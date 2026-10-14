@@ -4288,19 +4288,20 @@ public sealed partial class SessionMessageQueueService
     /// Every caller of <see cref="HandleDeliveryFailureAsync"/> holds the per-session queue lock,
     /// and the dispatch can await the outbound broker (direct publication, loss notices), so it is
     /// handed off rather than awaited (Review d0f3fd63 F1): the lock owner's work ends at the grace's
-    /// committed Sent row, the same durable state every live trigger dispatches from. The dispatcher
-    /// never takes the queue lock and its settle/capture keeps either order to one reply. A failure
+    /// committed Sent row and its immutable source ids. The dispatcher selects those sources'
+    /// completed prompt windows, never a newer turn. Its atomic source claim protects publication. A failure
     /// is logged and changes no verdict; the correlation stays open for the next live trigger.
     /// </summary>
-    private void DispatchLateConfirmedChannelReplies(Guid sessionId)
+    private void DispatchLateConfirmedChannelReplies(Guid sessionId, IReadOnlyCollection<Guid> messageIds)
     {
-        var dispatch = Task.Run(() => DispatchLateConfirmedChannelRepliesAsync(sessionId));
+        var confirmedIds = messageIds.ToArray();
+        var dispatch = Task.Run(() => DispatchLateConfirmedChannelRepliesAsync(sessionId, confirmedIds));
         _lateConfirmDispatches.TryAdd(dispatch, 0);
         _ = dispatch.ContinueWith(
             done => _lateConfirmDispatches.TryRemove(done, out _), TaskScheduler.Default);
     }
 
-    private async Task DispatchLateConfirmedChannelRepliesAsync(Guid sessionId)
+    private async Task DispatchLateConfirmedChannelRepliesAsync(Guid sessionId, IReadOnlyCollection<Guid> messageIds)
     {
         try
         {
@@ -4313,7 +4314,7 @@ public sealed partial class SessionMessageQueueService
                 ?? CancellationToken.None;
             if (LateConfirmDispatchStartingAsync is { } starting)
                 await starting(stopping);
-            await channelReplies.OnTurnEndAsync(sessionId, stopping);
+            await channelReplies.OnLateConfirmedAsync(sessionId, messageIds, stopping);
         }
         catch (Exception ex)
         {
@@ -4751,10 +4752,10 @@ public sealed partial class SessionMessageQueueService
                 (lateConfirmed, lateTruncated, lateConfirmedChannel) = await GraceConfirmAsync(sessionId, messageIds, ct);
             // CARD-1247: the grace pull stores the turn with no turn-end routing, so a Channel row it
             // promotes to Sent was invisible to every earlier dispatch. Mirror the CARD-0313
-            // re-dispatch on the turn-end path; the dispatcher's settle/capture keeps it to one reply.
+            // re-dispatch on the turn-end path, bound to the confirmed sources rather than the latest turn.
             // Handed off before any return below, and never awaited under the caller's lock.
             if (lateConfirmedChannel.Count > 0)
-                DispatchLateConfirmedChannelReplies(sessionId);
+                DispatchLateConfirmedChannelReplies(sessionId, lateConfirmedChannel);
             if (messageIds is { Count: > 0 }
                 && lateConfirmed.Count + lateTruncated.Count == messageIds.Count)
             {

@@ -224,6 +224,62 @@ public sealed class ChannelReplyDispatcher
     }
 
     /// <summary>
+    /// Route only the Channel sources confirmed by a queue boundary. The worker may start after
+    /// later turns have completed, so resolve the original attempt's owning prompt in sequence
+    /// order. This explicit receipt path also works with unified recovery disabled or no catalog.
+    /// </summary>
+    public async Task<ChannelReplyDispatchResult> OnLateConfirmedAsync(Guid sessionId,
+        IReadOnlyCollection<Guid> messageIds, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var sources = await OpenCorrelations(db).AsNoTracking()
+            .Where(m => m.AgentSessionId == sessionId && messageIds.Contains(m.Id))
+            .OrderBy(m => m.Sequence).ToListAsync(ct);
+        var published = new HashSet<Guid>();
+        var withheld = new HashSet<Guid>();
+        var failed = new HashSet<Guid>();
+        var deferred = new HashSet<Guid>();
+        if (sources.Count == 0) return ChannelReplyDispatchResult.Empty;
+
+        var after = sources.Min(m => m.LastDeliveryBaselineSequence ?? -1);
+        // A finite snapshot bound: later transcript arrivals belong to a subsequent trigger.
+        var through = await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId)
+            .MaxAsync(t => (long?)t.Sequence, ct) ?? -1;
+        while (sources.Count > 0 && after < through)
+        {
+            var prompts = await db.TranscriptEntries.AsNoTracking()
+                .Where(t => t.AgentSessionId == sessionId && t.Sequence > after && t.Sequence <= through
+                    && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.QueuedUserPrompt))
+                .OrderBy(t => t.Sequence).Take(ChannelOutboundDiscoveryService.PageSize).ToListAsync(ct);
+            if (prompts.Count == 0) break;
+            foreach (var prompt in prompts)
+            {
+                if (prompt.Text is null) continue;
+                var matches = await MatchChannelRowsAsync(db, prompt, ct);
+                if (!sources.Any(s => matches.Any(m => m.Id == s.Id))) continue;
+                var next = await TranscriptTurnWindow.FindNextTurnOpeningPromptSeqAsync(db, sessionId, prompt.Sequence, ct);
+                var end = await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId
+                    && t.Kind == TranscriptKinds.TurnEnd && t.Sequence > prompt.Sequence && t.Sequence <= through
+                    && (next == null || t.Sequence < next)).OrderBy(t => t.Sequence)
+                    .Select(t => (long?)t.Sequence).FirstOrDefaultAsync(ct);
+                if (end is null || (await TranscriptTurnWindow.FindOwningPromptAsync(db, sessionId, end.Value, ct))?.Id != prompt.Id)
+                    continue;
+
+                var result = await DispatchAsync(sessionId, prompt, rememberDirectTurn: true, ct);
+                published.UnionWith(result.PublishedCorrelationIds);
+                withheld.UnionWith(result.IntentionallyWithheldCorrelationIds);
+                failed.UnionWith(result.FailedCorrelationIds);
+                deferred.UnionWith(result.DeferredCorrelationIds ?? new HashSet<Guid>());
+                sources.RemoveAll(s => published.Contains(s.Id) || withheld.Contains(s.Id)
+                    || failed.Contains(s.Id) || deferred.Contains(s.Id));
+            }
+            after = prompts[^1].Sequence;
+        }
+        return new(published, withheld, failed, deferred);
+    }
+
+    /// <summary>
     /// Examine one bounded historical prompt page for an open source. The returned sequence
     /// is only a scheduling hint; source linkage in CaptureAsync remains the durable owner.
     /// Unlike OnTurnEndAsync this never selects the newest turn or changes the trailing cache.
@@ -324,8 +380,12 @@ public sealed class ChannelReplyDispatcher
         }
     }
 
+    private Task<ChannelReplyDispatchResult> DispatchAsync(Guid sessionId,
+        TranscriptEntry? historicalPrompt, CancellationToken ct) =>
+        DispatchAsync(sessionId, historicalPrompt, rememberDirectTurn: false, ct);
+
     private async Task<ChannelReplyDispatchResult> DispatchAsync(Guid sessionId,
-        TranscriptEntry? historicalPrompt, CancellationToken ct)
+        TranscriptEntry? historicalPrompt, bool rememberDirectTurn, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -476,11 +536,16 @@ public sealed class ChannelReplyDispatcher
         var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
         // Only legacy and catalog-less routes need the process-local watermark. Captured
         // destinations always derive trailing ownership from their committed root.
-        if (historicalPrompt is null)
+        if (historicalPrompt is null || rememberDirectTurn)
         {
             var legacyTargets = targets.Where(t => !outbound.UnifiedRecoveryEnabled || !t.HasCatalog).ToArray();
             if (legacyTargets.Length > 0)
-                _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, legacyTargets);
+            {
+                var turn = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, legacyTargets);
+                _dispatched.AddOrUpdate(sessionId, turn, (_, current) =>
+                    current.PromptSeq > turn.PromptSeq || current.PromptSeq == turn.PromptSeq
+                        && current.MaxTextSeq > turn.MaxTextSeq ? current : turn);
+            }
         }
 
         // The frozen silent-turn contract: a whole-turn NO_REPLY settles the correlations and
@@ -572,12 +637,8 @@ public sealed class ChannelReplyDispatcher
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _dispatched.TryRemove(sessionId, out _);
-                if (!outbound.UnifiedRecoveryEnabled)
-                {
-                    foreach (var m in matches.Where(m => target.CorrelationIds.Contains(m.Id)))
-                        m.ChannelReplySettledAt = null;
-                    await db.SaveChangesAsync(CancellationToken.None);
-                }
+                // Only the outbound owner may release a failed direct claim. These tracked
+                // matches may predate a concurrent successful publication or durable capture.
                 _logger.LogError(ex,
                     "Producing the channel reply for session {SessionId} failed; target {ConversationId} remains owed",
                     sessionId, target.ConversationId);
@@ -768,9 +829,10 @@ public sealed class ChannelReplyDispatcher
     private async Task SettleAsync(AppDbContext db, IReadOnlyList<SessionQueuedMessage> rows, CancellationToken ct)
     {
         var now = _timeProvider.GetUtcNow().UtcDateTime;
-        foreach (var row in rows)
-            row.ChannelReplySettledAt = now;
-        await db.SaveChangesAsync(ct);
+        var ids = rows.Select(m => m.Id).ToArray();
+        await db.SessionQueuedMessages.Where(m => ids.Contains(m.Id)
+            && m.ChannelReplySettledAt == null && m.ChannelOutboundDeliveryId == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelReplySettledAt, now), ct);
     }
 
     /// <summary><c>{provider}:{conversationId}</c>; split on the FIRST colon (chat ids carry none).</summary>
@@ -1561,8 +1623,6 @@ public sealed class ChannelReplyDispatcher
         {
             if (!publicationAccepted && !captureReply)
             {
-                foreach (var m in matches)
-                    m.ChannelReplySettledAt = null;
                 foreach (var task in impliedTasks)
                     task.DeliverableDeliveredAt = null;
                 await db.SaveChangesAsync(CancellationToken.None);

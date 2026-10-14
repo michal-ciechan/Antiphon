@@ -652,7 +652,8 @@ public sealed class AgentSessionRuntime
                     // The first pass intentionally runs before queue delivery. A row promoted from
                     // Pending to Sent by the queue afterwards was therefore invisible to it; run
                     // the same durable dispatcher once more, now that this exact row is eligible.
-                    var dispatchResult = await channelReplies.OnTurnEndAsync(sessionId, ct);
+                    var dispatchResult = await channelReplies.OnLateConfirmedAsync(
+                        sessionId, queueResult.LateConfirmedChannelMessageIds, ct);
                     await WarnOnUnpublishedLateConfirmedChannelRepliesAsync(
                         sessionId, queueResult.LateConfirmedChannelMessageIds, dispatchResult, ct);
                 }

@@ -457,6 +457,31 @@ public class ChannelReplyLateConfirmDispatchTests
         }
     }
 
+    [Test]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    public async Task Bound_grace_dispatch_retains_the_direct_turn_trailing_text_watermark(
+        bool unifiedRecovery, bool catalog)
+    {
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery },
+            AlwaysOn = true,
+        });
+        var chatId = catalog ? await h.BindChannelAsync() : $"uncatalogued-{Guid.NewGuid():N}";
+        const string prompt = "[Telegram Family] An answer with text after its stop marker";
+        var id = await h.SeedPendingMessageAsync(prompt, deliveryAttempts: 1, baselineSequence: 0,
+            origin: QueuedMessageOrigin.Channel, conversationKey: $"telegram:{chatId}");
+        h.Runner.SetTranscript(Turns(h.SessionId, (prompt, "The initial answer.")));
+        await VerifierGraceAsync(h, id);
+        h.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("The initial answer.");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "The trailing answer.");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        h.Messaging.SentReplies.Select(r => r.Text).ShouldBe(new[] { "The initial answer.", "The trailing answer." });
+        h.Messaging.SentReplies.ShouldAllBe(r => r.ConversationId == chatId);
+    }
+
     /// <summary>A producer whose first send blocks until the test releases it.</summary>
     private sealed class HeldProducer : IAntiphonMessagingProducer
     {

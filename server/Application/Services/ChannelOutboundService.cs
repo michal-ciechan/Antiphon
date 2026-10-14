@@ -100,18 +100,7 @@ public sealed class ChannelOutboundService
             }
 
             var memberIds = root is null ? source.CorrelationIds.Distinct().Order().ToArray() : [];
-            var members = new List<SessionQueuedMessage>();
-            foreach (var memberId in memberIds)
-            {
-                // Lock before reloading: contexts may have stale tracked correlations and
-                // overlapping batches must not replace a source claimed on another destination.
-                var member = await _db.SessionQueuedMessages.FromSqlInterpolated(
-                    $"SELECT * FROM \"SessionQueuedMessages\" WHERE \"Id\" = {memberId} FOR UPDATE")
-                    .AsNoTracking().SingleAsync(ct);
-                if (member.AgentSessionId != source.SessionId)
-                    throw new ArgumentException("A capture member belongs to another source session.");
-                members.Add(member);
-            }
+            var members = await LockSourceMembersAsync(source.SessionId, memberIds, ct);
             var owners = members.Where(m => m.ChannelOutboundDeliveryId != null)
                 .Select(m => m.ChannelOutboundDeliveryId!.Value).Distinct().ToArray();
             if (owners.Length > 1)
@@ -177,11 +166,7 @@ public sealed class ChannelOutboundService
             };
             _db.ChannelOutboundDeliveries.Add(delivery);
             await _db.SaveChangesAsync(ct);
-            var claimed = await _db.SessionQueuedMessages.Where(m => memberIds.Contains(m.Id)
-                && m.ChannelOutboundDeliveryId == null && m.ChannelReplySettledAt == null
-                && m.ChannelReplyDiscoveryClosedAt == null)
-                .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelOutboundDeliveryId, delivery.Id), ct);
-            if (claimed != memberIds.Length)
+            if (!await ClaimSourceMembersAsync(memberIds, delivery.Id, null, ct))
                 throw new ConflictException("A capture source was claimed concurrently.", "channel_outbound_members_owned");
             if (suppress)
                 await _db.SessionQueuedMessages.Where(m => memberIds.Contains(m.Id)
@@ -390,6 +375,11 @@ public sealed class ChannelOutboundService
                 return winner.State == ChannelOutboundDeliveryState.Published
                     ? ChannelOutboundSendOutcome.Published : ChannelOutboundSendOutcome.Deferred;
             }
+            var memberIds = source.CorrelationIds.Distinct().Order().ToArray();
+            var members = await LockSourceMembersAsync(source.SessionId, memberIds, ct);
+            if (members.Any(m => m.ChannelOutboundDeliveryId != null || m.ChannelReplySettledAt != null
+                || m.ChannelReplyDiscoveryClosedAt != null))
+                return ChannelOutboundSendOutcome.Deferred;
             var pending = profile is null ? 0 : await _db.ChannelOutboundDeliveries.CountAsync(d =>
                 d.ChannelId == channel.Id && d.State == ChannelOutboundDeliveryState.Pending, ct);
             var overflow = qualifies && profile is not null && pending >= profile.MaxPending;
@@ -401,13 +391,9 @@ public sealed class ChannelOutboundService
                 delivery.FailureReason = "Conversion queue full; original files retained.";
             }
             _db.ChannelOutboundDeliveries.Add(delivery);
-            foreach (var correlationId in source.CorrelationIds)
-            {
-                var row = _db.SessionQueuedMessages.Local.FirstOrDefault(m => m.Id == correlationId)
-                    ?? await _db.SessionQueuedMessages.SingleAsync(m => m.Id == correlationId, ct);
-                row.ChannelOutboundDeliveryId = id;
-            }
             await _db.SaveChangesAsync(ct);
+            if (!await ClaimSourceMembersAsync(memberIds, id, null, ct))
+                throw new ConflictException("An outbound source was claimed concurrently.", "channel_outbound_members_owned");
             if (ProbeBarrierAsync is { } beforeCommit)
                 await beforeCommit("admission-before-commit", id, ct);
             await transaction.CommitAsync(ct);
@@ -474,30 +460,64 @@ public sealed class ChannelOutboundService
         if (ProbeBarrierAsync is { } admission)
             await admission("direct-admission", source.CorrelationIds.FirstOrDefault(), ct);
         var now = _clock.GetUtcNow().UtcDateTime;
-        var correlations = new List<SessionQueuedMessage>();
-        foreach (var id in source.CorrelationIds)
+        var memberIds = source.CorrelationIds.Distinct().Order().ToArray();
+        if (memberIds.Length > 0)
         {
-            var row = _db.SessionQueuedMessages.Local.FirstOrDefault(m => m.Id == id)
-                ?? await _db.SessionQueuedMessages.SingleAsync(m => m.Id == id, ct);
-            correlations.Add(row);
-            row.ChannelReplySettledAt = now;
+            await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+            // Reuse capture's durable source identity and claim, including its lock ordering.
+            // A stale dispatcher must not overwrite another direct publisher, capture or loss.
+            var members = await LockSourceMembersAsync(source.SessionId, memberIds, ct);
+            if (members.Any(m => m.ChannelOutboundDeliveryId != null || m.ChannelReplySettledAt != null
+                || m.ChannelReplyDiscoveryClosedAt != null)
+                || !await ClaimSourceMembersAsync(memberIds, null, now, ct))
+                return ChannelOutboundSendOutcome.Deferred;
+            await transaction.CommitAsync(ct);
         }
-        if (correlations.Count > 0)
-            await _db.SaveChangesAsync(ct);
         try
         {
+            // Await the actual producer task, with no expiring claim or detached timeout. A
+            // competing trigger cannot acquire this source while publication may be in flight.
             await _producer.SendAsync(reply, ct);
             return ChannelOutboundSendOutcome.Published;
         }
         catch
         {
-            foreach (var row in correlations)
-                row.ChannelReplySettledAt = null;
-            if (correlations.Count > 0)
-                await _db.SaveChangesAsync(CancellationToken.None);
+            // The send has ended. Release only this invocation's marker, never a durable owner
+            // or a newer marker. Caller cancellation must not prevent the failed claim cleanup.
+            if (memberIds.Length > 0)
+                await _db.SessionQueuedMessages.Where(m => memberIds.Contains(m.Id)
+                    && m.ChannelReplySettledAt == now && m.ChannelOutboundDeliveryId == null)
+                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelReplySettledAt, (DateTime?)null),
+                        CancellationToken.None);
             throw;
         }
     }
+
+    private async Task<List<SessionQueuedMessage>> LockSourceMembersAsync(Guid sessionId,
+        Guid[] memberIds, CancellationToken ct)
+    {
+        var members = new List<SessionQueuedMessage>();
+        foreach (var id in memberIds)
+        {
+            // All callers hold a transaction and supply distinct, sorted ids. Reload independently
+            // of tracked state; capture, direct publication and loss recording share these locks.
+            var member = await _db.SessionQueuedMessages.FromSqlInterpolated(
+                $"SELECT * FROM \"SessionQueuedMessages\" WHERE \"Id\" = {id} FOR UPDATE")
+                .AsNoTracking().SingleAsync(ct);
+            if (member.AgentSessionId != sessionId)
+                throw new ArgumentException("An outbound member belongs to another source session.");
+            members.Add(member);
+        }
+        return members;
+    }
+
+    private async Task<bool> ClaimSourceMembersAsync(Guid[] memberIds, Guid? deliveryId,
+        DateTime? settledAt, CancellationToken ct) =>
+        await _db.SessionQueuedMessages.Where(m => memberIds.Contains(m.Id)
+            && m.ChannelOutboundDeliveryId == null && m.ChannelReplySettledAt == null
+            && m.ChannelReplyDiscoveryClosedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelOutboundDeliveryId, deliveryId)
+                .SetProperty(m => m.ChannelReplySettledAt, settledAt), ct) == memberIds.Length;
 
     private static string SourceKey(ChannelOutboundSource source, ChannelReply reply)
     {

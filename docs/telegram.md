@@ -72,6 +72,14 @@ The retained catalog-less conversation-ID fallback still sends directly for eith
 value (the plan's S4 compatibility amendment); it has no durable channel owner and does not
 gain this capture guarantee.
 
+Direct main/machine replies still share capture's source-member claim (CARD-1247): a
+conditional settlement update wins only if no settlement or durable delivery owns those
+members. The loser skips publication. A failed producer invocation releases its own marker
+after it has completed, so later triggers may retry; no timeout releases an in-flight send.
+Grace and runtime late-confirm dispatch bind to the confirmed source ids and original prompt
+window, including when recovery is disabled. These changes need no migration and do not
+change the direct path's existing crash/ambiguous-acceptance limitations.
+
 Preparation freezes validated attachment bytes under `.antiphon/outbound/<delivery-id>/`.
 Publication means **Kafka producer acceptance**, not Telegram/Slack receipt or a human read.
 Published state, its timestamp and main/machine source settlement commit together. Channel
