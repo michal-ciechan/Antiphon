@@ -89,12 +89,19 @@ use `max.message.bytes=20971520`. Historical contracts:
 [consumer identity](superpowers/plans/2026-09-06-card-0410-gateway-consumer-group-plan.md).
 
 The script technically verifies the running container, registered adapters, migration history, and
-a bounded redacted startup-log scan on the selected instance. With separate traffic authorization,
-confirm that instance serves the designated test group, then prove both directions. Send to the
-**`Antiphon-Family` test group
-(`-5370465377`)**, never the live `Family` group: `dotnet run scripts/tg-send.cs -- --to
--5370465377 --text "..."` from `C:\src\ClaudeBot` should log `[outbound] sent via telegram -> <id>`,
-and a reply typed back into that group should log `[ingress] telegram -5370465377 -> channels.inbound`.
+a bounded redacted startup-log scan on the selected instance. The real Telegram round-trip check
+is a separate manual, operator-initiated check in **Family**, whose binding is configured in the
+channel settings. A test message to Family reaches a real family group. An agent must not send
+test traffic there on its own; deployment authorization does not authorize test messages.
+CARD-1243 closed on 2026-10-14 with the operator's decision that the gateway works and Family is
+the authorized test conversation. This decision replaces the retired test-group destination.
+
+For an operator-initiated check, confirm the selected instance serves Family and verify the active
+Telegram conversation by name before sending. Observe an outbound message in Family and its
+gateway send log, then type a reply manually in Family and observe its ingress log and the bound
+agent's matching `UserPrompt` transcript. Confirm the agent's reply renders in Family. Record
+the observed directions separately; container health or broker acceptance alone is not a Telegram
+delivery receipt. See the [manual channel smoke notes](../.claude/skills/telegram-e2e-smoke/SKILL.md).
 
 ## Configure the agent (Channels + Agents pages, or API)
 
@@ -204,10 +211,12 @@ merged Compose settings, a changed running image ID, and independent read-only
 The server identity is reread before mutation and after verification; concurrent renames
 fail visibly. Adapter/migration checks and redacted startup-log checks remain in place.
 
-Production deployment and real traffic are separately authorized. After rollout, use only
-the Antiphon-Family test group (`-5370465377`), record one receipt's partition/offset and
-reply, verify the commit moved past it, and observe for age threshold plus two polls
-(normally seven minutes). No false notice/event should occur for that receipt. A technical
+Production deployment and real traffic are separately authorized. After rollout, the operator
+may initiate the manual round-trip check in Family, a real family group with its binding
+configured in the channel settings. An agent must not send test traffic there on its own.
+Record one receipt's partition/offset and reply, verify the commit moved past it, and observe
+for age threshold plus two polls (normally seven minutes). No false notice/event should occur
+for that receipt. A technical
 verdict without that traffic observation is not end-to-end acceptance.
 
 Rollback uses retained backups only by operator decision. Keep the corrected group when

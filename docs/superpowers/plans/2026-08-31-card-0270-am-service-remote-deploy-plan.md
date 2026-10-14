@@ -68,7 +68,7 @@ Those are deployment-address facts, not a project dependency list. Before any wr
 |---|---|
 | default or `-WhatIf` | Read local Dockerfile and remote build projection, validate the archive manifest, and print intended source entries. No SCP, remote extraction, build, recreate, or real-message check. |
 | `-Deploy` | Required explicit opt-in for every remote write. Combine with PowerShell `-Confirm` for an interactive deployment; a Deploy-role brief must state that production deployment is authorized before using it non-interactively. |
-| `-SkipRealTrafficCheck` | Explicitly records that the operator must perform the existing test-group round trip after technical verification. It does not make a live Family-group test legal. |
+| `-SkipRealTrafficCheck` | Records that the manual, operator-initiated Family round-trip check remains pending after technical verification. Family is a real family group; its binding is configured in the channel settings. An agent must not send test traffic there on its own (CARD-1243, 2026-10-14). |
 | `-TimeoutSec` | Bounds polling for the recreated service and HTTP endpoint; do not widen an SSH/build failure into a blind wait. |
 
 Use `[CmdletBinding(SupportsShouldProcess, ConfirmImpact='High')]`. `-Deploy` plus `ShouldProcess` makes the externally visible operation obvious in both an interactive session and a stored Deploy brief. The final line is always one of:
@@ -121,12 +121,17 @@ The script's successful verdict requires all of the following:
 4. The messaging-service migrations in source are represented in `am-postgres`'s `__EFMigrationsHistory`, using a scoped `docker compose exec -T am-postgres psql` query whose output is migration IDs only. This preserves CARD-0265's migration evidence instead of treating a running process as proof that the schema advanced.
 5. Recent `am-service` logs contain no startup exception. Limit the displayed log window and redact configuration values; the script must not dump arbitrary container logs into a task report.
 
-The script cannot safely prove a live bidirectional Telegram/Slack round trip without sending a real external message. `docs/telegram-bot-ops.md` retains the human verification step: use only the `Antiphon-Family` test group, never the live Family group. A Deploy-role report must state whether that final check was performed or explicitly left to the operator.
+**Traffic-check update (CARD-1243, 2026-10-14):** the Telegram round-trip destination is
+Family, whose binding is configured in the channel settings. A test message reaches a real
+family group, so the check is manual and operator-initiated. An agent must not send test
+traffic there on its own. Deployment authorization does not authorize test messages.
+Follow `docs/telegram-bot-ops.md`; a Deploy-role report must state whether the operator's
+check was observed or remains pending.
 
 ## Documentation and delegation changes
 
 1. Add the script with a complete comment-based help block: target, source-of-truth rule, dry-run and execution examples, exact production confirmation requirement, verification contract, rollback evidence, and no-secret logging rule. Keep it ASCII-only for Windows PowerShell 5.1 compatibility.
-2. Replace the manually enumerated `tar`/`scp` block in `docs/telegram-bot-ops.md`'s **Deploying the messaging service (server2)** section with the script as the sole source-built deployment procedure. Retain the test-group warning and explain that the source manifest comes from the Dockerfile.
+2. Replace the manually enumerated `tar`/`scp` block in `docs/telegram-bot-ops.md`'s **Deploying the messaging service (server2)** section with the script as the sole source-built deployment procedure. Retain the manual Family traffic-check warning and explain that the source manifest comes from the Dockerfile.
 3. Keep `docs/messaging-standalone.md` and `docs/slack-bot-ops.md` as links to the Telegram ops procedure; do not copy a second remote recipe into either document.
 4. Add a concise rule to the relevant deployment/orchestration reference: once `-Deploy` has explicit authorization, a Deploy-role delegate may run this script and report its final verdict; it may not reconstruct the SSH/tar/Compose sequence ad hoc.
 
@@ -154,4 +159,3 @@ CARD-0270 is scoped to `am-service` now. The school-revision server2 compose rep
 - No attempt to move remote Compose secrets, `.env`, or server configuration into this repository.
 - No generic SSH execution framework, arbitrary-target parameters, automatic rollback, or automatic real-message test.
 - No manually maintained project/file list anywhere in the new recipe or its operator docs.
-

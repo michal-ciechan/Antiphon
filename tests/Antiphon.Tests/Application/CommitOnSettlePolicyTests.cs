@@ -16,6 +16,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [NotInParallel("AgentQueue")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CommitOnSettlePolicyTests
 {
     [Test]
@@ -263,13 +264,17 @@ public sealed class CommitOnSettlePolicyTests
 
     private sealed class TempWorkspace : IDisposable
     {
-        public string Path { get; } = Directory.CreateTempSubdirectory("antiphon-c527-policy").FullName;
+        private readonly ScratchGitRepo _repo = new("antiphon-c527-policy");
 
-        public void Dispose()
+        public string Path => _repo.Path;
+
+        public TempWorkspace()
         {
-            try { Directory.Delete(Path, recursive: true); }
-            catch (IOException) { }
+            // Fresh tasks default to Worktree and need a repository with a branchable HEAD.
+            _repo.CommitFileAsync("README.md", "CommitOnSettle policy fixture.\n").GetAwaiter().GetResult();
         }
+
+        public void Dispose() => _repo.Dispose();
     }
 
     private sealed class StubHttpClientFactory : IHttpClientFactory
