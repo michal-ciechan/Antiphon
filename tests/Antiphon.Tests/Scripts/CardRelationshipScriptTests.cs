@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Antiphon.Tests.Application;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 using static Antiphon.Tests.Scripts.CardListSearchScriptTests;
