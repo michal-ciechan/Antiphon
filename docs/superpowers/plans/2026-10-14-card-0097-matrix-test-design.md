@@ -654,7 +654,25 @@ stage pins shaped as the live census plus one card pin; `-OutDir` under a temp d
 **S-F — `OrchestratorInstructionsRendererTests` (U), `OrchestratorInstructionsRefreshTests` (H),
 `OrchestratorInstructionsDeltaTests` (U)**
 
-Repair of Review `44e2b653` D1/D2: CP-20 now requires 14 methods / 26 results (Min 26).
+Repair of Review `09f50a7b` D3: CP-19 requires 8 methods / 10 results (Min 10);
+CP-20 requires 15 methods / 48 results (Min 48); CP-21 retains 5 results (Min 5).
+The D1/D2 rows from Review `44e2b653` remain in the selection.
+
+- V-F12 `Failed_reads_are_unknown_in_file_and_notice_then_recover` | H | 22 rows:
+  default and non-default chain, stage pin, availability, policy, chain metadata, standing
+  agent, holds, pins, runner defaults and host budget faults, crossed with file and notice.
+  A real DB interceptor fails the selected read. Literal unknown reasons and default-tier
+  source transitions, revision/count stability across different exception types, and recovery
+  are checked through the persisted file, the direct delta and delivered notices. Configuration
+  defaultComplexity stays Medium. The direct delta checks avoid the notice wrapper's clipping.
+- V-F13 `Unknown_matrix_details_keep_the_byte_cap_and_matrix_first_elision` | U |
+  14 rows with three unknown tiers and unknown effective/source. Require the explicit Plan
+  diagnostic line, 160-byte line cap, UTF-8 validity and matrix-first elision at full minus one.
+  The added diagnostic line is absent at ebcee0992; the cap and elision checks are regressions.
+- V-F10 also requires default-tier source/effective unknown in the direct delta for Medium
+  and simultaneous failures and the literal diagnostic line in the file. Source must not
+  transition to rolePolicy on failure. D3 tests are committed before implementation; their
+  first checkpoint run is an intentional red witness on ebcee0992 production code.
 The supplementary `OrchestratorInstructionsGuidanceTests` roster is 5 methods / 6 results.
 - V-F9 `A_failed_chain_read_marks_the_affected_file_cells_unknown` | H | four rows: Hard,
   Medium, Easy, and three tiers together, with Medium the default. A DB command interceptor

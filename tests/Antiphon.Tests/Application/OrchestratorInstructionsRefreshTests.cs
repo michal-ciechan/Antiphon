@@ -30,6 +30,170 @@ namespace Antiphon.Tests.Application;
 public class OrchestratorInstructionsRefreshTests
 {
     [Test]
+    [Arguments("chain-default", false)]
+    [Arguments("chain-default", true)]
+    [Arguments("chain-other", false)]
+    [Arguments("chain-other", true)]
+    [Arguments("stage pin", false)]
+    [Arguments("stage pin", true)]
+    [Arguments("availability", false)]
+    [Arguments("availability", true)]
+    [Arguments("policy", false)]
+    [Arguments("policy", true)]
+    [Arguments("chain metadata", false)]
+    [Arguments("chain metadata", true)]
+    [Arguments("standing agent", false)]
+    [Arguments("standing agent", true)]
+    [Arguments("holds", false)]
+    [Arguments("holds", true)]
+    [Arguments("pins", false)]
+    [Arguments("pins", true)]
+    [Arguments("defaults", false)]
+    [Arguments("defaults", true)]
+    [Arguments("budget", false)]
+    [Arguments("budget", true)]
+    public async Task Failed_reads_are_unknown_in_file_and_notice_then_recover(string part, bool notice)
+    {
+        var fault = new SnapshotReadFault(part);
+        await using var h = await CreateHarnessAsync(fault);
+        h.Delegation.OrchestratorInstructions.Path = Path.Combine(h.TempRoot, "i.md");
+        await AttachBundleAsync(h);
+        h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.Off;
+        await using (var scope = h.Provider.CreateAsyncScope())
+        {
+            var chains = scope.ServiceProvider.GetRequiredService<ComplexityChainService>();
+            await chains.UpsertAsync(AgentTaskRole.Plan,
+                part == "chain-other" ? TaskComplexity.Hard : TaskComplexity.Medium,
+                new PutComplexityChainRequest([new(AgentKind.ClaudeCode, AgentModelLevel.Low)],
+                    RoutingPinProvenance.Human, "D3 witness"), null, CancellationToken.None);
+            if (part is "stage pin" or "standing agent")
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                db.RoutingPins.Add(new RoutingPin
+                {
+                    Id = Guid.NewGuid(), Role = AgentTaskRole.Plan,
+                    AgentId = part == "standing agent" ? h.AgentId : null,
+                    AgentKind = part == "stage pin" ? AgentKind.ClaudeCode : null,
+                    ModelLevel = part == "stage pin" ? AgentModelLevel.High : null,
+                    Strength = RoutingPinStrength.Required, Provenance = RoutingPinProvenance.Human,
+                    Reason = "D3 stage pin", CreatedAt = h.Now, UpdatedAt = h.Now,
+                });
+                await db.SaveChangesAsync();
+            }
+        }
+        await Instructions(h).WhenIdleAsync();
+        await Instructions(h).ReconcileNowAsync("D3 baseline");
+        var before = await SnapshotAsync(h);
+        var beforeState = await ReadStateAsync(h);
+        h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.All;
+        fault.Enabled = true;
+        await Instructions(h).ReconcileNowAsync("D3 failed read");
+        fault.Failures.ShouldBeGreaterThan(0);
+        var failed = await ReadStateAsync(h);
+        failed.Revision.ShouldBe(beforeState.Revision + 1);
+        var after = await SnapshotAsync(h);
+        var delta = OrchestratorInstructionsDelta.Format(before, after);
+        var reason = part.StartsWith("chain-", StringComparison.Ordinal) ? "chain" :
+            part == "budget" ? "policy" : part;
+        var unknown = $"unknown ({reason} read failed)";
+        var file = await File.ReadAllTextAsync(failed.WrittenPath);
+        var subject = notice ? delta : file;
+        subject.ShouldContain(unknown);
+        subject.ShouldNotContain("→ rolePolicy");
+        subject.ShouldNotContain("→ unset");
+        subject.ShouldNotContain("InvalidOperationException");
+        file.ShouldContain("default Medium;");
+        h.Adapter.SubmittedBodies.Count.ShouldBe(1);
+        h.Adapter.SubmittedBodies[0].ShouldContain(unknown);
+        h.Adapter.SubmittedBodies[0].ShouldNotContain("→ rolePolicy");
+        h.Adapter.SubmittedBodies[0].ShouldNotContain("→ unset");
+        if (part is "chain-default" or "stage pin")
+        {
+            var source = part == "stage pin" ? "stage pin" : "role";
+            subject.ShouldContain(notice
+                ? $"matrix: Plan source {source} → {unknown}"
+                : $"  Plan: effective {unknown} via {unknown}");
+        }
+        if (part == "chain-other")
+        {
+            subject.ShouldContain(notice
+                ? "matrix: Plan Hard ClaudeCode/Low (haiku) → unknown (chain read failed)"
+                : "- Plan: Hard unknown (chain read failed); Medium (default) unset;");
+            delta.ShouldNotContain("Plan source");
+        }
+        if (part == "policy")
+            subject.ShouldContain(notice ? "caps: read observed → unknown (policy read failed)"
+                : "## 1. Pipeline caps\nunknown (policy read failed)");
+
+        // Exception type is diagnostic detail, not another settings transition.
+        fault.AlternateException = true;
+        await Instructions(h).ReconcileNowAsync("D3 same unavailable read, different exception");
+        h.Adapter.SubmittedBodies.Count.ShouldBe(1);
+        (await ReadStateAsync(h)).Revision.ShouldBe(failed.Revision);
+        fault.Enabled = false;
+        await Instructions(h).ReconcileNowAsync("D3 read recovered");
+        var recovered = await ReadStateAsync(h);
+        recovered.Revision.ShouldBe(failed.Revision + 1);
+        h.Adapter.SubmittedBodies.Count.ShouldBe(2);
+        var recovery = OrchestratorInstructionsDelta.Format(after, await SnapshotAsync(h));
+        if (part is "chain-default" or "stage pin")
+            recovery.ShouldContain($"matrix: Plan source {unknown} → {(part == "stage pin" ? "stage pin" : "role")}");
+        recovery.ShouldContain(unknown + " → ");
+        (await File.ReadAllTextAsync(recovered.WrittenPath)).ShouldNotContain("unknown (");
+        await Instructions(h).ReconcileNowAsync("D3 stable recovery");
+        h.Adapter.SubmittedBodies.Count.ShouldBe(2);
+    }
+
+    private static async Task<OrchestratorInstructionsSnapshot> SnapshotAsync(BridgeQueueHarness h)
+    {
+        await using var scope = h.Provider.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<OrchestratorInstructionsSnapshotBuilder>()
+            .BuildAsync(CancellationToken.None);
+    }
+
+    private sealed class SnapshotReadFault(string part) : DbCommandInterceptor
+    {
+        public bool Enabled { get; set; }
+        public bool AlternateException { get; set; }
+        public int Failures { get; private set; }
+        private int _chainReads;
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            var sql = command.CommandText;
+            var parameters = command.Parameters.Cast<DbParameter>().ToArray();
+            bool Table(string name) => sql.Contains($"FROM \"{name}\"", StringComparison.Ordinal);
+            bool Parameter(string name, int value) => parameters.Any(p => p.ParameterName.Contains(name, StringComparison.Ordinal)
+                && p.Value is not DBNull && Convert.ToInt32(p.Value) == value);
+            var planChain = Table("ComplexityChains") && Parameter("role", (int)AgentTaskRole.Plan)
+                && Parameter("complexity", (int)(part == "chain-other" ? TaskComplexity.Hard : TaskComplexity.Medium));
+            var fails = Enabled && part switch
+            {
+                "chain-default" or "chain-other" => planChain,
+                "chain metadata" => planChain && ++_chainReads % 2 == 0,
+                "stage pin" => Table("RoutingPins") && Parameter("role", (int)AgentTaskRole.Plan),
+                "standing agent" => Table("Agents") && sql.Contains("a.\"Kind\"", StringComparison.Ordinal)
+                    && !sql.Contains("a.\"Status\"", StringComparison.Ordinal),
+                "availability" => Table("ModelAvailabilityHolds") && parameters.Any(p => p.ParameterName.Contains("alias", StringComparison.OrdinalIgnoreCase)),
+                "policy" => Table("DispatchConcurrencySettings"),
+                "holds" => Table("ModelAvailabilityHolds") && parameters.All(p => !p.ParameterName.Contains("alias", StringComparison.OrdinalIgnoreCase)),
+                "pins" => Table("RoutingPins") && parameters.All(p => !p.ParameterName.Contains("role", StringComparison.Ordinal)),
+                "defaults" => Table("RunnerRoutingSettings"),
+                "budget" => Table("HostBudgets"),
+                _ => false,
+            };
+            if (fails)
+            {
+                Failures++;
+                if (AlternateException) throw new ArgumentException("D3 read unavailable");
+                throw new InvalidOperationException("D3 read unavailable");
+            }
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    [Test]
     [Arguments(TaskComplexity.Hard)]
     [Arguments(TaskComplexity.Medium)]
     [Arguments(TaskComplexity.Easy)]
@@ -71,6 +235,7 @@ public class OrchestratorInstructionsRefreshTests
     {
         var fault = new ChainReadFault(tier);
         await using var h = await CreateReadFailureHarnessAsync(fault);
+        var beforeSnapshot = await SnapshotAsync(h);
         fault.Enabled = true;
         await Instructions(h).ReconcileNowAsync("chain read failure");
 
@@ -81,6 +246,16 @@ public class OrchestratorInstructionsRefreshTests
             h.Adapter.SubmittedBodies[0].ShouldContain(
                 $"matrix: Plan {affected} ClaudeCode/Low (haiku) → unknown (chain read failed)");
         h.Adapter.SubmittedBodies[0].ShouldNotContain("→ unset");
+        var failedSnapshot = await SnapshotAsync(h);
+        var delta = OrchestratorInstructionsDelta.Format(beforeSnapshot, failedSnapshot);
+        delta.ShouldNotContain("→ rolePolicy");
+        if (tier is null or TaskComplexity.Medium)
+        {
+            delta.ShouldContain("matrix: Plan source role → unknown (chain read failed)");
+            delta.ShouldContain("matrix: Plan effective ClaudeCode/Low (haiku) → unknown (chain read failed)");
+            (await File.ReadAllTextAsync((await ReadStateAsync(h)).WrittenPath))
+                .ShouldContain("  Plan: effective unknown (chain read failed) via unknown (chain read failed)");
+        }
         var failed = await ReadStateAsync(h);
         await Instructions(h).ReconcileNowAsync("same chain read failure");
         h.Adapter.SubmittedBodies.Count.ShouldBe(1);
