@@ -121,12 +121,17 @@ The script's successful verdict requires all of the following:
 4. The messaging-service migrations in source are represented in `am-postgres`'s `__EFMigrationsHistory`, using a scoped `docker compose exec -T am-postgres psql` query whose output is migration IDs only. This preserves CARD-0265's migration evidence instead of treating a running process as proof that the schema advanced.
 5. Recent `am-service` logs contain no startup exception. Limit the displayed log window and redact configuration values; the script must not dump arbitrary container logs into a task report.
 
-The script cannot safely prove a live bidirectional Telegram/Slack round trip without sending a real external message. `docs/telegram-bot-ops.md` retains the human verification step: use only the `Antiphon-Family` test group, never the live Family group. A Deploy-role report must state whether that final check was performed or explicitly left to the operator.
+**Traffic-check update (CARD-1243, 2026-10-14):** the Telegram round-trip destination is
+Family, whose binding is configured in the channel settings. A test message reaches a real
+family group, so the check is manual and operator-initiated. An agent must not send test
+traffic there on its own. Deployment authorization does not authorize test messages.
+Follow `docs/telegram-bot-ops.md`; a Deploy-role report must state whether the operator's
+check was observed or remains pending.
 
 ## Documentation and delegation changes
 
 1. Add the script with a complete comment-based help block: target, source-of-truth rule, dry-run and execution examples, exact production confirmation requirement, verification contract, rollback evidence, and no-secret logging rule. Keep it ASCII-only for Windows PowerShell 5.1 compatibility.
-2. Replace the manually enumerated `tar`/`scp` block in `docs/telegram-bot-ops.md`'s **Deploying the messaging service (server2)** section with the script as the sole source-built deployment procedure. Retain the test-group warning and explain that the source manifest comes from the Dockerfile.
+2. Replace the manually enumerated `tar`/`scp` block in `docs/telegram-bot-ops.md`'s **Deploying the messaging service (server2)** section with the script as the sole source-built deployment procedure. Retain the manual Family traffic-check warning and explain that the source manifest comes from the Dockerfile.
 3. Keep `docs/messaging-standalone.md` and `docs/slack-bot-ops.md` as links to the Telegram ops procedure; do not copy a second remote recipe into either document.
 4. Add a concise rule to the relevant deployment/orchestration reference: once `-Deploy` has explicit authorization, a Deploy-role delegate may run this script and report its final verdict; it may not reconstruct the SSH/tar/Compose sequence ad hoc.
 

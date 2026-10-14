@@ -1554,7 +1554,10 @@ See [remote messaging operations](telegram-bot-ops.md#deploying-an-optional-remo
 Once a Deploy-role brief explicitly
 authorizes `-Deploy`, that Deploy-role delegate may run this script and report its final
 `REMOTE DEPLOY VERDICT`; it may not reconstruct the SSH/tar/Compose sequence ad hoc. Its default
-run is a read-only preflight, and its human traffic check remains the Antiphon-Family test group.
+run is a read-only preflight. Its Telegram round-trip check is manual and operator-initiated
+in Family, whose binding is configured in the channel settings (CARD-1243, 2026-10-14).
+A test message reaches a real family group; an agent must not send test traffic there on
+its own. Deployment authorization does not authorize test messages.
 
 ---
 
