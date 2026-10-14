@@ -10,6 +10,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -50,6 +51,7 @@ internal sealed class OverlayQuestionClosedException : Exception
 public sealed partial class SessionMessageQueueService
 {
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _locks = new();
+    private readonly ConcurrentDictionary<Task, byte> _lateConfirmDispatches = new();
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly AgentSessionRuntime _runtime;
     private readonly IEventBus _eventBus;
@@ -4283,17 +4285,45 @@ public sealed partial class SessionMessageQueueService
 
     /// <summary>
     /// CARD-1247: route the reply for a Channel row the post-failure grace just late-confirmed.
-    /// Runs under the caller's per-session queue lock; the dispatcher never takes that lock. It is
-    /// the same durable dispatcher every live trigger calls: a reply already captured or settled is
-    /// no longer an open correlation, and a turn without its TurnEnd or text stays owed.
+    /// Every caller of <see cref="HandleDeliveryFailureAsync"/> holds the per-session queue lock,
+    /// and the dispatch can await the outbound broker (direct publication, loss notices), so it is
+    /// handed off rather than awaited (Review d0f3fd63 F1): the lock owner's work ends at the grace's
+    /// committed Sent row, the same durable state every live trigger dispatches from. The dispatcher
+    /// never takes the queue lock and its settle/capture keeps either order to one reply. A failure
+    /// is logged and changes no verdict; the correlation stays open for the next live trigger.
     /// </summary>
-    private async Task DispatchLateConfirmedChannelRepliesAsync(Guid sessionId, CancellationToken ct)
+    private void DispatchLateConfirmedChannelReplies(Guid sessionId)
     {
-        await using var scope = _scopeFactory.CreateAsyncScope();
-        var channelReplies = scope.ServiceProvider.GetService<ChannelReplyDispatcher>();
-        if (channelReplies is not null)
-            await channelReplies.OnTurnEndAsync(sessionId, ct);
+        var dispatch = Task.Run(() => DispatchLateConfirmedChannelRepliesAsync(sessionId));
+        _lateConfirmDispatches.TryAdd(dispatch, 0);
+        _ = dispatch.ContinueWith(
+            done => _lateConfirmDispatches.TryRemove(done, out _), TaskScheduler.Default);
     }
+
+    private async Task DispatchLateConfirmedChannelRepliesAsync(Guid sessionId)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var channelReplies = scope.ServiceProvider.GetService<ChannelReplyDispatcher>();
+            if (channelReplies is null)
+                return;
+            // Not the lock owner's token: that caller may return (and its request end) first.
+            var stopping = scope.ServiceProvider.GetService<IHostApplicationLifetime>()?.ApplicationStopping
+                ?? CancellationToken.None;
+            await channelReplies.OnTurnEndAsync(sessionId, stopping);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Reply dispatch for a grace late-confirmed Channel row on session {SessionId} failed; "
+                + "the delivery verdict stands and the reply stays owed to the next turn-end trigger",
+                sessionId);
+        }
+    }
+
+    /// <summary>Test seam: completes when every grace late-confirm reply dispatch handed off so far has.</summary>
+    internal Task LateConfirmDispatchesSettledAsync() => Task.WhenAll(_lateConfirmDispatches.Keys);
 
     // A fresh scope per poll: this runs outside any caller's DbContext and must see rows the
     // transcript ingestion path is committing from its own scope, concurrently.
@@ -4718,8 +4748,9 @@ public sealed partial class SessionMessageQueueService
             // CARD-1247: the grace pull stores the turn with no turn-end routing, so a Channel row it
             // promotes to Sent was invisible to every earlier dispatch. Mirror the CARD-0313
             // re-dispatch on the turn-end path; the dispatcher's settle/capture keeps it to one reply.
+            // Handed off before any return below, and never awaited under the caller's lock.
             if (lateConfirmedChannel.Count > 0)
-                await DispatchLateConfirmedChannelRepliesAsync(sessionId, ct);
+                DispatchLateConfirmedChannelReplies(sessionId);
             if (messageIds is { Count: > 0 }
                 && lateConfirmed.Count + lateTruncated.Count == messageIds.Count)
             {

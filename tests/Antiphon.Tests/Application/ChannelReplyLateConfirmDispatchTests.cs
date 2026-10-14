@@ -75,11 +75,15 @@ public class ChannelReplyLateConfirmDispatchTests
 
     /// <summary>
     /// The verifier's verdict for a typed Channel row whose UserPrompt the stream has not stored yet.
-    /// The grace pull is the ONLY thing that stores the turn; no live event follows.
+    /// The grace pull is the ONLY thing that stores the turn; no live event follows. The reply
+    /// dispatch is handed off outside the caller (F1), so this joins it before anything is asserted.
     /// </summary>
-    private static Task VerifierGraceAsync(BridgeQueueHarness h, Guid messageId) =>
-        h.Queue.HandleDeliveryFailureAsync(
+    private static async Task VerifierGraceAsync(BridgeQueueHarness h, Guid messageId)
+    {
+        await h.Queue.HandleDeliveryFailureAsync(
             h.SessionId, [messageId], DeliveryVerdict.NoTranscriptRecord, CancellationToken.None);
+        await h.Queue.LateConfirmDispatchesSettledAsync();
+    }
 
     private static async Task<(string ChatId, Guid MessageId)> SeedTypedChannelRowAsync(
         BridgeQueueHarness h, string prompt)
@@ -262,6 +266,7 @@ public class ChannelReplyLateConfirmDispatchTests
 
         await first.WaitAsync(bound.Token);
         await producer.Published.Task.WaitAsync(bound.Token);
+        await h.Queue.LateConfirmDispatchesSettledAsync().WaitAsync(bound.Token);
         await h.DrainOutboundAsync();
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         await h.DrainOutboundAsync();
