@@ -564,8 +564,9 @@ is 422 `worktree_base_source_invalid`. Detail records `worktreeBaseRequestedRef`
 > when the any-role row for that complexity is Human (write it as Human, or clear the any-role
 > row).
 >
-> An Orchestrator whose single candidate under a Required pin is not ClaudeCode is always
-> **409 `routing_exhausted`**, whatever `refuseIfExhausted` says; it is never Blocked (CARD-1271).
+> With an explicit `complexity`, a forbid-only Required pin and one Codex row, an
+> Orchestrator create is refused **409 `routing_exhausted`** and no task row is written
+> (CARD-1271; `RequiredSingleCandidateRefusalTests` V-1).
 >
 > Routing pins (CARD-0305, CARD-0322) can also refuse create with **409 `routing_pin_conflict`**
 > (explicit kind/level/agent disagrees with a Required pin; a kind/level conflict lists every

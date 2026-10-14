@@ -8,21 +8,27 @@ Task base (merge-base with fetched master): `9cbe00bd52dd77367a34244c9cb9ea7d245
 A Required stage pin without candidates (forbid-only) contributes no pin slots, so
 `RoutingCandidates.Compose` returns the matrix row unchanged. A one-candidate row is
 not walked (`Walked: false`). With no chosen candidate, `AgentTaskService.CreateAsync`
-enters the Required-single-candidate arm ("today's 409s, never Blocked"). That arm
-re-checks the stage forbid list, quota and model holds. It never re-checked the walk's
-kind filter. So an Orchestrator with explicit `-Complexity` and one Codex row skipped
-the row as `not a delegate kind`, then was created on Codex. Elsewhere an Orchestrator
-is ClaudeCode only: an explicit kind is 422, a policy kind clamps, a walk skips, and
-reroute refuses (CARD-0084).
+enters the Required-single-candidate arm (its source comment: "today's 409s, never Blocked").
+That arm re-checks the stage forbid list, quota and model holds. At the task base it did not
+re-check the walk's kind filter, so an Orchestrator with explicit `-Complexity` and one Codex
+row skipped the row as `not a delegate kind`, then was created on Codex (V-1 red at S1).
+Other paths keep an Orchestrator on ClaudeCode (CARD-0084): an explicit Codex or Grok kind
+is a 422 `ValidationException`
+(`AgentTaskAgentKindTests.an_orchestrator_cannot_be_asked_to_run_on_Codex` and `..._on_Grok`),
+a policy kind clamps (`a_promoted_role_does_not_make_its_orchestrators_unrunnable`), a walk skips
+(`RoutingPinCandidateCreateTests.Orchestrator_skips_non_Claude_pin_candidates`), and reroute
+refuses (source: `AgentTaskService`, "An orchestrator cannot be rerouted off ClaudeCode").
 
 ## Decision
 
 The arm refuses before its other checks when the walk's kind filter rejects the single
 candidate. It throws 409 `routing_exhausted` with the `complexityRouting` extension.
-`refuseIfExhausted` does not change this: the arm never inserts Blocked, and a kind
-mismatch is not cleared by a hold or reset. The walk and the arm share one predicate,
-`ComplexityRoutingService.AdmitsKind`. The message tells the caller that a human
-must change the row or pin, and not to pick a kind.
+The arm is an `else if` ahead of the `request.RefuseIfExhausted` branch in
+`AgentTaskService.CreateAsync`, so that flag is not read on this path (source; no test sets
+it). V-1, V-3 and V-4 each assert no task row. `AdmitsKind` reads only the task kind and the
+candidate kind, so a hold or reset does not change its answer (source). The walk and the arm
+share that predicate, `ComplexityRoutingService.AdmitsKind`. The message tells the caller
+that a human must change the row or pin, and not to pick a kind.
 
 S1 commits the five tests and this plan. S2 makes the production change and adds the
 docs paragraph in `docs/orchestration-loop.md`. The D-1 repair (Review f28f0f79, Code task
@@ -37,12 +43,12 @@ docs paragraph in `docs/orchestration-loop.md`. The D-1 repair (Review f28f0f79,
   `An orchestrator runs only on ClaudeCode`. The routing DTO must be not walked, with one
   skipped Codex candidate, reason `not a delegate kind`, and no task row.
   Red at S1 (created on Codex), green at S2 (CP-1).
-- V-2: `An_orchestrator_with_complexity_over_one_claude_row_is_created_on_it` is a control
-  that proves a ClaudeCode Orchestrator is still created when its candidate is available.
-  The same pin over one ClaudeCode/Frontier row creates a Queued Orchestrator on
-  ClaudeCode/Frontier. That candidate passes every walk filter, so the walk chooses it and
-  create takes the chosen branch; it never enters the Required-single-candidate arm, and it
-  witnesses no arm mutant. It is green at S1 and S2 (CP-1).
+- V-2: `An_orchestrator_with_complexity_over_one_claude_row_is_created_on_it` is a control:
+  the same pin over one available ClaudeCode/Frontier row creates a Queued Orchestrator on
+  ClaudeCode/Frontier. The walk chooses that candidate, so create takes the
+  `routingWalk.Chosen` branch, not the Required-single-candidate arm (an `else if` after it
+  in `AgentTaskService.CreateAsync`). It stayed green under the scratch PC-3 demonstration
+  below and witnesses no arm mutant. It is green at S1 and S2 (CP-1).
 - V-3: these three tests are server witnesses for the documented Required-single-candidate
   refusals over one default-tier (Plan/Medium) row with a forbid-only Required pin.
   - `A_forbid_only_required_pin_over_one_held_default_row_is_409_model_disabled`:
@@ -84,7 +90,9 @@ acceptance, deployment or restart. Restart: server (on activation, ordinary land
 | PC-5 | Skip `EnforceForbiddenAliases` in the arm | `/*/*/RequiredSingleCandidateRefusalTests/A_forbid_only_required_pin_that_forbids_the_one_default_row_is_409_routing_pin_forbidden` | no exception |
 | PC-6 | Skip the quota gate in the arm | `/*/*/RequiredSingleCandidateRefusalTests/A_forbid_only_required_pin_over_one_quota_low_default_row_is_409_subscription_quota_low` | no exception |
 
-Mutation owns all deliberate mutant, red/restore/green and missing-control cycles; Code runs none.
+Mutation owns the deliberate mutant, red/restore/green and missing-control cycles that discharge
+these controls. Code task `4fc0b3a4` ran no mutations (Review d5e71c6e, D-2); Code task `7551b8d4` ran one scratch
+PC-3 demonstration (D-1 repair evidence below) that discharges nothing.
 
 ### Checkpoints
 
@@ -97,8 +105,8 @@ Mutation owns all deliberate mutant, red/restore/green and missing-control cycle
 | CP-5 | S1 | CP-1 | walk | `/*/*/ComplexityRoutingWalkTests/*` | R-1 | 8 passed, 0 failed/skipped | 8 | 2 | true | n/a |
 | CP-6 | S1 | CP-1 | agent-kind | `/*/*/AgentTaskAgentKindTests/*` | R-1 | 26 passed, 0 failed/skipped | 26 | 3 | true | n/a |
 
-Import this table to an ignored manifest and set `timeouts.rowMinutes: 40`. All rows share
-the S1 build group: run `--rows CP-1` at the S1 commit, then every row at the S2 commit. Each run uses the exact committed expected SHA,
+Import this table to an ignored manifest and set `timeouts.rowMinutes: 40`. CP-1..CP-6 share
+the S1 build group (Build column): run `--rows CP-1` at the S1 commit, then CP-1..CP-6 at the S2 commit. Each run uses the exact committed expected SHA,
 `--total-timeout 150m`, `--serial` and no `--keep-outputs`, and waits to completion. Linux
 builds use `UseAppHost=false`. Bootstrap the checkpoint tool once through
 `scripts/build-slot.ps1` into `bin-c1271-tool/`. That tool build is the sole planned
@@ -112,7 +120,7 @@ three normal times, with no repetition after green.
 
 ### Code evidence
 
-The S1 red run used commit `099d53805dd00e4d692003fad8fbfa9e2e1d4328` (tests and plan only). Run `20261014-221749-fce9`:
+The S1 red run used commit `099d53805dd00e4d692003fad8fbfa9e2e1d4328` (its diff from the task base touches the test class and this plan). Run `20261014-221749-fce9`:
 
 ```
 CHECKPOINT CP-1 commit=099d53805dd00e4d692003fad8fbfa9e2e1d4328 build=ok filter=/*/*/RequiredSingleCandidateRefusalTests/* executed=5 passed=4 failed=1 skipped=0 trx=/work/worktrees/task-4fc0b3a4/.antiphon/checkpoints/20261014-221749-fce9/rows/CP-1/run.trx slot=granted waited=45s dirty=0 source=099d53805dd00e4d692003fad8fbfa9e2e1d4328 sourceState=clean buildSource=verified
@@ -134,13 +142,13 @@ Both validators accept the S2 green receipt for CP-1..CP-6 (exit 0, `CHECKPOINT 
 `scripts/validate-checkpoint-receipt.ps1` and the tool's `validate`. Both reject the S1 red
 receipt with exit 2 (`cleanup_refused`, failed row). The fresh TRX method names match the
 filters, and their counts match the Min column. The tool reported `unlisted: none`. The
-only unlisted build was the planned tool bootstrap (`build-slot.ps1`, label `c1271-tool`,
+one unlisted build Code task `4fc0b3a4` reports is the planned tool bootstrap (`build-slot.ps1`, label `c1271-tool`,
 slot granted after 45s). The whole Unit lane was not run, per the brief, so that
 disclosure stays open.
 
 ### D-1 repair evidence (Code task 7551b8d4)
 
-The checkpoint tool ran every row at commit `7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4` (V-4 test, rebound PC-3, corrected docs). Run `20261014-230418-12cf` used `--serial` and `--total-timeout 150m`, with rowMinutes, totalMinutes and per-row timeoutMinutes 40/150/40 in the ignored manifest, and no `--keep-outputs`:
+The checkpoint tool ran CP-1..CP-6 (the six lines below) at commit `7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4` (V-4 test, rebound PC-3, corrected docs). Run `20261014-230418-12cf` used `--serial` and `--total-timeout 150m`, with rowMinutes, totalMinutes and per-row timeoutMinutes 40/150/40 in the ignored manifest, and no `--keep-outputs`:
 
 ```
 CHECKPOINT CP-1 commit=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 build=ok filter=/*/*/RequiredSingleCandidateRefusalTests/* executed=6 passed=6 failed=0 skipped=0 trx=/work/worktrees/task-7551b8d4/.antiphon/checkpoints/20261014-230418-12cf/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 sourceState=clean buildSource=verified
@@ -152,7 +160,7 @@ CHECKPOINT CP-6 commit=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 build=reused fil
 ```
 
 The run reported `unlisted: none`, builds 1, verdict GREEN exit=0 and `outputs: deleted bin-c1271/`.
-The CP-1 TRX names all six methods, including
+The CP-1 TRX names the six methods of the class (`testName` attributes), including
 `An_orchestrator_with_complexity_over_one_held_claude_row_is_409_model_disabled`. Both validators,
 `scripts/validate-checkpoint-receipt.ps1` and the tool's `validate`, accept the receipt (exit 0,
 `CHECKPOINT SOURCE VALID source=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 rows=6`).
@@ -166,6 +174,7 @@ Two unlisted runs went through `build-slot.ps1`:
   the filter `/*/*/RequiredSingleCandidateRefusalTests/*`. Result: total 6, failed 1, succeeded 5. The one
   failure was V-4: it expected `ModelDisabledException` but `RoutingExhaustedException` was thrown. V-2 stayed green under the
   mutant, which confirms D-1. Both the mutant and the scratch worktree were removed, and nothing was committed.
-  This demonstration does not discharge PC-3. Every PC stays pending for SourceLanding Mutation.
+  This demonstration does not discharge PC-3. PC-1..PC-6 stay pending for SourceLanding Mutation
+  (Status column of the candidates file).
 
 The whole Unit lane was not run, per the brief, so that disclosure stays open.
