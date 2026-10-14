@@ -89,3 +89,65 @@ The checkpoint rows are estimated at 28 minutes. The docker build adds about
 on top. The total fits the 90-minute budget. No whole-assembly or whole-Unit run is
 needed, because the change is confined to image build files, one shell guard and
 contract tests.
+
+## Results (Code 3dac1d55)
+
+Checkpoint tool bootstrap (unlisted, disclosed): `build-slot.ps1 -Label c1260-checkpoint-tool-bootstrap`
+built `tools/Antiphon.Checkpoints` into `bin-c1260-tool/` (waited 75 s, 0 errors).
+
+S1 `37ec8031771007d3c0ed88d2719b67498590ed62`, run `20261014-194713-b173`:
+
+```
+CHECKPOINT CP-1 commit=37ec8031771007d3c0ed88d2719b67498590ed62 build=ok filter=/*/*/(GitMinimumVersionGuardTests*)|(DockerStackContractTests*)/* executed=116 passed=112 failed=4 skipped=0 trx=/work/worktrees/task-3dac1d55/.antiphon/checkpoints/20261014-194713-b173/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=37ec8031771007d3c0ed88d2719b67498590ed62 sourceState=clean buildSource=verified
+```
+
+The 4 red tests were exactly the planned ones. `Git_floor_is_declared_once` and
+`Runner_git_meets_the_declared_minimum` failed because the guard was missing.
+`Server_image_git_meets_the_declared_minimum` failed because the root Dockerfile had no
+`ARG GIT_VERSION`. `Guard_refuses_git_below_the_landing_floor` failed because `sh` exited
+2 on the missing script.
+
+M-1 (`build-slot.ps1 -Label c1260-root-image`, `docker build` at S2 `797aac855be2`): the first
+invocation was rejected while parsing arguments, because the legacy builder has no
+`--progress`. No build step ran and the lease was held for 0 s. The second invocation built
+image `143cdb711f61`; the lease was held for 523 s and the slot wait was 0 s. The tarball
+check printed `git.tar.gz: OK` and the guard printed
+`git-minimum-version: Git 2.47.3 meets minimum 2.43`. The revision label is
+`797aac855be21183da6d9480150793b6dd5c5d20`. In the image, as uid 1654:
+
+- `git` is `/usr/local/bin/git`, version 2.47.3, and no Debian git package is installed.
+- In a fresh repository, `show-ref --exists` returns 0 for a present ref and 2 for a
+  missing one.
+- An HTTPS `ls-remote` returns 0.
+
+S2 group at `52d53ed26fd7d976f0a5f44673554705d9ec7a7d` (S2 plus the measured-version docs),
+run `20261014-200401-e038`:
+
+```
+CHECKPOINT CP-2 commit=52d53ed26fd7d976f0a5f44673554705d9ec7a7d build=ok filter=/*/*/(GitMinimumVersionGuardTests*)|(DockerStackContractTests*)/* executed=116 passed=116 failed=0 skipped=0 trx=/work/worktrees/task-3dac1d55/.antiphon/checkpoints/20261014-200401-e038/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=52d53ed26fd7d976f0a5f44673554705d9ec7a7d sourceState=clean buildSource=verified
+CHECKPOINT CP-3 commit=52d53ed26fd7d976f0a5f44673554705d9ec7a7d build=reused filter=/*/*/(WindowsUnitPlatformAdmissionTests*)|(ProcessSpawnTimeoutPolicyTests*)|(GrokSha256PinTests*)/* executed=17 passed=16 failed=1 skipped=1 trx=/work/worktrees/task-3dac1d55/.antiphon/checkpoints/20261014-200401-e038/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=52d53ed26fd7d976f0a5f44673554705d9ec7a7d sourceState=clean buildSource=verified
+```
+
+CP-3 differs from the planned `Expect` in two ways:
+
+- `C1210_Windows_linux_only_outcomes_are_exact` is Windows-only and skips on Linux. The
+  `0 skipped` expectation was wrong, and this skip is expected.
+- `C1210_Roster_closure_matches_source_gates` fails at
+  `c1210-unrostered-gate: Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests.Crlf_checkout_sends_carriage_return_free_remote_commands`.
+  This failure is inherited. CARD-1245 commit `750254d9b`, already in the task base,
+  added `NativeLinuxGate.Require(Reason)` to three `RefreshGithubTokenRemoteCommandTests`
+  methods. Those methods appear in neither the base roster nor this one, and this task
+  leaves the file unchanged.
+
+Static closure check: across the test sources, the only gated methods missing from the
+roster are those three CARD-1245 methods. `C1210_Native_linux_entries_guard_before_work`
+(58/69) and `C1210_Guard_matches_native_platform` pass with the new entry. The S2 run was
+not rerun because the red does not come from this change.
+
+Both receipt validators (`Antiphon.Checkpoints validate` and
+`validate-checkpoint-receipt.ps1`) exit 2 with `cleanup_refused` for both runs. The tool
+keeps build outputs when any row is red: S1 was red by design, and S2 is red because of the
+inherited CP-3 failure. The tested source rows themselves were clean.
+
+The whole-Unit lane was not run because the brief excluded it. That lane is deferred, not
+passed. PC-1 through PC-6 remain pending for SourceLanding Mutation.
