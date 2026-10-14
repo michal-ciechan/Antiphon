@@ -957,15 +957,32 @@ the stage pin, the chain, the chain metadata, a standing agent's label and each 
 availability; a failed part appends `<part> read failed (<type>)` to the cell's alert. The cell
 renders a value derived from a failed read as unknown, not as a definite candidate list or
 `then this row`. Values from reads that succeeded stay definite, with one exception: after a
-failed stage-pin read the stored origin and stored candidates are hidden although the chain read
-succeeded, because the unread pin can override them (C1258 row below). The Configure editor still
+failed stage-pin read an own, inherited or configuration origin and the stored candidates are
+hidden although the chain read succeeded, because the unread pin can override them (C1258 row
+below); an Unset cell keeps `Stored cell: unset`, which the successful chain read established
+(C1258 `Unset` rows). The Configure editor still
 opens with those stored values; its save writes only the stored row (V-2 `stage pin` editor rows).
 The PUT replaces the whole row (a blank reason stores the default `<cell> chain` label, a null
 expiry stores none), so the editor asks for an explicit overwrite before it writes over a value it
 could not read.
 
+A read that has not returned is not a value either. React Query 5 reports an offline query with
+no data as pending and paused (`isLoading` false, no data, no error), so each section of the
+Routing tab keys on the pending state: it shows `<subject> loading.` or
+`<subject> unknown (read paused offline).` in place of its values, its empty text or a failure,
+the matrix builds no Any role row and offers no Configure without the list, and a role row
+offers no Configure while its own read is pending. An editor opened from a role cell disables
+Save and Clear while that cell's read is pending again (C1270 D-1 rows below).
+
 | Behaviour | Test (runner, file) | What it asserts |
 |---|---|---|
+| Each read of the Routing tab in each query state: loading, paused offline, failed, refetch failed, fetching with stale data, success with an empty result, success | Vitest `C1270 D-1 $read read $state`, `client/src/features/settings/RoutingSettingsTab.test.tsx` | 62 cases over the list, Plan role row, routing pins, availability, usage, role policy, runner defaults, revisions and session runners reads; each asserts the React Query state it reached, its own loading, paused or failure text and no other, the populated values only on success or while a refetch is in flight, the empty text only on an empty success, and Configure only on success |
+| Offline from the first render, then reconnect | Vitest `C1270 D-1 offline from the first render shows no value and sends no PUT after reconnect`, same file | availability, usage, role policy, runner defaults, runner catalogue and matrix show their paused text; no `Unset`, `dispatch blocks`, empty text, `Could not load`, Any role row or Configure; after reconnect the cells load and no PUT or DELETE is sent |
+| An editor whose role-cell read is pending again | Vitest `C1270 D-1 editor whose cell read returns to pending blocks %s until the read loads`, same file | `Save and Clear are disabled until the cell's read loads: Plan effective cells unknown (read paused offline).`; Save and Clear override disabled; both enabled after the read loads; no write sent |
+| Pending-read labels | Vitest `C1270 D-1 pending read label <case>`, `C1270 D-1 routing pins read label <case>`, `routingSettingsModel.test.ts` | loading, paused offline and pending-idle texts; null once the read loaded, also while a later refetch is paused |
+| Clear override after a failed chain read words the cell as unknown | Vitest `C1270 D-2 clear copy after a chain read failure falls back to <fallback>`, `routingSettingsModel.test.ts`; `C1270 D-2 clear confirmation after a chain read failure on <tier>`, `RoutingSettingsTab.test.tsx` | `Clearing Plan/<tier> deletes this cell's own rule, with its reason and expiry, if one exists; its current value is unknown (chain read failed (…)). Without an own rule this cell …`; no `currently replaces` |
+| Clear override after a failed chain metadata read names the unread reason and expiry | Vitest `C1270 D-2 clear copy after a chain metadata read failure names the unread reason and expiry (<fallback>)`; `C1270 D-2 clear confirmation after a chain metadata read failure on <tier> names the unread reason and expiry` | the confirmation adds `The stored reason and expiry are unknown (chain metadata read failed (…)); clearing deletes them with the row.`; Clear itself stays behind `Confirm clear` without the overwrite checkbox |
+| A failed stage-pin read on an Unset cell | Vitest `C1258 V-2 stage-pin failure on an Unset cell keeps Stored cell: unset <tier>`, `RoutingSettingsTab.test.tsx` | `Effective routing unknown` and `Stored cell: unset`; no RolePolicy candidate, other origin or `dispatch blocks` |
 | Every displayed cell field against each failed read, with a Preferred and a Required pin, on the default and a non-default tier | Vitest `C1270 V-2 $read read failure with a $strength pin on $tier`, `client/src/features/settings/RoutingSettingsTab.test.tsx` | 32 cases: literal label, candidate, stored-origin, provenance, reason, expiry, availability, alert, banner and Configure texts, and the definite texts that must be absent |
 | A failed stage pin read makes the route unknown for every source | Vitest `C1258 V-2 stage-pin failure suppresses route promises $source/$tier`, same file; `C1258 V-1 stage-pin failure $source/$tier`, `routingSettingsModel.test.ts` | `Effective routing unknown`; no effective or stored candidate and no stored origin |
 | A failed chain read under a Preferred pin is unknown; under a Required or standing-agent pin the route stays definite | Vitest `C1270 V-1 effective label <case>`, `client/src/features/settings/routingSettingsModel.test.ts`; the V-2 `chain` rows | Preferred: `Effective routing unknown` with no candidate list, also when the default tier appended RolePolicy; Required: `Required Human pin → Codex/Frontier (gpt-6-astra)`; both `Stored cell: unknown (read failed)` |

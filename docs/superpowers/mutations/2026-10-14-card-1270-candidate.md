@@ -17,3 +17,14 @@ Bind only after ordinary Review and landing; no deliberate mutant was run by Cod
 
 Use method-scoped bound packs and red/restore/green receipts. Mutation owns final
 binding and missing-control discovery (for example a segment-split change for `; `).
+
+## Repair round 3 candidates (Review 036839b4 D-1..D-3; Code task `dfc1166f-9815-466a-8264-30363b97e1f5`)
+
+All pending; no deliberate mutant was run by Code.
+
+| ID | Mutation | Exact witness | Variants |
+|---|---|---|---|
+| PC-9 | `pendingReadLabel`: return null for a paused read, or key on `isPending && fetchStatus === 'fetching'` (the old `isLoading`) | model `C1270 D-1 pending read label 'paused offline'`; component `C1270 D-1 'complexity chains list' read 'paused'`, `… 'Plan effective cells' read 'paused'`, `… 'session runners' read 'paused'`, `… 'runner default revisions' read 'paused'` | paused; loading text vs paused text |
+| PC-10 | `routingPinsReadLabel`: drop the paused arm (back to null for a paused read) | model `C1270 D-1 routing pins read label 'paused offline'`; component `C1270 D-1 'routing pins' read 'paused'` | — |
+| PC-11 | Editor: drop `readPending` from `saveBlocked` or from `clearBlocked`, or stop passing `readPending` from `RoleCellEditor` | component `C1270 D-1 editor whose cell read returns to pending blocks Save until the read loads`, `… blocks Clear override …` | save gate; clear gate; host wiring |
+| PC-12 | `clearOverrideCopy`: ignore `chainUnknown` (definite fallback copy), or drop the metadata sentence | model `C1270 D-2 clear copy after a chain read failure falls back to 'any'`, `… chain metadata read failure names the unread reason and expiry ('any')`; component `C1270 D-2 clear confirmation after a chain read failure on 'Medium'`, `… chain metadata … on Medium …` | chain; metadata |

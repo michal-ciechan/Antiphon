@@ -96,6 +96,62 @@ Repair verification rows (all in the CP-1/CP-2 file set):
 - V-2 (`RunnerDefaultsSection.test.tsx`): `C1270 V-2 runner defaults history read %s` (failed,
   loading, empty control); `C1270 V-2 runner defaults catalogue read %s` (failed, loaded control).
 - R-1 adds `ComplexityChainCellEditor.test.tsx` and `RunnerDefaultsSection.test.tsx` to the file set.
+
+## Repair round 3 (Review 036839b4 D-1..D-3)
+
+Code task `dfc1166f-9815-466a-8264-30363b97e1f5`, branch `feat/card-task-dfc1166f`, continuing from
+`18d3ae9a5`; landing owner stays `7b9b0246`. S5 commits the failing rows, S6 the fix.
+
+Query states (React Query 5.90): `loading` = pending and fetching; `paused` = pending and not
+fetching because the browser is offline (`isLoading` false, no data, no error); `failed` = error
+without data; `refetch failed` = error with stale data; `fetching with stale data` = success and
+fetching; `success empty`; `success`. Before S6 the tab keyed on `isLoading`, so `paused` fell
+through to the success branch with no data.
+
+| Surface | Read | loading | paused (before S6) | paused (after S6) | failed / refetch failed | fetching with stale data | success empty |
+|---|---|---|---|---|---|---|---|
+| Matrix section, Any role row | list | `Complexity chains loading.` | Unset Any row, Configure, default draft, PUT on reconnect | `Complexity chains unknown (read paused offline).`, no Any row, no Configure | `Could not load complexity chains.` | last list | Unset Any row |
+| Role row cells | role effective | `<role> effective cells loading.` | Unset cells, Configure | `<role> effective cells unknown (read paused offline).`, no Configure | `Could not load <role> effective cells.` | last row | Unset cells |
+| Configure editor (role cell) | role effective, after open | Save, Clear disabled with `Save and Clear are disabled until the cell's read loads: …` | enabled | disabled with that note | snapshot kept (R2 table) | snapshot kept | n/a |
+| Configure editor (Any row) | list | editor not rendered (section shows the pending text) | opened on the synthesized Unset row | not rendered | not rendered | snapshot kept | Unset note (definite) |
+| Card pins list, row banners and count | routing pins | `Card-specific pins loading.` | `No card-specific pins.` | `Card-specific pins unknown (routing pins read paused offline).` | `… unknown (routing pins read failed: …)` | last pins | `No card-specific pins.` |
+| Availability section | availability | `Model availability loading.` | `no available aliases and no holds` | `Model availability unknown (read paused offline).` | `Could not load model availability.` | last snapshot | `no available aliases and no holds` |
+| Usage section | usage | `Subscription usage loading.` | `Unknown — …` (USAGE_UNKNOWN) | `Subscription usage unknown (read paused offline).` | `Could not load subscription usage observations.` | last samples | USAGE_UNKNOWN |
+| Role policy section | role policy | `Role policy loading.` | `Could not load role policy.` | `Role policy unknown (read paused offline).` | `Could not load role policy.` | last policy | empty table |
+| Runner defaults form | runner defaults | `Runner defaults loading.` | `Could not load runner defaults.` | `Runner defaults unknown (read paused offline).` | `Could not load runner defaults. …` | last defaults | n/a (the read returns one object) |
+| Runner defaults labels | session runners | `Runner catalogue loading.` | `<id> · missing from catalogue` | `Runner catalogue unknown (read paused offline).` | `<id> · catalogue unknown` + `Runner catalogue unknown (…)` | last catalogue | `<id> · missing from catalogue` |
+| Runner defaults history, Restore | revisions | `History loading.` | `No revisions yet.` | `History unknown (read paused offline).` | `History unknown (revisions read failed: …).` | last history | `No revisions yet.` |
+
+D-1 decision: one model helper `pendingReadLabel` keys on `isPending` (no data, no error) and names
+the paused case; the sections of the tab and `routingPinsReadLabel` use it (V-3 table rows below). The matrix narrows on
+`isPending`/`isError` before reading `list.data` and each row before reading its cells, so no
+Any row is synthesized and no Configure is rendered without data. A role-cell editor observes its
+row read and disables Save, Clear and Confirm clear while it is pending. Mutations keep React
+Query's default network mode: an editor opened on read data and saved offline still queues
+its PUT (ordinary stale edit, no concurrency token, as before).
+
+D-2 decision: `clearOverrideCopy` takes the failed chain and chain metadata segments. A failed
+chain read words the cell as unknown (own rule `if one exists`) and the fallback as conditional.
+Reviewer disclosure 2 (Clear after a failed metadata read deletes the unread reason and expiry):
+the confirmation states that they are unknown and deleted with the row. Requiring the overwrite
+checkbox was rejected: it would change the round-2 assertion that Clear is enabled before the
+checkbox, and Clear's effect does not depend on the unread values.
+
+D-3 decision: the doc sentence is qualified; `Stored cell: unset` stays because the chain read
+that established it succeeded.
+
+Repair verification rows:
+
+- V-3 (`RoutingSettingsTab.test.tsx`): `C1270 D-1 $read read $state` (9 reads x 7 states, less
+  runner defaults x success empty = 62); `C1270 D-1 offline from the first render shows no value and
+  sends no PUT after reconnect`; `C1270 D-1 editor whose cell read returns to pending blocks %s until
+  the read loads` (Save, Clear override); `C1270 D-2 clear confirmation after a chain read failure on
+  $tier` (2); `C1270 D-2 clear confirmation after a chain metadata read failure on %s names the unread
+  reason and expiry` (2); `C1258 V-2 stage-pin failure on an Unset cell keeps Stored cell: unset %s` (3).
+- V-3 (`routingSettingsModel.test.ts`): `C1270 D-1 pending read label $name` (5),
+  `C1270 D-1 routing pins read label $name` (5), `C1270 D-2 clear copy …` (7).
+- R-1 adds `RolePolicySection.test.tsx` and `SettingsPage.test.tsx` (both render changed sections).
+
 ### Cost
 
 Red floor 3 minutes, green floor 6 minutes, queue time separate. Checkpoint tool is
@@ -107,6 +163,6 @@ and npm's esbuild hard link broken before qualification. Manifest `rowMinutes: 4
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1, S3 | n/a | client-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/routingSettingsModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx src/features/settings/ComplexityChainCellEditor.test.tsx src/features/settings/RunnerDefaultsSection.test.tsx` | V-1, V-2, R-1 | 5 files, nonzero count; guarded new assertions red before fix | n/a | 3 | true |
-| CP-2 | S2, S4 | n/a | client-green | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/routingSettingsModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx src/features/settings/ComplexityChainCellEditor.test.tsx src/features/settings/RunnerDefaultsSection.test.tsx` | V-1, V-2, R-1 | 5 files passed, at least 223 tests, 0 failed/skipped | n/a | 3 | true |
-| CP-3 | S2, S4 | n/a | client-build | `npm --prefix client run build` | R-2 | typecheck and production build exit 0 | n/a | 3 | true |
+| CP-1 | S1, S3, S5 | n/a | client-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/routingSettingsModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx src/features/settings/ComplexityChainCellEditor.test.tsx src/features/settings/RunnerDefaultsSection.test.tsx src/features/settings/RolePolicySection.test.tsx src/features/settings/SettingsPage.test.tsx` | V-1, V-2, V-3, R-1 | 7 files, nonzero count; guarded new assertions red before fix | n/a | 3 | true |
+| CP-2 | S2, S4, S6 | n/a | client-green | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/routingSettingsModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx src/features/settings/ComplexityChainCellEditor.test.tsx src/features/settings/RunnerDefaultsSection.test.tsx src/features/settings/RolePolicySection.test.tsx src/features/settings/SettingsPage.test.tsx` | V-1, V-2, V-3, R-1 | 7 files passed, at least 313 tests, 0 failed/skipped | n/a | 3 | true |
+| CP-3 | S2, S4, S6 | n/a | client-build | `npm --prefix client run build` | R-2 | typecheck and production build exit 0 | n/a | 3 | true |
