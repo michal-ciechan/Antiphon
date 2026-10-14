@@ -171,6 +171,8 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         services.AddSingleton<ApiErrorRecoveryService>();
         services.AddSingleton<CapacityRecoveryService>();
         services.AddScoped<ModelAvailability>();
+        services.AddScoped<ComplexityRoutingService>();
+        services.AddScoped<ComplexityChainService>();
         services.AddSingleton<ChannelReplyDispatcher>();
         services.AddSingleton<IOptions<ChannelOutboundSettings>>(Options.Create(options.Outbound ?? new ChannelOutboundSettings()));
         services.AddSingleton<IOptions<AntiphonMessagingOptions>>(Options.Create(new AntiphonMessagingOptions()));

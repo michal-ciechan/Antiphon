@@ -1,3 +1,5 @@
+using System.Data.Common;
+using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
@@ -10,6 +12,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -26,6 +29,301 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("MessageQueue")]
 public class OrchestratorInstructionsRefreshTests
 {
+    [Test]
+    [Arguments("chain-default", false)]
+    [Arguments("chain-default", true)]
+    [Arguments("chain-other", false)]
+    [Arguments("chain-other", true)]
+    [Arguments("stage pin", false)]
+    [Arguments("stage pin", true)]
+    [Arguments("availability", false)]
+    [Arguments("availability", true)]
+    [Arguments("policy", false)]
+    [Arguments("policy", true)]
+    [Arguments("chain metadata", false)]
+    [Arguments("chain metadata", true)]
+    [Arguments("standing agent", false)]
+    [Arguments("standing agent", true)]
+    [Arguments("holds", false)]
+    [Arguments("holds", true)]
+    [Arguments("pins", false)]
+    [Arguments("pins", true)]
+    [Arguments("defaults", false)]
+    [Arguments("defaults", true)]
+    [Arguments("budget", false)]
+    [Arguments("budget", true)]
+    [Arguments("runners", false)]
+    [Arguments("runners", true)]
+    public async Task Failed_reads_are_unknown_in_file_and_notice_then_recover(string part, bool notice)
+    {
+        var fault = new SnapshotReadFault(part);
+        await using var h = await CreateHarnessAsync(fault);
+        h.Delegation.OrchestratorInstructions.Path = Path.Combine(h.TempRoot, "i.md");
+        await AttachBundleAsync(h);
+        h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.Off;
+        await using (var scope = h.Provider.CreateAsyncScope())
+        {
+            var chains = scope.ServiceProvider.GetRequiredService<ComplexityChainService>();
+            await chains.UpsertAsync(AgentTaskRole.Plan,
+                part == "chain-other" ? TaskComplexity.Hard : TaskComplexity.Medium,
+                new PutComplexityChainRequest([new(AgentKind.ClaudeCode, AgentModelLevel.Low)],
+                    RoutingPinProvenance.Human, "D3 witness"), null, CancellationToken.None);
+            if (part is "stage pin" or "standing agent")
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                db.RoutingPins.Add(new RoutingPin
+                {
+                    Id = Guid.NewGuid(), Role = AgentTaskRole.Plan,
+                    AgentId = part == "standing agent" ? h.AgentId : null,
+                    AgentKind = part == "stage pin" ? AgentKind.ClaudeCode : null,
+                    ModelLevel = part == "stage pin" ? AgentModelLevel.High : null,
+                    Strength = RoutingPinStrength.Required, Provenance = RoutingPinProvenance.Human,
+                    Reason = "D3 stage pin", CreatedAt = h.Now, UpdatedAt = h.Now,
+                });
+                await db.SaveChangesAsync();
+            }
+        }
+        await Instructions(h).WhenIdleAsync();
+        await Instructions(h).ReconcileNowAsync("D3 baseline");
+        var before = await SnapshotAsync(h);
+        var beforeState = await ReadStateAsync(h);
+        h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.All;
+        fault.Enabled = true;
+        await Instructions(h).ReconcileNowAsync("D3 failed read");
+        fault.Failures.ShouldBeGreaterThan(0);
+        var failed = await ReadStateAsync(h);
+        failed.Revision.ShouldBe(beforeState.Revision + 1);
+        var after = await SnapshotAsync(h);
+        var delta = OrchestratorInstructionsDelta.Format(before, after);
+        var reason = part.StartsWith("chain-", StringComparison.Ordinal) ? "chain" :
+            part == "budget" ? "policy" : part;
+        var unknown = $"unknown ({reason} read failed)";
+        var file = await File.ReadAllTextAsync(failed.WrittenPath);
+        var subject = (notice ? delta : file).Replace("\r\n", "\n", StringComparison.Ordinal);
+        subject.ShouldContain(unknown);
+        subject.ShouldNotContain("→ rolePolicy");
+        subject.ShouldNotContain("→ unset");
+        subject.ShouldNotContain("InvalidOperationException");
+        delta.ShouldNotContain(" removed");
+        file.ShouldContain("default Medium;");
+        h.Adapter.SubmittedBodies.Count.ShouldBe(1);
+        h.Adapter.SubmittedBodies[0].ShouldContain(unknown);
+        h.Adapter.SubmittedBodies[0].ShouldNotContain("→ rolePolicy");
+        h.Adapter.SubmittedBodies[0].ShouldNotContain("→ unset");
+        if (part is "chain-default" or "stage pin")
+        {
+            var source = part == "stage pin" ? "stage pin" : "role";
+            subject.ShouldContain(notice
+                ? $"matrix: Plan source {source} → {unknown}"
+                : $"  Plan: effective {unknown} via {unknown}");
+        }
+        if (part == "chain-other")
+        {
+            subject.ShouldContain(notice
+                ? "matrix: Plan Hard ClaudeCode/Low (haiku) → unknown (chain read failed)"
+                : "- Plan: Hard unknown (chain read failed); Medium (default) unset;");
+            delta.ShouldNotContain("Plan source");
+        }
+        if (part == "policy")
+            subject.ShouldContain(notice ? "caps: read observed → unknown (policy read failed)"
+                : "## 1. Pipeline caps\nunknown (policy read failed)");
+
+        // Exception type is diagnostic detail, not another settings transition.
+        fault.AlternateException = true;
+        await Instructions(h).ReconcileNowAsync("D3 same unavailable read, different exception");
+        h.Adapter.SubmittedBodies.Count.ShouldBe(1);
+        (await ReadStateAsync(h)).Revision.ShouldBe(failed.Revision);
+        fault.Enabled = false;
+        await Instructions(h).ReconcileNowAsync("D3 read recovered");
+        var recovered = await ReadStateAsync(h);
+        recovered.Revision.ShouldBe(failed.Revision + 1);
+        h.Adapter.SubmittedBodies.Count.ShouldBe(2);
+        var recovery = OrchestratorInstructionsDelta.Format(after, await SnapshotAsync(h));
+        if (part is "chain-default" or "stage pin")
+            recovery.ShouldContain($"matrix: Plan source {unknown} → {(part == "stage pin" ? "stage pin" : "role")}");
+        recovery.ShouldContain(unknown + " → ");
+        if (part == "policy")
+            recovery.ShouldContain("caps: read unknown (policy read failed) → MaxOpenTasks 6; local budget 2 (config)");
+        (await File.ReadAllTextAsync(recovered.WrittenPath)).ShouldNotContain("unknown (");
+        await Instructions(h).ReconcileNowAsync("D3 stable recovery");
+        h.Adapter.SubmittedBodies.Count.ShouldBe(2);
+    }
+
+    private static async Task<OrchestratorInstructionsSnapshot> SnapshotAsync(BridgeQueueHarness h)
+    {
+        await using var scope = h.Provider.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<OrchestratorInstructionsSnapshotBuilder>()
+            .BuildAsync(CancellationToken.None);
+    }
+
+    private sealed class SnapshotReadFault(string part) : DbCommandInterceptor
+    {
+        public bool Enabled { get; set; }
+        public bool AlternateException { get; set; }
+        public int Failures { get; private set; }
+        private int _chainReads;
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            var sql = command.CommandText;
+            var parameters = command.Parameters.Cast<DbParameter>().ToArray();
+            bool Table(string name) => sql.Contains($"FROM \"{name}\"", StringComparison.Ordinal);
+            bool Parameter(string name, int value) => parameters.Any(p => p.ParameterName.Contains(name, StringComparison.Ordinal)
+                && p.Value is not DBNull && Convert.ToInt32(p.Value) == value);
+            var planChain = Table("ComplexityChains") && Parameter("role", (int)AgentTaskRole.Plan)
+                && Parameter("complexity", (int)(part == "chain-other" ? TaskComplexity.Hard : TaskComplexity.Medium));
+            var fails = Enabled && part switch
+            {
+                "chain-default" or "chain-other" => planChain,
+                "chain metadata" => planChain && ++_chainReads % 2 == 0,
+                "stage pin" => Table("RoutingPins") && Parameter("role", (int)AgentTaskRole.Plan),
+                "standing agent" => Table("Agents") && sql.Contains("a.\"Kind\"", StringComparison.Ordinal)
+                    && !sql.Contains("a.\"Status\"", StringComparison.Ordinal),
+                "availability" => Table("ModelAvailabilityHolds") && parameters.Any(p => p.ParameterName.Contains("canonical", StringComparison.OrdinalIgnoreCase)),
+                "policy" => Table("DispatchConcurrencySettings"),
+                "holds" => Table("ModelAvailabilityHolds") && parameters.All(p => !p.ParameterName.Contains("canonical", StringComparison.OrdinalIgnoreCase)),
+                "pins" => Table("RoutingPins") && parameters.All(p => !p.ParameterName.Contains("role", StringComparison.Ordinal)),
+                "defaults" => Table("RunnerRoutingSettings"),
+                "budget" => Table("HostBudgets"),
+                "runners" => Table("AgentTasks") && sql.Contains("count(*)", StringComparison.Ordinal),
+                _ => false,
+            };
+            if (fails)
+            {
+                Failures++;
+                if (AlternateException) throw new ArgumentException("D3 read unavailable");
+                throw new InvalidOperationException("D3 read unavailable");
+            }
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
+    [Test]
+    [Arguments(TaskComplexity.Hard)]
+    [Arguments(TaskComplexity.Medium)]
+    [Arguments(TaskComplexity.Easy)]
+    [Arguments(null)]
+    public async Task A_failed_chain_read_marks_the_affected_file_cells_unknown(TaskComplexity? tier)
+    {
+        var fault = new ChainReadFault(tier);
+        await using var h = await CreateReadFailureHarnessAsync(fault);
+        fault.Enabled = true;
+        await Instructions(h).ReconcileNowAsync("chain read failure");
+
+        var state = await ReadStateAsync(h);
+        var file = await File.ReadAllTextAsync(state.WrittenPath);
+        var line = file.Split('\n').Single(value => value.StartsWith("- Plan:", StringComparison.Ordinal));
+        fault.Failures.ShouldBe(tier is null ? 3 : 1);
+        foreach (var affected in fault.Tiers)
+            line.ShouldContain($"{affected}{(affected == TaskComplexity.Medium ? " (default)" : "")} unknown (chain read failed)");
+        Encoding.UTF8.GetByteCount(line).ShouldBeLessThanOrEqualTo(160);
+        line.ShouldNotContain("\uFFFD");
+        state.Body.ShouldContain(line.TrimEnd('\r'));
+
+        await using var scope = h.Provider.CreateAsyncScope();
+        var snapshot = await scope.ServiceProvider.GetRequiredService<OrchestratorInstructionsSnapshotBuilder>()
+            .BuildAsync(CancellationToken.None);
+        var body = OrchestratorInstructionsRenderer.Render(snapshot);
+        var cap = Encoding.UTF8.GetByteCount(body) - 1;
+        var fitted = OrchestratorInstructionsRenderer.Render(snapshot, cap);
+        Encoding.UTF8.GetByteCount(fitted).ShouldBeLessThanOrEqualTo(cap);
+        fitted.ShouldContain("… 14 rows: GET /api/complexity-chains");
+        fitted.ShouldNotContain("- Plan:");
+    }
+
+    [Test]
+    [Arguments(TaskComplexity.Hard)]
+    [Arguments(TaskComplexity.Medium)]
+    [Arguments(TaskComplexity.Easy)]
+    [Arguments(null)]
+    public async Task A_failed_chain_read_notice_reports_unknown_and_recovery_reports_the_candidate(TaskComplexity? tier)
+    {
+        var fault = new ChainReadFault(tier);
+        await using var h = await CreateReadFailureHarnessAsync(fault);
+        var beforeSnapshot = await SnapshotAsync(h);
+        fault.Enabled = true;
+        await Instructions(h).ReconcileNowAsync("chain read failure");
+
+        fault.Failures.ShouldBe(tier is null ? 3 : 1);
+        h.Adapter.SubmittedBodies.Count.ShouldBe(1);
+        h.Adapter.SubmittedBodies[0].Length.ShouldBeLessThanOrEqualTo(700);
+        foreach (var affected in fault.Tiers)
+            h.Adapter.SubmittedBodies[0].ShouldContain(
+                $"matrix: Plan {affected} ClaudeCode/Low (haiku) → unknown (chain read failed)");
+        h.Adapter.SubmittedBodies[0].ShouldNotContain("→ unset");
+        var failedSnapshot = await SnapshotAsync(h);
+        var delta = OrchestratorInstructionsDelta.Format(beforeSnapshot, failedSnapshot);
+        delta.ShouldNotContain("→ rolePolicy");
+        if (tier is null or TaskComplexity.Medium)
+        {
+            delta.ShouldContain("matrix: Plan source role → unknown (chain read failed)");
+            delta.ShouldContain("matrix: Plan effective ClaudeCode/Low (haiku) → unknown (chain read failed)");
+            (await File.ReadAllTextAsync((await ReadStateAsync(h)).WrittenPath))
+                .ShouldContain("  Plan: effective unknown (chain read failed) via unknown (chain read failed)");
+        }
+        var failed = await ReadStateAsync(h);
+        await Instructions(h).ReconcileNowAsync("same chain read failure");
+        h.Adapter.SubmittedBodies.Count.ShouldBe(1);
+        (await ReadStateAsync(h)).Revision.ShouldBe(failed.Revision);
+
+        fault.Enabled = false;
+        await Instructions(h).ReconcileNowAsync("chain read recovered");
+        h.Adapter.SubmittedBodies.Count.ShouldBe(2);
+        h.Adapter.SubmittedBodies[1].Length.ShouldBeLessThanOrEqualTo(700);
+        foreach (var affected in fault.Tiers)
+            h.Adapter.SubmittedBodies[1].ShouldContain(
+                $"matrix: Plan {affected} unknown (chain read failed) → ClaudeCode/Low (haiku)");
+        var recovered = await ReadStateAsync(h);
+        recovered.Revision.ShouldBe(failed.Revision + 1);
+        (await File.ReadAllTextAsync(recovered.WrittenPath)).ShouldNotContain("unknown (chain read failed)");
+    }
+
+    private static async Task<BridgeQueueHarness> CreateReadFailureHarnessAsync(ChainReadFault fault)
+    {
+        var h = await CreateHarnessAsync(fault);
+        // Use a short real filename and candidate so the three tier transitions fit the
+        // existing 700-character notice wrapper. Longer notices retain its usual clipping.
+        h.Delegation.OrchestratorInstructions.Path = Path.Combine(h.TempRoot, "i.md");
+        await AttachBundleAsync(h);
+        h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.Off;
+        await using var scope = h.Provider.CreateAsyncScope();
+        var chains = scope.ServiceProvider.GetRequiredService<ComplexityChainService>();
+        foreach (var tier in fault.Tiers)
+            await chains.UpsertAsync(AgentTaskRole.Plan, tier,
+                new PutComplexityChainRequest([new(AgentKind.ClaudeCode, AgentModelLevel.Low)],
+                    RoutingPinProvenance.Human, "read-failure witness"), null, CancellationToken.None);
+        await Instructions(h).WhenIdleAsync();
+        await Instructions(h).ReconcileNowAsync("startup");
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.All;
+        return h;
+    }
+
+    private sealed class ChainReadFault(TaskComplexity? tier) : DbCommandInterceptor
+    {
+        public bool Enabled { get; set; }
+        public int Failures { get; private set; }
+        public TaskComplexity[] Tiers { get; } = tier is { } selected
+            ? [selected] : [TaskComplexity.Hard, TaskComplexity.Medium, TaskComplexity.Easy];
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            var parameters = command.Parameters.Cast<DbParameter>().ToArray();
+            if (Enabled && command.CommandText.Contains("FROM \"ComplexityChains\"", StringComparison.Ordinal)
+                && parameters.Any(p => p.ParameterName.Contains("role", StringComparison.Ordinal)
+                    && Convert.ToInt32(p.Value) == (int)AgentTaskRole.Plan)
+                && parameters.Any(p => p.ParameterName.Contains("complexity", StringComparison.Ordinal)
+                    && Tiers.Contains((TaskComplexity)Convert.ToInt32(p.Value))))
+            {
+                Failures++;
+                throw new InvalidOperationException("C097 S-F chain read failure");
+            }
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
     [Test]
     public async Task Runner_defaults_put_rewrites_the_file_and_delivers_one_notice_to_an_idle_standing_orchestrator()
     {
@@ -64,6 +362,7 @@ public class OrchestratorInstructionsRefreshTests
     [Arguments("routing-pin")]
     [Arguments("runner-eligibility")]
     [Arguments("dispatch-concurrency")]
+    [Arguments("complexity-chain")]
     public async Task Covered_writes_each_regenerate_and_notify(string kind)
     {
         await using var h = await CreateHarnessAsync();
@@ -75,6 +374,34 @@ public class OrchestratorInstructionsRefreshTests
         h.Adapter.SubmittedBodies.Count.ShouldBe(1);
         h.Adapter.SubmittedBodies[0].ShouldContain(section);
         h.Adapter.SubmittedBodies[0].ShouldContain(row.WrittenPath);
+        if (kind == "complexity-chain")
+        {
+            var signals = h.Provider.GetRequiredService<RecordingSignals>();
+            signals.Reasons.ToArray().ShouldBe(["complexity-chain Plan/Medium"]);
+            await using var scope = h.Provider.CreateAsyncScope();
+            var chains = scope.ServiceProvider.GetRequiredService<ComplexityChainService>();
+            var bytes = await File.ReadAllBytesAsync(row.WrittenPath);
+            await chains.UpsertAsync(AgentTaskRole.Plan, TaskComplexity.Medium,
+                new PutComplexityChainRequest([new(AgentKind.Codex, AgentModelLevel.Frontier)],
+                    RoutingPinProvenance.Human, "cell"), null, CancellationToken.None);
+            await Instructions(h).WhenIdleAsync();
+            signals.Reasons.Count.ShouldBe(2);
+            (await ReadStateAsync(h)).Revision.ShouldBe(row.Revision);
+            (await File.ReadAllBytesAsync(row.WrittenPath)).ShouldBe(bytes);
+            h.Adapter.SubmittedBodies.Count.ShouldBe(1);
+            await chains.ClearAsync(AgentTaskRole.Plan, TaskComplexity.Medium, CancellationToken.None);
+            await Instructions(h).WhenIdleAsync();
+            signals.Reasons.ToArray().ShouldBe([
+                "complexity-chain Plan/Medium", "complexity-chain Plan/Medium", "complexity-chain Plan/Medium"]);
+            (await ReadStateAsync(h)).Revision.ShouldBe(row.Revision + 1);
+            h.Adapter.SubmittedBodies.Count.ShouldBe(2);
+            await chains.ClearAsync(AgentTaskRole.Plan, TaskComplexity.Medium, CancellationToken.None);
+            await Instructions(h).WhenIdleAsync();
+            signals.Reasons.Count.ShouldBe(3);
+            h.Adapter.SubmittedBodies.Count.ShouldBe(2);
+        }
+        if (kind == "routing-pin")
+            row.Body.ShouldContain("- Code: Hard unset; Medium (default) unset; Easy unset; effective ClaudeCode/Frontier (fable) via stage pin");
     }
 
     [Test]
@@ -348,6 +675,55 @@ public class OrchestratorInstructionsRefreshTests
             && incident.Severity == AlertSeverity.Warning)).ShouldBeTrue();
     }
 
+    [Test]
+    public async Task A_cell_write_notice_is_received_as_one_complete_user_prompt_equal_to_its_queued_body()
+    {
+        await using var h = await CreateHarnessAsync();
+        await AttachBundleAsync(h);
+        h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.Off;
+        await Instructions(h).ReconcileNowAsync("startup");
+        var startup = await ReadStateAsync(h);
+        (await SessionVersionAsync(h)).ShouldBeNull();
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "Dispatch work.");
+        var floor = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.All;
+        await using (var scope = h.Provider.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ComplexityChainService>().UpsertAsync(
+                AgentTaskRole.Plan, TaskComplexity.Medium,
+                new PutComplexityChainRequest([new(AgentKind.Codex, AgentModelLevel.Frontier)],
+                    RoutingPinProvenance.Human, "cell"), null, CancellationToken.None);
+        }
+        await Instructions(h).WhenIdleAsync();
+        var state = await ReadStateAsync(h);
+        await using var db = NewDb(h);
+        var rows = await db.SessionQueuedMessages.Where(row => row.AgentSessionId == h.SessionId
+            && row.NoteHeader == OrchestratorInstructionsService.NoteHeader).ToListAsync();
+        rows.Count.ShouldBe(1);
+        var row = rows.Single();
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.LastDeliveryBaselineSequence.ShouldBe(floor);
+        var prompts = await db.TranscriptEntries.Where(entry => entry.AgentSessionId == h.SessionId
+            && entry.Kind == TranscriptKinds.UserPrompt).ToListAsync();
+        prompts.Count.ShouldBe(2);
+        prompts.Count(entry => entry.Sequence > floor).ShouldBe(1);
+        prompts.Single(entry => entry.Sequence > floor).Text.ShouldBe(row.Body);
+        row.Body.ShouldContain("matrix:");
+        row.Body.ShouldContain(state.WrittenPath);
+        h.Adapter.SubmittedBodies.ShouldBe([row.Body]);
+        state.Revision.ShouldBe(startup.Revision + 1);
+        state.Version.ShouldNotBe(startup.Version);
+        (await SessionVersionAsync(h)).ShouldBe(state.Version);
+        state.Body.ShouldContain("- Plan: Hard unset; Medium (default) Codex/Frontier (gpt-6-astra); Easy unset; effective Codex/Frontier (gpt-6-astra) via role");
+        var snapshot = JsonSerializer.Deserialize<OrchestratorInstructionsSnapshot>(state.SnapshotJson,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        snapshot.Matrix.ShouldNotBeNull();
+        snapshot.Matrix.DefaultComplexity.ShouldBe("Medium");
+        snapshot.Matrix.Rows.Select(matrixRow => matrixRow.Role).ShouldBe([
+            "Investigate", "Plan", "TestDesign", "Code", "Mutation", "Review", "Debug",
+            "Coverage", "Docs", "Commit", "Test", "Deploy", "Merge", "Custom"]);
+    }
+
     private static async Task<string> CoveredWriteAsync(BridgeQueueHarness h, string kind)
     {
         h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.Off;
@@ -364,6 +740,13 @@ public class OrchestratorInstructionsRefreshTests
         await using var scope = h.Provider.CreateAsyncScope();
         switch (kind)
         {
+            case "complexity-chain":
+                await scope.ServiceProvider.GetRequiredService<ComplexityChainService>().UpsertAsync(
+                    AgentTaskRole.Plan, TaskComplexity.Medium,
+                    new PutComplexityChainRequest([new(AgentKind.Codex, AgentModelLevel.Frontier)],
+                        RoutingPinProvenance.Human, "cell"), null, CancellationToken.None);
+                await Instructions(h).WhenIdleAsync();
+                return "matrix:";
             case "host-budget":
                 await scope.ServiceProvider.GetRequiredService<HostBudgetService>()
                     .UpsertAsync("local", 3, "raise local", CancellationToken.None);
@@ -427,7 +810,7 @@ public class OrchestratorInstructionsRefreshTests
         }
     }
 
-    private static async Task<BridgeQueueHarness> CreateHarnessAsync()
+    private static async Task<BridgeQueueHarness> CreateHarnessAsync(DbCommandInterceptor? interceptor = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var settings = new DelegationSettings();
@@ -436,16 +819,22 @@ public class OrchestratorInstructionsRefreshTests
             AlwaysOn = true,
             ConnectionString = schema.ConnectionString,
             Delegation = settings,
+            ConfigureDbContext = options =>
+            {
+                if (interceptor is not null) options.AddInterceptors(interceptor);
+            },
             ConfigureServices = services =>
             {
                 services.AddSingleton<OrchestratorInstructionsService>();
+                services.AddSingleton<RecordingSignals>();
                 services.AddSingleton<IOrchestratorInstructionsSignals>(sp =>
-                    sp.GetRequiredService<OrchestratorInstructionsService>());
+                    sp.GetRequiredService<RecordingSignals>());
                 services.AddScoped<OrchestratorInstructionsSnapshotBuilder>();
                 services.AddScoped<RunnerDefaultSettingsService>();
                 services.AddScoped<DispatchConcurrencySettingsService>();
                 services.AddScoped<HostBudgetService>();
                 services.AddScoped<RoutingPinService>();
+                services.AddScoped<ModelAvailability>();
                 services.AddSingleton<PhoneHomeRunnerDirectory>(sp => new PhoneHomeRunnerDirectory(
                     sp.GetRequiredService<ISessionRunnerClient>(),
                     Options.Create(new PhoneHomeRunnerSettings { Enabled = false }),
@@ -500,6 +889,17 @@ public class OrchestratorInstructionsRefreshTests
 
     private static OrchestratorInstructionsService Instructions(BridgeQueueHarness h) =>
         h.Provider.GetRequiredService<OrchestratorInstructionsService>();
+
+    private sealed class RecordingSignals(OrchestratorInstructionsService instructions) : IOrchestratorInstructionsSignals
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<string> Reasons { get; } = new();
+
+        public void Signal(string reason)
+        {
+            Reasons.Enqueue(reason);
+            instructions.Signal(reason);
+        }
+    }
 
     private static AppDbContext NewDb(BridgeQueueHarness h) =>
         new(TestDbFixture.CreateDbContextOptions(h.ConnectionString));

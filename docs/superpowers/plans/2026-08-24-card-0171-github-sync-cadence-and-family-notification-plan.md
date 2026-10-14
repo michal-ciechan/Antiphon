@@ -5,6 +5,12 @@
 **Verified against:** `master` @ `3d82003`. Every file:line below was re-read out of the code on
 that commit; every live fact was queried this pass (2026-08-24 15:25Z).
 
+**Traffic-check update (CARD-1243, 2026-10-14):** Family is the authorized conversation for
+the manual, operator-initiated Telegram round-trip check; its binding is configured in the
+channel settings. A test message reaches a real family group. An agent must not send test
+traffic there on its own. This decision does not authorize automated sync notifications.
+The inventory below remains a dated observation.
+
 **Established facts (Investigate, this pass — LIVE-VERIFIED where marked):**
 
 - **The sync response shape** (`server/Application/Dtos/TrackerSyncDtos.cs`):
@@ -34,9 +40,9 @@ that commit; every live fact was queried this pass (2026-08-24 15:25Z).
   severity emoji per line and `Detail` truncated at 200 chars (`:151-168`). Alert rows also
   toast in the client (`client/src/hooks/useAlertToasts.ts`) and prune after 30 days.
 - **LIVE: the Family channel is not an alert sink and is agent-bound.** `GET /api/channels`:
-  `caee9d25-b751-4401-a295-3b7e242842aa` telegram `-5052370282` "Family", `enabled=true`,
+  "Family", `enabled=true`,
   `alertMinSeverity=null`, `agentId=a7647365…` (the Family agent). No channel in the catalog is
-  an alert sink today. `Antiphon-Family (retired test)` `5fec07ce…` and `Mike` DM `2d2f6c45…`
+  an alert sink on that date. The retired test row and `Mike` DM `2d2f6c45…`
   are both `enabled=false`.
 - **LIVE: the Windmill schedule** `u/lndcobra/antiphon_github_sync`: cron `0 0 18 * * *`
   (6-field, seconds first), `Europe/London`, enabled, `edited_at 2026-08-24T11:35:40Z`,

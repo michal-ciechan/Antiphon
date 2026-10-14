@@ -8,6 +8,30 @@ namespace Antiphon.Tests.Application;
 public sealed class OrchestratorInstructionsDeltaTests
 {
     [Test]
+    public void A_long_known_value_keeps_the_unknown_transition_reason_visible()
+    {
+        var before = Sample() with
+        {
+            Matrix = new MatrixSection("Medium", [new MatrixInstructionRow("Plan", "unset", "unset", "unset",
+                new string('x', 300), "role")]),
+        };
+        var after = before with
+        {
+            Matrix = before.Matrix with
+            {
+                Rows = [before.Matrix.Rows[0] with { Effective = "unknown (standing agent read failed)" }],
+            },
+        };
+        var delta = OrchestratorInstructionsDelta.Format(before, after);
+        delta.ShouldEndWith(" → unknown (standing agent read failed)");
+        delta.Length.ShouldBeLessThanOrEqualTo(120);
+        OrchestratorInstructionsDelta.Format(after, after with { Matrix = after.Matrix with { Rows = after.Matrix.Rows.ToArray() } })
+            .ShouldBe("");
+        OrchestratorInstructionsDelta.Format(after, before)
+            .ShouldStartWith("matrix: Plan effective unknown (standing agent read failed) → xxx");
+    }
+
+    [Test]
     public void Changed_added_and_removed_facts_are_named_per_section()
     {
         var before = Sample();
@@ -117,6 +141,24 @@ public sealed class OrchestratorInstructionsDeltaTests
             delta, path, url, changedMoreThanOnceSince: "aaaa1111");
         repeated.ShouldContain("changed more than once since vaaaa1111");
         repeated.Length.ShouldBeLessThanOrEqualTo(700);
+    }
+
+    [Test]
+    public void An_identical_matrix_rewrite_produces_no_delta_and_a_changed_cell_names_the_role()
+    {
+        var before = Sample() with
+        {
+            Matrix = new MatrixSection("Medium", [new MatrixInstructionRow(
+                "Plan", "unset", "ClaudeCode/High (opus)", "unset", "ClaudeCode/High (opus)", "role")]),
+        };
+        var rewritten = before with { Matrix = new MatrixSection("Medium", [before.Matrix.Rows[0] with { }]) };
+        OrchestratorInstructionsDelta.Format(before, rewritten).ShouldBe("");
+        var changed = rewritten with
+        {
+            Matrix = rewritten.Matrix with { Rows = [rewritten.Matrix.Rows[0] with { Medium = "Codex/Frontier (gpt-6-astra)" }] },
+        };
+        OrchestratorInstructionsDelta.Format(before, changed)
+            .ShouldBe("matrix: Plan Medium ClaudeCode/High (opus) → Codex/Frontier (gpt-6-astra)");
     }
 
     private static OrchestratorInstructionsSnapshot Sample() => new(

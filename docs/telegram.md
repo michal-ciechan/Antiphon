@@ -306,8 +306,14 @@ author (+ `IsSelf` when it's the bot), conversation kind (private/group/channel)
 and the complete native `Update` JSON preserved in `Raw`. Inbound *formatting entities* (bold etc.
 in what users type) are not interpreted — agents see the plain text, which is what they want.
 
-Chats not in `Telegram__AllowedChatIds` are dropped at ingress (empty list = allow all — the
-current Antiphon-Family setup; set the list to fail closed).
+Chats not in `Telegram__AllowedChatIds` are dropped at ingress; an empty list accepts chats
+the bot is in. Verify the selected gateway's effective list; set it to fail closed.
+
+The real gateway round-trip check uses **Family** by the operator's CARD-1243 decision
+(2026-10-14); the conversation binding is configured in the channel settings. A test message
+to Family reaches a real family group, so this check is manual and operator-initiated.
+An agent must not send test traffic there on its own. Follow the
+[round-trip procedure](telegram-bot-ops.md#deploying-an-optional-remote-messaging-service).
 
 ## Settings reference (`Telegram` section / `Telegram__*` env)
 
