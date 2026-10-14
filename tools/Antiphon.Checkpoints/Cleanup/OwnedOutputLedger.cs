@@ -5,12 +5,20 @@ namespace Antiphon.Checkpoints;
 public static class OwnedOutputLedger
 {
     private const string Ledger = ".checkpoint-output-ledger.json";
-    public static string? Seal(string root)
+    public static string? Seal(string root, DateTimeOffset? buildExited = null)
     {
         try
         {
             if (!File.Exists(Path.Combine(root, ".checkpoint-output-owner.json"))) return "output-owner-missing";
             var entries = Inventory(root);
+            // CARD-1242: adopt only entries inside the custody window of this process's fresh root
+            // and the driver-observed build exit, with size and hash taken now (OutputCustody holds
+            // the threat model). Later additions, changes and links still refuse; a root this
+            // process did not create, or a seal without an observed exit, adopts nothing.
+            var window = SafeWrite.WasCreated(root) ? OutputCustody.For(root, buildExited) : null;
+            if (window is not null)
+                foreach (var relative in entries.Keys)
+                    SafeWrite.AdoptCreated(Path.Combine(root, relative), window);
             return SafeWrite.Text(Path.Combine(root, Ledger), JsonSerializer.Serialize(entries), SafeWrite.Under(root));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)

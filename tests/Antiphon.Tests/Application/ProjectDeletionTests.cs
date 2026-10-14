@@ -7,7 +7,9 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Data.Seeding;
 using Antiphon.Tests.TestHelpers;
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -237,6 +239,116 @@ public class ProjectDeletionTests
             (await verify.Boards.AnyAsync(b => b.Id == keptBoard.Id)).ShouldBeTrue();
             (await verify.Cards.AnyAsync(c => c.Id == keptCard.Id)).ShouldBeTrue();
             (await verify.BoardColumns.CountAsync(c => c.BoardId == keptBoard.Id)).ShouldBe(5);
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // CARD-1244: a Done move leaves worktree-cleanup rows whose FKs to the card and its Done
+    // revision are Restrict, so the cascade has to clear them before the cards.
+    // ---------------------------------------------------------------------
+
+    [Test]
+    public async Task C1244_force_delete_removes_the_worktree_cleanup_rows_of_done_cards()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var doomed = await SeedProjectAsync(tempRoot);
+            var keeper = await SeedProjectAsync(tempRoot);
+            await using var harness = BuildHarness();
+            var board = await harness.Boards.CreateAsync(
+                new CreateBoardRequest(doomed.Id, "Delivery"), CancellationToken.None);
+            var keptBoard = await harness.Boards.CreateAsync(
+                new CreateBoardRequest(keeper.Id, "Kept"), CancellationToken.None);
+            var card = await SeedCardAsync(board, "CARD-1", CardStatus.Done);
+            var keptCard = await SeedCardAsync(keptBoard, "KEEP-1", CardStatus.Done);
+            var chain = await SeedDoneCleanupAsync(tempRoot, card.Id);
+            var keptChain = await SeedDoneCleanupAsync(tempRoot, keptCard.Id);
+
+            await harness.Projects.DeleteAsync(doomed.Id, force: true, CancellationToken.None);
+
+            await using var verify = CreateContext();
+            (await verify.Projects.AnyAsync(p => p.Id == doomed.Id)).ShouldBeFalse();
+            (await verify.Boards.AnyAsync(b => b.Id == board.Id)).ShouldBeFalse();
+            (await verify.Cards.AnyAsync(c => c.Id == card.Id)).ShouldBeFalse();
+            (await ChainRowsAsync(verify, chain)).ShouldBe([0, 0, 0, 0]);
+            // The task is history, not part of the card: its FK is SetNull, so it outlives the card.
+            (await verify.AgentTasks.SingleAsync(t => t.Id == chain.TaskId)).CardId.ShouldBeNull();
+
+            (await verify.Projects.AnyAsync(p => p.Id == keeper.Id)).ShouldBeTrue();
+            (await verify.Cards.AnyAsync(c => c.Id == keptCard.Id)).ShouldBeTrue();
+            (await ChainRowsAsync(verify, keptChain)).ShouldBe([1, 1, 1, 1]);
+            (await verify.AgentTasks.SingleAsync(t => t.Id == keptChain.TaskId)).CardId.ShouldBe(keptCard.Id);
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
+    public async Task C1244_board_delete_removes_only_its_own_cards_worktree_cleanup_rows()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = await SeedProjectAsync(tempRoot);
+            await using var harness = BuildHarness();
+            var board = await harness.Boards.CreateAsync(
+                new CreateBoardRequest(project.Id, "Delivery"), CancellationToken.None);
+            var sibling = await harness.Boards.CreateAsync(
+                new CreateBoardRequest(project.Id, "Sibling"), CancellationToken.None);
+            var card = await SeedCardAsync(board, "CARD-1", CardStatus.Done);
+            var siblingCard = await SeedCardAsync(sibling, "SIB-1", CardStatus.Done);
+            var chain = await SeedDoneCleanupAsync(tempRoot, card.Id);
+            var siblingChain = await SeedDoneCleanupAsync(tempRoot, siblingCard.Id);
+
+            var result = await harness.Boards.DeleteAsync(board.Id, CancellationToken.None);
+
+            result.ProjectDeleted.ShouldBeFalse();
+            await using var verify = CreateContext();
+            (await verify.Boards.AnyAsync(b => b.Id == board.Id)).ShouldBeFalse();
+            (await verify.Cards.AnyAsync(c => c.Id == card.Id)).ShouldBeFalse();
+            (await ChainRowsAsync(verify, chain)).ShouldBe([0, 0, 0, 0]);
+            (await verify.Cards.AnyAsync(c => c.Id == siblingCard.Id)).ShouldBeTrue();
+            (await ChainRowsAsync(verify, siblingChain)).ShouldBe([1, 1, 1, 1]);
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    /// <summary>
+    /// Fail closed: the cleanup rows go in the cascade's own transaction, so a failure on a later
+    /// statement brings them back with everything else rather than leaving cards without them.
+    /// </summary>
+    [Test]
+    public async Task C1244_a_failed_force_delete_rolls_the_worktree_cleanup_rows_back()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var project = await SeedProjectAsync(tempRoot);
+            await using var harness = BuildHarness(new FailCardsDelete());
+            var board = await harness.Boards.CreateAsync(
+                new CreateBoardRequest(project.Id, "Delivery"), CancellationToken.None);
+            var card = await SeedCardAsync(board, "CARD-1", CardStatus.Done);
+            var chain = await SeedDoneCleanupAsync(tempRoot, card.Id);
+
+            var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
+                harness.Projects.DeleteAsync(project.Id, force: true, CancellationToken.None));
+
+            ex.Message.ShouldBe(FailCardsDelete.Message);
+            await using var verify = CreateContext();
+            (await verify.Projects.AnyAsync(p => p.Id == project.Id)).ShouldBeTrue();
+            (await verify.Boards.AnyAsync(b => b.Id == board.Id)).ShouldBeTrue();
+            (await verify.Cards.AnyAsync(c => c.Id == card.Id)).ShouldBeTrue();
+            (await ChainRowsAsync(verify, chain)).ShouldBe([1, 1, 1, 1]);
         }
         finally
         {
@@ -499,9 +611,12 @@ public class ProjectDeletionTests
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
-    private static Harness BuildHarness()
+    private static Harness BuildHarness(params IInterceptor[] interceptors)
     {
-        var db = CreateContext();
+        var db = interceptors.Length == 0
+            ? CreateContext()
+            : new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(TestDbFixture.CreateDbContextOptions())
+                .AddInterceptors(interceptors).Options);
         var eventBus = new MockEventBus();
         var boards = new BoardService(db, eventBus, TimeProvider.System);
         var projects = new ProjectService(
@@ -576,6 +691,61 @@ public class ProjectDeletionTests
         await db.SaveChangesAsync();
         return session;
     }
+
+    /// <summary>
+    /// What a Done move and its discovery leave behind (CARD-1017): the Done revision, the
+    /// cleanup generation, one target for the card's task and its pending local endpoint.
+    /// </summary>
+    private static async Task<CleanupChain> SeedDoneCleanupAsync(string tempRoot, Guid cardId)
+    {
+        var now = DateTime.UtcNow;
+        var revision = new CardRevision
+        {
+            Id = Guid.NewGuid(), CardId = cardId, RevisionNumber = 1, Kind = CardRevisionKind.Move,
+            FromStatus = CardStatus.InProgress, ToStatus = CardStatus.Done, CreatedAt = now
+        };
+        var taskId = Guid.NewGuid();
+        var task = new AgentTask
+        {
+            // Cleanup finds the task by this marker.
+            Id = taskId, RootTaskId = taskId, CardId = cardId, Title = tempRoot, Goal = "CARD-1244 fixture",
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
+            Status = AgentTaskStatus.Succeeded, Attempt = 1, CreatedAt = now
+        };
+        var cleanup = new CardWorktreeCleanup
+        {
+            Id = Guid.NewGuid(), CardId = cardId, DoneRevisionId = revision.Id, DoneAt = now, CreatedAt = now
+        };
+        var target = new CardWorktreeCleanupTarget
+        {
+            Id = Guid.NewGuid(), CleanupId = cleanup.Id, TaskId = taskId, TaskAttempt = 1,
+            WorkspaceIdentity = taskId.ToString("N"), RepositoryPath = Path.Combine(tempRoot, "repo"),
+            WorktreePath = Path.Combine(tempRoot, "tree"), SourceFullRef = "refs/heads/feat/c1244", CreatedAt = now
+        };
+        var endpoint = new CardWorktreeCleanupEndpoint
+        {
+            Id = Guid.NewGuid(), TargetId = target.Id, EndpointIdentity = "local",
+            RepositoryPath = target.RepositoryPath, WorktreePath = target.WorktreePath,
+            SourceFullRef = target.SourceFullRef, State = CardWorktreeCleanupEndpointState.Pending, UpdatedAt = now
+        };
+        await using var db = CreateContext();
+        db.CardRevisions.Add(revision);
+        db.AgentTasks.Add(task);
+        db.CardWorktreeCleanups.Add(cleanup);
+        db.CardWorktreeCleanupTargets.Add(target);
+        db.CardWorktreeCleanupEndpoints.Add(endpoint);
+        await db.SaveChangesAsync();
+        return new CleanupChain(revision.Id, taskId, cleanup.Id, target.Id, endpoint.Id);
+    }
+
+    /// <summary>How many of the chain's revision, cleanup, target and endpoint rows still exist.</summary>
+    private static async Task<int[]> ChainRowsAsync(AppDbContext db, CleanupChain chain) =>
+    [
+        await db.CardRevisions.CountAsync(r => r.Id == chain.RevisionId),
+        await db.CardWorktreeCleanups.CountAsync(c => c.Id == chain.CleanupId),
+        await db.CardWorktreeCleanupTargets.CountAsync(t => t.Id == chain.TargetId),
+        await db.CardWorktreeCleanupEndpoints.CountAsync(e => e.Id == chain.EndpointId)
+    ];
 
     private static async Task<Agent> SeedAgentAsync(string tempRoot, Guid boardId, Guid cardId)
     {
@@ -672,7 +842,11 @@ public class ProjectDeletionTests
         await db.CardWorkflowRuns.Where(r => runIds.Contains(r.Id)).ExecuteDeleteAsync();
 
         await db.AgentSessions.Where(s => s.CardId != null && cardIds.Contains(s.CardId.Value)).ExecuteDeleteAsync();
+        await db.CardWorktreeCleanupEndpoints.Where(e => cardIds.Contains(e.Target.Cleanup.CardId)).ExecuteDeleteAsync();
+        await db.CardWorktreeCleanupTargets.Where(t => cardIds.Contains(t.Cleanup.CardId)).ExecuteDeleteAsync();
+        await db.CardWorktreeCleanups.Where(c => cardIds.Contains(c.CardId)).ExecuteDeleteAsync();
         await db.Cards.Where(c => cardIds.Contains(c.Id)).ExecuteDeleteAsync();
+        await db.AgentTasks.Where(t => t.Title == tempRoot).ExecuteDeleteAsync();
         await db.BoardWorkflowDefinitions.Where(d => boardIds.Contains(d.BoardId)).ExecuteDeleteAsync();
         await db.BoardColumns.Where(c => boardIds.Contains(c.BoardId)).ExecuteDeleteAsync();
         await db.Boards.Where(b => boardIds.Contains(b.Id)).ExecuteDeleteAsync();
@@ -689,6 +863,21 @@ public class ProjectDeletionTests
         MockEventBus EventBus) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync() => await Db.DisposeAsync();
+    }
+
+    private sealed record CleanupChain(Guid RevisionId, Guid TaskId, Guid CleanupId, Guid TargetId, Guid EndpointId);
+
+    /// <summary>Fails the cascade at its card delete, after everything that must precede it.</summary>
+    private sealed class FailCardsDelete : DbCommandInterceptor
+    {
+        public const string Message = "CARD-1244: injected failure at the card delete";
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default) =>
+            command.CommandText.Contains("DELETE FROM \"Cards\"", StringComparison.Ordinal)
+                ? throw new InvalidOperationException(Message)
+                : base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
     }
 
     private sealed class StubHttpClientFactory : IHttpClientFactory

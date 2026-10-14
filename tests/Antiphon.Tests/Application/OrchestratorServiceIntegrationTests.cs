@@ -1536,6 +1536,11 @@ public class OrchestratorServiceIntegrationTests
         await db.Worktrees
             .Where(w => worktreeIds.Contains(w.Id))
             .ExecuteDeleteAsync();
+        // A Done move writes a CardWorktreeCleanup (CARD-1017) whose Restrict FKs name the card
+        // and its Done revision; a leaked board here is synced by the next test's tick (CARD-1251).
+        await db.CardWorktreeCleanups
+            .Where(c => cardIds.Contains(c.CardId))
+            .ExecuteDeleteAsync();
         await db.Cards
             .Where(c => cardIds.Contains(c.Id))
             .ExecuteDeleteAsync();
