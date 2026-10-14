@@ -197,3 +197,15 @@ R-3 remains deferred. No full assembly run or proof repetition is planned.
 PC-14 pending: omit returned-row hold check, V-7 board/project variants.
 PC-15 pending: omit destination existence or generation matching, V-8's 12 variants.
 PC-1..PC-15 await SourceLanding Mutation; no deliberate mutants in Code.
+
+### F1/F2 repair outcome (Code 1147dfb0)
+
+V-7's two race cases and V-8's twelve stale/missing-destination cases failed at the intended
+HTTP assertions on tests-only SHA 3189e5f0f774f92e39a1de81777c9a783dd2722c, whose production
+code matches b452f633d. The existing 27 cascade cases passed at that baseline.
+After repair and the fetched-master merge, tested SHA 67b9c85724a73752e32411c2d0e385475a031036
+passed CP-1/CP-2/CP-4/CP-5 with 41/38/61/18 cases (158 total), zero failures/skips.
+Both receipt validators returned VALID with clean source and verified build provenance.
+V-1..V-8, R-1/R-2/R-4/R-5 and the manual FK audit passed. R-3 remains NOT RUN / DEFERRED.
+PC-1..PC-15 remain pending SourceLanding Mutation. Full counts, publication checks and
+unedited receipt lines are in .antiphon/task-1147dfb0.md. Next: Review; restart: server after landing.
