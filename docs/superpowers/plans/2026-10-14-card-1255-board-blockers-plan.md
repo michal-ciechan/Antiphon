@@ -30,9 +30,9 @@ No schema, client production, dispatch, delivery or lease changes.
 
 | ID | Witness and literal outcome |
 |---|---|
-| V-1 | `Board_views_return_blockers_using_live_resolution_state` (full/summary): count 2 and five exact tuples, including cross-board open and unknown status; after resolution count 0 with five resolved entries; reopen count 1. |
+| V-1 | `Board_views_return_blockers_using_live_resolution_state` (full/summary): count 2 and five exact tuples, including cross-board Backlog and local InProgress; after resolution count 0 with five resolved entries; reopen count 1. |
 | V-2 | `Board_without_relationships_omits_blocker_fields` (full/summary): neither JSON blocker member exists; title/status retained. |
-| V-3 | `Board_loads_all_blocker_summaries_in_one_query` (1/40 cards, full/summary): exactly one relationship SQL command; every blocked card count 1 and literal CARD-0001 summary, inverse-only blocker has no summary. |
+| V-3 | `Board_loads_all_blocker_summaries_in_one_query` (1/40 cards, full/summary): exactly one relationship SQL command; every blocked card count 1 and literal CARD-0001 / status 999 / resolved false summary, inverse-only blocker has no summary. |
 | V-4 | BoardPage test `shows the Blocked chip from the board summary response on %s` (both routes): real query requests summary, visible Blocked tooltip names only CARD-0049; resolved-only peer has no chip. |
 | R-1 | Entire CardRelationshipApiTests protects card/list summaries and relationship writes. |
 | R-2 | Entire BoardServiceIntegrationTests and BoardProjectArchiveApiTests protect board reads, card moves and archived visibility. |
@@ -69,8 +69,16 @@ After S2 merge fetched origin/master with a merge commit; never rebase a pushed 
 ## Mutation handoff (unbound, all pending)
 
 PC-1 omit board enrichment: V-1 fails count 2. PC-2 count resolved summaries: V-1 fails count
-2/0 (variants Done, Canceled, archived). PC-3 unknown status treated resolved: V-1 fails count 2.
+2/0 (variants Done, Canceled, archived). PC-3 unknown status treated resolved: V-3 fails count 1.
 PC-4 per-card query loop: V-3 40-card case fails exact one command (full/summary variants).
 PC-5 always emit empty summaries: V-2 fails omitted blocker member (full/summary variants).
 PC-6 omit Blocked badge or include resolved tooltip identifiers: V-4 exact route cases fail.
 All controls require method-scoped SourceLanding Mutation after Review and caller landing.
+
+S1 fixture correction: initial CP-1 executed 8 (2 pass, 6 fail). Four batching assertions
+reached the intended zero-versus-one SQL defect; two HTTP cases returned 400 before the
+assertion. HTTP enum serialization disallows unknown numeric values, so unknown-status
+coverage is now in the direct-service batching matrix; HTTP retains five literal summaries
+with Backlog and InProgress open. No production change or relaxed expectation. The first
+zero-test attempt was a documented ledger refusal on npm-created esbuild hard links; both
+files were replaced with equivalent independent files before the rerun.
