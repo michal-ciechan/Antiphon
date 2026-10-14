@@ -193,7 +193,7 @@ public sealed class RowRunner
             if (!buildSourceOk) return SourceFailure(request, buffer, combined);
             if (binding is not null)
             {
-                var written = binding.Write();
+                var written = binding.Write(built.Exited);
                 if (written is not null)
                 {
                     combined.WriteLine($"CHECKPOINT {request.Name} refused: {written}");

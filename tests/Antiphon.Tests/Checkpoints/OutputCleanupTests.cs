@@ -146,8 +146,8 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     [Test]
     public void external_build_payload_is_adopted_at_seal_and_removed_on_green()
     {
-        var (root, output) = ExternalBuild("bin-c1242");
-        SafeWrite.Require(OwnedOutputLedger.Seal(output));
+        var (root, output, exited) = ExternalBuild("bin-c1242");
+        SafeWrite.Require(OwnedOutputLedger.Seal(output, exited));
 
         var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242"], 0, false, false, createdPaths: [output]);
 
@@ -163,8 +163,8 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     [Test]
     public void file_added_after_seal_is_refused_and_kept()
     {
-        var (root, output) = ExternalBuild("bin-c1242");
-        SafeWrite.Require(OwnedOutputLedger.Seal(output));
+        var (root, output, exited) = ExternalBuild("bin-c1242");
+        SafeWrite.Require(OwnedOutputLedger.Seal(output, exited));
         var late = Path.Combine(output, "runtimes", "late.txt");
         File.WriteAllText(late, "USER");
 
@@ -180,8 +180,8 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     [Test]
     public void file_modified_after_seal_is_refused_and_kept()
     {
-        var (root, output) = ExternalBuild("bin-c1242");
-        SafeWrite.Require(OwnedOutputLedger.Seal(output));
+        var (root, output, exited) = ExternalBuild("bin-c1242");
+        SafeWrite.Require(OwnedOutputLedger.Seal(output, exited));
         var native = Path.Combine(output, "runtimes", "native.so");
         File.WriteAllText(native, "NATIVF");
 
@@ -196,7 +196,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     [Test]
     public void symlink_in_a_build_output_is_refused_before_and_after_seal()
     {
-        var (root, output) = ExternalBuild("bin-c1242");
+        var (root, output, exited) = ExternalBuild("bin-c1242");
         var outside = Path.Combine(root, "outside.txt");
         File.WriteAllText(outside, "OUTSIDE");
         var linkedBeforeSeal = Path.Combine(root, "bin-c1242-pre");
@@ -208,7 +208,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
             File.CreateSymbolicLink(early, outside);
             OwnedOutputLedger.Seal(linkedBeforeSeal).ShouldBe("output-inventory-failed");
 
-            SafeWrite.Require(OwnedOutputLedger.Seal(output));
+            SafeWrite.Require(OwnedOutputLedger.Seal(output, exited));
             File.CreateSymbolicLink(link, outside);
 
             var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242", "bin-c1242-pre"], 0, false, false,
@@ -232,8 +232,8 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     [Test]
     public void tracked_file_in_an_adopted_build_output_is_refused_and_kept()
     {
-        var (root, output) = ExternalBuild("bin-c1242");
-        SafeWrite.Require(OwnedOutputLedger.Seal(output));
+        var (root, output, exited) = ExternalBuild("bin-c1242");
+        SafeWrite.Require(OwnedOutputLedger.Seal(output, exited));
         Git(root, "add", "--", "bin-c1242/app.dll");
         Git(root, "-c", "user.email=card-1242@example.invalid", "-c", "user.name=card-1242",
             "-c", "commit.gpgsign=false", "commit", "-m", "card-1242", "--no-verify");
@@ -249,12 +249,13 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     [Test]
     public void adopted_build_output_over_the_entry_cap_is_unsafe_tree()
     {
-        var (root, output) = ExternalBuild("bin-c1242");
+        var (root, output, _) = ExternalBuild("bin-c1242");
         var many = Path.Combine(output, "many");
         Directory.CreateDirectory(many);
         for (var i = 0; i < 10_000; i++)
             File.WriteAllText(Path.Combine(many, i + ".dll"), "x");
-        SafeWrite.Require(OwnedOutputLedger.Seal(output));
+        // The build is the 10,000 writes too, so it exits after them.
+        SafeWrite.Require(OwnedOutputLedger.Seal(output, DateTimeOffset.UtcNow));
 
         var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242"], 0, false, false, createdPaths: [output]);
 
@@ -280,6 +281,112 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242"], 0, false, false, createdPaths: [output]);
         result.Deleted.ShouldBeEmpty();
         File.ReadAllText(Path.Combine(output, "app.dll")).ShouldBe("COMPILER");
+    }
+
+    // CARD-1242 F1 (Review e18f0dc1): red at 2b293e51f, where Seal adopted every entry of a root this
+    // process created. The build runs through the real ProcessDriver; a separate process writes after
+    // the driver-observed exit. The build's file is adopted; the late file and its changed directory
+    // are not, cleanup refuses and the bytes stay.
+    [Test]
+    public async Task independent_writer_after_build_exit_is_not_adopted_and_cleanup_keeps_it()
+    {
+        if (!OperatingSystem.IsLinux())
+            Skip.Test("seal-time custody needs statx");
+        var root = InitGitRepo();
+        var output = Path.Combine(root, "bin-c1242");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
+        (OutputCustody.Stat(output)!.Value.Mode & 0x3F).ShouldBe(0);
+        var built = await new ProcessDriver().RunAsync(new DriverRequest("sh",
+            ["-c", "printf BUILD > \"$1/app.dll\" && mkdir \"$1/runtimes\" && printf NATIVE > \"$1/runtimes/native.so\"", "build", output], root),
+            CancellationToken.None);
+        built.ExitCode.ShouldBe(0);
+        built.Exited.ShouldNotBeNull();
+        PastKernelClock(built.Exited!.Value);
+        Shell("printf FOREIGN > \"$1/runtimes/foreign.txt\"", output);
+
+        SafeWrite.Require(OwnedOutputLedger.Seal(output, built.Exited));
+
+        SafeWrite.MatchesCreation(Path.Combine(output, "app.dll")).ShouldBeTrue();
+        SafeWrite.MatchesCreation(Path.Combine(output, "runtimes", "foreign.txt")).ShouldBeFalse();
+        SafeWrite.MatchesCreation(Path.Combine(output, "runtimes")).ShouldBeFalse();
+        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242"], 0, false, false, createdPaths: [output]);
+        result.Deleted.ShouldBeEmpty();
+        result.Refusals.Single().ShouldStartWith("output-ledger-mismatch; left in place: " + Path.Combine(output, "runtimes"));
+        File.ReadAllText(Path.Combine(output, "runtimes", "foreign.txt")).ShouldBe("FOREIGN");
+    }
+
+    // CARD-1242 F1: the reviewer's probe. Red at 2b293e51f. Without a driver-observed build exit the
+    // seal cannot bound custody, so a pre-seal write by a separate process is not adopted.
+    [Test]
+    public void seal_without_driver_observed_build_exit_adopts_nothing()
+    {
+        if (!OperatingSystem.IsLinux())
+            Skip.Test("seal-time custody needs statx");
+        var root = InitGitRepo();
+        var output = Path.Combine(root, "bin-c1242");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
+        Shell("printf FOREIGN > \"$1/foreign.txt\"", output);
+
+        SafeWrite.Require(OwnedOutputLedger.Seal(output));
+
+        SafeWrite.MatchesCreation(Path.Combine(output, "foreign.txt")).ShouldBeFalse();
+        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242"], 0, false, false, createdPaths: [output]);
+        result.Refusals.ShouldBe(["output-ledger-mismatch; left in place: " + Path.Combine(output, "foreign.txt")]);
+        result.Deleted.ShouldBeEmpty();
+        File.ReadAllText(Path.Combine(output, "foreign.txt")).ShouldBe("FOREIGN");
+    }
+
+    // CARD-1242 F1: a hard link made inside the build window is not adopted; the outside bytes stay.
+    // Green at 2b293e51f too (the confined reader already refused it); kept as a custody control.
+    [Test]
+    public void hard_linked_build_file_is_not_adopted_and_outside_bytes_stay()
+    {
+        var (root, output, _) = ExternalBuild("bin-c1242");
+        var outside = Path.Combine(root, "outside.txt");
+        File.WriteAllText(outside, "OUTSIDE");
+        var start = new ProcessStartInfo("ln");
+        start.ArgumentList.Add(outside);
+        start.ArgumentList.Add(Path.Combine(output, "linked.dll"));
+        CheckpointFixtureProcess.Run(start, 30_000).Exit.ShouldBe(0);
+
+        SafeWrite.Require(OwnedOutputLedger.Seal(output, DateTimeOffset.UtcNow));
+
+        SafeWrite.MatchesCreation(Path.Combine(output, "linked.dll")).ShouldBeFalse();
+        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242"], 0, false, false, createdPaths: [output]);
+        result.Refusals.ShouldBe(["output-ledger-mismatch; left in place: " + Path.Combine(output, "linked.dll")]);
+        result.Deleted.ShouldBeEmpty();
+        File.ReadAllText(outside).ShouldBe("OUTSIDE");
+    }
+
+    // CARD-1242 F1: mock inventory entry, since this test cannot chown. Red at 2b293e51f (no custody).
+    [Test]
+    public void custody_refuses_an_entry_owned_by_another_uid()
+    {
+        OutputCustody.Refusal(InWindow(), CustodyWindow).ShouldBeNull();
+        OutputCustody.Refusal(InWindow() with { Owner = 0 }, CustodyWindow).ShouldBe("foreign-owner");
+    }
+
+    // CARD-1242 F1: an entry whose ctime precedes the root's creation was not written by this build.
+    [Test]
+    public void custody_refuses_an_entry_changed_before_the_root_was_created()
+    {
+        OutputCustody.Refusal(InWindow() with { Changed = DateTimeOffset.FromUnixTimeSeconds(999) }, CustodyWindow)
+            .ShouldBe("changed-before-root");
+    }
+
+    // CARD-1242 F1: links, special files and entries changed or modified after the exit are refused;
+    // a directory inside the window is adopted.
+    [Test]
+    public void custody_refuses_links_special_files_and_entries_after_the_build_exit()
+    {
+        OutputCustody.Refusal(InWindow() with { Links = 2 }, CustodyWindow).ShouldBe("multiple-links");
+        OutputCustody.Refusal(InWindow(0xA1FF), CustodyWindow).ShouldBe("not-regular");
+        OutputCustody.Refusal(InWindow(0x11A4), CustodyWindow).ShouldBe("not-regular");
+        OutputCustody.Refusal(InWindow() with { Changed = DateTimeOffset.FromUnixTimeSeconds(2_001) }, CustodyWindow)
+            .ShouldBe("changed-after-build");
+        OutputCustody.Refusal(InWindow() with { Modified = DateTimeOffset.FromUnixTimeSeconds(2_001) }, CustodyWindow)
+            .ShouldBe("modified-after-build");
+        OutputCustody.Refusal(InWindow(0x41C0) with { Links = 3 }, CustodyWindow).ShouldBeNull();
     }
 
     [Test]
@@ -1079,16 +1186,47 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         """;
 
     // A fresh owned root whose payload is written outside SafeWrite, as the child dotnet build writes it.
-    private (string Root, string Output) ExternalBuild(string id)
+    // Exited stands for the driver-observed build exit; seal-time custody uses Linux statx.
+    private (string Root, string Output, DateTimeOffset Exited) ExternalBuild(string id)
     {
+        if (!OperatingSystem.IsLinux())
+            Skip.Test("seal-time custody needs statx; off Linux nothing is adopted");
         var root = InitGitRepo();
         var output = Path.Combine(root, id);
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
         File.WriteAllText(Path.Combine(output, "app.dll"), "COMPILER");
         Directory.CreateDirectory(Path.Combine(output, "runtimes"));
         File.WriteAllText(Path.Combine(output, "runtimes", "native.so"), "NATIVE");
-        return (root, output);
+        return (root, output, DateTimeOffset.UtcNow);
     }
+
+    // ctime comes from a coarse kernel clock: wait until it has passed the stamp so a later write is
+    // unambiguously after it (one tick is the disclosed custody boundary).
+    private void PastKernelClock(DateTimeOffset stamp)
+    {
+        var probe = Path.Combine(TempDir(), "clock");
+        for (var i = 0; i < 400; i++)
+        {
+            File.WriteAllText(probe, i.ToString());
+            if (OutputCustody.Stat(probe)!.Value.Changed > stamp) return;
+            Thread.Sleep(5);
+        }
+        throw new TimeoutException("kernel clock did not pass the exit stamp");
+    }
+
+    private static void Shell(string script, string directory)
+    {
+        var start = new ProcessStartInfo("sh");
+        foreach (var arg in new[] { "-c", script, "writer", directory })
+            start.ArgumentList.Add(arg);
+        CheckpointFixtureProcess.Run(start, 30_000).Exit.ShouldBe(0);
+    }
+
+    private static readonly OutputCustody.Window CustodyWindow = new(
+        DateTimeOffset.FromUnixTimeSeconds(1_000), DateTimeOffset.FromUnixTimeSeconds(2_000), 1654);
+
+    private static OutputCustody.Entry InWindow(ushort mode = 0x81A4) => new(mode, 1, 1654, 7, 4,
+        DateTimeOffset.FromUnixTimeSeconds(1_500), DateTimeOffset.FromUnixTimeSeconds(1_500));
 
     private string InitGitRepo()
     {
