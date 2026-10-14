@@ -211,7 +211,7 @@ for any Code task touching `client/src/features/settings`.
   (V-A4, R-A `RoutingPinCreateTests.An_explicit_kind_against_a_required_pin_is_409_routing_pin_conflict`).
 - Stage Required pin plus a set row → pin wins, `complexity chain bypassed by …` warning, `RoutingPinId` stamped
   (V-A5, mirrors `ComplexityCreateTests.A_required_pin_plus_complexity_uses_the_pin_pair_and_warns_bypass`).
-- Specialist role (Check) with an any-role Medium row → not stamped (V-A6).
+- The stamp guard excludes specialist roles, orchestrator kind, a named agent, an explicit kind/level, `ignoreModelDisabled` and live follow-ups (V-A6, seven `[Arguments]` rows).
 - Orchestrator kind with a set Plan row → not stamped, `MinOrchestratorLevel` clamp still applies (V-A7).
 - Settlement Commit delegate with a Commit/Medium cell → takes the cell's first available candidate (V-A8).
 - `DefaultComplexity` undefined in configuration → validator failure naming the key (V-A9).
@@ -236,8 +236,8 @@ Full V/R/PC binding, fixtures and the wire contract are in
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S-A tests committed, production not yet | `tests/Antiphon.Tests -> bin-c097m-red/` | matrix-default-red | `/*/*/MatrixDefaultComplexityCreateTests/*` | V-A1–V-A9 | 9 methods run; V-A1, V-A3, V-A5, V-A8, V-A9 fail (intentional red: no `DefaultComplexity`, no stamp); V-A2, V-A4, V-A6, V-A7 may pass (they assert today's path is kept) | 9 | 9 | false |
-| CP-2 | S-A | `tests/Antiphon.Tests -> bin-c097m-a/` | matrix-default | `/*/*/MatrixDefaultComplexityCreateTests/*` | V-A1–V-A9 | 9 methods, 0 failed/skipped | 9 | 9 | false |
+| CP-1 | S-A tests committed, production not yet | `tests/Antiphon.Tests -> bin-c097m-red/` | matrix-default-red | `/*/*/MatrixDefaultComplexityCreateTests/*` | V-A1–V-A9 | 9 methods run (15 results: V-A6 carries 7 `[Arguments]`); V-A1, V-A3, V-A5, V-A6, V-A8, V-A9 fail (intentional red: no `DefaultComplexity`, no stamp, no guard predicate); V-A2, V-A4, V-A7 may pass (they assert today's path is kept) | 9 | 9 | false |
+| CP-2 | S-A | `tests/Antiphon.Tests -> bin-c097m-a/` | matrix-default | `/*/*/MatrixDefaultComplexityCreateTests/*` | V-A1–V-A9 | 9 methods (15 results), 0 failed/skipped | 9 | 9 | false |
 | CP-3 | S-A | `tests/Antiphon.Tests -> bin-c097m-a/` (reused) | matrix-default-regression | `/*/*/ComplexityCreateTests/*` | R-A1 | all 14 methods, 0 failed/skipped | 14 | 8 | false |
 | CP-4 | S-A | `tests/Antiphon.Tests -> bin-c097m-a/` (reused) | pin-create-regression | `/*/*/RoutingPinCreateTests/*` | R-A2 | all 13 methods, 0 failed/skipped | 13 | 8 | false |
 | CP-5 | S-A | `tests/Antiphon.Tests -> bin-c097m-a/` (reused) | pin-list-create-regression | `/*/*/RoutingPinCandidateCreateTests/*` | R-A3 | all 17 methods, 0 failed/skipped | 17 | 8 | false |
@@ -274,7 +274,7 @@ automated row: M-2 and M-3 are transcripts in the Code report.
 | PC-3 | `MatrixDefaultComplexityCreateTests.An_exhausted_default_row_blocks_with_the_cell_name` | all held → force `RefuseIfExhausted` → `RoutingExhaustedException` |
 | PC-4 | `MatrixDefaultComplexityCreateTests.An_explicit_kind_is_not_stamped_and_warns` | `-Kind Codex` with a Plan row → stamp anyway → 422 `complexity cannot be combined` |
 | PC-5 | `MatrixDefaultComplexityCreateTests.A_required_stage_pin_still_wins_over_the_row` | Required pin + row → drop the pin from `WalkAsync` → row candidate chosen, no bypass warning |
-| PC-6 | `MatrixDefaultComplexityCreateTests.A_specialist_role_is_never_stamped` | Check with any-role Medium row → stamp → `ValidateCellRole`-shaped failure / `Blocked` |
+| PC-6 | `MatrixDefaultComplexityCreateTests.The_stamp_guard_excludes_specialists_orchestrators_agents_explicit_asks_and_ignore_model_disabled` (row `Check`) | Check → drop the specialist clause from the guard → `true` |
 | PC-7 | `MatrixDefaultComplexityCreateTests.An_orchestrator_create_keeps_role_policy_and_the_level_floor` | Orchestrator + Plan/Medium `[ClaudeCode/Low]` → stamp → `Low` ≠ `MinOrchestratorLevel` |
 | PC-8 | `MatrixDefaultComplexityCreateTests.The_settlement_commit_delegate_takes_the_commit_row` | Commit/Medium `[Codex/Frontier]` → keep `ResolveAgentKind` only → `ClaudeCode` |
 | PC-9 | `MatrixDefaultComplexityCreateTests.An_undefined_default_complexity_fails_validation` | `(TaskComplexity)999` → drop the validator line → `Succeeded` |
