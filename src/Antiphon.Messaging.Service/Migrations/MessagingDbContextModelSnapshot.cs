@@ -28,6 +28,12 @@ namespace Antiphon.Messaging.Service.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<int>("AckAttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("AcknowledgedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTimeOffset?>("AnsweredAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -90,22 +96,16 @@ namespace Antiphon.Messaging.Service.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
-                    b.Property<DateTimeOffset?>("AcknowledgedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("AckAttemptCount")
-                        .HasColumnType("integer");
-
                     b.HasKey("Id");
 
                     b.HasIndex("ReceivedAt");
 
-                    b.HasIndex("Topic", "Partition", "Offset");
+                    b.HasIndex("Channel", "Status");
 
-                    b.HasIndex("Channel", "ChannelMessageId")
+                    b.HasIndex("Channel", "ConversationId", "ChannelMessageId")
                         .IsUnique();
 
-                    b.HasIndex("Channel", "Status");
+                    b.HasIndex("Topic", "Partition", "Offset");
 
                     b.ToTable("Inbox", (string)null);
                 });
