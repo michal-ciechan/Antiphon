@@ -58,6 +58,7 @@ import {
   groupPins,
   nonComplexityBoundary,
   pinEffectCopy,
+  policyRoutingUnknown,
   resolvedFromLabel,
   stagePinsForRole,
   untilLabel,
@@ -533,10 +534,11 @@ function MatrixCell({
   const configureLabel = cellEditorTitle(isAnyRoleRow ? null : (role ?? null), cellComplexity)
   const effective = isAnyRoleRow ? null : chain?.effective
   const chainReadFailed = effective?.withheldReason?.includes('chain read failed') ?? false
+  const policyUnknown = effective != null && policyRoutingUnknown(effective)
   // RolePolicy describes the ordinary default create. A non-default -Complexity dispatch
-  // still blocks on a known empty chain; a failed chain read leaves that verdict unknown.
+  // blocks on a known empty chain only when the stage pin read succeeded too.
   const showEffective = effective != null && (
-    effective.source !== 'rolePolicy' || effective.governsDefault || chainReadFailed
+    effective.source !== 'rolePolicy' || effective.governsDefault || policyUnknown
   )
   const showStored = !showEffective || (
     effective.source === 'pin' || effective.source === 'pin+chain'
@@ -563,7 +565,7 @@ function MatrixCell({
           >
             {effectiveCellLabel(effective)}
           </Badge>
-          {effective.candidates.length > 0 && !(effective.source === 'rolePolicy' && chainReadFailed)
+          {effective.candidates.length > 0 && !policyUnknown
             ? <CandidateList candidates={effective.candidates} /> : null}
         </>
       ) : null}

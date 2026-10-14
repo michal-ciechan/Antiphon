@@ -23,6 +23,17 @@ export const COMPLEXITY_ROUTING_BOUNDARY_TITLE = 'Applies to complexity-routed t
 export const COMPLEXITY_ROUTING_BOUNDARY =
   'New complexity-routed dispatches read the saved cell immediately. No session restart is required. Queued complexity-chain tasks whose snapshot can no longer run, and tasks blocked for routing, are re-walked against the current matrix on the next dispatcher tick. Running sessions keep the model they started with. Saving a cell never interrupts, replaces, or migrates a mid-turn delegate. Tasks launched with an explicit kind or level, and other queued work that is not complexity-routed, keep their snapshots and are not retroactively routed by this matrix.'
 
+// ComplexityChainService.ReadPartAsync emits "{part} read failed ({exception type})";
+// GetEffectiveAsync joins those diagnostic segments and the policy reason with "; ".
+const STAGE_PIN_READ_FAILED_PREFIX = 'stage pin read failed ('
+
+export function policyRoutingUnknown(effective: ComplexityEffectiveDto): boolean {
+  return effective.source === 'rolePolicy' && (
+    effective.withheldReason?.includes('chain read failed') === true
+    || effective.withheldReason?.split('; ').some(reason => reason.startsWith(STAGE_PIN_READ_FAILED_PREFIX)) === true
+  )
+}
+
 export function effectiveCellLabel(effective: ComplexityEffectiveDto): string {
   const { source, candidates, stagePin, withheldReason } = effective
   if (source === 'agent') {
@@ -33,9 +44,9 @@ export function effectiveCellLabel(effective: ComplexityEffectiveDto): string {
       : 'Pinned to standing agent — this row is not walked'
   }
 
-  // A policy projection cannot establish the route while its chain read is unknown.
+  // A policy projection cannot establish the route while its chain or stage pin read is unknown.
   // Keep the server diagnostic in the cell's alert, separate from the verdict.
-  if (source === 'rolePolicy' && withheldReason?.includes('chain read failed')) {
+  if (policyRoutingUnknown(effective)) {
     return 'Effective routing unknown'
   }
 
