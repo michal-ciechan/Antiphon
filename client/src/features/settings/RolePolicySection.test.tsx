@@ -111,7 +111,10 @@ describe('RolePolicySection', () => {
     expect(within(plan).getByText('2. ClaudeCode/Frontier (fable)')).toBeInTheDocument()
     expect(within(plan).getByText('plan on sol')).toBeInTheDocument()
     // C1250: the held head is skipped, as the create walks the pin list.
-    expect(screen.getByTestId('role-policy-next-worker-Plan').textContent).toBe(
+    expect((await screen.findByText(
+      'Required Human pin → ClaudeCode/Frontier (fable), skipping held gpt-6-astra',
+      { selector: '[data-testid="role-policy-next-worker-Plan"]' },
+    )).textContent).toBe(
       'Required Human pin → ClaudeCode/Frontier (fable), skipping held gpt-6-astra',
     )
     expect(screen.getByTestId('role-policy-next-orchestrator-Plan').textContent).toBe(

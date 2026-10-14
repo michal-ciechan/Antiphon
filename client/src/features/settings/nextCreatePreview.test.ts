@@ -235,7 +235,7 @@ function scenario(options: {
       ? { source: 'pin', agentKind: stagePin.candidates[0].agentKind, modelLevel: stagePin.candidates[0].modelLevel, alias: stagePin.candidates[0].alias, strength: stagePin.strength }
       : policy.effective },
     cells: options.missingCells ? undefined : cells('Medium', [chain('Medium', effective({
-      candidates: options.candidates ?? [astra, sol, opus], source: options.source ?? 'role',
+      candidates: options.candidates ?? [astra, sol, opus], source: options.source ?? 'role', stagePin,
       withheldReason: options.withheld ?? null,
     }), options.resolved ?? 'role')]),
   }
@@ -280,7 +280,7 @@ const parityRows: ParityRow[] = [
   { id: 'partial-pin-filled-by-effective-view', server: 'ComplexityEffective.cs:30-35; RoutingCandidates.cs:138', context: scenario({ pin: listed([{ ...astra, modelLevel: null, alias: null }]), candidates: [astra, opus] }), expected: ['pin', 'Codex', 'Frontier', 'gpt-6-astra', null] },
   { id: 'agent-with-candidates-needs-agent-state', server: 'AgentTaskService.cs:837-858', context: scenario({ pin: listed([astra], { agentId: 'standing-agent' }) }), expected: ['unknown', null, null, null, null], label: 'unknown — standing-agent kind, model and admission depend on the server' },
   { id: 'preferred-agent-only-needs-agent-state', server: 'RoutingCandidates.cs:79-87; AgentTaskService.cs:837-858', context: scenario({ pin: pin({ strength: 'Preferred', agentId: 'standing-agent' }) }), expected: ['unknown', null, null, null, null] },
-  { id: 'availability-read-error-not-exhausted', server: 'AgentTaskService.cs:946-950; ComplexityChainEndpoints.cs', context: scenario({ candidates: [{ ...astra, availableNow: false, unavailableReason: 'availability unavailable' }, opus] }), expected: ['unknown', null, null, null, null] },
+  { id: 'availability-read-error-not-exhausted', server: 'AgentTaskService.cs:946-950; ComplexityChainService.cs:165-174', context: scenario({ candidates: [{ ...astra, availableNow: false, unavailableReason: 'availability unavailable' }, opus] }), expected: ['unknown', null, null, null, null] },
   { id: 'withheld-slot-not-silently-skipped', server: 'ComplexityEffective.cs:57-63', context: scenario({ candidates: [opus], withheld: 'routing candidate names a kind or level which delegation cannot launch' }), expected: ['unknown', null, null, null, null] },
   { id: 'missing-policy-cannot-evaluate-forbids', server: 'AgentTaskService.cs:773; ComplexityRoutingService.cs:502', context: { ...scenario(), row: undefined }, expected: ['unknown', null, null, null, null] },
   { id: 'any-row', server: 'ComplexityRoutingService.cs:327-329', context: scenario({ resolved: 'any', source: 'any' }), expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
