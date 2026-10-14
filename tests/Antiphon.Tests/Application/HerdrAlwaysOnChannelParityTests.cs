@@ -417,6 +417,8 @@ public partial class HerdrAlwaysOnChannelParityTests
                     _ => HerdrAgentKinds.Claude,
                 },
                 CodexStartupScreen = kind == AgentKind.Codex ? Antiphon.Agents.Pty.Tests.CodexStartupFixtures.P3 : null,
+                // CARD-1252: Grok readiness needs its captured dashboard, as Codex needs P3.
+                GrokStartupScreen = kind == AgentKind.Grok ? GrokLinuxStartupFixture.Screen("1.0.41") : null,
             };
             fake.Start();
             await fake.WaitUntilListeningAsync();

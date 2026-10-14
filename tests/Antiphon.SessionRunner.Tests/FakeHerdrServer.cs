@@ -64,6 +64,14 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     public string? CodexStartupScreen { get; set; }
 
     /// <summary>
+    /// CARD-1252: opt-in Grok startup screen, applied like <see cref="CodexStartupScreen"/>. Grok
+    /// readiness requires a captured composer dashboard (GrokStartupScreen.Classify), so a Grok
+    /// launch that must become ready needs one; <c>agent:grok</c> is never ready. Null keeps the
+    /// generic default.
+    /// </summary>
+    public string? GrokStartupScreen { get; set; }
+
+    /// <summary>
     /// CARD-0187: kind <c>pane.send_text</c> of <c>&amp; '&lt;x&gt;.launch.ps1'</c> stamps on the pane
     /// after <see cref="LaunchScriptDetectDelayMs"/>. Null = never detect (timeout seam). Default
     /// claude so existing CARD-0160/0164/0186 tests keep passing.
@@ -952,10 +960,10 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         }
 
         if (IsLaunchScriptInvocation(text)
-            && CodexStartupScreen is not null
-            && pane.LaunchDetectKind == HerdrAgentKinds.Codex)
+            && pane.LaunchDetectKind is { } launchKind
+            && StartupScreenFor(launchKind) is { } startupScreen)
         {
-            pane.ScreenText = CodexStartupScreen;
+            pane.ScreenText = startupScreen;
         }
 
         return OkJson();
@@ -1025,11 +1033,14 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         }
     }
 
-    private string? CodexStartupFor(string kind) =>
+    private string? StartupScreenFor(string kind) =>
         CodexStartupScreen is not null
         && string.Equals(kind, HerdrAgentKinds.Codex, StringComparison.OrdinalIgnoreCase)
             ? CodexStartupScreen
-            : null;
+            : GrokStartupScreen is not null
+            && string.Equals(kind, HerdrAgentKinds.Grok, StringComparison.OrdinalIgnoreCase)
+                ? GrokStartupScreen
+                : null;
 
     private void ApplyLaunchDetection(PaneState pane)
     {
@@ -1043,7 +1054,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
             return;
 
         pane.Agent = kind;
-        pane.ScreenText = CodexStartupFor(kind) ?? pane.ScreenText ?? $"agent:{kind} env={FormatEnv(pane.Env)}";
+        pane.ScreenText = StartupScreenFor(kind) ?? pane.ScreenText ?? $"agent:{kind} env={FormatEnv(pane.Env)}";
     }
 
     private string PaneReadJson(JsonElement parameters)
@@ -1197,7 +1208,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         pane.AgentName = name;
         // CARD-0164: sticky revision is the fake's default (measured 0.8.2). Screen text may change
         // on agent.start; revision does NOT auto-bump — tests that need it call SetPaneRevision.
-        pane.ScreenText = CodexStartupFor(kind) ?? $"agent:{kind} env={FormatEnv(pane.Env)}";
+        pane.ScreenText = StartupScreenFor(kind) ?? $"agent:{kind} env={FormatEnv(pane.Env)}";
         return
             $"{{\"type\":\"agent_started\",\"agent\":{{\"pane_id\":\"{pane.PaneId}\",\"tab_id\":\"{pane.TabId}\",\"workspace_id\":\"{pane.WorkspaceId}\",\"terminal_id\":\"{pane.TerminalId}\",\"name\":{JsonSerializer.Serialize(name)},\"agent\":{JsonSerializer.Serialize(kind)},\"agent_status\":\"idle\",\"cwd\":{JsonSerializer.Serialize(pane.Cwd)},\"revision\":{pane.Revision},\"focused\":false,\"interactive_ready\":true,\"launch_pending\":false}},\"argv\":[]}}";
     }
