@@ -29,6 +29,24 @@ if legitimate cross-chat collisions exist, PostgreSQL refuses rollback without
 losing rows or the new index. Update comments/index identity and Telegram owner.
 Do not expand the pre-existing general unique-exception classification policy.
 
+S3: correct the slow-test registry's comment placement after CP-4 exposed the
+format error in both the new entry and an existing Kafka entry. The existing entry
+was independently reproduced at the task base (one executed, one failed). Comments
+belong on the preceding line; retain both registered classes and their Slow tags.
+Rerun CP-4 after this documentation/registry-only slice; do not repeat green rows.
+
+CP-3 reached its initial 40-minute deadline without a terminal TRX. Its observed
+initial 17 failures were reproduced at the task base by the bounded CP-5 selection:
+59 executed, 42 passed, 17 failed, zero skipped. The completed partial log contained
+four further failures and 37 skip messages. CP-6 reused the certified base build
+and reproduced all four additional cases (four executed, four failed, zero skipped).
+This proves all 21 observed failures are
+inherited; it does not prove the cause of the whole-Unit timeout. The earlier
+CARD-1253 plan records a similar unqualified Unit timeout. No timeout or assertion
+was widened. R-3 whole Unit remains unqualified, not passed or waived. The brief
+contains both an explicit no-whole-Unit instruction and a generic Final whole-Unit
+profile; the caller's qualification-scope decision is still required.
+
 ## Verification design
 
 V-1: `EfInboxReceiptStoreTests.Same_message_id_in_two_chats_preserves_both_receipts_and_redelivery`
@@ -68,17 +86,21 @@ and live Telegram receipt are operator work, outside this task.
 
 - PC-1: omit ConversationId from EF lookup; V-1 and V-3 independently guard it.
 - PC-2: restore old model index; V-2 guards it.
-- PC-3: omit ConversationId from in-memory Record key; V-4 recorded/seeded variants.
-- PC-4: omit ConversationId from in-memory Add key; V-4 seeded variant.
-- PC-5: omit migration index replacement; V-5 guards it.
-- PC-6: lose true-redelivery suppression; existing same-key and V-1/V-4/V-6 oracles.
+- PC-3: remove chat identity from the Record key; recorded positive and seeded
+  negative variants, both pending qualification.
+- PC-4: remove chat identity from the Add key; seeded positive and recorded
+  negative variants, both pending qualification.
+- PC-5: omit migration index creation in Up or Down; both V-5 variants pending.
+- PC-6: overwrite original receipt offsets on replay; EF, both memory arguments
+  and broker-consumer variants pending.
 
 Mutation owns deliberate defects, red/restore/green and missing-control discovery.
-Candidate unbound pack directory: `docs/superpowers/mutations/`.
+Unbound candidate: `docs/superpowers/mutations/2026-10-14-card-1248-inbox-key-candidate.md`.
 
 ### Cost
 
-Estimated ordinary checkpoint floor: 35 minutes plus authoring and slot waits.
+Estimated table floor: 43 minutes plus authoring and slot waits, including the
+7-minute diagnostic CP-5 and 1-minute CP-6 added after inherited failures were observed.
 CP-1 is the required red-first diagnostic, rerun green with S2 if needed; CP-2
 qualifies the same complete affected classes plus adjacent monitoring/ingress.
 One run per committed group, `--row-timeout 40m --total-timeout 150m --serial`,
@@ -86,6 +108,15 @@ exact committed `--expected-source-sha`. The effective manifest rowMinutes is 40
 UseAppHost=false is the Linux checkpoint default. Tool bootstrap and CLI migration
 generation are disclosed auxiliary build-slot operations, not extra proof loops.
 No repetitions after green. Rerun only red rows after repairs.
+CP-5 runs only in the detached task-base checkout with ExpectedSourceSha equal to
+the recorded base. It is an explicitly disclosed failure-triage addition to the
+original four-row manifest, not another full assembly or Unit run. The same plan
+was copied to that checkout's ignored `.antiphon/c1248-baseline-plan.md` for the
+CP-4/CP-5 baseline diagnostics. The initial/final row timeout override is 40 minutes
+in request.json; no effective timeout was increased after a failure.
+CP-6 is a disclosed direct checkpoint-tool `row --no-build` call with strict base
+SHA/build provenance, selecting only the four later failures from CP-3's final
+partial log. It avoids another assembly build and does not rerun the whole lane.
 
 ### Checkpoints
 
@@ -95,3 +126,5 @@ No repetitions after green. Rerun only red rows after repairs.
 | CP-2 | S2 | `tests/Antiphon.Messaging.Tests -> bin-c1248-final/` | inbox-and-adjacent | `/*/*/(EfInboxReceiptStoreTests*)\|(InMemoryInboxReceiptStoreTests*)\|(InboxConversationMigrationTests*)\|(InboxConsumerServiceTests*)\|(GatewayTests*)\|(InboundUnconsumedMonitorTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, R-1, R-2 | all listed, 0 failed/skipped | 15 | 7 | `ANTIPHON_BROKER_TESTS=1` |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1248-unit/` | unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed/skipped | 1 | 20 | n/a |
 | CP-4 | S2 | CP-2 | messaging-unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed/skipped | 1 | 2 | n/a |
+| CP-5 | S3 | `tests/Antiphon.Tests -> bin-c1248-baseunit/` | inherited-unit-failures | `/*/*/(TestClassificationGuardTests*)\|(CheckpointImportTests*)\|(CheckpointLaunchCleanupTests*)\|(CheckpointProcessIdentityTests*)\|(CheckpointRunOwnershipTests*)\|(RerunPolicyTests*)\|(ShadowCopyTests*)/*` | R-3 | diagnostic baseline reproduction, report actual failures/skips | 17 | 7 | n/a |
+| CP-6 | S3 | CP-5 | inherited-late-failures | `/*/*/(TimeoutTests*)\|(RemoteScriptContractTests*)/(total_deadline_skips_a_queued_build_without_starting_it*)\|(total_deadline_kills_running_and_skips_queued*)\|(C1066_Fixture_npm_install_uses_argument_log_under_nounset*)` | R-3 | diagnostic baseline reproduction, all 4 failures reproduced | 4 | 1 | n/a |
