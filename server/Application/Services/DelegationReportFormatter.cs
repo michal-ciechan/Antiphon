@@ -218,8 +218,10 @@ public static class DelegationReportFormatter
                 + $"the desktop checkout {task.WorktreePath} is not reachable from here.");
             sb.AppendLine($"Commit on this branch only and push after every slice with "
                 + $"`git push origin HEAD:refs/heads/{task.WorktreeBranch}`.");
+            // Self-contained: a recovered session may predate git-common (CARD-1213 review dd8ce0cf F1).
             sb.AppendLine($"The branch is fast-forward-only from {task.WorktreeBaseSha}: never rebase, amend or reset "
-                + "a pushed commit, and never force-push; landing rebases onto the target itself.");
+                + "a pushed commit, and never force-push; landing rebases onto the target itself "
+                + "(git-common, when your instructions carry it, has the remaining git rules).");
             sb.AppendLine("If your brief asks you to rebase this branch, report blocked and say so.");
             sb.AppendLine($"Before your final message run `git ls-remote origin refs/heads/{task.WorktreeBranch}` "
                 + $"and include the line `[antiphon-progress:{task.Id:D} commit=<that sha>]`.");

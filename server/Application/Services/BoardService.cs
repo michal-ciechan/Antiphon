@@ -515,7 +515,10 @@ public sealed class BoardService
                 HasPrivateNotes = revision.Kind != CardRevisionKind.ContentEdit || revision.PrivateNotes is null ? null : revision.PrivateNotes.Length > 0,
                 CodeVerificationPolicy = revision.Kind == CardRevisionKind.ContentEdit ? revision.CodeVerificationPolicy : null,
                 ReviewVerificationPolicy = revision.Kind == CardRevisionKind.ContentEdit ? revision.ReviewVerificationPolicy : null,
-                RequiredPlatform = revision.Kind == CardRevisionKind.ContentEdit ? revision.RequiredPlatform : null };
+                RequiredPlatform = revision.Kind == CardRevisionKind.ContentEdit ? revision.RequiredPlatform : null,
+                RelatedCardId = revision.RelatedCardId,
+                RelatedCardIdentifier = revision.RelatedCardIdentifier,
+                RelationshipKind = revision.RelationshipKind };
     }
 
     internal async Task<Board> LoadBoardAsync(Guid id, CancellationToken ct)

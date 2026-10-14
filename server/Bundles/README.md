@@ -1,8 +1,10 @@
 # Instruction bundles
 
 Every `*.md` file beside this one is a named, versioned block of standing instructions that
-`InstructionBundleComposer` renders into an agent's `--append-system-prompt` at launch (CARD-0058,
-plan `docs/superpowers/specs/2026-08-16-card-0058-0059-0060-instruction-bundles.md`).
+`InstructionBundleComposer` renders into an agent's launch instructions (CARD-0058,
+plan `docs/superpowers/specs/2026-08-16-card-0058-0059-0060-instruction-bundles.md`). The carrier per
+provider is described in
+[Writing a brief](../../docs/orchestration-loop.md#3-writing-a-brief).
 
 **This file is the only one here that is not a bundle** — it is excluded from the embedded-resource
 glob in `Antiphon.Server.csproj`, and `InstructionBundleTests` pins the exact key set so an
@@ -16,13 +18,24 @@ accidentally-embedded file fails a test instead of reaching an agent.
 - The **key** is the filename without `.md`; the **version** is the first 8 hex digits of the
   SHA-256 of the LF-normalised text, rendered as `[bundle:<key> v<hash8>]` above the body. Editing a
   bundle changes its version automatically — there is nothing to bump by hand.
-- A change reaches an agent at its **next launch**. AlwaysOn agents are guaranteed one by
-  supervision; a fresh delegate gets it on dispatch; a warm pool delegate keeps what it launched with
-  until it retires (`PoolIdleRetireMinutes`, 60 min idle). Nothing types bundles into a live session;
-  instead a standing agent that is idle is relaunched with `--resume` and the new composition
-  (CARD-0334), keeping its conversation. `Agent.PolicyRefreshMode` picks the lane: `Auto` relaunches
-  when idle and past cooldown, `Relaunch` is the same but never falls back to Notify, `Notify` posts
-  a queued message describing the drift instead of killing the session, and `Off` does neither.
+- A change reaches an agent at a launch that composes the edited text. A fresh delegate gets it on
+  dispatch; a warm pool delegate keeps what it launched with until the pool retires it
+  (`Delegation:PoolIdleRetireMinutes`, configured default 60 idle minutes). Nothing types bundles
+  into a live session. For a standing agent with drift, `PolicyRefreshService.ActAsync`
+  (`server/Application/Services/PolicyRefreshService.cs`) applies its refusals and the Grok rules
+  preflight before `ResolveLane` picks Relaunch or Notify; `PrepareToActAsync` gates follow. Tested
+  outcomes:
+
+  | Case | Test (TUnit, Antiphon.Tests) | What it asserts |
+  |---|---|---|
+  | `Auto`, Claude Code, AlwaysOn, transcript bound, idle | `PolicyRefreshServiceTests.Drift_and_idle_kills_resumes_and_records_incident` | the old session is killed, the new start carries `--resume`, the new stamp is recorded and a `PolicyRefreshed` incident is raised |
+  | `Auto`, Codex | `PolicyRefreshServiceTests.Codex_is_Notify_not_a_kill` | no kill; one `PolicyDriftNotified` incident; the queued message says the change applies at the next launch |
+  | `Auto`, transcript not bound | `PolicyRefreshServiceTests.Unbound_transcript_is_Notify_not_a_kill` | no kill; a `PolicyDriftNotified` incident and no `PolicyRefreshed` |
+  | `Off` | `PolicyRefreshServiceTests.Off_mode_is_neither_lane` | the sweep acts on no agent and kills nothing; a forced refresh is refused with the not-resumable code |
+  | Herdr pane with no stamp | `PolicyRefreshServiceTests.Herdr_null_stamp_does_nothing` | the sweep acts on no agent; no kill and no incident |
+  | Session Working | `PolicyRefreshServiceTests.Working_is_skipped` | the sweep acts on no agent; no kill and no `PolicyRefreshed` |
+  | Grok drift with no rules-file receipt, or with the rules payload removed | `PolicyRefreshServiceTests.Grok_legacy_policy_drift_refuses_before_kill_queue_or_stamp_mutation` | a forced refresh is refused `grok_rules_legacy_resume_requires_fresh_start` or `grok_rules_removal_requires_fresh_start`; no kill, no submitted body, no new session, stamps unchanged |
+  | `Relaunch`, relaunch not eligible | not covered by a test | `ResolveLane` returns Notify |
 - Never write `{agentName}` or `{channels}` into a bundle: `ChannelPreamble.Render` substitutes those
   over the whole composed append, so they would be replaced inside the bundle text too. A test pins
   this.
@@ -52,6 +65,9 @@ InstructionBundleTests (C1213_*); the checkpoint rows are CP-9 and CP-10 of
 orchestrator carry git-common once (C1213_RoleCompositionsResolve). git-common says stage rules may
 narrow it, never widen it: Review's read-only INVARIANTS come first in its composition and still
 govern (C1213_ReviewOverrideFollowsFragment).
+
+Brief rules for git-common live in [Writing a brief](../../docs/orchestration-loop.md#3-writing-a-brief);
+the two branch forms are in [Delegate branch names](../../docs/orchestration-loop.md#delegate-branch-names-card-1213).
 
 ## Which agent carries which bundle
 

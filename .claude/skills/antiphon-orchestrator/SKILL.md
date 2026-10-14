@@ -80,15 +80,25 @@ Goal text always goes through a file (`Write` a scratchpad `.md`, then `Get-Cont
 `-Goal`), never inline through Bash — long text with quotes/backticks/newlines gets mangled
 otherwise.
 
-## 2. The "branched from HEAD" warning is usually expected, not a bug
+## 2. A delegate's base is chosen at dispatch; it stays on its own branch
 
-A fresh `-Worktree` dispatch for a non-Code role branches from current master HEAD, not the card's
-actual kept sibling branch — this is by design (CARD-0538/CARD-0215), not something to fix per
-dispatch. The fix is upstream: your goal text should already tell the agent which branch/commit to
-fetch and checkout first ("fetch/checkout feat/card-task-XXXX before starting, it has N commits").
-When you see the warning fire anyway, check whether your goal already covers it — if so, it's
-harmless and self-corrects; verify by checking the task's later transcript shows it checked out
-the right branch.
+A fresh `-Worktree` task works on its own recorded `WorktreeBranch`; git-common forbids switching
+branches, and a branch under Review is frozen. Do not tell a delegate to fetch or check out a
+sibling's branch. To continue a sibling's work, select the sibling's tip as the creation base:
+`-StartRef <full SHA>` (owner: Continuing a sibling's work (CARD-0613) in
+`docs/orchestration-loop.md`). Without `-StartRef`, dispatch selects the base from the card's kept
+siblings; outcomes include continuing one, taking the target, refusing and holding. Tested cases are in the table
+below; read a refusal's code and message before re-dispatching. When a brief names
+a branch, copy the sibling task's recorded `WorktreeBranch` (`feat/card-<n>-<stage>-<id>` or
+`feat/card-task-<id>`) rather than rebuilding it from the task id.
+
+| Behaviour | Test (TUnit, Antiphon.Tests) | What it asserts |
+|---|---|---|
+| `-StartRef` cuts a new branch at the requested base | `WorktreeStartRefDispatchTests.C613_StartRefCreatesOwnBranchAndBaseline` | for a branch, tag or full SHA: HEAD is the source SHA, the branch is the new task's own `feat/card-task-<id>`, and the source checkout keeps its branch and HEAD |
+| One clean same-card kept sibling, Review created without `-StartRef` | `AgentTaskDispatchBaseGuardTests.retained_real_create_continues_clean_same_card_tip` | the new checkout HEAD and `WorktreeBaseSha` equal the sibling SHA; master is unchanged |
+| Two divergent same-card kept siblings | `AgentTaskDispatchBaseGuardTests.retained_divergent_create_refuses_and_both_recovery_modes_work` | create is refused `worktree_base_ambiguous`, naming both tasks, `-BaseTask` and `-FreshWorktree`, and no task is added; with `WorktreeBaseTask` it continues the named sibling; with `FreshWorktree` it takes the target |
+| A kept sibling whose land is in flight | `AgentTaskDispatchBaseGuardTests.a_sibling_land_in_flight_holds_until_the_base_contains_it` | the task stays Queued with no checkout and one Held event naming the sibling; after the land completes it dispatches |
+| Delegates receive the assigned-branch-only and frozen-Review rules | `InstructionBundleTests.C1213_GitContractPins` | Code, Review, Mutation and orchestrator compositions carry each git-common sentence once |
 
 ## 3. Checks: read the digest, act only when something changed
 
@@ -101,29 +111,24 @@ intervene when:
   transcript tail is byte-identical across 2+ checks with growing idle time and zero new tool
   calls). A stall is a detection state, never grounds for an automatic kill on its own — decide,
   don't reflexively cancel.
-- **The "report-format stall" pattern** (see §6) — the task finished real work and committed it,
-  but ended its turn with plain text instead of the structured completion block, so it never
-  settles. This is common enough tonight (3+ times) that it's its own pattern, not a one-off.
+- **A report without its handoff block or token** (see §4): read the task status first; a
+  report with its token has settled.
 
-## 4. When a report doesn't settle: nudge once, then read the artifact yourself
+## 4. A report without its handoff block or report token
 
-A recurring failure mode: a delegate finishes its actual work (writes a doc, commits, pushes),
-narrates a plain-English summary, and ends its turn (`TurnEnd`) without the literal
-`--- next stage ---` block the harness needs to mark the task `Succeeded`. The task sits
-`Dispatched` indefinitely even though the deliverable is already safely on `origin/master`.
+The report token (`[antiphon-report:<id> done|blocked|failed]`) settles a task; the
+`--- next stage ---` block only sets `next=`. A report with the token and no block settles, and its
+completion header says `next=unmarked`. A turn that ends with neither is handled by the delivery
+watchdog: it nudges for the closing line, then settles the task or blocks it as unmarked waiting. Read the task's
+status and stored report before acting; do not cancel a settled task. For `next=unmarked`, read the
+report or its artifact and dispatch the next stage yourself.
 
-1. `-Refine` once, explicitly asking for the exact format: "end your turn with the required report
-   — brief summary, then a literal '--- next stage ---' block with 'next: <role>' and a
-   'handoff:' line."
-2. If that also produces plain text with no structured block (check the task's status again after
-   a few minutes — don't wait 20+ minutes hoping), **cancel the task** and **read the artifact
-   file directly** (`git fetch origin master`, `git show origin/master:<path>`) to find its own
-   `--- next stage ---` block, which the file itself usually does contain even when the chat
-   report didn't. Dispatch the next stage from that. Don't keep waiting or re-refining past one
-   attempt — it wastes real wall-clock time for no benefit once the pattern is confirmed.
-
-This was frequent enough on `fable`-tier ClaudeCode dispatches to be worth flagging as its own
-process-bug card if it recurs in a fresh session (see CARD-0551 in this project's history).
+| Behaviour | Test (TUnit, Antiphon.Tests) | What it asserts |
+|---|---|---|
+| A stage report with the token and no block settles | `AgentTaskReplyIntegrationTests.a_stage_role_without_the_block_gets_next_unmarked` | status Succeeded; the completion note contains `next=unmarked` |
+| A missing block parses as not found | `PipelineHandoffParseTests.a_missing_block_is_not_found` | a `done` report with no block: `Found` false, header bit `unmarked` for a stage role |
+| An untokened reply after a delivered nudge settles | `AgentTaskDeliveryWatchdogTests.an_unmarked_reply_after_a_delivered_nudge_settles_unmarked_after_nudge` | status Succeeded, evidence `UnmarkedAfterNudge`, the reply is the result |
+| An untokened idle session past the waiting clock blocks | `AgentTaskDeliveryWatchdogTests.an_unmarked_idle_after_the_waiting_clock_blocks_unmarked_waiting` | status Blocked, evidence `UnmarkedWaiting`, the session stays Running |
 
 ## 5. API quirks to route around, not fight
 
@@ -145,28 +150,43 @@ process-bug card if it recurs in a fresh session (see CARD-0551 in this project'
 - Cancel needs the **full GUID**, not the short id the chat notifications use — `GET
   /api/agent-tasks/{shortid}` first to resolve it, then `POST /api/agent-tasks/{full-guid}/cancel`.
 
-## 6. Landing: verify the actual branch holder, not just the "original owner"
+## 6. Landing: the original Code owner lands; the reviewed source is named separately
 
-A card can go through several fix/review rounds, each on its own fresh branch. The "original Code
-owner" task recorded on the card is often stale — its own branch stops at an early round, while
-the actually-reviewed, approved commit lives on a later round's branch. Before calling `-Land`:
+A card can go through several repair rounds, each on its own branch. The landing owner stays the
+original Code/Worktree task; a newer reviewed tip on another task's branch does not replace it.
+Owner: the Reviewed owner recovery table (CARD-0753) and
+[RepairSource succeeded; owner Failed](../../../docs/orchestration-loop.md#repairsource-failed-owner-recovery)
+in `docs/orchestration-loop.md`.
 
-1. `GET /api/agent-tasks/{candidate-task-id}` for both the recorded owner and the most recent
-   round's task; compare `worktreeBranch` and whether it actually contains the reviewed SHA.
-2. Land against whichever task's branch genuinely holds the tip, not just whichever id was
-   originally recorded as "owner."
-3. A `Conflicted` outcome (master moved since the branch's base) usually auto-spawns a `Merge`-role
+1. Ordinary: `-Land <owner> -ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>`, the Review's
+   `subjectTaskId` being the owner.
+2. The reviewed tip is on another task's branch (a `-StartRef` repair): `-Land <owner> -FromTask <source>
+   -ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>`, the Review's `subjectTaskId` being the source.
+3. The reviewed tip is on the owner's own branch and the owner settled Failed or Blocked: the
+   ordinary flags plus `-RecoverReviewedSource`. Use `-FromTask` or `-RecoverReviewedSource`, not both.
+4. A `-RepairSource` task is not a landing owner; its land is refused with
+   `repair_source_landing_owner_required`, naming the owner recipe.
+5. A `Conflicted` outcome (master moved since the branch's base) usually auto-spawns a `Merge`-role
    task to resolve it — check for one (`role=Merge`, `status=Dispatched`) before manually retrying;
    don't duplicate it.
-4. After a confirmed `Landed` outcome: `git fetch origin master` in the canonical checkout to
-   confirm the SHA, `restart-apphost.ps1 -ExpectedServerSha <sha>`, confirm healthy, **then**
-   close the card with a reason summarizing the whole stage history (defects found, how fixed,
-   final verified counts) — this is the last thing anyone reads about the card.
-5. A stale `.git/index.lock` holds the land as `git_index_lock_stale` or
+6. After a confirmed `Landed` outcome: advance the canonical checkout to the landed SHA (`git pull
+   --rebase` there; `git fetch` alone moves no local HEAD), then `restart-apphost.ps1
+   -ExpectedServerSha <sha>`, which refuses with exit 3 when that SHA is not the checkout HEAD, and
+   follow the Post-land server activation check (CARD-0495) in `docs/orchestration-loop.md`.
+   **Then** close the card with a reason summarizing the whole stage history (defects found, how
+   fixed, final verified counts) — this is the last thing anyone reads about the card.
+7. A stale `.git/index.lock` holds the land as `git_index_lock_stale` or
    `git_index_lock_held` (path and `Remove-Item` in the hold/`-Status` `Reason:`
    detail) instead of `target_advance_failed`. Confirm with `Get-Process git` that
    nothing older than the lock is running, then `Remove-Item` that path; the 5 s
    sweep resumes the land. Do not delete a lock a live git process still owns.
+
+| Behaviour | Test (TUnit, Antiphon.Tests) | What it asserts |
+|---|---|---|
+| A RepairSource task's land is refused and names the owner route | `RepairSourceLandRefusalTests.C603_RepairLandRefusalNamesReviewedOwnerRecovery` | 409 `repair_source_landing_owner_required`; the message names `-Land <owner>`, `subjectTaskId`, `-ExpectedSourceSha`, `-ReviewEvidenceId` and `-RecoverReviewedSource`; no land request is queued |
+| Adoption requires a Review of the source | `AgentTaskLandApprovalRequestTests.C788_AdoptionSubjectMismatchNamesSourceAndFlag` | an owner-subject Review with `AdoptFromTaskId` is refused `review_evidence_subject_mismatch`, naming `-FromTask <source>` |
+| A Failed owner lands its reviewed repaired tip | `RepairSourceRecoveryLandingTests.C603_FailedOwnerLandsReviewedRepairedTip` | with `RecoverReviewedSource` and an owner-subject Review the request queues and completes with recovery mode `OwnerReviewedSource`, recording owner status Failed |
+| `-FromTask` with `-RecoverReviewedSource` is refused | not covered by a test | `AgentTaskLandService` refuses `recovery_source_ambiguous`; `delegate.ps1` refuses before the request |
 
 ## 7. Mutation is post-land, throttled, and (as of CARD-0552) trackable
 
