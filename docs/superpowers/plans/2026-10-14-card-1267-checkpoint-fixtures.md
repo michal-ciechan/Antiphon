@@ -46,6 +46,7 @@ environment guard only for a dependency genuinely unavailable on the runner imag
 | CP-5 | S1 | CP-1 | row-runner | `/*/*/RowRunnerTests/*` | R-1 | all 13 passed | 13 | 2 | false | n/a |
 | CP-6 | S1 | CP-1 | scheduler | `/*/*/RunSchedulerTests/*` | R-1 | all 15 passed | 15 | 2 | false | n/a |
 | CP-7 | S1 | CP-1 | rerun-host | `/*/*/RerunFilterHostTests/*` | R-1 | 1 passed | 1 | 2 | false | n/a |
+| CP-8 | S2 | CP-1 | timeout-linux | `/*/*/TimeoutTests/(total_deadline_skips_a_queued_build_without_starting_it*)|(total_deadline_kills_running_and_skips_queued*)|(row_deadline_marks_timeout_without_global_driver_kill*)|(row_deadline_is_max_15_or_3x_estimate*)` | V-3 | exactly the 4 Linux methods passed, 0 failed/skipped | 4 | 2 | false | n/a |
 
 Import this table to an ignored manifest and set `timeouts.rowMinutes: 40`. Run all rows
 at S1 (baseline) and again after the final repair slice, with the exact committed
@@ -57,6 +58,13 @@ Remove only this task's literal output roots after their drivers exit.
 CP-4 originally said Min 8. The tool counts `executed` without skipped cases, so the first
 final run returned exit 3 for that row alone while all 4 Linux cases passed; Min is 4 and
 only CP-4 is rerun.
+
+Receipt qualification: the first final run kept its outputs after that exit 3, so both
+validators refuse it (`cleanup_refused`); CP-4 alone cannot qualify on Linux because its four
+Windows-only skips fail the zero-skip rule (`row_failed`). CP-8 (added at S2) selects the
+four Linux methods of the same class by exact name, and CP-1 to CP-3, CP-5 to CP-7 and CP-8
+run once more at the final commit for a clean, SHA-validated receipt. CP-4 stays the
+full-class witness.
 
 ### Cost
 
