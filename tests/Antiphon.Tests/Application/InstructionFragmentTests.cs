@@ -274,8 +274,8 @@ public class InstructionFragmentTests
 }
 
 /// <summary>
-/// CARD-1213: what a shipped bundle looks like inside a composition. The placeholder becomes the
-/// fragment's header and text at its first use and the see-above line afterwards.
+/// CARD-1213: what a shipped bundle looks like inside a composition when it holds the first
+/// placeholder: the fragment's header and text replace it.
 /// </summary>
 internal static class C1213Expected
 {
@@ -284,10 +284,5 @@ internal static class C1213Expected
     public static string FirstUse(string bundleText) =>
         bundleText.Contains(Placeholder, StringComparison.Ordinal)
             ? bundleText.Replace(Placeholder, InstructionFragments.Get(InstructionFragments.GitCommon).Render(), StringComparison.Ordinal)
-            : bundleText;
-
-    public static string LaterUse(string bundleText) =>
-        bundleText.Contains(Placeholder, StringComparison.Ordinal)
-            ? bundleText.Replace(Placeholder, InstructionFragments.Get(InstructionFragments.GitCommon).SeeAbove, StringComparison.Ordinal)
             : bundleText;
 }

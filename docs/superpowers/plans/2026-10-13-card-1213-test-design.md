@@ -389,14 +389,23 @@ Brief-directed grammar: a `{{` that does not open a well-formed known placeholde
 (malformed: one-character name, lowercase, underscore, 33-character name, unterminated, nested,
 inner space); a well-formed unknown name throws (unknown). C1213_ExpansionScope carries those rows;
 the operator append and the brief stay literal.
-D-8 placement: stage-review is 2,475 of its 2,500-character cap and every other line is pinned
-verbatim (TaskPlatformGuidanceTests, C1015), so stage-review gains only `{{GIT-COMMON}}` before its
-INVARIANTS line (2,490) and the subject-branch restriction is a git-common sentence that Review
-reads first (C1213_ReviewOverrideFollowsFragment, C1213_StageExceptionsRemain).
+D-8/T24 placement (needs caller acceptance): stage-review is 2,475 characters,
+TaskPlatformGuidanceTests.Stage_bundles_leave_twenty_characters_below_the_size_cap pins it at
+2,480 and every line is pinned verbatim (TaskPlatformGuidanceTests, C1015), so stage-review cannot
+hold the 14-character placeholder without loosening a pin (measured: 2,490 failed that pin in run
+20261013-235330-212b). stage-review is unchanged; delegate-basics alone carries `{{GIT-COMMON}}`.
+In the production Review order the read-only INVARIANTS therefore precede git-common, inverting
+PC-56's index oracle. git-common's INVARIANTS line says stage rules may narrow it, never widen it,
+and it carries the subject-branch freeze; C1213_ReviewOverrideFollowsFragment (name kept) pins
+override-in-stage, fragment-in-basics, that precedence line and the freeze sentence.
+git-common says "frozen", not "read-only": DelegateBundleLaunchTests.C470 forbids "read-only" in
+every Codex -c value of a Mutation launch (run 20261013-235330-212b).
+the_style_block_lands_after_the_bundles_and_the_agents_own_append_lands_last pins the exact stamp
+list; it gains the git-common stamp (D-5: fragment versions join Stamps).
 Budget: the orchestrator worst case (the_worst_case_composition_measured_sits_far_under_the_budget)
 had 243 characters of headroom, so delegate-basics replaces its git sentences (commit/push slice,
 evidence-diff, commit before a long run) with the placeholder and shortens unpinned wording, 7,084 to
-5,997 characters, for a 1,163-character fragment plus one orchestrator sentence.
+5,997 characters, for a 1,161-character fragment plus one orchestrator sentence.
 
 Closed ordinary scope below replaces parent §6's provisional execution list. Build each row to its own isolated OutputPath; no build reuse is assumed. Use the checkpoint tool through the host build-slot gate, one run per committed slice group, and wait to a terminal exit (75 means still running). The exact command shape is `pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1213-checkpoints -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1213-tool/ -- run --plan docs/superpowers/plans/2026-10-13-card-1213-test-design.md --after S1 --expected-source-sha <committed-sha>`; substitute S2/S3. Tool bootstrap is included in setup below; row builds take their own slots. Record unedited CP lines, counts, full SHA, clean source/build receipts. Exit 4 is not-run; zero tests is wrong selection. No hand-run build, test or widened filter. Remove only the producer-owned bin-c1213-cpN/ and bin-c1213-tool/ outputs after their runs.
 

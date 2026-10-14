@@ -48,9 +48,10 @@ exercise each rule are InstructionFragmentTests, plus the shipped-composition pi
 InstructionBundleTests (C1213_*); the checkpoint rows are CP-9 and CP-10 of
 `docs/superpowers/plans/2026-10-13-card-1213-test-design.md`.
 
-`delegate-basics` and `stage-review` carry `{{GIT-COMMON}}`; Review's copy sits before its read-only
-INVARIANTS so the override follows the shared rules. Every non-specialist delegate role and the
-orchestrator therefore carry git-common once (C1213_RoleCompositionsResolve).
+`delegate-basics` carries `{{GIT-COMMON}}`, so every non-specialist delegate role and the
+orchestrator carry git-common once (C1213_RoleCompositionsResolve). git-common says stage rules may
+narrow it, never widen it: Review's read-only INVARIANTS come first in its composition and still
+govern (C1213_ReviewOverrideFollowsFragment).
 
 ## Which agent carries which bundle
 
