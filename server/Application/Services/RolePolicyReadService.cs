@@ -13,6 +13,10 @@ public sealed class RolePolicyReadService
     public const string SourcePin = "pin";
     public const string SourceRolePolicy = "rolePolicy";
 
+    // Compile-only scaffold for CP-10; Row retains its existing behavior until extraction.
+    public static PolicyResolution PolicyTarget(DelegationSettings settings, AgentTaskRole role) =>
+        new(null, null, null, null);
+
     private readonly DelegationSettings _settings;
     private readonly RoutingPinService _pins;
 
