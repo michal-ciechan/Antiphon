@@ -27,12 +27,15 @@ V-3: `Later_failure_restores_nudges_or_questions_and_all_parents` (4 cases): exa
 failure after card deletion; fresh context proves dependents, parents and owner links restored.
 V-4: `Restrictive_task_history_survives_while_card_cleanup_is_removed` (2 cases): actual
 restrictive rows survive with their task, while card cleanup endpoint/target/generation/revision
-are removed in order. `Restrictive_foreign_key_inventory_requires_an_explicit_deletion_probe`+compares the EF model against a hand-written 15-link inventory.
+are removed in order. `Restrictive_foreign_key_inventory_requires_an_explicit_deletion_probe`
+compares the EF model against a hand-written 15-link inventory.
 R-1: Full `ProjectDeletionTests` (20), including existing workflow refusal, last-board workflow
 preservation, confirmation, agent detachment, session and CARD-1244 cleanup/rollback cases.
 R-2: Full `BoardProjectArchiveApiTests` (2) and `CardFilePrivacyOwnershipAcceptanceTests` (16).
 R-3: Whole Unit lane required by the Final profile and stage instructions (the narrow brief
 also says no whole Unit; the higher-priority Final requirement governs). No full assembly run.
+R-4: Full `SessionStateWarmupTests` (16) and `CardFileBoardLookupTests` (45), discovered by
+the delete-path caller audit: committed/rolled-back session projection and board lookup invalidation.
 Manual M-1: inspect the complete model snapshot for every Restrict/NoAction link into Card,
 CardComment, CardRevision, AgentSession, AgentTask, Board and Project. Confirm the runtime
 inventory matches it. M-2: evidence-policy diff, pushed-ref equality, clean tree, merge-tree.
@@ -77,7 +80,7 @@ All pending SourceLanding Mutation; candidate artifacts belong under docs/superp
 ### Cost
 
 One build per committed source group, shared by all its rows. Expected 8 minutes for red S1,
-18 minutes for final S2, plus authoring, receipts and review preparation. No repetition after green.
+21 minutes for final S2, plus authoring, receipts and review preparation. No repetition after green.
 The checkpoint tool bootstrap is the only planned unlisted build and takes a build slot.
 
 ### Checkpoints
@@ -87,6 +90,7 @@ The checkpoint tool bootstrap is the only planned unlisted build and takes a bui
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1253/` | cascade-fks | `/*/*/(ProjectCascadeForeignKeyTests*)/*` | V-1, V-2, V-3, V-4 | all 11 cases, 0 failed/skipped; S1 first run intentionally red | 11 | 8 |
 | CP-2 | S2 | CP-1 | deletion-regressions | `/*/*/(ProjectDeletionTests*)\|(BoardProjectArchiveApiTests*)\|(CardFilePrivacyOwnershipAcceptanceTests*)/*` | R-1, R-2 | all 38 cases, 0 failed/skipped | 38 | 3 |
 | CP-3 | S2 | CP-1 | unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed/skipped | 1 | 7 |
+| CP-4 | S2 | CP-1 | deletion-consumers | `/*/*/(SessionStateWarmupTests*)\|(CardFileBoardLookupTests*)/*` | R-4 | all 61 cases, 0 failed/skipped | 61 | 3 |
 
 S1 runs CP-1 by explicit row selection before the S2 implementation; S2 reruns the same row
-and runs CP-2/CP-3 once. Outputs from red S1 are removed before the final fresh build.
+and runs CP-2/CP-3/CP-4 once. Outputs from red S1 are removed before the final fresh build.

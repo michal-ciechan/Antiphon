@@ -129,6 +129,16 @@ public static class ProjectCascade
                 .Where(t => cardIds.Contains(t.Cleanup.CardId))
                 .ExecuteDeleteAsync(ct);
             await db.CardWorktreeCleanups.Where(c => cardIds.Contains(c.CardId)).ExecuteDeleteAsync(ct);
+            // Watchdog audits restrict comment deletion. Select through the actual comment FK:
+            // the nudge's destination session can belong to another board or project.
+            var commentIds = db.CardComments.Where(c => cardIds.Contains(c.CardId)).Select(c => c.Id);
+            await db.ExpectationNudges.Where(n => commentIds.Contains(n.AuditCommentId)).ExecuteDeleteAsync(ct);
+            // Decision answers restrict session deletion even when their task survives elsewhere.
+            // Both leaf deletes share the caller's transaction with the parent deletes below.
+            var sessionIds = db.AgentSessions
+                .Where(s => s.CardId != null && cardIds.Contains(s.CardId.Value)).Select(s => s.Id);
+            await db.AgentTaskDecisionQuestions
+                .Where(q => sessionIds.Contains(q.AgentSessionId)).ExecuteDeleteAsync(ct);
             // Transcript entries and queued messages have a real ON DELETE CASCADE from the
             // session, so the database clears them as these rows go.
             await db.AgentSessions
