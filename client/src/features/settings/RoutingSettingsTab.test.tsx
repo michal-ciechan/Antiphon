@@ -350,7 +350,8 @@ describe('RoutingSettingsTab', () => {
     if (reason) expect(cell).toHaveTextContent(reason)
     if (candidates.length > 0) {
       expect(cell).not.toHaveTextContent('not launchable')
-      expect(within(cell).getByText('candidateText' in row ? row.candidateText : '')).toBeInTheDocument()
+      if (!row.candidateText) throw new Error('Candidate case needs a literal text expectation')
+      expect(within(cell).getByText(row.candidateText)).toBeInTheDocument()
     }
     if (reason?.includes('read failed')) expect(within(cell).getByRole('alert')).toHaveTextContent(reason)
   })
