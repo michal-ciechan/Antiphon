@@ -1,5 +1,8 @@
 # Record WHICH agent/model a card+stage (or a whole stage) must run on, without composing HTTP by
 # hand. A pin is read by the NEXT create; it does not rewrite work that is already Queued.
+# For a role-wide candidate change, use complexity-chain.ps1 set -Role <role> -Complexity All.
+# Its -ClearStagePin switch removes the stage pin after the three cell writes succeed.
+# Keep this script for card pins, forbid lists, dates and standing-agent pins.
 #
 # ASCII-only on purpose: agent/ops scripts must parse under Windows PowerShell 5.1, which reads a
 # no-BOM .ps1 as CP1252 and mangles non-ASCII characters.
