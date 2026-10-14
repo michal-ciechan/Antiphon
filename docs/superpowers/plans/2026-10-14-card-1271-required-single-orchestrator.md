@@ -137,3 +137,35 @@ filters, and their counts match the Min column. The tool reported `unlisted: non
 only unlisted build was the planned tool bootstrap (`build-slot.ps1`, label `c1271-tool`,
 slot granted after 45s). The whole Unit lane was not run, per the brief, so that
 disclosure stays open.
+
+### D-1 repair evidence (Code task 7551b8d4)
+
+The checkpoint tool ran every row at commit `7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4` (V-4 test, rebound PC-3, corrected docs). Run `20261014-230418-12cf` used `--serial` and `--total-timeout 150m`, with rowMinutes, totalMinutes and per-row timeoutMinutes 40/150/40 in the ignored manifest, and no `--keep-outputs`:
+
+```
+CHECKPOINT CP-1 commit=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 build=ok filter=/*/*/RequiredSingleCandidateRefusalTests/* executed=6 passed=6 failed=0 skipped=0 trx=/work/worktrees/task-7551b8d4/.antiphon/checkpoints/20261014-230418-12cf/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 sourceState=clean buildSource=verified
+CHECKPOINT CP-2 commit=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 build=reused filter=/*/*/RoutingPinCandidateCreateTests/* executed=17 passed=17 failed=0 skipped=0 trx=/work/worktrees/task-7551b8d4/.antiphon/checkpoints/20261014-230418-12cf/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 sourceState=clean buildSource=verified
+CHECKPOINT CP-3 commit=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 build=reused filter=/*/*/ComplexityCreateTests/* executed=14 passed=14 failed=0 skipped=0 trx=/work/worktrees/task-7551b8d4/.antiphon/checkpoints/20261014-230418-12cf/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 sourceState=clean buildSource=verified
+CHECKPOINT CP-4 commit=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 build=reused filter=/*/*/MatrixDefaultComplexityCreateTests/* executed=34 passed=34 failed=0 skipped=0 trx=/work/worktrees/task-7551b8d4/.antiphon/checkpoints/20261014-230418-12cf/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 sourceState=clean buildSource=verified
+CHECKPOINT CP-5 commit=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 build=reused filter=/*/*/ComplexityRoutingWalkTests/* executed=8 passed=8 failed=0 skipped=0 trx=/work/worktrees/task-7551b8d4/.antiphon/checkpoints/20261014-230418-12cf/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 sourceState=clean buildSource=verified
+CHECKPOINT CP-6 commit=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 build=reused filter=/*/*/AgentTaskAgentKindTests/* executed=26 passed=26 failed=0 skipped=0 trx=/work/worktrees/task-7551b8d4/.antiphon/checkpoints/20261014-230418-12cf/rows/CP-6/run.trx slot=granted waited=0s dirty=0 source=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 sourceState=clean buildSource=verified
+```
+
+The run reported `unlisted: none`, builds 1, verdict GREEN exit=0 and `outputs: deleted bin-c1271/`.
+The CP-1 TRX names all six methods, including
+`An_orchestrator_with_complexity_over_one_held_claude_row_is_409_model_disabled`. Both validators,
+`scripts/validate-checkpoint-receipt.ps1` and the tool's `validate`, accept the receipt (exit 0,
+`CHECKPOINT SOURCE VALID source=7a5e5a8be95974c2bf3a470e3ab2b0c264f815b4 rows=6`).
+
+Two unlisted runs went through `build-slot.ps1`:
+
+- `c1271r-tool`: the tool bootstrap into `tools/Antiphon.Checkpoints/bin-c1271r-tool/`, since deleted.
+- `c1271r-pc3-demo`: one scratch PC-3 demonstration required by the repair brief. It ran in a
+  detached worktree at `7a5e5a8be` with the arm condition changed to
+  `request.Kind == AgentTaskKind.Orchestrator || !AdmitsKind(...)`, built into `bin-c1271pc3/`, with
+  the filter `/*/*/RequiredSingleCandidateRefusalTests/*`. Result: total 6, failed 1, succeeded 5. The one
+  failure was V-4: it expected `ModelDisabledException` but `RoutingExhaustedException` was thrown. V-2 stayed green under the
+  mutant, which confirms D-1. Both the mutant and the scratch worktree were removed, and nothing was committed.
+  This demonstration does not discharge PC-3. Every PC stays pending for SourceLanding Mutation.
+
+The whole Unit lane was not run, per the brief, so that disclosure stays open.
