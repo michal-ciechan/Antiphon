@@ -1,4 +1,4 @@
-# CARD-1234 role policy rejects kinds and levels delegation cannot use
+# CARD-1234 role policy: unlaunchable kinds and undefined levels
 
 Code task 47b93e01. Base: `42974ae069440f0aee9d7b446b1b11f0f1dbf105` (origin/master at start).
 
@@ -11,8 +11,8 @@ Code task 47b93e01. Base: `42974ae069440f0aee9d7b446b1b11f0f1dbf105` (origin/mas
 - **S2, server.** `DelegationSettingsValidator` rejects `Delegation:RolePolicy:<Role>:Kind` outside
   `AgentTaskService.DelegatableKinds` (Raw, OpenCode, undefined) and an undefined
   `Level`/`EscalateTo`/`Delegation:DefaultLevel`, one literal message each.
-  `AgentTaskService.ResolveLevel` refuses an undefined policy or default level with 422
-  `role_policy_level_invalid` (field `RolePolicy`) before the orchestrator floor;
+  `AgentTaskService.ResolveLevel`, given no explicit level, refuses an undefined policy or default
+  level with 422 `role_policy_level_invalid` (field `RolePolicy`) before the orchestrator floor;
   `ResolveAgentKind` gives a policy-sourced unsupported kind the code `role_policy_kind_unsupported`
   (field and message unchanged). `GET /api/role-policy` wire shapes are unchanged.
 - **S3, client.** `DelegateModal` reads `effective.modelLevel` for both sources, so a withheld
@@ -43,10 +43,10 @@ Code task 47b93e01. Base: `42974ae069440f0aee9d7b446b1b11f0f1dbf105` (origin/mas
   `AgentTaskAgentKindTests`, `RolePolicyToolBundleDispatchTests`, the validator-calling classes, and
   the existing DelegateModal/ProjectSetupModal cases (CARD-0097 V16-V18, V27, V30).
 
-Intended red at S1: V-1 8 rows, V-3, V-5 5 rows (master creates at 999 or refuses with
-`validation_failed`), V-7 (master clamps to High), V-8 (master shows the row's High), V-9 3 rows
-(master prints `default 999 tier.` or `default High tier.`). Controls V-2, V-4, V-6 and the Medium
-row of V-9 stay green.
+Intended red at S1: V-1 8 rows, V-3, V-5 5 rows (in CP-1 master answered 400 for the level rows and
+422 `validation_failed` for the kind rows), V-7 (master clamps to High), V-8 (master shows the
+row's High), V-9 3 rows (master prints `default 999 tier.` or `default High tier.`). Controls
+V-2, V-4, V-6 and the Medium row of V-9 stay green.
 
 PCs (pending, SourceLanding Mutation): PC-1 drop the Kind check (V-1 kind rows, V-3); PC-2 drop
 the Level check (V-1 level rows); PC-3 drop the EscalateTo check; PC-4 drop the DefaultLevel check;
@@ -71,7 +71,7 @@ manifest imported from this table with `timeouts.rowMinutes: 40` (the build dead
 `--rows CP-1,CP-2` at the S1 commit, `--rows CP-3,CP-4,CP-5,CP-6,CP-7` at the S3 commit. Not run:
 the whole Unit lane (excluded by the brief), the E2E callers of `ResolveLevel`
 (`DelegationSequencingE2ETests`, `DelegationPipelineE2ETests`; shipped settings, which V-2
-`shipped` proves valid).
+`shipped` validates).
 
 ### Cost
 

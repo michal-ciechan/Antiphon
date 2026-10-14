@@ -11,7 +11,7 @@ CHECKPOINT CP-1 commit=a21113e4e4e8dde93ac8af3a1a10ea9a82ba09b4 build=ok filter=
 PHASES CP-1 slotWait=30s build=655.0855101s startup=134.1207435s testsWall=10.6381224s teardown=22.1790086s hostWall=166.9378805s
 ```
 
-CP-1: 15 failed exactly as designed (V-1 8 rows, V-3, V-5 5 rows, V-7); 14 controls passed. On master a policy or default level of 999 answered 400 (not 422); the cause was not traced (probably the response body cannot serialise level 999, which the string-only enum converter refuses). Policy kinds Raw/OpenCode/999 answered 422 `validation_failed`. CP-2: `Tests 4 failed | 31 passed (35)` - V-8 (master showed the row's High) and V-9 undefined/null (`default High tier.`) and 999 (`default 999 tier.`); `CLIENT TESTS EXIT CODE: 1`.
+CP-1: 15 failed exactly as designed (V-1 8 rows, V-3, V-5 5 rows, V-7); 14 controls passed. On master a policy or default level of 999 answered 400 (not 422); the cause was not traced in this task. Policy kinds Raw/OpenCode/999 answered 422 `validation_failed`. CP-2: `Tests 4 failed | 31 passed (35)` - V-8 (master showed the row's High) and V-9 undefined/null (`default High tier.`) and 999 (`default 999 tier.`); `CLIENT TESTS EXIT CODE: 1`.
 
 ## Green at 8e87bd3f
 
