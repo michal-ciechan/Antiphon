@@ -371,7 +371,7 @@ describe('RoutingSettingsTab', () => {
     expect(cell).not.toHaveTextContent('Codex/Frontier')
     if (row.stored) {
       expect(within(cell).getByText(row.stored)).toBeInTheDocument()
-      expect(cell).not.toHaveTextContent('dispatch blocks')
+      expect(cell).not.toHaveTextContent(/dispatch blocks/i)
       if (row.stored === 'Stored cell: unknown (read failed)') expect(cell).not.toHaveTextContent(/unset/i)
     }
     if (row.banner) expect(await within(cell.closest('tr')!).findByText(row.banner)).toBeInTheDocument()
