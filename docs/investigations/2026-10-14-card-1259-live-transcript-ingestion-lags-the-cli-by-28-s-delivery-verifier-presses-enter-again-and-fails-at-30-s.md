@@ -62,6 +62,24 @@ in-memory runner, isolated PostgreSQL and a deliberately blocked side effect.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | evidence | `tests/Antiphon.SessionRunner.Tests -> bin-c1259-tailer/` | tailer-measurement | `/*/*/TranscriptIngestionLatencyProbeTests/Appended_prompts_reach_the_event_hub_under_concurrent_file_load` | file-to-hub characterization | 2 parameter rows, 0 failed/skipped | 2 | 5 |
 | CP-2 | evidence | `tests/Antiphon.Tests -> bin-c1259-pump/` | blocked-pump | `/*/*/SessionRunnerEventPumpTests/S0_blocked_hosted_pump_probe` | existing serial-pump reproduction | 4 parameter rows, 0 failed/skipped | 4 | 8 |
+| CP-3 | cold-tail | `tests/Antiphon.SessionRunner.Tests -> bin-c1259-cold/` | cold-history-measurement | `/*/*/TranscriptIngestionLatencyProbeTests/Cold_tail_records_latency_to_a_prompt_after_existing_history` | cold-tail backlog candidate | 2 parameter rows, 0 failed/skipped | 2 | 5 |
+
+CP-3 was added after source inspection found an additional candidate: the tailer
+starts at offset zero (`TranscriptTailer.cs:366`), reads at most 1 MiB (`:416`),
+and waits 300 ms after each read (`:440`). With 96 MiB before a prompt, 96 waits
+alone amount to 28.8 seconds. This is a new measurement, not a repeat of a passing
+row. The incident's native file size and tail offset are not known.
+
+CP-1/CP-2 run `20261014-194223-674c` at
+`b33daf90bbfc028900b24d5f12350b3992fb35a4`: 2/2 and 4/4 test cases passed, zero
+failed/skipped. Overall checkpoint **RED, exit 2**, because the S0 test created
+`bin-c1259-pump/TestOutput/card-0432/s0` after the compiler output ledger was
+captured; cleanup refused `output-ledger-mismatch`. Both the tool validator and
+`scripts/validate-checkpoint-receipt.ps1` exited 2, `cleanup_refused`. The raw
+receipt remains unchanged. Traces were copied to ignored
+`.antiphon/c1259-evidence/pump-traces/`, and only the run-created
+`tests/Antiphon.Tests/bin-c1259-pump` was manually removed by literal path.
+These counts are diagnostic evidence, not a qualified green checkpoint.
 
 ## Disclosures and remaining evidence
 
