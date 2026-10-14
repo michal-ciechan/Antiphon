@@ -15,6 +15,8 @@ import {
   unsetCellLabel,
   nonComplexityBoundary,
   cardPinCountLabel,
+  pendingReadLabel,
+  routingPinsReadLabel,
 } from './routingSettingsModel'
 
 const opus = { agentKind: 'ClaudeCode', modelLevel: 'High', alias: 'opus', availableNow: true, unavailableReason: null } as const
@@ -251,5 +253,68 @@ describe('candidate drafts', () => {
     expect(
       nextUnusedCandidate([{ agentKind: 'ClaudeCode', modelLevel: 'Frontier' }]),
     ).toEqual({ agentKind: 'ClaudeCode', modelLevel: 'High' })
+  })
+})
+
+// CARD-1270 D-1: React Query 5 reports an offline query with no data as pending and paused,
+// with isLoading false; neither state is a value.
+describe('C1270 D-1 pending reads', () => {
+  it.each([
+    { name: 'loading', state: { isPending: true, fetchStatus: 'fetching' }, expected: 'Model availability loading.' },
+    { name: 'paused offline', state: { isPending: true, fetchStatus: 'paused' }, expected: 'Model availability unknown (read paused offline).' },
+    { name: 'pending and idle', state: { isPending: true, fetchStatus: 'idle' }, expected: 'Model availability loading.' },
+    { name: 'loaded and refetching', state: { isPending: false, fetchStatus: 'fetching' }, expected: null },
+    { name: 'loaded and paused', state: { isPending: false, fetchStatus: 'paused' }, expected: null },
+  ] as const)('C1270 D-1 pending read label $name', ({ state, expected }) => {
+    expect(pendingReadLabel(state, 'Model availability')).toBe(expected)
+  })
+
+  it.each([
+    { name: 'loading', state: { isPending: true, fetchStatus: 'fetching', error: null }, expected: { row: 'Stage and card pins loading.', list: 'Card-specific pins loading.' } },
+    { name: 'paused offline', state: { isPending: true, fetchStatus: 'paused', error: null }, expected: { row: 'Stage and card pins unknown (routing pins read paused offline)', list: 'Card-specific pins unknown (routing pins read paused offline).' } },
+    { name: 'failed', state: { isPending: false, fetchStatus: 'idle', error: new Error('boom') }, expected: { row: 'Stage and card pins unknown (routing pins read failed: boom)', list: 'Card-specific pins unknown (routing pins read failed: boom).' } },
+    { name: 'loaded', state: { isPending: false, fetchStatus: 'idle', error: null }, expected: null },
+    { name: 'loaded and paused', state: { isPending: false, fetchStatus: 'paused', error: null }, expected: null },
+  ] as const)('C1270 D-1 routing pins read label $name', ({ state, expected }) => {
+    expect(routingPinsReadLabel(state, 'boom')).toEqual(expected)
+  })
+})
+
+describe('C1270 D-2 clear copy after a failed read', () => {
+  const chainSegment = 'chain read failed (InvalidOperationException)'
+  const metadataSegment = 'chain metadata read failed (InvalidOperationException)'
+
+  it.each([
+    { fallback: 'any', tail: 'Without an own rule this cell falls back to the Any role list.' },
+    { fallback: 'config', tail: 'Without an own rule this cell falls back to the configuration default.' },
+    { fallback: 'none', tail: 'Without an own rule this cell is Unset — a -Complexity dispatch for this role and tier will block until an operator sets a row.' },
+  ] as const)('C1270 D-2 clear copy after a chain read failure falls back to $fallback', ({ fallback, tail }) => {
+    const copy = clearOverrideCopy({
+      isAnyRoleRow: false, role: 'Plan', complexity: 'Easy', fallbackResolvedFrom: fallback,
+      chainUnknown: chainSegment, metadataUnknown: null,
+    })
+    expect(copy.title).toBe('Clear Plan/Easy override?')
+    expect(copy.body).toBe(`Clearing Plan/Easy deletes this cell's own rule, with its reason and expiry, if one exists; its current value is unknown (${chainSegment}). ${tail}`)
+    expect(copy.body).not.toMatch(/currently/)
+    expect(copy.confirm).toBe('Confirm clear')
+  })
+
+  it.each([
+    { fallback: 'any', head: 'Clearing this Plan/Easy override falls back to the Any role list. This cell currently replaces Any role as a whole; it does not append.' },
+    { fallback: 'config', head: 'Clearing this Plan/Easy override falls back to the configuration default. This cell currently replaces the inherited list as a whole; it does not append.' },
+    { fallback: 'none', head: 'Clearing this Plan/Easy override leaves this cell Unset — a -Complexity dispatch for this role and tier will block until an operator sets a row.' },
+  ] as const)('C1270 D-2 clear copy after a chain metadata read failure names the unread reason and expiry ($fallback)', ({ fallback, head }) => {
+    const copy = clearOverrideCopy({
+      isAnyRoleRow: false, role: 'Plan', complexity: 'Easy', fallbackResolvedFrom: fallback,
+      chainUnknown: null, metadataUnknown: metadataSegment,
+    })
+    expect(copy.body).toBe(`${head} The stored reason and expiry are unknown (${metadataSegment}); clearing deletes them with the row.`)
+  })
+
+  it('C1270 D-2 clear copy without a failed read is unchanged', () => {
+    expect(clearOverrideCopy({
+      isAnyRoleRow: false, role: 'Plan', complexity: 'Easy', fallbackResolvedFrom: 'any',
+      chainUnknown: null, metadataUnknown: null,
+    }).body).toBe('Clearing this Plan/Easy override falls back to the Any role list. This cell currently replaces Any role as a whole; it does not append.')
   })
 })

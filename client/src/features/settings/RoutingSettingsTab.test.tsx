@@ -1,18 +1,25 @@
+import { onlineManager } from '@tanstack/react-query'
+import { cleanup } from '@testing-library/react'
 import { HttpResponse, delay, http } from 'msw'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentTaskRole } from '../../api/agentTasks'
-import type {
-  ComplexityCandidateDto,
-  ComplexityChainDto,
-  ComplexityChainListDto,
-  ComplexityEffectiveDto,
-  ComplexityResolvedFrom,
-  TaskComplexity,
+import {
+  complexityChainKeys,
+  type ComplexityCandidateDto,
+  type ComplexityChainDto,
+  type ComplexityChainListDto,
+  type ComplexityEffectiveDto,
+  type ComplexityResolvedFrom,
+  type TaskComplexity,
 } from '../../api/complexityChains'
-import type { ModelAvailabilityDto } from '../../api/modelAvailability'
+import { modelAvailabilityKeys, type ModelAvailabilityDto } from '../../api/modelAvailability'
+import { rolePolicyKeys } from '../../api/rolePolicy'
+import { runnerDefaultKeys } from '../../api/runnerDefaults'
+import { sessionRunnerKeys } from '../../api/sessionRunners'
 import { routingPinKeys, type RoutingPinDto } from '../../api/routingPins'
-import type { SubscriptionUsageObservationDto } from '../../api/subscriptionUsage'
+import { subscriptionUsageKeys, type SubscriptionUsageObservationDto } from '../../api/subscriptionUsage'
 import { act, renderWithProviders, screen, userEvent, within, waitFor } from '../../test/utils'
+import { ROLE_POLICY_FIXTURE } from '../../test/mocks/handlers'
 import { server } from '../../test/mocks/server'
 import { RoutingSettingsTab } from './RoutingSettingsTab'
 import {
@@ -582,6 +589,310 @@ describe('C1270 routing pins read state', () => {
   )
 })
 
+// CARD-1270 D-1: every read of the tab x every query state. React Query 5 reports an offline
+// query with no data as pending and paused (isLoading false, no data, no error). Only a
+// successful read, or the last success while a refetch is in flight, may show a value or an
+// absence; every other state shows its own loading, paused or failed text.
+const c1270D1States = ['loading', 'paused', 'failed', 'refetch failed', 'fetching with stale data', 'success empty', 'success'] as const
+type C1270D1State = typeof c1270D1States[number]
+
+interface C1270D1Read {
+  url: string
+  /** `/api/complexity-chains` serves the list (role null) and each role row (role set). */
+  role?: AgentTaskRole | null
+  key: readonly unknown[]
+  surface: string
+  populated: unknown
+  empty: unknown
+  loading: string
+  paused: string
+  failed: string
+  /** Texts or display values only a successful populated read shows. */
+  shown: string[]
+  /** The definite absence a successful empty read shows; null when the read has none. */
+  emptyShown: string | null
+  configure?: boolean
+}
+
+const c1270D1Runner = (runnerId: string, platform: string) => ({
+  runnerId, displayName: runnerId, platform, platformObservedAt: '2026-09-25T00:00:00Z', available: true,
+  dispatchEligible: true, unavailableReason: null, capacity: 4, occupied: 0, capacityKind: 'sessions',
+  capacityObservedAt: '2026-09-25T00:00:00Z', stale: false, features: [],
+})
+
+const c1270D1Reads: Record<string, C1270D1Read> = {
+  'complexity chains list': {
+    url: '/api/complexity-chains', role: null, key: complexityChainKeys.list(), surface: 'routing-matrix-section',
+    populated: listDto, empty: { ...listDto, roles: [], chains: [] },
+    loading: 'Complexity chains loading.', paused: 'Complexity chains unknown (read paused offline).',
+    failed: 'Could not load complexity chains.',
+    shown: ['Any role rule'], emptyShown: 'Unset — a -Complexity Hard dispatch blocks', configure: true,
+  },
+  'Plan effective cells': {
+    url: '/api/complexity-chains', role: 'Plan', key: complexityChainKeys.effective('Plan'), surface: 'routing-matrix-row-Plan',
+    populated: planEffective,
+    empty: { ...planEffective, chains: (['Hard', 'Medium', 'Easy'] as const).map(tier => chain(tier, { role: 'Plan' })) },
+    loading: 'Plan effective cells loading.', paused: 'Plan effective cells unknown (read paused offline).',
+    failed: 'Could not load Plan effective cells.',
+    shown: ['Own rule', 'Inherits Any role'], emptyShown: 'Unset — a -Complexity Hard dispatch blocks', configure: true,
+  },
+  'routing pins': {
+    url: '/api/routing-pins', key: routingPinKeys.all, surface: 'routing-card-pins',
+    populated: { pins: defaultPins }, empty: { pins: [] },
+    loading: 'Card-specific pins loading.', paused: 'Card-specific pins unknown (routing pins read paused offline).',
+    failed: 'Card-specific pins unknown (routing pins read failed: boom).',
+    shown: ['CARD-0332'], emptyShown: 'No card-specific pins.',
+  },
+  'model availability': {
+    url: '/api/model-availability', key: modelAvailabilityKeys.all, surface: 'routing-availability-section',
+    populated: availabilityWithHolds, empty: { available: [], holds: [] },
+    loading: 'Model availability loading.', paused: 'Model availability unknown (read paused offline).',
+    failed: 'Could not load model availability.',
+    shown: ['weekly cap', 'Held'], emptyShown: 'This snapshot has no available aliases and no holds.',
+  },
+  'subscription usage': {
+    url: '/api/subscription-usage', key: subscriptionUsageKeys.all, surface: 'routing-usage-section',
+    populated: fullUsage, empty: [],
+    loading: 'Subscription usage loading.', paused: 'Subscription usage unknown (read paused offline).',
+    failed: 'Could not load subscription usage observations.',
+    shown: ['ChatGPT Plus'], emptyShown: USAGE_UNKNOWN,
+  },
+  'role policy': {
+    url: '/api/role-policy', key: rolePolicyKeys.all, surface: 'role-policy-section',
+    populated: ROLE_POLICY_FIXTURE, empty: { ...ROLE_POLICY_FIXTURE, roles: [] },
+    loading: 'Role policy loading.', paused: 'Role policy unknown (read paused offline).',
+    failed: 'Could not load role policy.',
+    shown: ['Investigate'], emptyShown: null,
+  },
+  'runner defaults': {
+    url: '/api/runner-defaults', key: runnerDefaultKeys.current, surface: 'runner-defaults-section',
+    populated: {
+      revision: 1, globalRunnerId: 'server2', kindDefaults: [], updatedAt: '2026-09-25T00:00:00Z',
+      lastReason: 'Imported Delegation:DefaultRunnerId.', lastProvenance: 'Migration', lastCallerTaskId: null,
+      supportedKinds: ['Grok', 'ClaudeCode', 'Codex'], unresolvedReferences: [],
+    },
+    empty: null,
+    loading: 'Runner defaults loading.', paused: 'Runner defaults unknown (read paused offline).',
+    failed: 'Could not load runner defaults. Model routing above is unchanged.',
+    shown: ['Revision 1.'], emptyShown: null,
+  },
+  'runner default revisions': {
+    url: '/api/runner-defaults/revisions', key: runnerDefaultKeys.revisions, surface: 'runner-defaults-history',
+    populated: {
+      revisions: [{ revision: 2, previousRevision: 1, globalRunnerId: null, kindDefaults: [], createdAt: '2026-09-25T00:00:00Z', reason: 'earlier', provenance: 'Human', callerTaskId: null }],
+      nextBeforeRevision: null,
+    },
+    empty: { revisions: [], nextBeforeRevision: null },
+    loading: 'History loading.', paused: 'History unknown (read paused offline).',
+    failed: 'History unknown (revisions read failed: boom).',
+    shown: ['earlier', 'Restore as new revision'], emptyShown: 'No revisions yet.',
+  },
+  'session runners': {
+    url: '/api/session-runners', key: sessionRunnerKeys.all, surface: 'runner-defaults-section',
+    populated: [c1270D1Runner('desktop', 'windows'), c1270D1Runner('server2', 'linux')], empty: [],
+    loading: 'Runner catalogue loading.', paused: 'Runner catalogue unknown (read paused offline).',
+    failed: 'Runner catalogue unknown (session runners read failed: boom).',
+    shown: ['server2 · linux'], emptyShown: 'server2 · missing from catalogue',
+  },
+}
+
+function c1270D1Handler(read: C1270D1Read, respond: () => Response | Promise<Response>) {
+  return http.get(read.url, ({ request }) => {
+    // Falls through to the next handler for the other complexity-chains read.
+    if (read.role !== undefined && new URL(request.url).searchParams.get('role') !== read.role) return undefined
+    return respond()
+  })
+}
+
+const c1270D1Respond = {
+  populated: (read: C1270D1Read) => () => HttpResponse.json(read.populated),
+  empty: (read: C1270D1Read) => () => HttpResponse.json(read.empty),
+  failed: () => () => HttpResponse.json({ title: 'boom' }, { status: 500 }),
+  infinite: (read: C1270D1Read) => async () => { await delay('infinite'); return HttpResponse.json(read.populated) },
+}
+
+function c1270D1Present(surface: HTMLElement, text: string): boolean {
+  return (surface.textContent ?? '').includes(text) || within(surface).queryAllByDisplayValue(text).length > 0
+}
+
+describe('C1270 D-1 read state table', () => {
+  afterEach(() => {
+    cleanup()
+    onlineManager.setOnline(true)
+  })
+
+  it.each(Object.keys(c1270D1Reads).flatMap(read => c1270D1States
+    .filter(state => state !== 'success empty' || c1270D1Reads[read].empty !== null)
+    .map(state => ({ read, state }))))(
+    'C1270 D-1 $read read $state', async ({ read: name, state }: { read: string; state: C1270D1State }) => {
+      const read = c1270D1Reads[name]
+      serveRouting({ usage: fullUsage })
+      // msw checks the first listed handler first, so the read under test wins over the revisions default.
+      server.use(
+        c1270D1Handler(read, state === 'loading' ? c1270D1Respond.infinite(read)
+          : state === 'failed' ? c1270D1Respond.failed()
+            : state === 'success empty' ? c1270D1Respond.empty(read)
+              : c1270D1Respond.populated(read)),
+        http.get('/api/runner-defaults/revisions', c1270D1Respond.populated(c1270D1Reads['runner default revisions'])),
+      )
+      const { queryClient } = renderWithProviders(<RoutingSettingsTab />)
+
+      if (state === 'paused' || state === 'refetch failed' || state === 'fetching with stale data') {
+        await waitFor(() => expect(c1270D1Present(screen.getByTestId(read.surface), read.shown[0])).toBe(true))
+        if (state === 'paused') {
+          act(() => {
+            onlineManager.setOnline(false)
+            void queryClient.resetQueries({ queryKey: read.key, exact: true })
+          })
+        } else if (state === 'refetch failed') {
+          server.use(c1270D1Handler(read, c1270D1Respond.failed()))
+          await act(async () => { await queryClient.refetchQueries({ queryKey: read.key, exact: true }) })
+        } else {
+          server.use(c1270D1Handler(read, c1270D1Respond.infinite(read)))
+          act(() => { void queryClient.refetchQueries({ queryKey: read.key, exact: true }) })
+        }
+      }
+
+      // The query reached the named state.
+      await waitFor(() => {
+        const query = queryClient.getQueryState(read.key)
+        expect(query).toBeDefined()
+        expect({ status: query?.status, fetchStatus: query?.fetchStatus, hasData: query?.data !== undefined }).toEqual({
+          loading: { status: 'pending', fetchStatus: 'fetching', hasData: false },
+          paused: { status: 'pending', fetchStatus: 'paused', hasData: false },
+          failed: { status: 'error', fetchStatus: 'idle', hasData: false },
+          'refetch failed': { status: 'error', fetchStatus: 'idle', hasData: true },
+          'fetching with stale data': { status: 'success', fetchStatus: 'fetching', hasData: true },
+          'success empty': { status: 'success', fetchStatus: 'idle', hasData: true },
+          success: { status: 'success', fetchStatus: 'idle', hasData: true },
+        }[state])
+      })
+
+      const expected: string | null = state === 'loading' ? read.loading
+        : state === 'paused' ? read.paused
+          : state === 'failed' || state === 'refetch failed' ? read.failed
+            : null
+      const valueShown = state === 'success' || state === 'fetching with stale data'
+      await waitFor(() => {
+        const current = screen.getByTestId(read.surface)
+        for (const label of [read.loading, read.paused, read.failed]) expect(c1270D1Present(current, label)).toBe(label === expected)
+        if (valueShown) expect(c1270D1Present(current, read.shown[0])).toBe(true)
+        if (state === 'success empty' && read.emptyShown) expect(c1270D1Present(current, read.emptyShown)).toBe(true)
+      })
+      const surface = screen.getByTestId(read.surface)
+      for (const text of read.shown) expect(c1270D1Present(surface, text)).toBe(valueShown)
+      if (read.emptyShown) expect(c1270D1Present(surface, read.emptyShown)).toBe(state === 'success empty')
+      if (read.configure) {
+        expect(within(surface).queryAllByRole('button', { name: /^Configure / }).length > 0).toBe(expected === null)
+      }
+    },
+  )
+})
+
+describe('C1270 D-1 offline reads and the cell editor', () => {
+  afterEach(() => {
+    cleanup()
+    onlineManager.setOnline(true)
+  })
+
+  it('C1270 D-1 offline from the first render shows no value and sends no PUT after reconnect', async () => {
+    const write = vi.fn()
+    serveRouting({ usage: fullUsage })
+    server.use(
+      http.put('/api/complexity-chains/:role/:complexity', ({ params }) => { write(`PUT ${params.role}/${params.complexity}`); return HttpResponse.json(chain('Hard')) }),
+      http.delete('/api/complexity-chains/:role/:complexity', ({ params }) => { write(`DELETE ${params.role}/${params.complexity}`); return new HttpResponse(null, { status: 204 }) }),
+    )
+    onlineManager.setOnline(false)
+    renderWithProviders(<RoutingSettingsTab />)
+
+    for (const [testId, text] of [
+      ['routing-availability-section', 'Model availability unknown (read paused offline).'],
+      ['routing-usage-section', 'Subscription usage unknown (read paused offline).'],
+      ['role-policy-section', 'Role policy unknown (read paused offline).'],
+      ['runner-defaults-section', 'Runner defaults unknown (read paused offline).'],
+      ['runner-defaults-section', 'Runner catalogue unknown (read paused offline).'],
+      ['routing-matrix-section', 'Complexity chains unknown (read paused offline).'],
+    ] as const) {
+      expect(await screen.findByTestId(testId)).toHaveTextContent(text)
+    }
+    const tab = screen.getByTestId('routing-settings-tab')
+    for (const text of ['Unset', 'dispatch blocks', 'No card-specific pins', 'no available aliases', 'No revisions yet', 'missing from catalogue', USAGE_UNKNOWN, 'Could not load', 'Any role rule']) {
+      expect(tab).not.toHaveTextContent(text)
+    }
+    expect(screen.queryByTestId('routing-matrix-row-any')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('button', { name: /^Configure / })).toHaveLength(0)
+    expect(screen.queryByTestId('routing-cell-editor')).not.toBeInTheDocument()
+
+    act(() => { onlineManager.setOnline(true) })
+    expect(await within(await screen.findByTestId('routing-matrix-cell-Plan-Hard')).findByText('Own rule')).toBeInTheDocument()
+    expect(within(screen.getByTestId('routing-matrix-cell-any-Hard')).getByText('Any role rule')).toBeInTheDocument()
+    expect(write).not.toHaveBeenCalled()
+  })
+
+  it.each(['Save', 'Clear override'] as const)(
+    'C1270 D-1 editor whose cell read returns to pending blocks %s until the read loads', async (action) => {
+      const write = vi.fn()
+      serveRouting()
+      server.use(
+        http.put('/api/complexity-chains/:role/:complexity', ({ params }) => { write(`PUT ${params.role}/${params.complexity}`); return HttpResponse.json(chain('Hard', { role: 'Plan' })) }),
+        http.delete('/api/complexity-chains/:role/:complexity', ({ params }) => { write(`DELETE ${params.role}/${params.complexity}`); return new HttpResponse(null, { status: 204 }) }),
+      )
+      const { queryClient } = renderWithProviders(<RoutingSettingsTab />)
+      const cell = await screen.findByTestId('routing-matrix-cell-Plan-Hard')
+      await userEvent.click(within(cell).getByRole('button', { name: 'Configure Plan / Hard' }))
+      const editor = await screen.findByTestId('routing-cell-editor')
+      const button = within(editor).getByRole('button', { name: action })
+      expect(button).toBeEnabled()
+
+      act(() => {
+        onlineManager.setOnline(false)
+        void queryClient.resetQueries({ queryKey: complexityChainKeys.effective('Plan'), exact: true })
+      })
+      expect(await within(editor).findByText("Save and Clear are disabled until the cell's read loads: Plan effective cells unknown (read paused offline).")).toBeInTheDocument()
+      expect(within(editor).getByRole('button', { name: 'Save' })).toBeDisabled()
+      expect(within(editor).getByRole('button', { name: 'Clear override' })).toBeDisabled()
+      expect(within(screen.getByTestId('routing-matrix-row-Plan')).queryAllByRole('button', { name: /^Configure / })).toHaveLength(0)
+
+      act(() => { onlineManager.setOnline(true) })
+      await waitFor(() => expect(within(editor).getByRole('button', { name: action })).toBeEnabled())
+      expect(within(editor).queryByText(/Save and Clear are disabled until/)).not.toBeInTheDocument()
+      expect(write).not.toHaveBeenCalled()
+    },
+  )
+})
+
+describe('C1270 D-2 clear confirmation after a failed read', () => {
+  it.each([
+    { tier: 'Medium' as const, tail: 'Without an own rule this cell falls back to the Any role list.' },
+    { tier: 'Easy' as const, tail: 'Without an own rule this cell is Unset — a -Complexity dispatch for this role and tier will block until an operator sets a row.' },
+  ])('C1270 D-2 clear confirmation after a chain read failure on $tier', async ({ tier, tail }) => {
+    serveRouting({ effective: { Plan: { ...planEffective, chains: [c1270Cell('chain', 'Required', tier)] } } })
+    renderWithProviders(<RoutingSettingsTab />)
+    const cell = await screen.findByTestId(`routing-matrix-cell-Plan-${tier}`)
+    await userEvent.click(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` }))
+    const editor = await screen.findByTestId('routing-cell-editor')
+    await userEvent.click(within(editor).getByRole('checkbox', { name: c1270EditorConfirm.chain }))
+    await userEvent.click(within(editor).getByRole('button', { name: 'Clear override' }))
+
+    const confirm = await within(editor).findByTestId('routing-cell-editor-clear-confirm')
+    expect(confirm).toHaveTextContent(`Clear Plan/${tier} override?`)
+    expect(confirm).toHaveTextContent(`Clearing Plan/${tier} deletes this cell's own rule, with its reason and expiry, if one exists; its current value is unknown (chain read failed (InvalidOperationException)). ${tail}`)
+    expect(confirm).not.toHaveTextContent('currently replaces')
+  })
+
+  it.each(['Medium', 'Easy'] as const)('C1270 D-2 clear confirmation after a chain metadata read failure on %s names the unread reason and expiry', async (tier) => {
+    serveRouting({ effective: { Plan: { ...planEffective, chains: [c1270Cell('chain metadata', 'Required', tier)] } } })
+    renderWithProviders(<RoutingSettingsTab />)
+    const cell = await screen.findByTestId(`routing-matrix-cell-Plan-${tier}`)
+    await userEvent.click(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` }))
+    const editor = await screen.findByTestId('routing-cell-editor')
+    await userEvent.click(within(editor).getByRole('button', { name: 'Clear override' }))
+
+    const confirm = await within(editor).findByTestId('routing-cell-editor-clear-confirm')
+    expect(confirm).toHaveTextContent('The stored reason and expiry are unknown (chain metadata read failed (InvalidOperationException)); clearing deletes them with the row.')
+  })
+})
+
 describe('RoutingSettingsTab', () => {
   it.each((['pin', 'pin+chain', 'role', 'any', 'config', 'rolePolicy', 'agent'] as const)
     .flatMap(source => (['Hard', 'Medium', 'Easy'] as const).map(tier => ({ source, tier }))))(
@@ -607,6 +918,29 @@ describe('RoutingSettingsTab', () => {
       expect(cell).not.toHaveTextContent('Codex/Frontier')
       expect(cell).not.toHaveTextContent('ClaudeCode/Frontier')
       expect(cell).not.toHaveTextContent('dispatch blocks')
+      expect(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` })).toBeEnabled()
+    },
+  )
+
+  it.each(['Hard', 'Medium', 'Easy'] as const)(
+    'C1258 V-2 stage-pin failure on an Unset cell keeps Stored cell: unset %s', async (tier) => {
+      const reason = 'stage pin read failed (InvalidOperationException)'
+      serveRouting({ pins: [], effective: { Plan: {
+        ...planEffective,
+        chains: [chain(tier, {
+          role: 'Plan', resolvedFrom: 'none', candidates: [],
+          effective: { source: 'rolePolicy', candidates: [codex], stagePin: null, governsDefault: tier === 'Medium', withheldReason: reason },
+        })],
+      } } })
+      renderWithProviders(<RoutingSettingsTab />)
+      const cell = await screen.findByTestId(`routing-matrix-cell-Plan-${tier}`)
+      expect(await within(cell).findByText('Effective routing unknown')).toBeInTheDocument()
+      // The chain read succeeded, so an Unset cell keeps its stored origin.
+      expect(within(cell).getByText('Stored cell: unset')).toBeInTheDocument()
+      expect(within(cell).getByRole('alert')).toHaveTextContent(reason)
+      for (const text of ['Own rule', 'Inherits Any role', 'Configuration fallback', 'Falls back to RolePolicy', 'Codex/Frontier', 'dispatch blocks']) {
+        expect(cell).not.toHaveTextContent(text)
+      }
       expect(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` })).toBeEnabled()
     },
   )
