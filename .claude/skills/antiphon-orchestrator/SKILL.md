@@ -86,15 +86,18 @@ A fresh `-Worktree` task works on its own recorded `WorktreeBranch`; git-common 
 branches, and a branch under Review is frozen. Do not tell a delegate to fetch or check out a
 sibling's branch. To continue a sibling's work, select the sibling's tip as the creation base:
 `-StartRef <full SHA>` (owner: Continuing a sibling's work (CARD-0613) in
-`docs/orchestration-loop.md`). Without `-StartRef`, dispatch chooses the base itself: a clean
-same-card kept sibling tip when one qualifies, otherwise the configured target. When a brief names
+`docs/orchestration-loop.md`). Without `-StartRef`, dispatch selects the base from the card's kept
+siblings; outcomes include continuing one, taking the target, refusing and holding. Tested cases are in the table
+below; read a refusal's code and message before re-dispatching. When a brief names
 a branch, copy the sibling task's recorded `WorktreeBranch` (`feat/card-<n>-<stage>-<id>` or
 `feat/card-task-<id>`) rather than rebuilding it from the task id.
 
 | Behaviour | Test (TUnit, Antiphon.Tests) | What it asserts |
 |---|---|---|
 | `-StartRef` cuts a new branch at the requested base | `WorktreeStartRefDispatchTests.C613_StartRefCreatesOwnBranchAndBaseline` | for a branch, tag or full SHA: HEAD is the source SHA, the branch is the new task's own `feat/card-task-<id>`, and the source checkout keeps its branch and HEAD |
-| A same-card Review without `-StartRef` starts at the kept sibling tip | `AgentTaskDispatchBaseGuardTests.retained_real_create_continues_clean_same_card_tip` | the new checkout HEAD and `WorktreeBaseSha` equal the sibling SHA; master is unchanged |
+| One clean same-card kept sibling, Review created without `-StartRef` | `AgentTaskDispatchBaseGuardTests.retained_real_create_continues_clean_same_card_tip` | the new checkout HEAD and `WorktreeBaseSha` equal the sibling SHA; master is unchanged |
+| Two divergent same-card kept siblings | `AgentTaskDispatchBaseGuardTests.retained_divergent_create_refuses_and_both_recovery_modes_work` | create is refused `worktree_base_ambiguous`, naming both tasks, `-BaseTask` and `-FreshWorktree`, and no task is added; with `WorktreeBaseTask` it continues the named sibling; with `FreshWorktree` it takes the target |
+| A kept sibling whose land is in flight | `AgentTaskDispatchBaseGuardTests.a_sibling_land_in_flight_holds_until_the_base_contains_it` | the task stays Queued with no checkout and one Held event naming the sibling; after the land completes it dispatches |
 | Delegates receive the assigned-branch-only and frozen-Review rules | `InstructionBundleTests.C1213_GitContractPins` | Code, Review, Mutation and orchestrator compositions carry each git-common sentence once |
 
 ## 3. Checks: read the digest, act only when something changed

@@ -206,9 +206,13 @@ public class RunnerBranchContractDocumentationTests
         Pin(runtime, "Two forms exist: `feat/card-task-<id>` and `feat/card-<n>-<stage>-<id>`.", "c1213-runtime-forms");
         runtime.ShouldContain("RunnerWorkspaceBindingTests.C1213_BindingBothBranchForms", Case.Sensitive, "c1213-runtime-mirror-test");
 
-        // Review dd8ce0cf F1/F3: launch carriers per provider, and the runner contract keeps its protections.
-        Pin(loop, "Claude Code receives `--append-system-prompt <text>`, Codex `-c developer_instructions=<text>`, and "
-            + "Grok a `GrokRulesPayload` that the runner writes to a rules file and passes as `--rules`", "c1213-loop-carriers");
+        // Review dd8ce0cf F1/F3, 3153a5c4 R2-F2: launch carriers per provider; Grok's --rules value is a
+        // bootstrap naming the rules file. The runner contract keeps its protections.
+        Pin(loop, "Claude Code receives `--append-system-prompt <text>` and Codex `-c developer_instructions=<text>`.",
+            "c1213-loop-carriers");
+        Pin(loop, "Grok receives a `GrokRulesPayload`: the runner writes it to a runner-owned `rules.md` and passes "
+            + "`--rules` with a bootstrap instruction naming that file", "c1213-loop-grok-carrier");
+        loop.ShouldNotContain("writes to a rules file and passes as `--rules`", Case.Sensitive, "c1213-loop-no-rules-file-arg");
         Pin(loop, "restates the rebase, amend, reset and force-push prohibitions in one sentence, because a recovered "
             + "session may have launched before git-common existed", "c1213-loop-recovered");
         loop.ShouldNotContain("every future dispatch gets the better version", Case.Sensitive, "c1213-loop-no-every-dispatch");
@@ -236,10 +240,12 @@ public class RunnerBranchContractDocumentationTests
         var readme = Collapse(Read("server/Bundles/README.md"));
         Read("server/Bundles/README.md").ShouldContain(
             "(../../docs/orchestration-loop.md#delegate-branch-names-card-1213)", Case.Sensitive, "c1213-readme-link");
-        // F4: Relaunch falls back to Notify when relaunch is not eligible; no unconditional launch claim.
-        Pin(readme, "`Auto` and `Relaunch` relaunch with `--resume` and the new composition (CARD-0334) only when "
-            + "relaunch is eligible", "c1213-readme-lanes");
-        Pin(readme, "and otherwise fall back to Notify.", "c1213-readme-fallback");
+        // F4, 3153a5c4 R2-F5: refusals and the Grok preflight come before lane selection; no unconditional launch claim.
+        Pin(readme, "applies its refusals and the Grok rules preflight before `ResolveLane` picks Relaunch or Notify",
+            "c1213-readme-lanes");
+        Pin(readme, "`PolicyRefreshServiceTests.Grok_legacy_policy_drift_refuses_before_kill_queue_or_stamp_mutation`",
+            "c1213-readme-grok-preflight");
+        readme.ShouldNotContain("and otherwise fall back to Notify.", Case.Sensitive, "c1213-readme-no-unconditional-fallback");
         readme.ShouldNotContain("never falls back to Notify", Case.Sensitive, "c1213-readme-no-never-falls-back");
         readme.ShouldNotContain("are guaranteed one", Case.Sensitive, "c1213-readme-no-guarantee");
     }
