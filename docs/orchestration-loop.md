@@ -955,8 +955,14 @@ downgrading it from Required to Preferred, is an operator decision made through
 **Matrix cells with a failed read (CARD-1258, CARD-1270).** A role cell's effective view reads
 the stage pin, the chain, the chain metadata, a standing agent's label and each candidate's
 availability; a failed part appends `<part> read failed (<type>)` to the cell's alert. The cell
-renders a value derived from a failed read as unknown, never as a definite candidate list or
-`then this row`; values from reads that succeeded stay definite.
+renders a value derived from a failed read as unknown, not as a definite candidate list or
+`then this row`. Values from reads that succeeded stay definite, with one exception: after a
+failed stage-pin read the stored origin and stored candidates are hidden although the chain read
+succeeded, because the unread pin can override them (C1258 row below). The Configure editor still
+opens with those stored values; its save writes only the stored row (V-2 `stage pin` editor rows).
+The PUT replaces the whole row (a blank reason stores the default `<cell> chain` label, a null
+expiry stores none), so the editor asks for an explicit overwrite before it writes over a value it
+could not read.
 
 | Behaviour | Test (runner, file) | What it asserts |
 |---|---|---|
@@ -967,6 +973,11 @@ renders a value derived from a failed read as unknown, never as a definite candi
 | A failed availability read is unknown, not unavailable | Vitest `C1270 V-1 availability <case>`; the V-2 `availability` rows | `availability unknown: availability read failed (…)`; a held reason or free text mentioning the marker renders unchanged |
 | A failed standing-agent read names the agent id with `(name unknown)` | `C1270 V-1 effective label <case>`; the V-2 `standing agent` rows | A missing agent keeps `(unavailable)`; a failed read does not |
 | A failed routing-pins or role-policy read leaves the cell definite | The V-2 `routing pins` and `role policy` rows | Cell texts match the no-failure row; the section shows its own failure text |
+| A failed chain or chain metadata read hides a stored reason the response still carries | Vitest `C1270 V-2 $read read failure beside a stored reason on $tier` | The unknown line is shown; no `Plan cell` and no `Expires` in the cell |
+| A standing-agent pin with a failed chain read keeps the agent route | `C1270 V-1 effective label required-standing-agent-with-chain-read-failure`, `preferred-standing-agent-with-chain-read-failure`; Vitest `C1270 V-2 standing agent pin with a chain read failure keeps the agent route with a $strength pin` | The agent label stays definite; `Stored cell: unknown (read failed)` and the provenance, reason and expiry unknown line |
+| The Configure editor after a failed chain or chain metadata read | Vitest `C1270 V-2 editor after a $label read failure on $tier`, `RoutingSettingsTab.test.tsx` | Chain: `Current value unknown (chain read failed (…))…`, no candidate row, empty Reason and Expires, Save and Clear override disabled until `Overwrite the unread stored cell…` is ticked, then one PUT. Chain metadata: the read candidates, `Stored reason and expiry unknown (…)…`, empty Reason and Expires, Save disabled until `Overwrite the unread reason and expiry…` is ticked, then a PUT with null reason and expiry. Controls (none, stage pin, availability, standing agent): stored candidates, reason and expiry, no checkbox |
+| Routing pins loading, failed, or stale after a failed refetch | Vitest `C1270 V-2 routing pins %s` | Row `Stage and card pins loading.` or `Stage and card pins unknown (routing pins read failed: …)`; card list `Card-specific pins loading.` or `Card-specific pins unknown (…).`; no banner, card-pin count, card pin or `No card-specific pins` |
+| Runner-defaults history and runner catalogue reads | Vitest `C1270 V-2 runner defaults history read %s`, `C1270 V-2 runner defaults catalogue read %s`, `RunnerDefaultsSection.test.tsx` | `History unknown (revisions read failed: …).` or `History loading.` in place of `No revisions yet.`; a stored runner reads `<id> · catalogue unknown`, not `missing from catalogue` |
 
 **A Preferred stage pin on an unset non-default tier lists the pin alone.** The effective view
 appends RolePolicy after a Preferred pin only on the default tier; on another tier an explicit

@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Alert,
   Button,
+  Checkbox,
   Group,
   Modal,
   Select,
@@ -32,15 +33,20 @@ import {
   CHAIN_SAVE_SUCCESS,
   INHERITED_REPLACE_WARNING,
   MAX_CHAIN_CANDIDATES,
+  OVERWRITE_UNREAD_CELL,
+  OVERWRITE_UNREAD_METADATA,
   UNSET_CELL_EDITOR_NOTE,
   canClearOverride,
   candidateListError,
+  cellEditorFailedReads,
   cellEditorTitle,
   clearOverrideCopy,
   effectiveResolvedFrom,
   isReplacingInheritedList,
   lookupFieldError,
   nextUnusedCandidate,
+  storedCellUnknownNote,
+  storedMetadataUnknownNote,
 } from './routingSettingsModel'
 
 export interface ComplexityChainEditorTarget {
@@ -62,8 +68,10 @@ interface DraftCandidate {
   modelLevel: AgentModelLevel
 }
 
-function toDraft(chain: ComplexityChainDto | undefined): DraftCandidate[] {
+function toDraft(chain: ComplexityChainDto | undefined, chainUnread: boolean): DraftCandidate[] {
   const rows = chain?.candidates ?? []
+  // An unread chain starts empty: a default candidate would look like the stored value.
+  if (chainUnread) return []
   if (rows.length === 0) {
     return [{ id: 'c1', agentKind: 'ClaudeCode', modelLevel: 'Frontier' }]
   }
@@ -109,16 +117,22 @@ export function ComplexityChainCellEditor({
   const saveRef = useRef<HTMLButtonElement>(null)
   const clearRef = useRef<HTMLButtonElement>(null)
   const idRef = useRef((chain?.candidates.length ?? 0) + 1)
+  const failedReads = cellEditorFailedReads(chain, isAnyRoleRow)
+  const metadataUnread = failedReads.chain != null || failedReads.metadata != null
 
-  const [candidates, setCandidates] = useState<DraftCandidate[]>(() => toDraft(chain))
-  const [reason, setReason] = useState(chain?.reason ?? '')
-  const [notAfter, setNotAfter] = useState(toDatetimeLocalValue(chain?.notAfter))
+  const [candidates, setCandidates] = useState<DraftCandidate[]>(() => toDraft(chain, failedReads.chain != null))
+  const [reason, setReason] = useState(metadataUnread ? '' : (chain?.reason ?? ''))
+  const [notAfter, setNotAfter] = useState(metadataUnread ? '' : toDatetimeLocalValue(chain?.notAfter))
+  const [overwriteConfirmed, setOverwriteConfirmed] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [formError, setFormError] = useState<string | null>(null)
   const [confirmingClear, setConfirmingClear] = useState(false)
 
   const resolved = chain ? effectiveResolvedFrom(chain) : 'none'
-  const canClear = canClearOverride(resolved, isAnyRoleRow)
+  // An unread chain may hold an own rule, so Clear stays available behind the overwrite confirmation.
+  const canClear = failedReads.chain != null || canClearOverride(resolved, isAnyRoleRow)
+  const saveBlocked = metadataUnread && !overwriteConfirmed
+  const clearBlocked = failedReads.chain != null && !overwriteConfirmed
   const title = cellEditorTitle(role, complexity)
   const copy = clearOverrideCopy({ isAnyRoleRow, role, complexity, fallbackResolvedFrom })
   const candidatesError = lookupFieldError(fieldErrors, 'Candidates')
@@ -177,6 +191,7 @@ export function ComplexityChainCellEditor({
   }
 
   const handleSave = () => {
+    if (saveBlocked) return
     setFormError(null)
     if (listError) {
       setFieldErrors({ Candidates: listError })
@@ -214,6 +229,7 @@ export function ComplexityChainCellEditor({
   }
 
   const handleClear = () => {
+    if (clearBlocked) return
     setFormError(null)
     setFieldErrors({})
     clear.mutate(
@@ -239,7 +255,15 @@ export function ComplexityChainCellEditor({
             {INHERITED_REPLACE_WARNING}
           </Alert>
         ) : null}
-        {resolved === 'none' ? (
+        {failedReads.chain ? (
+          <Alert color="red" variant="light">
+            {storedCellUnknownNote(failedReads.chain)}
+          </Alert>
+        ) : failedReads.metadata ? (
+          <Alert color="red" variant="light">
+            {storedMetadataUnknownNote(failedReads.metadata)}
+          </Alert>
+        ) : resolved === 'none' ? (
           <Alert color="red" variant="light">
             {UNSET_CELL_EDITOR_NOTE}
           </Alert>
@@ -340,6 +364,16 @@ export function ComplexityChainCellEditor({
           onChange={(event) => setNotAfter(event.currentTarget.value)}
         />
 
+        {metadataUnread ? (
+          <Checkbox
+            color="red"
+            label={failedReads.chain ? OVERWRITE_UNREAD_CELL : OVERWRITE_UNREAD_METADATA}
+            checked={overwriteConfirmed}
+            onChange={(event) => setOverwriteConfirmed(event.currentTarget.checked)}
+            disabled={busy}
+          />
+        ) : null}
+
         {formError ? (
           <Alert color="red" variant="light" data-testid="routing-cell-editor-error">
             {formError}
@@ -375,7 +409,7 @@ export function ComplexityChainCellEditor({
                   setFormError(null)
                   setConfirmingClear(true)
                 }}
-                disabled={busy}
+                disabled={busy || clearBlocked}
               >
                 Clear override
               </Button>
@@ -387,7 +421,7 @@ export function ComplexityChainCellEditor({
               ref={saveRef}
               onClick={handleSave}
               loading={put.isPending}
-              disabled={candidates.length === 0}
+              disabled={candidates.length === 0 || saveBlocked}
             >
               Save
             </Button>
