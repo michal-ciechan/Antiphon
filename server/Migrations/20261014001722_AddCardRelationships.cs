@@ -45,24 +45,26 @@ namespace Antiphon.Server.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_CardRelationships", x => x.Id);
+                    table.CheckConstraint("CK_CardRelationships_NotSelf", "\"CardId\" <> \"RelatedCardId\"");
                     table.ForeignKey(
                         name: "FK_CardRelationships_Cards_CardId",
                         column: x => x.CardId,
                         principalTable: "Cards",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Restrict);
+                        onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
                         name: "FK_CardRelationships_Cards_RelatedCardId",
                         column: x => x.RelatedCardId,
                         principalTable: "Cards",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Restrict);
+                        onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateIndex(
                 name: "IX_CardRelationships_CardId_RelatedCardId_Kind",
                 table: "CardRelationships",
-                columns: new[] { "CardId", "RelatedCardId", "Kind" });
+                columns: new[] { "CardId", "RelatedCardId", "Kind" },
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_CardRelationships_RelatedCardId",

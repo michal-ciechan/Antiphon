@@ -144,6 +144,32 @@ internal static class CardRevisionLog
         });
     }
 
+    /// <summary>
+    /// CARD-0100. Records a relationship added to or removed from <paramref name="card"/>, with the
+    /// other card's identifier as it is now.
+    /// </summary>
+    public static CardRevision AppendRelationship(
+        Card card,
+        CardRevisionKind kind,
+        Guid relatedCardId,
+        string relatedIdentifier,
+        CardRelationshipKind relationshipKind,
+        string? reason,
+        string? actor,
+        DateTime utcNow)
+    {
+        return Append(card, new CardRevision
+        {
+            Kind = kind,
+            RelatedCardId = relatedCardId,
+            RelatedCardIdentifier = relatedIdentifier,
+            RelationshipKind = relationshipKind,
+            Reason = Trimmed(reason),
+            EditedBy = Trimmed(actor),
+            CreatedAt = utcNow
+        });
+    }
+
     private static CardRevision Append(Card card, CardRevision revision)
     {
         // Id is deliberately left unset. A row reached through a navigation rather than through

@@ -207,6 +207,7 @@ public sealed class CardService : IScheduledCardActions
         var card = await LoadCardAsync(id, ct);
         var dto = await SessionContextUsage.AttachToCardAsync(
             _db, BoardService.ToCardDto(card), _contextWindow, _logger, ct);
+        dto = WithBlockers(dto, await LoadBlockerSummariesAsync([card.Id], ct));
         if (_cardFiles is null) return dto;
         try { return dto with { CardFileStatus = await _cardFiles.GetCardStatusAsync(id, ct) }; }
         catch (OperationCanceledException) { throw; }
@@ -313,8 +314,9 @@ public sealed class CardService : IScheduledCardActions
                 last.UpdatedAt.ToUniversalTime(), last.Id,
                 fingerprint).Encode();
         }
-        var summaries = cards.Select(card => BoardService.ToSummaryDto(
-            BoardService.ToCardDto(card), _cards.SummaryPreviewChars)).ToList();
+        var blockers = await LoadBlockerSummariesAsync(cards.Select(card => card.Id).ToList(), ct);
+        var summaries = cards.Select(card => WithBlockers(BoardService.ToSummaryDto(
+            BoardService.ToCardDto(card), _cards.SummaryPreviewChars), blockers)).ToList();
         await transaction.CommitAsync(ct);
         return (summaries, total, truncated, next);
     }
@@ -1322,16 +1324,218 @@ public sealed class CardService : IScheduledCardActions
     public const string CardRelationshipCycleCode = "card_relationship_cycle";
     public const string CardRelationshipExistsCode = "card_relationship_exists";
 
-    public Task<CardRelationshipsDto> GetRelationshipsAsync(Guid id, CancellationToken ct) =>
-        throw new NotImplementedException();
+    /// <summary>
+    /// CARD-0100. Each card's BlockedBy rows as summaries, one query for the whole set
+    /// (CardRelationshipApiTests.Card_and_list_views_carry_open_blocker_count_and_blockers_excluding_resolved).
+    /// </summary>
+    private async Task<Dictionary<Guid, List<CardBlockerSummaryDto>>> LoadBlockerSummariesAsync(
+        IReadOnlyCollection<Guid> cardIds, CancellationToken ct)
+    {
+        var rows = await _db.CardRelationships.AsNoTracking()
+            .Where(r => cardIds.Contains(r.CardId) && r.Kind == CardRelationshipKind.BlockedBy)
+            .Select(r => new { r.CardId, r.RelatedCard.Identifier, r.RelatedCard.Status, r.RelatedCard.ArchivedAt })
+            .ToListAsync(ct);
+        return rows.GroupBy(r => r.CardId).ToDictionary(
+            g => g.Key,
+            g => g.OrderBy(r => r.Identifier, StringComparer.Ordinal)
+                .Select(r => new CardBlockerSummaryDto(
+                    r.Identifier, r.Status, CardBlockers.IsResolved(r.Status, r.ArchivedAt)))
+                .ToList());
+    }
 
-    public Task<CardRelationshipDto> AddRelationshipAsync(
-        Guid id, AddCardRelationshipRequest request, CancellationToken ct) =>
-        throw new NotImplementedException();
+    private static CardDto WithBlockers(CardDto dto, Dictionary<Guid, List<CardBlockerSummaryDto>> blockers) =>
+        blockers.TryGetValue(dto.Id, out var rows)
+            ? dto with { Blockers = rows, OpenBlockerCount = rows.Count(r => !r.Resolved) }
+            : dto;
 
-    public Task<CardDto> RemoveRelationshipAsync(
-        Guid id, Guid relationshipId, RemoveCardRelationshipRequest request, CancellationToken ct) =>
-        throw new NotImplementedException();
+    private static readonly string[] RelationshipKindNames = [nameof(CardRelationshipKind.BlockedBy)];
+
+    /// <summary>
+    /// CARD-0100. The rows this card owns (<c>blockedBy</c>) and the rows naming it as the blocker
+    /// (<c>blocks</c>). <c>Resolved</c> is computed on the blocker end at read time.
+    /// </summary>
+    public async Task<CardRelationshipsDto> GetRelationshipsAsync(Guid id, CancellationToken ct)
+    {
+        var self = await _db.Cards.AsNoTracking().Where(c => c.Id == id)
+            .Select(c => new { c.Status, c.ArchivedAt }).FirstOrDefaultAsync(ct)
+            ?? throw new NotFoundException(nameof(Card), id);
+
+        var blockedBy = await _db.CardRelationships.AsNoTracking()
+            .Where(r => r.CardId == id)
+            .OrderBy(r => r.CreatedAt).ThenBy(r => r.Id)
+            .Select(r => new CardRelationshipDto(
+                r.Id, r.Kind, r.CardId, r.RelatedCardId, r.RelatedCard.Identifier, r.RelatedCard.Title,
+                r.RelatedCard.BoardId, r.RelatedCard.Status, r.RelatedCard.ArchivedAt, false,
+                r.Reason, r.CreatedBy, r.CreatedAt))
+            .ToListAsync(ct);
+        var blocks = await _db.CardRelationships.AsNoTracking()
+            .Where(r => r.RelatedCardId == id)
+            .OrderBy(r => r.CreatedAt).ThenBy(r => r.Id)
+            .Select(r => new CardRelationshipDto(
+                r.Id, r.Kind, r.CardId, r.CardId, r.Card.Identifier, r.Card.Title,
+                r.Card.BoardId, r.Card.Status, r.Card.ArchivedAt, false,
+                r.Reason, r.CreatedBy, r.CreatedAt))
+            .ToListAsync(ct);
+
+        var selfResolved = CardBlockers.IsResolved(self.Status, self.ArchivedAt);
+        return new CardRelationshipsDto(
+            blockedBy.Select(r => r with { Resolved = CardBlockers.IsResolved(r.RelatedStatus, r.RelatedArchivedAt) }).ToList(),
+            blocks.Select(r => r with { Resolved = selfResolved }).ToList());
+    }
+
+    /// <summary>
+    /// CARD-0100. Marks this card as blocked by <c>request.RelatedCard</c>. The blocked card owns the
+    /// write (token, revision, <c>UpdatedAt</c>); the blocker is only read
+    /// (CardRelationshipApiTests.Adding_a_blocker_leaves_the_blockers_token_and_revisions_untouched).
+    /// </summary>
+    public async Task<CardRelationshipDto> AddRelationshipAsync(
+        Guid id, AddCardRelationshipRequest request, CancellationToken ct)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (request.Kind is null || !RelationshipKindNames.Contains(request.Kind, StringComparer.Ordinal))
+            errors["kind"] = [$"kind must be one of: {string.Join(", ", RelationshipKindNames)}."];
+        if (string.IsNullOrWhiteSpace(request.RelatedCard))
+            errors["relatedCard"] = ["relatedCard is required: the blocker's guid or identifier."];
+        RequireWithinLimit(errors, "reason", request.Reason?.Trim(), MaxReasonLength);
+        RequireWithinLimit(errors, "createdBy", request.CreatedBy?.Trim(), MaxActorLength);
+        if (errors.Count > 0)
+            throw new ValidationException(errors);
+        var kind = Enum.Parse<CardRelationshipKind>(request.Kind!);
+
+        var card = await _db.Cards.FirstOrDefaultAsync(c => c.Id == id, ct)
+            ?? throw new NotFoundException(nameof(Card), id);
+        RequireRelationshipWrite(card, request.ConcurrencyToken);
+
+        var relatedId = await ResolveCardIdAsync(
+            request.RelatedCard!, new CardScopeContext(request.RelatedBoardId, card.Id, null, null), ct);
+        if (relatedId == card.Id)
+            throw new ValidationException("relatedCard", $"Card '{card.Identifier}' cannot block itself.");
+        var related = await _db.Cards.AsNoTracking().FirstAsync(c => c.Id == relatedId, ct);
+        if (related.ArchivedAt is not null)
+            throw new ConflictException(
+                $"Card '{related.Identifier}' is archived; unarchive it before naming it as a blocker.");
+
+        if (await _db.CardRelationships.AnyAsync(
+                r => r.CardId == card.Id && r.RelatedCardId == related.Id && r.Kind == kind, ct))
+        {
+            throw new ConflictException(
+                $"Card '{card.Identifier}' is already blocked by '{related.Identifier}'.",
+                CardRelationshipExistsCode);
+        }
+
+        if (await FindBlockerPathAsync(related.Id, card.Id, ct) is { } path)
+        {
+            var identifiers = await _db.Cards.AsNoTracking().Where(c => path.Contains(c.Id))
+                .ToDictionaryAsync(c => c.Id, c => c.Identifier, ct);
+            var chain = string.Join(" <- ", new[] { card.Id }.Concat(path).Select(p => identifiers[p]));
+            throw new ConflictException(
+                $"Blocking '{card.Identifier}' by '{related.Identifier}' would make a cycle: {chain}.",
+                CardRelationshipCycleCode);
+        }
+
+        var now = UtcNow();
+        var row = new CardRelationship
+        {
+            Id = Guid.NewGuid(),
+            CardId = card.Id,
+            RelatedCardId = related.Id,
+            Kind = kind,
+            Reason = string.IsNullOrWhiteSpace(request.Reason) ? null : request.Reason.Trim(),
+            CreatedBy = string.IsNullOrWhiteSpace(request.CreatedBy) ? null : request.CreatedBy.Trim(),
+            CreatedAt = now,
+        };
+        _db.CardRelationships.Add(row);
+        CardRevisionLog.AppendRelationship(card, CardRevisionKind.RelationshipAdded, related.Id,
+            related.Identifier, kind, request.Reason, request.CreatedBy, now);
+        card.UpdatedAt = now;
+        card.ConcurrencyToken = Guid.NewGuid();
+        await SaveCardWriteAsync(card, ct);
+
+        await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
+        return new CardRelationshipDto(
+            row.Id, row.Kind, row.CardId, related.Id, related.Identifier, related.Title, related.BoardId,
+            related.Status, related.ArchivedAt, CardBlockers.IsResolved(related.Status, related.ArchivedAt),
+            row.Reason, row.CreatedBy, row.CreatedAt) { CardConcurrencyToken = card.ConcurrencyToken };
+    }
+
+    /// <summary>CARD-0100. Removes one BlockedBy row this card owns and records it in the card's history.</summary>
+    public async Task<CardDto> RemoveRelationshipAsync(
+        Guid id, Guid relationshipId, RemoveCardRelationshipRequest request, CancellationToken ct)
+    {
+        var errors = new Dictionary<string, string[]>();
+        RequireWithinLimit(errors, "reason", request.Reason?.Trim(), MaxReasonLength);
+        RequireWithinLimit(errors, "removedBy", request.RemovedBy?.Trim(), MaxActorLength);
+        if (errors.Count > 0)
+            throw new ValidationException(errors);
+
+        var card = await _db.Cards.FirstOrDefaultAsync(c => c.Id == id, ct)
+            ?? throw new NotFoundException(nameof(Card), id);
+        RequireRelationshipWrite(card, request.ConcurrencyToken);
+        var row = await _db.CardRelationships.Include(r => r.RelatedCard)
+            .FirstOrDefaultAsync(r => r.Id == relationshipId && r.CardId == card.Id
+                && r.Kind == CardRelationshipKind.BlockedBy, ct)
+            ?? throw new NotFoundException(nameof(CardRelationship), relationshipId);
+
+        var now = UtcNow();
+        _db.CardRelationships.Remove(row);
+        CardRevisionLog.AppendRelationship(card, CardRevisionKind.RelationshipRemoved, row.RelatedCardId,
+            row.RelatedCard.Identifier, row.Kind, request.Reason, request.RemovedBy, now);
+        card.UpdatedAt = now;
+        card.ConcurrencyToken = Guid.NewGuid();
+        await SaveCardWriteAsync(card, ct);
+
+        await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
+        return await GetByIdAsync(card.Id, ct);
+    }
+
+    private static void RequireRelationshipWrite(Card card, Guid concurrencyToken)
+    {
+        if (concurrencyToken == Guid.Empty)
+            throw new ValidationException("concurrencyToken", "Card concurrency token is required.");
+        if (concurrencyToken != card.ConcurrencyToken)
+            throw new ConflictException($"Card '{card.Identifier}' was modified by another operation.");
+        if (card.ArchivedAt is not null)
+            throw new ConflictException(
+                $"Card '{card.Identifier}' is archived; unarchive it before changing its relationships.");
+    }
+
+    /// <summary>
+    /// Breadth-first over BlockedBy edges from <paramref name="start"/>, one query per level, with a
+    /// visited set. Returns the chain <c>start .. card that is blocked by target</c> when
+    /// <paramref name="target"/> is reachable, else null
+    /// (CardRelationshipApiTests.Relationship_write_refusal_table: two_cycle, three_cycle, diamond).
+    /// </summary>
+    private async Task<List<Guid>?> FindBlockerPathAsync(Guid start, Guid target, CancellationToken ct)
+    {
+        var reachedFrom = new Dictionary<Guid, Guid?> { [start] = null };
+        var frontier = new List<Guid> { start };
+        while (frontier.Count > 0)
+        {
+            var edges = await _db.CardRelationships.AsNoTracking()
+                .Where(r => frontier.Contains(r.CardId) && r.Kind == CardRelationshipKind.BlockedBy)
+                .Select(r => new { r.CardId, r.RelatedCardId })
+                .ToListAsync(ct);
+            var next = new List<Guid>();
+            foreach (var edge in edges)
+            {
+                if (edge.RelatedCardId == target)
+                {
+                    var path = new List<Guid>();
+                    for (Guid? node = edge.CardId; node is Guid current; node = reachedFrom[current])
+                        path.Insert(0, current);
+                    path.Add(target);
+                    return path;
+                }
+
+                if (reachedFrom.TryAdd(edge.RelatedCardId, edge.CardId))
+                    next.Add(edge.RelatedCardId);
+            }
+
+            frontier = next;
+        }
+
+        return null;
+    }
 
     public async Task<SpawnCardResult> SpawnAsync(Guid id, SpawnCardRequest request, CancellationToken ct)
     {
