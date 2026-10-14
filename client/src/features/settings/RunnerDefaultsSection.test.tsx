@@ -1,6 +1,6 @@
-import { HttpResponse, http } from 'msw'
+import { HttpResponse, delay, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
-import { act, renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { act, renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { runnerDefaultKeys } from '../../api/runnerDefaults'
 import { RunnerDefaultsSection } from './RunnerDefaultsSection'
@@ -129,5 +129,51 @@ describe('RunnerDefaultsSection', () => {
     renderWithProviders(<RunnerDefaultsSection />)
     expect(await screen.findByText(/Could not load runner defaults/)).toBeInTheDocument()
     expect(screen.queryByTestId('runner-defaults-save')).not.toBeInTheDocument()
+  })
+})
+
+describe('C1270 runner defaults read state', () => {
+  const desktopRunner = { runnerId: 'desktop', displayName: 'Desktop', platform: 'windows', available: true, dispatchEligible: true, unavailableReason: null, capacity: 6, occupied: 0, capacityKind: 'delegatedTasks', stale: false, features: [] }
+  const server2Runner = { runnerId: 'server2', displayName: 'server2', platform: 'linux', available: true, dispatchEligible: true, unavailableReason: null, capacity: null, occupied: null, capacityKind: 'sessions', stale: false, features: [] }
+
+  it.each(['failed', 'loading', 'empty'] as const)('C1270 V-2 runner defaults history read %s', async (state) => {
+    server.use(
+      http.get('/api/runner-defaults', () => HttpResponse.json(defaults)),
+      http.get('/api/session-runners', () => HttpResponse.json([desktopRunner, server2Runner])),
+      http.get('/api/runner-defaults/revisions', async () => {
+        if (state === 'failed') return HttpResponse.json({ title: 'boom' }, { status: 500 })
+        if (state === 'loading') await delay('infinite')
+        return HttpResponse.json({ revisions: [], nextBeforeRevision: null })
+      }),
+    )
+    renderWithProviders(<RunnerDefaultsSection />)
+    const history = await screen.findByTestId('runner-defaults-history')
+    const expected = {
+      failed: 'History unknown (revisions read failed: boom).',
+      loading: 'History loading.',
+      empty: 'No revisions yet.',
+    }[state]
+    expect(await within(history).findByText(expected)).toBeInTheDocument()
+    if (state !== 'empty') expect(history).not.toHaveTextContent('No revisions yet.')
+  })
+
+  it.each(['failed', 'loaded'] as const)('C1270 V-2 runner defaults catalogue read %s', async (state) => {
+    server.use(
+      http.get('/api/runner-defaults', () => HttpResponse.json({ ...defaults, unresolvedReferences: [] })),
+      http.get('/api/runner-defaults/revisions', () => HttpResponse.json({ revisions: [], nextBeforeRevision: null })),
+      http.get('/api/session-runners', () => state === 'failed'
+        ? HttpResponse.json({ title: 'boom' }, { status: 500 })
+        : HttpResponse.json([desktopRunner, server2Runner])),
+    )
+    renderWithProviders(<RunnerDefaultsSection />)
+    const global = await screen.findByTestId('runner-defaults-global')
+    if (state === 'failed') {
+      expect(global).toHaveValue('server2 · catalogue unknown')
+      expect(screen.getByText('Runner catalogue unknown (session runners read failed: boom).')).toBeInTheDocument()
+      expect(screen.getByTestId('runner-defaults-section')).not.toHaveTextContent('missing from catalogue')
+    } else {
+      expect(global).toHaveValue('server2 · linux')
+      expect(screen.getByTestId('runner-defaults-section')).not.toHaveTextContent('catalogue unknown')
+    }
   })
 })

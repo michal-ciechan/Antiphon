@@ -113,6 +113,7 @@ describe('C1270 failed-read display', () => {
   const availabilityFailed = 'availability read failed (InvalidOperationException)'
   const agentId = '7f0c2d4e-0000-4000-8000-000000000001'
   const missingAgent = `stage pin binds standing agent ${agentId} (unavailable); an ordinary dispatch runs on that agent and does not walk this row`
+  const namedAgent = 'stage pin binds standing agent Reviewer Bot (ClaudeCode); an ordinary dispatch runs on that agent and does not walk this row'
   const preferred = { ...stagePin, strength: 'Preferred' } as const
   const heldCodex = { ...codex, availableNow: false, unavailableReason: availabilityFailed }
 
@@ -130,6 +131,8 @@ describe('C1270 failed-read display', () => {
     ['preferred-standing-agent-read-failure', effective({ source: 'agent', stagePin: preferred, governsDefault: false, withheldReason: missingAgent + '; standing agent read failed (InvalidOperationException)' }), `Pinned to standing agent ${agentId} (name unknown) — an ordinary dispatch runs there; this row is not walked`],
     ['required-standing-agent-read-failure', effective({ source: 'agent', stagePin, governsDefault: false, withheldReason: missingAgent + '; standing agent read failed (InvalidOperationException)' }), `Pinned to standing agent ${agentId} (name unknown) — an ordinary dispatch runs there; this row is not walked`],
     ['standing-agent-missing-is-not-a-read-failure', effective({ source: 'agent', stagePin, governsDefault: false, withheldReason: missingAgent }), `Pinned to standing agent ${agentId} (unavailable) — an ordinary dispatch runs there; this row is not walked`],
+    ['required-standing-agent-with-chain-read-failure', effective({ source: 'agent', stagePin, governsDefault: false, withheldReason: namedAgent + '; ' + chainFailed }), 'Pinned to standing agent Reviewer Bot (ClaudeCode) — an ordinary dispatch runs there; this row is not walked'],
+    ['preferred-standing-agent-with-chain-read-failure', effective({ source: 'agent', stagePin: preferred, governsDefault: false, withheldReason: namedAgent + '; ' + chainFailed }), 'Pinned to standing agent Reviewer Bot (ClaudeCode) — an ordinary dispatch runs there; this row is not walked'],
   ])('C1270 V-1 effective label %s', (_name, input, expected) => {
     expect(effectiveCellLabel(input as ComplexityEffectiveDto)).toBe(expected)
   })
