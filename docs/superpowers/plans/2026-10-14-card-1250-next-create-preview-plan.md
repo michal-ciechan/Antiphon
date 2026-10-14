@@ -79,10 +79,10 @@ affected: no server source changes.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1 | n/a | client-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx` | V-1..V-13 red | expected red before S2: module resolution failure, V12/V25 and V13-V16 fail | n/a | 4 | true | n/a |
-| CP-2 | S2 | n/a | client | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx src/features/settings/rolePolicyModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx` | V-1..V-13, R-1 | all six files, 0 failed/skipped; CLIENT TESTS EXIT CODE: 0 | n/a | 5 | true | n/a |
-| CP-3 | S2 | n/a | client-types | `node client/node_modules/typescript/bin/tsc -b client/tsconfig.json --pretty false` | R-2 | exit 0, 0 TypeScript errors | n/a | 3 | true | n/a |
-| CP-4 | S2 | n/a | client-lint | `node client/node_modules/eslint/bin/eslint.js --config client/eslint.config.js --max-warnings 0 client/src/features/settings/nextCreatePreview.ts client/src/features/settings/nextCreatePreview.test.ts client/src/features/settings/RolePolicySection.tsx client/src/features/settings/RolePolicySection.test.tsx client/src/features/delegations/DelegateModal.tsx client/src/features/delegations/DelegateModal.test.tsx` | R-2 | 0 errors, 0 warnings | n/a | 2 | true | n/a |
+| CP-1 | Repair-tests | n/a | client-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx` | V-17 F1-F4 red | expected assertion failures against f047d2ef7 implementation | n/a | 4 | true | n/a |
+| CP-2 | Repair | n/a | client | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx src/features/settings/rolePolicyModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx` | V-1..V-17, R-1 | all six files, 149 passed, 0 failed/skipped; CLIENT TESTS EXIT CODE: 0 | n/a | 5 | true | n/a |
+| CP-3 | Repair | n/a | client-types | `node client/node_modules/typescript/bin/tsc -b client/tsconfig.json --pretty false` | R-2 | exit 0, 0 TypeScript errors | n/a | 3 | true | n/a |
+| CP-4 | Repair | n/a | client-lint | `node client/node_modules/eslint/bin/eslint.js --config client/eslint.config.js --max-warnings 0 client/src/features/settings/nextCreatePreview.ts client/src/features/settings/nextCreatePreview.test.ts client/src/features/settings/RolePolicySection.tsx client/src/features/settings/RolePolicySection.test.tsx client/src/features/delegations/DelegateModal.tsx client/src/features/delegations/DelegateModal.test.tsx` | R-2 | 0 errors, 0 warnings | n/a | 2 | true | n/a |
 
 ### Execution and cost
 
@@ -112,3 +112,7 @@ through `scripts/build-slot.ps1`: `npm ci --prefix client` (fresh worktree has n
 - PC-6 treat `resolvedFrom: none` as resolved: V-8 `unresolved-row` fails.
 - PC-7 drop the Orchestrator floor: V-5 Docs fails.
 - PC-8 report exhausted as the head without Blocked: V-3 and V-15 fail.
+
+## Repair 679ecbea (Final Review 18cdf39f F1-F4)
+
+V-17 is a table of 40 literal server-branch expectations, with f047d2ef7 server file:line citations in each row. CP-1 runs these regressions against the unchanged f047d2ef7 implementation before the repair. CP-2 runs the complete six-file selection after the repair; Min stays n/a because these are Vitest results. Configured Orchestrator floor, unevaluated partial-slot availability, standing-agent details and masked quota-versus-hold precedence must be disclosed as unknown rather than invented. Final scope remains client-only: no whole Unit or server integration lane (explicit repair brief).
