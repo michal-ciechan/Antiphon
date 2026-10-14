@@ -49,8 +49,8 @@ public sealed class WindowsUnitPlatformAdmissionTests
     public void C1210_Native_linux_entries_guard_before_work()
     {
         var methods = SourceMethods();
-        WindowsUnitSkipRoster.Native.Length.ShouldBe(57, "c1210-native-identity-count");
-        WindowsUnitSkipRoster.Native.Sum(entry => entry.Results).ShouldBe(68, "c1210-native-result-count");
+        WindowsUnitSkipRoster.Native.Length.ShouldBe(60, "c1210-native-identity-count");
+        WindowsUnitSkipRoster.Native.Sum(entry => entry.Results).ShouldBe(71, "c1210-native-result-count");
         foreach (var entry in WindowsUnitSkipRoster.Native)
         {
             var matches = methods.Where(method => Identity(method) == entry.Identity).ToArray();
@@ -255,7 +255,7 @@ public sealed class WindowsUnitPlatformAdmissionTests
         WindowsUnitSkipRoster.Conditional.ShouldBe(capabilities, "c1210-conditional-roster: frozen identities and reasons");
         WindowsUnitSkipRoster.StoragePortable.ShouldBe(storagePortable, "c1210-portable-roster: frozen storage identities");
         FileLink.PrivilegeReason.ShouldBe(capabilities[0].Reason, "c1210-filelink-exact-reason");
-        ChildFilter.ShouldBe("/*/*/(HostJqPrerequisiteScriptTests*)|(JqRunnerImageContractTests*)|(GrokSha256PinTests*)|(CodexRootExecContractTests*)|(ChannelOutboundStorageTests*)/*",
+        ChildFilter.ShouldBe("/*/*/(HostJqPrerequisiteScriptTests*)|(JqRunnerImageContractTests*)|(GrokSha256PinTests*)|(CodexRootExecContractTests*)|(ChannelOutboundStorageTests*)|(RefreshGithubTokenRemoteCommandTests*)/*",
             "c1210-child-storage-selection");
         foreach (var (conditional, skipped) in new[] { (Array.Empty<Entry>(), false), (capabilities, false), (capabilities, true) })
         {
@@ -325,10 +325,10 @@ public sealed class WindowsUnitPlatformAdmissionTests
                     outcome == "NotExecuted" ? new XElement(Trx + "Output", new XElement(Trx + "DebugTrace", "Skipped: " + entry.Reason)) : null));
             }
         }
-        // C1210_Audit_rejects_empty_or_incomplete_outcomes uses the frozen 72/105-result fixture totals.
-        var total = conditional.Length == 0 ? 72 : 105;
+        // CARD-1265 adds three single-result native gates to the frozen audit totals.
+        var total = conditional.Length == 0 ? 75 : 108;
         var passed = conditional.Length == 0 ? 4 : skipped ? 35 : 37;
-        var notExecuted = conditional.Length > 0 && skipped ? 70 : 68;
+        var notExecuted = conditional.Length > 0 && skipped ? 73 : 71;
         return new XDocument(new XElement(Trx + "TestRun", new XElement(Trx + "Results", results),
             new XElement(Trx + "TestDefinitions", definitions), new XElement(Trx + "ResultSummary", new XElement(Trx + "Counters",
                 new XAttribute("total", total), new XAttribute("executed", passed), new XAttribute("passed", passed),
