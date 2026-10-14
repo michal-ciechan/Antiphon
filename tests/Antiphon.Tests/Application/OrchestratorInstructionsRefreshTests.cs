@@ -64,6 +64,7 @@ public class OrchestratorInstructionsRefreshTests
     [Arguments("routing-pin")]
     [Arguments("runner-eligibility")]
     [Arguments("dispatch-concurrency")]
+    [Arguments("complexity-chain")]
     public async Task Covered_writes_each_regenerate_and_notify(string kind)
     {
         await using var h = await CreateHarnessAsync();
@@ -348,6 +349,48 @@ public class OrchestratorInstructionsRefreshTests
             && incident.Severity == AlertSeverity.Warning)).ShouldBeTrue();
     }
 
+    [Test]
+    public async Task A_cell_write_notice_is_received_as_one_complete_user_prompt_equal_to_its_queued_body()
+    {
+        await using var h = await CreateHarnessAsync();
+        await AttachBundleAsync(h);
+        h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.Off;
+        await Instructions(h).ReconcileNowAsync("startup");
+        var startup = await ReadStateAsync(h);
+        (await SessionVersionAsync(h)).ShouldBeNull();
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "Dispatch work.");
+        var floor = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.All;
+        await using (var scope = h.Provider.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ComplexityChainService>().UpsertAsync(
+                AgentTaskRole.Plan, TaskComplexity.Medium,
+                new PutComplexityChainRequest([new(AgentKind.Codex, AgentModelLevel.Frontier)],
+                    RoutingPinProvenance.Human, "cell"), null, CancellationToken.None);
+        }
+        await Instructions(h).WhenIdleAsync();
+        var state = await ReadStateAsync(h);
+        await using var db = NewDb(h);
+        var rows = await db.SessionQueuedMessages.Where(row => row.AgentSessionId == h.SessionId
+            && row.NoteHeader == OrchestratorInstructionsService.NoteHeader).ToListAsync();
+        rows.Count.ShouldBe(1);
+        var row = rows.Single();
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.LastDeliveryBaselineSequence.ShouldBe(floor);
+        var prompts = await db.TranscriptEntries.Where(entry => entry.AgentSessionId == h.SessionId
+            && entry.Kind == TranscriptKinds.UserPrompt).ToListAsync();
+        prompts.Count.ShouldBe(2);
+        prompts.Count(entry => entry.Sequence > floor).ShouldBe(1);
+        prompts.Single(entry => entry.Sequence > floor).Text.ShouldBe(row.Body);
+        row.Body.ShouldContain("matrix:");
+        row.Body.ShouldContain(state.WrittenPath);
+        h.Adapter.SubmittedBodies.ShouldBe([row.Body]);
+        state.Revision.ShouldBe(startup.Revision + 1);
+        state.Version.ShouldNotBe(startup.Version);
+        (await SessionVersionAsync(h)).ShouldBe(state.Version);
+        state.Body.ShouldContain("- Plan: Hard unset; Medium (default) Codex/Frontier (gpt-6-astra); Easy unset; effective Codex/Frontier (gpt-6-astra) via role");
+    }
+
     private static async Task<string> CoveredWriteAsync(BridgeQueueHarness h, string kind)
     {
         h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.Off;
@@ -364,6 +407,13 @@ public class OrchestratorInstructionsRefreshTests
         await using var scope = h.Provider.CreateAsyncScope();
         switch (kind)
         {
+            case "complexity-chain":
+                await scope.ServiceProvider.GetRequiredService<ComplexityChainService>().UpsertAsync(
+                    AgentTaskRole.Plan, TaskComplexity.Medium,
+                    new PutComplexityChainRequest([new(AgentKind.Codex, AgentModelLevel.Frontier)],
+                        RoutingPinProvenance.Human, "cell"), null, CancellationToken.None);
+                await Instructions(h).WhenIdleAsync();
+                return "matrix:";
             case "host-budget":
                 await scope.ServiceProvider.GetRequiredService<HostBudgetService>()
                     .UpsertAsync("local", 3, "raise local", CancellationToken.None);

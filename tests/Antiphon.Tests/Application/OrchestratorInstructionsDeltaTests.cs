@@ -119,6 +119,24 @@ public sealed class OrchestratorInstructionsDeltaTests
         repeated.Length.ShouldBeLessThanOrEqualTo(700);
     }
 
+    [Test]
+    public void An_identical_matrix_rewrite_produces_no_delta_and_a_changed_cell_names_the_role()
+    {
+        var before = Sample() with
+        {
+            Matrix = new MatrixSection("Medium", [new MatrixInstructionRow(
+                "Plan", "unset", "ClaudeCode/High (opus)", "unset", "ClaudeCode/High (opus)", "role")]),
+        };
+        var rewritten = before with { Matrix = new MatrixSection("Medium", [before.Matrix.Rows[0] with { }]) };
+        OrchestratorInstructionsDelta.Format(before, rewritten).ShouldBe("");
+        var changed = rewritten with
+        {
+            Matrix = rewritten.Matrix with { Rows = [rewritten.Matrix.Rows[0] with { Medium = "Codex/Frontier (gpt-6-astra)" }] },
+        };
+        OrchestratorInstructionsDelta.Format(before, changed)
+            .ShouldBe("matrix: Plan Medium ClaudeCode/High (opus) → Codex/Frontier (gpt-6-astra)");
+    }
+
     private static OrchestratorInstructionsSnapshot Sample() => new(
         Caps: new PipelineCapsSection(
             2, "configured", 6, "Worktree", "High",

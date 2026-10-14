@@ -11,7 +11,13 @@ public sealed record OrchestratorInstructionsSnapshot(
     IReadOnlyList<HoldInstructionRow> Holds,
     IReadOnlyList<PinInstructionRow> Pins,
     IReadOnlyList<LevelInstructionRow> Levels,
-    IReadOnlyList<string> StandingLines);
+    IReadOnlyList<string> StandingLines,
+    MatrixSection? Matrix = null);
+
+public sealed record MatrixSection(string DefaultComplexity, IReadOnlyList<MatrixInstructionRow> Rows);
+
+public sealed record MatrixInstructionRow(
+    string Role, string Hard, string Medium, string Easy, string Effective, string Source);
 
 public sealed record PipelineCapsSection(
     int EffectiveMaxConcurrentTasks,
