@@ -58,6 +58,7 @@ retained. No timeout or assertion threshold is widened.
 - R-3: compiled checkpoint census and manual separate-process run/wait using the
   rebuilt tool, both validators, exact-SHA source evidence and fresh TRX roster.
 
+The unbound candidate is docs/superpowers/mutations/2026-10-14-card-1254-candidate.md.
 All PCs below remain pending for method-scoped SourceLanding Mutation. Code does
 not perform deliberate mutants, and ordinary green does not discharge PCs.
 
@@ -86,7 +87,7 @@ TRX, run both validators, and run scripts/check-evidence-diff.ps1 over base..HEA
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c1254-final/` | slots | `/*/*/CheckpointSlotExecutorTests/*` | V-1 | all 10, 0 failed/skipped | 10 | 8 |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c1254-qualified/` | slots | `/*/*/CheckpointSlotExecutorTests/*` | V-1 | all 10, 0 failed/skipped | 10 | 8 |
 | CP-2 | all | CP-1 | launch | `/*/*/CheckpointLaunchCleanupTests/*` | V-2 | all 11, 0 failed/skipped | 11 | 1 |
 | CP-3 | all | CP-1 | usage | `/*/*/CheckpointTempUsageTests/*` | V-3 | all 8, 0 failed/skipped | 8 | 2 |
 | CP-4 | all | CP-1 | shadow-custody | `/*/*/CheckpointShadowCustodyTests/*` | V-4 | all 12, 0 failed/skipped | 12 | 2 |
