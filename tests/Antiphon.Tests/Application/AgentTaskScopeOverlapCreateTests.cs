@@ -38,7 +38,8 @@ public class AgentTaskScopeOverlapCreateTests
             new AgentTaskService.Caller(null, null, workspace.Path),
             CancellationToken.None);
 
-        created.Workspace.ShouldBe(WorkspaceMode.Shared);
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id))
+            .Workspace.ShouldBe(WorkspaceMode.Shared);
         var overlap = created.ScopeOverlaps.ShouldHaveSingleItem();
         overlap.TaskId.ShouldBe(running.Id);
         overlap.Policy.ShouldBe("serialise");
@@ -61,7 +62,8 @@ public class AgentTaskScopeOverlapCreateTests
             new AgentTaskService.Caller(null, null, workspace.Path),
             CancellationToken.None);
 
-        created.Workspace.ShouldBe(WorkspaceMode.Worktree);
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id))
+            .Workspace.ShouldBe(WorkspaceMode.Worktree);
         var overlap = created.ScopeOverlaps.ShouldHaveSingleItem();
         overlap.TaskId.ShouldBe(running.Id);
         overlap.Policy.ShouldBe("warn");
@@ -83,7 +85,8 @@ public class AgentTaskScopeOverlapCreateTests
             new AgentTaskService.Caller(null, null, workspace.Path),
             CancellationToken.None);
 
-        created.Workspace.ShouldBe(WorkspaceMode.Worktree);
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id))
+            .Workspace.ShouldBe(WorkspaceMode.Worktree);
         created.ScopeOverlaps.ShouldBeNull();
     }
 
@@ -99,7 +102,8 @@ public class AgentTaskScopeOverlapCreateTests
             new AgentTaskService.Caller(null, null, workspace.Path),
             CancellationToken.None);
 
-        created.Workspace.ShouldBe(WorkspaceMode.ReadOnly);
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id))
+            .Workspace.ShouldBe(WorkspaceMode.ReadOnly);
         created.ScopeOverlaps.ShouldBeNull();
     }
 
@@ -115,7 +119,8 @@ public class AgentTaskScopeOverlapCreateTests
             new AgentTaskService.Caller(null, null, workspace.Path),
             CancellationToken.None);
 
-        created.Workspace.ShouldBe(WorkspaceMode.Shared);
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id))
+            .Workspace.ShouldBe(WorkspaceMode.Shared);
         var overlap = created.ScopeOverlaps.ShouldHaveSingleItem();
         overlap.TaskId.ShouldBe(running.Id);
         overlap.Policy.ShouldBe("serialise");
@@ -135,7 +140,8 @@ public class AgentTaskScopeOverlapCreateTests
             new AgentTaskService.Caller(null, null, mine.Path),
             CancellationToken.None);
 
-        created.Workspace.ShouldBe(WorkspaceMode.Shared);
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id))
+            .Workspace.ShouldBe(WorkspaceMode.Shared);
         created.ScopeOverlaps.ShouldBeNull("cross-repo tasks must run concurrently");
     }
 
