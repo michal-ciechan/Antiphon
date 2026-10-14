@@ -62,3 +62,16 @@ Round-3 additions (pending, unbound):
 
 V17 now has 58 rows; round-3 ordinary selection is 173 tests. Exact source/citation suffixes
 come from the fresh Vitest JSON, since this repair corrects the round-2 source citations.
+
+Round-4 additions (pending, unbound; no Code mutants):
+
+| PC / variant | Guarded mutation | Witness | Status |
+|---|---|---|---|
+| PC-20 goal/card precedence | Drop card detection before stage composition | model V22 goal-leading, card-over-stage-pin, human-card-exempts-stage-forbid (three variants) | pending |
+| PC-20 title boundaries | Parse whole goal, bind #N prose, omit clamp or integer bound | model V22 goal-second-line-not-title, goal-hash-not-bound, goal-after-clamp, goal-overflow-not-bound (four variants) | pending |
+| PC-20 card origin | Drop retained cardContext from HandBackButton | modal V23 hand-back-prefill-and-edited-goal-withhold-target | pending |
+| PC-20 badge | Display an explicit tier for unknown card routing | modal V23 typed-card-overrides-stage-refusal-and-explicit-tier | pending |
+| PC-21 disclosure | Remove modal admission note | modal V24 modal-discloses-admission-dependency-with-explicit-tier | pending |
+| PC-22 kind/agent | Ignore explicitKind or explicitAgentId context | model V22 explicit-kind-unobserved / standing-agent-explicit (two variants) | pending |
+
+The round-4 selection has 58 retained V17 rows, 38 V22 rows, and 215 ordinary Vitest cases.
