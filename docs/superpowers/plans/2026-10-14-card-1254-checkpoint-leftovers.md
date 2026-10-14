@@ -77,9 +77,11 @@ Final table floor: 27 minutes, including one isolated test build. Baseline,
 tests-first red and red-row repairs use the same selections with fresh named
 outputs; the two tool bootstraps are disclosed gated builds. Import this table
 and set manifest timeouts.rowMinutes to 40; invoke run with --row-timeout 40m
---total-timeout 150m --serial --keep-outputs and the exact committed --expected-source-sha.
-Keep compiler outputs because lifecycle children write their HTML reports after
-the build seal; remove only those producer-owned literal output paths at the end.
+--total-timeout 150m --serial and the exact committed --expected-source-sha.
+On Linux omit --keep-outputs: CARD-1264 directs lifecycle-host reports to the
+caller's owned temp sandbox, which is reclaimed after joining the child. Green
+runs can clean their sealed compiler outputs; unknown post-seal files still refuse.
+Off Linux, build-file adoption remains unsupported; report retained output separately.
 Wait until exit is not 75. Keep generated evidence ignored. Inspect each fresh
 TRX, run both validators, and run scripts/check-evidence-diff.ps1 over base..HEAD.
 

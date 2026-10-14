@@ -6,13 +6,17 @@ Task base and fetched origin/master at start: 5665ddb1a3ba730f3b858acc109e65b5d7
 ## Implementation
 
 S1 commits the failing report-location assertions before changing either launch.
-S2 passes an explicit `--results-directory <owned sandbox>/TestResults` at both
-lifecycle-host launch sites. Existing CheckpointTestScope custody joins the child
-before reclaiming the sandbox. Do not adopt post-seal build writes or relax cleanup.
+S2 gives the lifecycle host an entry point that defaults `--results-directory` to
+`Path.GetTempPath()/TestResults` before test-platform startup. All three current
+callers (the two C# launch sites and verify-checkpoint-orphan-usage.ps1) supply an
+owned TMPDIR/TEMP/TMP sandbox and join the child before reclaiming it. Preserve an
+explicit results-directory option. Keep the generated self-registered extensions.
+Do not adopt post-seal build writes or relax cleanup.
 Update CARD-1254 Cost to remove the obsolete Linux keep-outputs workaround.
 
 Scope: CheckpointTempLifecycleTests.cs, CheckpointTempUsageTests.cs,
-OutputCleanupTests.cs, the compiled census in scripts/lib/checkpoint-usage.ps1,
+OutputCleanupTests.cs, the lifecycle-host project and entry point,
+the compiled census in scripts/lib/checkpoint-usage.ps1,
 and the testing/build owner and CARD-1254 plan documentation.
 No production service, database, delivery, landing or lease logic changes.
 Restart: none.
@@ -43,7 +47,9 @@ V-2 on the missing sandbox report. The unknown-file safety assertion covers an
 existing guard; deliberate defect injection belongs to Mutation. All ordinary rows
 run at S2. Fresh TRX inspection must show every named class/method and nonzero counts.
 No repeated green runs are required. No full assembly is planned: the invariant is
-confined to these two launch sites and the unchanged cleanup/scope boundaries.
+confined to this helper host and the unchanged cleanup/scope boundaries.
+The legacy 680 MiB orphan-usage acceptance script is not rerun: it uses the same
+host default and supplies the same temp environment; this is a coverage disclosure.
 The brief explicitly excludes a whole Unit lane; that coverage is disclosed rather
 than credited. This is the task-specific Final selection.
 
@@ -51,8 +57,8 @@ than credited. This is the task-specific Final selection.
 
 | PC | Variant | Method-scoped detecting filter |
 |---|---|---|
-| PC-1 | Omit lifecycle Verify results-directory argument | `/*/*/CheckpointTempLifecycleTests/passing_host_reports_are_removed_with_the_owned_sandbox` |
-| PC-2 | Omit usage host results-directory argument; assembly and allocation variants | `/*/*/CheckpointTempUsageTests/assembly_and_allocation_invoke_bounded_sweep` |
+| PC-1 | Omit the host's default results-directory argument | `/*/*/CheckpointTempLifecycleTests/passing_host_reports_are_removed_with_the_owned_sandbox` |
+| PC-2 | Direct the default report back beside the DLL; assembly and allocation variants | `/*/*/CheckpointTempUsageTests/assembly_and_allocation_invoke_bounded_sweep` |
 | PC-3 | Accept unknown post-seal report by path / bypass the creation record check | `/*/*/OutputCleanupTests/unknown_lifecycle_report_after_seal_is_refused_and_kept` |
 | PC-4 | Leave owned sandbox reports on disposal | `/*/*/CheckpointTempLifecycleTests/passing_host_reports_are_removed_with_the_owned_sandbox` |
 

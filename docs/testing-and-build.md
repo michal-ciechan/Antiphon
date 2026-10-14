@@ -1129,6 +1129,14 @@ tracking before commissioning the feature's own PCs; caller-owned rollout cannot
 
 ## Checkpoint temp custody and usage (CARD-0804/0805)
 
+CARD-1264: the lifecycle host defaults its test-platform results directory to
+`TestResults` under the caller's temp sandbox, rather than beside the staged DLL.
+Its C# and orphan-usage callers set TMPDIR/TEMP/TMP to their owned sandbox and join
+the child before removing it. Explicit `--results-directory` remains supported.
+This keeps HTML reports out of sealed build output, so a green Linux checkpoint
+run needs no `--keep-outputs` workaround. Unknown post-seal files still refuse
+cleanup; no report directory is adopted by name.
+
 Checkpoint tests allocate `c723-<guid>` roots through `CheckpointTestBase.TempDir()`.
 The per-test TUnit hooks register a marker and root index before returning the path,
 join registered work and exact child processes, and remove owned roots after each test.
