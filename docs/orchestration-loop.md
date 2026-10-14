@@ -910,8 +910,9 @@ stored row and effective overlay. On routing exhaustion, relay the result to the
 Retry, explicit Reroute, Cancel or hold change; do not pick a kind yourself.
 
 **Required forbid-only pin over a one-candidate row (CARD-1271).** A forbid-only Required pin
-leaves the row selecting, so a one-candidate row produces a single target, not a walk. That
-target is refused with a 409 and never becomes Blocked:
+leaves the row selecting, so a one-candidate row produces a single target, not a walk. An
+admissible target is created on it. A target that fails a walk filter is refused with a 409 and
+never becomes Blocked:
 
 - held: `model_disabled`
 - forbidden by the pin: `routing_pin_forbidden`
