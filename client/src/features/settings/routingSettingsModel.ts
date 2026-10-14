@@ -23,24 +23,48 @@ export const COMPLEXITY_ROUTING_BOUNDARY_TITLE = 'Applies to complexity-routed t
 export const COMPLEXITY_ROUTING_BOUNDARY =
   'New complexity-routed dispatches read the saved cell immediately. No session restart is required. Queued complexity-chain tasks whose snapshot can no longer run, and tasks blocked for routing, are re-walked against the current matrix on the next dispatcher tick. Running sessions keep the model they started with. Saving a cell never interrupts, replaces, or migrates a mid-turn delegate. Tasks launched with an explicit kind or level, and other queued work that is not complexity-routed, keep their snapshots and are not retroactively routed by this matrix.'
 
-export const NON_COMPLEXITY_BOUNDARY =
-  'RolePolicy still resolves work that is not launched with -Complexity, including default kind and level, escalation, timeout, and WIP. This matrix does not govern every dispatch.'
-
-// Compile-only bridge for the tests-first checkpoint: preserve the existing display.
 export function effectiveCellLabel(effective: ComplexityEffectiveDto): string {
-  return resolvedFromLabel(effective.source === 'role' || effective.source === 'any' || effective.source === 'config' ? effective.source : 'none', false)
+  const { source, candidates, stagePin, withheldReason } = effective
+  if (source === 'agent') {
+    // The wire contract carries the standing agent label in this explanation, not the pin ref.
+    const agent = withheldReason?.match(/^stage pin binds standing agent (.+?); an ordinary dispatch runs on that agent and does not walk this row/)
+    return agent
+      ? `Pinned to standing agent ${agent[1]} — an ordinary dispatch runs there; this row is not walked`
+      : 'Pinned to standing agent — this row is not walked'
+  }
+
+  const head = candidates[0]
+  if (!head) {
+    // A failed read also uses withheldReason. Only an explicitly rejected policy, with no
+    // remaining candidate, establishes that the projected policy target is not launchable.
+    if (source === 'rolePolicy' && withheldReason?.includes('which delegation cannot launch')) {
+      return `Falls back to RolePolicy → not launchable: ${withheldReason}`
+    }
+    return `Effective routing unknown: ${withheldReason ?? 'no candidate was returned'}`
+  }
+
+  const target = `${head.agentKind}/${head.modelLevel} (${head.alias})`
+  if (source === 'pin' || source === 'pin+chain') {
+    const pin = stagePin ? `${stagePin.strength} ${stagePin.provenance} pin` : 'Stage pin'
+    return `${pin} → ${target}${source === 'pin+chain' ? ', then this row' : ''}`
+  }
+  if (source === 'rolePolicy') return `Falls back to RolePolicy → ${target}`
+  return resolvedFromLabel(source, false)
 }
 
-export function unsetCellLabel(_tier: TaskComplexity, _governsDefault: boolean): string {
-  return resolvedFromLabel('none', false)
+export function unsetCellLabel(tier: TaskComplexity, governsDefault: boolean): string {
+  return governsDefault
+    ? 'Unset — default dispatch falls back to RolePolicy'
+    : `Unset — a -Complexity ${tier} dispatch blocks`
 }
 
-export function nonComplexityBoundary(_tier: TaskComplexity): string {
-  return NON_COMPLEXITY_BOUNDARY
+export function nonComplexityBoundary(tier: TaskComplexity): string {
+  return `An ordinary Worker dispatch without -Complexity, -Kind/-Level, -Agent or ignoreModelDisabled walks the ${tier} row; explicit asks, orchestrators, standing agents and specialist roles keep their existing routing path.`
 }
 
-export function cardPinCountLabel(_role: AgentTaskRole, _pins: RoutingPinDto[]): string | null {
-  return null
+export function cardPinCountLabel(role: AgentTaskRole, pins: RoutingPinDto[]): string | null {
+  const count = pins.filter((pin) => pin.role === role && !isStageWidePin(pin)).length
+  return count === 0 ? null : `${count} card pin${count === 1 ? '' : 's'}`
 }
 
 export function untilLabel(value: string | null): string {
@@ -131,9 +155,9 @@ export function pinTargetLabel(pin: RoutingPinDto): string {
 export function pinEffectCopy(pin: RoutingPinDto): string {
   const arrow = `${pin.role} → ${pinTargetLabel(pin)}`
   if (pin.strength === 'Required') {
-    return `Required ${pin.provenance} pin: ${arrow}. This bypasses the matrix cells for ${pin.role}.`
+    return `Required ${pin.provenance} pin: ${arrow}. Overrides each ${pin.role} cell until cleared.`
   }
-  return `Preferred ${pin.provenance} pin: ${arrow}. This prepends to the matrix candidates, then falls through to this row.`
+  return `Preferred ${pin.provenance} pin: ${arrow}. Tried before each ${pin.role} cell.`
 }
 
 export function cardPinCopy(pin: RoutingPinDto): string {
