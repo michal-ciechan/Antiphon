@@ -100,10 +100,10 @@ affected: no server source changes.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | Repair-tests | n/a | client-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx` | V-17 D1 and withheld-label, V-21 red | expected assertion failures against 805d4a6d3 implementation | n/a | 4 | true | n/a |
-| CP-2 | Repair | n/a | client | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx src/features/settings/rolePolicyModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx -JsonResultPath ../.antiphon/c1250-repair-client.json` | V-1..V-21, R-1 | all six files, 173 passed, 0 failed/skipped; CLIENT TESTS EXIT CODE: 0 | n/a | 5 | true | n/a |
+| CP-1 | Repair-tests | n/a | client-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx` | V-22..V-24 D1 red | expected assertion failures against df244bfb implementation | n/a | 4 | true | n/a |
+| CP-2 | Repair | n/a | client | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx src/features/settings/rolePolicyModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx -JsonResultPath ../.antiphon/c1250-repair-client.json` | V-1..V-24, R-1 | six files, 215 passed, 0 failed/skipped; CLIENT TESTS EXIT CODE: 0 | n/a | 5 | true | n/a |
 | CP-3 | Repair | n/a | client-types | `node client/node_modules/typescript/bin/tsc -b client/tsconfig.json --pretty false` | R-2 | exit 0, 0 TypeScript errors | n/a | 3 | true | n/a |
-| CP-4 | Repair | n/a | client-lint | `node client/node_modules/eslint/bin/eslint.js --config client/eslint.config.js --max-warnings 0 client/src/features/settings/nextCreatePreview.ts client/src/features/settings/nextCreatePreview.test.ts client/src/features/settings/RolePolicySection.tsx client/src/features/settings/RolePolicySection.test.tsx client/src/features/delegations/DelegateModal.tsx client/src/features/delegations/DelegateModal.test.tsx` | R-2 | 0 errors, 0 warnings | n/a | 2 | true | n/a |
+| CP-4 | Repair | n/a | client-lint | `node client/node_modules/eslint/bin/eslint.js --config client/eslint.config.js --max-warnings 0 client/src/features/settings/nextCreatePreview.ts client/src/features/settings/nextCreatePreview.test.ts client/src/features/settings/RolePolicySection.tsx client/src/features/settings/RolePolicySection.test.tsx client/src/features/delegations/DelegateModal.tsx client/src/features/delegations/DelegateModal.test.tsx client/src/features/thread/CardThreadPanel.tsx` | R-2 | 0 errors, 0 warnings | n/a | 2 | true | n/a |
 
 ### Execution and cost
 
@@ -259,3 +259,31 @@ CP-2/CP-3/CP-4 passed at 79a8cdb7f192d6a47af674bd1c9fbc6945d2505f
 found Vitest truncated the four config-case names to one identity. The follow-up change
 registers the same table with literal titles (same assertions/count), so method-scoped Mutation
 can distinguish them. CP-2/CP-3/CP-4 requalify that test-source change; this is not repeat proof.
+
+## Repair a1ba464f: D1 context inventory before implementation
+
+Choice: use the conservative unknown rendering for potential card bindings, with no target badge.
+No card-pin query is added. This is a client-only Final repair; the brief excludes whole Unit.
+
+| Create input / missing fact | Modal boundary and parity witness | Server source opened for this repair |
+|---|---|---|
+| Goal/title card reference | V-22 leading/interior/case/boundary/title-clamp rows: unknown; bare #N in prose does not bind | AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4535 |
+| Explicit -Card, including #N and GUID | Not a modal field; V-22 explicit-card contexts are unknown | AgentTaskCardBinder.cs:94-95,127-154 |
+| Card-origin/inherited binding | V-22 card-context and V-23 edited Hand back goal retain unknown | AgentTaskService.cs:707-719 |
+| Card pin before stage pin; Human card forbid exemption | V-22 card-over-stage/card-forbid rows withhold the staged target/refusal | RoutingPinService.cs:306-308,413-418 |
+| Agent-only pin and standing-agent arm | V-22 agent-only/mixed rows: model, owner quota and admission unknown | AgentTaskService.cs:840-861,1140-1144 |
+| Quota/holds at admission | V-22 quota read/unknown rows; V-24 visible admission disclosure | AgentTaskService.cs:1117-1144 |
+| Explicit provider -Kind | Not a modal field; V-22 explicit-kind context is unknown | AgentTaskService.cs:924-945,4169-4204 |
+| Explicit -Level | Known modal selection; V-22 explicit-level keeps requested tier and V-24 discloses server routing/admission | AgentTaskService.cs:4117-4135 |
+| Orchestrator floor | Missing from reads; V-22 floor row stays unknown below Frontier | AgentTaskService.cs:4132-4133 |
+| Worker versus Orchestrator | Known modal selection; V-22 paired rows and retained V-13 cover row eligibility | AgentTaskService.cs:924-945,4190-4204 |
+| Provider login, concurrency, workspace, runner/platform and changed snapshots | V-24 visible server-admission disclosure; precise refusal not predicted | Existing round-3 inventory above |
+
+V-22 extends the parity table without changing the earlier 58 contexts or exact assertions.
+V-23 exercises the Hand back prefill, the card-origin hint after goal edits, and a card-free goal.
+V-24 checks the visible server dependency disclosure, including an explicit tier.
+R-1/R-2 remain the six complete client files, TypeScript and ESLint. CP-1 qualifies D1 red before
+implementation; CP-2/CP-3/CP-4 qualify the repair. Min is n/a for these non-TUnit rows; Expect
+records the Vitest count. Additional drivers: dependency install, one isolated checkpoint tool
+build, and required esbuild/Node differential probe (GET only), each through the build-slot gate.
+No Mutation run: PC-1..PC-19 and the new card-context/goal-detection/disclosure variants remain pending.

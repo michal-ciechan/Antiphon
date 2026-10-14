@@ -6,6 +6,7 @@ import { ROLE_POLICY_FIXTURE } from '../../test/mocks/handlers'
 import type { RoutingPinCandidateDto, RoutingPinDto } from '../../api/routingPins'
 import type { RolePolicyRowDto } from '../../api/rolePolicy'
 import { DelegateModal } from './DelegateModal'
+import { HandBackButton } from '../thread/CardThreadPanel'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 
@@ -38,6 +39,53 @@ function captureCreate(warning: string | null = null): { body: CreateBody | null
 }
 
 describe('DelegateModal', () => {
+  it('C1250 V23 hand-back-prefill-and-edited-goal-withhold-target', async () => {
+    serveCodeRow('Medium', [candidate('Codex', 'Frontier', 'gpt-6-astra')])
+    renderWithProviders(<HandBackButton identifier="CARD-1250" context="Review" />)
+    await userEvent.click(screen.getByRole('button', { name: 'Hand back' }))
+    expect(screen.getByLabelText('Goal')).toHaveValue('CARD-1250 — change requested on Review: ')
+    expect((await screen.findByTestId('delegate-tier-source-unknown')).textContent).toBe('unknown — a card pin may apply; routing depends on the server')
+    expect(screen.queryByTestId('tier-Frontier')).not.toBeInTheDocument()
+    await userEvent.clear(screen.getByLabelText('Goal'))
+    await userEvent.type(screen.getByLabelText('Goal'), 'repair preview')
+    expect(screen.getByTestId('delegate-tier-source-unknown').textContent).toBe('unknown — a card pin may apply; routing depends on the server')
+    expect(screen.queryByTestId('tier-Frontier')).not.toBeInTheDocument()
+  })
+
+  it('C1250 V23 typed-card-overrides-stage-refusal-and-explicit-tier', async () => {
+    serveRolePolicyRow('Code', (row) => ({ ...row, stagePin: { ...previewPin([]), forbiddenAliases: ['gpt-6-astra'] } }))
+    serveCodeRow('Medium', [candidate('Codex', 'Frontier', 'gpt-6-astra')])
+    renderWithProviders(<DelegateModal opened onClose={() => {}} prefill={{ goal: 'Repair CARD-1250 please' }} />)
+    expect((await screen.findByTestId('delegate-tier-source-unknown')).textContent).toBe('unknown — a card pin may apply; routing depends on the server')
+    expect(screen.queryByTestId('delegate-tier-source-refused')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('tier-Frontier')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'override → low' }))
+    expect(screen.queryByTestId('tier-Low')).not.toBeInTheDocument()
+    expect(screen.getByTestId('delegate-tier-source-unknown')).toBeInTheDocument()
+  })
+
+  it('C1250 V23 card-free-goal-keeps-matrix-preview', async () => {
+    serveCodeRow('Medium', [candidate('Codex', 'Frontier', 'gpt-6-astra')])
+    renderWithProviders(<DelegateModal opened onClose={() => {}} prefill={{ goal: 'Repair preview for #1250' }} />)
+    expect((await screen.findByTestId('delegate-tier-source-matrix')).textContent).toBe('from the Medium row')
+    expect(screen.getByTestId('tier-Frontier')).toBeInTheDocument()
+    await userEvent.clear(screen.getByLabelText('Goal'))
+    await userEvent.type(screen.getByLabelText('Goal'), 'CARD-1250 repair')
+    expect(screen.getByTestId('delegate-tier-source-unknown')).toBeInTheDocument()
+    await userEvent.clear(screen.getByLabelText('Goal'))
+    await userEvent.type(screen.getByLabelText('Goal'), 'Repair preview')
+    expect(screen.getByTestId('delegate-tier-source-matrix')).toBeInTheDocument()
+    expect(screen.getByTestId('tier-Frontier')).toBeInTheDocument()
+  })
+
+  it('C1250 V24 modal-discloses-admission-dependency-with-explicit-tier', async () => {
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+    const label = 'Routing and admission depend on the server: card pins, standing-agent details, quota, model holds, provider sign-in, concurrency, workspace and runner conditions can change this preview.'
+    expect(screen.getByTestId('delegate-admission-note').textContent).toBe(label)
+    await userEvent.click(screen.getByRole('button', { name: 'override → low' }))
+    expect(screen.getByTestId('delegate-admission-note').textContent).toBe(label)
+  })
+
   it('omits runner and platform unless the caller chooses them, and keeps a conflicting runner', async () => {
     const captured = captureCreate()
     renderWithProviders(<DelegateModal opened onClose={() => {}} prefill={{ cardDefaultPlatform: 'Windows' }} />)

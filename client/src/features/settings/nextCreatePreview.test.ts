@@ -317,3 +317,52 @@ describe('C1250 V17 server-branch parity', () => {
     })
   }
 })
+
+// V-22: card identifiers use the stored title, with server-only binding resolution left unknown.
+const contextRows: ParityRow[] = [
+  { id: 'goal-leading', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"CARD-1250 — change requested on Review: "} }, expected: ['unknown', null, null, null, null], label: 'unknown — a card pin may apply; routing depends on the server' },
+  { id: 'goal-interior', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"Repair CARD-1250 please"} }, expected: ['unknown', null, null, null, null], label: 'unknown — a card pin may apply; routing depends on the server' },
+  { id: 'goal-case-and-zeros', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"repair card-0001250"} }, expected: ['unknown', null, null, null, null], label: 'unknown — a card pin may apply; routing depends on the server' },
+  { id: 'goal-hash-not-bound', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"#1250 repair"} }, expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'goal-plain-card-not-bound', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"card 1250 repair"} }, expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'goal-prefix-boundary', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"XCARD-1250 repair"} }, expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'goal-unicode-prefix-boundary', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"éCARD-1250 repair"} }, expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'goal-suffix-boundary', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"CARD-1250x repair"} }, expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'goal-overflow-not-bound', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"CARD-2147483648 repair"} }, expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'goal-max-int', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"CARD-2147483647 repair"} }, expected: ['unknown', null, null, null, null], label: 'unknown — a card pin may apply; routing depends on the server' },
+  { id: 'goal-zero', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"CARD-0000 repair"} }, expected: ['unknown', null, null, null, null], label: 'unknown — a card pin may apply; routing depends on the server' },
+  { id: 'goal-second-line-not-title', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"Repair preview\nCARD-1250"} }, expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'goal-empty-lines', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"\r\n\r\nCARD-1250 repair"} }, expected: ['unknown', null, null, null, null], label: 'unknown — a card pin may apply; routing depends on the server' },
+  { id: 'goal-whitespace-first-line', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":" \nCARD-1250 repair"} }, expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'goal-unicode-newline', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"Repair previewCARD-1250"} }, expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'goal-after-clamp', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx CARD-1250"} }, expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'goal-clamp-partial-identifier', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"goal":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx CARD-1250"} }, expected: ['unknown', null, null, null, null], label: 'unknown — a card pin may apply; routing depends on the server' },
+  { id: 'title-precedes-goal', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"title":"Repair preview","goal":"CARD-1250"} }, expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'explicit-title-card', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"title":"Repair CARD-1250","goal":"Repair preview"} }, expected: ['unknown', null, null, null, null], label: 'unknown — a card pin may apply; routing depends on the server' },
+  { id: 'explicit-card-hash', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"explicitCard":"#1250"} }, expected: ['unknown', null, null, null, null], label: 'unknown — a card pin may apply; routing depends on the server' },
+  { id: 'explicit-card-guid', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"explicitCard":"00000000-0000-0000-0000-000000001250"} }, expected: ['unknown', null, null, null, null], label: 'unknown — a card pin may apply; routing depends on the server' },
+  { id: 'card-origin-edited-goal', server: 'AgentTaskCardBinder.cs:43-64,92-116; AgentTaskService.cs:4519-4547', context: { ...scenario(), ...{"cardContext":true,"goal":"Repair preview"} }, expected: ['unknown', null, null, null, null], label: 'unknown — a card pin may apply; routing depends on the server' },
+  { id: 'card-over-stage-pin', server: 'RoutingPinService.cs:306-308', context: { ...scenario({ pin: listed([opus]) }), goal: 'CARD-1250 repair' }, expected: ['unknown', null, null, null, null] },
+  { id: 'human-card-exempts-stage-forbid', server: 'RoutingPinService.cs:413-418', context: { ...scenario({ pin: pin({ forbiddenAliases: ['gpt-6-astra'] }), candidates: [astra] }), goal: 'CARD-1250 repair' }, expected: ['unknown', null, null, null, null] },
+  { id: 'card-and-explicit-level', server: 'AgentTaskService.cs:773-778', context: { ...scenario({ level: 'Low' }), goal: 'CARD-1250 repair' }, expected: ['unknown', null, null, null, null] },
+  { id: 'explicit-kind-unobserved', server: 'AgentTaskService.cs:924-945,4169-4204', context: { ...scenario(), explicitKind: 'Grok' }, expected: ['unknown', null, null, null, null], label: 'unknown — explicit agent kind routing depends on the server' },
+  { id: 'standing-agent-explicit', server: 'AgentTaskService.cs:840-861', context: { ...scenario(), explicitAgentId: 'standing-agent' }, expected: ['unknown', null, null, null, null], label: 'unknown — standing-agent kind, model and admission depend on the server' },
+  { id: 'agent-only-pin', server: 'AgentTaskService.cs:840-861', context: scenario({ pin: pin({ agentId: 'standing-agent' }) }), expected: ['agent', null, null, null, null], label: 'stage pin binds a standing agent; its model and admission depend on the server' },
+  { id: 'agent-mixed-pin', server: 'AgentTaskService.cs:840-861', context: scenario({ pin: listed([astra], { agentId: 'standing-agent' }) }), expected: ['unknown', null, null, null, null] },
+  { id: 'quota-observed', server: 'AgentTaskService.cs:1117-1127', context: scenario({ pin: listed([quota(astra)]) }), expected: ['refused', 'Codex', 'Frontier', 'gpt-6-astra', null] },
+  { id: 'quota-unobserved', server: 'AgentTaskService.cs:1117-1127', context: scenario({ resolved: 'none', candidates: [] }), expected: ['rolePolicy', 'ClaudeCode', 'Frontier', 'fable', null], label: 'default → ClaudeCode/Frontier (fable); availability depends on the server' },
+  { id: 'explicit-level', server: 'AgentTaskService.cs:4117-4135', context: scenario({ level: 'Low' }), expected: ['explicit', null, 'Low', null, null], label: 'explicit Low' },
+  { id: 'orchestrator-floor', server: 'AgentTaskService.cs:4132-4133', context: scenario({ kind: 'Orchestrator', level: 'Low' }), expected: ['unknown', null, null, null, null] },
+  { id: 'worker-kind', server: 'AgentTaskService.cs:924-945', context: scenario(), expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'orchestrator-kind', server: 'AgentTaskService.cs:924-945,4190-4204', context: scenario({ kind: 'Orchestrator', candidates: [astra, fable] }), expected: ['rolePolicy', 'ClaudeCode', 'Frontier', 'fable', null] },
+  ...(['Check', 'Distill', 'Diagnose'] as const).map((role): ParityRow => ({ id: 'specialist-' + role, server: 'AgentTaskCardBinder.cs:91-92; AgentTaskEnums.cs:431-432', context: { ...scenario({ policy: row({ role }) }), goal: 'CARD-1250 repair' }, expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] })),
+]
+describe('C1250 V22 create-context parity', () => {
+  for (const { id, server, context, expected, label } of contextRows) {
+    it(`${id} [${server}]`, () => {
+      const preview = previewNextCreate(context)
+      expect([preview?.source, preview?.agentKind, preview?.modelLevel, preview?.alias, preview?.complexity]).toEqual(expected)
+      if (label) expect(nextCreateLabel(preview)).toBe(label)
+    })
+  }
+})
