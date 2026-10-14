@@ -70,9 +70,12 @@ public sealed class CheckpointProcessIdentityTests : CheckpointTestBase
     {
         var run = TempDir();
         CheckpointFixtures.MarkRun(run, alive);
+        // CARD-1268: the copy carries this process's creation records and a sealed ledger, as a
+        // real shadow copy does, so only the identity verdict decides whether it is removed.
         var tool = Path.Combine(run, "tool");
-        Directory.CreateDirectory(tool);
-        File.WriteAllText(Path.Combine(tool, "sentinel.dll"), "keep");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(tool, SafeWrite.Under(run)));
+        SafeWrite.Require(SafeWrite.Text(Path.Combine(tool, "sentinel.dll"), "keep", SafeWrite.Under(tool)));
+        SafeWrite.Require(OwnedOutputLedger.Seal(tool));
         return run;
     }
 
