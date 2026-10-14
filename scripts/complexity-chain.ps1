@@ -8,9 +8,14 @@
 #
 # Verbs:
 #   complexity-chain.ps1 get   [-Role Plan] [-Json]
-#   complexity-chain.ps1 set   [-Role Plan|Any] -Complexity Hard -Candidates ClaudeCode/Frontier,Codex/Frontier
-#                              [-Provenance Human|Auto] [-Reason r] [-NotAfter 2026-09-05T00:00:00Z]
-#   complexity-chain.ps1 clear [-Role Plan|Any] -Complexity Hard
+#   complexity-chain.ps1 set   [-Role Plan|Any] -Complexity Hard|Medium|Easy|All -Candidates ClaudeCode/Frontier,Codex/Frontier
+#                              [-Provenance Human|Auto] [-Reason r | -ReasonFile path] [-NotAfter 2026-09-05T00:00:00Z]
+#                              [-ClearStagePin] (set with All and a named Role only)
+#   complexity-chain.ps1 clear [-Role Plan|Any] -Complexity Hard|Medium|Easy|All
+#
+# All writes Hard, Medium, Easy in order and stops on the first refusal; earlier writes remain.
+# -ClearStagePin deletes the named role's stage pin after the three writes succeed.
+# Cell PUTs are last-writer-wins; this command does not make the three requests atomic.
 #
 # GRAIN. One active chain per (Role?, Hard/Medium/Easy). Role omitted or Any writes the any-role
 # row. A walk on (role, complexity) reads the cell, then the any-role row, then the config default,
@@ -27,7 +32,7 @@ param(
     [ValidateSet('get', 'set', 'clear')]
     [string]$Verb = 'get',
 
-    [ValidateSet('Hard', 'Medium', 'Easy')]
+    [ValidateSet('Hard', 'Medium', 'Easy', 'All')]
     [string]$Complexity,
 
     [ValidateSet('Investigate', 'Plan', 'TestDesign', 'Code', 'Mutation', 'Review', 'Debug', 'Coverage', 'Docs', 'Commit', 'Test', 'Deploy', 'Merge', 'Custom', 'Any')]
@@ -43,10 +48,31 @@ param(
 
     [string]$Reason,
 
+    [string]$ReasonFile,
+
+    [switch]$ClearStagePin,
+
     [switch]$Json
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($ClearStagePin -and ($Verb -ne 'set' -or $Complexity -ne 'All' -or
+        [string]::IsNullOrWhiteSpace($Role) -or $Role -eq 'Any')) {
+    Write-Error '-ClearStagePin requires set -Complexity All and a named -Role (not Any).'
+    exit 1
+}
+if (-not [string]::IsNullOrWhiteSpace($ReasonFile)) {
+    if (-not [string]::IsNullOrWhiteSpace($Reason)) {
+        Write-Error '-Reason and -ReasonFile are mutually exclusive.'
+        exit 1
+    }
+    if ($Verb -ne 'set') {
+        Write-Error '-ReasonFile requires set.'
+        exit 1
+    }
+    $Reason = [System.IO.File]::ReadAllText($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ReasonFile), [System.Text.Encoding]::UTF8)
+}
 
 $api = $env:ANTIPHON_API
 if ([string]::IsNullOrWhiteSpace($api)) { $api = 'http://localhost:17202' }
@@ -96,12 +122,11 @@ function Invoke-Antiphon {
         if ($null -ne $parsed -and $parsed.detail) {
             $lines = @($parsed.detail)
             if ($parsed.code) { $lines += ("code {0}" -f $parsed.code) }
-            Write-Error ("Antiphon {0} {1} failed: {2}" -f $Method, $Path, ($lines -join [Environment]::NewLine))
+            throw ("Antiphon {0} {1} failed: {2}" -f $Method, $Path, ($lines -join [Environment]::NewLine))
         }
         else {
-            Write-Error "Antiphon $Method $Path failed: $raw"
+            throw "Antiphon $Method $Path failed: $raw"
         }
-        exit 1
     }
 }
 
@@ -199,11 +224,18 @@ switch ($Verb) {
         }
         foreach ($chain in $chains) {
             Write-Output ('  ' + (Format-ChainLine -Chain $chain -Effective:$effective))
+            if ($effective -and $null -ne $chain.effective) {
+                $bits = @($chain.effective.candidates | ForEach-Object { Format-Candidate -Candidate $_ })
+                $list = if ($bits.Count -gt 0) { $bits -join ' -> ' }
+                    elseif ($chain.effective.withheldReason) { 'not launchable: ' + $chain.effective.withheldReason }
+                    else { '(empty)' }
+                Write-Output ('    effective: {0} {1}' -f $chain.effective.source, $list)
+            }
         }
     }
     'set' {
         if ([string]::IsNullOrWhiteSpace($Complexity)) {
-            Write-Error 'set requires -Complexity Hard|Medium|Easy.'
+            Write-Error 'set requires -Complexity Hard|Medium|Easy|All.'
             exit 1
         }
         if (-not [string]::IsNullOrWhiteSpace($NotAfter)) { Assert-UtcOffset -Name 'NotAfter' -Value $NotAfter }
@@ -216,22 +248,64 @@ switch ($Verb) {
         if (-not [string]::IsNullOrWhiteSpace($NotAfter)) { $body['notAfter'] = $NotAfter }
         if (-not [string]::IsNullOrWhiteSpace($Reason)) { $body['reason'] = $Reason }
 
-        $path = '/api/complexity-chains/{0}/{1}' -f (Get-RoleSegment), $Complexity
-        $chain = Invoke-Antiphon -Method PUT -Path $path -Body $body
-        if ($Json) {
-            $chain | ConvertTo-Json -Depth 8
-            break
+        $tiers = if ($Complexity -eq 'All') { @('Hard', 'Medium', 'Easy') } else { @($Complexity) }
+        $written = @()
+        $chains = @()
+        foreach ($tier in $tiers) {
+            $path = '/api/complexity-chains/{0}/{1}' -f (Get-RoleSegment), $tier
+            try {
+                $chain = Invoke-Antiphon -Method PUT -Path $path -Body $body
+            }
+            catch {
+                $status = @($written | ForEach-Object { '{0} written' -f $_ })
+                $status += ('{0} refused: {1}' -f $tier, $_.Exception.Message)
+                $status += @($tiers | Select-Object -Skip ($written.Count + 1) | ForEach-Object { '{0} not written' -f $_ })
+                if ($ClearStagePin) { $status += 'stage pin kept' }
+                Write-Output ($status -join '; ')
+                exit 1
+            }
+            $written += $tier
+            $chains += $chain
+            if (-not $Json) {
+                if ($Complexity -eq 'All') { Write-Output ('{0} written' -f $tier) }
+                Write-Output (Format-ChainLine -Chain $chain)
+            }
         }
-        Write-Output (Format-ChainLine -Chain $chain)
+
+        $pinStatus = $null
+        if ($ClearStagePin) {
+            # Same grain lookup and DELETE-by-id semantics as routing-pin.ps1 clear -Role.
+            # This point is reached only after the three PUTs returned successfully.
+            $pins = Invoke-Antiphon -Method GET -Path ('/api/routing-pins?role={0}' -f $Role)
+            $match = @($pins.pins) | Where-Object {
+                $_.role -eq $Role -and $null -eq $_.cardId
+            } | Select-Object -First 1
+            if ($null -eq $match) {
+                $pinStatus = 'No active routing pin for that grain.'
+            }
+            else {
+                Invoke-Antiphon -Method DELETE -Path ('/api/routing-pins/{0}' -f $match.id) -NoContent
+                $pinStatus = 'cleared {0} stage pin' -f $Role
+            }
+            if (-not $Json) { Write-Output $pinStatus }
+        }
+        if ($Json) {
+            if ($ClearStagePin) { @{ chains = $chains; stagePin = $pinStatus } | ConvertTo-Json -Depth 8 }
+            elseif ($Complexity -eq 'All') { ConvertTo-Json -InputObject $chains -Depth 8 }
+            else { $chains[0] | ConvertTo-Json -Depth 8 }
+        }
     }
     'clear' {
         if ([string]::IsNullOrWhiteSpace($Complexity)) {
-            Write-Error 'clear requires -Complexity Hard|Medium|Easy.'
+            Write-Error 'clear requires -Complexity Hard|Medium|Easy|All.'
             exit 1
         }
         $seg = Get-RoleSegment
-        Invoke-Antiphon -Method DELETE -Path ('/api/complexity-chains/{0}/{1}' -f $seg, $Complexity) -NoContent
-        $label = if ($seg -eq 'any') { $Complexity } else { '{0}/{1}' -f $seg, $Complexity }
-        Write-Output ("cleared {0} (config default applies again)" -f $label)
+        $tiers = if ($Complexity -eq 'All') { @('Hard', 'Medium', 'Easy') } else { @($Complexity) }
+        foreach ($tier in $tiers) {
+            Invoke-Antiphon -Method DELETE -Path ('/api/complexity-chains/{0}/{1}' -f $seg, $tier) -NoContent
+            $label = if ($seg -eq 'any') { $tier } else { '{0}/{1}' -f $seg, $tier }
+            Write-Output ("cleared {0} (config default applies again)" -f $label)
+        }
     }
 }
