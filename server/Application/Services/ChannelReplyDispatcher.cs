@@ -192,7 +192,7 @@ public sealed class ChannelReplyDispatcher
 
     /// <summary>
     /// Called on every completed turn. Cheap for sessions with no channel correlations (one indexed
-    /// count), and the only path that can turn an agent's turn into a chat reply.
+    /// count). Queue late-confirm boundaries use the source-bound entry below.
     /// </summary>
     public async Task<ChannelReplyDispatchResult> OnTurnEndAsync(Guid sessionId, CancellationToken ct)
     {
@@ -276,6 +276,11 @@ public sealed class ChannelReplyDispatcher
             }
             after = prompts[^1].Sequence;
         }
+        // Text can arrive while the owning direct producer is held. Its losing competitor
+        // cannot consume that text; drain from the owner's accepted watermark before returning.
+        if (_dispatched.ContainsKey(sessionId))
+            await DispatchFollowUpAsync(sessionId, ct);
+        await DispatchDurableFollowUpsAsync(sessionId, ct);
         return new(published, withheld, failed, deferred);
     }
 
@@ -534,19 +539,7 @@ public sealed class ChannelReplyDispatcher
         }
 
         var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
-        // Only legacy and catalog-less routes need the process-local watermark. Captured
-        // destinations always derive trailing ownership from their committed root.
-        if (historicalPrompt is null || rememberDirectTurn)
-        {
-            var legacyTargets = targets.Where(t => !outbound.UnifiedRecoveryEnabled || !t.HasCatalog).ToArray();
-            if (legacyTargets.Length > 0)
-            {
-                var turn = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, legacyTargets);
-                _dispatched.AddOrUpdate(sessionId, turn, (_, current) =>
-                    current.PromptSeq > turn.PromptSeq || current.PromptSeq == turn.PromptSeq
-                        && current.MaxTextSeq > turn.MaxTextSeq ? current : turn);
-            }
-        }
+        var rememberTurn = historicalPrompt is null || rememberDirectTurn;
 
         // The frozen silent-turn contract: a whole-turn NO_REPLY settles the correlations and
         // sends nothing — system notes and housekeeping turns must never spam the chat.
@@ -565,6 +558,9 @@ public sealed class ChannelReplyDispatcher
             }
             else
                 await SettleAsync(db, matches, ct);
+            if (rememberTurn)
+                RememberDirectTurn(sessionId, userPrompt.Sequence, maxTextSeq,
+                    targets.Where(t => !outbound.UnifiedRecoveryEnabled || !t.HasCatalog).ToArray());
             _logger.LogInformation(
                 "Silent turn (NO_REPLY) on session {SessionId}; {Count} correlation(s) settled without a reply",
                 sessionId, matches.Count);
@@ -582,6 +578,7 @@ public sealed class ChannelReplyDispatcher
         // batching scope ever widens to cross-conversation.
         var published = new HashSet<Guid>();
         var deferred = new HashSet<Guid>();
+        var rememberedTargets = new List<ReplyTarget>();
         var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
         foreach (var target in targets)
         {
@@ -617,6 +614,14 @@ public sealed class ChannelReplyDispatcher
                 {
                     outcome = await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply, source, ct);
                 }
+                // Only an accepted publication or durable admission owns this window. A loser
+                // may have read more text than the winner; recording its watermark would lose
+                // that unsent tail. Register before best-effort metadata/caller cancellation.
+                if (rememberTurn && !captureReply && outcome != ChannelOutboundSendOutcome.OwnedElsewhere)
+                {
+                    rememberedTargets.Add(target);
+                    RememberDirectTurn(sessionId, userPrompt.Sequence, maxTextSeq, rememberedTargets);
+                }
                 if (outcome == ChannelOutboundSendOutcome.Published)
                 {
                     published.UnionWith(target.CorrelationIds);
@@ -636,7 +641,6 @@ public sealed class ChannelReplyDispatcher
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _dispatched.TryRemove(sessionId, out _);
                 // Only the outbound owner may release a failed direct claim. These tracked
                 // matches may predate a concurrent successful publication or durable capture.
                 _logger.LogError(ex,
@@ -651,6 +655,16 @@ public sealed class ChannelReplyDispatcher
             new HashSet<Guid>(),
             failed,
             deferred);
+    }
+
+    private void RememberDirectTurn(Guid sessionId, long promptSequence, long maxTextSequence,
+        IReadOnlyList<ReplyTarget> targets)
+    {
+        if (targets.Count == 0) return;
+        var turn = new DispatchedTurn(promptSequence, maxTextSequence, targets.ToArray());
+        _dispatched.AddOrUpdate(sessionId, turn, (_, current) =>
+            current.PromptSeq > turn.PromptSeq || current.PromptSeq == turn.PromptSeq
+                && current.MaxTextSeq > turn.MaxTextSeq ? current : turn);
     }
 
     /// <summary>
@@ -831,7 +845,8 @@ public sealed class ChannelReplyDispatcher
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         var ids = rows.Select(m => m.Id).ToArray();
         await db.SessionQueuedMessages.Where(m => ids.Contains(m.Id)
-            && m.ChannelReplySettledAt == null && m.ChannelOutboundDeliveryId == null)
+            && m.ChannelReplySettledAt == null && m.ChannelOutboundDeliveryId == null
+            && m.ChannelReplyDiscoveryClosedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelReplySettledAt, now), ct);
     }
 
@@ -1607,13 +1622,13 @@ public sealed class ChannelReplyDispatcher
             else
                 outcome = await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply, source, ct);
             publicationAccepted = outcome == ChannelOutboundSendOutcome.Published;
+            if (historicalPrompt is null && !captureReply && outcome != ChannelOutboundSendOutcome.OwnedElsewhere)
+                RememberDirectTurn(sessionId, userPrompt.Sequence, maxTextSeq, [target]);
             if (outcome == ChannelOutboundSendOutcome.Published)
             {
                 StampDeliveredBundles(impliedTasks, attachments, _timeProvider.GetUtcNow().UtcDateTime);
                 await db.SaveChangesAsync(ct);
             }
-            if (historicalPrompt is null && !captureReply)
-                _dispatched[sessionId] = new DispatchedTurn(userPrompt.Sequence, maxTextSeq, [target]);
             _logger.LogInformation(
                 "Sent machine-turn follow-up {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) "
                 + "to {Provider} conversation {ConversationId} from session {SessionId}",
@@ -1634,7 +1649,7 @@ public sealed class ChannelReplyDispatcher
             return;
         }
 
-        if (!captureReply && matches.All(m => m.ChannelOutboundDeliveryId is null))
+        if (!captureReply && publicationAccepted)
         {
             var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
             await channels.StampLastReplyAsync(provider, conversationId, text, ct);

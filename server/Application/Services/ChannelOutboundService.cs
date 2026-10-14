@@ -14,7 +14,7 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Application.Services;
 
 public enum ChannelOutboundOrigin { AgentReply, Control }
-public enum ChannelOutboundSendOutcome { Published, Deferred }
+public enum ChannelOutboundSendOutcome { Published, Deferred, OwnedElsewhere }
 
 /// <summary>Stable identity of one agent text window; task id is metadata, never the dedupe key.</summary>
 public sealed record ChannelOutboundSource(
@@ -379,7 +379,7 @@ public sealed class ChannelOutboundService
             var members = await LockSourceMembersAsync(source.SessionId, memberIds, ct);
             if (members.Any(m => m.ChannelOutboundDeliveryId != null || m.ChannelReplySettledAt != null
                 || m.ChannelReplyDiscoveryClosedAt != null))
-                return ChannelOutboundSendOutcome.Deferred;
+                return ChannelOutboundSendOutcome.OwnedElsewhere;
             var pending = profile is null ? 0 : await _db.ChannelOutboundDeliveries.CountAsync(d =>
                 d.ChannelId == channel.Id && d.State == ChannelOutboundDeliveryState.Pending, ct);
             var overflow = qualifies && profile is not null && pending >= profile.MaxPending;
@@ -470,14 +470,17 @@ public sealed class ChannelOutboundService
             if (members.Any(m => m.ChannelOutboundDeliveryId != null || m.ChannelReplySettledAt != null
                 || m.ChannelReplyDiscoveryClosedAt != null)
                 || !await ClaimSourceMembersAsync(memberIds, null, now, ct))
-                return ChannelOutboundSendOutcome.Deferred;
+                return ChannelOutboundSendOutcome.OwnedElsewhere;
             await transaction.CommitAsync(ct);
         }
         try
         {
-            // Await the actual producer task, with no expiring claim or detached timeout. A
-            // competing trigger cannot acquire this source while publication may be in flight.
-            await _producer.SendAsync(reply, ct);
+            ct.ThrowIfCancellationRequested();
+            // Once publication starts, await its actual outcome. Producer cancellation may
+            // abandon only the wait while the transport continues (Kafka ProduceAsync). It
+            // cannot authorize releasing this claim and starting a second publication.
+            // The producer's delivery deadline is unchanged; no detached timeout or expiring claim.
+            await _producer.SendAsync(reply, CancellationToken.None);
             return ChannelOutboundSendOutcome.Published;
         }
         catch

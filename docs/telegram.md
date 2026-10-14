@@ -76,6 +76,9 @@ Direct main/machine replies still share capture's source-member claim (CARD-1247
 conditional settlement update wins only if no settlement or durable delivery owns those
 members. The loser skips publication. A failed producer invocation releases its own marker
 after it has completed, so later triggers may retry; no timeout releases an in-flight send.
+Caller cancellation is honored before producer entry; after entry the actual send owns the
+claim until it finishes. Only an accepted direct publication or durable admission records
+the trailing-text watermark, so a losing dispatcher cannot consume an unpublished tail.
 Grace and runtime late-confirm dispatch bind to the confirmed source ids and original prompt
 window, including when recovery is disabled. These changes need no migration and do not
 change the direct path's existing crash/ambiguous-acceptance limitations.
