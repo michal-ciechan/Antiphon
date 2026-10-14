@@ -125,9 +125,10 @@ Names are frozen. TUnit classes use the repo's `Snake_case_sentence` style; vite
 | T-27 | `CardHistory.test.tsx` "labels relationship revisions and names the related card" | revisions `[RelationshipAdded (relatedCardIdentifier 'CARD-0049'), RelationshipRemoved ('CARD-0048')]`; rows show badge text `Blocked by added` / `Blocked by removed` and the text `-> CARD-0049` / `-> CARD-0048` | render `relatedCardId` instead of `relatedCardIdentifier` | `expect(within(row).getByText('-> CARD-0049')).toBeInTheDocument()` |
 | T-28 | `CardModal.test.tsx` "renders the Blocked-by panel in the sidebar from the relationships query" | handlers `cardHandler`, `discussionHandler`, `agentDefinitionsHandler`, GET `/api/cards/card-1/relationships` → one `blockedBy` row CARD-0049; `within(screen.getByTestId('card-detail-sidebar')).findByTestId('card-blockers')` shows `CARD-0049`; the handler was called once | do not mount `CardBlockers` in the sidebar | `findByTestId('card-blockers')` times out |
 | T-29 | `CardTaskFileRendererTests.Frontmatter_key_set_is_exactly_the_public_whitelist` | render a card with every nullable field set (alias, due, started, completed, external tracker/key/url/author, needsHumanReview, archived/by/reason); take the lines between the two `---` fences, split on `:` → key list equals exactly `[id, identifier, title, alias, status, importance, importance_provenance, urgency, due, labels, created, started, completed, external_tracker, external_key, external_url, external_author, needs_human_review, archived, archived_by, archived_reason]`; the whole rendered text does not contain `block` (case-insensitive); `typeof(CardFilePublicCard)` constructor parameter names equal the frozen 24-name list | add `blocked_by:` to `RenderCard` | `keys.ShouldBe(expectedKeys)` |
+| T-30 | `CardRelationshipApiTests.Concurrent_adds_closing_a_ring_commit_all_but_one_and_refuse_one_as_a_cycle` `[Arguments(2)]`, `(3)` (Review 3501caaa F1) | ring of N cards, card i blocked by card i+1 mod N, the N POSTs sent at once while a test transaction holds `FOR UPDATE` on the N card rows; the rows are released once N backends wait on the holder directly or through another waiter (`pg_blocking_pids`, recursive), so each add has passed its walk or waits for the graph lock; then N-1 answers are 201, one is 409 `card_relationship_cycle`, and N-1 ring rows are persisted | delete the graph lock (transaction and `pg_advisory_xact_lock`) | `statuses.Count(Created).ShouldBe(ringSize - 1)` (N arrive; red on `79fb16126`, both rows) |
 
-Counts by class: `CardRelationshipSchemaTests` 3; `CardRelationshipApiTests` 11 methods / 19
-executions; S3 one method each; `CardRelationshipScriptTests` 4; client 7; `CardTaskFileRendererTests`
+Counts by class: `CardRelationshipSchemaTests` 3; `CardRelationshipApiTests` 12 methods / 21
+executions (T-30 added by the F1 repair); S3 one method each; `CardRelationshipScriptTests` 4; client 7; `CardTaskFileRendererTests`
 11 → 12.
 
 ## Fixtures and isolation (binding on Code)
@@ -205,7 +206,7 @@ transcripts, busy recipients, enqueue-failure recovery.
 ### Proves it works now
 - V-1: the schema refuses duplicates and self-reference, cascades on either card's delete, and the generated migration matches the model | DB | T-1, T-2, T-3 | CP-1, 3 passed
 - V-2: adding a blocker writes one row and one `RelationshipAdded` revision on the blocked card, rotates only that card's token, and refuses empty/stale tokens | HTTP | T-4, T-5, T-6 | CP-3
-- V-3: self, unknown kind, over-length text, duplicate, cycle (2 and 3 hops), archived blocker, archived blocked card and unknown card are refused with the frozen statuses and codes; a diamond is not a cycle | HTTP | T-7, T-8, T-9, T-10 | CP-3
+- V-3: self, unknown kind, over-length text, duplicate, cycle (2 and 3 hops), archived blocker, archived blocked card and unknown card are refused with the frozen statuses and codes; a diamond is not a cycle; concurrent adds closing a 2- or 3-ring leave one refused as a cycle | HTTP | T-7, T-8, T-9, T-10, T-30 | CP-3
 - V-4: `resolved` follows Done/Canceled/archived and their undo without a write; remove records `RelationshipRemoved` and clears both views | HTTP | T-11, T-12 | CP-3
 - V-5: card and list views carry `openBlockerCount`/`blockers` excluding resolved rows and omit them on untouched cards; cross-board resolution prefers the blocked card's board and honours the fence | HTTP | T-13, T-14 | CP-3
 - V-6: the tick, the pipeline backlog and the watchdog backlog exclude cards with an open blocker; the pipeline lists them with their blockers | service, real `PollTickAsync` / `GetAsync` / `ReadAsync` | T-15, T-16, T-17 | CP-5, CP-6, CP-7
@@ -258,8 +259,9 @@ mount: T-23, T-25..T-28) is not safety-critical and has no PC; each still names 
 - G-31: D-10/OD-4 card-file front matter has no relationship key | PC-31
 - G-32: S5 add posts the current token | PC-32
 - G-33: S5 add/remove hidden on an archived card | PC-33
+- G-34: D-6 graph lock makes the walk and the insert atomic against concurrent adds | PC-34
 
-guards=33, mapped=33, missing=0, duplicate PC maps=0.
+guards=34, mapped=34, missing=0, duplicate PC maps=0.
 
 ### Positive controls
 Pending: post-land Mutation is paused; Code runs V/R only; Review judges the design. Each PC is
@@ -300,6 +302,7 @@ fresh TRX.
 - PC-31: break G-31 by appending `blocked_by: []` in `RenderCard`; expect `Frontmatter_key_set_is_exactly_the_public_whitelist` red at `keys.ShouldBe(expectedKeys)`.
 - PC-32: break G-32 by omitting `concurrencyToken` from the client POST body; expect "adds a blocker with the current token and shows it with its status" red at `toHaveBeenCalledWith(objectContaining({ concurrencyToken }))`.
 - PC-33: break G-33 by rendering the controls regardless of `archivedAt`; expect "hides add and remove on an archived card" red at `queryByRole('button', { name: 'Add blocker' })).toBeNull()`.
+- PC-34: break G-34 by deleting the `BeginTransactionAsync` and `pg_advisory_xact_lock` statements in `AddRelationshipAsync`; expect `Concurrent_adds_closing_a_ring_commit_all_but_one_and_refuse_one_as_a_cycle` red in both rows at `statuses.Count(s => s == HttpStatusCode.Created).ShouldBe(ringSize - 1)`.
 
 ### Out of scope
 - D-13 (task creation against a blocked card keeps working): no production line changes; the existing `AgentTaskService` create tests stay the guard; a refusal would be OD-3, a separate card.
@@ -321,7 +324,7 @@ Filters were checked against the census above; a zero-test run is a wrong filter
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c0100-s12/` | relationship-schema | `/*/*/CardRelationshipSchemaTests/*` | V-1 | all 3 methods, 0 failed/skipped | 3 | 6 | true |
 | CP-2 | S1-S2 | CP-1 | correction-regression | `/*/*/CardCorrectionApiTests/*` | R-1 | all 12 methods, 0 failed/skipped | 12 | 3 | true |
-| CP-3 | S1-S2 | CP-1 | relationship-api | `/*/*/CardRelationshipApiTests/*` | V-2, V-3, V-4, V-5 | 19 executions over 11 methods (T-6 2 rows, T-7 3 rows, T-9 6 rows), 0 failed/skipped | 19 | 5 | true |
+| CP-3 | S1-S2 | CP-1 | relationship-api | `/*/*/CardRelationshipApiTests/*` | V-2, V-3, V-4, V-5 | 21 executions over 12 methods (T-6 2 rows, T-7 3 rows, T-9 6 rows, T-30 2 rows), 0 failed/skipped | 21 | 5 | true |
 | CP-4 | S1-S2 | CP-1 | identifier-and-renderer-regression | `/*/Antiphon.Tests.Application/(CardIdentifierResolutionTests*)\|(CardTaskFileRendererTests*)/*` | R-1b, R-2 | 18 + 12 = 30 executions, both classes present in the TRX, 0 failed/skipped | 30 | 3 | true |
 | CP-5 | S3 | `tests/Antiphon.Tests -> bin-c0100-s3/` | orchestrator-eligibility | `/*/*/OrchestratorServiceIntegrationTests/*` | V-6, R-3 | all 28 methods, 0 failed/skipped | 28 | 12 | true |
 | CP-6 | S3 | CP-5 | pipeline-backlog | `/*/*/AgentTaskPipelineStatusTests/*` | V-6, R-3 | 72 executions across the four partial files, 0 failed/skipped | 72 | 5 | false |
@@ -342,7 +345,7 @@ so Code reports the `Tests N passed` line plus a per-file source census. No cens
 ### Cost
 - Ordinary V/R floor (Code) = sum of EstimatedMinutes = 6 + 3 + 5 + 3 + 12 + 5 + 2 + 6 + 2 + 4 + 10 = **58 minutes** (estimated): S1-S2 task 17 (one build), S3 19 (one build), S4 8 (one build), S5 14 (no build). Plus the tool bootstrap build, about 4 minutes, once per Code task.
 - Savings versus the plan: one isolated build removed (S1 and S2 share `bin-c0100-s12/`), about 4 minutes; the plan's two-filter CP-4 is one combined-class row.
-- PC floor (Mutation, pending): 33 PCs. Server-side PCs (PC-1..PC-31) each need a scratch build plus red and green runs of one method, about 7 minutes unbatched = 217 minutes; batched by independent file and method (PC-1..PC-5 share `AddRelationshipAsync` and run separately; the rest form roughly eight batches) about 8 × 8 = 64 minutes plus one baseline, estimated 70. Client PCs (PC-32, PC-33) about 3 minutes each = 6. Schema PCs (PC-23..PC-27) need a regenerated migration in the scratch copy; count them in the server-side figure.
+- PC floor (Mutation, pending): 34 PCs (PC-34 added by the F1 repair, server-side). Server-side PCs (PC-1..PC-31) each need a scratch build plus red and green runs of one method, about 7 minutes unbatched = 217 minutes; batched by independent file and method (PC-1..PC-5 share `AddRelationshipAsync` and run separately; the rest form roughly eight batches) about 8 × 8 = 64 minutes plus one baseline, estimated 70. Client PCs (PC-32, PC-33) about 3 minutes each = 6. Schema PCs (PC-23..PC-27) need a regenerated migration in the scratch copy; count them in the server-side figure.
 - Total (estimated) = setup/build 4 per Code task × 4 = 16 + V/R 58 + PC 76 = **150 minutes** (unbatched PC alternative 239).
 
 ## Collisions and ordering (re-checked 2026-10-14 against `origin/master` = `e0877982c`)

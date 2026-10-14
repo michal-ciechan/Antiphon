@@ -21,7 +21,7 @@ release checklist does not apply.
 | 2 | The Antiphon board is `TrackerKind.Internal`. | `GET /api/boards/8988ca03-…` reports `trackerKind: GitHubIssues`. `GitHubIssuesTracker.cs:330` and `JiraTracker.cs:112` return `BlockedByExternalIds: []`; only `LinearTracker.cs:158` fills it. | The external path never blocks this board. The design is tracker-independent and leaves `ExternalTrackerSyncService` untouched (D-2). |
 | 3 | External "blocked" keeps a card out of active work; imitate it. | `ExternalTrackerSyncService.cs:530-587` resolves blocker state per sync; `:162-191` then places a blocked issue in the first non-active, non-terminal column (Backlog on this board) only when the tracker owns a non-terminal column. It is placement at sync, not a gate. | Not reusable: internal blockers need a read-time predicate, not a placement (D-3). |
 | 4 | "Should a blocked card be excluded from `LoadEligibleCandidatesAsync`?" | `OrchestratorService.cs:819-867` pulls only cards in an active, non-terminal column with `ArchivedAt == null`, `AutoDispatchHeldAt == null`, no owner, no live session, retry due. The Backlog pull is done by the orchestrator session from the pipeline snapshot: `AgentTaskPipelineStatusService.cs:145-180` builds `investigateBacklog` (Status Backlog, not archived, no owner, not started, label `post-land-verification` excluded at `:170`); `ExpectationSnapshotReader.ReadBacklogAsync` (`:340-375`) feeds the watchdog's `EligibleBacklog`. | Three read sites share one predicate (D-5): tick eligibility, pipeline backlog (which also reports the blocked rows), watchdog backlog. |
-| 5 | Cycles are possible once user-editable. | No write-time graph check exists anywhere for cards; identifier resolution is `CardService.ResolveCardIdAsync` (`:347-395`) through `CardIdentifierScope` with a board fence. | Write-time walk with a depth cap; 409 `card_relationship_cycle` (D-6). |
+| 5 | Cycles are possible once user-editable. | No write-time graph check exists anywhere for cards; identifier resolution is `CardService.ResolveCardIdAsync` (`:347-395`) through `CardIdentifierScope` with a board fence. | Write-time walk; 409 `card_relationship_cycle` (D-6). |
 | 6 | Auto-clearing when the blocker is Done. | Nothing clears; the tracker path re-resolves every sync (row 3). Card closes already fan out through `CardTaskSettlement` and `CardChanged` events (`CardService.cs:1034-1048`, `:654`). | Rows persist; `resolved` is computed at read time from the blocker's `Status`/`ArchivedAt` (D-7). |
 | 7 | Where the UI lives. | `CardModal.tsx:255-300` tabs plus a `CardDetails` sidebar; `BoardCard.tsx:52-57`, `CardRow.tsx:92-111` and `orchestrator/BacklogRow.tsx:90` all render `CardAxisBadges`. `useCard` fetches the full card on open (`CardModal.tsx:47`). | One `BlockedChip` inside `CardAxisBadges` covers tile, row and orchestrator backlog; the modal gets a Blocked-by section (S5). |
 | 8 | Card history must record it. | `CardRevision` is one table with `CardRevisionKind` (`CardRevisionKind.cs`: ContentEdit, Move, Archive, Unarchive, Reopen, Reorder); `CardRevisionLog.Append*` (`CardRevisionLog.cs:25-140`) allocates from `Card.RevisionCount`; every write rotates `ConcurrencyToken` and saves through `SaveCardWriteAsync` (`CardService.cs:1543-1566`; duplicate revision number is a 409). The client `KIND_LABELS` is `Record<CardRevisionKind, string>` (`CardHistory.tsx:64-77`). | Two new kinds, one new `RelatedCardId` column on `CardRevision`, client labels (S1, S5; D-8). |
@@ -48,8 +48,9 @@ release checklist does not apply.
   `CreatedBy` (nullable free text, same stance as `CardRevision.EditedBy`), `CreatedAt`.
   Table `CardRelationships`; unique index `IX_CardRelationships_CardId_RelatedCardId_Kind`;
   index on `RelatedCardId`; check constraint `CK_CardRelationships_NotSelf`
-  (`"CardId" <> "RelatedCardId"`); both FKs `OnDelete(Cascade)` (cards are never hard-deleted in
-  production; test cleanup `ExecuteDelete`s cards). Navigations `Card.BlockedBy` and
+  (`"CardId" <> "RelatedCardId"`); both FKs `OnDelete(Cascade)`. Board and project deletion physically delete the board's cards
+  (`ProjectCascade.DeleteBoardsAsync`, `ProjectCascade.cs:127`); deleting either card removes its
+  rows (T-3). Navigations `Card.BlockedBy` and
   `Card.Blocks`. Migration via `dotnet ef migrations add AddCardRelationships --project server`
   (never hand-written). Rejected: a `BlockedByCardIds` jsonb list on `Card` (no inverse, no
   per-row reason); a soft-removed row (history already lives in revisions, D-8).
@@ -69,9 +70,11 @@ release checklist does not apply.
   thing to keep consistent on every close/reopen/archive).
 - **D-6 Cycle and self rules at write time.** Self-reference is 422 `validation_failed`
   (`relatedCard`). Before insert, walk `BlockedBy` edges from the blocker outward (iterative
-  breadth-first over `CardRelationships`, visited set, depth cap 64); reaching the blocked card
+  breadth-first over `CardRelationships`, visited set, no depth cap); reaching the blocked card
   is 409 `card_relationship_cycle` with the path identifiers in the message. A duplicate pair is
-  409 `card_relationship_exists`. Rejected: documenting cycles as a footgun; a DB trigger.
+  409 `card_relationship_exists`. The duplicate check, the walk and the insert run in one transaction under
+  `pg_advisory_xact_lock(hashtext('antiphon.card-relationships.graph'))`, one key for the whole graph
+  because edges cross boards (T-30, Review 3501caaa F1). Rejected: documenting cycles as a footgun; a DB trigger.
 - **D-7 Resolution is computed, rows persist.** A blocker that is Done, Canceled or archived
   makes the row `resolved: true`; reopening or unarchiving the blocker re-blocks without a write.
   No sweep, no auto-delete. Rejected: deleting rows on close (loses the record; reopen would not
