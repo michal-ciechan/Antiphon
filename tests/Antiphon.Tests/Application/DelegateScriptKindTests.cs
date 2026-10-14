@@ -613,7 +613,7 @@ public sealed class DelegateScriptKindTests
 
         run.ExitCode.ShouldBe(0, run.Output);
         server.LastPath.ShouldBe("/api/agent-tasks/worktree-health");
-        run.Output.ShouldContain("No stuck feat/card-task-* worktrees.");
+        run.Output.ShouldContain("No stuck delegate worktrees.");
     }
 
     // ---- harness -------------------------------------------------------------------------------
