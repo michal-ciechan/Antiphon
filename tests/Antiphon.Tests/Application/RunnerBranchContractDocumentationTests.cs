@@ -189,6 +189,32 @@ public class RunnerBranchContractDocumentationTests
         skill.ShouldNotContain("an accepted Reply frees the seat", Case.Sensitive, "c1083-skill-no-reply-frees");
     }
 
+    /// <summary>
+    /// CARD-1213 S3. Owners cite git-common instead of restating git rules, and name both branch
+    /// forms with the recorded WorktreeBranch as the source. Expected sentences are literals.
+    /// </summary>
+    [Test]
+    public void C1213_DocsCiteGitCommonAndBothBranchForms()
+    {
+        var loop = Collapse(Read("docs/orchestration-loop.md"));
+        Pin(loop, "`delegate-basics` carries `{{GIT-COMMON}}`, so each non-specialist delegate launches with "
+            + "`server/Bundles/Fragments/git-common.md`.", "c1213-loop-carrier");
+        Pin(loop, "Do not restate those rules in a brief; supply the per-task values only.", "c1213-loop-no-restate");
+        loop.ShouldNotContain("commit-and-push each slice", Case.Sensitive, "c1213-loop-old-list");
+
+        var runtime = Collapse(Read("docs/session-runtime-invariants.md"));
+        Pin(runtime, "Two forms exist: `feat/card-task-<id>` and `feat/card-<n>-<stage>-<id>`.", "c1213-runtime-forms");
+        runtime.ShouldContain("RunnerWorkspaceBindingTests.C1213_BindingBothBranchForms", Case.Sensitive, "c1213-runtime-mirror-test");
+
+        var skill = Collapse(Read(".claude/skills/antiphon-orchestrator/SKILL.md"));
+        Pin(skill, "copy the sibling task's recorded `WorktreeBranch` (`feat/card-<n>-<stage>-<id>` or "
+            + "`feat/card-task-<id>`) rather than rebuilding it from the task id", "c1213-skill-branch");
+        skill.ShouldNotContain("feat/card-task-XXXX", Case.Sensitive, "c1213-skill-legacy-example");
+
+        Read("server/Bundles/README.md").ShouldContain(
+            "(../../docs/orchestration-loop.md#delegate-branch-names-card-1213)", Case.Sensitive, "c1213-readme-link");
+    }
+
     private static void Pin(string text, string sentence, string label)
     {
         text.ShouldContain(sentence, Case.Sensitive, label);
