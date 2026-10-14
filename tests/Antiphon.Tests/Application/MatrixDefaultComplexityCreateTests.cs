@@ -81,6 +81,7 @@ public sealed class MatrixDefaultComplexityCreateTests
         var task = await f.Saved(result.Id);
         task.Complexity.ShouldBeNull();
         task.ExplicitAgentKind.ShouldBe(AgentKind.ClaudeCode);
+        result.Warning.ShouldNotBeNull();
         result.Warning.ShouldContain("explicit kind/level: the Plan/Medium row was not consulted");
     }
 
@@ -213,10 +214,10 @@ public sealed class MatrixDefaultComplexityCreateTests
             IsPoolDelegate = false, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
         f.Db.Agents.Add(agent);
         await f.Db.SaveChangesAsync();
-        if (cardPin) await RoutingPinServiceTests.SeedCardAsync(f.Db, "CARD-9097A");
-        await f.Pins.UpsertAsync(new(AgentTaskRole.Plan, Card: cardPin ? "CARD-9097A" : null,
+        if (cardPin) await RoutingPinServiceTests.SeedCardAsync(f.Db, "CARD-9097");
+        await f.Pins.UpsertAsync(new(AgentTaskRole.Plan, Card: cardPin ? "CARD-9097" : null,
             Provenance: RoutingPinProvenance.Human, Strength: RoutingPinStrength.Required, AgentId: agent.Id, Reason: "standing owner"), null, default);
-        var result = await f.Create(new("plan", Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared, Card: cardPin ? "CARD-9097A" : null));
+        var result = await f.Create(new("plan", Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared, Card: cardPin ? "CARD-9097" : null));
         result.AgentKind.ShouldBe(AgentKind.ClaudeCode);
         result.Routing.ShouldBeNull();
         var task = await f.Saved(result.Id);
@@ -253,8 +254,8 @@ public sealed class MatrixDefaultComplexityCreateTests
                 goto case "stage-list-pin";
             case "stage-list-pin": await f.Pin(AgentTaskRole.Merge, true, AgentKind.ClaudeCode, AgentModelLevel.Frontier); break;
             case "card-pin":
-                cardId = (await RoutingPinServiceTests.SeedCardAsync(f.Db, "CARD-9097M")).Id;
-                await f.Pin(AgentTaskRole.Merge, false, AgentKind.Codex, AgentModelLevel.Frontier, "CARD-9097M"); break;
+                cardId = (await RoutingPinServiceTests.SeedCardAsync(f.Db, "CARD-9098")).Id;
+                await f.Pin(AgentTaskRole.Merge, false, AgentKind.Codex, AgentModelLevel.Frontier, "CARD-9098"); break;
             case "policy-kind-codex": f.Settings.RolePolicy["Merge"].Kind = AgentKind.Codex; break;
             case "none": break;
             default: throw new ArgumentOutOfRangeException(nameof(variant));
@@ -307,7 +308,9 @@ public sealed class MatrixDefaultComplexityCreateTests
         Pair(child, AgentKind.Codex, AgentModelLevel.Frontier, null);
         child.RoutingPinId.ShouldBeNull();
         await f.NoBlocked(child.Id);
-        (await f.Db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == child.Id && e.Type == AgentTaskEventType.Warning)).Detail.ShouldContain("Routing read failed");
+        var warnings = await f.Db.AgentTaskEvents.Where(e => e.AgentTaskId == child.Id && e.Type == AgentTaskEventType.Warning).ToListAsync();
+        warnings.Count.ShouldBe(1);
+        warnings[0].Detail.ShouldContain("Routing read failed");
     }
 
     [Test]
