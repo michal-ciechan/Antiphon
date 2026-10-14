@@ -308,10 +308,12 @@ const parityRows: ParityRow[] = [
   { id: 'legacy-policy-held', server: 'AgentTaskService.cs:1181-1186', context: scenario({ resolved: 'none', candidates: [held(fable)] }), expected: ['refused', 'ClaudeCode', 'Frontier', 'fable', null] },
 ]
 describe('C1250 V17 server-branch parity', () => {
-  it.each(parityRows)('$id [$server]', ({ context, expected, label }) => {
-    const preview = previewNextCreate(context)
-    if (expected === null) expect(preview).toBeNull()
-    else expect([preview?.source, preview?.agentKind, preview?.modelLevel, preview?.alias, preview?.complexity]).toEqual(expected)
-    if (label) expect(nextCreateLabel(preview)).toBe(label)
-  })
+  for (const { id, server, context, expected, label } of parityRows) {
+    it(`${id} [${server}]`, () => {
+      const preview = previewNextCreate(context)
+      if (expected === null) expect(preview).toBeNull()
+      else expect([preview?.source, preview?.agentKind, preview?.modelLevel, preview?.alias, preview?.complexity]).toEqual(expected)
+      if (label) expect(nextCreateLabel(preview)).toBe(label)
+    })
+  }
 })
