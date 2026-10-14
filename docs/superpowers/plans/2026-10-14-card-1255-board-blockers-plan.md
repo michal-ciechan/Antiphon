@@ -4,16 +4,17 @@ Original Code / landing owner: `dc2740ed-3d7c-42a1-9f45-359b810a068d`.
 Task base: `a02389cab727d508532e6d3db8ff6cbcf3eb7366`.
 Round: Final. Restart: server (activation by caller after Review/landing).
 
-The card is the implementation brief; this task-local plan freezes its test design and closed
-checkpoint list. The explicit Final profile and stage contract require the whole Unit lane,
-despite the earlier contradictory "no whole-Unit lane" sentence in the brief. No full assembly
-run is planned. Delivery, landing, leases and persistence outside board/card reads are unchanged.
+The card is the original implementation brief; this plan records its test design and closed
+checkpoint list. The original Code task used the Final profile and whole Unit lane.
+The D1 documentation repair has a separate, explicitly bounded verification scope below.
+No full assembly run is planned. Delivery, landing, leases and persistence outside board/card
+reads are unchanged.
 
 ## Design and slices
 
 S1: tests first. Extend CardRelationshipApiTests with full and summary HTTP board reads,
 literal blocker tuples, Done/Canceled/archived/unknown state coverage, cross-board blockers,
-live resolution/reopen, omitted fields without relationships, and a command interceptor
+live resolution/reopen, omitted fields without BlockedBy rows, and a command interceptor
 asserting exactly one relationship query for both 1 and 40 blocked cards. Add BoardPage tests
 for both real routes: `/boards` renders BoardCard through BoardColumn; `/boards/:id` renders
 CardRow through BoardShapeView/SortableCardList. Both use `GET /api/boards/{id}?view=summary`
@@ -94,3 +95,45 @@ The default red-run retention is reported as `still-present` by this checkpoint 
 that cleanup status is separate from the clean source and verified build in the red receipt.
 
 Final S2 run `20261014-174622-c17a` at `06df7e14d39e494d525b7f882b2abcd32f791b7c`: CP-2 29/29 green; CP-3 initially zero tests because pinned TUnit requires trailing wildcards in each OR operand. Corrective checkpoint-tool `row --no-build` at the same frozen source ran the documented filter and all 23 cases passed; both validators accepted it. This corrective invocation preceded the manifest amendment to reuse the certified build without changing source under the Unit run. CP-5 had 59 passes and two fixture-order failures: the default MSW handler shadowed the request recorder; recorder now registered in a later server.use call, assertions unchanged. CP-4 reached its unchanged 40-minute deadline, with no final TRX or certifiable counts. R-3 remains incomplete; visible console failures and native Windows skips are not a completed Unit result. CP-6 is the explicitly listed narrow original-base diagnostic for the 19 observed failed methods, not a replacement for the whole Unit lane.
+
+## D1 documentation repair (Code 12c75046)
+
+Final Review `6b623fc6` reported D1: relationships include both `blockedBy` and `blocks`,
+whereas blocker summaries describe the card's `BlockedBy` rows. The API text now names
+that direction, includes resolved rows, and retains omission of zero counts and absent
+summaries. The API batching claim and shared-loader comment cite
+`CardRelationshipApiTests.Board_loads_all_blocker_summaries_in_one_query` (V-3: 1/40 cards,
+full/summary). The DTO count comment also cites the board resolution, omission and batching
+tests (V-1 through V-3).
+
+The universal-word audit covers the CARD-1255 text in this plan, `docs/antiphon-api.md`,
+`CardBlockerSummaries.cs` and `BoardDtos.cs`. The API's "all" and loader's "every" now have
+the V-3 citation; V-3's own "every" is scoped to its named fixture. Remaining matches in
+this plan describe requested verification scope, execution instructions, pending mutants
+or recorded run counts, rather than additional behavior guarantees.
+
+The repair brief explicitly replaces the original CP-1 through CP-6 execution scope for
+this comments/docs-only slice: one server build and the API documentation pin classes,
+through `scripts/build-slot.ps1`; no whole-Unit, integration, client or Mutation run.
+This is the reason for these direct drivers instead of a checkpoint-tool bootstrap/run.
+Compile the doc-pin host once as a necessary build dependency, using the same isolated
+output and `UseAppHost=false`, then run it with `--no-build`. Queue each driver once.
+No production behavior, tests, assertions or timeouts change.
+
+Commands (from the task worktree, after committing):
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1255-docs -- dotnet build server/Antiphon.Server.csproj --property:OutputPath=bin-c1255-d1/ --property:UseAppHost=false --nologo
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1255-doc-pins-build -- dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c1255-d1/ --property:UseAppHost=false --nologo
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1255-doc-pins -- dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c1255-d1/ --property:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(RepairSourceDocumentationTests*)|(OrchestratorInstructionsGuidanceTests*)|(RunnerBranchContractDocumentationTests*)|(CommitOnSettleDocumentationTests*)|(BlockedTaskParkProjectionTests*)|(SessionRunnerAbsenceEvidenceDocumentationTests*)|(PipelineDefinitionDocumentationTests*)|(StandingPipelinePolicyDocumentationTests*)/*' --report-trx --report-trx-filename doc-pins.trx --results-directory .antiphon/c1255-d1/doc-pins
+```
+
+The `(Name*)` OR form is documented in `docs/testing-and-build.md`, Combined class filters.
+Expected scope is eight complete documentation classes; inspect fresh TRX identities and
+nonzero counts per class. Preserve actual tested SHA and slot/wait facts in the task report.
+V-5 repair acceptance also includes comment-only diff inspection, full-range evidence audit,
+fetched-master merge commit, merge-tree exit 0, matching remote ref and clean worktree.
+The original R-3 Unit timeout remains incomplete; this bounded repair does not discharge it.
+PC-1 through PC-6 and their variants remain pending for SourceLanding Mutation after Review
+and caller landing. This repair requires no restart; feature activation still needs the server
+restart recorded for the original Code owner.

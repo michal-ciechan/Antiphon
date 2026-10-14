@@ -9,7 +9,9 @@ namespace Antiphon.Server.Application.Services;
 internal static class CardBlockerSummaries
 {
     /// <summary>
-    /// Loads every requested card's BlockedBy summaries in one query, including resolved rows.
+    /// For a nonempty request, loads every requested card's BlockedBy summaries in one query,
+    /// including resolved rows (CardRelationshipApiTests.Board_loads_all_blocker_summaries_in_one_query;
+    /// CardRelationshipApiTests.Board_views_return_blockers_using_live_resolution_state).
     /// Resolution uses the same predicate as dispatch admission (CardBlockers).
     /// </summary>
     internal static async Task<Dictionary<Guid, List<CardBlockerSummaryDto>>> LoadAsync(

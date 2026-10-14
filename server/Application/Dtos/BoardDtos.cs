@@ -113,7 +113,10 @@ public sealed record CardDto(
 
     /// <summary>
     /// CARD-0100 / CARD-1255. Blockers that are not resolved; omitted at zero. Filled by card, board and list
-    /// routes (CardRelationshipApiTests.Card_and_list_views_carry_open_blocker_count_and_blockers_excluding_resolved).
+    /// routes (CardRelationshipApiTests.Card_and_list_views_carry_open_blocker_count_and_blockers_excluding_resolved;
+    /// CardRelationshipApiTests.Board_views_return_blockers_using_live_resolution_state;
+    /// CardRelationshipApiTests.Board_without_relationships_omits_blocker_fields;
+    /// CardRelationshipApiTests.Board_loads_all_blocker_summaries_in_one_query).
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public int OpenBlockerCount { get; init; }
