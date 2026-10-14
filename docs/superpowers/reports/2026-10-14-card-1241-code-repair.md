@@ -15,7 +15,7 @@ Mutation not run; PC-1..PC-6 of the 586e863b report and PC-7..PC-10 below are pe
 
 Not covered (stated in `docs/testing-and-build.md`): a change made between the admission check and the build's launch
 (base had the same window between its in-slot stamp and launch), or after a path's after-release stamp, when the final
-bytes equal the earlier ones; on Windows a rewrite keeping size and mtime.
+bytes equal the earlier ones.
 
 ## D2: scope statements
 
@@ -77,6 +77,6 @@ Green at `a605ca05` (TRX `.antiphon/c1241-classes/classes.trx`, run `194babd8-b2
 
 ## Not changed
 
-- Hard-link false tamper (task 47b93e01): a hard-linked ledger file stamps `unreadable`; `AdmitLedger` skips it while
-  its stat stamp is unchanged and outside the racy window, and `VerifyLedger` still reports it after release. Not fixed.
+- Hard-link false tamper (task 47b93e01): a hard-linked ledger file stamps `unreadable` and can be reported `tampered`
+  while unchanged. Not fixed.
 - OutputCleanup, CARD-1236, CARD-1242: untouched.

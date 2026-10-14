@@ -174,10 +174,12 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     public Task unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted()
     {
         // red: admission hashes each ledger entry again instead of the entries whose stat stamp changed.
+        if (!OperatingSystem.IsLinux()) Skip.Test("the statx stamp (inode and ctime) is read on Linux only");
         var root = BeginRepo();
         AgeWorktree(root);
         var ledger = Capture(root);
         ledger.Files.Count.ShouldBeGreaterThan(IgnoredFiles);
+        ledger.Stats.Values.ShouldAllBe(stat => stat.HasIdentityAndChangeTime);
 
         var unchanged = BuildConfinement.AdmitLedger(ledger);
         unchanged.Settlement.Kind.ShouldBeNull(unchanged.Settlement.Detail);
@@ -329,7 +331,8 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         return (run, exit);
     }
 
-    // Moves the modification time of the worktree files outside .git an hour back, outside the racy window.
+    // Moves the modification time of the worktree files outside .git an hour back, outside the racy window,
+    // then waits the window out: setting the mtime moves the ctime to now, and a ctime inside the window is hashed.
     private static void AgeWorktree(string root)
     {
         var old = DateTime.UtcNow.AddHours(-1);
@@ -337,6 +340,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
             if (!file.StartsWith(git, StringComparison.Ordinal))
                 File.SetLastWriteTimeUtc(file, old);
+        Thread.Sleep(TimeSpan.FromMilliseconds(BuildConfinement.RacyWindow / 1_000_000 + 250));
     }
 
     private string BeginRepo()

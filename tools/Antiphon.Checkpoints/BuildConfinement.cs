@@ -44,7 +44,7 @@ public static class BuildConfinement
     public sealed record Admission(Settlement Settlement, int Hashed);
 
     // A second write inside one file-system timestamp tick can leave the stat stamp equal, so an entry
-    // modified this close to the capture is hashed at admission whatever its stat says.
+    // whose mtime or ctime is this close to the capture is hashed at admission whatever its stat says.
     public const long RacyWindow = 2_000_000_000;
 
     public sealed record LedgerCapture(Ledger? Value, string? Refusal, string Detail)
@@ -134,9 +134,12 @@ public static class BuildConfinement
     // Review 06ff09f8 D1: the scheduler calls this once the build slot is granted, before the build starts,
     // so a change made during the slot wait is refused even when the build later writes the old bytes back
     // (file_changed_during_the_slot_wait_and_restored_by_the_build_is_refused_before_launch). An entry is
-    // hashed only when its stat stamp changed (unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted)
-    // or its recorded modification time is inside RacyWindow
-    // (entry_modified_just_before_the_ledger_is_hashed_when_the_slot_is_granted).
+    // skipped only when its recorded stamp has a file identity and a change time
+    // (stat_without_a_change_time_hashes_each_entry_at_admission), both its mtime and ctime are older than
+    // RacyWindow (entry_modified_just_before_the_ledger_is_hashed_when_the_slot_is_granted,
+    // entry_with_a_change_time_inside_the_racy_window_is_hashed_at_admission) and the stamp is unchanged
+    // (unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted). The portable stamp has neither,
+    // so off Linux admission hashes each entry.
     public static Admission AdmitLedger(Ledger ledger)
     {
         var paths = new List<string>();
@@ -144,7 +147,8 @@ public static class BuildConfinement
         foreach (var pair in ledger.Files)
         {
             var full = Combine(ledger.Repository, pair.Key);
-            if (ledger.Stats.TryGetValue(pair.Key, out var recorded) && recorded.Modified < ledger.RacyFrom
+            if (ledger.Stats.TryGetValue(pair.Key, out var recorded) && recorded.HasIdentityAndChangeTime
+                && recorded.Modified < ledger.RacyFrom && recorded.Changed < ledger.RacyFrom
                 && recorded.Matches(ledger.Stat(full)))
                 continue;
             hashed++;
