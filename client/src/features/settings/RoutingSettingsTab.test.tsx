@@ -347,10 +347,16 @@ describe('RoutingSettingsTab', () => {
     { name: 'empty-read-failure', tier: 'Easy', governsDefault: false, candidates: [], reason: 'chain read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unknown (read failed)' },
     { name: 'default-policy-read-failure', tier: 'Medium', governsDefault: true, candidates: [codex], reason: 'chain read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unknown (read failed)' },
     { name: 'non-default-availability-failure', tier: 'Easy', governsDefault: false, candidates: [{ ...codex, availableNow: false, unavailableReason: 'availability read failed (NpgsqlException)' }], reason: 'availability read failed (NpgsqlException)', label: 'Unset — a -Complexity Easy dispatch blocks', stored: null },
-    { name: 'non-default-pin-read-failure', tier: 'Easy', governsDefault: false, candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Unset — a -Complexity Easy dispatch blocks', stored: null },
+    { name: 'non-default-pin-read-failure', tier: 'Easy', governsDefault: false, candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unset' },
+    { name: 'default-pin-read-failure', tier: 'Medium', governsDefault: true, candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unset' },
+    { name: 'default-empty-pin-read-failure', tier: 'Medium', governsDefault: true, candidates: [], reason: 'stage pin read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unset' },
+    { name: 'default-required-pin-banner-read-failure', tier: 'Medium', governsDefault: true, candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unset', pinStrength: 'Required', banner: 'Required Human pin: Plan → Grok/Frontier. Overrides the Plan cells while this pin is active.' },
+    { name: 'non-default-required-pin-banner-read-failure', tier: 'Easy', governsDefault: false, candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unset', pinStrength: 'Required', banner: 'Required Human pin: Plan → Grok/Frontier. Overrides the Plan cells while this pin is active.' },
+    { name: 'default-preferred-pin-banner-read-failure', tier: 'Medium', governsDefault: true, candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unset', pinStrength: 'Preferred', banner: 'Preferred Human pin: Plan → Grok/Frontier. Tried before each Plan cell.' },
+    { name: 'non-default-preferred-pin-banner-read-failure', tier: 'Easy', governsDefault: false, candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unset', pinStrength: 'Preferred', banner: 'Preferred Human pin: Plan → Grok/Frontier. Tried before each Plan cell.' },
     { name: 'non-default-unlaunchable-policy', tier: 'Easy', governsDefault: false, candidates: [], reason: 'Plan policy names Raw/Frontier, which delegation cannot launch', label: 'Unset — a -Complexity Easy dispatch blocks', stored: null },
-  ] satisfies Array<{ name: string; tier: TaskComplexity; governsDefault: boolean; candidates: ComplexityCandidateDto[]; reason: string; label: string; stored: string | null }>)('C097M V-C4 diagnostic $name', async (row) => {
-    serveRouting({ pins: [], effective: { Plan: {
+  ] satisfies Array<{ name: string; tier: TaskComplexity; governsDefault: boolean; candidates: ComplexityCandidateDto[]; reason: string; label: string; stored: string | null; pinStrength?: 'Required' | 'Preferred'; banner?: string }>)('C097M V-C4 diagnostic $name', async (row) => {
+    serveRouting({ pins: row.pinStrength ? [pin({ role: 'Plan', strength: row.pinStrength, agentKind: 'Grok', modelLevel: 'Frontier' })] : [], effective: { Plan: {
       ...planEffective,
       chains: [chain(row.tier, { role: 'Plan', effective: {
         source: 'rolePolicy', candidates: row.candidates, stagePin: null,
@@ -365,8 +371,10 @@ describe('RoutingSettingsTab', () => {
     expect(cell).not.toHaveTextContent('Codex/Frontier')
     if (row.stored) {
       expect(within(cell).getByText(row.stored)).toBeInTheDocument()
-      expect(cell).not.toHaveTextContent(/unset|dispatch blocks/i)
+      expect(cell).not.toHaveTextContent('dispatch blocks')
+      if (row.stored === 'Stored cell: unknown (read failed)') expect(cell).not.toHaveTextContent(/unset/i)
     }
+    if (row.banner) expect(await within(cell.closest('tr')!).findByText(row.banner)).toBeInTheDocument()
   })
 
   it.each([

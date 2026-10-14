@@ -13,8 +13,9 @@ Controls: [pending Mutation candidate](../mutations/2026-10-14-card-0097-sc1-can
 
 ## Implementation
 
-D1: non-default RolePolicy cells with availability or pin-read diagnostics retain their
-blocking empty-chain verdict. Chain-read failures expose an unknown route/stored cell,
+D1: non-default RolePolicy cells with availability diagnostics retain their
+blocking empty-chain verdict. The pin-read verdict recorded by the first repair was rejected
+by Final Review 792ca57b D3; the amendment below replaces it. Chain-read failures expose an unknown route/stored cell,
 withhold the speculative policy target, and leave the explanation in the alert. Known pin
 and standing-agent bindings survive chain-read diagnostics; their stored cells read unknown.
 V-C1 and V-C4 bind these cases with literal expectations.
@@ -61,3 +62,21 @@ on `getByRole`. The repair removes that option; its string `name` remains an exa
 Build slot: granted, waited=45s. No production assertion or timeout was relaxed.
 The merge incorporated `origin/master` at `666c75d9fa1f64dde6fabcaf69b99c834cd3c951`
 without conflicts; that fetched delta touched S-D scripts/tests, not the client.
+
+## D3 repair (f6a6f9a0)
+
+Task `f6a6f9a0-619f-44ee-9c57-964524c60752`, branch `feat/card-task-f6a6f9a0`,
+worktree `/work/worktrees/task-f6a6f9a0`, starting at
+`3678d79f7f5050d762d8b4a523a8d7d2992d65e0`. Landing owner remains
+`6812413b-f769-4554-9d4a-5b73c6a11afa`. Review source:
+`/work/worktrees/task-792ca57b/.antiphon/task-792ca57b.md`.
+
+The server's `ReadPartAsync("stage pin", ...)` falls back to `Decision.None`, then
+`ComplexityEffective.Compose` can return source `rolePolicy` with a policy candidate.
+That candidate does not establish routing when the pin read failed. Both tier variants
+must show `Effective routing unknown`, preserve the diagnostic alert and report
+`Stored cell: unset` when the chain read succeeded. The marker is the exact diagnostic
+segment prefix `stage pin read failed (`; segments are joined by `; `.
+
+Tests-first slice adds eleven cases, including Required/Preferred banners from the separate
+pin endpoint, and corrects the existing non-default expectation. Verification pending.
