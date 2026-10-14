@@ -121,6 +121,79 @@ public sealed class CardRelationshipScriptTests
     }
 
     [Test]
+    public async Task Get_prints_the_card_when_relationships_returns_an_empty_404()
+    {
+        using var stub = CreateStub();
+        var respond = stub.Respond!;
+        stub.Respond = (call, index) => call.Path.EndsWith("/relationships")
+            ? new(404, "") : respond(call, index);
+
+        var run = await RunAsync(stub, "get", "CARD-0051");
+
+        run.ExitCode.ShouldBe(0, run.Stderr);
+        AssertCardWithoutRelationships(run.Stdout);
+        run.Stderr.ShouldBeEmpty();
+        stub.Calls.Select(c => $"{c.Method} {c.Path}").ShouldBe(new[]
+        {
+            "GET /api/cards/CARD-0051",
+            "GET /api/cards/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/relationships"
+        });
+    }
+
+    [Test]
+    public async Task Get_prints_the_card_and_warns_when_relationships_returns_500()
+    {
+        using var stub = CreateStub();
+        var respond = stub.Respond!;
+        stub.Respond = (call, index) => call.Path.EndsWith("/relationships")
+            ? new(500, """{"detail":"Relationship store unavailable"}""") : respond(call, index);
+
+        var run = await RunAsync(stub, "get", "CARD-0051");
+
+        run.ExitCode.ShouldBe(0, run.Stderr);
+        AssertCardWithoutRelationships(run.Stdout);
+        run.Stderr.Trim().ShouldBe("WARNING: relationships lookup failed (HTTP 500).");
+    }
+
+    [Test]
+    public async Task Block_fails_loudly_when_relationships_returns_404()
+    {
+        using var stub = CreateStub();
+        var respond = stub.Respond!;
+        stub.Respond = (call, index) => call.Path.EndsWith("/relationships")
+            ? new(404, """{"detail":"Relationship route unavailable","code":"relationship_route_missing"}""")
+            : respond(call, index);
+
+        var run = await RunAsync(stub, "block", "CARD-0051", "-BlockedBy", "CARD-0049");
+
+        run.ExitCode.ShouldNotBe(0);
+        run.Stderr.ShouldContain("Relationship route unavailable");
+        run.Stderr.ShouldContain("code relationship_route_missing");
+        run.Stdout.ShouldBeEmpty();
+        stub.Calls.Select(c => $"{c.Method} {c.Path}").ShouldBe(new[]
+        {
+            "GET /api/cards/CARD-0051",
+            "POST /api/cards/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/relationships"
+        });
+    }
+
+    private static void AssertCardWithoutRelationships(string stdout)
+    {
+        stdout.ShouldContain("CARD-0051");
+        stdout.ShouldContain("Blocked card");
+        stdout.ShouldContain("id          aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        stdout.ShouldContain("board       22222222-2222-2222-2222-222222222222");
+        stdout.ShouldContain("importance  Normal");
+        stdout.ShouldContain("urgency     Normal");
+        stdout.ShouldContain("rank        0");
+        stdout.ShouldContain("token       11111111-1111-1111-1111-111111111111");
+        stdout.ShouldContain("revisions   1");
+        stdout.Replace("\r\n", "\n").Split('\n')
+            .Where(line => line.StartsWith("relationships") || line.StartsWith("blocked by") || line.StartsWith("blocks"))
+            .ShouldBe(new[] { "relationships: unavailable" });
+    }
+
+    [Test]
     public async Task Unblock_without_a_matching_blocker_exits_non_zero_and_names_the_current_blockers()
     {
         using var stub = CreateStub();
