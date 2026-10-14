@@ -4311,6 +4311,8 @@ public sealed partial class SessionMessageQueueService
             // Not the lock owner's token: that caller may return (and its request end) first.
             var stopping = scope.ServiceProvider.GetService<IHostApplicationLifetime>()?.ApplicationStopping
                 ?? CancellationToken.None;
+            if (LateConfirmDispatchStartingAsync is { } starting)
+                await starting(stopping);
             await channelReplies.OnTurnEndAsync(sessionId, stopping);
         }
         catch (Exception ex)
@@ -4324,6 +4326,8 @@ public sealed partial class SessionMessageQueueService
 
     /// <summary>Test seam: completes when every grace late-confirm reply dispatch handed off so far has.</summary>
     internal Task LateConfirmDispatchesSettledAsync() => Task.WhenAll(_lateConfirmDispatches.Keys);
+
+    internal Func<CancellationToken, Task>? LateConfirmDispatchStartingAsync { get; set; }
 
     // A fresh scope per poll: this runs outside any caller's DbContext and must see rows the
     // transcript ingestion path is committing from its own scope, concurrently.
