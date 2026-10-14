@@ -331,7 +331,10 @@ describe('CardModal', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Move to' }))
     await userEvent.click(await screen.findByTestId('archive-card'))
-    await userEvent.type(screen.getByLabelText(/^Reason/), 'duplicate of CARD-0042')
+    // Pasted, not typed (CARD-1256): under load the keystrokes outran the 20 s hang detector and
+    // the abandoned typing then landed in the next test's form.
+    await userEvent.click(screen.getByLabelText(/^Reason/))
+    await userEvent.paste('duplicate of CARD-0042')
     await userEvent.click(screen.getByRole('button', { name: 'Archive' }))
 
     await waitFor(() => expect(onClose).toHaveBeenCalled())
@@ -422,7 +425,8 @@ describe('CardModal', () => {
       <CardModal boardId="board-1" card={null} opened onClose={() => undefined} />,
     )
 
-    await userEvent.type(screen.getByLabelText('Title'), 'A new card')
+    await userEvent.click(screen.getByLabelText('Title'))
+    await userEvent.paste('A new card')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
 
     await waitFor(() => expect(createSpy).toHaveBeenCalled())
@@ -444,7 +448,8 @@ describe('CardModal', () => {
       <CardModal boardId="board-1" card={null} opened onClose={() => undefined} />,
     )
 
-    await userEvent.type(screen.getByLabelText('Title'), 'A rated card')
+    await userEvent.click(screen.getByLabelText('Title'))
+    await userEvent.paste('A rated card')
     await userEvent.click(screen.getByPlaceholderText('Normal (auto)'))
     await userEvent.click(await screen.findByRole('option', { name: 'High' }))
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))

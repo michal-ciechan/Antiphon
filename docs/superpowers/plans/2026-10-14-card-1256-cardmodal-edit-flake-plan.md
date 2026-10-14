@@ -48,8 +48,11 @@ spent in `userEvent.type` keystrokes (2.9 s alone).
   microtask, the retry lands in act's queue, and act flushes it to completion before it returns.
   The assertions become synchronous `getBy*` with no polling window. No timeout changes, no skip.
   The separate module keeps `CardModal.tsx` component-only for `react-refresh/only-export-components`.
-- **S2 / cheaper create test.** The create test pastes its three values instead of typing them
-  key by key; the asserted request body is unchanged.
+- **S2 / cheaper typing.** Every `userEvent.type` in `CardModal.test.tsx` (the create test's three
+  fields, the archive reason, the two importance tests' titles) becomes click + paste; the asserted
+  request bodies are unchanged. S3 adds the last three after the S2 stress batch showed the archive
+  test's keystrokes outrunning the 20 s hang detector and its abandoned typing scrambling the next
+  test's title (`'AAR Dn-e0w0 4c2ard'`).
 - **S2 / D3.** `useAddBlocker` and `useRemoveBlocker` invalidate `boardKeys.card(cardId)` on any
   409 refusal. Stale-token and archived refusals share the code `conflict`; both mean the cached
   card is out of date, and the cycle/exists refusals cost one extra card read.
@@ -73,11 +76,18 @@ spent in `userEvent.type` keystrokes (2.9 s alone).
 
 | PC | Mutation | Expected red |
 |---|---|---|
-| PC-1 | `CardModal.tsx`: build the lazy from a fresh `import('./CardEditModal').then(...)` instead of `loadCardEditModal` | V-1: the dialog is not in the DOM after the act-wrapped click (`getByRole` throws) |
+| PC-1 | `CardModal.tsx`: the "Edit card" `onClick` no longer sets `editing` | V-1: no "Edit #1" heading after the act-wrapped click (`getByRole` throws) |
+| PC-1b | `CardEditModal.tsx`: title `useState('')` instead of `card.title` | V-1 prefill assertion |
 | PC-2 | `boards.ts`: drop the 409 `onError` invalidation in `useAddBlocker` | V-2 |
 | PC-3 | `boards.ts`: drop the `setQueryData` of `cardConcurrencyToken` in `useAddBlocker` | V-3 (remove posts token-1) |
 | PC-4 | `useSignalRInvalidation.ts`: drop the `['cards', 'detail', cardId]` key from `CardChanged` | V-4, V-5 |
 | PC-5 | `boards.ts`: drop the 409 `onError` invalidation in `useRemoveBlocker` | **No V covers it** — disclosed gap; Mutation decides on a missing control. |
+
+The shared loader is defence in depth, not a discriminator: measured at S2, V-1 still passes
+alone with the lazy built from a fresh `import('./CardEditModal')`, because vitest resolves a
+cached dynamic import inside act's flush. The loader makes that ordering hold by construction
+instead of by module-runner timing; no PC is claimed for it. The flake fix's proof is the
+stress repetition record, not a PC.
 
 ### Checkpoints
 
@@ -88,9 +98,9 @@ Red-first runs at S1 and the stress repetitions run through `scripts/build-slot.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S2 | n/a | client-affected | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/board/CardModal.test.tsx src/features/board/CardBlockers.test.tsx src/features/board/CardEditModal.test.tsx src/hooks/useSignalRInvalidation.test.ts` | V-1..V-5, R-1 | 4 files; `Tests 49 passed`, 0 failed/skipped; `CLIENT TESTS EXIT CODE: 0` | n/a | 4 | false |
-| CP-2 | S2 | n/a | client-full | `pwsh -NoProfile -File scripts/test-client.ps1` | R-2 | `CLIENT TESTS EXIT CODE: 0`, 0 failed/skipped, `lint gate` present | n/a | 12 | true |
-| CP-3 | S2 | n/a | client-types | `node client/node_modules/typescript/bin/tsc -b client/tsconfig.json --pretty false` | R-3 | exit 0, 0 TypeScript errors | n/a | 2 | false |
+| CP-1 | S3 | n/a | client-affected | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/board/CardModal.test.tsx src/features/board/CardBlockers.test.tsx src/features/board/CardEditModal.test.tsx src/hooks/useSignalRInvalidation.test.ts` | V-1..V-5, R-1 | 4 files; `Tests 49 passed`, 0 failed/skipped; `CLIENT TESTS EXIT CODE: 0` | n/a | 4 | false |
+| CP-2 | S3 | n/a | client-full | `pwsh -NoProfile -File scripts/test-client.ps1` | R-2 | `CLIENT TESTS EXIT CODE: 0`, 0 failed/skipped, `lint gate` present | n/a | 12 | true |
+| CP-3 | S3 | n/a | client-types | `node client/node_modules/typescript/bin/tsc -b client/tsconfig.json --pretty false` | R-3 | exit 0, 0 TypeScript errors | n/a | 2 | false |
 
 Census (source, S2): `CardModal` 19, `CardBlockers` 6 + 2 = 8, `CardEditModal` 14,
 `useSignalRInvalidation` 6 + 2 = 8 → 49 (`it(` census; no `each`, `skip`, `only` or `todo`).
