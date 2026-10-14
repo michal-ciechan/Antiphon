@@ -86,13 +86,44 @@ One build per committed source group, shared by all its rows. Expected 8 minutes
 The historical Unit attempt is disclosed below, not queued again. No repetition after green.
 The checkpoint tool bootstrap is the only planned unlisted build and takes a build slot.
 
+### Repair F1 (Review 3407870c)
+
+Repair Code task: bb848929-c0b9-4862-94fe-b1929ed9c255; original landing owner unchanged.
+Production baseline: 0cf2d997e138996a9f5af3644b0072c562a74785.
+V-5: `Holding_nudge_refuses_delete_preserves_composer_and_allows_audited_release`
+(board/project x Attempting/Uncertain/Unconfirmed, 6 cases) exercises the real HTTP routes,
+409 code/detail, retained graph and real queue gate, then operator release audit and successful delete.
+V-6: `Nonholding_nudge_allows_delete_while_another_board_hold_survives`
+(board/project x None/Confirmed/Refused/Submitted/Released, 10 cases) covers successful scoped
+deletion while an unrelated audit board still holds the surviving session.
+R-5: Full `ExpectationDirectDeliveryTests` and `ExpectationHoldReleaseEndpointTests`
+exercise the shared holding-state predicate used by queue, release and deletion.
+
+| Behaviour | Named test | What it asserts |
+|---|---|---|
+| Delete refuses an audit nudge holding a surviving session | Holding_nudge_refuses_delete_preserves_composer_and_allows_audited_release | Both routes return 409 with release route; graph and composer hold survive; audited operator release permits deletion |
+| Terminal nudge deletion remains scoped | Nonholding_nudge_allows_delete_while_another_board_hold_survives | Five non-holding states delete; a different board's hold remains effective |
+
+PC-10 pending: omit refusal or omit one holding state, V-5 (board/project x three states: 6 variants).
+PC-11 pending: broaden blocker outside doomed comments, V-6 (board/project: 2 variants).
+PC-12 pending: treat Released as holding, V-5 release-followed-by-delete (board/project: 2 variants).
+PC-13 pending: move refusal after a destructive statement, V-5 (board/project: 2 variants); Mutation checks missing-control coverage for transactional rollback masking statement order.
+PC-1..PC-13 remain pending SourceLanding Mutation, including missing-control discovery.
+
+Repair S1 runs CP-1 red against unchanged production, then repair S2 reruns CP-1 plus
+CP-2/CP-4/CP-5 after implementation and the requested master merge. One test-project build
+per committed source group; a second build is necessary for red/green source separation.
+R-3 remains deferred under the explicit repair brief. R-4 retained for cumulative coverage.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1253/` | cascade-fks | `/*/*/(ProjectCascadeForeignKeyTests*)/*` | V-1, V-2, V-3, V-4 | all 11 cases, 0 failed/skipped; S1 first run intentionally red | 11 | 8 |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-bb848929/` | cascade-fks | `/*/*/(ProjectCascadeForeignKeyTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6 | 27 cases, 0 failed/skipped; S1 first run intentionally red | 27 | 8 |
 | CP-2 | S2 | CP-1 | deletion-regressions | `/*/*/(ProjectDeletionTests*)\|(BoardProjectArchiveApiTests*)\|(CardFilePrivacyOwnershipAcceptanceTests*)/*` | R-1, R-2 | all 38 cases, 0 failed/skipped | 38 | 3 |
 | CP-4 | S2 | CP-1 | deletion-consumers | `/*/*/(SessionStateWarmupTests*)\|(CardFileBoardLookupTests*)/*` | R-4 | all 61 cases, 0 failed/skipped | 61 | 3 |
+
+| CP-5 | S2 | CP-1 | expectation-hold-regressions | `/*/*/(ExpectationDirectDeliveryTests*)\|(ExpectationHoldReleaseEndpointTests*)/*` | R-5 | named full classes, 0 failed/skipped | 1 | 4 |
 
 S1 runs CP-1 by explicit row selection before the S2 implementation; S2 reruns the same row
 and runs CP-2/CP-4 once. Outputs from red S1 are removed before the final fresh build.

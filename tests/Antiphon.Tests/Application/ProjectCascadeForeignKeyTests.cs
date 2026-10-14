@@ -17,7 +17,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [NotInParallel("Board")]
-public class ProjectCascadeForeignKeyTests
+public partial class ProjectCascadeForeignKeyTests
 {
     [Test]
     [Arguments(false)]
