@@ -38,6 +38,14 @@ public static class SafeDelete
     private const int MaxEntries = 10_000;
 
     public static DeleteResult Apply(string path, DeleteOwnership ownership, Action? beforeDelete = null, Func<string?>? inventoryCheck = null)
+        => ApplyCore(path, ownership, beforeDelete, inventoryCheck, null);
+
+    internal static DeleteResult ApplyToolCopy(string path, DeleteOwnership ownership, ToolCopyAuthority authority,
+        Action? beforeDelete = null) =>
+        ApplyCore(path, ownership, beforeDelete, authority.Check, authority);
+
+    private static DeleteResult ApplyCore(string path, DeleteOwnership ownership, Action? beforeDelete,
+        Func<string?>? inventoryCheck, ToolCopyAuthority? toolAuthority)
     {
         var full = Canonical(path);
         var reason = full is null ? "path-unsafe" : Evaluate(full, ownership);
@@ -60,7 +68,7 @@ public static class SafeDelete
         }
         else
         {
-            var custody = OwnedOutputLedger.Remove(full!);
+            var custody = toolAuthority is null ? OwnedOutputLedger.Remove(full!) : toolAuthority.Remove(full!);
             if (custody is not null) return new DeleteResult { Disposition = DeleteDisposition.Refused, Path = full!, Reason = custody };
         }
         return new DeleteResult { Disposition = DeleteDisposition.Deleted, Path = full!, Reason = null };

@@ -63,6 +63,11 @@ try {
     finally { $document.Dispose() }
     $data = $raw | ConvertFrom-Json
     if ($null -ne $data.rows) {
+        if ($data.cleanupRefusals -isnot [Array] -or
+            @($data.cleanupRefusals | Where-Object { $_ -isnot [string] -or [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
+            throw 'cleanup_refusals_invalid'
+        }
+        if ($data.cleanupRefusals.Count -gt 0) { throw 'cleanup_refused' }
         if ($data.schemaVersion -notin @(2, 3) -or $null -eq $data.source -or
             ($data.schemaVersion -eq 2 -and @($data.rows | Where-Object { $null -ne $_.repeat }).Count -gt 0) -or
             ($data.schemaVersion -eq 3 -and @($data.rows | Where-Object { $null -ne $_.repeat }).Count -eq 0)) { throw 'legacy_report' }

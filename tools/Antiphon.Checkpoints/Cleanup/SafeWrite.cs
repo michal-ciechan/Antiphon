@@ -64,6 +64,10 @@ public static class SafeWrite
         return recorded == bytes.LongLength + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
     }
 
+    internal static string? CreationRecord(string path) =>
+        CreatedContent.TryGetValue(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            out var content) ? content : null;
+
     public static string? Preflight(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null)
     {
         foreach (var root in roots)

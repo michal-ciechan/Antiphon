@@ -542,6 +542,22 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         (await ToolValidateAsync(builtEvidence)).ShouldBe(ExitCodes.Invalid, "tool-refuses-declared-outputs-without-paths");
     }
 
+    [Test]
+    public async Task cleanup_refusals_disqualify_green_rows_in_both_validators()
+    {
+        foreach (var selection in new string?[] { null, "CP-1" })
+        {
+            var report = ValidReport();
+            ReportValidator.Validate(report, Sha).ShouldBeNull();
+            (await ValidateWithScriptAsync(report, selection)).Exit.ShouldBe(0);
+            report.CleanupRefusals = ["output-ledger-mismatch: late-user.txt"];
+            ReportValidator.Validate(report, Sha, selection is null ? null : [selection]).ShouldBe("cleanup_refused");
+            var refused = await ValidateWithScriptAsync(report, selection);
+            refused.Exit.ShouldBe(2, refused.Output);
+            refused.Output.ShouldContain("reason=cleanup_refused");
+        }
+    }
+
     private async Task<(int Exit, string Output)> ValidateWithScriptAsync(ReportModel report, string? rows = null)
     {
         var evidence = Path.Combine(TempDir(), "report.json");

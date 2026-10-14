@@ -10,6 +10,7 @@ public sealed class RunOwnership
     public string Phase { get; set; } = "preparing";
     public ProcessIdentity? Starter { get; set; }
     public ProcessIdentity? Launched { get; set; }
+    public ToolCopyDigest? ToolCopy { get; set; }
 }
 
 public static class RunOwnershipStore

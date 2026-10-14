@@ -158,7 +158,7 @@ internal sealed class CheckpointTempRootSweep
             var marker = ReadMarker(root)!;
             if (marker.State is not ("active" or "deleting")) { receipt.Skip("marker-state"); continue; }
             marker.State = "deleting";
-            try { TestRootGuard.Write(root, marker); }
+            try { TestRootGuard.MarkDeleting(root, marker, rootGate, _probe); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             { receipt.Skip("marker-write-" + ex.GetType().Name); continue; }
             receipt.EligibleRemaining++;
