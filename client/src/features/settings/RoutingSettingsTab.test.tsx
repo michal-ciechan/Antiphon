@@ -321,18 +321,19 @@ describe('RoutingSettingsTab', () => {
   })
 
   it.each([
-    { name: 'required-empty-cell', source: 'pin', candidates: [codex], reason: null, label: 'Required Human pin → Codex/Frontier (gpt-6-astra)' },
-    { name: 'preferred-unlaunchable-policy', source: 'pin+chain', candidates: [codex], reason: 'Plan policy names Raw/Frontier, which delegation cannot launch', label: 'Preferred Human pin → Codex/Frontier (gpt-6-astra), then this row' },
-    { name: 'policy-read-failure', source: 'rolePolicy', candidates: [codex], reason: 'chain read failed (InvalidOperationException)', label: 'Falls back to RolePolicy → Codex/Frontier (gpt-6-astra)' },
+    { name: 'required-empty-cell', source: 'pin', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: null, label: 'Required Human pin → Codex/Frontier (gpt-6-astra)' },
+    { name: 'preferred-unlaunchable-policy', source: 'pin+chain', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: 'Plan policy names Raw/Frontier, which delegation cannot launch', label: 'Preferred Human pin → Codex/Frontier (gpt-6-astra), then this row' },
+    { name: 'policy-read-failure', source: 'rolePolicy', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: 'chain read failed (InvalidOperationException)', label: 'Falls back to RolePolicy → Codex/Frontier (gpt-6-astra)' },
     { name: 'empty-read-failure', source: 'rolePolicy', candidates: [], reason: 'chain read failed (InvalidOperationException)', label: 'Effective routing unknown: chain read failed (InvalidOperationException)' },
     { name: 'unlaunchable-policy', source: 'rolePolicy', candidates: [], reason: 'Plan policy names Raw/Frontier, which delegation cannot launch', label: 'Falls back to RolePolicy → not launchable: Plan policy names Raw/Frontier, which delegation cannot launch' },
-    { name: 'pin-read-failure', source: 'pin', candidates: [codex], reason: 'chain read failed (InvalidOperationException)', label: 'Required Human pin → Codex/Frontier (gpt-6-astra)' },
-    { name: 'role-read-failure', source: 'role', candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Own rule' },
-    { name: 'any-read-failure', source: 'any', candidates: [codex], reason: 'chain metadata read failed (InvalidOperationException)', label: 'Inherits Any role' },
-    { name: 'config-availability-failure', source: 'config', candidates: [{ ...heldFable, unavailableReason: 'availability read failed (InvalidOperationException)' }], reason: 'availability read failed (InvalidOperationException)', label: 'Configuration fallback' },
+    { name: 'pin-read-failure', source: 'pin', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: 'chain read failed (InvalidOperationException)', label: 'Required Human pin → Codex/Frontier (gpt-6-astra)' },
+    { name: 'role-read-failure', source: 'role', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: 'stage pin read failed (InvalidOperationException)', label: 'Own rule' },
+    { name: 'any-read-failure', source: 'any', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: 'chain metadata read failed (InvalidOperationException)', label: 'Inherits Any role' },
+    { name: 'config-availability-failure', source: 'config', candidates: [{ ...heldFable, unavailableReason: 'availability read failed (InvalidOperationException)' }], candidateText: '1. ClaudeCode/Frontier (fable)', reason: 'availability read failed (InvalidOperationException)', label: 'Configuration fallback' },
     { name: 'standing-agent', source: 'agent', candidates: [], reason: 'stage pin binds standing agent c097m-standing (ClaudeCode); an ordinary dispatch runs on that agent and does not walk this row', label: 'Pinned to standing agent c097m-standing (ClaudeCode) — an ordinary dispatch runs there; this row is not walked' },
     { name: 'standing-agent-read-failure', source: 'agent', candidates: [], reason: 'stage pin binds standing agent c097m-standing (ClaudeCode); an ordinary dispatch runs on that agent and does not walk this row; chain read failed (InvalidOperationException)', label: 'Pinned to standing agent c097m-standing (ClaudeCode) — an ordinary dispatch runs there; this row is not walked' },
-  ] satisfies Array<{ name: string; source: ComplexityEffectiveDto['source']; candidates: ComplexityCandidateDto[]; reason: string | null; label: string }>)('C097M V-C4 diagnostic $name', async ({ source, candidates, reason, label }) => {
+  ] satisfies Array<{ name: string; source: ComplexityEffectiveDto['source']; candidates: ComplexityCandidateDto[]; reason: string | null; label: string; candidateText?: string }>)('C097M V-C4 diagnostic $name', async (row) => {
+    const { source, candidates, reason, label } = row
     serveRouting({ effective: { Plan: {
       ...planEffective,
       chains: [chain('Easy', { role: 'Plan', effective: {
@@ -349,7 +350,7 @@ describe('RoutingSettingsTab', () => {
     if (reason) expect(cell).toHaveTextContent(reason)
     if (candidates.length > 0) {
       expect(cell).not.toHaveTextContent('not launchable')
-      expect(within(cell).getByText('1. ' + candidates[0].agentKind + '/' + candidates[0].modelLevel + ' (' + candidates[0].alias + ')')).toBeInTheDocument()
+      expect(within(cell).getByText('candidateText' in row ? row.candidateText : '')).toBeInTheDocument()
     }
     if (reason?.includes('read failed')) expect(within(cell).getByRole('alert')).toHaveTextContent(reason)
   })

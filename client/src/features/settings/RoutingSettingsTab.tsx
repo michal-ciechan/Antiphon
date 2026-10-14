@@ -553,7 +553,7 @@ function MatrixCell({
           <Badge
             size="sm"
             variant="light"
-            style={{ height: 'auto', whiteSpace: 'normal', textTransform: 'none' }}
+            styles={{ root: { height: 'auto', maxWidth: '100%', textTransform: 'none' }, label: { whiteSpace: 'normal', textAlign: 'left' } }}
             color={effective.withheldReason && effective.source !== 'agent' ? 'red'
               : effective.source === 'pin' ? 'red'
                 : effective.source === 'rolePolicy' ? 'gray' : 'blue'}
@@ -572,7 +572,7 @@ function MatrixCell({
         <Badge
           size="sm"
           variant="light"
-          style={{ height: 'auto', whiteSpace: 'normal', textTransform: 'none' }}
+          styles={{ root: { height: 'auto', maxWidth: '100%', textTransform: 'none' }, label: { whiteSpace: 'normal', textAlign: 'left' } }}
           color={showEffective ? 'gray'
             : resolved === 'none' ? 'red' : resolved === 'config' ? 'yellow' : resolved === 'any' ? 'gray' : 'blue'}
         >
