@@ -328,6 +328,35 @@ public sealed class RunScheduler
             request.State.MaxConcurrentBuilds,
             request.State.Builds.Count(item => item.State == "building"));
         Publish(request);
+        var repeat = request.Rows.First(row => row.Build == build.Id).Repeat;
+        var properties = BuildStep.PropertyArguments(request.Manifest.Build.Properties, _platform.IsWindows, repeat,
+            repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, build.Project) : null).ToList();
+        if (!string.IsNullOrWhiteSpace(build.Project) && !string.IsNullOrWhiteSpace(build.OutputPath))
+            BuildStep.AppendSharedLayout(properties, request.WorkingDirectory, build.Project, build.OutputPath);
+        var log = Path.Combine(request.RunDirectory, "builds", build.Id, "build.log");
+        // CARD-1241: non-output files are stamped before the slot is taken and verified after release.
+        BuildConfinement.Ledger? ledger = null;
+        if (_driver is IConfinedDriver confined)
+        {
+            var captured = confined.CaptureLedger(new DriverRequest("dotnet",
+                BuildStep.BuildArguments(build.Project, build.OutputPath, properties, 0), request.WorkingDirectory, log));
+            if (captured.Refusal is not null)
+            {
+                progress.AdmissionExitCode = ExitCodes.Invalid;
+                progress.SlotReason = "refused: " + captured.Refusal;
+                progress.State = "failed";
+                Publish(request);
+                return;
+            }
+
+            ledger = captured.Value;
+        }
+
+        CheckpointBuildBinding? built = null;
+        DriverResult? result = null;
+        var launched = false;
+        var sourceOk = true;
+        var started = DateTimeOffset.UtcNow;
         try
         {
             await using var lease = await request.Slots.AcquireAsync(session, "build:" + build.Id, cancellationToken).ConfigureAwait(false);
@@ -342,11 +371,6 @@ public sealed class RunScheduler
                 return;
             }
 
-            var repeat = request.Rows.First(row => row.Build == build.Id).Repeat;
-            var properties = BuildStep.PropertyArguments(request.Manifest.Build.Properties, _platform.IsWindows, repeat,
-                repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, build.Project) : null).ToList();
-            if (!string.IsNullOrWhiteSpace(build.Project) && !string.IsNullOrWhiteSpace(build.OutputPath))
-                BuildStep.AppendSharedLayout(properties, request.WorkingDirectory, build.Project, build.OutputPath);
             var binding = CheckpointBuildBinding.Expected(request.WorkingDirectory, build.Project, build.OutputPath,
                 properties, request.State.Source.Start);
             if (request.SourceGuard?.Observe() == false)
@@ -377,22 +401,34 @@ public sealed class RunScheduler
             }
             var cpu = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4;
             var args = BuildStep.BuildArguments(build.Project, build.OutputPath, properties, cpu);
-            var log = Path.Combine(request.RunDirectory, "builds", build.Id, "build.log");
-            var started = DateTimeOffset.UtcNow;
+            started = DateTimeOffset.UtcNow;
             if (request.BeforeLaunch is not null)
                 await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
-            var result = await RowTimeout.RunWithDeadlineAsync(
+            launched = true;
+            built = binding;
+            result = await RowTimeout.RunWithDeadlineAsync(
                 _driver,
-                new DriverRequest("dotnet", args, request.WorkingDirectory, log),
+                new DriverRequest("dotnet", args, request.WorkingDirectory, log) { Ledger = ledger },
                 TimeSpan.FromMinutes(Math.Max(15, request.Manifest.Timeouts.RowMinutes)),
                 cancellationToken).ConfigureAwait(false);
-            var sourceOk = request.SourceGuard?.Observe() != false;
+            sourceOk = request.SourceGuard?.Observe() != false;
+        }
+        catch (OperationCanceledException)
+        {
+            progress.State = "failed";
+        }
+
+        var outside = launched && ledger is not null ? BuildConfinement.VerifyLedger(ledger) : null;
+        if (outside?.Kind is not null)
+            ProcessDriver.AppendLog(log, outside.Detail);
+        if (result is not null)
+        {
             progress.Seconds = (DateTimeOffset.UtcNow - started).TotalSeconds;
-            progress.State = result.ExitCode == 0 && !result.TimedOut && sourceOk ? "ok" : "failed";
-            var refusal = BuildConfinement.ReportedRefusal(result.Stderr);
+            progress.State = result.ExitCode == 0 && !result.TimedOut && sourceOk && outside?.Kind is null ? "ok" : "failed";
+            var refusal = BuildConfinement.ReportedRefusal(result.Stderr) ?? BuildConfinement.ReportedRefusal(outside?.Detail);
             if (progress.State == "ok")
             {
-                var written = binding.Write(result.Exited);
+                var written = built!.Write(result.Exited);
                 if (written is not null)
                 {
                     progress.State = "failed";
@@ -408,9 +444,11 @@ public sealed class RunScheduler
             else if (!sourceOk) { progress.AdmissionExitCode = ExitCodes.Invalid; progress.SlotReason = request.SourceGuard?.Reason; }
             progress.Source = request.SourceGuard?.Copy(progress.State == "ok" ? "verified" : "unknown") ?? new SourceEvidence();
         }
-        catch (OperationCanceledException)
+        else if (outside?.Kind is not null)
         {
             progress.State = "failed";
+            progress.AdmissionExitCode = ExitCodes.Invalid;
+            progress.SlotReason = BuildConfinement.ReportedRefusal(outside.Detail);
         }
 
         Publish(request);
