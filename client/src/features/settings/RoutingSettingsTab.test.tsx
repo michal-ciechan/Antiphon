@@ -1,6 +1,6 @@
 import { onlineManager } from '@tanstack/react-query'
 import { cleanup } from '@testing-library/react'
-import { HttpResponse, delay, http } from 'msw'
+import { HttpResponse, delay, http, type JsonBodyType } from 'msw'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentTaskRole } from '../../api/agentTasks'
 import {
@@ -602,8 +602,9 @@ interface C1270D1Read {
   role?: AgentTaskRole | null
   key: readonly unknown[]
   surface: string
-  populated: unknown
-  empty: unknown
+  populated: JsonBodyType
+  /** Null when the read has no empty success. */
+  empty: JsonBodyType
   loading: string
   paused: string
   failed: string
