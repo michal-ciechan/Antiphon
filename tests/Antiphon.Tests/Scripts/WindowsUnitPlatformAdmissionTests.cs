@@ -20,7 +20,7 @@ namespace Antiphon.Tests.Scripts;
 public sealed class WindowsUnitPlatformAdmissionTests
 {
     private static readonly XNamespace Trx = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
-    private const string ChildFilter = "/*/*/(HostJqPrerequisiteScriptTests*)|(JqRunnerImageContractTests*)|(GrokSha256PinTests*)|(CodexRootExecContractTests*)|(ChannelOutboundStorageTests*)/*";
+    private const string ChildFilter = "/*/*/(HostJqPrerequisiteScriptTests*)|(JqRunnerImageContractTests*)|(GrokSha256PinTests*)|(CodexRootExecContractTests*)|(ChannelOutboundStorageTests*)|(RefreshGithubTokenRemoteCommandTests*)/*";
 
     [Test]
     public void C1210_Guard_matches_native_platform()

@@ -12,6 +12,9 @@ internal static class WindowsUnitSkipRoster
     internal const string ExistingReason = "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.";
     internal static readonly Entry[] Native =
     [
+        new("Antiphon.Tests.Scripts", "RefreshGithubTokenRemoteCommandTests", "Crlf_checkout_sends_carriage_return_free_remote_commands", 1, "CARD-1245: the fake bw/ssh are POSIX sh executables; Windows skips explicitly."),
+        new("Antiphon.Tests.Scripts", "RefreshGithubTokenRemoteCommandTests", "Upload_failure_surfaces_remote_stderr_without_the_token", 1, "CARD-1245: the fake bw/ssh are POSIX sh executables; Windows skips explicitly."),
+        new("Antiphon.Tests.Scripts", "RefreshGithubTokenRemoteCommandTests", "Verify_failure_surfaces_remote_stderr", 1, "CARD-1245: the fake bw/ssh are POSIX sh executables; Windows skips explicitly."),
         new("Antiphon.Tests.Scripts", "HostJqPrerequisiteScriptTests", "C1058_Open_descriptor_must_match_canonical_leaf", 1, "CARD-1210: C1025/C1058 host jq contracts require native Linux (bash, flock, /proc/self/fd, GNU coreutils); Windows skips explicitly."),
         new("Antiphon.Tests.Scripts", "HostJqPrerequisiteScriptTests", "C1058_Digest_is_bound_to_open_descriptor", 1, "CARD-1210: C1025/C1058 host jq contracts require native Linux (bash, flock, /proc/self/fd, GNU coreutils); Windows skips explicitly."),
         new("Antiphon.Tests.Scripts", "HostJqPrerequisiteScriptTests", "C1058_Installed_pin_is_checked_before_execution", 1, "CARD-1210: C1025/C1058 host jq contracts require native Linux (bash, flock, /proc/self/fd, GNU coreutils); Windows skips explicitly."),

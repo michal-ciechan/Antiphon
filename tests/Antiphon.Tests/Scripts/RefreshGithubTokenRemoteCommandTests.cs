@@ -17,13 +17,13 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RefreshGithubTokenRemoteCommandTests
 {
-    private const string Reason = "CARD-1245: the fake bw/ssh are POSIX sh executables; Windows skips explicitly.";
+    private const string NativeLinuxReason = "CARD-1245: the fake bw/ssh are POSIX sh executables; Windows skips explicitly.";
     private const string Token = "ghp_C1245SyntheticTokenNeverReal0123456789";
 
     [Test]
     public async Task Crlf_checkout_sends_carriage_return_free_remote_commands()
     {
-        NativeLinuxGate.Require(Reason);
+        NativeLinuxGate.Require(NativeLinuxReason);
         using var lf = new Fixture(crlf: false);
         using var crlf = new Fixture(crlf: true);
         crlf.ScriptText.ShouldContain("set -eu\r\n", Case.Sensitive, "the CRLF copy must carry CRLF here-strings");
@@ -55,7 +55,7 @@ public sealed class RefreshGithubTokenRemoteCommandTests
     [Test]
     public async Task Upload_failure_surfaces_remote_stderr_without_the_token()
     {
-        NativeLinuxGate.Require(Reason);
+        NativeLinuxGate.Require(NativeLinuxReason);
         using var fixture = new Fixture(crlf: false);
         fixture.UploadStderr = "sudo: a password is required\nremote echoed " + Token + " back";
         var run = await fixture.RunAsync();
@@ -73,7 +73,7 @@ public sealed class RefreshGithubTokenRemoteCommandTests
     [Test]
     public async Task Verify_failure_surfaces_remote_stderr()
     {
-        NativeLinuxGate.Require(Reason);
+        NativeLinuxGate.Require(NativeLinuxReason);
         using var fixture = new Fixture(crlf: false);
         fixture.VerifyStderr = "stat: cannot statx '/home/mc/antiphon-server2/secrets/github-token/token': Permission denied";
         var run = await fixture.RunAsync();
