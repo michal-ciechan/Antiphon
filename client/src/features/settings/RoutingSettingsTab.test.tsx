@@ -336,7 +336,7 @@ describe('RoutingSettingsTab', () => {
     expect(await within(hard).findByText('Own rule')).toBeInTheDocument()
     expect(within(hard).getByText('1. Codex/Frontier (gpt-6-astra)')).toBeInTheDocument()
     expect(within(matrix).queryByRole('columnheader', { name: /\(default/ })).not.toBeInTheDocument()
-    expect(within(matrix).getByRole('columnheader', { name: 'Medium', exact: true })).toBeInTheDocument()
+    expect(within(matrix).getByRole('columnheader', { name: 'Medium' })).toBeInTheDocument()
     expect(within(matrix).getByTestId('routing-boundary')).toHaveTextContent('RolePolicy still resolves work that is not launched with -Complexity, including default kind and level, escalation, timeout, and WIP. This matrix does not govern every dispatch.')
     expect(matrix).not.toHaveTextContent('walks the Medium row')
     expect(within(matrix).getByTestId('routing-matrix-cell-Plan-Medium')).toHaveTextContent('Unset — a -Complexity Medium dispatch blocks')
