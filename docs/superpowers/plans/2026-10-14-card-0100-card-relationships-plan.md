@@ -74,7 +74,9 @@ release checklist does not apply.
   is 409 `card_relationship_cycle` with the path identifiers in the message. A duplicate pair is
   409 `card_relationship_exists`. The duplicate check, the walk and the insert run in one transaction under
   `pg_advisory_xact_lock(hashtext('antiphon.card-relationships.graph'))`, one key for the whole graph
-  because edges cross boards (T-30, Review 3501caaa F1). Rejected: documenting cycles as a footgun; a DB trigger.
+  because edges cross boards (T-30, Review 3501caaa F1). No `lock_timeout` is set and a failed lock
+  command is the existing 500; the test design's "Waits and deadlines" table names the test, or the
+  absence of one, for each wait. Rejected: documenting cycles as a footgun; a DB trigger.
 - **D-7 Resolution is computed, rows persist.** A blocker that is Done, Canceled or archived
   makes the row `resolved: true`; reopening or unarchiving the blocker re-blocks without a write.
   No sweep, no auto-delete. Rejected: deleting rows on close (loses the record; reopen would not
@@ -176,6 +178,9 @@ and DTOs; they do not touch each other's files.
 
 ## Test list (case → mutation → expected red)
 
+Superseded: this is Plan's proposal. Test names, T-30 (added by the F1 repair) and counts are in
+the [test design](2026-10-14-card-0100-test-design.md) Test list; no checkpoint runs from this table.
+
 | ID | Test (class.method) | Case | Mutation that must go red | Red statement |
 |---|---|---|---|---|
 | T-1 | `CardRelationshipSchemaTests.Duplicate_pair_is_refused_by_the_unique_index` | insert the same `(CardId, RelatedCardId, Kind)` twice | drop `IsUnique()` | second `SaveChangesAsync` does not throw |
@@ -208,6 +213,10 @@ and DTOs; they do not touch each other's files.
 | T-28 | `CardModal.test.tsx` "renders the Blocked-by panel from the relationships query" | opened card | panel not mounted | testid missing |
 
 ## Verification design
+
+Superseded: the V/R rows, PCs, Checkpoints table (Expect and Min cells) and Cost below are Plan's
+pre-TestDesign proposal. The checkpoint tool runs the [test design](2026-10-14-card-0100-test-design.md)
+Checkpoints table; its V/R, guard inventory and Positive controls replace these.
 
 ### V/R matrix
 
