@@ -13,7 +13,12 @@ V-C14–V-C17, V-E7–V-E11, V-F4–V-F6, V-F8 and the delivery flow they descri
 Frontier; Final Review `f406ced5`, R3-01–R3-06; from `f62858af96321dbd02d0e0140a6cef600dcf65a3` on
 `feat/card-task-71e453db`) adds V-A15b, V-B11, V-B12, V-E12, V-F2b, V-G1–V-G5 and PC-39–PC-45, widens V-E6 (three
 rows) and V-F7 (part b), and adds CP-24; the withdrawn ids are not reused. Round-3 citations are against master
-`ff4d84df522eaf483059ee11187fe68cc955d44c`; the bodies cited are unchanged from `d317c3f59`.
+`ff4d84df522eaf483059ee11187fe68cc955d44c`; the bodies cited are unchanged from `d317c3f59`. Round 4 (task
+`c733486f`, Plan, Frontier; Final Review `ce3b2bda`, R4-01–R4-03; from `7065ed10aee8b9f111ddc904370c7cb5f9119f6e` on
+`feat/card-task-c733486f`) keeps V-F2b and V-G1 and rewrites both onto the fixtures the review traced, adds V-A12c and
+PC-46, and **withdraws V-G2, V-G3 and V-G5** (ids not reused; reasons in plan §12). Round-4 citations are against
+master `38a100f583f2a5f0568e007b6f066cc8fec7a693`; the routing, queue and fixture bodies cited are unchanged from
+`ff4d84df5`.
 
 **Operator decisions applied (plan §2).** OD-1 default tier `Medium`; OD-2 cells warn, pins refuse; OD-3 pins are
 migrated by the script and cleared only by the operator's `routing-pin.ps1 clear`; OD-4 last-writer-wins stated and
@@ -89,22 +94,36 @@ standing agent's kind (`:858`). `Fit` decrements `cardPerBoard` from 20 to 0 whi
 (`OrchestratorInstructionsRenderer.cs:54-60`); `SelectPins` keeps stage rows and trims card rows only (`:228-245`);
 `Sample()` has one stage pin and one card pin, `Antiphon CARD-0822 Code` (`OrchestratorInstructionsRendererTests.cs:168-172`).
 The chain fixture `CommitEndpointWebAppFactory` (`AgentTaskCommitEndpointTests.cs:319-340`: hosted services removed,
-`RecordingGitWorkspaceService`, `CommitChainBoundary`) with the private helpers `ChainAdapter` (an adapter whose
-`OnSubmitted` writes a `UserPrompt` then a `TurnEnd` transcript row), `ChainEntryAsync` and `ChainConfirmAsync`
-(`AgentTaskCommitChildChainTests.cs:217-250`) drives a real settle through
-`AgentTaskReplyService.OnTurnEndAsync(workerSession)` (`:96`), which spawns the Commit child
-(`AgentTaskReplyService.cs:4702-4718`); its receipt predicate is `TranscriptEntries.SingleAsync(p => p.AgentSessionId
-== X && p.Kind == TranscriptKinds.UserPrompt && p.Sequence > row.LastDeliveryBaselineSequence)` with
-`prompt.Text.ShouldBe(row.Body)` (`:155-157`, `:204-206`). `FlushSessionAsync` (`SessionMessageQueueService.cs:1741`),
-`OnTurnEndAsync` (`:1554`) and `FlushStrandedQueuesAsync` (`:1599`; `Pending` rows with `CreatedAt <= now −
-StrandedAgeSeconds`, `QueueAttention.cs:72-76`; default 60 s, `SupervisionSettings.cs:338`) read the committed row
-from a fresh scope; a delivered row is `Sent` with `LastDeliveryBaselineSequence` set (`:1054-1059`).
-`BridgeQueueHarness`'s adapter writes a stamped `UserPrompt` and a `TurnEnd` on submit (`BridgeQueueHarness.cs:322-349`),
-so a harness `Sent` row has a transcript receipt by construction; `QueueNoticesAsync` saves
-`session.OrchestratorInstructionsVersion` before `EnqueueAsync` (`OrchestratorInstructionsService.cs:268-278`). The
-Merge producer is called from the settle site at `AgentTaskReplyService.cs:2479-2480` and the land service at
-`AgentTaskLandService.cs:654`; `CommitOnSettlePolicyTests.cs:187` and `AgentTaskServiceIntegrationTests.cs:671` call
-it directly.
+`RecordingGitWorkspaceService`, `CommitChainBoundary`; each instance clones its own database,
+`AntiphonWebAppFactory.cs:52-56`) drives a real settle through `AgentTaskReplyService.OnTurnEndAsync(workerSession)`
+(`AgentTaskCommitChildChainTests.cs:96`), which spawns the Commit child (`AgentTaskReplyService.cs:4702-4718`). The
+chain test's helpers `ChainAdapter` (an adapter whose `OnSubmitted` writes a `UserPrompt` then a `TurnEnd` transcript
+row), `ChainEntryAsync` and `ChainConfirmAsync` are private instance methods of its nested, non-partial
+`CommitChildChain` class (`:32`, `:217-250`), so a second file of `AgentTaskCommitEndpointTests` does not reach them
+(R4-01); only `SeedRepoAsync` is on the outer class (`AgentTaskCommitEndpointTests.cs:283-289`). The receipt
+predicate is `TranscriptEntries.SingleAsync(p => p.AgentSessionId == X && p.Kind == TranscriptKinds.UserPrompt &&
+p.Sequence > row.LastDeliveryBaselineSequence)` with `prompt.Text.ShouldBe(row.Body)` (`:155-157`, `:204-206`). A
+Shared worker with `ReplyTo Session` whose settle spawns a Commit child gets a git note containing `commit task`
+(`AgentTaskReplyService.cs:4715-4717`), so `PersistDeliverThenReleaseAsync` also mints the worker's own completion
+obligation (`:2573-2582`) and, after the settlement save, `ReconcileAsync` enqueues it for the parent keyed
+`task:<root>` (`:2658-2671`; `AgentTaskLandNotificationService.cs:138-148`). `FlushSessionAsync`
+(`SessionMessageQueueService.cs:1741-1763`) runs `DeliverNextLockedAsync` once per call when the session reads idle;
+the head is `pending[0]`, and a head with a null `ConversationKey` is not batched (`:2410-2421`), so the Blocked
+child's note (queued first, no key) and the keyed completion take two flushes — the chain test's two parent flushes
+(`AgentTaskCommitChildChainTests.cs:141`, `:192`) and its `parentAdapter.SubmittedBodies.Count.ShouldBe(2)` (`:212`)
+are that shape (R4-02). A delivered row is `Sent` with `LastDeliveryBaselineSequence` equal to the session's
+transcript max when one exists, else null (`:1051-1059`, `:2538-2543`, `:3567-3575`). `BridgeQueueHarness`'s adapter
+writes a stamped `UserPrompt` and a `TurnEnd` on submit (`BridgeQueueHarness.cs:327-349`), so a harness `Sent` row
+has a transcript receipt by construction; a harness session starts with zero transcript rows, so its first delivery
+has a null baseline unless the test seeds rows first (`InsertTranscriptEntryAsync`, `:378-391`; R4-03).
+`OrchestratorInstructionsSettings.Notify` defaults to `All` (`OrchestratorInstructionsSettings.cs:28`), so a startup
+reconcile over a default `DelegationSettings` notifies the harness session; the refresh tests set `Off` before the
+startup reconcile and `All` after it (`OrchestratorInstructionsRefreshTests.cs:353`, `:362-363`); under `Off` the
+recipient selector returns an empty list and `QueueNoticesAsync` returns before its per-session loop
+(`OrchestratorInstructionsRecipients.cs:44-45`; `OrchestratorInstructionsService.cs:233-234`). `QueueNoticesAsync`
+saves `session.OrchestratorInstructionsVersion` before `EnqueueAsync` (`:268-278`). The Merge producer is called from
+the settle site at `AgentTaskReplyService.cs:2479-2480` and the land service at `AgentTaskLandService.cs:654`;
+`CommitOnSettlePolicyTests.cs:187` and `AgentTaskServiceIntegrationTests.cs:671` call it directly.
 
 ## Verification design
 
@@ -194,14 +213,21 @@ stored, `resolvedFrom` answered as `role` when present else `none`) and `Pins` s
 `GET /api/complexity-chains?role=` answer from and `PUT`/`DELETE` mutate, so a read-back sees the writes. `M` =
 direct calls into `routingSettingsModel.ts`, `it.each` rows with literal expected strings, titles `C097M <id> <name>`.
 `E` = `renderWithProviders` + `server.use` + `userEvent`, notifications mocked as the touched files already do. `K` =
-the Commit child chain (R3-06): `CommitEndpointWebAppFactory` (`AgentTaskCommitEndpointTests.cs:319-340`; hosted
-services removed, so a sweep runs only when the test calls it) plus the private helpers `ChainAdapter`,
-`ChainEntryAsync`, `ChainConfirmAsync` and `SeedRepoAsync` (`AgentTaskCommitChildChainTests.cs:217-250`,
-`AgentTaskCommitEndpointTests.cs:283`), reused by writing the new file as a second `partial` of
-`AgentTaskCommitEndpointTests` with the chain test's attributes; a receipt is the chain test's predicate
-(`TranscriptEntries` row with `Kind == UserPrompt`, `Sequence > row.LastDeliveryBaselineSequence`, `Text == row.Body`,
-`:155-157`). Test files and titles below are **binding required** until Code creates them and records their
-execution.
+the Commit child chain (R3-06, R4-01): a standalone class `MatrixChildReceiptTests` (`[NotInParallel]`,
+`[ParallelLimiter<ProcessSpawnLimit>]`, `[Category("Integration")]`) whose method constructs its own
+`CommitEndpointWebAppFactory` (`await using var factory = new CommitEndpointWebAppFactory()`, as the chain test does
+at `AgentTaskCommitChildChainTests.cs:28`; `AgentTaskCommitEndpointTests.cs:319-340`; hosted services removed, so a
+flush runs only when the test calls it) and carries three private static helpers written in the new file — no
+existing test file is edited and no private member of another class is referenced: `SeedRepoAsync()` (the body of
+`AgentTaskCommitEndpointTests.cs:283-289` with prefix `"c097m-receipt"`), `EntryAsync(factory, session, kind, body)`
+(the body of `AgentTaskCommitChildChainTests.cs:231-242`: a fresh scope, `Sequence` = the session's max + 1,
+`Timestamp` and `CreatedAt` now, `SaveChangesAsync`) and `AdapterFor(factory, session)` (the body of `:217-229`: a
+`FakeAgentProtocolAdapter` whose `OnSubmitted` calls `EntryAsync` for a `UserPrompt` carrying the body and then a
+`TurnEnd`, registered through `factory.Services.GetRequiredService<AgentSessionRuntime>().Register(session,
+adapter)`). There is no `ChainConfirmAsync` equivalent: the row selects each receipt by session, baseline floor and
+complete body. A receipt is the chain test's predicate (`TranscriptEntries` row with `Kind == UserPrompt`, `Sequence
+> row.LastDeliveryBaselineSequence`, `Text == row.Body`, `:155-157`). Test files and titles below are **binding
+required** until Code creates them and records their execution.
 
 ### Delivery inventory
 
@@ -210,7 +236,7 @@ existing path it reuses; the instructions notice is listed because a cell write 
 
 | Outcome | Producer | Recipient | Persistence and identity | Delivery | Receipt | Loss/recovery boundary | Bound by |
 |---|---|---|---|---|---|---|---|
-| Blocked default-tier create (OD-6) and Blocked Commit/Merge child (D-3) | `EnqueueBlockedParentNoteAsync` (`AgentTaskService.cs:4610-4634`) in the create/settle transaction — the existing producer the `-Complexity` Blocked path already uses (`:1577-1581`) | `task.ParentSessionId` (must exist in `AgentSessions`) | `SessionQueuedMessages` row: `SourceTaskId`, `ContentDigest = DelegationNoteDigest.Compute(reason)`, `NoteHeader`, `Origin Delegation`, `Status Pending`; committed with the task | existing turn-end flush / stranded flush (`SessionMessageQueueService.OnTurnEndAsync :1554`, `FlushStrandedQueuesAsync :1599`, `FlushSessionAsync :1741`) | one complete `UserPrompt` transcript row for the parent session with `Sequence > row.LastDeliveryBaselineSequence` and `Text == row.Body`; the row is `Sent` | the row and the task commit together in the producer's own `SaveChanges` (no `EnqueueAsync` call, so no enqueue failure boundary exists here); a crash after the commit leaves a `Pending` row the stranded sweep types once it is older than `StrandedAgeSeconds` (V-G3); a settled task with no parent session gets no row and no error (V-G4) | V-A3, V-A13, V-G4 (row fields and the no-parent boundary); receipts V-G1 (idle parent, real settle), V-G2 (busy parent, delivered at its turn end), V-G3 (stranded sweep over the committed row), V-G5 (Merge producer). The existing `All_held_returns_200_Blocked_with_a_Blocked_event_and_parent_note` (`ComplexityCreateTests.cs:54`) asserts the row count; `Spawned_child_complete_brief_gated_operation_and_parent_receipt` (`AgentTaskCommitChildChainTests.cs:24`) asserts a successful child's brief and the land notes, not a child Blocked at creation |
+| Blocked default-tier create (OD-6) and Blocked Commit/Merge child (D-3) | `EnqueueBlockedParentNoteAsync` (`AgentTaskService.cs:4610-4634`) in the create/settle transaction — the existing producer the `-Complexity` Blocked path already uses (`:1577-1581`) | `task.ParentSessionId` (must exist in `AgentSessions`) | `SessionQueuedMessages` row: `SourceTaskId`, `ContentDigest = DelegationNoteDigest.Compute(reason)`, `NoteHeader`, `Origin Delegation`, `Status Pending`; committed with the task | existing turn-end flush / stranded flush (`SessionMessageQueueService.OnTurnEndAsync :1554`, `FlushStrandedQueuesAsync :1599`, `FlushSessionAsync :1741`) | one complete `UserPrompt` transcript row for the parent session with `Sequence > row.LastDeliveryBaselineSequence` and `Text == row.Body`; the row is `Sent` | the row and the task commit together in the producer's own `SaveChanges` (no `EnqueueAsync` call, so no enqueue failure boundary exists here); a crash after the commit leaves a `Pending` row the stranded sweep types once it is older than `StrandedAgeSeconds` (`:1599`; the sweep is outside this card's closed file lists and is not re-tested here — round 4 withdrew V-G3); a settled task with no parent session gets no row and no error (V-G4) | V-A3, V-A13, V-A12c, V-G4 (row fields for the create, the Commit child and the Merge child; the no-parent boundary); receipt V-G1 (idle parent, real settle, the Blocked note and the worker's own completion each received once, in queue order). Withdrawn in round 4 with the reasons in plan §12: V-G2 (busy parent), V-G3 (stranded sweep), V-G5 (Merge receipt). The existing `All_held_returns_200_Blocked_with_a_Blocked_event_and_parent_note` (`ComplexityCreateTests.cs:54`) asserts the row count; `Spawned_child_complete_brief_gated_operation_and_parent_receipt` (`AgentTaskCommitChildChainTests.cs:24`) asserts a successful child's brief and the land notes, not a child Blocked at creation |
 | Instructions notice after a cell write (D-10) | `OrchestratorInstructionsService.QueueNoticesAsync` (`:212-285`), unchanged: a cell write only fires `OrchestratorInstructionsSignal` | `OrchestratorInstructionsRecipients.Select` | `OrchestratorInstructionsStates` row, `SessionQueuedMessages` row with `NoteHeader` | `EnqueueAsync(WhenIdle, deliverIfIdle: true)` (`:271-278`) | one `UserPrompt` row with `Sequence > row.LastDeliveryBaselineSequence` and `Text == row.Body` for the `Sent` row whose `NoteHeader == OrchestratorInstructionsService.NoteHeader`; identity: the session's `OrchestratorInstructionsVersion` equals the state's `Version` | unchanged and disclosed: the version column and the state are saved before `EnqueueAsync` (`:268-278`); a crash or enqueue failure between them, followed by the unchanged-body early return (`:156-157`), loses that notice; this card does not recover it (plan D-10) | V-F2 (a cell write enters the path), V-F2b (the complete receipt and the version identity); existing: `Runner_defaults_put_rewrites_the_file_and_delivers_one_notice_to_an_idle_standing_orchestrator` (`:30`; `SubmittedBodies` and the version column), `A_busy_session_gets_the_notice_after_its_turn_ends_and_a_second_change_replaces_the_pending_row` (`:209`) |
 
 Deadlines: none. Fixture timestamps (`updatedAt`) are display data; V-B6 compares two of them for order-or-equal.
@@ -317,6 +343,17 @@ null)`; `settled`/`conflicted` are a seeded Worker task with `WorktreePath`, `Wo
   entity default; today's producer assigns none), `Complexity == null`, `RoutingPinId == null`, `Status Queued`.
   Executed results: 5. Passes under the scaffold. Mutation: resolve the Merge pin in the legacy arm → row
   `stage-list-pin` gives `Frontier` → red.
+- V-A12c `An_exhausted_merge_row_blocks_the_merge_child` | I | Merge/Medium `[ClaudeCode/Frontier]`; hold `fable`;
+  `conflicted` seeded as `CommitOnSettlePolicyTests.cs:176-184` (`WorktreePath`, `WorktreeBranch`, `MergeTargetRef`)
+  with `ParentSessionId` = a seeded session; `service.CreateMergeTaskAsync(conflicted, ["a.cs"], ct)` then
+  `db.SaveChangesAsync()` (the settle site's call, `AgentTaskReplyService.cs:2479-2480`, before its own save) →
+  returned child `Status Blocked`, `FailureReason` starts with `routing exhausted: ` and contains `Merge/Medium chain`
+  and `fable`, `Complexity == Medium`, `RoutingPinId == null`, exactly one `Blocked` event for the child, exactly one
+  `SessionQueuedMessages` row with `SourceTaskId == child.Id`: `AgentSessionId == conflicted.ParentSessionId`, `Status
+  Pending`, `Origin Delegation`, `NoteHeader != null`, `ContentDigest == DelegationNoteDigest.Compute(child.FailureReason)`.
+  The Merge mirror of V-A13; it carries the row-level part of round 3's V-G5 (R4). Red under the scaffold (the
+  scaffold's Merge `legacy` returns `ResolveLevel(Worker, Merge, null)`, so the child is `Queued`). Mutation (PC-46):
+  fall back to the RolePolicy pair in the Merge arm instead of Blocking → `Status Queued` → red.
 - V-A13 `An_exhausted_commit_row_blocks_the_commit_child` | I | Commit/Medium `[ClaudeCode/Frontier]`; hold `fable`;
   `settled.ParentSessionId` = a seeded session; `CreateCommitTaskAsync` → `Status Blocked`, `FailureReason` starts
   with `routing exhausted: ` and contains `Commit/Medium chain`, `Complexity == Medium`, exactly one `Blocked` event for
@@ -597,75 +634,83 @@ stage pins shaped as the live census plus one card pin; `-OutDir` under a temp d
   `ModelAvailability` (`:173`). The existing assertions hold: `Revision > 0`, `SubmittedBodies.Count == 1`, the body
   contains `matrix:` and the written path. Mutation (PC-33): drop the signal from `UpsertAsync` →
   `SubmittedBodies.Count == 0` → red.
-- V-F2b `A_cell_write_notice_is_received_as_one_complete_user_prompt_equal_to_its_queued_body` | H |
-  `CreateHarnessAsync`, `AttachBundleAsync`, `Instructions(h).ReconcileNowAsync("startup")`, `Notify = All`; in a
+- V-F2b `A_cell_write_notice_is_received_as_one_complete_user_prompt_equal_to_its_queued_body` | H | the
+  `CoveredWriteAsync` order with a seeded transcript floor (R4-03): `CreateHarnessAsync`, `AttachBundleAsync`;
+  `h.Delegation.OrchestratorInstructions.Notify = Off`; `Instructions(h).ReconcileNowAsync("startup")` (writes the
+  file and the state row and queues no note: `Select` returns an empty list under `Off`,
+  `OrchestratorInstructionsRecipients.cs:44-45`, and `QueueNoticesAsync` returns at `:233-234`); `startup =
+  ReadStateAsync(h)`; `await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "Dispatch work.")` then `floor
+  = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn")` (`BridgeQueueHarness.cs:378-391`;
+  the session reads idle after the `TurnEnd`, as `:229-230` of the refresh tests relies on); `Notify = All`; in a
   scope `ComplexityChainService.UpsertAsync(Plan, Medium, new PutComplexityChainRequest([new(Codex, Frontier)], Human,
-  "cell"), null, ct)`; `WhenIdleAsync` → in `NewDb(h)`: exactly one `SessionQueuedMessages` row for `h.SessionId` with
-  `NoteHeader == OrchestratorInstructionsService.NoteHeader`, `Status == Sent`, `LastDeliveryBaselineSequence !=
-  null`; exactly one `TranscriptEntries` row with `AgentSessionId == h.SessionId && Kind == TranscriptKinds.UserPrompt
-  && Sequence > row.LastDeliveryBaselineSequence`, its `Text == row.Body`; `row.Body` contains `matrix:` and
-  `ReadStateAsync(h).WrittenPath`; `h.Adapter.SubmittedBodies` equals `[row.Body]`; `SessionVersionAsync(h) ==
-  state.Version` (the version the notice announces is the column the recipient now carries). The harness adapter
-  writes the `UserPrompt` on submit (`BridgeQueueHarness.cs:344`), so the row binds the queue's `Sent` transition to
-  that transcript row rather than to the adapter's acceptance. Mutation (PC-44): drop the signal from `UpsertAsync` →
-  no `Sent` row with the header → red.
+  "cell"), null, ct)`; `Instructions(h).WhenIdleAsync()`; `state = ReadStateAsync(h)` → `state.Revision ==
+  startup.Revision + 1` and `state.Version != startup.Version`; in `NewDb(h)`: the `SessionQueuedMessages` rows for
+  `h.SessionId` with `NoteHeader == OrchestratorInstructionsService.NoteHeader` number exactly one (the startup
+  reconcile ran under `Off`); that `row` has `Status == Sent` and `LastDeliveryBaselineSequence == floor` (the baseline
+  is the transcript max captured before typing, `SessionMessageQueueService.cs:1051-1059`, `:3567-3575`;
+  `TranscriptConfirmEnabled` defaults to true, `SupervisionSettings.cs:346`, and the harness's
+  `DeliveryVerificationSettings` leaves it, `BridgeQueueHarness.cs:129-145`); the
+  `TranscriptEntries` rows with `AgentSessionId == h.SessionId && Kind == TranscriptKinds.UserPrompt` number exactly
+  two (the seeded one and the receipt); exactly one of them has `Sequence > floor`, and its `Text == row.Body`;
+  `row.Body` contains `matrix:` and `state.WrittenPath`; `h.Adapter.SubmittedBodies` equals `[row.Body]`;
+  `SessionVersionAsync(h) == state.Version` (the version the notice announces is the column the recipient now
+  carries; the column was null before the write because `Off` skipped the per-session loop at startup). The harness
+  adapter writes the `UserPrompt` on submit (`BridgeQueueHarness.cs:344`), so the row binds the queue's `Sent`
+  transition to that transcript row rather than to the adapter's acceptance. Mutation (PC-44): drop the signal from
+  `UpsertAsync` → zero `SessionQueuedMessages` rows with the header for `h.SessionId` and `SubmittedBodies` empty →
+  red (the startup reconcile contributed no row, so the count has no other source).
 - V-F3 `An_identical_matrix_rewrite_produces_no_delta_and_a_changed_cell_names_the_role` | U | two snapshots with
   equal `Matrix` → no line starts with `matrix:`; change Plan's Medium → one line `matrix: Plan Medium …`. Mutation
   (PC-34): `DiffMatrix` reports on equal input → first assertion red.
 
-**Delivery receipts (R3-06) — `tests/Antiphon.Tests/Application/MatrixChildReceiptTests.cs` (K; a second `partial`
-of `AgentTaskCommitEndpointTests`; method names start with `Matrix_` so CP-24's filter selects them; committed with
-S-A)**
+**Delivery receipt (R3-06, R4) — `tests/Antiphon.Tests/Application/MatrixChildReceiptTests.cs` (K; a standalone
+class with one method and its own helpers, F-C; CP-24 selects it with the class filter; committed with S-A)**
 
 The producer under test is the real settle: `AgentTaskReplyService.OnTurnEndAsync(workerSession)` reads the worker's
 `done` report, finds `x.md` dirty under `CommitOnSettle = Agent` and calls `CreateCommitTaskAsync`
 (`AgentTaskReplyService.cs:4702-4718`), which under D-3 Blocks the child and writes the parent note in the same
-`SaveChanges`. Seeds follow the chain test's `:47-85` with the differences each row names; `parent`, `workerSession`
-and `childSession` are three `AgentSessions` rows; `parentAdapter = ChainAdapter(parent)`.
+`SaveChanges`. The same settle mints the worker's own completion obligation and enqueues it for the parent after the
+save (`:2573-2582`, `:2658-2671`), so the parent owns two `Pending` rows after one settle; the row below drives both
+deliveries and identifies each receipt by its complete body and the row's baseline floor (R4-02). Round 4 keeps
+this one producer receipt because it is the one place a parent receives something it did not receive before this
+card: a Commit child Blocked at creation beside the settled task's completion. Seeds follow the chain test's
+`:47-85` with the differences the row names; `parent` and `workerSession` are two `AgentSessions` rows (no
+`childSession` and no pool `Agents` row: the Blocked child is not dispatched); `parentAdapter = AdapterFor(factory,
+parent)`.
 
-- V-G1 `Matrix_blocked_commit_child_note_reaches_the_settled_tasks_parent_as_one_complete_user_prompt` | K | no
-  `RoutingPins` row; a `ComplexityChains` row `Role Commit`, `Complexity Medium`, `[ClaudeCode/Frontier]`, `Provenance
-  Human`; a manual hold on `ClaudeCode/fable` (`ModelAvailability.UpsertManualAsync`, until +4 h); parent idle
-  (`UserPrompt` then `TurnEnd`, as `:86-87`); worker `UserPrompt` marker, `done` report, `TurnEnd` (`:92-94`);
-  `OnTurnEndAsync(workerSession)` → in a fresh scope: the child (`ParentTaskId == taskId`) has `Status Blocked`,
-  `FailureReason` starting `routing exhausted: ` and containing `Commit/Medium chain` and `fable`, `Complexity ==
-  Medium`, `RoutingPinId == null`, one `Blocked` event; exactly one `SessionQueuedMessages` row with `SourceTaskId ==
-  child.Id`: `AgentSessionId == parent`, `Status Pending`, `NoteHeader != null`, `ContentDigest ==
-  DelegationNoteDigest.Compute(child.FailureReason)`; `queue.FlushSessionAsync(parent)` → that row is `Sent` with
-  `LastDeliveryBaselineSequence != null`; exactly one `TranscriptEntries` row with `AgentSessionId == parent && Kind
-  == TranscriptKinds.UserPrompt && Sequence > row.LastDeliveryBaselineSequence`, and its `Text == row.Body`. When the
-  settled task's own completion note was queued for `parent` in the same flush, it has its own `Sent` row and
-  `UserPrompt` with `Text == Body`, the two `UserPrompt` sequences are in the same order as the two rows' `Sequence`
-  values, and `parentAdapter.SubmittedBodies` equals the `Sent` rows' bodies in that order (count 2); otherwise count
-  1. Red under the scaffold (no Blocked child, no row). Mutation (PC-43): skip `EnqueueBlockedParentNoteAsync` in the
-  Blocked arm → no row with `SourceTaskId == child.Id`, no `UserPrompt` → red.
-- V-G2 `Matrix_blocked_commit_child_note_waits_for_a_busy_parent_and_is_delivered_at_its_turn_end` | K | as V-G1 but
-  the parent has its `UserPrompt` and no `TurnEnd` (busy); after the settle, `queue.FlushSessionAsync(parent)` → the
-  Blocked row stays `Pending`, `parentAdapter.SubmittedBodies` contains no body equal to it, and no `UserPrompt` row
-  for `parent` beyond the seeded one exists; then `ChainEntryAsync(parent, TurnEnd, null)`,
-  `queue.OnTurnEndAsync(parent)` and `queue.FlushSessionAsync(parent)` (the turn end releases, the flush drains) →
-  the row is `Sent` and one `UserPrompt` with `Sequence > row.LastDeliveryBaselineSequence && Text == row.Body`
-  exists, its `Sequence` greater than the `TurnEnd`'s. Red under the scaffold. Mutation: type on the busy flush → a
-  `UserPrompt` with `Text == row.Body` before the `TurnEnd` → red.
-- V-G3 `Matrix_blocked_commit_child_note_survives_the_settle_commit_and_is_typed_by_the_stranded_sweep` | K | as V-G1
-  (idle parent) with no `FlushSessionAsync`; after the settle, in a fresh scope, `ExecuteUpdateAsync` sets `CreatedAt
-  = DateTime.UtcNow.AddSeconds(-120)` on the `Pending` rows for `parent` (the sweep's cutoff is `now −
-  StrandedAgeSeconds`, default 60: `QueueAttention.cs:72-76`, `SupervisionSettings.cs:338`); `queue
-  .FlushStrandedQueuesAsync(ct)` → the Blocked row is `Sent` and one `UserPrompt` with `Sequence >
-  row.LastDeliveryBaselineSequence && Text == row.Body` exists. The producer's scope ended at the settle; the sweep
-  reads the committed row. Red under the scaffold. Mutation: PC-43's producer skip → no row, nothing typed → red.
-- V-G5 `Matrix_blocked_merge_child_note_reaches_the_conflicted_tasks_parent_as_one_complete_user_prompt` | K | seed
-  `parent` idle with `ChainAdapter`, and a Blocked Worker task `conflicted` with `ParentSessionId = parent`,
-  `WorktreePath`, `WorktreeBranch`, `MergeTargetRef` as `CommitOnSettlePolicyTests.cs:181-183`; a `ComplexityChains`
-  row Merge/Medium `[ClaudeCode/Frontier]` Human; hold `fable`; in a factory scope
-  `AgentTaskService.CreateMergeTaskAsync(conflicted, ["a.cs"], ct)` then `db.SaveChangesAsync()` — the call the
-  settle site makes at `AgentTaskReplyService.cs:2479-2480` before its own save → the returned child `Status Blocked`,
-  `FailureReason` contains `Merge/Medium chain`, `Complexity == Medium`; one `SessionQueuedMessages` row with
-  `SourceTaskId == child.Id` for `parent`; `queue.FlushSessionAsync(parent)` → `Sent`, one `UserPrompt` with `Sequence
-  > row.LastDeliveryBaselineSequence && Text == row.Body`. The rebase-conflict trigger is not re-driven here (it needs
-  a conflicting upstream fixture; the direct call is how `CommitOnSettlePolicyTests.cs:187` and
-  `AgentTaskServiceIntegrationTests.cs:671` exercise the producer). Red under the scaffold. Mutation: the Merge arm's
-  producer skip (PC-43's twin) → no row → red.
+- V-G1 `A_blocked_commit_child_note_and_the_settled_tasks_completion_each_reach_the_parent_once_in_queue_order` | K |
+  `await using var factory = new CommitEndpointWebAppFactory()`; `repo = await SeedRepoAsync()`,
+  `repo.AddBareOriginAsync()`, write `x.md` (`:38-42`); in one scope: the two sessions (`:53-58` shape), the Shared
+  worker task (`:60-68`: `ParentSessionId = parent`, `AgentSessionId = workerSession`, `ReplyTo Session`,
+  `CommitOnSettle Agent`, `Status Dispatched`), no `RoutingPins` row, a `ComplexityChains` row `Role Commit`,
+  `Complexity Medium`, `CandidatesJson` for `[ClaudeCode/Frontier]`, `Provenance Human`; in a factory scope
+  `ModelAvailability.UpsertManualAsync("ClaudeCode", "fable", DateTimeOffset.UtcNow.AddHours(4), "hold fable", ct)`;
+  `EntryAsync(factory, parent, UserPrompt, "Dispatch work.")`, `EntryAsync(factory, parent, TurnEnd, null)` (idle
+  parent with an observable baseline, `:86-87`); `parentAdapter = AdapterFor(factory, parent)`; worker `UserPrompt`
+  marker, `done` report, `TurnEnd` (`:92-94`); `AgentTaskReplyService.OnTurnEndAsync(workerSession)` (`:96`).
+  **Stage 1, fresh scope:** the child (`Single(ParentTaskId == taskId)`) has `Status Blocked`, `FailureReason`
+  starting `routing exhausted: ` and containing `Commit/Medium chain` and `fable`, `Complexity == Medium`,
+  `RoutingPinId == null`, one `Blocked` event; `blocked = Single(SessionQueuedMessages where SourceTaskId ==
+  child.Id)`: `AgentSessionId == parent`, `Status Pending`, `Origin Delegation`, `ConversationKey == null`,
+  `NoteHeader != null`, `ContentDigest == DelegationNoteDigest.Compute(child.FailureReason)`; `completion =
+  Single(SessionQueuedMessages where AgentSessionId == parent && SourceLandNotificationId != null)`: `Status Pending`,
+  `SourceTaskId == taskId`, `Sequence > blocked.Sequence`, `Body != blocked.Body`; the `SessionQueuedMessages` rows
+  for `parent` number exactly two; `parentAdapter.SubmittedBodies` is empty (hosted services removed; no flush yet).
+  **Stage 2:** `queue.FlushSessionAsync(parent)` → fresh scope: `blocked` is `Sent` with `LastDeliveryBaselineSequence
+  != null`; `completion` is still `Pending` (one `DeliverNextLockedAsync` per flush, `SessionMessageQueueService.cs:1749-1763`;
+  the null-key head is not batched, `:2410-2421`); `receipt1 = Single(TranscriptEntries where AgentSessionId ==
+  parent && Kind == TranscriptKinds.UserPrompt && Sequence > blocked.LastDeliveryBaselineSequence)` with
+  `receipt1.Text == blocked.Body`; the `UserPrompt` rows for `parent` with `Text == completion.Body` number zero;
+  `parentAdapter.SubmittedBodies` equals `[blocked.Body]`. **Stage 3:** `queue.FlushSessionAsync(parent)` again (the
+  adapter wrote `UserPrompt` then `TurnEnd` on submit, so the parent reads idle, as the chain test's second parent
+  flush at `:192` relies on) → fresh scope: `completion` is `Sent` with `LastDeliveryBaselineSequence >=
+  receipt1.Sequence`; `receipt2 = Single(TranscriptEntries where AgentSessionId == parent && Kind == UserPrompt &&
+  Sequence > completion.LastDeliveryBaselineSequence)` with `receipt2.Text == completion.Body` and `receipt2.Sequence
+  > receipt1.Sequence`; the `UserPrompt` rows for `parent` with `Text == blocked.Body` still number exactly one; the
+  `Pending` rows for `parent` number zero; `parentAdapter.SubmittedBodies` equals `[blocked.Body, completion.Body]`.
+  Red under the scaffold: the settle spawns a `Queued` child (the chain test's path), so `Status Blocked` fails at
+  stage 1 and `Single(SourceTaskId == child.Id)` has no row. Mutation (PC-43): skip `EnqueueBlockedParentNoteAsync`
+  in the Blocked arm → no row with `SourceTaskId == child.Id` at stage 1 → red.
 
 ### Guards the regression
 
@@ -723,8 +768,9 @@ The plan's PC-1–PC-45 table is the binding list (one per behaviour; exact meth
 `stage-list-pin`; PC-21 to V-B10's row `Raw/Frontier`; PC-22 to the concrete wrong-grain query named in the plan;
 PC-28 to V-D5 (R2-11); PC-30 to V-E4's row `apply`; PC-31 to V-E6's row `human`; PC-35 to V-F7's part (a); PC-24–PC-26
 and PC-36–PC-38 name the Vitest titles above. Round 3: PC-39 to V-A15b; PC-40 to V-E12; PC-41 to V-B11's row
-`with-row`; PC-42 to V-F7's part (b); PC-43 to V-G1 (V-G3 and V-G5 share its producer skip); PC-44 to V-F2b; PC-45 to
-V-E6's row `auto`. None has been run.
+`with-row`; PC-42 to V-F7's part (b); PC-43 to V-G1; PC-44 to V-F2b; PC-45 to V-E6's row `auto`. Round 4: PC-46 to
+V-A12c; PC-43's witness is the stage-1 row count and PC-44's the header-row count after a startup reconcile under
+`Off`. None has been run.
 
 ### Out of scope
 
@@ -742,34 +788,39 @@ V-E6's row `auto`. None has been run.
   delegate modal (D-6; CARD-1250). No new delivery, recovery or notice-ordering mechanism (D-10). The attention
   feed is covered by the existing `ComplexityAttentionTests` and is not re-tested for stamped tasks (their rows carry
   `Complexity`, the same key).
-- The rebase-conflict trigger of the Merge producer is not re-driven (V-G5 calls the producer as the settle site
+- The rebase-conflict trigger of the Merge producer is not re-driven (V-A12c calls the producer as the settle site
   does). The notice path's window between the version write and the enqueue
   (`OrchestratorInstructionsService.cs:268-278`) is inherited and disclosed in the inventory, not recovered (R3-06).
-  Method-scoped positive controls for V-G1–V-G5 run with CP-24's filter narrowed to the one method.
+  CP-24's class filter already selects the one method, so PC-43 runs under it unchanged.
+- Round 4 withdrew the receipt rows that only exercised unchanged queue code over the Blocked row: the busy-parent
+  turn-end rule (V-G2; `OnTurnEndAsync`, `SessionMessageQueueService.cs:1554`), the stranded sweep (V-G3;
+  `FlushStrandedQueuesAsync`, `:1599`) and the Merge receipt (V-G5; the same producer and queue path as V-G1). No
+  slice in the plan's closed file lists touches `SessionMessageQueueService.cs`; the Merge Blocked construction is
+  bound at row level by V-A12c instead. The reasons are recorded per row in plan §12.
 
 ### Checkpoints
 
-The closed list is the plan's `### Checkpoints` table (CP-1–CP-24); round 3 added CP-24 and this amendment adds no
-other row. Build reuse is written as `CP-n` in the Build column with the same `After` group as row n
-(`PlanTableImporter.cs:200-211`). CP-3/CP-4 execute 19 methods and **33 results** (V-A6 carries 8 `[Arguments]`,
-V-A8b 4, V-A12b 5; V-A15b and V-G4 are single); `Min` is 19. V-A6 is the class's one `[Category("Unit")]` method; the
-class filter runs it with the integration methods. CP-10/CP-11 execute 6 methods and 9 results (V-B10 carries 3,
-V-B11 2). CP-12 executes 3 methods. CP-18 executes 7 methods and 10 results (V-E4 carries 2, V-E6 3). CP-20's roster
-is 12 methods (V-F2b added). CP-24 runs the four `Matrix_*` methods of `AgentTaskCommitEndpointTests` through the
-method-segment filter `/*/*/AgentTaskCommitEndpointTests/Matrix_*` — the tree-node grammar's wildcard, as the
-class-segment forms in `docs/testing-and-build.md:166` use it — on CP-4's build, serial (a real host and the message
-queue). Regression `Min` values are the `[Test]` method counts read from master `d317c3f59`, as the plan states;
-`[Arguments]` and `MethodDataSource` expansion is recorded by Code from the runner's output.
+The closed list is the plan's `### Checkpoints` table (CP-1–CP-24); round 3 added CP-24, round 4 changed its filter
+and roster, and this amendment adds no other row. Build reuse is written as `CP-n` in the Build column with the same
+`After` group as row n (`PlanTableImporter.cs:200-211`). CP-3/CP-4 execute 20 methods and **34 results** (V-A6
+carries 8 `[Arguments]`, V-A8b 4, V-A12b 5; V-A12c, V-A15b and V-G4 are single); `Min` is 20. V-A6 is the class's one
+`[Category("Unit")]` method; the class filter runs it with the integration methods. CP-10/CP-11 execute 6 methods and
+9 results (V-B10 carries 3, V-B11 2). CP-12 executes 3 methods. CP-18 executes 7 methods and 10 results (V-E4 carries
+2, V-E6 3). CP-20's roster is 12 methods (V-F2b added). CP-24 runs the one method of `MatrixChildReceiptTests`
+through the ordinary class filter `/*/*/MatrixChildReceiptTests/*` on CP-4's build, serial (a real host and the
+message queue); the round-3 method-segment wildcard is gone with the partial. Regression `Min` values are the
+`[Test]` method counts read from master `d317c3f59`, as the plan states; `[Arguments]` and `MethodDataSource`
+expansion is recorded by Code from the runner's output.
 
 ### Cost
 
-As the plan states: ordinary green rows 155 minutes, red-first rows 25 minutes, authoring 470 minutes across seven
-Code dispatches (S-0 20, S-A 110, S-B 75, S-C1 60, S-D 60, S-E 65, S-F 80) plus 90 for the optional S-C2. No
+As the plan states: ordinary green rows 151 minutes, red-first rows 25 minutes, authoring 450 minutes across seven
+Code dispatches (S-0 20, S-A 90, S-B 75, S-C1 60, S-D 60, S-E 65, S-F 80) plus 90 for the optional S-C2. No
 production timeout or assertion is loosened. Edited existing tests, each with its reason recorded above: three
 `RoutingSettingsTab.test.tsx` cases (copy change), one `OrchestratorInstructionsRendererTests` method and its
 `Sample()` fixture (section renumbering), the `Covered_writes_each_regenerate_and_notify` argument list (one new write
-kind). The round-3 receipt methods live in a new partial file of an existing class; no existing method in
-`AgentTaskCommitEndpointTests` is edited.
+kind). The receipt method lives in its own new class with its own helpers; `AgentTaskCommitEndpointTests.cs` and
+`AgentTaskCommitChildChainTests.cs` are not edited (R4-01).
 
 ## Appendix A — withdrawn: the 2026-10-13 Appendix A (S3 stage-pin editor)
 
