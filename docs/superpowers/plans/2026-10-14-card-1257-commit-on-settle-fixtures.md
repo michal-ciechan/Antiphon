@@ -25,11 +25,11 @@ Correct CP-9's executed floor to 12 in the matrix plan and its test-design owner
   guard, or timeout is changed. Review the diff and run the full-range evidence guard.
 
 No new test methods: this repair restores existing behavioral witnesses. Red-first
-runs are ordinary fixture diagnostics, not positive controls. PC-1 (pending for
-SourceLanding Mutation): remove Git initialization from this fixture and run only
-`/*/*/CommitOnSettlePolicyTests/Create_persists_each_commitOnSettle_value`; require
-the three workspace-refusal failures, restore, and verify those three green.
-CARD-0097 PC-1–PC-49 and their named variants remain pending and are not discharged.
+runs are ordinary fixture diagnostics, not positive controls. The initially proposed
+fixture-removal PC-1 is withdrawn: a setup refusal is not a behavioral assertion
+control. This fixture-only repair defines zero PCs; Mutation still owns missing-control
+discovery. CARD-0097 PC-1–PC-49 and their named variants remain pending and are not
+discharged by these ordinary runs.
 
 ### Checkpoints
 
