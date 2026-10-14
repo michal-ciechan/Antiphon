@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ComplexityCandidateDto, ComplexityChainDto, ComplexityChainListDto, ComplexityEffectiveDto, TaskComplexity } from '../../api/complexityChains'
 import type { RolePolicyRowDto } from '../../api/rolePolicy'
 import type { RoutingPinDto } from '../../api/routingPins'
-import { nextCreateLabel, previewNextCreate } from './nextCreatePreview'
+import { nextCreateLabel, previewNextCreate, type NextCreateContext } from './nextCreatePreview'
 
 function row(overrides: Partial<RolePolicyRowDto> = {}): RolePolicyRowDto {
   return {
@@ -206,5 +206,85 @@ describe('previewNextCreate', () => {
     })
     expect(preview).toBeNull()
     expect(nextCreateLabel(preview)).toBe('unknown')
+  })
+})
+
+// Expected tuples are transcribed from the server branches, not computed by the preview.
+// References are anchored to server source at f047d2ef7 (unchanged in this repair).
+const sol: ComplexityCandidateDto = { ...astra, modelLevel: 'High', alias: 'gpt-6.1-sol' }
+const sonnet: ComplexityCandidateDto = { ...opus, modelLevel: 'Medium', alias: 'sonnet' }
+const quota = (c: ComplexityCandidateDto): ComplexityCandidateDto => ({ ...c, availableNow: false, unavailableReason: 'quota 2% remaining, resets in 10m' })
+function scenario(options: {
+  kind?: NextCreateContext['kind']; level?: NextCreateContext['explicitLevel'];
+  pin?: RoutingPinDto; policy?: RolePolicyRowDto; candidates?: ComplexityCandidateDto[];
+  resolved?: ComplexityChainDto['resolvedFrom']; source?: ComplexityEffectiveDto['source'];
+  missingCells?: boolean; withheld?: string;
+} = {}): NextCreateContext {
+  const policy = options.policy ?? row()
+  const stagePin = options.pin ?? null
+  return {
+    kind: options.kind ?? 'Worker', explicitLevel: options.level ?? null,
+    row: { ...policy, stagePin, effective: stagePin?.candidates?.[0]?.alias
+      ? { source: 'pin', agentKind: stagePin.candidates[0].agentKind, modelLevel: stagePin.candidates[0].modelLevel, alias: stagePin.candidates[0].alias, strength: stagePin.strength }
+      : policy.effective },
+    cells: options.missingCells ? undefined : cells('Medium', [chain('Medium', effective({
+      candidates: options.candidates ?? [astra, sol, opus], source: options.source ?? 'role',
+      withheldReason: options.withheld ?? null,
+    }), options.resolved ?? 'role')]),
+  }
+}
+function listed(candidates: RoutingPinDto['candidates'], overrides: Partial<RoutingPinDto> = {}): RoutingPinDto {
+  return pin({ candidates, candidateCount: candidates?.length, ...overrides })
+}
+const lowPolicy = row({ role: 'Docs', level: 'Medium', alias: 'sonnet', effective: { source: 'rolePolicy', agentKind: 'ClaudeCode', modelLevel: 'Medium', alias: 'sonnet', strength: null } })
+const codexPolicy = row({ kind: 'Codex', alias: 'gpt-6-astra', effective: { source: 'rolePolicy', agentKind: 'Codex', modelLevel: 'Frontier', alias: 'gpt-6-astra', strength: null } })
+type ParityRow = { id: string; server: string; context: NextCreateContext; expected: [string, string | null, string | null, string | null, string | null]; label?: string }
+const parityRows: ParityRow[] = [
+  { id: 'F1 required-forbid-only', server: 'ComplexityRoutingService.cs:502-508', context: scenario({ pin: pin({ forbiddenAliases: ['GPT-6-ASTRA'] }) }), expected: ['matrix', 'Codex', 'High', 'gpt-6.1-sol', 'Medium'] },
+  { id: 'F1 legacy-forbidden-head', server: 'ComplexityRoutingService.cs:502-508', context: scenario({ pin: listed([astra, opus], { forbiddenAliases: ['gpt-6-astra'] }), resolved: 'none' }), expected: ['pin', 'ClaudeCode', 'High', 'opus', null] },
+  { id: 'F2 preferred-forbid-only-refusal', server: 'AgentTaskService.cs:809-815,1116', context: scenario({ pin: pin({ strength: 'Preferred', forbiddenAliases: ['FABLE'] }) }), expected: ['refused', 'ClaudeCode', 'Frontier', 'fable', null], label: 'create refused (409 routing_pin_forbidden): fable is forbidden by the stage pin' },
+  { id: 'F2 preferred-forbid-only-policy', server: 'RoutingCandidates.cs:79-87; AgentTaskService.cs:924', context: scenario({ pin: pin({ strength: 'Preferred', forbiddenAliases: ['opus'] }), candidates: [astra, fable] }), expected: ['rolePolicy', 'ClaudeCode', 'Frontier', 'fable', null] },
+  { id: 'F2 preferred-dedup-held', server: 'RoutingCandidates.cs:164-168; AgentTaskService.cs:1160', context: scenario({ pin: listed([held(fable)], { strength: 'Preferred' }), candidates: [astra, held(fable), opus] }), expected: ['refused', 'ClaudeCode', 'Frontier', 'fable', null], label: 'create refused (409): fable is held; model_disabled or subscription_quota_low depends on the server' },
+  { id: 'F2 preferred-dedup-available', server: 'RoutingCandidates.cs:164-168', context: scenario({ pin: listed([fable], { strength: 'Preferred' }) }), expected: ['pin', 'ClaudeCode', 'Frontier', 'fable', null] },
+  { id: 'F3 orchestrator-kind-filter', server: 'ComplexityRoutingService.cs:498-499', context: scenario({ kind: 'Orchestrator', pin: listed([astra, opus]) }), expected: ['pin', 'ClaudeCode', 'High', 'opus', null] },
+  { id: 'F3 walked-medium-not-floored', server: 'AgentTaskService.cs:1082', context: scenario({ kind: 'Orchestrator', pin: listed([sonnet, opus]) }), expected: ['pin', 'ClaudeCode', 'Medium', 'sonnet', null], label: 'Required Human pin → ClaudeCode/Medium (sonnet)' },
+  { id: 'F4 single-required-held', server: 'AgentTaskService.cs:809-815,1167', context: scenario({ pin: listed([held(astra)]), source: 'pin', candidates: [held(astra)] }), expected: ['refused', 'Codex', 'Frontier', 'gpt-6-astra', null], label: 'create refused (409): gpt-6-astra is held; model_disabled or subscription_quota_low depends on the server' },
+  { id: 'required-single-available', server: 'AgentTaskService.cs:809-815', context: scenario({ pin: listed([opus]), candidates: [astra, opus] }), expected: ['pin', 'ClaudeCode', 'High', 'opus', null] },
+  { id: 'required-single-forbidden-before-quota', server: 'AgentTaskService.cs:1116-1120', context: scenario({ pin: listed([quota(astra)], { forbiddenAliases: ['gpt-6-astra'] }) }), expected: ['refused', 'Codex', 'Frontier', 'gpt-6-astra', null], label: 'create refused (409 routing_pin_forbidden): gpt-6-astra is forbidden by the stage pin' },
+  { id: 'required-single-quota', server: 'AgentTaskService.cs:1120', context: scenario({ pin: listed([quota(astra)]) }), expected: ['refused', 'Codex', 'Frontier', 'gpt-6-astra', null], label: 'create refused (409 subscription_quota_low): gpt-6-astra is quota-limited' },
+  { id: 'preferred-multiple-uses-matrix', server: 'AgentTaskService.cs:803,924; RoutingCandidates.cs:69-76', context: scenario({ pin: listed([held(opus)], { strength: 'Preferred' }), source: 'pin+chain', candidates: [held(opus), astra, sol] }), expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'required-multiple-replaces-matrix', server: 'RoutingCandidates.cs:56-60', context: scenario({ pin: listed([held(astra), opus]), source: 'pin', candidates: [held(astra), opus] }), expected: ['pin', 'ClaudeCode', 'High', 'opus', 'Medium'] },
+  { id: 'required-dedup-single', server: 'RoutingCandidates.cs:142,164-168', context: scenario({ pin: listed([astra, astra]) }), expected: ['pin', 'Codex', 'Frontier', 'gpt-6-astra', null] },
+  { id: 'preferred-policy-tail-unknown', server: 'RoutingCandidates.cs:79-87; RolePolicyReadService.cs:79-85', context: scenario({ pin: listed([held(astra)], { strength: 'Preferred' }), resolved: 'none', candidates: [] }), expected: ['unknown', null, null, null, null], label: 'unknown — candidate availability depends on the server' },
+  { id: 'preferred-policy-tail-evaluated', server: 'RoutingCandidates.cs:79-87', context: scenario({ pin: listed([held(astra)], { strength: 'Preferred' }), resolved: 'none', candidates: [held(astra), fable] }), expected: ['pin', 'ClaudeCode', 'Frontier', 'fable', null] },
+  { id: 'matrix-quota-skip', server: 'ComplexityRoutingService.cs:519-526', context: scenario({ candidates: [quota(astra), opus] }), expected: ['matrix', 'ClaudeCode', 'High', 'opus', 'Medium'], label: 'Medium row → ClaudeCode/High (opus), skipping gpt-6-astra (quota)' },
+  { id: 'matrix-quota-exhausted', server: 'AgentTaskService.cs:1046-1050', context: scenario({ candidates: [quota(astra), quota(opus)] }), expected: ['exhausted', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'], label: 'no eligible Medium-row candidate → Blocked; routing must become eligible' },
+  { id: 'matrix-forbidden-exhausted', server: 'ComplexityRoutingService.cs:502-508; AgentTaskService.cs:1046', context: scenario({ pin: pin({ forbiddenAliases: ['gpt-6-astra', 'opus'] }), candidates: [astra, opus] }), expected: ['exhausted', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'orchestrator-list-exhausted', server: 'AgentTaskService.cs:1097-1101', context: scenario({ kind: 'Orchestrator', pin: listed([astra, sol]) }), expected: ['exhausted', 'Codex', 'Frontier', 'gpt-6-astra', null] },
+  { id: 'orchestrator-explicit-pin-kind-refused', server: 'AgentTaskService.cs:4203-4210', context: scenario({ kind: 'Orchestrator', pin: listed([astra]) }), expected: ['refused', 'Codex', 'Frontier', 'gpt-6-astra', null], label: 'create refused (422): an Orchestrator requires ClaudeCode' },
+  { id: 'orchestrator-policy-kind-clamped', server: 'AgentTaskService.cs:4213-4215', context: scenario({ kind: 'Orchestrator', policy: codexPolicy, candidates: [astra, fable] }), expected: ['rolePolicy', 'ClaudeCode', 'Frontier', 'fable', null] },
+  { id: 'orchestrator-policy-alias-unknown', server: 'AgentTaskService.cs:4215; ModelLevelAliases.cs', context: scenario({ kind: 'Orchestrator', policy: codexPolicy }), expected: ['unknown', null, null, null, null] },
+  { id: 'orchestrator-configured-floor-unexposed', server: 'AgentTaskService.cs:4132-4133; RolePolicyReadService.cs:65', context: scenario({ kind: 'Orchestrator', policy: lowPolicy }), expected: ['unknown', null, null, null, null], label: 'unknown — Orchestrator level depends on the server floor' },
+  { id: 'orchestrator-explicit-floor-unexposed', server: 'AgentTaskService.cs:4132-4133', context: scenario({ kind: 'Orchestrator', level: 'Low' }), expected: ['unknown', null, null, null, null] },
+  { id: 'explicit-required-conflict', server: 'RoutingPinService.cs:348-357', context: scenario({ level: 'Low', pin: listed([astra]) }), expected: ['refused', null, null, null, null], label: 'create refused (409 routing_pin_conflict): explicit level disagrees with the Required stage pin' },
+  { id: 'explicit-required-narrowed-single', server: 'RoutingPinService.cs:377-381; AgentTaskService.cs:809', context: scenario({ level: 'High', pin: listed([astra, opus]) }), expected: ['pin', 'ClaudeCode', 'High', 'opus', null] },
+  { id: 'explicit-preferred-incompatible-unknown-alias', server: 'RoutingCandidates.cs:129-140,79-87', context: scenario({ level: 'Low', pin: listed([astra], { strength: 'Preferred' }) }), expected: ['unknown', null, null, null, null] },
+  { id: 'partial-pin-availability-not-evaluated', server: 'RoutingPinService.cs:795-800; RoutingCandidates.cs:138', context: scenario({ pin: listed([{ ...astra, modelLevel: null, alias: null }]), resolved: 'none', candidates: [] }), expected: ['unknown', null, null, null, null] },
+  { id: 'partial-pin-filled-by-effective-view', server: 'ComplexityEffective.cs:30-35; RoutingCandidates.cs:138', context: scenario({ pin: listed([{ ...astra, modelLevel: null, alias: null }]), candidates: [astra, opus] }), expected: ['pin', 'Codex', 'Frontier', 'gpt-6-astra', null] },
+  { id: 'agent-with-candidates-needs-agent-state', server: 'AgentTaskService.cs:837-858', context: scenario({ pin: listed([astra], { agentId: 'standing-agent' }) }), expected: ['unknown', null, null, null, null], label: 'unknown — standing-agent kind, model and admission depend on the server' },
+  { id: 'preferred-agent-only-needs-agent-state', server: 'RoutingCandidates.cs:79-87; AgentTaskService.cs:837-858', context: scenario({ pin: pin({ strength: 'Preferred', agentId: 'standing-agent' }) }), expected: ['unknown', null, null, null, null] },
+  { id: 'availability-read-error-not-exhausted', server: 'AgentTaskService.cs:946-950; ComplexityChainEndpoints.cs', context: scenario({ candidates: [{ ...astra, availableNow: false, unavailableReason: 'availability unavailable' }, opus] }), expected: ['unknown', null, null, null, null] },
+  { id: 'withheld-slot-not-silently-skipped', server: 'ComplexityEffective.cs:57-63', context: scenario({ candidates: [opus], withheld: 'routing candidate names a kind or level which delegation cannot launch' }), expected: ['unknown', null, null, null, null] },
+  { id: 'missing-policy-cannot-evaluate-forbids', server: 'AgentTaskService.cs:773; ComplexityRoutingService.cs:502', context: { ...scenario(), row: undefined }, expected: ['unknown', null, null, null, null] },
+  { id: 'any-row', server: 'ComplexityRoutingService.cs:327-329', context: scenario({ resolved: 'any', source: 'any' }), expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'config-row', server: 'ComplexityRoutingService.cs:331-344', context: scenario({ resolved: 'config', source: 'config' }), expected: ['matrix', 'Codex', 'Frontier', 'gpt-6-astra', 'Medium'] },
+  { id: 'legacy-policy-forbidden', server: 'RoutingPinService.cs:413-432', context: scenario({ pin: pin({ forbiddenAliases: ['fable'] }), resolved: 'none' }), expected: ['refused', 'ClaudeCode', 'Frontier', 'fable', null] },
+  { id: 'legacy-policy-held', server: 'AgentTaskService.cs:1177-1180', context: scenario({ resolved: 'none', candidates: [held(fable)] }), expected: ['refused', 'ClaudeCode', 'Frontier', 'fable', null] },
+]
+describe('C1250 V17 server-branch parity', () => {
+  it.each(parityRows)('$id [$server]', ({ context, expected, label }) => {
+    const preview = previewNextCreate(context)
+    expect([preview?.source, preview?.agentKind, preview?.modelLevel, preview?.alias, preview?.complexity]).toEqual(expected)
+    if (label) expect(nextCreateLabel(preview)).toBe(label)
   })
 })
