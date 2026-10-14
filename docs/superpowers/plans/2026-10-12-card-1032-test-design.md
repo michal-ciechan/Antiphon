@@ -74,7 +74,8 @@ its admitted callback at a deterministic barrier. That proves gate order only.
 For S4, RUN calls real read-only inspection/classification. Parent destructive
 U witnesses are scheduled at S5, when the real remover exists. They are not
 stubbed with a success DTO to get early slices green. S6 adds dispatcher
-composition; S8 crosses the complete producer/recipient boundary.
+composition; S8 crosses the cleanup producer/recipient transport; its preparation
+vectors start at PhoneHomeRunnerClient, not RemoteWorkspacePreparer ([S8 status](#s8-implementation-status-amendment-2026-10-14)).
 
 Positive baseline: current Done generation, terminal settled owner, no active
 consumer or recovery debt, bound ordinary creation on the original store,
@@ -95,6 +96,8 @@ refusal and absence of the next external read; Mutation must bind that first
 decisive assertion. Do not generate expected outcomes with the tested predicate.
 
 Durable intent and receipt tests use a new store reader/DbContext at each cut.
+S8 as implemented uses fresh DbContexts and fresh coordinators with the runner
+process and journal retained; the process-death arm below is planned ([S8 status](#s8-implementation-status-amendment-2026-10-14)).
 Fresh runtime/store objects prove reconstruction; cuts at rename/unregister/
 physical deletion/reply also use a process-death arm with parent-owned child
 PID/start identity, drained output and joined exit. FakeHerdrServer supplies the
@@ -141,7 +144,7 @@ No new method lacks a detecting control.
 | S6 / CP-11 | U.`C1032_TransportDefaultInert`; U.`C1032_TransportRequiredPayload`; U.`C1032_TransportDispatchReplay` | Unconfigured dispatcher refuses; explicitly configured dispatcher reaches real removal; typed complete replay receipt persists before reply. |
 | S7 / CP-13 | M.`C1032_AdmissionCurrentEligibility`; M.`C1032_AdmissionArtifactSurvival`; M.`C1032_AdmissionIntentOrdering`; M.`C1032_AdmissionBoundRebaseProof` | Explicit bound-rebase positive plus fresh generation/attempt/use/source/artifacts at intent; intent and reopen winner orders; fresh observer checks commit before send and no row lock across I/O. |
 | S7 / CP-14 | M.`C1032_ReceiptCompleteBoundReceipt` | Genuine complete receipt positive, one-field mismatch/missing-field vectors, digest mismatch and import failure; fresh observer does not see false Complete. |
-| S8 / CP-15 | M.`C1032_RecoveryQueuesBusyAndReady`; M.`C1032_RecoveryCrashHandoffs`; M.`C1032_RecoveryInertServerComposition` | Real preparation/inspection/removal transport in busy/ready states and each cut; fresh receipt plus recipient files; default server/sweep/route cannot execute removal even with fixture Execute=true. |
+| S8 / CP-15 | M.`C1032_RecoveryQueuesBusyAndReady`; M.`C1032_RecoveryCrashHandoffs`; M.`C1032_RecoveryInertServerComposition` | Real preparation/inspection/removal transport in busy/ready states and the executed cuts; fresh receipt plus recipient files; default server/sweep/route issue no removal command with fixture Execute=true (`C1032_RecoveryInertServerComposition`). Planned; executed cuts: [S8 cut table](2026-10-13-card-1032-s8-code-evidence.md#cuts). |
 
 The 21 parent U and 12 parent M exact names are retained in the PC-52..82,
 PC-108/109 rows and in the CP rosters below. They add **33** methods to these
@@ -177,21 +180,23 @@ do not add an invented channel or certify delivery with a direct dispatcher call
 
 | Path / producer -> destination | Persistence boundary / recovery | Recipient evidence / named controls |
 |---|---|---|
-| Preparation: RemoteWorkspacePreparer -> RemoteWorkspaceService -> phone-home request -> runner MirrorAsync -> binding store | Preparation identity durable before request; runner creation intent before Git; completed binding before reply; server binding append before current-path projection. Cuts P0-P5 below replay the same preparation after restart. | Actual runner tree HEAD/ref/admin and external binding readback, then server historical binding read from a new context. K creation/replay plus P capture methods; M.C1032_RecoveryQueuesBusyAndReady carries this to real recipient. PC-210..216, PC-218..222, PC-286 and PC-520..529. |
+| Preparation: RemoteWorkspacePreparer -> RemoteWorkspaceService -> phone-home request -> runner MirrorAsync -> binding store | Preparation identity durable before request; runner creation intent before Git; completed binding before reply; server binding append before current-path projection. Cuts P0-P5 below replay the same preparation after restart. | Actual runner tree HEAD/ref/admin and external binding readback, then server historical binding read from a new context. K creation/replay plus P capture methods; Planned: M.C1032_RecoveryQueuesBusyAndReady carries this to real recipient; as implemented it starts at PhoneHomeRunnerClient and inserts the server binding with fixture code, and P0-P5 are not covered ([S8 status](#s8-implementation-status-amendment-2026-10-14)). PC-210..216, PC-218..222, PC-286 and PC-520..529. |
 | Inspection: mirror coordinator -> typed inspect -> real dispatcher/runner inspector | No destructive intent yet; inspection is fresh, bound and read-only. Lost inspection reply permits another read, not inferred absence or enrollment. | Actual runner HEAD H and identity match source observations; tree, refs and store digest unchanged. U.C1032_InspectionReadOnlyBound/SourceProof plus M recovery methods. PC-233/234/239 and PC-286. |
-| Removal: coordinator -> persisted endpoint request -> real phone-home mutation queue -> guarded runner remover | Server intent committed before send; runner intent/set-aside identity before rename; component journal and typed receipt before reply; server imports exact receipt before Complete. Cuts D0-D11 below retain one operation/digest and reconcile owned components. | Original/owned aside absent, matching registration absent, refs/outside/replacement/report bytes retained; complete matching external receipt and fresh server endpoint agree. M.C1032_RecoveryQueuesBusyAndReady and CrashHandoffs; parent LostAckReusesOperation; PC-67/68/74..82, PC-261..265, PC-279/282/283/285..289, PC-509..512/517. |
-| Outcome readback: coordinator -> committed endpoint/component facts -> existing invalidation observer | Receipt and outcome commit before event. Crash before event is recovered by fresh DB read; missing event does not erase debt. | Fresh context returns the matching endpoint and stored receipt, including separate mirror Pending after local Complete. PC-71/81/204/284. Event receipt itself is not physical cleanup proof. |
+| Removal: coordinator -> persisted endpoint request -> real phone-home mutation queue -> guarded runner remover | Server intent committed before send; runner intent/set-aside identity before rename; component journal and typed receipt before reply; server imports exact receipt before Complete. Planned: cuts D0-D11 below retain one operation/digest and reconcile owned components; executed cuts: [S8 cut table](2026-10-13-card-1032-s8-code-evidence.md#cuts). | Original/owned aside absent, matching registration absent, refs/outside/replacement/report bytes retained; complete matching external receipt and fresh server endpoint agree. M.C1032_RecoveryQueuesBusyAndReady and CrashHandoffs; parent LostAckReusesOperation; PC-67/68/74..82, PC-261..265, PC-279/282/283/285..289, PC-509..512/517. |
+| Outcome readback: coordinator -> committed endpoint/component facts -> existing invalidation observer | Receipt and outcome commit before event. Crash before event is recovered by fresh DB read; missing event does not erase debt. S8 has no invalidation emitter on this path; only fresh DB readback runs ([S8 status](#s8-implementation-status-amendment-2026-10-14)). | Fresh context returns the matching endpoint and stored receipt, including separate mirror Pending after local Complete. PC-71/81/204/284. Event receipt itself is not physical cleanup proof. |
 
 M.`C1032_RecoveryQueuesBusyAndReady` uses six named vectors:
 preparation-busy, preparation-ready, inspection-busy, inspection-ready,
 removal-busy and removal-ready. Busy means an earlier actual mutation holds
 the recipient's gate; a fixture barrier proves it entered. Release is explicit,
 owned by the fixture. Ready means no blocker when the request crosses the socket.
-Both end at the recipient evidence above. A queued request, Sent flag, ACK,
+Both end at the recipient evidence above (preparation as implemented: [S8 status](#s8-implementation-status-amendment-2026-10-14);
+busy release waits for a runner MutationLock waiter, S8 round 2). A queued request, Sent flag, ACK,
 success event or a trace containing the operation name is not sufficient.
 
-M.`C1032_RecoveryCrashHandoffs` freezes these cuts, each with a reached-cut
-acknowledgement and a hand-written expected terminal outcome:
+Planned cut list for M.`C1032_RecoveryCrashHandoffs`, each with a reached-cut
+acknowledgement and a hand-written expected terminal outcome. The executed subset
+is the [S8 cut table](2026-10-13-card-1032-s8-code-evidence.md#cuts):
 
 | Cut | Fault/variant | Expected recovery and oracle |
 |---|---|---|
@@ -215,7 +220,7 @@ acknowledgement and a hand-written expected terminal outcome:
 | D10 | outcome saved before invalidation | Fresh observer reads outcome/receipt with no event required. |
 | D11 | same runner name reconnects with replacement store; changed task path/policy; wall-clock jump | Old store debt is held; replay payload remains frozen; cooldown and elapsed budget are enforced. |
 
-For P1/D1/D2/D8, inject both a before-send failure and loss after admission.
+Planned variants (executed subset: [S8 cut table](2026-10-13-card-1032-s8-code-evidence.md#cuts)). For P1/D1/D2/D8, inject both a before-send failure and loss after admission.
 They exercise actual send/waiter/mutation queues; there is no separate durable
 enqueue API in this source. MIR does not simulate an ACK as a completed receipt.
 P0/D0 rollback and the deliberately unknown/mismatched variants end in visible
@@ -256,7 +261,8 @@ executed them.
 - V-6: independent endpoints and end-to-end durable receipts |
   real PostgreSQL + phone-home mutation queue + runner | CP-13/14/15 |
   local Complete does not hide mirrors; busy/ready and each named cut converge
-  to recipient facts or the explicitly specified safety hold.
+  to recipient facts or the explicitly specified safety hold. S8 runs the
+  cut subset in the [S8 cut table](2026-10-13-card-1032-s8-code-evidence.md#cuts) ([S8 status](#s8-implementation-status-amendment-2026-10-14)).
 
 
 #### D-12 — R-2 disclosed legacy-binding decision (2026-10-12)
@@ -428,9 +434,9 @@ has not executed any control.
 | G-281 | D-9; DB locks released before Git/network | PC-281 |
 | G-282 | D-10; request digest validated in receipt | PC-282 |
 | G-283 | D-10; receipt imported before Complete | PC-283 |
-| G-284 | D-10; durable outcome precedes invalidation | PC-284 |
+| G-284 | D-10; durable outcome precedes invalidation (S8: no target, [S8 status](#s8-implementation-status-amendment-2026-10-14)) | PC-284 |
 | G-285 | D-10; real busy mutation queue reaches recipient | PC-285 |
-| G-286 | D-3/D-10; enqueue/send failure retains recoverable debt | PC-286 |
+| G-286 | D-3/D-10; enqueue/send failure retains recoverable debt (S8 variants: [S8 status](#s8-implementation-status-amendment-2026-10-14)) | PC-286 |
 | G-287 | D-10; runner result survives failed server save | PC-287 |
 | G-288 | D-10; replacement runner store cannot complete old endpoint | PC-288 |
 | G-289 | D-10; retry cooldown survives restart | PC-289 |
@@ -566,7 +572,7 @@ has not executed any control.
 | G-509 | D-10; directory success required separately | PC-509 |
 | G-510 | D-10; registration success required separately | PC-510 |
 | G-511 | D-7/D-10; retries use original bytes | PC-511 |
-| G-512 | D-10; finite wait uses monotonic elapsed time | PC-512 |
+| G-512 | D-10; finite wait uses monotonic elapsed time (S8: no target, [S8 status](#s8-implementation-status-amendment-2026-10-14)) | PC-512 |
 | G-513 | D-11; Execute default remains false | PC-513 |
 | G-514 | D-8; final admin directory checked independently | PC-514 |
 | G-515 | D-8; final common directory checked independently | PC-515 |
@@ -759,15 +765,15 @@ remain pending under the parent artifact, not silently discharged here.
 | PC-281 | MIR | hold runner inspection/send and execute independent card writer -> break G-281: hold admission row lock across network await. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionIntentOrdering` | `cardWriteCompletedWhileIoHeld.ShouldBeTrue()` |
 | PC-282 | MIR | matching IDs with different request digest -> break G-282: omit receipt digest comparison. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_ReceiptCompleteBoundReceipt` | `digestMismatchComplete.ShouldBeFalse()` |
 | PC-283 | MIR | receipt-save fault before state update -> break G-283: mark Complete in separate earlier save. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_ReceiptCompleteBoundReceipt` | `completeWithoutImportedReceipt.ShouldBeFalse()` |
-| PC-284 | MIR | observer reloads DB when invalidation received -> break G-284: emit invalidation before saving component facts. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryCrashHandoffs` | `durableOutcomeVisibleAtEvent.ShouldBeTrue()` |
+| PC-284 | MIR | observer reloads DB when invalidation received -> break G-284: emit invalidation before saving component facts. S8: no target ([S8 status](#s8-implementation-status-amendment-2026-10-14)). | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryCrashHandoffs` | `durableOutcomeVisibleAtEvent.ShouldBeTrue()` |
 | PC-285 | MIR | hold runner mutation turn with owned earlier work, then release; ready variant -> break G-285: drop guarded work queued while mutation turn is busy. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryQueuesBusyAndReady` | `busyRecipientDirectoryGone.ShouldBeTrue()` |
-| PC-286 | MIR | pre-send request-limit/write failure and queued disconnect -> break G-286: clear intent/preparation debt when transport did not send. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryCrashHandoffs` | `recoveredRecipientReceiptExists.ShouldBeTrue()` |
+| PC-286 | MIR | pre-send request-limit/write failure and queued disconnect (S8 variants: [S8 status](#s8-implementation-status-amendment-2026-10-14)) -> break G-286: clear intent/preparation debt when transport did not send. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryCrashHandoffs` | `recoveredRecipientReceiptExists.ShouldBeTrue()` |
 | PC-287 | MIR | real completed receipt then server save fails and restarts -> break G-287: erase operation identity after save failure. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryCrashHandoffs` | `postRestartOperationId.ShouldBe(originalOperationId)` |
 | PC-288 | MIR | reconnect same runner name with different persistent store -> break G-288: retarget old intent to new store. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryCrashHandoffs` | `oldEndpointComplete.ShouldBeFalse()` |
-| PC-289 | MIR | due-1 tick then due tick after fresh coordinator -> break G-289: ignore persisted NextAttemptAt on retry. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryCrashHandoffs` | `callsBeforeDue.ShouldBe(0)` |
-| PC-290 | MIR | real Program fixture with Execute=true and populated eligible endpoints -> break G-290: register coordinator/executor into production services. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryInertServerComposition` | `productionCoordinatorResolved.ShouldBeFalse()` |
+| PC-289 | MIR | due-1 tick then due tick after fresh coordinator (S8 runs due minus one second, then due: [S8 status](#s8-implementation-status-amendment-2026-10-14)) -> break G-289: ignore persisted NextAttemptAt on retry. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryCrashHandoffs` | `callsBeforeDue.ShouldBe(0)` |
+| PC-290 | MIR | real Program fixture with Execute=true and populated eligible endpoints (S8 variants: [S8 status](#s8-implementation-status-amendment-2026-10-14)) -> break G-290: register coordinator/executor into production services. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryInertServerComposition` | `productionCoordinatorResolved.ShouldBeFalse()` |
 | PC-291 | MIR | invoke existing sweep on populated eligible fixture with Execute=true -> break G-291: add mirror cleanup call to WorktreeResidueSweepService. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryInertServerComposition` | `automaticMirrorCommands.ShouldBe(0)` |
-| PC-292 | MIR | enumerate default endpoint data sources and probe candidate route -> break G-292: map public completed-card mirror cleanup endpoint. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryInertServerComposition` | `publicGuardedCleanupRoutes.ShouldBeEmpty()` |
+| PC-292 | MIR | enumerate default endpoint data sources and probe candidate route (S8 variants: [S8 status](#s8-implementation-status-amendment-2026-10-14)) -> break G-292: map public completed-card mirror cleanup endpoint. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryInertServerComposition` | `publicGuardedCleanupRoutes.ShouldBeEmpty()` |
 | PC-293 | MIR | synthetic credential URL/process-env/secret-content canaries in failed inputs -> break G-293: log raw guarded payload in refusal detail. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_ReceiptCompleteBoundReceipt` | `diagnosticsContainCanary.ShouldBeFalse()` |
 | PC-300 | WIRE | required.CardId: remove only CardId from valid bound JSON -> break G-300: remove the CardId required-value validation. | `/*/*/CompletedCardWorkspaceContractTests/C1032_WireRequiredFieldsAndVersion` | `validation.IsValid.ShouldBeFalse("required.CardId")` |
 | PC-301 | WIRE | required.DoneRevisionId: remove only DoneRevisionId from valid bound JSON -> break G-301: remove the DoneRevisionId required-value validation. | `/*/*/CompletedCardWorkspaceContractTests/C1032_WireRequiredFieldsAndVersion` | `validation.IsValid.ShouldBeFalse("required.DoneRevisionId")` |
@@ -896,8 +902,8 @@ remain pending under the parent artifact, not silently discharged here.
 | PC-508 | MIR | same-looking desktop path exists but runner artifact does not -> break G-508: use desktop File.Exists for remote artifact proof. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionArtifactSurvival` | `guardedRemovalCommands.ShouldBe(0)` |
 | PC-509 | MIR | genuine receipt registration gone, directory remains -> break G-509: treat registration success as complete. | `/*/*/CardWorktreeMirrorCleanupTests/C1017_AckIsNotRemoval` | `mirrorComplete.ShouldBeFalse("directory-remains")` |
 | PC-510 | MIR | genuine receipt directory gone, registration remains -> break G-510: treat directory success as complete. | `/*/*/CardWorktreeMirrorCleanupTests/C1017_AckIsNotRemoval` | `mirrorComplete.ShouldBeFalse("registration-remains")` |
-| PC-511 | MIR | task/path/proof/policy changes after persisted intent -> break G-511: rebuild replay command from current task. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryCrashHandoffs` | `replayedRequestBytes.ShouldBe(firstRequestBytes)` |
-| PC-512 | MIR | move wall clock backward with unchanged monotonic deadline budget -> break G-512: compute timeout from wall-clock deadline. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryCrashHandoffs` | `elapsedBudgetExceeded.ShouldBeFalse()` |
+| PC-511 | MIR | task/path/proof/policy changes after persisted intent (S8 variants: [S8 status](#s8-implementation-status-amendment-2026-10-14)) -> break G-511: rebuild replay command from current task. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryCrashHandoffs` | `replayedRequestBytes.ShouldBe(firstRequestBytes)` |
+| PC-512 | MIR | move wall clock backward with unchanged monotonic deadline budget (S8: no target, [S8 status](#s8-implementation-status-amendment-2026-10-14)) -> break G-512: compute timeout from wall-clock deadline. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryCrashHandoffs` | `elapsedBudgetExceeded.ShouldBeFalse()` |
 | PC-513 | MIR | default options from production configuration -> break G-513: set default WorktreeResidueSettings.Execute=true. | `/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryInertServerComposition` | `defaultExecute.ShouldBeFalse()` |
 | PC-514 | RUN | replace admin directory after initial read preserving other facts -> break G-514: omit final admin equality. | `/*/*/CompletedCardWorkspaceRemovalTests/C1017_RunnerFreshFinalInspection` | `lateAdminRefused.ShouldBeTrue()` |
 | PC-515 | RUN | common identity changes after initial read -> break G-515: omit final common equality. | `/*/*/CompletedCardWorkspaceRemovalTests/C1017_RunnerFreshFinalInspection` | `lateCommonRefused.ShouldBeTrue()` |
@@ -1332,3 +1338,29 @@ These witnesses use Witness/LandingSignature names, so CP-13/14 stay seven;
 CP-F2 becomes 63 and CP-F3 145. Code executed the scratch mutants as Code
 evidence; PC-595..599 in the F4 selection are pending for formal SourceLanding
 Mutation.
+
+## S8 implementation status (amendment 2026-10-14)
+
+Source: Review 5d4a0d1c F3, repaired by Code task 567fbd60. The S8 rows above
+stay the planned design. Executed cuts: the
+[S8 cut table](2026-10-13-card-1032-s8-code-evidence.md#cuts). Persistence arms in
+S8: fresh DbContexts per readback and fresh coordinators; the runner process and
+its journal are retained; reconnect means a new phone-home connection, not a
+runner-process restart.
+
+| PC | S8 variant run | Pending or inapplicable |
+|---|---|---|
+| PC-284 | none | inapplicable to S8: no invalidation emitter on this path; `durableOutcomeVisibleAtEvent` has no assertion |
+| PC-285 | busy and ready for preparation (PhoneHomeRunnerClient), inspection and removal; busy release after a runner MutationLock waiter observation | preparation through RemoteWorkspacePreparer pending |
+| PC-286 | D1 request-limit before send; I0 inspection request timeout | preparation debt and queued disconnect (D2) pending |
+| PC-287 | D9 SaveChanges fault, fresh coordinator | process death pending |
+| PC-288 | D11-store | none listed |
+| PC-289 | fresh coordinator at due minus one second, then at due (fake clock; the helper truncates to PostgreSQL microseconds) | due-minus-one-tick variant not run |
+| PC-290 | real Program graph with Execute=true | Program with populated eligible endpoints pending (the populated sweep is a separate fixture) |
+| PC-291 | existing sweep on a populated eligible fixture with Execute=true | none listed |
+| PC-292 | default endpoint data sources enumerated | HTTP probe of a candidate route pending |
+| PC-511 | task path and report changed after intent; oracle `replayedRequestBytes.ShouldBe(firstRequestBytes)` in `C1032_RecoveryCrashHandoffs` | proof and policy change pending |
+| PC-512 | none | inapplicable to S8: no coordinator elapsed budget; the persisted UTC `NextAttemptAt` is a scheduling fact, not an elapsed deadline |
+
+These PCs stay pending for method-scoped SourceLanding Mutation; S8 Code scratch
+runs are not PC execution evidence.

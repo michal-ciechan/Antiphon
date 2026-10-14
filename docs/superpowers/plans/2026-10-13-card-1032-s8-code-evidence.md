@@ -1,9 +1,11 @@
 # CARD-1032 S8 Code evidence: durable outcome and retry composition
 
-Code task f2630af7-f74a-4e6a-b7ad-ec577763f123, branch feat/card-task-f2630af7,
-base e8bbdba9513b4fb72463a108d7695d978f1d4fa1 (origin/master at start). Commits
-added without rebase. Execution stays inert: `C1032_RecoveryInertServerComposition`.
-Restart: none.
+Code task f2630af7-f74a-4e6a-b7ad-ec577763f123 (landing owner), branch
+feat/card-task-f2630af7, base e8bbdba9513b4fb72463a108d7695d978f1d4fa1 (origin/master
+at start). Round 2 (Review 5d4a0d1c findings F1-F3): Code task 567fbd60, branch
+feat/card-task-567fbd60, continued from febe8bf8dc9062ce7ccb054769d460aacc75ed8f
+without rebase; test, fixture and docs files only. Execution stays inert:
+`C1032_RecoveryInertServerComposition`. Restart: none.
 
 ## Master census at start
 
@@ -15,86 +17,137 @@ Restart: none.
 | `TestHelpers/CompletedCardMirrorFixture.cs` | Present (S7). Extended here. |
 | Coordinator retry metadata (`Attempts`, `Retryable`, `NextAttemptAt` columns) | Columns present; the mirror coordinator did not write them. A transport exception escaped `TryAsync`. |
 
-## Production change
+## Production change (round 1; round 2 changes no production file)
 
 `server/Application/Services/CardWorktreeMirrorCleanupService.cs` only:
 
 - A `PhoneHomeTransportException` or `ServiceUnavailableException` from client
   resolution, inspection or removal is saved as retry debt: `Retryable`,
   `NextAttemptAt = now + 5 min`, `Reason` = the problem code. State, operation id
-  and request bytes are not changed. Other exceptions still propagate.
+  and request bytes are not changed. Other exceptions propagate.
 - A call before a persisted `NextAttemptAt` returns `retry_not_due` and makes
   no client call.
-- Each removal request increments `Attempts`. Complete and terminal refusal
-  clear `Retryable` and `NextAttemptAt`.
+- Each removal request increments `Attempts`. A receipt import and a terminal
+  refusal clear `Retryable` and `NextAttemptAt`.
 
-No Program, sweep, route, runner or Execute change.
-
-Removal paths in touched code, with their gates: the coordinator's only removal is
-the command it sends (`SendAsync` -> `RemoveCompletedCardWorkspaceAsync`). That
-send is gated by destructive policy, `NextAttemptAt`, the binding/live-store check,
-first admission (eligibility, inspection, proof, artifacts, intent transaction)
-or digest-verified replay of the persisted request. The fixture adds no deletion.
-`CompletedCardCleanupFixture.DisposeAsync` keeps its existing ownership-checked
+No Program, sweep, route, runner or Execute change. The coordinator's one removal
+is the command it sends (`SendAsync` -> `RemoveCompletedCardWorkspaceAsync`), gated
+by destructive policy, `NextAttemptAt`, the binding/live-store check, and first
+admission or digest-verified replay of the persisted request. The fixture adds no
+deletion; `CompletedCardCleanupFixture.DisposeAsync` keeps its ownership-checked
 root delete.
 
 ## Fixture additions
 
 `CompletedCardMirrorFixture`: per-call client resolution; `BeforeRemoval` and
-`AfterRemoval` cut seams; captured sent operation ids and request JSON;
-`DisconnectAsync` and `ReconnectAsync` (same boot identity);
-`ReplaceStoreAsync` (the `RemoteWorkspacePreparerTests` rig recipe: lease
-expiry on a fake host clock, retire/clear authorization, new boot and store);
-`HoldMutationTurnAsync` (an earlier actual unbound WorkspaceMirror blocks inside
+`AfterRemoval` cut seams; `AttemptedRequests` (request bytes at seam entry, before
+`BeforeRemoval`), `SentOperationIds` and `SentRequests` (commands that reached the
+inner client); `DisconnectAsync` and `ReconnectAsync` (same boot identity);
+`ReplaceStoreAsync` (the `RemoteWorkspacePreparerTests` rig recipe: lease expiry on
+a fake host clock, retire/clear authorization, new boot and store);
+`HoldMutationTurnAsync` (an earlier unbound WorkspaceMirror blocks inside
 `RunnerWorkspaceService.MirrorAsync` under the dispatcher `MutationLock`; the
 fixture installs its workspace instance into the dispatcher by reflection);
-`ReleaseWhenQueuedAsync` (releases once server in-flight is 2); and
-`MirrorPreparation.Ready/Busy` (the fixture's own mirror is prepared through
-`PhoneHomeRunnerClient.MirrorWorkspaceAsync` over the socket rather than
-`RemoteWorkspacePreparer`, whose capture stays CP-4/CP-21).
+`RunnerHandlerProbe` (a `DispatchProxy` over the dispatcher's runtime surface that
+records inspect/remove handler entries and the removal OperationId);
+`ReleaseWhenQueuedAsync` (see F2 below); `Order` (runner-side event sequence);
+`MirrorPreparation.Ready/Busy` (the fixture's mirror is prepared through
+`PhoneHomeRunnerClient.MirrorWorkspaceAsync` over the socket, not through
+`RemoteWorkspacePreparer`).
+
+## Round 2 repairs
+
+F1. D1 and D11-frozen: at the pre-send fault the seam reads the committed endpoint
+from a fresh context (`frozen`), and `AttemptedRequests[0]` holds the first
+attempt's bytes. After the retry-debt save the test reads OperationId,
+RequestDigest and ImmutableRequest again and expects `frozen`'s values, with
+`Attempts` 1 and `Retryable` true. After the due retry, `SentRequests` holds one
+entry (the retry) and `replayedRequestBytes.ShouldBe(firstRequestBytes)` compares
+it with `AttemptedRequests[0]`; the canonical digest of the retry bytes, the sent
+and runner-entered OperationIds are checked against `frozen`; the final row has
+`Attempts` 2, `Retryable` false, `NextAttemptAt` null. D11-frozen also checks that
+the changed report has a different digest from the frozen command's. D9 expects
+two sends with equal bytes and the original OperationId twice. LostAck expects two
+sends.
+
+F2. `ReleaseWhenQueuedAsync(holder, tested, operation)` loops (yield, no fixed
+delay, 30 s Stopwatch bound) until the dispatcher's `MutationLock` has one queued
+async waiter and the server connection's outstanding requests are exactly the
+holder's WorkspaceMirror plus `operation`; it then checks that no handler for
+`operation` has entered, records `queued:<operation>`, records
+`released:waiters=<n>` (waiters observed at release) and releases. The holder
+records `holder-resumed` after its own release. `C1032_RecoveryQueuesBusyAndReady`
+asserts a hand-written runner order per vector, for example removal-busy:
+`entered:WorkspaceMirror > entered:CompletedCardWorkspaceInspect > holder-entered >
+queued:CompletedCardWorkspaceRemove > released:waiters=1 > holder-resumed >
+entered:CompletedCardWorkspaceRemove`, and the runner-entered removal OperationId.
+Capabilities bypasses `MutationLock`, so it adds no waiter.
+
+Limits: the waiter count and outstanding set are read by reflection
+(`SemaphoreSlim.m_asyncHead`, `PhoneHomeLiveConnection._waiters`); the waiter does
+not carry a request id, so the tested request is identified by the outstanding set
+and the later handler entry.
 
 ## Witnesses
 
 | Method | Case -> mutation -> red | Pre-slice (e8bbdba9 production, tests at da5b99df) | Scratch red (reverted) |
 |---|---|---|---|
-| `C1017_MirrorCompletesIndependently` | local Complete + mirror Pending -> skip target with Complete local -> `mirrorDirectoryGone` | passed (S7 behaviour) | batch A: `mirrorDirectoryGone` false |
-| `C1017_LocalProgressSurvivesOffline` | runner disconnected, local eligible -> refuse local while a mirror is not Complete -> `localDirectoryGone` | failed: `ServiceUnavailableException` escaped the mirror call | batch A: `localDirectoryGone` false |
-| `C1017_LostAckReusesOperation` | real removal, reply lost at the client seam, reconnect, due retry -> new OperationId on retry -> `distinctRemovalOperationIds` | failed: `PhoneHomeTransportException` escaped | batch B: `distinctRemovalOperationIds` 2 |
-| `C1032_RecoveryQueuesBusyAndReady` | six vectors (preparation/inspection/removal x busy/ready) -> drop work arriving while the turn is busy -> `busyRecipientDirectoryGone` | passed (S6/S7 transport) | batch A: red at the first vector's busy preparation (409 conflict from the mutant), before the oracle |
-| `C1032_RecoveryCrashHandoffs` | cuts I0, D1, D9, D11-frozen, D11-store -> ignore `NextAttemptAt` -> `callsBeforeDue` | failed at I0: `PhoneHomeTransportException` escaped | batch B: `callsBeforeDue` nonzero at I0 |
-| `C1032_RecoveryInertServerComposition` | Program Execute=true and the residue sweep over an eligible mirror -> register the coordinator in Program -> `productionCoordinatorResolved` | passed (inert on master) | batch A: red at Program DI validation (coordinator dependencies unregistered), before the oracle |
+| `C1017_MirrorCompletesIndependently` | local `Complete` + mirror Pending -> skip target with local `Complete` -> `mirrorDirectoryGone` | passed (S7 behaviour) | round 1 batch A: `mirrorDirectoryGone` false |
+| `C1017_LocalProgressSurvivesOffline` | runner disconnected, local eligible -> refuse local while a mirror is pending -> `localDirectoryGone` | failed: `ServiceUnavailableException` escaped the mirror call | round 1 batch A: `localDirectoryGone` false |
+| `C1017_LostAckReusesOperation` | real removal, reply discarded at the client seam, reconnect, due retry -> new OperationId on retry -> `distinctRemovalOperationIds` | failed: `PhoneHomeTransportException` escaped | round 1 batch B: `distinctRemovalOperationIds` 2 |
+| `C1032_RecoveryQueuesBusyAndReady` | six vectors -> drop work arriving while the turn is busy -> `busyRecipientDirectoryGone` | passed (S6/S7 transport) | round 1 batch A: stopped at a 409 from the mutant, before the oracle |
+| `C1032_RecoveryQueuesBusyAndReady` (F2) | busy vectors -> fixture releases the holder at barrier entry -> runner order | n/a | round 2: red at the order assertion for preparation-busy, inspection-busy and removal-busy (`holder-resumed` before `queued:<operation>`) |
+| `C1032_RecoveryQueuesBusyAndReady` (F2) | busy vectors -> fixture uses the reviewed barrier (server in-flight >= 2) -> runner order | n/a | round 2: red for inspection-busy and removal-busy (`released:waiters=0`); preparation-busy passed (no capability request precedes a WorkspaceMirror) |
+| `C1032_RecoveryCrashHandoffs` | cuts in the table below -> ignore `NextAttemptAt` -> `callsBeforeDue` | failed at I0: `PhoneHomeTransportException` escaped | round 1 batch B: `callsBeforeDue` nonzero at I0 |
+| `C1032_RecoveryCrashHandoffs` (F1) | D1, D11-frozen -> replay with a new OperationId -> `replayedRequestBytes` | n/a | round 2: red at `replayedRequestBytes.ShouldBe(firstRequestBytes)` for D1 and for D11-frozen |
+| `C1032_RecoveryCrashHandoffs` (F1) | D11-frozen -> replay with the report digest recomputed from the current task -> `replayedRequestBytes` | n/a | round 2: red for D11-frozen (reportDigest differs); D1 passed (its task does not change) |
+| `C1032_RecoveryInertServerComposition` | Program Execute=true and the residue sweep -> register the coordinator in Program -> `productionCoordinatorResolved` | passed (inert on master) | round 1 batch A: stopped at Program DI validation, before the oracle |
 
-Scratch batches ran on the dirty tree at 379ba5b0 through
-build-slot. Diffs and logs: `/work/evidence/task-f2630af7/scratchA.diff` and
-`scratchB.diff`. The production files were restored with `git checkout`.
+Round 1 scratch: `/work/evidence/task-f2630af7/scratchA.diff`, `scratchB.diff`.
+Round 2 scratch (environment-selected mutants and vector lists in one dirty build
+per batch; `git checkout` restored the files): `/work/evidence/task-567fbd60/`
+`scratch.diff`, `scratchF2.diff` and one log per run.
 
-Crash cuts at the mirror level, with their expected outcomes:
+## Cuts
 
-| Cut | Fault | Expected and asserted |
+| Cut | Tested here | Test |
 |---|---|---|
-| I0 | inspection request timeout | Pending retry debt, no intent, bytes kept; early call sends nothing; due retry removes |
-| D1 | removal request-limit before send | IntentRecorded retry debt, same request; early call sends nothing; due retry removes with one operation and identical request bytes |
-| D9 | receipt import save fails after a real receipt | exception propagates; IntentRecorded, no receipt; fresh coordinator replays the same operation to Complete |
-| D11-frozen | task path and report changed after intent | replayed request bytes equal the first |
-| D11-store | runner reconnects with a replacement store | `runner_store_mismatch`; old endpoint not Complete; no removal request; mirror, admin and sentinel kept |
+| P0 | no | not covered |
+| P1 | no | not covered |
+| P2 | no | not covered |
+| P3 | no | not covered |
+| P4 | no | not covered |
+| P5 | no | not covered |
+| I0 (inspection request timeout at the client seam) | yes | `C1032_RecoveryCrashHandoffs` |
+| D0 | no | not covered |
+| D1 (request-limit before send) | yes | `C1032_RecoveryCrashHandoffs` |
+| D1 (loss after admission) | no | not covered |
+| D2 | no | not covered |
+| D3 | no | not covered |
+| D4 | no | not covered |
+| D5 | no | not covered |
+| D6 | no | not covered |
+| D7 | no | not covered |
+| D8 | no | not covered |
+| D9 (SaveChanges fault after a real receipt; fresh coordinator) | yes | `C1032_RecoveryCrashHandoffs` |
+| D9 (process death) | no | not covered |
+| D10 | no | not covered |
+| D11-frozen (task path and report changed after intent) | yes | `C1032_RecoveryCrashHandoffs` |
+| D11-store (replacement store on reconnect) | yes | `C1032_RecoveryCrashHandoffs` |
+| D11 (policy or proof change) | no | not covered |
+| D11 (wall-clock jump, elapsed budget) | no | not covered |
+| runner-process restart at any cut | no | not covered |
 
-Not reproduced at the mirror level in this slice (recorded, not passed): P0-P5
-(preparer cuts; CP-4/CP-21 own preparer capture), D0 (CP-13
-`C1032_AdmissionIntentOrdering`), D2 (queued request at runner disconnect),
-D3-D7 (runner component cuts; CP-10 `C1032_RemovalComponentRecovery`), D8
-(the parent `C1017_LostAckReusesOperation` above), D10 (no invalidation is
-emitted on this path, so PC-284 has no emitter to mutate; fresh-context
-readback is asserted in each removal), and the PC-512 monotonic elapsed budget
-(no coordinator budget exists; the transport timer is the phone-home
-connection's).
+PC status per variant: test design, section "S8 implementation status (amendment
+2026-10-14)".
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-15 | S8 | `tests/Antiphon.Tests -> bin-c1032-s8-server/` | mirror-recovery | `/*/*/CardWorktreeMirrorCleanupTests/(C1017_MirrorCompletesIndependently*)\|(C1017_LocalProgressSurvivesOffline*)\|(C1017_LostAckReusesOperation*)\|(C1032_Recovery*)` | V-1, V-2, V-5, V-6, R-2, R-3 | all 6 listed; 0 failed/skipped | 6 | 6 | true |
-| CP-16 | S8 | CP-15 | legacy-sync | `/*/*/RemoteWorktreeMirrorTests/*` | R-1 | all 8 listed; 0 failed/skipped | 8 | 2 | true |
-| CP-F2 | S8 | CP-15 | local-adjacent | `/*/*/(CardWorktreeCleanupRecoveryTests*)\|(CompletedCardWorktreeRemovalTests*)\|(CardWorktreeMirrorCleanupTests*)/*` | V-1..6, R-1..3 | all three complete classes, 69 results; 0 failed/skipped | 69 | 10 | true |
+| CP-15 | S8 | `tests/Antiphon.Tests -> bin-c1032-s8-server/` | mirror-recovery | `/*/*/CardWorktreeMirrorCleanupTests/(C1017_MirrorCompletesIndependently*)\|(C1017_LocalProgressSurvivesOffline*)\|(C1017_LostAckReusesOperation*)\|(C1032_Recovery*)` | V-1, V-2, V-5, V-6 (cut table subset), R-2, R-3 | 6 listed methods; 0 failed/skipped | 6 | 6 | true |
+| CP-16 | S8 | CP-15 | legacy-sync | `/*/*/RemoteWorktreeMirrorTests/*` | R-1 | 8 methods; 0 failed/skipped | 8 | 2 | true |
+| CP-F2 | S8 | CP-15 | local-adjacent | `/*/*/(CardWorktreeCleanupRecoveryTests*)\|(CompletedCardWorktreeRemovalTests*)\|(CardWorktreeMirrorCleanupTests*)/*` | V-1..6, R-1..3 | three full classes, 69 results; 0 failed/skipped | 69 | 10 | true |
 | CP-RG1 | S8 | CP-15 | classification-guard | `/*/*/TestClassificationGuardTests/Registry_matches_compiled_metadata*` | metadata | exact guard; 0 failed/skipped | 1 | 1 | true |
 
 No Unit lane: the brief excludes it. Native Windows and S4/S5 activation stay
@@ -102,20 +155,23 @@ deferred.
 
 ## Pending Mutation
 
-Every PC stays pending for method-scoped SourceLanding Mutation. S8 rows:
-PC-71, PC-72, PC-82 and PC-285..292, PC-511, plus PC-284 and PC-512, which have
-no target in this slice (above). New retry guards for Mutation to bind:
+PCs stay pending for method-scoped SourceLanding Mutation: PC-71, PC-72, PC-82,
+PC-285..292 and PC-511; PC-284 and PC-512 have no target in this slice. Retry
+guards for Mutation to bind:
 
 | Deliberate defect | Detecting method | Expected red |
 |---|---|---|
 | retry ignores persisted `NextAttemptAt` | `C1032_RecoveryCrashHandoffs` | `callsBeforeDue` (I0, D1, D11 vectors) |
 | transport loss propagates or clears intent instead of retry debt | `C1032_RecoveryCrashHandoffs`, `C1017_LostAckReusesOperation` | exception escapes; `RetryDebtAsync` fields |
-| retry sends a new OperationId | `C1017_LostAckReusesOperation` | `distinctRemovalOperationIds` |
+| retry sends a new OperationId | `C1017_LostAckReusesOperation`, `C1032_RecoveryCrashHandoffs` | `distinctRemovalOperationIds`; `replayedRequestBytes.ShouldBe(firstRequestBytes)` (D1, D11-frozen) |
+| replay rebuilds the request from the current task | `C1032_RecoveryCrashHandoffs` | `replayedRequestBytes.ShouldBe(firstRequestBytes)` (D11-frozen) |
+| busy holder released before the tested request queues | `C1032_RecoveryQueuesBusyAndReady` | runner order string (fixture mutant, not production) |
 
 ## Checkpoint provenance
 
-Run 20261013-224931-5b7c, bound, source 6c250d8a9970a0f0461c743e6d7bcb3d60652e0e,
-state=clean, buildSource=verified, verdict GREEN exit=0, one build, unlisted: none.
+Round 1: run 20261013-224931-5b7c, bound, source
+6c250d8a9970a0f0461c743e6d7bcb3d60652e0e, state=clean, buildSource=verified,
+verdict GREEN exit=0, one build, unlisted: none.
 
 ```
 CHECKPOINT CP-15 commit=6c250d8a9970a0f0461c743e6d7bcb3d60652e0e build=ok filter=/*/*/CardWorktreeMirrorCleanupTests/(C1017_MirrorCompletesIndependently*)|(C1017_LocalProgressSurvivesOffline*)|(C1017_LostAckReusesOperation*)|(C1032_Recovery*) executed=6 passed=6 failed=0 skipped=0 trx=/work/worktrees/task-f2630af7/.antiphon/checkpoints/20261013-224931-5b7c/rows/CP-15/run.trx slot=granted waited=0s dirty=0 source=6c250d8a9970a0f0461c743e6d7bcb3d60652e0e sourceState=clean buildSource=verified
@@ -124,12 +180,17 @@ CHECKPOINT CP-F2 commit=6c250d8a9970a0f0461c743e6d7bcb3d60652e0e build=reused fi
 CHECKPOINT CP-RG1 commit=6c250d8a9970a0f0461c743e6d7bcb3d60652e0e build=reused filter=/*/*/TestClassificationGuardTests/Registry_matches_compiled_metadata* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-f2630af7/.antiphon/checkpoints/20261013-224931-5b7c/rows/CP-RG1/run.trx slot=granted waited=0s dirty=0 source=6c250d8a9970a0f0461c743e6d7bcb3d60652e0e sourceState=clean buildSource=verified
 ```
 
-Drivers outside the table, all through build-slot on Linux: 8 builds of
-`tests/Antiphon.Tests` to `bin-c1032s8/` (pre-slice red build, compile-repair
-builds, fix builds, two scratch builds) and these runs: pre-slice red (3 failed,
-3 passed), first fix run (3 failed: microsecond precision, reconnect refused 409),
-two single-method reconnect diagnostics (one on a stale build), a 5/6 run
-(D11-store 409), two CrashHandoffs runs (409, then green), scratch batch A
-(one zero-test filter attempt without trailing wildcards, then 4/4 red) and
-scratch batch B (2/2 red). Outputs `bin-c1032s8/` were deleted. No proof
-selection on unchanged source exceeded three normal executions.
+Round 1 drivers outside the table, through build-slot on Linux: 8 builds of
+`tests/Antiphon.Tests` to `bin-c1032s8/` and the pre-slice red, fix, diagnostic and
+scratch runs listed in that round's commits; outputs `bin-c1032s8/` were deleted.
+
+Round 2: the checkpoint run tests the commit that adds this text; its unedited
+CHECKPOINT lines are in the task 567fbd60 Code report. Round 2 drivers outside the
+table, through build-slot on Linux, output `bin-c1032s8r/` (deleted at the end):
+three compile builds (CS1503, then an MSB3027 apphost collision without
+`UseAppHost=false`, then 0 errors), one development run of the two changed methods
+at 0c6b2d6d (2/2 passed), and the scratch batches above (F1 build with five runs,
+the batch ended by its 598 s shell timeout during a sixth; its fifth run, an earlier
+early-release variant that released after the barrier's checks, passed
+preparation-busy, which led to the `holder-resumed` observation in 6ee751ec; F2 build with three
+early-release runs; three reviewed-barrier runs).
