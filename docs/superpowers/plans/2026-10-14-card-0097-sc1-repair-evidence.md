@@ -141,3 +141,56 @@ Scope disclosure retained from Review 792ca57b: role/any/config labels and candi
 remain visible on pin-read failure as chain-origin information. The inherited Preferred-pin
 projection may include a policy fallback slot for an empty non-default row. D3's assigned
 repair changes rolePolicy-source verdicts; it does not rewrite that server projection.
+
+### D3 final ordinary results
+
+| Check | Actual tested source | Outcome |
+|---|---|---|
+| CP-16 repaired implementation | d14210655f6056a2c52647748b3cae603a3f9e98 | 85 passed / 0 failed / 0 skipped |
+| Typecheck + production build | b37c58a2592f46f6be148acee692722704a1caa6 | Exit 0; existing >500 kB chunk warning |
+| CP-23 full client, attempt 1 | b37c58a2592f46f6be148acee692722704a1caa6 | 121 files, 1335 passed / 0 failed / 0 skipped |
+| CP-16 after preserving the case-insensitive blocks assertion | f51123630fa556c87b65912c8ecb9040862e4d48 | 85 passed / 0 failed / 0 skipped |
+
+The final scoped JSON contains 38 passing model cases, 40 passing tab cases and 7 passing
+API cases. V-C1: 21 passed; V-C2: 4 passed; V-C3: 4 passed; V-C4: 21 passed;
+V-C5: 2 passed; V-C6: 1 passed; R-C1: 7 passed. The remaining 25 scoped cases passed too.
+The full-suite JSON also records the lint gate and App's built-entry test as passed.
+The later source change is one stronger test expression, restoring case-insensitive rejection
+of dispatch-blocks text while retaining the existing unknown-chain no-unset assertion.
+The scoped rerun verifies it; the production files match the full-suite/build source.
+No full-suite retry or isolated flake rerun was needed. No S-C1 manual acceptance is named;
+server Unit/integration lanes are excluded by this repair brief. PCs 24, 25 and 26 remain pending.
+
+Unedited checkpoint lines:
+
+```text
+CHECKPOINT CP-16 commit=d14210655f6056a2c52647748b3cae603a3f9e98 build=n/a filter=pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/routingSettingsModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=0 slot=granted waited=0s dirty=0 source=d14210655f6056a2c52647748b3cae603a3f9e98 sourceState=clean buildSource=notApplicable
+CHECKPOINT CP-23 commit=b37c58a2592f46f6be148acee692722704a1caa6 build=n/a filter=pwsh -NoProfile -File scripts/test-client.ps1 -JsonResultPath /work/worktrees/task-f6a6f9a0/.antiphon/f6a6-client-final.json executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=0 slot=granted waited=0s dirty=0 source=b37c58a2592f46f6be148acee692722704a1caa6 sourceState=clean buildSource=notApplicable
+CHECKPOINT CP-16 commit=f51123630fa556c87b65912c8ecb9040862e4d48 build=n/a filter=pwsh -NoProfile -File scripts/test-client.ps1 -JsonResultPath /work/worktrees/task-f6a6f9a0/.antiphon/f6a6-client-scoped.json src/features/settings/routingSettingsModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=0 slot=granted waited=0s dirty=0 source=f51123630fa556c87b65912c8ecb9040862e4d48 sourceState=clean buildSource=notApplicable
+```
+
+Source validators: the PowerShell validator and checkpoint-tool validator each accepted
+69cd, 4941 and ffce with their actual tested SHA (rows=1). Receipts are clean with dirty=0;
+command rows carry buildSource=notApplicable. Vitest JSON/console output supplies executed
+identities/counts because these command rows produce no TRX. The final JSON files are
+`.antiphon/f6a6-client-final.json` and `.antiphon/f6a6-client-scoped.json` (ignored).
+`-JsonResultPath` only adds the script's JSON reporter; it does not change the selection.
+The manifest has rowMinutes 40; runs used --row-timeout 40m --total-timeout 150m --serial
+without --keep-outputs. Each checkpoint reported slot=granted waited=0s.
+
+Two out-of-table builds were necessary: the isolated checkpoint-tool bootstrap at the
+starting SHA (slot=granted waited=0s; exit 0, two existing nullable warnings), and the
+brief-required npm production build at b37c58a25 (slot=granted waited=0s, held=28s).
+The tool bootstrap held its slot for 13s and wrote tools/Antiphon.Checkpoints/bin-f6a6-tool/.
+There were no unlisted test selections. The merged master was
+ba774271a61870261e86fb39a6fc0614fb826d53; merge commit b37c58a25 had no conflicts and
+changed server files only. The final report records publication/evidence-diff/merge-tree
+checks after this report-only commit.
+
+Tooling disclosures: separate wait invocations reported output-memory-authority-missing
+and retained their tool shadows; green row receipts remained exit=0 and passed validation.
+The retained shadows are removed by their literal task-owned paths during cleanup. One
+read-only wait used a mistyped expected SHA and refused receipt-source-SHA-mismatching;
+the corrected wait and both validators used the recorded SHA. No driver ran at that typo.
+The tests-first red run is ordinary defect evidence, not a deliberate Mutation control.
+Restart: none.
