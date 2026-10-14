@@ -334,7 +334,8 @@ public sealed class RunScheduler
         if (!string.IsNullOrWhiteSpace(build.Project) && !string.IsNullOrWhiteSpace(build.OutputPath))
             BuildStep.AppendSharedLayout(properties, request.WorkingDirectory, build.Project, build.OutputPath);
         var log = Path.Combine(request.RunDirectory, "builds", build.Id, "build.log");
-        // CARD-1241: non-output files are stamped before the slot is taken and verified after release.
+        // CARD-1241: files outside the write roots are stamped before the slot is taken, re-checked once
+        // it is granted (AdmitLedger) and verified after release (VerifyLedger).
         BuildConfinement.Ledger? ledger = null;
         if (_driver is IConfinedDriver confined)
         {
@@ -404,6 +405,16 @@ public sealed class RunScheduler
             started = DateTimeOffset.UtcNow;
             if (request.BeforeLaunch is not null)
                 await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
+            var admitted = ledger is not null ? BuildConfinement.AdmitLedger(ledger).Settlement : null;
+            if (admitted?.Kind is not null)
+            {
+                ProcessDriver.AppendLog(log, admitted.Detail);
+                progress.AdmissionExitCode = ExitCodes.Invalid;
+                progress.SlotReason = BuildConfinement.ReportedRefusal(admitted.Detail);
+                progress.State = "failed";
+                Publish(request);
+                return;
+            }
             launched = true;
             built = binding;
             result = await RowTimeout.RunWithDeadlineAsync(
