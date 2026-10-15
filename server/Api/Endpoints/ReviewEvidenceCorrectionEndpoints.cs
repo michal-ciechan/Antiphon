@@ -40,8 +40,13 @@ public static class ReviewEvidenceCorrectionEndpoints
                     board ??= await db.Cards.Where(c => c.Id == callerCard).Select(c => (Guid?)c.BoardId).SingleOrDefaultAsync(ct);
                 }
                 if (caller.SessionId is Guid session)
+                {
+                    var sessionCard = await db.AgentSessions.AsNoTracking().Where(s => s.Id == session)
+                        .Select(s => s.CardId).SingleOrDefaultAsync(ct);
+                    if (sessionCard is not null && sessionCard != review.CardId) throw Denied("card");
                     board ??= await db.Agents.Where(a => a.PersistentSessionId == session.ToString("D"))
                         .Select(a => a.BoardId).FirstOrDefaultAsync(ct);
+                }
                 if (board is Guid authorizedBoard && (review.CardId is not Guid targetCard
                     || !await db.Cards.AnyAsync(c => c.Id == targetCard && c.BoardId == authorizedBoard, ct))) throw Denied("board");
                 actor = caller.Task is { } task ? $"task:{task.Id:D}"

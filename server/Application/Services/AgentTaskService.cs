@@ -173,7 +173,8 @@ public sealed class AgentTaskService
         string? CapabilityName = null,
         Guid? ProjectId = null,
         Guid? BoardId = null,
-        IReadOnlyList<string>? ExtraAllowedRoots = null)
+        IReadOnlyList<string>? ExtraAllowedRoots = null,
+        bool IsOperator = false)
     {
         /// <summary>Only an orchestrator (or the UI) may create tasks. A worker gets 403.</summary>
         public bool MayDelegate => Task is null || Task.Kind == AgentTaskKind.Orchestrator;
@@ -244,7 +245,8 @@ public sealed class AgentTaskService
     /// </summary>
     /// <summary>Internal caller-action admission; HTTP authorization belongs to the B-2 component.</summary>
     public Task<AgentTaskCreatedDto> CreateAsync(CreateAgentTaskRequest request, Caller caller,
-        Guid handoffActionId, CancellationToken ct) => CreateCoreAsync(request, caller, handoffActionId, ct);
+        Guid handoffActionId, CancellationToken ct, bool acceptSpend = false) =>
+        CreateCoreAsync(request, caller, handoffActionId, ct, acceptSpend);
 
     public Task<AgentTaskCreatedDto> CreateAsync(
         CreateAgentTaskRequest request,
@@ -252,8 +254,14 @@ public sealed class AgentTaskService
         CancellationToken ct) => CreateCoreAsync(request, caller, null, ct);
 
     private async Task<AgentTaskCreatedDto> CreateCoreAsync(
-        CreateAgentTaskRequest request, Caller caller, Guid? handoffActionId, CancellationToken ct)
+        CreateAgentTaskRequest request, Caller caller, Guid? handoffActionId, CancellationToken ct,
+        bool acceptSpend = false)
     {
+        if (handoffActionId is not null && !acceptSpend)
+            throw new ConflictException("The caller must explicitly accept this child request's spend.", "handoff_spend_held");
+        if (handoffActionId is not null && (request.IgnoreConcurrencyLimit || request.IgnoreSubscriptionQuota
+            || request.IgnoreModelDisabled || request.IgnoreRoutingPin || request.AllowUnauthenticatedProvider))
+            throw new ConflictException("The caller pilot cannot override admission policy.", "handoff_override_held");
         // Hash the caller's original request, before defaults/routing rewrite it. Object properties
         // (including environment dictionaries) are sorted; argument insertion order is not identity.
         var handoffDigest = handoffActionId is not null ? HandoffRequestDigest(request) : null;
@@ -1571,7 +1579,7 @@ public sealed class AgentTaskService
                 await _db.Entry(handoff).ReloadAsync(ct);
                 if (handoff.CardId != task.CardId || handoff.ProjectId != task.ProjectId
                     || handoff.NextStage != task.Role
-                    || (handoff.RecipientSessionId is { } recipient && recipient != caller.SessionId))
+                    || (!caller.IsOperator && handoff.RecipientSessionId != caller.SessionId))
                     throw new ConflictException("Handoff scope does not match the requested child.", "handoff_scope_changed");
                 if (handoff.RequestDigest is not null && handoff.RequestDigest != handoffDigest)
                     throw new ConflictException("The handoff already binds a different request.", "handoff_request_changed");
@@ -1620,6 +1628,15 @@ public sealed class AgentTaskService
                     throw new ConflictException("The card has an open dependency.", "handoff_dependency_held");
                 if (await FindScopeOverlapsAsync(task, ct, refuseOnError: true) is { Count: > 0 })
                     throw new ConflictException("The handoff overlaps an active writer.", "handoff_overlap_held");
+                if (handoff.ConsumedAt is null || handoff.EligibleAt is null)
+                    throw new ConflictException("The caller has not recorded eligibility.", "handoff_not_eligible");
+                await RequireHandoffHostCapacityAsync(task, ct);
+                if (_openGate is null)
+                    await new DelegationOpenGate(_db, Options.Create(_settings))
+                        .EnsureCanCreateAsync(projectId, task.Role, false, ct);
+                if (_quotaGate is not null)
+                    await _quotaGate.EnforceAsync(task.AgentKind, SubscriptionUsageKey.For(subscriptionOwner, task.AgentKind),
+                        false, "handoff child", ct);
             }
             if (admissionCard is not null && IsImplementationAdmission(task.Role))
             {
@@ -1822,6 +1839,26 @@ public sealed class AgentTaskService
     private static bool IsImplementationAdmission(AgentTaskRole role) => role is
         AgentTaskRole.Code or AgentTaskRole.Custom or AgentTaskRole.Debug or AgentTaskRole.Docs
         or AgentTaskRole.Merge or AgentTaskRole.Commit or AgentTaskRole.Deploy;
+
+    private async Task RequireHandoffHostCapacityAsync(AgentTask task, CancellationToken ct)
+    {
+        // Share the persisted budget writer's lock and reserve queued pilot work as well as
+        // dispatched work. A receipt or caller override must not create work on a drained host.
+        await _db.Database.ExecuteSqlRawAsync(
+            "SELECT pg_advisory_xact_lock(hashtext('antiphon-host-budget'))", cancellationToken: ct);
+        var host = task.RunnerId ?? "local";
+        var configured = await _db.HostBudgets.AsNoTracking().Where(b => b.HostId == host)
+            .Select(b => b.MaxInFlight).SingleOrDefaultAsync(ct);
+        var declared = task.RunnerId is null ? null : _runners?.DeclaredCapacity(task.RunnerId);
+        var limit = task.RunnerId is null ? configured ?? _settings.MaxConcurrentTasks
+            : configured is null ? declared : declared is null ? configured : Math.Min(configured.Value, declared.Value);
+        if (limit is null) return;
+        var occupied = await _db.AgentTasks.AsNoTracking().CountAsync(t => t.RunnerId == task.RunnerId
+            && !t.CapacityWaitRetained && (t.Status == AgentTaskStatus.Queued
+                || t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working), ct);
+        if (occupied >= limit)
+            throw new ConflictException("The selected host has no capacity for this child.", "handoff_capacity_held");
+    }
 
     internal static string HandoffRequestDigest(CreateAgentTaskRequest request)
     {

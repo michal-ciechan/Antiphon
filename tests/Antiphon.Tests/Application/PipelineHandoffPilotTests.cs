@@ -209,11 +209,13 @@ public sealed class PipelineHandoffPilotTests
         public string Url => $"/api/agent-tasks/{World.Owner.Id:D}/handoff-actions";
         private string TokenPath { get; } = Path.Combine(Path.GetTempPath(), "c1281-operator-" + Guid.NewGuid().ToString("N"));
 
-        public static async Task<PilotHost> CreateAsync()
+        public static async Task<PilotHost> CreateAsync(Action<IServiceCollection>? configure = null,
+            Action<DelegationSettings>? delegation = null)
         {
             var host = new PilotHost();
             List<ServiceDescriptor> graph = [];
-            host.World = await C544World.CreateAsync(configure: services => graph = services.ToList());
+            host.World = await C544World.CreateAsync(configure: services =>
+            { configure?.Invoke(services); graph = services.ToList(); }, delegation: delegation);
             await using (var db = host.World.CreateContext())
             {
                 var owner = await db.AgentTasks.SingleAsync(t => t.Id == host.World.Owner.Id);
