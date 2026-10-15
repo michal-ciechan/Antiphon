@@ -3,6 +3,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Antiphon.Tests")]
+
 namespace Antiphon.Checkpoints;
 
 // A value type keeps old ownership journals (which lack this member) readable.

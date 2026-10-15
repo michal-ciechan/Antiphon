@@ -40,7 +40,7 @@ public sealed class HostCleanupCheckpointCompatibilityTests
         var f = new HostCleanupToolFixture(); var control = new CountingControl();
         f.Owner.Launched = new ProcessIdentityProbe(f.Context).Current() with { StartUtcTicks = 1 };
         RunOwnershipStore.Write(f.Run, f.Owner, f.Context);
-        (await Program.RunAsync(["stop", "--run", f.Run, "--repo-root", f.Files.Parent], f.Runtime(control))).ShouldBe(75);
+        (await Antiphon.Checkpoints.Program.RunAsync(["stop", "--run", f.Run, "--repo-root", f.Files.Parent], f.Runtime(control))).ShouldBe(75);
         control.Calls.ShouldBe(0); f.Io.DirectoryExists(f.Tool).ShouldBeTrue();
     }
 
@@ -52,7 +52,7 @@ public sealed class HostCleanupCheckpointCompatibilityTests
         RunOwnershipStore.Write(f.Run, f.Owner, f.Context);
         f.Receipt.State.Phase = "running";
         f.Io.Put(f.Receipt.StatePath, JsonSerializer.Serialize(f.Receipt.State, RunStateStore.Json));
-        (await Program.RunAsync(["stop", "--run", f.Run, "--repo-root", f.Files.Parent], f.Runtime(control))).ShouldBe(75);
+        (await Antiphon.Checkpoints.Program.RunAsync(["stop", "--run", f.Run, "--repo-root", f.Files.Parent], f.Runtime(control))).ShouldBe(75);
         control.Calls.ShouldBe(1);
         new RunStateStore(f.Context).TryRead(f.Receipt.StatePath)!.Phase.ShouldBe("running");
         f.Io.DirectoryExists(f.Tool).ShouldBeTrue();
