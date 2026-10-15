@@ -1,4 +1,4 @@
-using System.ComponentModel;
+using Win32Exception = System.ComponentModel.Win32Exception;
 using System.Reflection;
 using System.Text;
 using Antiphon.Checkpoints;
