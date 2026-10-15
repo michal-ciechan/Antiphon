@@ -11,10 +11,10 @@ it('bounds the receipt timeout while the SignalR connection never replies', asyn
   const sockets = new Set<import('node:net').Socket>()
   // A Windows child that exits with the socket open aborts it, so the peer reset is expected here.
   const socketErrors: NodeJS.ErrnoException[] = []
-  // The script arms its timeout before connection.start(), so the hub's first accepted socket comes
-  // after the timer and the limit can start there. Starting it at spawn charged Node start-up and
-  // the SignalR require to the script's timeout, which a loaded host stretched past the limit with
-  // the script still correct (CARD-1246).
+  // The script arms its 0.3 s timer after the SignalR require and before connection.start(), so the
+  // hub's first accepted socket comes after the timer and the test's 2300 ms limit can start there.
+  // Starting that limit at spawn charged Node start-up and the require to the test's 2300 ms limit,
+  // which a loaded host exceeded with the script still correct (CARD-1246).
   let connected!: () => void
   const firstConnection = new Promise<void>(resolve => { connected = resolve })
   const server = createServer(socket => {
