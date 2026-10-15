@@ -79,6 +79,7 @@ export function TemplateManager() {
   const templatesPending = pendingReadLabel(templatesQuery, 'Templates')
   const providersRead: ListRead = { pending: pendingReadLabel(providersQuery, 'Providers'), failed: providersQuery.isError }
   const groupsRead: ListRead = { pending: pendingReadLabel(groupsQuery, 'Template groups'), failed: groupsQuery.isError }
+  const groupUnknown = groupsRead.pending ?? (groupsRead.failed ? 'Could not load template groups.' : null)
   const createMutation = useCreateTemplate()
   const updateMutation = useUpdateTemplate()
   const deleteMutation = useDeleteTemplate()
@@ -181,6 +182,9 @@ export function TemplateManager() {
     value: g.id,
     label: g.name,
   }))
+  if (formGroupId && !groupOptions.some((group) => group.value === formGroupId)) {
+    groupOptions.push({ value: formGroupId, label: `${formGroupId} (not in group list)` })
+  }
 
   if (templatesPending) {
     return <PendingRead label={templatesPending} py="xl" />
@@ -336,8 +340,10 @@ export function TemplateManager() {
           />
           <Select
             label="Group"
-            placeholder="No group (ungrouped)"
-            data={groupOptions}
+            placeholder={groupUnknown ?? 'No group (ungrouped)'}
+            description={groupUnknown}
+            disabled={groupUnknown !== null}
+            data={groupUnknown ? [] : groupOptions}
             value={formGroupId}
             onChange={setFormGroupId}
             clearable

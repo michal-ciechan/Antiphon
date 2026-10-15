@@ -15,3 +15,22 @@ deliberate mutant. Witness names are vitest test names in
 
 Use method-scoped bound packs and red/restore/green receipts. Mutation owns final binding and
 missing-control discovery.
+
+## Repair 9277c201 additions (pending)
+
+Ordinary red selection at `b2ba84ec817811dfcaaa9008d77473cbdf10f6f7`: 31 failed, 116 passed.
+This is defect reproduction against unmodified production, not Mutation qualification.
+The following witnesses use the `C1274 repair` prefix; bind exact expanded Vitest names.
+
+| ID | Mutation | Witness | Variants pending |
+|---|---|---|---|
+| PC-7 | Restore ungrouped placeholder or enable Group while its read is unknown; remove stored-id fallback | settingsPendingReads: `C1274 repair 'Edit' Template Group read 'paused' retains its value`; Add/Edit state rows; `C1274 repair missing stored Group stays visible after successful list []` | Add/Edit x loading, paused, failed, stale failure; successful empty and partial group lists; retained payload |
+| PC-8 | Restore negative-root/zero-limit Delegation fallback | ProjectSetupModal: `C1274 repair delegation catalog paused shows unknown instead of zero limits` and its loading/failed/stale-failure rows | four catalog states, failure detail |
+| PC-9 | Expose catalog-dependent agent draft or remove Create disabled condition; bypass preset initialization | ProjectSetupModal: `C1274 repair setup catalog paused withholds the agent draft and recovers preset payload` and its loading/failed/stale-failure rows | draft visibility; Create gate; recovery request fields (Frontier, Phone, alwaysOn, remoteControlEnabled, bundles) |
+| PC-10 | Treat unknown profiles as unsupported/resolved or remove profile Create gate | ProjectSetupModal: `C1274 repair profiles paused show remote support unknown and block agent create` and its loading/failed/stale-failure rows | profile label; RC description/disabled; Create gate; recovered RC flag |
+| PC-11 | Expose tier-only model select while its list is unread or remove models Create gate | ProjectSetupModal: `C1274 repair selected models paused show unknown and block agent create` and its loading/failed/stale-failure rows | four model states; Create gate |
+| PC-12 | Submit a missing selected preset or suppress empty-preset diagnosis | ProjectSetupModal: `C1274 repair empty presets are explicit and require skipping the first agent` | empty label; disabled agent create; explicit skip payload |
+| PC-13 | Remove runner type unknown text/disabled state or keep setup guidance through failed read | settingsPendingReads: `C1274 repair Runner type read paused retains the profile kind` and its loading/failed/stale-failure rows | four runner-type states; guidance; recovery selection |
+
+PC-1 through PC-13 and their listed variants remain pending. Mutation also owns missing-control
+discovery, including direct submit-handler guard independence and runner-type list partial results.

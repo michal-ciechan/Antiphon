@@ -36,13 +36,21 @@ import { DelegateModal } from '../delegations/DelegateModal'
 import { normalizeDir } from '../home/projectGrouping'
 import { AgentTuiSelection } from '../agents/AgentTuiSelection'
 import { useRemoteControlSupport } from '../agents/useRemoteControlSupport'
-import { useAgentTuiProfiles } from '../../api/agentTui'
+import { useAgentTuiModels, useAgentTuiProfiles } from '../../api/agentTui'
 import { DirectoryAutocomplete } from '../agents/DirectoryAutocomplete'
 import { ModelLevelSelect } from '../agents/ModelLevelSelect'
 import { ReplyStyleControl } from '../agents/ReplyStyleControl'
 import { ProjectReadinessPanel } from './ProjectReadinessPanel'
+import { PendingRead } from './PendingRead'
+import { pendingReadLabel, type QueryReadState } from './routingSettingsModel'
 
 const DEFAULT_COLUMNS = ['Backlog', 'In Progress', 'Review', 'Done']
+
+function unknownReadLabel(query: QueryReadState & { error: unknown }, subject: string): string | null {
+  return pendingReadLabel(query, subject) ?? (query.error
+    ? `${subject} unknown (read failed: ${getApiErrorMessage(query.error, 'request failed')}).`
+    : null)
+}
 
 function pathLeaf(directory: string): string {
   const trimmed = directory.trim().replace(/[\\/]+$/, '')
@@ -67,7 +75,10 @@ function isUnderRoot(directory: string, root: string): boolean {
 
 export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const catalog = useSetupCatalog(opened)
-  const { data: tuiProfiles } = useAgentTuiProfiles()
+  const profilesQuery = useAgentTuiProfiles()
+  const tuiProfiles = profilesQuery.data
+  const catalogUnknown = unknownReadLabel(catalog, 'Setup catalog')
+  const profilesUnknown = unknownReadLabel(profilesQuery, 'AI Agent TUI profiles')
   const projects = useProjects(opened)
   const setup = useSetupProject()
   const [active, setActive] = useState(0)
@@ -86,6 +97,8 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
   const [agentName, setAgentName] = useState('')
   const [systemPromptAppend, setSystemPromptAppend] = useState('')
   const [tuiProfileId, setTuiProfileId] = useState<string | null>(null)
+  const modelsQuery = useAgentTuiModels(tuiProfileId)
+  const modelsUnknown = tuiProfileId ? unknownReadLabel(modelsQuery, 'Agent models') : null
   const [modelId, setModelId] = useState<string | null>(null)
   const [modelLevel, setModelLevel] = useState<AgentModelLevel>('High')
   const [replyStyle, setReplyStyle] = useState<AgentReplyStyle>('Normal')
@@ -109,7 +122,11 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
     repoUrl: gitRepositoryUrl.trim(),
     directory: directory.trim(),
   }
-  const selectedPreset = catalog.data?.presets.find((preset) => preset.key === presetKey) ?? null
+  const selectedPreset = catalogUnknown ? null : catalog.data?.presets.find((preset) => preset.key === presetKey) ?? null
+  // The server gives explicit false/empty fields precedence over preset defaults.
+  // Wait for the preset and capability reads before constructing those explicit fields.
+  const createBlocked = catalogUnknown !== null
+    || (!skipAgent && (profilesUnknown !== null || modelsUnknown !== null || !selectedPreset))
   const suggestedName = renderTemplate(selectedPreset?.namePattern ?? '{project} Agent', values)
   const suggestedPrompt = renderTemplate(selectedPreset?.systemPromptTemplate ?? null, values)
   const existingProject = useMemo(
@@ -144,6 +161,7 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
   }
 
   const submit = () => {
+    if (createBlocked) return
     if (skipAgent) setStartAgent(false)
     setError(null)
     setFieldErrors({})
@@ -199,6 +217,7 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
 
   const gitInfo = gitInfos.data?.[0]
   const delegation = catalog.data?.delegation
+  const delegationUnknown = unknownReadLabel(catalog, 'Delegation settings')
   // C1234 delegation step names the default tier only when it is a model level.
   const defaultTier = AGENT_MODEL_LEVEL_OPTIONS.find((option) => option.value === delegation?.defaultLevel)?.value ?? null
   const allowed = delegation && !delegation.allowedRootsIsEmpty
@@ -281,7 +300,9 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
                     if (event.currentTarget.checked) setStartAgent(false)
                   }}
                 />
-                {!skipAgent && (
+                {!skipAgent && (catalogUnknown ? (
+                  <PendingRead label={catalogUnknown} />
+                ) : (
                   <>
                     <Text size="sm" fw={500}>Preset</Text>
                     <Chip.Group value={presetKey} onChange={(key) => {
@@ -290,11 +311,17 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
                     }}>
                       <Group>{(catalog.data?.presets ?? []).map((preset) => <Chip key={preset.key} value={preset.key}>{preset.label}</Chip>)}</Group>
                     </Chip.Group>
+                    {catalog.data?.presets.length === 0 && <Text size="sm" c="dimmed">No agent presets available.</Text>}
+                    {!selectedPreset && <Text size="sm" c="dimmed">Choose an available preset or skip the first agent.</Text>}
                     {fieldErrors['agent.preset'] && <Text c="red" size="sm">{fieldErrors['agent.preset']}</Text>}
                     {selectedPreset?.defaultWorkflowTemplateId && (
                       <Text size="sm" c="dimmed">Default workflow is set from this preset and stays editable after create.</Text>
                     )}
-                    {catalog.data?.profiles.length === 0 ? (
+                    {profilesUnknown ? (
+                      <PendingRead label={profilesUnknown} />
+                    ) : modelsUnknown ? (
+                      <PendingRead label={modelsUnknown} />
+                    ) : catalog.data?.profiles.length === 0 ? (
                       <Alert color="yellow">
                         No enabled AI Agent TUI profiles. <Anchor component={Link} to="/settings?tab=agent-tui">Set one up in AI Agent TUI settings</Anchor>.
                       </Alert>
@@ -323,16 +350,18 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
                     <Switch
                       label="Remote control"
                       description={
-                        rc.supported
+                        profilesUnknown
+                          ? 'Remote control support unknown until AI Agent TUI profiles load.'
+                          : rc.supported
                           ? 'Every start arms /remote-control so the session can be driven from claude.ai.'
                           : (rc.reason ?? 'Not available for this runner.')
                       }
-                      checked={rc.supported && remoteControlEnabled}
-                      disabled={!rc.supported}
+                      checked={!profilesUnknown && rc.supported && remoteControlEnabled}
+                      disabled={profilesUnknown !== null || !rc.supported}
                       onChange={(event) => setRemoteControlEnabled(event.currentTarget.checked)}
                     />
                   </>
-                )}
+                ))}
                 <Switch
                   label="Start agent now"
                   checked={startAgent}
@@ -344,7 +373,9 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
 
             <Stepper.Step label="Delegation" description="Know the boundary">
               <Stack mt="md">
-                {delegation?.allowedRootsIsEmpty ? (
+                {delegationUnknown ? (
+                  <PendingRead label={delegationUnknown} />
+                ) : delegation?.allowedRootsIsEmpty ? (
                   <Text>Each caller’s own tree only — the safe default.</Text>
                 ) : (
                   <>
@@ -368,7 +399,10 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
                     </Group>
                   </>
                 ) : (
-                  <Text c="dimmed">Review the setup, then create the project.</Text>
+                  <>
+                    <Text c="dimmed">Review the setup, then create the project.</Text>
+                    {createBlocked && <Text size="sm" c="dimmed">{catalogUnknown ?? profilesUnknown ?? modelsUnknown ?? 'Choose an available preset or skip the first agent.'}</Text>}
+                  </>
                 )}
               </Stack>
             </Stepper.Completed>
@@ -376,7 +410,7 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
           {!result && (
             <Group justify="space-between">
               <Button variant="subtle" onClick={() => setActive((current) => Math.max(current - 1, 0))} disabled={active === 0}>Back</Button>
-              {active < 4 ? <Button onClick={next}>Next</Button> : <Button onClick={submit} loading={setup.isPending}>Create project</Button>}
+              {active < 4 ? <Button onClick={next}>Next</Button> : <Button onClick={submit} loading={setup.isPending} disabled={createBlocked}>Create project</Button>}
             </Group>
           )}
         </Stack>

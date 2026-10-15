@@ -27,6 +27,7 @@ import {
 } from '../../api/agentTui'
 import { getApiErrorMessage } from '../../api/client'
 import { envToText, textToEnv } from '../../shared/environmentText'
+import { pendingReadLabel } from './routingSettingsModel'
 
 function splitLines(value: string): string[] {
   return value
@@ -44,7 +45,12 @@ export function AgentTuiProfileModal({
   onClose: () => void
   profile: AgentTuiProfileDto | null
 }) {
-  const { data: runnerTypes } = useAgentTuiRunnerTypes()
+  const runnerTypesQuery = useAgentTuiRunnerTypes()
+  const runnerTypes = runnerTypesQuery.data
+  const runnerTypesUnknown = pendingReadLabel(runnerTypesQuery, 'Runner types')
+    ?? (runnerTypesQuery.error
+      ? `Runner types unknown (read failed: ${getApiErrorMessage(runnerTypesQuery.error, 'request failed')}).`
+      : null)
   const createMutation = useCreateAgentTuiProfile()
   const updateMutation = useUpdateAgentTuiProfile(profile?.id ?? '')
   const putSecret = usePutAgentTuiSecret(profile?.id ?? '')
@@ -119,9 +125,13 @@ export function AgentTuiProfileModal({
   }
 
   const selectedRunner = useMemo(
-    () => runnerTypes?.find((runner) => runner.kind === kind),
-    [runnerTypes, kind],
+    () => runnerTypesUnknown ? undefined : runnerTypes?.find((runner) => runner.kind === kind),
+    [runnerTypes, kind, runnerTypesUnknown],
   )
+  const runnerOptions = (runnerTypes ?? []).map((runner) => ({ value: runner.kind, label: runner.displayName }))
+  if (!runnerOptions.some((runner) => runner.value === kind)) {
+    runnerOptions.push({ value: kind, label: `${kind} (not in runner type list)` })
+  }
 
   const commandPreview = useMemo(() => {
     const args = splitLines(argumentsText)
@@ -193,10 +203,10 @@ export function AgentTuiProfileModal({
         />
         <Select
           label="Runner type"
-          data={(runnerTypes ?? []).map((runner) => ({
-            value: runner.kind,
-            label: runner.displayName,
-          }))}
+          placeholder={runnerTypesUnknown ?? undefined}
+          description={runnerTypesUnknown}
+          disabled={runnerTypesUnknown !== null}
+          data={runnerTypesUnknown ? [] : runnerOptions}
           value={kind}
           onChange={(value) => value && setKind(value as AgentKind)}
         />
