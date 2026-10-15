@@ -11,6 +11,8 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -99,6 +101,21 @@ public class SessionRuntimeActionTests
         if (variant is "batch-fail" or "fallback-fail" or "cancel-after-commit") fault.Hits.ShouldBeGreaterThan(0);
         if (variant == "cancel-after-commit")
             (await f.Store.ReadAsync(f.SessionId, default)).Count.ShouldBe(1);
+        if (variant == "cancel-before-commit")
+        {
+            using var saveCancel = new CancellationTokenSource();
+            var saveFault = new CancelAtInsert(saveCancel);
+            await using var saving = await SessionStateTestFixture.CreateAsync(saveFault);
+            try { await saving.Runtime.PersistTranscriptAsync(saving.SessionId,
+                [saving.Event(1, "ToolResult", text: "must roll back", uuid: "cancel-save")], saveCancel.Token); }
+            catch (OperationCanceledException) { }
+            saveFault.Hits.ShouldBeGreaterThan(0, "the cancellation must reach actual database I/O");
+            saveFault.Cancellable.ShouldBeTrue("the storage command must observe its caller's cancellation");
+            (await saving.RowsAsync()).ShouldBeEmpty();
+            await using var verifySave = saving.Db();
+            (await verifySave.SessionRuntimeActions.CountAsync()).ShouldBe(0);
+            Console.WriteLine("V-3 actual-save cancellation: reached command; zero rows/actions");
+        }
         if (variant == "replay-after-ack")
         {
             await using (var db = f.Db())
@@ -111,6 +128,21 @@ public class SessionRuntimeActionTests
             await using var verify = f.Db();
             (await verify.SessionRuntimeActions.CountAsync()).ShouldBe(0);
             (await verify.TranscriptEntries.CountAsync()).ShouldBe(1);
+            // Reapply the actual DDL to this owned clone; the cached template's index
+            // cannot establish that the shipped migration enforces uniqueness.
+            var previous = verify.Database.GetMigrations().TakeWhile(m => m != "20261015181237_SessionRuntimeActions").Last();
+            await verify.GetService<IMigrator>().MigrateAsync(previous);
+            await verify.GetService<IMigrator>().MigrateAsync();
+            var original = new SessionRuntimeAction { Id = Guid.NewGuid(), AgentSessionId = f.SessionId,
+                Sequence = 1, TriggerKind = "status", Phase = 3, CreatedAt = DateTime.UtcNow, DueAt = DateTime.UtcNow };
+            verify.SessionRuntimeActions.Add(original); await verify.SaveChangesAsync();
+            await using var duplicate = f.Db();
+            duplicate.SessionRuntimeActions.Add(new SessionRuntimeAction { Id = Guid.NewGuid(), AgentSessionId = f.SessionId,
+                Sequence = 1, TriggerKind = "status", Phase = 0, CreatedAt = DateTime.UtcNow, DueAt = DateTime.UtcNow });
+            var conflict = await Should.ThrowAsync<DbUpdateException>(() => duplicate.SaveChangesAsync());
+            conflict.InnerException.ShouldBeOfType<PostgresException>().SqlState.ShouldBe(PostgresErrorCodes.UniqueViolation);
+            (await verify.SessionRuntimeActions.AsNoTracking().SingleAsync()).Phase.ShouldBe(3);
+            Console.WriteLine("V-3 migrated unique key: duplicate rejected; existing phase remains 3");
         }
         if (variant == "commit-wake-gap")
         {
@@ -131,7 +163,8 @@ public class SessionRuntimeActionTests
     public async Task C1259_stream_pull_and_replay_preserve_order(string variant)
     {
         var runner = new ScriptedSessionRunnerClient();
-        await using var f = await SessionStateTestFixture.CreateAsync(configure: s => s.AddSingleton<ISessionRunnerClient>(runner));
+        var writes = new WriterProbe();
+        await using var f = await SessionStateTestFixture.CreateAsync(writes, configure: s => s.AddSingleton<ISessionRunnerClient>(runner));
         var entries = new[] { f.Event(1, "UserPrompt", text: "prompt", uuid: "shared"),
             f.Event(1, "AssistantText", text: "answer", uuid: "shared"),
             f.Event(1, "TurnEnd", uuid: "shared") with { StopReason = "end_turn" } };
@@ -180,15 +213,28 @@ public class SessionRuntimeActionTests
         else
         {
             runner.SetTranscript(new(f.SessionId, entries, 1));
-            await Task.WhenAll(f.Runtime.PersistTranscriptAsync(f.SessionId, entries), f.Runtime.SyncTranscriptAsync(f.SessionId, default),
-                f.Runtime.SyncTranscriptAsync(f.SessionId, default));
+            writes.Armed = true;
+            var ingest = f.Runtime.PersistTranscriptAsync(f.SessionId, entries);
+            await writes.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var pull = f.Runtime.SyncTranscriptAsync(f.SessionId, default);
+            var secondPull = f.Runtime.SyncTranscriptAsync(f.SessionId, default);
+            try
+            {
+                await f.Runtime.ObserveTranscriptAsync(f.Event(1, "ToolResult", text: "other session advances") with { SessionId = f.OtherId }, default);
+                await using var before = f.Db();
+                (await before.TranscriptEntries.CountAsync(t => t.AgentSessionId == f.OtherId)).ShouldBe(1);
+                ingest.IsCompleted.ShouldBeFalse();
+                writes.Peak.ShouldBe(1, "overlapping stream/snapshot writes share the actual mutation lease");
+            }
+            finally { writes.Release.TrySetResult(); await Task.WhenAll(ingest, pull, secondPull); }
         }
         await f.Runtime.PersistTranscriptAsync(f.SessionId, entries);
         var saved = await f.RowsAsync();
         saved.Select(t => (t.Uuid, t.Kind)).ShouldBe(entries.Select(t => (t.Uuid, t.Kind)));
         saved.Select(t => t.Sequence).ShouldBe(Enumerable.Range(1, entries.Length).Select(i => (long)i));
         await using var verify = f.Db();
-        (await verify.SessionRuntimeActions.CountAsync(a => a.TriggerKind == "transcript")).ShouldBe(entries.Length);
+        (await verify.SessionRuntimeActions.CountAsync(a => a.AgentSessionId == f.SessionId && a.TriggerKind == "transcript")).ShouldBe(entries.Length);
+        writes.Peak.ShouldBe(1);
     }
 
     [Test]
@@ -199,6 +245,7 @@ public class SessionRuntimeActionTests
     [Arguments("poison-page")]
     public async Task C1259_saturation_keeps_ingestion_live_and_recovers_overflow(string variant)
     {
+        if (variant == "poison-page") await VerifyHostedExecutionPageYieldAsync();
         var receiver = new Receiver();
         var clock = DatabaseClock();
         await using var f = await SessionStateTestFixture.CreateAsync(clock: clock, configure: s => s.AddSingleton<IEventBus>(receiver));
@@ -395,6 +442,7 @@ public class SessionRuntimeActionTests
         await f.Runtime.ObserveTranscriptAsync(f.Event(1, "ToolResult", text: "retained turn"), default);
         if (variant == "phase-failure")
         {
+            await VerifyEveryPhaseAcknowledgementAsync();
             receiver.BeforeReceive = null;
             await Actions(f).DrainPageAsync(f.SessionId, default);
             await using (var db = f.Db())
@@ -408,7 +456,7 @@ public class SessionRuntimeActionTests
         }
         if (variant == "retry-clock")
         {
-            foreach (var seconds in new[] { 1, 2, 4, 8, 16, 30 })
+            foreach (var seconds in new[] { 1, 2, 4, 8, 16, 30, 30 })
             {
                 var at = clock.GetUtcNow().UtcDateTime;
                 await Actions(f).DrainPageAsync(f.SessionId, default);
@@ -420,6 +468,9 @@ public class SessionRuntimeActionTests
                 clock.Advance(TimeSpan.FromSeconds(seconds));
             }
             receiver.BeforeReceive = null;
+            clock.Advance(TimeSpan.FromDays(100));
+            await using (var overdue = f.Db())
+                (await overdue.SessionRuntimeActions.CountAsync()).ShouldBe(1, "old unfinished work cannot expire");
             await Actions(f).DrainPageAsync(f.SessionId, default);
             receiver.Payloads.Select(Text).ShouldBe(["retained turn"]);
             await using var verify = f.Db(); (await verify.SessionRuntimeActions.CountAsync()).ShouldBe(0);
@@ -485,6 +536,73 @@ public class SessionRuntimeActionTests
         return new(new DateTimeOffset(now.Ticks - now.Ticks % 10, TimeSpan.Zero));
     }
 
+    private static async Task VerifyHostedExecutionPageYieldAsync()
+    {
+        var receiver = new Receiver();
+        await using var f = await SessionStateTestFixture.CreateAsync(configure: s => s.AddSingleton<IEventBus>(receiver));
+        var blockers = Enumerable.Range(0, 3).Select(_ => Guid.NewGuid()).ToArray();
+        await using (var db = f.Db())
+        {
+            foreach (var id in blockers) db.AgentSessions.Add(new AgentSession { Id = id, DefinitionName = "page-owner",
+                Cwd = Path.GetTempPath(), Status = SessionStatus.Running, CreatedAt = DateTime.UtcNow, StartedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+        }
+        var held = new ConcurrentDictionary<Guid, byte>();
+        var firstPage = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePage = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondPage = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSecond = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseOwners = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bSeen = 0;
+        var bBeforeSecond = false;
+        receiver.BeforeReceive = async (payload, ct) =>
+        {
+            var id = (Guid)payload.GetType().GetProperty("sessionId")!.GetValue(payload)!;
+            if (blockers.Contains(id)) { held[id] = 0; await releaseOwners.Task.WaitAsync(ct); }
+            if (Text(payload) == "page-128") { firstPage.TrySetResult(); await releasePage.Task.WaitAsync(ct); }
+            if (Text(payload) == "B-page")
+                Interlocked.Exchange(ref bSeen, 1);
+            if (Text(payload) == "page-129")
+            {
+                bBeforeSecond = Volatile.Read(ref bSeen) == 1;
+                secondPage.TrySetResult(); await releaseSecond.Task.WaitAsync(ct);
+            }
+        };
+        foreach (var id in blockers)
+            await f.Runtime.ObserveTranscriptAsync(f.Event(1, "ToolResult", text: "held-owner") with { SessionId = id }, default);
+        await f.Runtime.PersistTranscriptAsync(f.SessionId, Enumerable.Range(1, 130)
+            .Select(i => f.Event(i, "ToolResult", text: "page-" + i)).ToArray());
+        await f.Runtime.ObserveTranscriptAsync(f.Event(1, "ToolResult", text: "B-page") with { SessionId = f.OtherId }, default);
+        using var worker = new SessionRuntimeActionHostedService(Actions(f));
+        await worker.StartAsync(default);
+        try
+        {
+            await firstPage.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            held.Count.ShouldBe(3);
+            Volatile.Read(ref bSeen).ShouldBe(0, "the fourth owner still holds its first page");
+            await using (var db = f.Db())
+            {
+                (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == f.SessionId)).ShouldBe(130);
+                (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == f.OtherId)).ShouldBe(1);
+            }
+            releasePage.TrySetResult();
+            await secondPage.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            bBeforeSecond.ShouldBeTrue("the worker must release A and service queued B before A's second page");
+            receiver.Payloads.Select(Text).Where(t => t!.StartsWith("page-")).ShouldBe(
+                Enumerable.Range(1, 128).Select(i => "page-" + i));
+            releaseSecond.TrySetResult(); releaseOwners.TrySetResult();
+            await UntilAsync(async () => { await using var db = f.Db(); return !await db.SessionRuntimeActions.AnyAsync(); });
+            receiver.Payloads.Select(Text).Where(t => t!.StartsWith("page-")).ShouldBe(
+                Enumerable.Range(1, 130).Select(i => "page-" + i));
+            Console.WriteLine("V-8 hosted execution pages: 128 then B then 2, exact ordered UI receipts");
+        }
+        finally
+        {
+            releasePage.TrySetResult(); releaseSecond.TrySetResult(); releaseOwners.TrySetResult();
+            await worker.StopAsync(default);
+        }
+    }
+
     private sealed class DeleteGate : DbCommandInterceptor
     {
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -496,6 +614,81 @@ public class SessionRuntimeActionTests
             { Entered.TrySetResult(); await Release.Task.WaitAsync(ct); }
             return result;
         }
+    }
+
+    private static async Task VerifyEveryPhaseAcknowledgementAsync()
+    {
+        for (var phase = 1; phase <= SessionRuntimeActionCoordinator.QueuePhase; phase++)
+        {
+            var clock = DatabaseClock();
+            var fault = new AckFault { Armed = true, Phase = phase };
+            var receiver = new Receiver();
+            await using var f = await SessionStateTestFixture.CreateAsync(fault, clock: clock,
+                configure: s => s.AddSingleton<IEventBus>(receiver));
+            await f.Runtime.ObserveTranscriptAsync(f.Event(1, "ToolResult", text: "ack " + phase), default);
+            await Actions(f).DrainPageAsync(f.SessionId, default);
+            fault.Hits.ShouldBe(1, "real acknowledgement save " + phase);
+            await using (var before = f.Db())
+            {
+                var retained = await before.SessionRuntimeActions.SingleAsync();
+                retained.Phase.ShouldBe(phase - 1);
+                retained.Attempts.ShouldBe(1);
+            }
+            receiver.Payloads.Count.ShouldBe(1);
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await Actions(f).DrainPageAsync(f.SessionId, default);
+            receiver.Payloads.Count.ShouldBe(phase == 1 ? 2 : 1,
+                "only an unacknowledged external acceptance may repeat");
+            await using var verify = f.Db();
+            (await verify.SessionRuntimeActions.CountAsync()).ShouldBe(0);
+            Console.WriteLine("V-10 acknowledgement phase " + phase + ": retained, retried, completed");
+        }
+    }
+
+    private sealed class CancelAtInsert(CancellationTokenSource cancellation) : DbCommandInterceptor
+    {
+        public int Hits;
+        public bool Cancellable;
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData data, InterceptionResult<DbDataReader> result, CancellationToken ct = default)
+        {
+            if (command.CommandText.Contains("INSERT INTO \"TranscriptEntries\"", StringComparison.Ordinal))
+            { Hits++; Cancellable = ct.CanBeCanceled; cancellation.Cancel(); }
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private sealed class WriterProbe : SaveChangesInterceptor
+    {
+        public bool Armed;
+        private readonly ConcurrentDictionary<Guid, int> _active = new();
+        private readonly ConcurrentDictionary<DbContext, Guid> _contexts = new();
+        public int Peak;
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
+            InterceptionResult<int> result, CancellationToken ct = default)
+        {
+            var row = data.Context!.ChangeTracker.Entries<TranscriptEntry>().FirstOrDefault(e => e.State == EntityState.Added);
+            if (row is null) return result;
+            _contexts[data.Context] = row.Entity.AgentSessionId;
+            var active = _active.AddOrUpdate(row.Entity.AgentSessionId, 1, (_, count) => count + 1);
+            int old;
+            do { old = Peak; if (active <= old) break; } while (Interlocked.CompareExchange(ref Peak, active, old) != old);
+            if (Armed) { Armed = false; Entered.TrySetResult(); await Release.Task.WaitAsync(ct); }
+            return result;
+        }
+        private void End(DbContext? context)
+        {
+            if (context is not null && _contexts.TryRemove(context, out var id))
+                _active.AddOrUpdate(id, 0, (_, count) => count - 1);
+        }
+        public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result, CancellationToken ct = default)
+        { End(data.Context); return ValueTask.FromResult(result); }
+        public override Task SaveChangesFailedAsync(DbContextErrorEventData data, CancellationToken ct = default)
+        { End(data.Context); return Task.CompletedTask; }
+        public override Task SaveChangesCanceledAsync(DbContextEventData data, CancellationToken ct = default)
+        { End(data.Context); return Task.CompletedTask; }
     }
 
     private sealed class AckFault : SaveChangesInterceptor
