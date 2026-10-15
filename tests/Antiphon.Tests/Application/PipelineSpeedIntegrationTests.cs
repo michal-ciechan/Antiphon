@@ -106,7 +106,7 @@ public sealed partial class PipelineSpeedIntegrationTests
                 create.IsCompleted.ShouldBeFalse("admission-waits-for-card-lock");
                 await ProbeCardLockAsync(w);
                 var card = await close.Cards.SingleAsync(c => c.Id == w.Card.Id);
-                if (terminal) card.Status = CardStatus.Done;
+                card.Status = terminal ? CardStatus.Done : CardStatus.NeedsDecision;
                 card.ConcurrencyToken = Guid.NewGuid();
                 await close.SaveChangesAsync();
             }
