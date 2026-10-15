@@ -815,7 +815,7 @@ public sealed class AgentSessionRuntime
                         ? Result(TranscriptRecoveryOutcome.Unknown, "persist_failure_retained")
                         : Result(TranscriptRecoveryOutcome.CheckedWorking, "runner_working");
 
-                var persisted = await PersistTranscriptCoreAsync(sessionId, snapshot.Entries, before);
+                var persisted = await PersistTranscriptCoreAsync(sessionId, snapshot.Entries, before, ct);
                 if (persisted.RecoveryFenceRejection is { } rejection)
                 {
                     _logger.LogWarning("Checked transcript recovery fence rejected session {SessionId}, generation {Generation}, reason {Reason}",
@@ -1550,6 +1550,7 @@ public sealed class AgentSessionRuntime
             StopReason = ColumnText.WithoutNul(e.StopReason),
             ApiCallId = ColumnText.WithoutNul(e.ApiCallId),
             ApiErrorClass = ColumnText.WithoutNul(e.ApiErrorClass),
+            ApiErrorTimeZoneId = ColumnText.WithoutNul(e.ApiErrorTimeZoneId),
             Model = ColumnText.WithoutNul(e.Model),
         };
     }
@@ -1557,7 +1558,7 @@ public sealed class AgentSessionRuntime
     private static bool ContainsNul(SessionRunnerTranscriptEvent e) =>
         HasNul(e.Kind) || HasNul(e.Uuid) || HasNul(e.ParentUuid) || HasNul(e.Role) || HasNul(e.Text)
         || HasNul(e.ToolName) || HasNul(e.ToolInput) || HasNul(e.ToolUseId) || HasNul(e.StopReason)
-        || HasNul(e.ApiCallId) || HasNul(e.ApiErrorClass) || HasNul(e.Model);
+        || HasNul(e.ApiCallId) || HasNul(e.ApiErrorClass) || HasNul(e.ApiErrorTimeZoneId) || HasNul(e.Model);
 
     private static bool HasNul(string? value) => value is not null && value.IndexOf('\0') >= 0;
 

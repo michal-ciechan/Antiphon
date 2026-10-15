@@ -58,6 +58,7 @@ internal sealed class SessionStateTestFixture : IAsyncDisposable
         });
         services.AddSingleton<SessionStateStore>();
         services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionRuntimeActionCoordinator>();
         services.AddSingleton<SessionMessageQueueService>();
         return services.BuildServiceProvider();
     }

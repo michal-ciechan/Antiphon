@@ -185,6 +185,7 @@ public sealed class ChannelReplyDispatcher
     private static IQueryable<SessionQueuedMessage> OpenCorrelations(AppDbContext db) =>
         db.SessionQueuedMessages
             .Where(m => m.Origin == QueuedMessageOrigin.Channel
+                && m.ReviewThreadId == null
                 && m.Status == QueuedMessageStatus.Sent
                 && m.ConversationKey != null
                 && m.ChannelReplySettledAt == null
