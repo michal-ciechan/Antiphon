@@ -1129,6 +1129,73 @@ public sealed class CardService : IScheduledCardActions
         return new ReopenCardResult(await GetByIdAsync(card.Id, ct), push);
     }
 
+    /// <summary>Commit a publication-bound terminal move and its receipt under the original proposal fence.</summary>
+    public async Task<CompletePublishedCardResult> CompletePublishedAsync(
+        PublishedCardCompletionProposal proposal, PublishedCardCompletion completion, string actor, CancellationToken ct)
+    {
+        CardCompletionAcceptanceService.RequireActor(actor);
+        if (!ReferenceEquals(_db, completion.Database)) throw new InvalidOperationException("Completion must use the card transaction's context.");
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        await CardCompletionAcceptanceService.LockCardAsync(_db, proposal.CardId, ct);
+        await completion.Boundary.ReachedAsync("completion-card-locked", proposal.CardId, proposal.AcceptanceId, ct);
+        var card = await LoadCardForUpdateAsync(proposal.CardId, ct);
+        await _db.Entry(card).ReloadAsync(ct);
+        completion.RequirePolicy(proposal);
+        var prior = await _db.CardCompletionReceipts.AsNoTracking()
+            .SingleOrDefaultAsync(r => r.CardId == card.Id && r.AcceptanceId == proposal.AcceptanceId, ct);
+        if (prior is not null)
+        {
+            var latest = await CardCompletionAcceptanceService.LatestAsync(_db, card.Id, ct);
+            if (prior.OriginalCardToken != proposal.CardToken || prior.AcceptanceRevision != proposal.AcceptanceRevision
+                || latest?.Id != proposal.AcceptanceId || card.Status != CardStatus.Done || card.ConcurrencyToken != prior.ResultCardToken)
+                throw CardCompletionAcceptanceService.Refuse("replayed_card_changed");
+            await transaction.CommitAsync(ct);
+            return new("already-completed", prior);
+        }
+        var acceptance = await completion.ValidateAsync(card, proposal, ct);
+        var mode = await completion.ModeAsync(ct);
+        if (mode != PublishedCloseMode.Enabled)
+        {
+            await transaction.CommitAsync(ct);
+            return new(mode == PublishedCloseMode.Shadow ? "shadow" : "disabled", null);
+        }
+        var done = card.Board.Columns.OrderBy(c => c.ColumnOrder).FirstOrDefault(c => c.CardStatus == CardStatus.Done && c.IsTerminal)
+            ?? throw CardCompletionAcceptanceService.Refuse("done_column_missing");
+        var reason = $"Published implementation {acceptance.ImplementationTaskId:D}; C={acceptance.ReviewedSourceSha}; "
+            + $"O={acceptance.OperationId:D}; L={acceptance.LandedSha}; Review={acceptance.ReviewEvidenceId:D}; "
+            + $"acceptance revision {acceptance.Revision}. Companion={acceptance.CompanionObligationJson}; Mutation/PCs remain pending.";
+        ApplyColumnMove(card, done, reason: reason, movedBy: actor);
+        var move = card.Revisions.Single(r => r.RevisionNumber == card.RevisionCount);
+        await completion.Boundary.ReachedAsync("completion-after-move", card.Id, acceptance.Id, ct);
+        var queueRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(_db, card, UtcNow(), ct);
+        card.AutoDispatchHeldAt = null;
+        await completion.Boundary.ReachedAsync("completion-after-dequeue", card.Id, acceptance.Id, ct);
+        if (card.ActiveWorkflowRunId is Guid runId)
+        {
+            var run = await _db.CardWorkflowRuns.SingleAsync(r => r.Id == runId, ct);
+            await _db.Entry(run).ReloadAsync(ct);
+            run.Status = CardWorkflowRunStatus.Completed; run.CompletedAt = UtcNow(); run.UpdatedAt = UtcNow();
+        }
+        var receipt = new CardCompletionReceipt
+        {
+            Id = Guid.NewGuid(), CardId = card.Id, OperationId = acceptance.OperationId!.Value,
+            AcceptanceId = acceptance.Id, AcceptanceRevision = acceptance.Revision, ImplementationTaskId = acceptance.ImplementationTaskId,
+            ReviewEvidenceId = acceptance.ReviewEvidenceId, ReviewedSourceSha = acceptance.ReviewedSourceSha,
+            LandedSha = acceptance.LandedSha!, OriginalCardToken = proposal.CardToken, ResultCardToken = card.ConcurrencyToken,
+            MoveRevisionId = move.Id, Actor = actor, RecordedAt = UtcNow(),
+        };
+        _db.CardCompletionReceipts.Add(receipt);
+        await completion.Boundary.ReachedAsync("completion-before-save", card.Id, receipt.Id, ct);
+        completion.RequirePolicy(proposal);
+        await SaveCardWriteAsync(card, ct);
+        await completion.Boundary.ReachedAsync("completion-before-commit", card.Id, receipt.Id, ct);
+        await transaction.CommitAsync(ct);
+        await completion.Boundary.ReachedAsync("completion-committed", card.Id, receipt.Id, ct);
+        if (queueRemoval is not null) await CardLifecycleTransitions.PublishQueueRemovalAsync(_eventBus, queueRemoval, ct);
+        await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
+        return new("completed", receipt);
+    }
+
     /// <summary>
     /// Moves a card because DELEGATED WORK said so (CARD-0040) — the sweep's only writer.
     /// </summary>

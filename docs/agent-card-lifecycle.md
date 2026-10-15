@@ -146,8 +146,29 @@ no open bound task, no live session and no owning card session becomes a Warning
 `AttentionKind.CardStalled` row in `GET /api/attention`, naming the last bound task's outcome. Nothing
 un-stalls it automatically — move it, or start something.
 
-**Review → Done is not automated, in any form.** CARD-0039 shipped the ranking axes; closing a card
-is still a human move. A confidence signal nobody has defined is still required.
+**The delegated-task sweep stops at Review.** CARD-1281 adds a separately gated, explicit
+publication close action; it is disabled by default and its routes await S6 registration.
+Closing through that action requires a current Final/Full Review, structured confirmed
+publication for the implementation Code owner, an immutable acceptance revision and no open
+bound task (including Queued). Acceptance and deployment evidence, the explicit empty-category
+decision and any same-board pending companion are recorded before close. A fresh acceptance
+revision must bind O/L after pre-publication readiness; readiness is metadata while the card
+stays Review.
+
+`CardTransitions:PublishedClose` accepts Disabled, Shadow or Enabled. Enablement additionally
+requires matching `PublishedClosePolicyRevision` / `PublishedCloseDecisionRevision` and at
+least 30 distinct publication events in `PublishedCloseShadowObservations`, with retained
+acceptance/publication bindings and independent actor/time adjudications. Any disagreement
+refuses enablement and subsequent closes. Test fixtures do not qualify this live Q-4 cohort.
+The explicit acceptance PUT/GET and complete-published POST authenticate operators or scoped
+orchestrators; supplied actor fields confer no authority. They add no new board column or
+automatic dispatcher. S6 owns registration and HTTP integration qualification.
+
+The completion transaction locks card, workflow and sorted Review/owner task rows in that
+order, rechecks the original token and acceptance/workflow/policy revisions, and commits the
+Done move, dequeue and unique close receipt together. A newer human move or hold wins through
+the token fence. CardChanged follows commit; after a lost response or event failure, authorized
+GET returns the durable receipt. Cleanup debt and pending PCs remain recorded independently.
 
 ## Diff Review Comments
 
