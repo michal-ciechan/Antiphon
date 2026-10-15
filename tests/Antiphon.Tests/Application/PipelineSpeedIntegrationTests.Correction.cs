@@ -32,7 +32,7 @@ public sealed partial class PipelineSpeedIntegrationTests
                     Options.Create(new DelegationSettings()), new MockEventBus(), new RecordingSessionStopper(),
                     TimeProvider.System, NullLogger<AgentTaskService>.Instance)));
             var (project, board, card) = await SeedCorrectionScopeAsync(w);
-            foreach (var denied in new[] { "anonymous", "invalid", "revoked", "worker", "project", "repository", "board", "card" })
+            foreach (var denied in new[] { "anonymous", "invalid", "revoked", "worker", "project", "repository", "board", "card", "session-card" })
             {
                 using var client = w.App.GetTestClient();
                 if (denied != "anonymous")
@@ -98,7 +98,7 @@ public sealed partial class PipelineSpeedIntegrationTests
         {
             board = Guid.NewGuid(); db.Add(new Board { Id = board, ProjectId = project, Name = "foreign" });
         }
-        if (variant == "card")
+        if (variant is "card" or "session-card")
         {
             var target = await db.Cards.SingleAsync(c => c.Id == card);
             card = Guid.NewGuid(); db.Add(new Card { Id = card, BoardId = board, BoardColumnId = target.BoardColumnId,
@@ -113,7 +113,7 @@ public sealed partial class PipelineSpeedIntegrationTests
                 RevokedAt = variant == "revoked" ? DateTime.UtcNow : null });
             actor = "capability:" + id.ToString("D");
         }
-        else if (variant == "session")
+        else if (variant is "session" or "session-card")
         {
             db.Add(new AgentSession { Id = id, Cwd = w.Request.RepositoryPath, CardId = card,
                 DelegationTokenHash = AgentTaskService.HashToken(token) });
