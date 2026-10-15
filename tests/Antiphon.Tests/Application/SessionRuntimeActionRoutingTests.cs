@@ -25,6 +25,124 @@ namespace Antiphon.Tests.Application;
 public class SessionRuntimeActionRoutingTests
 {
     [Test]
+    [Arguments("working")]
+    [Arguments("herdr-blocked")]
+    [Arguments("rules-held")]
+    [Arguments("generation-changed")]
+    public async Task C1259_new_working_or_blocked_state_defers_old_idle_action(string variant)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var runner = new ScriptedSessionRunnerClient
+        {
+            Capabilities = new("test", "test", "test", false, SessionBackends: [SessionBackends.Herdr])
+        };
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            ConfigureServices = s =>
+            {
+                s.AddSingleton<ISessionRunnerClient>(runner);
+                s.AddSingleton<PtyDeliveryProfile>();
+                s.AddSingleton<SessionDeliveryProfile>();
+            }
+        });
+        await h.InsertTurnAsync("previous prompt", "previous answer");
+        if (variant == "herdr-blocked")
+        {
+            await using var db = h.CreateObserverContext();
+            await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.SessionBackend, SessionBackend.Herdr));
+        }
+        const string body = "C1259 queued original first line\nC1259 complete second line";
+        var queued = await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, default, deliverIfIdle: false);
+        var messageId = queued.Messages.Single().Id;
+        var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
+        await actions.RequestAsync(h.SessionId, "status", default);
+        Guid actionId;
+        DateTime originalGeneration;
+        await using (var db = h.CreateObserverContext())
+        {
+            var action = await db.SessionRuntimeActions.SingleAsync();
+            actionId = action.Id;
+            originalGeneration = action.AcceptedGeneration!.Value;
+        }
+        long sequence = 10;
+        SessionRunnerTranscriptEvent Entry(string kind, string? text) => new(h.SessionId,
+            Interlocked.Increment(ref sequence), kind, Guid.NewGuid().ToString(), null, h.Clock.GetUtcNow(),
+            kind == TranscriptKinds.UserPrompt ? "user" : "assistant", text, null, null, null, null,
+            kind == TranscriptKinds.TurnEnd ? "end_turn" : null);
+        async Task PersistAsync(SessionRunnerTranscriptEvent entry)
+        {
+            runner.Produce(entry);
+            await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+            {
+                await using var observer = h.CreateObserverContext();
+                return await observer.TranscriptEntries.AnyAsync(t => t.Uuid == entry.Uuid);
+            });
+        }
+        using var pump = new SessionRunnerEventPump(h.Provider.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new SessionRunnerSettings { Enabled = true }), NullLogger<SessionRunnerEventPump>.Instance, h.Clock);
+        await pump.StartAsync(default);
+        try
+        {
+            await runner.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (variant == "working")
+            {
+                await PersistAsync(Entry(TranscriptKinds.UserPrompt, "new working turn after admission"));
+                (await h.Provider.GetRequiredService<SessionStateStore>().ReadAsync(h.SessionId, default)).Working.ShouldBeTrue();
+            }
+            if (variant == "herdr-blocked") h.Runtime.SetTestAgentStatus(h.SessionId, "blocked");
+            if (variant == "rules-held")
+            {
+                await using var db = h.CreateObserverContext();
+                await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.GrokRulesState, GrokRulesState.Pending));
+            }
+            if (variant == "generation-changed")
+            {
+                var nextGeneration = originalGeneration.AddMinutes(1);
+                await using var db = h.CreateObserverContext();
+                await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.StartedAt, nextGeneration));
+                h.Runtime.SetTestAcceptedStartedAt(h.SessionId, nextGeneration);
+            }
+            await actions.DrainPageAsync(h.SessionId, default);
+            h.Adapter.Inputs.ShouldBeEmpty("the admitted idle intent must recheck authoritative current eligibility");
+            await using (var db = h.CreateObserverContext())
+            {
+                var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == messageId);
+                row.Status.ShouldBe(QueuedMessageStatus.Pending);
+                row.DeliveryAttempts.ShouldBe(0);
+                row.DeliveryVerdict.ShouldBeNull();
+                var retained = await db.SessionRuntimeActions.SingleOrDefaultAsync(a => a.Id == actionId);
+                if (variant == "generation-changed") retained.ShouldBeNull("stale generation cannot be rebound");
+                else { retained.ShouldNotBeNull(); retained.Phase.ShouldBe(SessionRuntimeActionCoordinator.QueuePhase); }
+            }
+            if (variant == "working") await PersistAsync(Entry(TranscriptKinds.TurnEnd, null));
+            if (variant == "herdr-blocked") h.Runtime.SetTestAgentStatus(h.SessionId, "idle");
+            if (variant == "rules-held")
+            {
+                await using var db = h.CreateObserverContext();
+                await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.GrokRulesState, GrokRulesState.Ready));
+            }
+            var receipt = Entry(TranscriptKinds.UserPrompt, body);
+            h.Adapter.OnSubmitted = sent => { sent.ShouldBe(body); runner.Produce(receipt); return Task.CompletedTask; };
+            // This is the existing one-second deferred-action schedule, not an extended
+            // delivery timeout. The next request is captured in the current generation.
+            await Task.Delay(TimeSpan.FromMilliseconds(1100));
+            await actions.RequestAsync(h.SessionId, "status", default);
+            await actions.DrainPageAsync(h.SessionId, default);
+            await using (var verify = h.CreateObserverContext())
+            {
+                var row = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == messageId);
+                row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+                row.DeliveryAttempts.ShouldBe(1);
+                (await verify.TranscriptEntries.SingleAsync(t => t.Uuid == receipt.Uuid)).Text.ShouldBe(body);
+            }
+            h.Adapter.SubmittedBodies.ShouldBe([body]);
+            h.Adapter.Killed.ShouldBeFalse();
+        }
+        finally { await pump.StopAsync(default); }
+    }
+
+    [Test]
     [Arguments("map-free-restart")]
     [Arguments("forged-target")]
     [Arguments("wrong-session")]
@@ -73,6 +191,12 @@ public class SessionRuntimeActionRoutingTests
             (await db.ReviewThreads.SingleAsync(t => t.Id == thread.Id)).Status.ShouldBe(ReviewThreadStatus.AwaitingAgent);
         }
         long sequence = 2;
+        if (variant == "incomplete-body")
+        {
+            source.Body.Length.ShouldBeGreaterThan(250);
+            PromptSubmissionMatch.IsConfirmedBy(source.Body, source.Body[..250]).ShouldBeTrue("the clipped receipt must retain identity");
+            PromptSubmissionMatch.IsCompleteIn(source.Body, source.Body[..250]).ShouldBeFalse();
+        }
         SessionRunnerTranscriptEvent Entry(string kind, string? text, Guid? session = null, bool error = false) =>
             new(session ?? h.SessionId, Interlocked.Increment(ref sequence), kind, Guid.NewGuid().ToString(), null,
                 h.Clock.GetUtcNow(), kind == TranscriptKinds.UserPrompt ? "user" : "assistant", text,
@@ -81,7 +205,7 @@ public class SessionRuntimeActionRoutingTests
         {
             body.ShouldBe(source.Body);
             runner.Produce(Entry(TranscriptKinds.UserPrompt,
-                variant == "incomplete-body" ? body[..Math.Min(100, body.Length - 1)] : body));
+                variant == "incomplete-body" ? body[..250] : body));
             return Task.CompletedTask;
         };
         using var pump = new SessionRunnerEventPump(h.Provider.GetRequiredService<IServiceScopeFactory>(),
@@ -97,7 +221,7 @@ public class SessionRuntimeActionRoutingTests
                 delivered.DeliveryVerdict.ShouldBe(variant == "incomplete-body" ? DeliveryVerdict.Truncated : DeliveryVerdict.Delivered);
                 var receipt = await db.TranscriptEntries.SingleAsync(t => t.AgentSessionId == h.SessionId && t.Sequence == 3);
                 receipt.Kind.ShouldBe(TranscriptKinds.UserPrompt);
-                receipt.Text.ShouldBe(variant == "incomplete-body" ? source.Body[..Math.Min(100, source.Body.Length - 1)] : source.Body);
+                receipt.Text.ShouldBe(variant == "incomplete-body" ? source.Body[..250] : source.Body);
             }
             var destination = h.SessionId;
             await using (var db = h.CreateObserverContext())

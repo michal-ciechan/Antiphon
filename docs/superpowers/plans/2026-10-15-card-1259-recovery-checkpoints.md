@@ -15,7 +15,8 @@ No whole Unit or full assembly run is authorized by this supplement.
 | CP-15 | recovery-green | tests/Antiphon.Tests -> bin-c1259-recovery-green/ | recovery-green | /*/Antiphon.Tests.Application/SessionRuntimeActionRecoveryTests/* | V-5,V-6,V-10,D-4 | all 6 executed, 0 failed/skipped | 6 | 7 |
 | CP-16 | recovery-green | CP-15 | recovery-adjacent | /*/Antiphon.Tests.Application/(SessionRuntimeActionTests*)\|(ChannelReplyLateConfirmDispatchTests*)\|(ChannelReplyDurabilityTests*)\|(DataRetentionServiceTests*)/* | V-3,V-4,V-8,V-9,V-10,R-3 adjacent | all 146 listed, 0 failed/skipped | 146 | 10 |
 | CP-17 | base-confirmation | tests/Antiphon.Tests -> bin-c1259-base-six/ | inherited-six | /*/Antiphon.Tests.Application/(ChannelReplyLateConfirmDispatchTests*)\|(ChannelReplyDurabilityTests*)/(The_measured_transport_fixture_dispatches_the_error_through_the_runtime*)\|(A_late_confirmed_api_withheld_turn_does_not_warn_as_an_unpublished_reply*)\|(A_late_confirmed_no_reply_turn_does_not_warn_as_an_unpublished_reply*)\|(A_runtime_batch_redispatches_a_late_confirmed_channel_reply_once*)\|(A_failed_late_confirm_publication_is_durably_uncertain_and_leaves_it_owed*)\|(A_reply_the_live_path_already_published_is_not_published_again_by_the_grace_confirm*) | verify exact CP-16 failures at base 41289ba9 | all 6 executed; preserve actual failures | 6 | 7 |
-| CP-18 | recovery-green | CP-15 | routing-partial | /*/Antiphon.Tests.Application/SessionRuntimeActionRoutingTests/* | V-11 partial | all 8 executed, 0 failed/skipped | 8 | 7 |
+| CP-18 | recovery-green | CP-15 | routing-partial | /*/Antiphon.Tests.Application/SessionRuntimeActionRoutingTests/* | V-6,V-11 partial | all 12 executed, 0 failed/skipped | 12 | 7 |
+| CP-19 | recovery-green | CP-15 | task-settlement-adjacent | /*/Antiphon.Tests.Application/AgentTaskReplyIntegrationTests/* | task-attempt settlement and parent delivery regression | all 182 executed, 0 failed/skipped | 182 | 12 |
 
 The task-attempt cases must leave the replacement Working with no result/events;
 the direct cases require exact original recipient/body after restart or failed
@@ -33,6 +34,18 @@ CP-18 is an explicitly incomplete routing slice, not CP-3 or CP-6: eight V-11
 variants use ReviewThreadService, a real queue attempt, and a hosted pump receipt.
 The atomic-comment case covers rollback before commit; its post-commit/action-ack
 cut, legacy migration, enqueue-failure H0-H4 and fresh redispatch remain pending.
-The other four routing methods and the main 35-case requirement remain pending.
+Four V-6 cases cover working/Herdr/rules eligibility and stale generation, including
+the complete streamed receipt after release. Task-attempt-changed,
+action-during-flush and the working/capped-attempt subcase remain pending in that
+method. The other three routing methods and the main 35-case requirement remain
+pending. The original eight-case CP-18 run remains historical (7 passed, 1 fixture
+failure: a 100-character prefix did not retain the 200-character identity window).
+The repaired fixture proves identity and incompleteness before the real attempt.
 The inherited failure confirmation uses a detached, clean base checkout; its
 source remains frozen independently of work on the assigned continuation branch.
+
+CP-19 bounds the newly affected task settlement surface: the opt-in database save
+fence and shared already-persisted fallback must preserve existing task results,
+attempt identity and parent delivery. It runs the complete named class (182 cases,
+including its partial files), not an assembly or Unit lane. No shared impact has
+been declared qualified beyond these bounded selections; full Final remains open.
