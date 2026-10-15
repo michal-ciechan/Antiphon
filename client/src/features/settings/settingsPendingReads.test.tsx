@@ -149,7 +149,7 @@ const profile: AgentTuiProfileDto = {
   updatedAt: AT,
 } as AgentTuiProfileDto
 
-/** Every read the rendered surfaces make, populated; a row's own read is overridden per state. */
+/** Fixtures for the read-state rows below; a row overrides its target response. */
 function servePopulated() {
   server.use(
     http.get('/api/projects/p1/deletion-impact', () => HttpResponse.json(impact)),
@@ -472,5 +472,109 @@ describe('C1274 project delete dialog after a failed refetch', () => {
     expect(within(dialog).getByRole('button', { name: 'Delete' })).toBeDisabled()
     await userEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
     expect(write).not.toHaveBeenCalled()
+  })
+})
+
+const repairStates = ['loading', 'paused', 'failed', 'stale failure'] as const
+
+describe('C1274 repair modal read boundaries', () => {
+  afterEach(() => { cleanup(); onlineManager.setOnline(true) })
+
+  it.each(['Add', 'Edit'].flatMap((mode) => repairStates.map((state) => ({ mode, state }))))(
+    'C1274 repair $mode Template Group read $state retains its value', async ({ mode, state }) => {
+      servePopulated()
+      server.use(http.get('/api/settings/templates', () => HttpResponse.json([
+        { ...template, templateGroupId: 'g1', templateGroupName: 'Release group' },
+      ])))
+      const { queryClient } = renderWithProviders(<TemplateManager />)
+      const row = (await screen.findByText('Feature flow')).closest('tr')!
+      await waitFor(() => expect(queryClient.getQueryData(['template-groups'])).toEqual([templateGroup]))
+      if (mode === 'Edit') await userEvent.click(within(row).getAllByRole('button')[1])
+      else await userEvent.click(screen.getByRole('button', { name: 'Add Template' }))
+      if (state === 'paused') onlineManager.setOnline(false)
+      else server.use(http.get('/api/settings/template-groups', async () => {
+        if (state === 'loading') await delay('infinite')
+        return HttpResponse.json({ detail: 'groups unavailable' }, { status: 503 })
+      }))
+      act(() => {
+        if (state === 'stale failure') void queryClient.refetchQueries({ queryKey: ['template-groups'], exact: true })
+        else void queryClient.resetQueries({ queryKey: ['template-groups'], exact: true })
+      })
+      await waitFor(() => expect(queryClient.getQueryState(['template-groups'])).toMatchObject({
+        status: state.includes('fail') ? 'error' : 'pending', fetchStatus: state === 'loading' ? 'fetching' : state === 'paused' ? 'paused' : 'idle',
+      }))
+      const dialog = screen.getByRole('dialog')
+      const input = within(dialog).getByRole('textbox', { name: 'Group' })
+      const label = state === 'loading' ? 'Template groups loading.' : state === 'paused'
+        ? 'Template groups unknown (read paused offline).' : 'Could not load template groups.'
+      await waitFor(() => expect(input).toHaveAttribute('placeholder', label))
+      expect(input).toBeDisabled()
+      expect(within(dialog).queryByPlaceholderText('No group (ungrouped)')).not.toBeInTheDocument()
+
+      // Recovery reveals the stored selection; a subsequent save carries that id.
+      server.use(http.get('/api/settings/template-groups', () => HttpResponse.json([templateGroup])))
+      await act(async () => {
+        onlineManager.setOnline(true)
+        await queryClient.cancelQueries({ queryKey: ['template-groups'], exact: true })
+        await queryClient.refetchQueries({ queryKey: ['template-groups'], exact: true })
+      })
+      await waitFor(() => expect(input).toBeEnabled())
+      expect(input).toHaveValue(mode === 'Edit' ? 'Release group' : '')
+      if (mode === 'Edit') {
+        const saved = vi.fn()
+        server.use(http.put('/api/settings/templates/t1', async ({ request }) => {
+          saved(await request.json()); return HttpResponse.json(template)
+        }))
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Save Changes' }))
+        await waitFor(() => expect(saved).toHaveBeenCalledWith(expect.objectContaining({ templateGroupId: 'g1' })))
+      }
+    },
+  )
+
+  it.each([{ groups: [] }, { groups: [{ ...templateGroup, id: 'g2', name: 'Different group' }] }])(
+    'C1274 repair missing stored Group stays visible after successful list $groups', async ({ groups }) => {
+      servePopulated()
+      server.use(
+        http.get('/api/settings/templates', () => HttpResponse.json([{ ...template, templateGroupId: 'g1' }])),
+        http.get('/api/settings/template-groups', () => HttpResponse.json(groups)),
+      )
+      renderWithProviders(<TemplateManager />)
+      const row = (await screen.findByText('Feature flow')).closest('tr')!
+      await userEvent.click(within(row).getAllByRole('button')[1])
+      expect(await within(screen.getByRole('dialog')).findByDisplayValue('g1 (not in group list)')).toBeInTheDocument()
+    },
+  )
+
+  it.each(repairStates)('C1274 repair Runner type read %s retains the profile kind', async (state) => {
+    servePopulated()
+    const runner = { kind: 'ClaudeCode', displayName: 'Claude runner', description: '', guidance: '', capabilities: [] }
+    server.use(http.get('/api/agent-tui/runner-types', () => HttpResponse.json([runner])))
+    const { queryClient } = renderWithProviders(<AgentTuiConfig />)
+    const row = (await screen.findByText('Claude profile')).closest('tr')!
+    await waitFor(() => expect(queryClient.getQueryData(['agent-tui', 'runner-types'])).toEqual([runner]))
+    await userEvent.click(within(row).getAllByRole('button')[0])
+    if (state === 'paused') onlineManager.setOnline(false)
+    else server.use(http.get('/api/agent-tui/runner-types', async () => {
+      if (state === 'loading') await delay('infinite')
+      return HttpResponse.json({ detail: 'runner types unavailable' }, { status: 503 })
+    }))
+    act(() => {
+      if (state === 'stale failure') void queryClient.refetchQueries({ queryKey: ['agent-tui', 'runner-types'], exact: true })
+      else void queryClient.resetQueries({ queryKey: ['agent-tui', 'runner-types'], exact: true })
+    })
+    const label = state === 'loading' ? 'Runner types loading.' : state === 'paused'
+      ? 'Runner types unknown (read paused offline).' : 'Runner types unknown (read failed: runner types unavailable).'
+    const input = within(screen.getByRole('dialog')).getByRole('textbox', { name: 'Runner type' })
+    await waitFor(() => expect(input).toHaveAttribute('placeholder', label))
+    expect(input).toBeDisabled()
+    expect(screen.queryByText('Claude runner setup')).not.toBeInTheDocument()
+    server.use(http.get('/api/agent-tui/runner-types', () => HttpResponse.json([runner])))
+    await act(async () => {
+      onlineManager.setOnline(true)
+      await queryClient.cancelQueries({ queryKey: ['agent-tui', 'runner-types'], exact: true })
+      await queryClient.refetchQueries({ queryKey: ['agent-tui', 'runner-types'], exact: true })
+    })
+    await waitFor(() => expect(input).toBeEnabled())
+    expect(input).toHaveValue('Claude runner')
   })
 })
