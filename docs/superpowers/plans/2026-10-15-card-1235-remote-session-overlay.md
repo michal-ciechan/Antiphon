@@ -37,7 +37,9 @@ decide. The change stays in the overlay.
   The reads run concurrently under the existing `ListTimeoutSeconds` deadline. A runner's rows
   overlay only the sessions that runner owns. A runner that fails, is unavailable or misses the
   deadline leaves its own sessions' fields null (unknown) and logs; the other groups still apply.
-  Without a directory a remote group is left unknown, as today.
+  Without a directory a remote group is left unknown, as today. Cost: an agent list or detail
+  read adds one inventory read per remote runner that owns one of its live sessions
+  (`PhoneHomeRunnerDirectory.GetInventoryAsync` answers an unavailable runner without a request).
 
 No DTO, client, route or migration change: the client already renders `transcriptBinding`, so the
 CARD-0097 / CARD-0506 client work does not collide. Restart: server.

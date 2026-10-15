@@ -274,8 +274,11 @@ public sealed class AgentService
     /// A live session as the DTO layer needs it, plus the stamps its launch recorded (CARD-0058
     /// slice 6, CARD-0334 S1). Kept off <see cref="AgentSessionSummaryDto"/> deliberately — the
     /// stamps are inputs to a comparison the server makes, not facts the client has any use for.
+    /// CARD-1235: <c>RemoteRunnerId</c> is the phone-home runner that owns the session, read from
+    /// the same three columns as <c>ISessionRunnerDirectory.GetBindingAsync</c>; null is local.
     /// </summary>
-    private sealed record LiveSession(AgentSessionSummaryDto Dto, string? BundleStamp, string? FileStamp);
+    private sealed record LiveSession(
+        AgentSessionSummaryDto Dto, string? BundleStamp, string? FileStamp, string? RemoteRunnerId = null);
 
     // Loads the live (Starting/Running/Stopping) AgentSession for each agent's persistent session id,
     // keyed by session id. Stale/ended sessions are excluded so the UI only offers to open a real terminal.
@@ -317,7 +320,8 @@ public sealed class AgentService
                     null,
                     s.TerminationSource),
                 s.ComposedBundleStamp,
-                s.InstructionFileStamp))
+                s.InstructionFileStamp,
+                s.RunnerId != null && s.RunnerStoreId != null && s.RunnerCwd != null ? s.RunnerId : null))
             .ToListAsync(ct);
 
         var fullness = await SessionContextUsage.LoadFullnessAsync(
@@ -349,59 +353,93 @@ public sealed class AgentService
     /// <summary>
     /// CARD-0180 S4: overlay runner bind state onto live session DTOs. A runner that does not
     /// answer leaves <c>TranscriptBinding</c> null (unknown) — never guessed as unbound.
+    /// CARD-1235: each session is answered by the runner that owns it — the local runner's list
+    /// for local sessions, the phone-home runner's inventory for remote ones — under one deadline.
+    /// A runner that does not answer leaves only its own sessions unknown.
     /// </summary>
     private async Task AttachRunnerLiveStateAsync(
         Dictionary<Guid, LiveSession> liveSessions, CancellationToken ct)
     {
-        if (_runnerClient is null || liveSessions.Count == 0)
+        if (liveSessions.Count == 0)
             return;
 
-        IReadOnlyList<SessionRunnerSessionDto> runnerSessions;
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var timeoutSeconds = Math.Max(1, _runnerSettings.ListTimeoutSeconds);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+        var reads = liveSessions.Values
+            .GroupBy(s => s.RemoteRunnerId)
+            .Select(owner => ReadOwnerAsync(
+                owner.Key, owner.Select(s => s.Dto.Id).ToHashSet(), timeoutSeconds, timeoutCts.Token, ct))
+            .ToList();
+        var answers = await Task.WhenAll(reads);
+
+        foreach (var (owned, runnerSessions) in answers)
+        {
+            if (runnerSessions is null)
+                continue;
+            foreach (var runner in runnerSessions)
+            {
+                if (!owned.Contains(runner.SessionId) || !liveSessions.TryGetValue(runner.SessionId, out var live))
+                    continue;
+                liveSessions[runner.SessionId] = live with { Dto = WithRunnerState(live.Dto, runner) };
+            }
+        }
+    }
+
+    // One owner's list, or null when it is not reachable from here or does not answer in time.
+    private async Task<(HashSet<Guid> Owned, IReadOnlyList<SessionRunnerSessionDto>? Sessions)> ReadOwnerAsync(
+        string? remoteRunnerId, HashSet<Guid> owned, int timeoutSeconds, CancellationToken timeout, CancellationToken ct)
+    {
         try
         {
-            runnerSessions = await _runnerClient.ListAsync(timeoutCts.Token);
+            if (remoteRunnerId is null)
+                return (owned, _runnerClient is null ? null : await _runnerClient.ListAsync(timeout));
+            if (_runnerDirectory is null)
+                return (owned, null);
+            switch (await _runnerDirectory.GetInventoryAsync(remoteRunnerId, timeout))
+            {
+                case RunnerInventory.Available available:
+                    return (owned, available.Sessions);
+                case RunnerInventory.Unavailable unavailable:
+                    _logger.LogDebug(
+                        "Runner {RunnerId} inventory unavailable ({Reason}); live runner state left unknown",
+                        remoteRunnerId, unavailable.Reason);
+                    return (owned, null);
+                default:
+                    return (owned, null);
+            }
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             _logger.LogWarning(
-                "runner did not list sessions within {TimeoutSeconds}s; live runner state left unknown",
-                timeoutSeconds);
-            return;
+                "runner {RunnerId} did not list sessions within {TimeoutSeconds}s; live runner state left unknown",
+                remoteRunnerId ?? "local", timeoutSeconds);
+            return (owned, null);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogDebug(ex, "Runner unreachable; live runner state left unknown");
-            return;
+            _logger.LogDebug(ex, "Runner {RunnerId} unreachable; live runner state left unknown", remoteRunnerId ?? "local");
+            return (owned, null);
         }
+    }
 
-        foreach (var runner in runnerSessions)
+    private static AgentSessionSummaryDto WithRunnerState(AgentSessionSummaryDto dto, SessionRunnerSessionDto runner)
+    {
+        var binding = runner.TranscriptBound switch
         {
-            if (!liveSessions.TryGetValue(runner.SessionId, out var live))
-                continue;
-            var binding = runner.TranscriptBound switch
-            {
-                true => "bound",
-                false when runner.TranscriptUnboundReason == "awaiting-input" => "awaiting-input",
-                false => "unbound",
-                _ => (string?)null,
-            };
-            liveSessions[runner.SessionId] = live with
-            {
-                Dto = live.Dto with
-                {
-                    TranscriptBinding = binding ?? live.Dto.TranscriptBinding,
-                    HerdrAgentStatus = string.Equals(runner.Backend, "Herdr", StringComparison.OrdinalIgnoreCase)
-                        ? runner.AgentStatus : null,
-                    HerdrAgentStatusSinceUtc = string.Equals(runner.Backend, "Herdr", StringComparison.OrdinalIgnoreCase)
-                        ? runner.AgentStatusSinceUtc : null,
-                    HerdrOrigin = string.Equals(runner.Backend, "Herdr", StringComparison.OrdinalIgnoreCase)
-                        ? runner.HerdrOrigin : null,
-                },
-            };
-        }
+            true => "bound",
+            false when runner.TranscriptUnboundReason == "awaiting-input" => "awaiting-input",
+            false => "unbound",
+            _ => (string?)null,
+        };
+        var herdr = string.Equals(runner.Backend, "Herdr", StringComparison.OrdinalIgnoreCase);
+        return dto with
+        {
+            TranscriptBinding = binding ?? dto.TranscriptBinding,
+            HerdrAgentStatus = herdr ? runner.AgentStatus : null,
+            HerdrAgentStatusSinceUtc = herdr ? runner.AgentStatusSinceUtc : null,
+            HerdrOrigin = herdr ? runner.HerdrOrigin : null,
+        };
     }
 
     private static LiveSession? ResolveLiveSession(
