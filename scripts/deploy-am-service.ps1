@@ -15,8 +15,9 @@
     authorize deployment before -Confirm:$false. Success verifies the container,
     /api/channels, migrations, and a bounded redacted log scan. A retained source
     backup is reported; automatic rollback is deliberately not attempted. Never log
-    Compose environments, tokens, or arbitrary container logs. The human traffic
-    check remains the Antiphon-Family test-group round trip, never live Family.
+    Compose environments, tokens, or arbitrary container logs. The real traffic
+    round-trip check is manual and operator-initiated through the Family conversation;
+    an agent never sends test traffic to it.
 
 .EXAMPLE
     # Replace both placeholders with the confirmed destination before use.
@@ -391,7 +392,7 @@ function Invoke-AmServiceDeploymentCore {
         $latest = Get-AmServiceServerIdentity $HttpRunner
         if (($latest | ConvertTo-Json -Compress) -cne ($identity | ConvertTo-Json -Compress)) { throw 'Server identity changed during deployment verification.' }
         Write-Host "Endpoint verified: $($names.Count) registered adapter(s): $($names -join ', ')"; Write-Host "Migration comparison verified: $($sourceMigrations.Count) source, $($remoteMigrations.Count) recorded."; Write-Host 'Startup-log scan verified: last 100 lines, no startup exception (redacted scan).'
-        if ($SkipTrafficCheck) { Write-Host 'Real traffic check explicitly skipped; operator must perform the Antiphon-Family test-group round trip.' } else { Write-Host 'Real traffic check remains required: use only the Antiphon-Family test group, never the live Family group.' }
+        if ($SkipTrafficCheck) { Write-Host 'Real traffic check explicitly skipped; the round-trip check is manual and operator-initiated through the Family conversation, and an agent never sends test traffic to it.' } else { Write-Host 'Real traffic check remains required: the round-trip check is manual and operator-initiated through the Family conversation, and an agent never sends test traffic to it.' }
         return [pscustomobject]$result
     } finally {
         if ($archive -and (Test-Path -LiteralPath $archive.Path)) { Remove-Item -LiteralPath $archive.Path -Force -ErrorAction SilentlyContinue }
