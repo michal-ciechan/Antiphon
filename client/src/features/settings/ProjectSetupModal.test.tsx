@@ -390,7 +390,7 @@ describe('C1274 repair setup read boundaries', () => {
     const key = ['agent-tui', 'profiles']
     const { queryClient } = renderWithProviders(<ProjectSetupModal opened onClose={() => undefined} />)
     await firstAgent()
-    await waitFor(() => expect(screen.getByRole('switch', { name: 'Remote control' })).toBeChecked())
+    await waitFor(() => expect(screen.getByRole('switch', { name: /^Remote control/ })).toBeChecked())
     if (state === 'paused') onlineManager.setOnline(false)
     else unreadHandler('/api/agent-tui/profiles', state)
     act(() => {
@@ -402,8 +402,8 @@ describe('C1274 repair setup read boundaries', () => {
       ? 'AI Agent TUI profiles unknown (read paused offline).' : 'AI Agent TUI profiles unknown (read failed: catalog unavailable).'
     expect(await screen.findByText(label)).toBeInTheDocument()
     expect(screen.queryByText('Not available for this runner.')).not.toBeInTheDocument()
-    expect(screen.getByRole('switch', { name: 'Remote control' })).toBeDisabled()
-    expect(screen.getByRole('switch', { name: 'Remote control' })).toHaveAccessibleDescription('Remote control support unknown until AI Agent TUI profiles load.')
+    expect(screen.getByRole('switch', { name: /^Remote control/ })).toBeDisabled()
+    expect(screen.getByRole('switch', { name: /^Remote control/ })).toHaveAccessibleName('Remote control Remote control support unknown until AI Agent TUI profiles load.')
     await userEvent.click(screen.getByRole('button', { name: 'Next' }))
     await userEvent.click(screen.getByRole('button', { name: 'Next' }))
     expect(screen.getByRole('button', { name: 'Create project' })).toBeDisabled()
