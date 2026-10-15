@@ -2,8 +2,9 @@ import { HttpResponse, http } from 'msw'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { AgentSessionSummaryDto } from '../../api/boards'
 import { server } from '../../test/mocks/server'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { act, renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { SessionTabs } from './SessionTabs'
+import { loadSessionTerminal } from './sessionTerminalLoader'
 
 vi.mock('./SessionTerminal', () => ({
   SessionTerminal: ({ session }: { session: AgentSessionSummaryDto }) => (
@@ -39,28 +40,34 @@ function getSessionSelectInput() {
 
 describe('SessionTabs', () => {
   it('shows valid terminal sessions in an all-sessions dropdown and hides empty sessions', async () => {
-    renderWithProviders(
-      <SessionTabs
-        boardId="board-1"
-        sessions={[
-          { ...baseSession, id: 'session-new', status: 'Running', cwd: 'D:/repo/new' },
-          { ...baseSession, id: 'session-empty', status: 'Starting', cwd: '' },
-          { ...baseSession, id: 'session-old', status: 'Stopped', cwd: 'D:/repo/old' },
-        ]}
-      />,
-    )
+    // The terminal is a lazy chunk; React.lazy suspends on its first render even when cached, and a
+    // findBy window lost its retry under load (CARD-1246). Resolve the promise the lazy component
+    // uses, then render inside one async act: the retry is a microtask and act renders it.
+    await loadSessionTerminal()
+    await act(async () => {
+      renderWithProviders(
+        <SessionTabs
+          boardId="board-1"
+          sessions={[
+            { ...baseSession, id: 'session-new', status: 'Running', cwd: 'D:/repo/new' },
+            { ...baseSession, id: 'session-empty', status: 'Starting', cwd: '' },
+            { ...baseSession, id: 'session-old', status: 'Stopped', cwd: 'D:/repo/old' },
+          ]}
+        />,
+      )
+    })
 
     expect(getSessionSelectInput()).toHaveValue('Session 2 - Running')
-    expect(await screen.findByTestId('session-terminal')).toHaveTextContent('terminal session-new')
+    expect(screen.getByTestId('session-terminal')).toHaveTextContent('terminal session-new')
     expect(screen.getByTestId('hidden-session-count')).toHaveTextContent(
       'Hidden 1 preparing session without a terminal.',
     )
 
     await userEvent.click(getSessionSelectInput())
-    await userEvent.click(await screen.findByText('Session 1 - Stopped'))
+    await userEvent.click(screen.getByText('Session 1 - Stopped'))
 
     expect(getSessionSelectInput()).toHaveValue('Session 1 - Stopped')
-    expect(await screen.findByTestId('session-terminal')).toHaveTextContent('terminal session-old')
+    expect(screen.getByTestId('session-terminal')).toHaveTextContent('terminal session-old')
   })
 
   it('does not render a terminal for sessions without a cwd', () => {
