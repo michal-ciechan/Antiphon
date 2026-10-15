@@ -118,3 +118,64 @@ payload assertions matter. Server source was inspected, not changed or executed 
 
 Final CP-2/CP-3 qualification and CP-4 outcome will be recorded with the actual tested SHA in the
 stored task report. PCs are pending; Mutation was not run. Restart: none.
+
+## Repair Final qualification
+
+Tested source: `18a05f2b7cb267cfa9d26a6480ad48791eab4d2a`. Run
+`20261015-071611-e532`, 3m47s. Its combined verdict is RED because CP-4 retains the
+known CARD-1279 failures. CP-2 and CP-3 independently qualify green.
+
+```text
+CHECKPOINT CP-2 commit=18a05f2b7cb267cfa9d26a6480ad48791eab4d2a build=n/a filter=pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/settingsPendingReads.test.tsx src/features/settings/DispatchConcurrencyEditor.test.tsx src/features/settings/ProjectDeleteDialog.test.tsx src/features/settings/ApiKeysSection.test.tsx src/features/settings/ProjectConfig.test.tsx src/features/settings/RoutingSettingsTab.test.tsx src/features/settings/RunnerDefaultsSection.test.tsx src/features/settings/RolePolicySection.test.tsx src/features/settings/routingSettingsModel.test.ts src/features/settings/ConcurrencySettingsTab.test.tsx src/features/settings/ProjectSetupModal.test.tsx executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=0 slot=granted waited=0s dirty=0 source=18a05f2b7cb267cfa9d26a6480ad48791eab4d2a sourceState=clean buildSource=notApplicable
+CHECKPOINT CP-4 commit=18a05f2b7cb267cfa9d26a6480ad48791eab4d2a build=n/a filter=pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/SettingsPage.test.tsx executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=1 slot=granted waited=0s dirty=0 source=18a05f2b7cb267cfa9d26a6480ad48791eab4d2a sourceState=clean buildSource=notApplicable
+CHECKPOINT CP-3 commit=18a05f2b7cb267cfa9d26a6480ad48791eab4d2a build=n/a filter=npm --prefix client run build executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=0 slot=granted waited=0s dirty=0 source=18a05f2b7cb267cfa9d26a6480ad48791eab4d2a sourceState=clean buildSource=notApplicable
+```
+
+| Row | Actual result |
+|---|---|
+| CP-1 at b2ba84ec8 | 147 executed: 31 failed, 116 passed, 0 skipped; intended repair red |
+| CP-2 | 480 passed, 0 failed, 0 skipped, 11 files |
+| CP-4 | 4 executed: 2 passed, 2 inherited failures, 0 skipped |
+| CP-3 | tsc -b and vite build exit 0; chunk-size advisory retained |
+
+CP-4 failures: `does not fetch routing queries until the Routing tab is opened` and
+`?tab=routing selects the tab and mounts routing queries without fetching templates`,
+each `expected 15 to be 1`. Review 010d7154 independently reproduced these at the task
+base; this run matches its names and assertions. They remain CARD-1279, not repaired here.
+
+Both validators, with report.json, expected tested SHA, and rows CP-2,CP-3, exited 0:
+
+```text
+CHECKPOINT SOURCE VALID source=18a05f2b7cb267cfa9d26a6480ad48791eab4d2a rows=2
+```
+
+The commands were scripts/validate-checkpoint-receipt.ps1 and Antiphon.Checkpoints validate.
+The client command rows produce Vitest console logs, not TRX; their CHECKPOINT count fields
+and buildSource remain n/a/notApplicable as emitted. Actual counts above come from fresh logs.
+Vitest's results.json was inspected: the 11 CP-2 files have failed=false, SettingsPage has
+failed=true. Its observational copy is .antiphon/c1274-repair-vitest-roster.json (ignored).
+
+| Verification ID | Actual outcome |
+|---|---|
+| V-1 | PASS: 44 existing read/state rows in CP-2 |
+| V-2 | PASS: 8 existing offline/recovery/stale-impact cases in CP-2 |
+| V-3 | PASS: 2 history pending rows, within full DispatchConcurrencyEditor (54 cases) |
+| V-4 | PASS: 10 Group selector cases, within settingsPendingReads (66 cases) |
+| V-5 | PASS: 17 wizard repair cases, within full ProjectSetupModal (27 cases) |
+| V-6 | PASS: 4 Runner type read cases, within settingsPendingReads |
+| R-1 | CP-2 PASS, 480; CP-4 inherited RED, 2 failed / 2 passed |
+| R-2 | PASS, typecheck and production bundle |
+| Manual | Component/read/state source inventory and server preset precedence trace completed; no browser run |
+
+No deferred ordinary verification IDs. No whole Unit lane, per client repair brief.
+PC-1 through PC-13 and the variants in the candidate doc are pending SourceLanding Mutation.
+No deliberate mutants, timeout increases, assertion removals or skipped cases in this repair.
+The first CP-1 used a faulty switch locator for four new cases; the corrected CP-1 was red
+on their intended messages before the production fix. CP-2 was queued once after the fix.
+
+The remaining source-inspected surfaces are explicitly disclosed in the plan inventory:
+open model-routing Provider select after a read reset; project readiness dash; incomplete
+Concurrency scope options/raw id; DispatchConcurrency scope spinner; missing existing-project
+and repository-picker feedback; DirectoryAutocomplete suggestions; cached RolePolicy preview;
+open Any-role matrix editor snapshot; optional/malformed DTO compatibility defaults.
+These are disclosures, not asserted runtime coverage.
