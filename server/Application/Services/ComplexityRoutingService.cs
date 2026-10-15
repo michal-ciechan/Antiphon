@@ -389,8 +389,10 @@ public sealed class ComplexityRoutingService
     /// <summary>
     /// Reads the active rows and clears the expired ones, rotating their token like any clear
     /// (CARD-1275), so a writer that read such a row before the sweep loses its save. A sweep
-    /// that loses to a writer forgets its copy of that row and reads again; the writer's row
-    /// stands.
+    /// that loses to a writer forgets its copies of the rows it cleared and reads again; the
+    /// writer's row stands. After the last attempt it forgets them too before the error
+    /// propagates, so the shared context does not send the stale clear with the caller's next
+    /// save (CARD-1278: a default-tier task create that catches the error).
     /// </summary>
     private async Task<List<ComplexityChain>> SweepExpiredAsync(
         IQueryable<ComplexityChain> active,
@@ -401,32 +403,37 @@ public sealed class ComplexityRoutingService
             var rows = await active.ToListAsync(ct);
             var now = UtcNow();
             var live = new List<ComplexityChain>(rows.Count);
-            var dirty = false;
+            var cleared = new List<ComplexityChain>();
             foreach (var row in rows)
             {
                 if (row.NotAfter is { } notAfter && notAfter <= now)
                 {
                     row.ClearedAt = now;
                     row.ConcurrencyToken = Guid.NewGuid();
-                    dirty = true;
+                    cleared.Add(row);
                     continue;
                 }
 
                 live.Add(row);
             }
 
-            if (!dirty)
+            if (cleared.Count == 0)
                 return live;
             try
             {
                 await _db.SaveChangesAsync(ct);
                 return live;
             }
-            catch (DbUpdateConcurrencyException ex) when (attempt < SweepAttempts
-                && ex.Entries.All(e => e.Entity is ComplexityChain))
+            catch (DbUpdateConcurrencyException ex) when (ex.Entries.All(e => e.Entity is ComplexityChain))
             {
+                // Forget the rows that did not lose as well: their SaveChanges failed with the
+                // lost one, and the next read takes what the database holds.
                 foreach (var entry in ex.Entries)
                     entry.State = EntityState.Detached;
+                foreach (var row in cleared)
+                    _db.Entry(row).State = EntityState.Detached;
+                if (attempt >= SweepAttempts)
+                    throw;
             }
         }
     }
