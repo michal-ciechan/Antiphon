@@ -206,6 +206,20 @@ public sealed class CodexDoneDetector
     }
 }
 
+/// <summary>
+/// Preserves word boundaries in Codex raw-text consumers when CUP/CUF moves separate words.
+/// This is not terminal repaint reconstruction; rendered frames and transcript replies keep
+/// their existing authority. Other ANSI controls retain the shared stripper's behavior.
+/// </summary>
+public static class CodexOutputText
+{
+    private static readonly Regex CursorWordSeparator =
+        new(@"\x1b\[[0-9;]*[HC]", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    public static string Clean(string? raw) =>
+        AnsiStripper.Clean(CursorWordSeparator.Replace(raw ?? string.Empty, " ")) ?? string.Empty;
+}
+
 public static class CodexResponseAnalyzer
 {
     private static readonly Regex BlankLineRun =
@@ -216,7 +230,7 @@ public static class CodexResponseAnalyzer
 
     public static string ExtractResponse(string? rawSnapshot, string? prompt = null)
     {
-        var clean = AnsiStripper.Clean(rawSnapshot) ?? "";
+        var clean = CodexOutputText.Clean(rawSnapshot);
         clean = clean.Replace("\r\n", "\n").Replace('\r', '\n');
 
         if (!string.IsNullOrWhiteSpace(prompt))
