@@ -1,0 +1,174 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Antiphon.Server.Api.Endpoints;
+using Antiphon.Server.Api.Middleware;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Git;
+using Antiphon.Server.Infrastructure.Security;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Application;
+
+public partial class AdvisoryChangePolicyTests
+{
+    [Test]
+    public async Task C1281_ReceiptCorrection()
+    {
+        await using var w = await CorrectionWorld.CreateAsync();
+        var first = await w.PostAsync(w.Request);
+        first.StatusCode.ShouldBe(HttpStatusCode.OK, "valid-correction-route");
+        var receipt = (await first.Content.ReadFromJsonAsync<ReviewEvidenceCorrectionResponse>()).ShouldNotBeNull();
+        receipt.Disposition.ShouldBe("corrected");
+        await w.RestartAsync();
+        using var repeat = await w.PostAsync(w.Request);
+        repeat.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await repeat.Content.ReadFromJsonAsync<ReviewEvidenceCorrectionResponse>())!.CorrectionId.ShouldBe(receipt.CorrectionId);
+        await using var db = w.Db();
+        (await db.ReviewEvidenceCorrections.CountAsync()).ShouldBe(1, "one-audited-correction");
+        (await db.AgentTaskEvents.CountAsync()).ShouldBe(1, "one-audit");
+        (await db.AgentTasks.CountAsync(t => t.Role == AgentTaskRole.Review)).ShouldBe(1, "zero-new-reviews");
+        var old = await db.StageOutcomes.AsNoTracking().SingleAsync(o => o.Id == w.Request.PredecessorEvidenceId);
+        old.Outcome.ShouldBe(StageOutcomeKind.Found, "historical-row-unchanged");
+        old.CostUsd.ShouldBe(12.34m);
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == w.Review.Id)).Result.ShouldBe(w.Review.Result);
+        var subject = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == w.Request.SubjectTaskId);
+        (await LandApproval.LoadUsableEvidenceAsync(db, receipt.SuccessorEvidenceId!.Value, w.Request.SourceSha,
+            subject, CancellationToken.None)).Id.ShouldBe(receipt.SuccessorEvidenceId.Value, "actual-landing-consumer");
+        foreach (var (request, label) in new[] {
+            (w.Request with { SubjectTaskId = Guid.NewGuid() }, "foreign-subject-refused"),
+            (w.Request with { SourceSha = new string('a', 40) }, "foreign-sha-refused"),
+            (w.Request with { SourceRef = "refs/heads/foreign" }, "foreign-ref-refused"),
+            (w.Request with { RepositoryPath = w.Request.RepositoryPath + "-sibling" }, "foreign-repository-refused") })
+            (await w.PostAsync(request)).StatusCode.ShouldBe(HttpStatusCode.Conflict, label);
+        (await db.ReviewEvidenceCorrections.CountAsync()).ShouldBe(1);
+    }
+
+    [Test]
+    public async Task C1281_IncompleteNeverClean()
+    {
+        await using var w = await CorrectionWorld.CreateAsync();
+        // The control must reach the actual route before any refusal can count as evidence.
+        using var missing = await w.PostAsync(w.Request with { BundleDigest = new string('0', 64) });
+        missing.StatusCode.ShouldBe(HttpStatusCode.OK, "missing-execution-route-reached");
+        var absent = (await missing.Content.ReadFromJsonAsync<ReviewEvidenceCorrectionResponse>()).ShouldNotBeNull();
+        absent.Disposition.ShouldBe("incomplete", "missing-run-no-approval");
+        absent.MissingRows.ShouldBe(w.Request.Selection.Rows, "missing-selection-exact");
+        await using (var db = w.Db()) (await db.StageOutcomes.CountAsync()).ShouldBe(1);
+        foreach (var behavior in new[] { "Substantive", "Unknown" })
+        {
+            await w.BehaviorAsync(behavior);
+            (await w.PostAsync(w.Request)).StatusCode.ShouldBe(HttpStatusCode.Conflict, "missing-behavior-substantive");
+        }
+        await w.BehaviorAsync("Satisfied");
+        using var valid = await w.PostAsync(w.Request);
+        valid.StatusCode.ShouldBe(HttpStatusCode.OK, "restored-valid-control");
+    }
+
+    private sealed class CorrectionWorld : IAsyncDisposable
+    {
+        private IsolatedTestSchema _schema = null!;
+        private WebApplication _app = null!;
+        private HttpClient _client = null!;
+        private string _operatorPath = "";
+        public string Root { get; private set; } = "";
+        public string ProducerRoot { get; private set; } = "";
+        public string Repository { get; private set; } = "";
+        public AgentTask Review { get; private set; } = null!;
+        public ReviewEvidenceCorrectionRequest Request { get; private set; } = null!;
+        public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
+        public static string Digest(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+
+        public static async Task<CorrectionWorld> CreateAsync()
+        {
+            var w = new CorrectionWorld { _schema = await TestDbFixture.CreateIsolatedSchemaAsync(),
+                Root = Path.Combine(Path.GetTempPath(), "c1281-correction-" + Guid.NewGuid().ToString("N")) };
+            Directory.CreateDirectory(w.Root);
+            w.Repository = DelegateScriptRunner.FindRepoRoot();
+            var git = new LandingGit();
+            var common = await git.CommonDirectoryAsync(w.Repository, CancellationToken.None);
+            w.ProducerRoot = Path.Combine(common, "antiphon", "code-evidence", "04228bff");
+            var inventory = await File.ReadAllTextAsync(Path.Combine(w.ProducerRoot, "producer-pack-index.json"));
+            Digest(inventory).ShouldBe("5afb848873bdd8d653a3587654445d239b88cc31ea59f664dbf23efd78b98661",
+                "authentic-producer-inventory");
+            using var index = JsonDocument.Parse(inventory);
+            var source = index.RootElement.GetProperty("sourceCommit").GetString()!;
+            var worktree = index.RootElement.GetProperty("sourceWorktree").GetString()!;
+            var selectionPath = "docs/superpowers/plans/2026-10-15-card-1281-cheap-slices-checkpoints.md";
+            var plan = await git.RunAsync(w.Repository, ["show", source + ":" + selectionPath], CancellationToken.None);
+            plan.Succeeded.ShouldBeTrue();
+            var selection = new ReviewCorrectionSelection(selectionPath, source,
+                "## Shared bindings B-1/B-2/B-3 (TestDesign, 2026-10-15, task 598a38d5)",
+                Digest(plan.Output), ["CP-14", "CP-15", "CP-16"]);
+            var subject = TaskRow(worktree, worktree, "feat/card-task-04228bff", AgentTaskRole.Code);
+            w.Review = TaskRow(w.Root, worktree, "feat/review-fixture", AgentTaskRole.Review);
+            w.Review.Stage = OrchestrationStage.Review;
+            w.Review.FollowUpOfTaskId = subject.Id;
+            w.Review.VerificationProfileVersion = 1;
+            w.Review.VerificationRound = VerificationRound.Final;
+            w.Review.Goal = "Review this component.\n--- correction selection v1 ---\n" + JsonSerializer.Serialize(selection);
+            var old = Review(subject, source, StageOutcomeKind.Found);
+            old.StageTaskId = w.Review.Id; old.ReviewedSourceRef = "refs/heads/" + subject.WorktreeBranch;
+            old.ReviewedSourceClean = false; old.OrdinaryScopeCompleted = VerificationScope.None;
+            old.CostUsd = 12.34m;
+            w.Request = new(old.Id, "", subject.Id, source, old.ReviewedSourceRef!, worktree,
+                selection, index.RootElement.GetProperty("task").GetString()!, Digest(inventory), "attach retained execution");
+            await using (var db = w.Db()) { db.AgentTasks.AddRange(subject, w.Review); db.StageOutcomes.Add(old); await db.SaveChangesAsync(); }
+            await w.BehaviorAsync("Satisfied");
+            w._operatorPath = Path.Combine(w.Root, "operator-token");
+            await w.RestartAsync();
+            return w;
+        }
+
+        public async Task BehaviorAsync(string behavior)
+        {
+            Review.Result = "Retained typed assessment.\n--- correction assessment v1 ---\n" +
+                JsonSerializer.Serialize(new { Behavior = behavior, SubjectTaskId = Request.SubjectTaskId,
+                    SourceSha = Request.SourceSha, SourceRef = Request.SourceRef, RepositoryPath = Request.RepositoryPath });
+            Request = Request with { ExpectedReportDigest = Digest(Review.Result) };
+            await using var db = Db();
+            (await db.AgentTasks.SingleAsync(t => t.Id == Review.Id)).Result = Review.Result;
+            await db.SaveChangesAsync();
+        }
+
+        public async Task RestartAsync()
+        {
+            if (_app is not null) { _client.Dispose(); await _app.DisposeAsync(); }
+            var builder = WebApplication.CreateBuilder();
+            builder.WebHost.UseTestServer();
+            builder.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(_schema.ConnectionString));
+            builder.Services.AddSingleton(Options.Create(new PhoneHomeRunnerSettings { OperatorTokenPath = _operatorPath }));
+            ConfigureCorrectionServices(builder.Services);
+            _app = builder.Build();
+            _app.UseMiddleware<ExceptionMiddleware>();
+            _app.MapReviewEvidenceCorrectionEndpoints();
+            await _app.StartAsync();
+            _client = _app.GetTestClient();
+            _client.DefaultRequestHeaders.Add(OperatorTokenFile.Header, OperatorTokenFile.ReadOrCreate(_operatorPath));
+        }
+        private void ConfigureCorrectionServices(IServiceCollection services) { }
+        public Task<HttpResponseMessage> PostAsync(ReviewEvidenceCorrectionRequest request) =>
+            _client.PostAsJsonAsync($"/api/agent-tasks/{Review.Id:D}/review-evidence/corrections", request);
+        public async ValueTask DisposeAsync()
+        {
+            _client?.Dispose(); if (_app is not null) await _app.DisposeAsync();
+            await _schema.DisposeAsync(); Directory.Delete(Root, true);
+        }
+    }
+}
