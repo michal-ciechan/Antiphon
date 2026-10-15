@@ -19,6 +19,8 @@ import type { AgentTaskRole } from '../../api/agentTasks'
 import type { AgentKind } from '../../api/boards'
 import { getApiErrorMessage, getApiFieldErrors } from '../../api/client'
 import {
+  EMPTY_CONCURRENCY_TOKEN,
+  staleComplexityChain,
   useClearComplexityChain,
   usePutComplexityChain,
   type ComplexityChainDto,
@@ -30,7 +32,10 @@ import {
   CHAIN_CLEAR_SUCCESS,
   CHAIN_KIND_OPTIONS,
   CHAIN_MUTATION_EFFECT,
+  CHAIN_QUEUED_NOTE,
   CHAIN_SAVE_SUCCESS,
+  CHAIN_STALE_BODY,
+  CHAIN_STALE_TITLE,
   INHERITED_REPLACE_WARNING,
   MAX_CHAIN_CANDIDATES,
   OVERWRITE_UNREAD_CELL,
@@ -38,6 +43,7 @@ import {
   UNSET_CELL_EDITOR_NOTE,
   canClearOverride,
   candidateListError,
+  chainRowSummary,
   cellEditorFailedReads,
   cellEditorTitle,
   clearOverrideCopy,
@@ -48,6 +54,7 @@ import {
   readPendingEditorNote,
   storedCellUnknownNote,
   storedMetadataUnknownNote,
+  storedRowSummary,
 } from './routingSettingsModel'
 
 export interface ComplexityChainEditorTarget {
@@ -131,12 +138,19 @@ export function ComplexityChainCellEditor({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [formError, setFormError] = useState<string | null>(null)
   const [confirmingClear, setConfirmingClear] = useState(false)
+  // CARD-1275: the version this draft is based on. An unread row has none to send, so its
+  // write stays unconditional behind the overwrite confirmation; an empty cell expects no row.
+  const [token, setToken] = useState<string | undefined>(() =>
+    metadataUnread ? undefined : (chain?.concurrencyToken ?? EMPTY_CONCURRENCY_TOKEN),
+  )
+  // The stored row from a 409 complexity_chain_stale. Writes wait until the operator reloads.
+  const [stale, setStale] = useState<ComplexityChainDto | null>(null)
 
   const resolved = chain ? effectiveResolvedFrom(chain) : 'none'
   // An unread chain may hold an own rule, so Clear stays available behind the overwrite confirmation.
   const canClear = failedReads.chain != null || canClearOverride(resolved, isAnyRoleRow)
-  const saveBlocked = readPending != null || (metadataUnread && !overwriteConfirmed)
-  const clearBlocked = readPending != null || (failedReads.chain != null && !overwriteConfirmed)
+  const saveBlocked = readPending != null || stale != null || (metadataUnread && !overwriteConfirmed)
+  const clearBlocked = readPending != null || stale != null || (failedReads.chain != null && !overwriteConfirmed)
   const title = cellEditorTitle(role, complexity)
   const copy = clearOverrideCopy({
     isAnyRoleRow,
@@ -151,6 +165,7 @@ export function ComplexityChainCellEditor({
   const reasonError = lookupFieldError(fieldErrors, 'Reason')
   const listError = candidateListError(candidates)
   const busy = put.isPending || clear.isPending
+  const queued = put.isPaused || clear.isPaused
 
   const focusOperation = (operation: 'save' | 'clear') => {
     window.setTimeout(() => {
@@ -160,10 +175,32 @@ export function ComplexityChainCellEditor({
   }
 
   const showMutationError = (error: unknown, operation: 'save' | 'clear', fallback: string) => {
+    const current = staleComplexityChain(error)
+    if (current) {
+      // Never retried with the new version here: Reload shows it in the draft first.
+      setFieldErrors({})
+      setFormError(null)
+      setStale(current)
+      return
+    }
     const fields = getApiFieldErrors(error)
     setFieldErrors(fields)
     setFormError(Object.keys(fields).length > 0 ? null : getApiErrorMessage(error, fallback))
     focusOperation(operation)
+  }
+
+  const reloadStored = () => {
+    if (!stale) return
+    const next = toDraft(stale, false)
+    idRef.current = next.length + 1
+    setCandidates(next)
+    setReason(stale.reason ?? '')
+    setNotAfter(toDatetimeLocalValue(stale.notAfter))
+    setToken(stale.concurrencyToken ?? EMPTY_CONCURRENCY_TOKEN)
+    setStale(null)
+    setConfirmingClear(false)
+    setFieldErrors({})
+    setFormError(null)
   }
 
   const addCandidate = () => {
@@ -228,6 +265,7 @@ export function ComplexityChainCellEditor({
         })),
         reason: reason.trim() ? reason.trim() : null,
         notAfter: notAfterIso,
+        concurrencyToken: token,
       },
       {
         onSuccess: () => {
@@ -244,7 +282,7 @@ export function ComplexityChainCellEditor({
     setFormError(null)
     setFieldErrors({})
     clear.mutate(
-      { role, complexity },
+      { role, complexity, concurrencyToken: token },
       {
         onSuccess: () => {
           notifications.show({ color: 'green', message: CHAIN_CLEAR_SUCCESS })
@@ -388,6 +426,34 @@ export function ComplexityChainCellEditor({
             onChange={(event) => setOverwriteConfirmed(event.currentTarget.checked)}
             disabled={busy}
           />
+        ) : null}
+
+        {stale ? (
+          <Alert color="red" variant="light" title={CHAIN_STALE_TITLE} data-testid="routing-cell-editor-stale">
+            <Stack gap={4}>
+              <Text size="sm">{CHAIN_STALE_BODY}</Text>
+              <Text size="sm">Stored now: {storedRowSummary(stale)}</Text>
+              <Text size="sm">
+                Your draft:{' '}
+                {chainRowSummary(
+                  candidates,
+                  reason.trim() || null,
+                  fromDatetimeLocalValue(notAfter),
+                )}
+              </Text>
+              <Group justify="flex-end">
+                <Button size="compact-sm" variant="light" onClick={reloadStored}>
+                  Reload
+                </Button>
+              </Group>
+            </Stack>
+          </Alert>
+        ) : null}
+
+        {queued ? (
+          <Alert color="yellow" variant="light" data-testid="routing-cell-editor-queued">
+            {CHAIN_QUEUED_NOTE}
+          </Alert>
         ) : null}
 
         {formError ? (
