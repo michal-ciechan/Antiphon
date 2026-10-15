@@ -27,6 +27,110 @@ namespace Antiphon.Tests.Application;
 public class SessionRuntimeActionRecoveryTests
 {
     [Test]
+    public async Task C1259_uncertain_direct_roots_cannot_starve_a_later_recoverable_tail()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var producer = new RecordingProducer();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
+            ConfigureServices = s => s.AddSingleton<IAntiphonMessagingProducer>(producer)
+        });
+        const string prompt = "[Telegram Family] Recoverable later question";
+        await h.SeedChannelCorrelationAsync(prompt, "telegram:later-recipient");
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 1000, "UserPrompt", prompt), Entry(h, 1001, "AssistantText", "first"), Entry(h, 1002, "TurnEnd", null)]);
+        await h.Dispatcher.OnTranscriptActionAsync(h.SessionId, 1002, default);
+        producer.Sent.Select(r => r.Text).ShouldBe(["first"]);
+        await using (var db = h.CreateObserverContext())
+        {
+            for (var i = 1; i <= SessionRuntimeActionCoordinator.PageSize; i++)
+                db.SessionQueuedMessages.Add(new SessionQueuedMessage
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = h.SessionId, Sequence = i + 1,
+                    Body = "historical uncertain request", Status = QueuedMessageStatus.Sent,
+                    CreatedAt = h.Now.AddHours(-1), ChannelReplySettledAt = h.Now,
+                    DirectReplyPromptSequence = i, DirectReplyThroughSequence = i,
+                    DirectReplyPendingThroughSequence = i + 1, DirectReplyProvider = "telegram",
+                    DirectReplyConversationId = "uncertain-" + i
+                });
+            await db.SaveChangesAsync();
+        }
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 1003, "AssistantText", "recoverable trailing answer"), Entry(h, 1004, "UserPrompt", "next question")]);
+        await h.Dispatcher.OnTranscriptActionAsync(h.SessionId, 1003, default);
+        producer.Sent.Select(r => r.Text).ShouldBe(["first", "recoverable trailing answer"],
+            "an uncertain full page must not hide the later recoverable direct root");
+        producer.Sent.ShouldAllBe(r => r.ConversationId == "later-recipient");
+        await using var verify = h.CreateObserverContext();
+        (await verify.SessionQueuedMessages.CountAsync(m => m.DirectReplyPendingThroughSequence != null)).ShouldBe(128);
+        (await verify.SessionQueuedMessages.CountAsync(m => m.DirectReplyTailClosedAt != null)).ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments("complete")]
+    [Arguments("incomplete")]
+    [Arguments("stale-generation")]
+    [Arguments("resume-during-send")]
+    public async Task C1259_terminal_direct_tail_catches_up_before_closing(string variant)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var producer = new RecordingProducer();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
+            ConfigureServices = s => s.AddSingleton<IAntiphonMessagingProducer>(producer)
+        });
+        const string prompt = "[Telegram Family] Final question";
+        await h.SeedChannelCorrelationAsync(prompt, "telegram:final-recipient");
+        var initial = new[] { Entry(h, 1, "UserPrompt", prompt), Entry(h, 2, "AssistantText", "first"), Entry(h, 3, "TurnEnd", null) };
+        await h.Runtime.PersistTranscriptAsync(h.SessionId, initial);
+        await h.Dispatcher.OnTranscriptActionAsync(h.SessionId, 3, default);
+        DateTime generation;
+        await using (var db = h.CreateObserverContext())
+        {
+            generation = await db.AgentSessions.Where(s => s.Id == h.SessionId).Select(s => s.StartedAt).SingleAsync();
+            await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped));
+        }
+        var late = Entry(h, 4, "AssistantText", "last answer from terminal snapshot");
+        var snapshot = new SessionRunnerTranscriptDto(h.SessionId, [.. initial, late], 4,
+            AcceptedStartedAt: generation, TerminalComplete: true);
+        h.Runner.SetTranscript(snapshot with
+        {
+            TerminalComplete = variant != "incomplete",
+            AcceptedStartedAt = variant == "stale-generation" ? generation.AddMinutes(-1) : generation
+        });
+        if (variant is "incomplete" or "stale-generation")
+        {
+            await h.Dispatcher.OnTranscriptActionAsync(h.SessionId, 3, default);
+            producer.Sent.Select(r => r.Text).ShouldBe(["first"]);
+            await using var db = h.CreateObserverContext();
+            (await db.SessionQueuedMessages.SingleAsync()).DirectReplyTailClosedAt.ShouldBeNull();
+            h.Runner.SetTranscript(snapshot);
+        }
+        if (variant == "resume-during-send") producer.OnSend = async () =>
+        {
+            await using var db = h.CreateObserverContext();
+            await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u =>
+                u.SetProperty(s => s.StartedAt, generation.AddMinutes(1)).SetProperty(s => s.Status, SessionStatus.Running));
+        };
+        await h.Dispatcher.OnTranscriptActionAsync(h.SessionId, 3, default);
+        producer.Sent.Select(r => r.Text).ShouldBe(["first", "last answer from terminal snapshot"],
+            "terminal catch-up must publish the final suffix before closing its evidence");
+        producer.Sent.ShouldAllBe(r => r.ConversationId == "final-recipient");
+        await h.Dispatcher.OnTranscriptActionAsync(h.SessionId, 3, default);
+        producer.Sent.Count.ShouldBe(2);
+        await using var verify = h.CreateObserverContext();
+        var root = await verify.SessionQueuedMessages.SingleAsync();
+        root.DirectReplyThroughSequence.ShouldBe(4);
+        if (variant == "resume-during-send") root.DirectReplyTailClosedAt.ShouldBeNull("closure must recheck terminal generation after send");
+        else root.DirectReplyTailClosedAt.ShouldNotBeNull("a proven complete terminal tail must release retention protection");
+        (await verify.TranscriptEntries.SingleAsync(t => t.Uuid == late.Uuid)).Text.ShouldBe(late.Text);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task C1259_admitted_task_attempt_cannot_settle_its_replacement(bool catchup)
@@ -210,10 +314,12 @@ public class SessionRuntimeActionRecoveryTests
         public List<ChannelReply> Sent { get; } = [];
         public bool FailNext;
         public int Failures;
-        public Task SendAsync(ChannelReply reply, CancellationToken ct = default)
+        public Func<Task>? OnSend;
+        public async Task SendAsync(ChannelReply reply, CancellationToken ct = default)
         {
             if (FailNext) { FailNext = false; Failures++; throw new IOException("pre-accept failure"); }
-            Sent.Add(reply); return Task.CompletedTask;
+            Sent.Add(reply);
+            if (OnSend is not null) await OnSend();
         }
     }
 
