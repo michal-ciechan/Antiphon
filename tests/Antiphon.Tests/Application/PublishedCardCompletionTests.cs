@@ -209,7 +209,7 @@ public sealed class PublishedCardCompletionTests
         Directory.Exists(w.Land.Fixture.Source).ShouldBeTrue("cleanup-residue-retained");
     }
 
-    private sealed class InjectedFailure : Exception;
+    private sealed class InjectedFailure : Exception { }
     private sealed class Boundary : LandDeliveryBoundary
     {
         public string? Cut { get; set; }
