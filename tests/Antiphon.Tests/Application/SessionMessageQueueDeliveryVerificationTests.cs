@@ -450,11 +450,16 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         h.Adapter.SubmittedBodies.ShouldBeEmpty();
 
         await h.Runtime.ObserveTranscriptAsync(ManualBoundaryEvent(h.SessionId, 100, h.Clock.GetUtcNow()), CancellationToken.None);
+        await h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, default);
 
         h.Adapter.SubmittedBodies.ShouldBe(["the stranded brief"]);
         await using var db = CreateContext();
         (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId))
             .Status.ShouldBe(QueuedMessageStatus.Sent);
+        var receipt = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        receipt.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        (await db.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId && t.Kind == TranscriptKinds.UserPrompt)
+            .Select(t => t.Text).ToListAsync()).ShouldContain("the stranded brief");
     }
 
     // The flush is deliberately NOT the turn-end path: an empty queue there publishes
@@ -469,6 +474,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         h.EventBus.Clear();
 
         await h.Runtime.ObserveTranscriptAsync(ManualBoundaryEvent(h.SessionId, 101, h.Clock.GetUtcNow()), CancellationToken.None);
+        await h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, default);
 
         h.EventBus.PublishedEvents.ShouldNotContain(
             e => e.EventName == "SessionFinished",

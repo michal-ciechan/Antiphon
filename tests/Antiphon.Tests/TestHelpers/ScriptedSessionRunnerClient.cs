@@ -12,6 +12,7 @@ namespace Antiphon.Tests.TestHelpers;
         public System.Collections.Concurrent.ConcurrentQueue<Guid> SnapshotReads { get; } = new();
         public IReadOnlyList<SessionRunnerSessionDto> Sessions { get; set; } = [];
         public TaskCompletionSource Streaming { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ExitConsumed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public void Produce(SessionRunnerTranscriptEvent entry) => _events.Writer.TryWrite(new("transcript", entry.SessionId, Transcript: entry));
 
         // Match the HTTP iterator: offer the first payload on the ready marker, then its copy.
@@ -72,6 +73,7 @@ namespace Antiphon.Tests.TestHelpers;
             {
                 Received.Enqueue(entry.SessionId);
                 yield return entry;
+                if (entry.Exited is not null) ExitConsumed.TrySetResult();
             }
         }
     }
