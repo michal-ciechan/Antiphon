@@ -35,8 +35,8 @@ decide. The change stays in the overlay.
   are set. `AttachRunnerLiveStateAsync` groups live sessions by owner: the local group reads
   `_runnerClient.ListAsync`, each remote group reads `_runnerDirectory.GetInventoryAsync(owner)`.
   The reads run concurrently under the existing `ListTimeoutSeconds` deadline. A runner's rows
-  overlay only the sessions that runner owns. A runner that fails, is unavailable or misses the
-  deadline leaves its own sessions' fields null (unknown) and logs; the other groups still apply.
+  overlay the sessions that runner owns (V-2). A runner that fails, is unavailable or misses the
+  deadline leaves its own sessions' fields null (unknown) and logs; the other groups still apply (V-2, V-4).
   Without a directory a remote group is left unknown, as today. Cost: an agent list or detail
   read adds one inventory read per remote runner that owns one of its live sessions
   (`PhoneHomeRunnerDirectory.GetInventoryAsync` answers an unavailable runner without a request).
@@ -46,13 +46,13 @@ CARD-0097 / CARD-0506 client work does not collide. Restart: server.
 
 ## Verification design
 
-All in `AgentServiceIntegrationTests` (Postgres-backed, `[NotInParallel("AgentQueue")]`), with an
+The tests are in `AgentServiceIntegrationTests` (Postgres-backed, `[NotInParallel("AgentQueue")]`), with an
 in-test `InventoryDirectory` fake (per-runner Available / Unavailable / hang-until-cancelled
 answers, records which runner ids were asked) and a `ListedRunnerClient` for the local list.
 
 - V-1: `C1235_remote_bound_live_session_takes_transcriptBinding_from_its_runners_inventory`:
   agent detail of a remote-bound session whose runner lists it `awaiting-input` reads
-  `awaiting-input`, and the directory was asked for that runner only. Red at S1: null.
+  `awaiting-input`, and the directory's asked list equals `[runnerId]`. Red at S1: null.
 - V-2: `C1235_local_runner_row_does_not_overlay_a_remote_bound_session`: the local list carries a
   `bound` row under the remote session's id and the owner is Unavailable; the field stays null.
   Red at S1: `bound`.
@@ -86,8 +86,8 @@ change is confined to `AgentService`'s read-only overlay. Bootstrap the checkpoi
 through `scripts/build-slot.ps1` into `bin-c1235-tool/` (the planned unlisted build). Import this
 table to an ignored manifest with `timeouts.rowMinutes: 40`; run with `--total-timeout 150m`, the
 exact committed `--expected-source-sha`, no `--keep-outputs`, and wait until the exit is not 75.
-The red run keeps its outputs; remove only that run's literal output root after inspection.
-Each proof selection runs at most three normal times; none after green.
+The red run keeps its outputs; remove that run's literal output root after inspection.
+Each proof selection runs at most three normal times; no rerun after green.
 
 ### Checkpoints
 
