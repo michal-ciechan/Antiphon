@@ -270,7 +270,7 @@ public sealed class PipelineHandoffPilotTests
                     var other = new Board { Id = Guid.NewGuid(), ProjectId = World.Project.Id, Name = "foreign board" };
                     db.Add(other); board = other.Id;
                 }
-                db.Add(new DelegationCapability { Id = Guid.NewGuid(), Name = "B2 test", ProjectId = World.Project.Id,
+                db.Add(new DelegationCapability { Id = Guid.NewGuid(), Name = "B2 test " + variant, ProjectId = World.Project.Id,
                     BoardId = board, TokenHash = AgentTaskService.HashToken(token),
                     RootsJson = JsonSerializer.Serialize(new[] { World.RepositoryPath + (variant == "repository" ? "-sibling" : "") }),
                     RevokedAt = variant == "revoked" ? DateTime.UtcNow : null });
