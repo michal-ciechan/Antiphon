@@ -57,3 +57,21 @@ The exclusions are conservative at class granularity, including cross-platform m
 
 | `Antiphon.Tests.Agents.RunnerGrokAdapterReadyTests` | CARD-1287 selector boundary: required TUnit trailing-wildcard class operand also selects an Integration suffix class; excluded to keep this roster Unit-only. |
 | `Antiphon.Tests.Application.OutboundConversionManifestTests` | CARD-1287 selector boundary: required TUnit trailing-wildcard class operand also selects an Integration suffix class; excluded to keep this roster Unit-only. |
+
+## Completed candidate (failed; not qualified)
+
+The committed 374-class candidate at runtime HEAD `25d38896715e1927e85c7f09661822228a6561f8` completed once from the original `f6310a452a911b45b0a0946feb9ac49dcc71bbfd` binary. Only the three roster/documentation paths differ from that build SHA. Compiled source, tests and dependencies were not edited or rebuilt.
+
+| Run | Executed | Passed | Failed | Skipped | Outer wall | TRX wall | Classes |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| candidate1 | 4526 | 4525 | 1 | 0 | 2844.911s | 2839.116s | 374 |
+
+Fresh TRX class identities equal all 374 roster entries. Every compiled test method in those classes has a result; missing/extra classes and missing methods are all zero. Native driver exit was 2. The host slot was granted with zero wait.
+
+The sole failure is `Antiphon.Tests.Checkpoints.CheckpointBoundedReaderTests.changed_readers_bound_fifo_and_exited_child_pipes(project, ordinary)`: the four-second supervisor expired at 4,019ms, killed PowerShell with SIGKILL, and returned exit 1 even though stdout already contained `PASS project held=False`. TUnit reports 4.384s. This is an observed harness startup/exit deadline failure, not a confirmed intermittent flake; no isolated rerun or timeout change was made. The other nine reader arguments passed. The class will be quarantined under CARD-1287 and the amended roster will be measured twice. This failed run is retained and contributes no passing gate certificate.
+
+The old Linux CP-3 resolved manifest records `estimatedMinutes: 7`, `timeoutMinutes: 21`; its terminal report records timeout after 1261.672s with no TRX. This reduced candidate instead completed after 47m24.911s while making progress through serial real-build and native shell/PowerShell matrices. Underbudgeting is a sufficient explanation for an aggregate cutoff; the old Normal console cannot identify its active class or prove/exclude a separate hang. No full-Unit duration or historical critical path is claimed.
+
+Main assembly SHA-256: `cf0b0487b4e9527cc31cd471b652f9db91887de4426b348708dc33cf06a704a9`. Its existing assembly informational version is `1.0.0+f6310a452a911b45b0a0946feb9ac49dcc71bbfd`. Candidate TRX SHA-256: `8b53e52791169c741bbd8887ebf427ccdd051ab75afa12745c70ea7f5164a991`. No checkpoint source stamp was fabricated.
+
+Raw evidence is retained at `/work/evidence/task-67a7e42a/raw/`, including `candidate1/run.trx`, full console, exact argv/filter, timing, method/class audit, original build log/index and compiled metadata. The two final aggregate executions remain pending.
