@@ -15,6 +15,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using System.Collections.Concurrent;
 
 namespace Antiphon.Tests.TestHelpers;
@@ -33,6 +34,7 @@ namespace Antiphon.Tests.TestHelpers;
 internal sealed class BridgeQueueHarness : IAsyncDisposable
 {
     public bool PreserveDatabaseOnDispose { get; init; }
+    private SessionRuntimeActionHostedService? ActionWorker { get; init; }
     public required ServiceProvider Provider { get; init; }
     public required IServiceScope Scope { get; init; }
     public required string TempRoot { get; init; }
@@ -57,6 +59,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     {
         public bool AlwaysOn { get; init; } = true;
         public bool PreserveDatabaseOnDispose { get; init; }
+        public bool StartRuntimeActions { get; init; }
         public TimeProvider? TimeProvider { get; init; }
 
         /// <summary>
@@ -166,6 +169,11 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         var runner = new EmptyRunnerClient();
         services.AddSingleton<ISessionRunnerClient>(runner);
         services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton(Options.Create(new SessionStateSettings()));
+        services.AddSingleton<SessionStateCommandMetrics>();
+        services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+        services.AddSingleton<SessionStateStore>();
+        services.AddSingleton<SessionRuntimeActionCoordinator>();
         services.AddSingleton<ChannelInboundDebouncer>();
         services.AddSingleton<ChannelInboundWakeSignal>();
         services.AddSingleton<SessionMessageQueueService>();
@@ -252,6 +260,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         options.ConfigureServices?.Invoke(services);
         var provider = services.BuildServiceProvider();
         var scope = provider.CreateScope();
+        var actionWorker = options.StartRuntimeActions
+            ? new SessionRuntimeActionHostedService(provider.GetRequiredService<SessionRuntimeActionCoordinator>()) : null;
+        if (actionWorker is not null) await actionWorker.StartAsync(CancellationToken.None);
 
         if (options.AttachSessionId is Guid attachedSession)
         {
@@ -271,6 +282,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             attachedRuntime.Register(attachedSession, attachedAdapter);
             return new BridgeQueueHarness
             {
+                ActionWorker = actionWorker,
                 PreserveDatabaseOnDispose = options.PreserveDatabaseOnDispose,
                 Provider = provider,
                 Scope = scope,
@@ -355,6 +367,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
         return new BridgeQueueHarness
         {
+            ActionWorker = actionWorker,
             PreserveDatabaseOnDispose = options.PreserveDatabaseOnDispose,
             Provider = provider,
             Scope = scope,
@@ -633,6 +646,11 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (ActionWorker is not null)
+        {
+            await ActionWorker.StopAsync(CancellationToken.None);
+            ActionWorker.Dispose();
+        }
         if (!PreserveDatabaseOnDispose)
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(ConnectionString)))
         {
@@ -640,6 +658,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                 .Where(s => s.CardId == null && (s.Cwd.StartsWith(TempRoot) || s.Id == SessionId))
                 .Select(s => s.Id)
                 .ToListAsync();
+            await db.SessionRuntimeActions.Where(a => sessionIds.Contains(a.AgentSessionId)).ExecuteDeleteAsync();
             await db.ModelAvailabilityHolds
                 .Where(h => h.SourceSessionId != null
                     && (sessionIds.Contains(h.SourceSessionId.Value) || h.SourceSessionId == SessionId))

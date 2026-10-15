@@ -35,6 +35,7 @@ public class AppDbContext : DbContext
     public DbSet<PipelineDefinitionRevision> PipelineDefinitionRevisions => Set<PipelineDefinitionRevision>();
     public DbSet<AgentSession> AgentSessions => Set<AgentSession>();
     public DbSet<TranscriptEntry> TranscriptEntries => Set<TranscriptEntry>();
+    public DbSet<SessionRuntimeAction> SessionRuntimeActions => Set<SessionRuntimeAction>();
     public DbSet<ApiErrorRecovery> ApiErrorRecoveries => Set<ApiErrorRecovery>();
     public DbSet<SessionQueuedMessage> SessionQueuedMessages => Set<SessionQueuedMessage>();
     public DbSet<RemoteControlModalEpisode> RemoteControlModalEpisodes => Set<RemoteControlModalEpisode>();
@@ -1581,6 +1582,19 @@ public class AppDbContext : DbContext
                 .WithMany(r => r.Sessions)
                 .HasForeignKey(s => s.TuiProfileRevisionId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<SessionRuntimeAction>(entity =>
+        {
+            entity.ToTable("SessionRuntimeActions");
+            entity.HasKey(a => a.Id);
+            entity.Property(a => a.TriggerKind).HasMaxLength(40);
+            entity.Property(a => a.FailureReason).HasMaxLength(200);
+            entity.Property(a => a.UiProjectionDelta).HasColumnType("bytea");
+            entity.HasIndex(a => new { a.AgentSessionId, a.Sequence, a.TriggerKind }).IsUnique();
+            entity.HasIndex(a => new { a.DueAt, a.AgentSessionId });
+            entity.HasOne<AgentSession>().WithMany().HasForeignKey(a => a.AgentSessionId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<TranscriptEntry>().WithMany().HasForeignKey(a => a.TranscriptEntryId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<TranscriptEntry>(entity =>
