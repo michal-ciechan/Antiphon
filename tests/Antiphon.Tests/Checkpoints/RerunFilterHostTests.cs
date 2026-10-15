@@ -23,18 +23,41 @@ public sealed class RerunFilterHostTests
         var staged = Path.Combine(AppContext.BaseDirectory, "checkpoint-filter-host",
             "Antiphon.Checkpoints.FilterHost.dll");
         File.Exists(staged).ShouldBeTrue("filter host must be staged by the parent build");
+        // CARD-1272: the host's default report directory is beside its DLL, inside sealed
+        // checkpoint build output; each run reports into its own owned sandbox instead.
+        var scope = new CheckpointTestScope();
+        var goodSandbox = scope.TempDir();
+        var badSandbox = scope.TempDir();
+        try
         {
-            var good = await RunAsync(staged, filters[0]);
+            var good = await RunAsync(staged, filters[0], goodSandbox, scope.Register);
             good.ExitCode.ShouldBe(0, good.Text);
             Count(good.Text, "total:").ShouldBe(2);
             Count(good.Text, "succeeded:").ShouldBe(2);
 
-            var bad = await RunAsync(staged, "/*/*/FilterHostTests/alpha|/*/*/FilterHostTests/beta");
+            var bad = await RunAsync(staged, "/*/*/FilterHostTests/alpha|/*/*/FilterHostTests/beta",
+                badSandbox, scope.Register);
             Count(bad.Text, "total:").ShouldBe(0);
+
+            foreach (var sandbox in new[] { goodSandbox, badSandbox })
+            {
+                var reports = Path.Combine(sandbox, "TestResults");
+                Directory.Exists(reports).ShouldBeTrue("the child must write reports inside its owned sandbox");
+                Directory.GetFiles(reports, "*.html", SearchOption.AllDirectories).Length.ShouldBe(1);
+            }
+            Directory.Exists(Path.Combine(Path.GetDirectoryName(staged)!, "TestResults"))
+                .ShouldBeFalse("the sealed build output must remain unchanged");
         }
+        finally
+        {
+            await scope.DisposeAsync();
+        }
+        Directory.Exists(goodSandbox).ShouldBeFalse("scope disposal must reclaim the child report too");
+        Directory.Exists(badSandbox).ShouldBeFalse("scope disposal must reclaim the child report too");
     }
 
-    private static async Task<(int ExitCode, string Text)> RunAsync(string staged, string filter)
+    private static async Task<(int ExitCode, string Text)> RunAsync(string staged, string filter, string sandbox,
+        Action<Process> registerChild)
     {
         var psi = new ProcessStartInfo("dotnet")
         {
@@ -47,7 +70,11 @@ public sealed class RerunFilterHostTests
         psi.ArgumentList.Add(staged);
         psi.ArgumentList.Add("--treenode-filter");
         psi.ArgumentList.Add(filter);
+        psi.Environment["TMPDIR"] = sandbox;
+        psi.Environment["TEMP"] = sandbox;
+        psi.Environment["TMP"] = sandbox;
         using var process = Process.Start(psi)!;
+        registerChild(process);
         var stdout = await process.StandardOutput.ReadToEndAsync();
         var stderr = await process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync();
