@@ -152,6 +152,6 @@ before a second save (V-17 asserts one save either way).
 | CP-5 | S1-S10 | n/a | client-tests | `pwsh -NoProfile -File scripts/test-client.ps1 src/api/complexityChains.test.tsx src/features/settings/ComplexityChainCellEditor.test.tsx src/features/settings/RoutingSettingsTab.test.tsx src/features/settings/routingSettingsModel.test.ts src/features/orchestrator/ComplexityChainPanel.test.tsx` | V-8, V-9, V-10, V-11, V-12, V-13, V-14, V-22, R-4 | 5 files (SettingsPage.test.tsx excluded: 2 failures inherited at base e7b6b80, Review 40767d91), nonzero count, 0 failed/skipped, `CLIENT TESTS EXIT CODE: 0` | n/a | 5 | false |
 | CP-6 | S1-S10 | n/a | client-build | `npm --prefix client run build` | R-5 | typecheck and production build exit 0 | n/a | 4 | false |
 | CP-7 | S1-S10 | n/a | client-lint | `npm --prefix client run lint` | R-5 | ESLint exit 0 | n/a | 4 | false |
-| CP-8 | S10 | `CP-1` | instructions-refresh | `/*/*/OrchestratorInstructionsRefreshTests/*` | V-24, R-6 | 50 executed, 0 failed/skipped | 50 | 15 | false |
+| CP-8 | S1-S10 | `CP-1` | instructions-refresh | `/*/*/OrchestratorInstructionsRefreshTests/*` | V-24, R-6 | 50 executed, 0 failed/skipped | 50 | 15 | false |
 
 Red-first is by commit order (S1, S3, S5 precede their fixes); the red runs belong to Mutation.
