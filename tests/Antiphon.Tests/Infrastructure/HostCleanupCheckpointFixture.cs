@@ -25,6 +25,8 @@ internal sealed class HostCleanupCheckpointFixture
     {
         Io = new(Clock);
         Context = new(Io, Io, Clock);
+        Io.CreateDirectory("/");
+        Io.CreateDirectory("/c987");
         Io.CreateDirectory(Parent);
         Io.Put(Path.Combine(Parent, ".git"), "git marker");
         Io.Repository = Parent;
@@ -111,6 +113,22 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
         public FileAttributes Attributes;
     }
 
+    public int CurrentProcessId => 123;
+    public string MachineName => "virtual-host";
+    public string BootId => "virtual-boot";
+    public string PidNamespace => "virtual-pidns";
+    public string ImageDirectory { get; set; } = "/virtual/image";
+    public string CurrentDirectory => Repository;
+    public Dictionary<int, CheckpointProcessSnapshot> Processes { get; } = new() { [123] = new(456, 'R', false) };
+    public CheckpointProcessSnapshot Process(int pid)
+    {
+        Enter("process", pid.ToString());
+        return Processes.TryGetValue(pid, out var value) ? value : throw new ArgumentException("absent process");
+    }
+    public DateTime CreationTimeUtc(string path) { Enter("created", path); return DateTime.UnixEpoch.AddTicks(Nodes[path].Stat.Changed / 100); }
+    public DateTime LastWriteTimeUtc(string path) { Enter("modified", path); return DateTime.UnixEpoch.AddTicks(Nodes[path].Stat.Modified / 100); }
+    public string StreamPath(Stream stream) => ((WriteStream)stream).Path;
+    public Dictionary<string, string> Environment { get; } = [];
     public Dictionary<string, Node> Nodes { get; } = new(StringComparer.Ordinal);
     public List<(string Operation, string Path)> Events { get; } = [];
     public List<CheckpointReadOpen> ReadRequests { get; } = [];
@@ -186,7 +204,7 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
         if (!Nodes.ContainsKey(path) || mode is FileMode.Create or FileMode.CreateNew) Put(path, "");
         if (!_held.TryGetValue(path, out held)) _held[path] = held = [];
         held.Add(share);
-        return new WriteStream(Nodes[path].Bytes, mode == FileMode.Append, bytes => { Nodes[path].Bytes = bytes; held.Remove(share); });
+        return new WriteStream(path, Nodes[path].Bytes, mode == FileMode.Append, access != FileAccess.Read, bytes => { Nodes[path].Bytes = bytes; Nodes[path].Stat = Nodes[path].Stat with { Size = bytes.Length, Modified = Now, Changed = Now }; held.Remove(share); });
     }
     public ICheckpointReadHandle OpenRead(string path, CheckpointReadOpen request)
     {
@@ -211,7 +229,7 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
         if (Nodes.Keys.Any(p => Path.GetDirectoryName(p) == path)) throw new IOException("directory not empty");
         Nodes.Remove(path);
     }
-    public string? EnvironmentVariable(string name) => name == "PATH" ? "/bin" : null;
+    public string? EnvironmentVariable(string name) => Environment.GetValueOrDefault(name) ?? (name == "PATH" ? "/bin" : null);
     public CheckpointGitResult Run(CheckpointGitRequest request)
     {
         Enter("git", request.WorkingDirectory);
@@ -247,8 +265,51 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
     private sealed class WriteStream : MemoryStream
     {
         private readonly Action<byte[]> _closed;
-        public WriteStream(byte[] bytes, bool append, Action<byte[]> closed)
-        { Write(bytes); Position = append ? Length : 0; _closed = closed; }
+        public string Path { get; }
+        private readonly bool _writable;
+        public override bool CanWrite => _writable;
+        public WriteStream(string path, byte[] bytes, bool append, bool writable, Action<byte[]> closed)
+        { _writable = true; Write(bytes); Position = append ? Length : 0; _closed = closed; Path = path; _writable = writable; }
         protected override void Dispose(bool disposing) { if (disposing) _closed(ToArray()); base.Dispose(disposing); }
     }
+}
+
+internal sealed class HostCleanupToolFixture
+{
+    public HostCleanupReceiptFixture Receipt { get; }
+    public HostCleanupCheckpointFixture Files => Receipt.Files;
+    public VirtualCheckpointIo Io => Files.Io;
+    public CheckpointCleanupContext Context => Files.Context;
+    public string Run => Receipt.Run;
+    public string Tool => Run + "/tool";
+    public string Payload => Tool + "/fixture.dll";
+    public ProcessIdentity Dead => new(999, 1, Io.MachineName, Io.BootId, Io.PidNamespace);
+    public RunOwnership Owner { get; }
+    public HostCleanupToolFixture(int exit = 0, bool sealAuthority = false)
+    {
+        Receipt = new(exit);
+        Owner = new() { RunId = Path.GetFileName(Run), RunDirectory = Run,
+            Starter = new ProcessIdentityProbe(Context).Current(), Launched = Dead, Phase = "launched" };
+        SafeWrite.Require(Files.Write.CreateFreshDirectory(Tool, Files.Write.Under(Run)));
+        SafeWrite.Require(Files.Write.Text(Payload, "keep", Files.Write.Under(Tool)));
+        SafeWrite.Require(Files.Ledger.Seal(Tool));
+        if (sealAuthority) Owner.ToolCopy = ToolCopyAuthority.Seal(Run, Owner, Context);
+        RunOwnershipStore.Write(Run, Owner, Context);
+        Receipt.ClearEvents();
+    }
+    public ToolCopyCleanup Cleanup(CheckpointCleanupContext? context = null, Action<string>? beforeDelete = null) =>
+        new(context: context ?? Context, beforeDelete: beforeDelete);
+    public Task<int> Wait(CheckpointCleanupContext? context = null, string? sha = null, CancellationToken ct = default) =>
+        new WaitCommand(context: context ?? Context).WaitAsync(Run, TimeSpan.Zero, TimeSpan.FromSeconds(1),
+            new StringWriter(), ct, sha);
+    public CheckpointApp.Runtime Runtime(IProcessControl? control = null) => new()
+    {
+        CleanupContext = Context, RepoRoot = Files.Parent, EnvironmentLookup = _ => null,
+        ProcessControl = control, Output = new StringWriter(),
+        SourceCapture = _ => Receipt.State.Source.Start,
+    };
+    public static CheckpointManifest Manifest() => new()
+    {
+        Checkpoints = [new() { Id = "CP-1", After = ["S1"], Command = "true", EstimatedMinutes = 1 }]
+    };
 }

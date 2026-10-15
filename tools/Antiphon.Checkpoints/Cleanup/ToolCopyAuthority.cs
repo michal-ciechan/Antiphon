@@ -1,3 +1,4 @@
+using Antiphon.HostCleanup.Checkpoints;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -14,64 +15,71 @@ internal sealed class ToolCopyAuthority
     private const string FileName = "tool-copy-authority.json";
     private const int MaxEntries = 10000;
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    private readonly CheckpointCleanupContext _context;
+    private readonly CancellationToken _cancellationToken;
     private readonly CopyRecord _record;
     private readonly Dictionary<string, CopyEntry> _entries;
 
-    private ToolCopyAuthority(CopyRecord record)
+    private ToolCopyAuthority(CopyRecord record, CheckpointCleanupContext context, CancellationToken cancellationToken)
     {
+        _context = context;
+        _cancellationToken = cancellationToken;
         _record = record;
         _entries = record.Entries.ToDictionary(entry => entry.Path, StringComparer.Ordinal);
     }
 
-    public static ToolCopyDigest Seal(string run, RunOwnership owner)
+    public static ToolCopyDigest Seal(string run, RunOwnership owner, CheckpointCleanupContext? context = null)
     {
+        context ??= CheckpointCleanupDefaults.Context;
+        var write = new CheckpointWrite(context);
         var tool = Path.Combine(Path.GetFullPath(run), "tool");
-        SafeWrite.Require(OwnedOutputLedger.Check(tool));
-        var entries = Inventory(tool).Select(path =>
+        SafeWrite.Require(new CheckpointOutputLedger(context).Check(tool));
+        var entries = Inventory(context, tool).Select(path =>
         {
-            var stamp = LedgerStat.Of(path);
-            var content = SafeWrite.CreationRecord(path);
-            if (content is null || !SafeWrite.MatchesCreation(path) || !stamp.Matches(LedgerStat.Of(path)))
+            var stamp = LedgerStat.Of(context, path);
+            var content = write.CreationRecord(path);
+            if (content is null || !write.MatchesCreation(path) || !stamp.Matches(LedgerStat.Of(context, path)))
                 throw new IOException("refused: tool-authority-creation-mismatch");
             return new CopyEntry
             {
                 Path = Path.GetRelativePath(tool, path).Replace('\\', '/'),
                 Content = content, Stamp = stamp,
-                CreatedUtcTicks = Directory.Exists(path) ? Directory.GetCreationTimeUtc(path).Ticks : 0,
+                CreatedUtcTicks = context.Io.DirectoryExists(path) ? context.Io.CreationTimeUtc(path).Ticks : 0,
             };
         }).ToList();
         var record = new CopyRecord
         {
             RunId = owner.RunId, RunDirectory = Path.GetFullPath(run), ToolDirectory = tool,
             Creator = owner.Starter ?? throw new IOException("refused: tool-authority-owner-missing"),
-            Root = LedgerStat.Of(tool), RootCreatedUtcTicks = Directory.GetCreationTimeUtc(tool).Ticks,
+            Root = LedgerStat.Of(context, tool), RootCreatedUtcTicks = context.Io.CreationTimeUtc(tool).Ticks,
             Entries = entries,
         };
         var bytes = JsonSerializer.SerializeToUtf8Bytes(record, Json);
-        SafeWrite.Require(SafeWrite.Bytes(Path.Combine(run, FileName), bytes, SafeWrite.Under(run)));
+        SafeWrite.Require(write.Bytes(Path.Combine(run, FileName), bytes, write.Under(run)));
         return new ToolCopyDigest(Hash(bytes));
     }
 
-    public static ToolCopyAuthority? Load(string run, RunOwnership owner, out string? refusal)
+    public static ToolCopyAuthority? Load(string run, RunOwnership owner, out string? refusal, CheckpointCleanupContext? context = null, CancellationToken cancellationToken = default)
     {
+        context ??= CheckpointCleanupDefaults.Context;
         refusal = "tool-authority-missing";
         if (owner.ToolCopy is not { } seal) return null;
         try
         {
-            var bytes = ReceiptFile.ReadBytes(Path.Combine(run, FileName));
+            var bytes = ReceiptFile.ReadBytes(context, Path.Combine(run, FileName), cancellationToken);
             if (seal.Sha256 != Hash(bytes)) { refusal = "tool-authority-digest-mismatch"; return null; }
             using (var json = JsonDocument.Parse(bytes)) RequireUniqueProperties(json.RootElement);
             var record = ReceiptJson.Parse<CopyRecord>(Encoding.UTF8.GetString(bytes), Json);
             if (record.Version != 1 || record.RunId != owner.RunId
-                || !RunOwnershipStore.SamePath(record.RunDirectory, run)
-                || !RunOwnershipStore.SamePath(record.ToolDirectory, Path.Combine(run, "tool"))
+                || !RunOwnershipStore.SamePath(record.RunDirectory, run, context)
+                || !RunOwnershipStore.SamePath(record.ToolDirectory, Path.Combine(run, "tool"), context)
                 || record.Creator != owner.Starter)
             { refusal = "tool-authority-run-mismatch"; return null; }
             if (record.Entries.Count is 0 or > MaxEntries
                 || record.Entries.Any(entry => !SafeRelative(entry.Path))
                 || record.Entries.Select(entry => entry.Path).Distinct(StringComparer.Ordinal).Count() != record.Entries.Count)
             { refusal = "tool-authority-path-invalid"; return null; }
-            var authority = new ToolCopyAuthority(record);
+            var authority = new ToolCopyAuthority(record, context, cancellationToken);
             refusal = authority.Check();
             return refusal is null ? authority : null;
         }
@@ -85,11 +93,11 @@ internal sealed class ToolCopyAuthority
         try
         {
             var root = _record.ToolDirectory;
-            var preflight = SafeWrite.Preflight(root, [root]);
+            var preflight = new CheckpointWrite(_context).Preflight(root, [root]);
             if (preflight is not null) return preflight;
             if (!SameDirectory(root, _record.Root, _record.RootCreatedUtcTicks))
                 return "tool-authority-root-mismatch";
-            var actual = Inventory(root);
+            var actual = Inventory(_context, root);
             if (actual.Count != _entries.Count) return "tool-authority-inventory-mismatch";
             foreach (var path in actual)
             {
@@ -107,59 +115,59 @@ internal sealed class ToolCopyAuthority
     // each entry immediately before removal; a late addition prevents rmdir.
     public string? Remove(string root)
     {
-        if (!RunOwnershipStore.SamePath(root, _record.ToolDirectory)) return "tool-authority-root-mismatch";
+        if (!RunOwnershipStore.SamePath(root, _record.ToolDirectory, _context)) return "tool-authority-root-mismatch";
         var refusal = Check();
         if (refusal is not null) return refusal;
         foreach (var entry in _record.Entries.Where(entry => entry.Stamp.Kind == "file"))
         {
             var path = Path.Combine(root, entry.Path);
-            refusal = SafeWrite.Preflight(root, [path]);
+            refusal = new CheckpointWrite(_context).Preflight(root, [path]);
             if (refusal is not null || !Matches(path, entry)) return refusal ?? "tool-authority-entry-mismatch";
-            File.Delete(path);
+            _context.Io.Unlink(path);
         }
         foreach (var entry in _record.Entries.Where(entry => entry.Stamp.Kind == "directory")
                      .OrderByDescending(entry => entry.Path.Count(c => c == '/')))
         {
             var path = Path.Combine(root, entry.Path);
-            refusal = SafeWrite.Preflight(root, [path]);
+            refusal = new CheckpointWrite(_context).Preflight(root, [path]);
             if (refusal is not null || !SameDirectory(path, entry.Stamp, entry.CreatedUtcTicks))
                 return refusal ?? "tool-authority-entry-mismatch";
-            Directory.Delete(path, recursive: false);
+            _context.Io.RemoveDirectory(path, recursive: false);
         }
         if (!SameDirectory(root, _record.Root, _record.RootCreatedUtcTicks)) return "tool-authority-root-mismatch";
-        Directory.Delete(root, recursive: false);
+        _context.Io.RemoveDirectory(root, recursive: false);
         return null;
     }
 
-    private static bool Matches(string path, CopyEntry entry)
+    private bool Matches(string path, CopyEntry entry)
     {
         if (entry.Stamp.Kind == "directory")
             return entry.Content == "directory" && SameDirectory(path, entry.Stamp, entry.CreatedUtcTicks);
         if (entry.Stamp.Kind != "file") return false;
-        var before = LedgerStat.Of(path);
+        var before = LedgerStat.Of(_context, path);
         if (!entry.Stamp.Matches(before)) return false;
-        var bytes = ReceiptFile.ReadBytes(path); // regular single-link, bounded, verified handle
-        return entry.Content == bytes.LongLength + ":" + Hash(bytes) && before.Matches(LedgerStat.Of(path));
+        var bytes = ReceiptFile.ReadBytes(_context, path, _cancellationToken); // regular single-link, bounded, verified handle
+        return entry.Content == bytes.LongLength + ":" + Hash(bytes) && before.Matches(LedgerStat.Of(_context, path));
     }
 
-    private static bool SameDirectory(string path, LedgerStat expected, long created)
+    private bool SameDirectory(string path, LedgerStat expected, long created)
     {
-        var actual = LedgerStat.Of(path);
+        var actual = LedgerStat.Of(_context, path);
         return expected.Kind == "directory" && actual.Kind == "directory"
             && (expected.Inode != 0 ? expected.Device == actual.Device && expected.Inode == actual.Inode
-                : created == Directory.GetCreationTimeUtc(path).Ticks);
+                : created == _context.Io.CreationTimeUtc(path).Ticks);
     }
 
-    private static List<string> Inventory(string root)
+    private static List<string> Inventory(CheckpointCleanupContext context, string root)
     {
         var entries = new List<string>();
         var pending = new Stack<string>();
         pending.Push(root);
         while (pending.TryPop(out var directory))
-        foreach (var path in Directory.EnumerateFileSystemEntries(directory))
+        foreach (var path in context.Io.Enumerate(directory))
         {
             if (entries.Count >= MaxEntries) throw new IOException("tool inventory limit");
-            var stamp = LedgerStat.Of(path);
+            var stamp = LedgerStat.Of(context, path);
             if (stamp.Kind is not ("file" or "directory")) throw new IOException("nonregular tool entry");
             entries.Add(path);
             if (stamp.Kind == "directory") pending.Push(path);

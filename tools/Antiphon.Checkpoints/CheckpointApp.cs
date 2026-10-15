@@ -1,3 +1,4 @@
+using Antiphon.HostCleanup.Checkpoints;
 using System.Security.Cryptography;
 using System.Text.Json;
 
@@ -9,6 +10,9 @@ public static class CheckpointApp
 
     public sealed class Runtime
     {
+        public CheckpointCleanupContext CleanupContext { get; init; } = CheckpointCleanupDefaults.Context;
+        public CancellationToken CancellationToken { get; init; }
+        public string? RepoRoot { get; init; }
         public Func<string, string?> EnvironmentLookup { get; init; } = Environment.GetEnvironmentVariable;
         public HttpMessageHandler? OwnerHandler { get; init; }
         public Func<TimeSpan, CancellationToken, Task>? Delay { get; init; }
@@ -38,7 +42,7 @@ public static class CheckpointApp
         public Func<string, SourceObservation>? SourceCapture { get; init; }
     }
 
-    public static string ToolSource(Runtime? runtime = null) => runtime?.ToolDirectory ?? AppContext.BaseDirectory;
+    public static string ToolSource(Runtime? runtime = null) => runtime?.ToolDirectory ?? (runtime?.CleanupContext ?? CheckpointCleanupDefaults.Context).Io.ImageDirectory;
 
     public static string ReadLatest(string text)
     {
@@ -50,9 +54,9 @@ public static class CheckpointApp
         return lines[0];
     }
 
-    private static void WriteRunText(string runDirectory, string name, string content)
+    private static void WriteRunText(CheckpointCleanupContext context, string runDirectory, string name, string content)
     {
-        var reason = SafeWrite.Text(Path.Combine(runDirectory, name), content, SafeWrite.Under(runDirectory));
+        var reason = new CheckpointWrite(context).Text(Path.Combine(runDirectory, name), content, SafeWrite.Under(runDirectory));
         if (reason is not null)
             throw new IOException("refused: " + reason);
     }
@@ -60,7 +64,9 @@ public static class CheckpointApp
     public static async Task<int> ExecuteAsync(string runDirectory, CancellationToken cancellationToken, Runtime? runtime = null)
     {
         runtime ??= new Runtime();
-        var refusal = SafeWrite.Preflight(runDirectory, [Path.GetFullPath(runDirectory)], runtime.GitExecutable);
+        var context = runtime.CleanupContext;
+        var write = new CheckpointWrite(context);
+        var refusal = write.Preflight(runDirectory, [Path.GetFullPath(runDirectory)], runtime.GitExecutable);
         if (refusal is not null)
         {
             (runtime.Output ?? Console.Error).WriteLine("refused: " + refusal);
@@ -76,12 +82,12 @@ public static class CheckpointApp
             var reason = "executor.log or executor failure: " + ex.GetType().Name + ": " + ex.Message
                 + (ex.InnerException is null ? "" : " <- " + ex.InnerException.ToString().Replace("\n", " | "));
             var statePath = Path.Combine(runDirectory, "state.json");
-            var store = new RunStateStore();
+            var store = new RunStateStore(context);
             var state = store.TryRead(statePath) ?? new RunState { RunId = Path.GetFileName(runDirectory) };
             state.Phase = "done";
             state.ExitCode = ExitCodes.ExecutorCrashed;
             state.Reason = reason;
-            state.EndedAt = DateTimeOffset.UtcNow;
+            state.EndedAt = context.Time.GetUtcNow();
             var model = new ReportModel
             {
                 RunId = state.RunId,
@@ -96,7 +102,7 @@ public static class CheckpointApp
             };
             try
             {
-                ReportWriter.WriteFiles(runDirectory, model);
+                ReportWriter.WriteFiles(context, runDirectory, model);
                 var persisted = store.Write(statePath, state);
                 if (persisted is not null)
                     Console.Error.WriteLine("refused: " + persisted);
@@ -113,12 +119,14 @@ public static class CheckpointApp
     private static async Task<int> ExecuteCoreAsync(string runDirectory, CancellationToken cancellationToken, Runtime? runtime)
     {
         runtime ??= new Runtime();
+        var context = runtime.CleanupContext;
+        var write = new CheckpointWrite(context);
         // Checked entry custody precedes request, log, owner, and row I/O.
-        (runtime.ExecutorAckWrite ?? ExecutorOwnershipStore.Write)(runDirectory, new ProcessIdentityProbe().Current());
-        var request = ReceiptJson.Read<RunRequest>(Path.Combine(runDirectory, "request.json"), Json)
+        (runtime.ExecutorAckWrite ?? ((run, identity) => ExecutorOwnershipStore.Write(run, identity, context)))(runDirectory, (runtime.ProcessProbe ?? new ProcessIdentityProbe(context)).Current());
+        var request = ReceiptJson.Read<RunRequest>(context, Path.Combine(runDirectory, "request.json"), Json, cancellationToken)
             ?? throw new ManifestValidationException("request", "request.json is empty");
         var repo = request.RepoRoot;
-        var manifest = ManifestLoader.LoadFile(Path.Combine(runDirectory, "manifest.resolved.yaml"), repo);
+        var manifest = ManifestLoader.LoadFile(Path.Combine(runDirectory, "manifest.resolved.yaml"), repo, context: context, cancellationToken: cancellationToken);
         var source = request.Source;
         var sourceGuard = new SourceRunGuard(repo, source, runtime.SourceCapture);
         var selected = manifest.Checkpoints.Where(row => request.Rows.Count == 0 || request.Rows.Contains(row.Id)).ToList();
@@ -131,16 +139,16 @@ public static class CheckpointApp
         var entryAdmitted = await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
         if (entryAdmitted)
         {
-            WriteRunText(runDirectory, "host.txt", HostSnapshot.Capture(BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows())));
-            WriteRunText(runDirectory, "git.txt", GitSnapshot.Capture(repo));
+            WriteRunText(context, runDirectory, "host.txt", HostSnapshot.Capture(BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows())));
+            WriteRunText(context, runDirectory, "git.txt", GitSnapshot.Capture(repo));
         }
-        var store = new RunStateStore();
+        var store = new RunStateStore(context);
         var state = new RunState
         {
             RunId = Path.GetFileName(runDirectory),
             Phase = "running",
-            ExecutorPid = Environment.ProcessId,
-            StartedAt = DateTimeOffset.UtcNow,
+            ExecutorPid = context.Io.CurrentProcessId,
+            StartedAt = context.Time.GetUtcNow(),
             Source = source,
         };
         var statePath = Path.Combine(runDirectory, "state.json");
@@ -270,11 +278,11 @@ public static class CheckpointApp
             manifest.Checkpoints.FirstOrDefault(spec => spec.Id == row.Id)?.IsCommand != true).ToList();
         source.BuildSource = testRows.Count == 0 ? "notApplicable"
             : testRows.All(row => row.Source.BuildSource == "verified") ? "verified" : "unknown";
-        var model = BuildReport(runDirectory, repo, request, manifest, state, result);
+        var model = BuildReport(runDirectory, repo, request, manifest, state, result, context, cancellationToken);
         if (!owner.Ended.IsCancellationRequested && !string.IsNullOrWhiteSpace(request.Baseline))
         {
             var remaining = state.TotalTimeoutAt is DateTimeOffset deadline
-                ? deadline - DateTimeOffset.UtcNow
+                ? deadline - context.Time.GetUtcNow()
                 : TimeSpan.FromMinutes(15);
             if (remaining < TimeSpan.Zero)
                 remaining = TimeSpan.Zero;
@@ -308,22 +316,22 @@ public static class CheckpointApp
         }
 
         model.Evidence = Path.Combine(runDirectory, "report.md");
-        var gitAppend = SafeWrite.Append(Path.Combine(runDirectory, "git.txt"),
+        var gitAppend = write.Append(Path.Combine(runDirectory, "git.txt"),
             $"\nsource={SourceEvidence.Token(source.Start)} sourceState={source.State} buildSource={source.BuildSource}\n",
             SafeWrite.Under(runDirectory));
         if (gitAppend is not null)
             throw new IOException("refused: " + gitAppend);
-        ReportWriter.WriteFiles(runDirectory, model);
+        ReportWriter.WriteFiles(context, runDirectory, model);
         try
         {
-            EvidenceFolder.Write(runDirectory, model, removeToolCopy: false);
+            EvidenceFolder.Write(runDirectory, model, removeToolCopy: false, context: context);
         }
         catch (Exception ex)
         {
             Note("evidence failed: " + ex.GetType().Name + ": " + ex.Message);
         }
 
-        static bool OwnedOutputRemains(IReadOnlyCollection<string>? created)
+        bool OwnedOutputRemains(IReadOnlyCollection<string>? created)
         {
             if (created is null)
                 return false;
@@ -332,7 +340,7 @@ public static class CheckpointApp
                 var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                 if (!OutputCleanup.IsIsolatedOutputId(Path.GetFileName(trimmed)))
                     continue;
-                if (Directory.Exists(path) || File.Exists(path))
+                if (context.Io.DirectoryExists(path) || context.Io.FileExists(path))
                     return true;
             }
 
@@ -340,7 +348,7 @@ public static class CheckpointApp
         }
 
         model.OutputPaths = manifest.Builds
-            .SelectMany(build => OutputCleanup.MatchingIsolatedDirectories(repo, build.Id))
+            .SelectMany(build => new CheckpointOutputCleanup(context).MatchingIsolatedDirectories(repo, build.Id))
             .Distinct(StringComparer.Ordinal)
             .ToList();
         try
@@ -349,7 +357,7 @@ public static class CheckpointApp
                 throw new OperationCanceledException(owner.Reason);
             if (!request.KeepOutputs)
             {
-                var clean = OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(), model.ExitCode,
+                var clean = new CheckpointOutputCleanup(context).CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(), model.ExitCode,
                     request.CleanOnRed, dryRun: false, beforeDelete: owner.Bound ? () => owner.Ended.ThrowIfCancellationRequested() : null,
                     createdPaths: state.CreatedOutputPaths);
                 if (clean.KeptBecauseRed)
@@ -386,7 +394,7 @@ public static class CheckpointApp
             model.ExitCode = ExitCodes.OwnerEnded;
             model.Verdict = "RED";
             model.Reason = owner.Reason;
-            ReportWriter.WriteFiles(runDirectory, model);
+            ReportWriter.WriteFiles(context, runDirectory, model);
         }
         catch (Exception ex)
         {
@@ -405,7 +413,7 @@ public static class CheckpointApp
             await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
         if (!request.KeepOutputs)
         {
-            var remaining = model.OutputPaths.Where(path => Directory.Exists(path) || File.Exists(path)).ToList();
+            var remaining = model.OutputPaths.Where(path => context.Io.DirectoryExists(path) || context.Io.FileExists(path)).ToList();
             if (remaining.Count > 0)
             {
                 model.CleanedOutputs = false;
@@ -425,9 +433,9 @@ public static class CheckpointApp
             model.ExitCode = ExitCodes.OwnerEnded;
             model.Verdict = "RED";
             model.Reason = owner.Reason;
-            ReportWriter.WriteFiles(runDirectory, model);
+            ReportWriter.WriteFiles(context, runDirectory, model);
         }
-        ReportWriter.WriteFiles(runDirectory, model);
+        ReportWriter.WriteFiles(context, runDirectory, model);
         Note("done exit=" + model.ExitCode);
         await logWriter.FlushAsync().ConfigureAwait(false);
         await logWriter.DisposeAsync().ConfigureAwait(false);
@@ -439,9 +447,9 @@ public static class CheckpointApp
             model.ExitCode = ExitCodes.OwnerEnded;
             model.Verdict = "RED";
             model.Reason = owner.Reason;
-            ReportWriter.WriteFiles(runDirectory, model);
+            ReportWriter.WriteFiles(context, runDirectory, model);
         }
-        Finish(state, model.ExitCode, Publish, () => { }, _ => { });
+        Finish(state, model.ExitCode, Publish, () => { }, _ => { }, context);
         return model.ExitCode;
         }
         finally
@@ -455,27 +463,30 @@ public static class CheckpointApp
 
     public static string CreateRun(CheckpointManifest manifest, RunRequest request, string repo, Runtime? runtime = null)
     {
+        runtime ??= new Runtime();
+        var context = runtime.CleanupContext;
+        var write = new CheckpointWrite(context);
         ManifestValidator.Validate(manifest, repo);
         var selected = manifest.Checkpoints.Where(row => request.Rows.Count == 0 || request.Rows.Contains(row.Id)).ToList();
         if (selected.Count == 0)
             throw new ManifestValidationException("rows", "no checkpoints selected");
         var resultsRoot = Path.GetFullPath(Path.IsPathRooted(manifest.ResultsRoot) ? manifest.ResultsRoot : Path.Combine(repo, manifest.ResultsRoot));
         var resultsOwnership = SafeWrite.Under(resultsRoot, gitExecutable: runtime?.GitExecutable);
-        SafeWrite.Require(SafeWrite.CreateDirectory(resultsRoot, resultsOwnership));
+        SafeWrite.Require(write.CreateDirectory(resultsRoot, resultsOwnership));
         // Runs do not reclaim any older repository paths.
-        var runId = RepoPaths.RunId();
+        var runId = RepoPaths.RunId(context);
         var runDirectory = Path.Combine(resultsRoot, runId);
-        SafeWrite.Require(SafeWrite.CreateFreshDirectory(runDirectory, resultsOwnership));
+        SafeWrite.Require(write.CreateFreshDirectory(runDirectory, resultsOwnership));
         try
         {
-            (runtime?.OwnershipWrite ?? RunOwnershipStore.Write)(runDirectory, new RunOwnership
+            (runtime.OwnershipWrite ?? ((run, record) => RunOwnershipStore.Write(run, record, context)))(runDirectory, new RunOwnership
             {
                 RunId = runId,
                 RunDirectory = Path.GetFullPath(runDirectory),
-                Starter = new ProcessIdentityProbe().Current(),
+                Starter = (runtime.ProcessProbe ?? new ProcessIdentityProbe(context)).Current(),
             });
-            TestRootGuard.RegisterRun(runDirectory);
-            WriteRunText(runDirectory, "manifest.resolved.yaml", ManifestLoader.ToYaml(manifest));
+            TestRootGuard.RegisterRun(runDirectory, context);
+            WriteRunText(context, runDirectory, "manifest.resolved.yaml", ManifestLoader.ToYaml(manifest));
             request.RepoRoot = repo;
             request.Rows = selected.Select(row => row.Id).ToList();
             var capture = runtime?.SourceCapture ?? new SourceSnapshot().Capture;
@@ -492,12 +503,12 @@ public static class CheckpointApp
                 request.Commit = request.Source.Start.Commit ?? GitSnapshot.Run(repo, "rev-parse", "HEAD");
             if (string.IsNullOrWhiteSpace(request.Branch))
                 request.Branch = GitSnapshot.Run(repo, "rev-parse", "--abbrev-ref", "HEAD");
-            WriteRunText(runDirectory, "request.json", JsonSerializer.Serialize(request, Json));
+            WriteRunText(context, runDirectory, "request.json", JsonSerializer.Serialize(request, Json));
             return runDirectory;
         }
         catch
         {
-            if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
+            if (ContainedCleanup.SafeAncestors(runDirectory, context) && ContainedCleanup.SafeTree(runDirectory, 10000, context))
                 _ = runDirectory; // retain partial run evidence
             throw;
         }
@@ -509,10 +520,12 @@ public static class CheckpointApp
     public static async Task<StartResult> StartAsync(CheckpointManifest manifest, RunRequest request, string repo, TextWriter output, Runtime? runtime = null)
     {
         runtime ??= new Runtime();
+        var context = runtime.CleanupContext;
+        var write = new CheckpointWrite(context);
         using var owner = new TaskOwnerGuard(runtime.EnvironmentLookup, runtime.OwnerHandler, runtime.Delay,
             deadline: runtime.OwnerDeadline, now: runtime.OwnerClock,
             uncertaintyBudget: runtime.OwnerUncertaintyBudget);
-        if (!await owner.EnsureLiveAsync(CancellationToken.None).ConfigureAwait(false))
+        if (!await owner.EnsureLiveAsync(runtime.CancellationToken).ConfigureAwait(false))
         {
             output.WriteLine("CHECKPOINT owner " + owner.Reason);
             return new StartResult(ExitCodes.OwnerEnded, "");
@@ -532,7 +545,7 @@ public static class CheckpointApp
             writeRoots.AddRange(directories);
         }
 
-        var preflight = SafeWrite.Preflight(repo, writeRoots, runtime.GitExecutable);
+        var preflight = write.Preflight(repo, writeRoots, runtime.GitExecutable);
         if (preflight is not null)
         {
             output.WriteLine("refused: " + preflight);
@@ -544,30 +557,30 @@ public static class CheckpointApp
         var runDirectory = CreateRun(manifest, request, repo, runtime);
         var resultsRoot = Path.GetDirectoryName(runDirectory)!;
         var runId = Path.GetFileName(runDirectory);
-        var ownership = RunOwnershipStore.Read(runDirectory)!;
+        var ownership = RunOwnershipStore.Read(runDirectory, context, runtime.CancellationToken)!;
         try
         {
-            var stateRefusal = new RunStateStore().Write(Path.Combine(runDirectory, "state.json"),
-                new RunState { RunId = runId, Phase = "starting", StartedAt = DateTimeOffset.UtcNow });
+            var stateRefusal = new RunStateStore(context).Write(Path.Combine(runDirectory, "state.json"),
+                new RunState { RunId = runId, Phase = "starting", StartedAt = context.Time.GetUtcNow() });
             if (stateRefusal is not null)
                 throw new InvalidOperationException("refused: " + stateRefusal);
-            (runtime.CopyToolOutput ?? ShadowCopy.CopyToolOutput)(ToolSource(runtime), Path.Combine(runDirectory, "tool"));
-            ownership.ToolCopy = ToolCopyAuthority.Seal(runDirectory, ownership);
+            (runtime.CopyToolOutput ?? ((source, destination) => ShadowCopy.CopyToolOutput(source, destination, context)))(ToolSource(runtime), Path.Combine(runDirectory, "tool"));
+            ownership.ToolCopy = ToolCopyAuthority.Seal(runDirectory, ownership, context);
         }
         catch
         {
             // This starter has not published launch intent; its partial run evidence remains in place.
-            if (ContainedCleanup.SafeTree(runDirectory, 10000)) _ = runDirectory; // retain partial run evidence
+            if (ContainedCleanup.SafeTree(runDirectory, 10000, context)) _ = runDirectory; // retain partial run evidence
             throw;
         }
         var dll = Path.Combine(runDirectory, "tool", "Antiphon.Checkpoints.dll");
         var launch = new LaunchRequest("dotnet", [dll, "execute", "--run", runDirectory], repo);
         ownership.Phase = "launch-attempted";
-        try { (runtime.OwnershipWrite ?? RunOwnershipStore.Write)(runDirectory, ownership); }
+        try { (runtime.OwnershipWrite ?? ((run, record) => RunOwnershipStore.Write(run, record, context)))(runDirectory, ownership); }
         catch
         {
             // Launch has not been invoked. This starter's partial run evidence remains in place.
-            if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
+            if (ContainedCleanup.SafeAncestors(runDirectory, context) && ContainedCleanup.SafeTree(runDirectory, 10000, context))
                 _ = runDirectory; // retain partial run evidence
             throw;
         }
@@ -582,14 +595,14 @@ public static class CheckpointApp
         {
             // The native API refused to create a process; no executor can use this image.
             RecordNotStarted();
-            if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
+            if (ContainedCleanup.SafeAncestors(runDirectory, context) && ContainedCleanup.SafeTree(runDirectory, 10000, context))
                 _ = runDirectory; // retain partial run evidence
             throw;
         }
         if (outcome.Kind == LaunchKind.NotStarted)
         {
             RecordNotStarted();
-            if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
+            if (ContainedCleanup.SafeAncestors(runDirectory, context) && ContainedCleanup.SafeTree(runDirectory, 10000, context))
                 _ = runDirectory; // retain partial run evidence
             output.WriteLine("CHECKPOINT native launch refused run=" + runId);
             return new StartResult(ExitCodes.Invalid, runDirectory);
@@ -603,7 +616,7 @@ public static class CheckpointApp
         ProcessIdentity? launched = outcome.Identity;
         if (launched is null)
         {
-            try { launched = new ProcessIdentityProbe().Capture(pid); }
+            try { launched = (runtime.ProcessProbe ?? new ProcessIdentityProbe(context)).Capture(pid); }
             catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException
                                        or UnauthorizedAccessException or System.ComponentModel.Win32Exception) { }
         }
@@ -611,7 +624,7 @@ public static class CheckpointApp
         {
             ownership.Launched = launched;
             ownership.Phase = "launched";
-            try { (runtime.OwnershipWrite ?? RunOwnershipStore.Write)(runDirectory, ownership); }
+            try { (runtime.OwnershipWrite ?? ((run, record) => RunOwnershipStore.Write(run, record, context)))(runDirectory, ownership); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 output.WriteLine("CHECKPOINT launch custody write failed run=" + runId + " reason=" + ex.GetType().Name);
@@ -627,7 +640,7 @@ public static class CheckpointApp
         {
             ownership.Phase = "not-started";
             ownership.Launched = null;
-            try { (runtime.OwnershipWrite ?? RunOwnershipStore.Write)(runDirectory, ownership); }
+            try { (runtime.OwnershipWrite ?? ((run, record) => RunOwnershipStore.Write(run, record, context)))(runDirectory, ownership); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 // Failed publication keeps the old ambiguous journal and therefore retains the copy.
@@ -636,10 +649,11 @@ public static class CheckpointApp
         }
     }
 
-    public static void Finish(RunState state, int exitCode, Action publish, Action cleanup, Action<string> note)
+    public static void Finish(RunState state, int exitCode, Action publish, Action cleanup, Action<string> note, CheckpointCleanupContext? context = null)
     {
+        context ??= CheckpointCleanupDefaults.Context;
         state.Phase = "done";
-        state.EndedAt = DateTimeOffset.UtcNow;
+        state.EndedAt = context.Time.GetUtcNow();
         state.ExitCode = exitCode;
         publish();
         try
@@ -658,8 +672,9 @@ public static class CheckpointApp
         RunRequest request,
         CheckpointManifest manifest,
         RunState state,
-        SchedulerResult result)
+        SchedulerResult result, CheckpointCleanupContext? context = null, CancellationToken cancellationToken = default)
     {
+        context ??= CheckpointCleanupDefaults.Context;
         var rows = new List<ReportRow>();
         foreach (var row in result.Rows)
         {
@@ -703,13 +718,13 @@ public static class CheckpointApp
             });
         }
 
-        var ended = DateTimeOffset.UtcNow;
+        var ended = context.Time.GetUtcNow();
         var model = new ReportModel
         {
             SchemaVersion = rows.Any(row => row.Repeat is not null) ? 3 : 2,
             RunId = state.RunId,
             ManifestPath = Path.Combine(runDirectory, "manifest.resolved.yaml"),
-            ManifestHash = Hash(ReceiptFile.ReadText(Path.Combine(runDirectory, "manifest.resolved.yaml"))),
+            ManifestHash = Hash(ReceiptFile.ReadText(context, Path.Combine(runDirectory, "manifest.resolved.yaml"), cancellationToken)),
             Commit = request.Commit,
             Source = state.Source,
             Branch = request.Branch,

@@ -22,8 +22,20 @@ public interface ICheckpointReadHandle : IDisposable
     Stream OpenStream();
 }
 
+public readonly record struct CheckpointProcessSnapshot(long StartToken, char State, bool HasExited);
+
 public interface ICheckpointCleanupIo
 {
+    int CurrentProcessId { get; }
+    string MachineName { get; }
+    string BootId { get; }
+    string PidNamespace { get; }
+    string ImageDirectory { get; }
+    string CurrentDirectory { get; }
+    CheckpointProcessSnapshot Process(int pid);
+    DateTime CreationTimeUtc(string path);
+    DateTime LastWriteTimeUtc(string path);
+    string StreamPath(Stream stream);
     CheckpointPlatform Platform { get; }
     uint Owner { get; }
     bool FileExists(string path);

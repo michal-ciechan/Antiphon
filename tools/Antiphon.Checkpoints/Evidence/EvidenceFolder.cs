@@ -1,13 +1,16 @@
+using Antiphon.HostCleanup.Checkpoints;
 using System.Text;
 
 namespace Antiphon.Checkpoints;
 
 public static class EvidenceFolder
 {
-    public static void Write(string runDirectory, ReportModel model, bool removeToolCopy, string? imageDirectory = null)
+    public static void Write(string runDirectory, ReportModel model, bool removeToolCopy, string? imageDirectory = null, CheckpointCleanupContext? context = null)
     {
-        var ownership = SafeWrite.Under(runDirectory);
-        SafeWrite.Require(SafeWrite.CreateDirectory(runDirectory, ownership));
+        context ??= CheckpointCleanupDefaults.Context;
+        var write = new CheckpointWrite(context);
+        var ownership = write.Under(runDirectory);
+        SafeWrite.Require(write.CreateDirectory(runDirectory, ownership));
         if (model.Rows.Any(row => row.Failures.Count > 0))
         {
             var failures = new StringBuilder();
@@ -40,50 +43,39 @@ public static class EvidenceFolder
                 }
 
                 var rowDir = Path.Combine(runDirectory, "rows", row.Id);
-                SafeWrite.Require(SafeWrite.CreateDirectory(rowDir, ownership));
-                SafeWrite.Require(SafeWrite.Text(Path.Combine(rowDir, "failures.md"), rowFailures.ToString(), ownership));
-                SafeWrite.Require(SafeWrite.Text(Path.Combine(rowDir, "rerun.txt"), rerun.ToString(), ownership));
+                SafeWrite.Require(write.CreateDirectory(rowDir, ownership));
+                SafeWrite.Require(write.Text(Path.Combine(rowDir, "failures.md"), rowFailures.ToString(), ownership));
+                SafeWrite.Require(write.Text(Path.Combine(rowDir, "rerun.txt"), rerun.ToString(), ownership));
                 failures.Append(rowFailures);
             }
 
-            SafeWrite.Require(SafeWrite.Text(Path.Combine(runDirectory, "failures.md"), failures.ToString(), ownership));
+            SafeWrite.Require(write.Text(Path.Combine(runDirectory, "failures.md"), failures.ToString(), ownership));
         }
         else
         {
             var stale = Path.Combine(runDirectory, "failures.md");
-            if (File.Exists(stale))
-                SafeDelete.DeleteCreatedFile(stale);
+            if (context.Io.FileExists(stale))
+                new CheckpointDelete(context).DeleteCreatedFile(stale);
         }
 
         if (removeToolCopy)
-            TryRemoveToolCopy(runDirectory, imageDirectory);
+            TryRemoveToolCopy(runDirectory, imageDirectory, context);
     }
 
-    public static int SweepFinishedToolCopies(string resultsRoot, IProcessLiveness liveness, RunStateStore? store = null)
+    public static int SweepFinishedToolCopies(string resultsRoot, IProcessLiveness liveness, RunStateStore? store = null, CheckpointCleanupContext? context = null)
     {
-        return string.IsNullOrWhiteSpace(resultsRoot) ? 0 : new ToolCopyCleanup().Sweep(resultsRoot);
+        return string.IsNullOrWhiteSpace(resultsRoot) ? 0 : new ToolCopyCleanup(context: context).Sweep(resultsRoot);
     }
 
-    public static void TryRemoveToolCopy(string runDirectory, string? imageDirectory = null)
+    public static void TryRemoveToolCopy(string runDirectory, string? imageDirectory = null, CheckpointCleanupContext? context = null)
     {
-        if (IsExecutorImage(runDirectory, imageDirectory))
+        if (IsExecutorImage(runDirectory, imageDirectory, context))
             return;
-        new ToolCopyCleanup().Remove(runDirectory);
+        new ToolCopyCleanup(context: context).Remove(runDirectory);
     }
 
-    public static bool IsExecutorImage(string runDirectory, string? imageDirectory = null)
-    {
-        var tool = Path.GetFullPath(Path.Combine(runDirectory, "tool"));
-        var image = Path.GetFullPath(imageDirectory ?? AppContext.BaseDirectory);
-        var comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        var prefix = tool.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
-        if (!image.EndsWith(Path.DirectorySeparatorChar) && !image.EndsWith(Path.AltDirectorySeparatorChar))
-            image += Path.DirectorySeparatorChar;
-        return image.StartsWith(prefix, comparison);
-    }
+    public static bool IsExecutorImage(string runDirectory, string? imageDirectory = null, CheckpointCleanupContext? context = null) =>
+        ExecutorImageGuard.IsExecutorImage(context ?? CheckpointCleanupDefaults.Context, runDirectory, imageDirectory);
 
     public static string RowCommand(ReportModel model, ReportRow row, string failureName)
     {

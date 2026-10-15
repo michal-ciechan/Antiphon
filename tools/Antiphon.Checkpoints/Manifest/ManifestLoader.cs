@@ -1,3 +1,4 @@
+using Antiphon.HostCleanup.Checkpoints;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -56,8 +57,8 @@ public static class ManifestLoader
         return manifest;
     }
 
-    public static CheckpointManifest LoadFile(string path, string worktreeRoot, bool validate = true) =>
-        LoadYaml(ReceiptFile.ReadText(path), worktreeRoot, validate);
+    public static CheckpointManifest LoadFile(string path, string worktreeRoot, bool validate = true, CheckpointCleanupContext? context = null, CancellationToken cancellationToken = default) =>
+        LoadYaml(ReceiptFile.ReadText(context ?? CheckpointCleanupDefaults.Context, path, cancellationToken), worktreeRoot, validate);
 
     public static string ToYaml(CheckpointManifest manifest) => Serializer.Serialize(manifest);
 }

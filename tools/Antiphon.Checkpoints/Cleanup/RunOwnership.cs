@@ -1,3 +1,4 @@
+using Antiphon.HostCleanup.Checkpoints;
 using System.Text.Json;
 
 namespace Antiphon.Checkpoints;
@@ -18,15 +19,16 @@ public static class RunOwnershipStore
     public const string FileName = "ownership.json";
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public static RunOwnership? Read(string runDirectory)
+    public static RunOwnership? Read(string runDirectory, CheckpointCleanupContext? context = null, CancellationToken cancellationToken = default)
     {
+        context ??= CheckpointCleanupDefaults.Context;
         try
         {
             var path = Path.Combine(runDirectory, FileName);
-            var record = ReceiptJson.Read<RunOwnership>(path, Json);
+            var record = ReceiptJson.Read<RunOwnership>(context, path, Json, cancellationToken);
             return record is { Version: 1 }
                 && record.RunId == Path.GetFileName(Path.GetFullPath(runDirectory))
-                && SamePath(record.RunDirectory, runDirectory) ? record : null;
+                && SamePath(record.RunDirectory, runDirectory, context) ? record : null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
                                    or ArgumentException or NotSupportedException)
@@ -35,19 +37,21 @@ public static class RunOwnershipStore
         }
     }
 
-    public static void Write(string runDirectory, RunOwnership record)
+    public static void Write(string runDirectory, RunOwnership record, CheckpointCleanupContext? context = null)
     {
+        context ??= CheckpointCleanupDefaults.Context;
+        var write = new CheckpointWrite(context);
         var full = Path.GetFullPath(runDirectory);
-        if (record.Version != 1 || record.RunId != Path.GetFileName(full) || !SamePath(record.RunDirectory, full))
+        if (record.Version != 1 || record.RunId != Path.GetFileName(full) || !SamePath(record.RunDirectory, full, context))
             throw new InvalidOperationException("run ownership does not bind its directory");
         var path = Path.Combine(full, FileName);
         var json = JsonSerializer.Serialize(record, Json);
-        var ownership = SafeWrite.Under(full);
+        var ownership = write.Under(full);
         for (var attempt = 0; ; attempt++)
         {
             try
             {
-                var reason = SafeWrite.Text(path, json, ownership);
+                var reason = write.Text(path, json, ownership);
                 if (reason is not null)
                     throw new IOException("refused: " + reason);
                 return;
@@ -56,13 +60,13 @@ public static class RunOwnershipStore
                                        && attempt < 8
                                        && !ex.Message.StartsWith("refused:", StringComparison.Ordinal))
             {
-                Thread.Sleep(20 * (attempt + 1));
+                context.Delay(TimeSpan.FromMilliseconds(20 * (attempt + 1)));
             }
         }
     }
 
-    public static bool SamePath(string a, string b) => string.Equals(
+    public static bool SamePath(string a, string b, CheckpointCleanupContext? context = null) => string.Equals(
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)),
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)),
-        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        (context ?? CheckpointCleanupDefaults.Context).PathComparison);
 }
