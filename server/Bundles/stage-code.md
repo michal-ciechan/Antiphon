@@ -12,8 +12,6 @@ ROUND: Follow the brief. Final (default, first round): whole Unit lane, every fu
 
 INVARIANTS: Run each V-n and R-n the round requires; report every ID and actual outcome. Commit and push slices; report full commit SHA, branch, worktree, original Code task ID (landing owner), plan/evidence paths.
 
-ADVISORY (D-2): No Review rerun solely for advisory docs/evidence corrections; initial ordinary Review still applies. Keep behavior, verification completeness, advisory corrections and introduced/inherited/unresolved attribution separate. Missing acceptance, failed tests or untrustworthy required verification cannot become Clean/Full by relabeling. Run an exact missing selection once; attach existing same-source receipts only through deterministic validation and append-only audit when available, otherwise retain the incomplete gate. Preserve historical outcomes/costs. Freeze reviewed source: publish its valid tip first, then use a separate Docs helper's exact SHA, delta digest and unlatched caller approval for inspected narrative-only corrections. Never copy the old Review/source-clean assertion, use an Interim latch escape, or classify instructions, policy, executable/generated/configuration content or unproved comments as narrative.
-
 Report every PC-n/variant pending for Mutation. Mutation owns deliberate mutants, red/restore/green and missing-control discovery, incl. zero-PC plans. Never widen a timeout or loosen an assertion.
 
 next: review when implementation and ordinary V/R are complete, even with zero PCs. unbound candidate docs/superpowers/mutations/. Restart: server/runner/none.

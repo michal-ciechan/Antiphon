@@ -80,3 +80,5 @@ work itself.
   it. Nothing after it. Without that line the harness cannot tell your report from a status
   update and will ask you once. This token is distinct from `[antiphon-task:<id>]` (the prompt
   marker).
+
+Code/Review: read docs/orchestration-loop.md, D-2 advisory policy. No Review rerun solely for advisory corrections; retain an incomplete gate. Preserve historical outcomes and costs; publish the valid reviewed tip first. Exclude instructions, policy, test selections, schemas. Comment exemptions remain refused.
