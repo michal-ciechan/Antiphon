@@ -34,6 +34,9 @@ public sealed class HostCleanupCheckpointReceiptTests
         {
             var f = new HostCleanupReceiptFixture();
             f.Io.Platform = CheckpointPlatform.Windows;
+            ReceiptFile.ReadText(f.Context, f.StatePath).ShouldContain("verified-run", Case.Sensitive,
+                label + "windows-preopen:positive-pair");
+            f.ClearEvents();
             f.Io.Nodes[f.StatePath].Attributes = attribute;
             Should.Throw<IOException>(() => ReceiptFile.ReadBytes(f.Context, f.StatePath)).Message
                 .ShouldContain("receipt-nonregular", Case.Sensitive, label + "windows-preopen:" + attribute);
@@ -296,9 +299,15 @@ public sealed class HostCleanupCheckpointReceiptTests
         foreach (var error in new Exception[] { new IOException("injected-read"), new UnauthorizedAccessException("injected-denial") })
         {
             var f = new HostCleanupReceiptFixture();
+            var store = new RunStateStore(f.Context);
+            var control = store.TryRead(f.StatePath, out var controlRefusal);
+            control.ShouldNotBeNull(label + ":positive-pair");
+            control.RunId.ShouldBe("verified-run", label + ":positive-pair:identity");
+            controlRefusal.ShouldBeNull(label + ":positive-pair:refusal");
+            f.ClearEvents();
             var original = f.Io.Nodes[f.StatePath].Bytes.ToArray();
             f.Io.Before = (op, path) => { if (op == "open-read" && path == f.StatePath) throw error; };
-            new RunStateStore(f.Context).TryRead(f.StatePath, out var refusal).ShouldBeNull(label);
+            store.TryRead(f.StatePath, out var refusal).ShouldBeNull(label);
             refusal.ShouldStartWith("state-receipt-unreadable:", Case.Sensitive, label + ":reason");
             f.Io.Count("open-read", f.StatePath).ShouldBe(1, label + ":read-entered");
             f.Io.Nodes[f.StatePath].Bytes.ShouldBe(original, label + ":retained");
