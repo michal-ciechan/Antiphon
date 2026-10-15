@@ -20,6 +20,44 @@ namespace Antiphon.Tests.Agents;
 public class RunnerGrokAdapterTurnCompleteTests
 {
     [Test]
+    [Arguments(false, "Run a\u001b[1;6Hbc?\r\nDone.")]
+    [Arguments(true, "Run a\u001b[1;6Hbc?\r\nDone.")]
+    [Arguments(false, "Run \u001b[1Cabc?\r\nDone.")]
+    [Arguments(true, "Run \u001b[1Cabc?\r\nDone.")]
+    public async Task Cursor_moves_in_echo_keep_the_plain_stripping_verdict(bool transcript, string raw)
+    {
+        var client = new ScriptedRunnerClient { RawOutput = raw };
+        await using var adapter = NewAdapter(client, doneQuietMs: 0, doneMaxWaitMs: 15_000);
+        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+        await adapter.SendPromptAsync("Run abc?", CancellationToken.None);
+        if (transcript)
+            client.SetTranscript(Row(client.SessionId, 1, TranscriptKinds.TurnEnd, stopReason: "end_turn"));
+
+        var turn = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        turn.ResponseText.ShouldBe("Done.", "C907-D1-grok-echo");
+        turn.IsAskingQuestion.ShouldBeFalse("C907-D1-grok-question");
+        turn.TurnCompleted.ShouldBeTrue();
+        turn.RawSnapshot.ShouldBe(raw);
+    }
+
+    [Test]
+    public async Task Cursor_moves_in_answer_keep_plain_stripping()
+    {
+        const string raw = "Run\r\nAl\u001b[1;3Hpha\u001b[1Cbeta?";
+        var client = new ScriptedRunnerClient { RawOutput = raw };
+        await using var adapter = NewAdapter(client, doneQuietMs: 0, doneMaxWaitMs: 15_000);
+        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+        await adapter.SendPromptAsync("Run", CancellationToken.None);
+        client.SetTranscript(Row(client.SessionId, 1, TranscriptKinds.TurnEnd, stopReason: "end_turn"));
+
+        var turn = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        turn.ResponseText.ShouldBe("Alphabeta?", "C907-D1-grok-answer");
+        turn.IsAskingQuestion.ShouldBeTrue();
+        turn.TurnCompleted.ShouldBeTrue();
+        turn.RawSnapshot.ShouldBe(raw);
+    }
+
+    [Test]
     public async Task A_TurnEnd_row_past_the_prompt_baseline_completes_the_turn_with_transcript_reply_text()
     {
         var client = new ScriptedRunnerClient();
