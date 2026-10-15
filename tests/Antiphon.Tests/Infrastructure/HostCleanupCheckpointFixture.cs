@@ -13,9 +13,11 @@ internal sealed class HostCleanupCheckpointFixture
     public CheckpointWrite Write => new(Context);
     public CheckpointDelete Delete => new(Context);
     public CheckpointOutputLedger Ledger => new(Context);
-    public string Parent { get; } = "/c987/" + Guid.NewGuid().ToString("N");
-    public string Root => Parent + "/bin-owned";
-    public string Payload => Root + "/payload.txt";
+    // The policy uses the host's Path APIs even when kernel facts are virtual Linux facts.
+    // Keep dictionary keys and observed paths in the same host-native form.
+    public string Parent { get; } = Path.GetFullPath(Path.Combine("/c987", Guid.NewGuid().ToString("N")));
+    public string Root => Path.Combine(Parent, "bin-owned");
+    public string Payload => Path.Combine(Root, "payload.txt");
     public DateTimeOffset Exit => Clock.GetUtcNow().AddSeconds(1);
     public OutputCustody.Window Window => OutputCustody.For(Context, Root, Exit)!;
 
@@ -24,7 +26,7 @@ internal sealed class HostCleanupCheckpointFixture
         Io = new(Clock);
         Context = new(Io, Io, Clock);
         Io.CreateDirectory(Parent);
-        Io.Put(Parent + "/.git", "git marker");
+        Io.Put(Path.Combine(Parent, ".git"), "git marker");
         Io.Repository = Parent;
         SafeWrite.Require(Write.CreateFreshDirectory(Root, Write.Under(Parent)));
         Io.Put(Payload, "original"); // child output, not a registry entry
@@ -46,12 +48,12 @@ internal sealed class HostCleanupReceiptFixture
     public HostCleanupCheckpointFixture Files { get; } = new();
     public VirtualCheckpointIo Io => Files.Io;
     public CheckpointCleanupContext Context => Files.Context;
-    public string Run => Files.Root + "/verified-run";
-    public string StatePath => Run + "/state.json";
-    public string MarkdownPath => Run + "/report.md";
-    public string JsonPath => Run + "/report.json";
-    public string Output => Files.Root + "/output";
-    public string StampPath => Output + "/checkpoint-build-source.json";
+    public string Run => Path.Combine(Files.Root, "verified-run");
+    public string StatePath => Path.Combine(Run, "state.json");
+    public string MarkdownPath => Path.Combine(Run, "report.md");
+    public string JsonPath => Path.Combine(Run, "report.json");
+    public string Output => Path.Combine(Files.Root, "output");
+    public string StampPath => Path.Combine(Output, "checkpoint-build-source.json");
     public RunState State { get; }
     public ReportModel Report { get; }
     public CheckpointBuildBinding Stamp { get; }

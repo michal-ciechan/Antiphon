@@ -46,18 +46,18 @@ public sealed class HostCleanupCheckpointCustodyTests
         f.Write.CreateFreshDirectory(f.Root, f.Write.Under(f.Parent)).ShouldBe("pre-existing-output",
             "C987.Existing_directory_cannot_gain_creation_authority.mkdir-exists:creation-entry");
         f.Io.Count("write").ShouldBe(0);
-        var foreign = f.Parent + "/foreign"; f.Io.CreateDirectory(foreign);
+        var foreign = Path.Combine(f.Parent, "foreign"); f.Io.CreateDirectory(foreign);
         f.Write.CreateDirectory(foreign, f.Write.Under(f.Parent)).ShouldBeNull();
         f.Write.WasCreated(foreign).ShouldBeFalse("C987.Existing_directory_cannot_gain_creation_authority.ordinary-existing:directory");
         f.Write.Text(f.Payload, "replace", f.Write.Under(f.Root)).ShouldBe("unrecorded-existing", "C987.Existing_directory_cannot_gain_creation_authority.ordinary-existing");
         f.Io.Text(f.Payload).ShouldBe("original");
-        var marker = f.Root + "/marker";
+        var marker = Path.Combine(f.Root, "marker");
         f.Io.Before = (op, path) => { if (op == "open" && path == marker) f.Io.Put(marker, "foreign-marker"); };
         Should.Throw<IOException>(() => f.Write.OpenCreate(marker, f.Write.Under(f.Root), out _), "C987.Existing_directory_cannot_gain_creation_authority.open-create:race");
         f.Io.Opens.Single().Mode.ShouldBe(FileMode.CreateNew, "C987.Existing_directory_cannot_gain_creation_authority.open-create");
         f.Io.Text(marker).ShouldBe("foreign-marker");
         f.Io.Before = null;
-        var destination = f.Root + "/destination";
+        var destination = Path.Combine(f.Root, "destination");
         f.Io.Before = (op, path) =>
         {
             if (op == "write" && path.EndsWith(".tmp", StringComparison.Ordinal))
@@ -180,7 +180,7 @@ public sealed class HostCleanupCheckpointCustodyTests
         (flags.Io.ReadRequests.Single().UnixFlags & 0x800).ShouldBe(0x800, "C987.Links_and_special_entries_are_not_adopted.nonblocking-open");
         flags.Io.Count("follow-target").ShouldBe(0);
         var swapped = new HostCleanupCheckpointFixture();
-        var outside = swapped.Parent + "/outside"; swapped.Io.Put(outside, "outside-bytes");
+        var outside = Path.Combine(swapped.Parent, "outside"); swapped.Io.Put(outside, "outside-bytes");
         swapped.Io.Before = (op, path) => { if (op == "open-read") swapped.Io.Nodes[path].Target = outside; };
         Should.Throw<IOException>(() => swapped.Read());
         swapped.Io.Count("follow-target").ShouldBe(0, "C987.Links_and_special_entries_are_not_adopted.nofollow-open:outside-entry");
@@ -204,7 +204,7 @@ public sealed class HostCleanupCheckpointCustodyTests
         {
             var bad = new HostCleanupCheckpointFixture();
             bad.Io.InspectFails = variant == "handle-inspect-failure";
-            bad.Io.HandleMetadata = m => variant == "final-path" ? m with { Path = bad.Parent + "/outside" }
+            bad.Io.HandleMetadata = m => variant == "final-path" ? m with { Path = Path.Combine(bad.Parent, "outside") }
                 : variant == "held-size" ? m with { Size = 1025 } : m;
             if (variant == "handle-inspect-failure")
                 Should.Throw<IOException>(() => ReceiptFile.ReadBytes(bad.Context, bad.Payload)).Message.ShouldContain("receipt-read-refused", Case.Sensitive, "C987.Entry_change_during_read_is_not_adopted." + variant);
@@ -217,7 +217,7 @@ public sealed class HostCleanupCheckpointCustodyTests
         var windows = new HostCleanupCheckpointFixture(); windows.Io.Platform = CheckpointPlatform.Windows;
         Encoding.UTF8.GetString(windows.Read()).ShouldBe("original");
         (windows.Io.ReadRequests.Single().WindowsFlags & 0x00200000).ShouldBe(0x00200000u, "C987.Entry_change_during_read_is_not_adopted.windows-flags");
-        var target = windows.Parent + "/outside"; windows.Io.Put(target, "outside-bytes");
+        var target = Path.Combine(windows.Parent, "outside"); windows.Io.Put(target, "outside-bytes");
         windows.Io.Before = (op, path) => { if (op == "open-read") windows.Io.Nodes[path].Target = target; };
         Should.Throw<IOException>(() => windows.Read());
         windows.Io.Count("follow-target").ShouldBe(0, "C987.Entry_change_during_read_is_not_adopted.windows-flags:outside-entry");
@@ -259,7 +259,7 @@ public sealed class HostCleanupCheckpointCustodyTests
         f.Ledger.Remove(f.Root).ShouldStartWith("output-ledger-mismatch");
         f.Delete.DeleteCreatedFile(f.Payload).Disposition.ShouldBe(DeleteDisposition.Refused, "C987.Late_or_changed_entries_are_retained.file-only");
         f.Io.Text(f.Payload).ShouldBe("changed!");
-        var late = new HostCleanupCheckpointFixture(); late.Seal(); late.Io.Put(late.Root + "/late.txt", "late");
+        var late = new HostCleanupCheckpointFixture(); late.Seal(); late.Io.Put(Path.Combine(late.Root, "late.txt"), "late");
         late.Ledger.Check(late.Root).ShouldContain("late.txt", Case.Sensitive, "C987.Late_or_changed_entries_are_retained.late-file");
         late.Ledger.Remove(late.Root).ShouldStartWith("output-ledger-mismatch");
         late.Io.Count("unlink").ShouldBe(0, "C987.Late_or_changed_entries_are_retained.late-file:entry");
@@ -273,20 +273,20 @@ public sealed class HostCleanupCheckpointCustodyTests
         f.Ledger.Remove(f.Root).ShouldStartWith("left in place", Case.Sensitive, "C987.Individual_deletes_preserve_late_additions.final-file");
         f.Io.Count("unlink", f.Payload).ShouldBe(0, "C987.Individual_deletes_preserve_late_additions.final-file:entry");
         f.Io.Text(f.Payload).ShouldBe("changed!");
-        var dir = new HostCleanupCheckpointFixture(); var child = dir.Root + "/child";
+        var dir = new HostCleanupCheckpointFixture(); var child = Path.Combine(dir.Root, "child");
         dir.Io.CreateDirectory(child); dir.Seal(); var linkedAt = -1;
         dir.Io.Before = (op, path) =>
         {
             if (op == "unlink" && linkedAt < 0)
-            { dir.Io.Nodes[child].Target = dir.Parent + "/outside"; linkedAt = dir.Io.Events.Count; }
+            { dir.Io.Nodes[child].Target = Path.Combine(dir.Parent, "outside"); linkedAt = dir.Io.Events.Count; }
         };
         dir.Ledger.Remove(dir.Root).ShouldStartWith("left in place", Case.Sensitive, "C987.Individual_deletes_preserve_late_additions.final-directory");
         dir.Io.Events.Skip(linkedAt).ShouldContain(e => e.Operation == "link" && e.Path == child, "C987.Individual_deletes_preserve_late_additions.final-directory:preflight-entry");
         dir.Io.Count("rmdir", child).ShouldBe(0, "C987.Individual_deletes_preserve_late_additions.final-directory:entry");
         var late = new HostCleanupCheckpointFixture(); late.Seal();
-        late.Io.Before = (op, path) => { if (op == "rmdir" && path == late.Root) late.Io.Put(late.Root + "/late.txt", "keep"); };
+        late.Io.Before = (op, path) => { if (op == "rmdir" && path == late.Root) late.Io.Put(Path.Combine(late.Root, "late.txt"), "keep"); };
         Should.Throw<IOException>(() => late.Ledger.Remove(late.Root));
-        late.Io.Text(late.Root + "/late.txt").ShouldBe("keep", "C987.Individual_deletes_preserve_late_additions.no-recursion");
+        late.Io.Text(Path.Combine(late.Root, "late.txt")).ShouldBe("keep", "C987.Individual_deletes_preserve_late_additions.no-recursion");
         late.Io.RecursiveIntents.ShouldBe(0, "C987.Individual_deletes_preserve_late_additions.no-recursion:intent");
     }
 
@@ -298,17 +298,17 @@ public sealed class HostCleanupCheckpointCustodyTests
         f.Write.Text(f.Payload, "new", f.Write.Under(f.Root)).ShouldBe("tracked", "C987.Tracked_or_nested_repository_paths_are_retained.tracked:write");
         f.Delete.DeleteCreatedTree(f.Root).Reason.ShouldBe("tracked", "C987.Tracked_or_nested_repository_paths_are_retained.tracked:delete");
         f.Io.Text(f.Payload).ShouldBe("original");
-        var nested = new HostCleanupCheckpointFixture(); nested.Seal(); nested.Io.Put(nested.Root + "/.git", "nested");
+        var nested = new HostCleanupCheckpointFixture(); nested.Seal(); nested.Io.Put(Path.Combine(nested.Root, ".git"), "nested");
         nested.Delete.DeleteCreatedTree(nested.Root).Reason.ShouldBe("nested_repository", "C987.Tracked_or_nested_repository_paths_are_retained.nested-git");
         nested.Io.Count("unlink").ShouldBe(0);
         var outside = new HostCleanupCheckpointFixture(); outside.Seal();
-        outside.Delete.Apply(outside.Root, new DeleteOwnership { IsolatedRoot = outside.Parent + "/other", CreatedPaths = [outside.Root], AllowOutsideRepository = true })
+        outside.Delete.Apply(outside.Root, new DeleteOwnership { IsolatedRoot = Path.Combine(outside.Parent, "other"), CreatedPaths = [outside.Root], AllowOutsideRepository = true })
             .Reason.ShouldBe("outside-isolated-root", "C987.Tracked_or_nested_repository_paths_are_retained.outside");
-        var link = new HostCleanupCheckpointFixture(); link.Io.Nodes[link.Root].Target = link.Parent + "/outside";
-        link.Write.Text(link.Root + "/new", "new", link.Write.Under(link.Root)).ShouldBe("link-component", "C987.Tracked_or_nested_repository_paths_are_retained.ancestor-link");
+        var link = new HostCleanupCheckpointFixture(); link.Io.Nodes[link.Root].Target = Path.Combine(link.Parent, "outside");
+        link.Write.Text(Path.Combine(link.Root, "new"), "new", link.Write.Under(link.Root)).ShouldBe("link-component", "C987.Tracked_or_nested_repository_paths_are_retained.ancestor-link");
         link.Io.Count("write").ShouldBe(0);
         var cap = new HostCleanupCheckpointFixture();
-        for (var i = 0; i < 10001; i++) cap.Io.Put(cap.Root + "/entry-" + i, "");
+        for (var i = 0; i < 10001; i++) cap.Io.Put(Path.Combine(cap.Root, "entry-" + i), "");
         cap.Delete.DeleteCreatedTree(cap.Root).Reason.ShouldBe("unsafe-tree", "C987.Tracked_or_nested_repository_paths_are_retained.entry-cap");
         cap.Io.Count("unlink").ShouldBe(0);
     }
@@ -327,7 +327,7 @@ public sealed class HostCleanupCheckpointCustodyTests
             f.Io.Count("write").ShouldBe(0); f.Io.Count("unlink").ShouldBe(0);
             f.Io.Text(f.Payload).ShouldBe("original");
         }
-        var retry = new HostCleanupCheckpointFixture(); retry.Io.Put("/bin/git", "executable");
+        var retry = new HostCleanupCheckpointFixture(); retry.Io.Put(Path.Combine("/bin", "git"), "executable");
         retry.Io.GitRequests.Clear();
         retry.Io.GitResult = _ => throw new Win32Exception(11);
         var operation = Task.Run(() => retry.Write.Preflight(retry.Root, [retry.Root], timeoutMs: 50));
@@ -363,10 +363,10 @@ public sealed class HostCleanupCheckpointCustodyTests
     [Test]
     public void Fresh_owned_output_can_be_removed()
     {
-        var f = new HostCleanupCheckpointFixture(); f.Io.Put(f.Parent + "/evidence", "preserved"); f.Seal();
+        var f = new HostCleanupCheckpointFixture(); f.Io.Put(Path.Combine(f.Parent, "evidence"), "preserved"); f.Seal();
         f.Ledger.Check(f.Root).ShouldBeNull("C987.Fresh_owned_output_can_be_removed.positive-remove:check");
         f.Delete.DeleteCreatedTree(f.Root).Disposition.ShouldBe(DeleteDisposition.Deleted, "C987.Fresh_owned_output_can_be_removed.positive-remove");
-        f.Io.DirectoryExists(f.Root).ShouldBeFalse(); f.Io.Text(f.Parent + "/evidence").ShouldBe("preserved");
+        f.Io.DirectoryExists(f.Root).ShouldBeFalse(); f.Io.Text(Path.Combine(f.Parent, "evidence")).ShouldBe("preserved");
         f.Io.Count("unlink", f.Payload).ShouldBe(1, "C987.Fresh_owned_output_can_be_removed.positive-remove:entry");
     }
 }
