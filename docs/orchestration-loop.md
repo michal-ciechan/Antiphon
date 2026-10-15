@@ -2232,6 +2232,24 @@ the new order, keep evidence at its tested SHA and rerun affected controls at th
 No pins/holds/quotas, historical reports, role ordinals or parser tokens change; `verify` still
 aliases Review and optional `-Stage Verify` remains outcome accounting.
 
+## D-2 advisory policy (CARD-1281)
+
+Code and Review must apply this policy alongside their stage contract. The shared
+`delegate-basics` bundle points here because the stage bundles retain their existing
+size caps and verbatim instruction guards. A summary does not replace this policy.
+
+Required checkpoint defects above remain enforced. Missing required rows, zero counts, unjustified unlisted/ungated runs, broad runs without named invariant/cost or unprovable builds leave verification incomplete. Missing acceptance, lost assertions, failed tests and inadequate tests remain substantive.
+
+FINDINGS (D-2): Report product/acceptance behavior, verification completeness and advisory documentation separately; record introduced/inherited/unresolved attribution independently. No Review rerun solely for advisory docs/evidence corrections, and no Code repair solely for them. Missing trustworthy required verification remains an incomplete gate, never fabricated Clean/Full or an introduced regression. Initial ordinary Review remains required. Preserve historical outcomes and costs; an unclassified legacy Found still needs Review, never relabeling.
+
+EVIDENCE: Existing same-source receipts may be attached/corrected through deterministic receipt validation and an append-only audit without another model Review. If required execution is absent, request only the exact missing selection once. Until the correction validator/audit exists, or if source identity/provenance is unprovable, retain the incomplete gate. A finding override or recovery command cannot manufacture newly validated execution or Clean.
+
+ADVISORY SOURCE: Freeze the reviewed Code branch; publish the valid reviewed tip first, then commission a separate Docs helper with no open product acceptance. Retain its exact committed SHA and delta digest; use its own unlatched explicit caller approval, never the old Review or reviewedSourceClean. An Interim-latched owner/helper cannot use this path. Eligibility requires inspection of the full delta and its consumers: ordinary narrative only, excluding instructions, policy, test selections, schemas, executable examples, generated inputs, configuration and mixed code. Unknown meaning or unsupported content takes ordinary Review; Markdown extensions alone prove nothing. Comment exemptions remain refused until a language-aware equivalence proof is implemented, excluding directives, annotations, suppressions, generated inputs and behavior-bearing documentation.
+
+D-2 next-stage classification: advisory-only follow-ups are recorded separately and do not force Code or another Review. Substantive repairs or exact missing execution require code; incomplete verification never authorizes land. Final Review may authorize land only when behavior has no substantive finding and required verification is complete.
+
+ADVISORY (D-2): No Review rerun solely for advisory docs/evidence corrections; initial ordinary Review still applies. Keep behavior, verification completeness, advisory corrections and introduced/inherited/unresolved attribution separate. Missing acceptance, failed tests or untrustworthy required verification cannot become Clean/Full by relabeling. Run an exact missing selection once; attach existing same-source receipts only through deterministic validation and append-only audit when available, otherwise retain the incomplete gate. Preserve historical outcomes/costs. Freeze reviewed source: publish its valid tip first, then use a separate Docs helper's exact SHA, delta digest and unlatched caller approval for inspected narrative-only corrections. Never copy the old Review/source-clean assertion, use an Interim latch escape, or classify instructions, policy, executable/generated/configuration content or unproved comments as narrative.
+
 ## Interim and Final verification rounds (CARD-0544, dormant)
 
 Every new Code/Review task carries verification profile v1. `Final` is the default and the only
