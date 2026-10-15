@@ -1,5 +1,6 @@
+import { onlineManager } from '@tanstack/react-query'
 import { HttpResponse, http } from 'msw'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentTaskRole } from '../../api/agentTasks'
 import type {
   ComplexityCandidateDto,
@@ -7,14 +8,21 @@ import type {
   ComplexityResolvedFrom,
   TaskComplexity,
 } from '../../api/complexityChains'
-import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
+import { cleanup } from '@testing-library/react'
+import { act, renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { ComplexityChainCellEditor } from './ComplexityChainCellEditor'
 import {
   CHAIN_CLEAR_SUCCESS,
+  CHAIN_QUEUED_NOTE,
   CHAIN_SAVE_SUCCESS,
+  CHAIN_STALE_TITLE,
   INHERITED_REPLACE_WARNING,
+  OVERWRITE_UNREAD_METADATA,
 } from './routingSettingsModel'
+
+const OPENED_TOKEN = '7b0e2c1a-0000-4000-8000-0000000000aa'
+const CURRENT_TOKEN = '7b0e2c1a-0000-4000-8000-0000000000bb'
 
 const notificationMock = vi.hoisted(() => ({ show: vi.fn() }))
 
@@ -57,6 +65,7 @@ function chain(overrides: Partial<ComplexityChainDto> = {}): ComplexityChainDto 
     updatedAt: '2026-09-04T00:00:00Z',
     role: 'Plan',
     resolvedFrom: 'role',
+    concurrencyToken: OPENED_TOKEN,
     ...overrides,
   }
 }
@@ -193,6 +202,7 @@ describe('ComplexityChainCellEditor', () => {
       provenance: 'Human',
       reason: 'plan-grade',
       notAfter: null,
+      concurrencyToken: OPENED_TOKEN,
     })
     expect(notificationMock.show).toHaveBeenCalledWith({
       color: 'green',
@@ -231,6 +241,7 @@ describe('ComplexityChainCellEditor', () => {
       provenance: 'Human',
       reason: 'any-role Hard',
       notAfter: null,
+      concurrencyToken: OPENED_TOKEN,
     })
   })
 
@@ -383,5 +394,153 @@ describe('ComplexityChainCellEditor', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Confirm clear' }))
     expect(await screen.findByText('The Plan/Hard chain is in use by another write.')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm clear' })).toHaveFocus())
+  })
+})
+
+describe('C1275 editor concurrency token', () => {
+  beforeEach(() => {
+    notificationMock.show.mockReset()
+  })
+  afterEach(() => {
+    onlineManager.setOnline(true)
+  })
+
+  const staleBody = (current: ComplexityChainDto) => ({
+    title: 'Conflict',
+    status: 409,
+    code: 'complexity_chain_stale',
+    detail: 'The Plan/Hard chain changed since it was read.',
+    current,
+  })
+
+  it('C1275 a stale Save shows the stored row, does not retry, and Reload adopts the new version only on click', async () => {
+    const bodies: unknown[] = []
+    const current = chain({ candidates: [grok], reason: 'other operator', concurrencyToken: CURRENT_TOKEN })
+    server.use(
+      http.put('/api/complexity-chains/Plan/Hard', async ({ request }) => {
+        bodies.push(await request.json())
+        return bodies.length === 1
+          ? HttpResponse.json(staleBody(current), { status: 409 })
+          : HttpResponse.json(current)
+      }),
+    )
+    const { onClose } = renderEditor()
+
+    await userEvent.type(screen.getByLabelText('Reason (optional)'), ' mine')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    const stale = await screen.findByTestId('routing-cell-editor-stale')
+    expect(within(stale).getByText(CHAIN_STALE_TITLE)).toBeInTheDocument()
+    expect(stale).toHaveTextContent('Stored now: Grok/Frontier')
+    expect(stale).toHaveTextContent('reason "other operator"')
+    expect(stale).toHaveTextContent('Your draft: Codex/Frontier')
+    expect(stale).toHaveTextContent('reason "Plan cell mine"')
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Clear override' })).toBeDisabled()
+    expect(bodies).toHaveLength(1)
+    expect(onClose).not.toHaveBeenCalled()
+    // The draft is untouched until the operator asks for the stored row.
+    expect(screen.getByLabelText('Reason (optional)')).toHaveValue('Plan cell mine')
+
+    await userEvent.click(within(stale).getByRole('button', { name: 'Reload' }))
+    expect(screen.queryByTestId('routing-cell-editor-stale')).not.toBeInTheDocument()
+    expect(screen.getByTestId('routing-cell-editor-candidate-0')).toHaveAttribute('data-agent-kind', 'Grok')
+    expect(screen.getByLabelText('Reason (optional)')).toHaveValue('other operator')
+    expect(bodies).toHaveLength(1)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+    expect(bodies).toEqual([
+      {
+        candidates: [{ agentKind: 'Codex', modelLevel: 'Frontier' }],
+        provenance: 'Human',
+        reason: 'Plan cell mine',
+        notAfter: null,
+        concurrencyToken: OPENED_TOKEN,
+      },
+      {
+        candidates: [{ agentKind: 'Grok', modelLevel: 'Frontier' }],
+        provenance: 'Human',
+        reason: 'other operator',
+        notAfter: null,
+        concurrencyToken: CURRENT_TOKEN,
+      },
+    ])
+  })
+
+  it('C1275 a stale Clear sends the opened token and shows that the row is now absent', async () => {
+    const searches: string[] = []
+    const current = chain({ candidates: [], provenance: null, source: 'config', reason: null, resolvedFrom: 'none', concurrencyToken: null })
+    server.use(
+      http.delete('/api/complexity-chains/Plan/Hard', ({ request }) => {
+        searches.push(new URL(request.url).search)
+        return HttpResponse.json(staleBody(current), { status: 409 })
+      }),
+    )
+    renderEditor({ fallbackResolvedFrom: 'any' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Clear override' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirm clear' }))
+    const stale = await screen.findByTestId('routing-cell-editor-stale')
+    expect(stale).toHaveTextContent(CHAIN_STALE_TITLE)
+    expect(stale).toHaveTextContent('Stored now: no own row for this cell')
+    expect(searches).toEqual([`?concurrencyToken=${OPENED_TOKEN}`])
+  })
+
+  it('C1275 an unset cell sends the empty token; an unread cell confirmed for overwrite sends none', async () => {
+    const bodies: Record<string, unknown>[] = []
+    server.use(
+      http.put('/api/complexity-chains/Plan/Hard', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json(chain())
+      }),
+    )
+    const unset = renderEditor({
+      chain: chain({ candidates: [], provenance: null, source: 'config', reason: null, resolvedFrom: 'none', concurrencyToken: null }),
+      fallbackResolvedFrom: 'none',
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(unset.onClose).toHaveBeenCalled())
+    expect(bodies[0].concurrencyToken).toBe('00000000-0000-0000-0000-000000000000')
+    cleanup()
+
+    const unread = renderEditor({
+      chain: chain({
+        concurrencyToken: null,
+        effective: {
+          source: 'role',
+          candidates: [codex],
+          stagePin: null,
+          governsDefault: false,
+          withheldReason: 'chain metadata read failed (TimeoutException)',
+        },
+      }),
+    })
+    await userEvent.click(screen.getByLabelText(OVERWRITE_UNREAD_METADATA))
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(unread.onClose).toHaveBeenCalled())
+    expect(bodies).toHaveLength(2)
+    expect('concurrencyToken' in bodies[1]).toBe(false)
+  })
+
+  it('C1275 an offline Save shows queued and sends once with the opened token when back online', async () => {
+    const bodies: unknown[] = []
+    server.use(
+      http.put('/api/complexity-chains/Plan/Hard', async ({ request }) => {
+        bodies.push(await request.json())
+        return HttpResponse.json(chain())
+      }),
+    )
+    const { onClose } = renderEditor()
+    onlineManager.setOnline(false)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByTestId('routing-cell-editor-queued')).toHaveTextContent(CHAIN_QUEUED_NOTE)
+    expect(bodies).toHaveLength(0)
+    expect(onClose).not.toHaveBeenCalled()
+
+    act(() => { onlineManager.setOnline(true) })
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+    expect(bodies).toHaveLength(1)
+    expect((bodies[0] as Record<string, unknown>).concurrencyToken).toBe(OPENED_TOKEN)
   })
 })

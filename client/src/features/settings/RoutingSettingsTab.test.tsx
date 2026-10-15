@@ -1332,3 +1332,30 @@ describe('RoutingSettingsTab', () => {
     expect(within(rolePolicy).getByRole('heading', { name: 'Role policy' })).toBeInTheDocument()
   })
 })
+
+describe('C1275 editor draft across a failed list refresh', () => {
+  it('C1275 a failed list refresh keeps the open Any role editor and its unsaved draft', async () => {
+    serveRouting()
+    const { queryClient } = renderWithProviders(<RoutingSettingsTab />)
+    const anyHard = await screen.findByTestId('routing-matrix-cell-any-Hard')
+    await userEvent.click(within(anyHard).getByRole('button', { name: 'Configure Any role / Hard' }))
+    const editor = await screen.findByTestId('routing-cell-editor')
+    const reason = within(editor).getByLabelText('Reason (optional)')
+    await userEvent.clear(reason)
+    await userEvent.type(reason, 'unsaved draft')
+
+    server.use(http.get('/api/complexity-chains', () => HttpResponse.json({ title: 'boom' }, { status: 500 })))
+    await act(async () => { await queryClient.refetchQueries({ queryKey: complexityChainKeys.list(), exact: true }) })
+    await waitFor(() => expect(queryClient.getQueryState(complexityChainKeys.list())?.status).toBe('error'))
+
+    expect(screen.getByTestId('routing-matrix-section')).toHaveTextContent('Could not load complexity chains.')
+    expect(screen.getByTestId('routing-cell-editor')).toBe(editor)
+    expect(within(editor).getByLabelText('Reason (optional)')).toHaveValue('unsaved draft')
+
+    serveRouting()
+    await act(async () => { await queryClient.refetchQueries({ queryKey: complexityChainKeys.list(), exact: true }) })
+    await waitFor(() => expect(queryClient.getQueryState(complexityChainKeys.list())?.status).toBe('success'))
+    expect(screen.getByTestId('routing-cell-editor')).toBe(editor)
+    expect(within(editor).getByLabelText('Reason (optional)')).toHaveValue('unsaved draft')
+  })
+})
