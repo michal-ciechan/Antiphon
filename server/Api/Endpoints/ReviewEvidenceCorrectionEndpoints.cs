@@ -35,7 +35,10 @@ public static class ReviewEvidenceCorrectionEndpoints
                     && DelegationWorkspaceResolver.IsWithinRoot(review.RepoPath, root))) throw Denied("repository");
                 Guid? board = caller.BoardId;
                 if (caller.Task?.CardId is Guid callerCard)
+                {
+                    if (review.CardId != callerCard) throw Denied("card");
                     board ??= await db.Cards.Where(c => c.Id == callerCard).Select(c => (Guid?)c.BoardId).SingleOrDefaultAsync(ct);
+                }
                 if (caller.SessionId is Guid session)
                     board ??= await db.Agents.Where(a => a.PersistentSessionId == session.ToString("D"))
                         .Select(a => a.BoardId).FirstOrDefaultAsync(ct);

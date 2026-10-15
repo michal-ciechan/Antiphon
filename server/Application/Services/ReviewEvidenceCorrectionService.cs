@@ -24,7 +24,11 @@ public sealed class ReviewEvidenceCorrectionService(AppDbContext db, ICheckpoint
     {
         if (string.IsNullOrWhiteSpace(actor) || actor.Length > 200 || string.IsNullOrWhiteSpace(request.Reason)
             || request.Reason.Length > 2000 || request.PredecessorEvidenceId == Guid.Empty
-            || !IsDigest(request.ExpectedReportDigest) || !IsDigest(request.BundleDigest))
+            || !IsDigest(request.ExpectedReportDigest) || !IsDigest(request.BundleDigest)
+            || request.Selection is null || string.IsNullOrWhiteSpace(request.ProducerIdentity)
+            || !Antiphon.Server.Domain.GitObjectId.IsFull(request.SourceSha)
+            || request.SourceRef?.StartsWith("refs/heads/", StringComparison.Ordinal) != true
+            || string.IsNullOrWhiteSpace(request.RepositoryPath))
             throw new ValidationException("request", "Exact evidence digests and a bounded audit reason are required.");
         var review = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == reviewId, ct)
             ?? throw new NotFoundException(nameof(AgentTask), reviewId);
@@ -173,6 +177,19 @@ public sealed class ReviewEvidenceCorrectionService(AppDbContext db, ICheckpoint
             throw Refuse("link_mismatch");
         var review = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == c.ReviewTaskId, ct);
         if (review is null || Digest(review.Result ?? "") != c.ReportDigest) throw Refuse("link_report_changed");
+        try
+        {
+            using var validation = JsonDocument.Parse(c.ValidationResultJson);
+            var proof = validation.RootElement;
+            if (proof.GetProperty("schemaVersion").GetInt32() != 1 || !proof.GetProperty("verified").GetBoolean()
+                || proof.GetProperty("sourceSha").GetString() != c.SourceSha
+                || proof.GetProperty("bundleDigest").GetString() != c.CanonicalBundleDigest
+                || proof.GetProperty("exitCode").GetInt32() != 0
+                || proof.GetProperty("rows").GetRawText() != c.RequiredRowsJson)
+                throw Refuse("link_validation_mismatch");
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException)
+        { throw Refuse("link_validation_invalid"); }
         await CheckpointReceiptValidator.VerifyRetainedAsync(c.ImportedEvidenceIdentity, c.CanonicalBundleDigest, ct);
     }
 

@@ -23,6 +23,14 @@ public sealed class CheckpointReceiptValidator(IOptions<CheckpointReceiptSetting
 
     public async Task<ImportedCheckpointEvidence> ImportAsync(ReviewEvidenceCorrectionRequest request, CancellationToken ct)
     {
+        try { return await ImportCoreAsync(request, ct); }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException
+            or UnauthorizedAccessException or InvalidOperationException or KeyNotFoundException)
+        { throw ReviewEvidenceCorrectionService.Refuse("receipt_invalid"); }
+    }
+
+    private async Task<ImportedCheckpointEvidence> ImportCoreAsync(ReviewEvidenceCorrectionRequest request, CancellationToken ct)
+    {
         var settings = options.Value;
         var producer = settings.Producers.SingleOrDefault(p => p.Identity == request.ProducerIdentity)
             ?? throw ReviewEvidenceCorrectionService.Refuse("producer_untrusted");
@@ -55,7 +63,7 @@ public sealed class CheckpointReceiptValidator(IOptions<CheckpointReceiptSetting
         if (reportEntry is null) return Incomplete(request.Selection.Rows);
         byte[] reportBytes;
         try { reportBytes = await ReadEntryAsync(pack, reportEntry, ct); }
-        catch (IOException) { return Incomplete(request.Selection.Rows); }
+        catch (Exception ex) when (ex is IOException or InvalidDataException) { return Incomplete(request.Selection.Rows); }
         using var reportDocument = JsonDocument.Parse(reportBytes);
         var report = reportDocument.RootElement;
         if (report.GetProperty("schemaVersion").GetInt32() != 2
@@ -99,7 +107,7 @@ public sealed class CheckpointReceiptValidator(IOptions<CheckpointReceiptSetting
                     || stamp.RootElement.GetProperty("fingerprint").GetString() != row.GetProperty("source").GetProperty("start").GetProperty("fingerprint").GetString())
                     throw new InvalidDataException("build_provenance_mismatch");
             }
-            catch (Exception ex) when (ex is IOException or System.Xml.XmlException or JsonException or InvalidOperationException or KeyNotFoundException)
+            catch (Exception ex) when (ex is IOException or InvalidDataException or System.Xml.XmlException or JsonException or InvalidOperationException or KeyNotFoundException)
             { missing.Add(required.Id); }
         }
         if (missing.Count > 0) return Incomplete(missing);
@@ -190,7 +198,7 @@ public sealed class CheckpointReceiptValidator(IOptions<CheckpointReceiptSetting
             var inventory = Parse<Inventory>(bytes);
             foreach (var entry in inventory.Files) await ReadEntryAsync(root, entry, ct);
         }
-        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException or UnauthorizedAccessException)
         { throw ReviewEvidenceCorrectionService.Refuse("retained_evidence_unavailable"); }
     }
 

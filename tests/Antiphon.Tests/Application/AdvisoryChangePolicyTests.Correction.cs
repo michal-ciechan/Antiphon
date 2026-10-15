@@ -80,7 +80,7 @@ public partial class AdvisoryChangePolicyTests
         absent.Disposition.ShouldBe("incomplete", "missing-run-no-approval");
         absent.MissingRows.ShouldBe(w.Request.Selection.Rows, "missing-selection-exact");
         await using (var db = w.Db()) (await db.StageOutcomes.CountAsync()).ShouldBe(1);
-        foreach (var behavior in new[] { "Substantive", "Unknown" })
+        foreach (var behavior in new[] { "Substantive", "Unknown", "Legacy" })
         {
             await w.BehaviorAsync(behavior);
             (await w.PostAsync(w.Request)).StatusCode.ShouldBe(HttpStatusCode.Conflict, "missing-behavior-substantive");
@@ -204,6 +204,7 @@ public partial class AdvisoryChangePolicyTests
             Review.Result = "Retained typed assessment.\n--- correction assessment v1 ---\n" +
                 JsonSerializer.Serialize(new { Behavior = behavior, SubjectTaskId = Request.SubjectTaskId,
                     SourceSha = Request.SourceSha, SourceRef = Request.SourceRef, RepositoryPath = Request.RepositoryPath });
+            if (behavior == "Legacy") Review.Result = "Historical unclassified Found report.";
             Request = Request with { ExpectedReportDigest = Digest(Review.Result) };
             await using var db = Db();
             (await db.AgentTasks.SingleAsync(t => t.Id == Review.Id)).Result = Review.Result;
