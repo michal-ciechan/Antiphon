@@ -3,6 +3,7 @@ using System.Data.Common;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -165,6 +166,22 @@ public class SessionRuntimeActionRecoveryTests
         log.Messages.ShouldContain(m => m.Contains("start"));
         log.Messages.ShouldContain(m => m.Contains("end"));
         log.Messages.ShouldAllBe(m => !m.Contains("private-transcript-body"));
+        var failure = new PrivateFailureBus();
+        await using var failing = await SessionStateTestFixture.CreateAsync(configure: s =>
+        {
+            s.AddSingleton<ILogger<SessionRuntimeActionCoordinator>>(log);
+            s.AddSingleton<IEventBus>(failure);
+        });
+        await failing.Runtime.ObserveTranscriptAsync(failing.Event(1, "ToolResult", text: "second-private-body"), default);
+        await failing.Services.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(failing.SessionId, default);
+        failure.Hits.ShouldBe(1);
+        await using var verify = failing.Db();
+        var retained = await verify.SessionRuntimeActions.SingleAsync();
+        retained.Phase.ShouldBe(0);
+        retained.Attempts.ShouldBe(1);
+        retained.FailureReason.ShouldBe(nameof(IOException));
+        log.Values.ShouldContain(v => v.ContainsKey("FailureType") && Equals(v["FailureType"], nameof(IOException)));
+        log.Messages.ShouldAllBe(m => !m.Contains("second-private-body") && !m.Contains("private-exception-detail"));
     }
 
     private static SessionRunnerTranscriptEvent Entry(BridgeQueueHarness h, long seq, string kind, string? text) =>
@@ -208,5 +225,13 @@ public class SessionRuntimeActionRecoveryTests
             Messages.Enqueue(format(state, ex));
             if (state is IEnumerable<KeyValuePair<string, object?>> values) Values.Enqueue(values.ToDictionary());
         }
+    }
+
+    private sealed class PrivateFailureBus : IEventBus
+    {
+        public int Hits;
+        public Task PublishToGroupAsync(string group, string name, object payload, CancellationToken ct = default)
+        { Hits++; throw new IOException("private-exception-detail"); }
+        public Task PublishToAllAsync(string name, object payload, CancellationToken ct = default) => Task.CompletedTask;
     }
 }
