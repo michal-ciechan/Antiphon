@@ -223,6 +223,23 @@ public sealed class ChannelReplyDispatcher
         return result;
     }
 
+    internal async Task OnTranscriptActionAsync(Guid sessionId, long triggerSequence, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var boundary = await TranscriptTurnWindow.FindActionBoundaryAsync(db, sessionId, triggerSequence, ct);
+        if (boundary is null) return;
+        var prompt = await TranscriptTurnWindow.FindOwningPromptAsync(db, sessionId, boundary.Value, ct);
+        if (prompt is null) return;
+        var result = await DispatchAsync(sessionId, prompt, rememberDirectTurn: true, ct);
+        if (result.FailedCorrelationIds.Count != 0)
+            throw new InvalidOperationException("Bound channel publication remains pending.");
+        if (_dispatched.TryGetValue(sessionId, out var dispatched) && dispatched.PromptSeq == prompt.Sequence)
+            await DispatchFollowUpAsync(sessionId, ct);
+        await DispatchDurableFollowUpsAsync(sessionId, ct);
+        await DispatchMachineTurnFollowUpAsync(sessionId, prompt, ct);
+    }
+
     /// <summary>
     /// Route only the Channel sources confirmed by a queue boundary. The worker may start after
     /// later turns have completed, so resolve the original attempt's owning prompt in sequence

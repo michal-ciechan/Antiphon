@@ -19,7 +19,10 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>Late-confirmation evidence produced while processing one turn-end boundary.</summary>
 public sealed record SessionQueueTurnEndResult(
     IReadOnlySet<Guid> LateConfirmedMessageIds,
-    IReadOnlySet<Guid> LateConfirmedChannelMessageIds);
+    IReadOnlySet<Guid> LateConfirmedChannelMessageIds)
+{
+    public bool Deferred { get; init; }
+}
 
 /// <summary>
 /// The ask_user_question an overlay reply may answer: session, tool-call sequence (its place
@@ -462,12 +465,14 @@ public sealed partial class SessionMessageQueueService
         Guid? sourceLandNotificationId = null,
         Func<Guid, CancellationToken, Task>? afterLandQueueInsert = null,
         Guid? sourceChannelInboundId = null,
-        IReadOnlyList<Guid>? channelMemberInboundIds = null)
+        IReadOnlyList<Guid>? channelMemberInboundIds = null,
+        Guid? reviewThreadId = null, string? runtimeActionKey = null)
         => EnqueueCoreAsync(sessionId, body, mode, origin, conversationKey, sourceTaskId,
             contentDigest, noteHeader, sourceScheduleId, onCreated, deliverIfIdle, holdUntil,
             executionDeadlineAt, executionTaskId, capacityRecoveryActionKey, capacityWaitId,
             sourceLandNotificationId, afterLandQueueInsert, sourceChannelInboundId: sourceChannelInboundId,
-            channelMemberInboundIds: channelMemberInboundIds, ct: ct);
+            channelMemberInboundIds: channelMemberInboundIds, reviewThreadId: reviewThreadId,
+            runtimeActionKey: runtimeActionKey, ct: ct);
 
     internal async Task<Guid> EnqueueMentionAsync(Guid sessionId, string body, Guid occurrenceId, CancellationToken ct)
     {
@@ -505,6 +510,7 @@ public sealed partial class SessionMessageQueueService
         Func<Guid, CancellationToken, Task>? afterLandQueueInsert = null,
         Guid? mentionOccurrenceId = null, Guid? sourceChannelInboundId = null,
         IReadOnlyList<Guid>? channelMemberInboundIds = null,
+        Guid? reviewThreadId = null, string? runtimeActionKey = null,
         CancellationToken ct = default)
     {
         var trimmed = (body ?? string.Empty).Trim();
@@ -745,6 +751,10 @@ public sealed partial class SessionMessageQueueService
                     return await GetQueueAsync(sessionId, ct);
             }
 
+            if (runtimeActionKey is not null && await db.SessionQueuedMessages.AnyAsync(m =>
+                m.AgentSessionId == sessionId && m.RuntimeActionKey == runtimeActionKey, ct))
+                return await GetQueueAsync(sessionId, ct);
+
             if (sourceChannelInboundId is Guid inboundId)
             {
                 var existingInbound = await db.SessionQueuedMessages.AsNoTracking()
@@ -782,6 +792,8 @@ public sealed partial class SessionMessageQueueService
                 SpecialistInputPolicyJson = specialistInputPolicyJson,
                 CapacityRecoveryActionKey = capacityRecoveryActionKey,
                 CapacityWaitId = capacityWaitId,
+                ReviewThreadId = reviewThreadId,
+                RuntimeActionKey = runtimeActionKey,
             };
             // A producer can fit a remote brief before it knows the queue row Id. Bind the
             // pointer and bytes to that Id in the same insert; neither can then be replaced by
@@ -1553,7 +1565,13 @@ public sealed partial class SessionMessageQueueService
     /// Called when a session reaches a turn-end (idle). Delivers the next queued message if any; otherwise
     /// the agent has completely finished, so broadcast <c>SessionFinished</c>.
     /// </summary>
-    public async Task<SessionQueueTurnEndResult> OnTurnEndAsync(Guid sessionId, CancellationToken ct)
+    public Task<SessionQueueTurnEndResult> OnTurnEndAsync(Guid sessionId, CancellationToken ct) =>
+        OnTurnEndCoreAsync(sessionId, null, ct);
+
+    internal Task<SessionQueueTurnEndResult> OnRuntimeActionAsync(SessionRuntimeAction action, CancellationToken ct) =>
+        OnTurnEndCoreAsync(action.AgentSessionId, action, ct);
+
+    private async Task<SessionQueueTurnEndResult> OnTurnEndCoreAsync(Guid sessionId, SessionRuntimeAction? action, CancellationToken ct)
     {
         FlushResult flush;
         var lateConfirmed = new LateConfirmCollector();
@@ -1564,23 +1582,37 @@ public sealed partial class SessionMessageQueueService
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             // Cancel-not-strand: a Supervision /compact that sat through a turn must not fire now.
+            if (action is not null)
+            {
+                var generation = await db.AgentSessions.Where(s => s.Id == sessionId)
+                    .Select(s => (DateTime?)s.StartedAt).SingleOrDefaultAsync(ct);
+                if (generation != action.AcceptedGeneration) return lateConfirmed.ToResult();
+                if (await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == sessionId
+                        && a.Id != action.Id && a.Phase < SessionRuntimeActionCoordinator.QueuePhase, ct)
+                    || await ReadWorkingAsync(db, sessionId, ct))
+                    return lateConfirmed.ToResult() with { Deferred = true };
+            }
             var receipts = await ReconcileDeliveredSpillsLockedAsync(db, sessionId, ct);
             lateConfirmed.Record(receipts);
             await CancelPendingSupervisionLockedAsync(db, sessionId, "turn-end", ct);
             flush = await DeliverNextLockedAsync(db, sessionId, ct, lateConfirmed);
             if (flush == FlushResult.Nothing && receipts.Confirmed > 0)
                 flush = FlushResult.LateConfirmed;
+            if (action is not null && flush == FlushResult.Nothing
+                && await db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == sessionId
+                    && m.Status == QueuedMessageStatus.Pending, ct))
+                return lateConfirmed.ToResult() with { Deferred = true };
         }
         finally
         {
             sem.Release();
         }
 
-        if (flush == FlushResult.Nothing)
+        if (flush == FlushResult.Nothing && (action is null || action.TurnBoundary))
         {
             await PublishFinishedAsync(sessionId, ct);
         }
-        else
+        else if (flush != FlushResult.Nothing)
         {
             // Delivered (queue shrank) or Failed (message reverted to Pending) — either way the
             // queue view changed. A failed flush is NOT "finished".

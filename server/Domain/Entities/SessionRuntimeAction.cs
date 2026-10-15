@@ -18,4 +18,5 @@ public sealed class SessionRuntimeAction
     public string? FailureReason { get; set; }
     public int UiProjectionVersion { get; set; } = 1;
     public byte[] UiProjectionDelta { get; set; } = [];
+    public Guid[] LateConfirmedChannelMessageIds { get; set; } = [];
 }

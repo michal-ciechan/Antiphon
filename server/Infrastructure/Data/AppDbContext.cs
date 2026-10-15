@@ -1684,6 +1684,11 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<SessionQueuedMessage>(entity =>
         {
+            entity.Property(m => m.RuntimeActionKey).HasMaxLength(160);
+            entity.HasIndex(m => new { m.AgentSessionId, m.RuntimeActionKey }).IsUnique()
+                .HasFilter("\"RuntimeActionKey\" IS NOT NULL");
+            entity.HasIndex(m => new { m.AgentSessionId, m.ReviewThreadId })
+                .HasFilter("\"ReviewThreadId\" IS NOT NULL AND \"ReviewReplyConsumedAt\" IS NULL");
             entity.HasOne<ChannelOutboundDelivery>().WithMany()
                 .HasForeignKey(m => m.ChannelOutboundDeliveryId).OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(m => m.ChannelOutboundDeliveryId);

@@ -54,7 +54,7 @@ internal sealed record TaskReportSelection(
 internal static class TaskReportTurnSelector
 {
     internal static async Task<TaskReportSelection> SelectAsync(
-        AppDbContext db, Guid sessionId, AgentTask task, CancellationToken ct)
+        AppDbContext db, Guid sessionId, AgentTask task, CancellationToken ct, long? boundaryCeiling = null)
     {
         var sessionKind = await db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == sessionId)
@@ -79,7 +79,8 @@ internal static class TaskReportTurnSelector
             .ToHashSet(StringComparer.Ordinal);
 
         var boundaries = await db.TranscriptEntries.AsNoTracking()
-            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd
+                && (boundaryCeiling == null || t.Sequence <= boundaryCeiling))
             .OrderByDescending(t => t.Sequence)
             .Select(t => new BoundaryRow(t.Sequence, t.Kind, t.StopReason))
             .ToListAsync(ct);
