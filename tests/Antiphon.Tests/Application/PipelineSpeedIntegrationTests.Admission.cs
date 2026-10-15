@@ -80,7 +80,11 @@ public sealed partial class PipelineSpeedIntegrationTests
         var locks = new AdmissionLocks();
         await using var w = await C544World.CreateAsync(locks);
         var git = new AdmissionGit(w);
-        w.ConfigureServices = services => services.AddSingleton<ILandingGit>(git);
+        w.ConfigureServices = services =>
+        {
+            services.AddSingleton<ILandingGit>(git);
+            services.AddScoped<DelegationOpenGate>();
+        };
         await w.RestartAsync(locks);
         var action = handoff ? await SeedActionAsync(w) : null;
         var started = Stopwatch.GetTimestamp();

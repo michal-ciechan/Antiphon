@@ -1553,7 +1553,10 @@ public sealed class AgentTaskService
         DelegationOpenGate.Snapshot? openSnapshot = null;
         // The preview is advisory and dispatch recomputes it. Ordinary Git inspection
         // must not hold the card row or concurrency gate while subprocesses run.
-        CardWorktreeBaseSelection? basePreview = handoffActionId is null
+        var prepareBeforeLocks = handoffActionId is null && task.SourceLandingOperationId is null;
+        if (prepareBeforeLocks && gateCreate)
+            await _openGate!.PreviewCanCreateAsync(projectId, request.Role, request.IgnoreConcurrencyLimit, ct);
+        CardWorktreeBaseSelection? basePreview = prepareBeforeLocks
             ? await PrepareWorktreeBaseAsync(task, request, now, ct) : null;
         PipelineHandoffAction? handoff = null;
         if (gateCreate || task.SourceLandingOperationId is not null || verificationAdmission is not null
@@ -1667,7 +1670,7 @@ public sealed class AgentTaskService
                 openSnapshot = await _openGate!.EnsureCanCreateAsync(
                     projectId, request.Role, request.IgnoreConcurrencyLimit, ct);
             // Recover an already-linked handoff child before consulting Git again.
-            if (handoffActionId is not null)
+            if (!prepareBeforeLocks)
                 basePreview = await PrepareWorktreeBaseAsync(task, request, now, ct);
             // CARD-0544 D-5: the owner latch commits in the same transaction as this task, under
             // the owner row lock the land admission also takes, or neither exists.

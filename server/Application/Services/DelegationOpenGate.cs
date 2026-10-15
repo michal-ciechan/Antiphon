@@ -73,6 +73,17 @@ public sealed class DelegationOpenGate
         CancellationToken ct)
     {
         await TakeLockAsync(ct);
+        return await PreviewCanCreateAsync(projectId, role, ignoreConcurrencyLimit, ct);
+    }
+
+    // A refusal before expensive preparation is useful, but this read reserves nothing.
+    // Create must still call EnsureCanCreateAsync inside its insertion transaction.
+    public async Task<Snapshot> PreviewCanCreateAsync(
+        Guid? projectId,
+        AgentTaskRole role,
+        bool ignoreConcurrencyLimit,
+        CancellationToken ct)
+    {
         if (_concurrency is null)
         {
             var snapshot = await LoadSnapshotAsync(projectId, role, ct);
