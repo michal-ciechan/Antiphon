@@ -1,4 +1,6 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 
@@ -6,6 +8,68 @@ namespace Antiphon.HostCleanup.Checkpoints;
 
 public sealed class CheckpointNativeIo : ICheckpointCleanupIo
 {
+    public int CurrentProcessId => Environment.ProcessId;
+    public string MachineName => Environment.MachineName;
+    public string BootId => ReadBootId();
+    public string PidNamespace => ReadPidNamespace();
+    public string ImageDirectory => AppContext.BaseDirectory;
+    public string CurrentDirectory => Environment.CurrentDirectory;
+    public DateTime CreationTimeUtc(string path) => Directory.GetCreationTimeUtc(path);
+    public DateTime LastWriteTimeUtc(string path) => Directory.GetLastWriteTimeUtc(path);
+    public string StreamPath(Stream stream) => ((FileStream)stream).Name;
+    public CheckpointProcessSnapshot Process(int pid)
+    {
+        using var process = System.Diagnostics.Process.GetProcessById(pid);
+        var (start, state) = StartToken(pid, process);
+        return new(start, state, process.HasExited);
+    }
+
+    private static (long Token, char State) StartToken(int pid, Process process)
+    {
+        if (!OperatingSystem.IsLinux())
+            return (process.StartTime.ToUniversalTime().Ticks, 'R');
+        // /proc starttime is a kernel generation in clock ticks since boot. Unlike
+        // Process.StartTime's UTC conversion it is byte-stable across observers.
+        var stat = File.ReadAllText($"/proc/{pid}/stat");
+        var endName = stat.LastIndexOf(')');
+        if (endName < 0 || endName + 2 >= stat.Length)
+            throw new IOException("invalid proc stat");
+        var fields = stat[(endName + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (fields.Length <= 19 || fields[0].Length != 1
+            || !long.TryParse(fields[19], NumberStyles.None, CultureInfo.InvariantCulture, out var start))
+            throw new IOException("invalid proc starttime");
+        return (start, fields[0][0]);
+    }
+
+    private const string BootFormat = "yyyyMMddHHmm";
+    private static string ReadBootId()
+    {
+        if (OperatingSystem.IsLinux())
+            return File.ReadAllText("/proc/sys/kernel/random/boot_id").Trim();
+        if (OperatingSystem.IsWindows())
+        {
+            // The kernel's recorded boot time (CIM's LastBootUpTime). Now minus uptime drifted
+            // with every clock slew (29 s after 20 days), so earlier markers read as foreign.
+            var info = new byte[48];
+            var status = NtQuerySystemInformation(SystemTimeOfDayInformation, info, info.Length, out _);
+            if (status != 0)
+                throw new InvalidOperationException($"boot time query failed: 0x{status:X8}");
+            return DateTime.FromFileTimeUtc(BitConverter.ToInt64(info, 0))
+                .ToString(BootFormat, CultureInfo.InvariantCulture);
+        }
+        // A change or clock correction can only prevent cleanup, never authorize it.
+        return (DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64))
+            .UtcDateTime.ToString(BootFormat, CultureInfo.InvariantCulture);
+    }
+
+    private const int SystemTimeOfDayInformation = 3;
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtQuerySystemInformation(int infoClass, byte[] info, int length, out int returned);
+
+    private static string ReadPidNamespace() => OperatingSystem.IsLinux()
+        ? new FileInfo("/proc/self/ns/pid").LinkTarget ?? "unknown"
+        : "windows-local";
     public CheckpointPlatform Platform => OperatingSystem.IsLinux() ? CheckpointPlatform.Linux
         : OperatingSystem.IsWindows() ? CheckpointPlatform.Windows : CheckpointPlatform.Other;
     public uint Owner => OperatingSystem.IsLinux() ? GetEuid() : uint.MaxValue;

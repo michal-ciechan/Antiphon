@@ -1,3 +1,4 @@
+using Antiphon.HostCleanup.Checkpoints;
 using System.Text.RegularExpressions;
 
 namespace Antiphon.Checkpoints;
@@ -9,15 +10,17 @@ public sealed class CleanResult
     public bool KeptBecauseRed { get; init; }
 }
 
-public static class OutputCleanup
+public sealed class CheckpointOutputCleanup(CheckpointCleanupContext context)
 {
+    private IEnumerable<string> Directories(string path) => context.Io.Enumerate(path).Where(context.Io.DirectoryExists);
+
     // PC-4 drops "bin" from this list. Descending into bin/ would delete a nested owned name.
-    private static readonly string[] PruneNames = ["bin", "obj", "workspace", ".git", "node_modules", ".antiphon"];
+    private readonly string[] PruneNames = ["bin", "obj", "workspace", ".git", "node_modules", ".antiphon"];
 
     // CARD-1199: a build id is a directory name only when it is an isolated bin-<name> output.
-    private static readonly Regex IsolatedOutputId = new(@"^bin-[A-Za-z0-9._-]+$", RegexOptions.CultureInvariant);
+    private readonly Regex IsolatedOutputId = new(@"^bin-[A-Za-z0-9._-]+$", RegexOptions.CultureInvariant);
 
-    public static bool IsPathSegment(string value)
+    public bool IsPathSegment(string value)
     {
         if (string.IsNullOrWhiteSpace(value) || value is "." or "..")
             return false;
@@ -28,14 +31,14 @@ public static class OutputCleanup
         return !Path.IsPathRooted(value);
     }
 
-    public static bool IsIsolatedOutputId(string value) =>
+    public bool IsIsolatedOutputId(string value) =>
         IsPathSegment(value) && IsolatedOutputId.IsMatch(value);
 
-    public static bool IsStrictlyInside(string root, string candidate)
+    public bool IsStrictlyInside(string root, string candidate)
     {
         try
         {
-            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            var comparison = context.PathComparison;
             var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             var full = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             return full.StartsWith(fullRoot + Path.DirectorySeparatorChar, comparison);
@@ -46,7 +49,7 @@ public static class OutputCleanup
         }
     }
 
-    public static CleanResult CleanOwnedOutputs(string repoRoot, IReadOnlyCollection<string> ownedIds, int exitCode, bool cleanOnRed, bool dryRun,
+    public CleanResult CleanOwnedOutputs(string repoRoot, IReadOnlyCollection<string> ownedIds, int exitCode, bool cleanOnRed, bool dryRun,
         Action? beforeDelete = null, IReadOnlyCollection<string>? createdPaths = null, string? gitExecutable = null,
         bool refuseUnrecorded = false)
     {
@@ -86,7 +89,7 @@ public static class OutputCleanup
             }
 
             var name = Path.GetFileName(full);
-            var present = Directory.Exists(full) || File.Exists(full);
+            var present = context.Io.DirectoryExists(full) || context.Io.FileExists(full);
             if (!IsStrictlyInside(root, full))
             {
                 if (present)
@@ -101,12 +104,12 @@ public static class OutputCleanup
                 continue;
             }
 
-            if (!owned.Contains(name) || !Directory.Exists(full))
+            if (!owned.Contains(name) || !context.Io.DirectoryExists(full))
                 continue;
 
-            var ledgerRefusal = SafeDelete.Refusal(full, new DeleteOwnership { IsolatedRoot = root, CreatedPaths = createdPaths, RequireInventory = true, RequireBinName = true, AllowOutsideRepository = false, GitExecutable = gitExecutable }) ?? OwnedOutputLedger.Check(full);
+            var ledgerRefusal = new CheckpointDelete(context).Refusal(full, new DeleteOwnership { IsolatedRoot = root, CreatedPaths = createdPaths, RequireInventory = true, RequireBinName = true, AllowOutsideRepository = false, GitExecutable = gitExecutable }) ?? new CheckpointOutputLedger(context).Check(full);
             if (ledgerRefusal is not null) { Console.Error.WriteLine("left in place: " + full + "; remove it manually"); refusals.Add(ledgerRefusal); continue; }
-            var result = SafeDelete.Apply(full, new DeleteOwnership
+            var result = new CheckpointDelete(context).Apply(full, new DeleteOwnership
             {
                 IsolatedRoot = root,
                 CreatedPaths = createdPaths,
@@ -115,7 +118,7 @@ public static class OutputCleanup
                 DryRun = dryRun,
                 AllowOutsideRepository = false,
                 GitExecutable = gitExecutable,
-            }, beforeDelete, () => OwnedOutputLedger.Check(full));
+            }, beforeDelete, () => new CheckpointOutputLedger(context).Check(full));
             if (result.Disposition == DeleteDisposition.Refused)
                 refusals.Add(result.Reason ?? "refused");
             else if (result.Disposition is DeleteDisposition.Deleted or DeleteDisposition.DryRun)
@@ -125,19 +128,19 @@ public static class OutputCleanup
         return new CleanResult { Deleted = deleted, Refusals = refusals };
     }
 
-    public static List<string> MatchingIsolatedDirectories(string repoRoot, string buildId)
+    public List<string> MatchingIsolatedDirectories(string repoRoot, string buildId)
     {
         var found = new List<string>();
         if (!IsIsolatedOutputId(buildId) || string.IsNullOrWhiteSpace(repoRoot))
             return found;
         var root = Path.GetFullPath(repoRoot);
-        if (!Directory.Exists(root))
+        if (!context.Io.DirectoryExists(root))
             return found;
         Collect(root, root, buildId, found);
         return found;
     }
 
-    public static void RecordCreatedOutputs(RunState state, string repoRoot, string buildId, IReadOnlyCollection<string> before)
+    public void RecordCreatedOutputs(RunState state, string repoRoot, string buildId, IReadOnlyCollection<string> before)
     {
         state.CreatedOutputPaths ??= [];
         if (!IsIsolatedOutputId(buildId))
@@ -151,29 +154,29 @@ public static class OutputCleanup
         }
     }
 
-    public static CleanResult RemoveOlderRuns(string resultsRoot, TimeSpan olderThan, bool dryRun)
+    public CleanResult RemoveOlderRuns(string resultsRoot, TimeSpan olderThan, bool dryRun)
     {
         var deleted = new List<string>();
         var refusals = new List<string>();
-        if (!Directory.Exists(resultsRoot))
+        if (!context.Io.DirectoryExists(resultsRoot))
             return new CleanResult { Deleted = deleted, Refusals = refusals };
-        var cutoff = DateTime.UtcNow - olderThan;
-        foreach (var dir in Directory.EnumerateDirectories(resultsRoot))
+        var cutoff = context.Time.GetUtcNow().UtcDateTime - olderThan;
+        foreach (var dir in Directories(resultsRoot))
         {
             var name = Path.GetFileName(dir);
             if (PruneNames.Contains(name) || name.StartsWith("bin", StringComparison.Ordinal))
                 continue;
-            if (Directory.GetLastWriteTimeUtc(dir) >= cutoff)
+            if (context.Io.LastWriteTimeUtc(dir) >= cutoff)
                 continue;
-            var ownership = RunOwnershipStore.Read(dir);
-            if (ownership is null || !ContainedCleanup.SafeTree(dir, 10000))
+            var ownership = RunOwnershipStore.Read(dir, context);
+            if (ownership is null || !ContainedCleanup.SafeTree(dir, 10000, context))
                 continue;
             var observed = ownership.Phase == "preparing"
-                ? new ProcessIdentityProbe().Observe(ownership.Starter)
-                : new ToolCopyCleanup().ObserveExecutor(dir);
+                ? new ProcessIdentityProbe(context).Observe(ownership.Starter)
+                : new ToolCopyCleanup(context: context).ObserveExecutor(dir);
             if (observed.Verdict != ProcessVerdict.Dead)
                 continue;
-            var refusal = SafeDelete.Refusal(dir, new DeleteOwnership { IsolatedRoot = resultsRoot, CreatedPaths = [dir], RequireBinName = false, AllowOutsideRepository = true }) ?? OwnedOutputLedger.Check(dir);
+            var refusal = new CheckpointDelete(context).Refusal(dir, new DeleteOwnership { IsolatedRoot = resultsRoot, CreatedPaths = [dir], RequireBinName = false, AllowOutsideRepository = true }) ?? new CheckpointOutputLedger(context).Check(dir);
             if (refusal is not null) { refusals.Add(refusal); continue; }
             if (dryRun)
             {
@@ -181,22 +184,22 @@ public static class OutputCleanup
                 continue;
             }
 
-            var removed = SafeDelete.Apply(dir, new DeleteOwnership { IsolatedRoot = resultsRoot, CreatedPaths = [dir], RequireBinName = false, AllowOutsideRepository = true }, inventoryCheck: () => OwnedOutputLedger.Check(dir));
-            if (removed.Disposition == DeleteDisposition.Deleted && !Directory.Exists(dir) && !File.Exists(dir))
+            var removed = new CheckpointDelete(context).Apply(dir, new DeleteOwnership { IsolatedRoot = resultsRoot, CreatedPaths = [dir], RequireBinName = false, AllowOutsideRepository = true }, inventoryCheck: () => new CheckpointOutputLedger(context).Check(dir));
+            if (removed.Disposition == DeleteDisposition.Deleted && !context.Io.DirectoryExists(dir) && !context.Io.FileExists(dir))
                 deleted.Add(dir);
-            else if (removed.Disposition == DeleteDisposition.Refused || Directory.Exists(dir) || File.Exists(dir))
+            else if (removed.Disposition == DeleteDisposition.Refused || context.Io.DirectoryExists(dir) || context.Io.FileExists(dir))
                 refusals.Add(string.IsNullOrWhiteSpace(removed.Reason) ? "still-present" : removed.Reason);
         }
 
         return new CleanResult { Deleted = deleted, Refusals = refusals };
     }
 
-    public static string DeletedLine(bool dryRun, string path) =>
+    public string DeletedLine(bool dryRun, string path) =>
         (dryRun ? "would delete " : "deleted ") + path;
 
-    private static bool Listed(IReadOnlyCollection<string> created, string full)
+    private bool Listed(IReadOnlyCollection<string> created, string full)
     {
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var comparison = context.PathComparison;
         var trimmed = full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         foreach (var candidate in created)
         {
@@ -214,10 +217,10 @@ public static class OutputCleanup
         return false;
     }
 
-    private static void Collect(string repoRoot, string directory, string buildId, List<string> found)
+    private void Collect(string repoRoot, string directory, string buildId, List<string> found)
     {
         IEnumerable<string> children;
-        try { children = Directory.EnumerateDirectories(directory); }
+        try { children = Directories(directory); }
         catch (IOException) { return; }
         catch (UnauthorizedAccessException) { return; }
 
@@ -238,4 +241,26 @@ public static class OutputCleanup
             Collect(repoRoot, child, buildId, found);
         }
     }
+}
+
+public static class OutputCleanup
+{
+    public static bool IsPathSegment(string value) =>
+        new CheckpointOutputCleanup(CheckpointCleanupDefaults.Context).IsPathSegment(value);
+    public static bool IsIsolatedOutputId(string value) =>
+        new CheckpointOutputCleanup(CheckpointCleanupDefaults.Context).IsIsolatedOutputId(value);
+    public static bool IsStrictlyInside(string root, string candidate) =>
+        new CheckpointOutputCleanup(CheckpointCleanupDefaults.Context).IsStrictlyInside(root, candidate);
+    public static CleanResult CleanOwnedOutputs(string repoRoot, IReadOnlyCollection<string> ownedIds, int exitCode, bool cleanOnRed, bool dryRun,
+        Action? beforeDelete = null, IReadOnlyCollection<string>? createdPaths = null, string? gitExecutable = null,
+        bool refuseUnrecorded = false) =>
+        new CheckpointOutputCleanup(CheckpointCleanupDefaults.Context).CleanOwnedOutputs(repoRoot, ownedIds, exitCode, cleanOnRed, dryRun, beforeDelete, createdPaths, gitExecutable, refuseUnrecorded);
+    public static List<string> MatchingIsolatedDirectories(string repoRoot, string buildId) =>
+        new CheckpointOutputCleanup(CheckpointCleanupDefaults.Context).MatchingIsolatedDirectories(repoRoot, buildId);
+    public static void RecordCreatedOutputs(RunState state, string repoRoot, string buildId, IReadOnlyCollection<string> before) =>
+        new CheckpointOutputCleanup(CheckpointCleanupDefaults.Context).RecordCreatedOutputs(state, repoRoot, buildId, before);
+    public static CleanResult RemoveOlderRuns(string resultsRoot, TimeSpan olderThan, bool dryRun) =>
+        new CheckpointOutputCleanup(CheckpointCleanupDefaults.Context).RemoveOlderRuns(resultsRoot, olderThan, dryRun);
+    public static string DeletedLine(bool dryRun, string path) =>
+        new CheckpointOutputCleanup(CheckpointCleanupDefaults.Context).DeletedLine(dryRun, path);
 }

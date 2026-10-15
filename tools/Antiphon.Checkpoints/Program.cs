@@ -1,3 +1,4 @@
+using Antiphon.HostCleanup.Checkpoints;
 using System.Reflection;
 using System.Text.Json;
 
@@ -30,6 +31,8 @@ public static class Program
 
     private static async Task<int> RunCoreAsync(string[] args, CheckpointApp.Runtime? runtime)
     {
+        runtime ??= new CheckpointApp.Runtime();
+        var context = runtime.CleanupContext;
         if (args.Length == 0 || args[0] is "-h" or "--help")
         {
             Console.WriteLine("antiphon-checkpoints run|start|wait|status|stop|report|validate|import|coverage|row|clean|execute|hold|--version");
@@ -52,7 +55,7 @@ public static class Program
 
         var verb = args[0];
         var options = Parse(args.Skip(1).ToArray());
-        var repo = options.Get("repo-root") ?? RepoPaths.FindRoot();
+        var repo = options.Get("repo-root") ?? runtime.RepoRoot ?? RepoPaths.FindRoot(context: context);
         switch (verb)
         {
             case "coverage":
@@ -64,21 +67,21 @@ public static class Program
             case "start":
                 return await Start(options, repo, runtime).ConfigureAwait(false);
             case "wait":
-                return await Wait(options, repo).ConfigureAwait(false);
+                return await Wait(options, repo, runtime).ConfigureAwait(false);
             case "status":
-                return Status(options, repo, runtime?.Output ?? Console.Out);
+                return Status(options, repo, runtime.Output ?? Console.Out, runtime);
             case "stop":
                 return Stop(options, repo, runtime);
             case "report":
-                return Report(options, repo, runtime?.Output ?? Console.Out);
+                return Report(options, repo, runtime.Output ?? Console.Out, runtime);
             case "validate":
                 return Validate(options, repo);
             case "clean":
-                return Clean(options, repo, runtime?.Output ?? Console.Out);
+                return Clean(options, repo, runtime.Output ?? Console.Out, runtime);
             case "row":
                 return await Row(options, repo, runtime).ConfigureAwait(false);
             case "execute":
-                return await CheckpointApp.ExecuteAsync(Required(options, "run"), CancellationToken.None, runtime).ConfigureAwait(false);
+                return await CheckpointApp.ExecuteAsync(Required(options, "run"), runtime.CancellationToken, runtime).ConfigureAwait(false);
             default:
                 Console.Error.WriteLine("unknown verb " + verb);
                 return ExitCodes.Invalid;
@@ -207,27 +210,33 @@ public static class Program
 
     private static async Task<int> Start(ArgSet options, string repo, CheckpointApp.Runtime? runtime)
     {
-        var (manifest, request) = LoadSelection(options, repo);
-        return (await CheckpointApp.StartAsync(manifest, request, repo, Console.Out, runtime).ConfigureAwait(false)).ExitCode;
+        runtime ??= new CheckpointApp.Runtime();
+        var context = runtime.CleanupContext;
+        var (manifest, request) = LoadSelection(options, repo, context, runtime.CancellationToken);
+        return (await CheckpointApp.StartAsync(manifest, request, repo, (runtime.Output ?? Console.Out), runtime).ConfigureAwait(false)).ExitCode;
     }
 
     private static async Task<int> RunAndWait(ArgSet options, string repo, CheckpointApp.Runtime? runtime)
     {
-        var (manifest, request) = LoadSelection(options, repo);
-        var started = await CheckpointApp.StartAsync(manifest, request, repo, Console.Out, runtime).ConfigureAwait(false);
+        runtime ??= new CheckpointApp.Runtime();
+        var context = runtime.CleanupContext;
+        var (manifest, request) = LoadSelection(options, repo, context, runtime.CancellationToken);
+        var started = await CheckpointApp.StartAsync(manifest, request, repo, (runtime.Output ?? Console.Out), runtime).ConfigureAwait(false);
         if (started.ExitCode != 0)
             return started.ExitCode;
         if (runtime?.Wait is not null)
             return await runtime.Wait(started.RunDirectory).ConfigureAwait(false);
         var max = ParseDuration(options.Get("max-wait"));
         var heartbeat = ParseDuration(options.Get("heartbeat")) ?? TimeSpan.FromSeconds(60);
-        return await new WaitCommand().WaitAsync(started.RunDirectory, max, heartbeat, Console.Out, CancellationToken.None, request.Commit).ConfigureAwait(false);
+        return await new WaitCommand(probe: runtime.ProcessProbe, context: context).WaitAsync(started.RunDirectory, max, heartbeat, (runtime.Output ?? Console.Out), runtime.CancellationToken, request.Commit).ConfigureAwait(false);
     }
 
-    private static async Task<int> Wait(ArgSet options, string repo)
+    private static async Task<int> Wait(ArgSet options, string repo, CheckpointApp.Runtime? runtime = null)
     {
-        var run = ResolveRun(options, repo);
-        var refusal = SafeWrite.Preflight(repo, [Path.GetFullPath(run)]);
+        runtime ??= new CheckpointApp.Runtime();
+        var context = runtime.CleanupContext;
+        var run = ResolveRun(options, repo, context);
+        var refusal = new CheckpointWrite(context).Preflight(repo, [Path.GetFullPath(run)]);
         if (refusal is not null)
         {
             Console.Out.WriteLine("refused: " + refusal);
@@ -235,22 +244,24 @@ public static class Program
         }
         var max = ParseDuration(options.Get("max-wait"));
         var heartbeat = ParseDuration(options.Get("heartbeat")) ?? TimeSpan.FromSeconds(60);
-        return await new WaitCommand().WaitAsync(run, max, heartbeat, Console.Out, CancellationToken.None, options.Get("expected-source-sha")).ConfigureAwait(false);
+        return await new WaitCommand(probe: runtime.ProcessProbe, context: context).WaitAsync(run, max, heartbeat, (runtime.Output ?? Console.Out), runtime.CancellationToken, options.Get("expected-source-sha")).ConfigureAwait(false);
     }
 
-    private static int Status(ArgSet options, string repo, TextWriter output)
+    private static int Status(ArgSet options, string repo, TextWriter output, CheckpointApp.Runtime? runtime = null)
     {
+        runtime ??= new CheckpointApp.Runtime();
+        var context = runtime.CleanupContext;
         var root = ResultsRoot(options, repo);
-        if (!Directory.Exists(root)) { output.WriteLine("refused: receipt-directory-missing: " + root); return ExitCodes.Invalid; }
-        var store = new RunStateStore();
-        var directories = options.Get("run") is not null ? new[] { ResolveRun(options, repo) } : Directory.EnumerateDirectories(root).OrderBy(path => path).ToArray();
+        if (!context.Io.DirectoryExists(root)) { output.WriteLine("refused: receipt-directory-missing: " + root); return ExitCodes.Invalid; }
+        var store = new RunStateStore(context);
+        var directories = options.Get("run") is not null ? new[] { ResolveRun(options, repo, context) } : context.Io.Enumerate(root).Where(context.Io.DirectoryExists).OrderBy(path => path).ToArray();
         foreach (var dir in directories)
         {
-            var state = store.TryRead(Path.Combine(dir, "state.json"));
+            var state = store.TryRead(Path.Combine(dir, "state.json"), out _, runtime.CancellationToken);
             if (state is null) { output.WriteLine("refused: state-receipt-unreadable: " + dir); return ExitCodes.Invalid; }
             if (options.Get("expected-source-sha") is string expected && state.Source?.Start?.Commit != expected)
             { output.WriteLine("refused: receipt-source-SHA-mismatching"); return ExitCodes.Invalid; }
-            if (state.Phase == "done" && ReportWriter.RequiredReceiptRefusal(dir, state) is string required)
+            if (state.Phase == "done" && ReportWriter.RequiredReceiptRefusal(context, dir, state, runtime.CancellationToken) is string required)
             { output.WriteLine("refused: " + required); return ExitCodes.Invalid; }
             var green = state.Rows.Count(row => row.State == "green");
             var red = state.Rows.Count(row => row.State is "red" or "build-failed" or "timeout");
@@ -263,24 +274,26 @@ public static class Program
 
     private static int Stop(ArgSet options, string repo, CheckpointApp.Runtime? runtime)
     {
+        runtime ??= new CheckpointApp.Runtime();
+        var context = runtime.CleanupContext;
         var output = runtime?.Output ?? Console.Out;
-        var run = ResolveRun(options, repo);
-        var preflight = SafeWrite.Preflight(repo, [Path.GetFullPath(run)], runtime?.GitExecutable);
+        var run = ResolveRun(options, repo, context);
+        var preflight = new CheckpointWrite(context).Preflight(repo, [Path.GetFullPath(run)], runtime?.GitExecutable);
         if (preflight is not null)
         {
             output.WriteLine("refused: " + preflight);
             return ExitCodes.Invalid;
         }
 
-        var cleanup = new ToolCopyCleanup(runtime?.ProcessProbe);
-        var observed = cleanup.ObserveExecutor(run);
+        var cleanup = new ToolCopyCleanup(runtime.ProcessProbe, context: context);
+        var observed = cleanup.ObserveExecutor(run, runtime.CancellationToken);
         if (observed.Verdict is ProcessVerdict.Unknown or ProcessVerdict.ReusedPid)
         {
             Console.WriteLine("stop incomplete " + Path.GetFileName(run) + " " + observed.Reason);
             return ExitCodes.StillRunning;
         }
-        var store = new RunStateStore();
-        var state = store.TryRead(Path.Combine(run, "state.json"));
+        var store = new RunStateStore(context);
+        var state = store.TryRead(Path.Combine(run, "state.json"), out _, runtime.CancellationToken);
         if (state is null)
         {
             output.WriteLine("refused: state-receipt-unreadable: " + run);
@@ -298,7 +311,7 @@ public static class Program
         }
         if (state.Phase == "done")
         {
-            var required = RequiredRunReceiptRefusal(run, state, options.Get("expected-source-sha"));
+            var required = RequiredRunReceiptRefusal(run, state, options.Get("expected-source-sha"), context, runtime.CancellationToken);
             if (required is not null)
             {
                 output.WriteLine("refused: " + required);
@@ -309,10 +322,10 @@ public static class Program
         {
             try
             {
-                var identity = ExecutorOwnershipStore.Read(run)?.Executor ?? RunOwnershipStore.Read(run)?.Launched;
+                var identity = ExecutorOwnershipStore.Read(run, context, runtime.CancellationToken)?.Executor ?? RunOwnershipStore.Read(run, context, runtime.CancellationToken)?.Launched;
                 if (identity is null)
                     return ExitCodes.StillRunning;
-                if ((runtime?.ProcessProbe ?? new ProcessIdentityProbe()).Observe(identity).Verdict != ProcessVerdict.AliveSame)
+                if ((runtime?.ProcessProbe ?? new ProcessIdentityProbe(context)).Observe(identity).Verdict != ProcessVerdict.AliveSame)
                     return ExitCodes.StillRunning;
                 if (!(runtime?.ProcessControl ?? new ProcessControl()).StopAndWait(identity, TimeSpan.FromSeconds(10)))
                 {
@@ -346,7 +359,7 @@ public static class Program
             }
         }
 
-        var receipt = cleanup.Remove(run);
+        var receipt = cleanup.Remove(run, runtime.CancellationToken);
         output.WriteLine(receipt);
         if (receipt.Outcome == "Refused")
         {
@@ -358,32 +371,34 @@ public static class Program
         return ExitCodes.Green;
     }
 
-    private static string? RequiredRunReceiptRefusal(string run, RunState state, string? expectedSha)
+    private static string? RequiredRunReceiptRefusal(string run, RunState state, string? expectedSha, CheckpointCleanupContext context, CancellationToken cancellationToken)
     {
         if (expectedSha is not null && state.Source?.Start?.Commit != expectedSha)
             return "receipt-source-SHA-mismatching";
-        return ReportWriter.RequiredReceiptRefusal(run, state);
+        return ReportWriter.RequiredReceiptRefusal(context, run, state, cancellationToken);
     }
 
-    private static int Report(ArgSet options, string repo, TextWriter output)
+    private static int Report(ArgSet options, string repo, TextWriter output, CheckpointApp.Runtime? runtime = null)
     {
+        runtime ??= new CheckpointApp.Runtime();
+        var context = runtime.CleanupContext;
         ReportModel? ReadRequired(string run)
         {
-            var preflight = SafeWrite.Preflight(repo, [Path.GetFullPath(run)]);
-            var state = preflight is null ? new RunStateStore().TryRead(Path.Combine(run, "state.json")) : null;
+            var preflight = new CheckpointWrite(context).Preflight(repo, [Path.GetFullPath(run)]);
+            var state = preflight is null ? new RunStateStore(context).TryRead(Path.Combine(run, "state.json"), out _, runtime.CancellationToken) : null;
             var reason = preflight ?? (state is null ? "state-receipt-unreadable: " + run
-                : RequiredRunReceiptRefusal(run, state, options.Get("expected-source-sha")));
+                : RequiredRunReceiptRefusal(run, state, options.Get("expected-source-sha"), context, runtime.CancellationToken));
             if (reason is not null) { output.WriteLine("refused: " + reason); return null; }
-            return ReceiptJson.Read<ReportModel>(Path.Combine(run, "report.json"), ReportWriter.Json);
+            return ReceiptJson.Read<ReportModel>(context, Path.Combine(run, "report.json"), ReportWriter.Json, runtime.CancellationToken);
         }
 
         if (options.Has("merge"))
         {
             var root = ResultsRoot(options, repo);
             var models = new List<ReportModel>();
-            if (Directory.Exists(root))
-                foreach (var dir in Directory.EnumerateDirectories(root).Where(dir =>
-                    new[] { "state.json", "report.json", "report.md" }.Any(name => File.Exists(Path.Combine(dir, name)))))
+            if (context.Io.DirectoryExists(root))
+                foreach (var dir in context.Io.Enumerate(root).Where(context.Io.DirectoryExists).Where(dir =>
+                    new[] { "state.json", "report.json", "report.md" }.Any(name => context.Io.FileExists(Path.Combine(dir, name)))))
                 {
                     var model = ReadRequired(dir);
                     if (model is null) return ExitCodes.Invalid;
@@ -402,26 +417,28 @@ public static class Program
                 output.WriteLine("refused: receipt-merge-ineligible: " + ex.Message);
                 return ExitCodes.Invalid;
             }
-            output.Write(options.Has("json") ? ReportWriter.JsonText(merged) : ReportWriter.Markdown(merged));
+            output.Write(options.Has("json") ? ReportWriter.JsonText(merged) : ReportWriter.Markdown(context, merged));
             return ExitCodes.Green;
         }
 
-        var run = ResolveRun(options, repo);
+        var run = ResolveRun(options, repo, context);
         if (ReadRequired(run) is null) return ExitCodes.Invalid;
         var report = Path.Combine(run, options.Has("json") ? "report.json" : "report.md");
-        output.Write(ReceiptFile.ReadText(report));
+        output.Write(ReceiptFile.ReadText(context, report, runtime.CancellationToken));
         return ExitCodes.Green;
     }
 
-    private static int Clean(ArgSet options, string repo, TextWriter output)
+    private static int Clean(ArgSet options, string repo, TextWriter output, CheckpointApp.Runtime? runtime = null)
     {
+        runtime ??= new CheckpointApp.Runtime();
+        var context = runtime.CleanupContext;
         // A separate invocation cannot acquire deletion authority from persisted state.
         if (options.Get("run") is not null || options.Get("manifest") is not null || options.Positionals.Count > 0)
         {
-            var run = ResolveRun(options, repo);
+            var run = ResolveRun(options, repo, context);
             output.WriteLine("left in place: " + run + "; remove it manually");
-            var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"));
-            var required = state is null ? "state-receipt-unreadable" : ReportWriter.RequiredReceiptRefusal(run, state);
+            var state = new RunStateStore(context).TryRead(Path.Combine(run, "state.json"), out _, runtime.CancellationToken);
+            var required = state is null ? "state-receipt-unreadable" : ReportWriter.RequiredReceiptRefusal(context, run, state, runtime.CancellationToken);
             if (required is not null) output.WriteLine("refused: " + required);
             foreach (var path in state?.CreatedOutputPaths ?? []) output.WriteLine("left in place: " + path + "; remove it manually");
         }
@@ -571,7 +588,7 @@ public static class Program
         return result.ExitCode;
     }
 
-    private static (CheckpointManifest Manifest, RunRequest Request) LoadSelection(ArgSet options, string repo)
+    private static (CheckpointManifest Manifest, RunRequest Request) LoadSelection(ArgSet options, string repo, CheckpointCleanupContext? context = null, CancellationToken cancellationToken = default)
     {
         CheckpointManifest manifest;
         if (options.Get("plan") is string plan)
@@ -590,7 +607,7 @@ public static class Program
         else if (options.Positionals.Count > 0)
         {
             var path = options.Positionals[0];
-            manifest = ManifestLoader.LoadFile(Path.IsPathRooted(path) ? path : Path.Combine(repo, path), repo);
+            manifest = ManifestLoader.LoadFile(Path.IsPathRooted(path) ? path : Path.Combine(repo, path), repo, context: context, cancellationToken: cancellationToken);
         }
         else
             throw new ManifestValidationException("plan", "pass --plan or a manifest path");
@@ -635,7 +652,7 @@ public static class Program
         });
     }
 
-    private static string ResolveRun(ArgSet options, string repo)
+    private static string ResolveRun(ArgSet options, string repo, CheckpointCleanupContext? context = null)
     {
         if (options.Get("run") is string run && run.Length > 0)
             return Path.IsPathRooted(run) ? run : Path.Combine(ResultsRoot(options, repo), run);
@@ -645,8 +662,9 @@ public static class Program
             return Path.IsPathRooted(token) ? token : Path.Combine(ResultsRoot(options, repo), token);
         }
 
-        var newest = Directory.Exists(ResultsRoot(options, repo))
-            ? Directory.EnumerateDirectories(ResultsRoot(options, repo)).Where(path => File.Exists(Path.Combine(path, "request.json"))).OrderDescending(StringComparer.Ordinal).FirstOrDefault()
+        context ??= CheckpointCleanupDefaults.Context;
+        var newest = context.Io.DirectoryExists(ResultsRoot(options, repo))
+            ? context.Io.Enumerate(ResultsRoot(options, repo)).Where(context.Io.DirectoryExists).Where(path => context.Io.FileExists(Path.Combine(path, "request.json"))).OrderDescending(StringComparer.Ordinal).FirstOrDefault()
             : null;
         return newest ?? throw new ManifestValidationException("run", "no latest run");
     }

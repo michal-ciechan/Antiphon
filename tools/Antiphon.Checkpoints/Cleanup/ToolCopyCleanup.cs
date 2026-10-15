@@ -1,3 +1,4 @@
+using Antiphon.HostCleanup.Checkpoints;
 namespace Antiphon.Checkpoints;
 
 public sealed record CleanupReceipt(string Outcome, string Reason, string Path)
@@ -8,6 +9,10 @@ public sealed record CleanupReceipt(string Outcome, string Reason, string Path)
 
 public sealed class ToolCopyCleanup
 {
+    private readonly CheckpointCleanupContext _context;
+    private readonly CheckpointWrite _write;
+    private readonly CheckpointDelete _delete;
+    private readonly CheckpointOutputLedger _ledger;
     private readonly ProcessIdentityProbe _probe;
     private readonly int _maxEntries;
     private readonly string? _imageDirectory;
@@ -15,61 +20,65 @@ public sealed class ToolCopyCleanup
     private readonly Action<string>? _beforeDelete;
 
     public ToolCopyCleanup(ProcessIdentityProbe? probe = null, int maxEntries = 10000,
-        string? imageDirectory = null, Action? beforeLock = null, Action<string>? beforeDelete = null)
+        string? imageDirectory = null, Action? beforeLock = null, Action<string>? beforeDelete = null, CheckpointCleanupContext? context = null)
     {
-        _probe = probe ?? new();
+        _context = context ?? CheckpointCleanupDefaults.Context;
+        _write = new(_context);
+        _delete = new(_context);
+        _ledger = new(_context);
+        _probe = probe ?? new(_context);
         _maxEntries = maxEntries;
         _imageDirectory = imageDirectory;
         _beforeLock = beforeLock;
         _beforeDelete = beforeDelete;
     }
 
-    public ProcessObservation ObserveExecutor(string runDirectory)
+    public ProcessObservation ObserveExecutor(string runDirectory, CancellationToken cancellationToken = default)
     {
-        var record = RunOwnershipStore.Read(runDirectory);
+        var record = RunOwnershipStore.Read(runDirectory, _context, cancellationToken);
         if (record is null)
             return new(ProcessVerdict.Unknown, "ownership-missing");
-        var identity = ExecutorOwnershipStore.Read(runDirectory)?.Executor
+        var identity = ExecutorOwnershipStore.Read(runDirectory, _context, cancellationToken)?.Executor
             ?? (record.Phase is "launched" or "launch-attempted" ? record.Launched : null);
         if (identity is null && record.Phase == "not-started" && record.Launched is null
-            && !File.Exists(Path.Combine(runDirectory, "executor-ownership.json")))
+            && !_context.Io.FileExists(Path.Combine(runDirectory, "executor-ownership.json")))
             return new(ProcessVerdict.Dead, "launch-not-started");
         return identity is null
             ? new(ProcessVerdict.Unknown, "launch-outcome-unknown")
             : _probe.Observe(identity);
     }
 
-    public CleanupReceipt Remove(string runDirectory)
+    public CleanupReceipt Remove(string runDirectory, CancellationToken cancellationToken = default)
     {
         var full = Path.GetFullPath(runDirectory);
         var tool = Path.Combine(full, "tool");
-        if (!Directory.Exists(tool))
+        if (!_context.Io.DirectoryExists(tool))
             return new("AlreadyAbsent", "absent", tool);
-        if (EvidenceFolder.IsExecutorImage(full, _imageDirectory))
+        if (ExecutorImageGuard.IsExecutorImage(_context, full, _imageDirectory))
             return new("Retained", "current-executor-image", tool);
-        if (!ContainedCleanup.SafeAncestors(full) || !ContainedCleanup.SafeTree(full, _maxEntries))
+        if (!ContainedCleanup.SafeAncestors(full, _context) || !ContainedCleanup.SafeTree(full, _maxEntries, _context))
             return new("Retained", "inventory-incomplete-or-linked", tool);
         _beforeLock?.Invoke();
         try
         {
             // The file remains as a lock rendezvous even after a successful removal.
-            var gateReason = SafeWrite.OpenGate(Path.Combine(full, ".cleanup.lock"), SafeWrite.Under(full), out var gate);
+            var gateReason = _write.OpenGate(Path.Combine(full, ".cleanup.lock"), _write.Under(full), out var gate);
             if (gateReason is not null || gate is null)
                 throw new IOException("refused: " + gateReason);
             using var held = gate!;
-            if (!ContainedCleanup.SafeAncestors(full) || !ContainedCleanup.SafeTree(full, _maxEntries))
+            if (!ContainedCleanup.SafeAncestors(full, _context) || !ContainedCleanup.SafeTree(full, _maxEntries, _context))
                 return new("Retained", "inventory-incomplete-or-linked", tool);
-            var record = RunOwnershipStore.Read(full);
+            var record = RunOwnershipStore.Read(full, _context, cancellationToken);
             if (record is null)
                 return new("Retained", "ownership-missing", tool);
             ProcessObservation observed;
-            if (ExecutorOwnershipStore.Read(full) is not null)
-                observed = ObserveExecutor(full);
+            if (ExecutorOwnershipStore.Read(full, _context, cancellationToken) is not null)
+                observed = ObserveExecutor(full, cancellationToken);
             else if (record.Phase == "preparing")
                 observed = _probe.Observe(record.Starter);
             else if (record.Phase is "launch-attempted" or "launched" or "not-started")
             {
-                observed = ObserveExecutor(full);
+                observed = ObserveExecutor(full, cancellationToken);
             }
             else
                 return new("Retained", "launch-outcome-unknown", tool);
@@ -78,9 +87,9 @@ public sealed class ToolCopyCleanup
             ToolCopyAuthority? authority = null;
             string? ledger;
             if (record.ToolCopy is not null)
-                authority = ToolCopyAuthority.Load(full, record, out ledger);
+                authority = ToolCopyAuthority.Load(full, record, out ledger, _context, cancellationToken);
             else
-                ledger = OwnedOutputLedger.Check(tool);
+                ledger = _ledger.Check(tool);
             if (ledger is not null) return new("Refused", ledger + "; left in place: " + tool + "; remove it manually", tool);
             for (var attempt = 0; ; attempt++)
             {
@@ -95,14 +104,14 @@ public sealed class ToolCopyCleanup
                         AllowOutsideRepository = true,
                     };
                     var removed = authority is null
-                        ? SafeDelete.Apply(tool, deletion, () => _beforeDelete?.Invoke(tool), () => OwnedOutputLedger.Check(tool))
-                        : SafeDelete.ApplyToolCopy(tool, deletion, authority, () => _beforeDelete?.Invoke(tool));
+                        ? _delete.Apply(tool, deletion, () => _beforeDelete?.Invoke(tool), () => _ledger.Check(tool))
+                        : _delete.ApplyToolCopy(tool, deletion, authority, () => _beforeDelete?.Invoke(tool));
                     if (removed.Disposition == DeleteDisposition.Refused)
                         return new("Refused", removed.Reason ?? "refused", tool);
                     break;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 9)
-                { Thread.Sleep(50 * (attempt + 1)); }
+                { _context.Delay(TimeSpan.FromMilliseconds(50 * (attempt + 1))); }
             }
             return new("Removed", "identity-dead", tool);
         }
@@ -114,14 +123,14 @@ public sealed class ToolCopyCleanup
 
     public int Sweep(string resultsRoot, TextWriter? output = null, int maxEntries = 512, TimeSpan? budget = null)
     {
-        if (!Directory.Exists(resultsRoot)) return 0;
-        var clock = System.Diagnostics.Stopwatch.StartNew();
+        if (!_context.Io.DirectoryExists(resultsRoot)) return 0;
+        var started = _context.Time.GetTimestamp();
         var removed = 0;
         var count = 0;
-        foreach (var directory in Directory.EnumerateDirectories(resultsRoot))
+        foreach (var directory in _context.Io.Enumerate(resultsRoot).Where(_context.Io.DirectoryExists))
         {
-            if (++count > maxEntries || clock.Elapsed > (budget ?? TimeSpan.FromSeconds(2))) break;
-            if (!Directory.Exists(Path.Combine(directory, "tool"))) continue;
+            if (++count > maxEntries || _context.Time.GetElapsedTime(started) > (budget ?? TimeSpan.FromSeconds(2))) break;
+            if (!_context.Io.DirectoryExists(Path.Combine(directory, "tool"))) continue;
             var receipt = Remove(directory);
             output?.WriteLine(receipt);
             if (receipt.Outcome == "Removed") removed++;
@@ -141,25 +150,27 @@ public sealed class ExecutorOwnership
 public static class ExecutorOwnershipStore
 {
     private const string FileName = "executor-ownership.json";
-    public static void Write(string runDirectory, ProcessIdentity identity)
+    public static void Write(string runDirectory, ProcessIdentity identity, CheckpointCleanupContext? context = null)
     {
+        context ??= CheckpointCleanupDefaults.Context;
+        var write = new CheckpointWrite(context);
         var record = new ExecutorOwnership { RunId = Path.GetFileName(runDirectory),
             RunDirectory = Path.GetFullPath(runDirectory), Executor = identity };
         var path = Path.Combine(runDirectory, FileName);
         var json = System.Text.Json.JsonSerializer.Serialize(record);
-        var reason = SafeWrite.Text(path, json, SafeWrite.Under(Path.GetFullPath(runDirectory)));
+        var reason = write.Text(path, json, write.Under(Path.GetFullPath(runDirectory)));
         if (reason is not null)
             throw new IOException("refused: " + reason);
     }
 
-    public static ExecutorOwnership? Read(string runDirectory)
+    public static ExecutorOwnership? Read(string runDirectory, CheckpointCleanupContext? context = null, CancellationToken cancellationToken = default)
     {
         try
         {
-            var record = ReceiptJson.Read<ExecutorOwnership>(Path.Combine(runDirectory, FileName), new System.Text.Json.JsonSerializerOptions());
+            var record = ReceiptJson.Read<ExecutorOwnership>(context ?? CheckpointCleanupDefaults.Context, Path.Combine(runDirectory, FileName), new System.Text.Json.JsonSerializerOptions(), cancellationToken);
             return record is { Version: 1, Executor: not null }
                 && record.RunId == Path.GetFileName(Path.GetFullPath(runDirectory))
-                && RunOwnershipStore.SamePath(record.RunDirectory, runDirectory) ? record : null;
+                && RunOwnershipStore.SamePath(record.RunDirectory, runDirectory, context) ? record : null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException
                                    or ArgumentException or NotSupportedException)
@@ -169,13 +180,13 @@ public static class ExecutorOwnershipStore
 
 public static class ContainedCleanup
 {
-    public static bool SafeAncestors(string path)
+    public static bool SafeAncestors(string path, CheckpointCleanupContext? context = null)
     {
         try
         {
             for (var current = Path.GetFullPath(path); current is not null; current = Path.GetDirectoryName(current))
             {
-                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return false;
+                if (((context ?? CheckpointCleanupDefaults.Context).Io.Attributes(current) & FileAttributes.ReparsePoint) != 0) return false;
             }
             return true;
         }
@@ -183,7 +194,7 @@ public static class ContainedCleanup
         { return false; }
     }
 
-    public static bool SafeTree(string root, int maxEntries)
+    public static bool SafeTree(string root, int maxEntries, CheckpointCleanupContext? context = null)
     {
         var pending = new Stack<string>();
         pending.Push(Path.GetFullPath(root));
@@ -194,10 +205,10 @@ public static class ContainedCleanup
             {
                 var path = pending.Pop();
                 if (++count > maxEntries) return false;
-                var attributes = File.GetAttributes(path);
+                var attributes = (context ?? CheckpointCleanupDefaults.Context).Io.Attributes(path);
                 if ((attributes & FileAttributes.ReparsePoint) != 0) return false;
                 if ((attributes & FileAttributes.Directory) == 0) continue;
-                foreach (var child in Directory.EnumerateFileSystemEntries(path)) pending.Push(child);
+                foreach (var child in (context ?? CheckpointCleanupDefaults.Context).Io.Enumerate(path)) pending.Push(child);
             }
             return true;
         }

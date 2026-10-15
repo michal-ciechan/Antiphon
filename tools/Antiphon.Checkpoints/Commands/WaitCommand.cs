@@ -1,3 +1,4 @@
+using Antiphon.HostCleanup.Checkpoints;
 namespace Antiphon.Checkpoints;
 
 public interface IProcessLiveness
@@ -25,6 +26,7 @@ public sealed class ProcessLiveness : IProcessLiveness
 
 public sealed class WaitCommand
 {
+    private readonly CheckpointCleanupContext _context;
     private readonly RunStateStore _store;
     private readonly IProcessLiveness _liveness;
     private readonly Func<DateTimeOffset> _clock;
@@ -36,13 +38,14 @@ public sealed class WaitCommand
         IProcessLiveness? liveness = null,
         Func<DateTimeOffset>? clock = null,
         Func<TimeSpan, CancellationToken, Task>? delay = null,
-        ProcessIdentityProbe? probe = null)
+        ProcessIdentityProbe? probe = null, CheckpointCleanupContext? context = null)
     {
-        _store = store ?? new RunStateStore();
+        _context = context ?? CheckpointCleanupDefaults.Context;
+        _store = store ?? new RunStateStore(_context);
         _liveness = liveness ?? new ProcessLiveness();
-        _clock = clock ?? (() => DateTimeOffset.UtcNow);
-        _delay = delay ?? ((span, token) => Task.Delay(span, token));
-        _probe = probe ?? new ProcessIdentityProbe();
+        _clock = clock ?? (() => _context.Time.GetUtcNow());
+        _delay = delay ?? ((span, token) => Task.Delay(span, _context.Time, token));
+        _probe = probe ?? new ProcessIdentityProbe(_context);
     }
 
     public async Task<int> WaitAsync(
@@ -62,48 +65,48 @@ public sealed class WaitCommand
         while (true)
         {
             var now = _clock();
-            var state = _store.TryRead(statePath, out var stateRefusal);
+            var state = _store.TryRead(statePath, out var stateRefusal, cancellationToken);
             if (stateRefusal is not null && (stateRefusal.Contains("not regular", StringComparison.Ordinal) || stateRefusal.Contains("nonregular", StringComparison.Ordinal)
                 || stateRefusal.Contains("receipt-identity:", StringComparison.Ordinal)))
             { output.WriteLine("refused: " + stateRefusal); return ExitCodes.Invalid; }
-            var observed = cleanup.ObserveExecutor(runDirectory);
+            var observed = cleanup.ObserveExecutor(runDirectory, cancellationToken);
             // Finish publishes phase=done after the "done exit=" log line, and the
             // process can exit in that window. Re-read once death is observed.
             if (observed.Verdict == ProcessVerdict.Dead && state?.Phase != "done")
-                state = _store.TryRead(statePath);
+                state = _store.TryRead(statePath, out _, cancellationToken);
             if (state?.Phase == "done" && observed.Verdict == ProcessVerdict.Dead)
             {
                 var required = expectedSourceSha is not null && state.Source?.Start?.Commit != expectedSourceSha
-                    ? "receipt-source-SHA-mismatching" : ReportWriter.RequiredReceiptRefusal(runDirectory, state);
+                    ? "receipt-source-SHA-mismatching" : ReportWriter.RequiredReceiptRefusal(_context, runDirectory, state, cancellationToken);
                 if (required is not null)
                 {
                     output.WriteLine("refused: " + required);
                     return ExitCodes.Invalid;
                 }
-                var receipt = cleanup.Remove(runDirectory);
+                var receipt = cleanup.Remove(runDirectory, cancellationToken);
                 output.WriteLine(receipt);
                 if (receipt.Outcome == "Refused")
                     output.WriteLine("refused: " + receipt.Reason);
-                if (File.Exists(reportPath))
-                    output.Write(ReceiptFile.ReadText(reportPath));
+                if (_context.Io.FileExists(reportPath))
+                    output.Write(ReceiptFile.ReadText(_context, reportPath, cancellationToken));
                 else
                     output.WriteLine(state.Heartbeat(now));
                 var exit = state.ExitCode!.Value;
                 if (!receipt.Removed && exit == ExitCodes.Green)
                     return ExitCodes.Invalid;
-                if (exit == ExitCodes.Green && File.Exists(reportPath) && ReportRefused(reportPath))
+                if (exit == ExitCodes.Green && _context.Io.FileExists(reportPath) && ReportRefused(reportPath, cancellationToken))
                     return ExitCodes.Invalid;
                 return exit;
             }
 
             if (state?.Phase != "done" && observed.Verdict == ProcessVerdict.Dead)
             {
-                var diedReceipt = cleanup.Remove(runDirectory);
+                var diedReceipt = cleanup.Remove(runDirectory, cancellationToken);
                 output.WriteLine(diedReceipt);
                 if (diedReceipt.Outcome == "Refused")
                     output.WriteLine("refused: " + diedReceipt.Reason);
                 output.WriteLine("executor died without phase=done");
-                output.WriteLine(Tail(logPath));
+                output.WriteLine(Tail(logPath, cancellationToken));
                 return ExitCodes.ExecutorCrashed;
             }
 
@@ -142,9 +145,9 @@ public sealed class WaitCommand
         }
     }
 
-    private static bool ReportRefused(string reportPath)
+    private bool ReportRefused(string reportPath, CancellationToken cancellationToken)
     {
-        foreach (var line in ReceiptFile.ReadText(reportPath).Split('\n'))
+        foreach (var line in ReceiptFile.ReadText(_context, reportPath, cancellationToken).Split('\n'))
         {
             if (line.StartsWith("refused:", StringComparison.Ordinal))
                 return true;
@@ -160,11 +163,11 @@ public sealed class WaitCommand
         output.WriteLine(line.Trim());
     }
 
-    private static string Tail(string path)
+    private string Tail(string path, CancellationToken cancellationToken)
     {
-        if (!File.Exists(path))
+        if (!_context.Io.FileExists(path))
             return "";
-        using var reader = new StringReader(ReceiptFile.ReadText(path));
+        using var reader = new StringReader(ReceiptFile.ReadText(_context, path, cancellationToken));
         var lines = new List<string>();
         while (reader.ReadLine() is { } line)
             lines.Add(line);
