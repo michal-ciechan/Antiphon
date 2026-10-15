@@ -14,9 +14,10 @@ lifecycle host by passing `--results-directory <owned sandbox>/TestResults`.
 
 S1 commits the failing report-location assertions with the unchanged filter-host launch.
 `RerunFilterHostTests` takes a `CheckpointTestScope` sandbox per child run, sets
-TMPDIR/TEMP/TMP to it, registers the child, requires one HTML report under each
-sandbox's `TestResults`, requires `checkpoint-filter-host/TestResults` to be absent, and
-requires the sandboxes to be reclaimed on disposal. `CheckpointRepeatHostTests` already
+TMPDIR/TEMP/TMP to it, registers the child, requires each sandbox's `TestResults`
+(one HTML report for the matching run, none for the zero-match run, as a probe
+disclosed in the evidence observed), requires `checkpoint-filter-host/TestResults` to be
+absent, and requires the sandboxes to be reclaimed on disposal. `CheckpointRepeatHostTests` already
 passes `--results-directory <sandbox>`; S1 adds the same temp environment, child
 registration and beside-the-DLL absence assertion.
 S2 adds `--results-directory <sandbox>/TestResults` to the filter-host launch.

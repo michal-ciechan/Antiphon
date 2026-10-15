@@ -39,11 +39,12 @@ public sealed class RerunFilterHostTests
                 badSandbox, scope.Register);
             Count(bad.Text, "total:").ShouldBe(0);
 
-            foreach (var sandbox in new[] { goodSandbox, badSandbox })
+            // A zero-match run creates its results directory and writes no HTML report.
+            foreach (var (sandbox, html) in new[] { (goodSandbox, 1), (badSandbox, 0) })
             {
                 var reports = Path.Combine(sandbox, "TestResults");
                 Directory.Exists(reports).ShouldBeTrue("the child must write reports inside its owned sandbox");
-                Directory.GetFiles(reports, "*.html", SearchOption.AllDirectories).Length.ShouldBe(1);
+                Directory.GetFiles(reports, "*.html", SearchOption.AllDirectories).Length.ShouldBe(html);
             }
             Directory.Exists(Path.Combine(Path.GetDirectoryName(staged)!, "TestResults"))
                 .ShouldBeFalse("the sealed build output must remain unchanged");
