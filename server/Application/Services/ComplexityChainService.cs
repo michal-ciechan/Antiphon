@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Settings;
@@ -7,6 +9,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -18,7 +21,15 @@ namespace Antiphon.Server.Application.Services;
 public sealed class ComplexityChainService
 {
     public const string HumanOverwriteCode = "complexity_chain_human";
+    public const string StaleCode = "complexity_chain_stale";
     internal const int ReasonCap = 400;
+
+    // The 409 body's `current` row is pre-serialized: the problem-details writer drops nulls
+    // and writes enums as numbers, and a client compares this row with the one it opened.
+    private static readonly JsonSerializerOptions CurrentRowJson = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter(namingPolicy: null, allowIntegerValues: false) },
+    };
 
     private readonly AppDbContext _db;
     private readonly TimeProvider _time;
@@ -196,7 +207,9 @@ public sealed class ComplexityChainService
             answering?.UpdatedAt,
             role,
             loaded.ResolvedFrom,
-            effective);
+            effective,
+            // The cell's own token only: a role cell answered by the any-role row has no row.
+            loaded.ResolvedFrom == "role" ? answering?.ConcurrencyToken : null);
     }
 
     private async Task<T> ReadPartAsync<T>(string part, Func<Task<T>> read, T fallback,
@@ -253,6 +266,7 @@ public sealed class ComplexityChainService
         }
 
         var existing = await _routing.FindActiveAsync(role, complexity, ct);
+        await ThrowIfStaleAsync(role, complexity, existing, request.ConcurrencyToken, ct);
         if (existing is not null
             && existing.Provenance == RoutingPinProvenance.Human
             && request.Provenance == RoutingPinProvenance.Auto)
@@ -304,8 +318,9 @@ public sealed class ComplexityChainService
         existing.NotAfter = notAfter;
         existing.SourceTaskId = sourceTaskId;
         existing.UpdatedAt = now;
+        existing.ConcurrencyToken = Guid.NewGuid();
 
-        await _db.SaveChangesAsync(ct);
+        await SaveOrThrowStaleAsync(role, complexity, request.ConcurrencyToken, ct);
         OrchestratorInstructionsSignal.Fire(_services, $"complexity-chain {role?.ToString() ?? "any"}/{complexity}");
         _logger.LogInformation(
             "Complexity chain set: {Role}/{Complexity} {Provenance} ({Count} candidates)",
@@ -316,8 +331,19 @@ public sealed class ComplexityChainService
     public Task ClearAsync(TaskComplexity complexity, CancellationToken ct) =>
         ClearAsync(role: null, complexity, ct);
 
-    /// <summary>Clear the active row for the cell. Already-clear is a no-op so a script can run twice.</summary>
-    public async Task ClearAsync(AgentTaskRole? role, TaskComplexity complexity, CancellationToken ct)
+    public Task ClearAsync(AgentTaskRole? role, TaskComplexity complexity, CancellationToken ct) =>
+        ClearAsync(role, complexity, expectedToken: null, ct);
+
+    /// <summary>
+    /// Clear the active row for the cell. Already-clear is a no-op so a script can run twice,
+    /// whatever <paramref name="expectedToken"/> says: the state the caller asked for holds. A
+    /// present row whose token differs is 409 <see cref="StaleCode"/> (CARD-1275).
+    /// </summary>
+    public async Task ClearAsync(
+        AgentTaskRole? role,
+        TaskComplexity complexity,
+        Guid? expectedToken,
+        CancellationToken ct)
     {
         if (role is { } cellRole)
             ValidateCellRole(cellRole);
@@ -326,13 +352,102 @@ public sealed class ComplexityChainService
         if (existing is null)
             return;
 
+        await ThrowIfStaleAsync(role, complexity, existing, expectedToken, ct);
         existing.ClearedAt = UtcNow();
-        await _db.SaveChangesAsync(ct);
+        existing.ConcurrencyToken = Guid.NewGuid();
+        await SaveOrThrowStaleAsync(role, complexity, expectedToken, ct, clearing: true);
         OrchestratorInstructionsSignal.Fire(_services, $"complexity-chain {role?.ToString() ?? "any"}/{complexity}");
         _logger.LogInformation(
             "Complexity chain cleared: {Role}/{Complexity}",
             role?.ToString() ?? "any", complexity);
     }
+
+    /// <summary>
+    /// Null <paramref name="expected"/> = unconditional (legacy). <see cref="Guid.Empty"/> = the
+    /// caller saw no active row. Otherwise the active row must carry exactly that token.
+    /// </summary>
+    private async Task ThrowIfStaleAsync(
+        AgentTaskRole? role,
+        TaskComplexity complexity,
+        ComplexityChain? existing,
+        Guid? expected,
+        CancellationToken ct)
+    {
+        if (expected is not { } token)
+            return;
+        var matches = token == Guid.Empty ? existing is null : existing?.ConcurrencyToken == token;
+        if (!matches)
+            throw await StaleAsync(role, complexity, token, ct);
+    }
+
+    /// <summary>
+    /// The check above reads then writes; a writer between the two loses here instead: the
+    /// UPDATE names the original token (EF concurrency token) and a second active row breaks the
+    /// unique index. Either becomes the same 409 with the row as it is now.
+    /// </summary>
+    private async Task SaveOrThrowStaleAsync(
+        AgentTaskRole? role,
+        TaskComplexity complexity,
+        Guid? expected,
+        CancellationToken ct,
+        bool clearing = false)
+    {
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (IsLostRace(ex))
+        {
+            _db.ChangeTracker.Clear();
+            // A clear that lost to another clear still reached the state it asked for.
+            if (clearing && await _routing.FindActiveAsync(role, complexity, ct) is null)
+                return;
+            throw await StaleAsync(role, complexity, expected, ct, ex);
+        }
+    }
+
+    private async Task<ConflictException> StaleAsync(
+        AgentTaskRole? role,
+        TaskComplexity complexity,
+        Guid? expected,
+        CancellationToken ct,
+        Exception? inner = null)
+    {
+        var current = await GetAsync(role, complexity, ct);
+        var label = CellLabel(role, complexity);
+        var seen = expected is not { } token ? "no version"
+            : token == Guid.Empty ? "no row" : $"version {token}";
+        var now = current.ConcurrencyToken is { } currentToken ? $"version {currentToken}" : "no row";
+        var message = $"The {label} chain changed since it was read (read {seen}, now {now}). "
+            + "Reload it, review the difference and write again with the current concurrencyToken.";
+        _logger.LogInformation("Complexity chain write refused as stale: {Role}/{Complexity}",
+            role?.ToString() ?? "any", complexity);
+        var extensions = new Dictionary<string, object?>
+        {
+            ["current"] = JsonSerializer.SerializeToElement(current, CurrentRowJson),
+        };
+        return inner is null
+            ? new ConflictException(message, StaleCode, extensions)
+            : new StaleConflictException(message, extensions, inner);
+    }
+
+    private static bool IsLostRace(DbUpdateException ex)
+    {
+        if (ex is DbUpdateConcurrencyException)
+            return true;
+        for (var current = ex.InnerException; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } pg
+                && pg.ConstraintName == "IX_ComplexityChains_Role_Complexity_Active")
+                return true;
+        }
+
+        return false;
+    }
+
+    private sealed class StaleConflictException(
+        string message, IReadOnlyDictionary<string, object?> extensions, Exception inner)
+        : HttpException(409, message, inner, StaleCode, extensions);
 
     internal static void ValidateCellRole(AgentTaskRole role)
     {
@@ -428,7 +543,8 @@ public sealed class ComplexityChainService
             row.NotAfter,
             row.UpdatedAt,
             row.Role,
-            resolvedFrom);
+            resolvedFrom,
+            ConcurrencyToken: row.ConcurrencyToken);
 
     private async Task<ComplexityChainDto> ConfigDtoAsync(TaskComplexity complexity, CancellationToken ct)
     {

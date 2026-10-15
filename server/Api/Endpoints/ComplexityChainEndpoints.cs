@@ -36,13 +36,16 @@ public static class ComplexityChainEndpoints
                 ParseRole(role, required: true), ParseComplexity(complexity), request, caller?.Task?.Id, ct));
         });
 
+        // CARD-1275: ?concurrencyToken= is the DELETE form of the PUT body's concurrencyToken.
         group.MapDelete("/{role}/{complexity}", async (
             string role,
             string complexity,
+            Guid? concurrencyToken,
             ComplexityChainService chains,
             CancellationToken ct) =>
         {
-            await chains.ClearAsync(ParseRole(role, required: true), ParseComplexity(complexity), ct);
+            await chains.ClearAsync(
+                ParseRole(role, required: true), ParseComplexity(complexity), concurrencyToken, ct);
             return Results.NoContent();
         });
 
@@ -61,10 +64,11 @@ public static class ComplexityChainEndpoints
 
         group.MapDelete("/{complexity}", async (
             string complexity,
+            Guid? concurrencyToken,
             ComplexityChainService chains,
             CancellationToken ct) =>
         {
-            await chains.ClearAsync(role: null, ParseComplexity(complexity), ct);
+            await chains.ClearAsync(role: null, ParseComplexity(complexity), concurrencyToken, ct);
             return Results.NoContent();
         });
     }

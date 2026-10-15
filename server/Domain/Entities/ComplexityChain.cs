@@ -49,6 +49,12 @@ public class ComplexityChain
 
     public DateTime? ClearedAt { get; set; }
 
+    /// <summary>
+    /// CARD-1275: rotated on every write and clear. A PUT/DELETE that names an older value is
+    /// refused 409 <c>complexity_chain_stale</c>; EF also checks it on the UPDATE itself.
+    /// </summary>
+    public Guid ConcurrencyToken { get; set; } = Guid.NewGuid();
+
     public IReadOnlyList<ComplexityCandidatePair> ParseCandidates() =>
         ParseCandidates(CandidatesJson);
 

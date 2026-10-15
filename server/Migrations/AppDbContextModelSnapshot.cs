@@ -4938,6 +4938,10 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Complexity")
                         .HasColumnType("integer");
 
+                    b.Property<Guid>("ConcurrencyToken")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
