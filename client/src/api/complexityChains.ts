@@ -57,7 +57,11 @@ export interface PutComplexityChainRequest {
   provenance: 'Human'
   reason?: string | null
   notAfter?: string | null
-  /** Omitted = unconditional (legacy); {@link EMPTY_CONCURRENCY_TOKEN} = expect no row. */
+  /**
+   * Omitted = no version check: the server writes over the row stored when it saves and re-runs a
+   * lost race a bounded number of times before 409 `complexity_chain_stale`.
+   * {@link EMPTY_CONCURRENCY_TOKEN} = expect no row; a row token = refused if the row changed.
+   */
   concurrencyToken?: string
 }
 

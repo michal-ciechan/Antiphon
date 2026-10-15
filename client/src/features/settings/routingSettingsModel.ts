@@ -246,8 +246,13 @@ export const CHAIN_STALE_TITLE = 'Changed since you opened this: reload'
 export const CHAIN_STALE_BODY =
   'Another write changed this cell after the editor opened, so nothing was saved. Reload replaces your draft with the stored row and its version; then Save writes again.'
 
+/** A queued write that carries the opened version (a row token, or the empty token for no row). */
 export const CHAIN_QUEUED_NOTE =
-  'Queued: the browser is offline. The write is sent when the connection returns, with the version this editor opened; a change made meanwhile is refused, not overwritten.'
+  'Queued: the browser is offline. The write is sent when the connection returns, with the version this editor opened; the server does not overwrite a row that changed meanwhile.'
+
+/** A queued write from an editor that could not read the stored row: it carries no version. */
+export const CHAIN_QUEUED_UNCONDITIONAL_NOTE =
+  'Queued: the browser is offline. The write is sent when the connection returns without a version, because this editor could not read the stored row; it replaces or clears the row stored at that time, even one changed meanwhile.'
 
 /** One line for the stale-write comparison: candidates, reason and expiry, or the absent row. */
 export function chainRowSummary(

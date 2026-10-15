@@ -352,57 +352,17 @@ public sealed class ComplexityRoutingService
         TaskComplexity complexity,
         CancellationToken ct)
     {
-        var rows = await _db.ComplexityChains
-            .Where(c => c.ClearedAt == null && c.Complexity == complexity && c.Role == role)
-            .ToListAsync(ct);
-        if (rows.Count == 0)
-            return null;
-
-        var now = UtcNow();
-        ComplexityChain? live = null;
-        var dirty = false;
-        foreach (var row in rows)
-        {
-            if (row.NotAfter is { } notAfter && notAfter <= now)
-            {
-                row.ClearedAt = now;
-                dirty = true;
-                continue;
-            }
-
-            live ??= row;
-        }
-
-        if (dirty)
-            await _db.SaveChangesAsync(ct);
-        return live;
+        var live = await SweepExpiredAsync(_db.ComplexityChains
+            .Where(c => c.ClearedAt == null && c.Complexity == complexity && c.Role == role), ct);
+        return live.FirstOrDefault();
     }
 
     public async Task<IReadOnlyList<ComplexityChain>> ListLiveCellsAsync(CancellationToken ct)
     {
-        var rows = await _db.ComplexityChains
-            .Where(c => c.ClearedAt == null && c.Role != null)
-            .ToListAsync(ct);
-        if (rows.Count == 0)
+        var live = await SweepExpiredAsync(_db.ComplexityChains
+            .Where(c => c.ClearedAt == null && c.Role != null), ct);
+        if (live.Count == 0)
             return [];
-
-        var now = UtcNow();
-        var live = new List<ComplexityChain>(rows.Count);
-        var dirty = false;
-        foreach (var row in rows)
-        {
-            if (row.NotAfter is { } notAfter && notAfter <= now)
-            {
-                row.ClearedAt = now;
-                dirty = true;
-                continue;
-            }
-
-            live.Add(row);
-        }
-
-        if (dirty)
-            await _db.SaveChangesAsync(ct);
 
         var roleOrder = new Dictionary<AgentTaskRole, int>(RoutableRoles.Length);
         for (var i = 0; i < RoutableRoles.Length; i++)
@@ -418,6 +378,57 @@ public sealed class ComplexityRoutingService
             .OrderBy(c => c.Role is { } r && roleOrder.TryGetValue(r, out var ri) ? ri : int.MaxValue)
             .ThenBy(c => complexityOrder.GetValueOrDefault(c.Complexity, int.MaxValue))
             .ToList();
+    }
+
+    /// <summary>
+    /// Attempts of the lazy <c>NotAfter</c> sweep before a lost race propagates. The sweep is a
+    /// write without a token, so it follows <see cref="ComplexityChainService.UnconditionalAttempts"/>.
+    /// </summary>
+    internal const int SweepAttempts = ComplexityChainService.UnconditionalAttempts;
+
+    /// <summary>
+    /// Reads the active rows and clears the expired ones, rotating their token like any clear
+    /// (CARD-1275), so a writer that read such a row before the sweep loses its save. A sweep
+    /// that loses to a writer forgets its copy of that row and reads again; the writer's row
+    /// stands.
+    /// </summary>
+    private async Task<List<ComplexityChain>> SweepExpiredAsync(
+        IQueryable<ComplexityChain> active,
+        CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var rows = await active.ToListAsync(ct);
+            var now = UtcNow();
+            var live = new List<ComplexityChain>(rows.Count);
+            var dirty = false;
+            foreach (var row in rows)
+            {
+                if (row.NotAfter is { } notAfter && notAfter <= now)
+                {
+                    row.ClearedAt = now;
+                    row.ConcurrencyToken = Guid.NewGuid();
+                    dirty = true;
+                    continue;
+                }
+
+                live.Add(row);
+            }
+
+            if (!dirty)
+                return live;
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+                return live;
+            }
+            catch (DbUpdateConcurrencyException ex) when (attempt < SweepAttempts
+                && ex.Entries.All(e => e.Entity is ComplexityChain))
+            {
+                foreach (var entry in ex.Entries)
+                    entry.State = EntityState.Detached;
+            }
+        }
     }
 
     private static IReadOnlyList<RoutingCandidates.Candidate> FromRow(ComplexityChain row) =>

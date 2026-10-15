@@ -265,6 +265,44 @@ public sealed class ComplexityChainService
             }
         }
 
+        var reason = Cap(string.IsNullOrWhiteSpace(request.Reason)
+            ? $"{CellLabel(role, complexity)} chain"
+            : request.Reason);
+
+        ComplexityChain existing;
+        for (var attempt = 1; ; attempt++)
+        {
+            existing = await StageUpsertAsync(
+                role, complexity, request, pairs, reason, notAfter, sourceTaskId, now, ct);
+            var lost = await TrySaveAsync(ct);
+            if (lost is null)
+                break;
+            if (!RetriesLostRace(request.ConcurrencyToken, attempt))
+                throw await StaleAsync(role, complexity, request.ConcurrencyToken, ct, lost);
+        }
+
+        OrchestratorInstructionsSignal.Fire(_services, $"complexity-chain {role?.ToString() ?? "any"}/{complexity}");
+        _logger.LogInformation(
+            "Complexity chain set: {Role}/{Complexity} {Provenance} ({Count} candidates)",
+            role?.ToString() ?? "any", existing.Complexity, existing.Provenance, pairs.Count);
+        return await GetAsync(role, complexity, ct);
+    }
+
+    /// <summary>
+    /// One read-modify-write attempt up to the save: reads the active row, applies the stale and
+    /// Human checks to it, and stages the caller's values with a fresh token.
+    /// </summary>
+    private async Task<ComplexityChain> StageUpsertAsync(
+        AgentTaskRole? role,
+        TaskComplexity complexity,
+        PutComplexityChainRequest request,
+        IReadOnlyList<ComplexityCandidatePair> pairs,
+        string reason,
+        DateTime? notAfter,
+        Guid? sourceTaskId,
+        DateTime now,
+        CancellationToken ct)
+    {
         var existing = await _routing.FindActiveAsync(role, complexity, ct);
         await ThrowIfStaleAsync(role, complexity, existing, request.ConcurrencyToken, ct);
         if (existing is not null
@@ -296,10 +334,6 @@ public sealed class ComplexityChainService
             }
         }
 
-        var reason = Cap(string.IsNullOrWhiteSpace(request.Reason)
-            ? $"{CellLabel(role, complexity)} chain"
-            : request.Reason);
-
         if (existing is null)
         {
             existing = new ComplexityChain
@@ -320,12 +354,7 @@ public sealed class ComplexityChainService
         existing.UpdatedAt = now;
         existing.ConcurrencyToken = Guid.NewGuid();
 
-        await SaveOrThrowStaleAsync(role, complexity, request.ConcurrencyToken, ct);
-        OrchestratorInstructionsSignal.Fire(_services, $"complexity-chain {role?.ToString() ?? "any"}/{complexity}");
-        _logger.LogInformation(
-            "Complexity chain set: {Role}/{Complexity} {Provenance} ({Count} candidates)",
-            role?.ToString() ?? "any", existing.Complexity, existing.Provenance, pairs.Count);
-        return await GetAsync(role, complexity, ct);
+        return existing;
     }
 
     public Task ClearAsync(TaskComplexity complexity, CancellationToken ct) =>
@@ -348,14 +377,25 @@ public sealed class ComplexityChainService
         if (role is { } cellRole)
             ValidateCellRole(cellRole);
 
-        var existing = await _routing.FindActiveAsync(role, complexity, ct);
-        if (existing is null)
-            return;
+        for (var attempt = 1; ; attempt++)
+        {
+            var existing = await _routing.FindActiveAsync(role, complexity, ct);
+            if (existing is null)
+                return;
 
-        await ThrowIfStaleAsync(role, complexity, existing, expectedToken, ct);
-        existing.ClearedAt = UtcNow();
-        existing.ConcurrencyToken = Guid.NewGuid();
-        await SaveOrThrowStaleAsync(role, complexity, expectedToken, ct, clearing: true);
+            await ThrowIfStaleAsync(role, complexity, existing, expectedToken, ct);
+            existing.ClearedAt = UtcNow();
+            existing.ConcurrencyToken = Guid.NewGuid();
+            var lost = await TrySaveAsync(ct);
+            if (lost is null)
+                break;
+            // A clear that lost to another clear still reached the state it asked for.
+            if (await _routing.FindActiveAsync(role, complexity, ct) is null)
+                return;
+            if (!RetriesLostRace(expectedToken, attempt))
+                throw await StaleAsync(role, complexity, expectedToken, ct, lost);
+        }
+
         OrchestratorInstructionsSignal.Fire(_services, $"complexity-chain {role?.ToString() ?? "any"}/{complexity}");
         _logger.LogInformation(
             "Complexity chain cleared: {Role}/{Complexity}",
@@ -363,8 +403,9 @@ public sealed class ComplexityChainService
     }
 
     /// <summary>
-    /// Null <paramref name="expected"/> = unconditional (legacy). <see cref="Guid.Empty"/> = the
-    /// caller saw no active row. Otherwise the active row must carry exactly that token.
+    /// Null <paramref name="expected"/> = no check against a version the caller read.
+    /// <see cref="Guid.Empty"/> = the caller saw no active row. Otherwise the active row must
+    /// carry exactly that token.
     /// </summary>
     private async Task ThrowIfStaleAsync(
         AgentTaskRole? role,
@@ -381,30 +422,37 @@ public sealed class ComplexityChainService
     }
 
     /// <summary>
-    /// The check above reads then writes; a writer between the two loses here instead: the
-    /// UPDATE names the original token (EF concurrency token) and a second active row breaks the
-    /// unique index. Either becomes the same 409 with the row as it is now.
+    /// The check above reads then writes; a writer between the two makes this save fail
+    /// instead: the UPDATE names the original token (EF concurrency token) and a second active
+    /// row breaks the unique index. Returns that failure with the tracker cleared, so the next
+    /// read sees the committed row; null when the save landed.
     /// </summary>
-    private async Task SaveOrThrowStaleAsync(
-        AgentTaskRole? role,
-        TaskComplexity complexity,
-        Guid? expected,
-        CancellationToken ct,
-        bool clearing = false)
+    private async Task<DbUpdateException?> TrySaveAsync(CancellationToken ct)
     {
         try
         {
             await _db.SaveChangesAsync(ct);
+            return null;
         }
         catch (DbUpdateException ex) when (IsLostRace(ex))
         {
             _db.ChangeTracker.Clear();
-            // A clear that lost to another clear still reached the state it asked for.
-            if (clearing && await _routing.FindActiveAsync(role, complexity, ct) is null)
-                return;
-            throw await StaleAsync(role, complexity, expected, ct, ex);
+            return ex;
         }
     }
+
+    /// <summary>
+    /// Attempts a write without a token makes before a lost race is 409 <see cref="StaleCode"/>
+    /// (CARD-1275 D1). Such a write has no version to keep, so it re-reads the row and applies
+    /// the caller's values again (last writer wins, as before the token existed).
+    /// </summary>
+    internal const int UnconditionalAttempts = 3;
+
+    /// <summary>
+    /// A write with a token is refused on its first lost race: the version it read is gone.
+    /// </summary>
+    private static bool RetriesLostRace(Guid? expected, int attempt) =>
+        expected is null && attempt < UnconditionalAttempts;
 
     private async Task<HttpException> StaleAsync(
         AgentTaskRole? role,
@@ -415,11 +463,13 @@ public sealed class ComplexityChainService
     {
         var current = await GetAsync(role, complexity, ct);
         var label = CellLabel(role, complexity);
-        var seen = expected is not { } token ? "no version"
-            : token == Guid.Empty ? "no row" : $"version {token}";
         var now = current.ConcurrencyToken is { } currentToken ? $"version {currentToken}" : "no row";
-        var message = $"The {label} chain changed since it was read (read {seen}, now {now}). "
-            + "Reload it, review the difference and write again with the current concurrencyToken.";
+        var message = expected is not { } token
+            ? $"The {label} chain changed during each of {UnconditionalAttempts} write attempts (now {now}). "
+                + "Write again, or read it and send its concurrencyToken."
+            : $"The {label} chain changed since it was read (read "
+                + (token == Guid.Empty ? "no row" : $"version {token}") + $", now {now}). "
+                + "Reload it, review the difference and write again with the current concurrencyToken.";
         _logger.LogInformation("Complexity chain write refused as stale: {Role}/{Complexity}",
             role?.ToString() ?? "any", complexity);
         var extensions = new Dictionary<string, object?>
