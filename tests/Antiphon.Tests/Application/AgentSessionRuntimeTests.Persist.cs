@@ -6,6 +6,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -105,6 +106,7 @@ public partial class AgentSessionRuntimeTests
         var poison = "No Instance(s) Available.\r\r\n\r\0\n\0";
         await f.Runtime.ObserveTranscriptAsync(
             TranscriptEvent(f.SessionId, 1, TranscriptKinds.ToolResult, "u-nul", poison), default);
+        await f.DrainAsync();
 
         var rows = await f.RowsAsync();
         rows.ShouldHaveSingleItem();
@@ -117,6 +119,64 @@ public partial class AgentSessionRuntimeTests
         (await f.Runtime.PersistTranscriptAsync(f.SessionId, [
             TranscriptEvent(f.SessionId, 2, TranscriptKinds.ToolResult, "u-nul-2", poison)
         ])).LastStoredSeq.ShouldBe(2);
+    }
+
+    [Test]
+    [Arguments("sanitized")]
+    [Arguments("safe-stub")]
+    public async Task C1259_deferred_UI_payload_preserves_original_fields_after_restart(string variant)
+    {
+        await using var clone = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var f = await PersistFixture.CreateAsync(connectionString: clone.ConnectionString);
+        await f.Runtime.PersistTranscriptAsync(f.SessionId,
+            [TranscriptEvent(f.SessionId, 40, TranscriptKinds.ToolResult, "older-history", "old")]);
+        await f.DrainAsync();
+        var before = f.EventBus.PublishedEvents.Count(e => e.EventName == "SessionTranscript");
+        var original = new SessionRunnerTranscriptEvent(f.SessionId, 1, TranscriptKinds.ToolResult,
+            "source\0uuid", "parent\0uuid", new DateTimeOffset(2026, 10, 15, 10, 2, 3, TimeSpan.FromHours(2)).AddTicks(7),
+            "assistant\0", "before😀\0literal\uFFFDafter\0", variant == "safe-stub" ? new string('x', 201) : "tool\0name",
+            "distinct-input\0", "tool-use\0", true, "stop\0", ApiCallId: "api\0id", InputTokens: 19,
+            OutputTokens: 23, CacheReadTokens: 29, CacheCreationTokens: 31, IsApiError: true,
+            ApiErrorClass: "error\0class", ApiErrorStatus: 429, ApiErrorTimeZoneId: "zone\0", Model: "model\0", ModelCalls: 3);
+        await f.Runtime.ObserveTranscriptAsync(original, default);
+        await using (var db = f.Db())
+        {
+            var row = await db.TranscriptEntries.SingleAsync(t => t.AgentSessionId == f.SessionId && t.Sequence == 41);
+            row.Text.ShouldNotContain('\0');
+            row.Uuid.ShouldBe("source\uFFFDuuid");
+            if (variant == "safe-stub")
+            {
+                row.Text.ShouldBe("[transcript text not persistable: 22001]");
+                row.ToolName.ShouldBe(new string('x', 199) + "…");
+                row.ToolInput.ShouldBeNull();
+            }
+            else row.Text.ShouldBe("before😀\uFFFDliteral\uFFFDafter\uFFFD");
+            var debt = await db.SessionRuntimeActions.SingleAsync(a => a.TranscriptEntryId == row.Id);
+            debt.Sequence.ShouldBe(41); debt.ProducerSequence.ShouldBe(1);
+            debt.UiProjectionVersion.ShouldBe(1); debt.UiProjectionDelta.ShouldNotBeEmpty();
+        }
+        f.EventBus.PublishedEvents.Count(e => e.EventName == "SessionTranscript").ShouldBe(before);
+        await f.RestartAsync();
+        await f.DiscoverAndDrainAsync();
+        var received = f.EventBus.PublishedEvents.Where(e => e.EventName == "SessionTranscript").Skip(before).ShouldHaveSingleItem();
+        foreach (var field in typeof(SessionRunnerTranscriptEvent).GetProperties())
+        {
+            var name = char.ToLowerInvariant(field.Name[0]) + field.Name[1..];
+            var publishedField = received.Payload.GetType().GetProperty(name);
+            publishedField.ShouldNotBeNull($"the UI must preserve {field.Name}");
+            publishedField.GetValue(received.Payload).ShouldBe(field.GetValue(original), field.Name);
+        }
+        GetPayloadValue<string>(received.Payload, "text").ShouldContain('\0');
+        var timestamp = GetPayloadValue<DateTimeOffset>(received.Payload, "timestamp");
+        timestamp.Ticks.ShouldBe(original.Timestamp!.Value.Ticks);
+        timestamp.Offset.ShouldBe(TimeSpan.FromHours(2));
+        var stored = (await f.RowsAsync()).Single(t => t.Sequence == 41);
+        stored.Text.ShouldNotContain('\0');
+        await f.RestartAsync();
+        await f.Runtime.ObserveTranscriptAsync(original, default);
+        await f.DiscoverAndDrainAsync();
+        f.EventBus.PublishedEvents.Count(e => e.EventName == "SessionTranscript").ShouldBe(before + 1);
+        (await f.RowsAsync()).Count.ShouldBe(2);
     }
 
     [Test]
@@ -353,22 +413,26 @@ public partial class AgentSessionRuntimeTests
         ServiceProvider provider,
         string logPath,
         Guid sessionId,
-        AgentSessionRuntime runtime,
         MockEventBus eventBus,
-        List<string> logs) : IAsyncDisposable
+        List<string> logs,
+        string connectionString,
+        Func<ServiceProvider> newContainer) : IAsyncDisposable
     {
         public Guid SessionId { get; } = sessionId;
-        public AgentSessionRuntime Runtime { get; } = runtime;
+        public AgentSessionRuntime Runtime => provider.GetRequiredService<AgentSessionRuntime>();
+        public SessionRuntimeActionCoordinator Actions => provider.GetRequiredService<SessionRuntimeActionCoordinator>();
         public MockEventBus EventBus { get; } = eventBus;
         public List<string> Logs { get; } = logs;
 
         public static async Task<PersistFixture> CreateAsync(
             IInterceptor? interceptor = null,
             ISessionRunnerClient? runner = null,
-            Guid? sessionId = null)
+            Guid? sessionId = null,
+            string? connectionString = null)
         {
+            connectionString ??= TestDbFixture.ConnectionString;
             var sid = sessionId ?? Guid.NewGuid();
-            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
+            await using (var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(connectionString).Options))
             {
                 db.AgentSessions.Add(new AgentSession
                 {
@@ -390,10 +454,21 @@ public partial class AgentSessionRuntimeTests
             var eventBus = new MockEventBus();
             var logPath = Path.Combine(Path.GetTempPath(), $"antiphon-c561-{Guid.NewGuid():N}");
             var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton(TimeProvider.System);
+            services.AddSingleton<IEventBus>(eventBus);
+            services.AddSingleton<ISessionRunnerClient>(runner ?? new StaticSessionRunnerClient(new SessionRunnerBufferDto(sid, "", 0)));
+            services.AddSingleton(Options.Create(new AgentSessionSettings { SessionLogPath = logPath }));
+            services.AddSingleton(Options.Create(new SessionStateSettings()));
+            services.AddSingleton<SessionStateCommandMetrics>();
+            services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+            services.AddSingleton<SessionStateStore>();
+            services.AddSingleton<SessionRuntimeActionCoordinator>();
+            services.AddSingleton<AgentSessionRuntime>();
             services.AddSingleton<ILogger<AgentSessionRuntime>>(new ListLogger<AgentSessionRuntime>(logs));
             services.AddDbContext<AppDbContext>(o =>
             {
-                o.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+                o.UseNpgsql(connectionString, npgsql =>
                 {
                     npgsql.MigrationsAssembly("Antiphon.Server");
                     npgsql.SetPostgresVersion(16, 0);
@@ -401,20 +476,40 @@ public partial class AgentSessionRuntimeTests
                 if (interceptor is not null)
                     o.AddInterceptors(interceptor);
             });
-            var provider = services.BuildServiceProvider();
-            var runtime = new AgentSessionRuntime(
-                runner ?? new StaticSessionRunnerClient(new SessionRunnerBufferDto(sid, "", 0)),
-                eventBus,
-                Options.Create(new AgentSessionSettings { SessionLogPath = logPath }),
-                provider.GetRequiredService<IServiceScopeFactory>(),
-                TimeProvider.System,
-                provider.GetRequiredService<ILogger<AgentSessionRuntime>>());
-            return new PersistFixture(provider, logPath, sid, runtime, eventBus, logs);
+            return new PersistFixture(services.BuildServiceProvider(), logPath, sid, eventBus, logs,
+                connectionString, () => services.BuildServiceProvider());
+        }
+
+        public AppDbContext Db() => new(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(connectionString).Options);
+        public Task DrainAsync() => Actions.DrainPageAsync(SessionId, default);
+
+        public async Task RestartAsync()
+        {
+            await Runtime.DisposeSessionAsync(SessionId);
+            await provider.DisposeAsync();
+            provider = newContainer();
+        }
+
+        public async Task DiscoverAndDrainAsync()
+        {
+            using var worker = new SessionRuntimeActionHostedService(Actions);
+            await worker.StartAsync(default);
+            try
+            {
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                while (true)
+                {
+                    await using var db = Db();
+                    if (!await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == SessionId, deadline.Token)) break;
+                    await Task.Delay(20, deadline.Token);
+                }
+            }
+            finally { await worker.StopAsync(default); }
         }
 
         public async Task<List<TranscriptEntry>> RowsAsync()
         {
-            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            await using var db = Db();
             return await db.TranscriptEntries
                 .Where(t => t.AgentSessionId == SessionId)
                 .OrderBy(t => t.Sequence)
@@ -424,7 +519,8 @@ public partial class AgentSessionRuntimeTests
         public async ValueTask DisposeAsync()
         {
             await Runtime.DisposeSessionAsync(SessionId);
-            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            await using var db = Db();
+            await db.SessionRuntimeActions.Where(a => a.AgentSessionId == SessionId).ExecuteDeleteAsync();
             await db.TranscriptEntries.Where(t => t.AgentSessionId == SessionId).ExecuteDeleteAsync();
             await db.AgentSessions.Where(s => s.Id == SessionId).ExecuteDeleteAsync();
             await provider.DisposeAsync();
