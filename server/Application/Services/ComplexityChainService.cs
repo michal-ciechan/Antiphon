@@ -406,7 +406,7 @@ public sealed class ComplexityChainService
         }
     }
 
-    private async Task<ConflictException> StaleAsync(
+    private async Task<HttpException> StaleAsync(
         AgentTaskRole? role,
         TaskComplexity complexity,
         Guid? expected,
