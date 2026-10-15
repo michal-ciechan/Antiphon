@@ -2238,7 +2238,7 @@ Code and Review must apply this policy alongside their stage contract. The share
 `delegate-basics` bundle points here because the stage bundles retain their existing
 size caps and verbatim instruction guards. A summary does not replace this policy.
 
-Required checkpoint defects above remain enforced. Missing required rows, zero counts, unjustified unlisted/ungated runs, broad runs without named invariant/cost or unprovable builds leave verification incomplete. Missing acceptance, lost assertions, failed tests and inadequate tests remain substantive.
+Required checkpoint obligations in the Code and Review stage contracts remain enforced. Missing required rows, zero counts, unjustified unlisted/ungated runs, broad runs without named invariant/cost or unprovable builds leave verification incomplete. Missing acceptance, lost assertions, failed tests and inadequate tests remain substantive.
 
 FINDINGS (D-2): Report product/acceptance behavior, verification completeness and advisory documentation separately; record introduced/inherited/unresolved attribution independently. No Review rerun solely for advisory docs/evidence corrections, and no Code repair solely for them. Missing trustworthy required verification remains an incomplete gate, never fabricated Clean/Full or an introduced regression. Initial ordinary Review remains required. Preserve historical outcomes and costs; an unclassified legacy Found still needs Review, never relabeling.
 
