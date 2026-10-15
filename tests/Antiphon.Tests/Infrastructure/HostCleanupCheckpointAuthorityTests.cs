@@ -25,7 +25,7 @@ public sealed class HostCleanupCheckpointAuthorityTests
         var before = Evidence(f);
         var fresh = f.Files.FreshContext();
         fresh.Registry.WasCreated(f.Tool).ShouldBeFalse();
-        (await f.Wait(fresh)).ShouldBe(exit, Label(nameof(Fresh_context_removes_only_sealed_tool), "cross-context"));
+        (await f.Wait(fresh)).ShouldBe(exit, Label(nameof(Fresh_context_removes_only_sealed_tool), "cross-context") + ": " + f.LastWaitOutput);
         f.Io.DirectoryExists(f.Tool).ShouldBeFalse();
         foreach (var (path, hash) in before) Hash(f.Io.Nodes[path].Bytes).ShouldBe(hash);
         f.Io.DirectoryExists(f.Receipt.Output).ShouldBeTrue();
@@ -317,7 +317,7 @@ public sealed class HostCleanupCheckpointAuthorityTests
         f.Io.FileExists(AuthorityPath(f)).ShouldBeTrue(Label(method, "start"));
         ExecutorOwnershipStore.Write(f.Run, f.Dead, f.Context);
         f.Io.Count("move", f.Run + "/executor-ownership.json").ShouldBe(1, Label(method, "ack"));
-        (await f.Wait(f.Files.FreshContext())).ShouldBe(0, Label(method, "wait"));
+        (await f.Wait(f.Files.FreshContext())).ShouldBe(0, Label(method, "wait") + ": " + f.LastWaitOutput);
         f.Io.Count("rmdir", f.Tool).ShouldBe(1, Label(method, "wait"));
 
         var runFixture = new HostCleanupToolFixture();

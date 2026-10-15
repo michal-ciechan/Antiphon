@@ -218,6 +218,7 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
     {
         Enter("mkdir-exclusive", path);
         if (Nodes.ContainsKey(path)) return 17;
+        if (!Nodes.TryGetValue(Path.GetDirectoryName(path)!, out var parent) || parent.Stat.Kind != "directory") return 2;
         CreateDirectory(path);
         return 0;
     }
@@ -225,6 +226,11 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
     {
         Enter("mkdir", path);
         if (Nodes.ContainsKey(path)) return;
+        var missing = new Stack<string>();
+        for (var parent = Path.GetDirectoryName(path); parent is not null && !Nodes.ContainsKey(parent); parent = Path.GetDirectoryName(parent))
+            missing.Push(parent);
+        while (missing.TryPop(out var ancestor))
+            Nodes[ancestor] = new Node { CreatedUtc = clock.GetUtcNow().UtcDateTime, Stat = new("directory", 1, ++_inode, 0, Now, Now, 0x41C0, 1, Owner) };
         Nodes[path] = new Node { CreatedUtc = clock.GetUtcNow().UtcDateTime, Stat = new("directory", 1, ++_inode, 0, Now, Now, 0x41C0, 1, Owner) };
     }
     public Stream Open(string path, FileMode mode, FileAccess access, FileShare share)
@@ -332,9 +338,12 @@ internal sealed class HostCleanupToolFixture
     }
     public ToolCopyCleanup Cleanup(CheckpointCleanupContext? context = null, Action<string>? beforeDelete = null) =>
         new(context: context ?? Context, beforeDelete: beforeDelete);
-    public Task<int> Wait(CheckpointCleanupContext? context = null, string? sha = null, CancellationToken ct = default) =>
-        new WaitCommand(context: context ?? Context).WaitAsync(Run, TimeSpan.Zero, TimeSpan.FromSeconds(1),
-            new StringWriter(), ct, sha);
+    public StringWriter LastWaitOutput { get; private set; } = new();
+    public async Task<int> Wait(CheckpointCleanupContext? context = null, string? sha = null, CancellationToken ct = default)
+    {
+        LastWaitOutput = new();
+        return await new WaitCommand(context: context ?? Context).WaitAsync(Run, TimeSpan.Zero, TimeSpan.FromSeconds(1), LastWaitOutput, ct, sha);
+    }
     public CheckpointApp.Runtime Runtime(IProcessControl? control = null) => new()
     {
         CleanupContext = Context, RepoRoot = Files.Parent, SourceBranch = "virtual", EnvironmentLookup = _ => null,
