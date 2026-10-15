@@ -188,6 +188,7 @@ public sealed class ChannelReplyDispatcher
                 && m.ReviewThreadId == null
                 && m.Status == QueuedMessageStatus.Sent
                 && m.ConversationKey != null
+                && !m.ConversationKey.StartsWith("review:")
                 && m.ChannelReplySettledAt == null
                 && m.ChannelOutboundDeliveryId == null);
 

@@ -910,8 +910,8 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddHostedService<DelegationCostBackfillService>();
     // CARD-0448 F2: prose-based landing stage backfill is retired.
     builder.Services.AddHostedService<WorkflowFileWatcherHostedService>();
-    builder.Services.AddHostedService<SessionRunnerEventPump>();
     builder.Services.AddHostedService<SessionRuntimeActionHostedService>();
+    builder.Services.AddHostedService<SessionRunnerEventPump>();
     builder.Services.AddScoped<IRunnerStateStore, DbRunnerStateStore>();
     builder.Services.AddScoped<RunnerStateService>();
     // CARD-0727 D-6: the drain row is mirrored before recovery, so a restart does not un-drain.
