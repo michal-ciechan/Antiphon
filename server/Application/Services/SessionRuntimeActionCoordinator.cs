@@ -18,6 +18,7 @@ public sealed class SessionRuntimeActionCoordinator(
     internal const int HintCapacity = 128;
     internal const int PageSize = 128;
     internal const int QueuePhase = 8;
+    private const string DeferredReason = "Deferred";
     private readonly Channel<Guid> _hints = Channel.CreateBounded<Guid>(new BoundedChannelOptions(HintCapacity)
         { FullMode = BoundedChannelFullMode.Wait, AllowSynchronousContinuations = false });
     // Contains active execution owners only, at most WorkerCount. Overflow lives in PostgreSQL.
@@ -155,18 +156,29 @@ public sealed class SessionRuntimeActionCoordinator(
             var action = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == sessionId)
                 .OrderBy(a => a.Phase >= QueuePhase).ThenBy(a => a.Sequence).ThenBy(a => a.TriggerKind)
                 .FirstOrDefaultAsync(ct);
-            if (action is null || action.DueAt > clock.GetUtcNow().UtcDateTime) return false;
+            if (action is null) return false;
+            // A queue wakeup is coalescible only after all of its routing has completed.
+            // New work must be able to replace a deferred wakeup before its retry is due.
+            var superseded = action.Phase == QueuePhase && action.FailureReason == DeferredReason
+                && await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == sessionId
+                    && a.Id != action.Id && a.Phase == QueuePhase
+                    && (a.TurnBoundary || a.ManualCompactBoundary
+                        || (a.TranscriptEntryId == null && a.TriggerKind != "catchup"))
+                    && (a.Sequence > action.Sequence || (a.Sequence == action.Sequence
+                        && (a.CreatedAt > action.CreatedAt
+                            || (a.TriggerKind == "status" && action.TriggerKind != "status")))), ct);
+            if (action.DueAt > clock.GetUtcNow().UtcDateTime && !superseded) return false;
             ObserveAction(action);
             try
             {
-                await ExecuteAsync(scope.ServiceProvider, db, action, ct);
+                await ExecuteAsync(scope.ServiceProvider, db, action, superseded, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
                 db.ChangeTracker.Clear();
                 var attempts = Math.Min(action.Attempts + 1, 31);
-                var due = clock.GetUtcNow().UtcDateTime.AddSeconds(Math.Min(30, 1 << Math.Min(attempts - 1, 5)));
+                var due = RetryAt(attempts);
                 var reason = ex.GetType().Name;
                 await db.SessionRuntimeActions.Where(a => a.Id == action.Id)
                     .ExecuteUpdateAsync(s => s.SetProperty(a => a.Attempts, attempts)
@@ -181,7 +193,11 @@ public sealed class SessionRuntimeActionCoordinator(
     internal static SessionRunnerTranscriptEvent RestoreTranscriptPayload(TranscriptEntry row, SessionRuntimeAction action) =>
         TranscriptUiProjection.Restore(row, action);
 
-    private async Task ExecuteAsync(IServiceProvider services, AppDbContext db, SessionRuntimeAction action, CancellationToken ct)
+    private DateTime RetryAt(int attempts) => clock.GetUtcNow().UtcDateTime
+        .AddSeconds(Math.Min(30, 1 << Math.Min(attempts - 1, 5)));
+
+    private async Task ExecuteAsync(IServiceProvider services, AppDbContext db, SessionRuntimeAction action,
+        bool superseded, CancellationToken ct)
     {
         var row = action.TranscriptEntryId is { } id
             ? await db.TranscriptEntries.AsNoTracking().SingleAsync(t => t.Id == id, ct) : null;
@@ -210,19 +226,23 @@ public sealed class SessionRuntimeActionCoordinator(
             .Select(s => (DateTime?)s.StartedAt).SingleOrDefaultAsync(ct);
         if (generation == action.AcceptedGeneration && action.Phase == QueuePhase)
         {
-            var result = await runtime.ExecuteActionQueueAsync(action, ct);
+            var result = await runtime.ExecuteActionQueueAsync(action, superseded, ct);
             // The queue saves exact source IDs alongside the receipt verdict. Do not erase
             // that obligation with this context's older copy when acknowledging the phase.
             await db.Entry(action).ReloadAsync(ct);
             if (result.Deferred)
             {
-                action.DueAt = clock.GetUtcNow().UtcDateTime.AddSeconds(1);
+                action.Attempts = Math.Min(action.Attempts + 1, 31);
+                action.DueAt = RetryAt(action.Attempts);
+                action.FailureReason = DeferredReason;
                 await db.SaveChangesAsync(ct);
                 return;
             }
             action.LateConfirmedChannelMessageIds = action.LateConfirmedChannelMessageIds
                 .Union(result.LateConfirmedChannelMessageIds).ToArray();
             action.Phase++;
+            action.Attempts = 0;
+            action.FailureReason = null;
             await db.SaveChangesAsync(ct);
         }
         if (action.Phase > QueuePhase) await runtime.ExecuteActionLateConfirmAsync(action, ct);

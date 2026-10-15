@@ -419,12 +419,13 @@ public sealed class AgentSessionRuntime
         }
     }
 
-    internal async Task<SessionQueueTurnEndResult> ExecuteActionQueueAsync(SessionRuntimeAction action, CancellationToken ct)
+    internal async Task<SessionQueueTurnEndResult> ExecuteActionQueueAsync(SessionRuntimeAction action,
+        bool superseded, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var queue = scope.ServiceProvider.GetService<SessionMessageQueueService>();
         return queue is null ? new(new HashSet<Guid>(), new HashSet<Guid>())
-            : await queue.OnRuntimeActionAsync(action, ct);
+            : await queue.OnRuntimeActionAsync(action, superseded, ct);
     }
 
     internal async Task ExecuteActionLateConfirmAsync(SessionRuntimeAction action, CancellationToken ct)
