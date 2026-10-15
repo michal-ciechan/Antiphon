@@ -241,17 +241,19 @@ public static class CodexResponseAnalyzer
 
         if (!string.IsNullOrWhiteSpace(prompt))
         {
-            var echoEnd = FindPromptEchoEnd(clean, prompt);
-            if (echoEnd < 0 && preserveCursorWordBoundaries)
+            var echoEnd = -1;
+            if (preserveCursorWordBoundaries)
             {
-                // A cursor move may sit inside a word or after a literal space.
-                // Only use the plain form when it actually recovers the prompt echo.
+                // Prefer the plain echo: cursor separation can create an earlier match
+                // before the literal echo, leaving that later echo in the response.
                 var plain = (AnsiStripper.Clean(rawSnapshot) ?? string.Empty)
                     .Replace("\r\n", "\n").Replace('\r', '\n');
                 echoEnd = FindPromptEchoEnd(plain, prompt);
                 if (echoEnd >= 0)
                     clean = plain;
             }
+            if (echoEnd < 0)
+                echoEnd = FindPromptEchoEnd(clean, prompt);
             if (echoEnd >= 0)
                 clean = clean[echoEnd..];
         }
