@@ -365,70 +365,77 @@ public sealed class AgentSessionRuntime
         }
     }
 
-    /// <summary>Relays a structured transcript entry to the session's SignalR group and persists it (idempotently).</summary>
+    /// <summary>Commits the ordered transcript and its effects without awaiting delivery.</summary>
     public async Task ObserveTranscriptAsync(SessionRunnerTranscriptEvent entry, CancellationToken ct)
     {
-        using (new RuntimePhase(_logger, _timeProvider, entry.SessionId, "transcript.signalr-publish"))
-        await _eventBus.PublishToGroupAsync(
-            AgentSessionGroups.Session(entry.SessionId),
-            "SessionTranscript",
-            ToTranscriptPayload(entry),
-            ct);
+        await PersistTranscriptAsync(entry.SessionId, [entry], ct);
+    }
 
-        // Decided BEFORE persisting: the check asks "has a row like this already landed?", and
-        // persisting first would make every entry look like one we had already acted on.
-        var actOnTurnBoundary = IsTurnBoundary(entry) && await IsUnseenTurnBoundaryAsync(entry, ct);
-
-        var persisted = await PersistTranscriptAsync(entry.SessionId, new[] { entry });
-        if (persisted.LastStoredSeq is long storedSeq
-            && (entry.Kind == TranscriptKinds.UserPrompt
-                || entry.Kind == TranscriptKinds.QueuedUserPrompt
-                || entry.Kind == TranscriptKinds.TurnEnd))
+    internal async Task ExecuteActionPhaseAsync(SessionRuntimeAction action, TranscriptEntry? row, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var services = scope.ServiceProvider;
+        var sessionId = action.AgentSessionId;
+        var kind = row?.Kind;
+        var route = action.TurnBoundary || kind == TranscriptKinds.AssistantText;
+        switch (action.Phase)
         {
-            await DispatchCapacityRecoveryTranscriptAsync(entry, storedSeq, ct);
-        }
-
-        // CARD-1170: a newly stored live UserPrompt confirms a Sent refinement now.
-        // SyncTranscriptAsync still confirms a prompt that arrived only through catch-up.
-        if (entry.Kind == TranscriptKinds.UserPrompt && persisted.LastStoredSeq is not null)
-            await ConfirmRefinementDeliveriesAsync(entry.SessionId, ct);
-
-        // A completed turn (the agent stopped and is waiting) is the trigger to flush the next queued
-        // "wait until idle" message, or — when nothing is queued — to mark the session finished.
-        // Interrupted turns (Esc / rejected tool call) end with the "[Request interrupted..." user
-        // marker and NO TurnEnd — they are turn boundaries too, and the queue must flush or every
-        // WhenIdle delivery strands until some later turn completes (live miss 2026-07-29).
-        if (actOnTurnBoundary)
-            await FlushQueueOnIdleAsync(entry.SessionId, ct);
-
-        // Claude writes the turn's stop marker BEFORE its reply text: one API response becomes
-        // several JSONL records (thinking first, then text) and EVERY one carries the response's
-        // stop_reason, so the turn end we act on is the thinking record's. The TurnEnd-time
-        // dispatch therefore sees no text and leaves the correlations pending — the text's own
-        // arrival must re-trigger the channel reply dispatch (cheap no-op when nothing is pending).
-        if (entry.Kind == TranscriptKinds.AssistantText)
-            await DispatchChannelRepliesAsync(entry.SessionId, ct);
-
-        // A compaction boundary triggers recovery (incident + workspace re-read note). Resolved
-        // lazily like the queue service below: CompactionRecoveryService ctor-injects the queue,
-        // which ctor-injects this runtime — direct injection here would close a constructor cycle.
-        // Uses the STORED (session-monotonic) sequence, not the raw tailer one: the persisted
-        // recovery watermark must stay comparable across tailer generations, and a boundary that
-        // deduped away (replay) was already handled.
-        if (entry.Kind == TranscriptKinds.CompactBoundary && persisted.LastStoredSeq is long boundarySeq)
-        {
-            await DispatchCompactionRecoveryAsync(entry.SessionId, boundarySeq, ct);
-
-            // A MANUAL boundary is a turn end for the working rule (CARD-0041) and nothing else
-            // will ever flush this session: compaction makes no API call, so no TurnEnd follows.
-            // Recovery dispatch runs FIRST so its note is already queued when the flush looks.
-            // Narrow on purpose — FlushIfIdleAsync, not the turn-end path: no "Agent finished",
-            // no reply/task settlement against the stale pre-compaction report.
-            if (TranscriptKinds.IsManualCompactBoundary(entry.Kind, entry.Text))
-                await FlushQueueAfterManualCompactionAsync(entry.SessionId, ct);
+            case 0 when row is not null:
+                using (new RuntimePhase(_logger, _timeProvider, sessionId, "transcript.signalr-publish"))
+                    await _eventBus.PublishToGroupAsync(AgentSessionGroups.Session(sessionId), "SessionTranscript",
+                        ToTranscriptPayload(SessionRuntimeActionCoordinator.RestoreTranscriptPayload(row, action)), ct);
+                break;
+            case 1 when row is not null && (kind == TranscriptKinds.UserPrompt
+                || kind == TranscriptKinds.QueuedUserPrompt || kind == TranscriptKinds.TurnEnd):
+                if (services.GetService<CapacityRecoveryService>() is { } capacity)
+                    await capacity.ObserveTranscriptAsync(sessionId, kind, row.IsApiError == true, ct, row.Sequence);
+                break;
+            case 2 when kind == TranscriptKinds.UserPrompt || action.TriggerKind == "catchup":
+                if (services.GetService<SessionMessageQueueService>() is { } refinementQueue)
+                    await refinementQueue.ConfirmSentRefinementsAsync(sessionId, ct);
+                break;
+            case 3 when kind == TranscriptKinds.CompactBoundary:
+                if (services.GetService<CompactionRecoveryService>() is { } recovery)
+                    await recovery.OnCompactBoundaryAsync(sessionId, action.Sequence, ct);
+                break;
+            case 3 when action.TriggerKind == "catchup":
+                if (services.GetService<GrokRulesRefreshService>() is { } rules)
+                    await rules.ReconcileAsync(sessionId, ct);
+                break;
+            case 4 when route:
+                if (services.GetService<ChannelReplyDispatcher>() is { } channel)
+                    await channel.OnTurnEndAsync(sessionId, ct);
+                break;
+            case 5 when route:
+                if (services.GetService<ReviewReplyDispatcher>() is { } review)
+                    await review.OnTurnEndAsync(sessionId, ct);
+                break;
+            case 6 when route || action.TriggerKind == "catchup":
+                if (services.GetService<AgentTaskReplyService>() is { } task)
+                    await task.OnTurnEndAsync(sessionId, ct);
+                break;
         }
     }
 
+    internal async Task ExecuteActionQueueAsync(SessionRuntimeAction action, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var queue = scope.ServiceProvider.GetService<SessionMessageQueueService>();
+        if (queue is null) return;
+        if (!action.TurnBoundary)
+        {
+            await queue.FlushIfIdleAsync(action.AgentSessionId, ct);
+            return;
+        }
+        var result = await queue.OnTurnEndAsync(action.AgentSessionId, ct);
+        if (result.LateConfirmedChannelMessageIds.Count > 0
+            && scope.ServiceProvider.GetService<ChannelReplyDispatcher>() is { } channel)
+        {
+            var dispatched = await channel.OnLateConfirmedAsync(action.AgentSessionId, result.LateConfirmedChannelMessageIds, ct);
+            await WarnOnUnpublishedLateConfirmedChannelRepliesAsync(action.AgentSessionId,
+                result.LateConfirmedChannelMessageIds, dispatched, ct);
+        }
+    }
     // Resolved lazily from a scope for the same constructor-cycle reason as FlushQueueOnIdleAsync.
     private async Task FlushQueueAfterManualCompactionAsync(Guid sessionId, CancellationToken ct)
     {
@@ -477,7 +484,7 @@ public sealed class AgentSessionRuntime
             "Herdr status left blocked ({Previous} → {Current}) for session {SessionId}; nudging FlushIfIdleAsync",
             evt.PreviousAgentStatus, evt.AgentStatus, evt.SessionId);
         // Narrow flush only — re-checks IsWorkingAsync + S3 blocked gate before typing.
-        await FlushQueueAfterManualCompactionAsync(evt.SessionId, ct);
+        await Actions().RequestAsync(evt.SessionId, "status", ct);
     }
 
     /// <summary>A transcript entry that means "the agent stopped and is waiting" (see the callers of
@@ -946,56 +953,23 @@ public sealed class AgentSessionRuntime
     /// </summary>
     public async Task SyncTranscriptAsync(Guid sessionId, CancellationToken ct)
     {
-        PersistResult persisted;
         try
         {
             var snapshot = await _runnerClient.GetTranscriptAsync(sessionId, ct);
-            persisted = await PersistTranscriptAsync(sessionId, snapshot.Entries);
+            await PersistTranscriptAsync(sessionId, snapshot.Entries, ct);
+            await Actions().RequestAsync(sessionId, "catchup", ct);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Session is not live in the runner (or runner unavailable) — the DB still holds whatever streamed.
             _logger.LogDebug(ex, "Transcript sync skipped for session {SessionId}", sessionId);
-            return;
         }
-
-        // CARD-0491: a Sent refinement with a null verdict confirms from a complete UserPrompt
-        // that this persist just stored. The live path confirms a newly stored UserPrompt
-        // (CARD-1170); this remains the catch-up when that event was missed. Before settlement
-        // and before the boundary flush, so a cancelled TurnEnd still flushes a pending row,
-        // and a later prompt can confirm the Sent one.
-        await ConfirmRefinementDeliveriesAsync(sessionId, ct);
-
-        using (var rulesScope = _scopeFactory.CreateScope())
-        {
-            var rules = rulesScope.ServiceProvider.GetService<GrokRulesRefreshService>();
-            if (rules is not null) await rules.ReconcileAsync(sessionId, ct);
-        }
-
-        // CARD-0288: catch-up is the settlement path for a report-boundary TurnEnd that only
-        // ever arrived via backfill. The live re-emission then dedups as seen and never flushes.
-        // Settlement is its own try/catch and is NOT gated on AddedTurnBoundary — a previous
-        // partial persist (or a live event that stored the uuid without acting) still has to
-        // settle an open task. FlushQueueOnIdleAsync re-checks IsWorkingAsync itself, so a
-        // mid-turn sync stays a no-op for the queue half; do not add that idle gate here.
-        await TryCatchUpSettlementAsync(sessionId, persisted.AddedTurnBoundary, ct);
-
-        // A boundary that arrives via SYNC must trigger the same turn-end actions a live one does.
-        // The live path won't cover it: when the synced row lands first, the later live re-emission
-        // (if any) dedups as "seen" and never flushes — a TurnEnd missed during a server restart
-        // then strands every WhenIdle delivery until the next real turn (live miss 2026-08-08).
-        if (persisted.AddedTurnBoundary)
-            await FlushQueueOnIdleAsync(sessionId, ct);
-        else if (persisted.AddedAssistantText)
-            await DispatchChannelRepliesAsync(sessionId, ct);
-
-        // A MANUAL compaction boundary is a turn end too, and it can arrive ONLY via backfill —
-        // same argument as the TurnEnd case above. It gets the NARROW flush, never the turn-end
-        // path: a compaction is not a report to settle a task against (CARD-0041).
-        if (persisted.AddedManualCompactBoundary)
-            await FlushQueueAfterManualCompactionAsync(sessionId, ct);
     }
 
+    private SessionRuntimeActionCoordinator Actions()
+    {
+        using var scope = _scopeFactory.CreateScope();
+        return scope.ServiceProvider.GetRequiredService<SessionRuntimeActionCoordinator>();
+    }
     /// <summary>
     /// CARD-0288: if this session still has an open task, hand catch-up to settlement in its own
     /// try/catch so a throw in channel/review/queue flush cannot skip it. No-op when the reply
@@ -1075,17 +1049,18 @@ public sealed class AgentSessionRuntime
             (_, existing) => existing with { LastFailedAtUtc = now, Failures = existing.Failures + 1, Detail = detail });
     }
 
-    internal async Task<PersistResult> PersistTranscriptAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries)
+    internal async Task<PersistResult> PersistTranscriptAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries, CancellationToken ct = default)
     {
         if (entries.Count == 0) return PersistResult.Empty;
         try
         {
-            using var lease = _states is null ? null : await _states.BeginWriteAsync(sessionId, CancellationToken.None);
-            var result = await PersistTranscriptCoreAsync(sessionId, entries);
+            using var lease = await (_states ?? throw new InvalidOperationException("Transcript ingestion requires SessionStateStore.")).BeginWriteAsync(sessionId, ct);
+            var result = await PersistTranscriptCoreAsync(sessionId, entries, ct: ct);
             await PublishCommittedAsync(lease, result);
+            Actions().Hint(sessionId);
             return result;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             RecordTranscriptPersistFailure(sessionId, PersistFailureDetail(ex));
             _logger.LogWarning(ex, "Transcript state unavailable for session {SessionId}", sessionId);
@@ -1105,7 +1080,7 @@ public sealed class AgentSessionRuntime
     /// <summary>The synthetic append shares serialization, persistence and publication with runner ingestion.</summary>
     internal async Task<bool> WriteRestartBoundaryIfInterruptedAsync(Guid sessionId, CancellationToken ct)
     {
-        using var lease = _states is null ? null : await _states.BeginWriteAsync(sessionId, ct);
+        using var lease = await (_states ?? throw new InvalidOperationException("Transcript ingestion requires SessionStateStore.")).BeginWriteAsync(sessionId, ct);
         bool working;
         if (lease is not null) working = lease.Snapshot.Working;
         else
@@ -1118,18 +1093,20 @@ public sealed class AgentSessionRuntime
         var boundary = new SessionRunnerTranscriptEvent(sessionId, 0, TranscriptKinds.SessionRestartBoundary,
             Guid.NewGuid().ToString("D"), null, _timeProvider.GetUtcNow(), "system",
             "Session relaunched; the previous turn had been interrupted mid-flight.", null, null, null, null, null);
-        var result = await PersistTranscriptCoreAsync(sessionId, [boundary]);
+        var result = await PersistTranscriptCoreAsync(sessionId, [boundary], ct: ct);
         await PublishCommittedAsync(lease, result);
+        Actions().Hint(sessionId);
         return result.LastStoredSeq is not null;
     }
 
     private async Task<PersistResult> PersistTranscriptCoreAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries,
-        RecoveryObservation? expectedRecovery = null)
+        RecoveryObservation? expectedRecovery = null, CancellationToken ct = default)
     {
         using var observation = new RuntimePhase(_logger, _timeProvider, sessionId, "transcript.persist");
         if (entries.Count == 0)
             return PersistResult.Empty;
 
+        var originalEntries = entries;
         entries = SanitizeEntries(entries);
 
         try
@@ -1141,7 +1118,7 @@ public sealed class AgentSessionRuntime
 
             // FK safety: only persist for sessions the DB actually knows about (skips test/transient ids).
             var session = await db.AgentSessions.Where(s => s.Id == sessionId)
-                .Select(s => new { s.StartedAt }).FirstOrDefaultAsync();
+                .Select(s => new { s.StartedAt }).FirstOrDefaultAsync(ct);
             if (session is null)
                 return PersistResult.Empty with { RecoveryFenceRejection = expectedRecovery is null ? null : "ownership_changed_at_commit" };
 
@@ -1163,7 +1140,7 @@ public sealed class AgentSessionRuntime
                     .TagWith("session-state.identity")
                     .Where(t => t.AgentSessionId == sessionId && t.Uuid != null && uuidBatch.Contains(t.Uuid!))
                     .Select(t => new { t.Uuid, t.Kind })
-                    .ToListAsync();
+                    .ToListAsync(ct);
                 seenUuids.UnionWith(existing.Select(x => (x.Uuid!, x.Kind)));
             }
             var incomingSeqs = entries.Where(e => e.Uuid is null).Select(e => e.Sequence).ToHashSet();
@@ -1172,7 +1149,7 @@ public sealed class AgentSessionRuntime
                 : (await db.TranscriptEntries
                         .Where(t => t.AgentSessionId == sessionId && incomingSeqs.Contains(t.Sequence))
                         .Select(t => t.Sequence)
-                        .ToListAsync())
+                        .ToListAsync(ct))
                     .ToHashSet();
 
             // Stored sequences stay strictly monotonic per SESSION: a new tailer generation's
@@ -1181,12 +1158,13 @@ public sealed class AgentSessionRuntime
             // relaunches without schema changes.
             var maxSeq = await db.TranscriptEntries
                 .Where(t => t.AgentSessionId == sessionId)
-                .MaxAsync(t => (long?)t.Sequence) ?? 0;
+                .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
 
             var now = SessionGeneration.Normalize(_timeProvider.GetUtcNow().UtcDateTime);
             var pending = new List<(TranscriptEntry Row, SessionRunnerTranscriptEvent Source)>();
-            foreach (var e in entries)
+            for (var sourceIndex = 0; sourceIndex < entries.Count; sourceIndex++)
             {
+                var e = entries[sourceIndex];
                 if (e.Uuid is not null)
                 {
                     if (!seenUuids.Add((e.Uuid, e.Kind)))
@@ -1230,8 +1208,10 @@ public sealed class AgentSessionRuntime
                     CreatedAt = now,
                 };
                 db.TranscriptEntries.Add(row);
-                pending.Add((row, e));
+                pending.Add((row, originalEntries[sourceIndex]));
             }
+
+            await AdmitActionsAsync(db, sessionId, pending, session.StartedAt, ct);
 
             // Checked recovery owns one SQL fence through every batch/fallback save. The
             // lifecycle's UPDATE/DELETE conflicts with this row lock even when it does not
@@ -1240,7 +1220,7 @@ public sealed class AgentSessionRuntime
             // Prepare identities first, then revalidate inside this transaction before any
             // INSERT. Publication happens in the caller only after this transaction commits.
             await using var recoveryTransaction = expectedRecovery is null
-                ? null : await db.Database.BeginTransactionAsync();
+                ? null : await db.Database.BeginTransactionAsync(ct);
             if (expectedRecovery is not null)
             {
                 await SessionMessageQueueService.LockAgentSessionRowAsync(db, sessionId, CancellationToken.None);
@@ -1264,23 +1244,23 @@ public sealed class AgentSessionRuntime
             try
             {
                 using var save = new RuntimePhase(_logger, _timeProvider, sessionId, "transcript.save", storedSequence: maxSeq);
-                await SaveTrackedChangesAsync(db, sessionId, closesQuestion);
+                await SaveTrackedChangesAsync(db, sessionId, closesQuestion, ct);
                 save.Completed();
             }
             catch (DbUpdateException batchFailure)
             {
                 db.ChangeTracker.Clear();
-                var fallback = await PersistRowsIndividuallyAsync(db, sessionId, pending, batchFailure);
-                if (recoveryTransaction is not null) await recoveryTransaction.CommitAsync();
+                var fallback = await PersistRowsIndividuallyAsync(db, sessionId, pending, batchFailure, session.StartedAt, ct);
+                if (recoveryTransaction is not null) await recoveryTransaction.CommitAsync(ct);
                 return fallback with { AcceptedGeneration = session.StartedAt };
             }
 
-            if (recoveryTransaction is not null) await recoveryTransaction.CommitAsync();
+            if (recoveryTransaction is not null) await recoveryTransaction.CommitAsync(ct);
             _persistFailures.TryRemove(sessionId, out _);
             return ResultFrom(pending.Select(p => p.Source), pending.Max(p => p.Row.Sequence))
                 with { CommittedRows = pending.Select(p => p.Row).ToArray(), AcceptedGeneration = session.StartedAt };
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             RecordTranscriptPersistFailure(sessionId, PersistFailureDetail(ex));
             _logger.LogWarning(ex, "Failed to persist transcript entries for session {SessionId}", sessionId);
@@ -1288,11 +1268,29 @@ public sealed class AgentSessionRuntime
         }
     }
 
+    private static async Task AdmitActionsAsync(AppDbContext db, Guid sessionId,
+        List<(TranscriptEntry Row, SessionRunnerTranscriptEvent Source)> rows, DateTime generation, CancellationToken ct)
+    {
+        var apiIds = rows.Where(p => p.Row.Kind == TranscriptKinds.TurnEnd && p.Row.ApiCallId != null)
+            .Select(p => p.Row.ApiCallId!).Distinct().ToArray();
+        var seenApis = (await db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == sessionId
+            && t.Kind == TranscriptKinds.TurnEnd && t.ApiCallId != null && apiIds.Contains(t.ApiCallId))
+            .Select(t => t.ApiCallId!).ToListAsync(ct)).ToHashSet(StringComparer.Ordinal);
+        foreach (var (row, source) in rows)
+        {
+            // Classification is based on the final stored row, including safe-stub fallback.
+            var boundary = IsTurnBoundary(TranscriptUiProjection.Stored(row, row.Sequence));
+            if (row.Kind == TranscriptKinds.TurnEnd && row.ApiCallId is { } api)
+                boundary &= seenApis.Add(api);
+            SessionRuntimeActionCoordinator.Admit(db, row, source, generation, boundary, row.CreatedAt);
+        }
+    }
+
     private async Task<PersistResult> PersistRowsIndividuallyAsync(
         AppDbContext db,
         Guid sessionId,
         List<(TranscriptEntry Row, SessionRunnerTranscriptEvent Source)> rows,
-        DbUpdateException batchFailure)
+        DbUpdateException batchFailure, DateTime generation, CancellationToken ct)
     {
         var landed = new List<SessionRunnerTranscriptEvent>();
         var committed = new List<TranscriptEntry>();
@@ -1302,9 +1300,10 @@ public sealed class AgentSessionRuntime
         foreach (var (row, source) in rows)
         {
             db.TranscriptEntries.Add(row);
+            await AdmitActionsAsync(db, sessionId, [(row, source)], generation, ct);
             try
             {
-                await SaveTrackedChangesAsync(db, sessionId, await RowClosesOpenQuestionAsync(db, sessionId, row));
+                await SaveTrackedChangesAsync(db, sessionId, await RowClosesOpenQuestionAsync(db, sessionId, row), ct);
                 committed.Add(row);
                 landed.Add(source);
                 lastStoredSeq = lastStoredSeq is { } seq && seq > row.Sequence ? seq : row.Sequence;
@@ -1337,9 +1336,10 @@ public sealed class AgentSessionRuntime
                 var detail = PersistFailureDetail(rowFailure);
                 ApplyPersistStub(row, detail);
                 db.TranscriptEntries.Add(row);
+                await AdmitActionsAsync(db, sessionId, [(row, source)], generation, ct);
                 try
                 {
-                    await SaveTrackedChangesAsync(db, sessionId, await RowClosesOpenQuestionAsync(db, sessionId, row));
+                    await SaveTrackedChangesAsync(db, sessionId, await RowClosesOpenQuestionAsync(db, sessionId, row), ct);
                     committed.Add(row);
                     landed.Add(source);
                     lastStoredSeq = lastStoredSeq is { } seq && seq > row.Sequence ? seq : row.Sequence;
@@ -1374,21 +1374,21 @@ public sealed class AgentSessionRuntime
     /// Saves tracked rows. A question closure takes <see cref="SessionMessageQueueService.LockAgentSessionRowAsync"/>
     /// for the save's transaction so an overlay insert cannot commit between its unlocked read and its insert.
     /// </summary>
-    private static async Task SaveTrackedChangesAsync(AppDbContext db, Guid sessionId, bool lockSession)
+    private static async Task SaveTrackedChangesAsync(AppDbContext db, Guid sessionId, bool lockSession, CancellationToken ct)
     {
         // Checked recovery already holds the session row in its append transaction.
         // EF's savepoint rollback keeps that fence across batch and row fallbacks.
         if (db.Database.CurrentTransaction is not null)
         {
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(ct);
             return;
         }
-        await using var tx = lockSession ? await db.Database.BeginTransactionAsync() : null;
+        await using var tx = lockSession ? await db.Database.BeginTransactionAsync(ct) : null;
         if (lockSession)
             await SessionMessageQueueService.LockAgentSessionRowAsync(db, sessionId, CancellationToken.None);
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(ct);
         if (tx is not null)
-            await tx.CommitAsync();
+            await tx.CommitAsync(ct);
     }
 
     private static async Task<bool> BatchClosesOpenQuestionAsync(
@@ -1580,7 +1580,7 @@ public sealed class AgentSessionRuntime
         return innermost.GetType().Name;
     }
 
-    private static object ToTranscriptPayload(SessionRunnerTranscriptEvent e) => new
+    internal static object ToTranscriptPayload(SessionRunnerTranscriptEvent e) => new
     {
         sessionId = e.SessionId,
         sequence = e.Sequence,
