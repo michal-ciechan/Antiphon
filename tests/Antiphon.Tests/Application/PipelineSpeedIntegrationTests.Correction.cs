@@ -102,7 +102,7 @@ public sealed partial class PipelineSpeedIntegrationTests
         {
             var target = await db.Cards.SingleAsync(c => c.Id == card);
             card = Guid.NewGuid(); db.Add(new Card { Id = card, BoardId = board, BoardColumnId = target.BoardColumnId,
-                Identifier = "CARD-9999", Title = "foreign" });
+                Identifier = variant == "session-card" ? "CARD-9998" : "CARD-9999", Title = "foreign" });
         }
         string actor;
         if (variant is "revoked" or "repository" or "board" or "capability")
@@ -178,7 +178,8 @@ public sealed partial class PipelineSpeedIntegrationTests
         using (inventory)
         {
             var relative = inventory.RootElement.GetProperty("files").EnumerateArray()
-                .Select(e => e.GetProperty("relativePath").GetString()!).Single(p => p.EndsWith("manifest.resolved.yaml"));
+                .Select(e => e.GetProperty("relativePath").GetString()!).Single(p => p ==
+                    $".antiphon/checkpoints/{inventory.RootElement.GetProperty("cleanCheckpointRun").GetString()}/manifest.resolved.yaml");
             await File.AppendAllTextAsync(Path.Combine(tampered.ProducerRoot, relative), "\n# tampered fixture\n");
         }
         using var corrupted = await tampered.PostAsync(tampered.Request);
