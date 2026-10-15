@@ -59,7 +59,9 @@ public sealed class NativeWindowsFixtureGateTests
                 .SingleOrDefault(x => x.Variable.Identifier.ValueText == "NativeWindowsReason");
             reason.Variable.ShouldNotBeNull("c588-reason-const: " + site.Class);
             reason.Field.Modifiers.Any(SyntaxKind.ConstKeyword).ShouldBeTrue("c588-reason-const: " + site.Class);
-            (reason.Variable.Initializer?.Value as LiteralExpressionSyntax)?.Token.ValueText.ShouldBe(site.Reason, "c588-reason-literal: " + site.Class);
+            var literal = reason.Variable.Initializer?.Value as LiteralExpressionSyntax;
+            literal.ShouldNotBeNull("c588-reason-literal: " + site.Class);
+            literal.Token.ValueText.ShouldBe(site.Reason, "c588-reason-literal: " + site.Class);
             var method = type.Members.OfType<MethodDeclarationSyntax>().Single(m => m.Identifier.ValueText == site.Method);
             SyntaxFactory.AreEquivalent(method.Body?.Statements.FirstOrDefault(),
                 SyntaxFactory.ParseStatement("NativeWindowsGate.Require(NativeWindowsReason);"))
