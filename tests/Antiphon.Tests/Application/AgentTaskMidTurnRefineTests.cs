@@ -639,6 +639,7 @@ public sealed class AgentTaskMidTurnRefineTests
         summary.InterruptWritten.ShouldBe("written");
         summary.RefinementDelivered.ShouldBe("pending");
         await IngestAsync(fx, TurnEnd(fx.SessionId, 42, TranscriptKinds.StopReasons.Cancelled));
+        await fx.Scope.Actions.DrainPageAsync(fx.SessionId, CancellationToken.None);
         await using var db = CreateContext();
         var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == fx.SessionId);
         row.Status.ShouldBe(QueuedMessageStatus.Sent);
