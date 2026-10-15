@@ -257,6 +257,9 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
             .TryAsync(EndpointId, runId, CancellationToken.None);
     }
 
+    /// <summary>CARD-1230: names a fixture root under the OS temp directory. Not yet enforced.</summary>
+    internal static string? TempCheckoutRefusal(string root, string temp) => null;
+
     public async Task<string?> SentinelAsync() => File.Exists(Sentinel) ? await File.ReadAllTextAsync(Sentinel) : null;
     public async Task<int> IntentsAsync()
     {

@@ -108,6 +108,16 @@ public sealed class CardDoneWorktreeCleanupTests
     }
 
     [Test]
+    public void C1230_TempCheckoutIsRefusedByName()
+    {
+        // AgentReportStore refuses a report root under the temp directory, so the fixture must say so up front.
+        CompletedCardCleanupFixture.TempCheckoutRefusal("/tmp/review/.antiphon/test-output/c1017/ab", "/tmp/").ShouldBe("c1017_checkout_under_temp");
+        CompletedCardCleanupFixture.TempCheckoutRefusal("/tmp/review/.antiphon/test-output/c1017/ab", "/tmp").ShouldBe("c1017_checkout_under_temp");
+        CompletedCardCleanupFixture.TempCheckoutRefusal("/work/worktrees/t/.antiphon/test-output/c1017/ab", "/tmp/").ShouldBeNull();
+        CompletedCardCleanupFixture.TempCheckoutRefusal("/tmpx/t/.antiphon/test-output/c1017/ab", "/tmp/").ShouldBeNull();
+    }
+
+    [Test]
     public async Task C1017_UniqueOrdinaryOwner()
     {
         foreach (var vector in new[] { "exact-path", "short-prefix" })
