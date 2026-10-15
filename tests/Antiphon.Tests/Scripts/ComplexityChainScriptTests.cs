@@ -33,7 +33,7 @@ public sealed class ComplexityChainScriptTests
         var clear = await RunAsync(server, "clear", "-Role", "Mutation", "-Complexity", "Hard");
         clear.ExitCode.ShouldBe(0, clear.Output);
         server.LastMethod.ShouldBe("DELETE");
-        server.LastPath.ShouldBe("/api/complexity-chains/Mutation/Hard");
+        server.LastPath.ShouldBe($"/api/complexity-chains/Mutation/Hard?concurrencyToken={EmptyToken}");
     }
 
     [Test]
@@ -56,6 +56,7 @@ public sealed class ComplexityChainScriptTests
         candidates[0].GetProperty("agentKind").GetString().ShouldBe("ClaudeCode");
         candidates[0].GetProperty("modelLevel").GetString().ShouldBe("Frontier");
         candidates[2].GetProperty("agentKind").GetString().ShouldBe("Grok");
+        body.RootElement.GetProperty("concurrencyToken").GetString().ShouldBe(StubHardToken);
     }
 
     [Test]
@@ -93,7 +94,7 @@ public sealed class ComplexityChainScriptTests
 
         run.ExitCode.ShouldBe(0, run.Output);
         server.LastMethod.ShouldBe("DELETE");
-        server.LastPath.ShouldBe("/api/complexity-chains/any/Hard");
+        server.LastPath.ShouldBe($"/api/complexity-chains/any/Hard?concurrencyToken={StubHardToken}");
         run.Output.ShouldContain("cleared Hard");
     }
 
@@ -129,7 +130,7 @@ public sealed class ComplexityChainScriptTests
 
         run.ExitCode.ShouldBe(0, run.Output);
         server.LastMethod.ShouldBe("DELETE");
-        server.LastPath.ShouldBe("/api/complexity-chains/Plan/Hard");
+        server.LastPath.ShouldBe($"/api/complexity-chains/Plan/Hard?concurrencyToken={EmptyToken}");
         run.Output.ShouldContain("cleared Plan/Hard");
     }
 
@@ -152,10 +153,11 @@ public sealed class ComplexityChainScriptTests
             "-Candidates", "Codex/Frontier", "-Reason", "r");
         run.ExitCode.ShouldBe(0, run.Output);
         RequestLines(server).ShouldBe(new[] {
+            "GET /api/complexity-chains",
             "PUT /api/complexity-chains/Review/Hard",
             "PUT /api/complexity-chains/Review/Medium",
             "PUT /api/complexity-chains/Review/Easy" });
-        foreach (var request in server.Requests)
+        foreach (var request in server.Requests.Where(r => r.Method == "PUT"))
         {
             var body = request.Body!.Value;
             body.GetProperty("provenance").GetString().ShouldBe("Human");
@@ -177,8 +179,8 @@ public sealed class ComplexityChainScriptTests
             var fromFile = await RunAsync(fileServer, "set", "-Role", "Review", "-Complexity", "All",
                 "-Candidates", "Codex/Frontier", "-ReasonFile", reasonFile);
             fromFile.ExitCode.ShouldBe(0, fromFile.Output);
-            fileServer.RequestCount.ShouldBe(3);
-            foreach (var request in fileServer.Requests)
+            fileServer.RequestCount.ShouldBe(4);
+            foreach (var request in fileServer.Requests.Where(r => r.Method == "PUT"))
                 request.Body!.Value.GetProperty("reason").GetString().ShouldBe("review café\nsecond line");
             using var invalid = new ScriptedApi();
             var conflict = await RunAsync(invalid, "set", "-Complexity", "All", "-Candidates", "Codex/Frontier",
@@ -200,6 +202,7 @@ public sealed class ComplexityChainScriptTests
             "-Candidates", "Codex/Frontier");
         run.ExitCode.ShouldBe(1, run.Output);
         RequestLines(server).ShouldBe(new[] {
+            "GET /api/complexity-chains",
             "PUT /api/complexity-chains/Review/Hard",
             "PUT /api/complexity-chains/Review/Medium" });
         server.Cells.Keys.ShouldBe(new[] { "Review/Hard" });
@@ -238,6 +241,7 @@ public sealed class ComplexityChainScriptTests
             "-Candidates", "Codex/Frontier", "-ClearStagePin");
         run.ExitCode.ShouldBe(0, run.Output);
         RequestLines(server).ShouldBe(new[] {
+            "GET /api/complexity-chains",
             "PUT /api/complexity-chains/Review/Hard",
             "PUT /api/complexity-chains/Review/Medium",
             "PUT /api/complexity-chains/Review/Easy",
@@ -250,7 +254,7 @@ public sealed class ComplexityChainScriptTests
         var noPin = await RunAsync(absent, "set", "-Role", "Review", "-Complexity", "All",
             "-Candidates", "Codex/Frontier", "-ClearStagePin");
         noPin.ExitCode.ShouldBe(0, noPin.Output);
-        absent.RequestCount.ShouldBe(4);
+        absent.RequestCount.ShouldBe(5);
         absent.Requests.Last().Method.ShouldBe("GET");
         noPin.Output.ShouldContain("No active routing pin for that grain.");
 
@@ -278,6 +282,7 @@ public sealed class ComplexityChainScriptTests
             "-Candidates", "Codex/Frontier", "-ClearStagePin");
         run.ExitCode.ShouldBe(1, run.Output);
         RequestLines(server).ShouldBe(new[] {
+            "GET /api/complexity-chains",
             "PUT /api/complexity-chains/Review/Hard",
             "PUT /api/complexity-chains/Review/Medium",
             "PUT /api/complexity-chains/Review/Easy" });
@@ -320,13 +325,60 @@ public sealed class ComplexityChainScriptTests
         var run = await RunAsync(server, "clear", "-Role", "Review", "-Complexity", "All");
         run.ExitCode.ShouldBe(0, run.Output);
         RequestLines(server).ShouldBe(new[] {
-            "DELETE /api/complexity-chains/Review/Hard",
-            "DELETE /api/complexity-chains/Review/Medium",
-            "DELETE /api/complexity-chains/Review/Easy" });
+            "GET /api/complexity-chains",
+            $"DELETE /api/complexity-chains/Review/Hard?concurrencyToken={EmptyToken}",
+            $"DELETE /api/complexity-chains/Review/Medium?concurrencyToken={EmptyToken}",
+            $"DELETE /api/complexity-chains/Review/Easy?concurrencyToken={EmptyToken}" });
         run.Output.ShouldContain("cleared Review/Hard");
         run.Output.ShouldContain("cleared Review/Medium");
         run.Output.ShouldContain("cleared Review/Easy");
     }
+
+    [Test]
+    public async Task Set_and_clear_send_each_cells_token_from_one_read_and_stop_on_stale()
+    {
+        using var server = new ScriptedApi();
+        var seed = await RunAsync(server, "set", "-Role", "Review", "-Complexity", "Hard", "-Candidates", "Grok/Frontier");
+        seed.ExitCode.ShouldBe(0, seed.Output);
+        var hardToken = server.Tokens["Review/Hard"];
+
+        var all = await RunAsync(server, "set", "-Role", "Review", "-Complexity", "All", "-Candidates", "Codex/Frontier");
+        all.ExitCode.ShouldBe(0, all.Output);
+        var puts = server.Requests.Skip(2).ToArray();
+        puts.Select(r => $"{r.Method} {r.Path}").ShouldBe(new[] {
+            "GET /api/complexity-chains",
+            "PUT /api/complexity-chains/Review/Hard",
+            "PUT /api/complexity-chains/Review/Medium",
+            "PUT /api/complexity-chains/Review/Easy" });
+        puts[1].Body!.Value.GetProperty("concurrencyToken").GetString().ShouldBe(hardToken);
+        puts[2].Body!.Value.GetProperty("concurrencyToken").GetString().ShouldBe(EmptyToken);
+        puts[3].Body!.Value.GetProperty("concurrencyToken").GetString().ShouldBe(EmptyToken);
+
+        var tokens = new Dictionary<string, string>(server.Tokens);
+        var clear = await RunAsync(server, "clear", "-Role", "Review", "-Complexity", "All");
+        clear.ExitCode.ShouldBe(0, clear.Output);
+        RequestLines(server).Skip(6).ShouldBe(new[] {
+            "GET /api/complexity-chains",
+            $"DELETE /api/complexity-chains/Review/Hard?concurrencyToken={tokens["Review/Hard"]}",
+            $"DELETE /api/complexity-chains/Review/Medium?concurrencyToken={tokens["Review/Medium"]}",
+            $"DELETE /api/complexity-chains/Review/Easy?concurrencyToken={tokens["Review/Easy"]}" });
+
+        using var stale = new ScriptedApi();
+        stale.Respond("PUT", "/api/complexity-chains/Review/Medium", 409,
+            """{"detail":"The Review/Medium chain changed since it was read","code":"complexity_chain_stale"}""");
+        var refused = await RunAsync(stale, "set", "-Role", "Review", "-Complexity", "All", "-Candidates", "Codex/Frontier");
+        refused.ExitCode.ShouldBe(1, refused.Output);
+        RequestLines(stale).ShouldBe(new[] {
+            "GET /api/complexity-chains",
+            "PUT /api/complexity-chains/Review/Hard",
+            "PUT /api/complexity-chains/Review/Medium" });
+        refused.Output.ShouldContain("Hard written; Medium refused:");
+        refused.Output.ShouldContain("code complexity_chain_stale");
+        refused.Output.ShouldContain("Easy not written");
+    }
+
+    private const string EmptyToken = "00000000-0000-0000-0000-000000000000";
+    private const string StubHardToken = "11111111-2222-3333-4444-555555555555";
 
     private static string[] RequestLines(ScriptedApi server) =>
         server.Requests.Select(request => $"{request.Method} {request.Path}").ToArray();
@@ -376,7 +428,7 @@ public sealed class ComplexityChainScriptTests
 
         private const string ListJson =
             """
-            {"chains":[{"complexity":"Hard","candidates":[{"agentKind":"ClaudeCode","modelLevel":"Frontier","alias":"fable","availableNow":true,"unavailableReason":null}],"provenance":"Human","source":"pin","reason":"test","notAfter":null,"updatedAt":"2026-09-02T00:00:00Z"},{"complexity":"Medium","candidates":[],"provenance":null,"source":"config","reason":null,"notAfter":null,"updatedAt":null},{"complexity":"Easy","candidates":[],"provenance":null,"source":"config","reason":null,"notAfter":null,"updatedAt":null}]}
+            {"chains":[{"complexity":"Hard","candidates":[{"agentKind":"ClaudeCode","modelLevel":"Frontier","alias":"fable","availableNow":true,"unavailableReason":null}],"provenance":"Human","source":"pin","reason":"test","notAfter":null,"updatedAt":"2026-09-02T00:00:00Z","concurrencyToken":"11111111-2222-3333-4444-555555555555"},{"complexity":"Medium","candidates":[],"provenance":null,"source":"config","reason":null,"notAfter":null,"updatedAt":null},{"complexity":"Easy","candidates":[],"provenance":null,"source":"config","reason":null,"notAfter":null,"updatedAt":null}]}
             """;
 
     }
