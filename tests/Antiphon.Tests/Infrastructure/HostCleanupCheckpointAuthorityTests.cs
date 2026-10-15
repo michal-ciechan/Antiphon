@@ -113,6 +113,8 @@ public sealed class HostCleanupCheckpointAuthorityTests
                 case "directory-inode": f.Io.Nodes[f.Tool].Stat = f.Io.Nodes[f.Tool].Stat with { Inode = 900 }; expected = "tool-authority-root-mismatch"; break;
                 case "directory-created":
                     record.Root = record.Root with { Inode = 0 }; Rewrite(f, record);
+                    ToolCopyAuthority.Load(f.Run, f.Owner, out var fallbackRefusal, fresh).ShouldNotBeNull(label + ": unchanged portable identity");
+                    fallbackRefusal.ShouldBeNull(label);
                     f.Io.Nodes[f.Tool].CreatedUtc = f.Io.Nodes[f.Tool].CreatedUtc.AddTicks(1);
                     expected = "tool-authority-root-mismatch"; break;
                 case "missing": f.Io.Nodes.Remove(AuthorityPath(f)); expected = "tool-authority-unreadable"; break;
@@ -314,6 +316,8 @@ public sealed class HostCleanupCheckpointAuthorityTests
         var run = CheckpointApp.CreateRun(HostCleanupToolFixture.Manifest(), new() { Branch = "virtual" }, f.Files.Parent, f.Runtime());
         f.Io.Count("mkdir-exclusive", run).ShouldBe(1, Label(method, "create"));
         await f.StartAsync();
+        f.Io.Count("mkdir-exclusive", f.Tool).ShouldBe(1, Label(method, "start"));
+        f.Io.Count("copy", f.Tool + "/Antiphon.Checkpoints.dll").ShouldBe(1, Label(method, "start"));
         f.Io.FileExists(AuthorityPath(f)).ShouldBeTrue(Label(method, "start"));
         ExecutorOwnershipStore.Write(f.Run, f.Dead, f.Context);
         f.Io.Count("move", f.Run + "/executor-ownership.json").ShouldBe(1, Label(method, "ack"));
