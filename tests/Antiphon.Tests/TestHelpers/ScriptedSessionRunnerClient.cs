@@ -14,6 +14,13 @@ namespace Antiphon.Tests.TestHelpers;
         public TaskCompletionSource Streaming { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public void Produce(SessionRunnerTranscriptEvent entry) => _events.Writer.TryWrite(new("transcript", entry.SessionId, Transcript: entry));
 
+        // Match the HTTP iterator: offer the first payload on the ready marker, then its copy.
+        public void ProduceSubscriptionReady(SessionRunnerTranscriptEvent entry)
+        {
+            _events.Writer.TryWrite(new("transcript", entry.SessionId, Transcript: entry, SubscriptionReady: true));
+            Produce(entry);
+        }
+
         public void ProduceExit(SessionRunnerExitedEvent exited) =>
             _events.Writer.TryWrite(new(SessionRunnerEventNames.SessionExited, exited.SessionId, Exited: exited));
 

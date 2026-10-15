@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Data.Common;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -9,9 +10,12 @@ using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Tests.TestHelpers;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
+using Antiphon.Server.Infrastructure.Data;
 using Shouldly;
 using TUnit.Core;
 
@@ -32,10 +36,13 @@ public class SessionRunnerEventPumpTests
         var runner = new ScriptedSessionRunnerClient();
         var bus = new GatedEventBus();
         var trace = new PhaseLogger { ThrowDiagnostics = diagnosticsFail };
+        await using var store = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var h = await BridgeQueueHarness.CreateAsync(new()
         {
+            ConnectionString = store.ConnectionString,
             ConfigureServices = services =>
             {
+                AddStateStore(services);
                 services.AddSingleton<ISessionRunnerClient>(runner);
                 services.AddSingleton<IEventBus>(bus);
                 services.AddSingleton<AgentTaskReplyService>();
@@ -46,7 +53,7 @@ public class SessionRunnerEventPumpTests
         var second = Guid.NewGuid();
         var taskId = Guid.NewGuid();
         var owner = Guid.NewGuid();
-        await using (var db = BridgeQueueHarness.CreateContext())
+        await using (var db = h.CreateObserverContext())
         {
             db.AgentSessions.Add(new AgentSession { Id = second, Cwd = h.TempRoot, DefinitionName = "fake",
                 Status = SessionStatus.Running, AgentKind = AgentKind.ClaudeCode, CreatedAt = DateTime.UtcNow });
@@ -110,24 +117,28 @@ public class SessionRunnerEventPumpTests
             if (!reconnect) { runner.Produce(b); runner.Produce(bText); runner.Produce(bEnd); }
             try { await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
             {
-                await using var db = BridgeQueueHarness.CreateContext();
-                return persistedWhileBlocked = await db.TranscriptEntries.AnyAsync(e => e.Uuid == b.Uuid);
+                await using var db = h.CreateObserverContext();
+                var rows = await db.TranscriptEntries.Where(e => e.AgentSessionId == second)
+                    .OrderBy(e => e.Sequence).Select(e => e.Uuid).ToListAsync();
+                return persistedWhileBlocked = rows.SequenceEqual(new[] { b.Uuid, bText.Uuid, bEnd.Uuid })
+                    && await db.AgentTasks.AnyAsync(t => t.Id == taskId && t.Result != null);
             }); }
             catch (OperationCanceledException) { }
             release.Task.IsCompleted.ShouldBeFalse();
-            if (!reconnect) runner.Received.ShouldNotContain(second);
+            persistedWhileBlocked.ShouldBeTrue("B's ordered transcript and marked task must progress before A's effect is released");
+            if (!reconnect) runner.Received.ShouldContain(second);
         }
         finally
         {
             release.TrySetResult();
             await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
             {
-                await using var db = BridgeQueueHarness.CreateContext();
+                await using var db = h.CreateObserverContext();
                 return await db.TranscriptEntries.AnyAsync(e => e.Uuid == bEnd.Uuid);
             });
             await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
             {
-                await using var db = BridgeQueueHarness.CreateContext();
+                await using var db = h.CreateObserverContext();
                 return await db.AgentTasks.AnyAsync(t => t.Id == taskId && t.Result != null);
             });
             await pump.StopAsync(CancellationToken.None);
@@ -136,12 +147,203 @@ public class SessionRunnerEventPumpTests
             await File.WriteAllLinesAsync(Path.Combine(directory, $"{operation}-{reconnect}-{diagnosticsFail}.log"),
                 trace.Lines.Append($"B={second} uuid={b.Uuid} persistedWhileBlocked={persistedWhileBlocked}"));
         }
-        await using var settledDb = BridgeQueueHarness.CreateContext();
+        await using var settledDb = h.CreateObserverContext();
         (await settledDb.AgentTasks.SingleAsync(t => t.Id == taskId)).Result.ShouldNotBeNull(
             string.Join("\n", trace.Lines.Where(s => s.Contains("settle") || s.Contains("Exception"))));
         trace.Lines.ShouldContain(s => s.Contains(operation == "signalr-publish"
             ? "transcript.signalr-publish start" : "queue.delivery-confirm start"));
-        persistedWhileBlocked.ShouldBeFalse($"B Uuid {b.Uuid} missing while {operation} is held; original inline pump reproduction");
+        persistedWhileBlocked.ShouldBeTrue($"B Uuid {b.Uuid} must persist while {operation} is held");
+    }
+
+    private static void AddStateStore(IServiceCollection services)
+    {
+        services.AddSingleton(Options.Create(new SessionStateSettings()));
+        services.AddSingleton<SessionStateCommandMetrics>();
+        services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+        services.AddSingleton<SessionStateStore>();
+    }
+
+    [Test]
+    [Arguments("live")]
+    [Arguments("startup")]
+    [Arguments("subscription-ready")]
+    public async Task C1259_confirming_prompt_and_other_session_progress_before_confirmation(string ingress)
+    {
+        await using var store = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var runner = new ScriptedSessionRunnerClient();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 15, 12, 0, 0, TimeSpan.Zero));
+        var read = new ConfirmReadBarrier();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = store.ConnectionString,
+            TimeProvider = clock,
+            ConfigureDbContext = options => options.AddInterceptors(read),
+            ConfigureDeliveryVerification = v =>
+            {
+                v.TranscriptConfirmTimeoutSeconds = 30;
+                v.ReEnterIntervalSeconds = 7;
+                v.PollIntervalMs = 250;
+            },
+            ConfigureServices = services =>
+            {
+                AddStateStore(services);
+                services.AddSingleton<ISessionRunnerClient>(runner);
+            }
+        });
+        read.SessionId = h.SessionId;
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "prior prompt");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var state = h.Provider.GetRequiredService<SessionStateStore>();
+        var baseline = await state.ReadAsync(h.SessionId, CancellationToken.None);
+        baseline.LastSequence.ShouldBe(2);
+        baseline.Working.ShouldBeFalse();
+        var second = Guid.NewGuid();
+        await using (var db = h.CreateObserverContext())
+        {
+            db.AgentSessions.Add(new AgentSession { Id = second, Cwd = h.TempRoot, DefinitionName = "fake",
+                Status = SessionStatus.Running, AgentKind = AgentKind.ClaudeCode, CreatedAt = h.Now });
+            await db.SaveChangesAsync();
+        }
+        const string body = "C1259 complete ordinary first line\nC1259 distinctive second line";
+        var queued = await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle,
+            CancellationToken.None, deliverIfIdle: false);
+        var queueId = queued.Messages.Single().Id;
+        var boundary = Entry(h.SessionId, 3, TranscriptKinds.TurnEnd, null) with { Timestamp = clock.GetUtcNow() };
+        var confirming = Entry(h.SessionId, 4, TranscriptKinds.UserPrompt, body) with { Timestamp = clock.GetUtcNow() };
+        var b = new[] { Entry(second, 1, TranscriptKinds.UserPrompt, "other prompt"),
+            Entry(second, 2, TranscriptKinds.AssistantText, "other answer"),
+            Entry(second, 3, TranscriptKinds.TurnEnd, null) };
+        var submitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Adapter.OnSubmitted = actual =>
+        {
+            actual.ShouldBe(body);
+            read.Arm();
+            runner.Produce(confirming);
+            submitted.TrySetResult();
+            return Task.CompletedTask;
+        };
+        void Snapshots()
+        {
+            runner.Sessions = [new(h.SessionId, null, h.Now, "Running", null, AgentExitReason.Unknown, 3),
+                new(second, null, h.Now, "Running", null, AgentExitReason.Unknown, 3)];
+            runner.SetTranscript(new(h.SessionId, [boundary], 3));
+            runner.SetTranscript(new(second, b, 3));
+        }
+        if (ingress == "startup") Snapshots();
+        using var pump = new SessionRunnerEventPump(h.Provider.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new SessionRunnerSettings { Enabled = true }),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<SessionRunnerEventPump>.Instance, clock);
+        try
+        {
+            await pump.StartAsync(CancellationToken.None);
+            if (ingress != "startup")
+            {
+                await runner.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                if (ingress == "subscription-ready")
+                {
+                    Snapshots();
+                    runner.ProduceSubscriptionReady(b[2]);
+                }
+                else
+                {
+                    runner.Produce(boundary);
+                    foreach (var row in b) runner.Produce(row);
+                }
+            }
+            // Drive only pre-submit composer settling. Confirmation time stays below its first retry.
+            for (var i = 0; i < 100 && !submitted.Task.IsCompleted; i++)
+            {
+                clock.Advance(TimeSpan.FromMilliseconds(50));
+                await Task.Delay(20);
+            }
+            await submitted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await read.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            read.Hits.ShouldBe(1);
+            read.Baseline.ShouldBe(3);
+            read.CommandId.ShouldNotBe(Guid.Empty);
+            var persisted = false;
+            using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3)))
+            {
+                try
+                {
+                    while (!persisted)
+                    {
+                        await using var db = h.CreateObserverContext();
+                        var rows = await db.TranscriptEntries.Where(e => e.AgentSessionId == second)
+                            .OrderBy(e => e.Sequence).Select(e => e.Uuid).ToListAsync(deadline.Token);
+                        persisted = rows.SequenceEqual(b.Select(e => e.Uuid))
+                            && await db.TranscriptEntries.AnyAsync(e => e.AgentSessionId == h.SessionId
+                                && e.Uuid == confirming.Uuid && e.Text == body, deadline.Token);
+                        if (!persisted) await Task.Delay(10, deadline.Token);
+                    }
+                }
+                catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+            }
+            read.Release.Task.IsCompleted.ShouldBeFalse();
+            persisted.ShouldBeTrue("A's complete prompt and B's ordered rows must commit while the real confirmation read is held");
+            (await state.ReadAsync(h.SessionId, CancellationToken.None)).LastSequence.ShouldBe(4);
+            (await state.ReadAsync(second, CancellationToken.None)).LastSequence.ShouldBe(3);
+            await using (var db = h.CreateObserverContext())
+                (await db.SessionQueuedMessages.SingleAsync(m => m.Id == queueId)).DeliveryVerdict.ShouldBeNull();
+            h.Adapter.SubmittedBodies.ShouldBe(new[] { body });
+            h.Adapter.Inputs.Count(i => i == "\r").ShouldBe(1);
+            h.Adapter.Inputs.Count(i => i.Contains(body, StringComparison.Ordinal)).ShouldBe(1);
+            h.Adapter.Inputs.ShouldContain("\u001b[200~" + body + "\u001b[201~");
+            read.Release.TrySetResult();
+            await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+            {
+                await using var db = h.CreateObserverContext();
+                return await db.SessionQueuedMessages.AnyAsync(m => m.Id == queueId
+                    && m.DeliveryVerdict == DeliveryVerdict.Delivered);
+            });
+            await using (var db = h.CreateObserverContext())
+            {
+                var message = await db.SessionQueuedMessages.SingleAsync(m => m.Id == queueId);
+                message.DeliveryAttempts.ShouldBe(1);
+                message.LastDeliveryBaselineSequence.ShouldBe(3);
+                (await db.TranscriptEntries.CountAsync(e => e.AgentSessionId == h.SessionId
+                    && e.Sequence > 3 && e.Kind == TranscriptKinds.UserPrompt && e.Text == body)).ShouldBe(1);
+            }
+            runner.SnapshotReads.Count.ShouldBe(ingress == "live" ? 0 : 2);
+            h.Adapter.Inputs.Count(i => i == "\r").ShouldBe(1);
+            read.Hits.ShouldBe(1);
+        }
+        finally
+        {
+            read.Release.TrySetResult();
+            await pump.StopAsync(CancellationToken.None);
+        }
+    }
+
+    private sealed class ConfirmReadBarrier : DbCommandInterceptor
+    {
+        private int _armed;
+        private int _hits;
+        public Guid SessionId { get; set; }
+        public Guid CommandId { get; private set; }
+        public long Baseline { get; private set; }
+        public int Hits => Volatile.Read(ref _hits);
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void Arm() => Volatile.Write(ref _armed, 1);
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Volatile.Read(ref _armed) != 1 || !command.CommandText.StartsWith("SELECT t.\"Text\"", StringComparison.Ordinal)
+                || !command.CommandText.Contains("\"Sequence\" >", StringComparison.Ordinal)
+                || !command.CommandText.Contains("'UserPrompt'", StringComparison.Ordinal)
+                || !command.Parameters.Cast<DbParameter>().Any(p => p.Value is Guid id && id == SessionId)
+                || Interlocked.CompareExchange(ref _armed, 2, 1) != 1)
+                return result;
+            CommandId = eventData.CommandId;
+            Baseline = Convert.ToInt64(command.Parameters.Cast<DbParameter>()
+                .Single(p => p.ParameterName.Contains("baselineSequence", StringComparison.Ordinal)).Value);
+            Interlocked.Increment(ref _hits);
+            Entered.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
+            return result;
+        }
     }
 
     [Test]
