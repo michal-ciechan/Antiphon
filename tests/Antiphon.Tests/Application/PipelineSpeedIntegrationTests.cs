@@ -118,7 +118,7 @@ public sealed class PipelineSpeedIntegrationTests
     }
 
     private static async Task RequireTableAsync(AppDbContext db, string table) =>
-        (await db.Database.SqlQueryInterpolated<int>($"SELECT count(*)::int AS \"Value\" FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = {table}")
+        (await db.Database.SqlQuery<int>($"SELECT count(*)::int AS \"Value\" FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = {table}")
             .SingleAsync()).ShouldBe(1, table + " migrated");
 
     // These entities deliberately have no navigation properties. Fill every scalar coordinate,
