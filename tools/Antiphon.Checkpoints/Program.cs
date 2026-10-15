@@ -224,7 +224,7 @@ public static class Program
         var started = await CheckpointApp.StartAsync(manifest, request, repo, (runtime.Output ?? Console.Out), runtime).ConfigureAwait(false);
         if (started.ExitCode != 0)
             return started.ExitCode;
-        if (runtime?.Wait is not null)
+        if (runtime.Wait is not null)
             return await runtime.Wait(started.RunDirectory).ConfigureAwait(false);
         var max = ParseDuration(options.Get("max-wait"));
         var heartbeat = ParseDuration(options.Get("heartbeat")) ?? TimeSpan.FromSeconds(60);
@@ -325,7 +325,7 @@ public static class Program
                 var identity = ExecutorOwnershipStore.Read(run, context, runtime.CancellationToken)?.Executor ?? RunOwnershipStore.Read(run, context, runtime.CancellationToken)?.Launched;
                 if (identity is null)
                     return ExitCodes.StillRunning;
-                if ((runtime?.ProcessProbe ?? new ProcessIdentityProbe(context)).Observe(identity).Verdict != ProcessVerdict.AliveSame)
+                if ((runtime.ProcessProbe ?? new ProcessIdentityProbe(context)).Observe(identity).Verdict != ProcessVerdict.AliveSame)
                     return ExitCodes.StillRunning;
                 if (!(runtime?.ProcessControl ?? new ProcessControl()).StopAndWait(identity, TimeSpan.FromSeconds(10)))
                 {
@@ -595,9 +595,9 @@ public static class Program
         {
             var path = Path.IsPathRooted(plan) ? plan : Path.Combine(repo, plan);
             var at = path.IndexOf('@');
-            if (at > 0 && File.Exists(path[..at]))
+            if (at > 0 && (context ?? CheckpointCleanupDefaults.Context).Io.FileExists(path[..at]))
                 path = path[..at];
-            var imported = PlanTableImporter.ImportFile(path);
+            var imported = PlanTableImporter.ImportMarkdown(ReceiptFile.ReadText(context ?? CheckpointCleanupDefaults.Context, path, cancellationToken), path, (context ?? CheckpointCleanupDefaults.Context).Io.Platform == CheckpointPlatform.Windows);
             foreach (var warning in imported.Warnings)
                 Console.Error.WriteLine("WARNING " + warning);
             if (imported.Manifest is null)

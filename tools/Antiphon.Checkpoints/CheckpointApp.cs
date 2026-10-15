@@ -13,6 +13,7 @@ public static class CheckpointApp
         public CheckpointCleanupContext CleanupContext { get; init; } = CheckpointCleanupDefaults.Context;
         public CancellationToken CancellationToken { get; init; }
         public string? RepoRoot { get; init; }
+        public string? SourceBranch { get; init; }
         public Func<string, string?> EnvironmentLookup { get; init; } = Environment.GetEnvironmentVariable;
         public HttpMessageHandler? OwnerHandler { get; init; }
         public Func<TimeSpan, CancellationToken, Task>? Delay { get; init; }
@@ -471,7 +472,7 @@ public static class CheckpointApp
         if (selected.Count == 0)
             throw new ManifestValidationException("rows", "no checkpoints selected");
         var resultsRoot = Path.GetFullPath(Path.IsPathRooted(manifest.ResultsRoot) ? manifest.ResultsRoot : Path.Combine(repo, manifest.ResultsRoot));
-        var resultsOwnership = SafeWrite.Under(resultsRoot, gitExecutable: runtime?.GitExecutable);
+        var resultsOwnership = SafeWrite.Under(resultsRoot, gitExecutable: runtime.GitExecutable);
         SafeWrite.Require(write.CreateDirectory(resultsRoot, resultsOwnership));
         // Runs do not reclaim any older repository paths.
         var runId = RepoPaths.RunId(context);
@@ -489,7 +490,7 @@ public static class CheckpointApp
             WriteRunText(context, runDirectory, "manifest.resolved.yaml", ManifestLoader.ToYaml(manifest));
             request.RepoRoot = repo;
             request.Rows = selected.Select(row => row.Id).ToList();
-            var capture = runtime?.SourceCapture ?? new SourceSnapshot().Capture;
+            var capture = runtime.SourceCapture ?? new SourceSnapshot().Capture;
             request.Source = new SourceEvidence { Start = capture(repo) };
             if (request.ExpectedSourceSha is not null)
             {
@@ -502,7 +503,7 @@ public static class CheckpointApp
             if (string.IsNullOrWhiteSpace(request.Commit))
                 request.Commit = request.Source.Start.Commit ?? GitSnapshot.Run(repo, "rev-parse", "HEAD");
             if (string.IsNullOrWhiteSpace(request.Branch))
-                request.Branch = GitSnapshot.Run(repo, "rev-parse", "--abbrev-ref", "HEAD");
+                request.Branch = runtime.SourceBranch ?? GitSnapshot.Run(repo, "rev-parse", "--abbrev-ref", "HEAD");
             WriteRunText(context, runDirectory, "request.json", JsonSerializer.Serialize(request, Json));
             return runDirectory;
         }

@@ -61,11 +61,13 @@ public sealed class WaitCommand
         var logPath = Path.Combine(runDirectory, "executor.log");
         var started = _clock();
         var nextBeat = started;
-        var cleanup = new ToolCopyCleanup(_probe);
+        var cleanup = new ToolCopyCleanup(_probe, context: _context);
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var now = _clock();
             var state = _store.TryRead(statePath, out var stateRefusal, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (stateRefusal is not null && (stateRefusal.Contains("not regular", StringComparison.Ordinal) || stateRefusal.Contains("nonregular", StringComparison.Ordinal)
                 || stateRefusal.Contains("receipt-identity:", StringComparison.Ordinal)))
             { output.WriteLine("refused: " + stateRefusal); return ExitCodes.Invalid; }

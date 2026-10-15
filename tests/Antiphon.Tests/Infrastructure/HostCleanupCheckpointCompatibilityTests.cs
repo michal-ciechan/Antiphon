@@ -97,11 +97,12 @@ public sealed class HostCleanupCheckpointCompatibilityTests
     [Test]
     public void sweep_never_signals_a_process()
     {
-        var f = new HostCleanupToolFixture(); var control = new CountingControl();
+        var f = new HostCleanupToolFixture();
         f.Owner.Launched = new ProcessIdentityProbe(f.Context).Current();
         RunOwnershipStore.Write(f.Run, f.Owner, f.Context);
         f.Cleanup().Sweep(Path.GetDirectoryName(f.Run)!).ShouldBe(0);
-        control.Calls.ShouldBe(0); f.Io.DirectoryExists(f.Tool).ShouldBeTrue();
+        f.Io.Processes[f.Io.CurrentProcessId].HasExited.ShouldBeFalse();
+        f.Io.DirectoryExists(f.Tool).ShouldBeTrue();
         f.Io.Count("process", f.Io.CurrentProcessId.ToString()).ShouldBeGreaterThan(0);
     }
 
