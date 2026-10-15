@@ -8224,6 +8224,9 @@ namespace Antiphon.Server.Migrations
                         .IsRequired()
                         .HasColumnType("uuid[]");
 
+                    b.Property<bool>("ManualCompactBoundary")
+                        .HasColumnType("boolean");
+
                     b.Property<int>("Phase")
                         .HasColumnType("integer");
 
