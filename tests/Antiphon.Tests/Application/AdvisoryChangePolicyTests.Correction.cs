@@ -100,7 +100,7 @@ public partial class AdvisoryChangePolicyTests
             var w = new CorrectionWorld { _schema = await TestDbFixture.CreateIsolatedSchemaAsync(),
                 Root = Path.Combine(Path.GetTempPath(), "c1281-correction-" + Guid.NewGuid().ToString("N")) };
             Directory.CreateDirectory(w.Root);
-            w.Repository = DelegateScriptRunner.FindRepoRoot();
+            w.Repository = DelegateScriptRunner.RepoRoot;
             var git = new LandingGit();
             var common = await git.CommonDirectoryAsync(w.Repository, CancellationToken.None);
             w.ProducerRoot = Path.Combine(common, "antiphon", "code-evidence", "04228bff");
@@ -123,7 +123,7 @@ public partial class AdvisoryChangePolicyTests
             w.Review.VerificationProfileVersion = 1;
             w.Review.VerificationRound = VerificationRound.Final;
             w.Review.Goal = "Review this component.\n--- correction selection v1 ---\n" + JsonSerializer.Serialize(selection);
-            var old = Review(subject, source, StageOutcomeKind.Found);
+            var old = AdvisoryChangePolicyTests.Review(subject, source, StageOutcomeKind.Found);
             old.StageTaskId = w.Review.Id; old.ReviewedSourceRef = "refs/heads/" + subject.WorktreeBranch;
             old.ReviewedSourceClean = false; old.OrdinaryScopeCompleted = VerificationScope.None;
             old.CostUsd = 12.34m;
