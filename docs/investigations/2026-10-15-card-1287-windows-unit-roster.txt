@@ -293,8 +293,6 @@ Antiphon.Tests.Checkpoints.ProcessDriverTests
 Antiphon.Tests.Checkpoints.ReportMergerTests
 Antiphon.Tests.Checkpoints.ReportWriterTests
 Antiphon.Tests.Checkpoints.RerunFilterHostTests
-Antiphon.Tests.Checkpoints.RerunPolicyTests
-Antiphon.Tests.Checkpoints.RowRunnerTests
 Antiphon.Tests.Checkpoints.RunSchedulerTests
 Antiphon.Tests.Checkpoints.ShadowCopyTests
 Antiphon.Tests.Checkpoints.TimeoutTests
