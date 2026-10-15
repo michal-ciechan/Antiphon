@@ -27,9 +27,12 @@ public partial class HerdrAlwaysOnChannelParityTests
     [Arguments(AgentKind.Grok, SessionBackend.Herdr, false)]
     public async Task Standing_history_recovery_preserves_native_identity_and_queued_reply(AgentKind kind, SessionBackend backend, bool alwaysOn)
     {
-        // CARD-1273: reasons observed per backend with the guard lifted (runs 20261015-003609-6511, 20261015-005802-136e).
-        if (OperatingSystem.IsLinux() && backend == SessionBackend.PtyHost)
-            Skip.Test("CARD-0865: on Linux the native PtyHost fake CLI wrote no matching prompt to its JSONL before the 90 s deadline.");
+        // CARD-1273: reasons seen with the guards lifted (runs 20261015-003609-6511, 20261015-005802-136e,
+        // and the witness run of Review f2fbd6ae); follow-up CARD-1277 for the PtyHost rows.
+        if (OperatingSystem.IsLinux() && backend == SessionBackend.PtyHost && kind == AgentKind.ClaudeCode)
+            Skip.Test("CARD-1277: on Linux the first prompt times out: the fake CLI JSONL exists but the transcript normalizer reads no entries from it (cause not established; witness run of Review f2fbd6ae).");
+        if (OperatingSystem.IsLinux() && backend == SessionBackend.PtyHost && kind == AgentKind.Grok)
+            Skip.Test("CARD-1277: on Linux the matching prompt is in the fake CLI JSONL, but the fake Grok cuts its reply at 60 characters (src/Antiphon.FakeGrok/Program.cs:850), so the 52-character channel marker pushes the nonce out of the reply and the wait for it does not complete.");
         if (OperatingSystem.IsLinux())
             Skip.Test("CARD-1273: the Herdr queued channel reply is stored and confirmed with its [antiphon-channel:<id>] correlation marker, so the UserPrompt Text == nonce assertion does not match.");
         var root = Path.Combine(Path.GetTempPath(), $"c466-native-wire-{Guid.NewGuid():N}");
