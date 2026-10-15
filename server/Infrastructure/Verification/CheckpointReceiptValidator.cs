@@ -25,7 +25,7 @@ public sealed class CheckpointReceiptValidator(IOptions<CheckpointReceiptSetting
     {
         try { return await ImportCoreAsync(request, ct); }
         catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException
-            or UnauthorizedAccessException or InvalidOperationException or KeyNotFoundException)
+            or UnauthorizedAccessException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException)
         { throw ReviewEvidenceCorrectionService.Refuse("receipt_invalid"); }
     }
 

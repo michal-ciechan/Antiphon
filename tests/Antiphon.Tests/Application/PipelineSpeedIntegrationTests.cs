@@ -158,6 +158,9 @@ public sealed partial class PipelineSpeedIntegrationTests
     private static async Task<PipelineHandoffAction> SeedActionAsync(C544World w)
     {
         await using var db = w.CreateContext();
+        var owner = await db.AgentTasks.SingleAsync(t => t.Id == w.Owner.Id);
+        owner.NextStage = PipelineHandoffKind.Code;
+        owner.ParentSessionId = w.CallerSessionId;
         var sourceEvent = new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = w.Owner.Id,
             Type = AgentTaskEventType.Completed, At = w.Clock.GetUtcNow().UtcDateTime };
         db.Add(sourceEvent);
