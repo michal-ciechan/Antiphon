@@ -3,6 +3,7 @@ using System.Threading.Channels;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
@@ -28,14 +29,18 @@ public sealed class SessionRuntimeActionCoordinator(
     {
         if (_hints.Writer.TryWrite(sessionId)) return true;
         _scan.Writer.TryWrite(true);
+        try { logger.LogWarning("Action hints saturated for session {SessionId}; capacity {HintCapacity}, owners {OwnerCount}", sessionId, HintCapacity, _owners.Count); }
+        catch { }
         return false;
     }
 
     internal static SessionRuntimeAction Admit(AppDbContext db, TranscriptEntry row,
-        SessionRunnerTranscriptEvent source, DateTime generation, bool boundary, DateTime now)
+        SessionRunnerTranscriptEvent source, DateTime generation, bool boundary, DateTime now,
+        Guid? taskId = null, int? taskAttempt = null)
     {
         var action = new SessionRuntimeAction { Id = Guid.NewGuid(), AgentSessionId = row.AgentSessionId,
             TranscriptEntryId = row.Id, AcceptedGeneration = generation, Sequence = row.Sequence,
+            AcceptedTaskId = taskId, AcceptedTaskAttempt = taskAttempt,
             ProducerSequence = source.Sequence, TurnBoundary = boundary, CreatedAt = now, DueAt = now,
             ManualCompactBoundary = TranscriptKinds.IsManualCompactBoundary(source.Kind, source.Text),
             UiProjectionDelta = TranscriptUiProjection.Capture(source, row) };
@@ -55,10 +60,16 @@ public sealed class SessionRuntimeActionCoordinator(
         var action = await db.SessionRuntimeActions.SingleOrDefaultAsync(a => a.AgentSessionId == sessionId
             && a.Sequence == sequence && a.TriggerKind == kind, ct);
         if (action is null)
+        {
+            var task = await db.AgentTasks.AsNoTracking().Where(t => t.AgentSessionId == sessionId
+                && (t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Dispatched))
+                .Select(t => new { t.Id, t.Attempt }).FirstOrDefaultAsync(ct);
             db.SessionRuntimeActions.Add(new SessionRuntimeAction { Id = Guid.NewGuid(), AgentSessionId = sessionId,
                 AcceptedGeneration = generation, Sequence = sequence, TriggerKind = kind,
+                AcceptedTaskId = task?.Id, AcceptedTaskAttempt = task?.Attempt,
                 Phase = kind == "status" ? QueuePhase : 1, CreatedAt = clock.GetUtcNow().UtcDateTime,
                 DueAt = clock.GetUtcNow().UtcDateTime });
+        }
         else action.DueAt = clock.GetUtcNow().UtcDateTime;
         await db.SaveChangesAsync(ct);
         Hint(sessionId);
@@ -112,16 +123,27 @@ public sealed class SessionRuntimeActionCoordinator(
             await foreach (var sessionId in _hints.Reader.ReadAllAsync(ct))
             {
                 if (!_owners.TryAdd(sessionId, 0)) continue;
-                try { await DrainPageAsync(sessionId, ct); }
+                var more = false;
+                try { more = await DrainPageAsync(sessionId, ct); }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
                 catch (Exception ex) { Diagnostic(ex, "Action session execution failed", sessionId); }
                 finally { _owners.TryRemove(sessionId, out _); }
+                // Offer the continuation only after releasing ownership. Otherwise a free
+                // worker can consume and discard this session's sole second-page hint.
+                if (more) Hint(sessionId);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
     }
 
-    internal async Task DrainPageAsync(Guid sessionId, CancellationToken ct)
+    internal async Task<bool> DrainPageAsync(Guid sessionId, CancellationToken ct)
+    {
+        await ObserveDebtAsync(sessionId, "start", ct);
+        try { return await DrainCoreAsync(sessionId, ct); }
+        finally { await ObserveDebtAsync(sessionId, "end", CancellationToken.None); }
+    }
+
+    private async Task<bool> DrainCoreAsync(Guid sessionId, CancellationToken ct)
     {
         for (var i = 0; i < PageSize; i++)
         {
@@ -133,7 +155,8 @@ public sealed class SessionRuntimeActionCoordinator(
             var action = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == sessionId)
                 .OrderBy(a => a.Phase >= QueuePhase).ThenBy(a => a.Sequence).ThenBy(a => a.TriggerKind)
                 .FirstOrDefaultAsync(ct);
-            if (action is null || action.DueAt > clock.GetUtcNow().UtcDateTime) return;
+            if (action is null || action.DueAt > clock.GetUtcNow().UtcDateTime) return false;
+            ObserveAction(action);
             try
             {
                 await ExecuteAsync(scope.ServiceProvider, db, action, ct);
@@ -149,10 +172,10 @@ public sealed class SessionRuntimeActionCoordinator(
                     .ExecuteUpdateAsync(s => s.SetProperty(a => a.Attempts, attempts)
                         .SetProperty(a => a.DueAt, due).SetProperty(a => a.FailureReason, reason), ct);
                 Diagnostic(ex, "Action phase retained for retry", sessionId);
-                return;
+                return false;
             }
         }
-        Hint(sessionId); // yield ownership at the page boundary
+        return true;
     }
 
     internal static SessionRunnerTranscriptEvent RestoreTranscriptPayload(TranscriptEntry row, SessionRuntimeAction action) =>
@@ -209,7 +232,30 @@ public sealed class SessionRuntimeActionCoordinator(
 
     private void Diagnostic(Exception exception, string message, Guid sessionId)
     {
-        try { logger.LogWarning(exception, "{ActionMessage} for session {SessionId}", message, sessionId); }
+        try { logger.LogWarning("{ActionMessage} for session {SessionId}; failure {FailureType}", message, sessionId, exception.GetType().Name); }
         catch { /* Diagnostics cannot change admission or ownership. */ }
+    }
+
+    private async Task ObserveDebtAsync(Guid sessionId, string transition, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var debt = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == sessionId)
+                .GroupBy(a => a.AgentSessionId).Select(g => new { Count = g.Count(), Frontier = g.Max(a => a.Sequence) })
+                .SingleOrDefaultAsync(ct);
+            logger.LogInformation("Action worker {Transition} session {SessionId}; pending {PendingCount}, frontier {Frontier}",
+                transition, sessionId, debt?.Count ?? 0, debt?.Frontier ?? 0L);
+        }
+        catch { /* Observability has no completion authority. */ }
+    }
+
+    private void ObserveAction(SessionRuntimeAction action)
+    {
+        try { logger.LogInformation("Action {ActionId} session {SessionId}; phase {Phase}, age {AgeSeconds}s, frontier {Frontier}, attempts {Attempts}",
+            action.Id, action.AgentSessionId, action.Phase, Math.Max(0, (clock.GetUtcNow().UtcDateTime - action.CreatedAt).TotalSeconds),
+            action.Sequence, action.Attempts); }
+        catch { }
     }
 }

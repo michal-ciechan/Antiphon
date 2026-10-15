@@ -7,6 +7,8 @@ public sealed class SessionRuntimeAction
     public Guid AgentSessionId { get; set; }
     public Guid? TranscriptEntryId { get; set; }
     public DateTime? AcceptedGeneration { get; set; }
+    public Guid? AcceptedTaskId { get; set; }
+    public int? AcceptedTaskAttempt { get; set; }
     public long Sequence { get; set; }
     public long ProducerSequence { get; set; }
     public string TriggerKind { get; set; } = "transcript";

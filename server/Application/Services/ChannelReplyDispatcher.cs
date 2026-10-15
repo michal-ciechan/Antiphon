@@ -128,17 +128,6 @@ public sealed class ChannelReplyDispatcher
     internal const string LostReplyNoticePrefix =
         "[Antiphon] A reply this chat was owed was never delivered:";
 
-    // Legacy/default-off and catalog-less routing only. Claude can write AssistantText AFTER the
-    // TurnEnd that triggered dispatch (observed live 2026-07-29, AZ Care: TurnEnd, AssistantText,
-    // TurnEnd — the first dispatch consumed the correlations with only the turn's interim narration
-    // extracted, and the real answer landed one second later with nothing left to match). Remembering
-    // the dispatched turn's watermark lets that trailing text go out as a follow-up reply. Record
-    // equality (value-compared watermark, reference-compared targets) makes TryUpdate an atomic
-    // claim, so racing triggers can't double-send.
-    private readonly ConcurrentDictionary<Guid, DispatchedTurn> _dispatched = new();
-
-    private sealed record DispatchedTurn(long PromptSeq, long MaxTextSeq, IReadOnlyList<ReplyTarget> Targets);
-
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly Settings.ChannelBridgeSettings _settings;
     private readonly TimeProvider _timeProvider;
@@ -205,8 +194,7 @@ public sealed class ChannelReplyDispatcher
 
             // Trailing text for an already-answered turn (stop marker mid-stream) goes out as a
             // follow-up. No-op unless this session's last dispatched turn is still the live one.
-            if (_dispatched.ContainsKey(sessionId))
-                await DispatchFollowUpAsync(sessionId, ct);
+            await DispatchFollowUpAsync(sessionId, ct);
 
             await DispatchDurableFollowUpsAsync(sessionId, ct);
 
@@ -236,8 +224,7 @@ public sealed class ChannelReplyDispatcher
         var result = await DispatchAsync(sessionId, prompt, rememberDirectTurn: true, ct);
         if (result.FailedCorrelationIds.Count != 0)
             throw new InvalidOperationException("Bound channel publication remains pending.");
-        if (_dispatched.TryGetValue(sessionId, out var dispatched) && dispatched.PromptSeq == prompt.Sequence)
-            await DispatchFollowUpAsync(sessionId, ct);
+        await DispatchFollowUpAsync(sessionId, ct);
         await DispatchDurableFollowUpsAsync(sessionId, ct);
         await DispatchMachineTurnFollowUpAsync(sessionId, prompt, ct);
     }
@@ -297,8 +284,7 @@ public sealed class ChannelReplyDispatcher
         }
         // Text can arrive while the owning direct producer is held. Its losing competitor
         // cannot consume that text; drain from the owner's accepted watermark before returning.
-        if (_dispatched.ContainsKey(sessionId))
-            await DispatchFollowUpAsync(sessionId, ct);
+        await DispatchFollowUpAsync(sessionId, ct);
         await DispatchDurableFollowUpsAsync(sessionId, ct);
         return new(published, withheld, failed, deferred);
     }
@@ -558,7 +544,6 @@ public sealed class ChannelReplyDispatcher
         }
 
         var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
-        var rememberTurn = historicalPrompt is null || rememberDirectTurn;
 
         // The frozen silent-turn contract: a whole-turn NO_REPLY settles the correlations and
         // sends nothing — system notes and housekeeping turns must never spam the chat.
@@ -572,14 +557,12 @@ public sealed class ChannelReplyDispatcher
                         new ChannelOutboundSource(sessionId, userPrompt.Sequence, userPrompt.Sequence + 1,
                             maxTextSeq, "main", target.CorrelationIds),
                         ChannelReplyPreparation.Describe(responseText), _settings, ct, suppress: true);
-                await SettleAsync(db, matches.Where(m => targets.Any(t => !t.HasCatalog
-                    && t.CorrelationIds.Contains(m.Id))).ToList(), ct);
             }
-            else
-                await SettleAsync(db, matches, ct);
-            if (rememberTurn)
-                RememberDirectTurn(sessionId, userPrompt.Sequence, maxTextSeq,
-                    targets.Where(t => !outbound.UnifiedRecoveryEnabled || !t.HasCatalog).ToArray());
+            foreach (var target in targets.Where(t => !outbound.UnifiedRecoveryEnabled || !t.HasCatalog))
+                await outbound.SuppressDirectAsync(new ChannelReply { Channel = target.Provider,
+                        ConversationId = target.ConversationId, ReplyHandle = target.ReplyHandle },
+                    new ChannelOutboundSource(sessionId, userPrompt.Sequence, userPrompt.Sequence + 1,
+                        maxTextSeq, "main", target.CorrelationIds), ct);
             _logger.LogInformation(
                 "Silent turn (NO_REPLY) on session {SessionId}; {Count} correlation(s) settled without a reply",
                 sessionId, matches.Count);
@@ -597,7 +580,6 @@ public sealed class ChannelReplyDispatcher
         // batching scope ever widens to cross-conversation.
         var published = new HashSet<Guid>();
         var deferred = new HashSet<Guid>();
-        var rememberedTargets = new List<ReplyTarget>();
         var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
         foreach (var target in targets)
         {
@@ -633,14 +615,6 @@ public sealed class ChannelReplyDispatcher
                 {
                     outcome = await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply, source, ct);
                 }
-                // Only an accepted publication or durable admission owns this window. A loser
-                // may have read more text than the winner; recording its watermark would lose
-                // that unsent tail. Register before best-effort metadata/caller cancellation.
-                if (rememberTurn && !captureReply && outcome != ChannelOutboundSendOutcome.OwnedElsewhere)
-                {
-                    rememberedTargets.Add(target);
-                    RememberDirectTurn(sessionId, userPrompt.Sequence, maxTextSeq, rememberedTargets);
-                }
                 if (outcome == ChannelOutboundSendOutcome.Published)
                 {
                     published.UnionWith(target.CorrelationIds);
@@ -674,16 +648,6 @@ public sealed class ChannelReplyDispatcher
             new HashSet<Guid>(),
             failed,
             deferred);
-    }
-
-    private void RememberDirectTurn(Guid sessionId, long promptSequence, long maxTextSequence,
-        IReadOnlyList<ReplyTarget> targets)
-    {
-        if (targets.Count == 0) return;
-        var turn = new DispatchedTurn(promptSequence, maxTextSequence, targets.ToArray());
-        _dispatched.AddOrUpdate(sessionId, turn, (_, current) =>
-            current.PromptSeq > turn.PromptSeq || current.PromptSeq == turn.PromptSeq
-                && current.MaxTextSeq > turn.MaxTextSeq ? current : turn);
     }
 
     /// <summary>
@@ -1333,94 +1297,64 @@ public sealed class ChannelReplyDispatcher
 
     private async Task DispatchFollowUpAsync(Guid sessionId, CancellationToken ct)
     {
-        if (!_dispatched.TryGetValue(sessionId, out var turn))
-            return;
-
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-        var (nextPromptSeq, late) = await QueryTurnWindowAsync(
-            db, sessionId, promptSeq: turn.PromptSeq, afterSeq: turn.MaxTextSeq, ct);
-
-        // S2 (CARD-0071), same rule as the main path: an API-error stub in the trailing window
-        // withholds the whole follow-up — the turn died mid-stream and its error string must not
-        // reach the chat, not even beside real trailing text. The watermark is NOT advanced, which
-        // is deliberate: nothing was sent, and a later prompt already capping the window drops
-        // this record below (no future row can land in a sequence gap that already has a later
-        // prompt).
-        if (late.Any(l => TranscriptKinds.IsApiErrorStub(l.Kind, l.IsApiError)))
-        {
-            _logger.LogWarning(
-                "Trailing text on session {SessionId} (dispatched prompt seq {PromptSeq}) contains an API-error "
-                + "stub; withholding the follow-up reply.",
-                sessionId, turn.PromptSeq);
-            if (nextPromptSeq is not null)
-                _dispatched.TryRemove(new KeyValuePair<Guid, DispatchedTurn>(sessionId, turn));
-            return;
-        }
-
-        var texts = late.Where(l => !string.IsNullOrWhiteSpace(l.Text)).ToList();
-        if (texts.Count == 0)
-        {
-            // Window drained: a later prompt means no future row can land in this gap, so the
-            // record is done. No next prompt: keep the watermark so a later fragment of the
-            // same turn still follow-ups.
-            if (nextPromptSeq is not null)
-                _dispatched.TryRemove(new KeyValuePair<Guid, DispatchedTurn>(sessionId, turn));
-            return;
-        }
-
-        // Claim the trailing entries before sending; the loser of a race sees the moved watermark.
-        var claimed = turn with { MaxTextSeq = late[^1].Sequence };
-        if (!_dispatched.TryUpdate(sessionId, claimed, turn))
-            return;
-
-        var joined = string.Join("\n\n", texts.Select(l => l.Text!)).Trim();
-        if (ChannelContracts.IsNoReply(joined))
-        {
-            if (nextPromptSeq is not null)
-                _dispatched.TryRemove(new KeyValuePair<Guid, DispatchedTurn>(sessionId, claimed));
-            return;
-        }
-
-        var (bodyText, attachments) = PrepareReplyBody(joined, sessionId);
-        var text = Truncate(bodyText);
-        var kind = ClassifyKind(bodyText);
-        var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
         var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
-        foreach (var target in turn.Targets)
+        var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
+        // Each queue member retains the original route. Group complete batches before the
+        // bounded page so splitting a batch cannot mint a second publication owner.
+        var roots = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == sessionId
+            && m.DirectReplyPromptSequence != null && m.DirectReplyTailClosedAt == null)
+            .Select(m => new { Prompt = m.DirectReplyPromptSequence, Through = m.DirectReplyThroughSequence,
+                Pending = m.DirectReplyPendingThroughSequence, Provider = m.DirectReplyProvider,
+                Conversation = m.DirectReplyConversationId, Handle = m.DirectReplyHandle })
+            .Distinct().OrderBy(m => m.Prompt).ThenBy(m => m.Conversation)
+            .Take(SessionRuntimeActionCoordinator.PageSize).ToListAsync(ct);
+        foreach (var root in roots)
         {
-            var reply = new ChannelReply
+            if (root.Pending != null || root.Through is not long through)
             {
-                Channel = target.Provider,
-                ReplyHandle = target.ReplyHandle,
-                ConversationId = target.ConversationId,
-                Text = text.Length == 0 ? null : text,
-                Kind = kind,
-                Attachments = attachments,
-            };
-            var outcome = await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply,
-                    new ChannelOutboundSource(sessionId, turn.PromptSeq,
-                        turn.MaxTextSeq + 1, claimed.MaxTextSeq, "trailing", []), ct);
-            if (outcome == ChannelOutboundSendOutcome.Published)
+                try { _logger.LogWarning("Direct publication pending or uncertain for session {SessionId}, prompt {PromptSequence}; retained without replay",
+                    sessionId, root.Prompt); } catch { }
+                continue;
+            }
+            var members = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == sessionId
+                && m.DirectReplyPromptSequence == root.Prompt && m.DirectReplyProvider == root.Provider
+                && m.DirectReplyConversationId == root.Conversation && m.DirectReplyHandle == root.Handle
+                && m.DirectReplyThroughSequence == through && m.DirectReplyPendingThroughSequence == null
+                && m.DirectReplyTailClosedAt == null).Select(m => m.Id).ToArrayAsync(ct);
+            if (members.Length == 0) continue;
+            var (next, late) = await QueryTurnWindowAsync(db, sessionId, root.Prompt!.Value, through, ct);
+            var (_, apiError) = await ExtractTurnResponseAsync(db, sessionId, root.Prompt.Value, ct);
+            var joined = string.Join("\n\n", late.Where(l => !string.IsNullOrWhiteSpace(l.Text)).Select(l => l.Text!)).Trim();
+            if (!apiError && joined.Length > 0)
             {
-                try { await channels.StampLastReplyAsync(target.Provider, target.ConversationId, text, ct); }
-                catch (Exception stampError) when (stampError is not OperationCanceledException)
+                var (body, attachments) = PrepareReplyBody(joined, sessionId);
+                var text = Truncate(body);
+                var reply = new ChannelReply { Channel = root.Provider!, ConversationId = root.Conversation!,
+                    ReplyHandle = root.Handle, Text = text.Length == 0 ? null : text,
+                    Kind = ClassifyKind(body), Attachments = attachments };
+                var source = new ChannelOutboundSource(sessionId, root.Prompt.Value, through + 1,
+                    late[^1].Sequence, "trailing", members, DirectTail: true);
+                var outcome = ChannelContracts.IsNoReply(joined)
+                    ? await outbound.SuppressDirectAsync(reply, source, ct)
+                    : await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply, source, ct);
+                if (outcome != ChannelOutboundSendOutcome.Published) continue;
+                through = late[^1].Sequence;
+                if (!ChannelContracts.IsNoReply(joined))
                 {
-                    _logger.LogWarning(stampError,
-                        "Published follow-up to {ConversationId} but could not update its catalog preview",
-                        target.ConversationId);
+                    try { await channels.StampLastReplyAsync(root.Provider!, root.Conversation!, text, ct); }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    { _logger.LogWarning("Direct reply preview update failed for session {SessionId}; failure {FailureType}", sessionId, ex.GetType().Name); }
                 }
             }
-            _logger.LogInformation(
-                "Sent follow-up {Kind} reply ({Chars} chars, {AttachmentCount} attachment(s)) to {Provider} conversation {ConversationId} from session {SessionId} — text arrived after the turn's dispatch",
-                reply.Kind, text.Length, attachments.Count, target.Provider, target.ConversationId, sessionId);
+            // A later opening prompt seals the original turn. A live open tail remains
+            // retained, including after restart; no TTL can silently remove its evidence.
+            if (next is not null)
+                await db.SessionQueuedMessages.Where(m => members.Contains(m.Id)
+                    && m.DirectReplyThroughSequence == through && m.DirectReplyPendingThroughSequence == null)
+                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.DirectReplyTailClosedAt, _timeProvider.GetUtcNow().UtcDateTime), ct);
         }
-
-        // After the window is drained: a next prompt already caps it, so drop. Otherwise keep
-        // the advanced watermark for a later fragment of the same turn.
-        if (nextPromptSeq is not null)
-            _dispatched.TryRemove(new KeyValuePair<Guid, DispatchedTurn>(sessionId, claimed));
     }
 
     /// <summary>
@@ -1434,7 +1368,7 @@ public sealed class ChannelReplyDispatcher
     /// Idempotency reuses the injection row's own <see cref="SessionQueuedMessage.ChannelReplySettledAt"/>
     /// as the claim-before-produce marker. <see cref="OpenCorrelations"/> filters
     /// <c>Origin == Channel</c>, so this is invisible to correlation logic and costs no migration.
-    /// A successful send records the <c>_dispatched</c> watermark so trailing AssistantText of the
+    /// A successful send records a durable queue watermark so trailing AssistantText of the
     /// same turn follows via <see cref="DispatchFollowUpAsync"/>.
     /// </summary>
     private async Task DispatchMachineTurnFollowUpAsync(Guid sessionId,
@@ -1641,8 +1575,6 @@ public sealed class ChannelReplyDispatcher
             else
                 outcome = await outbound.SendAsync(reply, ChannelOutboundOrigin.AgentReply, source, ct);
             publicationAccepted = outcome == ChannelOutboundSendOutcome.Published;
-            if (historicalPrompt is null && !captureReply && outcome != ChannelOutboundSendOutcome.OwnedElsewhere)
-                RememberDirectTurn(sessionId, userPrompt.Sequence, maxTextSeq, [target]);
             if (outcome == ChannelOutboundSendOutcome.Published)
             {
                 StampDeliveredBundles(impliedTasks, attachments, _timeProvider.GetUtcNow().UtcDateTime);
