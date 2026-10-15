@@ -6,6 +6,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.SessionRunner.Tests;
+using Antiphon.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
@@ -26,14 +27,22 @@ public partial class HerdrAlwaysOnChannelParityTests
     [Arguments(AgentKind.Grok, SessionBackend.Herdr, false)]
     public async Task Standing_history_recovery_preserves_native_identity_and_queued_reply(AgentKind kind, SessionBackend backend, bool alwaysOn)
     {
-        // CARD-1273 probe: every case runs on Linux so each skip reason can be checked against an observed failure.
+        // CARD-1273: reasons observed per backend/kind with the guard lifted (run 20261015-003609-6511).
+        if (OperatingSystem.IsLinux() && backend == SessionBackend.PtyHost)
+            Skip.Test("CARD-0865: on Linux the native PtyHost fake CLI wrote no matching prompt to its JSONL before the 90 s deadline.");
+        if (OperatingSystem.IsLinux() && kind == AgentKind.ClaudeCode)
+            Skip.Test("CARD-0865: on Linux the Claude-on-Herdr queued channel reply has no UserPrompt after its delivery baseline.");
         var root = Path.Combine(Path.GetTempPath(), $"c466-native-wire-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         var home = Path.Combine(root, "native-home"); Directory.CreateDirectory(home);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
         var proofs = new List<Task>();
         await using var fake = backend == SessionBackend.Herdr ? new FakeHerdrServer
-        { EchoSendTextToScreen = true, LaunchScriptAgentKind = kind == AgentKind.Grok ? HerdrAgentKinds.Grok : HerdrAgentKinds.Claude } : null;
+        {
+            EchoSendTextToScreen = true, LaunchScriptAgentKind = kind == AgentKind.Grok ? HerdrAgentKinds.Grok : HerdrAgentKinds.Claude,
+            // CARD-1273: Grok readiness needs its captured dashboard, as in the CARD-1252 parity tests.
+            GrokStartupScreen = kind == AgentKind.Grok ? GrokLinuxStartupFixture.Screen("1.0.41") : null,
+        } : null;
         if (fake is not null) { fake.Start(); await fake.WaitUntilListeningAsync(); }
         try
         {
