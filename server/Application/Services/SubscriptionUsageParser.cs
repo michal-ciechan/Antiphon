@@ -7,7 +7,7 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>
 /// Pure parser for TUI subscription-usage panels (CARD-0143). No DI, no DB. Input is the raw
-/// buffer; escapes are stripped with <see cref="AnsiStripper.Clean"/>. Silence on a failed parse
+/// buffer; Codex cursor-separated words are preserved before stripping escapes. Silence on a failed parse
 /// is forbidden — the caller always writes a sample, <c>Unparsed</c> if nothing matched.
 /// </summary>
 public static class SubscriptionUsageParser
@@ -28,7 +28,7 @@ public static class SubscriptionUsageParser
     internal const bool GrokPercentageIsRemaining = true;
 
     private static readonly Regex CodexRemaining = new(
-        @"Weekly\s+limit:\s*(\d+(?:\.\d+)?)\s*%\s*left",
+        @"Weekly\s+limit:\s*(?:\[[\u2588\u2591]{1,80}\]\s*)?(\d+(?:\.\d+)?)\s*%\s*left",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static readonly Regex CodexReset = new(
@@ -53,7 +53,9 @@ public static class SubscriptionUsageParser
         TimeProvider time,
         TimeZoneInfo? hostTimeZone = null)
     {
-        var stripped = AnsiStripper.Clean(rawBuffer) ?? string.Empty;
+        var stripped = kind == AgentKind.Codex
+            ? CodexOutputText.Clean(rawBuffer)
+            : AnsiStripper.Clean(rawBuffer) ?? string.Empty;
         var excerpt = Cap(stripped);
         var tz = hostTimeZone ?? TimeZoneInfo.Local;
 
