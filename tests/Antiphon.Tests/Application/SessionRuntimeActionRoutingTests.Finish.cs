@@ -292,7 +292,8 @@ public partial class SessionRuntimeActionRoutingTests
         await using var f = await RoutingFixture.CreateAsync(AddTaskServices);
         var task = await SeedRoutingTaskAsync(f);
         var marker = DelegationReportFormatter.TaskMarker(task.Id);
-        var report = $"Original complete result needs a decision.\n[antiphon-report:{DelegationReportFormatter.Short(task.Id)} blocked]";
+        const string resultBody = "Original complete result needs a decision.";
+        var report = $"{resultBody}\n[antiphon-report:{DelegationReportFormatter.Short(task.Id)} blocked]";
         if (emptySync)
         {
             // Pre-upgrade stored history has no transcript actions. Empty sync must still
@@ -324,7 +325,9 @@ public partial class SessionRuntimeActionRoutingTests
         await using var verify = f.H.CreateObserverContext();
         var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         settled.Status.ShouldBe(AgentTaskStatus.Blocked);
-        settled.Result.ShouldBe(report, "the marked owning turn must survive a newer completed turn");
+        settled.Result.ShouldBe(resultBody, "settlement stores the exact owning report body after parsing its control marker");
+        (await verify.TranscriptEntries.Where(t => t.AgentSessionId == f.H.SessionId && t.Kind == "AssistantText")
+            .Select(t => t.Text).ToListAsync()).ShouldContain(report, "the complete marked source remains durable");
         (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Blocked)).ShouldBe(1);
     }
 
@@ -382,18 +385,21 @@ public partial class SessionRuntimeActionRoutingTests
                 f.Entry("TurnEnd") with { SessionId = parent, Sequence = 2 });
             if (busy) await f.StreamAsync(f.Entry("UserPrompt", "parent busy work") with { SessionId = parent });
             var task = await SeedRoutingTaskAsync(f, parent);
-            var report = $"Complete report with worker table | one | two | and a caveat.\n--- next stage ---\nnext: review\nhandoff: inspect complete result\n[antiphon-report:{DelegationReportFormatter.Short(task.Id)} blocked]";
+            const string resultBody = "Complete report with worker table | one | two | and a caveat.\n--- next stage ---\nnext: review\nhandoff: inspect complete result";
+            var report = $"{resultBody}\n[antiphon-report:{DelegationReportFormatter.Short(task.Id)} blocked]";
             await f.StreamAsync(f.Entry("UserPrompt", DelegationReportFormatter.TaskMarker(task.Id)),
                 f.Entry("AssistantText", report), f.Entry("TurnEnd"));
             await f.Actions.DrainPageAsync(f.H.SessionId, default);
             await using (var db = f.H.CreateObserverContext())
             {
-                (await db.AgentTasks.SingleAsync(t => t.Id == task.Id)).Result.ShouldBe(report);
-                (await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == task.Id)).Body.ShouldContain(report);
+                (await db.AgentTasks.SingleAsync(t => t.Id == task.Id)).Result.ShouldBe(resultBody);
+                (await db.TranscriptEntries.Where(t => t.AgentSessionId == f.H.SessionId && t.Kind == "AssistantText")
+                    .Select(t => t.Text).ToListAsync()).ShouldContain(report);
+                (await db.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == task.Id)).Body.ShouldContain(resultBody);
             }
             adapter.OnSubmitted = body =>
             {
-                body.ShouldContain(report);
+                body.ShouldContain(resultBody);
                 f.Runner.Produce(f.Entry("UserPrompt", body) with { SessionId = parent });
                 return Task.CompletedTask;
             };
@@ -441,12 +447,170 @@ public partial class SessionRuntimeActionRoutingTests
         }
     }
 
+    private static async Task VerifyReviewHandoffCutsAsync()
+    {
+        foreach (var busy in new[] { false, true })
+        foreach (var cut in Enumerable.Range(0, 5))
+        {
+            var fault = new ReviewEnqueueFault();
+            await using var f = await RoutingFixture.CreateAsync(s =>
+            {
+                s.AddSingleton<ReviewReplyDispatcher>(); s.AddScoped<ReviewThreadService>(); s.AddScoped<AgentFilesService>();
+            }, o => o.AddInterceptors(fault));
+            var label = $"V-11 H{cut} {(busy ? "busy" : "eligible")}";
+            if (busy) await f.StreamAsync(f.Entry("UserPrompt", "recipient is already working"));
+            Guid threadId;
+            using (var scope = f.H.Provider.CreateScope())
+            {
+                var thread = await scope.ServiceProvider.GetRequiredService<ReviewThreadService>().CreateAsync(f.H.AgentId,
+                    new CreateReviewThreadRequest("recover.md", 1, null, "Recover the entire review question", false), default);
+                threadId = thread!.Id;
+            }
+            if (cut == 0) await f.RestartAsync();
+            if (cut == 1)
+            {
+                fault.Armed = true;
+                await Should.ThrowAsync<IOException>(DispatchAsync);
+                fault.Hits.ShouldBe(1, label);
+                await using (var db = f.H.CreateObserverContext())
+                {
+                    (await db.SessionQueuedMessages.CountAsync()).ShouldBe(0, label);
+                    (await db.SessionRuntimeActions.CountAsync(a => a.TriggerKind.StartsWith("review:"))).ShouldBe(0, label);
+                    (await db.ReviewThreads.SingleAsync(t => t.Id == threadId)).Status.ShouldBe(ReviewThreadStatus.Open);
+                }
+                await f.RestartAsync();
+            }
+            await DispatchAsync();
+            Guid sourceId;
+            string body;
+            await using (var db = f.H.CreateObserverContext())
+            {
+                var row = await db.SessionQueuedMessages.SingleAsync(m => m.ReviewThreadId == threadId);
+                sourceId = row.Id; body = row.Body;
+                row.Status.ShouldBe(QueuedMessageStatus.Pending);
+                (await db.SessionRuntimeActions.AnyAsync(a => a.TriggerKind == "review:" + sourceId.ToString("N"))).ShouldBeTrue(label);
+            }
+            if (cut == 2) await f.RestartAsync();
+            if (busy)
+            {
+                await f.Actions.DrainPageAsync(f.H.SessionId, default);
+                f.H.Adapter.Inputs.ShouldBeEmpty(label);
+                await f.StreamAsync(f.Entry("TurnEnd"));
+                await Task.Delay(TimeSpan.FromMilliseconds(1100));
+                await f.Actions.RequestAsync(f.H.SessionId, "status", default);
+            }
+            var accepted = new List<string>();
+            var receiptEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            const string answer = "Recovered original review answer with the complete source.";
+            f.H.Adapter.OnSubmitted = async sent =>
+            {
+                sent.ShouldBe(body, label); accepted.Add(sent);
+                await f.StreamAsync(f.Entry("UserPrompt", sent));
+                if (cut == 3)
+                {
+                    await f.StreamAsync(f.Entry("AssistantText", answer), f.Entry("TurnEnd"));
+                    receiptEntered.TrySetResult(); await release.Task;
+                }
+            };
+            using (var worker = new SessionRuntimeActionHostedService(f.Actions))
+            {
+                await worker.StartAsync(default);
+                try
+                {
+                    if (cut == 3)
+                    {
+                        await receiptEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                        var stop = worker.StopAsync(default);
+                        stop.IsCompleted.ShouldBeFalse(label + " must join the held submission");
+                        release.TrySetResult(); await stop;
+                        await using var db = f.H.CreateObserverContext();
+                        (await db.TranscriptEntries.CountAsync(t => t.Kind == "UserPrompt" && t.Text == body)).ShouldBe(1, label);
+                        (await db.SessionRuntimeActions.AnyAsync(a => a.Phase == 8)).ShouldBeTrue(label + " queue action ack is still owed");
+                    }
+                    else
+                    {
+                        await WaitDeliveredAsync();
+                        if (cut == 4) await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+                        {
+                            await using var db = f.H.CreateObserverContext();
+                            return !await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == f.H.SessionId);
+                        });
+                    }
+                }
+                finally { release.TrySetResult(); await worker.StopAsync(default); }
+            }
+            if (cut is 3 or 4) await f.RestartAsync();
+            f.H.Adapter.OnSubmitted = async sent =>
+            {
+                accepted.Add(sent);
+                await f.StreamAsync(f.Entry("UserPrompt", sent));
+            };
+            using (var restarted = new SessionRuntimeActionHostedService(f.Actions))
+            {
+                await restarted.StartAsync(default);
+                try
+                {
+                    await WaitDeliveredAsync();
+                    if (cut != 3) await f.StreamAsync(f.Entry("AssistantText", answer), f.Entry("TurnEnd"));
+                    await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+                    {
+                        await using var db = f.H.CreateObserverContext();
+                        return await db.ReviewComments.AnyAsync(c => c.ThreadId == threadId && c.Author == ReviewCommentAuthor.Agent);
+                    });
+                }
+                finally { await restarted.StopAsync(default); }
+            }
+            accepted.ShouldBe([body], label + " original queue identity permits exactly one submitted body");
+            await using (var verify = f.H.CreateObserverContext())
+            {
+                var row = await verify.SessionQueuedMessages.SingleAsync(m => m.ReviewThreadId == threadId);
+                row.Id.ShouldBe(sourceId, label); row.ReviewReplyConsumedAt.ShouldNotBeNull(label);
+                row.ChannelReplySettledAt.ShouldBeNull(label);
+                (await verify.ReviewComments.Where(c => c.ThreadId == threadId && c.Author == ReviewCommentAuthor.Agent)
+                    .Select(c => c.Body).ToListAsync()).ShouldBe([answer], label);
+                (await verify.TranscriptEntries.CountAsync(t => t.Kind == "UserPrompt" && t.Text == body)).ShouldBe(1, label);
+            }
+            Console.WriteLine(label + ": same queue/target, one complete prompt, one comment");
+
+            async Task DispatchAsync()
+            {
+                using var scope = f.H.Provider.CreateScope();
+                (await scope.ServiceProvider.GetRequiredService<ReviewThreadService>().DispatchAsync(threadId, default)).ShouldBeTrue(label);
+            }
+            async Task WaitDeliveredAsync() => await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+            {
+                await using var db = f.H.CreateObserverContext();
+                var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == sourceId);
+                return row.DeliveryVerdict is DeliveryVerdict.Delivered or DeliveryVerdict.LateConfirmed;
+            });
+        }
+    }
+
+    private sealed class ReviewEnqueueFault : Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor
+    {
+        public bool Armed;
+        public int Hits;
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int>> SavingChangesAsync(
+            Microsoft.EntityFrameworkCore.Diagnostics.DbContextEventData data,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int> result, CancellationToken ct = default)
+        {
+            if (Armed && data.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
+                .Any(e => e.State == EntityState.Added && e.Entity.ReviewThreadId != null))
+            { Armed = false; Hits++; throw new IOException("review queue insert failed before commit"); }
+            return ValueTask.FromResult(result);
+        }
+    }
+
     private sealed class RoutingFixture : IAsyncDisposable
     {
         public required BridgeQueueHarness H;
         public required ScriptedSessionRunnerClient Runner;
         public required SessionRunnerEventPump Pump;
         public required IsolatedTestSchema Schema;
+        private Action<IServiceCollection>? _configure;
+        private Action<DbContextOptionsBuilder>? _configureDb;
+        private readonly List<string> _tempRoots = [];
         private long _sequence = 2;
         public SessionRuntimeActionCoordinator Actions => H.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
         public static async Task<RoutingFixture> CreateAsync(Action<IServiceCollection>? configure = null,
@@ -457,6 +621,7 @@ public partial class SessionRuntimeActionRoutingTests
             var h = await BridgeQueueHarness.CreateAsync(new()
             {
                 ConnectionString = schema.ConnectionString,
+                PreserveDatabaseOnDispose = true,
                 ConfigureDbContext = configureDb,
                 Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
                 ConfigureServices = s =>
@@ -471,8 +636,27 @@ public partial class SessionRuntimeActionRoutingTests
             await pump.StartAsync(default);
             await runner.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var fixture = new RoutingFixture { H = h, Runner = runner, Pump = pump, Schema = schema };
+            fixture._configure = configure; fixture._configureDb = configureDb; fixture._tempRoots.Add(h.TempRoot);
             fixture._sequence = await h.CurrentTranscriptMaxSequenceAsync();
             return fixture;
+        }
+        public async Task RestartAsync()
+        {
+            var session = H.SessionId; var agent = H.AgentId;
+            await Pump.StopAsync(default); Pump.Dispose(); await H.DisposeAsync();
+            Runner = new ScriptedSessionRunnerClient();
+            H = await BridgeQueueHarness.CreateAsync(new()
+            {
+                ConnectionString = Schema.ConnectionString, AttachSessionId = session, AttachAgentId = agent,
+                PreserveDatabaseOnDispose = true, ConfigureDbContext = _configureDb,
+                Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
+                ConfigureServices = s => { s.AddSingleton<ISessionRunnerClient>(Runner); _configure?.Invoke(s); }
+            });
+            _tempRoots.Add(H.TempRoot);
+            _sequence = await H.CurrentTranscriptMaxSequenceAsync();
+            Pump = new SessionRunnerEventPump(H.Provider.GetRequiredService<IServiceScopeFactory>(),
+                Options.Create(new SessionRunnerSettings { Enabled = true }), NullLogger<SessionRunnerEventPump>.Instance, H.Clock);
+            await Pump.StartAsync(default); await Runner.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(5));
         }
         public SessionRunnerTranscriptEvent Entry(string kind, string? text = null) =>
             new(H.SessionId, Interlocked.Increment(ref _sequence), kind, Guid.NewGuid().ToString(), null,
@@ -509,6 +693,8 @@ public partial class SessionRuntimeActionRoutingTests
         {
             await Pump.StopAsync(default); Pump.Dispose();
             await H.DisposeAsync(); await Schema.DisposeAsync();
+            foreach (var root in _tempRoots.Distinct())
+                if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
     }
 }

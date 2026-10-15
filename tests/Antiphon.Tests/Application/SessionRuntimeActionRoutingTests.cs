@@ -282,6 +282,7 @@ public partial class SessionRuntimeActionRoutingTests
     [Arguments("enqueue-failure")]
     public async Task C1259_review_recovery_uses_authorized_queue_identity_once(string variant)
     {
+        if (variant == "enqueue-failure") await VerifyReviewHandoffCutsAsync();
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var runner = new ScriptedSessionRunnerClient();
         var fault = new CommentCommitFault();
