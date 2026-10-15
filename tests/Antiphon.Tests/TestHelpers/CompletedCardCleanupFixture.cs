@@ -8,7 +8,10 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Files;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using System.Collections.Concurrent;
 using Shouldly;
 using Antiphon.SessionRunner.Contracts;
 using System.Text.Json;
@@ -31,6 +34,9 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
     public Guid TargetId { get; private set; }
     public Guid EndpointId { get; private set; }
 
+    /// <summary>CARD-1230: AgentReportStore warnings carry the reason behind artifact_unpreserved.</summary>
+    public ReportStoreLog ReportLog { get; } = new();
+
     /// <summary>Fixture-only cohort. Shipped configuration stays Execute=false and CardDoneAfterUtc=null.</summary>
     public WorktreeResidueSettings Residue { get; } = new() { Execute = true, MinSettledMinutes = 120 };
 
@@ -40,6 +46,8 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         while (checkout is not null && !File.Exists(Path.Combine(checkout.FullName, "Antiphon.sln"))) checkout = checkout.Parent;
         var root = Path.Combine(checkout?.FullName ?? throw new InvalidOperationException("checkout missing"),
             ".antiphon", "test-output", "c1017", Guid.NewGuid().ToString("N"));
+        if (TempCheckoutRefusal(root, Path.GetTempPath()) is { } refusal)
+            throw new InvalidOperationException($"{refusal}: {root} is under {Path.GetTempPath()}; run from a checkout outside the temp directory.");
         Host = new LandingSafetyHarness(root)
         {
             Clock = clock ?? TimeProvider.System,
@@ -49,6 +57,7 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
                 services.AddScoped<CardWorktreeCleanupExecutor>();
                 services.AddScoped<CardWorktreeCleanupService>();
                 services.AddSingleton(Options.Create(Residue));
+                services.AddSingleton<ILoggerProvider>(ReportLog);
             }
         };
     }
@@ -257,8 +266,19 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
             .TryAsync(EndpointId, runId, CancellationToken.None);
     }
 
-    /// <summary>CARD-1230: names a fixture root under the OS temp directory. Not yet enforced.</summary>
-    internal static string? TempCheckoutRefusal(string root, string temp) => null;
+    /// <summary>
+    /// CARD-1230: AgentReportStore refuses a report root under the OS temp directory
+    /// (docs/orchestration-loop.md, report storage), and this fixture keeps its repository, so its
+    /// report root, inside the checkout. From a checkout there each admitted cleanup ends artifact_unpreserved.
+    /// </summary>
+    internal static string? TempCheckoutRefusal(string root, string temp)
+    {
+        var full = Path.GetFullPath(root);
+        var tempRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(temp));
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return string.Equals(full, tempRoot, comparison) || full.StartsWith(tempRoot + Path.DirectorySeparatorChar, comparison)
+            ? "c1017_checkout_under_temp" : null;
+    }
 
     public async Task<string?> SentinelAsync() => File.Exists(Sentinel) ? await File.ReadAllTextAsync(Sentinel) : null;
     public async Task<int> IntentsAsync()
@@ -286,5 +306,25 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
             || (await File.ReadAllTextAsync(Path.Combine(Host.Fixture.Repository, "fixture-owner.txt"))).Trim() != TaskId.ToString("N"))
             throw new InvalidOperationException("C1017 fixture ownership changed");
         Antiphon.Server.Infrastructure.Git.WorktreeNoFollowDelete.Delete(root);
+    }
+}
+
+internal sealed class ReportStoreLog : ILoggerProvider
+{
+    private readonly ConcurrentQueue<string> _lines = new();
+    public string Text => string.Join(" | ", _lines);
+    public ILogger CreateLogger(string categoryName) =>
+        categoryName == typeof(AgentReportStore).FullName ? new Sink(_lines) : NullLogger.Instance;
+    public void Dispose() { }
+
+    private sealed class Sink(ConcurrentQueue<string> lines) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (IsEnabled(logLevel)) lines.Enqueue(formatter(state, exception));
+        }
     }
 }
