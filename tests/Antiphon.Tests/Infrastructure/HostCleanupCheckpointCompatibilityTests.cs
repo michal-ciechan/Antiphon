@@ -27,10 +27,32 @@ public sealed class HostCleanupCheckpointCompatibilityTests
     {
         var f = new HostCleanupToolFixture();
         var siblings = new[] { f.Files.Parent + "/.antiphon/checkpoints/dead/tool", f.Files.Parent + "/.antiphon/checkpoints/unknown/tool", f.Files.Parent + "/other/tool" };
-        foreach (var p in siblings) { f.Io.CreateDirectory(p); f.Io.Put(p + "/sentinel", "keep"); }
+        foreach (var p in siblings)
+        {
+            var siblingRun = Path.GetDirectoryName(p)!;
+            SafeWrite.Require(f.Files.Write.CreateDirectory(siblingRun, f.Files.Write.Under(f.Files.Parent)));
+            SafeWrite.Require(f.Files.Write.CreateFreshDirectory(p, f.Files.Write.Under(siblingRun)));
+            SafeWrite.Require(f.Files.Write.Text(p + "/sentinel", "keep", f.Files.Write.Under(p)));
+            SafeWrite.Require(f.Files.Ledger.Seal(p));
+            RunOwnershipStore.Write(siblingRun, new()
+            {
+                RunId = Path.GetFileName(siblingRun), RunDirectory = siblingRun,
+                Starter = f.Dead, Launched = p == siblings[1] ? null : f.Dead,
+                Phase = p == siblings[1] ? "launch-attempted" : "launched"
+            }, f.Context);
+        }
+        // The dead sibling is deletable under this context: startup must not sweep it.
+        f.Files.Ledger.Check(siblings[0]).ShouldBeNull();
+        f.Cleanup().ObserveExecutor(Path.GetDirectoryName(siblings[0])!).Verdict.ShouldBe(ProcessVerdict.Dead);
+        f.Receipt.ClearEvents();
         var run = CheckpointApp.CreateRun(HostCleanupToolFixture.Manifest(), new() { Branch = "virtual" }, f.Files.Parent, f.Runtime());
         f.Io.DirectoryExists(run).ShouldBeTrue();
-        foreach (var p in siblings) f.Io.Text(p + "/sentinel").ShouldBe("keep");
+        foreach (var p in siblings)
+        {
+            f.Io.DirectoryExists(p).ShouldBeTrue();
+            f.Io.FileExists(p + "/sentinel").ShouldBeTrue();
+            f.Io.Text(p + "/sentinel").ShouldBe("keep");
+        }
         f.Io.Count("unlink").ShouldBe(0); f.Io.Count("rmdir").ShouldBe(0);
     }
 
@@ -91,7 +113,11 @@ public sealed class HostCleanupCheckpointCompatibilityTests
         var before = f.Io.Nodes.Where(p => Path.GetDirectoryName(p.Key) == f.Run && p.Value.Stat.Kind == "file").ToDictionary(p => p.Key, p => Hash(p.Value.Bytes));
         f.Cleanup().Remove(f.Run).Outcome.ShouldBe("Removed");
         f.Io.DirectoryExists(f.Tool).ShouldBeFalse();
-        foreach (var (path, hash) in before) Hash(f.Io.Nodes[path].Bytes).ShouldBe(hash);
+        foreach (var (path, hash) in before)
+        {
+            f.Io.FileExists(path).ShouldBeTrue("preserved evidence: " + path);
+            Hash(f.Io.Nodes[path].Bytes).ShouldBe(hash);
+        }
     }
 
     [Test]
@@ -117,7 +143,18 @@ public sealed class HostCleanupCheckpointCompatibilityTests
         var task = Task.Run(() => f.Cleanup(beforeDelete: _ => { Interlocked.Increment(ref attempts); throw new IOException("delete-denied"); }).Remove(f.Run));
         for (var i = 0; i < 9; i++)
         {
-            var timer = await f.Files.Clock.WaitForTimerAsync(e => e.Action == "create" && e.DueTime == TimeSpan.FromMilliseconds(50 * (i + 1)));
+            using var observing = new CancellationTokenSource();
+            var timerTask = f.Files.Clock.WaitForTimerAsync(
+                e => e.Action == "create" && e.DueTime == TimeSpan.FromMilliseconds(50 * (i + 1)), ct: observing.Token);
+            var winner = await Task.WhenAny(task, timerTask);
+            if (winner != timerTask)
+            {
+                observing.Cancel();
+                try { await timerTask; } catch (OperationCanceledException) { }
+                await task;
+                (winner == timerTask).ShouldBeTrue(label + ": cleanup completed without scheduling the injected delay");
+            }
+            var timer = await timerTask;
             f.Files.Clock.Advance(timer.DueTime);
         }
         (await task).Outcome.ShouldBe("Failed", label); attempts.ShouldBe(10, label);
@@ -133,7 +170,9 @@ public sealed class HostCleanupCheckpointCompatibilityTests
         f.Io.Put(f.Run + "/request.json", JsonSerializer.Serialize(new RunRequest { KeepOutputs = keepOutputs }));
         var hash = Hash(f.Io.Nodes[f.Receipt.MarkdownPath].Bytes);
         (await f.Wait()).ShouldBe(exitCode);
-        f.Io.DirectoryExists(f.Tool).ShouldBeFalse(); Hash(f.Io.Nodes[f.Receipt.MarkdownPath].Bytes).ShouldBe(hash);
+        f.Io.DirectoryExists(f.Tool).ShouldBeFalse();
+        f.Io.FileExists(f.Receipt.MarkdownPath).ShouldBeTrue();
+        Hash(f.Io.Nodes[f.Receipt.MarkdownPath].Bytes).ShouldBe(hash);
         f.Io.DirectoryExists(f.Receipt.Output).ShouldBeTrue();
     }
 

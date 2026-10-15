@@ -369,7 +369,6 @@ internal sealed class HostCleanupToolFixture
         Receipt.State.RunId = Path.GetFileName(Run); Receipt.Report.RunId = Receipt.State.RunId;
         SafeWrite.Require(new RunStateStore(Context).Write(Run + "/state.json", Receipt.State));
         ReportWriter.WriteFiles(Context, Run, Receipt.Report);
-        Receipt.ClearEvents();
     }
     public static CheckpointManifest Manifest() => new()
     {
