@@ -7957,6 +7957,27 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime?>("DeliveryVerdictAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("DirectReplyConversationId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("DirectReplyHandle")
+                        .HasColumnType("text");
+
+                    b.Property<long?>("DirectReplyPendingThroughSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("DirectReplyPromptSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("DirectReplyProvider")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("DirectReplyTailClosedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long?>("DirectReplyThroughSequence")
+                        .HasColumnType("bigint");
+
                     b.Property<DateTime?>("ExecutionDeadlineAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -8203,6 +8224,12 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<DateTime?>("AcceptedGeneration")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("AcceptedTaskAttempt")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("AcceptedTaskId")
+                        .HasColumnType("uuid");
 
                     b.Property<Guid>("AgentSessionId")
                         .HasColumnType("uuid");
