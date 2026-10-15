@@ -112,7 +112,7 @@ public sealed partial class PipelineSpeedIntegrationTests
             await writer.RecordAsync(w.Owner.Id, new PipelineHandoffActionRequest(action.Attempt,
                 action.SettlementEventId, AgentTaskRole.Code, 0, "eligible", "lock order"), "fixture", CancellationToken.None);
         }
-        locks.Order.ShouldBe(new[] { "card", "task", "action" }, customMessage: "observation writer takes card before task/action");
+        string.Join(",", locks.Order).ShouldBe("card,task,action", "observation writer takes card before task/action");
         locks.Order.Clear();
         await using (var scope = w.Services.CreateAsyncScope())
         {
@@ -121,10 +121,10 @@ public sealed partial class PipelineSpeedIntegrationTests
             await Should.ThrowAsync<ConflictException>(() => writer.RequestChildAsync(w.Owner.Id, action.Id,
                 new PipelineHandoffChildRequest(ChildRequest(w)), w.Caller(), "fixture", CancellationToken.None));
         }
-        locks.Order.ShouldBe(new[] { "card", "action" }, customMessage: "refusal writer takes card before action");
+        string.Join(",", locks.Order).ShouldBe("card,action", "refusal writer takes card before action");
         locks.Order.Clear();
         await CreateAsync(w, ChildRequest(w), action.Id);
-        locks.Order.ShouldBe(new[] { "card", "action", "host", "concurrency" }, customMessage: "admission lock order");
+        string.Join(",", locks.Order).ShouldBe("card,action,host,concurrency", "admission lock order");
     }
 
     private sealed class AdmissionLocks : DbCommandInterceptor, IDbTransactionInterceptor
