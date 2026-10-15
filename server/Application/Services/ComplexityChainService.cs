@@ -140,11 +140,23 @@ public sealed class ComplexityChainService
         var empty = (Candidates: (IReadOnlyList<RoutingCandidates.Candidate>)[],
             Provenance: (RoutingPinProvenance?)null, ChainSource: "config",
             ChainRole: (AgentTaskRole?)null, ResolvedFrom: "none");
+        // CARD-1275: the cell's token is read before its candidates, so a write between the two
+        // reads pairs newer candidates with an older token and a save with it is 409.
+        var cellFailures = new List<string>();
+        var cell = await ReadPartAsync("chain metadata", () => _routing.FindActiveAsync(role, complexity, ct),
+            (ComplexityChain?)null, cellFailures, ct);
         var loaded = await ReadPartAsync("chain", () => _routing.LoadChainAsync(role, complexity, ct), empty, failures, ct);
-        var answering = loaded.ResolvedFrom is "role" or "any"
-            ? await ReadPartAsync("chain metadata", () => _routing.FindActiveAsync(loaded.ChainRole, complexity, ct),
-                (ComplexityChain?)null, failures, ct)
-            : null;
+        ComplexityChain? answering = null;
+        if (loaded.ResolvedFrom == "role")
+        {
+            failures.AddRange(cellFailures);
+            answering = cell;
+        }
+        else if (loaded.ResolvedFrom == "any")
+        {
+            answering = await ReadPartAsync("chain metadata", () => _routing.FindActiveAsync(null, complexity, ct),
+                (ComplexityChain?)null, failures, ct);
+        }
 
         string? agentLabel = null;
         if (decision.Applied && decision.Pin!.AgentId is { } agentId)
