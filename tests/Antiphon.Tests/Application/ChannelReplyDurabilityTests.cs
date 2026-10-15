@@ -124,6 +124,7 @@ public class ChannelReplyDurabilityTests
         h.Runner.SetTranscript(LateConfirmBatch(h.SessionId, prompt, answer));
 
         await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+        await h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, CancellationToken.None);
         h.Messaging.SentReplies.ShouldBeEmpty();
         await ChannelOutboundTestDriver.AssertCapturedAsync(h.Provider, h.SessionId, "main", 1);
         await h.DrainOutboundAsync();
@@ -169,6 +170,7 @@ public class ChannelReplyDurabilityTests
         h.Runner.SetTranscript(LateConfirmBatch(h.SessionId, prompt, answer));
 
         await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+        await h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, CancellationToken.None);
         await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty();
@@ -218,6 +220,7 @@ public class ChannelReplyDurabilityTests
         h.Runner.SetTranscript(LateConfirmBatch(h.SessionId, prompt, "NO_REPLY"));
 
         await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+        await h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, CancellationToken.None);
         await h.DrainOutboundAsync();
 
         h.Messaging.SentReplies.ShouldBeEmpty();
@@ -250,6 +253,7 @@ public class ChannelReplyDurabilityTests
             h.SessionId, prompt, "API Error: 529 Overloaded", isApiError: true));
 
         await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+        await h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, CancellationToken.None);
         await h.DrainOutboundAsync();
 
         (await RowAsync(messageId)).DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
@@ -891,6 +895,7 @@ public class ChannelReplyDurabilityTests
         h.Runner.SetTranscript(TransportFixtureBatch(h.SessionId));
 
         await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+        await h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, CancellationToken.None);
         await h.DrainOutboundAsync();
 
         await AssertTransportNoticeAsync(h, chatId, messageId);
