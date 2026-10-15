@@ -6,7 +6,14 @@ Base: `3931a31149acbc63837fcdda13cad60fdd1117cb`.
 
 The authority is the B-1 binding in [the plan](../plans/2026-10-15-card-1281-pipeline-speed-plan.md)
 and the component CP-2 in [the checkpoint manifest](../plans/2026-10-15-card-1281-cheap-slices-checkpoints.md).
-This report initially records implementation and red evidence; final receipts follow after execution.
+B-1 is implemented and its acceptance selection passes. **Final remains incomplete:** the
+required existing-guard row has two proven inherited bundle-size failures. These are failed
+verification guards, not advisory narrative corrections. No Clean/Full or Review-ready claim is
+made. Next Code repairs the inherited D-2 bundle-size gate, retaining the pinned instructions and
+assertions, before the original B-1 owner receives ordinary Review.
+
+Actual implementation and tested source: `3bdef3882d31df49c292efab66646b3a198c7875`.
+This evidence update is a subsequent report-only commit and does not change that tested identity.
 
 ## Component boundary
 
@@ -71,7 +78,73 @@ waited=0s. CP-2's first run at `a80c4ed24fbdb7ef8f06ec57f7161f8f544e250a` execut
 the other ten stayed green. The first implementation run at
 `7ea3062cfe46fa4efe0d0423010b1ca931465cce` executed 12: 11 passed, 1 failed, 0 skipped.
 V-3 passed; V-2 exposed an introduced error classification bug: InvalidDataException escaped the
-row's incomplete-result handler. The fix retains the assertion and deadline. Final run pending.
+row's incomplete-result handler. The fix retains the assertion and deadline. The final component
+run passes; the separate inherited failures and final gate are detailed below.
+
+## Final results and attribution
+
+| ID | Outcome at the tested source |
+|---|---|
+| V-1 | Passed advisory disposition and composed policy |
+| V-2 | Passed substantive/unknown/legacy assessment refusal; absent run, failed row, absent TRX/build provenance, wrong receipt; exact missing rows and no successor |
+| V-3 | Passed real correction POST/validator/storage/LandApproval; replay after input deletion and host restart; one correction/audit, zero new Reviews; independent subject/SHA/ref/repository negatives; historical report/cost unchanged; broken link refused |
+| V-4 | Passed separate Docs source/approval identity |
+| V-5 | Passed narrative boundary and protected-content refusals |
+| V-6 | Passed refusal without supported comment-equivalence proof |
+| V-7 | Passed unchanged history and attribution |
+| R-1 | **Incomplete gate**: CP-2/qualified 12/12; CP-25 274/276, with two inherited InstructionBundleTests size failures. Parser, summary and approval classes otherwise pass |
+| R-5 | Existing foundation five-method class and Review recovery 21-method class passed in CP-25; no new S0 claim |
+| R-6 | Existing recovery endpoint full class passed 6/6; S6's new correction integration matrix remains pending |
+| V-27/V-28/V-29 | Deferred to the separately owned S6 authorization/transaction/import integration methods; never marked passed by B-1 |
+| Other V/R/Q IDs | Other component/shared/live work remains with the original plan owners. No B-1 manual operating gate is specified |
+
+Fresh TRX confirms CP-2 and CP-2-qualified each contain all seven AdvisoryChangePolicyTests and
+all five StageOutcomeSummaryTests, with zero failures/skips. CP-25 contains every requested full
+class: InstructionBundleTests 78 (76 passed, 2 failed), ReviewEvidenceParserTests 21,
+AgentTaskLandApprovalRequestTests 24, AgentTaskLandApprovalRecoveryTests 94,
+AgentTaskLandApprovalPersistenceTests 10, CheckpointSourceApprovalTests 4,
+InterimVerificationLandGuardTests 13, ReviewEvidenceRecoveryTests 21,
+ReviewEvidenceRecoveryEndpointTests 6, PipelineSpeedIntegrationTests 5. All other classes pass;
+there are no skipped cases.
+
+The failed method is `InstructionBundleTests.each_stage_bundle_is_ascii_and_under_the_size_cap`:
+stage-code is 3,348 characters and stage-review is 5,014, against the unchanged 2,500 cap.
+The exact six-argument method was rerun from a temporary detached checkout of task base
+`3931a31149acbc63837fcdda13cad60fdd1117cb`: 6 executed, 4 passed, the identical two failed,
+zero skipped, clean source and verified build. The bundles and guard file have zero task-range
+diff. The detached checkout made no commits or branch changes and is removed after evidence
+retention. This extra isolated baseline build/test is required failure attribution, not a broad
+baseline suite or an additional feature checkpoint.
+
+The combined final run's source is clean with verified build provenance, but its report refuses
+qualification with `cleanup_refused` because it retained outputs after the red guard row. That
+historical refusal remains intact. CP-2 was therefore rerun exactly once, without rebuilding,
+as CP-2-qualified at the same SHA; both the checkpoint tool and the existing PowerShell validator
+return `CHECKPOINT SOURCE VALID ... rows=1`. No edited/relabelled receipt was used. This is
+required receipt qualification, not a confidence repetition. CP-25 remains red/unqualified.
+Every build/row used a granted host slot, waited=0s. No deadline or assertion changed.
+
+Three grouped runs consumed 342.003, 335.308 and 590.331 seconds of tool-recorded wall time.
+Standalone row reports omit useful phase timings (serialized zeros are not zero cost); their
+console reports and build log are retained. The baseline and qualification runs are disclosed
+additional cost, as is the five-second leased tool bootstrap. No savings are claimed.
+
+## Retained evidence and next action
+
+The 85-file raw inventory is retained outside the disposable checkout at
+`/work/repos/antiphon/.git/antiphon/code-evidence/f88c7bf2/producer-pack-index.json`, SHA-256
+`64633856c4b839d17e21a6f1727027e708f3c8c4c86ab72f1302a4e919ad8745`.
+It records original paths, retained paths, bytes and hashes, including every red attempt, the
+unmodified qualified receipt, all TRX, build stamps/logs, guard search, derived manifest and exact
+base reproduction. This inventory is not runtime approval. The extra CP-25 is a deterministic
+copy of the original first table plus the brief-authorized guard row; input/output digests are
+in `.antiphon/c1281-b1-plan-provenance.json` and retained in that inventory.
+
+Run the inherited exact size guard after repairing D-2 policy bundles, then the six existing
+instruction guards and required full affected classes without weakening the cap or losing
+instruction pins. B-1's original owner remains the landing owner. Commission ordinary Review
+only after the failed gate is repaired. S6 still owns registration and V-27..29. All PCs stay
+pending for SourceLanding Mutation. Restart remains none.
 
 ## Pending controls and other slices
 
@@ -81,3 +154,41 @@ No Mutation or live acceptance was performed. See the companion unbound mutation
 V-22..26 remain S0 history; V-27..37/R-5..8 remain the shared integration contracts except any
 explicit unchanged classes observed in CP-25. D-3/D-4/D-5 live and operating Q gates are separate.
 Restart: none.
+
+## Unedited checkpoint lines
+
+
+### 20261015-133255-4fcc
+
+```text
+CHECKPOINT CP-2 commit=a80c4ed24fbdb7ef8f06ec57f7161f8f544e250a build=ok filter=/*/*/(AdvisoryChangePolicyTests*)|(StageOutcomeSummaryTests*)/* executed=12 passed=10 failed=2 skipped=0 trx=/work/worktrees/task-f88c7bf2/.antiphon/checkpoints/20261015-133255-4fcc/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=a80c4ed24fbdb7ef8f06ec57f7161f8f544e250a sourceState=clean buildSource=verified
+```
+
+
+### 20261015-134522-f9a8
+
+```text
+CHECKPOINT CP-2 commit=7ea3062cfe46fa4efe0d0423010b1ca931465cce build=ok filter=/*/*/(AdvisoryChangePolicyTests*)|(StageOutcomeSummaryTests*)/* executed=12 passed=11 failed=1 skipped=0 trx=/work/worktrees/task-f88c7bf2/.antiphon/checkpoints/20261015-134522-f9a8/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=7ea3062cfe46fa4efe0d0423010b1ca931465cce sourceState=clean buildSource=verified
+```
+
+
+### 20261015-135459-d4bc
+
+```text
+CHECKPOINT CP-2 commit=3bdef3882d31df49c292efab66646b3a198c7875 build=ok filter=/*/*/(AdvisoryChangePolicyTests*)|(StageOutcomeSummaryTests*)/* executed=12 passed=12 failed=0 skipped=0 trx=/work/worktrees/task-f88c7bf2/.antiphon/checkpoints/20261015-135459-d4bc/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=3bdef3882d31df49c292efab66646b3a198c7875 sourceState=clean buildSource=verified
+CHECKPOINT CP-25 commit=3bdef3882d31df49c292efab66646b3a198c7875 build=reused filter=/*/*/(InstructionBundleTests*)|(ReviewEvidenceParserTests*)|(AgentTaskLandApprovalRequestTests*)|(AgentTaskLandApprovalRecoveryTests*)|(AgentTaskLandApprovalPersistenceTests*)|(CheckpointSourceApprovalTests*)|(InterimVerificationLandGuardTests*)|(ReviewEvidenceRecoveryTests*)|(ReviewEvidenceRecoveryEndpointTests*)|(PipelineSpeedIntegrationTests*)/* executed=276 passed=274 failed=2 skipped=0 trx=/work/worktrees/task-f88c7bf2/.antiphon/checkpoints/20261015-135459-d4bc/rows/CP-25/run.trx slot=granted waited=0s dirty=0 source=3bdef3882d31df49c292efab66646b3a198c7875 sourceState=clean buildSource=verified
+```
+
+
+### CP-2-qualified-20261015-140718-4a37
+
+```text
+CHECKPOINT CP-2-qualified commit=3bdef3882d31df49c292efab66646b3a198c7875 build=reused filter=/*/*/(AdvisoryChangePolicyTests*)|(StageOutcomeSummaryTests*)/* executed=12 passed=12 failed=0 skipped=0 trx=/work/worktrees/task-f88c7bf2/.antiphon/checkpoints/CP-2-qualified-20261015-140718-4a37/run.trx slot=granted waited=0s dirty=0 source=3bdef3882d31df49c292efab66646b3a198c7875 sourceState=clean buildSource=verified
+```
+
+
+### Exact base failure attribution
+
+```text
+CHECKPOINT CP-25-base commit=3931a31149acbc63837fcdda13cad60fdd1117cb build=ok filter=/*/*/InstructionBundleTests/each_stage_bundle_is_ascii_and_under_the_size_cap* executed=6 passed=4 failed=2 skipped=0 trx=/tmp/c1281-base-f88c7bf2/.antiphon/checkpoints/CP-25-base-20261015-140501-1cd7/run.trx slot=granted waited=0s dirty=0 source=3931a31149acbc63837fcdda13cad60fdd1117cb sourceState=clean buildSource=verified
+```
