@@ -15,7 +15,7 @@ public sealed class BaselineComparerTests : CheckpointTestBase
         var baselineRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "antiphon-checkpoints-baseline"));
         var prefix = baselineRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         Path.GetFullPath(safe).StartsWith(prefix, StringComparison.Ordinal).ShouldBeTrue();
-        Path.GetFileName(safe).ShouldBe("bin-a");
+        Path.GetFileName(safe).ShouldBe("baseline-a");
         foreach (var id in new[] { "tests", ".", "..", "src", Path.GetFullPath(source) })
             Should.Throw<InvalidOperationException>(() => BaselineComparer.CheckoutPath(source, "20260101-000000-abcd", id));
     }
@@ -48,6 +48,45 @@ public sealed class BaselineComparerTests : CheckpointTestBase
         kinds.Single(item => item.Name == "N.Kept.bad").Kind.ShouldBe("INHERITED");
         kinds.Single(item => item.Name == "N.Fresh.good").Kind.ShouldBe("INTRODUCED");
         kinds.Single(item => item.Name == "N.Missing.gone").Kind.ShouldBe("NEW");
+    }
+
+    [Test]
+    public async Task red_at_base_census_is_inherited_when_the_census_skips_build_output_folders()
+    {
+        // CARD-1231: TestLaneCategoryGuardTests and other repository censuses skip a source
+        // path with a bin, obj or bin-* segment. This fake run does the same with the
+        // segments the tool chooses below the temp root: inside such a folder it scans
+        // nothing and passes, elsewhere it reports the failure that is red at the base.
+        var driver = Script(request => SkipsBuildOutput(request.WorkingDirectory) ? """
+            <?xml version="1.0" encoding="utf-8"?>
+            <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+              <Results>
+                <UnitTestResult testId="1" outcome="Passed" duration="00:00:01" />
+              </Results>
+              <TestDefinitions>
+                <UnitTest id="1"><TestMethod className="N.Guard" name="census" /></UnitTest>
+              </TestDefinitions>
+              <ResultSummary><Counters total="1" executed="1" passed="1" failed="0" /></ResultSummary>
+            </TestRun>
+            """ : """
+            <?xml version="1.0" encoding="utf-8"?>
+            <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+              <Results>
+                <UnitTestResult testId="1" outcome="Failed" duration="00:00:01" />
+              </Results>
+              <TestDefinitions>
+                <UnitTest id="1"><TestMethod className="N.Guard" name="census" /></UnitTest>
+              </TestDefinitions>
+              <ResultSummary><Counters total="1" executed="1" passed="0" failed="1" /></ResultSummary>
+            </TestRun>
+            """);
+        var kinds = await new BaselineComparer(driver).CompareAsync(
+            TempDir(), TempDir(), "origin/master",
+            [Failures("CP-1", "bin-c507-s1", "N.Guard.census")],
+            [new BuildSpec { Id = "bin-c507-s1", Project = "tests/Antiphon.Tests", OutputPath = "bin-c507-s1/" }],
+            CancellationToken.None);
+        kinds.Single().Kind.ShouldBe("INHERITED", "the baseline checkout must not sit under a folder a census skips");
+        Path.GetFileName(driver.Calls.First(CheckpointFixtures.IsRun).WorkingDirectory).ShouldBe("baseline-c507-s1");
     }
 
     [Test]
@@ -183,7 +222,9 @@ public sealed class BaselineComparerTests : CheckpointTestBase
         }
     }
 
-    private static FakeDriver Script(string trx)
+    private static FakeDriver Script(string trx) => Script(_ => trx);
+
+    private static FakeDriver Script(Func<DriverRequest, string> trx)
     {
         var driver = new FakeDriver();
         driver.When(request => request.FileName == "git", (request, _) =>
@@ -196,11 +237,18 @@ public sealed class BaselineComparerTests : CheckpointTestBase
         {
             var path = CheckpointFixtures.TrxFile(request);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, trx);
+            File.WriteAllText(path, trx(request));
             return Task.FromResult(new DriverResult(0, "", ""));
         });
         return driver;
     }
+
+    private static bool SkipsBuildOutput(string path) =>
+        Path.GetRelativePath(Path.GetTempPath(), path)
+            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(part => part.Equals("bin", StringComparison.OrdinalIgnoreCase)
+                || part.Equals("obj", StringComparison.OrdinalIgnoreCase)
+                || part.StartsWith("bin-", StringComparison.OrdinalIgnoreCase));
 
     private static ReportRow Failures(string id, string build, params string[] names) => new()
     {
