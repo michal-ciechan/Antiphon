@@ -225,17 +225,33 @@ public static class CodexResponseAnalyzer
     private static readonly Regex BlankLineRun =
         new(@"\n{3,}", RegexOptions.Compiled);
 
-    public static bool IsAskingQuestion(string? rawSnapshot, string? prompt = null) =>
-        ExtractResponse(rawSnapshot, prompt).Contains('?');
+    public static bool IsAskingQuestion(
+        string? rawSnapshot, string? prompt = null, bool preserveCursorWordBoundaries = false) =>
+        ExtractResponse(rawSnapshot, prompt, preserveCursorWordBoundaries).Contains('?');
 
-    public static string ExtractResponse(string? rawSnapshot, string? prompt = null)
+    // Grok and OpenCode also use this analyzer. Cursor separation belongs only to
+    // Codex raw-output callers, which explicitly opt in.
+    public static string ExtractResponse(
+        string? rawSnapshot, string? prompt = null, bool preserveCursorWordBoundaries = false)
     {
-        var clean = CodexOutputText.Clean(rawSnapshot);
+        var clean = preserveCursorWordBoundaries
+            ? CodexOutputText.Clean(rawSnapshot)
+            : AnsiStripper.Clean(rawSnapshot) ?? string.Empty;
         clean = clean.Replace("\r\n", "\n").Replace('\r', '\n');
 
         if (!string.IsNullOrWhiteSpace(prompt))
         {
             var echoEnd = FindPromptEchoEnd(clean, prompt);
+            if (echoEnd < 0 && preserveCursorWordBoundaries)
+            {
+                // A cursor move may sit inside a word or after a literal space.
+                // Only use the plain form when it actually recovers the prompt echo.
+                var plain = (AnsiStripper.Clean(rawSnapshot) ?? string.Empty)
+                    .Replace("\r\n", "\n").Replace('\r', '\n');
+                echoEnd = FindPromptEchoEnd(plain, prompt);
+                if (echoEnd >= 0)
+                    clean = plain;
+            }
             if (echoEnd >= 0)
                 clean = clean[echoEnd..];
         }

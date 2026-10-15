@@ -157,8 +157,8 @@ public sealed class CodexAdapter : IAgentProtocolAdapter
         var raw = _runner.SnapshotText();
         return new AgentTurnResult(
             TurnCompleted: done,
-            ResponseText: CodexResponseAnalyzer.ExtractResponse(raw, _lastPrompt),
-            IsAskingQuestion: CodexResponseAnalyzer.IsAskingQuestion(raw, _lastPrompt),
+            ResponseText: CodexResponseAnalyzer.ExtractResponse(raw, _lastPrompt, preserveCursorWordBoundaries: true),
+            IsAskingQuestion: CodexResponseAnalyzer.IsAskingQuestion(raw, _lastPrompt, preserveCursorWordBoundaries: true),
             RawSnapshot: raw);
     }
 
