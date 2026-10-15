@@ -117,6 +117,7 @@ internal static class LandApproval
             .AnyAsync(o => o.SupersedesId == row.Id, ct);
         if (superseded)
             throw new ConflictException("Review evidence has been superseded.", "review_evidence_superseded");
+        await ReviewEvidenceCorrectionService.ValidateLinkAsync(db, row, ct);
         return row;
     }
 
