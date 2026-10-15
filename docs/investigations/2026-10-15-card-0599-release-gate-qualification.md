@@ -13,6 +13,10 @@ execution with 24 named script-harness assertions. RC credit cannot satisfy mast
 readiness; master credit cannot authorize release. False/string booleans, missing
 identity and wrong candidate SHA earn no credit. Fixture files are not live receipts.
 
+Observed at `19b25d22171fc2f1126a1e661fefab3678d34173`: CP-7 passed 2/2 and
+CP-8 passed 1/1, zero failures/skips. V-19 and V-20 are passed portable preflight;
+their clean SHA/build receipts were validated. This is no live qualification credit.
+
 The [activation plan](../superpowers/plans/2026-09-22-card-0599-release-gate-activation-plan.md)
 still requires its upstream settings/entrypoint binding (A-1). Its Q-1/Q-3
 enable/trigger commands cannot be supplied until that seam exists. The CARD-1281
