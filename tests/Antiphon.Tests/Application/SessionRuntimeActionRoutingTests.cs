@@ -29,8 +29,17 @@ public class SessionRuntimeActionRoutingTests
     [Arguments("herdr-blocked")]
     [Arguments("rules-held")]
     [Arguments("generation-changed")]
+    [Arguments("task-attempt-changed")]
+    [Arguments("action-during-flush")]
     public async Task C1259_new_working_or_blocked_state_defers_old_idle_action(string variant)
     {
+        if (variant == "task-attempt-changed")
+        {
+            await SessionRuntimeActionRecoveryTests.VerifyTaskAttemptReplacementAsync(false);
+            await SessionRuntimeActionRecoveryTests.VerifyTaskAttemptReplacementAsync(true);
+            return;
+        }
+        if (variant == "action-during-flush") { await VerifyActionDuringFlushAsync(); return; }
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var runner = new ScriptedSessionRunnerClient
         {
@@ -138,8 +147,112 @@ public class SessionRuntimeActionRoutingTests
             }
             h.Adapter.SubmittedBodies.ShouldBe([body]);
             h.Adapter.Killed.ShouldBeFalse();
+            if (variant == "working")
+            {
+                var cap = h.Provider.GetRequiredService<IOptions<SupervisionSettings>>().Value.DeliveryVerification.MaxDeliveryAttempts;
+                var capped = await h.SeedPendingMessageAsync("C1259 parked body must never be typed again", deliveryAttempts: cap,
+                    baselineSequence: receipt.Sequence);
+                await PersistAsync(Entry(TranscriptKinds.TurnEnd, null));
+                await Task.Delay(TimeSpan.FromMilliseconds(1100));
+                await actions.RequestAsync(h.SessionId, "status", default);
+                await actions.DrainPageAsync(h.SessionId, default);
+                h.Adapter.SubmittedBodies.ShouldBe([body], "eligibility must not bypass the delivery attempt cap");
+                await using var observer = h.CreateObserverContext();
+                var parked = await observer.SessionQueuedMessages.SingleAsync(m => m.Id == capped);
+                parked.Status.ShouldBe(QueuedMessageStatus.Pending);
+                parked.DeliveryAttempts.ShouldBe(cap);
+            }
         }
         finally { await pump.StopAsync(default); }
+    }
+
+    private static async Task VerifyActionDuringFlushAsync()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var runner = new ScriptedSessionRunnerClient();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            ConfigureServices = s => s.AddSingleton<ISessionRunnerClient>(runner)
+        });
+        await h.InsertTurnAsync("previous prompt", "previous answer");
+        const string first = "C1259 first complete queued body";
+        const string second = "C1259 second complete queued body";
+        await h.Queue.EnqueueAsync(h.SessionId, first, MessageSendMode.WhenIdle, default, deliverIfIdle: false);
+        await h.Queue.EnqueueAsync(h.SessionId, second, MessageSendMode.WhenIdle, default, deliverIfIdle: false);
+        var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
+        await actions.RequestAsync(h.SessionId, "status", default);
+        long sequence = 10;
+        SessionRunnerTranscriptEvent Entry(string kind, string? text) => new(h.SessionId,
+            Interlocked.Increment(ref sequence), kind, Guid.NewGuid().ToString(), null, h.Clock.GetUtcNow(),
+            kind == TranscriptKinds.UserPrompt ? "user" : "assistant", text, null, null, null, null,
+            kind == TranscriptKinds.TurnEnd ? "end_turn" : null);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Adapter.OnSubmitted = async body =>
+        {
+            if (body == first) { entered.TrySetResult(); await release.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
+            else body.ShouldBe(second);
+            runner.Produce(Entry(TranscriptKinds.UserPrompt, body));
+        };
+        using var pump = new SessionRunnerEventPump(h.Provider.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new SessionRunnerSettings { Enabled = true }), NullLogger<SessionRunnerEventPump>.Instance, h.Clock);
+        await pump.StartAsync(default);
+        Task? draining = null;
+        try
+        {
+            await runner.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            draining = actions.DrainPageAsync(h.SessionId, default);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var during = Entry(TranscriptKinds.TurnEnd, null);
+            runner.Produce(during);
+            Guid newAction = Guid.Empty;
+            await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+            {
+                await using var observer = h.CreateObserverContext();
+                var row = await observer.TranscriptEntries.SingleOrDefaultAsync(t => t.Uuid == during.Uuid);
+                if (row is null) return false;
+                newAction = await observer.SessionRuntimeActions.Where(a => a.TranscriptEntryId == row.Id).Select(a => a.Id).SingleAsync();
+                return true;
+            });
+            draining.IsCompleted.ShouldBeFalse();
+            release.TrySetResult();
+            await draining;
+            await using (var observer = h.CreateObserverContext())
+            {
+                (await observer.SessionRuntimeActions.SingleAsync(a => a.Id == newAction)).Phase.ShouldBe(SessionRuntimeActionCoordinator.QueuePhase);
+                var pending = await observer.SessionQueuedMessages.SingleAsync(m => m.Body == second);
+                pending.Status.ShouldBe(QueuedMessageStatus.Pending);
+                pending.DeliveryAttempts.ShouldBe(0);
+            }
+            h.Adapter.SubmittedBodies.ShouldBe([first]);
+            var finished = Entry(TranscriptKinds.TurnEnd, null);
+            runner.Produce(finished);
+            await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+            {
+                await using var observer = h.CreateObserverContext();
+                return await observer.TranscriptEntries.AnyAsync(t => t.Uuid == finished.Uuid);
+            });
+            await Task.Delay(TimeSpan.FromMilliseconds(1100));
+            await actions.DrainPageAsync(h.SessionId, default);
+            h.Adapter.SubmittedBodies.ShouldBe([first, second]);
+            await using var verify = h.CreateObserverContext();
+            (await verify.SessionRuntimeActions.AnyAsync(a => a.Id == newAction)).ShouldBeFalse();
+            foreach (var body in new[] { first, second })
+            {
+                var queue = await verify.SessionQueuedMessages.SingleAsync(m => m.Body == body);
+                queue.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+                queue.DeliveryAttempts.ShouldBe(1);
+                (await verify.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+                    && t.Kind == TranscriptKinds.UserPrompt && t.Text == body)).ShouldBe(1);
+            }
+        }
+        finally
+        {
+            release.TrySetResult();
+            if (draining is not null) await draining;
+            await pump.StopAsync(default);
+        }
     }
 
     [Test]
