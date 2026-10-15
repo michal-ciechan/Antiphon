@@ -1,6 +1,8 @@
 # CARD-1287 Windows Unit roster qualification
 
-Status: qualification of the revised 361-class roster is pending; the earlier 364-class pair was not qualified because its repeat failed. Compiled source: **cdb18eef5013bfa45336dfd304a022b489686bbc**. No product or test code changed.
+Status: **qualified by two clean executions of the frozen 361-class Windows roster**. Q1/Q2 remain unresolved release-candidate findings outside this subset.
+
+Aggregate compiled source: **cdb18eef5013bfa45336dfd304a022b489686bbc**. The refinement's separate attribution sources are identified below.
 
 The roster contains **361 of 409 compiled Unit classes**, with **48 whole-class exclusions** below. One fully qualified class appears per line in the adjacent `-roster.txt`; the adjacent `-filter.txt` supplies the literal TUnit OR expression. Each operand has the trailing wildcard required by the pinned discovery hint extractor. Prefix collisions are excluded rather than admitting Integration classes. Compiled metadata, actual TRX class/method identities and result counts determine coverage; listing tests is not execution evidence.
 
@@ -8,7 +10,7 @@ The historical Windows all-passing-class candidate came from the 5,591-case run 
 
 ## Reproduction
 
-Run from the native Windows repository root, with fresh results directories. The test runs reuse the original binary built at the pinned SHA; the later roster/evidence commits change only these three artifact paths. Rebuilding at an artifact commit creates a new build identity and requires its own qualification. To replay exactly at the compiled SHA, supply the retained filter from `C:\Antiphon\worktrees\card-task-b7430380\.antiphon\c1287-b7430380\filter.txt` because these artifact files do not exist at that SHA.
+Run from the native Windows repository root, with fresh results directories. The test runs reuse the original binary built at the pinned SHA; the later roster/evidence commits change only these three artifact paths. Rebuilding at an artifact commit creates a new build identity and requires its own qualification. To replay exactly at the compiled SHA, supply the retained filter from `C:\src\Antiphon\.antiphon\investigations\card-1287-b7430380\filter.txt` because these artifact files do not exist at that SHA.
 
 ```powershell
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1287-windows-build -- dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c1287-b7430380/ --nologo
@@ -23,7 +25,7 @@ The isolated build passed with **0 errors, 1,058 warnings**, MSBuild elapsed **1
 
 ## Exclusions
 
-Every exclusion is at class granularity, so passing portable methods within these classes are also outside this gate. Causes are historical Windows observations or explicit platform admission, not new reproductions at the pinned SHA. Group letters refer to the [published full Windows run](2026-10-15-card-1287-windows-unit-lane-5ca376de.md) and its retained 0afb0cee triage. CARD-1287 tracks the roster qualification. Native Linux coverage remains independently qualified by its own roster; Windows skips and passing early-return branches do not prove native Linux behavior.
+Every exclusion is at class granularity, so passing portable methods within these classes are also outside this gate. Historical rows retain the earlier Windows observations or explicit platform admission; Q1–Q7 record this task's new pinned-source observations and the requested baseline/current isolation. Group letters refer to the [published full Windows run](2026-10-15-card-1287-windows-unit-lane-5ca376de.md) and its retained 0afb0cee triage. CARD-1287 tracks the roster qualification. Native Linux coverage remains independently qualified by its own roster; Windows skips and passing early-return branches do not prove native Linux behavior.
 
 | Class | Cause / triage group or card |
 |---|---|
@@ -95,7 +97,7 @@ The 366-class attempt (`final1/`, despite its original name) also **failed**: **
 
 `RerunPolicyTests.rerun_lines_and_reruns_suffix` and `RowRunnerTests.no_trx_is_exit_2` failed through the bounded `ReceiptFile.ReadBytes` / `ConfinedFileReader.ReadBytes` path: canceled reads of `checkpoint-build-source.json` and `.checkpoint-output-owner.json`, respectively. Both methods, and every other case in their classes, passed in each original candidate. This is observed outcome variability at the same compiled source across aggregate selections, not a claim that the 366-class roster had an identical-selection comparison run. The exact assertions/stack traces and prior passing rows are retained. These are classified as intermittent receipt I/O, not corrupt JSON or a demonstrated deletion regression. Both classes are now wholly excluded under Q3/Q4. No isolated retry, wider deadline or parallelism change was made.
 
-Removing their nineteen cases gives the frozen final roster of **364 classes, 4,560 expected cases**. Two new runs of exactly that roster are required for qualification. All three failed aggregate runs remain historical red evidence and cannot certify the final subset.
+Removing their nineteen cases produced the intermediate roster of **364 classes, 4,560 expected cases**. Its two fresh executions are reported below. The three aggregate runs completed at this point remain historical red evidence and cannot certify the final subset.
 
 ## Caller refinement: release-candidate attribution
 
@@ -144,4 +146,35 @@ The second run has eight failures in **three classes that all passed in the firs
 
 Those three classes and all their thirty-four cases are now excluded. The final frozen roster contains **361 classes and 4,526 expected cases**; the executions named `gate1` and `gate2` below are fresh runs of that complete selection.
 
-Final runs pending. Raw evidence is retained under `C:\Antiphon\worktrees\card-task-b7430380\.antiphon\c1287-b7430380`, including the original build log, source index, compiled class/method metadata, exact filter and argv, timing, fresh TRX and class/method audit. Generated payloads remain ignored.
+Raw evidence is retained under `C:\src\Antiphon\.antiphon\investigations\card-1287-b7430380`, including the original build log, source index, compiled class/method metadata, exact filter and argv, timing, fresh TRX and class/method audit. Generated payloads remain ignored.
+
+
+## Final frozen Windows qualification
+
+| Run | Executed | Passed | Failed | Skipped | Classes | Outer wall | TRX start/finish wall | Slot wait | Driver exit |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| gate1 | 4526 | 4526 | 0 | 0 | 361 | 233.641s | 228.102s | 0s | 0 |
+| gate2 | 4526 | 4526 | 0 | 0 | 361 | 218.501s | 215.023s | 0s | 0 |
+
+Outer walls are **3m 53.641s** and **3m 38.501s**, with an observed spread of **15.141s (6.480% of the first run)**. These are two shared-host aggregate measurements, not summed class durations, percentiles or a worst-case budget. The separate original build cost is 265.786s including its memory-floor queue; a new train also needs its own build and queue allowance. Both final test leases were granted with zero wait.
+
+Both fresh TRX files equal the complete **361-class roster** and cover all **2,855 compiled methods**, with exactly **4,526 passed cases** each, no failed/skipped cases, no missing/extra classes and no missing/extra methods. Class/method/outcome count multisets agree. No class failed in only one final run. The only literal display-string difference is the previously documented generated task GUID in the passing DispatchHoldLedgerTests argument; no unexplained case-count or outcome difference remains.
+
+Both final runs used runtime artifact HEAD **b64c894b72846920bb097e2f8a44c7a8acee1862**, clean tracked status before/after and unchanged main assembly bytes. The compiled source is still **cdb18eef5013bfa45336dfd304a022b489686bbc**; only the three requested roster/filter/evidence paths differ in Git. The same original output was reused without rebuilding. This does not qualify later origin/master changes, excluded classes, the whole Unit lane or nested checkpoint-provenance audits. In particular it does not clear Q1/Q2 or grant release-candidate acceptance.
+
+| Binding | SHA-256 |
+|---|---|
+| Original main assembly | `6d0efac2057fca2d7fc3a4cf7984e21d66dfa373ec2fb25c5432186cd1a2dd00` |
+| Frozen roster | `67ecec5455bc80aa1e3f0f0f2dae583dc371dc90788d7ee7d27fa872988b7c97` |
+| Frozen filter | `5f3dfcc9cca230168380b1524982089ee67ba027feb2e769f60ed98d288d755a` |
+| gate1 TRX | `c7a1cdd3cbebd0df7ebb280ac03faadfc470e326199440665d1509abb6ec2c67` |
+| gate2 TRX | `864499a81a8cdf77a9b91207b8d739564d8bbce0df4c012fe002a69f8733773e` |
+
+Persistent final TRX paths:
+
+- `C:\src\Antiphon\.antiphon\investigations\card-1287-b7430380\gate1\run.trx`
+- `C:\src\Antiphon\.antiphon\investigations\card-1287-b7430380\gate2\run.trx`
+
+The persistent root also retains every earlier failed trial, the first passing-but-not-qualified 364-class trial, all four exact-filter attribution TRXs (including the zero-case baseline audit), source/assembly identities, literal argv/filter, timing, class/method outcomes, comparison audits and original build logs. Seven aggregate trials and three isolated builds were completed in total; the four standalone attribution drivers add twenty executed cases plus the explicitly absent baseline class. Historical red results and costs remain visible. No product/test code was repaired.
+
+All owned foreground drivers finished. Removed **84 producer-inventoried alternate output roots** across the aggregate and two attribution checkouts; none remain. Captured process censuses were zero after each driver, and the final producer-path census is retained. Unknown fixture scratch directories were not blanket-deleted. Generated TRX/log/JSON/HTML evidence remains ignored. Both detached attribution checkouts were removed with ordinary `git worktree remove`; the separate checkout-cleanup receipt records their exact source identities and successful removals.
