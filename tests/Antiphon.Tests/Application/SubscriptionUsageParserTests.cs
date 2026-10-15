@@ -38,7 +38,7 @@ public sealed class SubscriptionUsageParserTests
                 parsed.ResetsAt.ShouldBeNull("C907-vendor-panel-time-only-reset");
                 parsed.RawExcerpt.Length.ShouldBeLessThanOrEqualTo(SubscriptionUsageParser.RawExcerptCapChars,
                     "C907-vendor-panel-excerpt-cap");
-                parsed.RawExcerpt.ShouldNotContain("#", "C907-vendor-panel-header-excluded");
+                parsed.RawExcerpt.Contains('#').ShouldBeFalse("C907-vendor-panel-header-excluded");
             },
             _ =>
             {
