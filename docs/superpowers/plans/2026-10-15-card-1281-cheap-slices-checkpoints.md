@@ -259,9 +259,9 @@ The exact-line comparison deliberately ignores the marker quoted in this code ex
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-14 | S0-foundation | `tests/Antiphon.Tests -> bin-c1281-foundation/` | binding-schema | `/*/*/PipelineSpeedIntegrationTests/(C1281_B1Schema)\|(C1281_B2Schema)\|(C1281_B3Schema)` | V-22,V-23,V-24,R-5 | all 3 methods, every schema variant, 0 failed/skipped | 3 | 6 |
-| CP-15 | S0-foundation | CP-14 | binding-admission | `/*/*/PipelineSpeedIntegrationTests/(C1281_B2AtomicChild)\|(C1281_B3AdmissionFence)` | V-25,V-26,R-5,R-7,R-8 | both methods, both contender orders/cuts, 0 failed/skipped | 2 | 4 |
-| CP-16 | S0-foundation | CP-14 | binding-old-locks | `/*/*/(CardWorkflowRunFactoryTests)\|(ReviewEvidenceRecoveryTests)/(CreateFromRevision_snapshots_every_stage_in_order_with_queued_status_and_first_stage_pointer)\|(C1043_LockOrder)` | R-5 | 2 methods, 0 failed/skipped | 2 | 3 |
+| CP-14 | S0-foundation | `tests/Antiphon.Tests -> bin-c1281-foundation/` | binding-schema | `/*/*/PipelineSpeedIntegrationTests/(C1281_B1Schema*)\|(C1281_B2Schema*)\|(C1281_B3Schema*)` | V-22,V-23,V-24,R-5 | all 3 methods, every schema variant, 0 failed/skipped | 3 | 6 |
+| CP-15 | S0-foundation | CP-14 | binding-admission | `/*/*/PipelineSpeedIntegrationTests/(C1281_B2AtomicChild*)\|(C1281_B3AdmissionFence*)` | V-25,V-26,R-5,R-7,R-8 | both methods, both contender orders/cuts, 0 failed/skipped | 2 | 4 |
+| CP-16 | S0-foundation | CP-14 | binding-old-locks | `/*/*/(CardWorkflowRunFactoryTests*)\|(ReviewEvidenceRecoveryTests*)/(CreateFromRevision_snapshots_every_stage_in_order_with_queued_status_and_first_stage_pointer*)\|(C1043_LockOrder*)` | R-5 | 2 methods, 0 failed/skipped | 2 | 3 |
 | CP-17 | S6-wiring | `tests/Antiphon.Tests -> bin-c1281-wiring/` | binding-http-auth | `/*/*/PipelineSpeedIntegrationTests/(C1281_B1Authorization)\|(C1281_B2Authorization)\|(C1281_B3Authorization)` | V-27,V-30,V-33 | 3 methods, every route/principal/scope variant, 0 failed/skipped | 3 | 7 |
 | CP-18 | S6-wiring | CP-17 | binding-correction | `/*/*/PipelineSpeedIntegrationTests/(C1281_B1CorrectionTransaction)\|(C1281_B1ReceiptImport)` | V-28,V-29,R-6 | 2 methods; authentic producer pack and actual validator reached, 0 failed/skipped | 2 | 6 |
 | CP-19 | S6-wiring | CP-17 | binding-caller | `/*/*/PipelineSpeedIntegrationTests/(C1281_B2ObservationReadback)\|(C1281_B2HttpChildRecovery)` | V-31,V-32,R-7 | 2 methods, restart/refusal/notification cuts reached, 0 failed/skipped | 2 | 6 |
@@ -285,3 +285,5 @@ All numbers below are **estimated**, not measured; no builds/tests ran here.
 - Two isolated builds and eight reused rows save an estimated **16 build minutes** versus rebuilding for all 10 rows (10 x 2 minus 2 x 2). Test omission saves **0 minutes**: every named ordinary row and PC remains required.
 
 Handoff audit: **new guards=57, mapped=57, missing=0, duplicate PC maps=0**; combined with parent **guards=121, mapped=121, missing=0, duplicate PC maps=0**. **PCs executed=0; required pending=121**. This docs-only stage does not claim “all PCs run”; Mutation must run all controls and report break/red/restore/green before claiming PC-clean. Code's compile-time payload/line binding must be recorded, including any newly split guards. **Next: code, S0-foundation only**, then the component/final-integration order above; no human choice is outstanding.
+
+S0 Code filter correction (04228bff): the original CP-14 method OR executed zero tests on TUnit 1.44. Suffix wildcards on each OR operand, as required by docs/testing-and-build.md, retain the named-method roster; inspect fresh TRX. Evidence: `docs/superpowers/evidence/2026-10-15-card-1281-s0-foundation.md`.

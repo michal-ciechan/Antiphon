@@ -132,10 +132,71 @@ public class AppDbContext : DbContext
     public DbSet<BlockedTaskParkReclaimCursor> BlockedTaskParkReclaimCursors => Set<BlockedTaskParkReclaimCursor>();
     public DbSet<HostOccupancySample> HostOccupancySamples => Set<HostOccupancySample>();
     public DbSet<AgentTaskSyncDebt> AgentTaskSyncDebts => Set<AgentTaskSyncDebt>();
+    public DbSet<ReviewEvidenceCorrection> ReviewEvidenceCorrections => Set<ReviewEvidenceCorrection>();
+    public DbSet<PipelineHandoffAction> PipelineHandoffActions => Set<PipelineHandoffAction>();
+    public DbSet<PipelineHandoffObservation> PipelineHandoffObservations => Set<PipelineHandoffObservation>();
+    public DbSet<CardCompletionAcceptance> CardCompletionAcceptances => Set<CardCompletionAcceptance>();
+    public DbSet<CardCompletionReceipt> CardCompletionReceipts => Set<CardCompletionReceipt>();
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        RequireImmutablePipelineEvidence();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        RequireImmutablePipelineEvidence();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void RequireImmutablePipelineEvidence()
+    {
+        ChangeTracker.DetectChanges();
+        foreach (var entry in ChangeTracker.Entries())
+            if (entry.State is EntityState.Modified or EntityState.Deleted
+                && entry.Entity is ReviewEvidenceCorrection or PipelineHandoffObservation or CardCompletionAcceptance or CardCompletionReceipt)
+                throw new InvalidOperationException($"{entry.Metadata.ClrType.Name} is append-only.");
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<ReviewEvidenceCorrection>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.CanonicalBundleDigest).HasMaxLength(64);
+            entity.HasIndex(x => new { x.PredecessorOutcomeId, x.CanonicalBundleDigest }).IsUnique()
+                .HasDatabaseName("IX_ReviewEvidenceCorrections_Predecessor_Bundle");
+        });
+        modelBuilder.Entity<PipelineHandoffAction>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.RequestDigest).HasMaxLength(64);
+            entity.HasIndex(x => new { x.PredecessorTaskId, x.Attempt, x.SettlementEventId, x.NextStage,
+                    x.WorkflowRunId, x.PipelineDefinitionRevisionId, x.CurrentStageId, x.WorkflowUpdatedAt })
+                .IsUnique().AreNullsDistinct(false).HasDatabaseName("IX_PipelineHandoffActions_Identity");
+            entity.HasIndex(x => x.ChildTaskId).IsUnique();
+        });
+        modelBuilder.Entity<PipelineHandoffObservation>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.ActionId, x.Sequence }).IsUnique();
+            entity.HasOne<PipelineHandoffAction>().WithMany().HasForeignKey(x => x.ActionId).OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<CardCompletionAcceptance>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.CardId, x.Revision }).IsUnique();
+        });
+        modelBuilder.Entity<CardCompletionReceipt>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.CardId, x.OperationId, x.AcceptanceRevision }).IsUnique()
+                .HasDatabaseName("IX_CardCompletionReceipts_Card_Operation_Acceptance");
+            entity.HasOne<CardCompletionAcceptance>().WithMany().HasForeignKey(x => x.AcceptanceId).OnDelete(DeleteBehavior.Restrict);
+        });
 
         modelBuilder.Entity<AgentTaskPark>(entity =>
         {
