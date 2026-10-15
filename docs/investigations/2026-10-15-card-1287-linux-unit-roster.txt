@@ -259,7 +259,6 @@ Antiphon.Tests.CachingChatClientTests
 Antiphon.Tests.Checkpoints.BaselineComparerTests
 Antiphon.Tests.Checkpoints.BuildSlotClientTests
 Antiphon.Tests.Checkpoints.CheckpointAppTests
-Antiphon.Tests.Checkpoints.CheckpointBoundedReaderTests
 Antiphon.Tests.Checkpoints.CheckpointBuildBindingPathTests
 Antiphon.Tests.Checkpoints.CheckpointConfinementLedgerTests
 Antiphon.Tests.Checkpoints.CheckpointExecutorLogTests
