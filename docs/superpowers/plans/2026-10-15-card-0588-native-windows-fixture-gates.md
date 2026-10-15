@@ -57,6 +57,6 @@ Positive controls (pending for SourceLanding Mutation, method-scoped):
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c588/` | c588-gates | `/*/*/NativeWindowsFixtureGateTests/*` | V-1, V-2, V-3 | all listed, 0 failed | 5 | 12 |
-| CP-3 | S2 | CP-2 | c1210-closure | `/*/*/WindowsUnitPlatformAdmissionTests/(C1210_Guard_matches_native_platform)\|(C1210_Native_linux_entries_guard_before_work)\|(C1210_Roster_closure_matches_source_gates)\|(C1210_Audit_rejects_empty_or_incomplete_outcomes)` | R-1 | all listed, 0 failed | 4 | 2 |
+| CP-3 | S2 | CP-2 | c1210-closure | `/*/*/WindowsUnitPlatformAdmissionTests/(C1210_Guard_matches_native_platform*)\|(C1210_Native_linux_entries_guard_before_work*)\|(C1210_Roster_closure_matches_source_gates*)\|(C1210_Audit_rejects_empty_or_incomplete_outcomes*)` | R-1 | all listed, 0 failed | 4 | 2 |
 | CP-4 | S2 | CP-2 | tests-classification | `/*/*/TestClassificationGuardTests/*` | R-2 | all listed, 0 failed | 1 | 2 |
 | CP-5 | S2 | `tests/Antiphon.E2E -> bin-c588-e2e/` | e2e-classification | `/*/*/TestClassificationGuardTests/*` | R-2 | all listed, 0 failed | 1 | 14 |
