@@ -81,7 +81,7 @@ public sealed class PipelineSpeedIntegrationTests
             var create = CreateAsync(w, ChildRequest(w));
             try
             {
-                await Task.WhenAny(locks.Attempt.Task, create).WaitAsync(Guard);
+                await Task.WhenAny(locks.Attempt.Task, locks.Insertion.Task, create).WaitAsync(Guard);
                 locks.Attempt.Task.IsCompleted.ShouldBeTrue("admission-waits-for-card-lock");
                 create.IsCompleted.ShouldBeFalse("admission-waits-for-card-lock");
                 await ProbeCardLockAsync(w);
@@ -90,7 +90,11 @@ public sealed class PipelineSpeedIntegrationTests
                 card.ConcurrencyToken = Guid.NewGuid();
                 await close.SaveChangesAsync();
             }
-            finally { await tx.CommitAsync(); }
+            finally
+            {
+                await tx.CommitAsync();
+                try { await create.WaitAsync(Guard); } catch (ConflictException) { }
+            }
             var error = await Should.ThrowAsync<ConflictException>(() => create, "post-close-implementation-refused");
             error.Code.ShouldBe(terminal ? "card_implementation_closed" : "card_admission_changed");
             (await w.TaskCountAsync()).ShouldBe(0);
@@ -156,12 +160,21 @@ public sealed class PipelineSpeedIntegrationTests
     private sealed class CardLockObserver : DbCommandInterceptor
     {
         public TaskCompletionSource Attempt { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Insertion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private void Observe(DbCommand command)
+        {
+            if (command.CommandText.Contains("\"Cards\"") && command.CommandText.Contains("FOR UPDATE")) Attempt.TrySetResult();
+            if (command.CommandText.Contains("INSERT INTO \"AgentTasks\"")) Insertion.TrySetResult();
+        }
         public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
             CommandEventData data, InterceptionResult<int> result, CancellationToken ct = default)
         {
-            if (command.CommandText.Contains("\"Cards\"") && command.CommandText.Contains("FOR UPDATE")) Attempt.TrySetResult();
+            Observe(command);
             return ValueTask.FromResult(result);
         }
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData data, InterceptionResult<DbDataReader> result, CancellationToken ct = default)
+        { Observe(command); return ValueTask.FromResult(result); }
     }
 
     private sealed class AdmissionFault(string cut) : SaveChangesInterceptor, IDbTransactionInterceptor
