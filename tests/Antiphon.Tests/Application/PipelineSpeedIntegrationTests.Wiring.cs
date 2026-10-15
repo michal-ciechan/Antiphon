@@ -15,6 +15,25 @@ namespace Antiphon.Tests.Application;
 public sealed partial class PipelineSpeedIntegrationTests
 {
     [Test]
+    public async Task C1281_AdmissionHoldsHostBudget()
+    {
+        await using var w = await C544World.CreateAsync();
+        var action = await SeedActionAsync(w);
+        await using (var db = w.CreateContext())
+        {
+            db.HostBudgets.Add(new HostBudget { HostId = "local", MaxInFlight = 0,
+                Reason = "explicit test drain", UpdatedAt = w.Clock.GetUtcNow().UtcDateTime });
+            await db.SaveChangesAsync();
+        }
+        var refused = await Should.ThrowAsync<ConflictException>(() => CreateAsync(w, ChildRequest(w), action.Id),
+            "host-budget-zero-refuses-child");
+        refused.Code.ShouldBe("handoff_capacity_held");
+        await using var fresh = w.CreateContext();
+        (await fresh.PipelineHandoffActions.SingleAsync(a => a.Id == action.Id)).ChildTaskId.ShouldBeNull();
+        (await fresh.AgentTasks.CountAsync(t => t.CardId == w.Card.Id && t.Id != w.Owner.Id)).ShouldBe(0);
+    }
+
+    [Test]
     public async Task C1281_B2Authorization()
     {
         await new PipelineHandoffPilotTests().C1281_WriterAuthorization();
