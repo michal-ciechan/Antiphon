@@ -30,3 +30,8 @@ The [plan](../plans/2026-10-15-card-1289-admission.md) holds the closed selectio
 [Mutation candidate](../mutations/2026-10-15-card-1289-admission-candidate.md) remains
 unbound. All controls and missing-control discovery belong to SourceLanding
 Mutation after Review and landing of the original Code owner.
+
+Final receipt validation for CP-1/CP-3 also refused `cleanup_refused` (exit 2).
+Their test counts are observed passes, not validated Final qualification. All V/R
+IDs retain the receipt-qualification obligation. Owned alternate build outputs
+were removed after the runs ended; historical receipts were left unedited.

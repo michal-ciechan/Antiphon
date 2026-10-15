@@ -196,3 +196,25 @@ d0912598a70468bef758ce300974894ce53809d5 test(card-1289): assert exact ordered l
 9a446a829a2659657b90aa0654927035d6c5eb7d test(card-1289): observe resolver Git subprocess seam
 dc4e7eb590d176e694ec3d25421fb3c3a3020f05 fix(card-1289): fence admission state and prepare ordinary Git before card lock
 3a2cb10fc293799a50e84876173aa99b9f0a9099 fix(card-1289): preserve capacity refusal before Git preparation
+
+## Final receipt validation and cleanup
+
+The checkpoint validator was first called with the wrong option (--run instead of
+--evidence); that invocation did no validation. The corrected invocation selected
+CP-1/CP-3 from the terminal repair report and returned exit 2:
+`CHECKPOINT SOURCE INVALID reason=cleanup_refused`.
+The unedited row lines truthfully report passing tests and clean/verified row fields,
+but no validated receipt or Final qualification is claimed, including for V-1,
+V-2, R-1 and R-3. All V/R IDs retain this qualification obligation; R-2/R-4 also
+retain the missing execution/terminal-receipt work described above.
+
+Owned bin-c1289-final, bin-c1289-repair and bin-c1289-tool directories were manually
+removed after every run ended; bin-c1289-red was removed between its ended runs.
+No generated receipt was edited to erase the cleanup refusal. The temporary edit
+helper was removed. The working tree was clean. The whole-range guard through
+05b7067421f84d7615d3f22ac847efb04ae4f184 passed (7 commits, 1 permitted Markdown
+entry, zero violations); final report publication is checked again. That published
+tip also had a conflict-free merge-tree (55a6f6f33bca54bca2011f8d521f2e76067187a8).
+Next Code must establish trustworthy Final receipts, complete CP-5..7 and qualify
+the full affected class/application Unit rows; ordinary Review follows, then the
+caller lands the original owner and commissions SourceLanding Mutation.
