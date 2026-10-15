@@ -1136,6 +1136,9 @@ sandbox and join the child before removing it. TUnit keeps its generated entry p
 This keeps HTML reports out of sealed build output, so a green Linux checkpoint
 run needs no `--keep-outputs` workaround. Unknown post-seal files still refuse
 cleanup; no report directory is adopted by name.
+CARD-1272 applies the same rule to the staged filter host (`RerunFilterHostTests`)
+and repeat host (`CheckpointRepeatHostTests`): each launch passes a results directory
+in its owned sandbox and sets TMPDIR/TEMP/TMP to it.
 
 Checkpoint tests allocate `c723-<guid>` roots through `CheckpointTestBase.TempDir()`.
 The per-test TUnit hooks register a marker and root index before returning the path,
