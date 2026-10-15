@@ -142,6 +142,7 @@ public class ChannelReplyLateConfirmDispatchTests
         // Every live trigger that can follow: the runtime's own sync, the turn-end and the
         // AssistantText re-dispatch (same OnTurnEndAsync), and a restarted process.
         await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+        await h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, CancellationToken.None);
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         await Restarted(h).OnTurnEndAsync(h.SessionId, CancellationToken.None);
         await h.DrainOutboundAsync();
@@ -160,6 +161,7 @@ public class ChannelReplyLateConfirmDispatchTests
         h.Runner.SetTranscript(Turns(h.SessionId, (prompt, answer)));
 
         await h.Runtime.SyncTranscriptAsync(h.SessionId, CancellationToken.None);
+        await h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, CancellationToken.None);
         await h.DrainOutboundAsync();
         h.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe(answer);
         (await RowAsync(messageId)).ChannelReplySettledAt.ShouldNotBeNull();
