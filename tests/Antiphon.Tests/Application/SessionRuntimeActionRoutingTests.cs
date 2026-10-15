@@ -127,13 +127,20 @@ public class SessionRuntimeActionRoutingTests
                 await using var db = h.CreateObserverContext();
                 return await db.TranscriptEntries.AnyAsync(t => t.Uuid == end.Uuid);
             });
+            long boundary;
+            await using (var observer = h.CreateObserverContext())
+            {
+                boundary = await observer.TranscriptEntries.Where(t => t.Uuid == end.Uuid).Select(t => t.Sequence).SingleAsync();
+                (await TranscriptTurnWindow.FindOwningPromptAsync(observer, destination, boundary, default))
+                    .ShouldNotBeNull("the consumer must reach a real persisted turn in the selected session");
+            }
             // A fresh consumer has never seen the producer or an in-memory Track call.
             var restarted = new ReviewReplyDispatcher(h.Provider.GetRequiredService<IServiceScopeFactory>(), h.Clock,
                 NullLogger<ReviewReplyDispatcher>.Instance);
             if (variant == "atomic-comment")
             {
                 fault.Armed = true;
-                await Should.ThrowAsync<IOException>(() => restarted.OnTranscriptActionAsync(destination, end.Sequence, default));
+                await Should.ThrowAsync<IOException>(() => restarted.OnTranscriptActionAsync(destination, boundary, default));
                 fault.Hits.ShouldBe(1);
                 await AssertUnconsumedAsync();
             }
@@ -142,14 +149,14 @@ public class SessionRuntimeActionRoutingTests
                 await using (var db = h.CreateObserverContext())
                     await db.SessionQueuedMessages.Where(m => m.Id == source.Id).ExecuteUpdateAsync(u =>
                         u.SetProperty(m => m.ConversationKey, $"review:{decoy.Id}"));
-                await restarted.OnTranscriptActionAsync(destination, end.Sequence, default);
+                await restarted.OnTranscriptActionAsync(destination, boundary, default);
                 await AssertUnconsumedAsync();
                 await using var restore = h.CreateObserverContext();
                 await restore.SessionQueuedMessages.Where(m => m.Id == source.Id).ExecuteUpdateAsync(u =>
                     u.SetProperty(m => m.ConversationKey, source.ConversationKey));
             }
-            await restarted.OnTranscriptActionAsync(destination, end.Sequence, default);
-            await restarted.OnTranscriptActionAsync(destination, end.Sequence, default);
+            await restarted.OnTranscriptActionAsync(destination, boundary, default);
+            await restarted.OnTranscriptActionAsync(destination, boundary, default);
             if (variant is "wrong-session" or "wrong-origin" or "incomplete-body" or "ttl" or "api-error")
             {
                 await AssertUnconsumedAsync();
