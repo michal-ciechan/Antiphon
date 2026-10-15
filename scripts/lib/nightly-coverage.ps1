@@ -187,7 +187,7 @@ function Test-NightlyPinnedDiagnosticVersions {
 function Get-NightlyDiagnosticStateName {
     param([string]$Record)
     if ($Record -match 'PassedTestNodeStateProperty') { return 'Passed' }
-    if ($Record -match 'FailedTestNodeStateProperty') { return 'Failed' }
+    if ($Record -match '(?:Failed|Error)TestNodeStateProperty') { return 'Failed' }
     if ($Record -match 'SkippedTestNodeStateProperty') { return 'Skipped' }
     if ($Record -match 'DiscoveredTestNodeStateProperty') { return 'Discovered' }
     if ($Record -match 'InProgressTestNodeStateProperty') { return 'InProgress' }
@@ -221,7 +221,7 @@ function ConvertFrom-NightlyDiagnosticRecord {
         if ($c -eq 'OptIn' -or $c -eq 'Explicit') { $excluded = $true }
     }
     $className = $(if ([string]::IsNullOrWhiteSpace($ns)) { $typeName } else { '{0}.{1}' -f $ns, $typeName })
-    return [pscustomobject]@{
+    $node = [pscustomobject]@{
         Uid = $uid
         Assembly = $assembly
         Namespace = $ns
@@ -234,6 +234,11 @@ function ConvertFrom-NightlyDiagnosticRecord {
         Excluded = $excluded
         Categories = $categories
     }
+    # Native MTP Error explanations include the multiline failure message.
+    if ($State -eq 'Failed' -and $Record -match '(?s)(?:Failed|Error)TestNodeStateProperty \{ Explanation = (?<message>.*?)(?:, Exception = | \} \] \} \}\s*$)') {
+        $node | Add-Member -NotePropertyName Message -NotePropertyValue $Matches['message']
+    }
+    return $node
 }
 
 function ConvertFrom-NightlyExecutionJson {
