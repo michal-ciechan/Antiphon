@@ -1,37 +1,43 @@
 # CARD-1287 Linux Unit roster qualification
 
-Status: candidate; qualification pending. Built clean source f6310a452a911b45b0a0946feb9ac49dcc71bbfd once through the host build-slot gate (3m13.96s, 0 errors). No product or test changes. The two requested aggregate runs will reuse that binary.
+Status: **final roster frozen; two qualification executions pending**. Source built once: **f6310a452a911b45b0a0946feb9ac49dcc71bbfd**. No product or test code changed.
 
-The roster contains 374 compiled Unit classes, one fully qualified class per line. The filter is the adjacent `-filter.txt` file; class OR operands use the documented trailing wildcard and actual TRX identities must equal the roster.
+The roster contains **373 of 408 compiled Unit classes**, one fully qualified class per line; **35 classes are excluded** below. Expected result census is **4516 executed, 0 failed, 0 skipped per final run**, derived from the completed candidate after removing the ten reader variants. Qualification requires actual executions of the exact amended roster twice; filtering or subtracting the candidate TRX is not a passing run or a wall-time measurement.
 
-The prior Linux 21-minute cutoff is an aggregate checkpoint timeout with no terminal TRX, not proof of a hang. `RollingVolumeRecycleScriptTests.C1008_Legacy_rolling_and_jq_rosters_remain` runs four serial child harnesses; `C1008Process` gives each a separate twelve-minute budget while the class method timeout is ten minutes. The child wait does not receive TUnit cancellation. Windows triage group T observed this timeout; `RemoteScriptContractTests` also retains synchronous/unbounded child waits. Both classes are excluded rather than changing code/timeouts. The previous Linux log used Normal output and cannot identify the active class at cutoff.
+The adjacent `-filter.txt` file contains the exact TUnit OR filter. Every operand has the documented trailing wildcard; two prefix collisions with Integration classes are explicitly excluded. Fresh TRX identities must equal the roster, every compiled method must have a result, and executed counts must match in both runs.
 
-## Exact commands
+## Reproduction
 
-```powershell
+Run from the repository root on native Linux with the pinned source and fresh result directories. These shell commands pass the filter literally, matching the recorded native argv. The retained Node driver also uses literal argument arrays. A direct PowerShell native invocation of the large wildcard filter stalled before creating a child and was stopped; its empty `run1/console.log` is retained and counts as zero test executions.
+
+```sh
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1287-linux-build -- dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c1287-67a7e42a/ --property:UseAppHost=false --nologo
-$filter = (Get-Content docs/investigations/2026-10-15-card-1287-linux-unit-filter.txt -Raw).Trim()
-# Use a fresh --results-directory for each run.
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1287-linux-run1 -- dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c1287-67a7e42a/ --property:UseAppHost=false -- --treenode-filter $filter --output Detailed --report-trx --report-trx-filename run.trx --results-directory .antiphon/c1287-67a7e42a/run1
-# Repeat the same command with label/results-directory run2. No retries.
+roster_filter=$(cat docs/investigations/2026-10-15-card-1287-linux-unit-filter.txt)
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1287-linux-final1 -- dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c1287-67a7e42a/ --property:UseAppHost=false -- --treenode-filter "$roster_filter" --output Detailed --report-trx --report-trx-filename run.trx --results-directory "$PWD/.antiphon/c1287-67a7e42a/final1"
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1287-linux-final2 -- dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c1287-67a7e42a/ --property:UseAppHost=false -- --treenode-filter "$roster_filter" --output Detailed --report-trx --report-trx-filename run.trx --results-directory "$PWD/.antiphon/c1287-67a7e42a/final2"
 ```
+
+The build passed with 0 errors (1056 warnings), MSBuild wall 193.96s, a granted slot with zero wait, and 194s lease hold. All tests reuse that original output; documentation commits do not change the compiled source. Runtime: Debian 12, .NET 9.0.20, SDK 10.0.401, TUnit 1.44 / Microsoft Testing Platform 2.2.2. TUNIT_MAX_PARALLEL_TESTS is unset; process-spawning cases share the assembly's one-wide limiter. This is a shared-host sample, with one owned assembly driver at a time.
 
 ## Exclusions
 
-The exclusions are conservative at class granularity, including cross-platform methods sharing an excluded class. Windows-only failure attributions are retained as Windows observations, not asserted to reproduce on Linux. Every entry is tracked under CARD-1287 or its referenced triage group.
+Class granularity also removes portable methods sharing an excluded class. Windows-only bodies include explicit skips and early returns; their reported passing returns do not prove native execution. Historical Windows failures remain Windows observations, with conservative cross-host exclusions where stated. All other current Linux native contract classes remain in the roster. Causes are tracked by CARD-1287, its Windows triage group letters, or the cited prior CARD-1253 base proof. CARD-1286/CARD-1298 repaired routing/classification guards are retained and passed in the candidate.
 
 | Class | Cause and evidence |
 |---|---|
 | `Antiphon.Tests.AgentTui.AgentTuiSecretProtectorTests` | CARD-1287 Linux platform exclusion: explicit Windows-only method/fixture admission. Source: tests/Antiphon.Tests/AgentTui/AgentTuiSecretProtectorTests.cs |
 | `Antiphon.Tests.Agents.AgentRegistrySettingsTests` | CARD-1287 Linux platform exclusion: explicit Windows-only method/fixture admission. Source: tests/Antiphon.Tests/Agents/AgentRegistrySettingsTests.cs |
+| `Antiphon.Tests.Agents.RunnerGrokAdapterReadyTests` | CARD-1287 selector boundary: required TUnit trailing-wildcard class operand also selects an Integration suffix class; excluded to keep this roster Unit-only. |
 | `Antiphon.Tests.Application.AgentExecutableResolverTests` | CARD-1287 Linux platform exclusion: explicit Windows-only method/fixture admission. Source: tests/Antiphon.Tests/Application/AgentExecutableResolverTests.cs |
 | `Antiphon.Tests.Application.AgentPinPathTests` | CARD-1287 Linux platform exclusion: explicit Windows-only method/fixture admission. Source: tests/Antiphon.Tests/Application/AgentPinPathTests.cs |
 | `Antiphon.Tests.Application.ClaudeRemoteControlLaunchArgsTests` | CARD-1287 Linux platform exclusion: explicit Windows-only method/fixture admission. Source: tests/Antiphon.Tests/Application/ClaudeRemoteControlLaunchArgsTests.cs |
 | `Antiphon.Tests.Application.DelegationReportFormatterTests` | CARD-1287 Linux platform exclusion: explicit Windows-only method/fixture admission. Source: tests/Antiphon.Tests/Application/DelegationUnitTests.cs |
 | `Antiphon.Tests.Application.DirectoryBrowseServiceTests` | CARD-1287 Linux platform exclusion: explicit Windows-only method/fixture admission. Source: tests/Antiphon.Tests/Application/DirectoryBrowseServiceTests.cs |
 | `Antiphon.Tests.Application.GrokRulesTransportCompatibilityTests` | CARD-1287 Linux platform exclusion: explicit Windows-only method/fixture admission. Source: tests/Antiphon.Tests/Application/GrokRulesTransportCompatibilityTests.cs |
+| `Antiphon.Tests.Application.OutboundConversionManifestTests` | CARD-1287 selector boundary: required TUnit trailing-wildcard class operand also selects an Integration suffix class; excluded to keep this roster Unit-only. |
 | `Antiphon.Tests.Application.PtyDeliveryCeilingsTests` | CARD-1287 Linux platform exclusion: explicit Windows-only method/fixture admission. Source: tests/Antiphon.Tests/Application/PtyDeliveryCeilingsTests.cs |
 | `Antiphon.Tests.Application.SessionDeliveryProfileTests` | CARD-1287 Linux platform exclusion: explicit Windows-only method/fixture admission. Source: tests/Antiphon.Tests/Application/SessionDeliveryProfileTests.cs |
+| `Antiphon.Tests.Checkpoints.CheckpointBoundedReaderTests` | CARD-1287: Linux candidate observed a four-second supervisor expiration after the ordinary project probe printed PASS (elapsed 4019ms, expired=true, SIGKILL). Other nine variants passed; intermittent status unconfirmed. Evidence: candidate1/run.trx. |
 | `Antiphon.Tests.Checkpoints.CheckpointImportTests` | CARD-1287 Linux inherited checkpoint environment/rerun failure (CARD-1253 base proof). |
 | `Antiphon.Tests.Checkpoints.CheckpointLaunchCleanupTests` | CARD-1287 Linux inherited executor acknowledgement/cleanup failures (CARD-1253 base proof). |
 | `Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests` | CARD-1287 group D: Windows Git fixture teardown failure; conservative whole-class exclusion. |
@@ -55,8 +61,7 @@ The exclusions are conservative at class granularity, including cross-platform m
 | `Antiphon.Tests.TestHelpers.DelegationHarnessCensusTests` | CARD-1287 group V: DelegateBranchDeliveryTests missing shared graph registration. |
 | `Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests` | CARD-1287 group X: embedded raw C# FreshProbe mistaken for compiled untagged test. |
 
-| `Antiphon.Tests.Agents.RunnerGrokAdapterReadyTests` | CARD-1287 selector boundary: required TUnit trailing-wildcard class operand also selects an Integration suffix class; excluded to keep this roster Unit-only. |
-| `Antiphon.Tests.Application.OutboundConversionManifestTests` | CARD-1287 selector boundary: required TUnit trailing-wildcard class operand also selects an Integration suffix class; excluded to keep this roster Unit-only. |
+The nested C1008/C1210 provenance audits require a legitimate checkpoint-built source stamp; they are outside this plain-build roster. No such stamp was fabricated. Whole-Unit and Windows qualification remain outside this frozen Linux subset.
 
 ## Completed candidate (failed; not qualified)
 
