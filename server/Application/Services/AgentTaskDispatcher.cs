@@ -6307,6 +6307,27 @@ public sealed partial class AgentTaskDispatcher
         spec = spec with { RequiredPlatform = WireRequiredPlatform(task.RequiredPlatform) };
         GrokLaunchArgs.EnsureWindowsRulesArgv(
             spec.Args, session.AgentKind, session.SessionBackend, spec.Env, $"Session {session.Id}");
+
+        // Queued tasks survive a server restart, but the one-shot RawTokens cache does not.
+        // A boot-wedge replacement also starts a fresh process after the original consumed it.
+        // Repair only at this fresh-launch boundary: attaching or reusing a live session must
+        // retain its existing credential. Persist the replacement hash before any launch sink
+        // can observe the spec; a failed save must never launch an unauthenticated worker.
+        if (!spec.Env.TryGetValue("ANTIPHON_TASK_TOKEN", out var launchToken)
+            || string.IsNullOrWhiteSpace(launchToken)
+            || AgentTaskService.HashToken(launchToken) != task.TokenHash)
+        {
+            var (token, hash) = AgentTaskService.NewToken();
+            task.TokenHash = hash;
+            await _db.SaveChangesAsync(ct);
+            spec = spec with
+            {
+                Env = new Dictionary<string, string>(spec.Env, StringComparer.Ordinal)
+                {
+                    ["ANTIPHON_TASK_TOKEN"] = token,
+                },
+            };
+        }
         return spec;
     }
 
@@ -7120,8 +7141,8 @@ public sealed partial class AgentTaskDispatcher
             ["ANTIPHON_TASK_KIND"] = task.Kind.ToString(),
         };
 
-        // The raw token exists only between creation and this injection — it is stored hashed, so
-        // this is the one and only chance to hand it to the delegate.
+        // Consume the creation-time token when it survived. The final fresh-launch boundary
+        // replaces a lost/stale token and persists its hash before enqueue.
         if (AgentTaskService.RawTokens.TryRemove(task.Id, out var token))
             env["ANTIPHON_TASK_TOKEN"] = token;
 
