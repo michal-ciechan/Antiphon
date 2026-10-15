@@ -26,8 +26,7 @@ public partial class HerdrAlwaysOnChannelParityTests
     [Arguments(AgentKind.Grok, SessionBackend.Herdr, false)]
     public async Task Standing_history_recovery_preserves_native_identity_and_queued_reply(AgentKind kind, SessionBackend backend, bool alwaysOn)
     {
-        if (OperatingSystem.IsLinux())
-            Skip.Test("CARD-0865: Linux standing/always-on native history and queued reply parity awaits repair.");
+        // CARD-1273 probe: every case runs on Linux so each skip reason can be checked against an observed failure.
         var root = Path.Combine(Path.GetTempPath(), $"c466-native-wire-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         var home = Path.Combine(root, "native-home"); Directory.CreateDirectory(home);
