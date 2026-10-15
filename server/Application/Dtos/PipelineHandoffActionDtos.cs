@@ -23,3 +23,7 @@ public sealed record PipelineHandoffActionRequest(
 public sealed record PipelineHandoffActionDto(
     PipelineHandoffAction Action, IReadOnlyList<PipelineHandoffObservation> Observations,
     bool? RequestedWithinFiveMinutes, bool UnexplainedWaitRequiresInvestigation);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record PipelineHandoffChildRequest(
+    CreateAgentTaskRequest Task, bool AcceptSpend = false, string Trigger = "caller");

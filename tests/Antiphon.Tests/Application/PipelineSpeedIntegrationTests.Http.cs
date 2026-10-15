@@ -23,6 +23,72 @@ namespace Antiphon.Tests.Application;
 public sealed partial class PipelineSpeedIntegrationTests
 {
     [Test]
+    public async Task C1281_B2HttpAdmissionHolds()
+    {
+        foreach (var variant in new[] { "dependency", "overlap", "decision", "stage", "host", "quota", "stage-cap", "placement", "workflow", "eligibility", "override" })
+        {
+            await using var host = await PipelineHandoffPilotTests.PilotHost.CreateAsync(services =>
+            {
+                services.AddScoped<DelegationOpenGate>();
+                services.AddScoped<SubscriptionUsageReader>();
+                services.AddSingleton(Options.Create(new SubscriptionQuotaGateSettings()));
+                services.AddScoped<SubscriptionQuotaGate>();
+            }, settings => { settings.MaxConcurrentTasks = 512; settings.RolePolicy["Code"].RecommendedInFlight = 1; });
+            using var consumed = await host.Client.PostAsJsonAsync(host.Url,
+                host.Request(variant == "eligibility" ? "consumed" : "eligible", "explicit caller decision"));
+            consumed.StatusCode.ShouldBe(HttpStatusCode.OK);
+            var action = (await consumed.Content.ReadFromJsonAsync<PipelineHandoffActionDto>())!.Action;
+            var request = ChildRequest(host.World) with { AgentKind = AgentKind.ClaudeCode,
+                Scope = "server/Application/Services/AgentTaskService.cs" };
+            await using (var db = host.World.CreateContext())
+            {
+                if (variant == "dependency")
+                {
+                    var blocker = new Card { Id = Guid.NewGuid(), BoardId = host.World.Board.Id,
+                        BoardColumnId = host.World.Card.BoardColumnId, Identifier = "CARD-9998", Title = "blocker" };
+                    db.Add(blocker); db.Add(new CardRelationship { Id = Guid.NewGuid(), CardId = host.World.Card.Id,
+                        RelatedCardId = blocker.Id, Kind = CardRelationshipKind.BlockedBy });
+                }
+                if (variant == "decision") (await db.Cards.SingleAsync(c => c.Id == host.World.Card.Id)).Status = CardStatus.NeedsDecision;
+                if (variant == "stage") (await db.AgentTasks.SingleAsync(t => t.Id == host.World.Owner.Id)).NextStage = PipelineHandoffKind.Review;
+                if (variant == "workflow") (await db.PipelineHandoffActions.SingleAsync(a => a.Id == action.Id)).WorkflowRunId = Guid.NewGuid();
+                if (variant is "overlap" or "stage-cap")
+                    db.Add(new AgentTask { Id = Guid.NewGuid(), RootTaskId = Guid.NewGuid(), Title = "occupant", Goal = "occupant",
+                        ProjectId = host.World.Project.Id, WorkingDirectory = host.World.RepositoryPath, RepoPath = host.World.RepositoryPath,
+                        Scope = variant == "overlap" ? request.Scope : null, Role = AgentTaskRole.Code,
+                        Workspace = variant == "overlap" ? WorkspaceMode.Worktree : WorkspaceMode.ReadOnly, Status = AgentTaskStatus.Working });
+                if (variant == "host") db.HostBudgets.Add(new HostBudget { HostId = "local", MaxInFlight = 0, Reason = "drain" });
+                if (variant == "quota") db.SubscriptionUsageSamples.Add(new SubscriptionUsageSample
+                {
+                    Id = Guid.NewGuid(), Provider = AgentKind.ClaudeCode, SubscriptionKey = "ClaudeCode", RemainingPercent = 1,
+                    ResetsAt = host.Clock.GetUtcNow().UtcDateTime.AddHours(8), ObservedAt = host.Clock.GetUtcNow().UtcDateTime,
+                    AgentSessionId = host.World.CallerSessionId, SourceCommand = "/status", ParseStatus = SubscriptionUsageParseStatus.Parsed,
+                });
+                await db.SaveChangesAsync();
+            }
+            if (variant == "placement") request = request with { RunnerId = "unknown-fixture-runner" };
+            if (variant == "override") request = request with { IgnoreConcurrencyLimit = true };
+            var code = variant switch
+            {
+                "host" => "handoff_capacity_held", "quota" => "subscription_quota_low", "stage-cap" => "concurrency_limit",
+                "placement" => "validation_failed", "workflow" => "handoff_workflow_changed", "eligibility" => "handoff_not_eligible",
+                _ => "handoff_" + variant + "_held",
+            };
+            using var refused = await host.Client.PostAsJsonAsync(host.Url + $"/{action.Id:D}/child", new { task = request, acceptSpend = true });
+            refused.StatusCode.ShouldBe(variant == "placement" ? HttpStatusCode.UnprocessableEntity : HttpStatusCode.Conflict, variant);
+            using var problem = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
+            problem.RootElement.GetProperty("code").GetString().ShouldBe(code, variant);
+            await host.RestartHttpAsync();
+            var fresh = await host.ReadAsync();
+            fresh.Action.ChildTaskId.ShouldBeNull(variant + ": refused child not acknowledged");
+            fresh.Observations.Last().Detail.ShouldBe("Child request refused: " + code);
+            fresh.Observations.Last().NextObservationAt.ShouldNotBeNull();
+            await using var read = host.World.CreateContext();
+            (await read.AgentTasks.CountAsync(t => t.CardId == host.World.Card.Id && t.Id != host.World.Owner.Id)).ShouldBe(0);
+        }
+    }
+
+    [Test]
     public async Task C1281_B2HttpChildRecovery()
     {
         await using var host = await PipelineHandoffPilotTests.PilotHost.CreateAsync();

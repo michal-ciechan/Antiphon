@@ -151,7 +151,7 @@ public sealed partial class PipelineSpeedIntegrationTests
     {
         await using var scope = w.Services.CreateAsyncScope();
         var service = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
-        return action is { } id ? await service.CreateAsync(request, w.Caller(), id, CancellationToken.None)
+        return action is { } id ? await service.CreateAsync(request, w.Caller(), id, CancellationToken.None, acceptSpend: true)
             : await service.CreateAsync(request, w.Caller(), CancellationToken.None);
     }
 
@@ -167,7 +167,7 @@ public sealed partial class PipelineSpeedIntegrationTests
         var action = new PipelineHandoffAction { Id = Guid.NewGuid(), PredecessorTaskId = w.Owner.Id,
             Attempt = w.Owner.Attempt, SettlementEventId = sourceEvent.Id, NextStage = AgentTaskRole.Code,
             CardId = w.Card.Id, ProjectId = w.Project.Id, RecipientSessionId = w.CallerSessionId,
-            Actor = "fixture", CreatedAt = sourceEvent.At };
+            Actor = "fixture", CreatedAt = sourceEvent.At, ConsumedAt = sourceEvent.At, EligibleAt = sourceEvent.At };
         db.Add(action); await db.SaveChangesAsync(); return action;
     }
 
