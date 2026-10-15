@@ -827,6 +827,8 @@ On Windows, a resolved `powershell.exe` child is the one environment exception (
 
 Keep one slot-owning layer: invoke `scripts/run-checkpoint.ps1` directly with `pwsh -NoProfile -File` because that driver takes its own lease. Do not put it behind `build-slot.ps1`; a child checkpoint would wait for a second lease while the wrapper holds the first. Use the wrapper for script targets that rely on it to acquire their lease, quoting each path or value containing spaces in the caller's shell.
 
+Never chain a second driver after the gated command with a shell operator: the lease ends when build-slot.ps1 returns, so `-- dotnet build ... && dotnet exec ...` runs the exec unleased and Review flags it.
+
 The wait is visible in the transcript: `BUILD SLOT waiting label=<l> position=<n> occupied=<o>/<b> elapsed=<m>m` (or `reason=memory_floor available=<a>MB floor=<f>MB`) on each new reason and once a minute, then `BUILD SLOT granted lease=<id> waited=<s>s maxcpucount=<n>` and `BUILD SLOT released lease=<id> held=<s>s`. Two failure modes:
 
 - **Timeout** (busy or below the floor for the whole `-SlotWaitMinutes`, default 45): `BUILD SLOT timeout after 45m position=<n>`, **exit 4**, nothing built and no `dotnet` call. Report the row as not run, or end `blocked`; never retry it unleased or with `-NoSlot`.
