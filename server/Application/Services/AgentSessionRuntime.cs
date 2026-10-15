@@ -413,8 +413,7 @@ public sealed class AgentSessionRuntime
             case 6 when route || action.TriggerKind == "catchup":
                 if (services.GetService<AgentTaskReplyService>() is { } task)
                 {
-                    if (action.TriggerKind == "catchup") await task.OnTurnEndAsync(sessionId, ct);
-                    else await task.OnTranscriptActionAsync(sessionId, action.Sequence, ct);
+                    await task.OnTranscriptActionAsync(action, ct);
                 }
                 break;
         }
@@ -1285,6 +1284,9 @@ public sealed class AgentSessionRuntime
     private static async Task AdmitActionsAsync(AppDbContext db, Guid sessionId,
         List<(TranscriptEntry Row, SessionRunnerTranscriptEvent Source)> rows, DateTime generation, CancellationToken ct)
     {
+        var task = await db.AgentTasks.AsNoTracking().Where(t => t.AgentSessionId == sessionId
+            && (t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Dispatched))
+            .Select(t => new { t.Id, t.Attempt }).FirstOrDefaultAsync(ct);
         var apiIds = rows.Where(p => p.Row.Kind == TranscriptKinds.TurnEnd && p.Row.ApiCallId != null)
             .Select(p => p.Row.ApiCallId!).Distinct().ToArray();
         var seenApis = (await db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == sessionId
@@ -1296,7 +1298,7 @@ public sealed class AgentSessionRuntime
             var boundary = IsTurnBoundary(TranscriptUiProjection.Stored(row, row.Sequence));
             if (row.Kind == TranscriptKinds.TurnEnd && row.ApiCallId is { } api)
                 boundary &= seenApis.Add(api);
-            SessionRuntimeActionCoordinator.Admit(db, row, source, generation, boundary, row.CreatedAt);
+            SessionRuntimeActionCoordinator.Admit(db, row, source, generation, boundary, row.CreatedAt, task?.Id, task?.Attempt);
         }
     }
 

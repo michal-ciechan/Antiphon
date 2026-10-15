@@ -23,6 +23,8 @@ internal static class ChannelOutboundEvidence
 
     internal static IQueryable<Guid> ProtectedSessions(AppDbContext db) =>
         DiscoverySources(db).Select(m => m.AgentSessionId)
+            .Union(db.SessionQueuedMessages.Where(m => m.DirectReplyPromptSequence != null
+                && m.DirectReplyTailClosedAt == null).Select(m => m.AgentSessionId))
             .Union(ProtectedDeliveries(db).Select(d => d.SourceSessionId));
 
     internal static IQueryable<SessionQueuedMessage> ProtectedSources(AppDbContext db)
@@ -30,6 +32,7 @@ internal static class ChannelOutboundEvidence
         var sources = DiscoverySources(db);
         var deliveries = ProtectedDeliveries(db);
         return db.SessionQueuedMessages.Where(m => sources.Any(s => s.Id == m.Id)
+            || m.DirectReplyPromptSequence != null && m.DirectReplyTailClosedAt == null
             || deliveries.Any(d => d.Id == m.ChannelOutboundDeliveryId)
             // Settled channel context is still needed to route an undiscovered machine answer.
             || m.Origin == QueuedMessageOrigin.Channel

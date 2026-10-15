@@ -351,7 +351,7 @@ public sealed class DataRetentionService
                 (m.Status == QueuedMessageStatus.Sent || m.Status == QueuedMessageStatus.Canceled)
                 && m.CreatedAt < cutoff),
             ct);
-        var removed = await _db.SessionQueuedMessages
+        var eligible = _db.SessionQueuedMessages
             .Where(m => (m.Status == QueuedMessageStatus.Sent || m.Status == QueuedMessageStatus.Canceled)
                 && m.CreatedAt < cutoff
                 && !_db.SessionRuntimeActions.Any(a => a.AgentSessionId == m.AgentSessionId)
@@ -366,8 +366,11 @@ public sealed class DataRetentionService
                 && !_db.ChannelInbounds.Any(i => i.EnvelopeJson != null && i.QueueMessageId == m.Id)
                 && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
                     && (r.SessionId == m.AgentSessionId || r.ResumeSessionId == m.AgentSessionId
-                        || (r.OwningCheckTaskId != null && r.OwningCheckTaskId == m.SourceTaskId))))
-            .ExecuteDeleteAsync(ct);
+                        || (r.OwningCheckTaskId != null && r.OwningCheckTaskId == m.SourceTaskId))));
+        var removed = 0;
+        foreach (var sessionId in await eligible.Select(m => m.AgentSessionId).Distinct().ToListAsync(ct))
+            removed += await MutateTranscriptAsync(sessionId,
+                () => eligible.Where(m => m.AgentSessionId == sessionId).ExecuteDeleteAsync(ct), ct);
         if (removed > 0)
         {
             _logger.LogInformation(

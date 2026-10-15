@@ -10,6 +10,15 @@ namespace Antiphon.Server.Domain.Entities;
 /// </summary>
 public class SessionQueuedMessage
 {
+    // Direct transport retains its original route and accepted text frontier across restart.
+    // A pending frontier is an in-flight/uncertain publication, never permission to replay.
+    public long? DirectReplyPromptSequence { get; set; }
+    public long? DirectReplyThroughSequence { get; set; }
+    public long? DirectReplyPendingThroughSequence { get; set; }
+    public string? DirectReplyProvider { get; set; }
+    public string? DirectReplyConversationId { get; set; }
+    public string? DirectReplyHandle { get; set; }
+    public DateTime? DirectReplyTailClosedAt { get; set; }
     public Guid? ReviewThreadId { get; set; }
     public DateTime? ReviewReplyConsumedAt { get; set; }
     public string? RuntimeActionKey { get; set; }

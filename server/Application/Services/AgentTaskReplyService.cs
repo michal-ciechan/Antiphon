@@ -99,20 +99,29 @@ public sealed class AgentTaskReplyService
         }
     }
 
-    internal async Task OnTranscriptActionAsync(Guid sessionId, long triggerSequence, CancellationToken ct)
+    internal async Task OnTranscriptActionAsync(SessionRuntimeAction action, CancellationToken ct)
     {
+        if (action.AcceptedTaskId is not { } taskId || action.AcceptedTaskAttempt is not { } attempt
+            || action.AcceptedGeneration is not { } generation) return;
+        var sessionId = action.AgentSessionId;
         var gate = _settleLocks.GetOrAdd(sessionId, static _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var boundary = await TranscriptTurnWindow.FindActionBoundaryAsync(db, sessionId, triggerSequence, ct);
+            var boundary = action.TriggerKind == "catchup"
+                ? await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId && t.Sequence <= action.Sequence
+                    && t.Kind == TranscriptKinds.TurnEnd).MaxAsync(t => (long?)t.Sequence, ct)
+                : await TranscriptTurnWindow.FindActionBoundaryAsync(db, sessionId, action.Sequence, ct);
             if (boundary is null) return;
-            var task = await db.AgentTasks.FirstOrDefaultAsync(t => t.AgentSessionId == sessionId
+            var task = await db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId && t.Attempt == attempt && t.AgentSessionId == sessionId
                 && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working), ct);
-            if (task is not null)
-                await JudgeOpenTaskAsync(scope.ServiceProvider, db, task, sessionId, null, ct, boundary);
+            if (task is null || !await db.AgentSessions.AnyAsync(s => s.Id == sessionId && s.StartedAt == generation, ct)) return;
+            db.RuntimeActionTaskFence = new(taskId, attempt, sessionId, generation);
+            if (DelayAfterOpenTaskLoadedAsync is not null) await DelayAfterOpenTaskLoadedAsync(sessionId, ct);
+            // Unlike the sweep entry point, failure must reach the durable phase owner.
+            await JudgeOpenTaskAsync(scope.ServiceProvider, db, task, sessionId, null, ct, boundary);
         }
         finally { gate.Release(); }
     }
@@ -2728,9 +2737,10 @@ public sealed class AgentTaskReplyService
             var store = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var stored = await store.AgentTasks.AsNoTracking()
                 .Where(t => t.Id == task.Id)
-                .Select(t => new { t.Status, t.CompletedAt })
+                .Select(t => new { t.Status, t.CompletedAt, t.Attempt, t.AgentSessionId })
                 .FirstOrDefaultAsync(ct);
-            if (stored is null || stored.Status != task.Status || stored.CompletedAt is null)
+            if (stored is null || stored.Status != task.Status || stored.CompletedAt is null
+                || stored.Attempt != task.Attempt || stored.AgentSessionId != task.AgentSessionId)
                 return false;
             // CARD-0544 D-9: status alone is not this settlement. Continue delivery only when the
             // exact committed settlement event owns the exact committed obligation.

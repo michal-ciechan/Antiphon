@@ -19,7 +19,7 @@ public enum ChannelOutboundSendOutcome { Published, Deferred, OwnedElsewhere }
 /// <summary>Stable identity of one agent text window; task id is metadata, never the dedupe key.</summary>
 public sealed record ChannelOutboundSource(
     Guid SessionId, long PromptSequence, long FirstTextSequence, long LastTextSequence,
-    string SendKind, IReadOnlyList<Guid> CorrelationIds, Guid? SourceTaskId = null);
+    string SendKind, IReadOnlyList<Guid> CorrelationIds, Guid? SourceTaskId = null, bool DirectTail = false);
 
 /// <summary>Server-only facade immediately above the existing messaging producer.</summary>
 public sealed class ChannelOutboundService
@@ -284,6 +284,8 @@ public sealed class ChannelOutboundService
         if (source is null || string.IsNullOrWhiteSpace(reply.ConversationId))
             throw new ArgumentException("An agent reply requires a stable source and conversation.");
 
+        if (source.DirectTail) return await PublishDirectAsync(reply, source, ct);
+
         var channel = await _db.ChatChannels
             .SingleOrDefaultAsync(c => c.Provider == reply.Channel && c.ExternalId == reply.ConversationId, ct);
         var profileName = channel?.OutboundAgentProfile;
@@ -454,8 +456,11 @@ public sealed class ChannelOutboundService
         return await File.ReadAllTextAsync(path, ct);
     }
 
+    internal Task<ChannelOutboundSendOutcome> SuppressDirectAsync(ChannelReply reply,
+        ChannelOutboundSource source, CancellationToken ct) => PublishDirectAsync(reply, source, ct, suppress: true);
+
     private async Task<ChannelOutboundSendOutcome> PublishDirectAsync(
-        ChannelReply reply, ChannelOutboundSource source, CancellationToken ct)
+        ChannelReply reply, ChannelOutboundSource source, CancellationToken ct, bool suppress = false)
     {
         if (ProbeBarrierAsync is { } admission)
             await admission("direct-admission", source.CorrelationIds.FirstOrDefault(), ct);
@@ -467,12 +472,27 @@ public sealed class ChannelOutboundService
             // Reuse capture's durable source identity and claim, including its lock ordering.
             // A stale dispatcher must not overwrite another direct publisher, capture or loss.
             var members = await LockSourceMembersAsync(source.SessionId, memberIds, ct);
-            if (members.Any(m => m.ChannelOutboundDeliveryId != null || m.ChannelReplySettledAt != null
-                || m.ChannelReplyDiscoveryClosedAt != null)
+            if (source.DirectTail)
+            {
+                if (members.Any(m => m.DirectReplyPromptSequence != source.PromptSequence
+                    || m.DirectReplyThroughSequence != source.FirstTextSequence - 1
+                    || m.DirectReplyPendingThroughSequence != null || m.DirectReplyTailClosedAt != null
+                    || m.DirectReplyProvider != reply.Channel || m.DirectReplyConversationId != reply.ConversationId))
+                    return ChannelOutboundSendOutcome.OwnedElsewhere;
+            }
+            else if (members.Any(m => m.ChannelOutboundDeliveryId != null || m.ChannelReplySettledAt != null
+                    || m.ChannelReplyDiscoveryClosedAt != null)
                 || !await ClaimSourceMembersAsync(memberIds, null, now, ct))
                 return ChannelOutboundSendOutcome.OwnedElsewhere;
+            await _db.SessionQueuedMessages.Where(m => memberIds.Contains(m.Id)).ExecuteUpdateAsync(s =>
+                s.SetProperty(m => m.DirectReplyPromptSequence, source.PromptSequence)
+                    .SetProperty(m => m.DirectReplyPendingThroughSequence, source.LastTextSequence)
+                    .SetProperty(m => m.DirectReplyProvider, reply.Channel)
+                    .SetProperty(m => m.DirectReplyConversationId, reply.ConversationId)
+                    .SetProperty(m => m.DirectReplyHandle, reply.ReplyHandle), ct);
             await transaction.CommitAsync(ct);
         }
+        var accepted = false;
         try
         {
             ct.ThrowIfCancellationRequested();
@@ -480,17 +500,36 @@ public sealed class ChannelOutboundService
             // abandon only the wait while the transport continues (Kafka ProduceAsync). It
             // cannot authorize releasing this claim and starting a second publication.
             // The producer's delivery deadline is unchanged; no detached timeout or expiring claim.
-            await _producer.SendAsync(reply, CancellationToken.None);
+            if (!suppress) await _producer.SendAsync(reply, CancellationToken.None);
+            accepted = true;
+            if (memberIds.Length > 0)
+                await _db.SessionQueuedMessages.Where(m => memberIds.Contains(m.Id)
+                    && m.DirectReplyPromptSequence == source.PromptSequence
+                    && m.DirectReplyPendingThroughSequence == source.LastTextSequence)
+                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.DirectReplyThroughSequence, source.LastTextSequence)
+                        .SetProperty(m => m.DirectReplyPendingThroughSequence, (long?)null), CancellationToken.None);
             return ChannelOutboundSendOutcome.Published;
         }
         catch
         {
             // The send has ended. Release only this invocation's marker, never a durable owner
             // or a newer marker. Caller cancellation must not prevent the failed claim cleanup.
-            if (memberIds.Length > 0)
+            // A failed acknowledgement after acceptance is uncertain. Retain its claim;
+            // only a completed producer failure permits retry of this exact text range.
+            if (!accepted && memberIds.Length > 0 && source.DirectTail)
+                await _db.SessionQueuedMessages.Where(m => memberIds.Contains(m.Id)
+                    && m.DirectReplyPendingThroughSequence == source.LastTextSequence
+                    && m.DirectReplyThroughSequence == source.FirstTextSequence - 1)
+                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.DirectReplyPendingThroughSequence, (long?)null), CancellationToken.None);
+            else if (!accepted && memberIds.Length > 0)
                 await _db.SessionQueuedMessages.Where(m => memberIds.Contains(m.Id)
                     && m.ChannelReplySettledAt == now && m.ChannelOutboundDeliveryId == null)
-                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelReplySettledAt, (DateTime?)null),
+                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelReplySettledAt, (DateTime?)null)
+                        .SetProperty(m => m.DirectReplyPromptSequence, (long?)null)
+                        .SetProperty(m => m.DirectReplyPendingThroughSequence, (long?)null)
+                        .SetProperty(m => m.DirectReplyProvider, (string?)null)
+                        .SetProperty(m => m.DirectReplyConversationId, (string?)null)
+                        .SetProperty(m => m.DirectReplyHandle, (string?)null),
                         CancellationToken.None);
             throw;
         }

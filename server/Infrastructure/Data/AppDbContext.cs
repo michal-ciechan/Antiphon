@@ -141,14 +141,36 @@ public class AppDbContext : DbContext
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
+        if (RuntimeActionTaskFence is not null)
+            throw new InvalidOperationException("Deferred task writes require the asynchronous identity fence.");
         RequireImmutablePipelineEvidence();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
-    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    internal sealed record ActionTaskFence(Guid TaskId, int Attempt, Guid SessionId, DateTime Generation);
+    internal ActionTaskFence? RuntimeActionTaskFence { get; set; }
+
+    public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         RequireImmutablePipelineEvidence();
-        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        if (RuntimeActionTaskFence is not { } fence)
+            return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        // Only the bound deferred-task scope opts in. Hold SQL locks over this save,
+        // never over report preparation, parent delivery or other external effects.
+        await using var transaction = Database.CurrentTransaction is null
+            ? await Database.BeginTransactionAsync(cancellationToken) : null;
+        await Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"AgentSessions\" WHERE \"Id\" = {fence.SessionId} FOR UPDATE", cancellationToken);
+        await Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"AgentTasks\" WHERE \"Id\" = {fence.TaskId} FOR UPDATE", cancellationToken);
+        var tracked = ChangeTracker.Entries<AgentTask>().Single(e => e.Entity.Id == fence.TaskId);
+        var status = tracked.Property(t => t.Status).OriginalValue;
+        var token = tracked.Property(t => t.ConcurrencyToken).OriginalValue;
+        if (!await AgentTasks.AsNoTracking().AnyAsync(t => t.Id == fence.TaskId && t.Attempt == fence.Attempt
+                && t.AgentSessionId == fence.SessionId && t.Status == status && t.ConcurrencyToken == token, cancellationToken)
+            || !await AgentSessions.AsNoTracking().AnyAsync(s => s.Id == fence.SessionId && s.StartedAt == fence.Generation, cancellationToken))
+            throw new DbUpdateConcurrencyException("Deferred runtime task identity changed before commit.");
+        var saved = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
+        return saved;
     }
 
     private void RequireImmutablePipelineEvidence()
