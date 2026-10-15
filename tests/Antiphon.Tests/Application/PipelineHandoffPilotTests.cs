@@ -110,11 +110,13 @@ public sealed class PipelineHandoffPilotTests
             post.StatusCode.ShouldBe(expected, "post-anonymous-refused " + variant + " " + await post.Content.ReadAsStringAsync());
             if (variant != "allowed")
             {
-                (await get.Content.ReadAsStringAsync()).ShouldNotContain("operator", "denied-get-no-history");
+                (await get.Content.ReadAsStringAsync()).Contains("operator", StringComparison.Ordinal)
+                    .ShouldBeFalse("denied-get-no-history");
                 (await host.ReadAsync()).Observations.Count.ShouldBe(1, "denied-post-no-write");
             }
         }
-        (await host.ReadAsync()).Observations.Last().Actor.ShouldStartWith("task:", "authenticated-actor-retained");
+        (await host.ReadAsync()).Observations.Last().Actor.StartsWith("task:", StringComparison.Ordinal)
+            .ShouldBeTrue("authenticated-actor-retained");
         var body = JsonSerializer.SerializeToNode(host.Request("consumed", "forged", 2))!;
         body["actor"] = "operator";
         using var forged = await host.Client.PostAsJsonAsync(host.Url, body);
