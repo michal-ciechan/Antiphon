@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -22,6 +23,8 @@ namespace Antiphon.Tests.Application;
 
 public sealed partial class PipelineSpeedIntegrationTests
 {
+    private static readonly JsonSerializerOptions ProgramJson = new(JsonSerializerDefaults.Web)
+    { Converters = { new JsonStringEnumConverter() } };
     [Test]
     public async Task C1281_B2HttpAdmissionHolds()
     {
@@ -241,14 +244,14 @@ public sealed partial class PipelineSpeedIntegrationTests
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add(OperatorTokenFile.Header, OperatorTokenFile.ReadOrCreate(factory.OperatorTokenPath));
         var url = $"/api/agent-tasks/{task:D}/handoff-actions";
-        (await client.GetFromJsonAsync<List<PipelineHandoffActionDto>>(url))!.ShouldBeEmpty("delivered-not-consumed");
+        (await client.GetFromJsonAsync<List<PipelineHandoffActionDto>>(url, ProgramJson))!.ShouldBeEmpty("delivered-not-consumed");
         var request = new PipelineHandoffActionRequest(predecessor.Attempt, note.SourceEventId, AgentTaskRole.Code,
             0, "eligible", "explicit caller consumption", Receipt: receipt);
         foreach (var wrong in new[] { receipt with { ReceiptSequence = queue.LastDeliveryBaselineSequence ?? 0 },
             receipt with { RecipientSessionId = Guid.NewGuid() }, receipt with { RecipientGeneration = receipt.RecipientGeneration.AddSeconds(-1) },
             receipt with { WireDigest = new string('0', 64) } })
         {
-            using var denied = await client.PostAsJsonAsync(url, request with { Receipt = wrong });
+            using var denied = await client.PostAsJsonAsync(url, request with { Receipt = wrong }, ProgramJson);
             await RequireProblemAsync(denied, "handoff_foreign_receipt");
         }
         await using (var transcript = rig.World.CreateContext())
@@ -260,21 +263,21 @@ public sealed partial class PipelineSpeedIntegrationTests
             await transcript.SaveChangesAsync();
             try
             {
-                using var clipped = await client.PostAsJsonAsync(url, request);
+                using var clipped = await client.PostAsJsonAsync(url, request, ProgramJson);
                 await RequireProblemAsync(clipped, "handoff_foreign_receipt");
             }
             finally { prompt.Text = complete; await transcript.SaveChangesAsync(); }
         }
-        using var saved = await client.PostAsJsonAsync(url, request);
+        using var saved = await client.PostAsJsonAsync(url, request, ProgramJson);
         saved.StatusCode.ShouldBe(HttpStatusCode.OK, await saved.Content.ReadAsStringAsync());
-        var action = (await saved.Content.ReadFromJsonAsync<PipelineHandoffActionDto>())!.Action;
+        var action = (await saved.Content.ReadFromJsonAsync<PipelineHandoffActionDto>(ProgramJson))!.Action;
         action.ReceivedAt.ShouldBe(note.ConfirmedAt); action.ConsumedAt.ShouldNotBeNull();
         action.ChildDispatchedAt.ShouldBeNull("unknown-dispatch-null");
         using var child = await client.PostAsJsonAsync(url + $"/{action.Id:D}/child",
-            new { task = ChildRequest(rig.World) with { RunnerId = "local" }, acceptSpend = true });
+            new { task = ChildRequest(rig.World) with { RunnerId = "local" }, acceptSpend = true }, ProgramJson);
         child.StatusCode.ShouldBe(HttpStatusCode.OK, "wired-child: " + await child.Content.ReadAsStringAsync());
-        var id = (await child.Content.ReadFromJsonAsync<AgentTaskCreatedDto>())!.Id;
-        var read = (await client.GetFromJsonAsync<List<PipelineHandoffActionDto>>(url))!.ShouldHaveSingleItem();
+        var id = (await child.Content.ReadFromJsonAsync<AgentTaskCreatedDto>(ProgramJson))!.Id;
+        var read = (await client.GetFromJsonAsync<List<PipelineHandoffActionDto>>(url, ProgramJson))!.ShouldHaveSingleItem();
         read.Action.ChildTaskId.ShouldBe(id); read.Action.ChildDispatchedAt.ShouldBeNull();
         read.RequestedWithinFiveMinutes.ShouldBe(true, "actual-child-within-five-minutes");
         factory.SessionRunner.LaunchAttempts.ShouldBeEmpty();

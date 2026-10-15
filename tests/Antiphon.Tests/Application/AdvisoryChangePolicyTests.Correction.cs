@@ -55,18 +55,24 @@ public partial class AdvisoryChangePolicyTests
         var subject = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == w.Request.SubjectTaskId);
         (await LandApproval.LoadUsableEvidenceAsync(db, receipt.SuccessorEvidenceId!.Value, w.Request.SourceSha,
             subject, CancellationToken.None)).Id.ShouldBe(receipt.SuccessorEvidenceId.Value, "actual-landing-consumer");
-        foreach (var (request, label) in new[] {
-            (w.Request with { SubjectTaskId = Guid.NewGuid() }, "foreign-subject-refused"),
-            (w.Request with { SourceSha = new string('a', 40) }, "foreign-sha-refused"),
-            (w.Request with { SourceRef = "refs/heads/foreign" }, "foreign-ref-refused"),
-            (w.Request with { RepositoryPath = w.Request.RepositoryPath + "-sibling" }, "foreign-repository-refused") })
-            (await w.PostAsync(request)).StatusCode.ShouldBe(HttpStatusCode.Conflict, label);
+        foreach (var (request, label, code) in new[] {
+            (w.Request with { SubjectTaskId = Guid.NewGuid() }, "foreign-subject-refused", "review_ineligible"),
+            (w.Request with { SourceSha = new string('a', 40) }, "foreign-sha-refused", "assessment_coordinates_mismatch"),
+            (w.Request with { SourceRef = "refs/heads/foreign" }, "foreign-ref-refused", "assessment_coordinates_mismatch"),
+            (w.Request with { RepositoryPath = w.Request.RepositoryPath + "-sibling" }, "foreign-repository-refused", "review_ineligible") })
+        {
+            using var denied = await w.PostAsync(request);
+            denied.StatusCode.ShouldBe(HttpStatusCode.Conflict, label);
+            using var problem = JsonDocument.Parse(await denied.Content.ReadAsStringAsync());
+            problem.RootElement.GetProperty("code").GetString().ShouldBe("review_evidence_correction_" + code, label);
+        }
         (await db.ReviewEvidenceCorrections.CountAsync()).ShouldBe(1);
         var successor = await db.StageOutcomes.SingleAsync(o => o.Id == receipt.SuccessorEvidenceId);
         successor.Ref = "broken-link";
         await db.SaveChangesAsync();
-        await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
+        var broken = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
             LandApproval.LoadUsableEvidenceAsync(db, successor.Id, w.Request.SourceSha, subject, CancellationToken.None));
+        broken.Code.ShouldBe("review_evidence_correction_link_mismatch");
     }
 
     [Test]
@@ -83,7 +89,10 @@ public partial class AdvisoryChangePolicyTests
         foreach (var behavior in new[] { "Substantive", "Unknown", "Legacy" })
         {
             await w.BehaviorAsync(behavior);
-            (await w.PostAsync(w.Request)).StatusCode.ShouldBe(HttpStatusCode.Conflict, "missing-behavior-substantive");
+            using var denied = await w.PostAsync(w.Request);
+            denied.StatusCode.ShouldBe(HttpStatusCode.Conflict, "missing-behavior-substantive");
+            using var problem = JsonDocument.Parse(await denied.Content.ReadAsStringAsync());
+            problem.RootElement.GetProperty("code").GetString().ShouldBe("review_evidence_correction_behavior_requires_review");
         }
         await w.BehaviorAsync("Satisfied");
         using var valid = await w.PostAsync(w.Request);

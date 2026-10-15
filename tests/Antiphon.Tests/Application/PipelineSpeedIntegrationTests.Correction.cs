@@ -39,6 +39,12 @@ public sealed partial class PipelineSpeedIntegrationTests
                     client.DefaultRequestHeaders.Add("X-Antiphon-Task-Token", (await CorrectionCredentialAsync(w, project, board, card, denied)).Token);
                 using var response = await client.PostAsJsonAsync(CorrectionUrl(w), w.Request);
                 response.StatusCode.ShouldBe(HttpStatusCode.Forbidden, "correction-principal-refused " + denied);
+                if (denied is not ("anonymous" or "invalid" or "revoked"))
+                {
+                    var scopeCode = denied switch { "worker" => "principal", "session-card" => "card", _ => denied };
+                    using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                    problem.RootElement.GetProperty("code").GetString().ShouldBe("review_correction_" + scopeCode + "_denied");
+                }
                 await using var db = w.Db();
                 (await db.ReviewEvidenceCorrections.CountAsync()).ShouldBe(0, "denied-no-correction");
                 (await db.AgentTaskEvents.CountAsync()).ShouldBe(0, "denied-no-audit");
