@@ -2,6 +2,11 @@
 
 Date: 2026-10-02. Stage: TestDesign; next Code. TestDesign source census: **`d8e5af27684a9c52e71557768f81085949354da2`**, the pushed Plan tip, on assigned branch `feat/card-task-64a87ae9`. Original Plan baseline was remote master `9f99584f9d728b9aa150bb228559fae356e1dc54`; its branch was `feat/card-task-1195268b`. No fetch, pull, reset, rebase or shared-ref update was performed. All counts below were independently recounted at the TestDesign start ref.
 
+2026-10-15 Code continuation: the next-unfinished-slice brief is implemented by
+[the bounded raw-parser slice](2026-10-15-card-0907-raw-parser-slice.md). It advances
+the independent V-5 regressions while the required Windows capture remains pending;
+the final parent roster and all other acceptance obligations below are retained.
+
 ## Outcome and scope
 
 Qualify Antiphon's existing Codex screen and rollout consumers for codex-cli 0.160.0 as follow-up to the critical rollout path. Add attributable fixtures, exercise the production terminal renderer and parsers, and fix only demonstrated compatibility failures. Preserve the existing 0.156.1 trust/sign-in/ready/update behavior, transcript-first delivery/completion, and quota hold behavior. This does not adopt a model tier, change the image verifier, deploy an image, or edit instruction bundles.

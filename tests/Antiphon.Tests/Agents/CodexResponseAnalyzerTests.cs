@@ -1,4 +1,10 @@
 using Antiphon.Agents.Pty;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -7,6 +13,52 @@ namespace Antiphon.Tests.Agents;
 [Category("Unit")]
 public class CodexResponseAnalyzerTests
 {
+    [Test]
+    public void V0160_cursor_positioned_echo_is_excluded()
+    {
+        const string prompt = "Echo this?";
+        const string raw = "Echo\u001b[1;6Hthis?\r\nC907 alpha beta.";
+        var answer = CodexResponseAnalyzer.ExtractResponse(raw, prompt);
+
+        answer.Contains('?').ShouldBeFalse("C907-echo-excluded");
+        answer.ShouldBe("C907 alpha beta.", "C907-echo-answer");
+        CodexResponseAnalyzer.IsAskingQuestion(raw, prompt).ShouldBeFalse("C907-echo-question");
+    }
+
+    [Test]
+    public async Task V0160_fallback_preserves_answer_word_boundaries()
+    {
+        // Derived raw witnesses from the TestDesign plan, not captured terminal output.
+        (string Label, string Raw)[] cases =
+        [
+            ("cup", "C907\u001b[1;6Halpha\u001b[1;12Hbeta."),
+            ("cuf", "C907\u001b[1Calpha\u001b[1Cbeta."),
+            ("plain", "C907 alpha beta."),
+            ("sgr", "\u001b[32mC907\u001b[0m alpha beta."),
+            ("erase-osc", "C9\u001b[K07\u001b]0;codex\a alpha beta."),
+        ];
+        foreach (var (label, raw) in cases)
+        {
+            CodexResponseAnalyzer.ExtractResponse(raw)
+                .ShouldBe("C907 alpha beta.", "C907-answer-word-boundaries-" + label);
+
+            var client = new ScriptedCodexRunnerClient { RawOutput = raw };
+            await using var adapter = new RunnerCodexAdapter(client, Options.Create(new AgentRegistrySettings()));
+            await adapter.StartAsync(new AgentLaunchSpec(
+                DefinitionName: "codex", Kind: AgentKind.Codex, Exe: "unused",
+                Args: [], Env: new Dictionary<string, string>(), Cwd: Path.GetTempPath(),
+                Cols: 120, Rows: 30, SessionId: Guid.NewGuid()), CancellationToken.None);
+            await adapter.SendPromptAsync("C907 fallback request", CancellationToken.None);
+            // A fresh completion without AssistantText reaches raw extraction immediately.
+            client.Append(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+            var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+            result.TurnCompleted.ShouldBeTrue("C907-fallback-completed-" + label);
+            result.ResponseText.ShouldBe("C907 alpha beta.", "C907-fallback-answer-" + label);
+            result.IsAskingQuestion.ShouldBeFalse("C907-fallback-question-" + label);
+            result.RawSnapshot.ShouldBe(raw, "C907-fallback-raw-diagnostic-" + label);
+        }
+    }
+
     [Test]
     public void IsAskingQuestion_ignores_question_mark_in_echoed_prompt()
     {

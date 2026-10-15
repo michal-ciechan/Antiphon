@@ -1,0 +1,34 @@
+# cli-version: 0.160.0
+# provenance: synthesised-vendor
+# source: https://raw.githubusercontent.com/openai/codex/a956835d020762cb2b570053af06f643a11c0ecc/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_snapshot_includes_credits_and_limits.snap
+# revision: a956835d020762cb2b570053af06f643a11c0ecc
+# retrieved-utc: 2026-10-15
+# cols: unspecified (vendor snapshot)
+# rows: unspecified (vendor snapshot)
+# os-backend: vendor snapshot, no local terminal capture
+# transformations: removed snapshot metadata only; payload verbatim, including v0.0.0 banner
+# redactions: none; workspace placeholder is vendor-authored
+# source-sha256: 3f7762c4e006f0934b118408bd264469693ff0204a73251cc0ecab4678fc689f
+# payload-sha256: a691faeafa5d9e59b47a78832cb3c5e987bed37b0feba5cfbb97d181856eed68
+# encoding: rendered UTF-8 text, LF
+--- payload ---
+/status/tests.rs
+expression: sanitized
+---
+/status
+
+  >_ OpenAI Codex (v0.0.0)
+
+  Visit https://chatgpt.com/codex/settings/usage for up-to-date
+  information on rate limits and credits
+
+  Model:           gpt-5.1-codex (reasoning none, summaries auto)
+  Directory:       [[workspace]]
+  Permissions:     Custom (workspace with network access, Ask for approval)
+  Agents.md:       <none>
+
+  Token usage:     2K total  (1.4K input + 600 output)
+  Context window:  100% left (2.2K used / 272K)
+  5h limit:        [███████████░░░░░░░░░] 55% left (resets 09:25)
+  Weekly limit:    [██████████████░░░░░░] 70% left (resets 09:55)
+  Credits:         Available
