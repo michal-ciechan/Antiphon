@@ -32,7 +32,11 @@ is then 409 at once; a write without one re-reads and re-applies its values, up 
 `UnconditionalAttempts` (3) saves, before the same 409 (repair D1 of Review 40767d91). A clear that
 lost to another clear returns 204. The lazy `NotAfter` sweep rotates the token and re-reads after a
 lost race, up to the same bound; after the third lost race its `DbUpdateConcurrencyException`
-propagates and the request is a 500 (V-23, repair D2 of Review 72440e28). The `?role=` view reads a
+leaves `FindActiveAsync` (V-23 witnesses that, not an HTTP status; repair D2 of Review 72440e28).
+What each request kind then answers (500 for the unfiltered GET, PUT, DELETE and an
+explicit-complexity task creation; 200 with a withheld reason on `?role=`; a created task with a
+`Routing read failed` warning at the default tier) is the sweep table in `docs/antiphon-api.md`,
+which cites the code for each row (repair D1 of Review a11e0948). The `?role=` view reads a
 role cell's token, reason and expiry before its candidates, so a cell created or re-created between
 the reads pairs newer candidates with an older token (or none) and a save with it is 409 (V-21,
 repair D1 of Review 72440e28). The two reads stay separate because a failure of each is reported
@@ -74,6 +78,7 @@ in-flight or queued PUT; the token makes a late queued PUT refuse rather than ov
 | S8 | test | repair D1/D2 (Review 40767d91): `ComplexityChainRaceTests`, editor queued-note tests (red before S9) |
 | S9 | fix+docs | bounded no-token re-run, sweep token rotation and re-read, per-case queued note; API doc, DTO and client comments, this plan |
 | S10 | fix+test+docs | repair D1-D3 (Review 72440e28): `?role=` token read before the candidates, V-21 replaced, V-23, fault ordinals in `ComplexityEffectiveHttpTests` and `OrchestratorInstructionsRefreshTests`; API doc, DTO comments, this plan |
+| S11 | docs | repair D1 (Review a11e0948): the sweep's answer per request kind, with a code or test source beside each CARD-1275 sentence in the API doc; this plan. No code or test change, so CP-1..CP-8 are unchanged |
 
 ## Verification design
 
