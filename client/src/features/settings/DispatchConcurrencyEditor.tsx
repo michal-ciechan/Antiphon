@@ -19,6 +19,8 @@ import { notifications } from '@mantine/notifications'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { ApiError, getApiErrorMessage, getApiFieldErrors } from '../../api/client'
+import { PendingRead } from './PendingRead'
+import { pendingReadLabel } from './routingSettingsModel'
 import {
   dispatchConcurrencyKeys,
   isProjectScope,
@@ -166,6 +168,8 @@ export function DispatchConcurrencyEditor({ projectId }: { projectId: string | n
         return result.isError || !result.data ? null : result.data
       }}
       history={history.data?.revisions ?? []}
+      // CARD-1274: a pending history read (loading, or paused offline) is not an empty history.
+      historyPending={pendingReadLabel(history, 'History')}
       historyFailed={history.isError}
     />
   )
@@ -246,6 +250,7 @@ function EditorForm({
   cached,
   refetch,
   history,
+  historyPending,
   historyFailed,
 }: {
   projectId: string | null
@@ -255,6 +260,7 @@ function EditorForm({
   cached: () => Snapshot
   refetch: () => Promise<DispatchConcurrencyScopeDto | null>
   history: DispatchConcurrencyRevisionDto[]
+  historyPending: string | null
   historyFailed: boolean
 }) {
   const save = usePutDispatchConcurrency(projectId)
@@ -558,12 +564,13 @@ function EditorForm({
           <Text size="sm" fw={600}>
             History
           </Text>
+          {historyPending && <PendingRead label={historyPending} py={0} />}
           {historyFailed && (
             <Text size="sm" c="dimmed">
               Could not load history.
             </Text>
           )}
-          {!historyFailed && history.length === 0 && (
+          {!historyPending && !historyFailed && history.length === 0 && (
             <Text size="sm" c="dimmed">
               No revisions yet.
             </Text>

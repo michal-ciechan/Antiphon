@@ -14,10 +14,11 @@ import {
   ActionIcon,
   Tooltip,
   Alert,
-  Loader,
   PasswordInput,
 } from '@mantine/core'
 import { TbPlus, TbEdit, TbTrash, TbAlertCircle, TbPlugConnected, TbCheck, TbX } from 'react-icons/tb'
+import { PendingRead } from './PendingRead'
+import { pendingReadLabel } from './routingSettingsModel'
 import {
   useProviders,
   useCreateProvider,
@@ -40,14 +41,13 @@ const PROVIDER_TYPE_OPTIONS = [
 ]
 
 export function ProviderConfig() {
-  const { data: providers, isLoading: providersLoading, error: providersError } = useProviders()
+  const providersQuery = useProviders()
+  const { data: providers, error: providersError } = providersQuery
+  // CARD-1274: a pending read (loading, or paused offline) is not an empty provider list.
+  const pending = pendingReadLabel(providersQuery, 'Providers')
 
-  if (providersLoading) {
-    return (
-      <Group justify="center" py="xl">
-        <Loader size="md" />
-      </Group>
-    )
+  if (pending) {
+    return <PendingRead label={pending} py="xl" />
   }
 
   if (providersError) {

@@ -3,7 +3,6 @@ import {
   Alert,
   Button,
   Group,
-  Loader,
   Paper,
   PasswordInput,
   Stack,
@@ -17,6 +16,8 @@ import { useState } from 'react'
 import { TbAlertCircle, TbPlus, TbTrash } from 'react-icons/tb'
 import { useApiKeys, useDeleteApiKey, usePutApiKey } from '../../api/apiKeys'
 import { getApiErrorMessage } from '../../api/client'
+import { PendingRead } from './PendingRead'
+import { pendingReadLabel } from './routingSettingsModel'
 
 function formatUpdatedAt(value: string): string {
   return new Date(value).toLocaleString()
@@ -36,9 +37,13 @@ export function ApiKeysSection({ projectId }: { projectId?: string }) {
   const [replacementValues, setReplacementValues] = useState<Record<string, string>>({})
 
   const scope = projectId ? 'Project' : 'Global'
+  // CARD-1274: the PUT replaces a stored key of the same name, so a new key is not saved while the
+  // list is pending (loading, or paused offline) or failed: the operator cannot see the names.
+  const pending = pendingReadLabel(keys, 'API keys')
+  const listUnknown = pending !== null || keys.isError
 
   const addKey = async () => {
-    if (!newName.trim() || !newValue) return
+    if (!newName.trim() || !newValue || listUnknown) return
     try {
       await putKey.mutateAsync({ name: newName.trim(), value: newValue })
       setNewName('')
@@ -103,18 +108,21 @@ export function ApiKeysSection({ projectId }: { projectId?: string }) {
               leftSection={<TbPlus size={16} />}
               onClick={() => void addKey()}
               loading={putKey.isPending}
-              disabled={!newName.trim() || !newValue}
+              disabled={!newName.trim() || !newValue || listUnknown}
             >
               Save key
             </Button>
           </Group>
+          {listUnknown && (
+            <Text size="xs" c="dimmed">
+              Save key is disabled until the API key list loads: a key with the same name would be replaced.
+            </Text>
+          )}
         </Stack>
       </Paper>
 
-      {keys.isLoading ? (
-        <Group justify="center" py="md">
-          <Loader size="sm" />
-        </Group>
+      {pending ? (
+        <PendingRead label={pending} py="md" />
       ) : keys.error ? (
         <Alert color="red" icon={<TbAlertCircle size={16} />}>
           {getApiErrorMessage(keys.error, 'Failed to load API keys')}

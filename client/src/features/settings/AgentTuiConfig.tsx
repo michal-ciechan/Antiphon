@@ -5,7 +5,6 @@ import {
   Badge,
   Button,
   Group,
-  Loader,
   Stack,
   Table,
   Text,
@@ -30,6 +29,8 @@ import {
 } from '../../api/agentTui'
 import { getApiErrorMessage } from '../../api/client'
 import { AgentTuiProfileModal } from './AgentTuiProfileModal'
+import { PendingRead } from './PendingRead'
+import { pendingReadLabel } from './routingSettingsModel'
 
 function validationColor(status: string) {
   switch (status) {
@@ -48,19 +49,18 @@ function validationColor(status: string) {
 }
 
 export function AgentTuiConfig() {
-  const { data: profiles, isLoading, error } = useAgentTuiProfiles()
+  const profilesQuery = useAgentTuiProfiles()
+  const { data: profiles, error } = profilesQuery
+  // CARD-1274: a pending read (loading, or paused offline) is not an empty profile table.
+  const pending = pendingReadLabel(profilesQuery, 'AI Agent TUI profiles')
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<AgentTuiProfileDto | null>(null)
   const deleteMutation = useDeleteAgentTuiProfile()
   const duplicateMutation = useDuplicateAgentTuiProfile()
   const [actionError, setActionError] = useState<string | null>(null)
 
-  if (isLoading) {
-    return (
-      <Group justify="center" py="xl">
-        <Loader size="md" />
-      </Group>
-    )
+  if (pending) {
+    return <PendingRead label={pending} py="xl" />
   }
 
   if (error) {

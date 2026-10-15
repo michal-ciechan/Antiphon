@@ -37,6 +37,7 @@ import {
   ComplexityChainCellEditor,
   type ComplexityChainEditorTarget,
 } from './ComplexityChainCellEditor'
+import { PendingRead } from './PendingRead'
 import { RolePolicySection } from './RolePolicySection'
 import { RunnerDefaultsSection } from './RunnerDefaultsSection'
 import {
@@ -741,17 +742,6 @@ function CardPinsList({ pins, unknown }: { pins: RoutingPinDto[]; unknown: strin
         </Text>
       ))}
     </Stack>
-  )
-}
-
-function PendingRead({ label }: { label: string }) {
-  return (
-    <Group justify="center" gap="xs" py="sm">
-      <Loader size="sm" />
-      <Text size="sm" c="dimmed">
-        {label}
-      </Text>
-    </Group>
   )
 }
 

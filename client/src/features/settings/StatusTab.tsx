@@ -8,13 +8,14 @@ import {
   Table,
   ActionIcon,
   Tooltip,
-  Loader,
   Alert,
   ThemeIcon,
 } from '@mantine/core'
 import { TbRefresh, TbAlertCircle, TbCircleCheck, TbCircleX, TbDatabase } from 'react-icons/tb'
 import { useGitHubStatus, useRefreshGitHubRepos } from '../../api/projects'
 import { useQueryClient } from '@tanstack/react-query'
+import { PendingRead } from './PendingRead'
+import { pendingReadLabel } from './routingSettingsModel'
 
 function formatDate(iso: string | null): string {
   if (!iso) return 'Never'
@@ -33,7 +34,10 @@ function age(iso: string | null): string {
 }
 
 export function StatusTab() {
-  const { data: status, isLoading, error, refetch } = useGitHubStatus()
+  const statusQuery = useGitHubStatus()
+  const { data: status, error, refetch } = statusQuery
+  // CARD-1274: a pending read (loading, or paused offline) is not a disconnected, empty status.
+  const pending = pendingReadLabel(statusQuery, 'GitHub status')
   const refreshRepos = useRefreshGitHubRepos()
   const queryClient = useQueryClient()
 
@@ -42,12 +46,8 @@ export function StatusTab() {
     await queryClient.invalidateQueries({ queryKey: ['github', 'status'] })
   }
 
-  if (isLoading) {
-    return (
-      <Group justify="center" py="xl">
-        <Loader size="md" />
-      </Group>
-    )
+  if (pending) {
+    return <PendingRead label={pending} py="xl" />
   }
 
   if (error) {
