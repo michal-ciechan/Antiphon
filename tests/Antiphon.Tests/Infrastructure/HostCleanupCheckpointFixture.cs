@@ -40,6 +40,65 @@ internal sealed class HostCleanupCheckpointFixture
         Antiphon.Checkpoints.Coverage.ConfinedFileReader.ReadBytes(Context, Root, Payload, limit, after, ct);
 }
 
+
+internal sealed class HostCleanupReceiptFixture
+{
+    public HostCleanupCheckpointFixture Files { get; } = new();
+    public VirtualCheckpointIo Io => Files.Io;
+    public CheckpointCleanupContext Context => Files.Context;
+    public string Run => Files.Root + "/verified-run";
+    public string StatePath => Run + "/state.json";
+    public string MarkdownPath => Run + "/report.md";
+    public string JsonPath => Run + "/report.json";
+    public string Output => Files.Root + "/output";
+    public string StampPath => Output + "/checkpoint-build-source.json";
+    public RunState State { get; }
+    public ReportModel Report { get; }
+    public CheckpointBuildBinding Stamp { get; }
+
+    public HostCleanupReceiptFixture(int exit = 0, bool seed = true)
+    {
+        SafeWrite.Require(Files.Write.CreateFreshDirectory(Run, Files.Write.Under(Files.Root)));
+        Io.CreateDirectory(Output);
+        State = new()
+        {
+            RunId = "verified-run", ToolOwner = SafeWrite.Marker, Phase = "done", ExitCode = exit,
+            StartedAt = Files.Clock.GetUtcNow(), EndedAt = Files.Clock.GetUtcNow(),
+            Source = Source(),
+            Builds = [new() { Id = "owned", State = "built", Slot = "granted", Source = Source() }],
+            Rows = [new() { Id = "CP-fixture", State = "green", Slot = "granted" }]
+        };
+        Report = new()
+        {
+            RunId = State.RunId, Commit = State.Source.Start.Commit!, Source = Source(), ExitCode = exit,
+            Verdict = exit == 0 ? "GREEN" : "RED",
+            OutputNames = ["bin-owned/"], OutputPaths = [Output],
+            Builds = [new() { Id = "owned", State = "built", Project = "fixture", Slot = "granted", Source = Source() }],
+            Rows = [new() { Id = "CP-fixture", State = "green", Source = Source(), Executed = 1, Passed = 1 }]
+        };
+        Stamp = new() { Commit = Report.Commit, Fingerprint = Report.Source.Start.Fingerprint, OutputPath = Output };
+        if (seed)
+        {
+            var markdown = ReportWriter.Markdown(Context, Report);
+            Report.MarkdownSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(markdown)));
+            Io.Put(MarkdownPath, markdown);
+            SaveReport();
+            Io.Put(StatePath, System.Text.Json.JsonSerializer.Serialize(State, RunStateStore.Json));
+        }
+        SaveStamp();
+        ClearEvents();
+    }
+
+    private static SourceEvidence Source()
+    {
+        var observation = new SourceObservation(new string('a', 40), 0, new string('1', 64), DateTimeOffset.UnixEpoch, "known");
+        return new() { Start = observation, End = observation, State = "clean", BuildSource = "verified" };
+    }
+    public void SaveReport() => Io.Put(JsonPath, ReportWriter.JsonText(Report));
+    public void SaveStamp() => Io.Put(StampPath, System.Text.Json.JsonSerializer.Serialize(Stamp, CheckpointApp.Json));
+    public void ClearEvents() { Io.Events.Clear(); Io.Opens.Clear(); Io.ReadRequests.Clear(); }
+}
+
 internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheckpointCleanupIo, ICheckpointGitRunner
 {
     internal sealed class Node
