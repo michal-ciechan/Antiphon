@@ -125,16 +125,25 @@ public partial class HerdrAlwaysOnChannelParityTests
                 NativePrompts(directory, kind).Count(x => x.Contains(nonce, StringComparison.Ordinal)).ShouldBe(1);
                 (await h.Runner.ListAsync(default)).Count(s => s.ExitCode is null && s.Status != "Exited").ShouldBe(1);
             }
+            // CARD-1276: the queue marks the legacy row before its first typed attempt
+            // (ChannelPromptCorrelation.PrepareFirstAttempt), and the submitted prompt must carry
+            // that marker (docs/session-runtime-invariants.md, CARD-0584). The delivered wire body is:
+            var wire = $"[antiphon-channel:{queuedId:N}] {nonce}";
+            if (fake is not null)
+                fake.Requests.Count(r => r.TryGetProperty("method", out var method) && method.GetString() == "pane.send_text"
+                    && r.TryGetProperty("params", out var parameters) && parameters.TryGetProperty("text", out var text)
+                    && (text.GetString() ?? "").Contains(wire, StringComparison.Ordinal)).ShouldBe(1);
             await using (var verify = CreateContext())
             {
                 var moved = (await verify.SessionQueuedMessages.FindAsync(queuedId))!;
                 moved.AgentSessionId.ShouldBe(a); moved.Status.ShouldBe(QueuedMessageStatus.Sent);
                 moved.DeliveryAttempts.ShouldBe(1); moved.LastDeliveryBaselineSequence.ShouldNotBeNull();
+                moved.Body.ShouldBe(wire);
                 // CARD-1273: diagnostic only; name the baseline, the stored body and each UserPrompt row.
                 var prompts = await verify.TranscriptEntries.Where(t => t.AgentSessionId == a && t.Kind == TranscriptKinds.UserPrompt)
                     .OrderBy(t => t.Sequence).Select(t => $"{t.Sequence}:{t.Text}").ToListAsync();
                 (await verify.TranscriptEntries.AnyAsync(t => t.AgentSessionId == a && t.Kind == TranscriptKinds.UserPrompt
-                    && t.Sequence > moved.LastDeliveryBaselineSequence && t.Text == nonce)).ShouldBeTrue(
+                    && t.Sequence > moved.LastDeliveryBaselineSequence && t.Text == wire)).ShouldBeTrue(
                     $"baseline={moved.LastDeliveryBaselineSequence} body={moved.Body} prompts=[{string.Join(" | ", prompts)}]");
                 (await verify.Agents.FindAsync(agent.Id))!.PersistentSessionId.ShouldBe(a.ToString("D"));
                 (await verify.AgentSessions.FindAsync(b))!.StandingAgentId.ShouldBe(agent.Id);
