@@ -116,6 +116,7 @@ public partial class SessionRuntimeActionRoutingTests
     [Arguments("blocked-exit")]
     public async Task C1259_compaction_refinement_and_status_cannot_block_ingestion(string variant)
     {
+        if (variant == "manual-compaction") await VerifyManualHandoffCutsAsync();
         if (variant == "empty-sync") { await VerifyTaskRoutingAsync(true); return; }
         await using var f = await RoutingFixture.CreateAsync(s => s.AddSingleton<CompactionRecoveryService>());
         var h = f.H;
@@ -482,13 +483,15 @@ public partial class SessionRuntimeActionRoutingTests
             }
             await DispatchAsync();
             Guid sourceId;
+            Guid reviewActionId;
             string body;
             await using (var db = f.H.CreateObserverContext())
             {
                 var row = await db.SessionQueuedMessages.SingleAsync(m => m.ReviewThreadId == threadId);
                 sourceId = row.Id; body = row.Body;
                 row.Status.ShouldBe(QueuedMessageStatus.Pending);
-                (await db.SessionRuntimeActions.AnyAsync(a => a.TriggerKind == "review:" + sourceId.ToString("N"))).ShouldBeTrue(label);
+                reviewActionId = (await db.SessionRuntimeActions.SingleAsync(a =>
+                    a.TriggerKind == "review:" + sourceId.ToString("N"))).Id;
             }
             if (cut == 2) await f.RestartAsync();
             if (busy)
@@ -526,7 +529,8 @@ public partial class SessionRuntimeActionRoutingTests
                         release.TrySetResult(); await stop;
                         await using var db = f.H.CreateObserverContext();
                         (await db.TranscriptEntries.CountAsync(t => t.Kind == "UserPrompt" && t.Text == body)).ShouldBe(1, label);
-                        (await db.SessionRuntimeActions.AnyAsync(a => a.Phase == 8)).ShouldBeTrue(label + " queue action ack is still owed");
+                        (await db.SessionRuntimeActions.AnyAsync(a => a.Id == reviewActionId && a.Phase == 8))
+                            .ShouldBeTrue(label + " the original review queue action ack is still owed");
                     }
                     else
                     {
@@ -534,7 +538,7 @@ public partial class SessionRuntimeActionRoutingTests
                         if (cut == 4) await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
                         {
                             await using var db = f.H.CreateObserverContext();
-                            return !await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == f.H.SessionId);
+                            return !await db.SessionRuntimeActions.AnyAsync(a => a.Id == reviewActionId);
                         });
                     }
                 }
@@ -557,6 +561,11 @@ public partial class SessionRuntimeActionRoutingTests
                     {
                         await using var db = f.H.CreateObserverContext();
                         return await db.ReviewComments.AnyAsync(c => c.ThreadId == threadId && c.Author == ReviewCommentAuthor.Agent);
+                    });
+                    await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+                    {
+                        await using var db = f.H.CreateObserverContext();
+                        return !await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == f.H.SessionId);
                     });
                 }
                 finally { await restarted.StopAsync(default); }
@@ -598,6 +607,273 @@ public partial class SessionRuntimeActionRoutingTests
             if (Armed && data.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
                 .Any(e => e.State == EntityState.Added && e.Entity.ReviewThreadId != null))
             { Armed = false; Hits++; throw new IOException("review queue insert failed before commit"); }
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private static async Task VerifyManualHandoffCutsAsync()
+    {
+        foreach (var busy in new[] { false, true })
+        foreach (var cut in Enumerable.Range(0, 5))
+        {
+            var fault = new ManualEnqueueFault();
+            await using var f = await RoutingFixture.CreateAsync(s => s.AddSingleton<CompactionRecoveryService>(),
+                o => o.AddInterceptors(fault));
+            var label = $"V-7 manual H{cut} {(busy ? "busy" : "eligible")}";
+            await using (var db = f.H.CreateObserverContext())
+                await db.Agents.Where(a => a.Id == f.H.AgentId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(a => a.SystemPromptAppend, "Retain original workspace instructions."));
+            var boundary = f.Entry("CompactBoundary", "Context compacted (manual)");
+            await f.StreamAsync(boundary);
+            if (busy) await f.StreamAsync(f.Entry("UserPrompt", "recipient still working after boundary"));
+            long storedSequence;
+            Guid actionId;
+            await using (var db = f.H.CreateObserverContext())
+            {
+                storedSequence = (await db.TranscriptEntries.SingleAsync(t => t.Uuid == boundary.Uuid)).Sequence;
+                actionId = (await db.SessionRuntimeActions.SingleAsync(a => a.Sequence == storedSequence)).Id;
+                (await db.SessionQueuedMessages.CountAsync()).ShouldBe(0, label);
+            }
+            if (cut == 0) await f.RestartAsync();
+            if (cut == 1)
+            {
+                fault.Armed = true;
+                await f.Actions.DrainPageAsync(f.H.SessionId, default);
+                fault.Hits.ShouldBe(1, label);
+                await using (var db = f.H.CreateObserverContext())
+                {
+                    (await db.SessionQueuedMessages.CountAsync()).ShouldBe(0, label);
+                    var debt = await db.SessionRuntimeActions.SingleAsync(a => a.Id == actionId);
+                    debt.Phase.ShouldBe(3); debt.Attempts.ShouldBe(1);
+                    (await db.AgentSessions.SingleAsync(s => s.Id == f.H.SessionId))
+                        .CompactionRecoveryWatermark.ShouldBeNull(label);
+                }
+                await f.RestartAsync();
+            }
+            Guid? queueBeforeRestart = null;
+            if (cut == 2)
+            {
+                await f.H.Provider.GetRequiredService<CompactionRecoveryService>()
+                    .OnCompactBoundaryAsync(f.H.SessionId, storedSequence, default);
+                await using (var db = f.H.CreateObserverContext())
+                {
+                    var queued = await db.SessionQueuedMessages.SingleAsync();
+                    queueBeforeRestart = queued.Id;
+                    queued.DeliveryAttempts.ShouldBe(0); queued.Status.ShouldBe(QueuedMessageStatus.Pending);
+                    (await db.SessionRuntimeActions.AnyAsync(a => a.Id == actionId)).ShouldBeTrue(label);
+                }
+                await f.RestartAsync();
+            }
+            var submitted = new List<string>();
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            f.H.Adapter.OnSubmitted = async body =>
+            {
+                body.ShouldBe(ChannelPreamble.RecoveryNoteBody, label);
+                submitted.Add(body);
+                await f.StreamAsync(f.Entry("UserPrompt", body));
+                entered.TrySetResult();
+                if (cut == 3)
+                {
+                    await f.StreamAsync(f.Entry("TurnEnd"));
+                    await release.Task;
+                }
+            };
+            using (var first = new SessionRuntimeActionHostedService(f.Actions))
+            {
+                await first.StartAsync(default);
+                try
+                {
+                    if (busy)
+                    {
+                        await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+                        {
+                            await using var db = f.H.CreateObserverContext();
+                            return await db.SessionRuntimeActions.AnyAsync(a => a.Id == actionId && a.Phase == 8);
+                        });
+                        f.H.Adapter.Inputs.ShouldBeEmpty(label);
+                        await f.StreamAsync(f.Entry("TurnEnd"));
+                    }
+                    await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                    if (cut == 3)
+                    {
+                        var stop = first.StopAsync(default);
+                        stop.IsCompleted.ShouldBeFalse(label + " retains the held submission owner");
+                        release.TrySetResult(); await stop;
+                        await using var db = f.H.CreateObserverContext();
+                        (await db.TranscriptEntries.CountAsync(t => t.Kind == "UserPrompt"
+                            && t.Text == ChannelPreamble.RecoveryNoteBody)).ShouldBe(1, label);
+                        (await db.SessionRuntimeActions.AnyAsync(a => a.Id == actionId && a.Phase == 8)).ShouldBeTrue(label);
+                    }
+                    else await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+                    {
+                        await using var db = f.H.CreateObserverContext();
+                        return await db.SessionQueuedMessages.AnyAsync(m => m.DeliveryVerdict == DeliveryVerdict.Delivered)
+                            && !await db.SessionRuntimeActions.AnyAsync(a => a.Id == actionId);
+                    });
+                }
+                finally { release.TrySetResult(); await first.StopAsync(default); }
+            }
+            Guid queueId;
+            await using (var db = f.H.CreateObserverContext())
+            {
+                queueId = (await db.SessionQueuedMessages.SingleAsync()).Id;
+                if (queueBeforeRestart is Guid original) queueId.ShouldBe(original, label);
+            }
+            if (cut is 3 or 4) await f.RestartAsync();
+            if (cut != 3) await f.StreamAsync(f.Entry("TurnEnd"));
+            f.H.Adapter.OnSubmitted = async body =>
+            {
+                submitted.Add(body);
+                await f.StreamAsync(f.Entry("UserPrompt", body));
+            };
+            using (var restarted = new SessionRuntimeActionHostedService(f.Actions))
+            {
+                await restarted.StartAsync(default);
+                try
+                {
+                    await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+                    {
+                        await using var db = f.H.CreateObserverContext();
+                        return !await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == f.H.SessionId);
+                    });
+                }
+                finally { await restarted.StopAsync(default); }
+            }
+            await using (var verify = f.H.CreateObserverContext())
+            {
+                var queued = await verify.SessionQueuedMessages.SingleAsync();
+                queued.Id.ShouldBe(queueId, label);
+                queued.RuntimeActionKey.ShouldBe($"compaction:{storedSequence}:recovery");
+                queued.DeliveryVerdict.ShouldBeOneOf(DeliveryVerdict.Delivered, DeliveryVerdict.LateConfirmed);
+                queued.DeliveryAttempts.ShouldBe(1, label);
+                (await verify.TranscriptEntries.CountAsync(t => t.Kind == "UserPrompt"
+                    && t.Text == ChannelPreamble.RecoveryNoteBody)).ShouldBe(1, label);
+                (await verify.AgentSessions.SingleAsync(s => s.Id == f.H.SessionId))
+                    .CompactionRecoveryWatermark.ShouldBe(storedSequence, label);
+            }
+            submitted.ShouldBe([ChannelPreamble.RecoveryNoteBody], label);
+            Console.WriteLine(label + ": same action/queue identity, one complete recovery prompt");
+        }
+    }
+
+    private sealed class ManualEnqueueFault : Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor
+    {
+        public bool Armed;
+        public int Hits;
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int>> SavingChangesAsync(
+            Microsoft.EntityFrameworkCore.Diagnostics.DbContextEventData data,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int> result, CancellationToken ct = default)
+        {
+            if (Armed && data.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
+                .Any(e => e.State == EntityState.Added && e.Entity.RuntimeActionKey?.StartsWith("compaction:") == true))
+            { Armed = false; Hits++; throw new IOException("manual recovery queue insert failed before commit"); }
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private static async Task VerifyCommittedReviewBeforeActionAckAsync()
+    {
+        var fault = new ReviewCommentAckFault();
+        await using var f = await RoutingFixture.CreateAsync(s =>
+        {
+            s.AddSingleton<ReviewReplyDispatcher>(); s.AddScoped<ReviewThreadService>(); s.AddScoped<AgentFilesService>();
+        }, o => o.AddInterceptors(fault));
+        Guid thread;
+        using (var scope = f.H.Provider.CreateScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<ReviewThreadService>();
+            thread = (await service.CreateAsync(f.H.AgentId,
+                new CreateReviewThreadRequest("ack.md", 1, null, "Keep this exact question", false), default))!.Id;
+            (await service.DispatchAsync(thread, default)).ShouldBeTrue();
+        }
+        const string answer = "This exact comment committed before its runtime action acknowledgement.";
+        string body;
+        Guid queueId;
+        await using (var db = f.H.CreateObserverContext())
+        {
+            var source = await db.SessionQueuedMessages.SingleAsync();
+            body = source.Body; queueId = source.Id;
+        }
+        var submissions = new List<string>();
+        f.H.Adapter.OnSubmitted = async sent =>
+        {
+            sent.ShouldBe(body); submissions.Add(sent);
+            await f.StreamAsync(f.Entry("UserPrompt", sent), f.Entry("AssistantText", answer), f.Entry("TurnEnd"));
+        };
+        using (var worker = new SessionRuntimeActionHostedService(f.Actions))
+        {
+            await worker.StartAsync(default);
+            try
+            {
+                await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+                {
+                    await using var db = f.H.CreateObserverContext();
+                    return await db.SessionRuntimeActions.AnyAsync(a => a.Id == fault.ActionId && a.Phase == 5 && a.Attempts == 1);
+                });
+            }
+            finally { await worker.StopAsync(default); }
+        }
+        fault.Hits.ShouldBe(1, "the actual save after accepted comment must fail once");
+        await using (var before = f.H.CreateObserverContext())
+        {
+            (await before.ReviewComments.Where(c => c.ThreadId == thread && c.Author == ReviewCommentAuthor.Agent)
+                .Select(c => c.Body).ToListAsync()).ShouldBe([answer]);
+            (await before.SessionQueuedMessages.SingleAsync(m => m.Id == queueId)).ReviewReplyConsumedAt.ShouldNotBeNull();
+            (await before.SessionRuntimeActions.SingleAsync(a => a.Id == fault.ActionId)).Phase.ShouldBe(5);
+        }
+        await f.RestartAsync();
+        f.H.Adapter.OnSubmitted = sent => { submissions.Add(sent); return Task.CompletedTask; };
+        using (var restarted = new SessionRuntimeActionHostedService(f.Actions))
+        {
+            await restarted.StartAsync(default);
+            try
+            {
+                await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+                {
+                    await using var db = f.H.CreateObserverContext();
+                    return !await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == f.H.SessionId);
+                });
+            }
+            finally { await restarted.StopAsync(default); }
+        }
+        await using var verify = f.H.CreateObserverContext();
+        (await verify.ReviewComments.Where(c => c.ThreadId == thread && c.Author == ReviewCommentAuthor.Agent)
+            .Select(c => c.Body).ToListAsync()).ShouldBe([answer], "restart must observe the atomic consume stamp");
+        var queued = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == queueId);
+        queued.ReviewReplyConsumedAt.ShouldNotBeNull(); queued.ChannelReplySettledAt.ShouldBeNull();
+        (await verify.TranscriptEntries.CountAsync(t => t.Kind == "UserPrompt" && t.Text == body)).ShouldBe(1);
+        submissions.ShouldBe([body]); fault.Hits.ShouldBe(1);
+        Console.WriteLine("V-11 comment committed before action ack: one fault, same queue/comment after cold DI recovery");
+    }
+
+    private sealed class ReviewCommentAckFault : Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor
+    {
+        private DbContext? _commentContext;
+        private bool _armed;
+        public int Hits;
+        public Guid ActionId;
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int>> SavingChangesAsync(
+            Microsoft.EntityFrameworkCore.Diagnostics.DbContextEventData data,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int> result, CancellationToken ct = default)
+        {
+            if (data.Context!.ChangeTracker.Entries<ReviewComment>()
+                .Any(e => e.State == EntityState.Added && e.Entity.Author == ReviewCommentAuthor.Agent))
+                _commentContext = data.Context;
+            var ack = data.Context.ChangeTracker.Entries<SessionRuntimeAction>()
+                .FirstOrDefault(e => e.State == EntityState.Modified && e.Entity.Phase == 6);
+            if (_armed && Hits == 0 && ack is not null)
+            {
+                Hits++; _armed = false; ActionId = ack.Entity.Id;
+                throw new IOException("comment accepted; runtime phase acknowledgement not committed");
+            }
+            return ValueTask.FromResult(result);
+        }
+        public override ValueTask<int> SavedChangesAsync(
+            Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesCompletedEventData data, int result, CancellationToken ct = default)
+        {
+            if (ReferenceEquals(data.Context, _commentContext))
+            { _commentContext = null; _armed = true; }
             return ValueTask.FromResult(result);
         }
     }
