@@ -56,14 +56,23 @@ six cases as part of the full affected class in S2.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1285-red2/` | token-red | `/*/*/PhoneHomeTaskDispatchProjectionTests/C1285_worker_launch_has_durable_task_token` | V-1, V-2, V-3, V-4 | C1285_worker_launch_has_durable_task_token | 6 | 5 | true |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1285-green/` | remote-dispatch | `/*/*/PhoneHomeTaskDispatchProjectionTests/*` | V-1, V-2, V-3, V-4, R-1 | PhoneHomeTaskDispatchProjectionTests | 14 | 5 | true |
-| CP-3 | S2 | CP-2 | launch-adjacent | `/*/*/(LaunchEnvLayersIntegrationTests)\|(PinnedProfileLaunchSpecTests)\|(CodexDelegateDispatchTests)\|(GrokDelegateDispatchTests)\|(BootWedgeRelaunchParityTests)/*` | R-2 | LaunchEnvLayersIntegrationTests,PinnedProfileLaunchSpecTests,CodexDelegateDispatchTests,GrokDelegateDispatchTests,BootWedgeRelaunchParityTests | 5 | 4 | true |
-| CP-4 | S2 | CP-2 | owner-guards | `/*/*/(CheckpointTaskOwnershipTests)\|(CheckpointSlotExecutorTests)\|(LaunchModelArgumentAppenderTests)/*` | R-3 | CheckpointTaskOwnershipTests,CheckpointSlotExecutorTests,LaunchModelArgumentAppenderTests | 3 | 3 | true |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1285-green2/` | remote-dispatch | `/*/*/PhoneHomeTaskDispatchProjectionTests/*` | V-1, V-2, V-3, V-4, R-1 | PhoneHomeTaskDispatchProjectionTests | 14 | 5 | true |
+| CP-3 | S2 | CP-2 | launch-adjacent | `/*/*/(LaunchEnvLayersIntegrationTests*)\|(PinnedProfileLaunchSpecTests*)\|(CodexDelegateDispatchTests*)\|(GrokDelegateDispatchTests*)\|(BootWedgeRelaunchParityTests*)/*` | R-2 | LaunchEnvLayersIntegrationTests,PinnedProfileLaunchSpecTests,CodexDelegateDispatchTests,GrokDelegateDispatchTests,BootWedgeRelaunchParityTests | 5 | 4 | true |
+| CP-4 | S2 | CP-2 | owner-guards | `/*/*/(CheckpointTaskOwnershipTests*)\|(CheckpointSlotExecutorTests*)\|(LaunchModelArgumentAppenderTests*)/*` | R-3 | CheckpointTaskOwnershipTests,CheckpointSlotExecutorTests,LaunchModelArgumentAppenderTests | 3 | 3 | true |
+| CP-5 | Base | `tests/Antiphon.Tests -> bin-c1285-base/` | inherited-remote-prep | `/*/*/PhoneHomeTaskDispatchProjectionTests/(Runner_bound_boot_wedge_relaunch_keeps_the_runner_binding_and_projection*)\|(Runner_bound_grok_task_reaches_the_queue_projected*)\|(Runner_bound_claude_task_reaches_the_queue_projected*)\|(Runner_bound_task_launch_reaches_runner_start_with_a_sourced_task_on_record*)\|(Card_bound_runner_worktree_task_dispatches*)\|(Runner_bound_grok_brief_spills_under_the_runner_cwd*)` | R-1 attribution | PhoneHomeTaskDispatchProjectionTests | 6 | 6 | true |
 
 Run via the checkpoint tool with `--after S1` or `--after S2`, exact committed
 `--expected-source-sha`, and `--serial`. Bootstrap compilation of the checkpoint
 tool is the one explained non-manifest build, through `build-slot.ps1` into an
 isolated output; run its DLL afterward. Inspect fresh TRX rosters, not just totals.
+
+CP-5 is the required attribution run at the exact task base in a temporary detached
+checkout, using this external committed manifest and `--rows CP-5`. It selects only
+the six existing methods that failed CP-2. The initial S2 run passed all six new
+token cases but exposed those six pre-launch fixture failures; CP-3/CP-4 selected
+zero tests because their original OR operands lacked the documented trailing
+wildcards. Those results remain invalid/incomplete, with costs retained. Corrected
+CP-3/CP-4 run once at the final repair commit. No assertion or deadline is relaxed.
 
 ### Mutation handoff
 
@@ -82,6 +91,7 @@ Mutation owns red/restore/green and missing-control discovery. Candidate pack:
 
 ### Cost
 
-Ordinary checkpoint floor: 17 minutes including red-first build; authoring and
+Checkpoint floor: 23 minutes including red-first build and the base attribution;
+authoring and
 investigation approximately 20 minutes. One execution per selection; no repeat
 proof after green. No fleet location is embedded in execution commands.
