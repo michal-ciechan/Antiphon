@@ -1,10 +1,13 @@
 # CARD-1259: persist transcripts independently of delivery confirmation
 
-Plan task `8b2dbcd8`, 2026-10-15. Inspected source:
-`8ffe3633357e6383b7e408bd078465acf9f5fd79`. This is a design, not an implementation
-or a passing verification report. **Next: TestDesign**, separately dispatched;
-the brief did not fold that stage into Plan. No production changes, builds,
-tests, provider input, or external messages were made in this task.
+Original Plan task `8b2dbcd8`, 2026-10-15, inspected source
+`8ffe3633357e6383b7e408bd078465acf9f5fd79` and handed off to separate TestDesign.
+Correction task `4cdba1a7` inspects base
+`26147352a09a61a0cb210fdcebdc504c5fc0d539`, resolves B-1 in D-8 and binds the
+remaining verification here and in the companion manifest. **Next: Code**;
+this brief folds the narrow TestDesign correction into Plan. This is a design,
+not implementation or passing execution evidence. No production changes,
+builds, product tests, provider input or external messages ran in either Plan task.
 
 The change must remove the dependency in which the runner event reader awaits
 delivery confirmation whose UserPrompt is still waiting to be read. Keep the
@@ -34,6 +37,7 @@ supersedes its pump slice for this card; it does not reopen its distillation wor
 | Transcript writes already have the needed serialization. | `PersistTranscriptAsync:1084` takes `SessionStateStore.BeginWriteAsync`; `PersistTranscriptCoreAsync` dedups `(Uuid,Kind)`, rebases sequences, saves, and publishes committed state under that lease. The unseen-boundary read is currently outside it, and persistence currently uses `CancellationToken.None`. | Reuse the store lease, move action eligibility inside it, and preserve batch/fallback publication. Do not add parallel transcript writers. |
 | A bounded in-memory channel alone is safe backpressure. | A waiting channel writer can block ingress before the confirming prompt; dropping loses effects. `CompletionNoteFlushQueue` has a durable **completion-note-specific** recovery source, not arbitrary runtime actions. | A channel is a nonblocking hint; pending transcript effects need their own durable recovery source. Do not repurpose the completion-note worker. |
 | Deferred callbacks can safely ask for the newest turn. | Channel, review and task dispatchers contain latest-turn selection. Ingestion will now advance while they wait. Review correlations currently live in `ReviewReplyDispatcher._pending`, although the queue already stores `review:{threadId}` and the body. | Bind deferred routing to stored turn identity; recover review targets from authorized queue rows, never from model-written tags alone. |
+| Producer sequence alone can reconstruct the original UI payload after restart (B-1). | `AgentSessionRuntime.ToTranscriptPayload` uses the original event; `SanitizeEntries` replaces NUL, timestamp storage normalizes precision/offset, and `ApplyPersistStub` clips metadata and discards Text/ToolInput. C561 explicitly asserts original NUL in UI alongside stored U+FFFD. | D-8 retains a durable projection delta with the action; R-6/PC-113 bind live and restart fidelity, including safe stubs. |
 
 Paths abbreviated in this table are under `server/Application/Services/` except
 the pump under `server/Infrastructure/Agents/SessionRunner/`. Read owners:
@@ -245,6 +249,60 @@ This changes server work scheduling, not a session's input-wait lifecycle.
 automatic release deadline (CARD-1083).** No worker timeout stops a session,
 releases its seat, sends synthetic input, or changes the stall policy.
 
+### D-8. Preserve original UI fields with a durable projection delta (B-1 resolved)
+
+Keep C561's two independent assertions: PostgreSQL Text contains U+FFFD and no
+NUL; the published `SessionTranscript.text` contains the original NUL. The same
+source DTO must be published after a worker restart, including for a committed
+safe stub. Display fidelity is compatible with durable admission if the lost
+information is retained atomically; it must never become delivery authority.
+
+Alongside D-2's producer sequence, persist `UiProjectionVersion=1` and
+`UiProjectionDelta` (`byte[]` mapped to PostgreSQL `bytea`) on the action.
+Build this versioned, field-keyed delta from the **original event and the final
+stored row**, before commit. For ordinary NUL sanitization, retain only the
+zero-based UTF-16 positions originally containing NUL in each changed string;
+literal U+FFFD positions remain untouched. Preserve original timestamp ticks and
+offset when storage normalization loses them. For stub clipping/clearing, retain
+the original value only of each irreversibly changed field, including Text and
+ToolInput. Encode replacement strings losslessly as length-delimited UTF-16 code
+units with distinct null/empty tags in the binary delta; do not put raw NUL in
+text/jsonb columns. An empty delta is explicit and versioned, not missing data.
+
+This refines D-2 without storing a second complete transcript body or DTO:
+ordinary bodies stay solely in TranscriptEntry, and a stub's discarded body
+lives solely in its action delta. Retained bytes scale with the source fields
+lost during persistence; this does not introduce an in-memory backlog. Rebuild
+the delta after `ApplyPersistStub` changes the candidate row, and save row, action
+and delta in the same batch or fallback transaction. A failed admission commits
+none of them; replay cannot overwrite an active action's original projection.
+
+The worker's planned `SessionRuntimeActionCoordinator.RestoreTranscriptPayload`
+reconstructs from the stored row, producer sequence and delta, for both first
+publication and retry/restart. Keep the delta until the action is deleted after
+its acknowledged final phase; no separate cache or runner re-fetch is required.
+Missing/invalid required projection data leaves publication pending under the
+existing failure policy, never silently publishes sanitized content. Stored
+rows alone still drive state, eligibility, dedup and receipt matching. Do not
+backfill historical actions or log delta/body contents. Publication remains
+at-least-once across acceptance-before-ack; this decision promises payload
+fidelity, not exactly-once browser delivery.
+
+Rejected: publishing sanitized/stub text changes the existing observable
+contract unnecessarily; replacing every U+FFFD with NUL corrupts literal U+FFFD;
+an in-memory original cannot survive restart; copying the whole DTO duplicates
+ordinary bodies and D-2's durable source. The binary delta avoids the text/column
+constraints that caused the fallback while keeping its committed stub authoritative.
+
+S2 adds the projection fields/mapping/CLI migration in the already named action
+files; S3 captures the original in `AgentSessionRuntime.cs` and reconstructs in
+`SessionRuntimeActionCoordinator.cs`. Its test-first commit adapts C561 and adds
+R-6's two-case restart method in
+`tests/Antiphon.Tests/Application/AgentSessionRuntimeTests.Persist.cs`; S4 closes
+their ordinary verification.
+The companion binds exact filters, counts and PC-113; no additional slice or
+checkpoint is added.
+
 ## Implementation slices
 
 All paths below are repository-relative. Commit/push the red test slice before
@@ -382,6 +440,21 @@ as Investigate. It is not a substitute for the deterministic acceptance proof.
 TestDesign's [bound verification manifest](2026-10-15-card-1259-transcript-pump-verification.md)
 supplements this fix design and replaces the proposed checkpoint roster/cost above.
 Use the companion's `### Checkpoints` table for Code, and retain its independent
-post-land guard/positive-control obligations. D-1 through D-7 remain unchanged.
-The companion identifies B-1, the original-versus-stored UI payload contract;
-resolve that narrow seam in Plan before handing the implementation to Code.
+post-land guard/positive-control obligations. D-8 resolves B-1 and binds R-6 and
+PC-113 in that manifest; D-1 through D-7 and V-1 through V-12 remain in force.
+The earlier proposed roster and separate-TestDesign readiness text are historical;
+the corrected companion is the only executable roster. **Code can start.**
+
+Code first commits S1's tests and runs **CP-1** (`--after S1`, intended assertion
+red), then CP-2 (`--after S2-contracts`) and CP-3 (`--after S3-contracts`) at their
+respective test-first commits. Final CP-4 through CP-13 run at one completed,
+clean S2-S4 SHA; CP-13 includes the original C561 and both restart payload cases.
+Lanes: CP-1..CP-10 and CP-12..CP-13 are Integration (Linux-capable); CP-11 is the
+existing mixed Integration/portable Unit class selection, not a whole Unit lane.
+
+Correction read `GET /api/runner-defaults` and `GET /api/session-runners` on
+2026-10-15 at 17:20 UTC: revision 2, no kind overrides, eligible Linux and Windows
+lanes and an unavailable draining entry. Re-read at dispatch and omit `-Runner`
+and `-Platform`; this adds no OS requirement or fleet pin. The correction changes
+no input-wait lifecycle: D-7's no automatic release deadline while parking is
+disabled still applies.
