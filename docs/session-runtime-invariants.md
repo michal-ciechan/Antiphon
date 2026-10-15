@@ -19,6 +19,20 @@ the event pump before joining the action workers; a shutdown deadline does not
 release an owner while its external effect is still running. This remains a
 single-server-writer design.
 
+Deferred task actions capture the task ID and attempt at admission. The action
+entry point checks that identity and session generation; its database context
+rechecks the attempt, original status/token and generation under row locks over
+each save. Catch-up uses this same failure-propagating entry point and its stored
+frontier. A replacement attempt cannot inherit a previously admitted report.
+
+Direct channel replies retain their original route, accepted text frontier and
+pending publication range on the source queue rows. Trailing text recovers from
+those rows after restart. A completed producer failure releases only its own
+pending range; acceptance followed by an acknowledgement failure retains an
+uncertain range and never authorizes automatic replay. An open direct tail keeps
+its queue/transcript evidence. Queue pruning rechecks eligibility while holding
+the same mutation lease as transcript/action admission.
+
 Implementation and qualification status, including remaining routing/recovery
 work, is recorded in
 [the continuation evidence](superpowers/plans/2026-10-15-card-1259-code-s2-s4-evidence.md).
