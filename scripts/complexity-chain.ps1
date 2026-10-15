@@ -15,7 +15,12 @@
 #
 # All writes Hard, Medium, Easy in order and stops on the first refusal; earlier writes remain.
 # -ClearStagePin deletes the named role's stage pin after the three writes succeed.
-# Cell PUTs are last-writer-wins; this command does not make the three requests atomic.
+# This command does not make the three requests atomic.
+#
+# CONCURRENCY (CARD-1275). set and clear first read GET /api/complexity-chains once and send each
+# cell's concurrencyToken from that read (the empty GUID when the cell has no row). A cell changed
+# by someone else between that read and the write is refused 409 complexity_chain_stale; the
+# script stops there like any other refusal, and a rerun reads the new version.
 #
 # GRAIN. One active chain per (Role?, Hard/Medium/Easy). Role omitted or Any writes the any-role
 # row. A walk on (role, complexity) reads the cell, then the any-role row, then the config default,
@@ -128,6 +133,29 @@ function Invoke-Antiphon {
             throw "Antiphon $Method $Path failed: $raw"
         }
     }
+}
+
+$EmptyToken = '00000000-0000-0000-0000-000000000000'
+
+# The cell's own token from one list read: the any-role row (role null) or the live role cell.
+function Get-CellTokens {
+    $list = Invoke-Antiphon -Method GET -Path '/api/complexity-chains'
+    $seg = Get-RoleSegment
+    $tokens = @{}
+    foreach ($chain in @($list.chains)) {
+        $chainRole = if ([string]::IsNullOrWhiteSpace([string]$chain.role)) { 'any' } else { [string]$chain.role }
+        if ($chainRole -ne $seg) { continue }
+        if (-not [string]::IsNullOrWhiteSpace([string]$chain.concurrencyToken)) {
+            $tokens[[string]$chain.complexity] = [string]$chain.concurrencyToken
+        }
+    }
+    return $tokens
+}
+
+function Get-CellToken {
+    param([hashtable]$Tokens, [string]$Tier)
+    if ($Tokens.ContainsKey($Tier)) { return $Tokens[$Tier] }
+    return $EmptyToken
 }
 
 function Assert-UtcOffset {
@@ -249,10 +277,12 @@ switch ($Verb) {
         if (-not [string]::IsNullOrWhiteSpace($Reason)) { $body['reason'] = $Reason }
 
         $tiers = if ($Complexity -eq 'All') { @('Hard', 'Medium', 'Easy') } else { @($Complexity) }
+        $tokens = Get-CellTokens
         $written = @()
         $chains = @()
         foreach ($tier in $tiers) {
             $path = '/api/complexity-chains/{0}/{1}' -f (Get-RoleSegment), $tier
+            $body['concurrencyToken'] = Get-CellToken -Tokens $tokens -Tier $tier
             try {
                 $chain = Invoke-Antiphon -Method PUT -Path $path -Body $body
             }
@@ -302,8 +332,10 @@ switch ($Verb) {
         }
         $seg = Get-RoleSegment
         $tiers = if ($Complexity -eq 'All') { @('Hard', 'Medium', 'Easy') } else { @($Complexity) }
+        $tokens = Get-CellTokens
         foreach ($tier in $tiers) {
-            Invoke-Antiphon -Method DELETE -Path ('/api/complexity-chains/{0}/{1}' -f $seg, $tier) -NoContent
+            $token = Get-CellToken -Tokens $tokens -Tier $tier
+            Invoke-Antiphon -Method DELETE -Path ('/api/complexity-chains/{0}/{1}?concurrencyToken={2}' -f $seg, $tier, $token) -NoContent
             $label = if ($seg -eq 'any') { $tier } else { '{0}/{1}' -f $seg, $tier }
             Write-Output ("cleared {0} (config default applies again)" -f $label)
         }
