@@ -176,7 +176,8 @@ public class OrchestratorInstructionsRefreshTests
             var fails = Enabled && part switch
             {
                 "chain-default" or "chain-other" => planChain,
-                "chain metadata" => planChain && ++_chainReads % 2 == 0,
+                // GetEffectiveAsync reads the cell's metadata and token before its candidates (CARD-1275).
+                "chain metadata" => planChain && ++_chainReads % 2 == 1,
                 "stage pin" => Table("RoutingPins") && Parameter("role", (int)AgentTaskRole.Plan),
                 "standing agent" => Table("Agents") && sql.Contains("a.\"Kind\"", StringComparison.Ordinal)
                     && !sql.Contains("a.\"Status\"", StringComparison.Ordinal),

@@ -21,10 +21,10 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-1275 D1: deterministic races. A save interceptor on the caller's context commits a
 /// competing write from a second context between the caller's read and its save. A write
-/// without a token is re-run up to <see cref="ComplexityChainService.UnconditionalAttempts"/>
-/// times (last writer wins); a write with a token is 409 <c>complexity_chain_stale</c> on its
-/// first lost race. Also the NotAfter sweep (token rotation, lost race) and the two reads of
-/// the <c>?role=</c> view.
+/// without a token makes up to <see cref="ComplexityChainService.UnconditionalAttempts"/> saves
+/// (last writer wins); a write with a token is 409 <c>complexity_chain_stale</c> on its first
+/// lost race. Also the NotAfter sweep (token rotation, lost races) and the read order of the
+/// <c>?role=</c> view.
 /// </summary>
 [Category("Integration")]
 public sealed class ComplexityChainRaceTests
@@ -226,28 +226,94 @@ public sealed class ComplexityChainRaceTests
     }
 
     [Test]
-    public async Task The_role_view_reads_candidates_and_token_separately_and_a_recreate_between_them_shows_the_new_token()
+    public async Task A_sweep_that_loses_every_attempt_lets_the_concurrency_error_propagate()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await WriteAsync(schema, AgentTaskRole.Review, TaskComplexity.Hard, AgentKind.Grok, "old");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 15, 12, 0, 0, TimeSpan.Zero));
+        await WriteAsync(schema, null, TaskComplexity.Easy, AgentKind.Grok, "expiring",
+            clock, clock.GetUtcNow().AddMinutes(1));
+        clock.Advance(TimeSpan.FromMinutes(2));
+        var race = new CompetingCommit();
+        await using var db = Open(schema, race);
+
+        // Before each sweep save another writer rotates the expired row's token, so every save loses.
+        race.Arm(int.MaxValue, async () =>
+        {
+            await using var other = Open(schema);
+            await other.ComplexityChains
+                .Where(c => c.ClearedAt == null && c.Role == null && c.Complexity == TaskComplexity.Easy)
+                .ExecuteUpdateAsync(u => u.SetProperty(c => c.ConcurrencyToken, Guid.NewGuid()));
+        });
+
+        await Should.ThrowAsync<DbUpdateConcurrencyException>(() =>
+            Routing(db, clock).FindActiveAsync(null, TaskComplexity.Easy, CancellationToken.None));
+        race.Saves.ShouldBe(ComplexityRoutingService.SweepAttempts);
+        race.Fired.ShouldBe(ComplexityRoutingService.SweepAttempts);
+        (await LiveOrNullAsync(schema, null, TaskComplexity.Easy)).ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task The_role_view_reads_the_token_before_the_candidates_so_a_change_between_them_makes_a_save_stale()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+
+        // Cleared and re-created between the reads: newer candidates, older token; the save is 409.
+        var old = await WriteAsync(schema, AgentTaskRole.Review, TaskComplexity.Hard, AgentKind.Grok, "old");
         Guid? recreated = null;
-        var between = new AfterFirstChainRead(async () =>
+        var cell = await RoleViewAsync(schema, TaskComplexity.Hard, async () =>
         {
             await ClearWithAsync(schema, AgentTaskRole.Review, TaskComplexity.Hard);
             recreated = (await WriteAsync(
                 schema, AgentTaskRole.Review, TaskComplexity.Hard, AgentKind.Codex, "new")).ConcurrencyToken;
         });
-        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString, between));
-
-        var cell = await Service(db).GetEffectiveAsync(AgentTaskRole.Review, TaskComplexity.Hard, CancellationToken.None);
-
-        // Documented skew (docs/antiphon-api.md): candidates come from the first read; reason,
-        // expiry and the token from the second. A writer then sends the newer version.
-        between.Fired.ShouldBeTrue();
         cell.ResolvedFrom.ShouldBe("role");
-        cell.Candidates.ShouldHaveSingleItem().AgentKind.ShouldBe(AgentKind.Grok);
-        cell.Reason.ShouldBe("new");
-        cell.ConcurrencyToken.ShouldBe(recreated.ShouldNotBeNull());
+        cell.Candidates.ShouldHaveSingleItem().AgentKind.ShouldBe(AgentKind.Codex);
+        cell.ConcurrencyToken.ShouldBe(old.ConcurrencyToken);
+        var stale = await SaveAsEditorAsync(schema, TaskComplexity.Hard, cell);
+        stale.Code.ShouldBe(ComplexityChainService.StaleCode);
+        CurrentToken(stale).ShouldBe(recreated.ShouldNotBeNull().ToString());
+        (await LiveAsync(schema, AgentTaskRole.Review, TaskComplexity.Hard)).Reason.ShouldBe("new");
+
+        // Created between the reads: the view has the row's candidates and no token; the save is 409.
+        var created = await RoleViewAsync(schema, TaskComplexity.Easy,
+            () => WriteAsync(schema, AgentTaskRole.Review, TaskComplexity.Easy, AgentKind.Codex, "new"));
+        created.ResolvedFrom.ShouldBe("role");
+        created.ConcurrencyToken.ShouldBeNull();
+        (await SaveAsEditorAsync(schema, TaskComplexity.Easy, created)).Code.ShouldBe(ComplexityChainService.StaleCode);
+        (await LiveAsync(schema, AgentTaskRole.Review, TaskComplexity.Easy)).Reason.ShouldBe("new");
+
+        // Cleared between the reads: the view shows no row and no token, the state a save then meets.
+        await WriteAsync(schema, AgentTaskRole.Review, TaskComplexity.Medium, AgentKind.Grok, "old");
+        var cleared = await RoleViewAsync(schema, TaskComplexity.Medium,
+            () => ClearWithAsync(schema, AgentTaskRole.Review, TaskComplexity.Medium));
+        cleared.ResolvedFrom.ShouldBe("none");
+        cleared.Candidates.ShouldBeEmpty();
+        cleared.Reason.ShouldBeNull();
+        cleared.ConcurrencyToken.ShouldBeNull();
+    }
+
+    /// <summary>The <c>?role=Review</c> cell, with <paramref name="between"/> run after its first chain read.</summary>
+    private static async Task<ComplexityChainDto> RoleViewAsync(
+        IsolatedTestSchema schema, TaskComplexity complexity, Func<Task> between)
+    {
+        var hook = new AfterFirstChainRead(between);
+        await using var db = Open(schema, hook);
+        var cell = await Service(db).GetEffectiveAsync(AgentTaskRole.Review, complexity, CancellationToken.None);
+        hook.Fired.ShouldBeTrue();
+        return cell;
+    }
+
+    /// <summary>A Save from the editor opened on <paramref name="cell"/>: its token, or the empty GUID.</summary>
+    private static async Task<HttpException> SaveAsEditorAsync(
+        IsolatedTestSchema schema, TaskComplexity complexity, ComplexityChainDto cell)
+    {
+        await using var db = Open(schema);
+        var stale = await Should.ThrowAsync<HttpException>(() => Service(db).UpsertAsync(
+            AgentTaskRole.Review, complexity,
+            Put(AgentKind.ClaudeCode, "editor") with { ConcurrencyToken = cell.ConcurrencyToken ?? Guid.Empty },
+            null, CancellationToken.None));
+        stale.StatusCode.ShouldBe(409);
+        return stale;
     }
 
     private static PutComplexityChainRequest Put(AgentKind kind, string reason) =>
