@@ -32,7 +32,11 @@ public class SessionRuntimeActionRecoveryTests
         await using var h = await BridgeQueueHarness.CreateAsync(new()
         {
             ConnectionString = schema.ConnectionString,
-            ConfigureServices = s => s.AddSingleton<AgentTaskReplyService>()
+            ConfigureServices = s =>
+            {
+                s.AddSingleton<AgentTaskReplyService>();
+                s.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = Path.GetTempPath() });
+            }
         });
         var taskId = Guid.NewGuid();
         await using (var db = h.CreateObserverContext())
@@ -40,7 +44,8 @@ public class SessionRuntimeActionRecoveryTests
             db.AgentTasks.Add(new AgentTask
             {
                 Id = taskId, RootTaskId = taskId, AgentSessionId = h.SessionId,
-                Status = AgentTaskStatus.Working, Attempt = 1, Title = "attempt fence",
+                Status = AgentTaskStatus.Working, Attempt = 1, Title = "attempt fence", Role = AgentTaskRole.Docs,
+                AgentId = h.AgentId, Workspace = WorkspaceMode.Shared, WorkingDirectory = h.TempRoot,
                 CreatedAt = h.Now.AddMinutes(-2), DispatchedAt = h.Now.AddMinutes(-1),
                 CommitOnSettle = CommitOnSettlePolicy.Never
             });
@@ -65,7 +70,7 @@ public class SessionRuntimeActionRecoveryTests
         task.Attempt.ShouldBe(2);
         task.Status.ShouldBe(AgentTaskStatus.Working, "a persisted action belongs to its admitted task attempt");
         task.Result.ShouldBeNull();
-        (await verify.AgentTaskEvents.CountAsync(e => e.TaskId == taskId)).ShouldBe(0);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId)).ShouldBe(0);
         (await verify.SessionRuntimeActions.CountAsync()).ShouldBe(0, "stale settlement is superseded without retrying another attempt");
     }
 
