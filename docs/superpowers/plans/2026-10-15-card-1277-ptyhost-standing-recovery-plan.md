@@ -7,8 +7,8 @@ Base `cc8798c1fa4f3c2faa834283aef080d8e5fd28f0`.
 
 ## Decision
 
-`Standing_ptyhost_history_recovery_preserves_native_identity_and_queued_reply` stays skipped
-on Linux under CARD-1277. The witness in the CARD-1273 evidence file names two fixture defects.
+The PtyHost rows of `Standing_ptyhost_history_recovery_preserves_native_identity_and_queued_reply`
+are the CARD-1277 rows. The witness in the CARD-1273 evidence file names two fixture defects.
 The product assertions stay: `ConfirmNativePromptAsync` waits for AssistantText that contains
 the nonce, and `VerifiedPromptSubmitter` keeps its body write followed by a separate CR.
 
@@ -31,6 +31,13 @@ the nonce, and `VerifiedPromptSubmitter` keeps its body write followed by a sepa
   (`FakeClaudeContractTests.Text_and_CR_in_one_write_does_NOT_submit`).
   `ANTIPHON_FAKE_LF_ENTER` stays unset. The Claude transcript assistant text uses the same
   split as Grok: screen echo at 60 characters, transcript text the escaped prompt.
+  S2 run `20261015-075228-ee60` at `4ba1794d2239ee1d98256b9b935815215fd6ae0d` left CP-2 red
+  (2 executed, 2 failed, 0 skipped) and CP-3 at 2 passed (both Grok), 2 failed (both Claude),
+  0 skipped. A Porta probe of that fakegrok recorded one burst `bytes=109 cr=0 lf=1` for the
+  108-character wire plus the later CR. On a Linux tty, `Console.OpenStandardInput().Read`
+  is `StdInReader.ReadLine`, which returns the body and a newline as one buffer, so the
+  burst splitter does not see a lone CR. S3 reads that slave with libc `read` after the
+  raw-mode `tcsetattr`.
 
 `Card1277PtyHostFixtureTests.Grok_jsonl_reply_keeps_the_nonce_past_the_screen_cut` and
 `Card1277PtyHostFixtureTests.Claude_two_write_submit_is_a_normalizer_turn` are the pins.
@@ -45,6 +52,8 @@ S1 run `20261015-073635-162c` is the red for both: 2 executed, 2 failed, 0 skipp
   because S1 run `20261015-073635-162c` had an empty JSONL for each. The two CARD-1277
   `Skip.Test` calls come out.
   CP-2 expects both methods passed. CP-3 expects the four PtyHost rows passed, 0 skipped.
+- S3 (fix): the Linux reader in both fakes uses libc `read` so a later CR stays its own burst.
+  CP-2 and CP-3 are rerun at this commit.
 
 ## Verification
 
