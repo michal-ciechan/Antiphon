@@ -221,7 +221,7 @@ public sealed class ChannelReplyDispatcher
         if (boundary is null) return;
         var prompt = await TranscriptTurnWindow.FindOwningPromptAsync(db, sessionId, boundary.Value, ct);
         if (prompt is null) return;
-        var result = await DispatchAsync(sessionId, prompt, rememberDirectTurn: true, ct);
+        var result = await DispatchAsync(sessionId, prompt, ct);
         if (result.FailedCorrelationIds.Count != 0)
             throw new InvalidOperationException("Bound channel publication remains pending.");
         await DispatchFollowUpAsync(sessionId, ct);
@@ -272,7 +272,7 @@ public sealed class ChannelReplyDispatcher
                 if (end is null || (await TranscriptTurnWindow.FindOwningPromptAsync(db, sessionId, end.Value, ct))?.Id != prompt.Id)
                     continue;
 
-                var result = await DispatchAsync(sessionId, prompt, rememberDirectTurn: true, ct);
+                var result = await DispatchAsync(sessionId, prompt, ct);
                 published.UnionWith(result.PublishedCorrelationIds);
                 withheld.UnionWith(result.IntentionallyWithheldCorrelationIds);
                 failed.UnionWith(result.FailedCorrelationIds);
@@ -390,12 +390,8 @@ public sealed class ChannelReplyDispatcher
         }
     }
 
-    private Task<ChannelReplyDispatchResult> DispatchAsync(Guid sessionId,
-        TranscriptEntry? historicalPrompt, CancellationToken ct) =>
-        DispatchAsync(sessionId, historicalPrompt, rememberDirectTurn: false, ct);
-
     private async Task<ChannelReplyDispatchResult> DispatchAsync(Guid sessionId,
-        TranscriptEntry? historicalPrompt, bool rememberDirectTurn, CancellationToken ct)
+        TranscriptEntry? historicalPrompt, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -1325,7 +1321,7 @@ public sealed class ChannelReplyDispatcher
                 && m.DirectReplyTailClosedAt == null).Select(m => m.Id).ToArrayAsync(ct);
             if (members.Length == 0) continue;
             var (next, late) = await QueryTurnWindowAsync(db, sessionId, root.Prompt!.Value, through, ct);
-            var (_, apiError) = await ExtractTurnResponseAsync(db, sessionId, root.Prompt.Value, ct);
+            var (_, _, apiError) = await ExtractTurnResponseAsync(db, sessionId, root.Prompt.Value, ct);
             var joined = string.Join("\n\n", late.Where(l => !string.IsNullOrWhiteSpace(l.Text)).Select(l => l.Text!)).Trim();
             if (!apiError && joined.Length > 0)
             {
