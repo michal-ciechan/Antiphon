@@ -17,8 +17,6 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
 {
     private ICheckpointCleanupIo Io => context.Io;
     private CheckpointWrite SafeWrite => new(context);
-    private CheckpointDelete SafeDelete => new(context);
-    private CheckpointOutputLedger OwnedOutputLedger => new(context);
     private const string Ledger = ".checkpoint-output-ledger.json";
     public string? Seal(string root, DateTimeOffset? buildExited = null)
     {
@@ -90,7 +88,7 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
         {
             foreach (var path in Io.Enumerate(directory))
             {
-                if (Io.LinkTarget(path) is not null || Io.LinkTarget(path) is not null
+                if (Io.LinkTarget(path) is not null
                     || (Io.Attributes(path) & FileAttributes.ReparsePoint) != 0) throw new IOException("linked output");
                 var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
                 if (relative == Ledger) continue;

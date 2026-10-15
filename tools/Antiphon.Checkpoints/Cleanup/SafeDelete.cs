@@ -1,6 +1,5 @@
 using Antiphon.HostCleanup.Checkpoints;
 using System.ComponentModel;
-using System.Diagnostics;
 
 namespace Antiphon.Checkpoints;
 
@@ -58,7 +57,6 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
 {
     private ICheckpointCleanupIo Io => context.Io;
     private CheckpointWrite SafeWrite => new(context);
-    private CheckpointDelete SafeDelete => new(context);
     private CheckpointOutputLedger OwnedOutputLedger => new(context);
     private const int GitTimeoutMs = 15_000;
     private const int MaxEntries = 10_000;

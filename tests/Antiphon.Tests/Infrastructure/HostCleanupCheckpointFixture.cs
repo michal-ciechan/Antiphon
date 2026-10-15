@@ -29,6 +29,9 @@ internal sealed class HostCleanupCheckpointFixture
         SafeWrite.Require(Write.CreateFreshDirectory(Root, Write.Under(Parent)));
         Io.Put(Payload, "original"); // child output, not a registry entry
         Io.Events.Clear();
+        Io.ReadRequests.Clear();
+        Io.Opens.Clear();
+        Io.GitRequests.Clear();
     }
 
     public void Seal() => SafeWrite.Require(Ledger.Seal(Root, Exit));
