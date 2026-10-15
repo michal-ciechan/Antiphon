@@ -236,6 +236,18 @@ public class SessionRuntimeActionRoutingTests
             await Task.Delay(TimeSpan.FromMilliseconds(1100));
             await actions.DrainPageAsync(h.SessionId, default);
             h.Adapter.SubmittedBodies.ShouldBe([first, second]);
+            // The newly submitted second prompt is now Working. Complete that actual
+            // turn before requiring every retained idle intent to be acknowledged.
+            var secondFinished = Entry(TranscriptKinds.TurnEnd, null);
+            runner.Produce(secondFinished);
+            await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+            {
+                await using var observer = h.CreateObserverContext();
+                return await observer.TranscriptEntries.AnyAsync(t => t.Uuid == secondFinished.Uuid);
+            });
+            await Task.Delay(TimeSpan.FromMilliseconds(1100));
+            await actions.DrainPageAsync(h.SessionId, default);
+            h.Adapter.SubmittedBodies.ShouldBe([first, second]);
             await using var verify = h.CreateObserverContext();
             (await verify.SessionRuntimeActions.AnyAsync(a => a.Id == newAction)).ShouldBeFalse();
             foreach (var body in new[] { first, second })
