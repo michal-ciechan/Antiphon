@@ -48,7 +48,7 @@ public static class CardCompletionEndpoints
         var card = await db.Cards.AsNoTracking().Include(c => c.Board).ThenInclude(b => b.Project)
             .SingleOrDefaultAsync(c => c.Id == cardId, ct) ?? throw new NotFoundException(nameof(Card), cardId);
         var project = caller.Task?.ProjectId ?? await tasks.DeriveCallerProjectAsync(caller, ct);
-        if (card.Board.ProjectId is null || project != card.Board.ProjectId)
+        if (project != card.Board.ProjectId)
             throw new ForbiddenException("Completion requires the card's project scope.", "card_completion_project_denied");
         var roots = new[] { caller.Task?.RepoPath ?? caller.WorkingDirectory }.Concat(caller.ExtraAllowedRoots ?? []);
         var repository = card.Board.Project?.LocalRepositoryPath;
