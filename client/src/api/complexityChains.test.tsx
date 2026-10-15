@@ -2,8 +2,11 @@ import { HttpResponse, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import { renderHookWithProviders, waitFor } from '../test/utils'
 import { server } from '../test/mocks/server'
+import { ApiError } from './client'
 import {
+  EMPTY_CONCURRENCY_TOKEN,
   complexityChainKeys,
+  staleComplexityChain,
   useClearComplexityChain,
   useComplexityChainEffective,
   useComplexityChains,
@@ -201,5 +204,55 @@ describe('useClearComplexityChain', () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(deleteSpy).toHaveBeenCalledWith('/api/complexity-chains/any/Hard')
+  })
+})
+
+describe('C1275 concurrency token', () => {
+  it('C1275 sends concurrencyToken in the PUT body and as ?concurrencyToken= on DELETE', async () => {
+    const seen = vi.fn()
+    server.use(
+      http.put('/api/complexity-chains/Plan/Hard', async ({ request }) => {
+        seen('PUT', await request.json())
+        return HttpResponse.json(savedRow)
+      }),
+      http.delete('/api/complexity-chains/Plan/Hard', ({ request }) => {
+        seen('DELETE', new URL(request.url).search)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+
+    const put = renderHookWithProviders(() => usePutComplexityChain())
+    put.result.current.mutate({
+      role: 'Plan',
+      complexity: 'Hard',
+      candidates: [{ agentKind: 'Codex', modelLevel: 'Frontier' }],
+      concurrencyToken: '7b0e2c1a-0000-4000-8000-000000000001',
+    })
+    await waitFor(() => expect(put.result.current.isSuccess).toBe(true))
+    expect(seen).toHaveBeenCalledWith('PUT', {
+      candidates: [{ agentKind: 'Codex', modelLevel: 'Frontier' }],
+      provenance: 'Human',
+      reason: null,
+      notAfter: null,
+      concurrencyToken: '7b0e2c1a-0000-4000-8000-000000000001',
+    })
+
+    const clear = renderHookWithProviders(() => useClearComplexityChain())
+    clear.result.current.mutate({
+      role: 'Plan',
+      complexity: 'Hard',
+      concurrencyToken: EMPTY_CONCURRENCY_TOKEN,
+    })
+    await waitFor(() => expect(clear.result.current.isSuccess).toBe(true))
+    expect(seen).toHaveBeenCalledWith('DELETE', '?concurrencyToken=00000000-0000-0000-0000-000000000000')
+  })
+
+  it('C1275 reads the current row from a 409 complexity_chain_stale and nothing else', () => {
+    const current = { ...savedRow, concurrencyToken: '7b0e2c1a-0000-4000-8000-000000000002' }
+    expect(staleComplexityChain(new ApiError(409, 'Conflict', { code: 'complexity_chain_stale', current }))).toEqual(current)
+    expect(staleComplexityChain(new ApiError(409, 'Conflict', { code: 'complexity_chain_human', current }))).toBeNull()
+    expect(staleComplexityChain(new ApiError(422, 'Unprocessable', { code: 'complexity_chain_stale', current }))).toBeNull()
+    expect(staleComplexityChain(new ApiError(409, 'Conflict', { code: 'complexity_chain_stale' }))).toBeNull()
+    expect(staleComplexityChain(new Error('network'))).toBeNull()
   })
 })
