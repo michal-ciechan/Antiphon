@@ -9,14 +9,14 @@ probably cannot become ready (`GrokStartupScreen.Classify`) whatever CARD-0865 s
 
 ## Slices
 
-- S1 (probe): the Linux guard is removed so every argument row runs on Linux and each skip reason
-  is checked against an observed outcome. No assertion, deadline or fixture change.
+- S1 (probe): the Linux guard is removed so the eight argument rows run on Linux (CP-1: 8 executed,
+  0 skipped) and their failures are recorded. No assertion, deadline or fixture change.
 - S2 (fix): CP-1 (run `20261015-003609-6511`) failed each row, for three different reasons
   (evidence file `docs/superpowers/evidence/2026-10-15-card-1273-code.md`). The Grok-on-Herdr
   rows give the fake the captured Grok 1.0.41 dashboard (`GrokStartupScreen`, as CARD-1252) and
-  run on Linux. The Linux guard is narrowed to the observed reasons: PtyHost rows (native prompt
-  absent from the fake CLI JSONL at the 90 s deadline) and the Claude-on-Herdr rows (no UserPrompt
-  after the delivery baseline). No assertion, deadline or other fixture change.
+  run on Linux. The Linux guard is narrowed to the PtyHost rows (CP-1: TaskCanceledException in
+  `ConfirmNativePromptAsync` at the 90 s deadline) and the Claude-on-Herdr rows (queued-reply
+  UserPrompt assertion false). No assertion, deadline or other fixture change.
 - S2b (diagnostic): CP-2 (run `20261015-005014-8d18`) showed the Grok-on-Herdr rows past launch
   and first delivery but red on the queued-reply UserPrompt assertion, like Claude-on-Herdr. The
   assertion gains a message naming the baseline, the stored body and each UserPrompt row
@@ -27,6 +27,14 @@ probably cannot become ready (`GrokStartupScreen.Classify`) whatever CARD-0865 s
   guard whose text names the marker mismatch. Deciding whether the assertion, the fixture or the
   product owns that mismatch is outside this card (reported as a finding). No assertion or
   deadline change.
+- S4 (repair of Review f2fbd6ae D1): the PtyHost guard is split by kind, with texts from the
+  Review's witness run. Claude/PtyHost: the first prompt times out; the fake CLI JSONL exists but
+  the transcript normalizer reads no entries from it (cause not established). Grok/PtyHost: the
+  matching prompt is in the fake CLI JSONL, but the fake Grok cuts its reply at 60 characters
+  (`src/Antiphon.FakeGrok/Program.cs:850`), so the 52-character `[antiphon-channel:<id>] ` marker
+  pushes the nonce out of the reply and the `ConfirmNativePromptAsync` wait for it does not
+  complete. Follow-up: CARD-1277. Skip reasons only; no assertion, deadline or fixture change.
+  Verified by a CP-4 rerun at the repair tip.
 
 ## Verification design
 
@@ -40,8 +48,8 @@ PCs pending for SourceLanding Mutation (none run here):
 - PC-1: with the Linux guards lifted, drop `GrokStartupScreen` from the Standing_history_recovery
   fake; both Grok-on-Herdr rows must fail at the first delivery with the
   `FakeHerdrServer never saw pane.send_text` timeout instead of at the queued-reply assertion.
-- PC-2: lift the narrowed Linux guards; the PtyHost rows and the Herdr rows must go red with the
-  reasons the skip texts name.
+- PC-2: lift the narrowed Linux guards; the Claude/PtyHost, Grok/PtyHost and Herdr rows must go red
+  with the reasons their skip texts name.
 
 ### Checkpoints
 
