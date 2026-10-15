@@ -481,10 +481,11 @@ public partial class SessionRuntimeActionRoutingTests
         public async Task StreamAsync(params SessionRunnerTranscriptEvent[] entries)
         {
             foreach (var entry in entries) Runner.Produce(entry);
+            var lastUuid = entries[^1].Uuid;
             await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
             {
                 await using var db = H.CreateObserverContext();
-                return await db.TranscriptEntries.AnyAsync(t => t.Uuid == entries[^1].Uuid);
+                return await db.TranscriptEntries.AnyAsync(t => t.Uuid == lastUuid);
             });
         }
         public async Task StreamOtherSessionAsync()
