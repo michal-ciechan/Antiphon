@@ -378,11 +378,12 @@ public class SessionRunnerEventPumpTests
         await runner.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(5));
         runner.ProduceExit(new SessionRunnerExitedEvent(
             h.SessionId, 1, AgentExitReason.KilledByRequest, 0, generationA));
-        await Task.Delay(500);
+        await runner.ExitConsumed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await pump.StopAsync(CancellationToken.None);
 
         await using var verify = BridgeQueueHarness.CreateContext();
         (await verify.AgentSessions.SingleAsync(s => s.Id == h.SessionId)).Status.ShouldBe(SessionStatus.Running);
+        bus.Events.ShouldBeEmpty("a consumed stale exit has no exit or status notification authority");
     }
 
     private static SessionRunnerTranscriptEvent Entry(Guid session, long sequence, string kind, string? text) =>
@@ -391,15 +392,18 @@ public class SessionRunnerEventPumpTests
 
     private sealed class GatedEventBus : IEventBus
     {
+        public ConcurrentQueue<string> Events { get; } = new();
         public string? Group;
         public TaskCompletionSource? Entered;
         public TaskCompletionSource? Release;
         public async Task PublishToGroupAsync(string group, string eventName, object payload, CancellationToken ct = default)
         {
+            Events.Enqueue(eventName);
             if (group == Group && eventName == "SessionTranscript")
             { Entered!.TrySetResult(); await Release!.Task.WaitAsync(ct); }
         }
-        public Task PublishToAllAsync(string eventName, object payload, CancellationToken ct = default) => Task.CompletedTask;
+        public Task PublishToAllAsync(string eventName, object payload, CancellationToken ct = default)
+        { Events.Enqueue(eventName); return Task.CompletedTask; }
     }
 
     private sealed class PhaseLogger : ILoggerProvider, ILogger<SessionRunnerEventPump>

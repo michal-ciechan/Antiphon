@@ -350,6 +350,7 @@ public sealed class AgentTaskMidTurnRefineTests
         var complete = await PrepareSentRefinementAsync(completeWorkspace.Path);
         await complete.Fx.Scope.Runtime.ObserveTranscriptAsync(
             UserPrompt(complete.Fx.SessionId, 43, complete.Body, DateTimeOffset.UtcNow), CancellationToken.None);
+        await complete.Fx.Scope.Actions.DrainPageAsync(complete.Fx.SessionId, default);
 
         await using (var verify = CreateContext())
         {
@@ -370,6 +371,7 @@ public sealed class AgentTaskMidTurnRefineTests
         head.Body.Length.ShouldBeGreaterThan(300);
         await head.Fx.Scope.Runtime.ObserveTranscriptAsync(
             UserPrompt(head.Fx.SessionId, 43, head.Body[..300], DateTimeOffset.UtcNow), CancellationToken.None);
+        await head.Fx.Scope.Actions.DrainPageAsync(head.Fx.SessionId, default);
 
         await using var headDb = CreateContext();
         var headRow = await headDb.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == head.Fx.SessionId);
@@ -442,14 +444,31 @@ public sealed class AgentTaskMidTurnRefineTests
         var observe = prepared.Fx.Scope.Runtime.ObserveTranscriptAsync(
             UserPrompt(prepared.Fx.SessionId, 43, prepared.Body, DateTimeOffset.UtcNow),
             CancellationToken.None);
+        Task? deferred = null;
         try
         {
             var finished = await Task.WhenAny(observe, Task.Delay(TimeSpan.FromSeconds(5)));
-            finished.ShouldNotBe(observe, "a Sent refinement must take the queue lock before it writes a verdict");
+            finished.ShouldBe(observe, "durable ingestion must finish while confirmation waits on the queue lock");
+            await observe;
+            deferred = prepared.Fx.Scope.Actions.DrainPageAsync(prepared.Fx.SessionId, default);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (true)
+            {
+                await using var pending = CreateContext();
+                if (await pending.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == prepared.Fx.SessionId && a.Phase == 2, deadline.Token))
+                {
+                    (await pending.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == prepared.Fx.SessionId))
+                        .DeliveryVerdict.ShouldBeNull();
+                    deferred.IsCompleted.ShouldBeFalse("the deferred verdict still requires the held queue lock");
+                    break;
+                }
+                await Task.Delay(20, deadline.Token);
+            }
         }
         finally
         {
             gate.Release();
+            if (deferred is not null) await deferred.WaitAsync(TimeSpan.FromSeconds(15));
         }
 
         await observe.WaitAsync(TimeSpan.FromSeconds(15));
@@ -878,6 +897,7 @@ public sealed class AgentTaskMidTurnRefineTests
     {
         private readonly ServiceProvider _provider;
         public AgentSessionRuntime Runtime => _provider.GetRequiredService<AgentSessionRuntime>();
+        public SessionRuntimeActionCoordinator Actions => _provider.GetRequiredService<SessionRuntimeActionCoordinator>();
 
         public ScopeFactory(RecordingInterruptRunner runner, TimeProvider clock, SupervisionSettings? supervision = null)
         {
@@ -891,6 +911,11 @@ public sealed class AgentTaskMidTurnRefineTests
             services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
             services.AddSingleton(Options.Create(new DelegationSettings { FinalMessageGraceSeconds = 0 }));
             services.AddSingleton(clock);
+            services.AddSingleton(Options.Create(new SessionStateSettings()));
+            services.AddSingleton<SessionStateCommandMetrics>();
+            services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+            services.AddSingleton<SessionStateStore>();
+            services.AddSingleton<SessionRuntimeActionCoordinator>();
             services.AddSingleton<ISessionRunnerClient>(runner);
             services.AddSingleton<AgentSessionRuntime>();
             services.AddSingleton<SessionMessageQueueService>();

@@ -388,9 +388,7 @@ public class ChannelReplyLateConfirmDispatchTests
         h.Runner.SetTranscript(Turns(h.SessionId, (prompt, answer)));
         await h.Queue.HandleDeliveryFailureAsync(h.SessionId, [id], DeliveryVerdict.NoTranscriptRecord, bound.Token);
         // Invoke the real live TurnEnd entry, including its dispatcher-first/queue/redispatch chain.
-        var runtime = (Task)typeof(AgentSessionRuntime).GetMethod("FlushQueueOnIdleAsync",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .Invoke(h.Runtime, [h.SessionId, bound.Token])!;
+        var runtime = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, bound.Token);
         try
         {
             await both.Task.WaitAsync(bound.Token);
@@ -496,10 +494,10 @@ public class ChannelReplyLateConfirmDispatchTests
         {
             await h.Queue.HandleDeliveryFailureAsync(h.SessionId, [id], DeliveryVerdict.NoTranscriptRecord, bound.Token);
             await firstReady.Task.WaitAsync(bound.Token);
-            await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "The trailing answer.");
-            runtime = (Task)typeof(AgentSessionRuntime).GetMethod("FlushQueueOnIdleAsync",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                .Invoke(h.Runtime, [h.SessionId, bound.Token])!;
+            await h.Runtime.ObserveTranscriptAsync(new SessionRunnerTranscriptEvent(h.SessionId, 1000,
+                TranscriptKinds.AssistantText, Guid.NewGuid().ToString(), null, DateTimeOffset.UtcNow,
+                "assistant", "The trailing answer.", null, null, null, null, null), bound.Token);
+            runtime = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, bound.Token);
             await secondReady.Task.WaitAsync(bound.Token);
             releaseFirst.TrySetResult();
             await producer.Entered.Task.WaitAsync(bound.Token);
