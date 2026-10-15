@@ -19,6 +19,16 @@ the event pump before joining the action workers; a shutdown deadline does not
 release an owner while its external effect is still running. This remains a
 single-server-writer design.
 
+Queue-phase deferrals use that same capped retry schedule. A Pending queue row
+alone is not a reason to retain a transcript action: capped attempts, terminal
+sessions, failed rules and policy-held input finish the queue step without typing.
+Working on a Running session, unfinished routing and temporary transport, Herdr
+or rules barriers can defer it. A newer routed boundary/status request replaces
+an older deferred queue wakeup even before its due time. Replacement completes
+the older boundary's finished notification and preserves its separate late-confirm
+publication phase; narrow requests do not publish SessionFinished. Input attempts,
+transcript confirmation and the 30-second delivery window are unchanged.
+
 Deferred task actions capture the task ID and attempt at admission. The action
 entry point checks that identity and session generation; its database context
 rechecks the attempt, original status/token and generation under row locks over
