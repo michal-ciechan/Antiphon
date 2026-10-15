@@ -30,7 +30,11 @@ pending publication range on the source queue rows. Trailing text recovers from
 those rows after restart. A completed producer failure releases only its own
 pending range; acceptance followed by an acknowledgement failure retains an
 uncertain range and never authorizes automatic replay. An open direct tail keeps
-its queue/transcript evidence. Queue pruning rechecks eligibility while holding
+its queue/transcript evidence. Uncertain claims are excluded before selecting the
+bounded recoverable-root page. A complete terminal snapshot must be persisted and
+its final suffix published before closing the tail; closure rechecks terminal
+generation after publication. Incomplete or stale snapshots retain the evidence.
+Queue pruning rechecks eligibility while holding
 the same mutation lease as transcript/action admission.
 
 Implementation and qualification status, including remaining routing/recovery
