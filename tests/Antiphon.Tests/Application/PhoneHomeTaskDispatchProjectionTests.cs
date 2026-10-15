@@ -21,7 +21,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-public sealed class PhoneHomeTaskDispatchProjectionTests
+public sealed partial class PhoneHomeTaskDispatchProjectionTests
 {
     [Test]
     public Task Runner_bound_claude_task_reaches_the_queue_projected() =>
@@ -602,8 +602,12 @@ public sealed class PhoneHomeTaskDispatchProjectionTests
     private sealed class RecordingLaunchSink : IAgentTaskLaunchSink
     {
         public List<AgentLaunchSpec> Specs { get; } = [];
-        public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec) =>
+        public Action<Guid, AgentLaunchSpec>? OnEnqueue { get; init; }
+        public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec)
+        {
+            OnEnqueue?.Invoke(sessionId, spec);
             Specs.Add(spec);
+        }
     }
 
     private sealed class TempWorkspace : IDisposable
