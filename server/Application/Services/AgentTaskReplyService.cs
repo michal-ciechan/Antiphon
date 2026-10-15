@@ -99,6 +99,24 @@ public sealed class AgentTaskReplyService
         }
     }
 
+    internal async Task OnTranscriptActionAsync(Guid sessionId, long triggerSequence, CancellationToken ct)
+    {
+        var gate = _settleLocks.GetOrAdd(sessionId, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var boundary = await TranscriptTurnWindow.FindActionBoundaryAsync(db, sessionId, triggerSequence, ct);
+            if (boundary is null) return;
+            var task = await db.AgentTasks.FirstOrDefaultAsync(t => t.AgentSessionId == sessionId
+                && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working), ct);
+            if (task is not null)
+                await JudgeOpenTaskAsync(scope.ServiceProvider, db, task, sessionId, null, ct, boundary);
+        }
+        finally { gate.Release(); }
+    }
+
     private async Task OnTurnEndLockedAsync(Guid sessionId, CancellationToken ct)
     {
         try
@@ -184,9 +202,9 @@ public sealed class AgentTaskReplyService
         AgentTask task,
         Guid sessionId,
         Func<CancellationToken, Task>? onStillUncorrelated,
-        CancellationToken ct)
+        CancellationToken ct, long? boundaryCeiling = null)
     {
-        var turn = await ExtractMarkedTurnAsync(db, sessionId, task, ct);
+        var turn = await ExtractMarkedTurnAsync(db, sessionId, task, ct, boundaryCeiling);
 
         if (turn.Interrupted is { } interrupted)
         {
@@ -3245,10 +3263,10 @@ public sealed class AgentTaskReplyService
     /// carry this task's marker AND the response that ended the turn must have written its own text.
     /// </summary>
     private async Task<TurnOutcome> ExtractMarkedTurnAsync(
-        AppDbContext db, Guid sessionId, AgentTask task, CancellationToken ct)
+        AppDbContext db, Guid sessionId, AgentTask task, CancellationToken ct, long? boundaryCeiling = null)
     {
         var taskId = task.Id;
-        var selection = await TaskReportTurnSelector.SelectAsync(db, sessionId, task, ct);
+        var selection = await TaskReportTurnSelector.SelectAsync(db, sessionId, task, ct, boundaryCeiling);
         if (selection.Skipped.Count > 0 || selection.Kind != TaskReportSelectionKind.None)
         {
             _logger.LogDebug(

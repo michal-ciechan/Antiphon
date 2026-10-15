@@ -56,88 +56,41 @@ public sealed class CompactionRecoveryService
         var seen = _handledSequences.GetOrAdd(sessionId, 0);
         if (sequence <= seen)
             return;
-        _handledSequences[sessionId] = sequence;
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
+        if (session is null || session.CompactionRecoveryWatermark >= sequence) return;
+        var sessionText = sessionId.ToString("D");
+        var agent = await db.Agents.AsNoTracking().FirstOrDefaultAsync(a => a.PersistentSessionId == sessionText, ct);
+        var recoveryBody = string.IsNullOrWhiteSpace(agent?.SystemPromptAppend) ? null : ChannelPreamble.RecoveryNoteBody;
+        var compactionBody = session.AgentKind == AgentKind.ClaudeCode ? null
+            : await CompactionBodyAsync(scope.ServiceProvider, db, session, ct);
 
-        string? recoveryBody = null;
-        string? compactionBody = null;
-        try
+        // The transcript action remains the durable obligation until these stable queue keys
+        // exist. An interrupted second enqueue retries without duplicating the first note.
+        if (recoveryBody is not null)
+            await _queue.EnqueueAsync(sessionId, recoveryBody, MessageSendMode.WhenIdle, ct,
+                origin: QueuedMessageOrigin.System, deliverIfIdle: false,
+                runtimeActionKey: $"compaction:{sequence}:recovery");
+        if (compactionBody is not null)
+            await _queue.EnqueueAsync(sessionId, compactionBody, MessageSendMode.WhenIdle, ct,
+                origin: QueuedMessageOrigin.System, deliverIfIdle: false,
+                runtimeActionKey: $"compaction:{sequence}:instructions");
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var advanced = await db.AgentSessions.Where(s => s.Id == sessionId
+            && (s.CompactionRecoveryWatermark == null || s.CompactionRecoveryWatermark < sequence))
+            .ExecuteUpdateAsync(s => s.SetProperty(s => s.CompactionRecoveryWatermark, sequence), ct);
+        if (advanced > 0 && agent is not null)
         {
-            await using var scope = _scopeFactory.CreateAsyncScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-            var session = await db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
-            if (session is null)
-                return;
-            if (session.CompactionRecoveryWatermark is long mark && sequence <= mark)
-                return; // already handled (this process or a previous one)
-
-            var sessionIdText = sessionId.ToString("D");
-            var agent = await db.Agents.FirstOrDefaultAsync(a => a.PersistentSessionId == sessionIdText, ct);
-
-            if (agent is not null)
-            {
-                // Scoped supervisor; RecordIncidentAsync does NOT save — this scope's save commits
-                // the incident and the watermark together.
-                var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
-                await supervisor.RecordIncidentAsync(
-                    agent.Id, sessionId, AgentIncidentKind.ContextCompacted, AlertSeverity.Info,
-                    $"Context compacted (transcript boundary seq {sequence}).",
-                    raiseAlert: false,
-                    ct: ct);
-
-                // Only channel-facing agents (preamble configured) get the bot-flavored note; a
-                // plain dev agent compacting gets the incident row and nothing typed at it.
-                if (!string.IsNullOrWhiteSpace(agent.SystemPromptAppend))
-                    recoveryBody = ChannelPreamble.RecoveryNoteBody;
-            }
-
-            if (session.AgentKind != AgentKind.ClaudeCode)
-                compactionBody = await CompactionBodyAsync(scope.ServiceProvider, db, session, ct);
-
-            session.CompactionRecoveryWatermark = sequence;
+            var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
+            await supervisor.RecordIncidentAsync(agent.Id, sessionId, AgentIncidentKind.ContextCompacted,
+                AlertSeverity.Info, $"Context compacted (transcript boundary seq {sequence}).", raiseAlert: false, ct: ct);
             await db.SaveChangesAsync(ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "Compaction recovery bookkeeping failed for session {SessionId}", sessionId);
-            return;
-        }
-
-        if (recoveryBody is null && compactionBody is null)
-            return;
-
-        try
-        {
-            // WhenIdle is safe here BECAUSE a MANUAL boundary is a turn END for the working rule
-            // and AgentSessionRuntime flushes the queue right after this dispatch (CARD-0041).
-            // The older claim — "safe because the boundary kind is excluded from IsWorkingAsync" —
-            // was falsified: exclusion only stops the boundary ITSELF counting as activity, and the
-            // raw typed "/compact …" prompt and the continuation prompt that follow it are activity
-            // under that rule, so the note stranded on every real compaction. An AUTO boundary
-            // lands mid-turn and is NOT an end: its note waits for the real turn end, as before.
-            if (recoveryBody is not null)
-            {
-                await _queue.EnqueueAsync(
-                    sessionId, recoveryBody, MessageSendMode.WhenIdle, ct, origin: QueuedMessageOrigin.System);
-                _logger.LogInformation("Compaction recovery note queued for session {SessionId} (seq {Sequence})",
-                    sessionId, sequence);
-            }
-
-            if (compactionBody is not null)
-            {
-                await _queue.EnqueueAsync(
-                    sessionId, compactionBody, MessageSendMode.WhenIdle, ct, origin: QueuedMessageOrigin.System);
-                _logger.LogInformation(
-                    "Orchestrator instructions compaction note queued for session {SessionId} (seq {Sequence})",
-                    sessionId, sequence);
-            }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "Compaction recovery note enqueue failed for session {SessionId}", sessionId);
-        }
+        await tx.CommitAsync(ct);
+        _handledSequences.AddOrUpdate(sessionId, sequence, (_, prior) => Math.Max(prior, sequence));
     }
-
     private static async Task<string?> CompactionBodyAsync(
         IServiceProvider services, AppDbContext db, AgentSession session, CancellationToken ct)
     {

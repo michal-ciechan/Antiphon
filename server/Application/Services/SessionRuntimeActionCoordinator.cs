@@ -170,8 +170,20 @@ public sealed class SessionRuntimeActionCoordinator(
             && a.Id != action.Id && a.Phase < QueuePhase, ct)) return;
         var generation = await db.AgentSessions.Where(s => s.Id == action.AgentSessionId)
             .Select(s => (DateTime?)s.StartedAt).SingleOrDefaultAsync(ct);
-        if (generation == action.AcceptedGeneration)
-            await runtime.ExecuteActionQueueAsync(action, ct);
+        if (generation == action.AcceptedGeneration && action.Phase == QueuePhase)
+        {
+            var result = await runtime.ExecuteActionQueueAsync(action, ct);
+            if (result.Deferred)
+            {
+                action.DueAt = clock.GetUtcNow().UtcDateTime.AddSeconds(1);
+                await db.SaveChangesAsync(ct);
+                return;
+            }
+            action.LateConfirmedChannelMessageIds = result.LateConfirmedChannelMessageIds.ToArray();
+            action.Phase++;
+            await db.SaveChangesAsync(ct);
+        }
+        if (action.Phase > QueuePhase) await runtime.ExecuteActionLateConfirmAsync(action, ct);
         db.SessionRuntimeActions.Remove(action);
         await db.SaveChangesAsync(ct);
     }
