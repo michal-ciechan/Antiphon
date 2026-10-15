@@ -247,3 +247,338 @@ If a delegate needs an operator decision, put the question and source identity o
 ## Acceptance of this Plan
 
 The deliverable is this committed, pushed document with decisions, current-code discrepancies, quantified opportunity limits, implementation slices and TestDesign input. No build or test is required to validate this documentation-only planning change. Verify Markdown links and named existing paths, clean diff and assigned branch publication; report the full commit SHA and merge-tree compatibility with fetched master. The next stage is **decide** because the proposal is complete under D-1 through D-12. After decisions, the next implementation step is **test-design**, beginning with approved cheap slices and measurement; it is not direct Code or settings activation.
+
+## Verification design
+
+TestDesign, 2026-10-15, task `12ca0ba3`; inspected base `ec8552a7d7ee76ca00a4af0ed44e3e1cabfad2b4`. Commissioning brief records operator approval of D-1..D-12 and the label **ready for release**. This appendix does not rewrite the design above. Scope is S2/D-2, S3/D-3, S4/D-4, S5/D-5, in that order. No implementation, qualification or PC result is claimed here.
+
+**Handoff: Plan for the three binding gaps below, then Code per independent slice.** Proposed test names are contracts to implement, not existing passing cases. An unbound payload remains **binding required after Code**; a mock callback, prose pin or syntactically valid checkpoint table cannot discharge it.
+
+| Binding | Evidence / required Plan output | Affected acceptance |
+|---|---|---|
+| B-1: advisory evidence correction | `ReviewEvidenceRecoveryService.RebindAsync` recovers an already-Clean retained report with confirmed sync and Full scope; `StageOutcomeService.RecordFindingAsync` appends an override, not validated execution. Name the authoritative correction input, validator, append-only audit and approval consumer for attaching existing receipts. Do not manufacture Full/Clean with an override. | V-2/V-3; S2 receipt-correction sub-slice only |
+| B-2: caller action and delay record | Completion delivery has durable identity; `ExpectationPipelineTests` tests queued-work age (10m), not settled-to-next-stage consumption. Name the existing caller operation that persists consumption/eligibility/reason/next-observation and the readback joining its child request. If no such operation exists, plan that small seam; do not substitute a new dispatcher for the approved caller pilot. | V-8/V-9/V-11 and five-minute operating acceptance |
+| B-3: close authorization | `CardWorkflowRun` has no acceptance/publication metadata record; `Card` has labels, notes and revisions. Name the versioned obligation record, authorized writer, source/card revision binding, and atomic recheck before terminal move. `ApplyAutomatedMoveAsync` reloads the card after the sweep's decision: stale decision versus newer human move needs a barrier test, not only optimistic concurrency after reload. | V-12..V-17 |
+
+| Independent slice | Exclusive source area; fixtures/tests owned by this slice | Dependencies / land boundary |
+|---|---|---|
+| A / S2 | `server/Bundles/stage-review.md`, `stage-code.md`; proposed `server/Application/Services/AdvisoryChangePolicy.cs`; evidence classification/correction services and DTOs if B-1 requires them; new `tests/Antiphon.Tests/Application/AdvisoryChangePolicyTests.cs`. Existing `InstructionBundleTests`, `StageOutcomeSummaryTests`, `ReviewEvidenceParserTests` are read-only regression inputs. | Bundle/classification can land before receipt correction. Owner prose for evidence belongs to A. No edits to `orchestrator.md`, card transitions or release drivers. Comment-equivalence admission stays refused until its proof is implemented. |
+| B / S3 | `server/Bundles/orchestrator.md`; caller/watchdog procedure in `docs/orchestration-loop.md`; new `tests/Antiphon.Tests/Application/PipelineHandoffPilotTests.cs` and slice-local harness. Existing completion queue, parser and watchdog are reused; B-2 must name any necessary production adapter. | Caller pilot only; no automatic continuation service. Read A's policy without editing its files. Do not edit `InstructionBundleTests` or shared delivery fixtures; add slice-local tests/extensions. |
+| C / S4 | `CardWorkTransitionService.cs`, `CardWorkTransitionSettings.cs`, `CardService.cs`, proposed `PublishedCardCompletion.cs`, `docs/agent-card-lifecycle.md`; new `tests/Antiphon.Tests/Application/PublishedCardCompletionTests.cs` and slice-local fixture. | Ordinary single-owner publication only. B-3 first; shadow at least 30 events before enablement. Any shared EF model/Program registration changes from A and C require a separately sequenced integration slice; they are not parallel-safe. |
+| D / S5 | Qualification records under `docs/investigations/` for CARD-0487, CARD-0599, CARD-0544; existing qualification scripts/settings through their owners. No runtime source edits in this qualification task. | Portable guard preflight may run independently. Live steps are sequential: 0545/0487 -> 0599 -> 0544. Repairs return to their owning Code task, not this slice. |
+
+Parallel Code means disjoint declared paths, separate branches/build outputs and current cap checks, not simultaneous edits to common tests, owner documents, DI or migrations. No slice requires another slice's unlanded source. B-1..B-3 must be resolved before commissioning their dependent work; this is not a closed-list authorization to invent those seams in Code.
+
+### Inspection
+
+| Bodies read (paths relative to repository) | Boundary -> coverage or exclusion |
+|---|---|
+| Full CARD-1281 plan; `docs/project-context.md`; relevant checkpoint, coverage, mutation and delivery sections of `docs/testing-and-build.md`; caller/close sections of `docs/orchestration-loop.md`; lifecycle, session delivery/custody and resilience owners | Full ordinary verification retained; no write retries or five-minute kill timer |
+| `InstructionBundleTests`: composer, C470 stage separation, C467 delivery inventory, C1083 source/render equality, C1213 read-only precedence; their `PinSentence`/normalization helpers; shipped `stage-review.md` | V-1/V-2; R-1. Text checks prove shipped instructions, not model obedience |
+| `StageOutcomeSummaryTests` (all bodies/Row/context), `ReviewEvidenceParserTests` (all bodies/Block/Report); `StageOutcome`, `RecordFindingAsync`, `ReviewEvidenceRecoveryService` | V-2/V-3/V-7; B-1; R-1 |
+| `PipelineHandoffParseTests` and Block helper; `ExpectationPipelineTests.C650_Queue_age_and_dispatch_progress_use_exact_boundaries`, quota/fence cases and Directive/Snap helpers; `CompletionNoteWorkQueueTests` | V-8/V-9/V-11; R-2. Queue age does not establish caller consumption |
+| `CompletionWarningDeliveryTests` receipt/recovery/SettlePlan bodies; `C544DeliveryRig` including all persistence cuts, submit callback and restart; `VerificationRoundDeliveryTests.AssertReceivedOnceAsync`; `C544World` service-boundary setup | V-10; real queue with substitute terminal; B-2 starts after this proof |
+| `CardWorkTransitionServiceTests` sweep cases and full nested harness; `CardWorkTransitionService`, settings, `CardService.ApplyAutomatedMoveAsync`, `Card`, `CardWorkflowRun`, `AgentTaskLandingState.HasPublication`; `LandingGitFixture.InitializeAsync`/observer helpers and `AgentTaskLandPublicationTests.C494_LostPushAckReconcilesRealTargetBeforeSourceChecks` | V-12..V-18; R-3. Card harness has real PostgreSQL/CardService, zero launch adapters; private bare remote provides independent publication witness. `LandingProtocolHarness` instead substitutes Git and cannot prove publication |
+| `ReleaseGateActivationTests` including ActivationState; `InterimVerificationPolicyTests` permission/baseline cases and update/refusal helpers; `InterimVerificationLandGuardTests` bodies/identity helpers | V-19/V-21; R-4. Fabricated activation files are negative-test fixtures, never qualification receipts |
+| `ReleaseGateRunTests`; `Test-C599_CreditVerdicts`, New-C599RunFx/Invoke-C599Run in `scripts/test-release-gate.ps1`; `ScriptHarness.RunHarnessCaseAsync`/Validate | V-20; R-4. Harness PASS rows are assertions, not TUnit result counts |
+| `NightlyWatchdogCoreTests.C545_IntentBeforeNetwork`, `C545_ReceiptIdempotent`, `C545_ReaderHeldWithoutSession`; `C545World` ledger/transport/reader setup; `docs/nightly-watchdog.md`, `docs/release-gates.md`; CARD-0545 S6 and CARD-0599 activation Q-1..Q-4 | D delivery inventory; Q-1..Q-3 below. Existing RC activation plan explicitly leaves scheduler entrypoint/settings unbound; no `ReleaseGateSchedulerTests` or `ReleaseGateQueueTests` exists at this base |
+
+### Delivery inventory
+
+| Path / durable join | Producer -> destination; persistence boundary | Recovery and observable receipt / tests |
+|---|---|---|
+| B completion: task/attempt + completion source-event ID -> notification ID -> queue ID + destination session/generation + baseline sequence + wire digest | Real `AgentTaskReplyService` settlement -> completion obligation -> notification scanner -> real `SessionMessageQueueService` -> caller | V-10 uses `C544DeliveryRig`: already eligible and busy-then-TurnEnd; cuts `obligation-insert`, `settled-committed`, `note-insert`, `note-committed`, `wakeup-dropped`, `render-committed`, `spill-written`, `attempt-committed`, `prompt-accepted`. Prove each cut fired, recreate services, recover the same obligation/queue identity, then exactly one complete matching UserPrompt above its attempt floor. PC-21..PC-25. |
+| B continuation: predecessor task/attempt/settlement event + next stage + workflow-run revision -> caller decision -> child task | Recipient consumes completion -> current eligibility/authority checks -> existing task creation; reason/next-observation persisted before acknowledging a held handoff | V-8/V-9/V-11 must recover after consumption, before child-create, and after committed create with lost response. One correlated child, or durable classified delay; never an unrecorded gap or duplicate child. **B-2 binding required**: current delivery receipt proves no child request or model decision. PC-13..PC-20, PC-26. |
+| C publication projection: operation/implementation owner/card + source/ref/repository + obligation/card revision -> close revision | Confirmed landing plus recorded obligations -> close predicate -> `CardService` terminal write | V-13/V-15/V-17: crash before write, after durable write before acknowledgement, duplicate sweep, changed obligation/human revision. Fresh DB and CardService read show exactly one Done revision for the same operation; no second push or canceled queued implementation. B-3 binds the record. PC-27..PC-40. No session input added. `CardChanged` alone proves nothing. |
+| D nightly/watchdog: due-day/namespace/outage epoch -> nid/attempt/body hash/recipient peer; master job/native run/policy/script identity | Independent watchdog SQLite intent before network -> Telegram transport -> authorized recipient reader; nightly report -> its existing recipient path | Q-1 must observe failure **and** recovery in the recipient view after delayed reader, already available reader, restart before send, acceptance with lost acknowledgement and reader outage. Existing C545 ledger tests are preflight only. Reuse CARD-0545's delivery/control inventory; never mark received from sent/message-id/read marker. |
+| D RC: candidate SHA/ref/policy/native-run/job/slot -> report obligation -> board incident/revision; tag/release/assets | Real candidate runner -> report destination and publication readback | Q-2 requires complete board GET body/revision and independent remote tag/release/asset readback. Real queue busy/eligible and handoff crash coverage is owed by CARD-0599 activation Q-2; absent scheduler/queue bindings remain an upstream prerequisite, not a fake C1281 test. |
+
+- Substitutes: `FakeAgentProtocolAdapter.OnSubmitted` records what was actually submitted; it cannot prove native provider ingestion or caller reasoning. No test inserts its expected UserPrompt as a success shortcut. `C545World` uses real SQLite but fake Windmill/Telegram/MTProto and time; it proves durable protocol logic, not live availability, credentials or delivery. Release script seams prove refusal logic, not an RC run. DB projection proves persisted state, not browser refresh.
+- If B changes notification transport or C adds a new notice, extend this inventory and bind a producer-to-recipient test before Code closes. No new transport is authorized by the current cheap slices. Session acceptance always needs the matching **complete UserPrompt**, never a request, insert, event, Sent flag or ack.
+
+### Proves it works now
+
+Recipe keys: **A** = new `AdvisoryChangePolicyTests`, real composed bundles plus planned policy/production correction boundary (B-1); **B** = new `PipelineHandoffPilotTests`, C544 queue rig plus the caller operation bound by B-2; **C** = new `PublishedCardCompletionTests`, isolated migrated PostgreSQL, real CardService, private Git publication fixture and B-3 record; **D** = existing qualification fixtures named below. For new methods commit the failing test before implementation, observe an intended assertion failure against pre-fix behavior, then run its CP green. Missing symbols/build failure is not acceptance red. Existing D checks may already pass: record that honestly and use their post-land PC for sensitivity, not an invented regression.
+
+Each row specifies recipe, variant/case, oracle, reachability and classification. Variant loops contribute one execution unless `[Arguments]` is explicitly prescribed. Exact methods below belong to `tests/Antiphon.Tests/Application/`, except `ReleaseGateRunTests` under `Scripts/`. A/B/C new classes are Integration; give process-spawning fixtures `ParallelLimiter<ProcessSpawnLimit>`, B the existing MessageQueue serialization, and C isolated schemas plus global-sweep serialization. Keep their fixtures slice-local so parallel authors do not edit shared helper files.
+
+| ID / behavior | Recipe; exact test | Variant/case -> decisive oracle | Reachability / classification |
+|---|---|---|---|
+| V-1 advisory-only disposition | A; `AdvisoryChangePolicyTests.C1281_AdvisoryDoesNotRerun` | Valid Final/Full source + narrative correction: no new Review/Code solely for advisory; retain independent behavior/evidence/advisory fields and attribution | Compose actual Review/Code text and invoke policy; new acceptance, red-first. A phrase pin alone cannot prove the caller action |
+| V-2 substantive and incomplete stay gates | A; `AdvisoryChangePolicyTests.C1281_IncompleteNeverClean` | Missing acceptance behavior, failed assertion, absent required run, missing provenance, wrong receipt: substantive/incomplete retained; no usable Clean/Full grant | Feed each through production classification/approval consumer; new safety acceptance, B-1 required |
+| V-3 existing evidence correction | A; `AdvisoryChangePolicyTests.C1281_ReceiptCorrection` | Same-source valid receipt attached twice: one audited correction, zero new Review tasks; absent execution requests only missing selection; wrong subject/SHA/ref/repository refuses and leaves original evidence intact | Real stored report/receipt validator; include restart; new acceptance, B-1 required |
+| V-4 separate Docs follow-up | A; `AdvisoryChangePolicyTests.C1281_SeparateDocsIdentity` | Original reviewed branch frozen and published first; new Docs tip has separate caller approval/delta, never old reviewedSourceClean; Interim-latched helper refuses | Scratch Git refs and real land request boundary; new acceptance |
+| V-5 safe narrative eligibility | A; `AdvisoryChangePolicyTests.C1281_NarrativeBoundary` | Ordinary narrative admits; instructions, policy, test selections, schemas, executable examples, generated inputs, configuration and mixed code refuse individually | Policy reads actual diff payloads, not extension-only fixtures; new acceptance |
+| V-6 comment eligibility | A; `AdvisoryChangePolicyTests.C1281_CommentEquivalence` | Proved ordinary comment admits; token delta, directive, annotation, suppression, generated input, behavior-bearing doc and unsupported language refuse | Language-aware proof through policy; unsupported/proof absent stays refused; new acceptance |
+| V-7 historical attribution | A; `AdvisoryChangePolicyTests.C1281_HistoryPreserved` | Existing Found rows/costs unchanged; introduced/inherited/unresolved independent of new taxonomy; missing acceptance remains substantive | Fresh DB read of seeded historical rows after policy operation; new regression acceptance |
+| V-8 timely request or durable reason | B; `PipelineHandoffPilotTests.C1281_DelayAccounting` | Eligible request at 4:59 and 5:00 passes; 5:00.001 is late; unexplained >15m is investigated. Holds: dependency, decision, capacity, overlap, priority, evidence, quota, placement; each has reason, observed time, next observation | Real caller operation/readback after service restart; separate settlement->notification->receipt->consumption->eligible->create->dispatch clocks; new acceptance, B-2 required; operating p95 measured separately |
+| V-9 authority and refusal | B; `PipelineHandoffPilotTests.C1281_AdmissionHolds` | Unapproved stage, open blocker, overlap, quota, stage cap, host cap, placement failure, tracker not activated/spend not accepted: no child; durable reason; allowed control creates through existing API | One invalid dimension with all others eligible; current cap/quota refuses preserved, no reroute/override; new acceptance, B-2 required |
+| V-10 receipt and recovery | B; `PipelineHandoffPilotTests.C1281_CompletionRecovery` | `[Arguments]` for the nine cuts in delivery inventory; each loops busy/eligible and raw/distilled-spilled. Also clip body, move destination/generation and reuse pre-floor prompt: never confirmed. Restored positive gets one complete UserPrompt and stable IDs | Real settlement/scanner/queue and actual submitted callback; new composed-boundary regression; 9 TUnit executions, not 36 |
+| V-11 once per current handoff | B; `PipelineHandoffPilotTests.C1281_CurrentHandoffOnce` | Duplicate/restart/lost create response: one child for the same key; stale workflow revision creates none; missing/unmarked/unknown handoff returns to original owner; no timer kills a Working/Blocked seat | Bound caller operation and real task rows, not parser-only; new acceptance, B-2 required |
+| V-12 readiness is metadata | C; `PublishedCardCompletionTests.C1281_ReadyForRelease` | Settled Code pre-publication remains Review; metadata says ready for release with source identity; board column count/IDs unchanged, no session kept just to wait | Actual card/run read after restart; new acceptance, B-3 required |
+| V-13 close only shipped owner | C; `PublishedCardCompletionTests.C1281_PublicationGate` | Real confirmed ordinary implementation land + valid obligations closes once; successful Code, Plan-only land, unrelated same-card land, push-start/ack without confirmation and stale approval do not | Produce positive via private bare remote/landing protocol; vary each negative separately; new safety acceptance |
+| V-14 explicit obligations | C; `PublishedCardCompletionTests.C1281_Obligations` | Pending acceptance or deployment blocks independently; wrong build/version deployment blocks; required pending companion must be recorded with correct owner/operation. Cleanup residue alone does not block | Persist/reload B-3 record; zero-obligation category must be explicitly recorded, never inferred from absence; new acceptance |
+| V-15 current task/human state | C; `PublishedCardCompletionTests.C1281_ConcurrentClose` | Queued/Dispatched/Working/Blocked implementation task, human move/reopen/hold, archived/owned/decision/terminal card each blocks; barrier inserts human move after proposal before CardService reload | Two DB contexts and deterministic barrier; no lost human revision or canceled implementation; new safety acceptance |
+| V-16 shadow then enable | C; `PublishedCardCompletionTests.C1281_ShadowGate` | Disabled/shadow: proposal only, zero Done writes; <30 accepted events or any false-close proposal forbids enable; qualified enabled control closes; false close suspends admission | Actual settings/qualification consumer, not test-count flag; new acceptance; pilot sample is Q-4 |
+| V-17 recover close once | C; `PublishedCardCompletionTests.C1281_CloseRecovery` | Pre-write crash, post-commit lost acknowledgement, restart, duplicate projection: one same-operation close; changed obligations/card revision re-evaluated | DB failure/barrier hooks assert reached; new acceptance, B-3 required |
+| V-18 publication survives cleanup debt | C; `PublishedCardCompletionTests.C1281_CleanupDebt` | Confirmed publication + completed obligations + retained worktree residue may close; unresolved cleanup stays recorded, no second push/deletion | Real operation and card reads; new acceptance |
+| V-19 readiness remains fail-closed | D; `ReleaseGateActivationTests.C599_Admission`, `ReleaseGateActivationTests.C599_QueuedReadiness` | Valid fixture ready; missing/wrong qualification, recipient/outage/watchdog data, disabled, stale/future/unreadable monitor refuse | Real reader over temp files; existing guard qualification, **not live acceptance** |
+| V-20 separate lane credit | D; `ReleaseGateRunTests.C599_CreditVerdicts` | RC never earns master credit; master never release credit; false/string booleans, missing identity and wrong candidate SHA earn none | Real script predicate via ScriptHarness; existing regression qualification, 1 TUnit execution / 24 harness assertions |
+| V-21 Interim qualification semantics | D; `InterimVerificationPolicyTests.C544_BaselineCompletion`, `InterimVerificationLandGuardTests.C544_FinalFullRequired` | Completed Found Final/Full may supply baseline; noncompleted baseline refuses. Unknown/None legacy scope cannot land; valid Final/Full can | Real create/land admission boundaries, controlled readiness/Git; existing qualification. Actual pilot additionally Q-3 |
+
+Live acceptance (ordinary guard green never substitutes):
+
+| ID | Exact existing recipe / required recipient evidence | Status and estimate |
+|---|---|---|
+| Q-1 / D-5 0545/0487 | CARD-0545 plan S6/F-1..F-6; manual full unattended master green then real scheduled master green, all seven suites; independent watchdog failure/recovery recipient observations joined by nid/body hash and job/native identities. Commit qualification Markdown before receipt references its SHA. | Operator qualification; no live sends in this TestDesign. Estimated 300-600 active/run minutes plus two overnight boundaries, inherited from owner plan |
+| Q-2 / D-5 0599 | CARD-0599 activation plan Q-1..Q-4: deployed entrypoint/registration readbacks; real queue/process rehearsal; full Windows automated RC including E2E; both schedule slots, at least one actual scheduled green; peeled tag + downloaded manifest/summary digests + board GET receipt. | **Upstream binding required**: activation plan itself says next=plan for missing settings/entrypoint; do not invent Hangfire commands or switch scheduler here. Estimate 20+20+313+318=671 minutes plus slot waits |
+| Q-3 / D-5 0544 | After Q-1/Q-2: one real qualified Interim repair admission, refusal when readiness is lost, retained owner latch, restored Final/Full covering all deferrals at exact source, confirmed land; record selection, policy, owner/card revision, costs and rollback to FullOnly/disabled. Found baseline is coverage, never approval. | Operator pilot, binding required for live identities; estimate 90 minutes plus its approved ordinary-scope duration (budget separately once source/selection known) |
+| Q-4 / D-4 shadow | At least 30 correlated publication/acceptance events independently adjudicated; zero false-close proposals before enable. Eligible acceptance/publication-to-close p95 <=5m; retain raw publication-to-Done latency. | Operating acceptance; estimate 30 minutes review plus collection latency, no invented elapsed-time guarantee |
+| Q-5 / D-3 pilot | 50 comparable completions including held/unfinished cases; >=95% eligible handoffs requested <=5m; every >15m unexplained wait investigated. Retain four latency components and original denominators. | Operating acceptance; estimate 30 minutes audit plus cohort collection; B-2 must supply records |
+
+### Guards the regression
+
+| ID | Regression selection and decisive assertion |
+|---|---|
+| R-1 | A's V-1..V-7 plus unchanged `InstructionBundleTests`, `StageOutcomeSummaryTests`, `ReviewEvidenceParserTests`: composed read-only/PC/source contracts survive; historical Found/Clean counts and supersession remain; Full never implies source-clean. Separate helper SHA cannot borrow approval. |
+| R-2 | B's V-8..V-11 plus unchanged `PipelineHandoffParseTests`, `ExpectationPipelineTests`, `CompletionNoteWorkQueueTests`: unmarked remains unmarked; unrelated scope cannot count as progress; due/coalescing behavior preserved. V-10 is the recipient witness; these Unit classes alone are not. |
+| R-3 | C's V-12..V-18 plus unchanged `CardWorkTransitionServiceTests`: dispatch -> InProgress, last successful settle -> Review, human precedence, disabled sweep, unrelated/owned/archived cards and idempotence remain. New Done predicate must not reuse the old exclusion of Queued tasks. |
+| R-4 | V-19..V-21 plus `NightlyWatchdogCoreTests.C545_IntentBeforeNetwork`, `C545_ReceiptIdempotent`, `C545_ReaderHeldWithoutSession`: persisted intent, receipt idempotence and missing-reader hold remain. Existing comprehensive 0487/0545/0544/0599 control inventories remain pending under their original IDs; this preflight does not qualify or replace those programs. |
+
+### Guard inventory
+
+Only cheap-slice boundary guards are newly commissioned below; unchanged transitive guards inside the reused transport/landing/qualification engines retain their original plans' controls. Each listed independently bypassable guard has its own PC, including presently unbound ones. No safety-critical exemption is claimed.
+
+| Guard | Plan reference / invariant | Control |
+|---|---|---|
+| G-1 | D-2 advisory alone does not demand a rerun | PC-1 |
+| G-2 | D-2 missing behavior remains substantive | PC-2 |
+| G-3 | D-2 absent/failed required verification never earns Clean/Full | PC-3 |
+| G-4 | D-2 corrected evidence matches subject | PC-4 |
+| G-5 | D-2 corrected evidence matches SHA | PC-5 |
+| G-6 | D-2 corrected evidence matches ref | PC-6 |
+| G-7 | D-2 corrected evidence matches repository | PC-7 |
+| G-8 | D-2 protected instructions/executable documentation never use narrative exemption | PC-8 |
+| G-9 | D-2 comments require safe language-aware equivalence | PC-9 |
+| G-10 | D-2 give new Docs SHA separate approval | PC-10 |
+| G-11 | D-2 Interim latch cannot use Docs escape | PC-11 |
+| G-12 | D-2 historical rows and costs are not rewritten | PC-12 |
+| G-13 | D-3 approved stage authority required | PC-13 |
+| G-14 | D-3 dependency holds respected | PC-14 |
+| G-15 | D-3 source overlap respected | PC-15 |
+| G-16 | D-3 quota refusal respected, no silent reroute | PC-16 |
+| G-17 | D-3 stage cap respected | PC-17 |
+| G-18 | D-3 host cap respected | PC-18 |
+| G-19 | D-3 tracker YAML activation required | PC-19 |
+| G-20 | D-3 scheduled spend acceptance required | PC-20 |
+| G-21 | D-3 completion obligation commits with settlement before enqueue | PC-21 |
+| G-22 | D-3 lost enqueue/wakeup recovers same queue identity | PC-22 |
+| G-23 | D-3 rendering/spill survives restart as the complete frozen body | PC-23 |
+| G-24 | D-3 complete prompt required before receipt | PC-24 |
+| G-25 | D-3 receipt is above attempt sequence floor | PC-25 |
+| G-26 | D-3 current handoff key creates at most one child across restart | PC-26 |
+| G-27 | D-4 confirmed publication required, not push ack/status | PC-27 |
+| G-28 | D-4 implementation owner and card mapping required | PC-28 |
+| G-29 | D-4 Plan-only land excluded | PC-29 |
+| G-30 | D-4 current approval required | PC-30 |
+| G-31 | D-4 explicit acceptance must be satisfied | PC-31 |
+| G-32 | D-4 recorded deployment must match required build/version | PC-32 |
+| G-33 | D-4 required pending companion recorded and correlated | PC-33 |
+| G-34 | D-4 any open implementation task, including Queued, blocks close | PC-34 |
+| G-35 | D-4 newer human move/reopen/hold wins | PC-35 |
+| G-36 | D-4 revalidate predicate atomically at card write | PC-36 |
+| G-37 | D-4 archived-card exclusion retained | PC-37 |
+| G-38 | D-4 readiness uses metadata, no new column or premature Done | PC-38 |
+| G-39 | D-4 shadow cannot close | PC-39 |
+| G-40 | D-4 replay produces one operation-linked close revision | PC-40 |
+| G-41 | D-5 RC cannot grant master readiness | PC-41 |
+| G-42 | D-5 master cannot grant release credit | PC-42 |
+| G-43 | D-5 incomplete execution cannot become green | PC-43 |
+| G-44 | D-5 missing recipient evidence cannot qualify readiness | PC-44 |
+| G-45 | D-5 stale monitor cannot admit Interim | PC-45 |
+| G-46 | D-5 incomplete baseline cannot admit; Found Full remains usable coverage | PC-46 |
+| G-47 | D-5 latched land requires Final/Full | PC-47 |
+| G-48 | D-3 placement refusal independently blocks create | PC-48 |
+| G-49 | D-3 delay reason/next observation durable before held acknowledgement | PC-49 |
+| G-50 | D-3 stale or unmarked handoff cannot select/create a child | PC-50 |
+| G-51 | D-3 timing targets never kill/release Working or Blocked sessions | PC-51 |
+| G-52 | D-2 reviewed source branch stays frozen until publication | PC-52 |
+| G-53 | D-3 receipt belongs to destination session | PC-53 |
+| G-54 | D-3 receipt belongs to current destination generation | PC-54 |
+| G-55 | D-3 human-decision hold respected | PC-55 |
+| G-56 | D-3 missing-evidence hold respected | PC-56 |
+| G-57 | D-3 unmarked/unknown handoff returns to owner, no guessed stage | PC-57 |
+| G-58 | D-4 owned-card exclusion retained | PC-58 |
+| G-59 | D-4 NeedsDecision exclusion retained | PC-59 |
+| G-60 | D-4 terminal-card exclusion retained | PC-60 |
+| G-61 | D-4 disabled cannot close | PC-61 |
+| G-62 | D-4 fewer than 30 accepted shadow events cannot enable | PC-62 |
+| G-63 | D-4 false-close proposal prevents enablement | PC-63 |
+| G-64 | D-4 required deployment cannot be absent/pending | PC-64 |
+
+For composite fixture matrices, Code must split further if implementation introduces independent bypasses (for example multiple token-proof validators); add distinct controls and costs before handoff, never reuse one PC mapping.
+
+### Positive controls
+
+Mutation runs **break/red/restore/green after land**; Code runs V/R; Review judges this design before land. Every PC is required when its slice's Mutation is commissioned. Bind proposed payloads to the landed production line and assert the branch/cut was reached. Build/fixture failure, skip, zero executions or unrelated assertion failure is not red. Restore fixed bytes and rerun the same exact method green. Never mutate a live deployment. New policy mutations below mean compiling edits to the actual predicate or shipped bundle, not changes to expected results.
+
+Detecting filter for every row is exactly `/*/*/<Class>/<Method>` using the single class-qualified method shown; no class-wide mutation run. Assertions quoted below are required labels for new cases; existing-method rows name their existing assertion text. B-1/B-2/B-3 rows remain binding required until their production seam exists, even after ordinary Code green.
+
+| PC | Compiling defect in the corresponding G guard | Exact detecting method; expected red oracle |
+|---|---|---|
+| PC-1 | Route advisory-only disposition to Review rerun | `AdvisoryChangePolicyTests.C1281_AdvisoryDoesNotRerun`; `advisory-rerun-count == 0` |
+| PC-2 | Classify missing acceptance behavior as advisory | `AdvisoryChangePolicyTests.C1281_IncompleteNeverClean`; `missing-behavior-substantive` |
+| PC-3 | Grant Clean/Full for absent required execution | `AdvisoryChangePolicyTests.C1281_IncompleteNeverClean`; `missing-run-no-approval` |
+| PC-4 | Omit subject equality | `AdvisoryChangePolicyTests.C1281_ReceiptCorrection`; `foreign-subject-refused` |
+| PC-5 | Omit SHA equality | `AdvisoryChangePolicyTests.C1281_ReceiptCorrection`; `foreign-sha-refused` |
+| PC-6 | Omit ref equality | `AdvisoryChangePolicyTests.C1281_ReceiptCorrection`; `foreign-ref-refused` |
+| PC-7 | Omit repository equality | `AdvisoryChangePolicyTests.C1281_ReceiptCorrection`; `foreign-repository-refused` |
+| PC-8 | Admit policy Markdown by extension | `AdvisoryChangePolicyTests.C1281_NarrativeBoundary`; `policy-doc-refused` |
+| PC-9 | Accept comments with no equivalence proof | `AdvisoryChangePolicyTests.C1281_CommentEquivalence`; `directive-refused` |
+| PC-10 | Copy old reviewedSourceClean/approval onto Docs SHA | `AdvisoryChangePolicyTests.C1281_SeparateDocsIdentity`; `new-sha-separate-approval` |
+| PC-11 | Ignore owner's Final latch in Docs eligibility | `AdvisoryChangePolicyTests.C1281_SeparateDocsIdentity`; `latched-helper-refused` |
+| PC-12 | Update historical Found row to Clean | `AdvisoryChangePolicyTests.C1281_HistoryPreserved`; `historical-row-unchanged` |
+| PC-13 | Skip stage authorization | `PipelineHandoffPilotTests.C1281_AdmissionHolds`; `unauthorized-zero-child` |
+| PC-14 | Ignore held-card eligibility result | `PipelineHandoffPilotTests.C1281_AdmissionHolds`; `open-blocker-zero-child` |
+| PC-15 | Ignore overlap result | `PipelineHandoffPilotTests.C1281_AdmissionHolds`; `overlap-zero-child` |
+| PC-16 | Retry quota refusal through another provider | `PipelineHandoffPilotTests.C1281_AdmissionHolds`; `quota-zero-child` |
+| PC-17 | Ignore stage cap | `PipelineHandoffPilotTests.C1281_AdmissionHolds`; `stage-cap-zero-child` |
+| PC-18 | Ignore host cap | `PipelineHandoffPilotTests.C1281_AdmissionHolds`; `host-cap-zero-child` |
+| PC-19 | Treat absent tracker activation as enabled | `PipelineHandoffPilotTests.C1281_AdmissionHolds`; `yaml-disabled-zero-child` |
+| PC-20 | Default spend acceptance to true | `PipelineHandoffPilotTests.C1281_AdmissionHolds`; `spend-unaccepted-zero-child` |
+| PC-21 | Save settlement without its completion obligation | `PipelineHandoffPilotTests.C1281_CompletionRecovery`; `obligation-insert-settlement-rolled-back` |
+| PC-22 | Skip pending notification recovery after lost enqueue | `PipelineHandoffPilotTests.C1281_CompletionRecovery`; `note-insert-complete-prompt-count == 1` |
+| PC-23 | Discard frozen delivery before recovery render | `PipelineHandoffPilotTests.C1281_CompletionRecovery`; `render-committed-wire-digest-unchanged` |
+| PC-24 | Confirm from Sent before complete transcript match | `PipelineHandoffPilotTests.C1281_CompletionRecovery`; `clipped-prompt-unconfirmed` |
+| PC-25 | Accept matching text below attempt sequence floor | `PipelineHandoffPilotTests.C1281_CompletionRecovery`; `pre-floor-unconfirmed` |
+| PC-26 | Create another child after lost create acknowledgement | `PipelineHandoffPilotTests.C1281_CurrentHandoffOnce`; `same-key-child-count == 1` |
+| PC-27 | Replace HasPublication with push-start/status test | `PublishedCardCompletionTests.C1281_PublicationGate`; `unconfirmed-zero-done` |
+| PC-28 | Accept unrelated same-card owner's publication | `PublishedCardCompletionTests.C1281_PublicationGate`; `foreign-owner-zero-done` |
+| PC-29 | Accept Plan owner as implementation owner | `PublishedCardCompletionTests.C1281_PublicationGate`; `plan-only-zero-done` |
+| PC-30 | Skip current approval validation | `PublishedCardCompletionTests.C1281_PublicationGate`; `superseded-approval-zero-done` |
+| PC-31 | Treat missing acceptance record as satisfied | `PublishedCardCompletionTests.C1281_Obligations`; `acceptance-missing-zero-done` |
+| PC-32 | Accept deployment of the wrong build | `PublishedCardCompletionTests.C1281_Obligations`; `deploy-sha-mismatch-zero-done` |
+| PC-33 | Ignore required companion correlation | `PublishedCardCompletionTests.C1281_Obligations`; `companion-missing-zero-done` |
+| PC-34 | Reuse old OpenStatuses excluding Queued | `PublishedCardCompletionTests.C1281_ConcurrentClose`; `queued-implementation-not-canceled` |
+| PC-35 | Ignore newer human move at proposal | `PublishedCardCompletionTests.C1281_ConcurrentClose`; `newer-human-zero-done` |
+| PC-36 | Apply stale close decision after CardService reload | `PublishedCardCompletionTests.C1281_ConcurrentClose`; `human-between-proposal-and-write-wins` |
+| PC-37 | Remove archived-card exclusion from close entrypoint | `PublishedCardCompletionTests.C1281_ConcurrentClose`; `archived-zero-done` |
+| PC-38 | Store readiness by moving to Done | `PublishedCardCompletionTests.C1281_ReadyForRelease`; `ready-status-review` |
+| PC-39 | Allow shadow mode to write Done | `PublishedCardCompletionTests.C1281_ShadowGate`; `shadow-zero-done` |
+| PC-40 | Append a second close revision on replay | `PublishedCardCompletionTests.C1281_CloseRecovery`; `same-operation-close-count == 1` |
+| PC-41 | Allow rc-release to satisfy master predicate | `ReleaseGateRunTests.C599_CreditVerdicts`; `rc green never earns master credit` |
+| PC-42 | Allow master-scheduled to satisfy release predicate | `ReleaseGateRunTests.C599_CreditVerdicts`; `master green never earns release credit` |
+| PC-43 | Remove coverageComplete condition | `ReleaseGateRunTests.C599_CreditVerdicts`; `coverageComplete false earns nothing` |
+| PC-44 | Ignore recipientEvidenceIds emptiness | `ReleaseGateActivationTests.C599_Admission`; `receipt-no-recipients must fail closed` |
+| PC-45 | Accept monitor one tick beyond freshness boundary | `ReleaseGateActivationTests.C599_QueuedReadiness`; `one tick past the boundary is stale` |
+| PC-46 | Ignore baseline task completion | `InterimVerificationPolicyTests.C544_BaselineCompletion`; `succeeded-incomplete: zero admitted tasks` |
+| PC-47 | Allow Final Unknown/None for latched land | `InterimVerificationLandGuardTests.C544_FinalFullRequired`; `final-unknown` refusal / zero request |
+| PC-48 | Ignore placement failure | `PipelineHandoffPilotTests.C1281_AdmissionHolds`; `placement-zero-child` |
+| PC-49 | Acknowledge held handoff before saving its delay record | `PipelineHandoffPilotTests.C1281_DelayAccounting`; `restart-retains-reason-and-next-observation` |
+| PC-50 | Dispatch from stale workflow revision | `PipelineHandoffPilotTests.C1281_CurrentHandoffOnce`; `stale-revision-zero-child` |
+| PC-51 | Stop waiting/working caller at 5m deadline | `PipelineHandoffPilotTests.C1281_CurrentHandoffOnce`; `deadline-zero-stop-calls` |
+| PC-52 | Apply the Docs correction to the reviewed branch before publication | `AdvisoryChangePolicyTests.C1281_SeparateDocsIdentity`; `reviewed-tip-unchanged` |
+| PC-53 | Match complete prompt from a foreign session | `PipelineHandoffPilotTests.C1281_CompletionRecovery`; `foreign-session-unconfirmed` |
+| PC-54 | Match complete prompt from an old generation | `PipelineHandoffPilotTests.C1281_CompletionRecovery`; `old-generation-unconfirmed` |
+| PC-55 | Ignore human-decision hold | `PipelineHandoffPilotTests.C1281_AdmissionHolds`; `decision-zero-child` |
+| PC-56 | Ignore missing-evidence hold | `PipelineHandoffPilotTests.C1281_AdmissionHolds`; `evidence-zero-child` |
+| PC-57 | Default an unmarked handoff to Code | `PipelineHandoffPilotTests.C1281_CurrentHandoffOnce`; `unmarked-zero-child` |
+| PC-58 | Remove owned-card exclusion | `PublishedCardCompletionTests.C1281_ConcurrentClose`; `owned-zero-done` |
+| PC-59 | Remove NeedsDecision exclusion | `PublishedCardCompletionTests.C1281_ConcurrentClose`; `decision-zero-done` |
+| PC-60 | Remove terminal-card exclusion | `PublishedCardCompletionTests.C1281_ConcurrentClose`; `terminal-zero-new-move` |
+| PC-61 | Ignore auto-close disabled switch | `PublishedCardCompletionTests.C1281_ShadowGate`; `disabled-zero-done` |
+| PC-62 | Permit enablement with 29 accepted shadow events | `PublishedCardCompletionTests.C1281_ShadowGate`; `under-30-refused` |
+| PC-63 | Permit enablement after a false-close proposal | `PublishedCardCompletionTests.C1281_ShadowGate`; `false-proposal-refused` |
+| PC-64 | Treat absent deployment receipt as satisfied | `PublishedCardCompletionTests.C1281_Obligations`; `deployment-pending-zero-done` |
+
+### Out of scope
+
+- D-6..D-10 / S6..S9 are later slices only: depend on A/B cleanup measurement, C close authorization, qualified D lanes, then versioned train admission -> immutable composition/aggregate approval -> exact publication/member projection -> operation-bound SourceLanding. No train code, aggregate tests, new scheduler, new column, or partial-train projection is commissioned here.
+- D-11 / S10 depends on stable R1 and S1 census; separate non-train cohort, ordinary Review unchanged. No assignment/pipeline experiment here.
+- S1 attribution implementation is separate. This appendix preserves D-1/D-12 denominators and stop gates but does not build the reporting tool.
+- Live deploy, credential placement, recipient authorization and schedule activation remain the owners' operating steps. Approval of D-5 commissions qualification design; it does not make this delegate the operator or authorize external messages.
+- Unchanged internal landing, transcript, readiness and release guards retain their comprehensive original PC inventories. If a cheap slice edits those engines, expand this scope before execution; the small D preflight is not a replacement full qualification roster.
+
+### Checkpoints
+
+The importer reads the first `### Checkpoints` heading, which above is the historical planning inventory. To preserve the original plan unchanged, use the identical table in the [cheap-slice checkpoint manifest](2026-10-15-card-1281-cheap-slices-checkpoints.md), which has one heading. Do not run this parent document as `--plan`. B-1..B-3 unresolved means their rows are designed but not commissionable. D rows are portable fixture preflight only; Q rows are separate operating gates.
+
+All new classes have the method/execution census above: A=7, B=12 (3 ordinary methods + 9 recovery arguments), C=7. Existing class floors below are conservative lower bounds, not claims about current expanded totals; Require every listed method and all its parameter rows, zero failures/skips, fresh TRX. Unit is retained per owner default with nonzero floor 1; Code must record its discovered/executed roster at the committed SHA. Unit already covers Unit-class R inputs; the integration rows do not rerun those classes.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1281-a/` | advisory-unit | `/*/*/*/*[Category=Unit]` | R-1 | >=1 executed; full Unit roster, 0 failed/skipped | 1 | 7 |
+| CP-2 | S2 | CP-1 | advisory-acceptance | `/*/*/(AdvisoryChangePolicyTests*)\|(StageOutcomeSummaryTests*)/*` | V-1,V-2,V-3,V-4,V-5,V-6,V-7,R-1 | A 7 + summary 5 methods, all variants, 0 failed/skipped | 12 | 6 |
+| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1281-b/` | handoff-unit | `/*/*/*/*[Category=Unit]` | R-2 | >=1 executed; full Unit roster, 0 failed/skipped | 1 | 7 |
+| CP-4 | S3 | CP-3 | handoff-acceptance | `/*/*/PipelineHandoffPilotTests/*` | V-8,V-9,V-10,V-11,R-2 | 12 executions, every cut reached, 0 failed/skipped | 12 | 12 |
+| CP-5 | S4 | `tests/Antiphon.Tests -> bin-c1281-c/` | close-unit | `/*/*/*/*[Category=Unit]` | R-3 | >=1 executed; full Unit roster, 0 failed/skipped | 1 | 7 |
+| CP-6 | S4 | CP-5 | close-acceptance | `/*/*/(PublishedCardCompletionTests*)\|(CardWorkTransitionServiceTests*)/*` | V-12,V-13,V-14,V-15,V-16,V-17,V-18,R-3 | C 7 + transition 13 methods, all variants, 0 failed/skipped | 20 | 8 |
+| CP-7 | S5 | `tests/Antiphon.Tests -> bin-c1281-d/` | qualification-admission | `/*/*/ReleaseGateActivationTests/(C599_Admission*)\|(C599_QueuedReadiness*)` | V-19,R-4 | 2 methods, every negative and valid control, 0 failed/skipped | 2 | 6 |
+| CP-8 | S5 | CP-7 | qualification-credit | `/*/*/ReleaseGateRunTests/C599_CreditVerdicts` | V-20,R-4 | 1 execution; 24 named harness assertions, 0 failed/skipped | 1 | 2 |
+| CP-9 | S5 | CP-7 | qualification-baseline | `/*/*/InterimVerificationPolicyTests/C544_BaselineCompletion` | V-21,R-4 | 1 execution, Found Full control admits, 0 failed/skipped | 1 | 3 |
+| CP-10 | S5 | CP-7 | qualification-final | `/*/*/InterimVerificationLandGuardTests/C544_FinalFullRequired` | V-21,R-4 | 1 execution, all scope variants, 0 failed/skipped | 1 | 3 |
+| CP-11 | S5 | CP-7 | qualification-watchdog | `/*/*/NightlyWatchdogCoreTests/(C545_IntentBeforeNetwork*)\|(C545_ReceiptIdempotent*)\|(C545_ReaderHeldWithoutSession*)` | R-4 | 3 executions, all assertion rows, 0 failed/skipped | 3 | 2 |
+
+Code front door after binding: `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1281 -- dotnet run --project tools/Antiphon.Checkpoints -- run --plan docs/superpowers/plans/2026-10-15-card-1281-cheap-slices-checkpoints.md --after S2 --expected-source-sha <committed-source-sha> --serial`; select S3/S4/S5 separately. Await completion (`wait` if exit 75), retain unedited CP lines/provenance, run the base..HEAD evidence guard, clean only owned alternate outputs. Commit red tests before fixes; red-first executions use the same row/selection and are counted as reruns. No mutation run in Code. No whole assembly/native suite added by this appendix.
+
+### Cost
+
+All figures are **estimated**, not measured. Ordinary V/R floor (Code) = **63 minutes**: A `7+6=13`, B `7+12=19`, C `7+8=15`, D `6+2+3+3+2=16`; filters are exactly CP-1..CP-11. Of this, four isolated builds/setup total 16 minutes and V/R execution totals 47. Review budgets its own same ordinary selection; receipt repair never silently replaces required initial Review.
+
+PC floor (Mutation): PC-1..12, PC-27..47, PC-52, PC-58..64 = 41 cycles x 6 minutes = 246; PC-13..26, PC-48..51, PC-53..57 = 23 cycles x 9 minutes = 207; **453 minutes total**. Each six-minute cycle budgets 2 build + 1 exact-method red + 2 restored build + 1 exact-method green; each nine-minute B cycle budgets 2+2.5+2+2.5. No shared-build saving assumed; mutation methods are the exact filters above. Ordinary plus all new PCs = **516 minutes** = 16 setup/build + 47 V/R + 453 PC. An initial red-first pass of all changed A/B/C CP rows adds up to 47 minutes, so reserve **563 minutes** through Code+Mutation, plus independent Review (63) = **626 minutes**. Slot waits, authoring, inherited-red diagnosis and binding work are additional and recorded, never zero-filled.
+
+Live/operating floor is separate: Q-1 lower estimate 300 + Q-2 671 + Q-3 90 + Q-4 30 + Q-5 30 = **1,121 minutes**, plus Q-3's source-specific ordinary run, calendar windows/cohort collection and any upstream activation repair. No complete live total is claimable until those are bound. TestDesign ran 0 builds, 0 tests, 0 PCs and changed documentation only.
+
+Savings claim: **0 measured minutes / $0** from this design. Four ordinary builds replace a per-row build plan's eleven (7 builds avoided; at 4 minutes each, **28 estimated minutes**); baseline per-row rebuilding is a counterfactual, not historical evidence. Unit is intentionally repeated for independently landable A/B/C; D is qualification-only and changes no code. Do not charge all 33.08 historical Review hours as avoidable, or claim closure latency as publication savings.
+
+Audit at this handoff: **guards=64, mapped=64, missing=0, duplicate PC maps=0**. All 64 PCs are required future runs; **executed=0, pending=64**, not passed. B-1/B-2/B-3 and RC activation entrypoint remain explicit binding obligations. `next: plan` resolves those seams; `next: code` is valid only after the affected recipes, exact payloads, source scopes and checkpoint selection are bound. No further D-1..D-12 operator decision is requested.
+
+## Plan binding follow-up (2026-10-15, task 024ec8fb)
+
+D-1..D-12 are approved; their historical proposal wording above is retained, not reopened. The original plan through “Acceptance of this Plan” matches `origin/master` at `7012a447c0919e944dc8e95b912d8699682cf3db` exactly. TestDesign's appendix is retained. **Ancestry reconciliation is blocked:** this task's explicit fast-forward-only contract forbids the requested rebase from pushed base `d63ee104ba28c3a8d9098bdcc2ec59da3b4f1fcd`. Landing must reconcile the add/add, or the caller must commission a fresh master-based Docs task to replay the appendices; this branch must not be rebased or force-pushed.
+
+### Ground truth for the bindings
+
+| Assumption to bind | Inspected code at the assigned base | Chosen boundary |
+|---|---|---|
+| Receipt attachment can repair approval | `ReviewEvidenceRecoveryService.RebindAsync` requires an already-Clean retained report; `RecordFindingAsync` does not validate execution or populate Full. `StageOutcome.Ref` is limited to 1,000 characters. | B-1 adds a typed correction record and validator, preserving original reports/outcomes; do not put a receipt bundle in `Ref` or use the finding override. |
+| Delivery records caller action | `AgentTaskLandNotification` stores completion delivery, not consumption or a next-stage decision. `AgentTaskService.CreateAsync` commits task insertion inside its admission transaction. | B-2 records caller actions separately and joins child creation inside that transaction, rather than dispatching then recording its ID. |
+| Reloading the card makes a proposed close current | `CardWorkflowRun` has no acceptance record. `ApplyAutomatedMoveAsync` reloads the card but receives no expected proposal revision and does not recheck publication/acceptance. | B-3 adds versioned acceptance and a dedicated transactional close entrypoint; ordinary automated moves remain separate. |
+
+### Binding decisions under D-2, D-3 and D-4
+
+All paths below are proposed unless identified as existing. API routes are design contracts, not commands available on today's server. Writes use existing operator/scoped orchestrator authorization, server-derived caller identity, repository/project/card checks and optimistic expected revisions; free-text actor names confer no authority.
+
+**B-1 — receipt correction (D-2).** `POST /api/agent-tasks/{reviewId}/review-evidence/corrections` in new `server/Api/Endpoints/ReviewEvidenceCorrectionEndpoints.cs` calls `ReviewEvidenceCorrectionService.CorrectAsync` (new service under `server/Application/Services/`). Its request, in new `server/Application/Dtos/ReviewEvidenceCorrectionDtos.cs`, names predecessor evidence, expected retained-report digest, subject/SHA/full-ref/repository, committed checkpoint selection, content-addressed receipt bundle and reason. A new `server/Infrastructure/Verification/CheckpointReceiptValidator.cs` imports the receipt bytes and referenced provenance/TRX into retained server evidence storage, checks their digests and producer identity, and invokes the existing `scripts/validate-checkpoint-receipt.ps1` contract against the exact required rows/source. A submitted path, successful process exit or self-reported clean flag alone is insufficient; absent execution returns the exact missing selection, never launches a Review.
+
+Store immutable `ReviewEvidenceCorrection` rows in PostgreSQL (`server/Domain/Entities/ReviewEvidenceCorrection.cs`): schema version, predecessor/report/selection digests, source coordinates, imported evidence identity, validation result, authenticated caller and time, and optional successor outcome ID. Under the existing Review task lock, recheck predecessor/report/source identity and atomically append the correction, audit and any successor `StageOutcome`; duplicates of the predecessor plus canonical bundle digest return the same correction. Preserve historical rows, costs and report bytes. A successor may express Clean Final/Full only when the retained typed behavior assessment already has no substantive finding and validated receipts cover the commissioned Full scope. Unclassified legacy Found or a substantive finding needs Review; receipts cannot change that judgement. `LandApproval.LoadUsableEvidenceAsync` remains the approval consumer and must also validate the correction link for correction-derived outcomes. Reject recovery/override as a substitute because neither proves newly attached execution. **Red witness:** V-2 `C1281_IncompleteNeverClean` refuses absent/failed proof; V-3 `C1281_ReceiptCorrection` calls this route and the real validator/land consumer, repeats after restart and requires one audit/successor, zero Reviews, and independent wrong-subject/SHA/ref/repository refusals.
+
+**B-2 — durable caller action (D-3).** New `server/Api/Endpoints/PipelineHandoffActionEndpoints.cs` exposes `POST /api/agent-tasks/{predecessorId}/handoff-actions` and corresponding scoped GET. New `server/Application/Services/PipelineHandoffActionService.cs` owns `RecordAsync` and `RequestChildAsync`; new DTOs live in `server/Application/Dtos/PipelineHandoffActionDtos.cs`. The authorized caller explicitly writes consumption, then either a classified hold with `nextObservationAt`, or a child request. Store `PipelineHandoffAction` plus append-only `PipelineHandoffObservation` rows in PostgreSQL (same-named new files under `server/Domain/Entities/`). Unique key: predecessor, attempt, settlement source-event ID, next stage, workflow-run ID and run/pipeline revision. Persist notification/queue/receipt references, server consumption time, eligibility observation, reason code, next observation, request digest, caller and child task ID. Preserve separate settlement, notification, receipt, consumption, eligibility, create and dispatch clocks; missing clocks stay unknown. GET joins the actual child row and returns the observation history after restart.
+
+For child creation, pass the bound action ID into the existing `AgentTaskService.CreateAsync` path. Its admission transaction locks/revalidates the handoff, current workflow/card and all authorization/blocker/cap/quota/placement/spend conditions, and inserts the child and action's child link together. An existing link returns that child; a changed request digest refuses; a refusal persists a classified observation separately without acknowledging a nonexistent child. Post-commit notifications occur after this transaction. A crash after consumption or before create leaves a recoverable pending action; a lost create response is resolved by GET, never an unkeyed retry. Reject a new dispatcher or a delivery timestamp as consumption evidence. **Red witnesses:** V-8 `C1281_DelayAccounting` reads reason/time history through GET after restart; V-9 `C1281_AdmissionHolds` reaches actual create admission; V-11 `C1281_CurrentHandoffOnce` races duplicate callers and loses the committed response, asserting one actual child. V-10 retains the complete UserPrompt delivery witness.
+
+**B-3 — acceptance and atomic close (D-4).** New `server/Api/Endpoints/CardCompletionEndpoints.cs` exposes versioned `PUT/GET /api/cards/{cardId}/completion-acceptance` and `POST /api/cards/{cardId}/complete-published`. New `server/Application/Services/CardCompletionAcceptanceService.cs` writes immutable `CardCompletionAcceptance` revisions plus `CardCompletionReceipt` rows (new same-named entities). Bind card/board/project, workflow-run revision, implementation Code owner, repository/ref, reviewed C/Review evidence ID, confirmed landing operation O/verified L, expected card revision/token, policy/decision revision, acceptance items and deployment items with required build/version and evidence digests. Each item has explicit Pending/Satisfied state and authorized actor/time; an empty obligation set requires an explicit authorized category decision. Missing records never mean satisfied. Record the required same-board companion and its O/owner correlation separately; pending PCs remain pending. GET also exposes pre-publication `ready for release` metadata while the card remains Review.
+
+`PublishedCardCompletion` proposes a close; new `CardService.CompletePublishedAsync` rechecks it in one transaction before calling the existing column-move machinery. Serialize on the card row, require the proposal's original card/token/run and acceptance revisions, re-read current Review approval and structured `HasPublication` for the correct Code owner, validate acceptance/deployment at L, companion, exclusions and **all** open implementation statuses including Queued. Acceptance writers use the same card lock. Task admission must lock/recheck that card in its insertion transaction so a concurrent new task cannot slip between the no-open-task check and Done. Serialize the Review check with its existing evidence-writer lock; use a consistent lock order. Append the move revision, dequeue effects and unique `(cardId, operationId, acceptanceRevision)` close receipt together; publish `CardChanged` only after commit. A conflict rolls back and requires a fresh proposal, never refreshes a stale proposal in place. Reject a sweep-only predicate followed by `ApplyAutomatedMoveAsync`: its reload loses the original human-revision fence. **Red witnesses:** V-14 `C1281_Obligations` persists/reads absent, pending, explicit-empty and wrong-build records; V-15 `C1281_ConcurrentClose` places human move, acceptance revision and queued-task insertion barriers between proposal and write; V-17 `C1281_CloseRecovery` cuts before/after commit and proves one operation-linked Done revision. V-13 uses actual confirmed private-remote publication. Shadow/disabled behavior and the 30-event gate remain V-16/Q-4.
+
+### Exclusive ownership and dispatch order
+
+The four source scopes below replace the appendix's provisional file lists. Reserve shared work for **sequential integration**: all five new entity files named in B-1..B-3, `server/Infrastructure/Data/AppDbContext.cs`, CLI-generated `server/Migrations/*` and snapshot, `server/Application/Services/AgentTaskService.cs`, `server/Program.cs`, and new `tests/Antiphon.Tests/Application/PipelineSpeedIntegrationTests.cs`. First land the entity/schema contracts and optional B-2 action-link/B-3 card-fence hooks in task admission; they must not depend on the future component services. Then commission dependent components against that landed foundation. After components land, register their services/endpoints in a final integration pass. Focused TestDesign must bind the foundation and final wiring's schema, authorization, transaction and HTTP tests/PCs before their Code dispatch. The prior 64-PC census/cost does not cover these added surfaces. No task consumes another's unlanded source.
+
+| Cheap slice | Exclusive component files (plus slice-local tests) | Can start now / what waits |
+|---|---|---|
+| A / S2 / D-2 | Existing `server/Bundles/stage-review.md`, `stage-code.md`; new `AdvisoryChangePolicy.cs`, B-1 service/DTO/endpoint/validator; existing `LandApproval.cs` for correction consumption; `tests/Antiphon.Tests/Application/AdvisoryChangePolicyTests.cs`. | **Policy subset can start Code now**, independently of B-1, using S2-policy below (V-1/V-4/V-5/V-6/V-7). Receipt correction V-2/V-3 waits for B-1's focused verification binding and shared foundation. Do not commission two A authors concurrently. |
+| B / S3 / D-3 | Existing `server/Bundles/orchestrator.md`, `docs/orchestration-loop.md`; B-2 service/DTO/endpoint; `tests/Antiphon.Tests/Application/PipelineHandoffPilotTests.cs` and local harness. | **Wait:** B-2 is design-bound here; its transaction hook/schema and focused verification must land first. Then independent Code, CP-3/CP-4. No automatic continuation service or transport rewrite. |
+| C / S4 / D-4 | Existing `CardWorkTransitionService.cs`, `CardWorkTransitionSettings.cs`, `CardService.cs`, `docs/agent-card-lifecycle.md`; new `PublishedCardCompletion.cs`, B-3 service, `server/Application/Dtos/CardCompletionDtos.cs`, B-3 endpoint; `tests/Antiphon.Tests/Application/PublishedCardCompletionTests.cs` and local fixture. | **Wait:** B-3 is design-bound here; its schema/admission fence and focused verification must land first. Then independent Code, CP-5/CP-6; shadow before enablement. No train projection. |
+| D / S5 / D-5 | Qualification Markdown under `docs/investigations/` for CARD-0487/0599/0544. Existing scripts/tests are read-only inputs; repairs return to their owners. | **Portable preflight can start now**, parallel with A policy, CP-7..CP-11. Live qualification remains ordered 0545/0487 -> 0599 -> 0544. CARD-0599 activation Q-1..Q-4 still requires its upstream settings/entrypoint binding; this follow-up supplies neither activation commands nor qualification credit. |
+
+Bare component services/settings resolve as above. Entity declarations and shared registration edits belong exclusively to integration; A/B/C consume them. All existing shared test fixtures/classes remain read-only. Workflow identity uses the existing `(runId, pipelineDefinitionRevisionId, currentStageId, updatedAt)` fence; do not assume a nonexistent run revision property. B-3 permits unset O/L for pre-publication readiness only; close requires a subsequent acceptance revision bound to confirmed O/L. Its admission fence applies to implementation work and preserves explicitly commissioned post-Done Mutation. New component endpoints remain inactive until the final registration pass; integration fixtures map the actual endpoints with production services and the migrated schema.
+
+S2-policy's closed list is CP-12/CP-13 in the [manifest](2026-10-15-card-1281-cheap-slices-checkpoints.md): CP-12 is Unit and CP-13 contains the five A policy methods plus the five existing `StageOutcomeSummaryTests` methods (minimum 10). Omit V-2/V-3 implementations from that first subset; do not use stubs. R-1 in these rows covers policy only, not full S2 receipt acceptance. Full S2 later uses CP-1/CP-2. The policy subset adds an estimated 13 minutes if landed separately; shared-integration verification cost must be bound by focused TestDesign, not hidden in the old 63-minute estimate. No build/test/PC was run in this follow-up.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-12 | S2-policy | `tests/Antiphon.Tests -> bin-c1281-a-policy/` | advisory-policy-unit | `/*/*/*/*[Category=Unit]` | R-1 | >=1 executed; full Unit roster, 0 failed/skipped | 1 | 7 |
+| CP-13 | S2-policy | CP-12 | advisory-policy-acceptance | `/*/*/(AdvisoryChangePolicyTests*)\|(StageOutcomeSummaryTests*)/*` | V-1,V-4,V-5,V-6,V-7,R-1 | A policy 5 + summary 5 methods, all variants, 0 failed/skipped | 10 | 6 |
+
+Placement was re-read through both required GET routes on 2026-10-15: defaults revision 2, available Windows and Linux inventory. CP-1..CP-13 use the portable application/database/script lane, with private Git/PostgreSQL where their recipes require it; D live RC retains its Windows lane. Re-read effective placement/caps at dispatch; omit `-Runner` and omit `-Platform` for portable work. No session wait is added. Existing input waits have no automatic release deadline while parking is disabled (CARD-1083); 5m/15m remain observation thresholds.
