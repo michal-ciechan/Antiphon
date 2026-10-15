@@ -7,7 +7,13 @@ public sealed record PutComplexityChainRequest(
     IReadOnlyList<ComplexityCandidateRequest> Candidates,
     RoutingPinProvenance Provenance = RoutingPinProvenance.Auto,
     string? Reason = null,
-    DateTimeOffset? NotAfter = null);
+    DateTimeOffset? NotAfter = null,
+    /// <summary>
+    /// CARD-1275: the <see cref="ComplexityChainDto.ConcurrencyToken"/> the writer read. Omitted =
+    /// unconditional (legacy callers); the empty GUID = "expect no active row"; any other value
+    /// must equal the active row's token, else 409 <c>complexity_chain_stale</c>.
+    /// </summary>
+    Guid? ConcurrencyToken = null);
 
 public sealed record ComplexityCandidateRequest(AgentKind AgentKind, AgentModelLevel ModelLevel);
 
@@ -39,7 +45,13 @@ public sealed record ComplexityChainDto(
     /// <c>none</c> (empty — a <c>-Complexity</c> dispatch will Block until set).
     /// </summary>
     string ResolvedFrom = "none",
-    ComplexityEffectiveDto? Effective = null);
+    ComplexityEffectiveDto? Effective = null,
+    /// <summary>
+    /// CARD-1275: token of this cell's own active row (the role cell for a role entry, the
+    /// any-role row otherwise); null when the cell has no row, including a role cell that
+    /// resolves through the any-role row or config.
+    /// </summary>
+    Guid? ConcurrencyToken = null);
 
 public sealed record ComplexityEffectiveDto(
     string Source,

@@ -2550,6 +2550,7 @@ public class AppDbContext : DbContext
             entity.Property(c => c.Reason).IsRequired().HasMaxLength(400);
             entity.Property(c => c.CreatedAt).IsRequired();
             entity.Property(c => c.UpdatedAt).IsRequired();
+            entity.Property(c => c.ConcurrencyToken).IsConcurrencyToken();
 
             // NULLS NOT DISTINCT: Postgres treats NULL as distinct in a unique index, so
             // without this two any-role (Role IS NULL) rows of the same complexity could coexist.
