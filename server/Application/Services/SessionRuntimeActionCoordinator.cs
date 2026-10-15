@@ -187,13 +187,17 @@ public sealed class SessionRuntimeActionCoordinator(
         if (generation == action.AcceptedGeneration && action.Phase == QueuePhase)
         {
             var result = await runtime.ExecuteActionQueueAsync(action, ct);
+            // The queue saves exact source IDs alongside the receipt verdict. Do not erase
+            // that obligation with this context's older copy when acknowledging the phase.
+            await db.Entry(action).ReloadAsync(ct);
             if (result.Deferred)
             {
                 action.DueAt = clock.GetUtcNow().UtcDateTime.AddSeconds(1);
                 await db.SaveChangesAsync(ct);
                 return;
             }
-            action.LateConfirmedChannelMessageIds = result.LateConfirmedChannelMessageIds.ToArray();
+            action.LateConfirmedChannelMessageIds = action.LateConfirmedChannelMessageIds
+                .Union(result.LateConfirmedChannelMessageIds).ToArray();
             action.Phase++;
             await db.SaveChangesAsync(ct);
         }

@@ -802,6 +802,20 @@ public sealed partial class SessionMessageQueueService
             if (origin == QueuedMessageOrigin.Channel)
                 row.Body = ChannelPromptCorrelation.Mark(row.Id, row.Body);
             db.SessionQueuedMessages.Add(row);
+            if (reviewThreadId is { } reviewTarget)
+            {
+                if (origin != QueuedMessageOrigin.Channel || conversationKey != $"review:{reviewTarget}")
+                    throw new ValidationException(nameof(reviewThreadId), "Review dispatch requires its authorized channel identity.");
+                var thread = await db.ReviewThreads.SingleAsync(t => t.Id == reviewTarget, ct);
+                thread.Status = ReviewThreadStatus.AwaitingAgent;
+                thread.UpdatedAt = now;
+                var generation = await db.AgentSessions.Where(s => s.Id == sessionId).Select(s => s.StartedAt).SingleAsync(ct);
+                var frontier = await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId)
+                    .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
+                db.SessionRuntimeActions.Add(new SessionRuntimeAction { Id = Guid.NewGuid(), AgentSessionId = sessionId,
+                    AcceptedGeneration = generation, Sequence = frontier, TriggerKind = $"review:{row.Id}",
+                    Phase = SessionRuntimeActionCoordinator.QueuePhase, CreatedAt = now, DueAt = now });
+            }
             var stampCompletion = CompletionNoteStamp.IsCallerCompletionNote(
                 origin, sourceLandNotificationId, sourceTaskId, conversationKey);
             await using var completionTx = stampCompletion || sourceChannelInboundId is not null
@@ -1584,6 +1598,8 @@ public sealed partial class SessionMessageQueueService
             // Cancel-not-strand: a Supervision /compact that sat through a turn must not fire now.
             if (action is not null)
             {
+                // Receipt verdicts and their exact publication obligation share SaveChanges.
+                await db.SessionRuntimeActions.SingleAsync(a => a.Id == action.Id, ct);
                 var generation = await db.AgentSessions.Where(s => s.Id == sessionId)
                     .Select(s => (DateTime?)s.StartedAt).SingleOrDefaultAsync(ct);
                 if (generation != action.AcceptedGeneration) return lateConfirmed.ToResult();
@@ -2755,7 +2771,10 @@ public sealed partial class SessionMessageQueueService
         // The verdict and byte release are one commit. Failed saves leave the durable obligation
         // available to the next fresh context, and callers publish only after this returns.
         if (confirmedIds.Count > 0)
+        {
+            RetainRuntimeLateConfirm(db, sessionId, channelIds);
             await db.SaveChangesAsync(ct);
+        }
         return new LateConfirmCounts(confirmedIds.Count, 0, confirmedIds, channelIds);
     }
 
@@ -2918,9 +2937,18 @@ public sealed partial class SessionMessageQueueService
         }
 
         if (confirmed > 0)
+        {
+            RetainRuntimeLateConfirm(db, sessionId, confirmedChannelMessageIds);
             await db.SaveChangesAsync(ct);
+        }
 
         return new LateConfirmCounts(confirmed, truncated, confirmedMessageIds, confirmedChannelMessageIds);
+    }
+
+    private static void RetainRuntimeLateConfirm(AppDbContext db, Guid sessionId, IEnumerable<Guid> ids)
+    {
+        foreach (var action in db.SessionRuntimeActions.Local.Where(a => a.AgentSessionId == sessionId))
+            action.LateConfirmedChannelMessageIds = action.LateConfirmedChannelMessageIds.Union(ids).ToArray();
     }
 
     /// <summary>CARD-0544 D-9. The Completion obligations (untracked) whose keyed rows are in this run.</summary>
