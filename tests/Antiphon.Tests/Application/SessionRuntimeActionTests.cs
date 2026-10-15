@@ -52,6 +52,8 @@ public class SessionRuntimeActionTests
         {
             var entries = variant == "fallback-fail"
                 ? new[] { f.Event(1, "ToolResult", text: "first", uuid: "first"), entry with { Sequence = 2 }, f.Event(3, "ToolResult", text: "third", uuid: "third") }
+                : variant == "safe-stub" ? new[] { entry, f.Event(2, "CompactBoundary", text: "Context compacted (manual)", uuid: "manual-stub")
+                    with { ToolName = new string('y', 201) } }
                 : new[] { entry };
             try { await f.Runtime.PersistTranscriptAsync(f.SessionId, entries, cancel.Token); }
             catch (OperationCanceledException) when (variant == "cancel-after-commit") { }
@@ -68,15 +70,32 @@ public class SessionRuntimeActionTests
                 rows.Select(t => t.Uuid).ShouldBe(["first", "third"]);
             else
             {
-                rows.ShouldHaveSingleItem(); actions.ShouldHaveSingleItem();
                 if (variant == "safe-stub")
                 {
+                    rows.Count.ShouldBe(2); actions.Count.ShouldBe(2);
                     rows[0].Text.ShouldBe("[transcript text not persistable: 22001]");
                     rows[0].ToolInput.ShouldBeNull(); actions[0].UiProjectionDelta.ShouldNotBeEmpty();
                 }
+                else { rows.ShouldHaveSingleItem(); actions.ShouldHaveSingleItem(); }
             }
         }
         receiver.Payloads.ShouldBeEmpty("admission cannot run an external effect");
+        if (variant == "safe-stub")
+        {
+            await using (var db = f.Db())
+            {
+                db.SessionQueuedMessages.Add(new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = f.SessionId,
+                    Sequence = 1, CreatedAt = DateTime.UtcNow, Body = "wait for authoritative idle", Status = QueuedMessageStatus.Pending });
+                await db.SaveChangesAsync();
+            }
+            await Actions(f).DrainPageAsync(f.SessionId, default);
+            await using var verify = f.Db();
+            var remaining = await verify.SessionRuntimeActions.ToListAsync();
+            remaining.Count.ShouldBe(1, "a safe stub must retain the original manual compaction's narrow queue obligation");
+            remaining[0].Sequence.ShouldBe(2); remaining[0].Phase.ShouldBe(8);
+            (await verify.SessionQueuedMessages.SingleAsync()).DeliveryAttempts.ShouldBe(0,
+                "the stored stub still owns working state; source intent cannot authorize input");
+        }
         if (variant is "batch-fail" or "fallback-fail" or "cancel-after-commit") fault.Hits.ShouldBeGreaterThan(0);
         if (variant == "cancel-after-commit")
             (await f.Store.ReadAsync(f.SessionId, default)).Count.ShouldBe(1);
