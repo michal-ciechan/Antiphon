@@ -53,8 +53,8 @@ classes; no unchanged selection is repeated after green otherwise.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-9 | F5 | `tests/Antiphon.Tests -> bin-c1136-f5/` | cli-status | `/*/*/DelegateScriptLandStatusTests/C1136_StatusPrintsSyncDebtAndPendingLines` | V-15 | exact 3 results, 0 failed/skipped | 3 | 8 | true |
-| CP-10 | F5 | CP-9 | docs-pitfall | `/*/*/(CheckpointManifestDocumentationTests)\|(RunnerBranchContractDocumentationTests)/*` | V-16, V-7 | exact 16 results, 0 failed/skipped | 16 | 2 | true |
-| CP-EXTRA | F5 | CP-9 | affected-classes | `/*/*/(DelegateScriptLandStatusTests)\|(CheckpointManifestDocumentationTests)\|(RunnerBranchContractDocumentationTests)\|(ScopedVerificationInstructionTests)\|(AdvisoryChangePolicyTests)\|(MechanicalPcContractTests)\|(CheckpointRepeatDocumentationTests)\|(TaskPlatformGuidanceTests)\|(RunnerDefaultGuidanceTests)\|(DockerStackDocumentationTests)\|(GrokRunnerImageContractTests)\|(RunnerPushCredentialDocsTests)\|(PackageVersionPinContractTests)/*` | R-10 subset, R-12 | all listed classes, 0 failed/skipped | 124 | 5 | true |
+| CP-10 | F5 | CP-9 | docs-pitfall | `/*/*/(CheckpointManifestDocumentationTests*)\|(RunnerBranchContractDocumentationTests*)/*` | V-16, V-7 | exact 16 results, 0 failed/skipped | 16 | 2 | true |
+| CP-EXTRA | F5 | CP-9 | affected-classes | `/*/*/(DelegateScriptLandStatusTests*)\|(CheckpointManifestDocumentationTests*)\|(RunnerBranchContractDocumentationTests*)\|(ScopedVerificationInstructionTests*)\|(AdvisoryChangePolicyTests*)\|(MechanicalPcContractTests*)\|(CheckpointRepeatDocumentationTests*)\|(TaskPlatformGuidanceTests*)\|(RunnerDefaultGuidanceTests*)\|(DockerStackDocumentationTests*)\|(GrokRunnerImageContractTests*)\|(RunnerPushCredentialDocsTests*)\|(PackageVersionPinContractTests*)/*` | R-10 subset, R-12 | all listed classes, 0 failed/skipped | 124 | 5 | true |
 
 Expected cost: 15 minutes per full group including one isolated build; the first
 red-first group omits CP-EXTRA. No timeout increase or assertion relaxation.
