@@ -31,16 +31,8 @@ public partial class HerdrAlwaysOnChannelParityTests
     [Arguments(AgentKind.Grok, true)]
     [Arguments(AgentKind.ClaudeCode, false)]
     [Arguments(AgentKind.Grok, false)]
-    public Task Standing_ptyhost_history_recovery_preserves_native_identity_and_queued_reply(AgentKind kind, bool alwaysOn)
-    {
-        // CARD-1273: reasons seen with the guards lifted (run 20261015-003609-6511 and the witness
-        // run of Review f2fbd6ae); follow-up CARD-1277.
-        if (OperatingSystem.IsLinux() && kind == AgentKind.ClaudeCode)
-            Skip.Test("CARD-1277: on Linux the first prompt times out: the fake CLI JSONL exists but the transcript normalizer reads no entries from it (cause not established; witness run of Review f2fbd6ae).");
-        if (OperatingSystem.IsLinux() && kind == AgentKind.Grok)
-            Skip.Test("CARD-1277: on Linux the matching prompt is in the fake CLI JSONL, but the fake Grok cuts its reply at 60 characters (src/Antiphon.FakeGrok/Program.cs:850), so the 52-character channel marker pushes the nonce out of the reply and the wait for it does not complete.");
-        return StandingHistoryRecoveryAsync(kind, SessionBackend.PtyHost, alwaysOn);
-    }
+    public Task Standing_ptyhost_history_recovery_preserves_native_identity_and_queued_reply(AgentKind kind, bool alwaysOn) =>
+        StandingHistoryRecoveryAsync(kind, SessionBackend.PtyHost, alwaysOn);
 
     private async Task StandingHistoryRecoveryAsync(AgentKind kind, SessionBackend backend, bool alwaysOn)
     {
