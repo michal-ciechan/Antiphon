@@ -514,7 +514,7 @@ public sealed partial class PhoneHomeTaskDispatchProjectionTests
             Id = id, RootTaskId = id, Title = "remote task", Goal = goal,
             Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Custom, AgentKind = kind,
             ModelLevel = AgentModelLevel.Frontier, Workspace = WorkspaceMode.Worktree,
-            WorkingDirectory = path, WorktreePath = path, WorktreeBranch = "feat/test-remote",
+            WorkingDirectory = path, WorktreePath = path, WorktreeBranch = "feat/card-task-" + id.ToString("N")[..8],
             RunnerId = runnerId, Status = AgentTaskStatus.Queued,
             ReplyTo = AgentTaskReplyTo.None, CreatedAt = now, ConcurrencyToken = Guid.NewGuid(),
         });

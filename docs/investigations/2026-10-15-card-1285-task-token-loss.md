@@ -113,3 +113,35 @@ A fresh dispatch after activation is needed for any currently tokenless task;
 this change cannot modify the environment of its running process.
 CHECKPOINT CP-1 commit=a64b2db0b6dfb5b9ebd443ad820b7740113f8736 build=ok filter=/*/*/PhoneHomeTaskDispatchProjectionTests/C1285_worker_launch_has_durable_task_token executed=6 passed=0 failed=6 skipped=0 trx=/work/worktrees/task-23d87a95/.antiphon/checkpoints/20261015-184558-27e4/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=a64b2db0b6dfb5b9ebd443ad820b7740113f8736 sourceState=clean buildSource=verified
 CHECKPOINT CP-1 commit=ffcdaddcb520417d7b3d8022cfc5868755b18842 build=ok filter=/*/*/PhoneHomeTaskDispatchProjectionTests/C1285_worker_launch_has_durable_task_token executed=6 passed=1 failed=5 skipped=0 trx=/work/worktrees/task-23d87a95/.antiphon/checkpoints/20261015-185455-de54/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=ffcdaddcb520417d7b3d8022cfc5868755b18842 sourceState=clean buildSource=verified
+
+## Existing fixture attribution and final selection correction
+
+At `4a31ec4e997b066cf3503adb1dc366a9f2e8ccb9`, all six new token variants passed
+inside CP-2 (14 executed, 8 passed, 6 failed). The six failures were existing remote
+preparation cases. CP-3 and CP-4 executed zero cases: the initial combined-class
+filters omitted the trailing wildcards required by the pinned TUnit discovery.
+They are incomplete results, not passes. The revised manifest corrects those
+filters without changing the intended classes.
+
+CP-5 reran exactly the six failing existing methods at task base
+`157321d8bbedcd93a3e2b8f4c43f4a098db4cf7f` in detached checkout
+`/tmp/c1285-task-base-23d87a95`. All six reproduced the same failures with clean
+source and verified build provenance. The fixture used `feat/test-remote`;
+`RemoteWorkspaceService.MirrorAsync` requires a recognized delegate branch whose
+short ID equals the task ID. The fixture now seeds that matching branch, and the
+new token test's progress baseline uses the same branch. No production mirror
+rule, timeout or assertion changes. These inherited fixture repairs are included
+so the whole affected class can qualify the launch change.
+
+The base run cost 8m09s: build slot granted after 135s, build 237.96s, row slot
+granted with zero wait, test host 92.34s. An initial request to place base evidence
+outside its checkout was refused before any driver; the corrected run used its
+normal evidence directory. A wait without the base repo-root also refused; the
+corrected wait joined the same run. Neither refusal started additional tests.
+
+The candidate Mutation pack is
+`docs/superpowers/mutations/2026-10-15-card-1285-task-token-candidates.md`.
+CHECKPOINT CP-2 commit=4a31ec4e997b066cf3503adb1dc366a9f2e8ccb9 build=ok filter=/*/*/PhoneHomeTaskDispatchProjectionTests/* executed=14 passed=8 failed=6 skipped=0 trx=/work/worktrees/task-23d87a95/.antiphon/checkpoints/20261015-190253-d496/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=4a31ec4e997b066cf3503adb1dc366a9f2e8ccb9 sourceState=clean buildSource=verified
+CHECKPOINT CP-3 commit=4a31ec4e997b066cf3503adb1dc366a9f2e8ccb9 build=reused filter=/*/*/(LaunchEnvLayersIntegrationTests)|(PinnedProfileLaunchSpecTests)|(CodexDelegateDispatchTests)|(GrokDelegateDispatchTests)|(BootWedgeRelaunchParityTests)/* executed=0 passed=0 failed=0 skipped=0 trx=/work/worktrees/task-23d87a95/.antiphon/checkpoints/20261015-190253-d496/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=4a31ec4e997b066cf3503adb1dc366a9f2e8ccb9 sourceState=clean buildSource=verified
+CHECKPOINT CP-4 commit=4a31ec4e997b066cf3503adb1dc366a9f2e8ccb9 build=reused filter=/*/*/(CheckpointTaskOwnershipTests)|(CheckpointSlotExecutorTests)|(LaunchModelArgumentAppenderTests)/* executed=0 passed=0 failed=0 skipped=0 trx=/work/worktrees/task-23d87a95/.antiphon/checkpoints/20261015-190253-d496/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=4a31ec4e997b066cf3503adb1dc366a9f2e8ccb9 sourceState=clean buildSource=verified
+CHECKPOINT CP-5 commit=157321d8bbedcd93a3e2b8f4c43f4a098db4cf7f build=ok filter=/*/*/PhoneHomeTaskDispatchProjectionTests/(Runner_bound_boot_wedge_relaunch_keeps_the_runner_binding_and_projection*)|(Runner_bound_grok_task_reaches_the_queue_projected*)|(Runner_bound_claude_task_reaches_the_queue_projected*)|(Runner_bound_task_launch_reaches_runner_start_with_a_sourced_task_on_record*)|(Card_bound_runner_worktree_task_dispatches*)|(Runner_bound_grok_brief_spills_under_the_runner_cwd*) executed=6 passed=0 failed=6 skipped=0 trx=/tmp/c1285-task-base-23d87a95/.antiphon/checkpoints/20261015-191110-083e/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=157321d8bbedcd93a3e2b8f4c43f4a098db4cf7f sourceState=clean buildSource=verified
