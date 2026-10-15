@@ -8021,6 +8021,12 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(160)
                         .HasColumnType("character varying(160)");
 
+                    b.Property<DateTime?>("ReviewReplyConsumedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ReviewThreadId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTime?>("RulesAcknowledgedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -8054,6 +8060,10 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<long?>("RulesTurnEndSequence")
                         .HasColumnType("bigint");
+
+                    b.Property<string>("RuntimeActionKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
 
                     b.Property<DateTime?>("SentAt")
                         .HasColumnType("timestamp with time zone");
@@ -8121,8 +8131,15 @@ namespace Antiphon.Server.Migrations
                         .HasDatabaseName("IX_SessionQueuedMessages_AgentSessionId_PinRefreshKey")
                         .HasFilter("\"PinRefreshKey\" IS NOT NULL");
 
+                    b.HasIndex("AgentSessionId", "ReviewThreadId")
+                        .HasFilter("\"ReviewThreadId\" IS NOT NULL AND \"ReviewReplyConsumedAt\" IS NULL");
+
                     b.HasIndex("AgentSessionId", "RulesRefreshKey")
                         .IsUnique();
+
+                    b.HasIndex("AgentSessionId", "RuntimeActionKey")
+                        .IsUnique()
+                        .HasFilter("\"RuntimeActionKey\" IS NOT NULL");
 
                     b.HasIndex("Origin", "Status")
                         .HasDatabaseName("IX_SessionQueuedMessages_OpenChannelCorrelations")
@@ -8202,6 +8219,10 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("FailureReason")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
+
+                    b.PrimitiveCollection<Guid[]>("LateConfirmedChannelMessageIds")
+                        .IsRequired()
+                        .HasColumnType("uuid[]");
 
                     b.Property<int>("Phase")
                         .HasColumnType("integer");
