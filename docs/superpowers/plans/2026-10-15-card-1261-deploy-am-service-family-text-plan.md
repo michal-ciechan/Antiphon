@@ -53,3 +53,22 @@ live acceptance; the Family round trip stays operator-initiated.
 - PC-1: restore the skipped-branch line to the retired group text; V-1 goes red.
 - PC-2: restore the required-branch line to the retired group text; V-2 goes red.
 - PC-3: insert a non-ASCII character into the script help; V-3 goes red.
+
+## Evidence
+
+S1 red (unlisted, disclosed above): `scripts/build-slot.ps1 -Label card1261-red` running
+the CP-1 command at `a6e64feb89c8d44e215f357166c3f19cc6ba070d` reported the three
+CARD-1261 assertions as `FAIL` and exit 1; the harness summary line carries the counts.
+
+Checkpoint run `20261015-003723-0a87` at `bfa1851337693d05dcc60aec6b888f43d2bd2cce`
+(generated evidence under `.antiphon/checkpoints/`, gitignored):
+
+```text
+CHECKPOINT CP-1 commit=bfa1851337693d05dcc60aec6b888f43d2bd2cce build=n/a filter=pwsh -NoProfile -NonInteractive -File scripts/test-deploy-am-service.ps1 executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=0 slot=granted waited=0s dirty=0 source=bfa1851337693d05dcc60aec6b888f43d2bd2cce sourceState=clean buildSource=notApplicable
+CHECKPOINT CP-2 commit=bfa1851337693d05dcc60aec6b888f43d2bd2cce build=ok filter=/*/*/AmServiceDeployReadinessTests/(RetriesUntilHttpReadyAsync*)|(FailsWhenHttpReadinessBudgetIsExhaustedAsync*)|(SucceedsImmediatelyAndPreservesDeployContractAsync*) executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-81e506c1/.antiphon/checkpoints/20261015-003723-0a87/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=bfa1851337693d05dcc60aec6b888f43d2bd2cce sourceState=clean buildSource=verified
+```
+
+CP-1 console: `DEPLOY-AM-SERVICE TESTS EXIT CODE: 0`, with the three CARD-1261 assertions
+printed as `PASS`. Receipts validated by
+`validate --evidence <run>/report.json --expected-source-sha bfa18513...` and
+`scripts/validate-checkpoint-receipt.ps1` (both `CHECKPOINT SOURCE VALID ... rows=2`).
