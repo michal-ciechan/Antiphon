@@ -32,16 +32,27 @@ required follow-up: this delegate cannot use a bound server2 checkpoint.
 | CP-1 | Diagnosis | `tests/Antiphon.Tests -> bin-q2-red/` | original-windows-red | `/*/*/HostCleanupCheckpointCustodyTests/*` | V-1 | all 12 original cases; diagnostic red expected | 12 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-2 | Repair | `tests/Antiphon.Tests -> bin-q2-green/` | custody-windows | `/*/*/HostCleanupCheckpointCustodyTests/*` | V-2 | all 12 cases, 0 failed/skipped | 12 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | Repair | CP-2 | cleanup-regression | `/*/*/(HostCleanup*)\|(OutputCleanup*)\|(CheckpointOwned*)/*` | R-1 | all named full classes, 0 failed/skipped | 1 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-4 | Repair | CP-2 | final-unit | `/*/*/*/*[Category=Unit]` | R-2 | whole Unit lane, 0 failed | 1992 | 12 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled` |
+| CP-4 | Repair | CP-2 | final-unit | `/*/*/*/*[Category=Unit]` | R-2 | whole Unit lane, 0 failed | 1992 | 53 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled` |
 
 ### Cost
 
-Estimated ordinary Windows cost: 30 minutes including two isolated builds.
+Estimated ordinary Windows cost: 71 minutes including two isolated builds.
+The measured Windows Unit sample took 52m14s for tests alone (the CARD-1287
+Windows lane report), so the initial 12-minute estimate was invalid. CP-4 cannot
+fit this commission's 60-minute budget alongside diagnosis and named regression
+work; it remains an incomplete Final requirement, never a passed or waived row.
 Checkpoint CLI bootstrap is a declared additional slot-gated build. Run the
 checkpoint tool via the build-slot wrapper, pass committed HEAD as expected SHA,
 and wait for completion. Inspect fresh TRX methods/counts and clean receipts.
 Any missing-token fallback clears ANTIPHON_TASK_ID only in the child environment.
 No source edits while a run is active. No repeat proof after green is required.
+
+Windows launcher correction: import this table to an ignored YAML manifest and
+set `build.properties.UseAppHost: false` explicitly, so build and run agree. The
+initial tool run was refused by Git preflight; its retry built a DLL but tried to
+launch a missing apphost. The baseline therefore executes that exact stamped DLL
+through `scripts/build-slot.ps1` with the CP-1 filter and fresh TRX, without another
+build. These failed admissions and the additional diagnostic execution are retained.
 
 All inherited CARD-0987 PC-1..413 and variants remain pending SourceLanding
 Mutation. No deliberate mutants are part of this Code task. Mutation also owns

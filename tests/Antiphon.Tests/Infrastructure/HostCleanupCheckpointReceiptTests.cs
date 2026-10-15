@@ -50,7 +50,7 @@ public sealed class HostCleanupCheckpointReceiptTests
             {
                 "held-type" => m with { Regular = false },
                 "held-links" => m with { Links = 2 },
-                "outside" => m with { Path = f.Files.Parent + "/outside" },
+                "outside" => m with { Path = Path.Combine(f.Files.Parent, "outside") },
                 _ => m
             };
             f.Io.InspectFails = variant == "inspect-error";
@@ -327,8 +327,8 @@ public sealed class HostCleanupCheckpointReceiptTests
             // Exercise the replaceable state and history append, with the same context.
             f.State.Nonce++;
             store.Write(f.StatePath, f.State).ShouldBeNull(label + ":state-replace");
-            f.Io.Count("append", f.Run + "/state.history.jsonl").ShouldBe(1, label + ":history");
-            f.Io.Text(f.Run + "/state.history.jsonl").Split('\n', StringSplitOptions.RemoveEmptyEntries).Length.ShouldBe(2, label + ":history-lines");
+            f.Io.Count("append", Path.Combine(f.Run, "state.history.jsonl")).ShouldBe(1, label + ":history");
+            f.Io.Text(Path.Combine(f.Run, "state.history.jsonl")).Split('\n', StringSplitOptions.RemoveEmptyEntries).Length.ShouldBe(2, label + ":history-lines");
             ReportWriter.WriteFiles(f.Context, f.Run, f.Report);
             // Reads survive a fresh registry but never acquire generic output custody.
             var fresh = f.Files.FreshContext();
