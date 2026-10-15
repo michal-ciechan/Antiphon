@@ -9,6 +9,8 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -22,7 +24,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public class SessionRuntimeActionRoutingTests
+public partial class SessionRuntimeActionRoutingTests
 {
     [Test]
     [Arguments("working")]
@@ -276,6 +278,8 @@ public class SessionRuntimeActionRoutingTests
     [Arguments("atomic-comment")]
     [Arguments("ttl")]
     [Arguments("api-error")]
+    [Arguments("legacy-upgrade")]
+    [Arguments("enqueue-failure")]
     public async Task C1259_review_recovery_uses_authorized_queue_identity_once(string variant)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -305,6 +309,41 @@ public class SessionRuntimeActionRoutingTests
         var decoy = await service.CreateAsync(h.AgentId,
             new CreateReviewThreadRequest("notes/other.md", 2, null, "A different question", false), default);
         decoy.ShouldNotBeNull();
+        if (variant == "enqueue-failure")
+        {
+            fault.QueueArmed = true;
+            await Should.ThrowAsync<IOException>(() => service.DispatchAsync(thread.Id, default));
+            fault.Hits.ShouldBe(1, "the real review queue admission save must fail");
+            await using var failed = h.CreateObserverContext();
+            (await failed.SessionQueuedMessages.CountAsync()).ShouldBe(0);
+            (await failed.SessionRuntimeActions.CountAsync()).ShouldBe(0);
+            (await failed.ReviewThreads.SingleAsync(t => t.Id == thread.Id)).Status.ShouldBe(ReviewThreadStatus.Open);
+        }
+        if (variant == "legacy-upgrade")
+        {
+            (await service.DispatchAsync(thread.Id, default)).ShouldBeTrue();
+            Guid legacyId;
+            await using (var db = h.CreateObserverContext())
+            {
+                legacyId = (await db.SessionQueuedMessages.SingleAsync()).Id;
+                var previous = db.Database.GetMigrations().TakeWhile(m => m != "20261015181237_SessionRuntimeActions").Last();
+                var migrator = db.GetService<IMigrator>();
+                await migrator.MigrateAsync(previous);
+                await migrator.MigrateAsync();
+            }
+            await using (var upgraded = h.CreateObserverContext())
+            {
+                var legacy = await upgraded.SessionQueuedMessages.SingleAsync(m => m.Id == legacyId);
+                legacy.ReviewThreadId.ShouldBeNull("the real upgrade cannot infer authority from the legacy key");
+                legacy.ReviewReplyConsumedAt.ShouldBeNull();
+                (await upgraded.SessionRuntimeActions.CountAsync()).ShouldBe(0, "migration cannot replay historical transcript effects");
+                (await upgraded.ReviewComments.CountAsync(c => c.Author == ReviewCommentAuthor.Agent)).ShouldBe(0);
+                // Explicit redispatch retires the unknown legacy request, then uses the real
+                // producer to create new durable authority. No target is backfilled.
+                legacy.Status = QueuedMessageStatus.Canceled;
+                await upgraded.SaveChangesAsync();
+            }
+        }
         (await service.DispatchAsync(thread.Id, default)).ShouldBeTrue();
         SessionQueuedMessage source;
         await using (var db = h.CreateObserverContext())
@@ -450,10 +489,13 @@ public class SessionRuntimeActionRoutingTests
     private sealed class CommentCommitFault : SaveChangesInterceptor
     {
         public bool Armed;
+        public bool QueueArmed;
         public int Hits;
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
             InterceptionResult<int> result, CancellationToken ct = default)
         {
+            if (QueueArmed && data.Context!.ChangeTracker.Entries<SessionQueuedMessage>().Any(e => e.State == EntityState.Added))
+            { QueueArmed = false; Hits++; throw new IOException("deterministic review admission failure"); }
             if (Armed && data.Context!.ChangeTracker.Entries<ReviewComment>().Any(e => e.State == EntityState.Added))
             { Armed = false; Hits++; throw new IOException("deterministic comment transaction failure"); }
             return ValueTask.FromResult(result);
