@@ -19,7 +19,7 @@ CHECKPOINT CP-1 commit=48855ce665284b1c0f745c08b86027b9a420b592 build=n/a filter
 verdict: RED exit=1
 ```
 
-CP-2 and CP-3 at S2, run `20261015-061840-d5fc`: CP-2 red only in `SettingsPage.test.tsx` (2 tests,
+CP-2 and CP-3 at S2, run `20261015-061840-d5fc`: CP-2 red in `SettingsPage.test.tsx` (2 tests,
 `expected 15 to be 1`), which fail with the same assertion at the base (classified in a detached
 base worktree through build-slot `c1274-settingspage-classify`). The plan moved that file to CP-4.
 
@@ -76,4 +76,4 @@ broken by copy-and-rename before the client rows. Manifests rowMinutes 40, total
 5. Enumerated and not changed: ProjectConfig readiness cell (`--` for a pending or failed read),
    ConcurrencySettingsTab scope label for an unread project, DispatchConcurrencyEditor scope loader
    for a paused read, ProjectSetupModal existing-project hint, AgentTuiProfileModal runner list.
-6. jsdom only; no real-browser acceptance.
+6. Tests run under jsdom; no real-browser acceptance.
