@@ -55,18 +55,19 @@ import { ProjectDeleteDialog } from './ProjectDeleteDialog'
 import { ProjectReadinessPanel } from './ProjectReadinessPanel'
 import { ProjectSetupModal } from './ProjectSetupModal'
 import { ApiKeysSection } from './ApiKeysSection'
+import { PendingRead } from './PendingRead'
+import { pendingReadLabel } from './routingSettingsModel'
 import { envToText, parseEnvironmentText } from '../../shared/environmentText'
 import { notifications } from '@mantine/notifications'
 
 export function ProjectConfig() {
-  const { data: projects, isLoading, error } = useProjects()
+  const projectsQuery = useProjects()
+  const { data: projects, error } = projectsQuery
+  // CARD-1274: a pending read (loading, or paused offline) is not an empty project list.
+  const pending = pendingReadLabel(projectsQuery, 'Projects')
 
-  if (isLoading) {
-    return (
-      <Group justify="center" py="xl">
-        <Loader size="md" />
-      </Group>
-    )
+  if (pending) {
+    return <PendingRead label={pending} py="xl" />
   }
 
   if (error) {
@@ -83,7 +84,10 @@ export function ProjectConfig() {
 function ProjectList({ projects }: { projects: ProjectDto[] }) {
   const updateMutation = useUpdateProject()
   const testMutation = useTestGitConnectivity()
-  const { data: boards } = useBoards()
+  const boardsQuery = useBoards()
+  const boards = boardsQuery.data
+  // CARD-1274: without the board list a project's Boards cell is unknown, not "--".
+  const boardsRead = { pending: pendingReadLabel(boardsQuery, 'Boards'), failed: boardsQuery.isError }
   const { data: githubRepos } = useGitHubRepos()
   const refreshReposMutation = useRefreshGitHubRepos()
   const navigate = useNavigate()
@@ -283,8 +287,16 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
                       {project.gitRepositoryUrl}
                     </Text>
                   </Table.Td>
-                  <Table.Td>
-                    <ProjectBoardsCell boards={boardsByProject.get(project.id) ?? []} />
+                  <Table.Td data-testid={`project-boards-${project.id}`}>
+                    {boardsRead.pending ? (
+                      <PendingRead label={boardsRead.pending} py={0} />
+                    ) : boardsRead.failed ? (
+                      <Text size="sm" c="dimmed">
+                        Could not load boards.
+                      </Text>
+                    ) : (
+                      <ProjectBoardsCell boards={boardsByProject.get(project.id) ?? []} />
+                    )}
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm" c="dimmed">

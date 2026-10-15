@@ -13,7 +13,6 @@ import {
   ActionIcon,
   Tooltip,
   Alert,
-  Loader,
   Collapse,
   Divider,
   Select,
@@ -45,6 +44,23 @@ import {
   type LlmProviderDto,
   type TemplateGroupDto,
 } from '../../api/settings'
+import { PendingRead } from './PendingRead'
+import { pendingReadLabel } from './routingSettingsModel'
+
+/** A list read that is not loaded: its pending text, or whether it failed (CARD-1274). */
+interface ListRead {
+  pending: string | null
+  failed: boolean
+}
+
+function ListReadUnknown({ read, failedText }: { read: ListRead; failedText: string }) {
+  if (read.pending) return <PendingRead label={read.pending} py={0} />
+  return (
+    <Text size="sm" c="dimmed">
+      {failedText}
+    </Text>
+  )
+}
 
 const PROVIDER_TYPE_LABELS: Record<number, string> = {
   0: 'Anthropic',
@@ -53,9 +69,16 @@ const PROVIDER_TYPE_LABELS: Record<number, string> = {
 }
 
 export function TemplateManager() {
-  const { data: templates, isLoading, error } = useTemplates()
-  const { data: providers } = useProviders()
-  const { data: templateGroups } = useTemplateGroups()
+  const templatesQuery = useTemplates()
+  const { data: templates, error } = templatesQuery
+  const providersQuery = useProviders()
+  const providers = providersQuery.data
+  const groupsQuery = useTemplateGroups()
+  const templateGroups = groupsQuery.data
+  // CARD-1274: a pending (loading, or paused offline) or failed list read is not an empty list.
+  const templatesPending = pendingReadLabel(templatesQuery, 'Templates')
+  const providersRead: ListRead = { pending: pendingReadLabel(providersQuery, 'Providers'), failed: providersQuery.isError }
+  const groupsRead: ListRead = { pending: pendingReadLabel(groupsQuery, 'Template groups'), failed: groupsQuery.isError }
   const createMutation = useCreateTemplate()
   const updateMutation = useUpdateTemplate()
   const deleteMutation = useDeleteTemplate()
@@ -159,12 +182,8 @@ export function TemplateManager() {
     label: g.name,
   }))
 
-  if (isLoading) {
-    return (
-      <Group justify="center" py="xl">
-        <Loader size="md" />
-      </Group>
-    )
+  if (templatesPending) {
+    return <PendingRead label={templatesPending} py="xl" />
   }
 
   if (error) {
@@ -267,7 +286,11 @@ export function TemplateManager() {
 
               <Collapse in={expandedTemplateId === template.id}>
                 <Divider />
-                <TemplateModelRouting templateId={template.id} providers={providers ?? []} />
+                <TemplateModelRouting
+                  templateId={template.id}
+                  providers={providers ?? []}
+                  providersRead={providersRead}
+                />
               </Collapse>
             </Paper>
           ))}
@@ -282,7 +305,7 @@ export function TemplateManager() {
 
       {/* Template Groups Section */}
       <Divider mt="md" />
-      <TemplateGroupsManager groups={templateGroups ?? []} />
+      <TemplateGroupsManager groups={templateGroups ?? []} groupsRead={groupsRead} />
 
       {/* Create / Edit Modal */}
       <Modal
@@ -370,7 +393,7 @@ export function TemplateManager() {
 
 // --- Template Groups Manager ---
 
-function TemplateGroupsManager({ groups }: { groups: TemplateGroupDto[] }) {
+function TemplateGroupsManager({ groups, groupsRead }: { groups: TemplateGroupDto[]; groupsRead: ListRead }) {
   const createMutation = useCreateTemplateGroup()
   const updateMutation = useUpdateTemplateGroup()
   const deleteMutation = useDeleteTemplateGroup()
@@ -447,7 +470,7 @@ function TemplateGroupsManager({ groups }: { groups: TemplateGroupDto[] }) {
   const isSaving = createMutation.isPending || updateMutation.isPending
 
   return (
-    <Stack>
+    <Stack data-testid="template-groups-section">
       <Group justify="space-between">
         <Text fw={500} size="sm">
           Template Groups
@@ -457,7 +480,9 @@ function TemplateGroupsManager({ groups }: { groups: TemplateGroupDto[] }) {
         </Button>
       </Group>
 
-      {groups.length > 0 ? (
+      {groupsRead.pending || groupsRead.failed ? (
+        <ListReadUnknown read={groupsRead} failedText="Could not load template groups." />
+      ) : groups.length > 0 ? (
         <Table striped highlightOnHover fz="sm">
           <Table.Thead>
             <Table.Tr>
@@ -598,11 +623,15 @@ function TemplateGroupsManager({ groups }: { groups: TemplateGroupDto[] }) {
 function TemplateModelRouting({
   templateId,
   providers,
+  providersRead,
 }: {
   templateId: string
   providers: LlmProviderDto[]
+  providersRead: ListRead
 }) {
-  const { data: routings, isLoading } = useModelRoutingsByTemplate(templateId)
+  const routingsQuery = useModelRoutingsByTemplate(templateId)
+  const routings = routingsQuery.data
+  const routingsRead: ListRead = { pending: pendingReadLabel(routingsQuery, 'Model routing'), failed: routingsQuery.isError }
   const createMutation = useCreateModelRouting(templateId)
   const updateMutation = useUpdateModelRouting(templateId)
   const deleteMutation = useDeleteModelRouting(templateId)
@@ -679,7 +708,7 @@ function TemplateModelRouting({
   const isSaving = createMutation.isPending || updateMutation.isPending
 
   return (
-    <Stack p="md" gap="sm">
+    <Stack p="md" gap="sm" data-testid={`template-model-routing-${templateId}`}>
       <Group justify="space-between">
         <Text size="sm" fw={500}>
           Model Routing
@@ -695,8 +724,11 @@ function TemplateModelRouting({
         </Button>
       </Group>
 
-      {isLoading ? (
-        <Loader size="xs" />
+      {providersRead.pending || providersRead.failed ? (
+        // Provider names and the add-a-provider hint depend on the provider list.
+        <ListReadUnknown read={providersRead} failedText="Could not load providers." />
+      ) : routingsRead.pending || routingsRead.failed ? (
+        <ListReadUnknown read={routingsRead} failedText="Could not load model routing." />
       ) : routings && routings.length > 0 ? (
         <Table striped highlightOnHover fz="sm">
           <Table.Thead>

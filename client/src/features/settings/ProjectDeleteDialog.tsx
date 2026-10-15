@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Alert, Button, Checkbox, Group, List, Loader, Modal, Stack, Text } from '@mantine/core'
+import { Alert, Button, Checkbox, Group, List, Modal, Stack, Text } from '@mantine/core'
 import { TbAlertTriangle } from 'react-icons/tb'
 import { getApiErrorMessage } from '../../api/client'
 import {
@@ -9,6 +9,8 @@ import {
 } from '../../api/projects'
 
 import { describeImpact } from './describeImpact'
+import { PendingRead } from './PendingRead'
+import { pendingReadLabel } from './routingSettingsModel'
 
 export interface ProjectDeleteDialogProps {
   project: ProjectDto | null
@@ -36,7 +38,10 @@ export function ProjectDeleteDialog({ project, onClose, onDeleted }: ProjectDele
     setError(null)
   }
 
-  const data = impact.data
+  // CARD-1274: a pending read (loading, or paused offline) and a failed one, also a failed
+  // refetch over an older answer, leave the impact unknown, so nothing is listed and Delete stays off.
+  const pending = pendingReadLabel(impact, 'Deletion impact')
+  const data = impact.isError ? undefined : impact.data
   const lines = data ? describeImpact(data) : []
   const needsAcknowledgement = data?.requiresConfirmation ?? false
   const blocked = data ? !data.canDelete : false
@@ -63,19 +68,11 @@ export function ProjectDeleteDialog({ project, onClose, onDeleted }: ProjectDele
           Delete the project "{project?.name}"? This cannot be undone.
         </Text>
 
-        {impact.isLoading && (
-          <Group gap="xs">
-            <Loader size="xs" />
-            <Text size="sm" c="dimmed">
-              Checking what this would delete...
-            </Text>
-          </Group>
-        )}
+        {pending && <PendingRead label={pending} py={0} />}
 
         {impact.isError && (
           <Alert color="red" icon={<TbAlertTriangle />}>
-            Could not check what this project owns. Deleting now could fail or destroy more than
-            you expect.
+            Could not check what this project owns. Delete stays disabled until the check loads.
           </Alert>
         )}
 
