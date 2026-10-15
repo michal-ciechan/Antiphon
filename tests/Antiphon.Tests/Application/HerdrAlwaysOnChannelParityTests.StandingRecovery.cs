@@ -143,19 +143,35 @@ public partial class HerdrAlwaysOnChannelParityTests
         }
     }
 
+    // CARD-1273: the six rows of the former Standing_native_wire_missing_target_never_creates are
+    // split by their Linux guard so the rows that run on Linux can be selected without a skip.
     [Test]
-    [Arguments(AgentKind.ClaudeCode, SessionBackend.PtyHost, false)]
-    [Arguments(AgentKind.Grok, SessionBackend.PtyHost, false)]
-    [Arguments(AgentKind.ClaudeCode, SessionBackend.Herdr, false)]
-    [Arguments(AgentKind.Grok, SessionBackend.Herdr, false)]
-    [Arguments(AgentKind.Grok, SessionBackend.PtyHost, true)]
-    [Arguments(AgentKind.Grok, SessionBackend.Herdr, true)]
-    public async Task Standing_native_wire_missing_target_never_creates(AgentKind kind, SessionBackend backend, bool unavailable)
+    [Arguments(AgentKind.Grok, SessionBackend.PtyHost)]
+    [Arguments(AgentKind.ClaudeCode, SessionBackend.Herdr)]
+    [Arguments(AgentKind.Grok, SessionBackend.Herdr)]
+    public Task Standing_native_wire_missing_target_never_creates(AgentKind kind, SessionBackend backend) =>
+        NativeWireMissingTargetNeverCreatesAsync(kind, backend, unavailable: false);
+
+    [Test]
+    public Task Standing_claude_ptyhost_native_wire_missing_target_never_creates()
     {
-        if (OperatingSystem.IsLinux() && kind == AgentKind.ClaudeCode && backend == SessionBackend.PtyHost && !unavailable)
+        if (OperatingSystem.IsLinux())
             Skip.Test("CARD-0878: Linux PtyHost output/exit race can miss native-session-missing classification.");
-        if (OperatingSystem.IsLinux() && kind == AgentKind.Grok && unavailable)
+        return NativeWireMissingTargetNeverCreatesAsync(AgentKind.ClaudeCode, SessionBackend.PtyHost, unavailable: false);
+    }
+
+    [Test]
+    [Arguments(SessionBackend.PtyHost)]
+    [Arguments(SessionBackend.Herdr)]
+    public Task Standing_grok_unavailable_native_store_never_creates(SessionBackend backend)
+    {
+        if (OperatingSystem.IsLinux())
             Skip.Test("CARD-0865: Linux Grok unavailable-native-store classification awaits repair.");
+        return NativeWireMissingTargetNeverCreatesAsync(AgentKind.Grok, backend, unavailable: true);
+    }
+
+    private async Task NativeWireMissingTargetNeverCreatesAsync(AgentKind kind, SessionBackend backend, bool unavailable)
+    {
         var root = Path.Combine(Path.GetTempPath(), $"c466-native-missing-{Guid.NewGuid():N}"); Directory.CreateDirectory(root);
         var home = Path.Combine(root, "native-home"); Directory.CreateDirectory(home);
         if (unavailable) await File.WriteAllTextAsync(Path.Combine(home, "sessions"), "not a directory: synthetic unavailable native storage");
