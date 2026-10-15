@@ -14,6 +14,40 @@ namespace Antiphon.Tests.Agents;
 public class CodexResponseAnalyzerTests
 {
     [Test]
+    public async Task Cursor_move_inside_echo_word_does_not_become_an_agent_question()
+    {
+        foreach (var move in new[] { "\u001b[1;6H", "\u001b[1C" })
+            await AssertEchoExcluded("Run abc?", "Run a" + move + "bc?\r\nDone.");
+    }
+
+    [Test]
+    public async Task Cursor_move_after_echo_space_does_not_become_an_agent_question()
+    {
+        foreach (var move in new[] { "\u001b[1;5H", "\u001b[1C" })
+            await AssertEchoExcluded("Run abc?", "Run " + move + "abc?\r\nDone.");
+    }
+
+    private static async Task AssertEchoExcluded(string prompt, string raw)
+    {
+        CodexResponseAnalyzer.ExtractResponse(raw, prompt).ShouldBe("Done.", "C907-D1-codex-echo");
+        CodexResponseAnalyzer.IsAskingQuestion(raw, prompt).ShouldBeFalse("C907-D1-codex-question");
+
+        var client = new ScriptedCodexRunnerClient { RawOutput = raw };
+        await using var adapter = new RunnerCodexAdapter(client, Options.Create(new AgentRegistrySettings()));
+        await adapter.StartAsync(new AgentLaunchSpec(
+            DefinitionName: "codex", Kind: AgentKind.Codex, Exe: "unused",
+            Args: [], Env: new Dictionary<string, string>(), Cwd: Path.GetTempPath(),
+            Cols: 120, Rows: 30, SessionId: Guid.NewGuid()), CancellationToken.None);
+        await adapter.SendPromptAsync(prompt, CancellationToken.None);
+        client.Append(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var result = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        result.ResponseText.ShouldBe("Done.", "C907-D1-runner-codex-echo");
+        result.IsAskingQuestion.ShouldBeFalse("C907-D1-runner-codex-question");
+        result.TurnCompleted.ShouldBeTrue();
+        result.RawSnapshot.ShouldBe(raw);
+    }
+
+    [Test]
     public void V0160_cursor_positioned_echo_is_excluded()
     {
         const string prompt = "Echo this?";

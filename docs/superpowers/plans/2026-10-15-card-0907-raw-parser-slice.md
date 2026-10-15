@@ -37,7 +37,15 @@ No startup, completion, hold, delivery or transcript behavior changes in this sl
 
 ### Checkpoints
 
-Run CP-3 alone at the test-first commit; run CP-3 and CP-6 at the repair commit.
+Original slice: CP-3 alone at the test-first commit; CP-3 and CP-6 at the repair commit.
+D1 repair (Code ec8f807a, base 14f077fb578e5262b5768fc3bafaa77fb7989764):
+run CP-3 and CP-7 at the test-first commit, then CP-3, CP-6 and CP-7 at the fix.
+This is the brief's closed Final repair selection (CARD-1287), not whole Unit.
+CP-3 now includes two new echo regressions (73 results); CP-7 includes every method
+in the Grok, OpenCode and portable in-process Codex raw-response caller classes.
+The new CodexAdapterRawResponseTests uses the existing stream-reader seam and private
+fixture state to call the real adapter extraction path without starting a process;
+it does not replace the seven Windows-only CodexAdapterLocalShellTests.
 Each row uses a fresh isolated output and exact complete classes. CP-3 retains
 the parent selection: 9 + 5 + 39 + 18 = 71, with the two future V-6 methods still
 pending (the parent final floor remains 73). CP-6 is the brief-required extra
@@ -49,13 +57,23 @@ No full assembly or whole Unit invocation; operator brief explicitly excludes it
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---:|---|---|
-| CP-3 | Raw-tests,Raw-fix | `tests/Antiphon.Tests -> bin-c907-raw/` | codex-raw | `/*/*/(CodexResponseAnalyzerTests*)\|(SubscriptionUsageParserTests*)\|(UsageLimitWallParserTests*)\|(ProviderQuotaRefusalTests*)/*` | V-5,R-3 | Linux 71; Windows 71; 0 failed/skipped after repair | 71 | 6 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1;C804_ORPHAN_SWEEP_ROOT=c907-disabled` |
+| CP-3 | Raw-tests,Raw-fix,D1-tests,D1-fix | `tests/Antiphon.Tests -> bin-c907-raw/` | codex-raw | `/*/*/(CodexResponseAnalyzerTests*)\|(SubscriptionUsageParserTests*)\|(UsageLimitWallParserTests*)\|(ProviderQuotaRefusalTests*)/*` | V-5,R-3,D1 | Linux 73; Windows 73; 0 failed/skipped after repair | 73 | 6 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1;C804_ORPHAN_SWEEP_ROOT=c907-disabled` |
 | CP-6 | Raw-fix | `tests/Antiphon.Tests -> bin-c907-adjacent/` | codex-adjacent | `/*/*/(RunnerCodexAdapterTurnCompleteTests*)\|(SubscriptionUsageMonitorTests*)/*` | adjacent R-2 and persistence | Linux 21; Windows 21; 0 failed/skipped | 21 | 8 | 9 | true | `TUNIT_MAX_PARALLEL_TESTS=1;C804_ORPHAN_SWEEP_ROOT=c907-disabled` |
+| CP-7 | D1-tests,D1-fix | `tests/Antiphon.Tests -> bin-c907-callers/` | raw-callers | `/*/*/(RunnerGrokAdapterTurnCompleteTests*)\|(OpenCodeAdapterTests*)\|(CodexAdapterRawResponseTests*)/*` | D1,adjacent R-2 | Linux 20; Windows 20; 0 failed/skipped after repair | 20 | 6 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1;C804_ORPHAN_SWEEP_ROOT=c907-disabled` |
 
 Use the checkpoint tool with committed HEAD as expected-source-sha; await terminal
 exit and inspect every class and new method in fresh TRX. One leased bootstrap of
 the checkpoint launcher is allowed because no launcher output exists at this base.
 No repeat proof or mutation runs are commissioned. Generated evidence stays ignored.
+
+D1 invariant: cursor separators apply only to Codex raw callers. Grok/OpenCode retain
+plain AnsiStripper output, including answer bytes and question detection, through both
+Grok completion paths and OpenCode completion. Codex retries echo matching against
+plain-stripped text if the separated form misses a mid-word move or an existing space.
+The four V0160 tests and all 67 earlier parser results must stay green. Cost: 12 minutes
+test-first plus 20 minutes final, including isolated builds; no full assembly or repeat
+proof is justified. Add no timeout increases or weakened assertions. The repair alone
+goes next to Review; the parent card's remaining acceptance remains incomplete below.
 
 ## Remaining card obligations
 
