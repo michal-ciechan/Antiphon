@@ -1299,13 +1299,25 @@ public sealed class ChannelReplyDispatcher
         var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
         // Each queue member retains the original route. Group complete batches before the
         // bounded page so splitting a batch cannot mint a second publication owner.
-        var roots = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == sessionId
-            && m.DirectReplyPromptSequence != null && m.DirectReplyTailClosedAt == null)
+        var open = db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == sessionId
+            && m.DirectReplyPromptSequence != null && m.DirectReplyTailClosedAt == null);
+        var uncertain = await open.CountAsync(m => m.DirectReplyPendingThroughSequence != null
+            || m.DirectReplyThroughSequence == null, ct);
+        if (uncertain > 0)
+        {
+            try { _logger.LogWarning("Direct publication pending or uncertain for session {SessionId}; {PendingCount} members retained without replay",
+                sessionId, uncertain); } catch { }
+        }
+        // Uncertain claims are retained but cannot occupy the recoverable page forever.
+        var roots = await open.Where(m => m.DirectReplyPendingThroughSequence == null
+                && m.DirectReplyThroughSequence != null)
             .Select(m => new { Prompt = m.DirectReplyPromptSequence, Through = m.DirectReplyThroughSequence,
                 Pending = m.DirectReplyPendingThroughSequence, Provider = m.DirectReplyProvider,
                 Conversation = m.DirectReplyConversationId, Handle = m.DirectReplyHandle })
             .Distinct().OrderBy(m => m.Prompt).ThenBy(m => m.Conversation)
             .Take(SessionRuntimeActionCoordinator.PageSize).ToListAsync(ct);
+        var terminalProof = roots.Count == 0 ? null
+            : await ChannelOutboundTerminalTranscript.CatchUpAsync(scope.ServiceProvider, sessionId, ct);
         foreach (var root in roots)
         {
             if (root.Pending != null || root.Through is not long through)
@@ -1344,11 +1356,18 @@ public sealed class ChannelReplyDispatcher
                     { _logger.LogWarning("Direct reply preview update failed for session {SessionId}; failure {FailureType}", sessionId, ex.GetType().Name); }
                 }
             }
-            // A later opening prompt seals the original turn. A live open tail remains
-            // retained, including after restart; no TTL can silently remove its evidence.
-            if (next is not null)
+            // Sending may have yielded to another transcript writer. Never close over a
+            // suffix that arrived after the first read, even when the next opener is known.
+            var (_, remaining) = await QueryTurnWindowAsync(db, sessionId, root.Prompt.Value, through, ct);
+            if (!apiError && remaining.Any(l => !string.IsNullOrWhiteSpace(l.Text))) continue;
+            var terminalGeneration = terminalProof?.StoredSequences.Contains(root.Prompt.Value) == true
+                ? terminalProof.Generation : (DateTime?)null;
+            if (next is not null || terminalGeneration is not null)
                 await db.SessionQueuedMessages.Where(m => members.Contains(m.Id)
-                    && m.DirectReplyThroughSequence == through && m.DirectReplyPendingThroughSequence == null)
+                    && m.DirectReplyThroughSequence == through && m.DirectReplyPendingThroughSequence == null
+                    && (next != null || db.AgentSessions.Any(s => s.Id == sessionId
+                        && s.StartedAt == terminalGeneration
+                        && (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed))))
                     .ExecuteUpdateAsync(s => s.SetProperty(m => m.DirectReplyTailClosedAt, _timeProvider.GetUtcNow().UtcDateTime), ct);
         }
     }
