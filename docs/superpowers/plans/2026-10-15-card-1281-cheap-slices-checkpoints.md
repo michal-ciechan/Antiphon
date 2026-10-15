@@ -1,10 +1,12 @@
 # CARD-1281 cheap-slice checkpoint manifest
 
-This is the importable copy of the checkpoint table in the [verification design](2026-10-15-card-1281-pipeline-speed-plan.md#verification-design). The parent plan retains an earlier planning inventory; its first Checkpoints heading is not executable. Keep these rows identical to the verification appendix.
+This is the importable copy of the checkpoint rows in the [verification design](2026-10-15-card-1281-pipeline-speed-plan.md#verification-design) and its Plan binding follow-up. The parent retains an earlier planning inventory; its first Checkpoints heading is not executable. Keep each row identical to its parent entry.
 
-Status: **design only; next Plan**. Resolve B-1/B-2/B-3 before commissioning the dependent S2/S3/S4 rows. S5 is portable guard preflight, not live qualification. Methods in the three proposed C1281 test classes do not exist yet. The parent owns the recipes, oracles, 64 pending PCs, operating gates and exclusions.
+Status: **B-1/B-2/B-3 design-bound; dependent verification/integration pending**. Follow the parent's [binding follow-up](2026-10-15-card-1281-pipeline-speed-plan.md#plan-binding-follow-up-2026-10-15-task-024ec8fb). S2-policy and S5 portable preflight can start independently; full S2/S3/S4 wait for the shared integration prerequisite and focused verification binding. S5 is not live qualification. Proposed C1281 methods do not exist yet; the parent's original 64 PCs remain pending, with new integration coverage to bind.
 
 Run one committed slice group at a time with the checkpoint tool and the host build-slot gate. Use `--after S2`, `--after S3`, `--after S4` or `--after S5`; never run the whole manifest against a partially implemented slice. Reuse builds only within that group. Source must be committed and frozen, with exact SHA receipts. Observe actual result rosters; Min counts TUnit executions, not internal matrix/assertion rows.
+
+For the independently commissionable policy subset use `--after S2-policy` (CP-12/CP-13). Its five methods are V-1/V-4/V-5/V-6/V-7; no receipt-correction stubs. All rows use the portable application/database/script lane; live Windows RC qualification stays separate.
 
 ### Checkpoints
 
@@ -21,8 +23,11 @@ Run one committed slice group at a time with the checkpoint tool and the host bu
 | CP-9 | S5 | CP-7 | qualification-baseline | `/*/*/InterimVerificationPolicyTests/C544_BaselineCompletion` | V-21,R-4 | 1 execution, Found Full control admits, 0 failed/skipped | 1 | 3 |
 | CP-10 | S5 | CP-7 | qualification-final | `/*/*/InterimVerificationLandGuardTests/C544_FinalFullRequired` | V-21,R-4 | 1 execution, all scope variants, 0 failed/skipped | 1 | 3 |
 | CP-11 | S5 | CP-7 | qualification-watchdog | `/*/*/NightlyWatchdogCoreTests/(C545_IntentBeforeNetwork*)\|(C545_ReceiptIdempotent*)\|(C545_ReaderHeldWithoutSession*)` | R-4 | 3 executions, all assertion rows, 0 failed/skipped | 3 | 2 |
+| CP-12 | S2-policy | `tests/Antiphon.Tests -> bin-c1281-a-policy/` | advisory-policy-unit | `/*/*/*/*[Category=Unit]` | R-1 | >=1 executed; full Unit roster, 0 failed/skipped | 1 | 7 |
+| CP-13 | S2-policy | CP-12 | advisory-policy-acceptance | `/*/*/(AdvisoryChangePolicyTests*)\|(StageOutcomeSummaryTests*)/*` | V-1,V-4,V-5,V-6,V-7,R-1 | A policy 5 + summary 5 methods, all variants, 0 failed/skipped | 10 | 6 |
 
 ### Cost
 
 Estimated ordinary Code floor: 63 minutes (S2 13, S3 19, S4 15, S5 16), including 16 minutes build/setup. The parent's 453-minute Mutation floor and live qualification budget are separate; these rows run no PCs or live operations.
 
+Landing S2-policy first adds 13 estimated minutes before the later full S2 run (76 total for these component checkpoints). Shared-integration verification and additional controls remain to be costed by focused TestDesign; 76 is not a complete program estimate.
