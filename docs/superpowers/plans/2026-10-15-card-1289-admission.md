@@ -21,8 +21,8 @@ V-1: ConcurrentCardEdit parameter rows force writes between pre-read and lock.
 Four unrelated edits admit exactly one child; state/archive/platform/policy changes
 retain their refusals and zero children. Existing admission fence retains Done,
 unbound and post-Done Mutation scope. Red-first source has only tests.
-V-2: GitLockDuration probes the real row with NOWAIT during actual CommonDirectory
-Git operations, measures lock/command/create durations, checks saved preview and
+V-2: GitLockDuration probes the real row with NOWAIT during actual Git subprocess
+operations, measures lock/command/create durations, checks saved preview and
 atomic child linkage, and proves retry bypasses Git. Ordinary arm must go red
 before moving the preview. Handoff arm documents the retained critical section.
 R-1: CardLockOrder observes production SQL for observation/refusal writers and
