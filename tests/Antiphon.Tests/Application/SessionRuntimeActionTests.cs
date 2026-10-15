@@ -7,6 +7,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -180,7 +181,7 @@ public class SessionRuntimeActionTests
     public async Task C1259_saturation_keeps_ingestion_live_and_recovers_overflow(string variant)
     {
         var receiver = new Receiver();
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var clock = DatabaseClock();
         await using var f = await SessionStateTestFixture.CreateAsync(clock: clock, configure: s => s.AddSingleton<IEventBus>(receiver));
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = new ConcurrentDictionary<Guid, int>();
@@ -366,7 +367,7 @@ public class SessionRuntimeActionTests
     public async Task C1259_retry_and_retention_preserve_pending_turn(string variant)
     {
         var receiver = new Receiver();
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var clock = DatabaseClock();
         var attempts = 0;
         receiver.BeforeReceive = (_, _) =>
         { Interlocked.Increment(ref attempts); throw new IOException("receiver unavailable"); };
@@ -412,7 +413,10 @@ public class SessionRuntimeActionTests
         await retentionDb.TranscriptEntries.ExecuteUpdateAsync(u => u.SetProperty(t => t.CreatedAt, old));
         var queueId = Guid.NewGuid();
         retentionDb.SessionQueuedMessages.Add(new SessionQueuedMessage { Id = queueId, AgentSessionId = f.SessionId,
-            Sequence = 1, Body = "source correlation", CreatedAt = old, Status = QueuedMessageStatus.Sent, Origin = QueuedMessageOrigin.Ui });
+            Sequence = 1, Body = "source correlation", CreatedAt = old, Status = QueuedMessageStatus.Sent,
+            Origin = variant == "correlation-retention" ? QueuedMessageOrigin.Channel : QueuedMessageOrigin.Ui,
+            ReviewThreadId = variant == "correlation-retention" ? Guid.NewGuid() : null,
+            ChannelReplySettledAt = variant == "correlation-retention" ? old : null });
         await retentionDb.SaveChangesAsync();
         var audit = Options.Create(new AuditSettings());
         var retention = new DataRetentionService(retentionDb, Options.Create(new RetentionSettings()), audit,
@@ -424,8 +428,55 @@ public class SessionRuntimeActionTests
         (await retentionDb.SessionQueuedMessages.CountAsync()).ShouldBe(1);
         receiver.BeforeReceive = null;
         await Actions(f).DrainPageAsync(f.SessionId, default);
+        if (variant == "prune-race")
+        {
+            var gate = new DeleteGate();
+            await using var racingDb = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+                .UseNpgsql(retentionDb.Database.GetConnectionString()).AddInterceptors(gate).Options);
+            var racing = new DataRetentionService(racingDb, Options.Create(new RetentionSettings()), audit,
+                clock, NullLogger<DataRetentionService>.Instance, new AuditService(racingDb, audit), f.Store);
+            var prune = racing.PruneTranscriptsAsync(default);
+            Task? ingest = null;
+            try
+            {
+                await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                ingest = f.Runtime.ObserveTranscriptAsync(f.Event(2, "ToolResult", text: "new action after pruning"), default);
+                ingest.IsCompleted.ShouldBeFalse("retention owns the actual mutation lease");
+            }
+            finally { gate.Release.TrySetResult(); await prune; if (ingest is not null) await ingest; }
+            (await f.RowsAsync()).Select(t => t.Text).ShouldBe(["new action after pruning"]);
+            await using var raceVerify = f.Db();
+            (await raceVerify.SessionRuntimeActions.SingleAsync()).Sequence.ShouldBe(2);
+            (await retention.PruneQueuedMessagesAsync(default)).ShouldBe(0);
+            return;
+        }
         (await retention.PruneTranscriptsAsync(default)).ShouldBe(1);
+        if (variant == "correlation-retention")
+        {
+            (await retention.PruneQueuedMessagesAsync(default)).ShouldBe(0, "review consumption owns correlation retention independently of action completion");
+            await retentionDb.SessionQueuedMessages.Where(m => m.Id == queueId)
+                .ExecuteUpdateAsync(u => u.SetProperty(m => m.ReviewReplyConsumedAt, old));
+        }
         (await retention.PruneQueuedMessagesAsync(default)).ShouldBe(1);
+    }
+
+    private static FakeTimeProvider DatabaseClock()
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new(new DateTimeOffset(now.Ticks - now.Ticks % 10, TimeSpan.Zero));
+    }
+
+    private sealed class DeleteGate : DbCommandInterceptor
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
+            CommandEventData data, InterceptionResult<int> result, CancellationToken ct = default)
+        {
+            if (command.CommandText.StartsWith("DELETE FROM \"TranscriptEntries\"", StringComparison.Ordinal))
+            { Entered.TrySetResult(); await Release.Task.WaitAsync(ct); }
+            return result;
+        }
     }
 
     private sealed class AckFault : SaveChangesInterceptor
