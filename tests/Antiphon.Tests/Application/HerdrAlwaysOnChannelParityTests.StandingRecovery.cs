@@ -118,8 +118,12 @@ public partial class HerdrAlwaysOnChannelParityTests
                 var moved = (await verify.SessionQueuedMessages.FindAsync(queuedId))!;
                 moved.AgentSessionId.ShouldBe(a); moved.Status.ShouldBe(QueuedMessageStatus.Sent);
                 moved.DeliveryAttempts.ShouldBe(1); moved.LastDeliveryBaselineSequence.ShouldNotBeNull();
+                // CARD-1273: diagnostic only; name the baseline, the stored body and each UserPrompt row.
+                var prompts = await verify.TranscriptEntries.Where(t => t.AgentSessionId == a && t.Kind == TranscriptKinds.UserPrompt)
+                    .OrderBy(t => t.Sequence).Select(t => $"{t.Sequence}:{t.Text}").ToListAsync();
                 (await verify.TranscriptEntries.AnyAsync(t => t.AgentSessionId == a && t.Kind == TranscriptKinds.UserPrompt
-                    && t.Sequence > moved.LastDeliveryBaselineSequence && t.Text == nonce)).ShouldBeTrue();
+                    && t.Sequence > moved.LastDeliveryBaselineSequence && t.Text == nonce)).ShouldBeTrue(
+                    $"baseline={moved.LastDeliveryBaselineSequence} body={moved.Body} prompts=[{string.Join(" | ", prompts)}]");
                 (await verify.Agents.FindAsync(agent.Id))!.PersistentSessionId.ShouldBe(a.ToString("D"));
                 (await verify.AgentSessions.FindAsync(b))!.StandingAgentId.ShouldBe(agent.Id);
             }
