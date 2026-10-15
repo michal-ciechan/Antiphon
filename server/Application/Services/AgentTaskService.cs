@@ -242,15 +242,27 @@ public sealed class AgentTaskService
     /// Create a task. <paramref name="caller"/> is the authenticated creator: an orchestrator
     /// delegating downward, or the UI acting on a human's behalf.
     /// </summary>
-    // Compile-only seam for S0's red-first admission witnesses. Wired in the next slice.
+    /// <summary>Internal caller-action admission; HTTP authorization belongs to the B-2 component.</summary>
     public Task<AgentTaskCreatedDto> CreateAsync(CreateAgentTaskRequest request, Caller caller,
-        Guid handoffActionId, CancellationToken ct) => CreateAsync(request, caller, ct);
+        Guid handoffActionId, CancellationToken ct) => CreateCoreAsync(request, caller, handoffActionId, ct);
 
-    public async Task<AgentTaskCreatedDto> CreateAsync(
+    public Task<AgentTaskCreatedDto> CreateAsync(
         CreateAgentTaskRequest request,
         Caller caller,
-        CancellationToken ct)
+        CancellationToken ct) => CreateCoreAsync(request, caller, null, ct);
+
+    private async Task<AgentTaskCreatedDto> CreateCoreAsync(
+        CreateAgentTaskRequest request, Caller caller, Guid? handoffActionId, CancellationToken ct)
     {
+        // Hash the caller's original request, before defaults/routing rewrite it. Object properties
+        // (including environment dictionaries) are sorted; argument insertion order is not identity.
+        var handoffDigest = handoffActionId is not null ? HandoffRequestDigest(request) : null;
+        if (handoffActionId is not null && (request.Kind != AgentTaskKind.Worker
+            || AgentTaskRoles.IsSpecialist(request.Role) || request.AgentId is not null
+            || request.Agent is not null || request.FollowUpOnTask is not null))
+            throw new ValidationException("handoffActionId", "A handoff requires a fresh worker task.", "handoff_requires_fresh_task");
+        if (handoffActionId is not null && _db.Database.CurrentTransaction is not null)
+            throw new ConflictException("Handoff admission must own its transaction.", "handoff_transaction_owned");
         if (string.IsNullOrWhiteSpace(request.Goal))
             throw new ValidationException(nameof(request.Goal), "A goal is required.");
         if (request.Goal.Length > 20_000)
@@ -721,6 +733,11 @@ public sealed class AgentTaskService
                 resolved.RepoPath,
                 resolved.WorkingDirectory),
             ct);
+
+        var proposedCardToken = binding.CardId is Guid proposedCardId
+            ? await _db.Cards.AsNoTracking().Where(c => c.Id == proposedCardId)
+                .Select(c => (Guid?)c.ConcurrencyToken).SingleAsync(ct)
+            : null;
 
         if (caller.BoardId is Guid capabilityBoard && binding.CardId is Guid boundCardId)
         {
@@ -1525,7 +1542,9 @@ public sealed class AgentTaskService
         IDbContextTransaction? gateTx = null;
         DelegationOpenGate.Snapshot? openSnapshot = null;
         CardWorktreeBaseSelection? basePreview = null;
-        if (gateCreate || task.SourceLandingOperationId is not null || verificationAdmission is not null)
+        PipelineHandoffAction? handoff = null;
+        if (gateCreate || task.SourceLandingOperationId is not null || verificationAdmission is not null
+            || task.CardId is not null || handoffActionId is not null)
         {
             gateTx = _db.Database.CurrentTransaction is null
                 ? await _db.Database.BeginTransactionAsync(ct)
@@ -1534,6 +1553,70 @@ public sealed class AgentTaskService
 
         try
         {
+            // Shared order for B-3 writers: card, handoff (when present), then task/evidence locks.
+            // This transaction is required even when the optional concurrency gate is absent.
+            Card? admissionCard = null;
+            if (task.CardId is Guid admissionCardId)
+            {
+                await _db.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT 1 FROM \"Cards\" WHERE \"Id\" = {admissionCardId} FOR UPDATE", ct);
+                admissionCard = await _db.Cards.AsNoTracking().SingleAsync(c => c.Id == admissionCardId, ct);
+            }
+            if (handoffActionId is Guid actionId)
+            {
+                await _db.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT 1 FROM \"PipelineHandoffActions\" WHERE \"Id\" = {actionId} FOR UPDATE", ct);
+                handoff = await _db.PipelineHandoffActions.SingleOrDefaultAsync(a => a.Id == actionId, ct)
+                    ?? throw new NotFoundException("PipelineHandoffAction", actionId);
+                await _db.Entry(handoff).ReloadAsync(ct);
+                if (handoff.CardId != task.CardId || handoff.ProjectId != task.ProjectId
+                    || handoff.NextStage != task.Role
+                    || (handoff.RecipientSessionId is { } recipient && recipient != caller.SessionId))
+                    throw new ConflictException("Handoff scope does not match the requested child.", "handoff_scope_changed");
+                if (handoff.RequestDigest is not null && handoff.RequestDigest != handoffDigest)
+                    throw new ConflictException("The handoff already binds a different request.", "handoff_request_changed");
+                if (handoff.ChildTaskId is Guid childId)
+                {
+                    var existing = await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == childId, ct)
+                        ?? throw new ConflictException("The handoff child is missing.", "handoff_child_missing");
+                    if (handoff.RequestDigest is null || existing.CardId != task.CardId
+                        || existing.ProjectId != task.ProjectId || existing.Role != task.Role)
+                        throw new ConflictException("The handoff child binding is invalid.", "handoff_child_mismatch");
+                    if (gateTx is not null) await gateTx.CommitAsync(ct);
+                    return new AgentTaskCreatedDto(existing.Id, DelegationReportFormatter.Short(existing.Id),
+                        existing.Status, existing.ModelLevel, null, existing.AgentKind,
+                        CardId: existing.CardId, CardIdentifier: binding.Identifier,
+                        RequiredPlatform: existing.RequiredPlatform,
+                        RunnerId: RunnerRequestIntent.DisplayRunnerId(existing.RunnerId));
+                }
+                var predecessor = await _db.AgentTasks.AsNoTracking()
+                    .SingleOrDefaultAsync(t => t.Id == handoff.PredecessorTaskId, ct);
+                if (predecessor is null || predecessor.Attempt != handoff.Attempt
+                    || predecessor.CardId != handoff.CardId || predecessor.ProjectId != handoff.ProjectId
+                    || !await _db.AgentTaskEvents.AnyAsync(e => e.Id == handoff.SettlementEventId
+                        && e.AgentTaskId == handoff.PredecessorTaskId && e.Type == AgentTaskEventType.Completed, ct))
+                    throw new ConflictException("The handoff predecessor changed.", "handoff_predecessor_changed");
+                if (admissionCard?.ActiveWorkflowRunId != handoff.WorkflowRunId)
+                    throw new ConflictException("The handoff workflow changed.", "handoff_workflow_changed");
+                if (handoff.WorkflowRunId is Guid runId)
+                {
+                    var run = await _db.CardWorkflowRuns.AsNoTracking().SingleOrDefaultAsync(r => r.Id == runId, ct);
+                    if (run is null || run.CardId != task.CardId
+                        || run.PipelineDefinitionRevisionId != handoff.PipelineDefinitionRevisionId
+                        || run.CurrentStageId != handoff.CurrentStageId || run.UpdatedAt != handoff.WorkflowUpdatedAt)
+                        throw new ConflictException("The handoff workflow fence changed.", "handoff_workflow_changed");
+                }
+                else if (handoff.PipelineDefinitionRevisionId is not null || handoff.CurrentStageId is not null
+                    || handoff.WorkflowUpdatedAt is not null)
+                    throw new ConflictException("The handoff workflow fence is incomplete.", "handoff_workflow_changed");
+            }
+            if (admissionCard is not null && IsImplementationAdmission(task.Role))
+            {
+                if (admissionCard.Status is CardStatus.Done or CardStatus.Canceled || admissionCard.ArchivedAt is not null)
+                    throw new ConflictException("Implementation work requires an open card.", "card_implementation_closed");
+                if (admissionCard.ConcurrencyToken != proposedCardToken)
+                    throw new ConflictException("The card changed during admission; request a fresh decision.", "card_admission_changed");
+            }
             if (task.SourceLandingOperationId is Guid sourceOperation)
             {
                 if (_sourceLanding is null)
@@ -1668,13 +1751,25 @@ public sealed class AgentTaskService
         }
 
         await _db.SaveChangesAsync(ct);
+        if (handoff is not null)
+        {
+            handoff.RequestDigest = handoffDigest;
+            handoff.ChildTaskId = task.Id;
+            handoff.ChildCreatedAt = task.CreatedAt;
+            await _db.SaveChangesAsync(ct);
+        }
         if (gateTx is not null)
             await gateTx.CommitAsync(ct);
         }
         catch
         {
             if (gateTx is not null)
-                await gateTx.RollbackAsync(ct);
+            {
+                // A lost response may surface after the database has committed. Preserve that
+                // original failure; the durable action link is the retry authority.
+                try { await gateTx.RollbackAsync(ct); }
+                catch (InvalidOperationException) { }
+            }
             throw;
         }
         finally
@@ -1711,6 +1806,35 @@ public sealed class AgentTaskService
             RequirementSource: task.RequirementSource,
             ObservedPlatform: task.ObservedPlatform,
             WorktreeBase: basePreview);
+    }
+
+    private static bool IsImplementationAdmission(AgentTaskRole role) => role is
+        AgentTaskRole.Code or AgentTaskRole.Custom or AgentTaskRole.Debug or AgentTaskRole.Docs
+        or AgentTaskRole.Merge or AgentTaskRole.Commit or AgentTaskRole.Deploy;
+
+    internal static string HandoffRequestDigest(CreateAgentTaskRequest request)
+    {
+        using var bytes = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(bytes)) Write(JsonSerializer.SerializeToElement(request), writer);
+        return Convert.ToHexString(SHA256.HashData(bytes.ToArray()));
+
+        static void Write(JsonElement element, Utf8JsonWriter writer)
+        {
+            if (element.ValueKind == JsonValueKind.Object)
+            {
+                writer.WriteStartObject();
+                foreach (var property in element.EnumerateObject().OrderBy(p => p.Name, StringComparer.Ordinal))
+                { writer.WritePropertyName(property.Name); Write(property.Value, writer); }
+                writer.WriteEndObject();
+            }
+            else if (element.ValueKind == JsonValueKind.Array)
+            {
+                writer.WriteStartArray();
+                foreach (var item in element.EnumerateArray()) Write(item, writer);
+                writer.WriteEndArray();
+            }
+            else element.WriteTo(writer);
+        }
     }
 
     private async Task<(RequiredPlatform Requirement, RequirementSource Source)> ResolveRequirementAsync(

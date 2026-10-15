@@ -38,6 +38,26 @@ public sealed class PipelineSpeedIntegrationTests
         var changed = await Should.ThrowAsync<ConflictException>(() => CreateAsync(w,
             request with { Goal = "different request" }, action.Id), "changed-request-refused");
         changed.Code.ShouldBe("handoff_request_changed", "changed-request-refused");
+        foreach (var field in new[] { "attempt", "event", "stage", "card", "project", "recipient", "workflow" })
+        {
+            var stale = await SeedActionAsync(w);
+            await using (var db = w.CreateContext())
+            {
+                var row = await db.Set<PipelineHandoffAction>().SingleAsync(a => a.Id == stale.Id);
+                switch (field)
+                {
+                    case "attempt": row.Attempt++; break;
+                    case "event": row.SettlementEventId = Guid.NewGuid(); break;
+                    case "stage": row.NextStage = AgentTaskRole.Review; break;
+                    case "card": row.CardId = Guid.NewGuid(); break;
+                    case "project": row.ProjectId = Guid.NewGuid(); break;
+                    case "recipient": row.RecipientSessionId = Guid.NewGuid(); break;
+                    case "workflow": row.WorkflowRunId = Guid.NewGuid(); break;
+                }
+                await db.SaveChangesAsync();
+            }
+            await Should.ThrowAsync<ConflictException>(() => CreateAsync(w, request, stale.Id), "stale-handoff-refused " + field);
+        }
         await using (var fresh = w.CreateContext())
         {
             (await fresh.Set<PipelineHandoffAction>().SingleAsync(a => a.Id == action.Id)).ChildTaskId.ShouldBe(pair[0].Id);
@@ -181,13 +201,19 @@ public sealed class PipelineSpeedIntegrationTests
     {
         public int Hits { get; private set; }
         private bool _admitting;
-        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
             InterceptionResult<int> result, CancellationToken ct = default)
         {
             _admitting |= data.Context!.ChangeTracker.Entries<AgentTask>().Any(e => e.State == EntityState.Added);
-            if (cut == "link" && data.Context.ChangeTracker.Entries<PipelineHandoffAction>()
-                    .Any(e => e.State == EntityState.Modified && e.Entity.ChildTaskId != null)) Fail();
-            return ValueTask.FromResult(result);
+            var link = data.Context.ChangeTracker.Entries<PipelineHandoffAction>()
+                .FirstOrDefault(e => e.State == EntityState.Modified && e.Entity.ChildTaskId != null);
+            if (cut == "link" && link is not null)
+            {
+                (await data.Context.Set<AgentTask>().AnyAsync(t => t.Id == link.Entity.ChildTaskId, ct))
+                    .ShouldBeTrue("child insert reached before link failure");
+                Fail();
+            }
+            return result;
         }
         public ValueTask<InterceptionResult> TransactionCommittingAsync(DbTransaction transaction,
             TransactionEventData data, InterceptionResult result, CancellationToken ct = default)
@@ -298,6 +324,7 @@ public sealed class PipelineSpeedIntegrationTests
         receipt.AcceptanceRevision = acceptance.Revision;
         await RoundtripAsync(w, receipt);
         await DuplicateAsync(w, Copy(receipt), "duplicate-close-receipt-refused");
+        await ImmutableAsync<CardCompletionReceipt>(w, receipt.Id, "close-receipt-immutable");
     }
 
     private static async Task RequireTableAsync(AppDbContext db, string table) =>
