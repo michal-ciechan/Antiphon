@@ -31,8 +31,13 @@ save fail (EF concurrency token on UPDATE, unique active-row index on INSERT). A
 is then 409 at once; a write without one re-reads and re-applies its values, up to
 `UnconditionalAttempts` (3) saves, before the same 409 (repair D1 of Review 40767d91). A clear that
 lost to another clear returns 204. The lazy `NotAfter` sweep rotates the token and re-reads after a
-lost race, up to the same bound. The `?role=` view reads candidates and token in two reads; a clear
-and re-create between them pairs the earlier candidates with the newer token (documented, V-21).
+lost race, up to the same bound; after the third lost race its `DbUpdateConcurrencyException`
+propagates and the request is a 500 (V-23, repair D2 of Review 72440e28). The `?role=` view reads a
+role cell's token, reason and expiry before its candidates, so a cell created or re-created between
+the reads pairs newer candidates with an older token (or none) and a save with it is 409 (V-21,
+repair D1 of Review 72440e28). The two reads stay separate because a failure of each is reported
+as its own part (`chain metadata`, `chain`). The unfiltered list and `complexity-chain.ps1` take
+candidates and token from one read.
 
 **Backward compatibility.** `complexity-chain.ps1 set|clear` reads `GET /api/complexity-chains`
 once and sends each cell's token (or the empty GUID). `migrate-stage-pins-to-cells.ps1` is
@@ -68,6 +73,7 @@ in-flight or queued PUT; the token makes a late queued PUT refuse rather than ov
 | S7 | docs | `docs/antiphon-api.md`, this plan |
 | S8 | test | repair D1/D2 (Review 40767d91): `ComplexityChainRaceTests`, editor queued-note tests (red before S9) |
 | S9 | fix+docs | bounded no-token re-run, sweep token rotation and re-read, per-case queued note; API doc, DTO and client comments, this plan |
+| S10 | fix+test+docs | repair D1-D3 (Review 72440e28): `?role=` token read before the candidates, V-21 replaced, V-23, fault ordinals in `ComplexityEffectiveHttpTests` and `OrchestratorInstructionsRefreshTests`; API doc, DTO comments, this plan |
 
 ## Verification design
 
@@ -93,13 +99,16 @@ in-flight or queued PUT; the token makes a late queued PUT refuse rather than ov
 | V-18 | new (repair D1) | `ComplexityChainRaceTests.A_race_lost_on_every_attempt_exhausts_the_bound_and_is_stale` | bound is 3; a competing commit before each save: PUT and DELETE without a token make 3 saves, then 409 |
 | V-19 | new (disclosure 2) | `ComplexityChainRaceTests.The_expiry_sweep_rotates_the_token_so_a_write_that_read_the_row_live_loses_its_save` | sweep between a token PUT's read and save: 409 with no row, swept row's token rotated; no-token PUT recreates the row on attempt 2 |
 | V-20 | new (disclosure 2) | `ComplexityChainRaceTests.A_sweep_that_loses_to_a_write_reads_again_and_returns_the_writers_row` | a sweep whose save loses to a writer returns the writer's row, no exception |
-| V-21 | new (disclosure 3) | `ComplexityChainRaceTests.The_role_view_reads_candidates_and_token_separately_and_a_recreate_between_them_shows_the_new_token` | clear and re-create between the two `?role=` reads: earlier candidates, newer reason and token (documented skew) |
+| V-21 | new (repair D1, Review 72440e28) | `ComplexityChainRaceTests.The_role_view_reads_the_token_before_the_candidates_so_a_change_between_them_makes_a_save_stale` | after the first `?role=` chain read: re-created cell gives newer candidates and the older token, a save with it 409, the newer row kept; created cell gives no token, a save with the empty GUID 409; cleared cell gives `none`, no candidates, no token |
+| V-23 | new (repair D2, Review 72440e28) | `ComplexityChainRaceTests.A_sweep_that_loses_every_attempt_lets_the_concurrency_error_propagate` | a writer rotates the expired row's token before each sweep save: `SweepAttempts` saves, then `DbUpdateConcurrencyException` out of `FindActiveAsync`, row still active |
+| V-24 | changed (repair D1, Review 72440e28) | `ComplexityEffectiveHttpTests.Get_role_view_carries_effective_and_default_complexity_and_card_pins_are_excluded` (independent reads); `OrchestratorInstructionsRefreshTests.Failed_reads_are_unknown_in_file_and_notice_then_recover` (`chain metadata` cases) | a fault on the first `ComplexityChains` read of a role cell is `chain metadata read failed` with the stored candidates, no reason and no token; a fault on the second is `chain read failed` with no candidates |
 | V-22 | new (repair D2) | `ComplexityChainCellEditor.test.tsx` `C1275 D2 an offline Save from an unread row says the queued write overwrites and sends no token` | queued note text equals `CHAIN_QUEUED_UNCONDITIONAL_NOTE`; one PUT without `concurrencyToken` after reconnect |
 | R-1 | regression | `ComplexityChainHttpTests`, `ComplexityChainRoleHttpTests`, `ComplexityEffectiveHttpTests` | no-token callers unchanged (incl. `Put_twice_is_last_writer_wins_without_a_409`) |
 | R-2 | regression | `ComplexityChainServiceTests`, `ComplexityChainRoleTests`, `AppDbContextModelTests` | service paths; model matches the hand-written migration snapshot |
 | R-3 | regression | `MigrateStagePinsScriptTests` | migration apply/restore through the shared `ScriptedApi` (query stripped from the cell key, tokens kept out of `Cells`) |
 | R-4 | regression | client files listed in CP-5 | routing tab, editor, model and settings page |
 | R-5 | regression | `npm --prefix client run build`, `npm --prefix client run lint` | typecheck, production build, ESLint |
+| R-6 | regression (S10) | `OrchestratorInstructionsRefreshTests` | the orchestrator snapshot reads the `?role=` cells through `GetEffectiveAsync`; its read-fault cases follow the new read order |
 
 ### Positive controls (pending for SourceLanding Mutation)
 
@@ -123,6 +132,8 @@ in-flight or queued PUT; the token makes a late queued PUT refuse rather than ov
 | PC-16 | expiry sweep does not rotate `ConcurrencyToken` | V-19 (token PUT saves onto the cleared row, no 409) |
 | PC-17 | expiry sweep rethrows a lost race (catch removed) | V-20 (`DbUpdateConcurrencyException`) |
 | PC-18 | queued note ignores the queued token (always `CHAIN_QUEUED_NOTE`) | V-22; the reverse (always the unconditional note) turns V-12 red |
+| PC-19 | `GetEffectiveAsync` reads the cell's metadata and token after `LoadChainAsync` (the pre-repair order) | V-21 (token equals the re-created row's; no 409), V-24 |
+| PC-20 | expiry sweep swallows the lost race on its last attempt | V-23 (no exception) |
 
 V-4 depends on requests reaching the read-then-write window together and stays as a probabilistic
 witness only; V-15 to V-18 commit the competing write from a save interceptor and are the
@@ -134,12 +145,13 @@ before a second save (V-17 asserts one save either way).
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1-S9 | `tests/Antiphon.Tests -> bin-c1275/` | chain-concurrency | `/*/*/(ComplexityChainConcurrencyHttpTests*)\|(ComplexityChainRaceTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-15, V-16, V-17, V-18, V-19, V-20, V-21 | 12 executed, 0 failed/skipped | 12 | 12 | false |
-| CP-2 | S1-S9 | `CP-1` | chain-http | `/*/*/(ComplexityChainHttpTests*)\|(ComplexityChainRoleHttpTests*)\|(ComplexityEffectiveHttpTests*)/*` | R-1 | 9 executed, 0 failed/skipped | 9 | 8 | false |
-| CP-3 | S1-S9 | `CP-1` | chain-service | `/*/*/(ComplexityChainServiceTests*)\|(ComplexityChainRoleTests*)\|(AppDbContextModelTests*)/*` | R-2 | at least 26 executed, 0 failed/skipped | 26 | 8 | false |
-| CP-4 | S1-S9 | `CP-1` | chain-scripts | `/*/*/(ComplexityChainScriptTests*)\|(MigrateStagePinsScriptTests*)/*` | V-6, V-7, R-3 | at least 24 executed, 0 failed/skipped | 24 | 10 | false |
-| CP-5 | S1-S9 | n/a | client-tests | `pwsh -NoProfile -File scripts/test-client.ps1 src/api/complexityChains.test.tsx src/features/settings/ComplexityChainCellEditor.test.tsx src/features/settings/RoutingSettingsTab.test.tsx src/features/settings/routingSettingsModel.test.ts src/features/orchestrator/ComplexityChainPanel.test.tsx` | V-8, V-9, V-10, V-11, V-12, V-13, V-14, V-22, R-4 | 5 files (SettingsPage.test.tsx excluded: 2 failures inherited at base e7b6b80, Review 40767d91), nonzero count, 0 failed/skipped, `CLIENT TESTS EXIT CODE: 0` | n/a | 5 | false |
-| CP-6 | S1-S9 | n/a | client-build | `npm --prefix client run build` | R-5 | typecheck and production build exit 0 | n/a | 4 | false |
-| CP-7 | S1-S9 | n/a | client-lint | `npm --prefix client run lint` | R-5 | ESLint exit 0 | n/a | 4 | false |
+| CP-1 | S1-S10 | `tests/Antiphon.Tests -> bin-c1275/` | chain-concurrency | `/*/*/(ComplexityChainConcurrencyHttpTests*)\|(ComplexityChainRaceTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-15, V-16, V-17, V-18, V-19, V-20, V-21, V-23 | 13 executed, 0 failed/skipped | 13 | 12 | false |
+| CP-2 | S1-S10 | `CP-1` | chain-http | `/*/*/(ComplexityChainHttpTests*)\|(ComplexityChainRoleHttpTests*)\|(ComplexityEffectiveHttpTests*)/*` | R-1, V-24 | 9 executed, 0 failed/skipped | 9 | 8 | false |
+| CP-3 | S1-S10 | `CP-1` | chain-service | `/*/*/(ComplexityChainServiceTests*)\|(ComplexityChainRoleTests*)\|(AppDbContextModelTests*)/*` | R-2 | at least 26 executed, 0 failed/skipped | 26 | 8 | false |
+| CP-4 | S1-S10 | `CP-1` | chain-scripts | `/*/*/(ComplexityChainScriptTests*)\|(MigrateStagePinsScriptTests*)/*` | V-6, V-7, R-3 | at least 24 executed, 0 failed/skipped | 24 | 10 | false |
+| CP-5 | S1-S10 | n/a | client-tests | `pwsh -NoProfile -File scripts/test-client.ps1 src/api/complexityChains.test.tsx src/features/settings/ComplexityChainCellEditor.test.tsx src/features/settings/RoutingSettingsTab.test.tsx src/features/settings/routingSettingsModel.test.ts src/features/orchestrator/ComplexityChainPanel.test.tsx` | V-8, V-9, V-10, V-11, V-12, V-13, V-14, V-22, R-4 | 5 files (SettingsPage.test.tsx excluded: 2 failures inherited at base e7b6b80, Review 40767d91), nonzero count, 0 failed/skipped, `CLIENT TESTS EXIT CODE: 0` | n/a | 5 | false |
+| CP-6 | S1-S10 | n/a | client-build | `npm --prefix client run build` | R-5 | typecheck and production build exit 0 | n/a | 4 | false |
+| CP-7 | S1-S10 | n/a | client-lint | `npm --prefix client run lint` | R-5 | ESLint exit 0 | n/a | 4 | false |
+| CP-8 | S10 | `CP-1` | instructions-refresh | `/*/*/OrchestratorInstructionsRefreshTests/*` | V-24, R-6 | 50 executed, 0 failed/skipped | 50 | 15 | false |
 
 Red-first is by commit order (S1, S3, S5 precede their fixes); the red runs belong to Mutation.
