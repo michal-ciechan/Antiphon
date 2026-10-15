@@ -15,6 +15,7 @@ import { ComplexityChainCellEditor } from './ComplexityChainCellEditor'
 import {
   CHAIN_CLEAR_SUCCESS,
   CHAIN_QUEUED_NOTE,
+  CHAIN_QUEUED_UNCONDITIONAL_NOTE,
   CHAIN_SAVE_SUCCESS,
   CHAIN_STALE_TITLE,
   INHERITED_REPLACE_WARNING,
@@ -534,7 +535,7 @@ describe('C1275 editor concurrency token', () => {
     onlineManager.setOnline(false)
 
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
-    expect(await screen.findByTestId('routing-cell-editor-queued')).toHaveTextContent(CHAIN_QUEUED_NOTE)
+    expect((await screen.findByTestId('routing-cell-editor-queued')).textContent).toBe(CHAIN_QUEUED_NOTE)
     expect(bodies).toHaveLength(0)
     expect(onClose).not.toHaveBeenCalled()
 
@@ -542,5 +543,38 @@ describe('C1275 editor concurrency token', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled())
     expect(bodies).toHaveLength(1)
     expect((bodies[0] as Record<string, unknown>).concurrencyToken).toBe(OPENED_TOKEN)
+  })
+
+  it('C1275 D2 an offline Save from an unread row says the queued write overwrites and sends no token', async () => {
+    const bodies: Record<string, unknown>[] = []
+    server.use(
+      http.put('/api/complexity-chains/Plan/Hard', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json(chain())
+      }),
+    )
+    const { onClose } = renderEditor({
+      chain: chain({
+        concurrencyToken: null,
+        effective: {
+          source: 'role',
+          candidates: [codex],
+          stagePin: null,
+          governsDefault: false,
+          withheldReason: 'chain metadata read failed (TimeoutException)',
+        },
+      }),
+    })
+    await userEvent.click(screen.getByLabelText(OVERWRITE_UNREAD_METADATA))
+    onlineManager.setOnline(false)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect((await screen.findByTestId('routing-cell-editor-queued')).textContent).toBe(CHAIN_QUEUED_UNCONDITIONAL_NOTE)
+    expect(bodies).toHaveLength(0)
+
+    act(() => { onlineManager.setOnline(true) })
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+    expect(bodies).toHaveLength(1)
+    expect('concurrencyToken' in bodies[0]).toBe(false)
   })
 })
