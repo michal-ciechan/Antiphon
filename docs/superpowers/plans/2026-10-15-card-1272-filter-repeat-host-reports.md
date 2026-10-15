@@ -1,6 +1,6 @@
 # CARD-1272: filter and repeat host reports belong to the test sandbox
 
-Code and landing owner: `c660169d`.
+Code and landing owner: `c660169d-4e9a-45a8-b9d2-ce90aa2b58cb`.
 Task base: `e7b6b80378dffe7b2326a8bc46ee5a91d30e9e69` (`git merge-base origin/master HEAD`).
 
 Observed in run 20261014-224348-1b4b (CARD-1267 Code evidence, Runs): a green
