@@ -25,7 +25,7 @@ public sealed partial class PipelineSpeedIntegrationTests
     [Test]
     public async Task C1281_B2HttpAdmissionHolds()
     {
-        foreach (var variant in new[] { "dependency", "overlap", "decision", "stage", "host", "quota", "stage-cap", "placement", "workflow", "eligibility", "override" })
+        foreach (var variant in new[] { "dependency", "overlap", "decision", "stage", "host", "quota", "stage-cap", "placement", "workflow", "eligibility", "override", "settlement" })
         {
             await using var host = await PipelineHandoffPilotTests.PilotHost.CreateAsync(services =>
             {
@@ -51,6 +51,11 @@ public sealed partial class PipelineSpeedIntegrationTests
                 }
                 if (variant == "decision") (await db.Cards.SingleAsync(c => c.Id == host.World.Card.Id)).Status = CardStatus.NeedsDecision;
                 if (variant == "stage") (await db.AgentTasks.SingleAsync(t => t.Id == host.World.Owner.Id)).NextStage = PipelineHandoffKind.Review;
+                if (variant == "settlement")
+                {
+                    var predecessor = await db.AgentTasks.SingleAsync(t => t.Id == host.World.Owner.Id);
+                    predecessor.CompletedAt = predecessor.CompletedAt!.Value.AddSeconds(1);
+                }
                 if (variant == "workflow") (await db.PipelineHandoffActions.SingleAsync(a => a.Id == action.Id)).WorkflowRunId = Guid.NewGuid();
                 if (variant is "overlap" or "stage-cap")
                     db.Add(new AgentTask { Id = Guid.NewGuid(), RootTaskId = Guid.NewGuid(), Title = "occupant", Goal = "occupant",
@@ -72,6 +77,7 @@ public sealed partial class PipelineSpeedIntegrationTests
             {
                 "host" => "handoff_capacity_held", "quota" => "subscription_quota_low", "stage-cap" => "concurrency_limit",
                 "placement" => "validation_failed", "workflow" => "handoff_workflow_changed", "eligibility" => "handoff_not_eligible",
+                "settlement" => "handoff_predecessor_changed",
                 _ => "handoff_" + variant + "_held",
             };
             using var refused = await host.Client.PostAsJsonAsync(host.Url + $"/{action.Id:D}/child", new { task = request, acceptSpend = true });
@@ -91,7 +97,7 @@ public sealed partial class PipelineSpeedIntegrationTests
     [Test]
     public async Task C1281_B2HttpChildRecovery()
     {
-        await using var host = await PipelineHandoffPilotTests.PilotHost.CreateAsync();
+        await using var host = await PipelineHandoffPilotTests.PilotHost.CreateAsync(delegation: settings => settings.MaxConcurrentTasks = 512);
         using var consumed = await host.Client.PostAsJsonAsync(host.Url, host.Request("eligible", "caller authorizes next stage"));
         consumed.StatusCode.ShouldBe(HttpStatusCode.OK);
         var action = (await consumed.Content.ReadFromJsonAsync<PipelineHandoffActionDto>())!.Action;
@@ -114,11 +120,16 @@ public sealed partial class PipelineSpeedIntegrationTests
             read.Observations.Last().Detail.Contains("handoff_", StringComparison.Ordinal).ShouldBeTrue("refusal-durable-zero-child");
             read.Observations.Last().NextObservationAt.ShouldNotBeNull("refusal-next-observation");
         }
+        var recipientToken = await host.CredentialAsync("allowed");
+        host.Client.DefaultRequestHeaders.Remove(OperatorTokenFile.Header);
+        host.Client.DefaultRequestHeaders.Add("X-Antiphon-Task-Token", recipientToken);
         host.App.Services.GetRequiredService<IEventBus>().ShouldBeOfType<MockEventBus>().ThrowOnceOnEvent = "AgentTaskChanged";
         using var lost = await host.Client.PostAsJsonAsync(url, new { task = request, acceptSpend = true });
         lost.StatusCode.ShouldBe(HttpStatusCode.InternalServerError, "post-commit-event-cut-reached");
         var committed = (await host.ReadAsync()).Action.ChildTaskId.ShouldNotBeNull("committed-child-visible-after-event-failure");
         await host.RestartHttpAsync();
+        host.Client.DefaultRequestHeaders.Remove(OperatorTokenFile.Header);
+        host.Client.DefaultRequestHeaders.Add("X-Antiphon-Task-Token", recipientToken);
         var pair = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ =>
             host.Client.PostAsJsonAsync(url, new { task = request, acceptSpend = true })));
         try
@@ -213,7 +224,7 @@ public sealed partial class PipelineSpeedIntegrationTests
             await rig.FlushAsync(); await rig.ScanAsync();
             (await rig.NotificationAsync(task))!.Id.ShouldBe(note.Id, "same-notification-after-restart");
             await VerificationRoundDeliveryTests.AssertReceivedOnceAsync(rig, task, label, ["next=code"], expectKind: null,
-                expectSpill: spill ? null : false);
+                expectSpill: spill);
             await ConsumeAndRequestAsync(rig, task);
         }
     }
@@ -240,6 +251,20 @@ public sealed partial class PipelineSpeedIntegrationTests
             using var denied = await client.PostAsJsonAsync(url, request with { Receipt = wrong });
             await RequireProblemAsync(denied, "handoff_foreign_receipt");
         }
+        await using (var transcript = rig.World.CreateContext())
+        {
+            var prompt = await transcript.TranscriptEntries.SingleAsync(t => t.AgentSessionId == receipt.RecipientSessionId
+                && t.Sequence == receipt.ReceiptSequence);
+            var complete = prompt.Text;
+            prompt.Text = wire.WireText[..Math.Min(30, wire.WireText.Length - 1)];
+            await transcript.SaveChangesAsync();
+            try
+            {
+                using var clipped = await client.PostAsJsonAsync(url, request);
+                await RequireProblemAsync(clipped, "handoff_foreign_receipt");
+            }
+            finally { prompt.Text = complete; await transcript.SaveChangesAsync(); }
+        }
         using var saved = await client.PostAsJsonAsync(url, request);
         saved.StatusCode.ShouldBe(HttpStatusCode.OK, await saved.Content.ReadAsStringAsync());
         var action = (await saved.Content.ReadFromJsonAsync<PipelineHandoffActionDto>())!.Action;
@@ -251,6 +276,7 @@ public sealed partial class PipelineSpeedIntegrationTests
         var id = (await child.Content.ReadFromJsonAsync<AgentTaskCreatedDto>())!.Id;
         var read = (await client.GetFromJsonAsync<List<PipelineHandoffActionDto>>(url))!.ShouldHaveSingleItem();
         read.Action.ChildTaskId.ShouldBe(id); read.Action.ChildDispatchedAt.ShouldBeNull();
+        read.RequestedWithinFiveMinutes.ShouldBe(true, "actual-child-within-five-minutes");
         factory.SessionRunner.LaunchAttempts.ShouldBeEmpty();
     }
 

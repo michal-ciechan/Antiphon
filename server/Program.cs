@@ -483,6 +483,11 @@ try
     builder.Services.AddSingleton<AgentTaskReplyService>();
     builder.Services.AddScoped<ReviewEvidenceBindingService>();
     builder.Services.AddScoped<ReviewEvidenceRecoveryService>();
+    builder.Services.AddOptions<CheckpointReceiptSettings>()
+        .Bind(builder.Configuration.GetSection("CheckpointReceipts"));
+    builder.Services.AddScoped<ICheckpointReceiptValidator, Antiphon.Server.Infrastructure.Verification.CheckpointReceiptValidator>();
+    builder.Services.AddScoped<ReviewEvidenceCorrectionService>();
+    builder.Services.AddScoped<PipelineHandoffActionService>();
     // Scheduled check-ins on a running delegate (CARD-0047). The probe is read-only by
     // construction — see its constructor; the queue is the hand-off that keeps the dispatcher's
     // 5 s tick from ever waiting on a check.
@@ -1141,6 +1146,8 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapOperatorEndpoints();
     app.MapOrchestratorEndpoints();
     app.MapAgentTaskEndpoints();
+    app.MapReviewEvidenceCorrectionEndpoints();
+    app.MapPipelineHandoffActionEndpoints();
     app.MapModelAvailabilityEndpoints();
     app.MapSubscriptionUsageEndpoints();
     app.MapRoutingPinEndpoints();
