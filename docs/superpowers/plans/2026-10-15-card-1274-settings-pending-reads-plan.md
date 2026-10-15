@@ -63,6 +63,9 @@ can be pending.
   `RoutingSettingsTab.test.tsx`, `RunnerDefaultsSection.test.tsx`, `RolePolicySection.test.tsx`,
   `routingSettingsModel.test.ts`, `SettingsPage.test.tsx`, `ConcurrencySettingsTab.test.tsx`.
 - R-2 client typecheck and production build.
+- Amendment after CP-2 run `20261015-061840-d5fc`: `SettingsPage.test.tsx` moved from CP-2 to CP-4. Its two
+  template-request-count tests fail at the base with the same assertion, so the row records them as
+  inherited instead of reddening the C1274 rows' receipt.
 - No server source changes, so no .NET class is affected; the brief excludes the whole Unit lane.
 
 PC-1..PC-6 are pending for SourceLanding Mutation; see
@@ -79,5 +82,6 @@ committed `--expected-source-sha`, no keep-outputs on Linux.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | n/a | client-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/settingsPendingReads.test.tsx src/features/settings/DispatchConcurrencyEditor.test.tsx` | V-1, V-2, V-3 | both files run, nonzero count; new C1274 rows red before the fix | n/a | 5 | true |
-| CP-2 | S2 | n/a | client-green | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/settingsPendingReads.test.tsx src/features/settings/DispatchConcurrencyEditor.test.tsx src/features/settings/ProjectDeleteDialog.test.tsx src/features/settings/ApiKeysSection.test.tsx src/features/settings/ProjectConfig.test.tsx src/features/settings/RoutingSettingsTab.test.tsx src/features/settings/RunnerDefaultsSection.test.tsx src/features/settings/RolePolicySection.test.tsx src/features/settings/routingSettingsModel.test.ts src/features/settings/SettingsPage.test.tsx src/features/settings/ConcurrencySettingsTab.test.tsx` | V-1, V-2, V-3, R-1 | the listed files passed, nonzero count, 0 failed/skipped | n/a | 8 | true |
+| CP-2 | S2 | n/a | client-green | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/settingsPendingReads.test.tsx src/features/settings/DispatchConcurrencyEditor.test.tsx src/features/settings/ProjectDeleteDialog.test.tsx src/features/settings/ApiKeysSection.test.tsx src/features/settings/ProjectConfig.test.tsx src/features/settings/RoutingSettingsTab.test.tsx src/features/settings/RunnerDefaultsSection.test.tsx src/features/settings/RolePolicySection.test.tsx src/features/settings/routingSettingsModel.test.ts src/features/settings/ConcurrencySettingsTab.test.tsx` | V-1, V-2, V-3, R-1 | the listed files passed, nonzero count, 0 failed/skipped | n/a | 8 | true |
+| CP-4 | S2 | n/a | client-settings-page | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/SettingsPage.test.tsx` | R-1 | inherited red: `does not fetch routing queries until the Routing tab is opened` and `?tab=routing selects the tab and mounts routing queries without fetching templates` fail with `expected 15 to be 1` at base 78e400178 (run in a detached base worktree, see the evidence doc); other tests pass | n/a | 2 | true |
 | CP-3 | S2 | n/a | client-build | `npm --prefix client run build` | R-2 | typecheck and production build exit 0 | n/a | 3 | true |
