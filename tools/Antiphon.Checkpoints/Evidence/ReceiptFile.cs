@@ -31,9 +31,9 @@ public static class ReceiptFile
 
     public static string ReadText(string path) => ReadText(CheckpointCleanupDefaults.Context, path);
 
-    public static string ReadText(CheckpointCleanupContext context, string path)
+    public static string ReadText(CheckpointCleanupContext context, string path, CancellationToken cancellationToken = default)
     {
-        using var reader = new StreamReader(new MemoryStream(ReadBytes(context, path)));
+        using var reader = new StreamReader(new MemoryStream(ReadBytes(context, path, cancellationToken)));
         return reader.ReadToEnd();
     }
 }
@@ -42,7 +42,11 @@ public static class ReceiptFile
 public static class ReceiptJson
 {
     public static T Read<T>(string path, JsonSerializerOptions options) where T : class =>
-        Parse<T>(ReceiptFile.ReadText(path), options);
+        Read<T>(CheckpointCleanupDefaults.Context, path, options);
+
+    public static T Read<T>(CheckpointCleanupContext context, string path, JsonSerializerOptions options,
+        CancellationToken cancellationToken = default) where T : class =>
+        Parse<T>(ReceiptFile.ReadText(context, path, cancellationToken), options);
 
     public static T Parse<T>(string text, JsonSerializerOptions options) where T : class
     {

@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Antiphon.HostCleanup.Checkpoints;
 
 namespace Antiphon.Checkpoints;
 
@@ -12,7 +13,9 @@ public static class ReportWriter
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never,
     };
 
-    public static string Markdown(ReportModel model)
+    public static string Markdown(ReportModel model) => Markdown(CheckpointCleanupDefaults.Context, model);
+
+    public static string Markdown(CheckpointCleanupContext context, ReportModel model)
     {
         var text = new StringBuilder();
         text.AppendLine("--- checkpoint report ---");
@@ -60,7 +63,7 @@ public static class ReportWriter
         if (model.OutputNames.Count == 0 && model.OutputPaths.Count == 0)
             text.AppendLine("outputs: none");
         else
-            text.AppendLine(SafeWrite.FormatOutputs(model.OutputNames, model.OutputPaths));
+            text.AppendLine(new CheckpointWrite(context).FormatOutputs(model.OutputNames, model.OutputPaths));
         text.AppendLine("evidence: " + model.Evidence);
         text.AppendLine($"verdict: {model.Verdict} exit={model.ExitCode}" + (model.Reason is null ? "" : " reason=" + model.Reason));
         return text.ToString();
@@ -68,21 +71,29 @@ public static class ReportWriter
 
     public static string JsonText(ReportModel model) => JsonSerializer.Serialize(model, Json);
 
-    public static void WriteFiles(string runDirectory, ReportModel model)
+    public static void WriteFiles(string runDirectory, ReportModel model) =>
+        WriteFiles(CheckpointCleanupDefaults.Context, runDirectory, model);
+
+    public static void WriteFiles(CheckpointCleanupContext context, string runDirectory, ReportModel model)
     {
-        var markdown = Markdown(model);
+        var markdown = Markdown(context, model);
         model.MarkdownSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(markdown)));
-        var ownership = SafeWrite.Under(runDirectory);
-        var markdownRefusal = SafeWrite.Text(Path.Combine(runDirectory, "report.md"), markdown, ownership);
-        var jsonRefusal = SafeWrite.Text(Path.Combine(runDirectory, "report.json"), JsonText(model), ownership);
+        var write = new CheckpointWrite(context);
+        var ownership = write.Under(runDirectory);
+        var markdownRefusal = write.Text(Path.Combine(runDirectory, "report.md"), markdown, ownership);
+        var jsonRefusal = write.Text(Path.Combine(runDirectory, "report.json"), JsonText(model), ownership);
         if (markdownRefusal is not null || jsonRefusal is not null)
             throw new IOException("refused: required " + (markdownRefusal is not null ? "report.md" : "report.json") + " receipt-write-failed: " + (markdownRefusal ?? jsonRefusal));
-        if (ReceiptFile.ReadText(Path.Combine(runDirectory, "report.md")) != markdown
-            || ReceiptFile.ReadText(Path.Combine(runDirectory, "report.json")) != JsonText(model))
+        if (ReceiptFile.ReadText(context, Path.Combine(runDirectory, "report.md")) != markdown
+            || ReceiptFile.ReadText(context, Path.Combine(runDirectory, "report.json")) != JsonText(model))
             throw new IOException("refused: required report receipt readback mismatching");
     }
 
-    public static string? RequiredReceiptRefusal(string runDirectory, RunState state)
+    public static string? RequiredReceiptRefusal(string runDirectory, RunState state) =>
+        RequiredReceiptRefusal(CheckpointCleanupDefaults.Context, runDirectory, state);
+
+    public static string? RequiredReceiptRefusal(CheckpointCleanupContext context, string runDirectory, RunState state,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -93,10 +104,10 @@ public static class ReportWriter
             var markdownPath = Path.Combine(runDirectory, "report.md");
             var jsonPath = Path.Combine(runDirectory, "report.json");
             foreach (var path in new[] { markdownPath, jsonPath })
-                if (!File.Exists(path)) return "receipt-missing: " + path;
-            var report = ReceiptJson.Read<ReportModel>(jsonPath, Json);
+                if (!context.Io.FileExists(path)) return "receipt-missing: " + path;
+            var report = ReceiptJson.Read<ReportModel>(context, jsonPath, Json, cancellationToken);
             if (report is null || state.ExitCode is null) return "receipt-unreadable-or-terminal-exit-missing";
-            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(ReceiptFile.ReadBytes(markdownPath)));
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(ReceiptFile.ReadBytes(context, markdownPath, cancellationToken)));
             if (report.MarkdownSha256 != hash) return "receipt-mismatching: report.md";
             if (report.RunId != state.RunId || report.ExitCode != state.ExitCode
                 || report.Commit != (state.Source.Start.Commit ?? "")
@@ -107,8 +118,8 @@ public static class ReportWriter
                 foreach (var output in report.OutputPaths)
                 {
                     var path = Path.Combine(output, "checkpoint-build-source.json");
-                    if (!File.Exists(path)) return "receipt-missing: " + path;
-                    var binding = ReceiptJson.Read<CheckpointBuildBinding>(path, CheckpointApp.Json);
+                    if (!context.Io.FileExists(path)) return "receipt-missing: " + path;
+                    var binding = ReceiptJson.Read<CheckpointBuildBinding>(context, path, CheckpointApp.Json, cancellationToken);
                     if (binding is null || binding.Commit != report.Commit || binding.Fingerprint != report.Source.Start.Fingerprint)
                         return "receipt-source-mismatching: " + path;
                 }
