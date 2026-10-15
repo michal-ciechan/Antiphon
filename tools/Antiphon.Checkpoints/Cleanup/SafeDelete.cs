@@ -1,3 +1,4 @@
+using Antiphon.HostCleanup.Checkpoints;
 using System.ComponentModel;
 using System.Diagnostics;
 
@@ -34,17 +35,42 @@ public sealed class DeleteOwnership
 
 public static class SafeDelete
 {
+    public static DeleteResult Apply(string path, DeleteOwnership ownership, Action? beforeDelete = null, Func<string?>? inventoryCheck = null) =>
+        new CheckpointDelete(CheckpointCleanupDefaults.Context).Apply(path, ownership, beforeDelete, inventoryCheck);
+    internal static DeleteResult ApplyToolCopy(string path, DeleteOwnership ownership, ToolCopyAuthority authority,
+        Action? beforeDelete = null) =>
+        new CheckpointDelete(CheckpointCleanupDefaults.Context).ApplyToolCopy(path, ownership, authority, beforeDelete);
+    public static string? Refusal(string path, DeleteOwnership ownership) =>
+        new CheckpointDelete(CheckpointCleanupDefaults.Context).Refusal(path, ownership);
+    public static DeleteResult DeleteCreatedFile(string path) =>
+        new CheckpointDelete(CheckpointCleanupDefaults.Context).DeleteCreatedFile(path);
+    public static DeleteResult DeleteCreatedTree(string path) =>
+        new CheckpointDelete(CheckpointCleanupDefaults.Context).DeleteCreatedTree(path);
+    public static DeleteOwnership Stamp(string repositoryRoot, string? gitExecutable = null) =>
+        new CheckpointDelete(CheckpointCleanupDefaults.Context).Stamp(repositoryRoot, gitExecutable);
+    public static string? ExistingPathRefusal(string path, string? gitExecutable = null, int? timeoutMs = null) =>
+        new CheckpointDelete(CheckpointCleanupDefaults.Context).ExistingPathRefusal(path, gitExecutable, timeoutMs);
+    public static string? PreflightRoots(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null) =>
+        new CheckpointDelete(CheckpointCleanupDefaults.Context).PreflightRoots(repository, roots, gitExecutable, timeoutMs);
+}
+
+public sealed class CheckpointDelete(CheckpointCleanupContext context)
+{
+    private ICheckpointCleanupIo Io => context.Io;
+    private CheckpointWrite SafeWrite => new(context);
+    private CheckpointDelete SafeDelete => new(context);
+    private CheckpointOutputLedger OwnedOutputLedger => new(context);
     private const int GitTimeoutMs = 15_000;
     private const int MaxEntries = 10_000;
 
-    public static DeleteResult Apply(string path, DeleteOwnership ownership, Action? beforeDelete = null, Func<string?>? inventoryCheck = null)
+    public DeleteResult Apply(string path, DeleteOwnership ownership, Action? beforeDelete = null, Func<string?>? inventoryCheck = null)
         => ApplyCore(path, ownership, beforeDelete, inventoryCheck, null);
 
-    internal static DeleteResult ApplyToolCopy(string path, DeleteOwnership ownership, ToolCopyAuthority authority,
+    internal DeleteResult ApplyToolCopy(string path, DeleteOwnership ownership, ToolCopyAuthority authority,
         Action? beforeDelete = null) =>
         ApplyCore(path, ownership, beforeDelete, authority.Check, authority);
 
-    private static DeleteResult ApplyCore(string path, DeleteOwnership ownership, Action? beforeDelete,
+    private DeleteResult ApplyCore(string path, DeleteOwnership ownership, Action? beforeDelete,
         Func<string?>? inventoryCheck, ToolCopyAuthority? toolAuthority)
     {
         var full = Canonical(path);
@@ -64,7 +90,7 @@ public static class SafeDelete
         if (ownership.FileOnly)
         {
             if (!SafeWrite.MatchesCreation(full!)) return new DeleteResult { Disposition = DeleteDisposition.Refused, Path = full!, Reason = "left in place: " + full + "; current-process creation record missing or changed" };
-            File.Delete(full!);
+            Io.Unlink(full!);
         }
         else
         {
@@ -74,13 +100,13 @@ public static class SafeDelete
         return new DeleteResult { Disposition = DeleteDisposition.Deleted, Path = full!, Reason = null };
     }
 
-    public static string? Refusal(string path, DeleteOwnership ownership)
+    public string? Refusal(string path, DeleteOwnership ownership)
     {
         var full = Canonical(path);
         return full is null ? "path-unsafe" : Evaluate(full, ownership);
     }
 
-    public static DeleteResult DeleteCreatedFile(string path)
+    public DeleteResult DeleteCreatedFile(string path)
     {
         var full = Canonical(path);
         var parent = full is null ? null : Path.GetDirectoryName(full);
@@ -89,7 +115,7 @@ public static class SafeDelete
         return Apply(full, Private(parent, full, fileOnly: true));
     }
 
-    public static DeleteResult DeleteCreatedTree(string path)
+    public DeleteResult DeleteCreatedTree(string path)
     {
         var full = Canonical(path);
         var parent = full is null ? null : Path.GetDirectoryName(full);
@@ -98,7 +124,7 @@ public static class SafeDelete
         return Apply(full, Private(parent, full, fileOnly: false));
     }
 
-    public static DeleteOwnership Stamp(string repositoryRoot, string? gitExecutable = null) => new()
+    public DeleteOwnership Stamp(string repositoryRoot, string? gitExecutable = null) => new()
     {
         IsolatedRoot = repositoryRoot,
         RequireInventory = false,
@@ -109,7 +135,7 @@ public static class SafeDelete
         GitExecutable = gitExecutable,
     };
 
-    private static DeleteOwnership Private(string root, string path, bool fileOnly) => new()
+    private DeleteOwnership Private(string root, string path, bool fileOnly) => new()
     {
         IsolatedRoot = root,
         CreatedPaths = [path],
@@ -119,12 +145,12 @@ public static class SafeDelete
         FileOnly = fileOnly,
     };
 
-    private static string? Evaluate(string full, DeleteOwnership ownership)
+    private string? Evaluate(string full, DeleteOwnership ownership)
     {
         var reparse = ReparseReason(full, ownership.IsolatedRoot);
         if (reparse is not null)
             return reparse;
-        if (!string.IsNullOrWhiteSpace(ownership.IsolatedRoot) && !OutputCleanup.IsStrictlyInside(ownership.IsolatedRoot, full))
+        if (!string.IsNullOrWhiteSpace(ownership.IsolatedRoot) && !context.IsStrictlyInside(ownership.IsolatedRoot, full))
             return "outside-isolated-root";
         if (ownership.StampFile)
         {
@@ -146,12 +172,12 @@ public static class SafeDelete
         var git = GitRefusal(full, ownership.AllowOutsideRepository, ownership.GitExecutable, ownership.GitTimeoutMilliseconds);
         if (git is not null)
             return git;
-        if (ownership.FileOnly || !Directory.Exists(full))
+        if (ownership.FileOnly || !Io.DirectoryExists(full))
             return null;
         return TreeReason(full);
     }
 
-    private static string? ReparseReason(string full, string? isolatedRoot)
+    private string? ReparseReason(string full, string? isolatedRoot)
     {
         for (var current = full; !string.IsNullOrEmpty(current); current = Path.GetDirectoryName(current))
         {
@@ -161,7 +187,7 @@ public static class SafeDelete
             if (target is not null && !string.IsNullOrWhiteSpace(isolatedRoot))
             {
                 var resolved = ResolveTarget(current, target);
-                if (resolved is null || !OutputCleanup.IsStrictlyInside(isolatedRoot, resolved))
+                if (resolved is null || !context.IsStrictlyInside(isolatedRoot, resolved))
                     return "reparse-outside-root";
             }
 
@@ -173,9 +199,9 @@ public static class SafeDelete
 
     // An existing path may not be replaced until the same tracked-file and link checks a delete uses
     // have succeeded. A missing path is a create, not an overwrite.
-    public static string? ExistingPathRefusal(string path, string? gitExecutable = null, int? timeoutMs = null)
+    public string? ExistingPathRefusal(string path, string? gitExecutable = null, int? timeoutMs = null)
     {
-        if (!File.Exists(path) && !Directory.Exists(path))
+        if (!Io.FileExists(path) && !Io.DirectoryExists(path))
             return null;
         var full = Canonical(path);
         if (full is null)
@@ -186,7 +212,7 @@ public static class SafeDelete
         return GitRefusal(full, allowOutsideRepository: true, gitExecutable, timeoutMs ?? GitTimeoutMs);
     }
 
-    private static string? TreeReason(string root)
+    private string? TreeReason(string root)
     {
         if (IsGitMetadataName(root))
             return "nested_repository";
@@ -204,9 +230,9 @@ public static class SafeDelete
                 return "nested_repository";
             try
             {
-                if ((File.GetAttributes(path) & FileAttributes.Directory) == 0)
+                if ((Io.Attributes(path) & FileAttributes.Directory) == 0)
                     continue;
-                foreach (var child in Directory.EnumerateFileSystemEntries(path))
+                foreach (var child in Io.Enumerate(path))
                 {
                     // Name check before push: do not follow a link, and do not enter .git.
                     if (IsGitMetadataName(child))
@@ -223,14 +249,14 @@ public static class SafeDelete
         return null;
     }
 
-    private static bool IsGitMetadataName(string path) =>
+    private bool IsGitMetadataName(string path) =>
         string.Equals(Path.GetFileName(path), ".git", StringComparison.Ordinal);
 
     // A git answer is required. No metadata is "not a repository", and that is a refusal
     // unless the caller proved this file sits outside any repository.
-    private static string? GitRefusal(string full, bool allowOutsideRepository, string? gitExecutable, int timeoutMs)
+    private string? GitRefusal(string full, bool allowOutsideRepository, string? gitExecutable, int timeoutMs)
     {
-        var start = Directory.Exists(full) && !IsReparse(full) ? full : Path.GetDirectoryName(full);
+        var start = Io.DirectoryExists(full) && !IsReparse(full) ? full : Path.GetDirectoryName(full);
         if (string.IsNullOrEmpty(start))
             return "path-unsafe";
         var owner = FindOwner(start);
@@ -260,14 +286,14 @@ public static class SafeDelete
     }
 
     // One ls-files of every write root. A git failure refuses; a missing repository has nothing tracked.
-    public static string? PreflightRoots(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null)
+    public string? PreflightRoots(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null)
     {
         if (roots.Count == 0)
             return "git-failed";
         var start = Canonical(repository);
         if (start is null)
             return "path-unsafe";
-        var owner = FindOwner(Directory.Exists(start) ? start : Path.GetDirectoryName(start) ?? start);
+        var owner = FindOwner(Io.DirectoryExists(start) ? start : Path.GetDirectoryName(start) ?? start);
         if (owner is null)
             return string.IsNullOrWhiteSpace(gitExecutable) ? null : "git-failed";
         var timeout = timeoutMs ?? GitTimeoutMs;
@@ -291,13 +317,13 @@ public static class SafeDelete
         return listed.Stdout.Length == 0 ? null : "tracked";
     }
 
-    private static string? FindOwner(string start)
+    private string? FindOwner(string start)
     {
         var current = start;
         while (!string.IsNullOrEmpty(current))
         {
             var git = Path.Combine(current, ".git");
-            if (Directory.Exists(git) || File.Exists(git))
+            if (Io.DirectoryExists(git) || Io.FileExists(git))
                 return current;
             var parent = Path.GetDirectoryName(current);
             if (string.Equals(parent, current, StringComparison.Ordinal))
@@ -318,29 +344,26 @@ public static class SafeDelete
     // settle race are retried a few times inside that deadline when the executable is present,
     // then still reported as git-unavailable. A child that was created and then does not finish
     // is git-timeout, including a custody failure after that start.
-    private static GitRun RunGit(string git, string workingDirectory, IReadOnlyList<string> args, int timeoutMs)
+    private GitRun RunGit(string git, string workingDirectory, IReadOnlyList<string> args, int timeoutMs)
     {
         if (timeoutMs < 1)
             timeoutMs = GitTimeoutMs;
-        var clock = Stopwatch.StartNew();
+        var started = context.Time.GetTimestamp();
         for (var attempt = 1; ; attempt++)
         {
-            var remaining = timeoutMs - (int)Math.Min(clock.ElapsedMilliseconds, timeoutMs);
+            var remaining = timeoutMs - (int)Math.Min(context.Time.GetElapsedTime(started).TotalMilliseconds, timeoutMs);
             if (remaining < 1)
                 return new GitRun(-1, "", "", "git-unavailable");
-            var start = new ProcessStartInfo(git) { WorkingDirectory = workingDirectory };
-            foreach (var arg in args)
-                start.ArgumentList.Add(arg);
-            CheckpointProcessRunner.Result result;
+            CheckpointGitResult result;
             try
             {
-                result = CheckpointProcessRunner.Run(start, remaining, git: true);
+                result = context.Git.Run(new(git, workingDirectory, args, remaining));
             }
             catch (Exception ex) when (ex is Win32Exception or FileNotFoundException or DirectoryNotFoundException)
             {
                 if (attempt >= SpawnAttempts || !IsTransientSpawn(ex, git))
                     return new GitRun(-1, "", "", "git-unavailable");
-                Thread.Sleep(25 << (attempt - 1));
+                context.Delay(TimeSpan.FromMilliseconds(Math.Min(25 << (attempt - 1), Math.Max(0, timeoutMs - context.Time.GetElapsedTime(started).TotalMilliseconds))));
                 continue;
             }
             catch (InvalidOperationException)
@@ -355,7 +378,7 @@ public static class SafeDelete
             {
                 if (attempt >= SpawnAttempts || !ExecutableExists(git))
                     return new GitRun(-1, "", "", "git-unavailable");
-                Thread.Sleep(25 << (attempt - 1));
+                context.Delay(TimeSpan.FromMilliseconds(Math.Min(25 << (attempt - 1), Math.Max(0, timeoutMs - context.Time.GetElapsedTime(started).TotalMilliseconds))));
                 continue;
             }
 
@@ -365,43 +388,43 @@ public static class SafeDelete
 
     private const int SpawnAttempts = 6;
 
-    private static bool StartFailed(CheckpointProcessRunner.Result result) =>
-        OperatingSystem.IsLinux() && result.Exit is (126 or 127)
+    private bool StartFailed(CheckpointGitResult result) =>
+        Io.Platform == CheckpointPlatform.Linux && result.Exit is (126 or 127)
         && result.Stderr.StartsWith("setsid: failed to execute ", StringComparison.Ordinal);
 
-    private static bool IsTransientSpawn(Exception ex, string git)
+    private bool IsTransientSpawn(Exception ex, string git)
     {
         if (ex is not Win32Exception win || !ExecutableExists(git))
             return false;
         var code = win.NativeErrorCode;
-        if (OperatingSystem.IsWindows())
+        if (Io.Platform == CheckpointPlatform.Windows)
             return code is 8 or 1450;
         return code is 4 or 11 or 12 or 26 or 2 or 13;
     }
 
-    private static bool ExecutableExists(string git)
+    private bool ExecutableExists(string git)
     {
-        if (File.Exists(git))
+        if (Io.FileExists(git))
             return true;
         if (git.Contains('/') || git.Contains('\\'))
             return false;
-        var path = Environment.GetEnvironmentVariable("PATH");
+        var path = Io.EnvironmentVariable("PATH");
         if (string.IsNullOrEmpty(path))
             return false;
-        foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        foreach (var dir in path.Split(Io.Platform == CheckpointPlatform.Windows ? ';' : ':', StringSplitOptions.RemoveEmptyEntries))
         {
-            if (File.Exists(Path.Combine(dir, git)))
+            if (Io.FileExists(Path.Combine(dir, git)))
                 return true;
-            if (OperatingSystem.IsWindows() && File.Exists(Path.Combine(dir, git + ".exe")))
+            if (Io.Platform == CheckpointPlatform.Windows && Io.FileExists(Path.Combine(dir, git + ".exe")))
                 return true;
         }
 
         return false;
     }
 
-    private static bool Listed(IReadOnlyCollection<string> created, string full)
+    private bool Listed(IReadOnlyCollection<string> created, string full)
     {
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var comparison = Io.Platform == CheckpointPlatform.Windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         foreach (var candidate in created)
         {
             var other = Canonical(candidate);
@@ -412,7 +435,7 @@ public static class SafeDelete
         return false;
     }
 
-    private static string? Canonical(string path)
+    private string? Canonical(string path)
     {
         try
         {
@@ -424,19 +447,15 @@ public static class SafeDelete
         }
     }
 
-    private static bool Exists(string full) => File.Exists(full) || Directory.Exists(full);
+    private bool Exists(string full) => Io.FileExists(full) || Io.DirectoryExists(full);
 
-    private static bool IsReparse(string path) => LinkTargetOf(path) is not null || HasReparseAttribute(path);
+    private bool IsReparse(string path) => LinkTargetOf(path) is not null || HasReparseAttribute(path);
 
-    private static string? LinkTargetOf(string path)
+    private string? LinkTargetOf(string path)
     {
         try
         {
-            var directory = new DirectoryInfo(path);
-            if (!string.IsNullOrEmpty(directory.LinkTarget))
-                return directory.LinkTarget;
-            var file = new FileInfo(path);
-            return string.IsNullOrEmpty(file.LinkTarget) ? null : file.LinkTarget;
+            return Io.LinkTarget(path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
@@ -444,11 +463,11 @@ public static class SafeDelete
         }
     }
 
-    private static bool HasReparseAttribute(string path)
+    private bool HasReparseAttribute(string path)
     {
         try
         {
-            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+            return (Io.Attributes(path) & FileAttributes.ReparsePoint) != 0;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
                                    or NotSupportedException or FileNotFoundException or DirectoryNotFoundException)
@@ -457,7 +476,7 @@ public static class SafeDelete
         }
     }
 
-    private static string? ResolveTarget(string link, string target)
+    private string? ResolveTarget(string link, string target)
     {
         try
         {

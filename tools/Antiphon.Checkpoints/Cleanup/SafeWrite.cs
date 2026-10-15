@@ -1,3 +1,4 @@
+using Antiphon.HostCleanup.Checkpoints;
 using System.Collections.Concurrent;
 
 namespace Antiphon.Checkpoints;
@@ -21,6 +22,70 @@ public sealed class WriteOwnership
 public static class SafeWrite
 {
     public const string Marker = "antiphon-checkpoints";
+    public static void AdoptCreated(string path, OutputCustody.Window window) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).AdoptCreated(path, window);
+    public static DateTimeOffset? FreshRootCreated(string path) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).FreshRootCreated(path);
+    public static bool MatchesCreation(string path) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).MatchesCreation(path);
+    internal static string? CreationRecord(string path) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).CreationRecord(path);
+    public static string? Preflight(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).Preflight(repository, roots, gitExecutable, timeoutMs);
+    public static string? Refusal(string path, WriteOwnership ownership) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).Refusal(path, ownership);
+    public static string? Text(string path, string content, WriteOwnership ownership) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).Text(path, content, ownership);
+    public static string? Bytes(string path, ReadOnlySpan<byte> content, WriteOwnership ownership) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).Bytes(path, content, ownership);
+    public static string? Append(string path, string content, WriteOwnership ownership) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).Append(path, content, ownership);
+    public static string? CopyOverwrite(string source, string destination, WriteOwnership ownership) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).CopyOverwrite(source, destination, ownership);
+    public static string? MoveOverwrite(string source, string destination, WriteOwnership ownership) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).MoveOverwrite(source, destination, ownership);
+    public static string? CreateDirectory(string path, WriteOwnership ownership) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).CreateDirectory(path, ownership);
+    public static bool WasCreated(string path) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).WasCreated(path);
+    public static string? CreateFreshDirectory(string path, WriteOwnership ownership) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).CreateFreshDirectory(path, ownership);
+    public static string? OpenCreate(string path, WriteOwnership ownership, out FileStream? stream)
+    {
+        var reason = new CheckpointWrite(CheckpointCleanupDefaults.Context).OpenCreate(path, ownership, out var opened);
+        stream = (FileStream?)opened;
+        return reason;
+    }
+    public static string? OpenAppend(string path, WriteOwnership ownership, out FileStream? stream,
+        FileShare share = FileShare.ReadWrite | FileShare.Delete)
+    {
+        var reason = new CheckpointWrite(CheckpointCleanupDefaults.Context).OpenAppend(path, ownership, out var opened, share);
+        stream = (FileStream?)opened;
+        return reason;
+    }
+    public static string? OpenGate(string path, WriteOwnership ownership, out FileStream? stream)
+    {
+        var reason = new CheckpointWrite(CheckpointCleanupDefaults.Context).OpenGate(path, ownership, out var opened);
+        stream = (FileStream?)opened;
+        return reason;
+    }
+    public static void Require(string? reason) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).Require(reason);
+    public static bool CarriesMarker(string path, string runId) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).CarriesMarker(path, runId);
+    public static WriteOwnership Under(string root, string? runId = null, WriteKind kind = WriteKind.Ordinary, string? gitExecutable = null) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).Under(root, runId, kind, gitExecutable);
+    public static string FormatOutputs(IReadOnlyList<string> labels, IReadOnlyList<string> paths) =>
+        new CheckpointWrite(CheckpointCleanupDefaults.Context).FormatOutputs(labels, paths);
+}
+
+public sealed class CheckpointWrite(CheckpointCleanupContext context)
+{
+    private ICheckpointCleanupIo Io => context.Io;
+    private CheckpointWrite SafeWrite => new(context);
+    private CheckpointDelete SafeDelete => new(context);
+    private CheckpointOutputLedger OwnedOutputLedger => new(context);
+    public const string Marker = "antiphon-checkpoints";
 
     private static readonly ConcurrentDictionary<string, byte> Created = new(OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
@@ -30,45 +95,43 @@ public static class SafeWrite
     private static readonly ConcurrentDictionary<string, string> CreatedContent = new(OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     // Kernel ctime of each fresh owner-only root, taken right after the exclusive mkdir.
-    private static readonly ConcurrentDictionary<string, DateTimeOffset> FreshRoots = new(OperatingSystem.IsWindows()
-        ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-    private static void RecordContent(string path) => CreatedContent.TryAdd(path, Describe(path));
-    private static string Describe(string path)
+    private void RecordContent(string path) => CreatedContent.TryAdd(path, Describe(path));
+    private string Describe(string path)
     {
-        if (Directory.Exists(path)) return "directory";
-        var bytes = ReceiptFile.ReadBytes(path);
+        if (Io.DirectoryExists(path)) return "directory";
+        var bytes = ReceiptFile.ReadBytes(context, path);
         return bytes.LongLength + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
     }
     // Seal-time custody for entries a child process wrote under a root this process created
     // (OwnedOutputLedger.Seal). An existing record wins; an entry outside the custody window,
     // unreadable, or whose statx changes across the read stays unrecorded (OutputCustody).
-    public static void AdoptCreated(string path, OutputCustody.Window window)
+    public void AdoptCreated(string path, OutputCustody.Window window)
     {
         var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         try
         {
-            var before = OutputCustody.Stat(full);
+            var before = OutputCustody.Stat(context, full);
             if (before is null || OutputCustody.Refusal(before.Value, window) is not null) return;
             var record = Describe(full);
-            if (OutputCustody.Stat(full) == before) CreatedContent.TryAdd(full, record);
+            if (OutputCustody.Stat(context, full) == before) CreatedContent.TryAdd(full, record);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
-    public static DateTimeOffset? FreshRootCreated(string path) =>
-        FreshRoots.TryGetValue(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), out var created) ? created : null;
-    public static bool MatchesCreation(string path)
+    public DateTimeOffset? FreshRootCreated(string path) =>
+        context.Registry.FreshRoot(path);
+    public bool MatchesCreation(string path)
     {
         if (!CreatedContent.TryGetValue(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), out var recorded)) return false;
-        if (Directory.Exists(path)) return recorded == "directory";
-        var bytes = ReceiptFile.ReadBytes(path);
+        if (Io.DirectoryExists(path)) return recorded == "directory";
+        var bytes = ReceiptFile.ReadBytes(context, path);
         return recorded == bytes.LongLength + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
     }
 
-    internal static string? CreationRecord(string path) =>
+    internal string? CreationRecord(string path) =>
         CreatedContent.TryGetValue(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
             out var content) ? content : null;
 
-    public static string? Preflight(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null)
+    public string? Preflight(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null)
     {
         foreach (var root in roots)
         {
@@ -80,7 +143,7 @@ public static class SafeWrite
         return SafeDelete.PreflightRoots(repository, roots, gitExecutable, timeoutMs);
     }
 
-    public static string? Refusal(string path, WriteOwnership ownership)
+    public string? Refusal(string path, WriteOwnership ownership)
     {
         var full = Canonical(path);
         if (full is null)
@@ -93,7 +156,7 @@ public static class SafeWrite
         var git = SafeDelete.PreflightRoots(full, [full], ownership.GitExecutable, ownership.GitTimeoutMilliseconds);
         if (git is not null)
             return git;
-        if (!File.Exists(full) && !Directory.Exists(full))
+        if (!Io.FileExists(full) && !Io.DirectoryExists(full))
             return null;
         if (Created.ContainsKey(full))
             return null;
@@ -104,7 +167,7 @@ public static class SafeWrite
         return "unrecorded-existing";
     }
 
-    public static string? Text(string path, string content, WriteOwnership ownership)
+    public string? Text(string path, string content, WriteOwnership ownership)
     {
         var reason = Refusal(path, ownership);
         if (reason is not null)
@@ -121,27 +184,27 @@ public static class SafeWrite
         var temporary = full + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            File.WriteAllText(temporary, content);
+            Io.WriteBytes(temporary, System.Text.Encoding.UTF8.GetBytes(content));
             Created.TryAdd(temporary, 0);
             reason = Refusal(full, ownership);
             if (reason is not null)
                 return reason;
-            File.Move(temporary, full, overwrite: true);
+            Io.Move(temporary, full, overwrite: true);
             Created.TryAdd(full, 0);
             RecordContent(full);
             return null;
         }
         finally
         {
-            if (File.Exists(temporary))
+            if (Io.FileExists(temporary))
             {
-                try { File.Delete(temporary); } catch (IOException) { }
+                try { Io.Unlink(temporary); } catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
             }
         }
     }
 
-    public static string? Bytes(string path, ReadOnlySpan<byte> content, WriteOwnership ownership)
+    public string? Bytes(string path, ReadOnlySpan<byte> content, WriteOwnership ownership)
     {
         var reason = Refusal(path, ownership);
         if (reason is not null)
@@ -158,43 +221,43 @@ public static class SafeWrite
         var temporary = full + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            File.WriteAllBytes(temporary, content.ToArray());
+            Io.WriteBytes(temporary, content.ToArray());
             Created.TryAdd(temporary, 0);
             reason = Refusal(full, ownership);
             if (reason is not null)
                 return reason;
-            File.Move(temporary, full, overwrite: true);
+            Io.Move(temporary, full, overwrite: true);
             Created.TryAdd(full, 0);
             RecordContent(full);
             return null;
         }
         finally
         {
-            if (File.Exists(temporary))
+            if (Io.FileExists(temporary))
             {
-                try { File.Delete(temporary); } catch (IOException) { }
+                try { Io.Unlink(temporary); } catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
             }
         }
     }
 
-    public static string? Append(string path, string content, WriteOwnership ownership)
+    public string? Append(string path, string content, WriteOwnership ownership)
     {
         var reason = AllowExisting(path, ownership);
         if (reason is not null)
             return reason;
         var full = Canonical(path)!;
-        if (Directory.Exists(full))
+        if (Io.DirectoryExists(full))
             return "unrecorded-existing";
-        if (!File.Exists(full))
+        if (!Io.FileExists(full))
             return Text(path, content, ownership);
-        File.AppendAllText(full, content);
+        Io.AppendText(full, content);
         Created.TryAdd(full, 0);
         RecordContent(full);
         return null;
     }
 
-    public static string? CopyOverwrite(string source, string destination, WriteOwnership ownership)
+    public string? CopyOverwrite(string source, string destination, WriteOwnership ownership)
     {
         var reason = Refusal(destination, ownership);
         if (reason is not null)
@@ -208,30 +271,30 @@ public static class SafeWrite
                 return reason;
         }
 
-        File.Copy(source, full, overwrite: true);
+        Io.Copy(source, full, overwrite: true);
         Created.TryAdd(full, 0);
         RecordContent(full);
         return null;
     }
 
-    public static string? MoveOverwrite(string source, string destination, WriteOwnership ownership)
+    public string? MoveOverwrite(string source, string destination, WriteOwnership ownership)
     {
         var reason = Refusal(destination, ownership);
         if (reason is not null)
             return reason;
         var full = Canonical(destination)!;
-        File.Move(source, full, overwrite: true);
+        Io.Move(source, full, overwrite: true);
         Created.TryAdd(full, 0);
         RecordContent(full);
         return null;
     }
 
-    public static string? CreateDirectory(string path, WriteOwnership ownership)
+    public string? CreateDirectory(string path, WriteOwnership ownership)
     {
         var full = Canonical(path);
         if (full is null)
             return "path-unsafe";
-        if (Directory.Exists(full) && LinkRefusal(full) is null && !File.Exists(full))
+        if (Io.DirectoryExists(full) && LinkRefusal(full) is null && !Io.FileExists(full))
         {
             if (!InsideRoots(full, ownership.Roots) && !ContainsRoot(full, ownership.Roots))
                 return "outside-root";
@@ -241,29 +304,29 @@ public static class SafeWrite
         var reason = Refusal(full, ownership);
         if (reason is not null)
             return reason;
-        Directory.CreateDirectory(full);
+        Io.CreateDirectory(full);
         Created.TryAdd(full, 0);
         RecordContent(full);
         return null;
     }
 
-    public static bool WasCreated(string path) => Created.ContainsKey(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+    public bool WasCreated(string path) => Created.ContainsKey(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
 
-    public static string? CreateFreshDirectory(string path, WriteOwnership ownership)
+    public string? CreateFreshDirectory(string path, WriteOwnership ownership)
     {
         var reason = Refusal(path, ownership);
         if (reason is not null) return reason;
         var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        reason = ExclusiveDirectory.Create(full);
+        reason = ExclusiveDirectory.Create(context, full);
         if (reason is not null) return reason;
-        if (OutputCustody.Stat(full) is { IsDirectory: true } made && made.Owner == OutputCustody.Owner && (made.Mode & 0x3F) == 0)
-            FreshRoots.TryAdd(full, made.Changed);
+        if (OutputCustody.Stat(context, full) is { IsDirectory: true } made && made.Owner == Io.Owner && (made.Mode & 0x3F) == 0)
+            context.Registry.RecordFreshRoot(full, made.Changed);
         Created.TryAdd(full, 0);
         RecordContent(full);
         return Text(Path.Combine(full, ".checkpoint-output-owner.json"), Guid.NewGuid().ToString("N"), Under(full));
     }
 
-    public static string? OpenCreate(string path, WriteOwnership ownership, out FileStream? stream)
+    public string? OpenCreate(string path, WriteOwnership ownership, out Stream? stream)
     {
         stream = null;
         var reason = Refusal(path, ownership);
@@ -278,12 +341,12 @@ public static class SafeWrite
                 return reason;
         }
 
-        stream = new FileStream(full, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        stream = Io.Open(full, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         Created.TryAdd(full, 0);
         return null;
     }
 
-    public static string? OpenAppend(string path, WriteOwnership ownership, out FileStream? stream,
+    public string? OpenAppend(string path, WriteOwnership ownership, out Stream? stream,
         FileShare share = FileShare.ReadWrite | FileShare.Delete)
     {
         stream = null;
@@ -291,7 +354,7 @@ public static class SafeWrite
         if (reason is not null)
             return reason;
         var full = Canonical(path)!;
-        if (Directory.Exists(full))
+        if (Io.DirectoryExists(full))
             return "unrecorded-existing";
         var directory = Path.GetDirectoryName(full);
         if (!string.IsNullOrEmpty(directory))
@@ -301,19 +364,19 @@ public static class SafeWrite
                 return reason;
         }
 
-        stream = new FileStream(full, FileMode.Append, FileAccess.Write, share);
+        stream = Io.Open(full, FileMode.Append, FileAccess.Write, share);
         Created.TryAdd(full, 0);
         return null;
     }
 
-    public static string? OpenGate(string path, WriteOwnership ownership, out FileStream? stream)
+    public string? OpenGate(string path, WriteOwnership ownership, out Stream? stream)
     {
         stream = null;
         var reason = AllowExisting(path, ownership);
         if (reason is not null)
             return reason;
         var full = Canonical(path)!;
-        if (Directory.Exists(full))
+        if (Io.DirectoryExists(full))
             return "unrecorded-existing";
         var directory = Path.GetDirectoryName(full);
         if (!string.IsNullOrEmpty(directory))
@@ -323,24 +386,24 @@ public static class SafeWrite
                 return reason;
         }
 
-        stream = new FileStream(full, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        stream = Io.Open(full, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         Created.TryAdd(full, 0);
         return null;
     }
 
-    public static void Require(string? reason)
+    public void Require(string? reason)
     {
         if (reason is not null)
             throw new IOException("refused: " + reason);
     }
 
-    public static bool CarriesMarker(string path, string runId)
+    public bool CarriesMarker(string path, string runId)
     {
         try
         {
-            if (!File.Exists(path))
+            if (!Io.FileExists(path))
                 return false;
-            var text = ReceiptFile.ReadText(path);
+            var text = ReceiptFile.ReadText(context, path);
             if (text.StartsWith(Marker + " " + runId, StringComparison.Ordinal))
                 return true;
             return text.Contains("\"toolOwner\": \"" + Marker + "\"", StringComparison.Ordinal)
@@ -353,7 +416,7 @@ public static class SafeWrite
         }
     }
 
-    public static WriteOwnership Under(string root, string? runId = null, WriteKind kind = WriteKind.Ordinary, string? gitExecutable = null) =>
+    public WriteOwnership Under(string root, string? runId = null, WriteKind kind = WriteKind.Ordinary, string? gitExecutable = null) =>
         new()
         {
             Roots = [Path.GetFullPath(root)],
@@ -362,7 +425,7 @@ public static class SafeWrite
             GitExecutable = gitExecutable,
         };
 
-    public static string FormatOutputs(IReadOnlyList<string> labels, IReadOnlyList<string> paths)
+    public string FormatOutputs(IReadOnlyList<string> labels, IReadOnlyList<string> paths)
     {
         if (labels.Count == 0 && paths.Count == 0)
             return "outputs: none";
@@ -373,7 +436,7 @@ public static class SafeWrite
         {
             var label = i < labels.Count ? labels[i] : Path.GetFileName(paths[i].TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) + "/";
             var path = i < paths.Count ? paths[i] : null;
-            var present = path is not null && (Directory.Exists(path) || File.Exists(path));
+            var present = path is not null && (Io.DirectoryExists(path) || Io.FileExists(path));
             if (path is null || present)
                 kept.Add(label);
             else
@@ -385,7 +448,7 @@ public static class SafeWrite
         return "outputs: deleted " + string.Join(", ", deleted);
     }
 
-    private static string? AllowExisting(string path, WriteOwnership ownership)
+    private string? AllowExisting(string path, WriteOwnership ownership)
     {
         var full = Canonical(path);
         if (full is null)
@@ -398,7 +461,7 @@ public static class SafeWrite
         return SafeDelete.PreflightRoots(full, [full], ownership.GitExecutable, ownership.GitTimeoutMilliseconds);
     }
 
-    private static string? LinkRefusal(string path)
+    private string? LinkRefusal(string path)
     {
         var full = Canonical(path);
         if (full is null)
@@ -412,13 +475,13 @@ public static class SafeWrite
         return null;
     }
 
-    private static bool IsLink(string path)
+    private bool IsLink(string path)
     {
         try
         {
-            if (!string.IsNullOrEmpty(new DirectoryInfo(path).LinkTarget) || !string.IsNullOrEmpty(new FileInfo(path).LinkTarget))
+            if (!string.IsNullOrEmpty(Io.LinkTarget(path)) || !string.IsNullOrEmpty(Io.LinkTarget(path)))
                 return true;
-            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+            return (Io.Attributes(path) & FileAttributes.ReparsePoint) != 0;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
                                    or NotSupportedException or FileNotFoundException or DirectoryNotFoundException)
@@ -427,39 +490,39 @@ public static class SafeWrite
         }
     }
 
-    private static bool InsideRoots(string full, IReadOnlyCollection<string> roots)
+    private bool InsideRoots(string full, IReadOnlyCollection<string> roots)
     {
         foreach (var root in roots)
         {
-            if (OutputCleanup.IsStrictlyInside(root, full) || Same(root, full))
+            if (context.IsStrictlyInside(root, full) || Same(root, full))
                 return true;
         }
 
         return false;
     }
 
-    private static bool ContainsRoot(string directory, IReadOnlyCollection<string> roots)
+    private bool ContainsRoot(string directory, IReadOnlyCollection<string> roots)
     {
         foreach (var root in roots)
         {
             var full = Canonical(root);
-            if (full is not null && (OutputCleanup.IsStrictlyInside(directory, full) || Same(directory, full)))
+            if (full is not null && (context.IsStrictlyInside(directory, full) || Same(directory, full)))
                 return true;
         }
 
         return false;
     }
 
-    private static bool Same(string root, string full)
+    private bool Same(string root, string full)
     {
         var canonical = Canonical(root);
         if (canonical is null)
             return false;
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var comparison = context.PathComparison;
         return string.Equals(canonical, full, comparison);
     }
 
-    private static string? Canonical(string path)
+    private string? Canonical(string path)
     {
         try
         {
