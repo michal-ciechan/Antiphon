@@ -9,6 +9,69 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegateScriptLandStatusTests
 {
+    /// <summary>CARD-1136 / F5 V-15: render the real status command against the task-detail wire.</summary>
+    [Test]
+    [Arguments("pending-with-debt")]
+    [Arguments("pending-without-debt")]
+    [Arguments("synchronized")]
+    public async Task C1136_StatusPrintsSyncDebtAndPendingLines(string scenario)
+    {
+        var id = Guid.NewGuid();
+        var observed = new string('a', 40);
+        var mirror = new string('b', 40);
+        var synchronized = scenario == "synchronized";
+        var hasDebt = scenario == "pending-with-debt";
+        const string report = "SYNC STATUS REPORT AFTER FACTS";
+        const string noDebt = "Pending evidence without a debt row means the task stayed Blocked and a reply is required.";
+        var body = JsonSerializer.Serialize(new
+        {
+            summary = new { status = scenario == "pending-without-debt" ? "Blocked" : "Succeeded",
+                title = "sync status", kind = "Worker", role = "Code", modelLevel = "High" },
+            result = report,
+            landing = new { publication = "Unconfirmed", cleanup = "NotStarted" },
+            progressEvidence = new
+            {
+                remoteSync = new
+                {
+                    state = synchronized ? "Synchronized" : "Pending",
+                    reason = synchronized ? "runner_sync_synchronized" : "runner_sync_lease_busy",
+                    observedSha = observed,
+                    confirmedSha = synchronized ? observed : null,
+                    mirrorSha = mirror, mirrorRelation = "Equal", mirrorPushed = false, mirrorDirty = false,
+                },
+            },
+            syncDebt = hasDebt ? new
+            {
+                state = "Pending", sourceSha = observed, confirmedSha = (string?)null,
+                reasonCode = "runner_sync_lease_busy", attempts = 2,
+                nextAttemptAt = (string?)null, sourceReadyAt = (string?)null,
+            } : null,
+        });
+        await using var server = LandApiStub.Compatible(new string('e', 40), taskStatusBody: body);
+
+        var status = await DelegateScriptRunner.RunAsync(server.Url, "-Status", id.ToString());
+
+        status.ExitCode.ShouldBe(0, status.Output);
+        // Compare complete output lines, with independent expected values. In particular,
+        // Pending has no confirmed SHA and a different mirror SHA: neither can stand in for origin.
+        var lines = status.Output.Replace("\r\n", "\n").Split('\n');
+        var syncLine = synchronized
+            ? $"Runner sync: Synchronized runner_sync_synchronized; mirror={mirror} Equal pushed=False dirty=False"
+            : $"Runner sync: Pending runner_sync_lease_busy; origin={observed}";
+        lines.Where(line => line.StartsWith("Runner sync:", StringComparison.Ordinal)).ShouldBe([syncLine]);
+        lines.Where(line => line.StartsWith("Desktop sync debt:", StringComparison.Ordinal)).ShouldBe(
+            hasDebt ? [$"Desktop sync debt: Pending source={observed} confirmed= reason=runner_sync_lease_busy attempts=2"] : Array.Empty<string>());
+        lines.Count(line => line == noDebt).ShouldBe(scenario == "pending-without-debt" ? 1 : 0);
+        var reportIndex = Array.IndexOf(lines, report);
+        reportIndex.ShouldBeGreaterThan(Array.IndexOf(lines, syncLine));
+        if (hasDebt)
+            reportIndex.ShouldBeGreaterThan(Array.FindIndex(lines, line => line.StartsWith("Desktop sync debt:", StringComparison.Ordinal)));
+        if (scenario == "pending-without-debt")
+            reportIndex.ShouldBeGreaterThan(Array.IndexOf(lines, noDebt));
+        server.Requests.Select(request => (request.Method, request.Path))
+            .ShouldBe([("GET", $"/api/agent-tasks/{id}")]);
+    }
+
     [Test]
     [Arguments("not-requested")]
     [Arguments("held")]

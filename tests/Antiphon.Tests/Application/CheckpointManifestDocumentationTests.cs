@@ -24,6 +24,20 @@ public sealed class CheckpointManifestDocumentationTests
 
     private static string ReadCollapsed(params string[] relative) => Collapse(ReadRepoFile(relative));
 
+    /// <summary>CARD-1136 / F5 V-16: shell operators end the wrapper's lease before a second driver.</summary>
+    [Test]
+    public void the_chained_operator_pitfall_is_documented()
+    {
+        var doc = ReadRepoFile("docs", "testing-and-build.md");
+        var start = doc.IndexOf("### Build slots (CARD-0589)", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        var next = doc.IndexOf("\n## ", start, StringComparison.Ordinal);
+        var section = Collapse(next < 0 ? doc[start..] : doc[start..next]);
+        section.ShouldContain("Never chain a second driver after the gated command with a shell operator: "
+            + "the lease ends when build-slot.ps1 returns, so `-- dotnet build ... && dotnet exec ...` "
+            + "runs the exec unleased and Review flags it.", Case.Sensitive, "CARD-1136 V-16");
+    }
+
     [Test]
     public void the_checkpoint_phrases_are_pinned_in_every_copy()
     {
