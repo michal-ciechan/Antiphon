@@ -748,6 +748,90 @@ function Test-C1044_ParserCompatibility {
     Assert-C1044Rejects -Name 'header only refuses' -Text $headers -Pattern 'unknown diagnostic format'
 }
 
+function Get-D13FailureText {
+    . (Join-Path $here 'fixtures/nightly/d13-error-pair.ps1')
+    return ("Version: '1.44.0.0'`nVersion: 2.2.2`n" + $D13FailureRecord)
+}
+
+function Test-D13_ErrorTerminal {
+    . (Join-Path $here 'fixtures/nightly/d13-error-pair.ps1')
+    $uid = 'Antiphon.E2E.AgentTaskLandDeliveryE2ETests.1.1.C488_ApprovalPollingCannotConfirm.1.1.0'
+    $class = 'Antiphon.E2E.AgentTaskLandDeliveryE2ETests'
+    $method = 'C488_ApprovalPollingCannotConfirm'
+    foreach ($style in @('LF', 'CRLF')) {
+        $nl = $(if ($style -eq 'LF') { "`n" } else { "`r`n" })
+        $text = (Get-D13FailureText).Replace("`r`n", "`n").Replace("`n", $nl)
+        $path = Write-C1044Diagnostic -Name ('d13-' + $style) -Text $text
+        $parsed = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution).Nodes)
+        Assert-C487 -Cond ($parsed.Count -eq 1 -and $parsed[0].Uid -ceq $uid -and
+            $parsed[0].ClassName -ceq $class -and $parsed[0].Method -ceq $method -and
+            $parsed[0].Outcome -ceq 'Failed') -Name ('D13 ' + $style + ' failure identity')
+        $expected = '[Test Failure] ShouldAssertException: OperatingSystem.IsWindows()' + $nl +
+            '    should be' + $nl + 'True' + $nl + '    but was' + $nl + 'False'
+        Assert-C487 -Cond ($parsed.Count -eq 1 -and $parsed[0].Message -ceq $expected) -Name ('D13 ' + $style + ' failure message')
+        $trx = Join-Path $ResultsDirectory ('d13-' + $style + '.trx')
+        [IO.File]::WriteAllText($trx, $D13FailureTrx)
+        $rows = @(Read-NightlyTrxIdentities -TrxPath $trx)
+        Assert-C487 -Cond ($rows.Count -eq 1 -and $rows[0].ClassName -ceq $class -and
+            $rows[0].MethodName -ceq $method -and $rows[0].Outcome -ceq 'Failed') -Name ('D13 ' + $style + ' real TRX identity')
+        $discovery = Join-Path $ResultsDirectory ('d13-' + $style + '.json')
+        Write-C487Discovery -Path $discovery -Nodes @(@{ uid = $uid; namespace = 'Antiphon.E2E';
+            type = 'AgentTaskLandDeliveryE2ETests'; method = $method; state = 'Discovered' })
+        $v = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trx -DiscoveryPath $discovery -ExecutionDiagnosticPath $path `
+            -RunDirectory $ResultsDirectory -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-1)) -ProcessExit 2 `
+            -Sha 'd13' -ExpectedSha 'd13' -GitRef 'test' -ExpectedRef 'test' -PolicyHash 'test' -ExpectedPolicyHash 'test'
+        Assert-C487 -Cond ($v.coverageComplete -and -not $v.testsPassed -and $v.reasons -contains 'failed-row' -and
+            @($v.terminalNodes).Count -eq 1 -and $v.terminalNodes[0].Message -ceq $expected) -Name ('D13 ' + $style + ' complete failed verdict')
+        # Even a misleading successful process exit cannot make the failure pass.
+        $direct = ConvertTo-NightlyCoverageVerdict -TerminalRows $parsed -ProcessExit 0 `
+            -Sha 'd13' -ExpectedSha 'd13' -GitRef 'test' -ExpectedRef 'test' -PolicyHash 'test' -ExpectedPolicyHash 'test'
+        Assert-C487 -Cond (-not $direct.testsPassed -and $direct.reasons -contains 'failed-row') -Name ('D13 ' + $style + ' error alone stays red')
+    }
+}
+
+function Test-D13_ExecutionCompatibility {
+    $root = Get-C487ProbeRoot
+    $text = [IO.File]::ReadAllText((Join-Path $root 'execution.diag'))
+    $pass = @((ConvertFrom-NightlyDiagnosticLog -Path (Join-Path $root 'execution.diag') -Kind execution).Nodes)
+    $skipPath = Write-C1044Diagnostic -Name 'd13-skips' -Text ($text.Replace('PassedTestNodeStateProperty', 'SkippedTestNodeStateProperty'))
+    $skip = @((ConvertFrom-NightlyDiagnosticLog -Path $skipPath -Kind execution).Nodes)
+    Assert-C487 -Cond ($pass.Count -eq 8 -and $skip.Count -eq 8 -and
+        @($pass | Where-Object { $_.Outcome -cne 'Passed' }).Count -eq 0 -and
+        @($skip | Where-Object { $_.Outcome -cne 'Skipped' }).Count -eq 0 -and
+        (Test-C1044Inventory -Nodes $pass -Execution) -and (Test-C1044Inventory -Nodes $skip -Execution)) -Name 'D13 pass and skip unchanged'
+    $legacyPath = Write-C1044Diagnostic -Name 'd13-legacy' -Text ((Get-D13FailureText).Replace('ErrorTestNodeStateProperty', 'FailedTestNodeStateProperty'))
+    $legacy = @((ConvertFrom-NightlyDiagnosticLog -Path $legacyPath -Kind execution).Nodes)
+    Assert-C487 -Cond ($legacy.Count -eq 1 -and $legacy[0].Outcome -ceq 'Failed' -and
+        $legacy[0].Method -ceq 'C488_ApprovalPollingCannotConfirm') -Name 'D13 legacy Failed retained'
+    $discovery = [IO.File]::ReadAllText((Join-Path $root 'discovery.diag'))
+    $mixedPath = Write-C1044Diagnostic -Name 'd13-mixed' -Text ($text + "`n" + $discovery + "`n" + (Get-D13FailureText))
+    $mixed = @((ConvertFrom-NightlyDiagnosticLog -Path $mixedPath -Kind execution).Nodes)
+    Assert-C487 -Cond ($mixed.Count -eq 9 -and @($mixed | Where-Object { $_.Outcome -eq 'Failed' }).Count -eq 1 -and
+        @($mixed | Where-Object { $_.Outcome -in @('Discovered', 'InProgress') }).Count -eq 0) -Name 'D13 nonterminal updates omitted'
+}
+
+function Test-D13_ExecutionGuards {
+    $text = Get-D13FailureText
+    foreach ($variant in @('duplicate', 'version')) {
+        $changed = $(if ($variant -eq 'duplicate') { $text + "`n" + $text } else { $text.Replace('2.2.2', '9.0.0') })
+        $path = Write-C1044Diagnostic -Name ('d13-' + $variant) -Text $changed
+        $errorText = ''
+        try { $null = ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution } catch { $errorText = $_.Exception.Message }
+        if ($variant -eq 'duplicate') {
+            Assert-C487 -Cond ($errorText -match 'duplicate execution uid') -Name 'D13 duplicate Error refuses' -Detail $errorText
+        } else {
+            Assert-C487 -Cond ($errorText -match 'version-drift') -Name 'D13 unsupported version refuses' -Detail $errorText
+        }
+    }
+    $path = Write-C1044Diagnostic -Name 'd13-guard-error' -Text $text
+    $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution).Nodes)
+    $missing = Test-NightlyExpandedRowsPresent -DiscoveryNodes @() -TerminalRows @() `
+        -RequiredUids @('Antiphon.E2E.AgentTaskLandDeliveryE2ETests.1.1.C488_ApprovalPollingCannotConfirm.1.1.0')
+    Assert-C487 -Cond (-not $missing.Ok -and $missing.Missing.Count -eq 1) -Name 'D13 missing failed UID refuses'
+    $extra = Test-NightlyTrxDiagnosticCrossCheck -TrxRows @() -TerminalNodes $nodes
+    Assert-C487 -Cond (-not $extra.Ok -and $extra.Mismatch.Count -eq 1) -Name 'D13 extra failed identity refuses'
+}
+
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
