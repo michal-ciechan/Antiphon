@@ -15,7 +15,7 @@ Both registry and profile launches reach `FinishDispatchedLaunchSpecAsync`.
 Phone-home projection copies the environment and changes callback origin; it does
 not remove this token. Runner transport already carries it.
 
-S1 adds a six-variant regression through actual dispatch, remote preparation,
+S1 adds a six-variant regression through actual dispatch from prepared remote state,
 database persistence, the launch sink and phone-home serialization. An independent
 database context witnesses the token hash at enqueue, then fresh authentication
 checks task/session identity and Worker authority. No credential values appear in
@@ -55,7 +55,7 @@ six cases as part of the full affected class in S2.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1285-red/` | token-red | `/*/*/PhoneHomeTaskDispatchProjectionTests/C1285_worker_launch_has_durable_task_token` | V-1, V-2, V-3, V-4 | C1285_worker_launch_has_durable_task_token | 6 | 5 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1285-red2/` | token-red | `/*/*/PhoneHomeTaskDispatchProjectionTests/C1285_worker_launch_has_durable_task_token` | V-1, V-2, V-3, V-4 | C1285_worker_launch_has_durable_task_token | 6 | 5 | true |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1285-green/` | remote-dispatch | `/*/*/PhoneHomeTaskDispatchProjectionTests/*` | V-1, V-2, V-3, V-4, R-1 | PhoneHomeTaskDispatchProjectionTests | 14 | 5 | true |
 | CP-3 | S2 | CP-2 | launch-adjacent | `/*/*/(LaunchEnvLayersIntegrationTests)\|(PinnedProfileLaunchSpecTests)\|(CodexDelegateDispatchTests)\|(GrokDelegateDispatchTests)\|(BootWedgeRelaunchParityTests)/*` | R-2 | LaunchEnvLayersIntegrationTests,PinnedProfileLaunchSpecTests,CodexDelegateDispatchTests,GrokDelegateDispatchTests,BootWedgeRelaunchParityTests | 5 | 4 | true |
 | CP-4 | S2 | CP-2 | owner-guards | `/*/*/(CheckpointTaskOwnershipTests)\|(CheckpointSlotExecutorTests)\|(LaunchModelArgumentAppenderTests)/*` | R-3 | CheckpointTaskOwnershipTests,CheckpointSlotExecutorTests,LaunchModelArgumentAppenderTests | 3 | 3 | true |
