@@ -198,7 +198,7 @@ public sealed class PipelineHandoffPilotTests
 
     // Component composition only. S6 owns real Program registration. All routes below are
     // the production extension; no test-only endpoint or production runner is installed.
-    private sealed class PilotHost : IAsyncDisposable
+    internal sealed class PilotHost : IAsyncDisposable
     {
         public C544World World { get; private set; } = null!;
         public WebApplication App { get; private set; } = null!;
@@ -218,6 +218,7 @@ public sealed class PipelineHandoffPilotTests
             {
                 var owner = await db.AgentTasks.SingleAsync(t => t.Id == host.World.Owner.Id);
                 owner.NextStage = PipelineHandoffKind.Code;
+                owner.ParentSessionId = host.World.CallerSessionId;
                 var ev = new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = owner.Id,
                     Type = AgentTaskEventType.Completed, At = owner.CompletedAt!.Value };
                 host.EventId = ev.Id;
@@ -294,6 +295,7 @@ public sealed class PipelineHandoffPilotTests
                 db.Add(new AgentTask { Id = id, RootTaskId = id, Title = "credential", Goal = "credential",
                     ProjectId = project, CardId = card, RepoPath = World.RepositoryPath, WorkingDirectory = World.RepositoryPath,
                     Kind = variant == "worker" ? AgentTaskKind.Worker : AgentTaskKind.Orchestrator,
+                    AgentSessionId = variant == "allowed" ? World.CallerSessionId : null,
                     TokenHash = AgentTaskService.HashToken(token) });
             }
             await db.SaveChangesAsync();

@@ -21,7 +21,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [NotInParallel]
-public sealed class PipelineSpeedIntegrationTests
+public sealed partial class PipelineSpeedIntegrationTests
 {
     private static readonly TimeSpan Guard = TimeSpan.FromSeconds(30);
 
