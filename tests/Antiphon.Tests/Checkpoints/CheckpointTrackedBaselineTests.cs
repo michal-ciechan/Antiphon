@@ -237,13 +237,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
               </ItemGroup>
             </Project>
             """);
-        Write(root, "App/FreshProbe.cs", """
-            public sealed class FreshProbe
-            {
-                [TUnit.Core.Test]
-                public void one() { }
-            }
-            """);
+        Write(root, "App/FreshProbe.cs", "public sealed class FreshProbe { [TUnit.Core.Test] public void one() { } }");
         Commit(root);
         Directory.Exists(Path.Combine(root, "App", "obj")).ShouldBeFalse("a fresh checkout has no normal obj cache");
 

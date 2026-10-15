@@ -225,6 +225,7 @@ public sealed class DelegateBranchDeliveryTests
         var services = new ServiceCollection(); services.AddLogging();
         services.AddDbContext<AppDbContext>(o => { o.UseNpgsql(schema.ConnectionString); if (fail) o.AddInterceptors(new FailEvidenceSave()); });
         services.AddSingleton<IEventBus, MockEventBus>(); services.AddSingleton(TimeProvider.System);
+        services.AddGitWorkspaceService();
         services.AddSingleton(Options.Create(new DelegationSettings())); services.AddSingleton<AgentTaskReplyService>();
         await using var provider = services.BuildServiceProvider(); await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>(); var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId, ct);
