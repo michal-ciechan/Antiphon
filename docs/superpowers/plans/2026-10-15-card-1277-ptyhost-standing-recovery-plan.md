@@ -87,6 +87,8 @@ PCs pending for SourceLanding Mutation (not run here):
 
 Import this table to an ignored manifest and set `timeouts.rowMinutes: 40`. Pass the committed
 HEAD as `--expected-source-sha`, use `--row-timeout 40m` and `--total-timeout 150m`, without
-`--keep-outputs`. Linux builds use `UseAppHost=false`. CP-1 runs at the S1 commit. CP-2 and
-CP-3 run at the S2 commit. The checkpoint tool is bootstrapped once through
-`scripts/build-slot.ps1` into `bin-c1277-tool/` (disclosed unlisted build).
+`--keep-outputs`. Linux builds use `UseAppHost=false`. CP-1 runs at the S1 commit. S2 run
+`20261015-075228-ee60` is the CP-2 and CP-3 result at
+`4ba1794d2239ee1d98256b9b935815215fd6ae0d`. The qualifying CP-2 and CP-3
+rerun is S3 run `20261015-083106-71b7`. The checkpoint tool is bootstrapped
+through `scripts/build-slot.ps1` into `bin-c1277-tool/` (disclosed unlisted build).
