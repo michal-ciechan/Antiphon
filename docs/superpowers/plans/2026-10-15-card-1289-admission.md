@@ -42,7 +42,17 @@ weakening. No repetition after green.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1289-red/` | red-admission | `/*/*/PipelineSpeedIntegrationTests/C1289_*` | V-1,V-2,R-1 | all 11 cases; unrelated edits and ordinary Git arm fail before fix | 11 | 4 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1289-final/` | full-foundation-wiring | `/*/*/PipelineSpeedIntegrationTests/*` | V-1,V-2,R-1,R-2 | all methods, zero failed | 35 | 6 |
-| CP-3 | S2 | CP-2 | existing-create-admission | `/*/*/(AgentTaskCardBindingTests*)\|(AgentTaskConcurrencyLimitTests*)\|(AgentTaskScopeOverlapCreateTests*)\|(DispatchConcurrencyAdmissionTests*)\|(AgentTaskWorktreeBaseCreateTests*)\|(AgentTaskWorktreeBaseResolverTests*)\|(PipelineHandoffPilotTests*)/*` | R-3 | every named full class, zero failed | 70 | 8 |
-| CP-4 | S2 | CP-2 | unit | `/*/*/*/*[Category=Unit]` | R-4 | all Unit cases, zero failed | 1 | 5 |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1289-final/` | admission-regressions | `/*/*/PipelineSpeedIntegrationTests/C1289_*` | V-1,V-2,R-1 | all 11 cases, zero failed | 11 | 4 |
+| CP-2 | S2 | CP-1 | full-foundation-wiring | `/*/*/PipelineSpeedIntegrationTests/*` | R-2 | all methods, zero failed | 35 | 6 |
+| CP-3 | S2 | CP-1 | existing-create-admission | `/*/*/(AgentTaskCardBindingTests*)\|(AgentTaskConcurrencyLimitTests*)\|(AgentTaskScopeOverlapCreateTests*)\|(DispatchConcurrencyAdmissionTests*)\|(AgentTaskWorktreeBaseCreateTests*)\|(AgentTaskWorktreeBaseResolverTests*)\|(PipelineHandoffPilotTests*)/*` | R-3 | every named full class, zero failed | 70 | 8 |
+| CP-4 | S2 | CP-1 | unit-application | `/*/Antiphon.Tests.Application/*/*[Category=Unit]` | R-4 | all Unit cases in namespace, zero failed | 1 | 5 |
+| CP-5 | S2 | CP-1 | unit-checkpoints | `/*/Antiphon.Tests.Checkpoints/*/*[Category=Unit]` | R-4 | all Unit cases in namespace, zero failed | 1 | 5 |
+| CP-6 | S2 | CP-1 | unit-scripts | `/*/Antiphon.Tests.Scripts/*/*[Category=Unit]` | R-4 | all Unit cases in namespace, zero failed | 1 | 5 |
+| CP-7 | S2 | CP-1 | unit-remainder | `/*/(Antiphon.Tests)\|(Antiphon.Tests.AgentTui*)\|(Antiphon.Tests.Agents*)\|(Antiphon.Tests.ApiKeys*)\|(Antiphon.Tests.Domain*)\|(Antiphon.Tests.Infrastructure*)\|(Antiphon.Tests.Migrations*)\|(Antiphon.Tests.TestHelpers*)/*/*[Category=Unit]` | R-4 | all remaining Unit namespaces, zero failed | 1 | 5 |
+
+The S1 version of CP-1 used bin-c1289-red and expected the guarded defects.
+It now reruns green in S2, sharing one build with all remaining rows. Preserve
+all historical outcomes. CP-4..7 partition the whole Unit lane using the source
+category/namespace census, because S0's single Unit row exceeded 15 minutes.
+Each row retains a 15-minute minimum deadline; no timeout is widened. Final
+execution has a 22-minute total cap to respect the commissioning budget.
