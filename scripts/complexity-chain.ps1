@@ -18,9 +18,11 @@
 # This command does not make the three requests atomic.
 #
 # CONCURRENCY (CARD-1275). set and clear first read GET /api/complexity-chains once and send each
-# cell's concurrencyToken from that read (the empty GUID when the cell has no row). A cell changed
-# by someone else between that read and the write is refused 409 complexity_chain_stale; the
-# script stops there like any other refusal, and a rerun reads the new version.
+# cell's concurrencyToken from that read (the empty GUID when the cell has no row). A set on a
+# cell someone else wrote, created or cleared between that read and the write is refused 409
+# complexity_chain_stale. A clear is refused 409 only when the cell still has a row whose token is
+# not the one read; a clear of a cell someone else already cleared is a 204 and reports cleared.
+# The script stops on a refusal like any other, and a rerun reads the new version.
 #
 # GRAIN. One active chain per (Role?, Hard/Medium/Easy). Role omitted or Any writes the any-role
 # row. A walk on (role, complexity) reads the cell, then the any-role row, then the config default,
