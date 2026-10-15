@@ -13,8 +13,9 @@ it('bounds the receipt timeout while the SignalR connection never replies', asyn
   const socketErrors: NodeJS.ErrnoException[] = []
   // The script arms its timeout before connection.start(), so the hub's first accepted socket comes
   // after the timer and the limit can start there. Starting it at spawn charged Node start-up and
-  // the SignalR require to the script's timeout, which a loaded host stretched past the limit with
-  // the script still correct (CARD-1246).
+  // the SignalR require to the test's 2300 ms limit (timeout plus 2 s), which a loaded host
+  // stretched past the limit with the script still correct (CARD-1246). The script arms its own
+  // 0.3 s timer after the require.
   let connected!: () => void
   const firstConnection = new Promise<void>(resolve => { connected = resolve })
   const server = createServer(socket => {
