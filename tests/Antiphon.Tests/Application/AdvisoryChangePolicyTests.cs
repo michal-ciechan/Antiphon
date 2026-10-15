@@ -17,7 +17,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public class AdvisoryChangePolicyTests
+public partial class AdvisoryChangePolicyTests
 {
     [Test]
     public void C1281_AdvisoryDoesNotRerun()
