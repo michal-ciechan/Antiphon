@@ -60,6 +60,8 @@ public static class PipelineHandoffActionEndpoints
         if (boardId is not null && card?.BoardId != boardId) throw Denied("board");
         if (card is not null && !await db.Boards.AnyAsync(b => b.Id == card.BoardId && b.ProjectId == project, ct))
             throw Denied("card");
+        if (predecessor.ParentSessionId is not { } recipient || caller.SessionId != recipient)
+            throw Denied("recipient");
         return caller.Task is { } task ? $"task:{task.Id:D}"
             : caller.CapabilityId is { } capability ? $"capability:{capability:D}" : $"session:{caller.SessionId:D}";
     }

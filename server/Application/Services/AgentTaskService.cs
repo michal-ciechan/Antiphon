@@ -1609,6 +1609,17 @@ public sealed class AgentTaskService
                 else if (handoff.PipelineDefinitionRevisionId is not null || handoff.CurrentStageId is not null
                     || handoff.WorkflowUpdatedAt is not null)
                     throw new ConflictException("The handoff workflow fence is incomplete.", "handoff_workflow_changed");
+                if (predecessor.Status != AgentTaskStatus.Succeeded
+                    || predecessor.NextStage is not { } next
+                    || !PipelineHandoff.TryToStageRole(next, out var nextRole) || nextRole != task.Role)
+                    throw new ConflictException("The predecessor has not authorized this stage.", "handoff_stage_held");
+                if (admissionCard?.Status == CardStatus.NeedsDecision)
+                    throw new ConflictException("The card requires a human decision.", "handoff_decision_held");
+                if (admissionCard is not null && await _db.Cards.Where(c => c.Id == admissionCard.Id)
+                    .AnyAsync(c => c.BlockedBy.AsQueryable().Any(CardBlockers.IsOpenBlocker), ct))
+                    throw new ConflictException("The card has an open dependency.", "handoff_dependency_held");
+                if (await FindScopeOverlapsAsync(task, ct, refuseOnError: true) is { Count: > 0 })
+                    throw new ConflictException("The handoff overlaps an active writer.", "handoff_overlap_held");
             }
             if (admissionCard is not null && IsImplementationAdmission(task.Role))
             {
@@ -4958,7 +4969,7 @@ public sealed class AgentTaskService
     /// bookkeeping field refusing a launch.</para>
     /// </summary>
     private async Task<IReadOnlyList<ScopeOverlapDto>?> FindScopeOverlapsAsync(
-        AgentTask task, CancellationToken ct)
+        AgentTask task, CancellationToken ct, bool refuseOnError = false)
     {
         if (task.Workspace == WorkspaceMode.ReadOnly || AgentTaskRoles.IsSpecialist(task.Role))
             return null;
@@ -5026,7 +5037,7 @@ public sealed class AgentTaskService
 
             return overlaps.Count == 0 ? null : overlaps;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException && !refuseOnError)
         {
             _logger.LogWarning(ex, "Could not compute scope overlaps for task {ShortId}.",
                 DelegationReportFormatter.Short(task.Id));
