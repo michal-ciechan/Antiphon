@@ -50,9 +50,9 @@ rows is not the sweep's and propagates untouched (the `ex.Entries.All(e => e.Ent
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1278/` | sweep-create | `/*/*/MatrixDefaultComplexityCreateTests/(A_default_tier_create_whose_expiry_sweep_loses_every_race_is_created_with_the_warning*)\|(An_explicit_complexity_create_whose_expiry_sweep_loses_every_race_still_fails*)` | V-1, V-2 | 2 tests; S1 V-1 failed, V-2 passed; S2 2 passed | 2 | 8 | false | n/a |
-| CP-2 | S1 | `CP-1` | sweep-race | `/*/*/ComplexityChainRaceTests/(A_sweep_of_several_rows_that_loses_every_attempt_leaves_none_of_them_modified*)\|(A_sweep_that_loses_every_attempt_lets_the_concurrency_error_propagate*)` | V-3, V-4 | 2 tests; S1 2 failed; S2 2 passed | 2 | 5 | false | n/a |
-| CP-3 | S2 | `CP-1` | sweep-classes | `/*/*/(ComplexityChainRaceTests*)\|(MatrixDefaultComplexityCreateTests*)/*` | R-1 | 0 failed, 0 skipped | 30 | 8 | false | n/a |
-| CP-4 | S2 | `CP-1` | routing-callers | `/*/*/(ComplexityChainServiceTests*)\|(ComplexityChainRoleTests*)\|(ComplexityRoutingWalkTests*)\|(ComplexityCreateTests*)\|(MatrixDefaultComplexityRoutingTests*)\|(ComplexityEffectiveHttpTests*)/*` | R-2 | 0 failed, 0 skipped | 30 | 12 | false | n/a |
+| CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c1278/` | sweep-create | `/*/*/MatrixDefaultComplexityCreateTests/(A_default_tier_create_whose_expiry_sweep_loses_every_race_is_created_with_the_warning*)\|(An_explicit_complexity_create_whose_expiry_sweep_loses_every_race_still_fails*)` | V-1, V-2 | 2 tests; S1 V-1 failed, V-2 passed; S2 2 passed | 2 | 8 | false | n/a |
+| CP-2 | S1-S2 | `CP-1` | sweep-race | `/*/*/ComplexityChainRaceTests/(A_sweep_of_several_rows_that_loses_every_attempt_leaves_none_of_them_modified*)\|(A_sweep_that_loses_every_attempt_lets_the_concurrency_error_propagate*)` | V-3, V-4 | 2 tests; S1 2 failed; S2 2 passed | 2 | 5 | false | n/a |
+| CP-3 | S1-S2 | `CP-1` | sweep-classes | `/*/*/(ComplexityChainRaceTests*)\|(MatrixDefaultComplexityCreateTests*)/*` | R-1 | 0 failed, 0 skipped | 30 | 8 | false | n/a |
+| CP-4 | S1-S2 | `CP-1` | routing-callers | `/*/*/(ComplexityChainServiceTests*)\|(ComplexityChainRoleTests*)\|(ComplexityRoutingWalkTests*)\|(ComplexityCreateTests*)\|(MatrixDefaultComplexityRoutingTests*)\|(ComplexityEffectiveHttpTests*)/*` | R-2 | 0 failed, 0 skipped | 30 | 12 | false | n/a |
 
 Red-first is by commit order: S1 runs CP-1 and CP-2 (`--rows CP-1,CP-2`); S2 runs CP-1..CP-4.
