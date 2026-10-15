@@ -30,15 +30,22 @@ NightlyDiscoveryParserTests harness and NightlyScriptsTests source contract peer
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-d13-final/` | error-red | `/*/*/NightlyExecutionDiagnosticTests/D13_ErrorTerminal` | V-1 | 1 method, 0 failed/skipped; rerun of expected red | 1 | 7 |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-d13-qualified/` | error-red | `/*/*/NightlyExecutionDiagnosticTests/D13_ErrorTerminal` | V-1 | 1 method, 0 failed/skipped; rerun of expected red | 1 | 7 |
 | CP-2 | S2 | CP-1 | error-final | `/*/*/NightlyExecutionDiagnosticTests/*` | V-1, V-2, R-1 | all 3 methods, 0 failed/skipped | 3 | 1 |
-| CP-3 | S2 | CP-1 | adapter-adjacent | `/*/*/(NightlyDiscoveryParserTests)\|(NightlyScriptsTests)/*` | R-2 | all 8 methods, 0 failed/skipped | 8 | 1 |
+| CP-3 | S2 | CP-1 | adapter-adjacent | `/*/*/(NightlyDiscoveryParserTests*)\|(NightlyScriptsTests*)/*` | R-2 | all 8 methods, 0 failed/skipped | 8 | 1 |
 
 Historical S1 CP-1 at `226550ffa3e2b373d48ffb4401d10a6dbc1975c8` built
 `bin-d13-red/` and failed 0/1/0 (pass/fail/skip) with unknown diagnostic format.
 The final table reruns that exact filter as CP-1 and shares one new isolated build
 with CP-2/CP-3. The expected red cost was 6m40s (build 376.847s, slot wait 0s).
 Each run uses committed expected source SHA.
+The first S2 run at `529ea8f5beff1c73e468250dd4a61421696ef81c` passed
+CP-1 (1) and CP-2 (3), but CP-3 selected zero tests: TUnit 1.44 needs trailing
+wildcards in OR operands (CARD-0403). That run remains incomplete, exit 3,
+cost 6m07s (build 318.714s, slot waits 0s). The corrected table uses a fresh
+output and repeats the three bounded rows once to qualify the corrected committed
+manifest. The third normal CP-1 selection is within the repeat-proof ceiling;
+no further green repetitions are requested. Production and test source are unchanged.
 Bootstrap of the checkpoint CLI is an explained unlisted host-slot build.
 V-3 is an explained non-build read-only manual replay, after checkpoint completion.
 
