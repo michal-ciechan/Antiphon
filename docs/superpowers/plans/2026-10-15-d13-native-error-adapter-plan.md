@@ -30,12 +30,15 @@ NightlyDiscoveryParserTests harness and NightlyScriptsTests source contract peer
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-d13-red/` | error-red | `/*/*/NightlyExecutionDiagnosticTests/D13_ErrorTerminal` | V-1 | 1 expected red before fix | 1 | 4 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-d13-final/` | error-final | `/*/*/NightlyExecutionDiagnosticTests/*` | V-1, V-2, R-1 | all 3 methods, 0 failed/skipped | 3 | 4 |
-| CP-3 | S2 | CP-2 | adapter-adjacent | `/*/*/(NightlyDiscoveryParserTests)\|(NightlyScriptsTests)/*` | R-2 | all 8 methods, 0 failed/skipped | 8 | 1 |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-d13-final/` | error-red | `/*/*/NightlyExecutionDiagnosticTests/D13_ErrorTerminal` | V-1 | 1 method, 0 failed/skipped; rerun of expected red | 1 | 7 |
+| CP-2 | S2 | CP-1 | error-final | `/*/*/NightlyExecutionDiagnosticTests/*` | V-1, V-2, R-1 | all 3 methods, 0 failed/skipped | 3 | 1 |
+| CP-3 | S2 | CP-1 | adapter-adjacent | `/*/*/(NightlyDiscoveryParserTests)\|(NightlyScriptsTests)/*` | R-2 | all 8 methods, 0 failed/skipped | 8 | 1 |
 
-CP-1 is red-first evidence, rerun at S2 before CP-2/CP-3 if needed by the runner;
-its fixed test is also included in CP-2. Each run uses committed expected source SHA.
+Historical S1 CP-1 at `226550ffa3e2b373d48ffb4401d10a6dbc1975c8` built
+`bin-d13-red/` and failed 0/1/0 (pass/fail/skip) with unknown diagnostic format.
+The final table reruns that exact filter as CP-1 and shares one new isolated build
+with CP-2/CP-3. The expected red cost was 6m40s (build 376.847s, slot wait 0s).
+Each run uses committed expected source SHA.
 Bootstrap of the checkpoint CLI is an explained unlisted host-slot build.
 V-3 is an explained non-build read-only manual replay, after checkpoint completion.
 
@@ -49,7 +52,7 @@ V-3 is an explained non-build read-only manual replay, after checkpoint completi
 
 ### Cost
 
-Ordinary checkpoint floor: 9 minutes, including expected-red build; authoring and
-manual replay budget: 20 minutes. Total brief budget: 40 minutes. No repetitions
+Final checkpoint floor: 9 minutes, plus historical expected-red cost above; authoring
+and manual replay budget: 20 minutes. Total brief budget: 40 minutes. No repetitions
 requested. Review follows ordinary completion; Mutation owns all deliberate mutants.
 Restart: none (scripts load on invocation).
