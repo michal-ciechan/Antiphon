@@ -38,7 +38,7 @@ public sealed class HostCleanupCheckpointAuthorityTests
         var f = new HostCleanupToolFixture(sealAuthority: true);
         var fresh = f.Files.FreshContext();
         ToolCopyAuthority.Load(f.Run, f.Owner, out var refusal, fresh).ShouldNotBeNull(); refusal.ShouldBeNull();
-        new CheckpointOutputLedger(fresh).Check(f.Tool)!.ShouldStartWith("output-memory-authority-missing",
+        new CheckpointOutputLedger(fresh).Check(f.Tool)!.StartsWith("output-memory-authority-missing", StringComparison.Ordinal).ShouldBeTrue(
             Label(nameof(Tool_authority_does_not_seed_generic_registry), "authority-import"));
         fresh.Registry.WasCreated(f.Payload).ShouldBeFalse(); fresh.Registry.WasCreated(f.Tool).ShouldBeFalse();
         f.Cleanup(fresh).Remove(f.Run).Outcome.ShouldBe("Removed");
@@ -113,14 +113,14 @@ public sealed class HostCleanupCheckpointAuthorityTests
                 case "directory-inode": f.Io.Nodes[f.Tool].Stat = f.Io.Nodes[f.Tool].Stat with { Inode = 900 }; expected = "tool-authority-root-mismatch"; break;
                 case "directory-created":
                     record.Root = record.Root with { Inode = 0 }; Rewrite(f, record);
-                    f.Io.Nodes[f.Tool].Stat = f.Io.Nodes[f.Tool].Stat with { Changed = f.Io.Nodes[f.Tool].Stat.Changed + 100 };
+                    f.Io.Nodes[f.Tool].CreatedUtc = f.Io.Nodes[f.Tool].CreatedUtc.AddTicks(1);
                     expected = "tool-authority-root-mismatch"; break;
                 case "missing": f.Io.Nodes.Remove(AuthorityPath(f)); expected = "tool-authority-unreadable"; break;
                 case "forged-ledger":
                     f.Owner.ToolCopy = null; f.Io.Put(f.Tool + "/.checkpoint-output-ledger.json", "{}");
                     RunOwnershipStore.Write(f.Run, f.Owner, f.Context);
-                    new CheckpointOutputLedger(fresh).Check(f.Tool)!.ShouldStartWith("output-memory-authority-missing", label);
-                    f.Cleanup(fresh).Remove(f.Run).Reason.ShouldContain("output-memory-authority-missing", label);
+                    new CheckpointOutputLedger(fresh).Check(f.Tool)!.StartsWith("output-memory-authority-missing", StringComparison.Ordinal).ShouldBeTrue(label);
+                    f.Cleanup(fresh).Remove(f.Run).Reason.Contains("output-memory-authority-missing", StringComparison.Ordinal).ShouldBeTrue(label);
                     (await f.Wait(fresh)).ShouldBe(2, label);
                     f.Io.Text(f.Payload).ShouldBe("keep", label); continue;
                 case "linked":
@@ -139,7 +139,7 @@ public sealed class HostCleanupCheckpointAuthorityTests
             f.Receipt.ClearEvents();
             ToolCopyAuthority.Load(f.Run, f.Owner, out var refusal, fresh).ShouldBeNull(label);
             refusal.ShouldBe(expected, label);
-            f.Io.Count("open-read", AuthorityPath(f)).ShouldBeGreaterThan(0, label);
+            f.Io.Count(variant == "missing" ? "stat" : "open-read", AuthorityPath(f)).ShouldBeGreaterThan(0, label);
             f.Io.Count("unlink").ShouldBe(0, label);
             (await f.Wait(fresh)).ShouldBe(2, label);
             f.Io.DirectoryExists(f.Tool).ShouldBeTrue(label);
@@ -198,13 +198,13 @@ public sealed class HostCleanupCheckpointAuthorityTests
         };
         f.Io.AfterRead = path =>
         {
-            if (variant == "seal-stat" && path == f.Payload && ++reads == 2)
+            if (variant == "seal-stat" && path == f.Payload && f.Io.Count("open-read", path) == 2 && reads++ == 0)
                 f.Io.Nodes[path].Stat = f.Io.Nodes[path].Stat with { Inode = 4444 };
         };
         Should.Throw<IOException>(() => ToolCopyAuthority.Seal(f.Run, f.Owner, f.Context), label)
-            .Message.ShouldContain("tool-authority-creation-mismatch", label);
+            .Message.Contains("tool-authority-creation-mismatch", StringComparison.Ordinal).ShouldBeTrue(label);
         f.Io.FileExists(AuthorityPath(f)).ShouldBeFalse(label);
-        (variant == "seal-creation" ? inventories : reads).ShouldBe(2, label);
+        (variant == "seal-creation" ? inventories : f.Io.Count("open-read", f.Payload)).ShouldBe(2, label);
     }
 
     [Test]
@@ -236,6 +236,7 @@ public sealed class HostCleanupCheckpointAuthorityTests
         try
         {
             canceled.Cancel();
+            stream.Token.IsCancellationRequested.ShouldBeTrue("C987.Invalid_terminal_receipt_prevents_cleanup.caller-cancellation");
             await Should.ThrowAsync<OperationCanceledException>(() => waiting.WaitAsync(TimeSpan.FromSeconds(5)));
             stream.Token.IsCancellationRequested.ShouldBeTrue();
             cancelFixture.Io.Count("unlink").ShouldBe(0);
@@ -299,7 +300,7 @@ public sealed class HostCleanupCheckpointAuthorityTests
             else
             {
                 var error = Should.Throw<IOException>(() => TestRootGuard.MarkDeleting(f.Context, root, expected, gate, new(f.Context)), label);
-                error.Message.ShouldContain(variant is "first-bytes" or "final-bytes" ? "root-marker-changed" : "root-marker-transition-unproven", label);
+                error.Message.Contains(variant is "first-bytes" or "final-bytes" ? "root-marker-changed" : "root-marker-transition-unproven", StringComparison.Ordinal).ShouldBeTrue(label);
                 f.Io.Text(marker).ShouldBe(variant is "first-bytes" or "final-bytes" ? JsonSerializer.Serialize(current) : before, label);
             }
         }
@@ -353,7 +354,7 @@ public sealed class HostCleanupCheckpointAuthorityTests
         var removed = new CheckpointOutputCleanup(output.Context).CleanOwnedOutputs(output.Parent, ["bin-owned"], 0, false, false, createdPaths: [output.Root]);
         removed.Deleted.ShouldContain(output.Root, Label(method, "output"));
         output.Io.DirectoryExists(output.Root).ShouldBeFalse();
-        await new HostCleanupCheckpointCompatibilityTests().failed_delete_receipt_is_truthful_and_retryable();
+        await HostCleanupCheckpointCompatibilityTests.RetryDelayProof(Label(method, "delays"));
         // Current-image observation is injected as well, with zero unlink attempts.
         var image = new HostCleanupToolFixture(); image.Io.ImageDirectory = image.Tool + "/child";
         image.Cleanup().Remove(image.Run).Reason.ShouldBe("current-executor-image"); image.Io.Count("unlink").ShouldBe(0);

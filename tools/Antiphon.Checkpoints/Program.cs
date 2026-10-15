@@ -75,7 +75,7 @@ public static class Program
             case "report":
                 return Report(options, repo, runtime.Output ?? Console.Out, runtime);
             case "validate":
-                return Validate(options, repo);
+                return Validate(options, repo, runtime);
             case "clean":
                 return Clean(options, repo, runtime.Output ?? Console.Out, runtime);
             case "row":
@@ -447,14 +447,14 @@ public static class Program
         return ExitCodes.Invalid;
     }
 
-    private static int Validate(ArgSet options, string repo)
+    private static int Validate(ArgSet options, string repo, CheckpointApp.Runtime runtime)
     {
         var path = Required(options, "evidence");
         path = Path.IsPathRooted(path) ? path : Path.Combine(repo, path);
         var expected = Required(options, "expected-source-sha");
         try
         {
-            var raw = ReceiptFile.ReadText(path);
+            var raw = ReceiptFile.ReadText(runtime.CleanupContext, path, runtime.CancellationToken);
             using var document = JsonDocument.Parse(raw);
             AssertUniqueJson(document.RootElement);
             var report = ReceiptJson.Parse<ReportModel>(raw, ReportWriter.Json);

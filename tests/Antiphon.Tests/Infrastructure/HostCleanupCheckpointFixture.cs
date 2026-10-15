@@ -36,6 +36,39 @@ internal sealed class HostCleanupCheckpointFixture
         Io.GitRequests.Clear();
     }
 
+    public static void AssertNoSignalCalls(Type type)
+    {
+        var opcodes = typeof(System.Reflection.Emit.OpCodes).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(f => f.FieldType == typeof(System.Reflection.Emit.OpCode)).Select(f => (System.Reflection.Emit.OpCode)f.GetValue(null)!)
+            .ToDictionary(op => unchecked((ushort)op.Value));
+        foreach (var method in type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static))
+        {
+            var il = method.GetMethodBody()?.GetILAsByteArray();
+            if (il is null) continue;
+            for (var at = 0; at < il.Length;)
+            {
+                ushort code = il[at++]; if (code == 0xfe) code = (ushort)(0xfe00 | il[at++]);
+                var op = opcodes[code];
+                if (op.OperandType == System.Reflection.Emit.OperandType.InlineMethod)
+                {
+                    var called = method.Module.ResolveMethod(BitConverter.ToInt32(il, at));
+                    if (called?.DeclaringType == typeof(ProcessControl) || called?.DeclaringType == typeof(IProcessControl)
+                        || called?.DeclaringType == typeof(System.Diagnostics.Process) && called.Name == "Kill")
+                        throw new InvalidOperationException("C987.sweep_never_signals_a_process.signal-call: " + called);
+                }
+                at += op.OperandType switch
+                {
+                    System.Reflection.Emit.OperandType.InlineNone => 0,
+                    System.Reflection.Emit.OperandType.ShortInlineBrTarget or System.Reflection.Emit.OperandType.ShortInlineI or System.Reflection.Emit.OperandType.ShortInlineVar => 1,
+                    System.Reflection.Emit.OperandType.InlineVar => 2,
+                    System.Reflection.Emit.OperandType.InlineI8 or System.Reflection.Emit.OperandType.InlineR => 8,
+                    System.Reflection.Emit.OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(il, at),
+                    _ => 4,
+                };
+            }
+        }
+    }
+
     public void Seal() => SafeWrite.Require(Ledger.Seal(Root, Exit));
     public CheckpointCleanupContext FreshContext() => new(Io, Io, Clock);
     public byte[] Read(int limit = 1024, Action? after = null, CancellationToken ct = default) =>
@@ -109,6 +142,7 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
         public required CheckpointStat Stat;
         public string? Target;
         public FileAttributes Attributes;
+        public DateTime CreatedUtc;
     }
 
     public int CurrentProcessId => 123;
@@ -123,7 +157,7 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
         Enter("process", pid.ToString());
         return Processes.TryGetValue(pid, out var value) ? value : throw new ArgumentException("absent process");
     }
-    public DateTime CreationTimeUtc(string path) { Enter("created", path); return DateTime.UnixEpoch.AddTicks(Nodes[path].Stat.Changed / 100); }
+    public DateTime CreationTimeUtc(string path) { Enter("created", path); return Nodes[path].CreatedUtc; }
     public DateTime LastWriteTimeUtc(string path) { Enter("modified", path); return DateTime.UnixEpoch.AddTicks(Nodes[path].Stat.Modified / 100); }
     public string StreamPath(Stream stream) => ((WriteStream)stream).Path;
     public Dictionary<string, string> Environment { get; } = [];
@@ -155,7 +189,7 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
     public Node Put(string path, string text) => Put(path, Encoding.UTF8.GetBytes(text));
     public Node Put(string path, byte[] bytes)
     {
-        var node = new Node { Bytes = bytes, Stat = new("file", 1, ++_inode, bytes.Length, Now, Now, 0x8180, 1, Owner) };
+        var node = new Node { CreatedUtc = clock.GetUtcNow().UtcDateTime, Bytes = bytes, Stat = new("file", 1, ++_inode, bytes.Length, Now, Now, 0x8180, 1, Owner) };
         Nodes[path] = node;
         return node;
     }
@@ -191,7 +225,7 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
     {
         Enter("mkdir", path);
         if (Nodes.ContainsKey(path)) return;
-        Nodes[path] = new Node { Stat = new("directory", 1, ++_inode, 0, Now, Now, 0x41C0, 1, Owner) };
+        Nodes[path] = new Node { CreatedUtc = clock.GetUtcNow().UtcDateTime, Stat = new("directory", 1, ++_inode, 0, Now, Now, 0x41C0, 1, Owner) };
     }
     public Stream Open(string path, FileMode mode, FileAccess access, FileShare share)
     {
