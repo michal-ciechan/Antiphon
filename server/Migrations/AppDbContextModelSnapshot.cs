@@ -3903,6 +3903,169 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("CardComments", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardCompletionAcceptance", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AcceptanceItemsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Actor")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("BoardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CompanionObligationJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("CurrentStageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DecisionRevision")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("DeploymentItemsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EmptyObligationsDecisionJson")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ExpectedCardToken")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ImplementationTaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LandedSha")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("OperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("PipelineDefinitionRevisionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PolicyRevision")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("ReadyForRelease")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("RecordedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RepositoryPath")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ReviewEvidenceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReviewedSourceSha")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SourceRef")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("WorkflowRunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("WorkflowUpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CardId", "Revision")
+                        .IsUnique();
+
+                    b.ToTable("CardCompletionAcceptances");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardCompletionReceipt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AcceptanceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AcceptanceRevision")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Actor")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("CardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ImplementationTaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LandedSha")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("MoveRevisionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OriginalCardToken")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("RecordedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ResultCardToken")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ReviewEvidenceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReviewedSourceSha")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AcceptanceId");
+
+                    b.HasIndex("CardId", "OperationId", "AcceptanceRevision")
+                        .IsUnique()
+                        .HasDatabaseName("IX_CardCompletionReceipts_Card_Operation_Acceptance");
+
+                    b.ToTable("CardCompletionReceipts");
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardRelationship", b =>
                 {
                     b.Property<Guid>("Id")
@@ -6695,6 +6858,156 @@ namespace Antiphon.Server.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.PipelineHandoffAction", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Actor")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Attempt")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("CardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ChildCreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ChildDispatchedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ChildTaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ConsumedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CurrentStageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("EligibleAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("NextObservationAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("NextStage")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("NotificationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("NotifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("PipelineDefinitionRevisionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PredecessorTaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("QueueId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReasonCode")
+                        .HasColumnType("text");
+
+                    b.Property<long?>("ReceiptSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RecipientGeneration")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("RecipientSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RequestDigest")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("SettledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("SettlementEventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("WireDigest")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("WorkflowRunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("WorkflowUpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChildTaskId")
+                        .IsUnique();
+
+                    b.HasIndex("PredecessorTaskId", "Attempt", "SettlementEventId", "NextStage", "WorkflowRunId", "PipelineDefinitionRevisionId", "CurrentStageId", "WorkflowUpdatedAt")
+                        .IsUnique()
+                        .HasDatabaseName("IX_PipelineHandoffActions_Identity");
+
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("PredecessorTaskId", "Attempt", "SettlementEventId", "NextStage", "WorkflowRunId", "PipelineDefinitionRevisionId", "CurrentStageId", "WorkflowUpdatedAt"), false);
+
+                    b.ToTable("PipelineHandoffActions");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.PipelineHandoffObservation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ActionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Actor")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Detail")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("NextObservationAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ObservedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReasonCode")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("Sequence")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActionId", "Sequence")
+                        .IsUnique();
+
+                    b.ToTable("PipelineHandoffObservations");
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Project", b =>
                 {
                     b.Property<Guid>("Id")
@@ -6934,6 +7247,109 @@ namespace Antiphon.Server.Migrations
                         .HasDatabaseName("IX_ReviewComments_ThreadId_CreatedAt");
 
                     b.ToTable("ReviewComments", (string)null);
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewEvidenceCorrection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Actor")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("BoardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CanonicalBundleDigest")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid?>("CardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ImportedEvidenceIdentity")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("PredecessorOutcomeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProducerIdentity")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("RecordedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReportDigest")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("RepositoryPath")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("RequiredRowsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ReviewTaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SelectionCommitSha")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SelectionDigest")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SelectionPath")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SelectionSection")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceRef")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceSha")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("SubjectTaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("SuccessorOutcomeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ValidationResultJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PredecessorOutcomeId", "CanonicalBundleDigest")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ReviewEvidenceCorrections_Predecessor_Bundle");
+
+                    b.ToTable("ReviewEvidenceCorrections");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewThread", b =>
@@ -10140,6 +10556,15 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("Card");
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardCompletionReceipt", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.CardCompletionAcceptance", null)
+                        .WithMany()
+                        .HasForeignKey("AcceptanceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardRelationship", b =>
                 {
                     b.HasOne("Antiphon.Server.Domain.Entities.Card", "Card")
@@ -10549,6 +10974,15 @@ namespace Antiphon.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("Definition");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.PipelineHandoffObservation", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.PipelineHandoffAction", null)
+                        .WithMany()
+                        .HasForeignKey("ActionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Project", b =>
