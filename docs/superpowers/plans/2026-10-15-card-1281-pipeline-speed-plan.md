@@ -535,7 +535,7 @@ Audit at this handoff: **guards=64, mapped=64, missing=0, duplicate PC maps=0**.
 
 ## Plan binding follow-up (2026-10-15, task 024ec8fb)
 
-D-1..D-12 are approved; their historical proposal wording above is retained, not reopened. The original plan through “Acceptance of this Plan” matches `origin/master` at `7012a447c0919e944dc8e95b912d8699682cf3db` exactly. TestDesign's appendix is retained. **Ancestry reconciliation is blocked:** this task's explicit fast-forward-only contract forbids the requested rebase from pushed base `d63ee104ba28c3a8d9098bdcc2ec59da3b4f1fcd`. Landing must reconcile the add/add, or the caller must commission a fresh master-based Docs task to replay the appendices; this branch must not be rebased or force-pushed.
+D-1..D-12 are approved; their historical proposal wording above is retained, not reopened. The original plan through “Acceptance of this Plan” matches `origin/master` at `7012a447c0919e944dc8e95b912d8699682cf3db` exactly. TestDesign's appendix is retained. **Caller-owned reconciliation:** the refinement explicitly withdraws the rebase request, requires this branch's history to remain unchanged, and assigns carrying the work onto master on a fresh branch to the caller. Preserve master's original text and append TestDesign plus this follow-up. This task completes the bindings and dispatch order on its assigned branch; the add/add reconciliation is no longer a blocker to its completion.
 
 ### Ground truth for the bindings
 
