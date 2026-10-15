@@ -96,3 +96,26 @@ contracts and CP-2 tests, then the bound routing/review/projection contracts and
 CP-3 tests. Retain the compaction enqueue obligation at H0/H1 and the queue's
 exact existing verification policy. Complete S2-S4 and run CP-4..CP-13 before
 commissioning ordinary Review; all PCs stay with SourceLanding Mutation.
+
+## Receipt and cleanup qualification
+
+`validate-checkpoint-receipt.ps1` against CP-1's untouched `report.json` and
+tested SHA returned exit 2, `CHECKPOINT SOURCE INVALID reason=cleanup_refused`.
+This remains an invalid qualification receipt, not Clean/Full evidence. Its
+actual seven assertion failures and clean-source/build-provenance observations
+above remain historical facts. Manual output cleanup does not rewrite that
+receipt or promote its verdict.
+
+After terminal executor exit and inspection of the exact owned roots, removed
+`tests/Antiphon.Tests/bin-c1259-red` (2,606 entries) and
+`tools/Antiphon.Checkpoints/bin-c1259-tool` (49 entries), with containment and
+link checks. The ignored checkpoint run, logs and TRX remain in place. No
+process or worker is left running by this task.
+
+The evidence history guard passed over task base through report commit
+`980624fee2cb4ac0c82b7a3af0c16f7b92d668da`: two commits, zero violations.
+It is rerun through the final pushed report SHA before settlement.
+`git fetch origin master` followed by `git merge-tree --write-tree origin/master
+HEAD` returned exit 0 with tree `dbe9ea871bbc3223fd54b90b339556273ddc25f0`;
+the fetched target was `e03508908` (abbreviated observation, not a tested SHA).
+Merge feasibility is not acceptance or permission to land these red tests.
