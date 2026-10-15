@@ -152,6 +152,6 @@ describe('AgentCreateModal presets', () => {
     expect(screen.getByRole('radio', { name: 'Phone' })).toBeChecked()
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
     await settleQueries(queryClient)
-    expect(submitted?.replyStyle).toBe('Phone')
+    expect(submitted).toMatchObject({ replyStyle: 'Phone' })
   })
 })
