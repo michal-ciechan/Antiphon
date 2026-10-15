@@ -347,6 +347,42 @@ public sealed class MatrixDefaultComplexityCreateTests
         }
     }
 
+    [Test]
+    public async Task A_default_tier_create_whose_expiry_sweep_loses_every_race_is_created_with_the_warning()
+    {
+        // CARD-1278: the sweep's lost rows must not stay tracked in the context the create saves with.
+        var race = new SweepRace();
+        await using var f = await Fixture.CreateAsync(race);
+        var expired = await f.ExpiredRow(AgentTaskRole.Plan);
+        race.Compete = () => f.RotateToken(expired);
+        var result = await f.Create();
+        race.Fired.ShouldBe(ComplexityRoutingService.SweepAttempts);
+        result.Status.ShouldBe(AgentTaskStatus.Queued);
+        result.Warning.ShouldBe("Routing read failed (DbUpdateConcurrencyException); using today's path.");
+        result.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        result.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+        result.Routing.ShouldBeNull();
+        (await f.Saved(result.Id)).Complexity.ShouldBeNull();
+        (await f.CreatedDetail(result.Id)).ShouldContain("(role policy)");
+        await f.NoBlocked(result.Id);
+        f.Db.ChangeTracker.Entries<ComplexityChain>().ShouldNotContain(e => e.State == EntityState.Modified);
+        (await f.Db.ComplexityChains.AsNoTracking().SingleAsync(c => c.Id == expired)).ClearedAt.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task An_explicit_complexity_create_whose_expiry_sweep_loses_every_race_still_fails()
+    {
+        var race = new SweepRace();
+        await using var f = await Fixture.CreateAsync(race);
+        var expired = await f.ExpiredRow(AgentTaskRole.Plan);
+        race.Compete = () => f.RotateToken(expired);
+        await Should.ThrowAsync<DbUpdateConcurrencyException>(() => f.Create(
+            new("plan it", Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared, Complexity: TaskComplexity.Medium)));
+        race.Fired.ShouldBe(ComplexityRoutingService.SweepAttempts);
+        (await f.Db.AgentTasks.CountAsync()).ShouldBe(0);
+        (await f.Db.ComplexityChains.AsNoTracking().SingleAsync(c => c.Id == expired)).ClearedAt.ShouldBeNull();
+    }
+
     private static void Pair(AgentTask child, AgentKind kind, AgentModelLevel level, TaskComplexity? complexity)
     {
         child.Status.ShouldBe(AgentTaskStatus.Queued);
@@ -370,6 +406,24 @@ public sealed class MatrixDefaultComplexityCreateTests
         { Check(command); return ValueTask.FromResult(result); }
     }
 
+    /// <summary>Runs <see cref="Compete"/> before each save that carries a modified chain row (the sweep's).</summary>
+    private sealed class SweepRace : SaveChangesInterceptor
+    {
+        public Func<Task>? Compete { get; set; }
+        public int Fired { get; private set; }
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (Compete is not null && eventData.Context!.ChangeTracker.Entries<ComplexityChain>()
+                    .Any(e => e.State == EntityState.Modified))
+            {
+                Fired++;
+                await Compete();
+            }
+            return result;
+        }
+    }
+
     private sealed class Fixture(IsolatedTestSchema schema, AppDbContext db) : IAsyncDisposable
     {
         public IsolatedTestSchema Schema { get; } = schema;
@@ -377,11 +431,11 @@ public sealed class MatrixDefaultComplexityCreateTests
         public string Path { get; } = Directory.CreateTempSubdirectory("c097m-create").FullName;
         public DelegationSettings Settings { get; } = new();
         public RoutingPinService Pins => new(Db, TimeProvider.System, NullLogger<RoutingPinService>.Instance);
-        public static async Task<Fixture> CreateAsync(PinReadGuard? guard = null)
+        public static async Task<Fixture> CreateAsync(params IInterceptor[] interceptors)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var options = new DbContextOptionsBuilder<AppDbContext>(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-            if (guard is not null) options.AddInterceptors(guard);
+            options.AddInterceptors(interceptors);
             var f = new Fixture(schema, new AppDbContext(options.Options));
             f.Settings.AllowedRoots = [f.Path];
             return f;
@@ -406,6 +460,24 @@ public sealed class MatrixDefaultComplexityCreateTests
                 CandidatesJson = ComplexityChain.SerializeCandidates(candidates), Provenance = RoutingPinProvenance.Human,
                 Reason = "matrix test", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
             await Db.SaveChangesAsync();
+        }
+        public async Task<Guid> ExpiredRow(AgentTaskRole role)
+        {
+            var id = Guid.NewGuid();
+            Db.ComplexityChains.Add(new ComplexityChain { Id = id, Role = role, Complexity = TaskComplexity.Medium,
+                CandidatesJson = ComplexityChain.SerializeCandidates([new(AgentKind.Codex, AgentModelLevel.Frontier)]),
+                Provenance = RoutingPinProvenance.Human, Reason = "expired", NotAfter = DateTime.UtcNow.AddMinutes(-1),
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+            await Db.SaveChangesAsync();
+            Db.ChangeTracker.Clear();
+            return id;
+        }
+        /// <summary>Another writer rotates the row's token, so the sweep's save of it matches no row.</summary>
+        public async Task RotateToken(Guid id)
+        {
+            await using var other = new AppDbContext(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
+            await other.ComplexityChains.Where(c => c.Id == id)
+                .ExecuteUpdateAsync(u => u.SetProperty(c => c.ConcurrencyToken, Guid.NewGuid()));
         }
         public async Task Hold()
         {

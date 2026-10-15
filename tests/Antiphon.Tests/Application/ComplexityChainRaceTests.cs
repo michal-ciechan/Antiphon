@@ -250,6 +250,43 @@ public sealed class ComplexityChainRaceTests
         race.Saves.ShouldBe(ComplexityRoutingService.SweepAttempts);
         race.Fired.ShouldBe(ComplexityRoutingService.SweepAttempts);
         (await LiveOrNullAsync(schema, null, TaskComplexity.Easy)).ShouldNotBeNull();
+
+        // CARD-1278: the context keeps no stale clear, so its next save (a task create) carries none.
+        db.ChangeTracker.Entries<ComplexityChain>().ShouldNotContain(e => e.State == EntityState.Modified);
+        race.Arm(0, () => Task.CompletedTask);
+        (await db.SaveChangesAsync()).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task A_sweep_of_several_rows_that_loses_every_attempt_leaves_none_of_them_modified()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 15, 12, 0, 0, TimeSpan.Zero));
+        await WriteAsync(schema, AgentTaskRole.Plan, TaskComplexity.Easy, AgentKind.Grok, "expiring",
+            clock, clock.GetUtcNow().AddMinutes(1));
+        await WriteAsync(schema, AgentTaskRole.Code, TaskComplexity.Easy, AgentKind.Grok, "expiring",
+            clock, clock.GetUtcNow().AddMinutes(1));
+        var lost = await LiveAsync(schema, AgentTaskRole.Plan, TaskComplexity.Easy);
+        clock.Advance(TimeSpan.FromMinutes(2));
+        var race = new CompetingCommit();
+        await using var db = Open(schema, race);
+
+        // Only the Plan row loses; the Code row's clear was valid but rolled back with the batch.
+        race.Arm(int.MaxValue, async () =>
+        {
+            await using var other = Open(schema);
+            await other.ComplexityChains.Where(c => c.Id == lost.Id)
+                .ExecuteUpdateAsync(u => u.SetProperty(c => c.ConcurrencyToken, Guid.NewGuid()));
+        });
+
+        await Should.ThrowAsync<DbUpdateConcurrencyException>(() =>
+            Routing(db, clock).ListLiveCellsAsync(CancellationToken.None));
+        race.Saves.ShouldBe(ComplexityRoutingService.SweepAttempts);
+        db.ChangeTracker.Entries<ComplexityChain>().ShouldNotContain(e => e.State == EntityState.Modified);
+        race.Arm(0, () => Task.CompletedTask);
+        (await db.SaveChangesAsync()).ShouldBe(0);
+        (await LiveOrNullAsync(schema, AgentTaskRole.Plan, TaskComplexity.Easy)).ShouldNotBeNull();
+        (await LiveOrNullAsync(schema, AgentTaskRole.Code, TaskComplexity.Easy)).ShouldNotBeNull();
     }
 
     [Test]
