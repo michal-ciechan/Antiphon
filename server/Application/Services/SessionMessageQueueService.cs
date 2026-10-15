@@ -1582,8 +1582,16 @@ public sealed partial class SessionMessageQueueService
     public Task<SessionQueueTurnEndResult> OnTurnEndAsync(Guid sessionId, CancellationToken ct) =>
         OnTurnEndCoreAsync(sessionId, null, ct);
 
-    internal Task<SessionQueueTurnEndResult> OnRuntimeActionAsync(SessionRuntimeAction action, CancellationToken ct) =>
-        OnTurnEndCoreAsync(action.AgentSessionId, action, ct);
+    internal async Task<SessionQueueTurnEndResult> OnRuntimeActionAsync(SessionRuntimeAction action,
+        bool superseded, CancellationToken ct)
+    {
+        if (!superseded) return await OnTurnEndCoreAsync(action.AgentSessionId, action, ct);
+        // The coordinator has checked generation and completed routing. Transfer only the
+        // input wakeup to the newer request, preserving this boundary's notification and
+        // the action's separately persisted late-confirm publication phase.
+        if (action.TurnBoundary) await PublishFinishedAsync(action.AgentSessionId, ct);
+        return new(new HashSet<Guid>(), new HashSet<Guid>());
+    }
 
     private async Task<SessionQueueTurnEndResult> OnTurnEndCoreAsync(Guid sessionId, SessionRuntimeAction? action, CancellationToken ct)
     {
@@ -1600,12 +1608,12 @@ public sealed partial class SessionMessageQueueService
             {
                 // Receipt verdicts and their exact publication obligation share SaveChanges.
                 await db.SessionRuntimeActions.SingleAsync(a => a.Id == action.Id, ct);
-                var generation = await db.AgentSessions.Where(s => s.Id == sessionId)
-                    .Select(s => (DateTime?)s.StartedAt).SingleOrDefaultAsync(ct);
-                if (generation != action.AcceptedGeneration) return lateConfirmed.ToResult();
+                var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
+                if (session is null || session.StartedAt != action.AcceptedGeneration) return lateConfirmed.ToResult();
                 if (await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == sessionId
                         && a.Id != action.Id && a.Phase < SessionRuntimeActionCoordinator.QueuePhase, ct)
-                    || await ReadWorkingAsync(db, sessionId, ct))
+                    || (session.Status == SessionStatus.Running && session.GrokRulesState != GrokRulesState.Failed
+                        && await ReadWorkingAsync(db, sessionId, ct)))
                     return lateConfirmed.ToResult() with { Deferred = true };
             }
             var receipts = await ReconcileDeliveredSpillsLockedAsync(db, sessionId, ct);
@@ -1614,7 +1622,7 @@ public sealed partial class SessionMessageQueueService
             flush = await DeliverNextLockedAsync(db, sessionId, ct, lateConfirmed);
             if (flush == FlushResult.Nothing && receipts.Confirmed > 0)
                 flush = FlushResult.LateConfirmed;
-            if (action is not null && flush == FlushResult.Nothing
+            if (action is not null && flush == FlushResult.Nothing && lateConfirmed.TemporarilyBlocked
                 && await db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == sessionId
                     && m.Status == QueuedMessageStatus.Pending, ct))
                 return lateConfirmed.ToResult() with { Deferred = true };
@@ -2181,12 +2189,20 @@ public sealed partial class SessionMessageQueueService
         CancellationToken ct,
         LateConfirmCollector? lateConfirmed = null)
     {
+        FlushResult TemporaryBlock()
+        {
+            if (lateConfirmed is not null) lateConfirmed.TemporarilyBlocked = true;
+            return FlushResult.Nothing;
+        }
+
         var rulesSession = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
-        if (rulesSession is null || !_runtime.IsLiveOrUnknown(rulesSession)) return FlushResult.Nothing;
+        if (rulesSession is null || rulesSession.Status != SessionStatus.Running
+            || rulesSession.GrokRulesState == GrokRulesState.Failed
+            || !_runtime.IsLiveOrUnknown(rulesSession)) return FlushResult.Nothing;
         try { await _runtime.EnsureInputTransportAvailableAsync(rulesSession, ct); }
         catch (ServiceUnavailableException ex) when (ex.Code == PhoneHomeProblemTypes.Unavailable)
         {
-            return FlushResult.Nothing;
+            return TemporaryBlock();
         }
         using var rulesScope = _scopeFactory.CreateScope();
         var rules = rulesScope.ServiceProvider.GetService<GrokRulesRefreshService>();
@@ -2215,7 +2231,7 @@ public sealed partial class SessionMessageQueueService
         {
             _logger.LogDebug(
                 "Deferring delivery to herdr session {SessionId}: agent_status=blocked", sessionId);
-            return FlushResult.Nothing;
+            return TemporaryBlock();
         }
 
         // CARD-0186 S3: herdr unreachable (pending adoption, or 503 herdr_unreachable) → defer.
@@ -2226,11 +2242,11 @@ public sealed partial class SessionMessageQueueService
             _logger.LogDebug(
                 "Deferring delivery to herdr session {SessionId}: Pending={Pending}",
                 sessionId, pendingMeta.Pending);
-            return FlushResult.Nothing;
+            return TemporaryBlock();
         }
 
         if (await IsModalBlockedLockedAsync(db, sessionId, ct))
-            return FlushResult.Nothing;
+            return TemporaryBlock();
 
         var interrupted = await LoadInterruptedSentRunAsync(db, sessionId, ct);
         if (rulesClosed && interrupted.Any(m => m.RulesRefreshKey is null))
@@ -2262,7 +2278,7 @@ public sealed partial class SessionMessageQueueService
             .OrderByDescending(m => m.RulesRefreshKey != null).ThenBy(m => m.Sequence)
             .ToListAsync(ct);
         if (pending.Count == 0)
-            return FlushResult.Nothing;
+            return rulesClosed ? TemporaryBlock() : FlushResult.Nothing;
 
         var sessionGeneration = SessionGeneration.Normalize(
             await db.AgentSessions.AsNoTracking()
@@ -2704,7 +2720,7 @@ public sealed partial class SessionMessageQueueService
             _logger.LogInformation(
                 "Deferring delivery to session {SessionId}: herdr unreachable (no attempt charged)",
                 sessionId);
-            return FlushResult.Nothing;
+            return TemporaryBlock();
         }
 
         var ids = run.Select(m => m.Id).ToList();
@@ -3515,6 +3531,7 @@ public sealed partial class SessionMessageQueueService
 
     private sealed class LateConfirmCollector
     {
+        public bool TemporarilyBlocked { get; set; }
         private readonly HashSet<Guid> _messageIds = [];
         private readonly HashSet<Guid> _channelMessageIds = [];
 
