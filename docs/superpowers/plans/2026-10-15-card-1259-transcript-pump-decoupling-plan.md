@@ -376,3 +376,12 @@ Land/deploy is a later authorized stage; this task does not restart a shared
 server. A later live observation may compare producer/runner/server-persist phase
 timings without sending real chat messages, using the same measurement caveats
 as Investigate. It is not a substitute for the deterministic acceptance proof.
+
+## Verification design
+
+TestDesign's [bound verification manifest](2026-10-15-card-1259-transcript-pump-verification.md)
+supplements this fix design and replaces the proposed checkpoint roster/cost above.
+Use the companion's `### Checkpoints` table for Code, and retain its independent
+post-land guard/positive-control obligations. D-1 through D-7 remain unchanged.
+The companion identifies B-1, the original-versus-stored UI payload contract;
+resolve that narrow seam in Plan before handing the implementation to Code.
