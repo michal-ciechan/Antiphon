@@ -361,6 +361,7 @@ public sealed class DataRetentionService
                 && (m.SourceLandNotificationId == null || _db.AgentTaskLandNotifications.Any(n =>
                     n.Id == m.SourceLandNotificationId && n.ConfirmedAt != null))
                 && (m.Origin != QueuedMessageOrigin.Channel || m.ChannelReplySettledAt != null)
+                && (m.ReviewThreadId == null || m.ReviewReplyConsumedAt != null)
                 && !outboundSources.Any(s => s.Id == m.Id)
                 && !_db.ChannelInbounds.Any(i => i.EnvelopeJson != null && i.QueueMessageId == m.Id)
                 && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)

@@ -404,36 +404,42 @@ public sealed class AgentSessionRuntime
                 break;
             case 4 when route:
                 if (services.GetService<ChannelReplyDispatcher>() is { } channel)
-                    await channel.OnTurnEndAsync(sessionId, ct);
+                    await channel.OnTranscriptActionAsync(sessionId, action.Sequence, ct);
                 break;
             case 5 when route:
                 if (services.GetService<ReviewReplyDispatcher>() is { } review)
-                    await review.OnTurnEndAsync(sessionId, ct);
+                    await review.OnTranscriptActionAsync(sessionId, action.Sequence, ct);
                 break;
             case 6 when route || action.TriggerKind == "catchup":
                 if (services.GetService<AgentTaskReplyService>() is { } task)
-                    await task.OnTurnEndAsync(sessionId, ct);
+                {
+                    if (action.TriggerKind == "catchup") await task.OnTurnEndAsync(sessionId, ct);
+                    else await task.OnTranscriptActionAsync(sessionId, action.Sequence, ct);
+                }
                 break;
         }
     }
 
-    internal async Task ExecuteActionQueueAsync(SessionRuntimeAction action, CancellationToken ct)
+    internal async Task<SessionQueueTurnEndResult> ExecuteActionQueueAsync(SessionRuntimeAction action, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var queue = scope.ServiceProvider.GetService<SessionMessageQueueService>();
-        if (queue is null) return;
-        if (!action.TurnBoundary)
-        {
-            await queue.FlushIfIdleAsync(action.AgentSessionId, ct);
-            return;
-        }
-        var result = await queue.OnTurnEndAsync(action.AgentSessionId, ct);
-        if (result.LateConfirmedChannelMessageIds.Count > 0
+        return queue is null ? new(new HashSet<Guid>(), new HashSet<Guid>())
+            : await queue.OnRuntimeActionAsync(action, ct);
+    }
+
+    internal async Task ExecuteActionLateConfirmAsync(SessionRuntimeAction action, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var ids = action.LateConfirmedChannelMessageIds.ToHashSet();
+        if (ids.Count > 0
             && scope.ServiceProvider.GetService<ChannelReplyDispatcher>() is { } channel)
         {
-            var dispatched = await channel.OnLateConfirmedAsync(action.AgentSessionId, result.LateConfirmedChannelMessageIds, ct);
+            var dispatched = await channel.OnLateConfirmedAsync(action.AgentSessionId, ids, ct);
             await WarnOnUnpublishedLateConfirmedChannelRepliesAsync(action.AgentSessionId,
-                result.LateConfirmedChannelMessageIds, dispatched, ct);
+                ids, dispatched, ct);
+            if (dispatched.FailedCorrelationIds.Count > 0)
+                throw new InvalidOperationException("Late-confirmed channel publication remains pending.");
         }
     }
     // Resolved lazily from a scope for the same constructor-cycle reason as FlushQueueOnIdleAsync.
@@ -729,7 +735,7 @@ public sealed class AgentSessionRuntime
         try
         {
             var snapshot = await _runnerClient.GetTranscriptAsync(sessionId, ct);
-            return (true, await PersistTranscriptAsync(sessionId, snapshot.Entries));
+            return (true, await PersistTranscriptAsync(sessionId, snapshot.Entries, ct));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -1055,7 +1061,15 @@ public sealed class AgentSessionRuntime
         try
         {
             using var lease = await (_states ?? throw new InvalidOperationException("Transcript ingestion requires SessionStateStore.")).BeginWriteAsync(sessionId, ct);
-            var result = await PersistTranscriptCoreAsync(sessionId, entries, ct: ct);
+            PersistResult result;
+            try { result = await PersistTranscriptCoreAsync(sessionId, entries, ct: ct); }
+            catch (OperationCanceledException)
+            {
+                // Cancellation after a database commit can obscure its outcome. Reload under
+                // the same lease before another reader is allowed to observe this session.
+                await lease.ReconcileAsync(false, CancellationToken.None);
+                throw;
+            }
             await PublishCommittedAsync(lease, result);
             Actions().Hint(sessionId);
             return result;

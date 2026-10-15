@@ -12,6 +12,27 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 internal static class TranscriptTurnWindow
 {
+    /// <summary>Resolve only the triggering record's completed turn, including stop-before-text.</summary>
+    internal static async Task<long?> FindActionBoundaryAsync(AppDbContext db, Guid sessionId,
+        long triggerSequence, CancellationToken ct)
+    {
+        var trigger = await db.TranscriptEntries.AsNoTracking().SingleOrDefaultAsync(t =>
+            t.AgentSessionId == sessionId && t.Sequence == triggerSequence, ct);
+        if (trigger is null) return null;
+        if (trigger.Kind == TranscriptKinds.TurnEnd) return trigger.Sequence;
+        if (trigger.Kind != TranscriptKinds.AssistantText) return null;
+        var candidates = db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == sessionId
+            && t.Kind == TranscriptKinds.TurnEnd);
+        var boundary = trigger.ApiCallId is { } api
+            ? await candidates.Where(t => t.ApiCallId == api).OrderBy(t => t.Sequence).FirstOrDefaultAsync(ct)
+            : await candidates.Where(t => t.Sequence < triggerSequence).OrderByDescending(t => t.Sequence).FirstOrDefaultAsync(ct);
+        if (boundary is null) return null;
+        var prompt = await FindOwningPromptAsync(db, sessionId, boundary.Sequence, ct);
+        if (prompt is null || prompt.Sequence >= triggerSequence) return null;
+        var next = await FindNextTurnOpeningPromptSeqAsync(db, sessionId, prompt.Sequence, ct);
+        return next is { } cap && triggerSequence >= cap ? null : boundary.Sequence;
+    }
+
     /// <summary>
     /// Owning prompt of the turn that ended at <paramref name="turnEndSeq"/>: latest
     /// <c>UserPrompt</c> in <c>(prevTurnEnd, turnEndSeq)</c>, else latest <c>QueuedUserPrompt</c>

@@ -266,8 +266,11 @@ public class ReviewReplyDispatcherTests
         {
             var prompt =
                 $"{ReviewPromptFormat.EnvelopePrefix(ThreadId)} notes/report.md:12\nIs this number right?";
-            Dispatcher.Track(SessionId, new ReviewReplyDispatcher.PendingThreadReply(
-                ThreadId, prompt, DateTime.UtcNow));
+            using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = SessionId,
+                ReviewThreadId = ThreadId, Origin = QueuedMessageOrigin.Channel, ConversationKey = $"review:{ThreadId}",
+                Body = prompt, Sequence = 1, CreatedAt = DateTime.UtcNow, Status = QueuedMessageStatus.Sent });
+            db.SaveChanges();
             return prompt;
         }
 

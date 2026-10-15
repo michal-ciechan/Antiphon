@@ -155,13 +155,10 @@ public sealed class ReviewThreadService
         }
 
         var prompt = await BuildPromptAsync(thread, ct);
-        _replies.Track(sessionId, new ReviewReplyDispatcher.PendingThreadReply(
-            thread.Id, prompt, _timeProvider.GetUtcNow().UtcDateTime));
-
         await _queue.EnqueueAsync(
             sessionId, prompt, MessageSendMode.WhenIdle, ct,
             origin: QueuedMessageOrigin.Channel,
-            conversationKey: $"review:{thread.Id}");
+            conversationKey: $"review:{thread.Id}", reviewThreadId: thread.Id);
 
         thread.Status = ReviewThreadStatus.AwaitingAgent;
         thread.UpdatedAt = _timeProvider.GetUtcNow().UtcDateTime;
