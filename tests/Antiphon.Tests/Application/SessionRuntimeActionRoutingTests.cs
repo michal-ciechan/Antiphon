@@ -54,7 +54,8 @@ public class SessionRuntimeActionRoutingTests
         // through the hosted event pump, including the queue's confirming receipt.
         await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "earlier completed work");
         await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
-        var service = h.Scope.ServiceProvider.GetRequiredService<ReviewThreadService>();
+        using var reviewScope = h.Provider.CreateScope();
+        var service = reviewScope.ServiceProvider.GetRequiredService<ReviewThreadService>();
         var thread = await service.CreateAsync(h.AgentId,
             new CreateReviewThreadRequest("notes/report.md", 12, "a quoted line", "Please check the complete figure.", false), default);
         thread.ShouldNotBeNull();
