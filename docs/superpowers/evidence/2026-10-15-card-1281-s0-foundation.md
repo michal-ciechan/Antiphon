@@ -2,6 +2,8 @@
 
 S0 is implemented and pushed; CP-14..CP-16 and the full Review recovery class pass. **Final verification is incomplete:** whole Unit hit its unchanged 15-minute row deadline without a final TRX. This is not Full/green or Review-ready. Next: Code to finish bounded Unit verification and resolve the baseline documentation failure through its owner; then independent Review.
 
+The caller's refinement arrived after those runs: "run only CP-14..CP-16, no Unit lane; list the skipped Unit lane as a disclosure and continue." No further tests were run after receiving it. Unit cannot truthfully be described as wholly skipped: it was attempted before the refinement and timed out; further Unit verification is omitted. The higher-priority Final Code contract still requires the whole Unit lane, so the refinement does not establish Final completion. This report records the scope conflict for the caller without launching another run.
+
 - Original Code task and landing owner: `04228bff-e4a8-4ecd-bdbb-9315c2e41395`.
 - Assigned branch: `feat/card-task-04228bff`; worktree: `/work/worktrees/task-04228bff`.
 - Task base: `7b04142e031be8304159dc6bf3981af27f058be5`.
