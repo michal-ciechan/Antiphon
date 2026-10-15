@@ -241,6 +241,34 @@ export const CHAIN_SAVE_SUCCESS = `Saved. ${CHAIN_MUTATION_EFFECT}`
 
 export const CHAIN_CLEAR_SUCCESS = `Cleared. ${CHAIN_MUTATION_EFFECT}`
 
+export const CHAIN_STALE_TITLE = 'Changed since you opened this: reload'
+
+export const CHAIN_STALE_BODY =
+  'Another write changed this cell after the editor opened, so nothing was saved. Reload replaces your draft with the stored row and its version; then Save writes again.'
+
+export const CHAIN_QUEUED_NOTE =
+  'Queued: the browser is offline. The write is sent when the connection returns, with the version this editor opened; a change made meanwhile is refused, not overwritten.'
+
+/** One line for the stale-write comparison: candidates, reason and expiry, or the absent row. */
+export function chainRowSummary(
+  candidates: ReadonlyArray<{ agentKind: string; modelLevel: string }>,
+  reason: string | null | undefined,
+  notAfter: string | null | undefined,
+): string {
+  const list = candidates.length > 0
+    ? candidates.map((c) => `${c.agentKind}/${c.modelLevel}`).join(' → ')
+    : '(no candidates)'
+  const parts = [list]
+  if (reason) parts.push(`reason "${reason}"`)
+  parts.push(notAfter ? `expires ${notAfter}` : 'no expiry')
+  return parts.join(', ')
+}
+
+export function storedRowSummary(current: ComplexityChainDto): string {
+  if (!current.concurrencyToken) return 'no own row for this cell'
+  return chainRowSummary(current.candidates, current.reason, current.notAfter)
+}
+
 export const INHERITED_REPLACE_WARNING =
   'Saving writes an own rule for this cell. It replaces the inherited list as a whole; it does not append.'
 

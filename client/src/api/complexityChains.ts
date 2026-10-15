@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
-import { apiDelete, apiGet, apiPut } from './client'
+import { ApiError, apiDelete, apiGet, apiPut } from './client'
 import type { AgentKind } from './boards'
 import type { AgentModelLevel } from './agents'
 import type { AgentTaskRole, RoutingPinRefDto } from './agentTasks'
@@ -37,6 +37,11 @@ export interface ComplexityChainDto {
   /** Where this entry was resolved from. List view: `role` for a cell, `any`/`config`/`none` for any-role. */
   resolvedFrom?: ComplexityResolvedFrom
   effective?: ComplexityEffectiveDto | null
+  /**
+   * CARD-1275: this cell's own row version; null when the cell has no row (a role cell that
+   * resolves through Any role or config has none).
+   */
+  concurrencyToken?: string | null
 }
 
 export interface ComplexityChainListDto {
@@ -52,6 +57,23 @@ export interface PutComplexityChainRequest {
   provenance: 'Human'
   reason?: string | null
   notAfter?: string | null
+  /** Omitted = unconditional (legacy); {@link EMPTY_CONCURRENCY_TOKEN} = expect no row. */
+  concurrencyToken?: string
+}
+
+/** CARD-1275 wire value for "the editor saw no row in this cell". */
+export const EMPTY_CONCURRENCY_TOKEN = '00000000-0000-0000-0000-000000000000'
+
+export const COMPLEXITY_CHAIN_STALE_CODE = 'complexity_chain_stale'
+
+/** The stored row a 409 `complexity_chain_stale` carries, or null for any other error. */
+export function staleComplexityChain(error: unknown): ComplexityChainDto | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null
+  const body = error.body
+  if (!body || typeof body !== 'object') return null
+  if (!('code' in body) || body.code !== COMPLEXITY_CHAIN_STALE_CODE) return null
+  const current = 'current' in body ? body.current : undefined
+  return current && typeof current === 'object' ? (current as ComplexityChainDto) : null
 }
 
 export const complexityChainKeys = {
@@ -100,18 +122,21 @@ export function usePutComplexityChain() {
       candidates,
       reason,
       notAfter,
+      concurrencyToken,
     }: {
       role: AgentTaskRole | null
       complexity: TaskComplexity
       candidates: PutComplexityChainRequest['candidates']
       reason?: string | null
       notAfter?: string | null
+      concurrencyToken?: string
     }) =>
       apiPut<ComplexityChainDto>(complexityChainPath(role, complexity), {
         candidates,
         provenance: 'Human',
         reason: reason ?? null,
         notAfter: notAfter ?? null,
+        ...(concurrencyToken === undefined ? {} : { concurrencyToken }),
       } satisfies PutComplexityChainRequest),
     onSuccess: () => {
       void invalidateComplexityChains(queryClient)
@@ -125,10 +150,17 @@ export function useClearComplexityChain() {
     mutationFn: ({
       role,
       complexity,
+      concurrencyToken,
     }: {
       role: AgentTaskRole | null
       complexity: TaskComplexity
-    }) => apiDelete(complexityChainPath(role, complexity)),
+      concurrencyToken?: string
+    }) =>
+      apiDelete(
+        concurrencyToken === undefined
+          ? complexityChainPath(role, complexity)
+          : `${complexityChainPath(role, complexity)}?concurrencyToken=${encodeURIComponent(concurrencyToken)}`,
+      ),
     onSuccess: () => {
       void invalidateComplexityChains(queryClient)
     },

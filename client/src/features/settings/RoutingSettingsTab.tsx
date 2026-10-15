@@ -295,7 +295,40 @@ function MatrixSection() {
   const list = useComplexityChains()
   const pinsQuery = useRoutingPins()
   const [editor, setEditor] = useState<ComplexityChainEditorTarget | null>(null)
+  // CARD-1275: the open editor sits at one tree position whatever the list read shows, so a
+  // failed refresh neither drops its draft nor reopens it from the old snapshot afterwards.
+  const editorNode = editor?.role ? (
+    <RoleCellEditor target={editor} role={editor.role} onClose={() => setEditor(null)} />
+  ) : editor ? (
+    // The Any role cell comes from the list read, which this section has loaded.
+    <ComplexityChainCellEditor
+      opened
+      onClose={() => setEditor(null)}
+      role={editor.role}
+      complexity={editor.complexity}
+      chain={editor.chain}
+      isAnyRoleRow={editor.isAnyRoleRow}
+      fallbackResolvedFrom={editor.fallbackResolvedFrom}
+    />
+  ) : null
 
+  return (
+    <>
+      <MatrixSectionBody list={list} pinsQuery={pinsQuery} onConfigure={setEditor} />
+      {editorNode}
+    </>
+  )
+}
+
+function MatrixSectionBody({
+  list,
+  pinsQuery,
+  onConfigure,
+}: {
+  list: ReturnType<typeof useComplexityChains>
+  pinsQuery: ReturnType<typeof useRoutingPins>
+  onConfigure: (target: ComplexityChainEditorTarget) => void
+}) {
   // Without the list there is no Any role row to synthesize and no cell to open in the editor.
   if (list.isPending) {
     return (
@@ -377,7 +410,7 @@ function MatrixSection() {
                       chain={chain}
                       isAnyRoleRow
                       onConfigure={() =>
-                        setEditor({
+                        onConfigure({
                           role: null,
                           complexity: chain.complexity,
                           chain,
@@ -398,27 +431,13 @@ function MatrixSection() {
                   cardPins={cardSpecific}
                   pinsUnknown={pinsRead?.row ?? null}
                   anyChains={anyChains}
-                  onConfigure={(target) => setEditor(target)}
+                  onConfigure={onConfigure}
                 />
               ))}
             </Table.Tbody>
           </Table>
         </Box>
         <CardPinsList pins={cardSpecific} unknown={pinsRead?.list ?? null} />
-        {editor?.role ? (
-          <RoleCellEditor target={editor} role={editor.role} onClose={() => setEditor(null)} />
-        ) : editor ? (
-          // The Any role cell comes from the list read, which this section has loaded.
-          <ComplexityChainCellEditor
-            opened
-            onClose={() => setEditor(null)}
-            role={editor.role}
-            complexity={editor.complexity}
-            chain={editor.chain}
-            isAnyRoleRow={editor.isAnyRoleRow}
-            fallbackResolvedFrom={editor.fallbackResolvedFrom}
-          />
-        ) : null}
       </Stack>
     </Paper>
   )
