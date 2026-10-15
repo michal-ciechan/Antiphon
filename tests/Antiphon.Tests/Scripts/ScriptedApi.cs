@@ -30,6 +30,8 @@ internal class ScriptedApi : IDisposable
     public string? LastPath => Requests.LastOrDefault()?.Path;
     public JsonDocument? LastBody { get; private set; }
     public Dictionary<string, JsonObject> Cells { get; } = [];
+    /// <summary>CARD-1275: the row token each PUT issues; GET shows it, DELETE removes it.</summary>
+    public Dictionary<string, string> Tokens { get; } = [];
     public List<JsonObject> Pins { get; } = [];
 
     public void Respond(string method, string pathPrefix, int status, string body) =>
@@ -74,15 +76,17 @@ internal class ScriptedApi : IDisposable
         const string cellsPrefix = "/api/complexity-chains/";
         if (request.Path.StartsWith(cellsPrefix, StringComparison.Ordinal))
         {
-            var key = request.Path[cellsPrefix.Length..];
+            var key = request.Path[cellsPrefix.Length..].Split('?')[0];
             if (request.Method == "PUT")
             {
                 Cells[key] = JsonNode.Parse(request.Body!.Value.GetRawText())!.AsObject();
+                Tokens[key] = Guid.NewGuid().ToString();
                 return (200, CellView(key).ToJsonString());
             }
             if (request.Method == "DELETE")
             {
                 Cells.Remove(key);
+                Tokens.Remove(key);
                 return (204, "");
             }
         }
@@ -117,6 +121,7 @@ internal class ScriptedApi : IDisposable
         view["complexity"] = segments[1];
         view["resolvedFrom"] = present ? "role" : "none";
         view["source"] = present ? "pin" : "config";
+        view["concurrencyToken"] = Tokens.TryGetValue(key, out var token) ? token : null;
         return view;
     }
 
