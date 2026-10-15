@@ -85,7 +85,7 @@ public sealed partial class PipelineSpeedIntegrationTests
         var action = handoff ? await SeedActionAsync(w) : null;
         var started = Stopwatch.GetTimestamp();
         var child = await CreateAsync(w, ChildRequest(w), action?.Id);
-        Console.WriteLine($"C1289 measurement handoff={handoff} createMs={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1} cardLockMs={locks.HeldMilliseconds:F1} commonGitMs={git.ElapsedMilliseconds:F1} commonGitCalls={git.Calls} lockedDuringGit={git.CardLocked}");
+        Console.WriteLine($"C1289 measurement handoff={handoff} createMs={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1} cardLockMs={locks.HeldMilliseconds:F1} gitMs={git.ElapsedMilliseconds:F1} gitCalls={git.Calls} lockedDuringGit={git.CardLocked}");
         git.Calls.ShouldBeGreaterThan(0, "real Git preview was reached");
         git.CardLocked.ShouldBe(handoff, "ordinary Git preview precedes the card lock; handoff keeps idempotent recovery first");
         (await w.TaskAsync(child.Id)).WorktreeBasePreviewJson.ShouldNotBeNullOrWhiteSpace();
@@ -159,7 +159,7 @@ public sealed partial class PipelineSpeedIntegrationTests
         public int Calls { get; private set; }
         public bool CardLocked { get; private set; }
         public double ElapsedMilliseconds { get; private set; }
-        public new async Task<string> CommonDirectoryAsync(string repository, CancellationToken ct)
+        public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         {
             await using var connection = new NpgsqlConnection(world.Schema.ConnectionString);
             await connection.OpenAsync(ct);
@@ -168,7 +168,7 @@ public sealed partial class PipelineSpeedIntegrationTests
             try { await command.ExecuteScalarAsync(ct); }
             catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.LockNotAvailable) { CardLocked = true; }
             var started = Stopwatch.GetTimestamp();
-            var result = await base.CommonDirectoryAsync(repository, ct);
+            var result = await base.RunAsync(repository, arguments, ct);
             ElapsedMilliseconds += Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             Calls++;
             return result;
