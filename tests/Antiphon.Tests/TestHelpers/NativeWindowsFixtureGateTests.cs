@@ -49,30 +49,31 @@ public sealed class NativeWindowsFixtureGateTests
     }
 
     [Test]
-    public void C588_Named_fixtures_gate_before_work_and_keep_windows_prerequisites()
+    [Arguments("WorktreeLockDiagnosticsWindowsTests")]
+    [Arguments("LandDeliveryFixture")]
+    [Arguments("OutputDistillationApplyCanaryTests")]
+    public void C588_Named_fixture_gates_before_work_and_keeps_windows_prerequisites(string fixture)
     {
-        foreach (var site in Sites)
-        {
-            var root = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, site.File))).GetRoot();
-            var type = root.DescendantNodes().OfType<ClassDeclarationSyntax>().Single(c => c.Identifier.ValueText == site.Class);
-            var reason = type.Members.OfType<FieldDeclarationSyntax>()
-                .SelectMany(f => f.Declaration.Variables, (f, v) => (Field: f, Variable: v))
-                .SingleOrDefault(x => x.Variable.Identifier.ValueText == "NativeWindowsReason");
-            reason.Variable.ShouldNotBeNull("c588-reason-const: " + site.Class);
-            reason.Field.Modifiers.Any(SyntaxKind.ConstKeyword).ShouldBeTrue("c588-reason-const: " + site.Class);
-            var literal = reason.Variable.Initializer?.Value as LiteralExpressionSyntax;
-            literal.ShouldNotBeNull("c588-reason-literal: " + site.Class);
-            literal.Token.ValueText.ShouldBe(site.Reason, "c588-reason-literal: " + site.Class);
-            var method = type.Members.OfType<MethodDeclarationSyntax>().Single(m => m.Identifier.ValueText == site.Method);
-            SyntaxFactory.AreEquivalent(method.Body?.Statements.FirstOrDefault(),
-                SyntaxFactory.ParseStatement("NativeWindowsGate.Require(NativeWindowsReason);"))
-                .ShouldBeTrue("c588-gate-first: " + site.Class + "." + site.Method);
-            var invocations = method.DescendantNodes().OfType<InvocationExpressionSyntax>().Select(i => i.ToString()).ToArray();
-            invocations.ShouldNotContain(i => i.Contains("IsWindows()", StringComparison.Ordinal) && i.Contains("ShouldBeTrue", StringComparison.Ordinal),
-                "c588-no-windows-assertion: " + site.Class + "." + site.Method);
-            if (site.Class != "WorktreeLockDiagnosticsWindowsTests")
-                invocations.ShouldContain("ConPtyRedistributable.TryLocate(out _, out var why).ShouldBeTrue(why)",
-                    "c588-windows-prerequisite-kept: " + site.Class + "." + site.Method);
-        }
+        var site = Sites.Single(s => s.Class == fixture);
+        var root = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, site.File))).GetRoot();
+        var type = root.DescendantNodes().OfType<ClassDeclarationSyntax>().Single(c => c.Identifier.ValueText == site.Class);
+        var reason = type.Members.OfType<FieldDeclarationSyntax>()
+            .SelectMany(f => f.Declaration.Variables, (f, v) => (Field: f, Variable: v))
+            .SingleOrDefault(x => x.Variable.Identifier.ValueText == "NativeWindowsReason");
+        reason.Variable.ShouldNotBeNull("c588-reason-const: " + site.Class);
+        reason.Field.Modifiers.Any(SyntaxKind.ConstKeyword).ShouldBeTrue("c588-reason-const: " + site.Class);
+        var literal = reason.Variable.Initializer?.Value as LiteralExpressionSyntax;
+        literal.ShouldNotBeNull("c588-reason-literal: " + site.Class);
+        literal.Token.ValueText.ShouldBe(site.Reason, "c588-reason-literal: " + site.Class);
+        var method = type.Members.OfType<MethodDeclarationSyntax>().Single(m => m.Identifier.ValueText == site.Method);
+        SyntaxFactory.AreEquivalent(method.Body?.Statements.FirstOrDefault(),
+            SyntaxFactory.ParseStatement("NativeWindowsGate.Require(NativeWindowsReason);"))
+            .ShouldBeTrue("c588-gate-first: " + site.Class + "." + site.Method);
+        var invocations = method.DescendantNodes().OfType<InvocationExpressionSyntax>().Select(i => i.ToString()).ToArray();
+        invocations.ShouldNotContain(i => i.Contains("IsWindows()", StringComparison.Ordinal) && i.Contains("ShouldBeTrue", StringComparison.Ordinal),
+            "c588-no-windows-assertion: " + site.Class + "." + site.Method);
+        if (site.Class != "WorktreeLockDiagnosticsWindowsTests")
+            invocations.ShouldContain("ConPtyRedistributable.TryLocate(out _, out var why).ShouldBeTrue(why)",
+                "c588-windows-prerequisite-kept: " + site.Class + "." + site.Method);
     }
 }
