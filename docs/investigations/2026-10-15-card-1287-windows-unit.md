@@ -1,10 +1,10 @@
 # CARD-1287 Windows Unit roster qualification
 
-Status: qualification pending; two frozen-roster executions are required. Compiled source: **cdb18eef5013bfa45336dfd304a022b489686bbc**. No product or test code changed.
+Status: final qualification pending after two failed candidate runs; two executions of the revised roster are required. Compiled source: **cdb18eef5013bfa45336dfd304a022b489686bbc**. No product or test code changed.
 
-The roster contains **368 of 409 compiled Unit classes**, with **41 whole-class exclusions** below. One fully qualified class appears per line in the adjacent `-roster.txt`; the adjacent `-filter.txt` supplies the literal TUnit OR expression. Each operand has the trailing wildcard required by the pinned discovery hint extractor. Prefix collisions are excluded rather than admitting Integration classes. Compiled metadata, actual TRX class/method identities and result counts determine coverage; listing tests is not execution evidence.
+The roster contains **366 of 409 compiled Unit classes**, with **43 whole-class exclusions** below. One fully qualified class appears per line in the adjacent `-roster.txt`; the adjacent `-filter.txt` supplies the literal TUnit OR expression. Each operand has the trailing wildcard required by the pinned discovery hint extractor. Prefix collisions are excluded rather than admitting Integration classes. Compiled metadata, actual TRX class/method identities and result counts determine coverage; listing tests is not execution evidence.
 
-The historical Windows all-passing-class candidate came from the 5,591-case run at `a30b7f4297400f010ce70188ac99ebe55be51931`, not this source. Current compiled metadata has three Unit classes absent from that historical TRX: `CodexAdapterRawResponseTests`, `D2AdvisoryDocumentationTests` and `HostCleanupCheckpointCustodyTests`; all are included. `MatrixDefaultComplexityCreateTests` is no longer a compiled Unit class. Repaired groups A/V/X are not treated as current failures: `OrchestratorInstructionsGuidanceTests` (CARD-1286), `DelegationHarnessCensusTests` and `TestLaneCategoryGuardTests` (CARD-1298) are retained. `CheckpointTrackedBaselineTests` remains excluded for its explicit Windows platform skips.
+The historical Windows all-passing-class candidate came from the 5,591-case run at `a30b7f4297400f010ce70188ac99ebe55be51931`, not this source. Current compiled metadata has three Unit classes absent from that historical TRX: `CodexAdapterRawResponseTests`, `D2AdvisoryDocumentationTests` and `HostCleanupCheckpointCustodyTests`; the first two are retained; HostCleanupCheckpointCustodyTests is excluded after both candidate runs failed. `MatrixDefaultComplexityCreateTests` is no longer a compiled Unit class. Repaired groups A/V/X are not treated as current failures: `OrchestratorInstructionsGuidanceTests` (CARD-1286), `DelegationHarnessCensusTests` and `TestLaneCategoryGuardTests` (CARD-1298) are retained. `CheckpointTrackedBaselineTests` remains excluded for its explicit Windows platform skips.
 
 ## Reproduction
 
@@ -69,6 +69,20 @@ Every exclusion is at class granularity, so passing portable methods within thes
 | `Antiphon.Tests.Scripts.WindowsUnitPlatformAdmissionTests` | M: nested audit requires legitimate checkpoint build-source stamp, absent from plain build (CARD-1210). |
 | `Antiphon.Tests.TestHelpers.ControlledLandingGitTests` | U: registration-only deletion sharing error 32; owner unresolved (CARD-0665/CARD-0688). |
 
+| `Antiphon.Tests.Infrastructure.CheckpointToolProjectContractTests` | CARD-1287 qualification finding Q1: csproj_has_no_project_references fails in both candidate runs because Antiphon.Checkpoints.csproj references Antiphon.HostCleanup; that reference was added by 367c8ee4cdcc877aa71f1a46d30c410d628edc3b. One failed method among four cases. No parent execution or repair performed. |
+| `Antiphon.Tests.Infrastructure.HostCleanupCheckpointCustodyTests` | CARD-1287 qualification finding Q2 / CARD-0987: eleven of twelve methods fail in both candidate runs: ten output-owner-missing refusals and one missing /c987/.../bin-owned dictionary key. The virtual Linux-path fixture and Windows Path.GetFullPath canonicalization disagree (source-based inference). No native deletion regression is established and no repair performed. |
+
 ## Execution evidence
 
-Pending. Raw evidence is retained under `C:\Antiphon\worktrees\card-task-b7430380\.antiphon\c1287-b7430380`, including the original build log, source index, compiled class/method metadata, exact filter and argv, timing, fresh TRX and class/method audit. Generated payloads remain ignored.
+The **368-class candidate failed twice** and is not a gate certificate. Both runs matched all 368 class identities and all 2,921 compiled methods; missing/extra classes and methods were zero. Both used runtime HEAD `ac9f7bff08bc740dfdca58431aa59732da48be6f`, clean tracked status and the original unchanged compiled assembly.
+
+| Candidate | Cases | Passed | Failed | Skipped | Outer wall | TRX wall | Driver exit |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| run1 | 4595 | 4583 | 12 | 0 | 281.979s | 278.352s | 2 |
+| run2 | 4595 | 4583 | 12 | 0 | 276.770s | 272.341s | 2 |
+
+The same twelve methods fail in both runs: `CheckpointToolProjectContractTests.csproj_has_no_project_references`, plus every `HostCleanupCheckpointCustodyTests` method except `Links_and_special_entries_are_not_adopted`. Ten custody failures are `IOException: refused: output-owner-missing`; `Custody_window_checks_owner_mode_and_times` instead throws `KeyNotFoundException` for its virtual `/c987/.../bin-owned` root. Exact method rows, assertions and stack traces are retained in each `run.trx` and `cases.json`. These findings are present at the pinned task base, not introduced by roster/evidence edits. The project reference and virtual fixture came from the recent CARD-0987 slice; no historical parent test was run, and no product regression beyond the contract/fixture failures is claimed.
+
+Candidate class/method/outcome count multisets are identical; **no class failed in only one candidate run**. One passing `DispatchHoldLedgerTests.C672_ClassOf_maps_every_hold_sentence` display argument embeds a fresh task GUID, so literal display strings differ while the selected method and case counts match. Its source creates a new GUID; this is not an outcome flake. Both candidates had granted slots with zero wait. The two observed failing classes are wholly excluded from the final roster (sixteen total cases, including four passing cases), leaving an expected **4,579 executed cases across 366 classes and 2,905 compiled methods**. The final executions below are fresh whole-roster runs; their timings and passes are not obtained by subtracting failed cases from these candidates.
+
+Final runs pending. Raw evidence is retained under `C:\Antiphon\worktrees\card-task-b7430380\.antiphon\c1287-b7430380`, including the original build log, source index, compiled class/method metadata, exact filter and argv, timing, fresh TRX and class/method audit. Generated payloads remain ignored.

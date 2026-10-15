@@ -305,7 +305,6 @@ Antiphon.Tests.Domain.StateMachine.RunAttemptStateMachineTests
 Antiphon.Tests.Domain.StateMachine.WorkflowStateMachineTests
 Antiphon.Tests.Infrastructure.AppDbContextModelTests
 Antiphon.Tests.Infrastructure.AppHostBrokerSourceGuardTests
-Antiphon.Tests.Infrastructure.CheckpointToolProjectContractTests
 Antiphon.Tests.Infrastructure.CustodyHelperContractTests
 Antiphon.Tests.Infrastructure.DindRunnerContractTests
 Antiphon.Tests.Infrastructure.DirectoryBuildRspTests
@@ -317,7 +316,6 @@ Antiphon.Tests.Infrastructure.DotnetToolManifestContractTests
 Antiphon.Tests.Infrastructure.E2ECopyOwnedPtyHostAppHostContractTests
 Antiphon.Tests.Infrastructure.EvidencePolicyWorkflowTests
 Antiphon.Tests.Infrastructure.GrokRunnerImageContractTests
-Antiphon.Tests.Infrastructure.HostCleanupCheckpointCustodyTests
 Antiphon.Tests.Infrastructure.HostCleanupExecutionTests
 Antiphon.Tests.Infrastructure.HostCleanupOwnershipTests
 Antiphon.Tests.Infrastructure.HostCleanupPolicyTests
