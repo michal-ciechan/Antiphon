@@ -494,8 +494,9 @@ the pump also accepts the schema's legacy `pane_agent_status_changed` spelling.
 event would re-kill sessions on stale closes at every single reconnect. The pump therefore re-runs
 the full §6 adoption bar before recording any `Exited`.
 
-A `blocked` → not-blocked transition may only **nudge** `FlushIfIdleAsync`, which re-checks
-`IsWorkingAsync` and the blocked gate for itself.
+A `blocked` → not-blocked transition only admits a durable idle request (CARD-1259).
+The action worker re-checks stored working state and the blocked gate before delivery;
+the status event never grants a delivery verdict or waits for the flush.
 
 CARD-0163 also pushes the runner's file-ordered transcript verdict as display-only
 `pane.report_metadata`: all sidebar state labels read `<herdr> · antiphon: <verdict>`, with
@@ -655,7 +656,7 @@ workspace/tab ids stay out of the database.
 
 ### Preserved Gotcha #64
 
-- **Herdr events are verification triggers, never evidence; disagreement is a Warning row only** (CARD-0162): herdr REPLAYS historical `pane_closed` to every new `events.subscribe` (measured E5), so a pump that trusted the event would re-kill on stale closes at every reconnect — `HerdrEventPumpService` re-runs the §6A bar (`pane.get` + `process_info` vs sidecar `ChildPid`) before any Exited. The measured status wire name is `pane.agent_status_changed` (dotted, CARD-0163 R9, 2026-08-26; legacy underscored schema spelling accepted); S4b pushes `state_labels` only, never `pane.report_agent`. `HerdrStatusDisagreement` (34) is Warning, timeline-only unless channel-bound, 10-minute hysteresis + pull-before-raise; it never kills, retypes, or escalates. Blocked-exit may only nudge `FlushIfIdleAsync` (which re-checks `IsWorkingAsync` and the S3 blocked gate). The status badge is a corroboration hint, never a verdict.
+- **Herdr events are verification triggers, never evidence; disagreement is a Warning row only** (CARD-0162): herdr REPLAYS historical `pane_closed` to every new `events.subscribe` (measured E5), so a pump that trusted the event would re-kill on stale closes at every reconnect — `HerdrEventPumpService` re-runs the §6A bar (`pane.get` + `process_info` vs sidecar `ChildPid`) before any Exited. The measured status wire name is `pane.agent_status_changed` (dotted, CARD-0163 R9, 2026-08-26; legacy underscored schema spelling accepted); S4b pushes `state_labels` only, never `pane.report_agent`. `HerdrStatusDisagreement` (34) is Warning, timeline-only unless channel-bound, 10-minute hysteresis + pull-before-raise; it never kills, retypes, or escalates. Blocked-exit only admits a durable idle action; its worker re-checks stored working state and the S3 blocked gate before delivery (CARD-1259). The status badge is a corroboration hint, never a verdict.
 
 ### Preserved Gotcha #65
 

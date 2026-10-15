@@ -755,3 +755,37 @@ gives 733.25 PC minutes and 793.25 total including optional bootstrap. Compariso
 to the assigned base confirms D-1..D-7, V-1..V-12, R-1..R-5, G/PC-1..112 and
 CP-1..CP-12 unchanged; only the two assigned Markdown files changed and
 `git diff --check` passed. No compiled importer, product build/test or PC ran.
+
+### Code continuation binding (a6d66bd8; incomplete Final)
+
+The continuation binds durable work to `SessionRuntimeAction` and
+`SessionRuntimeActionCoordinator.Admit`, `RequestAsync`, `DrainPageAsync` and
+`RestoreTranscriptPayload`. Phases are 0 UI, 1 capacity, 2 refinement, 3 compaction
+or rules catch-up, 4 channel, 5 review, 6 task, 7 reserved/no-op, 8 queue and 9
+late-confirm publication. `AgentSessionRuntime.ExecuteActionPhaseAsync` is the
+effect entry point. `TranscriptUiProjection.Capture/Restore` is binary version 1;
+its delta and producer sequence commit with the final stored row. The separate
+`ManualCompactBoundary` flag preserves scheduling intent through safe stubs.
+
+CLI migrations are `20261015181237_SessionRuntimeActions`,
+`20261015182600_DurableRuntimeReviewAuthority` and
+`20261015190500_PreserveManualCompactionIntent`. Typed review authority is
+`SessionQueuedMessage.ReviewThreadId`/`ReviewReplyConsumedAt`; queue admission
+also commits the review thread status and a `review:<queue-id-N>` idle action.
+Compaction queue identities are `compaction:<stored-sequence>:recovery` and
+`:instructions`; its watermark advances after these durable enqueues.
+
+`SessionRuntimeActionTests` supplies the 28 named executions, using real
+PostgreSQL, `CommitFault`, `AckFault`, `DeleteGate`, owned hosted workers and a
+recording receiver. The receiver counts fake UI acceptance, not browser receipt.
+The full planned subcase matrix is not yet qualified: cancellation at the actual
+save, unique-index migration replay, peak simultaneous-writer instrumentation,
+same-session second-page fairness, full reconnect/scope/seat counters and all
+required H0-H4 recipient cuts remain open. The 35-case routing class is not yet
+implemented. The R-6 two-case cold UI guard is implemented but has not run.
+
+All PC-1 through PC-113 and every variant remain pending SourceLanding Mutation.
+No mutant/red/restore/green cycle was performed. See the continuation evidence for
+historical receipts, source findings and the exact remaining ordinary work. This
+binding does not qualify CP-3 through CP-13 or mark any deferred V/R obligation
+passed.
