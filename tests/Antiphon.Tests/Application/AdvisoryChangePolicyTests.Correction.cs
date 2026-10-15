@@ -3,9 +3,11 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -13,6 +15,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Infrastructure.Security;
+using Antiphon.Server.Infrastructure.Verification;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -36,6 +39,7 @@ public partial class AdvisoryChangePolicyTests
         first.StatusCode.ShouldBe(HttpStatusCode.OK, "valid-correction-route");
         var receipt = (await first.Content.ReadFromJsonAsync<ReviewEvidenceCorrectionResponse>()).ShouldNotBeNull();
         receipt.Disposition.ShouldBe("corrected");
+        Directory.Delete(w.ProducerRoot, true);
         await w.RestartAsync();
         using var repeat = await w.PostAsync(w.Request);
         repeat.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -58,6 +62,11 @@ public partial class AdvisoryChangePolicyTests
             (w.Request with { RepositoryPath = w.Request.RepositoryPath + "-sibling" }, "foreign-repository-refused") })
             (await w.PostAsync(request)).StatusCode.ShouldBe(HttpStatusCode.Conflict, label);
         (await db.ReviewEvidenceCorrections.CountAsync()).ShouldBe(1);
+        var successor = await db.StageOutcomes.SingleAsync(o => o.Id == receipt.SuccessorEvidenceId);
+        successor.Ref = "broken-link";
+        await db.SaveChangesAsync();
+        await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
+            LandApproval.LoadUsableEvidenceAsync(db, successor.Id, w.Request.SourceSha, subject, CancellationToken.None));
     }
 
     [Test]
@@ -79,6 +88,22 @@ public partial class AdvisoryChangePolicyTests
         await w.BehaviorAsync("Satisfied");
         using var valid = await w.PostAsync(w.Request);
         valid.StatusCode.ShouldBe(HttpStatusCode.OK, "restored-valid-control");
+        foreach (var defect in new[] { "failed-row", "missing-trx", "missing-provenance", "wrong-receipt" })
+        {
+            await using var invalid = await CorrectionWorld.CreateAsync(defect);
+            using var response = await invalid.PostAsync(invalid.Request);
+            if (defect == "wrong-receipt") response.StatusCode.ShouldBe(HttpStatusCode.Conflict, defect);
+            else
+            {
+                response.StatusCode.ShouldBe(HttpStatusCode.OK, defect);
+                var incomplete = (await response.Content.ReadFromJsonAsync<ReviewEvidenceCorrectionResponse>()).ShouldNotBeNull();
+                incomplete.Disposition.ShouldBe("incomplete", defect + "-no-approval");
+                incomplete.MissingRows.ShouldBe(defect == "missing-provenance" ? invalid.Request.Selection.Rows : ["CP-15"], defect + "-exact-selection");
+            }
+            await using var fresh = invalid.Db();
+            (await fresh.ReviewEvidenceCorrections.CountAsync()).ShouldBe(0, defect + "-no-correction");
+            (await fresh.StageOutcomes.CountAsync()).ShouldBe(1, defect + "-no-approval");
+        }
     }
 
     private sealed class CorrectionWorld : IAsyncDisposable
@@ -95,7 +120,7 @@ public partial class AdvisoryChangePolicyTests
         public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
         public static string Digest(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
-        public static async Task<CorrectionWorld> CreateAsync()
+        public static async Task<CorrectionWorld> CreateAsync(string? defect = null)
         {
             var w = new CorrectionWorld { _schema = await TestDbFixture.CreateIsolatedSchemaAsync(),
                 Root = Path.Combine(Path.GetTempPath(), "c1281-correction-" + Guid.NewGuid().ToString("N")) };
@@ -103,10 +128,48 @@ public partial class AdvisoryChangePolicyTests
             w.Repository = DelegateScriptRunner.RepoRoot;
             var git = new LandingGit();
             var common = await git.CommonDirectoryAsync(w.Repository, CancellationToken.None);
-            w.ProducerRoot = Path.Combine(common, "antiphon", "code-evidence", "04228bff");
-            var inventory = await File.ReadAllTextAsync(Path.Combine(w.ProducerRoot, "producer-pack-index.json"));
+            var original = Path.Combine(common, "antiphon", "code-evidence", "04228bff");
+            var inventory = await File.ReadAllTextAsync(Path.Combine(original, "producer-pack-index.json"));
             Digest(inventory).ShouldBe("5afb848873bdd8d653a3587654445d239b88cc31ea59f664dbf23efd78b98661",
                 "authentic-producer-inventory");
+            // The positive is the unedited actual producer pack. Negative arms edit only this
+            // private parser fixture, never the retained producer or production code.
+            w.ProducerRoot = Path.Combine(w.Root, "input");
+            Directory.CreateDirectory(w.ProducerRoot);
+            var node = JsonNode.Parse(inventory)!;
+            foreach (var item in node["files"]!.AsArray())
+            {
+                var relative = item!["relativePath"]!.GetValue<string>();
+                var destination = Path.Combine(w.ProducerRoot, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                File.Copy(Path.Combine(original, relative), destination);
+            }
+            if (defect is not null)
+            {
+                var run = node["cleanCheckpointRun"]!.GetValue<string>();
+                var reportRelative = $".antiphon/checkpoints/{run}/report.json";
+                if (defect is "failed-row" or "wrong-receipt")
+                {
+                    var path = Path.Combine(w.ProducerRoot, reportRelative);
+                    var report = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
+                    if (defect == "wrong-receipt") report["commit"] = new string('a', 40);
+                    else report["rows"]!.AsArray().Single(r => r!["id"]!.GetValue<string>() == "CP-15")!["state"] = "red";
+                    var content = report.ToJsonString();
+                    await File.WriteAllTextAsync(path, content);
+                    var entry = node["files"]!.AsArray().Single(e => e!["relativePath"]!.GetValue<string>() == reportRelative)!;
+                    entry["bytes"] = Encoding.UTF8.GetByteCount(content); entry["sha256"] = Digest(content);
+                }
+                else
+                {
+                    var entry = node["files"]!.AsArray().Single(e => defect == "missing-trx"
+                        ? e!["relativePath"]!.GetValue<string>() == $".antiphon/checkpoints/{run}/rows/CP-15/run.trx"
+                        : e!["relativePath"]!.GetValue<string>().EndsWith("bin-c1281-foundation/checkpoint-build-source.json"));
+                    File.Delete(Path.Combine(w.ProducerRoot, entry!["relativePath"]!.GetValue<string>()));
+                    node["files"]!.AsArray().Remove(entry);
+                }
+                inventory = node.ToJsonString();
+            }
+            await File.WriteAllTextAsync(Path.Combine(w.ProducerRoot, "producer-pack-index.json"), inventory);
             using var index = JsonDocument.Parse(inventory);
             var source = index.RootElement.GetProperty("sourceCommit").GetString()!;
             var worktree = index.RootElement.GetProperty("sourceWorktree").GetString()!;
@@ -162,7 +225,19 @@ public partial class AdvisoryChangePolicyTests
             _client = _app.GetTestClient();
             _client.DefaultRequestHeaders.Add(OperatorTokenFile.Header, OperatorTokenFile.ReadOrCreate(_operatorPath));
         }
-        private void ConfigureCorrectionServices(IServiceCollection services) { }
+        private void ConfigureCorrectionServices(IServiceCollection services)
+        {
+            services.AddSingleton<ILandingGit, LandingGit>();
+            services.AddSingleton(Options.Create(new CheckpointReceiptSettings {
+                StorageRoot = Path.Combine(Root, "retained"),
+                ValidatorScript = Path.Combine(Repository, "scripts", "validate-checkpoint-receipt.ps1"),
+                Producers = [new(Request.ProducerIdentity, Path.Combine(ProducerRoot, "producer-pack-index.json"),
+                    Request.BundleDigest, Request.RepositoryPath, Repository)] }));
+            services.AddSingleton<TimeProvider>(TimeProvider.System);
+            services.AddSingleton<LandDeliveryBoundary>();
+            services.AddScoped<ICheckpointReceiptValidator, CheckpointReceiptValidator>();
+            services.AddScoped<ReviewEvidenceCorrectionService>();
+        }
         public Task<HttpResponseMessage> PostAsync(ReviewEvidenceCorrectionRequest request) =>
             _client.PostAsJsonAsync($"/api/agent-tasks/{Review.Id:D}/review-evidence/corrections", request);
         public async ValueTask DisposeAsync()
