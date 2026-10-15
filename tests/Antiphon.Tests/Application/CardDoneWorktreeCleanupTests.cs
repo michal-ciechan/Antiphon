@@ -102,7 +102,7 @@ public sealed class CardDoneWorktreeCleanupTests
             await using (var observer = f.Host.CreateContext())
                 (await observer.AgentTasks.SingleAsync(t => t.Id == f.TaskId)).Status.ShouldBe(state);
             await f.ChangeTaskAsync(t => t.Status = AgentTaskStatus.Succeeded);
-            (await f.CleanupAsync()).IsClean.ShouldBeTrue();
+            (await f.CleanupAsync()).Residue.ShouldBeNull(state.ToString());
             await f.AssertRemovedAsync();
         }
     }
