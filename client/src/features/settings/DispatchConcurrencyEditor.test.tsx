@@ -1,6 +1,6 @@
 import type { HubConnection } from '@microsoft/signalr'
 import { notifications } from '@mantine/notifications'
-import type { QueryClient } from '@tanstack/react-query'
+import { onlineManager, type QueryClient } from '@tanstack/react-query'
 import { HttpResponse, http } from 'msw'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { act, renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
@@ -14,7 +14,7 @@ import type {
   DispatchConcurrencyRevisionPageDto,
   DispatchConcurrencyScopeDto,
 } from '../../api/dispatchConcurrency'
-import { useDispatchConcurrency } from '../../api/dispatchConcurrency'
+import { dispatchConcurrencyKeys, useDispatchConcurrency } from '../../api/dispatchConcurrency'
 import { DispatchConcurrencyEditor } from './DispatchConcurrencyEditor'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
@@ -965,6 +965,33 @@ it('C506 V14 history-empty', async () => {
   expect(saveButton()).toBeEnabled()
   await userEvent.click(saveButton())
   await waitFor(() => expect(state.puts).toHaveLength(1))
+})
+
+// CARD-1274: a history read that has not returned (loading, or paused offline) is not an empty history.
+it.each(['loading', 'paused'] as const)('C1274 history read %s shows no empty history', async (state) => {
+  serve(null, G7, undefined, HISTORY_EMPTY)
+  if (state === 'loading') server.use(http.get('/api/dispatch-concurrency/revisions', () => new Promise<Response>(() => {})))
+  try {
+    const { queryClient } = renderWithProviders(<DispatchConcurrencyEditor projectId={null} />)
+    await loaded()
+    if (state === 'paused') {
+      expect(await within(screen.getByTestId('dispatch-concurrency-history')).findByText('No revisions yet.')).toBeInTheDocument()
+      act(() => {
+        onlineManager.setOnline(false)
+        void queryClient.resetQueries({ queryKey: dispatchConcurrencyKeys.revisions(null), exact: true })
+      })
+    }
+    await waitFor(() => expect(queryClient.getQueryState(dispatchConcurrencyKeys.revisions(null))).toMatchObject({
+      status: 'pending',
+      fetchStatus: state === 'loading' ? 'fetching' : 'paused',
+    }))
+    const history = screen.getByTestId('dispatch-concurrency-history')
+    expect(await within(history).findByText(state === 'loading' ? 'History loading.' : 'History unknown (read paused offline).')).toBeInTheDocument()
+    expect(within(history).queryByText('No revisions yet.')).toBeNull()
+    expect(within(history).queryByText('Could not load history.')).toBeNull()
+  } finally {
+    onlineManager.setOnline(true)
+  }
 })
 
 // ---- Review e9c9efa5 repair: read-only mode, save versus the cached read it superseded, pending submission ----
