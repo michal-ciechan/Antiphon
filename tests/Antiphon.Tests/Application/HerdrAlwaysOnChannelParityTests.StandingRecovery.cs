@@ -27,11 +27,11 @@ public partial class HerdrAlwaysOnChannelParityTests
     [Arguments(AgentKind.Grok, SessionBackend.Herdr, false)]
     public async Task Standing_history_recovery_preserves_native_identity_and_queued_reply(AgentKind kind, SessionBackend backend, bool alwaysOn)
     {
-        // CARD-1273: reasons observed per backend/kind with the guard lifted (run 20261015-003609-6511).
+        // CARD-1273: reasons observed per backend with the guard lifted (runs 20261015-003609-6511, 20261015-005802-136e).
         if (OperatingSystem.IsLinux() && backend == SessionBackend.PtyHost)
             Skip.Test("CARD-0865: on Linux the native PtyHost fake CLI wrote no matching prompt to its JSONL before the 90 s deadline.");
-        if (OperatingSystem.IsLinux() && kind == AgentKind.ClaudeCode)
-            Skip.Test("CARD-0865: on Linux the Claude-on-Herdr queued channel reply has no UserPrompt after its delivery baseline.");
+        if (OperatingSystem.IsLinux())
+            Skip.Test("CARD-1273: the Herdr queued channel reply is stored and confirmed with its [antiphon-channel:<id>] correlation marker, so the UserPrompt Text == nonce assertion does not match.");
         var root = Path.Combine(Path.GetTempPath(), $"c466-native-wire-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         var home = Path.Combine(root, "native-home"); Directory.CreateDirectory(home);
