@@ -8178,6 +8178,70 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("SessionRunnerStates", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.SessionRuntimeAction", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("AcceptedGeneration")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("AgentSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("DueAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("Phase")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("ProducerSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("Sequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("TranscriptEntryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TriggerKind")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<bool>("TurnBoundary")
+                        .HasColumnType("boolean");
+
+                    b.Property<byte[]>("UiProjectionDelta")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<int>("UiProjectionVersion")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TranscriptEntryId");
+
+                    b.HasIndex("DueAt", "AgentSessionId");
+
+                    b.HasIndex("AgentSessionId", "Sequence", "TriggerKind")
+                        .IsUnique();
+
+                    b.ToTable("SessionRuntimeActions", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.SpecialistAttempt", b =>
                 {
                     b.Property<Guid>("Id")
@@ -11145,6 +11209,20 @@ namespace Antiphon.Server.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("AgentSession");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.SessionRuntimeAction", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.AgentSession", null)
+                        .WithMany()
+                        .HasForeignKey("AgentSessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Antiphon.Server.Domain.Entities.TranscriptEntry", null)
+                        .WithMany()
+                        .HasForeignKey("TranscriptEntryId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Stage", b =>
