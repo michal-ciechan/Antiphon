@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
@@ -43,6 +44,12 @@ public sealed partial class PhoneHomeTaskDispatchProjectionTests
             var task = await seed.AgentTasks.SingleAsync(t => t.Id == taskId);
             task.Role = role;
             task.TokenHash = originalHash;
+            task.RemoteWorktreePath = "/work/worktrees/c1285-token";
+            task.ProgressBaselineJson = TaskProgressJson.SerializeBaseline(new ProgressBaselineSnapshot(
+                1, DateTime.UtcNow, DateTime.UtcNow,
+                new ProgressSourceBaseline(workspace.Path, workspace.Path, taskId, workspace.Path,
+                    "refs/heads/feat/test-remote", new string('1', 40),
+                    new ProgressRemoteBaseline(ProgressRemoteState.Missing, null, "c1285")), null));
             await seed.SaveChangesAsync();
         }
         AgentTaskService.RawTokens[taskId] = scenario == "stale"
@@ -62,20 +69,21 @@ public sealed partial class PhoneHomeTaskDispatchProjectionTests
                     && stored.AgentSessionId == sessionId);
             },
         };
-        var firstGraph = CreateDispatcher(schema, host, sink);
-        await using (firstGraph.Services)
-        {
-            await firstGraph.Dispatcher.TickAsync(CancellationToken.None);
-            await firstGraph.Preparer.WhenIdleAsync();
-        }
-        // The durable queued row and prepared mirror survive; only this task's raw cache is lost.
+        // Seed the durable state after remote preparation. Only this task's raw cache is lost.
         if (scenario == "missing") AgentTaskService.RawTokens.TryRemove(taskId, out _);
         var graph = CreateDispatcher(schema, host, sink);
         await using var services = graph.Services;
         try
         {
             await graph.Dispatcher.TickAsync(CancellationToken.None);
-            sink.Specs.Count.ShouldBe(1);
+            await using (var observe = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+            {
+                var stored = await observe.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                var events = await observe.AgentTaskEvents.Where(e => e.AgentTaskId == taskId)
+                    .Select(e => e.Detail).ToListAsync();
+                stored.Status.ShouldBe(AgentTaskStatus.Dispatched, stored.FailureReason + string.Join("; ", events));
+                sink.Specs.Count.ShouldBe(1, string.Join("; ", events));
+            }
             if (scenario == "relaunch")
             {
                 var firstSession = Guid.Parse(sink.Specs[0].Env["ANTIPHON_SESSION_ID"]);
