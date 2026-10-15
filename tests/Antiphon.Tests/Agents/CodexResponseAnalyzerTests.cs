@@ -14,6 +14,12 @@ namespace Antiphon.Tests.Agents;
 public class CodexResponseAnalyzerTests
 {
     [Test]
+    public async Task Plain_echo_takes_precedence_over_an_earlier_cursor_separated_match()
+    {
+        await AssertEchoExcluded("Run abc?", "Run\u001b[1;5Habc?\r\n> Run abc?\r\nDone.");
+    }
+
+    [Test]
     public async Task Cursor_move_inside_echo_word_does_not_become_an_agent_question()
     {
         foreach (var move in new[] { "\u001b[1;6H", "\u001b[1C" })
