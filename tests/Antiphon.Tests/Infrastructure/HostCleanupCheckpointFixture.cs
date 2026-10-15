@@ -210,7 +210,7 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
     {
         Enter("open-read", path);
         ReadRequests.Add(request);
-        var node = Nodes[path];
+        if (!Nodes.TryGetValue(path, out var node)) throw new FileNotFoundException(path);
         if (node.Target is not null && ((Platform == CheckpointPlatform.Linux && (request.UnixFlags & 0x20000) == 0)
             || (Platform == CheckpointPlatform.Windows && (request.WindowsFlags & 0x00200000) == 0)))
         { Enter("follow-target", node.Target); node = Nodes[node.Target]; }
@@ -280,7 +280,7 @@ internal sealed class HostCleanupToolFixture
     public HostCleanupCheckpointFixture Files => Receipt.Files;
     public VirtualCheckpointIo Io => Files.Io;
     public CheckpointCleanupContext Context => Files.Context;
-    public string Run => Receipt.Run;
+    public string Run { get; private set; }
     public string Tool => Run + "/tool";
     public string Payload => Tool + "/fixture.dll";
     public ProcessIdentity Dead => new(999, 1, Io.MachineName, Io.BootId, Io.PidNamespace);
@@ -288,6 +288,7 @@ internal sealed class HostCleanupToolFixture
     public HostCleanupToolFixture(int exit = 0, bool sealAuthority = false)
     {
         Receipt = new(exit);
+        Run = Receipt.Run;
         Owner = new() { RunId = Path.GetFileName(Run), RunDirectory = Run,
             Starter = new ProcessIdentityProbe(Context).Current(), Launched = Dead, Phase = "launched" };
         SafeWrite.Require(Files.Write.CreateFreshDirectory(Tool, Files.Write.Under(Run)));
@@ -304,10 +305,29 @@ internal sealed class HostCleanupToolFixture
             new StringWriter(), ct, sha);
     public CheckpointApp.Runtime Runtime(IProcessControl? control = null) => new()
     {
-        CleanupContext = Context, RepoRoot = Files.Parent, EnvironmentLookup = _ => null,
+        CleanupContext = Context, RepoRoot = Files.Parent, SourceBranch = "virtual", EnvironmentLookup = _ => null,
         ProcessControl = control, Output = new StringWriter(),
         SourceCapture = _ => Receipt.State.Source.Start,
     };
+    public async Task StartAsync()
+    {
+        var source = Files.Parent + "/source-tool";
+        Io.CreateDirectory(source); Io.Put(source + "/Antiphon.Checkpoints.dll", "image");
+        var launches = 0;
+        var runtime = new CheckpointApp.Runtime
+        {
+            CleanupContext = Context, RepoRoot = Files.Parent, SourceBranch = "virtual", EnvironmentLookup = _ => null,
+            ToolDirectory = source, SourceCapture = _ => Receipt.State.Source.Start,
+            LaunchWithOutcome = request => { launches++; return new(LaunchKind.Started, Dead.Pid, Dead); },
+        };
+        var started = await CheckpointApp.StartAsync(Manifest(), new() { Branch = "virtual" }, Files.Parent, new StringWriter(), runtime);
+        if (started.ExitCode != 0 || launches != 1) throw new InvalidOperationException("virtual starter failed");
+        Run = started.RunDirectory;
+        Receipt.State.RunId = Path.GetFileName(Run); Receipt.Report.RunId = Receipt.State.RunId;
+        SafeWrite.Require(new RunStateStore(Context).Write(Run + "/state.json", Receipt.State));
+        ReportWriter.WriteFiles(Context, Run, Receipt.Report);
+        Receipt.ClearEvents();
+    }
     public static CheckpointManifest Manifest() => new()
     {
         Checkpoints = [new() { Id = "CP-1", After = ["S1"], Command = "true", EstimatedMinutes = 1 }]
