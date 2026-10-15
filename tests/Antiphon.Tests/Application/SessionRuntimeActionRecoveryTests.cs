@@ -125,19 +125,26 @@ public class SessionRuntimeActionRecoveryTests
             Body = "old settled source", Sequence = 1, Status = QueuedMessageStatus.Sent,
             CreatedAt = DateTime.UtcNow.AddDays(-100) });
         await db.SaveChangesAsync();
+        await f.Store.ReadAsync(f.SessionId, default);
         var audit = Options.Create(new AuditSettings());
         var retention = new DataRetentionService(db, Options.Create(new RetentionSettings()), audit,
             TimeProvider.System, NullLogger<DataRetentionService>.Instance, new AuditService(db, audit), f.Store);
         var prune = retention.PruneQueuedMessagesAsync(default);
-        Task? ingest = null;
+        Task<SessionStateStore.Lease>? writer = null;
         try
         {
             await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            ingest = f.Runtime.ObserveTranscriptAsync(f.Event(1, "ToolResult", text: "new durable debt"), default);
-            await Task.WhenAny(ingest, Task.Delay(200));
-            ingest.IsCompleted.ShouldBeFalse("queue deletion must hold the same lease as action admission");
+            // The cached store makes an uncontended lease acquisition synchronous. This
+            // observes the actual gate, without inferring ownership from database latency.
+            writer = f.Store.BeginWriteAsync(f.SessionId, default);
+            writer.IsCompleted.ShouldBeFalse("queue deletion must hold the same lease as action admission");
         }
-        finally { gate.Release.TrySetResult(); await prune; if (ingest is not null) await ingest; }
+        finally
+        {
+            gate.Release.TrySetResult(); await prune;
+            if (writer is not null) (await writer).Dispose();
+        }
+        await f.Runtime.ObserveTranscriptAsync(f.Event(1, "ToolResult", text: "new durable debt"), default);
         await using var verify = f.Db();
         (await verify.TranscriptEntries.SingleAsync()).Text.ShouldBe("new durable debt");
         (await verify.SessionRuntimeActions.SingleAsync()).Sequence.ShouldBe(1);
