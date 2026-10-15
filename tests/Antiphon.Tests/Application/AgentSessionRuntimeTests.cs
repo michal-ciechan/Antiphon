@@ -730,58 +730,15 @@ public partial class AgentSessionRuntimeTests
     [Test]
     public async Task Error_turn_end_is_acted_on_once_replay_dedups()
     {
-        var sessionId = Guid.NewGuid();
-        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions()))
-        {
-            db.AgentSessions.Add(new Antiphon.Server.Domain.Entities.AgentSession
-            {
-                Id = sessionId,
-                DefinitionName = "grok",
-                AgentKind = AgentKind.Grok,
-                Status = SessionStatus.Running,
-                Cwd = Path.GetTempPath(),
-                Cols = 120,
-                Rows = 30,
-                CreatedAt = DateTime.UtcNow,
-            });
-            await db.SaveChangesAsync();
-        }
-
-        var logPath = Path.Combine(Path.GetTempPath(), $"antiphon-runtime-error-boundary-{Guid.NewGuid():N}");
-        var services = new ServiceCollection();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
-        {
-            npgsql.MigrationsAssembly("Antiphon.Server");
-            npgsql.SetPostgresVersion(16, 0);
-        }));
-        await using var provider = services.BuildServiceProvider();
-        var runtime = new AgentSessionRuntime(
-            new MockEventBus(),
-            Options.Create(new AgentSessionSettings { SessionLogPath = logPath }),
-            provider.GetRequiredService<IServiceScopeFactory>(),
-            TimeProvider.System,
-            NullLogger<AgentSessionRuntime>.Instance);
-
-        try
-        {
-            var first = TurnEndEvent(TranscriptKinds.StopReasons.Error, sessionId, uuid: "error-uuid-1");
-            await runtime.ObserveTranscriptAsync(first, CancellationToken.None);
-            await runtime.ObserveTranscriptAsync(first with { Sequence = 99 }, CancellationToken.None);
-
-            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions());
-            var rows = await verify.TranscriptEntries
-                .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
-                .ToListAsync();
-            rows.ShouldHaveSingleItem("replay of the same uuid must not persist a second TurnEnd");
-            rows[0].StopReason.ShouldBe(TranscriptKinds.StopReasons.Error);
-        }
-        finally
-        {
-            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
-            await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
-            await db.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
-            DeleteDirectoryBestEffort(logPath);
-        }
+        await using var f = await PersistFixture.CreateAsync();
+        var first = TurnEndEvent(TranscriptKinds.StopReasons.Error, f.SessionId, uuid: "error-uuid-1");
+        await f.Runtime.ObserveTranscriptAsync(first, CancellationToken.None);
+        await f.Runtime.ObserveTranscriptAsync(first with { Sequence = 99 }, CancellationToken.None);
+        var rows = await f.RowsAsync();
+        rows.ShouldHaveSingleItem("replay of the same uuid must not persist a second TurnEnd");
+        rows[0].StopReason.ShouldBe(TranscriptKinds.StopReasons.Error);
+        await using var verify = f.Db();
+        (await verify.SessionRuntimeActions.CountAsync(a => a.AgentSessionId == f.SessionId)).ShouldBe(1);
     }
 
     private static SessionRunnerTranscriptEvent TurnEndEvent(
