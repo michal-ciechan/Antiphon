@@ -50,9 +50,11 @@ public class ComplexityChain
     public DateTime? ClearedAt { get; set; }
 
     /// <summary>
-    /// CARD-1275: rotated by each API write and clear and by the NotAfter sweep. A PUT/DELETE that
-    /// names an older value is refused 409 <c>complexity_chain_stale</c>; EF also checks it on the
-    /// UPDATE itself.
+    /// CARD-1275: rotated by each API write and clear and by the NotAfter sweep. A PUT that names
+    /// an older value is refused 409 <c>complexity_chain_stale</c>. A DELETE that names one is 409
+    /// only while the cell still has an active row; once the cell has none it is a 204 no-op
+    /// (<c>ComplexityChainConcurrencyHttpTests.Stale_delete_is_409_and_keeps_the_row</c>). EF also
+    /// checks the token on the UPDATE itself.
     /// </summary>
     public Guid ConcurrencyToken { get; set; } = Guid.NewGuid();
 

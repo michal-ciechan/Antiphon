@@ -23,8 +23,8 @@ namespace Antiphon.Tests.Application;
 /// competing write from a second context between the caller's read and its save. A write
 /// without a token makes up to <see cref="ComplexityChainService.UnconditionalAttempts"/> saves
 /// (last writer wins); a write with a token is 409 <c>complexity_chain_stale</c> on its first
-/// lost race. Also the NotAfter sweep (token rotation, lost races) and the read order of the
-/// <c>?role=</c> view.
+/// lost race, except a clear that finds the row gone after the lost race, which returns. Also
+/// the NotAfter sweep (token rotation, lost races) and the read order of the <c>?role=</c> view.
 /// </summary>
 [Category("Integration")]
 public sealed class ComplexityChainRaceTests
