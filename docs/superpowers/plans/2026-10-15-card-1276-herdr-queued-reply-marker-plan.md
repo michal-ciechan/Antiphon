@@ -19,7 +19,7 @@ submitted prompt must contain the literal marker and the entire stored body"). T
 `ChannelPromptCorrelation.Matches` rejects a marked row whose prompt lacks the marker
 (`missing-marker`). A provider transcript records the typed text, so the UserPrompt of the queued
 reply is `[antiphon-channel:<queue-id:N>] <nonce>`. CARD-1273 run `20261015-005802-136e` printed
-exactly that stored body and UserPrompt row. The marker is stripped only from human-facing replies
+exactly that stored body and UserPrompt row. The marker is stripped from human-facing replies
 (`ChannelReplyPreparation`, `ChannelReplyDispatcher`), which the test's final
 `reply.Text.ShouldContain(nonce)` already covers.
 
@@ -36,7 +36,7 @@ exactly that stored body and UserPrompt row. The marker is stripped only from hu
 - S2 (fix): the test states the literal wire body
   `$"[antiphon-channel:{queuedId:N}] {nonce}"`: the moved row's `Body` equals it, the UserPrompt
   after the delivery baseline has `Text` equal to it, and on Herdr a `pane.send_text` request
-  carried it (the typed text, not only the fixture's copy of the stored body). The PtyHost branch
+  carried it (the typed text, beside the fixture's copy of the stored body). The PtyHost branch
   keeps its native-prompt containment check. No deadline, guard or product change.
 
 ## Verification design
@@ -48,7 +48,7 @@ exactly that stored body and UserPrompt row. The marker is stripped only from hu
 - R-2: the methods of the class whose cases run on Linux pass with no skip (CP-4, clean receipt):
   the CARD-1273 CP-5 selection plus the Herdr method.
 
-PCs pending for SourceLanding Mutation (none run here):
+PCs pending for SourceLanding Mutation (not run here):
 
 - PC-1: in `ChannelPromptCorrelation.PrepareFirstAttempt`, leave the body unmarked; the Herdr rows
   must fail at `moved.Body.ShouldBe(wire)` (or at the `pane.send_text` wire check).
