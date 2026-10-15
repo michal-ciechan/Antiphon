@@ -11,6 +11,7 @@ public sealed class SessionRuntimeAction
     public long ProducerSequence { get; set; }
     public string TriggerKind { get; set; } = "transcript";
     public bool TurnBoundary { get; set; }
+    public bool ManualCompactBoundary { get; set; }
     public int Phase { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime DueAt { get; set; }
