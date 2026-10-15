@@ -96,6 +96,8 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
     public static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
+    public AppDbContext CreateObserverContext() => new(TestDbFixture.CreateDbContextOptions(ConnectionString));
+
     public static async Task<BridgeQueueHarness> CreateAsync(HarnessOptions? options = null)
     {
         options ??= new HarnessOptions();
