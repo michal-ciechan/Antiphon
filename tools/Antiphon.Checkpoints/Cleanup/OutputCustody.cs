@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+using Antiphon.HostCleanup.Checkpoints;
 
 namespace Antiphon.Checkpoints;
 
@@ -22,7 +22,7 @@ public static class OutputCustody
 
     public sealed record Window(DateTimeOffset RootCreated, DateTimeOffset BuildExited, uint Owner);
 
-    public static uint Owner => OperatingSystem.IsLinux() ? GetEuid() : uint.MaxValue;
+    public static uint Owner => CheckpointCleanupDefaults.Context.Io.Owner;
 
     public static string? Refusal(Entry entry, Window window)
     {
@@ -37,39 +37,23 @@ public static class OutputCustody
 
     // Fail closed: no driver-observed exit, a root this process did not create owner-only, or a
     // root whose owner/mode changed since gives no window, so Seal adopts nothing.
-    public static Window? For(string root, DateTimeOffset? buildExited)
+    public static Window? For(string root, DateTimeOffset? buildExited) => For(CheckpointCleanupDefaults.Context, root, buildExited);
+
+    public static Window? For(CheckpointCleanupContext context, string root, DateTimeOffset? buildExited)
     {
-        if (buildExited is not { } exited || SafeWrite.FreshRootCreated(root) is not { } created || exited < created) return null;
-        return Stat(root) is { IsDirectory: true } dir && dir.Owner == Owner && (dir.Mode & 0x3F) == 0
-            ? new Window(created, exited, Owner) : null;
+        if (buildExited is not { } exited || context.Registry.FreshRoot(root) is not { } created || exited < created) return null;
+        return Stat(context, root) is { IsDirectory: true } dir && dir.Owner == context.Io.Owner && (dir.Mode & 0x3F) == 0
+            ? new Window(created, exited, context.Io.Owner) : null;
     }
 
-    public static Entry? Stat(string path)
-    {
-        if (!OperatingSystem.IsLinux()) return null;
-        // AT_SYMLINK_NOFOLLOW; TYPE|MODE|NLINK|UID|MTIME|CTIME|INO|SIZE.
-        const uint mask = 0x3CF;
-        if (Statx(-100, path, 0x100, mask, out var stat) != 0 || (stat.Mask & mask) != mask) return null;
-        return new Entry(stat.Mode, stat.Links, stat.Uid, stat.Inode, stat.Size, Time(stat.CtimeSeconds, stat.CtimeNanoseconds), Time(stat.MtimeSeconds, stat.MtimeNanoseconds));
-    }
+    public static Entry? Stat(string path) => Stat(CheckpointCleanupDefaults.Context, path);
 
-    private static DateTimeOffset Time(long seconds, uint nanoseconds) =>
-        DateTimeOffset.FromUnixTimeSeconds(seconds).AddTicks(nanoseconds / 100);
-
-    [StructLayout(LayoutKind.Explicit, Size = 256)]
-    private struct LinuxStatx
+    public static Entry? Stat(CheckpointCleanupContext context, string path)
     {
-        [FieldOffset(0)] public uint Mask;
-        [FieldOffset(16)] public uint Links;
-        [FieldOffset(20)] public uint Uid;
-        [FieldOffset(28)] public ushort Mode;
-        [FieldOffset(32)] public ulong Inode;
-        [FieldOffset(40)] public ulong Size;
-        [FieldOffset(96)] public long CtimeSeconds;
-        [FieldOffset(104)] public uint CtimeNanoseconds;
-        [FieldOffset(112)] public long MtimeSeconds;
-        [FieldOffset(120)] public uint MtimeNanoseconds;
+        if (context.Io.Platform != CheckpointPlatform.Linux) return null;
+        var stat = context.Io.Stat(path);
+        if (stat.Kind is "unknown" or "absent" || stat.Inode == 0 || stat.Changed == 0) return null;
+        return new Entry(stat.Mode, stat.Links, stat.Owner, stat.Inode, (ulong)stat.Size,
+            DateTimeOffset.UnixEpoch.AddTicks(stat.Changed / 100), DateTimeOffset.UnixEpoch.AddTicks(stat.Modified / 100));
     }
-    [DllImport("libc", EntryPoint = "statx", SetLastError = true)] private static extern int Statx(int fd, string path, int flags, uint mask, out LinuxStatx stat);
-    [DllImport("libc", EntryPoint = "geteuid")] private static extern uint GetEuid();
 }

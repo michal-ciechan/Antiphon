@@ -1,0 +1,190 @@
+using System.Text;
+using Antiphon.Checkpoints;
+using Antiphon.HostCleanup.Checkpoints;
+using Antiphon.Tests.TestHelpers;
+
+namespace Antiphon.Tests.Infrastructure;
+
+internal sealed class HostCleanupCheckpointFixture
+{
+    public ControlledTimeProvider Clock { get; } = new();
+    public VirtualCheckpointIo Io { get; }
+    public CheckpointCleanupContext Context { get; }
+    public CheckpointWrite Write => new(Context);
+    public CheckpointDelete Delete => new(Context);
+    public CheckpointOutputLedger Ledger => new(Context);
+    public string Parent { get; } = "/c987/" + Guid.NewGuid().ToString("N");
+    public string Root => Parent + "/bin-owned";
+    public string Payload => Root + "/payload.txt";
+    public DateTimeOffset Exit => Clock.GetUtcNow().AddSeconds(1);
+    public OutputCustody.Window Window => OutputCustody.For(Context, Root, Exit)!;
+
+    public HostCleanupCheckpointFixture()
+    {
+        Io = new(Clock);
+        Context = new(Io, Io, Clock);
+        Io.CreateDirectory(Parent);
+        Io.Put(Parent + "/.git", "git marker");
+        Io.Repository = Parent;
+        SafeWrite.Require(Write.CreateFreshDirectory(Root, Write.Under(Parent)));
+        Io.Put(Payload, "original"); // child output, not a registry entry
+        Io.Events.Clear();
+    }
+
+    public void Seal() => SafeWrite.Require(Ledger.Seal(Root, Exit));
+    public CheckpointCleanupContext FreshContext() => new(Io, Io, Clock);
+    public byte[] Read(int limit = 1024, Action? after = null, CancellationToken ct = default) =>
+        Antiphon.Checkpoints.Coverage.ConfinedFileReader.ReadBytes(Context, Root, Payload, limit, after, ct);
+}
+
+internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheckpointCleanupIo, ICheckpointGitRunner
+{
+    internal sealed class Node
+    {
+        public byte[] Bytes = [];
+        public required CheckpointStat Stat;
+        public string? Target;
+        public FileAttributes Attributes;
+    }
+
+    public Dictionary<string, Node> Nodes { get; } = new(StringComparer.Ordinal);
+    public List<(string Operation, string Path)> Events { get; } = [];
+    public List<CheckpointReadOpen> ReadRequests { get; } = [];
+    public List<(string Path, FileMode Mode, FileAccess Access, FileShare Share)> Opens { get; } = [];
+    public List<CheckpointGitRequest> GitRequests { get; } = [];
+    public Action<string, string>? Before { get; set; }
+    public Action<string>? AfterRead { get; set; }
+    public Func<CheckpointGitRequest, CheckpointGitResult>? GitResult { get; set; }
+    public Func<CheckpointHandleStat, CheckpointHandleStat>? HandleMetadata { get; set; }
+    public Func<Stream>? StreamFactory { get; set; }
+    public bool InspectFails { get; set; }
+    public string Repository { get; set; } = "/c987";
+    public CheckpointPlatform Platform { get; set; } = CheckpointPlatform.Linux;
+    public uint Owner => 1000;
+    public int RecursiveIntents { get; private set; }
+    private ulong _inode = 10;
+    private readonly Dictionary<string, List<FileShare>> _held = [];
+    private long Now => (clock.GetUtcNow().UtcTicks - DateTime.UnixEpoch.Ticks) * 100;
+
+    private void Enter(string operation, string path)
+    {
+        Events.Add((operation, path));
+        Before?.Invoke(operation, path);
+    }
+    public int Count(string operation, string? path = null) => Events.Count(e => e.Operation == operation && (path is null || e.Path == path));
+    public Node Put(string path, string text) => Put(path, Encoding.UTF8.GetBytes(text));
+    public Node Put(string path, byte[] bytes)
+    {
+        var node = new Node { Bytes = bytes, Stat = new("file", 1, ++_inode, bytes.Length, Now, Now, 0x8180, 1, Owner) };
+        Nodes[path] = node;
+        return node;
+    }
+    public string Text(string path) => Encoding.UTF8.GetString(Nodes[path].Bytes);
+    public bool FileExists(string path) { Enter("file-exists", path); return Nodes.TryGetValue(path, out var n) && n.Stat.Kind != "directory"; }
+    public bool DirectoryExists(string path) { Enter("directory-exists", path); return Nodes.TryGetValue(path, out var n) && n.Stat.Kind == "directory"; }
+    public FileAttributes Attributes(string path)
+    {
+        Enter("attributes", path);
+        if (!Nodes.TryGetValue(path, out var n)) throw new FileNotFoundException();
+        return n.Attributes | (n.Stat.Kind == "directory" ? FileAttributes.Directory : 0) | (n.Target is null ? 0 : FileAttributes.ReparsePoint);
+    }
+    public string? LinkTarget(string path) { Enter("link", path); return Nodes.GetValueOrDefault(path)?.Target; }
+    public long Length(string path) { Enter("length", path); return Nodes[path].Bytes.Length; }
+    public IEnumerable<string> Enumerate(string path)
+    {
+        Enter("enumerate", path);
+        return Nodes.Keys.Where(p => Path.GetDirectoryName(p) == path).ToArray();
+    }
+    public CheckpointStat Stat(string path, bool portable = false)
+    {
+        Enter("stat", path);
+        return Nodes.TryGetValue(path, out var n) ? n.Stat : new("absent", 0, 0, 0, 0, 0);
+    }
+    public int CreateExclusiveDirectory(string path)
+    {
+        Enter("mkdir-exclusive", path);
+        if (Nodes.ContainsKey(path)) return 17;
+        CreateDirectory(path);
+        return 0;
+    }
+    public void CreateDirectory(string path)
+    {
+        Enter("mkdir", path);
+        if (Nodes.ContainsKey(path)) return;
+        Nodes[path] = new Node { Stat = new("directory", 1, ++_inode, 0, Now, Now, 0x41C0, 1, Owner) };
+    }
+    public Stream Open(string path, FileMode mode, FileAccess access, FileShare share)
+    {
+        Enter("open", path);
+        Opens.Add((path, mode, access, share));
+        if (_held.TryGetValue(path, out var held) && held.Any(s => s == FileShare.None || share == FileShare.None)) throw new IOException("sharing violation");
+        if (mode == FileMode.CreateNew && Nodes.ContainsKey(path)) throw new IOException("already exists");
+        if (!Nodes.ContainsKey(path) || mode is FileMode.Create or FileMode.CreateNew) Put(path, "");
+        if (!_held.TryGetValue(path, out held)) _held[path] = held = [];
+        held.Add(share);
+        return new WriteStream(Nodes[path].Bytes, mode == FileMode.Append, bytes => { Nodes[path].Bytes = bytes; held.Remove(share); });
+    }
+    public ICheckpointReadHandle OpenRead(string path, CheckpointReadOpen request)
+    {
+        Enter("open-read", path);
+        ReadRequests.Add(request);
+        var node = Nodes[path];
+        if (node.Target is not null && ((Platform == CheckpointPlatform.Linux && (request.UnixFlags & 0x20000) == 0)
+            || (Platform == CheckpointPlatform.Windows && (request.WindowsFlags & 0x00200000) == 0)))
+        { Enter("follow-target", node.Target); node = Nodes[node.Target]; }
+        else if (node.Target is not null) throw new IOException("no follow");
+        return new Held(this, node, path);
+    }
+    public void WriteBytes(string path, ReadOnlySpan<byte> bytes) { Enter("write", path); Put(path, bytes.ToArray()); }
+    public void AppendText(string path, string text) { Enter("append", path); Put(path, Text(path) + text); }
+    public void Copy(string source, string destination, bool overwrite) { Enter("copy", destination); Put(destination, Nodes[source].Bytes.ToArray()); }
+    public void Move(string source, string destination, bool overwrite) { Enter("move", destination); Nodes[destination] = Nodes[source]; Nodes.Remove(source); }
+    public void Unlink(string path) { Enter("unlink", path); Nodes.Remove(path); }
+    public void RemoveDirectory(string path, bool recursive)
+    {
+        Enter("rmdir", path);
+        if (recursive) RecursiveIntents++;
+        if (Nodes.Keys.Any(p => Path.GetDirectoryName(p) == path)) throw new IOException("directory not empty");
+        Nodes.Remove(path);
+    }
+    public string? EnvironmentVariable(string name) => name == "PATH" ? "/bin" : null;
+    public CheckpointGitResult Run(CheckpointGitRequest request)
+    {
+        Enter("git", request.WorkingDirectory);
+        GitRequests.Add(request);
+        return GitResult?.Invoke(request) ?? new(0, request.Arguments.Contains("rev-parse") ? Repository + "\n" : "", "", false);
+    }
+
+    private sealed class Held(VirtualCheckpointIo io, Node node, string path) : ICheckpointReadHandle
+    {
+        public CheckpointHandleStat Inspect()
+        {
+            io.Enter("inspect", path);
+            if (io.InspectFails) throw new IOException("inspect failed");
+            var metadata = new CheckpointHandleStat((node.Stat.Mode & 0xF000) == 0x8000, node.Stat.Links, (ulong)node.Stat.Size, path);
+            return io.HandleMetadata?.Invoke(metadata) ?? metadata;
+        }
+        public Stream OpenStream()
+        {
+            io.Enter("stream", path);
+            return io.StreamFactory?.Invoke() ?? new ReadStream(node.Bytes, () => io.AfterRead?.Invoke(path));
+        }
+        public void Dispose() => io.Enter("close-read", path);
+    }
+    private sealed class ReadStream(byte[] bytes, Action afterRead) : MemoryStream(bytes, false)
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var result = base.ReadAsync(buffer, cancellationToken);
+            afterRead();
+            return result;
+        }
+    }
+    private sealed class WriteStream : MemoryStream
+    {
+        private readonly Action<byte[]> _closed;
+        public WriteStream(byte[] bytes, bool append, Action<byte[]> closed)
+        { Write(bytes); Position = append ? Length : 0; _closed = closed; }
+        protected override void Dispose(bool disposing) { if (disposing) _closed(ToArray()); base.Dispose(disposing); }
+    }
+}
