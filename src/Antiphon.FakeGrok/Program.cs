@@ -389,9 +389,11 @@ internal static class Program
         var clock = Stopwatch.StartNew();
         long lastByteMs = 0;
         var eof = false;
-        var stdin = Console.OpenStandardInput();
-        // Opening stdin can restore the cooked slave Porta spawned. Set raw mode again
-        // after that open, before the first read.
+        // On a Linux tty, Console.OpenStandardInput().Read is StdInReader.ReadLine: the body
+        // stays buffered until Enter, and the returned chunk is that body plus a newline.
+        // The burst splitter then cannot see the later CR as its own enter. Read the slave
+        // with libc instead, after raw mode is set.
+        Stream? stdin = OperatingSystem.IsLinux() ? null : Console.OpenStandardInput();
         TryEnableRawConsole();
         var reader = new Thread(() =>
         {
@@ -399,7 +401,7 @@ internal static class Program
             while (true)
             {
                 int n;
-                try { n = stdin.Read(buf, 0, buf.Length); }
+                try { n = ReadStdinChunk(stdin, buf); }
                 catch { break; }
                 if (n <= 0) { lock (gate) eof = true; break; }
                 lock (gate)
@@ -1674,6 +1676,24 @@ internal static class Program
             // Best-effort: a non-tty stdin keeps the caller's mode.
         }
     }
+
+    private static int ReadStdinChunk(Stream? consoleStdin, byte[] buf)
+    {
+        if (!OperatingSystem.IsLinux())
+            return consoleStdin!.Read(buf, 0, buf.Length);
+        while (true)
+        {
+            var n = LinuxRead(0, buf, buf.Length);
+            if (n >= 0)
+                return n;
+            // EINTR. A closed slave is EOF so the reader loop stops.
+            if (Marshal.GetLastPInvokeError() != 4)
+                return 0;
+        }
+    }
+
+    [DllImport("libc", EntryPoint = "read", SetLastError = true)]
+    private static extern int LinuxRead(int fd, byte[] buffer, int count);
 
     [DllImport("libc", EntryPoint = "isatty")]
     private static extern int IsAtty(int fd);
