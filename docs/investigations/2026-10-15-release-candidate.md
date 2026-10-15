@@ -67,3 +67,44 @@ Pending. Production AppHost/server/runner on 17202/17204 will not be stopped or
 restarted. No product/test fixes, timeout relaxation or fabricated receipts.
 
 Initial isolated Linux build: PASS, source HEAD `067b47e2dc903247f1a7c8aa539032cc4266e4ad`, 123.498s wall, 1,057 warnings, 0 errors, granted slot with 0s wait. Main assembly SHA-256 `3f92aaf671875db0b613e83d60f55d324655748d2febbdbd557a58acb5421290`; pinned informational-version bytes verified. The next documentation-only commit records this result before the long no-build test run; no product/test input changes. Build argv/log/timing/provenance are retained under the raw evidence root.
+
+## Refinement and immutable ref correction
+
+The caller's refinement arrived after the originally requested `release/2026-10-15`
+was already pushed. That ref is retained at the pinned SHA; it was not deleted or
+moved. The corrected authoritative pilot ref is
+`release/rc-20261015T215926Z`, created by a plain non-force push of the pinned SHA
+after an absence check and verified with `git ls-remote`. The cutter was not used:
+its source rejects linked worktrees, and this assigned checkout is one. No owned
+producer clone or candidate journal was fabricated. Remote readback is retained
+in `raw/corrected-release-ref.txt`.
+
+No tag or `publish-release.ps1` invocation is authorized or performed. The refined
+release-note draft will be `2026-10-15-release-notes-v2026.10.15.1.md`; the proposed
+version is not a published release.
+
+## Completed Linux roster and smoke
+
+| Piece | Verdict | Total | Passed | Failed | Skipped | Outer wall | Exit |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Isolated pinned-source Linux build | PASS | — | — | 0 errors | — | 123.498s | 0 |
+| Frozen Linux roster, one run | FAIL | 4,516 | 4,515 | 1 | 0 | 2,699.430s (44m59.430s) | 2 |
+| Failed class, one isolated rerun | FAIL | 4 | 3 | 1 | 0 | 24.027s | 2 |
+| Documented stack smoke | FAIL / health checks incomplete | — | Docker + owned network | missing dev Postgres + Windows-only cmdlet | — | 4.120s | 1 |
+
+The roster's native TUnit duration is 44m52.566s; outer wall includes driver/slot
+handling. Its slot was granted with 0s wait; the rerun waited 15s; smoke waited 0s.
+Fresh TRX has exactly all 373 frozen roster classes, no missing/extra classes, and
+2,866 distinct observed methods. The main assembly hash remained byte-identical
+to the pinned-source build. Runtime checkout HEAD was the evidence-only commit
+`cef5e26487da2b2d87fc4aaa9a62365632b74c71`; its only delta from the candidate is
+this evidence note. No product/test input was modified or rebuilt for the run.
+
+The single roster failure and its reproduced assertion are detailed in
+[the defect fan-out](2026-10-15-release-candidate-defects.md). The missing Aspire
+stack and Windows-only listener command leave smoke incomplete on this Linux
+host. No production process was changed. E2E remains a separate pending piece.
+
+Raw TRX: `/work/evidence/task-1c14bf28/raw/roster/run.trx` and
+`/work/evidence/task-1c14bf28/raw/rerun-project-contract/run.trx`.
+Exact argv, consoles, timings and machine-readable audits are beside those files.
