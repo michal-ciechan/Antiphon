@@ -178,8 +178,11 @@ public sealed class BaselineComparer
         var name = string.IsNullOrWhiteSpace(runId) ? "run" : runId;
         if (!OutputCleanup.IsPathSegment(name) || !OutputCleanup.IsIsolatedOutputId(buildId))
             throw new InvalidOperationException("refusing unsafe baseline checkout path");
+        // CARD-1231: repository censuses skip a path with a bin-* segment, so a checkout named
+        // after the build id would scan nothing at the base and pass.
+        var leaf = "baseline-" + buildId["bin-".Length..];
         var baselineRoot = Path.Combine(Path.GetTempPath(), "antiphon-checkpoints-baseline");
-        var path = Path.GetFullPath(Path.Combine(baselineRoot, name, buildId));
+        var path = Path.GetFullPath(Path.Combine(baselineRoot, name, leaf));
         if (!OutputCleanup.IsStrictlyInside(baselineRoot, path))
             throw new InvalidOperationException("refusing baseline checkout outside the isolated root");
         var source = Path.GetFullPath(sourceWorktree);
@@ -187,7 +190,7 @@ public sealed class BaselineComparer
         var prefix = source.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
         if (path.StartsWith(prefix, comparison))
         {
-            path = Path.GetFullPath(Path.Combine(baselineRoot, Guid.NewGuid().ToString("N"), buildId));
+            path = Path.GetFullPath(Path.Combine(baselineRoot, Guid.NewGuid().ToString("N"), leaf));
             if (!OutputCleanup.IsStrictlyInside(baselineRoot, path))
                 throw new InvalidOperationException("refusing baseline checkout outside the isolated root");
         }
