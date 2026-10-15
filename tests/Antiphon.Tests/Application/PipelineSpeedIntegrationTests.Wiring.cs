@@ -34,7 +34,11 @@ public sealed partial class PipelineSpeedIntegrationTests
     public Task C1281_B1ReceiptImport() => new AdvisoryChangePolicyTests().C1281_IncompleteNeverClean();
 
     [Test]
-    public Task C1281_B1CorrectionTransaction() => new AdvisoryChangePolicyTests().C1281_ReceiptCorrection();
+    public async Task C1281_B1CorrectionTransaction()
+    {
+        await new AdvisoryChangePolicyTests().C1281_ReceiptCorrection();
+        await CorrectionTransactionsAsync();
+    }
 
     [Test]
     public async Task C1281_AdmissionHolds()

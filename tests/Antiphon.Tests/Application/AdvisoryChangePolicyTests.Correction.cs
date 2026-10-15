@@ -123,14 +123,18 @@ public partial class AdvisoryChangePolicyTests
         public string Repository { get; private set; } = "";
         public AgentTask Review { get; private set; } = null!;
         public ReviewEvidenceCorrectionRequest Request { get; private set; } = null!;
+        public WebApplication App => _app;
+        public Action<IServiceCollection>? Configure { get; set; }
+        public string ConnectionString => _schema.ConnectionString;
         public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
         public static string Digest(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
-        public static async Task<CorrectionWorld> CreateAsync(string? defect = null)
+        public static async Task<CorrectionWorld> CreateAsync(string? defect = null, Action<IServiceCollection>? configure = null)
         {
             var w = new CorrectionWorld { _schema = await TestDbFixture.CreateIsolatedSchemaAsync(),
                 Root = Path.Combine(Path.GetTempPath(), "c1281-correction-" + Guid.NewGuid().ToString("N")) };
             Directory.CreateDirectory(w.Root);
+            w.Configure = configure;
             w.Repository = DelegateScriptRunner.RepoRoot;
             var git = new LandingGit();
             var common = await git.CommonDirectoryAsync(w.Repository, CancellationToken.None);
@@ -226,6 +230,7 @@ public partial class AdvisoryChangePolicyTests
             builder.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(_schema.ConnectionString));
             builder.Services.AddSingleton(Options.Create(new PhoneHomeRunnerSettings { OperatorTokenPath = _operatorPath }));
             ConfigureCorrectionServices(builder.Services);
+            Configure?.Invoke(builder.Services);
             _app = builder.Build();
             _app.UseMiddleware<ExceptionMiddleware>();
             _app.MapReviewEvidenceCorrectionEndpoints();
