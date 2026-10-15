@@ -14,6 +14,8 @@ No whole Unit or full assembly run is authorized by this supplement.
 | CP-14 | recovery-red | tests/Antiphon.Tests -> bin-c1259-recovery-red/ | recovery-red | /*/Antiphon.Tests.Application/SessionRuntimeActionRecoveryTests/* | V-5,V-6,V-10,D-4 | all 6 executed; intended guarded assertions red | 6 | 7 |
 | CP-15 | recovery-green | tests/Antiphon.Tests -> bin-c1259-recovery-green/ | recovery-green | /*/Antiphon.Tests.Application/SessionRuntimeActionRecoveryTests/* | V-5,V-6,V-10,D-4 | all 6 executed, 0 failed/skipped | 6 | 7 |
 | CP-16 | recovery-green | CP-15 | recovery-adjacent | /*/Antiphon.Tests.Application/(SessionRuntimeActionTests*)\|(ChannelReplyLateConfirmDispatchTests*)\|(ChannelReplyDurabilityTests*)\|(DataRetentionServiceTests*)/* | V-3,V-4,V-8,V-9,V-10,R-3 adjacent | all 146 listed, 0 failed/skipped | 146 | 10 |
+| CP-17 | base-confirmation | tests/Antiphon.Tests -> bin-c1259-base-six/ | inherited-six | /*/Antiphon.Tests.Application/(ChannelReplyLateConfirmDispatchTests*)\|(ChannelReplyDurabilityTests*)/(The_measured_transport_fixture_dispatches_the_error_through_the_runtime*)\|(A_late_confirmed_api_withheld_turn_does_not_warn_as_an_unpublished_reply*)\|(A_late_confirmed_no_reply_turn_does_not_warn_as_an_unpublished_reply*)\|(A_runtime_batch_redispatches_a_late_confirmed_channel_reply_once*)\|(A_failed_late_confirm_publication_is_durably_uncertain_and_leaves_it_owed*)\|(A_reply_the_live_path_already_published_is_not_published_again_by_the_grace_confirm*) | verify exact CP-16 failures at base 41289ba9 | all 6 executed; preserve actual failures | 6 | 7 |
+| CP-18 | routing-partial | tests/Antiphon.Tests -> bin-c1259-routing-partial/ | routing-partial | /*/Antiphon.Tests.Application/SessionRuntimeActionRoutingTests/* | V-11 partial | all 8 executed, 0 failed/skipped | 8 | 7 |
 
 The task-attempt cases must leave the replacement Working with no result/events;
 the direct cases require exact original recipient/body after restart or failed
@@ -26,3 +28,11 @@ SessionRuntimeActionTests 28, ChannelReplyLateConfirmDispatchTests 20,
 ChannelReplyDurabilityTests 25, DataRetentionServiceTests 73. The shared queue
 claim, runtime phase and retention changes justify this additional bounded row.
 It does not discharge any missing routing matrix or the main final CP-3..CP-13.
+
+CP-18 is an explicitly incomplete routing slice, not CP-3 or CP-6: eight V-11
+variants use ReviewThreadService, a real queue attempt, and a hosted pump receipt.
+The atomic-comment case covers rollback before commit; its post-commit/action-ack
+cut, legacy migration, enqueue-failure H0-H4 and fresh redispatch remain pending.
+The other four routing methods and the main 35-case requirement remain pending.
+The inherited failure confirmation uses a detached, clean base checkout; its
+source remains frozen independently of work on the assigned continuation branch.
