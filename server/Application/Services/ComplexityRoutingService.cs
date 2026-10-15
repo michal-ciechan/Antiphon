@@ -487,6 +487,14 @@ public sealed class ComplexityRoutingService
             : "held (per-model cap, no reset stated)";
     }
 
+    /// <summary>
+    /// The walk's first filter: a delegate kind, and ClaudeCode only for an orchestrator
+    /// (CARD-0084). The not-walked Required single candidate applies it too (CARD-1271).
+    /// </summary>
+    internal static bool AdmitsKind(AgentTaskKind taskKind, AgentKind kind) =>
+        AgentTaskService.DelegatableKinds.Contains(kind)
+        && (taskKind != AgentTaskKind.Orchestrator || kind == AgentKind.ClaudeCode);
+
     internal static string FormatQuota(SubscriptionQuotaVerdict verdict) =>
         $"quota {SubscriptionQuotaPolicy.FormatPercent(verdict.RemainingPercent)}% remaining, resets in {SubscriptionQuotaPolicy.FormatTimeToReset(verdict.TimeToReset)}";
 
@@ -495,11 +503,8 @@ public sealed class ComplexityRoutingService
         WalkContext ctx,
         CancellationToken ct)
     {
-        if (!AgentTaskService.DelegatableKinds.Contains(candidate.Kind)
-            || (ctx.TaskKind == AgentTaskKind.Orchestrator && candidate.Kind != AgentKind.ClaudeCode))
-        {
+        if (!AdmitsKind(ctx.TaskKind, candidate.Kind))
             return "not a delegate kind";
-        }
 
         if (!ctx.StageForbidExempt && ctx.StagePin is { } stage)
         {

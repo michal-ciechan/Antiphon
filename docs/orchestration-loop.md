@@ -909,6 +909,22 @@ override the row; a Preferred pin prepends candidates. Escalation, timeout and W
 stored row and effective overlay. On routing exhaustion, relay the result to the operator for a
 Retry, explicit Reroute, Cancel or hold change; do not pick a kind yourself.
 
+**Required forbid-only pin over a one-candidate row (CARD-1271).** A forbid-only Required pin
+leaves the row selecting, so a one-candidate row produces a single target, not a walk
+(`RequiredSingleCandidateRefusalTests` V-1 asserts `walked: false`). These witnessed shapes are
+refused with a 409 and no task row (each test asserts zero rows):
+
+- held: `model_disabled`
+- forbidden by the pin: `routing_pin_forbidden`
+- quota-limited: `subscription_quota_low`
+- an Orchestrator with an explicit complexity whose one candidate is Codex: `routing_exhausted`
+
+Witnesses are the five refusal methods of `RequiredSingleCandidateRefusalTests`, including a held
+ClaudeCode Orchestrator (`model_disabled`, not `routing_exhausted`). They use an explicit Hard row
+for the Orchestrator cases and a default Medium row for the others. The class's sixth method is a
+control: for an Orchestrator, the walk chooses one available ClaudeCode row and the task is
+created on it. That create takes the `routingWalk.Chosen` branch of `AgentTaskService.CreateAsync`, not the arm.
+
 **Operators read routing at `/settings?tab=routing`** (CARD-0333): the global
 Routing settings tab shows live model availability, best-effort subscription-usage observations
 (explicitly provider/profile-level, never a per-model quota, and "Unknown" rather than a guessed
