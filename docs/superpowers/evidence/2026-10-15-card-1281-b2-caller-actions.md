@@ -1,14 +1,14 @@
 # CARD-1281 B-2 caller actions — Code 27d33f88
 
-Status: partial implementation, not Review-ready. Original Code/landing owner: 27d33f88-e1c4-4846-9d15-e6c7c67468c1. Branch: feat/card-task-27d33f88. Worktree: /work/worktrees/task-27d33f88. Base: 5dd289dbc37a3eeb82583899c4cb3fbd647f02b2.
+Status: writer/records implemented; ordinary verification in progress. The caller's refinement 5f8cdd75-7038-4578-ae41-9a5441a1b55d explicitly narrows this task to the writer/records and defers refusal-before-child to final wiring. Original Code/landing owner: 27d33f88-e1c4-4846-9d15-e6c7c67468c1. Branch: feat/card-task-27d33f88. Worktree: /work/worktrees/task-27d33f88. Base: 5dd289dbc37a3eeb82583899c4cb3fbd647f02b2.
 
 Implemented in the component scope: explicit RecordAsync, scoped GET, authenticated actor, workflow/attempt/settlement and observation fences, append-only history, idempotent lost-response replay, verified completion receipt association, independent nullable clocks and actual-child clock readback. Routes remain unregistered until S6. No migration, shared entity/admission/Program edit, policy/bundle change, dispatcher, transport change, restart or deployment.
 
-## Blocking shared boundary
+## Deferred shared boundary (caller refinement)
 
-The approved B-2 binding requires blocker, overlap, quota, stage/host cap, placement and tracker/spend conditions revalidated inside AgentTaskService.CreateAsync's child/link transaction. At the assigned S0 base, its action hook validates identity and writes the link atomically, but FindScopeOverlapsAsync is explicitly advisory and runs after commit; it returns ScopeOverlaps rather than refusing. CardBlockers is not called from CreateAsync. Tracker activation/spend is not part of its handoff request contract. Adding only a component preflight would leave the promised transaction guard absent. AgentTaskService.cs is exclusively owned by sequential integration and forbidden by this brief. A scope decision was requested; no expansion is assumed.
+The approved B-2 binding requires blocker, overlap, quota, stage/host cap, placement and tracker/spend conditions revalidated inside AgentTaskService.CreateAsync's child/link transaction. At the assigned S0 base, its action hook validates identity and writes the link atomically, but FindScopeOverlapsAsync is explicitly advisory and runs after commit; it returns ScopeOverlaps rather than refusing. CardBlockers is not called from CreateAsync. Tracker activation/spend is not part of its handoff request contract. Adding only a component preflight would leave the promised transaction guard absent. AgentTaskService.cs is exclusively owned by sequential integration and forbidden by this brief. The caller resolved the scope question: finish writer/records and tests, disclose this gap for final wiring, and report; do not edit AgentTaskService.
 
-RequestChildAsync and its HTTP request form are not implemented. V-9/V-11, refusal recovery and the complete V-8 request/admission proof remain pending, not passed. Do not register this component as the completed B-2 protocol. Commission the shared admission repair, then finish B-2 and its ordinary tests before Review. A missing method is reported as missing; there is no constant-success admission stub.
+RequestChildAsync and its HTTP request form are not implemented. V-9/V-11, refusal recovery and the complete V-8 request/admission proof remain pending for final wiring, not passed. Do not register this component as the completed B-2 protocol. Review this writer slice independently; final wiring must commission the shared admission repair and remaining child-operation tests. A missing method is reported as missing; there is no constant-success admission stub.
 
 ## Verification selection
 
@@ -44,4 +44,4 @@ The checkpoint-tool bootstrap was an additional leased dotnet run with its own b
 - Q-5: operating cohort remains pending; no pilot, spend, external message or timing improvement claimed.
 - All PCs remain pending for Mutation. B-2 inherited PCs: PC-13..26, PC-48..51, PC-53..57; shared B-2 PCs: PC-67..73, PC-99..104, PC-112, PC-113, PC-117. All variants pending. The entire plan's PC-1..121 census remains pending, with missing-control discovery still owned by Mutation. No PC-clean claim.
 
-Restart: none. Next: Code for the shared admission contract and remaining ordinary verification, then Review. Landing belongs to the original Code task after Review, followed by separately commissioned SourceLanding Mutation.
+Restart: none. Next: Review when writer verification completes, under the caller's refined scope. Landing belongs to the original Code task after Review, followed by separately commissioned SourceLanding Mutation. Final wiring retains the shared admission contract and its ordinary verification.
