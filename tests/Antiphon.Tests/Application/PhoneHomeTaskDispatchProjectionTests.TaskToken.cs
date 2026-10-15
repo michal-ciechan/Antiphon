@@ -48,7 +48,7 @@ public sealed partial class PhoneHomeTaskDispatchProjectionTests
             task.ProgressBaselineJson = TaskProgressJson.SerializeBaseline(new ProgressBaselineSnapshot(
                 1, DateTime.UtcNow, DateTime.UtcNow,
                 new ProgressSourceBaseline(workspace.Path, workspace.Path, taskId, workspace.Path,
-                    "refs/heads/feat/test-remote", new string('1', 40),
+                    "refs/heads/" + task.WorktreeBranch, new string('1', 40),
                     new ProgressRemoteBaseline(ProgressRemoteState.Missing, null, "c1285")), null));
             await seed.SaveChangesAsync();
         }

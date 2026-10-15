@@ -87,7 +87,8 @@ All PCs remain pending for method-scoped SourceLanding Mutation. Use
 | PC-4 | Regenerate even a valid cached token | cached |
 
 Mutation owns red/restore/green and missing-control discovery. Candidate pack:
-`docs/superpowers/mutations/` (unbound; none commissioned by Code).
+`docs/superpowers/mutations/2026-10-15-card-1285-task-token-candidates.md`
+(unbound; none commissioned by Code).
 
 ### Cost
 
