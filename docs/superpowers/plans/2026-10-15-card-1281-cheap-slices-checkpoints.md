@@ -6,7 +6,9 @@ Status: **B-1/B-2/B-3 design-bound; dependent verification/integration pending**
 
 Run one committed slice group at a time with the checkpoint tool and the host build-slot gate. Use `--after S2`, `--after S3`, `--after S4` or `--after S5`; never run the whole manifest against a partially implemented slice. Reuse builds only within that group. Source must be committed and frozen, with exact SHA receipts. Observe actual result rosters; Min counts TUnit executions, not internal matrix/assertion rows.
 
-For the independently commissionable policy subset use `--after S2-policy` (CP-12/CP-13). Its five methods are V-1/V-4/V-5/V-6/V-7; no receipt-correction stubs. All rows use the portable application/database/script lane; live Windows RC qualification stays separate.
+For the original independently commissionable policy subset use `--rows CP-12,CP-13`; `--after S2-policy` also includes the F-1 regression row below. Its five methods are V-1/V-4/V-5/V-6/V-7; no receipt-correction stubs. All rows use the portable application/database/script lane; live Windows RC qualification stays separate.
+
+Review 68b276a9 F-1 repair (Code fcb08fbe) has the explicit closed selection `--rows CP-13,CP-14`: preserve the ten D-2 acceptance executions and execute each of the six existing instruction guards once. CP-14 uses the primary `C478_V11_ComposedContractsKeepOrdinaryReviewBeforePublication` method, not its alias. The exact method-name operands have suffix wildcards for TUnit discovery; inspect fresh TRX to reject extra or missing methods. CP-12 supplies the shared isolated build definition but its whole Unit selection remains deferred by this repair brief, never passed. No test source changes or deliberate mutants are required to restore the pinned instructions.
 
 ### Checkpoints
 
@@ -25,9 +27,12 @@ For the independently commissionable policy subset use `--after S2-policy` (CP-1
 | CP-11 | S5 | CP-7 | qualification-watchdog | `/*/*/NightlyWatchdogCoreTests/(C545_IntentBeforeNetwork*)\|(C545_ReceiptIdempotent*)\|(C545_ReaderHeldWithoutSession*)` | R-4 | 3 executions, all assertion rows, 0 failed/skipped | 3 | 2 |
 | CP-12 | S2-policy | `tests/Antiphon.Tests -> bin-c1281-a-policy/` | advisory-policy-unit | `/*/*/*/*[Category=Unit]` | R-1 | >=1 executed; full Unit roster, 0 failed/skipped | 1 | 7 |
 | CP-13 | S2-policy | CP-12 | advisory-policy-acceptance | `/*/*/(AdvisoryChangePolicyTests*)\|(StageOutcomeSummaryTests*)/*` | V-1,V-4,V-5,V-6,V-7,R-1 | A policy 5 + summary 5 methods, all variants, 0 failed/skipped | 10 | 6 |
+| CP-14 | S2-policy | CP-12 | review-instruction-repair | `/*/*/(TaskPlatformGuidanceTests*)\|(VerificationRoundInstructionTests*)\|(PostLandMutationContractTests*)\|(CheckpointManifestDocumentationTests*)\|(InstructionBundleTests*)/(Review_guidance_preserves_every_instruction*)\|(Review_guidance_keeps_scope_examples_landing_evidence_and_runner_routes*)\|(C544_FinalReviewContract*)\|(C478_V11_ComposedContractsKeepOrdinaryReviewBeforePublication*)\|(the_review_bundle_names_each_checkpoint_defect*)\|(C589_V6_BuildSlotGateIsAStandingRuleReviewEnforces*)` | R-1 (F-1 instruction guards) | exactly 6 methods, 1 execution each, 0 failed/skipped | 6 | 2 |
 
 ### Cost
 
 Estimated ordinary Code floor: 63 minutes (S2 13, S3 19, S4 15, S5 16), including 16 minutes build/setup. The parent's 453-minute Mutation floor and live qualification budget are separate; these rows run no PCs or live operations.
 
 Landing S2-policy first adds 13 estimated minutes before the later full S2 run (76 total for these component checkpoints). Shared-integration verification and additional controls remain to be costed by focused TestDesign; 76 is not a complete program estimate.
+
+F-1 repair adds the two-minute CP-14 regression row (78-minute component estimate). Its explicit CP-13/CP-14 selection is eight estimated minutes including the one shared isolated build; no whole Unit or full-assembly run is authorized for this repair.
