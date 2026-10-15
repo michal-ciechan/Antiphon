@@ -107,7 +107,7 @@ public sealed class HostCleanupCheckpointAuthorityTests
                 case "duplicate-entry": record.Entries.Add(record.Entries[0]); Rewrite(f, record); expected = "tool-authority-path-invalid"; break;
                 case "entry-count": record.Entries.Clear(); Rewrite(f, record); expected = "tool-authority-path-invalid"; break;
                 case "entry-count-large":
-                    record.Entries = Enumerable.Range(0, 10001).Select(i => new ToolCopyAuthority.CopyEntry { Path = "file" + i, Content = "0:" }).ToList();
+                    record.Entries = Enumerable.Range(0, 10001).Select(i => new ToolCopyAuthority.CopyEntry { Path = "file" + i, Content = "0:", Stamp = record.Entries[0].Stamp }).ToList();
                     Rewrite(f, record); expected = "tool-authority-path-invalid"; break;
                 case "directory-device": f.Io.Nodes[f.Tool].Stat = f.Io.Nodes[f.Tool].Stat with { Device = 2 }; expected = "tool-authority-root-mismatch"; break;
                 case "directory-inode": f.Io.Nodes[f.Tool].Stat = f.Io.Nodes[f.Tool].Stat with { Inode = 900 }; expected = "tool-authority-root-mismatch"; break;
