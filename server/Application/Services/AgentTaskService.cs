@@ -1003,6 +1003,23 @@ public sealed class AgentTaskService
                 level = routingWalk.Outcomes.Count > 0
                     ? routingWalk.Outcomes[0].Candidate.Level
                     : ResolveLevel(request.Kind, request.Role, request.ModelLevel);
+                // CARD-1271: the single candidate lands here when it failed a walk filter: a hold,
+                // the pin's forbid list or quota (refused below), or the kind filter (an
+                // Orchestrator on a non-ClaudeCode row, or a non-delegate kind). No hold or reset
+                // clears a kind mismatch, so refuse it first.
+                if (!ComplexityRoutingService.AdmitsKind(request.Kind, agentKind))
+                {
+                    var why = request.Kind == AgentTaskKind.Orchestrator && DelegatableKinds.Contains(agentKind)
+                        ? $"An orchestrator runs only on {AgentKind.ClaudeCode} (CARD-0084), and the single "
+                            + $"candidate under this Required pin is {agentKind}/{level}."
+                        : $"{agentKind} is not a delegate kind.";
+                    throw new RoutingExhaustedException(
+                        routingWalk.ExhaustedSentence(pinDecision) + " " + why
+                        + " A human decides: change the row, replace the pin or clear it. "
+                        + "Do NOT pick a kind yourself.",
+                        routingWalk.ToDto());
+                }
+
                 _routingPins?.EnforceForbiddenAliases(pinDecision, agentKind, level);
                 if (_quotaGate is not null)
                 {
