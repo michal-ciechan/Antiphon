@@ -1,5 +1,4 @@
 using Antiphon.HostCleanup.Checkpoints;
-using System.Collections.Concurrent;
 
 namespace Antiphon.Checkpoints;
 
@@ -82,20 +81,11 @@ public static class SafeWrite
 public sealed class CheckpointWrite(CheckpointCleanupContext context)
 {
     private ICheckpointCleanupIo Io => context.Io;
-    private CheckpointWrite SafeWrite => new(context);
     private CheckpointDelete SafeDelete => new(context);
-    private CheckpointOutputLedger OwnedOutputLedger => new(context);
     public const string Marker = "antiphon-checkpoints";
 
-    private static readonly ConcurrentDictionary<string, byte> Created = new(OperatingSystem.IsWindows()
-        ? StringComparer.OrdinalIgnoreCase
-        : StringComparer.Ordinal);
-
-    // Append-only creation records stay in this process. Disk ledgers are diagnostic only.
-    private static readonly ConcurrentDictionary<string, string> CreatedContent = new(OperatingSystem.IsWindows()
-        ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-    // Kernel ctime of each fresh owner-only root, taken right after the exclusive mkdir.
-    private void RecordContent(string path) => CreatedContent.TryAdd(path, Describe(path));
+    // The context owns append-only creation records; disk ledgers never populate them.
+    private void RecordContent(string path) => context.Registry.RecordContent(path, Describe(path));
     private string Describe(string path)
     {
         if (Io.DirectoryExists(path)) return "directory";
@@ -113,7 +103,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
             var before = OutputCustody.Stat(context, full);
             if (before is null || OutputCustody.Refusal(before.Value, window) is not null) return;
             var record = Describe(full);
-            if (OutputCustody.Stat(context, full) == before) CreatedContent.TryAdd(full, record);
+            if (OutputCustody.Stat(context, full) == before) context.Registry.RecordContent(full, record);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
@@ -121,15 +111,14 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         context.Registry.FreshRoot(path);
     public bool MatchesCreation(string path)
     {
-        if (!CreatedContent.TryGetValue(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), out var recorded)) return false;
+        if (context.Registry.Content(path) is not { } recorded) return false;
         if (Io.DirectoryExists(path)) return recorded == "directory";
         var bytes = ReceiptFile.ReadBytes(context, path);
         return recorded == bytes.LongLength + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
     }
 
     internal string? CreationRecord(string path) =>
-        CreatedContent.TryGetValue(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-            out var content) ? content : null;
+        context.Registry.Content(path);
 
     public string? Preflight(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null)
     {
@@ -158,7 +147,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
             return git;
         if (!Io.FileExists(full) && !Io.DirectoryExists(full))
             return null;
-        if (Created.ContainsKey(full))
+        if (context.Registry.WasCreated(full))
             return null;
         if (ownership.Kind == WriteKind.ToolOwnedReplaceable
             && !string.IsNullOrEmpty(ownership.RunId)
@@ -185,12 +174,12 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         try
         {
             Io.WriteBytes(temporary, System.Text.Encoding.UTF8.GetBytes(content));
-            Created.TryAdd(temporary, 0);
+            context.Registry.RecordCreated(temporary);
             reason = Refusal(full, ownership);
             if (reason is not null)
                 return reason;
             Io.Move(temporary, full, overwrite: true);
-            Created.TryAdd(full, 0);
+            context.Registry.RecordCreated(full);
             RecordContent(full);
             return null;
         }
@@ -222,12 +211,12 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         try
         {
             Io.WriteBytes(temporary, content.ToArray());
-            Created.TryAdd(temporary, 0);
+            context.Registry.RecordCreated(temporary);
             reason = Refusal(full, ownership);
             if (reason is not null)
                 return reason;
             Io.Move(temporary, full, overwrite: true);
-            Created.TryAdd(full, 0);
+            context.Registry.RecordCreated(full);
             RecordContent(full);
             return null;
         }
@@ -252,7 +241,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         if (!Io.FileExists(full))
             return Text(path, content, ownership);
         Io.AppendText(full, content);
-        Created.TryAdd(full, 0);
+        context.Registry.RecordCreated(full);
         RecordContent(full);
         return null;
     }
@@ -272,7 +261,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         }
 
         Io.Copy(source, full, overwrite: true);
-        Created.TryAdd(full, 0);
+        context.Registry.RecordCreated(full);
         RecordContent(full);
         return null;
     }
@@ -284,7 +273,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
             return reason;
         var full = Canonical(destination)!;
         Io.Move(source, full, overwrite: true);
-        Created.TryAdd(full, 0);
+        context.Registry.RecordCreated(full);
         RecordContent(full);
         return null;
     }
@@ -305,12 +294,12 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         if (reason is not null)
             return reason;
         Io.CreateDirectory(full);
-        Created.TryAdd(full, 0);
+        context.Registry.RecordCreated(full);
         RecordContent(full);
         return null;
     }
 
-    public bool WasCreated(string path) => Created.ContainsKey(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+    public bool WasCreated(string path) => context.Registry.WasCreated(path);
 
     public string? CreateFreshDirectory(string path, WriteOwnership ownership)
     {
@@ -321,7 +310,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         if (reason is not null) return reason;
         if (OutputCustody.Stat(context, full) is { IsDirectory: true } made && made.Owner == Io.Owner && (made.Mode & 0x3F) == 0)
             context.Registry.RecordFreshRoot(full, made.Changed);
-        Created.TryAdd(full, 0);
+        context.Registry.RecordCreated(full);
         RecordContent(full);
         return Text(Path.Combine(full, ".checkpoint-output-owner.json"), Guid.NewGuid().ToString("N"), Under(full));
     }
@@ -342,7 +331,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         }
 
         stream = Io.Open(full, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        Created.TryAdd(full, 0);
+        context.Registry.RecordCreated(full);
         return null;
     }
 
@@ -365,7 +354,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         }
 
         stream = Io.Open(full, FileMode.Append, FileAccess.Write, share);
-        Created.TryAdd(full, 0);
+        context.Registry.RecordCreated(full);
         return null;
     }
 
@@ -387,7 +376,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         }
 
         stream = Io.Open(full, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        Created.TryAdd(full, 0);
+        context.Registry.RecordCreated(full);
         return null;
     }
 
@@ -479,7 +468,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
     {
         try
         {
-            if (!string.IsNullOrEmpty(Io.LinkTarget(path)) || !string.IsNullOrEmpty(Io.LinkTarget(path)))
+            if (!string.IsNullOrEmpty(Io.LinkTarget(path)))
                 return true;
             return (Io.Attributes(path) & FileAttributes.ReparsePoint) != 0;
         }

@@ -43,6 +43,9 @@ public sealed class HostCleanupCheckpointCustodyTests
     {
         var f = new HostCleanupCheckpointFixture();
         ExclusiveDirectory.Create(f.Context, f.Root).ShouldBe("pre-existing-output", "C987.Existing_directory_cannot_gain_creation_authority.mkdir-exists");
+        f.Write.CreateFreshDirectory(f.Root, f.Write.Under(f.Parent)).ShouldBe("pre-existing-output",
+            "C987.Existing_directory_cannot_gain_creation_authority.mkdir-exists:creation-entry");
+        f.Io.Count("write").ShouldBe(0);
         var foreign = f.Parent + "/foreign"; f.Io.CreateDirectory(foreign);
         f.Write.CreateDirectory(foreign, f.Write.Under(f.Parent)).ShouldBeNull();
         f.Write.WasCreated(foreign).ShouldBeFalse("C987.Existing_directory_cannot_gain_creation_authority.ordinary-existing:directory");
@@ -176,6 +179,13 @@ public sealed class HostCleanupCheckpointCustodyTests
         (flags.Io.ReadRequests.Single().UnixFlags & 0x20000).ShouldBe(0x20000, "C987.Links_and_special_entries_are_not_adopted.nofollow-open");
         (flags.Io.ReadRequests.Single().UnixFlags & 0x800).ShouldBe(0x800, "C987.Links_and_special_entries_are_not_adopted.nonblocking-open");
         flags.Io.Count("follow-target").ShouldBe(0);
+        var swapped = new HostCleanupCheckpointFixture();
+        var outside = swapped.Parent + "/outside"; swapped.Io.Put(outside, "outside-bytes");
+        swapped.Io.Before = (op, path) => { if (op == "open-read") swapped.Io.Nodes[path].Target = outside; };
+        Should.Throw<IOException>(() => swapped.Read());
+        swapped.Io.Count("follow-target").ShouldBe(0, "C987.Links_and_special_entries_are_not_adopted.nofollow-open:outside-entry");
+        swapped.Io.Count("stream").ShouldBe(0);
+        swapped.Io.Text(outside).ShouldBe("outside-bytes");
     }
 
     [Test]
@@ -207,6 +217,10 @@ public sealed class HostCleanupCheckpointCustodyTests
         var windows = new HostCleanupCheckpointFixture(); windows.Io.Platform = CheckpointPlatform.Windows;
         Encoding.UTF8.GetString(windows.Read()).ShouldBe("original");
         (windows.Io.ReadRequests.Single().WindowsFlags & 0x00200000).ShouldBe(0x00200000u, "C987.Entry_change_during_read_is_not_adopted.windows-flags");
+        var target = windows.Parent + "/outside"; windows.Io.Put(target, "outside-bytes");
+        windows.Io.Before = (op, path) => { if (op == "open-read") windows.Io.Nodes[path].Target = target; };
+        Should.Throw<IOException>(() => windows.Read());
+        windows.Io.Count("follow-target").ShouldBe(0, "C987.Entry_change_during_read_is_not_adopted.windows-flags:outside-entry");
         foreach (var cancel in new[] { false, true }) await BlockedRead(cancel);
     }
 
@@ -305,6 +319,7 @@ public sealed class HostCleanupCheckpointCustodyTests
         foreach (var variant in new[] { "nonzero", "start-failure", "timed-out" })
         {
             var f = new HostCleanupCheckpointFixture(); f.Seal();
+            f.Io.Events.Clear();
             f.Io.GitResult = _ => variant == "start-failure" ? throw new FileNotFoundException() : new(1, "", "failed", variant == "timed-out");
             var reason = variant == "nonzero" ? "git-failed" : variant == "start-failure" ? "git-unavailable" : "git-timeout";
             f.Write.Text(f.Payload, "new", f.Write.Under(f.Root)).ShouldBe(reason, "C987.Git_failure_and_deadline_refuse_before_mutation." + variant + ":write");
@@ -326,7 +341,13 @@ public sealed class HostCleanupCheckpointCustodyTests
             (await operation.WaitAsync(safety.Token)).ShouldBe("git-unavailable", "C987.Git_failure_and_deadline_refuse_before_mutation.retry-deadline");
             retry.Io.GitRequests.Select(r => r.TimeoutMilliseconds).ShouldBe(new[] { 50, 25 }, "C987.Git_failure_and_deadline_refuse_before_mutation.retry-deadline:remaining");
         }
-        finally { for (var i = 0; i < 8 && !operation.IsCompleted; i++) { retry.Clock.Advance(TimeSpan.FromSeconds(1)); await Task.Yield(); } }
+        finally
+        {
+            // Release and join the finite retry loop even when a control fails its assertion.
+            for (var i = 0; i < 16 && !operation.IsCompleted; i++)
+            { retry.Clock.Advance(TimeSpan.FromSeconds(1)); await Task.WhenAny(operation, Task.Delay(20)); }
+            await operation.WaitAsync(TimeSpan.FromSeconds(5));
+        }
         var seen = false;
         var native = new CheckpointNativeGitRunner((start, timeout, git) =>
         {
