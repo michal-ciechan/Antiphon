@@ -103,7 +103,10 @@ public sealed class AmServiceDeployReadinessTests
             "deploy writes the managed override and verifies the merge before recreate",
             "marked existing override is backed up and reported",
             "remote seam parses endpoint adapters after recreate",
-            "postdeploy verification refuses degraded" })
+            "postdeploy verification refuses degraded",
+            "CARD-1261 skipped traffic check names Family as manual operator-initiated only",
+            "CARD-1261 required traffic check names Family as manual operator-initiated only",
+            "CARD-1261 deploy script stays ASCII-only and names no retired destination or chat id" })
             legacy.ShouldContain(name, Case.Sensitive);
         legacy.ShouldNotContain("FAIL ", Case.Sensitive);
         Console.WriteLine("PASS C504 R-1");

@@ -443,6 +443,14 @@ try {
     $log = @(Invoke-AmServiceDeployment -SshTarget 'operator@gateway.example.invalid' $root $true $true 10 $successSsh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"
     $written = @($script:commands | Where-Object { $_ -match 'C0410_MANAGED' }) -join "`n"
     Assert-True (-not $log.Contains('never-log-this') -and -not $written.Contains('never-log-this')) 'identity, compose, and container output never leak'
+    $skippedTraffic = 'Real traffic check explicitly skipped; the round-trip check is manual and operator-initiated through the Family conversation, and an agent never sends test traffic to it.'
+    Assert-True ($log.Contains($skippedTraffic) -and -not $log.Contains('Antiphon-Family') -and -not $log.Contains('test group') -and -not $log.Contains('test-group')) 'CARD-1261 skipped traffic check names Family as manual operator-initiated only' $log
+    Reset-MonitorFake; $script:commands.Clear()
+    $requiredLog = @(Invoke-AmServiceDeployment -SshTarget 'operator@gateway.example.invalid' $root $true $false 10 $successSsh $scp $http 6>&1 | ForEach-Object { $_.ToString() }) -join "`n"
+    $requiredTraffic = 'Real traffic check remains required: the round-trip check is manual and operator-initiated through the Family conversation, and an agent never sends test traffic to it.'
+    Assert-True ($requiredLog.Contains($requiredTraffic) -and -not $requiredLog.Contains('Antiphon-Family') -and -not $requiredLog.Contains('test group') -and -not $requiredLog.Contains('test-group')) 'CARD-1261 required traffic check names Family as manual operator-initiated only' $requiredLog
+    $scriptText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'deploy-am-service.ps1'))
+    Assert-True (-not $scriptText.Contains('Antiphon-Family') -and $scriptText -notmatch '-?\d{10}' -and @([Text.Encoding]::UTF8.GetBytes($scriptText) | Where-Object { $_ -gt 127 }).Count -eq 0) 'CARD-1261 deploy script stays ASCII-only and names no retired destination or chat id'
     foreach ($legacyCase in @('ambiguous-compose','broker-mismatch','invalid-cluster')) {
         Reset-MonitorFake; $script:monitorCase=$legacyCase; $script:commands.Clear(); $script:scpCalls.Clear()
         $failureLog = ''
