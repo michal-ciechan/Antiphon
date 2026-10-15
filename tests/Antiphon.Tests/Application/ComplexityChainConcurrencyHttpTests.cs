@@ -109,10 +109,10 @@ public sealed class ComplexityChainConcurrencyHttpTests
             // Legacy caller with no token still overwrites (complexity-chain.ps1 before CARD-1275).
             var overwrite = await PutAsync(client, "any/Easy", "Codex", "legacy overwrite", token: null);
             overwrite.StatusCode.ShouldBe(HttpStatusCode.OK);
-            (await TokenAsync(overwrite)).ShouldNotBe(created);
+            var last = await TokenAsync(overwrite);
+            last.ShouldNotBe(created);
 
             // A token for a row that was cleared since is stale too: the current state is config.
-            var last = await TokenAsync(overwrite);
             (await client.DeleteAsync("/api/complexity-chains/any/Easy")).StatusCode.ShouldBe(HttpStatusCode.NoContent);
             var gone = await PutAsync(client, "any/Easy", "Grok", "editor of a cleared row", last);
             gone.StatusCode.ShouldBe(HttpStatusCode.Conflict);
