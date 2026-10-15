@@ -510,10 +510,10 @@ public partial class SessionRuntimeActionRoutingTests
             {
                 sent.ShouldBe(body, label); accepted.Add(sent);
                 await f.StreamAsync(f.Entry("UserPrompt", sent));
-                if (cut == 3)
+                if (cut is 3 or 4)
                 {
                     await f.StreamAsync(f.Entry("AssistantText", answer), f.Entry("TurnEnd"));
-                    receiptEntered.TrySetResult(); await release.Task;
+                    if (cut == 3) { receiptEntered.TrySetResult(); await release.Task; }
                 }
             };
             using (var worker = new SessionRuntimeActionHostedService(f.Actions))
@@ -556,7 +556,7 @@ public partial class SessionRuntimeActionRoutingTests
                 try
                 {
                     await WaitDeliveredAsync();
-                    if (cut != 3) await f.StreamAsync(f.Entry("AssistantText", answer), f.Entry("TurnEnd"));
+                    if (cut is not (3 or 4)) await f.StreamAsync(f.Entry("AssistantText", answer), f.Entry("TurnEnd"));
                     await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
                     {
                         await using var db = f.H.CreateObserverContext();
@@ -672,12 +672,11 @@ public partial class SessionRuntimeActionRoutingTests
                 body.ShouldBe(ChannelPreamble.RecoveryNoteBody, label);
                 submitted.Add(body);
                 await f.StreamAsync(f.Entry("UserPrompt", body));
+                // A different idle intent may have submitted this queue member. Complete
+                // the actual recovery turn before requiring the original intent's ack.
+                await f.StreamAsync(f.Entry("TurnEnd"));
                 entered.TrySetResult();
-                if (cut == 3)
-                {
-                    await f.StreamAsync(f.Entry("TurnEnd"));
-                    await release.Task;
-                }
+                if (cut == 3) await release.Task;
             };
             using (var first = new SessionRuntimeActionHostedService(f.Actions))
             {
@@ -721,7 +720,6 @@ public partial class SessionRuntimeActionRoutingTests
                 if (queueBeforeRestart is Guid original) queueId.ShouldBe(original, label);
             }
             if (cut is 3 or 4) await f.RestartAsync();
-            if (cut != 3) await f.StreamAsync(f.Entry("TurnEnd"));
             f.H.Adapter.OnSubmitted = async body =>
             {
                 submitted.Add(body);
