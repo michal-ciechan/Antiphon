@@ -4,7 +4,7 @@ Commissioned subset of the parent cheap-slice manifest for Code e7ca6378.
 The brief waives the whole Unit lane (CARD-1287), excludes B-3 and forbids mapping
 before B-1 authorization/transaction/import pass. Component hosts therefore prove
 the authorization gate before real Program routing is added. S6b retains closure.
-Rows below bind the current compiling red-first increment; subsequent S6a rows
+Rows below bind the current uncompiled red-first increment; subsequent S6a rows
 must be added before their runs. No pending row is credited as passed.
 
 ### Checkpoints
