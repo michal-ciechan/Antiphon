@@ -16,25 +16,34 @@ namespace Antiphon.Tests.Application;
 
 public partial class HerdrAlwaysOnChannelParityTests
 {
+    // CARD-1276: the eight rows are split by backend so the Herdr rows, which run on Linux, can be
+    // selected without the PtyHost rows' Linux skips. The body is the shared helper below.
     [Test]
-    [Arguments(AgentKind.ClaudeCode, SessionBackend.PtyHost, true)]
-    [Arguments(AgentKind.Grok, SessionBackend.PtyHost, true)]
     [Arguments(AgentKind.ClaudeCode, SessionBackend.Herdr, true)]
     [Arguments(AgentKind.Grok, SessionBackend.Herdr, true)]
-    [Arguments(AgentKind.ClaudeCode, SessionBackend.PtyHost, false)]
-    [Arguments(AgentKind.Grok, SessionBackend.PtyHost, false)]
     [Arguments(AgentKind.ClaudeCode, SessionBackend.Herdr, false)]
     [Arguments(AgentKind.Grok, SessionBackend.Herdr, false)]
-    public async Task Standing_history_recovery_preserves_native_identity_and_queued_reply(AgentKind kind, SessionBackend backend, bool alwaysOn)
+    public Task Standing_history_recovery_preserves_native_identity_and_queued_reply(AgentKind kind, SessionBackend backend, bool alwaysOn) =>
+        StandingHistoryRecoveryAsync(kind, backend, alwaysOn);
+
+    [Test]
+    [Arguments(AgentKind.ClaudeCode, true)]
+    [Arguments(AgentKind.Grok, true)]
+    [Arguments(AgentKind.ClaudeCode, false)]
+    [Arguments(AgentKind.Grok, false)]
+    public Task Standing_ptyhost_history_recovery_preserves_native_identity_and_queued_reply(AgentKind kind, bool alwaysOn)
     {
-        // CARD-1273: reasons seen with the guards lifted (runs 20261015-003609-6511, 20261015-005802-136e,
-        // and the witness run of Review f2fbd6ae); follow-up CARD-1277 for the PtyHost rows.
-        if (OperatingSystem.IsLinux() && backend == SessionBackend.PtyHost && kind == AgentKind.ClaudeCode)
+        // CARD-1273: reasons seen with the guards lifted (run 20261015-003609-6511 and the witness
+        // run of Review f2fbd6ae); follow-up CARD-1277.
+        if (OperatingSystem.IsLinux() && kind == AgentKind.ClaudeCode)
             Skip.Test("CARD-1277: on Linux the first prompt times out: the fake CLI JSONL exists but the transcript normalizer reads no entries from it (cause not established; witness run of Review f2fbd6ae).");
-        if (OperatingSystem.IsLinux() && backend == SessionBackend.PtyHost && kind == AgentKind.Grok)
+        if (OperatingSystem.IsLinux() && kind == AgentKind.Grok)
             Skip.Test("CARD-1277: on Linux the matching prompt is in the fake CLI JSONL, but the fake Grok cuts its reply at 60 characters (src/Antiphon.FakeGrok/Program.cs:850), so the 52-character channel marker pushes the nonce out of the reply and the wait for it does not complete.");
-        if (OperatingSystem.IsLinux())
-            Skip.Test("CARD-1273: the Herdr queued channel reply is stored and confirmed with its [antiphon-channel:<id>] correlation marker, so the UserPrompt Text == nonce assertion does not match.");
+        return StandingHistoryRecoveryAsync(kind, SessionBackend.PtyHost, alwaysOn);
+    }
+
+    private async Task StandingHistoryRecoveryAsync(AgentKind kind, SessionBackend backend, bool alwaysOn)
+    {
         var root = Path.Combine(Path.GetTempPath(), $"c466-native-wire-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         var home = Path.Combine(root, "native-home"); Directory.CreateDirectory(home);
