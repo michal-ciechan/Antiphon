@@ -6,12 +6,14 @@ bbd94575-e940-4616-9cda-a1090e1bfc39, Antiphon board
 8988ca03-7414-47ad-b0b6-51556c701703, revision 15.
 
 This supplements the [landed fix design](2026-10-15-card-1259-transcript-pump-decoupling-plan.md).
-D-1 through D-7 and S1 through S4 are unchanged. This file is the **executable
+D-1 through D-7 and S1 through S4 remain in force. This file is the **executable
 manifest**, replacing that document's proposed checkpoint roster and cost.
 Pass this file to the checkpoint importer; do not run both tables.
-**Code is not ready:** inspection found one incompatible payload contract (B-1
-below). Return this narrow seam to Plan without changing D-1..D-7 here. The case
-roster and controls are bound; the UI-payload choice needs a plan amendment.
+**Code can start:** Plan correction `4cdba1a7`, based on
+`26147352a09a61a0cb210fdcebdc504c5fc0d539`, resolves B-1 with D-8 and binds R-6/
+PC-113 here. This brief folds that narrow verification correction into Plan;
+no further TestDesign round is needed. V-1..V-12 and CP-1..CP-12 are unchanged;
+CP-13 expands only the payload guard. There are still 13 checkpoints.
 
 This is a design, not execution evidence. No product tests, builds or PCs ran in
 TestDesign. Code runs ordinary V/R; independent Review judges before land;
@@ -78,8 +80,9 @@ are planned contracts, not assertions that they already exist. An unbound mutati
 payload remains **binding required after Code**; it cannot be marked run, green,
 equivalent or covered by a nearby test. Existing EF interceptors and owned I/O barriers can verify the scheduling and
 delivery boundaries; new phase boundaries may expose internal, test-only fault
-hooks that cannot provide delivery evidence. B-1 below prevents a complete
-payload binding and therefore prevents Code handoff.
+hooks that cannot provide delivery evidence. D-8 and the R-6 recipe below bind
+the remaining payload contract; Code records concrete implementation line sites
+alongside the other planned members, without reopening the contract choice.
 
 **B-1: original UI bytes versus durable stored bytes.** In
 AgentSessionRuntimeTests.Persist.cs,
@@ -93,12 +96,17 @@ where original NUL bytes were replaced (a literal U+FFFD may have existed too).
 An in-memory callback is not restart evidence. The safe-stub path has the same
 original-versus-stored payload issue.
 
-R-6/PC-113 preserve the existing assertion so Code cannot silently discard it.
-Plan must bind the post-commit/restart UI payload contract and any retained source
-metadata, then explicitly retain or revise this assertion and its corresponding
-recovery case. This is a concrete design seam, not a request for broader testing,
-permission, or a verifier timeout change. Do not mark the current payload binding
-complete after Code merely because the other V/R rows pass.
+**Resolved by D-8 (Plan correction 4cdba1a7):** preserve the original UI DTO,
+including NUL, literal U+FFFD and safe-stub source fields, before and after restart.
+The action retains producer sequence plus a versioned binary projection delta:
+original NUL positions, lost timestamp precision/offset, and original values of
+stub-clipped/cleared fields. Ordinary transcript bodies are not duplicated; a
+stub's discarded body exists only in the delta. Store it as bytea atomically with
+the final row/action, rebuild it for fallback, and retain it through acknowledgement.
+Both first publication and restart use the same stored-row reconstruction seam.
+Stored sanitized/stub rows remain the state/delivery authority. R-6 keeps C561's
+NUL assertion and adds the two restart cases below; PC-113 bypasses reconstruction
+at the worker, rather than mutating the now-obsolete inline publication site.
 
 #### Source scope per slice
 
@@ -110,6 +118,9 @@ complete after Code merely because the other V/R rows pass.
 | S4 | Complete S1-S3 tests; adapt AgentSessionRuntimeTests/PersistFixture, SessionStateTestFixture, ReviewReplyDispatcherTests, the three AgentTaskMidTurnRefineTests and selected queue tests to await effect evidence. Extend shared registration only where required; preserve direct persistence callers. docs/session-runtime-invariants.md, docs/herdr-sessions.md, this binding record. Production lifecycle corrections stay within S2/S3 paths. |
 
 Paths without a server/ or docs/ prefix in this table are under tests/Antiphon.Tests.
+For D-8 only, S3 also touches SessionRuntimeActionCoordinator.cs (listed in S2)
+and adds the R-6 tests to Application/AgentSessionRuntimeTests.Persist.cs in its
+test-first commit; S4 runs their final evidence through CP-13.
 Commit each test addition before its implementation; existing working guards need
 not fail on the old source. For genuinely new semantics the compilation must
 succeed and the named behaviour assertion must fail before its fix. Code records
@@ -130,7 +141,7 @@ recipient evidence.
 | Path: producer -> destination | Persistence, recovery and receipt | Cases |
 |---|---|---|
 | Live/initial sync/subscription sync/held transcript -> deferred effects | Transcript plus action commit together; failed/closed hint leaves debt. Startup/overflow/1s scan discovers it without another event. Read exact ordered transcript and then actual recipient result. | V-1..V-4,V-8,V-9 |
-| Stored transcript -> session UI | Same action identity, ordered SessionTranscript publication, phase ack after fake receiver accepts payload. Publication error retries; DB commit is independent. Receipt is fake bus receiver's ordered payload list with original producer DTO sequence and stored action identity separately observed. This proves server dispatch, not browser rendering. | V-1,V-3,V-8,V-10 |
+| Stored transcript -> session UI | Same action identity, ordered SessionTranscript publication, phase ack after fake receiver accepts payload. Publication error retries; DB commit is independent. Receipt is fake bus receiver's ordered payload list with original producer DTO sequence and stored action identity separately observed. D-8's delta restores original fields after restart, including safe-stub fallback. This proves server dispatch, not browser rendering. | V-1,V-3,V-8,V-10,R-6 |
 | Boundary/refinement/compaction/status/catch-up -> same-session queue | Producer action retains phase; compaction recovery has its own stored watermark before enqueue; queue owns stable message ID, attempt floor and generation. Crash before queue commit retries owed action; after commit/before ack reuses queue identity. In-progress Sent checks transcript before retry. Busy and already eligible recipients each finish at complete UserPrompt through pump. | V-2,V-6,V-7,V-9,V-12 |
 | Bound channel turn/late-confirm source IDs -> channel destination | Existing channel queue correlation/publication claim and durable outbound journal remain owners. Fake destination records full body, conversation and source ID. Test pre-accept failure, after journal commit/before wake, and after acceptance/before action ack; recover with original identity. Direct transport's uncertain crash window remains PublishUncertain, never asserted exactly-once. | V-5,V-9,V-10,R-3 |
 | Bound task report -> task settlement -> parent's queue -> parent session | Join task ID + Attempt + completion publication/notification ID to parent queue ID, original source turn and complete parent UserPrompt. Settlement without the parent transcript is insufficient. Test real queue with parent busy and already idle; cross-session routing cannot stall ingress. | V-5 parent-handoffs,V-9 |
@@ -234,7 +245,45 @@ recovery, or empty test selection is not acceptance.
 | R-3 | ChannelReplyLateConfirmDispatchTests.Grace_dispatch_keeps_its_confirmed_turn_when_a_newer_turn_completes (4); Grace_and_runtime_redispatch_share_one_atomic_publication_owner (2); Caller_cancellation_does_not_release_a_still_publishing_direct_reply (2). Exact earlier/later recipient bodies and one accepted publication, retained claim during live transport. If FlushQueueOnIdleAsync is renamed, bind its real deferred equivalent; do not replace race with a mock callback. |
 | R-4 | SessionRunnerEventPumpTests.C502_V36_pump_forwards_the_typed_exit_and_publishes_nothing_for_a_stale_disposition: stale generation cannot close Running row. Existing name promises more than its body asserts; add zero exit/status notifications and an event-consumed barrier so arbitrary Task.Delay is not the acceptance oracle. |
 | R-5 | CP-11 runs all 8 SessionStateCommitTests, all 7 ReviewReplyDispatcherTests and all 14 HerdrStatusDisagreementTests executions. CP-12 runs the three named held-event methods (4 executions), C1170 (1), and both C1188 methods (2). Preserve commit publication, stub classification, review withholding/window and status no-authority assertions. C1188_SentRefinementStillWaitsOnTheQueueLockBeforeConfirming now requires Observe to finish while verdict remains null under lock, then confirms after release; keep method name because the confirmation still waits. C1170 awaits persisted verdict, not Observe return. |
-| R-6 | AgentSessionRuntimeTests.C561_a_NUL_in_tool_result_text_persists_as_U_FFFD: persisted text replaces NUL while published payload contains original NUL. Preserve this current guard until Plan resolves B-1; add a stopped-worker/restart subcase under that resolved contract. |
+| R-6 | AgentSessionRuntimeTests.C561_a_NUL_in_tool_result_text_persists_as_U_FFFD (1): preserve stored U+FFFD/no-NUL and published original-NUL assertions, awaiting worker publication. Add AgentSessionRuntimeTests.C1259_deferred_UI_payload_preserves_original_fields_after_restart (2 Arguments: sanitized, safe-stub). Exact original DTO after cold DI restart, independently observed sanitized/stub row and retained delta before publication, no historical replay after ack. CP-13 executes 3 results total. |
+
+#### R-6 restart payload binding (D-8)
+
+Implement the new method in Application/AgentSessionRuntimeTests.Persist.cs with
+the clone-aware PersistFixture, real state store/coordinator/worker and recording
+event bus. Its two Arguments results each run this recipe:
+
+1. Seed older history so producer Sequence=1 rebases to a different stored
+   sequence. Ingest a ToolResult whose original Text contains both NUL and a
+   literal U+FFFD (also put a surrogate pair before a NUL to pin UTF-16 indexing).
+   Populate the other DTO fields, NUL-bearing metadata and a timestamp with a
+   nonzero offset and sub-microsecond ticks. Retain expected field values in the
+   fixture, not by invoking the production reconstruction helper.
+2. Keep hosted execution stopped during admission. In sanitized, use ordinary
+   field lengths. In safe-stub, use a 201-character ToolName to hit real 22001
+   batch/per-row fallback; include distinctive nonempty Text and ToolInput.
+   Assert the actual stub marker, clipped name and null ToolInput in a fresh
+   context. In both cases assert row/action/delta committed together, producer
+   sequence retained, stored text has no NUL, and zero UI events before restart.
+3. Dispose/join the first DI graph, discard its pending hints and construct a
+   new graph over the same clone. Start the real worker; no new event, cache,
+   runner snapshot or manufactured action may provide the lost fields. Require
+   a startup-discovery/publication barrier before asserting exactly one received
+   SessionTranscript for that action. Compare every DTO field with the original
+   event; explicitly retain text.ShouldContain NUL, exact literal U+FFFD positions,
+   original producer sequence/timestamp and the unclipped/cleared stub fields.
+   The independently read transcript row must still be sanitized or stubbed.
+4. Await durable final ack/action removal, restart workers again, then replay
+   the source through ingestion. Assert no new action/publication. This is
+   acknowledged replay proof, not an exactly-once claim for a crash before ack.
+
+Preserve all original C561 assertions, including its subsequent persistence
+result. The two new cases inherit Integration/Slow from the class and need real
+PostgreSQL, no native process. Their sub-assertions/restarts do not add executions.
+Commit the guard additions before the projection implementation. This is a
+preserved observable contract, not an assertion that old C561 was red: ordinary
+CP-13 runs in S2-S4, and PC-113 supplies its independent post-land compiling-defect
+red. Any failure-driven CP-13 rerun is reported with its actual extra cost.
 
 ### Guard inventory
 
@@ -358,7 +407,7 @@ are no "none" or intentionally untested safety-critical guards in this scope.
 | G-110 | D-7: Worker timeout never releases or parks a waiting session seat | PC-110 |
 | G-111 | D-5: Final delivery gate preserves attempt cap | PC-111 |
 | G-112 | D-2,D-4: No expiration deletes unfinished action debt | PC-112 |
-| G-113 | D-1,D-2 / B-1: UI source payload fidelity must be explicitly bound across commit/restart; current C561 requires original NUL | PC-113 |
+| G-113 | D-8,R-6: Durable UI reconstruction preserves original NUL/literal U+FFFD and source fields across restart and safe-stub fallback; stored rows remain sanitized/stubbed | PC-113 |
 
 ### Positive controls
 
@@ -501,7 +550,7 @@ status: 0/113 run; 113 required, not waived.
 | PC-110 / G-110 | uncooperative-effect: invoke existing seat-release/parking path at worker deadline | SessionRuntimeActionTests.C1259_shutdown_joins_and_restart_reconciles_submission | seat-release/parking calls zero and same session retains seat |
 | PC-111 / G-111 | working: ignore MaxDeliveryAttempts at final queue selection | SessionRuntimeActionRoutingTests.C1259_new_working_or_blocked_state_defers_old_idle_action | capped idle-row subcase has zero input and unchanged attempts |
 | PC-112 / G-112 | retry-clock: delete failed actions at bounded retry/age threshold | SessionRuntimeActionTests.C1259_retry_and_retention_preserve_pending_turn | action persists after long clock advance and later recovers |
-| PC-113 / G-113 | Current contract: in ObserveTranscriptAsync pass entry with Text = entry.Text?.Replace('\0', '\uFFFD') to ToTranscriptPayload; this is a compiling defect against today's raw-payload contract | AgentSessionRuntimeTests.C561_a_NUL_in_tool_result_text_persists_as_U_FFFD | published payload text ShouldContain NUL; retain independently of stored U+FFFD assertion. After B-1 is resolved, bind the worker/restart site explicitly; not executable as a completed future payload binding yet. |
+| PC-113 / G-113 | Both sanitized and safe-stub: in the planned SessionRuntimeActionCoordinator.RestoreTranscriptPayload bypass application of UiProjectionDelta and return the stored-row projection with ProducerSequence still applied. Leave transaction/admission, startup discovery and publication/ack intact; this is a compiling payload-only defect. | AgentSessionRuntimeTests.C1259_deferred_UI_payload_preserves_original_fields_after_restart | Exact filter /*/*/AgentSessionRuntimeTests/C1259_deferred_UI_payload_preserves_original_fields_after_restart; 2 executed per pass: baseline 2 green, mutation 2 assertion failures, restored 2 green, 0 skipped. Each red must be original DTO/text-NUL fidelity after the restart publication barrier; stored U+FFFD/stub assertions still pass. |
 
 The following internal subcases are mandatory in their owning V method (one
 Arguments result can contain several isolated setup/run/cleanup subcases):
@@ -576,13 +625,18 @@ The completed source
 must run CP-4..CP-13 at one clean committed SHA after S2-S4. Reuse CP-4's one
 isolated build only within that unchanged After group. No whole Unit lane
 (CARD-1287); the explicitly named Unit class in CP-11 is portable and small.
+Lane assignment: CP-1..CP-10 and CP-12..CP-13 are Integration, Linux-capable;
+CP-11 retains its exact mixed Integration/portable Unit class selection.
+The Plan correction re-read runner defaults/catalogue at 17:20 UTC on 2026-10-15:
+revision 2, no kind overrides, eligible Linux and Windows lanes. Re-read at dispatch;
+omit -Runner and -Platform, with no fleet location or OS requirement added.
 
 PostgreSQL: CP-1 through CP-13 all need a real test database because each row
 contains database-consuming tests. The held-output methods in CP-12 and
 HerdrStatusDisagreementTests within CP-11 do not themselves use PostgreSQL.
 V-11 legacy-upgrade needs an owned clone and real migrations; merely applying
 the new EF model to an already migrated fixture is not upgrade proof.
-Minimums count Arguments results: 70 baseline selections, 124 final green = 194 planned
+Minimums count Arguments results: 70 baseline selections, 126 final green = 196 planned
 ordinary executions. Zero failures/skips required for every final green row.
 The method unions and class unions below use escaped literal pipes exactly
 as required by docs/testing-and-build.md; method-name prefixes exist solely for
@@ -602,8 +656,11 @@ TUnit's argument suffix matching, and do not select unrelated methods.
 | CP-10 | S2-S4 | CP-4 | stale-exit-regression | /*/Antiphon.Tests.Application/SessionRunnerEventPumpTests/C502_V36_pump_forwards_the_typed_exit_and_publishes_nothing_for_a_stale_disposition | R-4 | all 1 listed, 0 failed/skipped | 1 | 1 |
 | CP-11 | S2-S4 | CP-4 | existing-guard-classes | /*/Antiphon.Tests.Application/(SessionStateCommitTests*)\|(ReviewReplyDispatcherTests*)\|(HerdrStatusDisagreementTests*)/* | R-5 | all 29 listed, 0 failed/skipped | 29 | 3 |
 | CP-12 | S2-S4 | CP-4 | held-and-refinement-guards | /*/Antiphon.Tests.Application/(SessionRunnerHeldEventDeliveryTests*)\|(AgentTaskMidTurnRefineTests*)/(C1205_Blocked_held_callback_stops_on_host_cancellation*)\|(C1205_Blocked_held_callback_stops_at_monotonic_deadline*)\|(C1205_Last_transcript_pull_cancellation_preserves_one_output*)\|(C1170_LiveUserPromptConfirmsSentRefinementWithoutASyncPump*)\|(C1188_UserPromptDoesNotWaitOnTheQueueLockWithoutASentRefinement*)\|(C1188_SentRefinementStillWaitsOnTheQueueLockBeforeConfirming*) | R-5 | all 7 listed, 0 failed/skipped | 7 | 2 |
-| CP-13 | S2-S4 | CP-4 | original-ui-payload-guard | /*/Antiphon.Tests.Application/AgentSessionRuntimeTests/C561_a_NUL_in_tool_result_text_persists_as_U_FFFD | R-6,B-1 | all 1 listed, 0 failed/skipped under explicitly resolved B-1 contract | 1 | 1 |
+| CP-13 | S2-S4 | CP-4 | original-ui-payload-guard | /*/Antiphon.Tests.Application/AgentSessionRuntimeTests/(C561_a_NUL_in_tool_result_text_persists_as_U_FFFD*)\|(C1259_deferred_UI_payload_preserves_original_fields_after_restart*) | R-6,D-8 | all 3 listed (C561=1, sanitized=1, safe-stub=1), 0 failed/skipped | 3 | 3 |
 
+**Code starts with CP-1**, after committing/pushing S1's tests; retain its seven
+intended assertion-red results. Next run CP-2 at S2-contracts, then CP-3 at
+S3-contracts. CP-4..CP-13 are the final S2-S4 group, not the initial baseline.
 Run the checkpoint tool with run --plan <this-file> --after S1 then --after S2-contracts, then --after S3-contracts, and finally
 --after S2-S4 --expected-source-sha <committed-implementation-sha>. Supply the
 corresponding committed S1 SHA for CP-1 too. Await every executor to terminal
@@ -623,20 +680,20 @@ All amounts below are **estimated wall-clock minutes**, not measured receipts.
 Slot wait, authoring and unexpected failure repair are additional; no cost is
 silently converted from test counts.
 
-- Ordinary V/R floor (Code): **56 minutes**, sum of CP EstimatedMinutes:
+- Ordinary V/R floor (Code): **58 minutes**, sum of CP EstimatedMinutes:
   CP-1=5, CP-2=8, CP-3=10, CP-4=5, CP-5=6, CP-6=8, CP-7=2,
-  CP-8=2, CP-9=3, CP-10=1, CP-11=3, CP-12=2, CP-13=1. Baseline selection floor
-  23 minutes; final green floor 33 minutes. This contains four isolated builds,
-  estimated 1.5 minutes each (6 build + 50 test/fixture minutes). Optional cold
+  CP-8=2, CP-9=3, CP-10=1, CP-11=3, CP-12=2, CP-13=3. Baseline selection floor
+  23 minutes; final green floor 35 minutes. This contains four isolated builds,
+  estimated 1.5 minutes each (6 build + 52 test/fixture minutes). Optional cold
   checkpoint-tool bootstrap is separately budgeted at 2 minutes and gated.
-- PC floor (Mutation): **731.75 minutes** serial. Pristine landed-pack setup/build
+- PC floor (Mutation): **733.25 minutes** serial. Pristine landed-pack setup/build
   3 minutes, then 113 independent cycles. Each cycle budgets two isolated
   builds at 1.5 minutes each, 0.25 minutes for break/restore/source checks,
   and three executions of the exact target method (baseline green, red,
   restored green). No whole-class fallback. The table below enumerates all
   targets and per-pass test minutes, so the total can be recalculated.
 - Total execution provision including optional tool bootstrap:
-  **2 + 56 + 731.75 = 789.75 minutes**. Without bootstrap, 787.75 minutes.
+  **2 + 58 + 733.25 = 793.25 minutes**. Without bootstrap, 791.25 minutes.
   This is not a prediction of elapsed calendar time with parallel independent
   mutation packs, and no parallel savings are assumed.
 - Savings: four builds rather than thirteen independent ordinary-row builds
@@ -671,20 +728,30 @@ a TUnit execution count. Each method run still expands the roster above.
 | SessionRuntimeActionRoutingTests.C1259_missing_or_truncated_prompt_never_confirms | 5 | 1 | 31.25 |
 | SessionRunnerEventPumpTests.C502_V36_pump_forwards_the_typed_exit_and_publishes_nothing_for_a_stale_disposition | 1 | 0.25 | 4 |
 | SessionMessageQueueDeliveryVerificationTests.Late_confirm_does_not_promote_a_truncated_body_to_sent | 1 | 0.25 | 4 |
-| AgentSessionRuntimeTests.C561_a_NUL_in_tool_result_text_persists_as_U_FFFD | 1 | 0.5 | 4.75 |
+| AgentSessionRuntimeTests.C1259_deferred_UI_payload_preserves_original_fields_after_restart | 1 | 1 | 6.25 |
 
-Cycle subtotal **728.75** + pristine setup/build **3** = **731.75** minutes.
-This includes PC-113's current assertion control; Plan must update its cost if
-the resolved restart payload recipe changes. These are prospective budgets,
-not authorization to run the unresolved payload case as acceptance.
+Cycle subtotal **730.25** + pristine setup/build **3** = **733.25** minutes.
+PC-113 runs its exact two-case method three times (2 green / 2 intended red /
+2 restored green = 6 results), with the same two-build cycle allowance as the
+other controls. Its pass estimate rises from 0.5 to 1 minute for cold DI restart
+and stub recovery. These remain prospective budgets, not execution evidence.
 
 Design handoff inventory: **guards=113, mapped=113, missing=0, duplicate PC maps=0**.
 Execution remains **all 113 PCs required after land; 0 run in TestDesign**.
 Code must preserve this inventory and bind the concrete payloads/variants; ordinary
 Review verifies that none disappeared. Any new unverifiable seam returns to Plan;
-an actual product-policy choice returns to Decide. Current next stage: **Plan for B-1**, then TestDesign rebinds only that seam before Code.
+an actual product-policy choice returns to Decide. Current next stage: **Code**;
+D-8 and R-6/PC-113 resolve and bind B-1 without another TestDesign dispatch.
 
-TestDesign validation: a foreground PowerShell structural check passed the
+Historical TestDesign validation (before this correction): a foreground PowerShell structural check passed the
 13-row/9-column schema, build-reuse groups, 194 planned execution total,
 56-minute ordinary sum, 113 one-to-one guard/PC mappings and append-only original
 plan check. This was not the actual compiled importer or a product test/build.
+
+Plan correction validation: the foreground PowerShell structural check passed
+13 rows/9 columns, four build groups, 70 baseline + 126 final = 196 planned
+executions, 58 ordinary minutes and 113 one-to-one guard/PC maps. Recalculation
+gives 733.25 PC minutes and 793.25 total including optional bootstrap. Comparison
+to the assigned base confirms D-1..D-7, V-1..V-12, R-1..R-5, G/PC-1..112 and
+CP-1..CP-12 unchanged; only the two assigned Markdown files changed and
+`git diff --check` passed. No compiled importer, product build/test or PC ran.
