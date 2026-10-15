@@ -237,14 +237,16 @@ public sealed class ComplexityEffectiveHttpTests(ComplexityChainApiWebAppFactory
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var original = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        foreach (var (table, reason, source) in new[]
+        // CARD-1275: the cell's metadata and token are the first ComplexityChains read, its candidates the second.
+        foreach (var (table, nth, reason, source) in new[]
         {
-            ("RoutingPins", "stage pin read failed (InvalidOperationException)", "role"),
-            ("ComplexityChains", "chain read failed (InvalidOperationException)", "pin"),
-            ("ModelAvailabilityHolds", "availability read failed (InvalidOperationException)", "pin"),
+            ("RoutingPins", 1, "stage pin read failed (InvalidOperationException)", "role"),
+            ("ComplexityChains", 1, "chain metadata read failed (InvalidOperationException)", "pin"),
+            ("ComplexityChains", 2, "chain read failed (InvalidOperationException)", "pin"),
+            ("ModelAvailabilityHolds", 1, "availability read failed (InvalidOperationException)", "pin"),
         })
         {
-            var fault = new ReadFault(table);
+            var fault = new ReadFault(table, nth);
             await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
                 .UseNpgsql(original.Database.GetConnectionString()).AddInterceptors(fault).Options);
             var rows = await Service(db).ListAsync(AgentTaskRole.Plan, CancellationToken.None);
@@ -253,11 +255,21 @@ public sealed class ComplexityEffectiveHttpTests(ComplexityChainApiWebAppFactory
             var hard = rows.Chains[0];
             hard.Effective.ShouldNotBeNull().Source.ShouldBe(source);
             hard.Effective.WithheldReason.ShouldBe(reason);
-            if (table == "ComplexityChains") hard.Candidates.ShouldBeEmpty();
+            if (reason.StartsWith("chain read", StringComparison.Ordinal)) hard.Candidates.ShouldBeEmpty();
             else hard.Candidates.Single().AgentKind.ShouldBe(AgentKind.Codex);
             if (table == "RoutingPins") hard.Effective.StagePin.ShouldBeNull();
             else hard.Effective.StagePin.ShouldNotBeNull().Id.ShouldBe(stage);
             hard.Effective.Candidates.Single().AgentKind.ShouldBe(table == "RoutingPins" ? AgentKind.Codex : AgentKind.ClaudeCode);
+            if (table == "ComplexityChains")
+            {
+                hard.Reason.ShouldBeNull();
+                hard.ConcurrencyToken.ShouldBeNull();
+            }
+            else
+            {
+                hard.Reason.ShouldBe("first");
+                hard.ConcurrencyToken.ShouldNotBeNull();
+            }
             if (table == "ModelAvailabilityHolds")
             {
                 hard.Candidates.Single().AvailableNow.ShouldBeFalse();
@@ -281,13 +293,16 @@ public sealed class ComplexityEffectiveHttpTests(ComplexityChainApiWebAppFactory
         return new(db, TimeProvider.System, routing, options, NullLogger<ComplexityChainService>.Instance, pins);
     }
 
-    private sealed class ReadFault(string table) : DbCommandInterceptor
+    /// <summary>Fails the <paramref name="nth"/> query of <paramref name="table"/>, once.</summary>
+    private sealed class ReadFault(string table, int nth = 1) : DbCommandInterceptor
     {
+        private int _reads;
         public int Failures { get; private set; }
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
             CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
         {
-            if (Failures == 0 && command.CommandText.Contains($"FROM \"{table}\"", StringComparison.Ordinal))
+            if (Failures == 0 && command.CommandText.Contains($"FROM \"{table}\"", StringComparison.Ordinal)
+                && ++_reads == nth)
             {
                 Failures++;
                 throw new InvalidOperationException("C097M injected read failure");
