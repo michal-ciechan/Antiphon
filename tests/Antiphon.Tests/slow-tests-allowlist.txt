@@ -303,4 +303,7 @@ Antiphon.Tests.Application.PhoneHomeCompletedCardTransportTests
 # CARD-1032 S7: real PostgreSQL, scratch Git, phone-home recipient and receipt refusal matrices.
 Antiphon.Tests.Application.CardWorktreeMirrorCleanupTests
 Antiphon.Tests.Application.SessionRuntimeActionTests
+# CARD-1259: isolated schema recovery, real queue and retained transcript leases.
 Antiphon.Tests.Application.SessionRuntimeActionRecoveryTests
+# CARD-1259: hosted pump, actual review producer and real queue receipts on isolated schemas.
+Antiphon.Tests.Application.SessionRuntimeActionRoutingTests
