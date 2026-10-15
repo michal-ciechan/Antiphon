@@ -19,3 +19,9 @@ Parameterized methods include their variants; do not substitute the whole class.
 Mutation owns red/restore/green and missing-control discovery, including additional
 board/identifier/workflow binding controls and other card-lock writers. Existing
 CARD-1281 S0/S6a controls remain pending under their own inventories.
+
+PC-6 pending: remove the early capacity preview; guard is
+AgentTaskWorktreeBaseCreateTests.T0442_V17_existing_create_guards_precede_source_selection
+(concurrency variant). Remove the locked recheck separately and use the existing
+AgentTaskConcurrencyLimitTests racing-create control; Mutation must select its
+exact method before commissioning. No Code mutant or claimed control green.

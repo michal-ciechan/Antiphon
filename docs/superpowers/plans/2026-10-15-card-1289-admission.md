@@ -42,7 +42,7 @@ weakening. No repetition after green.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1289-final/` | admission-regressions | `/*/*/PipelineSpeedIntegrationTests/C1289_*` | V-1,V-2,R-1 | all 11 cases, zero failed | 11 | 4 |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1289-repair/` | admission-regressions | `/*/*/PipelineSpeedIntegrationTests/C1289_*` | V-1,V-2,R-1 | all 11 cases, zero failed | 11 | 4 |
 | CP-2 | S2 | CP-1 | full-foundation-wiring | `/*/*/PipelineSpeedIntegrationTests/*` | R-2 | all methods, zero failed | 35 | 6 |
 | CP-3 | S2 | CP-1 | existing-create-admission | `/*/*/(AgentTaskCardBindingTests*)\|(AgentTaskConcurrencyLimitTests*)\|(AgentTaskScopeOverlapCreateTests*)\|(DispatchConcurrencyAdmissionTests*)\|(AgentTaskWorktreeBaseCreateTests*)\|(AgentTaskWorktreeBaseResolverTests*)\|(PipelineHandoffPilotTests*)/*` | R-3 | every named full class, zero failed | 70 | 8 |
 | CP-4 | S2 | CP-1 | unit-application | `/*/Antiphon.Tests.Application/*/*[Category=Unit]` | R-4 | all Unit cases in namespace, zero failed | 1 | 5 |
@@ -56,3 +56,14 @@ all historical outcomes. CP-4..7 partition the whole Unit lane using the source
 category/namespace census, because S0's single Unit row exceeded 15 minutes.
 Each row retains a 15-minute minimum deadline; no timeout is widened. Final
 execution has a 22-minute total cap to respect the commissioning budget.
+
+Repair after the first S2 selection: CP-3 exposed V17 concurrency-refusal priority.
+Preview capacity without acquiring a lock before ordinary Git, then retain the
+transactional capacity recheck before insertion. SourceLanding keeps its original
+custody-before-capacity ordering. The Git probe now registers the real open gate.
+The existing V17 test must continue to require zero Git calls on initial refusal.
+Run CP-1 and CP-3 again, plus unfinished CP-5..7; CP-2 (35/35) and CP-4
+(2938 passed, 27 skipped) were executed before this bounded repair and retain their
+actual source identity. The stopped run has no terminal run receipt: do not claim
+Final qualification from its partial state. Fresh output is bin-c1289-repair/.
+The repair run has a 10-minute total cap; incomplete verification stays incomplete.
