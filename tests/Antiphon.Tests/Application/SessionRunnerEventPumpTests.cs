@@ -370,6 +370,9 @@ public class SessionRunnerEventPumpTests
                 .SetProperty(s => s.Status, SessionStatus.Running));
         }
 
+        // Agent creation notifications belong to fixture setup. Measure the pump and
+        // stale exit from a clean receiver, preserving the zero-notification oracle.
+        bus.Events.Clear();
         using var pump = new SessionRunnerEventPump(
             h.Provider.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(new SessionRunnerSettings { Enabled = true }),
