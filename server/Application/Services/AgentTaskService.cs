@@ -742,9 +742,11 @@ public sealed class AgentTaskService
                 resolved.WorkingDirectory),
             ct);
 
-        var proposedCardToken = binding.CardId is Guid proposedCardId
+        var proposedCardState = binding.CardId is Guid proposedCardId
             ? await _db.Cards.AsNoTracking().Where(c => c.Id == proposedCardId)
-                .Select(c => (Guid?)c.ConcurrencyToken).SingleAsync(ct)
+                .Select(c => new CardAdmissionState(c.Status, c.ArchivedAt, c.BoardId, c.Identifier,
+                    c.ActiveWorkflowRunId, c.RequiredPlatform, c.CodeVerificationPolicy, c.ReviewVerificationPolicy))
+                .SingleAsync(ct)
             : null;
 
         if (caller.BoardId is Guid capabilityBoard && binding.CardId is Guid boundCardId)
@@ -1549,7 +1551,10 @@ public sealed class AgentTaskService
             await _dispatchConcurrency.EnsureInitializedAsync(ct);
         IDbContextTransaction? gateTx = null;
         DelegationOpenGate.Snapshot? openSnapshot = null;
-        CardWorktreeBaseSelection? basePreview = null;
+        // The preview is advisory and dispatch recomputes it. Ordinary Git inspection
+        // must not hold the card row or concurrency gate while subprocesses run.
+        CardWorktreeBaseSelection? basePreview = handoffActionId is null
+            ? await PrepareWorktreeBaseAsync(task, request, now, ct) : null;
         PipelineHandoffAction? handoff = null;
         if (gateCreate || task.SourceLandingOperationId is not null || verificationAdmission is not null
             || task.CardId is not null || handoffActionId is not null)
@@ -1643,7 +1648,7 @@ public sealed class AgentTaskService
             {
                 if (admissionCard.Status is CardStatus.Done or CardStatus.Canceled || admissionCard.ArchivedAt is not null)
                     throw new ConflictException("Implementation work requires an open card.", "card_implementation_closed");
-                if (admissionCard.ConcurrencyToken != proposedCardToken)
+                if (CardAdmissionState.From(admissionCard) != proposedCardState)
                     throw new ConflictException("The card changed during admission; request a fresh decision.", "card_admission_changed");
             }
             if (task.SourceLandingOperationId is Guid sourceOperation)
@@ -1661,59 +1666,9 @@ public sealed class AgentTaskService
             if (gateCreate)
                 openSnapshot = await _openGate!.EnsureCanCreateAsync(
                     projectId, request.Role, request.IgnoreConcurrencyLimit, ct);
-            if (explicitBaseTask)
-            {
-                if (task.CardId is null)
-                    throw new ValidationException(nameof(request.WorktreeBaseTask),
-                        "BaseTask requires a bound card.", "worktree_base_card_required");
-                var sourceId = await ResolveTaskIdAsync(request.WorktreeBaseTask!, ct);
-                var source = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == sourceId, ct);
-                // Refuse a foreign card or destination before observing its repository.
-                // The caller may know a task ID without having custody of its checkout.
-                if (source.CardId != task.CardId || source.Workspace != WorkspaceMode.Worktree
-                    || source.WorktreeBranch is null || task.RepoPath is null
-                    || !string.Equals(source.MergeTargetRef ?? "master", task.MergeTargetRef ?? "master", StringComparison.Ordinal))
-                    throw new ValidationException(nameof(request.WorktreeBaseTask),
-                        "BaseTask must name a same-card Worktree source in the same Git repository and with the same landing destination.",
-                        "worktree_base_source_invalid");
-                var sameCommon = false;
-                var sourceRepository = source.RepoPath is { } original && Directory.Exists(original)
-                    ? original : source.WorktreePath;
-                if (_landingGit is not null && sourceRepository is not null && task.RepoPath is not null)
-                {
-                    try
-                    {
-                        sameCommon = PathsEqual(
-                            await _landingGit.CommonDirectoryAsync(sourceRepository, ct),
-                            await _landingGit.CommonDirectoryAsync(task.RepoPath, ct));
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    { sameCommon = false; }
-                }
-                if (!sameCommon)
-                    throw new ValidationException(nameof(request.WorktreeBaseTask),
-                        "BaseTask must name a same-card Worktree source in the same Git repository and with the same landing destination.",
-                        "worktree_base_source_invalid");
-                task.RequestedWorktreeBaseTaskId = sourceId;
-            }
-
-            basePreview = _baseResolver is null ? null
-                : await _baseResolver.ResolveAsync(task, ct);
-            if (basePreview?.Decision == CardWorktreeBaseDecision.Ambiguous)
-                throw new ConflictException(
-                    "Same-card worktree histories diverge: "
-                    + string.Join(" ", basePreview.CandidateWarnings)
-                    + " Choose -BaseTask or -FreshWorktree.",
-                    "worktree_base_ambiguous");
-            if (explicitBaseTask && basePreview?.Decision == CardWorktreeBaseDecision.Unknown)
-                throw new ValidationException(nameof(request.WorktreeBaseTask),
-                    $"Requested source cannot be validated: {basePreview.Reason}. {string.Join(" ", basePreview.CandidateWarnings)}",
-                    "worktree_base_source_invalid");
-            task.WorktreeBasePreviewJson = basePreview is null ? null : JsonSerializer.Serialize(new
-            {
-                observedAt = now,
-                decision = basePreview,
-            });
+            // Recover an already-linked handoff child before consulting Git again.
+            if (handoffActionId is not null)
+                basePreview = await PrepareWorktreeBaseAsync(task, request, now, ct);
             // CARD-0544 D-5: the owner latch commits in the same transaction as this task, under
             // the owner row lock the land admission also takes, or neither exists.
             if (verificationAdmission is not null)
@@ -1835,6 +1790,78 @@ public sealed class AgentTaskService
             RequirementSource: task.RequirementSource,
             ObservedPlatform: task.ObservedPlatform,
             WorktreeBase: basePreview);
+    }
+
+    // The general edit token also changes for title, description and ownership writes.
+    // Fence only coordinates used by binding, placement, verification and card admission.
+    private sealed record CardAdmissionState(CardStatus Status, DateTime? ArchivedAt, Guid BoardId,
+        string Identifier, Guid? WorkflowRunId, RequiredPlatform Platform,
+        CardVerificationPolicy CodePolicy, CardVerificationPolicy ReviewPolicy)
+    {
+        public static CardAdmissionState From(Card card) => new(card.Status, card.ArchivedAt,
+            card.BoardId, card.Identifier, card.ActiveWorkflowRunId, card.RequiredPlatform,
+            card.CodeVerificationPolicy, card.ReviewVerificationPolicy);
+    }
+
+    private async Task<CardWorktreeBaseSelection?> PrepareWorktreeBaseAsync(AgentTask task,
+        CreateAgentTaskRequest request, DateTime now, CancellationToken ct)
+    {
+        var explicitBaseTask = request.WorktreeBaseTask is not null;
+        CardWorktreeBaseSelection? basePreview;
+        if (explicitBaseTask)
+        {
+            if (task.CardId is null)
+                throw new ValidationException(nameof(request.WorktreeBaseTask),
+                    "BaseTask requires a bound card.", "worktree_base_card_required");
+            var sourceId = await ResolveTaskIdAsync(request.WorktreeBaseTask!, ct);
+            var source = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == sourceId, ct);
+            // Refuse a foreign card or destination before observing its repository.
+            // The caller may know a task ID without having custody of its checkout.
+            if (source.CardId != task.CardId || source.Workspace != WorkspaceMode.Worktree
+                || source.WorktreeBranch is null || task.RepoPath is null
+                || !string.Equals(source.MergeTargetRef ?? "master", task.MergeTargetRef ?? "master", StringComparison.Ordinal))
+                throw new ValidationException(nameof(request.WorktreeBaseTask),
+                    "BaseTask must name a same-card Worktree source in the same Git repository and with the same landing destination.",
+                    "worktree_base_source_invalid");
+            var sameCommon = false;
+            var sourceRepository = source.RepoPath is { } original && Directory.Exists(original)
+                ? original : source.WorktreePath;
+            if (_landingGit is not null && sourceRepository is not null && task.RepoPath is not null)
+            {
+                try
+                {
+                    sameCommon = PathsEqual(
+                        await _landingGit.CommonDirectoryAsync(sourceRepository, ct),
+                        await _landingGit.CommonDirectoryAsync(task.RepoPath, ct));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                { sameCommon = false; }
+            }
+            if (!sameCommon)
+                throw new ValidationException(nameof(request.WorktreeBaseTask),
+                    "BaseTask must name a same-card Worktree source in the same Git repository and with the same landing destination.",
+                    "worktree_base_source_invalid");
+            task.RequestedWorktreeBaseTaskId = sourceId;
+        }
+
+        basePreview = _baseResolver is null ? null
+            : await _baseResolver.ResolveAsync(task, ct);
+        if (basePreview?.Decision == CardWorktreeBaseDecision.Ambiguous)
+            throw new ConflictException(
+                "Same-card worktree histories diverge: "
+                + string.Join(" ", basePreview.CandidateWarnings)
+                + " Choose -BaseTask or -FreshWorktree.",
+                "worktree_base_ambiguous");
+        if (explicitBaseTask && basePreview?.Decision == CardWorktreeBaseDecision.Unknown)
+            throw new ValidationException(nameof(request.WorktreeBaseTask),
+                $"Requested source cannot be validated: {basePreview.Reason}. {string.Join(" ", basePreview.CandidateWarnings)}",
+                "worktree_base_source_invalid");
+        task.WorktreeBasePreviewJson = basePreview is null ? null : JsonSerializer.Serialize(new
+        {
+            observedAt = now,
+            decision = basePreview,
+        });
+        return basePreview;
     }
 
     private static bool IsImplementationAdmission(AgentTaskRole role) => role is
