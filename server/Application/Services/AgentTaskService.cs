@@ -242,6 +242,10 @@ public sealed class AgentTaskService
     /// Create a task. <paramref name="caller"/> is the authenticated creator: an orchestrator
     /// delegating downward, or the UI acting on a human's behalf.
     /// </summary>
+    // Compile-only seam for S0's red-first admission witnesses. Wired in the next slice.
+    public Task<AgentTaskCreatedDto> CreateAsync(CreateAgentTaskRequest request, Caller caller,
+        Guid handoffActionId, CancellationToken ct) => CreateAsync(request, caller, ct);
+
     public async Task<AgentTaskCreatedDto> CreateAsync(
         CreateAgentTaskRequest request,
         Caller caller,

@@ -23,6 +23,176 @@ namespace Antiphon.Tests.Application;
 [NotInParallel]
 public sealed class PipelineSpeedIntegrationTests
 {
+    private static readonly TimeSpan Guard = TimeSpan.FromSeconds(30);
+
+    [Test]
+    public async Task C1281_B2AtomicChild()
+    {
+        await using var w = await C544World.CreateAsync();
+        var action = await SeedActionAsync(w);
+        var request = ChildRequest(w);
+        var pair = await Task.WhenAll(CreateAsync(w, request, action.Id), CreateAsync(w, request, action.Id));
+        pair[1].Id.ShouldBe(pair[0].Id, "same-key-child-count == 1");
+        await w.RestartAsync();
+        (await CreateAsync(w, request, action.Id)).Id.ShouldBe(pair[0].Id, "lost-response-same-child");
+        var changed = await Should.ThrowAsync<ConflictException>(() => CreateAsync(w,
+            request with { Goal = "different request" }, action.Id), "changed-request-refused");
+        changed.Code.ShouldBe("handoff_request_changed", "changed-request-refused");
+        await using (var fresh = w.CreateContext())
+        {
+            (await fresh.Set<PipelineHandoffAction>().SingleAsync(a => a.Id == action.Id)).ChildTaskId.ShouldBe(pair[0].Id);
+            (await fresh.AgentTasks.CountAsync(t => t.Id != w.Owner.Id)).ShouldBe(1);
+        }
+        foreach (var cut in new[] { "link", "commit", "committed" })
+        {
+            var next = await SeedActionAsync(w);
+            var fault = new AdmissionFault(cut);
+            await w.RestartAsync(fault);
+            await Should.ThrowAsync<IOException>(() => CreateAsync(w, request, next.Id));
+            fault.Hits.ShouldBe(1, "cut reached: " + cut);
+            await w.RestartAsync();
+            await using var fresh = w.CreateContext();
+            var row = await fresh.Set<PipelineHandoffAction>().SingleAsync(a => a.Id == next.Id);
+            var count = await fresh.AgentTasks.CountAsync(t => t.Id != w.Owner.Id);
+            if (cut != "committed")
+            {
+                row.ChildTaskId.ShouldBeNull("child-and-link-atomic " + cut);
+                count.ShouldBe(1, "child-and-link-atomic " + cut);
+            }
+            else
+            {
+                row.ChildTaskId.ShouldNotBeNull("child-and-link-atomic committed");
+                count.ShouldBe(2);
+                (await CreateAsync(w, request, next.Id)).Id.ShouldBe(row.ChildTaskId.Value);
+            }
+        }
+    }
+
+    [Test]
+    public async Task C1281_B3AdmissionFence()
+    {
+        foreach (var terminal in new[] { true, false })
+        {
+            var locks = new CardLockObserver();
+            await using var w = await C544World.CreateAsync(locks);
+            await using var close = w.CreateContext();
+            await using var tx = await close.Database.BeginTransactionAsync();
+            await close.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"Cards\" WHERE \"Id\" = {w.Card.Id} FOR UPDATE");
+            var create = CreateAsync(w, ChildRequest(w));
+            try
+            {
+                await Task.WhenAny(locks.Attempt.Task, create).WaitAsync(Guard);
+                locks.Attempt.Task.IsCompleted.ShouldBeTrue("admission-waits-for-card-lock");
+                create.IsCompleted.ShouldBeFalse("admission-waits-for-card-lock");
+                await ProbeCardLockAsync(w);
+                var card = await close.Cards.SingleAsync(c => c.Id == w.Card.Id);
+                if (terminal) card.Status = CardStatus.Done;
+                card.ConcurrencyToken = Guid.NewGuid();
+                await close.SaveChangesAsync();
+            }
+            finally { await tx.CommitAsync(); }
+            var error = await Should.ThrowAsync<ConflictException>(() => create, "post-close-implementation-refused");
+            error.Code.ShouldBe(terminal ? "card_implementation_closed" : "card_admission_changed");
+            (await w.TaskCountAsync()).ShouldBe(0);
+            // Explicitly commissioned post-Done verification retains ordinary admission.
+            (await CreateAsync(w, ChildRequest(w) with { Role = AgentTaskRole.Mutation })).Id.ShouldNotBe(Guid.Empty);
+            (await CreateAsync(w, ChildRequest(w) with { Card = null, Title = "unbound" })).CardId.ShouldBeNull();
+        }
+
+        var hold = new HoldAdmissionCommit();
+        await using var queued = await C544World.CreateAsync();
+        await queued.RestartAsync(hold);
+        var insertion = CreateAsync(queued, ChildRequest(queued));
+        try
+        {
+            await Task.WhenAny(hold.Entered.Task, insertion).WaitAsync(Guard);
+            hold.Entered.Task.IsCompleted.ShouldBeTrue("insertion-transaction-reached");
+            await ProbeCardLockAsync(queued);
+        }
+        finally { hold.Release.TrySetResult(); await insertion.WaitAsync(Guard); }
+        // S0 supplies the fence only: exercise the close writer's required locked read,
+        // without pretending the not-yet-implemented B-3 close service exists.
+        await using var contender = queued.CreateContext();
+        await using var closeTx = await contender.Database.BeginTransactionAsync();
+        await contender.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"Cards\" WHERE \"Id\" = {queued.Card.Id} FOR UPDATE");
+        (await contender.AgentTasks.AnyAsync(t => t.CardId == queued.Card.Id && t.Status == AgentTaskStatus.Queued))
+            .ShouldBeTrue("queued-implementation-not-canceled; close must refuse");
+    }
+
+    private static CreateAgentTaskRequest ChildRequest(C544World w) => new("foundation child", Title: "foundation",
+        Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree, WorkingDirectory: w.RepositoryPath,
+        Card: w.Card.Id.ToString());
+
+    private static async Task<AgentTaskCreatedDto> CreateAsync(C544World w, CreateAgentTaskRequest request, Guid? action = null)
+    {
+        await using var scope = w.Services.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
+        return action is { } id ? await service.CreateAsync(request, w.Caller(), id, CancellationToken.None)
+            : await service.CreateAsync(request, w.Caller(), CancellationToken.None);
+    }
+
+    private static async Task<PipelineHandoffAction> SeedActionAsync(C544World w)
+    {
+        await using var db = w.CreateContext();
+        var sourceEvent = new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = w.Owner.Id,
+            Type = AgentTaskEventType.Completed, At = w.Clock.GetUtcNow().UtcDateTime };
+        db.Add(sourceEvent);
+        var action = new PipelineHandoffAction { Id = Guid.NewGuid(), PredecessorTaskId = w.Owner.Id,
+            Attempt = w.Owner.Attempt, SettlementEventId = sourceEvent.Id, NextStage = AgentTaskRole.Code,
+            CardId = w.Card.Id, ProjectId = w.Project.Id, RecipientSessionId = w.CallerSessionId,
+            Actor = "fixture", CreatedAt = sourceEvent.At };
+        db.Add(action); await db.SaveChangesAsync(); return action;
+    }
+
+    private static async Task ProbeCardLockAsync(C544World w)
+    {
+        await using var connection = new NpgsqlConnection(w.Schema.ConnectionString); await connection.OpenAsync();
+        await using var command = new NpgsqlCommand("SELECT 1 FROM \"Cards\" WHERE \"Id\" = @id FOR UPDATE NOWAIT", connection);
+        command.Parameters.AddWithValue("id", w.Card.Id);
+        var error = await Should.ThrowAsync<PostgresException>(() => command.ExecuteScalarAsync(), "admission-waits-for-card-lock");
+        error.SqlState.ShouldBe(PostgresErrorCodes.LockNotAvailable, "admission-waits-for-card-lock");
+    }
+
+    private sealed class CardLockObserver : DbCommandInterceptor
+    {
+        public TaskCompletionSource Attempt { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
+            CommandEventData data, InterceptionResult<int> result, CancellationToken ct = default)
+        {
+            if (command.CommandText.Contains("\"Cards\"") && command.CommandText.Contains("FOR UPDATE")) Attempt.TrySetResult();
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private sealed class AdmissionFault(string cut) : SaveChangesInterceptor, IDbTransactionInterceptor
+    {
+        public int Hits { get; private set; }
+        private bool _admitting;
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
+            InterceptionResult<int> result, CancellationToken ct = default)
+        {
+            _admitting |= data.Context!.ChangeTracker.Entries<AgentTask>().Any(e => e.State == EntityState.Added);
+            if (cut == "link" && data.Context.ChangeTracker.Entries<PipelineHandoffAction>()
+                    .Any(e => e.State == EntityState.Modified && e.Entity.ChildTaskId != null)) Fail();
+            return ValueTask.FromResult(result);
+        }
+        public ValueTask<InterceptionResult> TransactionCommittingAsync(DbTransaction transaction,
+            TransactionEventData data, InterceptionResult result, CancellationToken ct = default)
+        { if (_admitting && cut == "commit") Fail(); return ValueTask.FromResult(result); }
+        public Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData data, CancellationToken ct = default)
+        { if (_admitting && cut == "committed") Fail(); return Task.CompletedTask; }
+        private void Fail() { Hits++; throw new IOException("admission cut " + cut); }
+    }
+
+    private sealed class HoldAdmissionCommit : DbTransactionInterceptor
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override async ValueTask<InterceptionResult> TransactionCommittingAsync(DbTransaction transaction,
+            TransactionEventData data, InterceptionResult result, CancellationToken ct = default)
+        { Entered.TrySetResult(); await Release.Task.WaitAsync(Guard, ct); return result; }
+    }
+
     [Test]
     public async Task C1281_B1Schema()
     {
