@@ -71,6 +71,8 @@ public sealed class RerunFilterHostTests
         psi.ArgumentList.Add(staged);
         psi.ArgumentList.Add("--treenode-filter");
         psi.ArgumentList.Add(filter);
+        psi.ArgumentList.Add("--results-directory");
+        psi.ArgumentList.Add(Path.Combine(sandbox, "TestResults"));
         psi.Environment["TMPDIR"] = sandbox;
         psi.Environment["TEMP"] = sandbox;
         psi.Environment["TMP"] = sandbox;
