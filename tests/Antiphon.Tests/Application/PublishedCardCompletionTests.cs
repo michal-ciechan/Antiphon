@@ -167,7 +167,16 @@ public sealed class PublishedCardCompletionTests
     [Test]
     public async Task C1281_CloseRecovery()
     {
-        await using var w = await World.CreateAsync(); await w.PrepareAsync();
+        await using var w = await World.CreateAsync();
+        await using (var seed = w.Db())
+        {
+            var agent = new Agent { Id = Guid.NewGuid(), Name = "assigned", Slug = "assigned", WorkingDirectory = w.Land.Fixture.Repository };
+            seed.Agents.Add(agent);
+            var card = await seed.Cards.SingleAsync(c => c.Id == w.CardId);
+            card.AssignedAgentId = agent.Id; card.AgentQueuePosition = 1;
+            await seed.SaveChangesAsync();
+        }
+        await w.PrepareAsync();
         var proposal = await w.ProposeAsync();
         foreach (var cut in new[] { "completion-after-move", "completion-after-dequeue", "completion-before-save", "completion-before-commit" })
         {
@@ -177,7 +186,10 @@ public sealed class PublishedCardCompletionTests
             await using var db = w.Db();
             (await db.CardRevisions.CountAsync(r => r.CardId == w.CardId)).ShouldBe(0, "close-effects-atomic:" + cut);
             (await db.CardCompletionReceipts.CountAsync(r => r.CardId == w.CardId)).ShouldBe(0);
-            (await db.Cards.SingleAsync(c => c.Id == w.CardId)).Status.ShouldBe(CardStatus.Review);
+            var retained = await db.Cards.SingleAsync(c => c.Id == w.CardId);
+            retained.Status.ShouldBe(CardStatus.Review);
+            retained.AssignedAgentId.ShouldNotBeNull("dequeue-rolled-back:" + cut);
+            retained.AgentQueuePosition.ShouldBe(1, "queue-position-rolled-back:" + cut);
         }
         w.Boundary.Cut = null;
         w.Events.Callback = async () =>
@@ -193,12 +205,15 @@ public sealed class PublishedCardCompletionTests
         await using var read = w.Db();
         var receipt = await read.CardCompletionReceipts.SingleAsync(r => r.CardId == w.CardId);
         (await read.CardRevisions.SingleAsync(r => r.CardId == w.CardId)).Id.ShouldBe(receipt.MoveRevisionId, "same-operation-close-count == 1");
+        var completed = await read.Cards.SingleAsync(c => c.Id == w.CardId);
+        completed.AssignedAgentId.ShouldBeNull("dequeue-committed-with-receipt");
+        completed.AgentQueuePosition.ShouldBeNull();
     }
 
     [Test]
     public async Task C1281_CleanupDebt()
     {
-        await using var w = await World.CreateAsync(); await w.PrepareAsync();
+        await using var w = await World.CreateAsync(retainResidue: true); await w.PrepareAsync();
         var before = (await w.Land.OperationAsync()).ShouldNotBeNull();
         before.Cleanup.ShouldNotBe(LandCleanupStatus.Complete, "fixture-retains-cleanup-debt");
         var pushes = w.Land.Fixture.Git.Trace.Count(a => a[0] == "push");
@@ -279,7 +294,7 @@ public sealed class PublishedCardCompletionTests
             }
             await db.SaveChangesAsync();
         }
-        public static async Task<World> CreateAsync(bool publish = true)
+        public static async Task<World> CreateAsync(bool publish = true, bool retainResidue = false)
         {
             var w = new World();
             await w.Land.InitializeAsync();
@@ -308,8 +323,15 @@ public sealed class PublishedCardCompletionTests
             }
             if (publish)
             {
+                if (retainResidue)
+                    w.Land.Fixture.Git.AfterCommand = async (_, args, result) =>
+                    {
+                        if (args[0] == "push" && result.Succeeded && args.Any(a => a.EndsWith(":" + w.Land.Fixture.TargetRef)))
+                            await File.WriteAllTextAsync(Path.Combine(w.Land.Fixture.Source, "retained-after-publication.txt"), "valuable untracked residue\n");
+                    };
                 await w.Land.RequestAsync(expectedSourceSha: w.SourceSha, reviewEvidenceId: w.EvidenceId);
                 await w.Land.RunQueuedAsync();
+                w.Land.Fixture.Git.AfterCommand = null;
                 var op = (await w.Land.OperationAsync()).ShouldNotBeNull();
                 new AgentTaskLandingState().HasPublication(op).ShouldBeTrue("real-private-publication");
                 var observed = await w.Land.Fixture.RequiredAsync(w.Land.Fixture.Observer, "fetch", "origin", w.Land.Fixture.TargetRef);
