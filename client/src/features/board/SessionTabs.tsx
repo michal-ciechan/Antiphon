@@ -8,10 +8,9 @@ import type { AgentSessionResumeMode } from '../../api/sessions'
 import { useResumeSession, useStopSession } from '../../api/sessions'
 import { SessionContextBadge } from '../agents/SessionContextBadge'
 import { SuspenseBoundary } from '../../shared/SuspenseBoundary'
+import { loadSessionTerminal } from './sessionTerminalLoader'
 
-const SessionTerminal = lazy(() =>
-  import('./SessionTerminal').then((m) => ({ default: m.SessionTerminal })),
-)
+const SessionTerminal = lazy(loadSessionTerminal)
 
 interface SessionTabsProps {
   boardId: string
