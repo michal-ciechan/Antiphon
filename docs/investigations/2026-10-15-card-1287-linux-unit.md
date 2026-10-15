@@ -2,7 +2,7 @@
 
 Status: candidate; qualification pending. Built clean source f6310a452a911b45b0a0946feb9ac49dcc71bbfd once through the host build-slot gate (3m13.96s, 0 errors). No product or test changes. The two requested aggregate runs will reuse that binary.
 
-The roster contains 376 compiled Unit classes, one fully qualified class per line. The filter is the adjacent `-filter.txt` file; class OR operands use the documented trailing wildcard and actual TRX identities must equal the roster.
+The roster contains 374 compiled Unit classes, one fully qualified class per line. The filter is the adjacent `-filter.txt` file; class OR operands use the documented trailing wildcard and actual TRX identities must equal the roster.
 
 The prior Linux 21-minute cutoff is an aggregate checkpoint timeout with no terminal TRX, not proof of a hang. `RollingVolumeRecycleScriptTests.C1008_Legacy_rolling_and_jq_rosters_remain` runs four serial child harnesses; `C1008Process` gives each a separate twelve-minute budget while the class method timeout is ten minutes. The child wait does not receive TUnit cancellation. Windows triage group T observed this timeout; `RemoteScriptContractTests` also retains synchronous/unbounded child waits. Both classes are excluded rather than changing code/timeouts. The previous Linux log used Normal output and cannot identify the active class at cutoff.
 
@@ -54,3 +54,6 @@ The exclusions are conservative at class granularity, including cross-platform m
 | `Antiphon.Tests.Scripts.WindowsUnitPlatformAdmissionTests` | CARD-1287 group M: nested audit requires checkpoint-build-source.json provenance; Windows-specific audit rows. Source: tests/Antiphon.Tests/Scripts/WindowsUnitPlatformAdmissionTests.cs |
 | `Antiphon.Tests.TestHelpers.DelegationHarnessCensusTests` | CARD-1287 group V: DelegateBranchDeliveryTests missing shared graph registration. |
 | `Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests` | CARD-1287 group X: embedded raw C# FreshProbe mistaken for compiled untagged test. |
+
+| `Antiphon.Tests.Agents.RunnerGrokAdapterReadyTests` | CARD-1287 selector boundary: required TUnit trailing-wildcard class operand also selects an Integration suffix class; excluded to keep this roster Unit-only. |
+| `Antiphon.Tests.Application.OutboundConversionManifestTests` | CARD-1287 selector boundary: required TUnit trailing-wildcard class operand also selects an Integration suffix class; excluded to keep this roster Unit-only. |

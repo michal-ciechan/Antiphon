@@ -30,7 +30,6 @@ Antiphon.Tests.Agents.RunnerClaudeAdapterVerifiedPromptTests
 Antiphon.Tests.Agents.RunnerCodexAdapterReadyTests
 Antiphon.Tests.Agents.RunnerCodexAdapterSubmitConfirmTests
 Antiphon.Tests.Agents.RunnerCodexAdapterTurnCompleteTests
-Antiphon.Tests.Agents.RunnerGrokAdapterReadyTests
 Antiphon.Tests.Agents.RunnerGrokAdapterSignInPromptTests
 Antiphon.Tests.Agents.RunnerGrokAdapterTrustPromptTests
 Antiphon.Tests.Agents.RunnerGrokAdapterTurnCompleteTests
@@ -165,7 +164,6 @@ Antiphon.Tests.Application.OrchestratorInstructionsRendererTests
 Antiphon.Tests.Application.OrchestratorInvestigationDetectorTests
 Antiphon.Tests.Application.OrchestratorSettingsTests
 Antiphon.Tests.Application.OrchestratorWorkspaceLayoutTests
-Antiphon.Tests.Application.OutboundConversionManifestTests
 Antiphon.Tests.Application.OutputDistillationGateTests
 Antiphon.Tests.Application.OutputDistillationPolicyTests
 Antiphon.Tests.Application.OutputDistillationQueueTests
