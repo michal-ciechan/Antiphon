@@ -280,12 +280,9 @@ Antiphon.Tests.Checkpoints.CheckpointRunOwnershipTests
 Antiphon.Tests.Checkpoints.CheckpointSlotContractTests
 Antiphon.Tests.Checkpoints.CheckpointTempScopeTests
 Antiphon.Tests.Checkpoints.CheckpointTimingHarnessTests
-Antiphon.Tests.Checkpoints.CheckpointToolCopyCleanupTests
 Antiphon.Tests.Checkpoints.CheckpointToolSourceTests
-Antiphon.Tests.Checkpoints.EvidenceFolderTests
 Antiphon.Tests.Checkpoints.ExitCodeTests
 Antiphon.Tests.Checkpoints.PlanCoverageAssertionTests
-Antiphon.Tests.Checkpoints.PlanCoverageCensusTests
 Antiphon.Tests.Checkpoints.PlanCoverageGoldenTests
 Antiphon.Tests.Checkpoints.PlanCoverageParserTests
 Antiphon.Tests.Checkpoints.PlanCoveragePcTests
