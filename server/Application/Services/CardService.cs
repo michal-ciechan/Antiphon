@@ -1166,6 +1166,9 @@ public sealed class CardService : IScheduledCardActions
             + $"acceptance revision {acceptance.Revision}. Companion={acceptance.CompanionObligationJson}; Mutation/PCs remain pending.";
         ApplyColumnMove(card, done, reason: reason, movedBy: actor);
         var move = card.Revisions.Single(r => r.RevisionNumber == card.RevisionCount);
+        // Navigation-created revisions receive their key when EF starts tracking them.
+        // Track explicitly before copying that key into the durable close receipt.
+        _db.CardRevisions.Add(move);
         await completion.Boundary.ReachedAsync("completion-after-move", card.Id, acceptance.Id, ct);
         var queueRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(_db, card, UtcNow(), ct);
         card.AutoDispatchHeldAt = null;
