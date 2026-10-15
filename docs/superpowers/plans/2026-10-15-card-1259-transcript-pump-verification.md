@@ -657,6 +657,23 @@ TUnit's argument suffix matching, and do not select unrelated methods.
 | CP-11 | S2-S4 | CP-4 | existing-guard-classes | /*/Antiphon.Tests.Application/(SessionStateCommitTests*)\|(ReviewReplyDispatcherTests*)\|(HerdrStatusDisagreementTests*)/* | R-5 | all 29 listed, 0 failed/skipped | 29 | 3 |
 | CP-12 | S2-S4 | CP-4 | held-and-refinement-guards | /*/Antiphon.Tests.Application/(SessionRunnerHeldEventDeliveryTests*)\|(AgentTaskMidTurnRefineTests*)/(C1205_Blocked_held_callback_stops_on_host_cancellation*)\|(C1205_Blocked_held_callback_stops_at_monotonic_deadline*)\|(C1205_Last_transcript_pull_cancellation_preserves_one_output*)\|(C1170_LiveUserPromptConfirmsSentRefinementWithoutASyncPump*)\|(C1188_UserPromptDoesNotWaitOnTheQueueLockWithoutASentRefinement*)\|(C1188_SentRefinementStillWaitsOnTheQueueLockBeforeConfirming*) | R-5 | all 7 listed, 0 failed/skipped | 7 | 2 |
 | CP-13 | S2-S4 | CP-4 | original-ui-payload-guard | /*/Antiphon.Tests.Application/AgentSessionRuntimeTests/(C561_a_NUL_in_tool_result_text_persists_as_U_FFFD*)\|(C1259_deferred_UI_payload_preserves_original_fields_after_restart*) | R-6,D-8 | all 3 listed (C561=1, sanitized=1, safe-stub=1), 0 failed/skipped | 3 | 3 |
+| CP-24 | S2-S4 | CP-4 | finish-recovery-class | /*/Antiphon.Tests.Application/SessionRuntimeActionRecoveryTests/* | task fences, direct tail terminal suffix and starvation, retention lease, diagnostics | all 11 pass | 11 | 2 |
+| CP-25 | S2-S4 | CP-4 | finish-channel-classes | /*/Antiphon.Tests.Application/(ChannelReplyLateConfirmDispatchTests*)\|(ChannelReplyDurabilityTests*)/* | full affected direct-publication and late-confirm classes | all 45 pass | 45 | 3 |
+| CP-26 | S2-S4 | CP-4 | finish-retention-class | /*/Antiphon.Tests.Application/DataRetentionServiceTests/* | full affected retention class | all 73 pass | 73 | 3 |
+| CP-27 | S2-S4 | CP-4 | finish-task-class | /*/Antiphon.Tests.Application/AgentTaskReplyIntegrationTests/* | full affected task settlement and parent delivery class | all 334 pass | 334 | 5 |
+
+Continuation 65a75ada appends CP-24..CP-27 to qualify the already implemented
+recovery/adjacent surfaces at the same final source as CP-4..CP-13. These four
+bounded class rows add 463 executions and an estimated 13 wall minutes, sharing
+CP-4's build. No assembly or whole Unit lane is added. The original table rows,
+historical costs and baseline outcomes remain unchanged. The 35 routing names
+now exist; required internal recovery cuts remain incomplete until separately
+recorded. No argument count substitutes for those subcases. A source-reader
+audit found only literal path fixtures in ScopeDriftTests/DelegationUnitTests;
+neither reads the changed runtime/pump/queue source, so no zero-test reader row
+is invented. Output retention is used for the checkpoint cleanup refusal that
+mistakes its own builds/bin-* evidence directories for remaining compiler output;
+owned compiler outputs are removed manually only after executor death.
 
 **Code starts with CP-1**, after committing/pushing S1's tests; retain its seven
 intended assertion-red results. Next run CP-2 at S2-contracts, then CP-3 at
