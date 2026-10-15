@@ -111,7 +111,7 @@ Static input defaults and values supplied by a loaded parent are distinguished f
 | ProjectDeleteDialog impact, acknowledgement, Delete | deletion-impact | label, disabled | error, disabled | older impact hidden, disabled | success uses canDelete and requiresConfirmation; existing acknowledgement persistence is unchanged |
 | ApiKeysSection global and project lists, Save key, Replace/Delete | api-keys for scope | label, Save disabled | error, Save disabled | error, Save disabled | legitimate empty list; row actions require displayed row |
 | ProjectSetupModal Directory: existing-project hint | projects | hint absent | hint absent | cached hint | absence is not a claim of uniqueness; retain, server checks conflict |
-| ProjectSetupModal Directory: git / browse hints | filesystem/workspaces; DirectoryAutocomplete browse | git hint absent; browse child uses its own pending state | git hint absent; browse error | cached hints | git-negative text needs returned gitInfo; retain; imported browse child is disclosed below |
+| ProjectSetupModal Directory: git / browse hints | filesystem/workspaces; DirectoryAutocomplete browse | git hint absent; browse suggestions empty | git hint absent; browse suggestions empty | cached hints | git-negative text needs returned gitInfo; retain; imported browse child is disclosed below |
 | ProjectSetupModal project/board/default columns | local inputs | local choices | local choices | local choices | constants are new-project preferences, not stored values |
 | ProjectSetupModal First agent: preset, bundles, name/prompt preview, model level, switches | setup-catalog | empty choices/default draft (F3) | same (F3) | cached draft | fix: withhold catalog-dependent form and disable Create until successful catalog; empty/missing selected preset blocks agent creation with explicit text |
 | ProjectSetupModal First agent: profile, remote-control support | agent-tui/profiles, runner-types via support hook | blank profile / Not available (F3) | same (F3) | cached support | fix: profile read message, disabled RC and Create for agent while unknown; successful empty profile list is an actual empty list |
@@ -135,7 +135,7 @@ Static input defaults and values supplied by a loaded parent are distinguished f
 | ComplexityChainCellEditor candidates, metadata, overwrite, Save/Clear | parent loaded snapshot; role readPending | open role editor gated on readPending | parent snapshot retained | parent snapshot retained | partial failedReads needs overwrite acknowledgement; open Any-role editor retains snapshot if list resets (disclosed, CARD-1275 area) |
 | PendingRead | label prop | supplied label | supplied label | supplied label | no read |
 
-Imported DirectoryAutocomplete and AgentTuiSelection are outside this directory. The wizard repair
+DirectoryAutocomplete shows empty suggestions without a pending/error diagnosis and reports pathMissing=false before a response. It does not show an exists assertion; this UX remains disclosed. Imported DirectoryAutocomplete and AgentTuiSelection are outside this directory. The wizard repair
 covers AgentTuiSelection's profile/model read boundary; DirectoryAutocomplete's browse UX and the
 post-create CardModal/DelegateModal are unchanged. No claim of exhaustive runtime coverage is made
 for malformed DTOs, optional compatibility defaults, or these imported dialogs.

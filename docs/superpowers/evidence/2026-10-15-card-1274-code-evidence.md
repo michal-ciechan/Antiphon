@@ -77,3 +77,44 @@ broken by copy-and-rename before the client rows. Manifests rowMinutes 40, total
    ConcurrencySettingsTab scope label for an unread project, DispatchConcurrencyEditor scope loader
    for a paused read, ProjectSetupModal existing-project hint, AgentTuiProfileModal runner list.
 6. Tests run under jsdom; no real-browser acceptance.
+
+## Repair 9277c201 ordinary red evidence
+
+Repair branch `feat/card-task-9277c201`, worktree `/work/worktrees/task-9277c201`.
+Original Code/landing owner remains `6889fec1-9b2d-441e-a3fd-28a5c887e913`.
+Review `010d7154` F1-F4; start `97acbfa6e1008b850594672d2b6ebef9bc57c24a`.
+The independent component/read/state inventory is the repair section in the plan.
+
+Tests committed before production edits:
+`9016bc69588f1b040005d0bf234245da2547ea15`, then locator correction
+`b2ba84ec817811dfcaaa9008d77473cbdf10f6f7`; both pushed.
+
+- CP-1 `20261015-070830-2635`: 147 executed, 31 failed, 116 passed, 0 skipped.
+  Four profile rows stopped at an incorrect exact switch name; 27 rows reached the guarded defect.
+- CP-1 `20261015-071142-f8ef`: 147 executed, 31 failed, 116 passed, 0 skipped.
+  Corrected profile locators reached the missing profile-read messages. The other failures were
+  missing catalog/delegation/model/empty-preset messages, Group placeholder/retained-id display,
+  and Runner type placeholder. Test names and assertion diagnostics inspected in each console.log.
+
+```text
+CHECKPOINT CP-1 commit=9016bc69588f1b040005d0bf234245da2547ea15 build=n/a filter=pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/settingsPendingReads.test.tsx src/features/settings/DispatchConcurrencyEditor.test.tsx src/features/settings/ProjectSetupModal.test.tsx executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=1 slot=granted waited=0s dirty=0 source=9016bc69588f1b040005d0bf234245da2547ea15 sourceState=clean buildSource=notApplicable
+CHECKPOINT CP-1 commit=b2ba84ec817811dfcaaa9008d77473cbdf10f6f7 build=n/a filter=pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/settingsPendingReads.test.tsx src/features/settings/DispatchConcurrencyEditor.test.tsx src/features/settings/ProjectSetupModal.test.tsx executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=1 slot=granted waited=0s dirty=0 source=b2ba84ec817811dfcaaa9008d77473cbdf10f6f7 sourceState=clean buildSource=notApplicable
+```
+
+Drivers outside the table: dependency installation (`c1274-repair-npm-ci`, slot granted,
+waited=30s, exit 0); checkpoint-tool bootstrap (`c1274-repair-checkpoint-tool`, slot granted,
+waited=0s, exit 0, two existing compiler warnings). Tool built once to
+`tools/Antiphon.Checkpoints/bin-c1274-repair-tool/`. esbuild's executable was copied and renamed
+before checkpoint execution to break npm's hard link. A shortened expected SHA and a mistaken
+`--manifest` flag were refused before a driver launched. Subsequent runs use full SHAs and the
+positional manifest, rowMinutes 40, totalMinutes 150, `--total-timeout 150m`, serial, no keep-outputs.
+The first red run used effective row/total overrides 40/150 (recorded in request.json).
+
+F3 choice: disable Create project while the setup catalog is unknown, including skipped-agent
+submissions. For agent creation, profile/model read states and missing selected preset also gate
+Create. The server trace is ProjectSetupService -> AgentService -> AgentPresets.Apply:
+explicit false and empty lists override preset values, so client initialization and recovered
+payload assertions matter. Server source was inspected, not changed or executed in this repair.
+
+Final CP-2/CP-3 qualification and CP-4 outcome will be recorded with the actual tested SHA in the
+stored task report. PCs are pending; Mutation was not run. Restart: none.
