@@ -81,7 +81,7 @@ committed `--expected-source-sha`, no keep-outputs on Linux.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | n/a | client-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/settingsPendingReads.test.tsx src/features/settings/DispatchConcurrencyEditor.test.tsx src/features/settings/ProjectSetupModal.test.tsx` | V-1, V-2, V-3, V-4, V-5, V-6 | both files run, nonzero count; new C1274 rows red before the fix | n/a | 5 | true |
+| CP-1 | S1 | n/a | client-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/settingsPendingReads.test.tsx src/features/settings/DispatchConcurrencyEditor.test.tsx src/features/settings/ProjectSetupModal.test.tsx` | V-1, V-2, V-3, V-4, V-5, V-6 | three files run, 147 executed; repair rows red before the fix | n/a | 5 | true |
 | CP-2 | S2 | n/a | client-green | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/settingsPendingReads.test.tsx src/features/settings/DispatchConcurrencyEditor.test.tsx src/features/settings/ProjectDeleteDialog.test.tsx src/features/settings/ApiKeysSection.test.tsx src/features/settings/ProjectConfig.test.tsx src/features/settings/RoutingSettingsTab.test.tsx src/features/settings/RunnerDefaultsSection.test.tsx src/features/settings/RolePolicySection.test.tsx src/features/settings/routingSettingsModel.test.ts src/features/settings/ConcurrencySettingsTab.test.tsx src/features/settings/ProjectSetupModal.test.tsx` | V-1, V-2, V-3, V-4, V-5, V-6, R-1 | 11 files; >= 480 executed, 0 failed/skipped (inspect Vitest log; command-row Min must be n/a) | n/a | 8 | true |
 | CP-4 | S2 | n/a | client-settings-page | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/SettingsPage.test.tsx` | R-1 | inherited red: `does not fetch routing queries until the Routing tab is opened` and `?tab=routing selects the tab and mounts routing queries without fetching templates` fail with `expected 15 to be 1` at base 78e400178 (run in a detached base worktree, see the evidence doc); other tests pass | n/a | 2 | true |
 | CP-3 | S2 | n/a | client-build | `npm --prefix client run build` | R-2 | typecheck and production build exit 0 | n/a | 3 | true |
@@ -158,3 +158,7 @@ for malformed DTOs, optional compatibility defaults, or these imported dialogs.
 - R-2 remains typecheck plus production build. Unit is excluded by this client repair brief.
 - Manual acceptance: source-level server contract trace and this inventory; browser not commissioned.
 - New PCs are pending for Mutation; this stage exercises ordinary red tests before the repair.
+
+Repair red-fixture adjustment: Mantine Switch includes its description in the accessible name.
+The four profile rows use a prefix locator followed by a literal full-name expectation. Their
+first run stopped at the locator before reaching the defect; CP-1 is repeated before production edits.
