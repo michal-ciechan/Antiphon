@@ -158,11 +158,11 @@ public sealed class ReviewThreadService
         await _queue.EnqueueAsync(
             sessionId, prompt, MessageSendMode.WhenIdle, ct,
             origin: QueuedMessageOrigin.Channel,
-            conversationKey: $"review:{thread.Id}", reviewThreadId: thread.Id);
+            conversationKey: $"review:{thread.Id}", reviewThreadId: thread.Id, deliverIfIdle: false);
 
-        thread.Status = ReviewThreadStatus.AwaitingAgent;
-        thread.UpdatedAt = _timeProvider.GetUtcNow().UtcDateTime;
-        await _db.SaveChangesAsync(ct);
+        // Queue admission commits the typed target, AwaitingAgent and an idle action
+        // together. No later producer save may overwrite a fast consumed reply.
+        await _db.Entry(thread).ReloadAsync(ct);
         await PublishChangedAsync(threadId, ct);
         return true;
     }
