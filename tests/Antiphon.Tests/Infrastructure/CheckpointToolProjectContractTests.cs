@@ -1,3 +1,4 @@
+using System.Xml.Linq;
 using Shouldly;
 using TUnit.Core;
 
@@ -17,10 +18,18 @@ public sealed class CheckpointToolProjectContractTests
     }
 
     [Test]
-    public void csproj_has_no_project_references()
+    public void csproj_references_only_host_cleanup()
     {
-        DockerStackDocuments.Read("tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj")
-            .ShouldNotContain("<ProjectReference");
+        // CARD-0987 custody refresh D-3 requires the one-way tool -> HostCleanup reference.
+        // Keep the exact set closed: missing, duplicate and unrelated references must fail.
+        var references = XDocument.Parse(
+                DockerStackDocuments.Read("tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj"))
+            .Descendants()
+            .Where(element => element.Name.LocalName == "ProjectReference")
+            .Select(element => (string?)element.Attribute("Include"))
+            .ToArray();
+
+        references.ShouldBe(["../../src/Antiphon.HostCleanup/Antiphon.HostCleanup.csproj"]);
     }
 
     [Test]
