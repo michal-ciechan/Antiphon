@@ -26,10 +26,10 @@ public sealed class SubscriptionUsageParserTests
     public void V0160_cuf_status_retains_remaining_and_reset()
     {
         // Collect independent failures so the cursor witness cannot mask the vendor bar defect.
-        Should.SatisfyAllConditions(
-            () => AssertDatedStatus("Weekly\u001b[1Climit: 3% left\r\n"
+        this.ShouldSatisfyAllConditions(
+            _ => AssertDatedStatus("Weekly\u001b[1Climit: 3% left\r\n"
                 + "(resets\u001b[1C22:13\u001b[1Con\u001b[1C24\u001b[1CAug)", "cuf"),
-            () =>
+            _ =>
             {
                 var panel = ReadVendorStatusPanel();
                 var parsed = SubscriptionUsageParser.Parse(AgentKind.Codex, panel, Clock(), TimeZoneInfo.Utc);
@@ -40,7 +40,7 @@ public sealed class SubscriptionUsageParserTests
                     "C907-vendor-panel-excerpt-cap");
                 parsed.RawExcerpt.ShouldNotContain("#", "C907-vendor-panel-header-excluded");
             },
-            () =>
+            _ =>
             {
                 string[] invalid = ["three", "1..3", "[] 3", "[arbitrary text] 3",
                     "[██\n░░] 3", "[" + new string('█', 81) + "] 3"];
@@ -74,7 +74,8 @@ public sealed class SubscriptionUsageParserTests
         var parts = fixture.Split("--- payload ---\n", 2, StringSplitOptions.None);
         parts.Length.ShouldBe(2, "C907-setup-vendor-panel-envelope");
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(parts[1]))).ToLowerInvariant();
-        parts[0].ShouldContain("# payload-sha256: " + digest, "C907-setup-vendor-panel-digest");
+        parts[0].Contains("# payload-sha256: " + digest, StringComparison.Ordinal)
+            .ShouldBeTrue("C907-setup-vendor-panel-digest");
         return parts[1];
     }
 
