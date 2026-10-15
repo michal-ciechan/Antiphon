@@ -30,6 +30,9 @@ public class SessionRuntimeActionRecoveryTests
     [Arguments(false)]
     [Arguments(true)]
     public async Task C1259_admitted_task_attempt_cannot_settle_its_replacement(bool catchup)
+        => await VerifyTaskAttemptReplacementAsync(catchup);
+
+    internal static async Task VerifyTaskAttemptReplacementAsync(bool catchup)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var h = await BridgeQueueHarness.CreateAsync(new()

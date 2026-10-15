@@ -288,7 +288,9 @@ public partial class AgentTaskReplyIntegrationTests
 
             // The admission hook starts a real conversion task. Its observation stays held while
             // this runtime must route the source answer and submit the next queued prompt.
-            runtimeTask = h.Runtime.ObserveTranscriptAsync(turnEnd, CancellationToken.None);
+            await h.Runtime.ObserveTranscriptAsync(turnEnd, CancellationToken.None);
+            runtimeTask = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>()
+                .DrainPageAsync(h.SessionId, CancellationToken.None);
             // Start the unchanged release budget at the actual converter-held condition,
             // rather than charging the capture/materialization ticks to runtime release.
             var observed = await Task.WhenAny(converterHeld.Task, runtimeTask);
