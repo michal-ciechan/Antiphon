@@ -38,8 +38,8 @@ public class AdvisoryChangePolicyTests
                 .ShouldBe(AdvisoryAction.Review, "unclassified-needs-review");
         }
         foreach (var role in new[] { AgentTaskRole.Review, AgentTaskRole.Code })
-            Compose(role).ShouldContain("No Review rerun solely for advisory", "shipped-advisory-policy");
-        Compose(AgentTaskRole.Review).ShouldContain("incomplete gate", "shipped-incomplete-policy");
+            Compose(role).ShouldContain("No Review rerun solely for advisory", customMessage: "shipped-advisory-policy");
+        Compose(AgentTaskRole.Review).ShouldContain("incomplete gate", customMessage: "shipped-incomplete-policy");
     }
 
     [Test]
@@ -89,7 +89,7 @@ public class AdvisoryChangePolicyTests
         refusal.Code.ShouldBe("final_verification_review_required", "latched-helper-refused");
         (await db.AgentTaskLandRequests.CountAsync(r => r.TaskId == latched.Id)).ShouldBe(0);
         (await db.StageOutcomes.AsNoTracking().SingleAsync()).ReviewedSourceSha.ShouldBe(originalSha);
-        Compose(AgentTaskRole.Review).ShouldContain("publish the valid reviewed tip first", "publication-before-helper");
+        Compose(AgentTaskRole.Review).ShouldContain("publish the valid reviewed tip first", customMessage: "publication-before-helper");
     }
 
     [Test]
@@ -119,7 +119,7 @@ public class AdvisoryChangePolicyTests
             policy.CanUseSeparateDocs([narrative with { After = text }]).ShouldBeFalse("active-markup-refused");
         policy.CanUseSeparateDocs([]).ShouldBeFalse("empty-delta-refused");
         policy.CanUseSeparateDocs([narrative with { After = narrative.Before }]).ShouldBeFalse("unchanged-refused");
-        Compose(AgentTaskRole.Review).ShouldContain("instructions, policy, test selections, schemas", "protected-content-policy");
+        Compose(AgentTaskRole.Review).ShouldContain("instructions, policy, test selections, schemas", customMessage: "protected-content-policy");
     }
 
     [Test]
@@ -127,7 +127,7 @@ public class AdvisoryChangePolicyTests
     {
         // S2-policy intentionally has no language-aware proof implementation: even ordinary
         // comments remain on ordinary Review. No regex/extension token-equivalence claim.
-        Compose(AgentTaskRole.Review).ShouldContain("Comment exemptions remain refused", "unproved-comments-refused");
+        Compose(AgentTaskRole.Review).ShouldContain("Comment exemptions remain refused", customMessage: "unproved-comments-refused");
         var policy = new AdvisoryChangePolicy();
         foreach (var (path, before, after) in new[] {
             ("code.cs", "// old\nreturn 1;", "// new\nreturn 1;"),
@@ -176,7 +176,7 @@ public class AdvisoryChangePolicyTests
         persisted.SupersedesId.ShouldBeNull();
         (await new StageOutcomeService(fresh).ListAsync(null, null, "Review", null, true, CancellationToken.None))
             .Summary.ShouldHaveSingleItem().Found.ShouldBe(1);
-        Compose(AgentTaskRole.Review).ShouldContain("Preserve historical outcomes and costs", "history-policy");
+        Compose(AgentTaskRole.Review).ShouldContain("Preserve historical outcomes and costs", customMessage: "history-policy");
     }
 
     private static AdvisoryDelta Narrative() => new("docs/stories/launch.md", "The launch was in May.",
