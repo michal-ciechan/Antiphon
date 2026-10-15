@@ -82,15 +82,23 @@ public sealed class CheckpointRepeatHostTests : CheckpointTestBase
         foreach (var argument in new[] { staged, "--treenode-filter", "/*/*/RepeatHostTests*/*", "--report-trx",
                      "--report-trx-filename", "run.trx", "--results-directory", root })
             psi.ArgumentList.Add(argument);
+        psi.Environment["TMPDIR"] = root;
+        psi.Environment["TEMP"] = root;
+        psi.Environment["TMP"] = root;
         psi.Environment["C885_PROBE_LOG"] = log;
         psi.Environment["ANTIPHON_CHECKPOINT_NONCE"] = nonce;
         psi.Environment["TUNIT_MAX_PARALLEL_TESTS"] = "1";
         if (failOrdinal is not null) psi.Environment["C885_FAIL_ORDINAL"] = failOrdinal;
         if (skipOrdinal is not null) psi.Environment["C885_SKIP_ORDINAL"] = skipOrdinal;
         using var process = Process.Start(psi)!;
+        RegisterCheckpointChild(process);
         var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken);
-        return (process.ExitCode, await stdout + "\n" + await stderr, Path.Combine(root, "run.trx"), log, nonce);
+        var text = await stdout + "\n" + await stderr;
+        // CARD-1272: the default report directory is beside the staged DLL, inside sealed output.
+        Directory.Exists(Path.Combine(Path.GetDirectoryName(staged)!, "TestResults"))
+            .ShouldBeFalse("the sealed build output must remain unchanged");
+        return (process.ExitCode, text, Path.Combine(root, "run.trx"), log, nonce);
     }
 }
