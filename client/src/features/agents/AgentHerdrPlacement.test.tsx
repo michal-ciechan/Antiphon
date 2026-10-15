@@ -1,7 +1,7 @@
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentDetailDto, AgentSummaryDto, CreateAgentRequest, UpdateAgentRequest } from '../../api/agents'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { pasteInto, renderWithProviders, screen, settleQueries, userEvent } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { AgentCreateModal } from './AgentCreateModal'
 import { AgentSettingsModal } from './AgentSettingsModal'
@@ -108,10 +108,11 @@ function commonHandlers() {
 describe('AgentHerdrPlacement', () => {
   it('create modal shows both inputs only in Herdr mode with the documented placeholders', async () => {
     server.use(...commonHandlers())
-    renderWithProviders(<AgentCreateModal opened onClose={() => {}} />)
+    const { queryClient } = renderWithProviders(<AgentCreateModal opened onClose={() => {}} />)
     expect(screen.queryByPlaceholderText('project name')).not.toBeInTheDocument()
-    await userEvent.click(await screen.findByRole('radio', { name: 'Herdr' }))
-    expect(await screen.findByPlaceholderText('project name')).toBeInTheDocument()
+    await settleQueries(queryClient)
+    await userEvent.click(screen.getByRole('radio', { name: 'Herdr' }))
+    expect(screen.getByPlaceholderText('project name')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('automatic placement')).toBeInTheDocument()
   })
 
@@ -124,19 +125,22 @@ describe('AgentHerdrPlacement', () => {
         return HttpResponse.json({ ...detail, ...submitted, id: 'new', queue: [] })
       }),
     )
-    renderWithProviders(<AgentCreateModal opened onClose={() => {}} />)
+    // Settled and pasted, not polled and typed: the per-key typing reached the hang detector under
+    // load, and its abandoned keystrokes landed in the next test's field ('hOrch2'; CARD-1246).
+    const { queryClient } = renderWithProviders(<AgentCreateModal opened onClose={() => {}} />)
+    await settleQueries(queryClient)
     const name = screen.getAllByLabelText('Name').find((el) => el instanceof HTMLInputElement) as HTMLInputElement
-    await userEvent.type(name, 'Orch Agent')
+    await pasteInto(name, 'Orch Agent')
     const directory = screen
       .getAllByLabelText('Working directory')
       .find((el): el is HTMLInputElement => el instanceof HTMLInputElement)!
     await userEvent.clear(directory)
-    await userEvent.type(directory, 'D:\\src\\app')
-    await userEvent.click(await screen.findByRole('radio', { name: 'Herdr' }))
-    await userEvent.type(screen.getByPlaceholderText('project name'), 'PredictionMarkets')
-    await userEvent.type(screen.getByPlaceholderText('automatic placement'), 'Orch')
+    await pasteInto(directory, 'D:\\src\\app')
+    await userEvent.click(screen.getByRole('radio', { name: 'Herdr' }))
+    await pasteInto(screen.getByPlaceholderText('project name'), 'PredictionMarkets')
+    await pasteInto(screen.getByPlaceholderText('automatic placement'), 'Orch')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
-    await waitFor(() => expect(submitted).not.toBeNull())
+    await settleQueries(queryClient)
     expect(submitted!.herdrWorkspaceLabel).toBe('PredictionMarkets')
     expect(submitted!.herdrTabLabel).toBe('Orch')
   })
@@ -150,15 +154,16 @@ describe('AgentHerdrPlacement', () => {
         return HttpResponse.json({ ...detail, ...submitted })
       }),
     )
-    renderWithProviders(
+    const { queryClient } = renderWithProviders(
       <AgentSettingsModal agent={agent} opened onClose={() => {}} onDeleted={() => {}} />,
     )
-    expect(await screen.findByDisplayValue('PredictionMarkets')).toBeInTheDocument()
+    await settleQueries(queryClient)
+    expect(screen.getByDisplayValue('PredictionMarkets')).toBeInTheDocument()
     expect(screen.getByDisplayValue('Orch')).toBeInTheDocument()
     await userEvent.clear(screen.getByDisplayValue('Orch'))
-    await userEvent.type(screen.getByPlaceholderText('automatic placement'), 'Orch2')
+    await pasteInto(screen.getByPlaceholderText('automatic placement'), 'Orch2')
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(submitted).not.toBeNull())
+    await settleQueries(queryClient)
     expect(submitted!.herdrTabLabel).toBe('Orch2')
     expect(submitted!.herdrWorkspaceLabel).toBeUndefined()
   })
@@ -172,28 +177,28 @@ describe('AgentHerdrPlacement', () => {
         return HttpResponse.json({ ...detail, herdrTabLabel: null })
       }),
     )
-    renderWithProviders(
+    const { queryClient } = renderWithProviders(
       <AgentSettingsModal agent={agent} opened onClose={() => {}} onDeleted={() => {}} />,
     )
-    await screen.findByDisplayValue('Orch')
+    await settleQueries(queryClient)
     await userEvent.clear(screen.getByDisplayValue('Orch'))
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(submitted).not.toBeNull())
+    await settleQueries(queryClient)
     expect(submitted!.herdrTabLabel).toBe('')
   })
 
   it('switching backend away and back keeps typed labels', async () => {
     server.use(...commonHandlers())
-    renderWithProviders(
+    const { queryClient } = renderWithProviders(
       <AgentSettingsModal agent={agent} opened onClose={() => {}} onDeleted={() => {}} />,
     )
-    const tab = await screen.findByDisplayValue('Orch')
-    await userEvent.clear(tab)
-    await userEvent.type(screen.getByPlaceholderText('automatic placement'), 'Kept')
+    await settleQueries(queryClient)
+    await userEvent.clear(screen.getByDisplayValue('Orch'))
+    await pasteInto(screen.getByPlaceholderText('automatic placement'), 'Kept')
     await userEvent.click(screen.getByRole('radio', { name: 'Pty host' }))
     expect(screen.queryByPlaceholderText('automatic placement')).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('radio', { name: 'Herdr' }))
-    expect(await screen.findByDisplayValue('Kept')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Kept')).toBeInTheDocument()
   })
 
   it('saving labels on a live agent PATCHes and never POSTs start', async () => {
@@ -217,12 +222,14 @@ describe('AgentHerdrPlacement', () => {
         return HttpResponse.json({ ...detail, ...live, queue: [] })
       }),
     )
-    renderWithProviders(
+    const { queryClient } = renderWithProviders(
       <AgentSettingsModal agent={live as AgentSummaryDto} opened onClose={() => {}} onDeleted={() => {}} />,
     )
-    await screen.findByDisplayValue('Orch')
+    await settleQueries(queryClient)
+    expect(screen.getByDisplayValue('Orch')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(patched).toBe(true))
+    await settleQueries(queryClient)
+    expect(patched).toBe(true)
     expect(started).toBe(false)
   })
 })

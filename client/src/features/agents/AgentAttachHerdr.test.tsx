@@ -2,7 +2,7 @@ import { HttpResponse, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentDetailDto, AgentSummaryDto } from '../../api/agents'
 import type { AgentSessionSummaryDto, BoardSummaryDto } from '../../api/boards'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { pasteInto, renderWithProviders, screen, settleQueries, userEvent } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { AgentsPage } from './AgentsPage'
 import { notifications } from '@mantine/notifications'
@@ -90,15 +90,19 @@ function handlers(summary: AgentSummaryDto, detail: AgentDetailDto = { ...summar
 describe('CARD-0213 attach Herdr pane', () => {
   it('shows Attach… only for Herdr agents with no live session', async () => {
     server.use(...handlers(herdrAgent))
-    renderWithProviders(<AgentsPage />)
-    expect(await screen.findByRole('button', { name: 'Attach…' })).toBeInTheDocument()
+    // Settled, not polled: the agent list's first render missed a findBy window under load (CARD-1246).
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
+    expect(screen.getByRole('button', { name: 'Attach…' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Start' })).toBeInTheDocument()
   })
 
   it('does not show Attach… for a PtyHost agent', async () => {
     server.use(...handlers(ptyAgent))
-    renderWithProviders(<AgentsPage />)
-    expect(await screen.findByText('Frontend Claude')).toBeInTheDocument()
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
+    // Settled, the detail panel repeats the name, so assert the roster card.
+    expect(screen.getByRole('button', { name: 'Agent Frontend Claude' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Attach…' })).not.toBeInTheDocument()
   })
 
@@ -110,9 +114,10 @@ describe('CARD-0213 attach Herdr pane', () => {
       liveSession: liveAttached,
     }
     server.use(...handlers(attached, { ...attached, queue: [] }))
-    renderWithProviders(<AgentsPage />)
-    expect(await screen.findByText('PM-DropCopy-Grok')).toBeInTheDocument()
-    expect(await screen.findByTestId('agent-session-stop')).toHaveTextContent('Detach')
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
+    expect(screen.getByRole('button', { name: 'Agent PM-DropCopy-Grok' })).toBeInTheDocument()
+    expect(screen.getByTestId('agent-session-stop')).toHaveTextContent('Detach')
     expect(screen.getAllByTestId('herdr-attached-chip')[0]).toHaveTextContent('attached')
   })
 
@@ -133,19 +138,18 @@ describe('CARD-0213 attach Herdr pane', () => {
       ),
     )
 
-    renderWithProviders(<AgentsPage />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Attach…' }))
-    const input = await screen.findByTestId('attach-herdr-pane-id')
-    await userEvent.type(input, 'w2:p3')
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
+    await userEvent.click(screen.getByRole('button', { name: 'Attach…' }))
+    await pasteInto(screen.getByTestId('attach-herdr-pane-id'), 'w2:p3')
     await userEvent.click(screen.getByRole('button', { name: 'Attach' }))
+    await settleQueries(queryClient)
 
-    await waitFor(() => {
-      expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({
-          color: 'red',
-          message: 'pane w2:p3 is bound to session aaaa (attached)',
-        }),
-      )
-    })
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({
+        color: 'red',
+        message: 'pane w2:p3 is bound to session aaaa (attached)',
+      }),
+    )
   })
 })

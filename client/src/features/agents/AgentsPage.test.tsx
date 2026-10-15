@@ -5,7 +5,7 @@ import type { AgentDetailDto, AgentSummaryDto, InstructionBundleDto } from '../.
 import type { ProjectReadinessDto } from '../../api/projectSetup'
 import type { AgentTuiProfileDto } from '../../api/agentTui'
 import type { AgentSessionSummaryDto, BoardDetailDto, BoardSummaryDto } from '../../api/boards'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { pasteInto, renderWithProviders, screen, settleQueries, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { AgentCard, AgentsPage } from './AgentsPage'
 
@@ -390,9 +390,11 @@ describe('AgentsPage', () => {
     }
     server.use(...agentHandlers([stoppedWithSession], { ...stoppedWithSession, queue: [] }))
 
-    renderWithProviders(<AgentsPage />)
+    // Settled, not polled: these renders missed a findBy window under load (CARD-1246).
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
 
-    expect(await screen.findByRole('button', { name: 'Stop' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Start' })).not.toBeInTheDocument()
   })
 
@@ -457,17 +459,20 @@ describe('AgentsPage', () => {
       }),
     )
 
-    renderWithProviders(<AgentsPage />)
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Agent menu Frontend Claude' }))
-    await userEvent.click(await screen.findByRole('menuitem', { name: /Edit settings/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Agent menu Frontend Claude' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /Edit settings/ }))
+    await settleQueries(queryClient)
 
-    const detailsField = await screen.findByLabelText('Details')
+    const detailsField = screen.getByLabelText('Details')
     await userEvent.clear(detailsField)
-    await userEvent.type(detailsField, 'updated details')
+    await pasteInto(detailsField, 'updated details')
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await settleQueries(queryClient)
 
-    await waitFor(() => expect(patchSpy).toHaveBeenCalledTimes(1))
+    expect(patchSpy).toHaveBeenCalledTimes(1)
     expect(patchSpy.mock.calls[0][0]).toMatchObject({
       name: 'Frontend Claude',
       details: 'updated details',
@@ -598,35 +603,35 @@ describe('AgentsPage', () => {
       }),
     )
 
-    renderWithProviders(<AgentsPage />)
+    const { queryClient } = renderWithProviders(<AgentsPage />)
 
     await userEvent.click(screen.getByRole('button', { name: 'New Agent' }))
-    await userEvent.type(await screen.findByLabelText('Name'), 'Frontend Claude')
-    await userEvent.type(getVisibleInput('Working directory'), 'D:/src/app')
-    await userEvent.type(screen.getByLabelText('Details'), 'UI work')
+    await settleQueries(queryClient)
+    await pasteInto(screen.getByLabelText('Name'), 'Frontend Claude')
+    await pasteInto(getVisibleInput('Working directory'), 'D:/src/app')
+    await pasteInto(screen.getByLabelText('Details'), 'UI work')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+    await settleQueries(queryClient)
 
-    await waitFor(() =>
-      expect(createSpy).toHaveBeenCalledWith({
-        sessionBackend: 'PtyHost',
-        herdrWorkspaceLabel: null,
-        herdrTabLabel: null,
-        name: 'Frontend Claude',
-        workingDirectory: 'D:/src/app',
-        details: 'UI work',
-        assignmentPolicy: 'AutoPick',
-        createWorkingDirectory: false,
-        tuiProfileId: 'tui-profile-1',
-        modelId: null,
-        modelLevel: 'High',
-        replyStyle: 'Normal',
-        alwaysOn: true,
-        remoteControlEnabled: true,
-        bundleKeys: ['orchestrator', 'board-api'],
-        systemPromptAppend: null,
-        preset: 'orchestrator',
-      }),
-    )
+    expect(createSpy).toHaveBeenCalledWith({
+      sessionBackend: 'PtyHost',
+      herdrWorkspaceLabel: null,
+      herdrTabLabel: null,
+      name: 'Frontend Claude',
+      workingDirectory: 'D:/src/app',
+      details: 'UI work',
+      assignmentPolicy: 'AutoPick',
+      createWorkingDirectory: false,
+      tuiProfileId: 'tui-profile-1',
+      modelId: null,
+      modelLevel: 'High',
+      replyStyle: 'Normal',
+      alwaysOn: true,
+      remoteControlEnabled: true,
+      bundleKeys: ['orchestrator', 'board-api'],
+      systemPromptAppend: null,
+      preset: 'orchestrator',
+    })
   })
 
   it('creates a supervised agent when the always-on and remote-control switches are on', async () => {
@@ -640,40 +645,39 @@ describe('AgentsPage', () => {
       }),
     )
 
-    renderWithProviders(<AgentsPage />)
+    const { queryClient } = renderWithProviders(<AgentsPage />)
 
     await userEvent.click(screen.getByRole('button', { name: 'New Agent' }))
-    await userEvent.type(await screen.findByLabelText('Name'), 'Supervised Claude')
-    await userEvent.type(getVisibleInput('Working directory'), 'D:/src/app')
+    await settleQueries(queryClient)
+    await pasteInto(screen.getByLabelText('Name'), 'Supervised Claude')
+    await pasteInto(getVisibleInput('Working directory'), 'D:/src/app')
+    await settleQueries(queryClient)
 
-    const alwaysOn = await screen.findByRole('switch', { name: /Always on/i })
-    const remoteControl = screen.getByRole('switch', { name: /Remote control/i })
-    await waitFor(() => expect(alwaysOn).toBeChecked())
-    expect(remoteControl).toBeChecked()
+    expect(screen.getByRole('switch', { name: /Always on/i })).toBeChecked()
+    expect(screen.getByRole('switch', { name: /Remote control/i })).toBeChecked()
 
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+    await settleQueries(queryClient)
 
-    await waitFor(() =>
-      expect(createSpy).toHaveBeenCalledWith({
-        sessionBackend: 'PtyHost',
-        herdrWorkspaceLabel: null,
-        herdrTabLabel: null,
-        name: 'Supervised Claude',
-        workingDirectory: 'D:/src/app',
-        details: null,
-        assignmentPolicy: 'AutoPick',
-        createWorkingDirectory: false,
-        tuiProfileId: 'tui-profile-1',
-        modelId: null,
-        modelLevel: 'High',
-        replyStyle: 'Normal',
-        alwaysOn: true,
-        remoteControlEnabled: true,
-        bundleKeys: ['orchestrator', 'board-api'],
-        systemPromptAppend: null,
-        preset: 'orchestrator',
-      }),
-    )
+    expect(createSpy).toHaveBeenCalledWith({
+      sessionBackend: 'PtyHost',
+      herdrWorkspaceLabel: null,
+      herdrTabLabel: null,
+      name: 'Supervised Claude',
+      workingDirectory: 'D:/src/app',
+      details: null,
+      assignmentPolicy: 'AutoPick',
+      createWorkingDirectory: false,
+      tuiProfileId: 'tui-profile-1',
+      modelId: null,
+      modelLevel: 'High',
+      replyStyle: 'Normal',
+      alwaysOn: true,
+      remoteControlEnabled: true,
+      bundleKeys: ['orchestrator', 'board-api'],
+      systemPromptAppend: null,
+      preset: 'orchestrator',
+    })
   })
 
   it('drafts agent fields from a description before creating', async () => {
@@ -706,48 +710,47 @@ describe('AgentsPage', () => {
       }),
     )
 
-    renderWithProviders(<AgentsPage />)
+    const { queryClient } = renderWithProviders(<AgentsPage />)
 
     await userEvent.click(screen.getByRole('button', { name: 'New Agent' }))
-    await userEvent.type(
-      await screen.findByLabelText('Describe what you want'),
+    await settleQueries(queryClient)
+    await pasteInto(
+      screen.getByLabelText('Describe what you want'),
       'Frontend agent for D:/src/Antiphon/client with manual review',
     )
     await userEvent.click(screen.getByRole('button', { name: 'Draft details' }))
+    await settleQueries(queryClient)
 
-    expect(await screen.findByDisplayValue('Frontend Agent')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Frontend Agent')).toBeInTheDocument()
     expect(screen.getByDisplayValue('D:/src/Antiphon/client')).toBeInTheDocument()
     expect(screen.getByDisplayValue('Owns React and Mantine UI work.')).toBeInTheDocument()
     expect(screen.getByDisplayValue('Manual confirm')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+    await settleQueries(queryClient)
 
-    await waitFor(() =>
-      expect(draftSpy).toHaveBeenCalledWith({
-        description: 'Frontend agent for D:/src/Antiphon/client with manual review',
-      }),
-    )
-    await waitFor(() =>
-      expect(createSpy).toHaveBeenCalledWith({
-        sessionBackend: 'PtyHost',
-        herdrWorkspaceLabel: null,
-        herdrTabLabel: null,
-        name: 'Frontend Agent',
-        workingDirectory: 'D:/src/Antiphon/client',
-        details: 'Owns React and Mantine UI work.',
-        assignmentPolicy: 'ManualConfirm',
-        createWorkingDirectory: false,
-        tuiProfileId: 'tui-profile-1',
-        modelId: null,
-        modelLevel: 'High',
-        replyStyle: 'Normal',
-        alwaysOn: true,
-        remoteControlEnabled: true,
-        bundleKeys: ['orchestrator', 'board-api'],
-        systemPromptAppend: null,
-        preset: 'orchestrator',
-      }),
-    )
+    expect(draftSpy).toHaveBeenCalledWith({
+      description: 'Frontend agent for D:/src/Antiphon/client with manual review',
+    })
+    expect(createSpy).toHaveBeenCalledWith({
+      sessionBackend: 'PtyHost',
+      herdrWorkspaceLabel: null,
+      herdrTabLabel: null,
+      name: 'Frontend Agent',
+      workingDirectory: 'D:/src/Antiphon/client',
+      details: 'Owns React and Mantine UI work.',
+      assignmentPolicy: 'ManualConfirm',
+      createWorkingDirectory: false,
+      tuiProfileId: 'tui-profile-1',
+      modelId: null,
+      modelLevel: 'High',
+      replyStyle: 'Normal',
+      alwaysOn: true,
+      remoteControlEnabled: true,
+      bundleKeys: ['orchestrator', 'board-api'],
+      systemPromptAppend: null,
+      preset: 'orchestrator',
+    })
   })
 
   it('shows backend validation text when agent creation fails', async () => {
@@ -765,14 +768,16 @@ describe('AgentsPage', () => {
       ),
     )
 
-    renderWithProviders(<AgentsPage />)
+    const { queryClient } = renderWithProviders(<AgentsPage />)
 
     await userEvent.click(screen.getByRole('button', { name: 'New Agent' }))
-    await userEvent.type(await screen.findByLabelText('Name'), 'Frontend Claude')
-    await userEvent.type(getVisibleInput('Working directory'), 'D:/src/app')
+    await settleQueries(queryClient)
+    await pasteInto(screen.getByLabelText('Name'), 'Frontend Claude')
+    await pasteInto(getVisibleInput('Working directory'), 'D:/src/app')
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+    await settleQueries(queryClient)
 
-    expect(await screen.findByText('Agent name is required.')).toBeInTheDocument()
+    expect(screen.getByText('Agent name is required.')).toBeInTheDocument()
   })
 
   it('creates a new card, queues it, and starts the agent', async () => {
@@ -815,19 +820,22 @@ describe('AgentsPage', () => {
       }),
     )
 
-    renderWithProviders(<AgentsPage />)
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
 
     // The agent owns board-1, so the modal creates the card there directly (no board picker).
-    await userEvent.click(await screen.findByRole('button', { name: 'Add Card' }))
-    await userEvent.type(await screen.findByLabelText('Title'), 'Wire the thing')
-    await userEvent.type(screen.getByLabelText('Description'), 'do it well')
+    await userEvent.click(screen.getByRole('button', { name: 'Add Card' }))
+    await settleQueries(queryClient)
+    await pasteInto(screen.getByLabelText('Title'), 'Wire the thing')
+    await pasteInto(screen.getByLabelText('Description'), 'do it well')
     await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await settleQueries(queryClient)
 
-    await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1))
+    expect(createSpy).toHaveBeenCalledTimes(1)
     expect(createSpy.mock.calls[0][0]).toMatchObject({ title: 'Wire the thing', description: 'do it well' })
-    await waitFor(() => expect(assignSpy).toHaveBeenCalledWith({ cardId: 'new-card' }))
+    expect(assignSpy).toHaveBeenCalledWith({ cardId: 'new-card' })
     // Remote control comes from the persisted agent setting; the start call itself carries no flag.
-    await waitFor(() => expect(startSpy).toHaveBeenCalledWith({}))
+    expect(startSpy).toHaveBeenCalledWith({})
   })
 
   it('starts the agent process from the detail panel', async () => {
@@ -858,14 +866,16 @@ describe('AgentsPage', () => {
       }),
     )
 
-    renderWithProviders(<AgentsPage />)
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Start' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Start' }))
+    await settleQueries(queryClient)
 
     // Remote control comes from the persisted agent setting; the start call itself carries no flag.
-    await waitFor(() => expect(startSpy).toHaveBeenCalledWith({}))
+    expect(startSpy).toHaveBeenCalledWith({})
     // Once running, the control flips to Stop.
-    expect(await screen.findByRole('button', { name: 'Stop' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument()
   })
 
   it('offers to start the agent from the card CLI icon when no terminal is running', async () => {
@@ -878,15 +888,18 @@ describe('AgentsPage', () => {
       }),
     )
 
-    renderWithProviders(<AgentsPage />)
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
 
     // The card's terminal icon opens the CLI modal; with no live session it offers to start.
-    await userEvent.click(await screen.findByRole('button', { name: 'Terminal Frontend Claude' }))
-    await userEvent.click(await screen.findByRole('button', { name: 'Start agent' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Terminal Frontend Claude' }))
+    await settleQueries(queryClient)
+    await userEvent.click(screen.getByRole('button', { name: 'Start agent' }))
+    await settleQueries(queryClient)
 
     // Remote control mirrors the agent's persisted setting (false in this fixture) — explicitly
     // passing the persisted value is equivalent to omitting it server-side.
-    await waitFor(() => expect(startSpy).toHaveBeenCalledWith({ fresh: false, remoteControl: false }))
+    expect(startSpy).toHaveBeenCalledWith({ fresh: false, remoteControl: false })
   })
 
   it('chips directory missing from the project readiness checks', async () => {
