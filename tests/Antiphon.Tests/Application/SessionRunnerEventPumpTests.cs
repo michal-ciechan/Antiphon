@@ -40,6 +40,7 @@ public class SessionRunnerEventPumpTests
         await using var h = await BridgeQueueHarness.CreateAsync(new()
         {
             ConnectionString = store.ConnectionString,
+            StartRuntimeActions = true,
             ConfigureServices = services =>
             {
                 AddStateStore(services);
@@ -176,6 +177,7 @@ public class SessionRunnerEventPumpTests
         await using var h = await BridgeQueueHarness.CreateAsync(new()
         {
             ConnectionString = store.ConnectionString,
+            StartRuntimeActions = true,
             TimeProvider = clock,
             ConfigureDbContext = options => options.AddInterceptors(read),
             ConfigureDeliveryVerification = v =>

@@ -188,6 +188,7 @@ public sealed class DataRetentionService
             (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
             && s.LastSeenAt < cutoff
             && !outboundSessions.Contains(s.Id)
+            && !_db.SessionRuntimeActions.Any(a => a.AgentSessionId == s.Id)
             && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
                 && (r.SessionId == s.Id || r.ResumeSessionId == s.Id))
             && !_db.LegacyCheckNotePublications.Any(p =>
@@ -247,6 +248,7 @@ public sealed class DataRetentionService
             .Where(s => (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed)
                 && s.LastSeenAt < cutoff
                 && !outboundSessions.Contains(s.Id)
+                && !_db.SessionRuntimeActions.Any(a => a.AgentSessionId == s.Id)
                 && !_db.CheckCompactionRecoveries.Any(r => unresolvedRecovery.Contains(r.State)
                     && (r.SessionId == s.Id || r.ResumeSessionId == s.Id))
                 && !_db.LegacyCheckNotePublications.Any(p =>
@@ -285,6 +287,8 @@ public sealed class DataRetentionService
             var deleted = await MutateTranscriptAsync(sessionId, async () =>
             {
                 // Recheck under the ingest gate: a catch-up may have committed after discovery.
+                if (await _db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == sessionId, ct))
+                    return 0;
                 if (await ChannelOutboundEvidence.ProtectedSessions(_db).ContainsAsync(sessionId, ct))
                     return 0;
                 if (await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId && t.CreatedAt >= cutoff, ct))
@@ -350,6 +354,7 @@ public sealed class DataRetentionService
         var removed = await _db.SessionQueuedMessages
             .Where(m => (m.Status == QueuedMessageStatus.Sent || m.Status == QueuedMessageStatus.Canceled)
                 && m.CreatedAt < cutoff
+                && !_db.SessionRuntimeActions.Any(a => a.AgentSessionId == m.AgentSessionId)
                 && m.MaintenanceResult != RemoteControlArmResult.ArmUnconfirmed
                 && !m.MaintenanceSlotActive
                 && m.DeferredFromRunAttemptId == null
