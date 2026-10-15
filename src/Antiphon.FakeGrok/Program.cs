@@ -390,6 +390,9 @@ internal static class Program
         long lastByteMs = 0;
         var eof = false;
         var stdin = Console.OpenStandardInput();
+        // Opening stdin can restore the cooked slave Porta spawned. Set raw mode again
+        // after that open, before the first read.
+        TryEnableRawConsole();
         var reader = new Thread(() =>
         {
             var buf = new byte[8192];
@@ -749,8 +752,7 @@ internal static class Program
 
         if (QuestionToolEnabled && !_questionOpen)
         {
-            var echoQ = escaped.Length > 60 ? escaped[..60] : escaped;
-            _inFlightPromptId = AppendPartialTurn(sessionDir, sessionId, text, $"FAKE response to: {echoQ}");
+            _inFlightPromptId = AppendPartialTurn(sessionDir, sessionId, text, $"FAKE response to: {escaped}");
             _questionToolCallId = $"call-{Guid.NewGuid():D}-25";
             _questionText = "Any preference before I start?";
             AppendQuestionOpening(sessionDir, sessionId, _questionToolCallId, _questionText);
@@ -849,6 +851,9 @@ internal static class Program
 
         var echo = escaped.Length > 60 ? escaped[..60] : escaped;
         write($"FAKE response to: {echo}\r\n");
+        // The screen stays at 60 characters (FakeClaudeContractTests pins that cut). The transcript
+        // keeps the escaped prompt so a channel nonce past the cut is still in the assistant text.
+        var transcriptReply = $"FAKE response to: {escaped}";
 
         if (SubmitWhileWorkingCancels && _turnInFlight)
         {
@@ -861,14 +866,14 @@ internal static class Program
             _inFlightPromptId = null;
             write("Worked for 1.7s\r\n");
             write(IdleTitle);
-            AppendSessionFiles(sessionDir, sessionId, text, $"FAKE response to: {echo}");
+            AppendSessionFiles(sessionDir, sessionId, text, transcriptReply);
             return;
         }
 
         if (SubmitWhileWorkingCancels && !_turnInFlight)
         {
             // Hold the turn open so the next prompt is the measured mid-turn submit.
-            _inFlightPromptId = AppendPartialTurn(sessionDir, sessionId, text, $"FAKE response to: {echo}");
+            _inFlightPromptId = AppendPartialTurn(sessionDir, sessionId, text, transcriptReply);
             _turnInFlight = true;
             return;
         }
@@ -877,7 +882,7 @@ internal static class Program
         // integer " for \d+s" regex does NOT match — do not "fix" this to an integer.
         write("Worked for 1.7s\r\n");
         write(IdleTitle);
-        AppendSessionFiles(sessionDir, sessionId, text, AssistantText(text, echo));
+        AppendSessionFiles(sessionDir, sessionId, text, AssistantText(text, escaped));
     }
 
     /// <summary>
@@ -1609,6 +1614,11 @@ internal static class Program
 
     private static void TryEnableRawConsole()
     {
+        if (OperatingSystem.IsLinux())
+        {
+            TryEnableLinuxRawStdin();
+            return;
+        }
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
         try
         {
@@ -1635,6 +1645,44 @@ internal static class Program
             // Best-effort only; the test harness drives us through ConPTY where defaults are workable.
         }
     }
+
+    // CARD-1277: same Linux slave as FakeClaude. A coalesced body+LF is not a lone enter, so the
+    // queued reply never reaches updates.jsonl. Raw stdin keeps the later CR as its own burst.
+    private static void TryEnableLinuxRawStdin()
+    {
+        try
+        {
+            if (IsAtty(0) != 1)
+                return;
+            var termios = new byte[60];
+            if (TcGetAttr(0, termios) != 0)
+                return;
+            var input = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(termios.AsSpan(0));
+            var local = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(termios.AsSpan(12));
+            const uint inlcr = 0x40, igncr = 0x80, icrnl = 0x100;
+            const uint isig = 0x1, icanon = 0x2, echo = 0x8, echoe = 0x10, echok = 0x20, echonl = 0x40, iexten = 0x8000;
+            input &= ~(inlcr | igncr | icrnl);
+            local &= ~(isig | icanon | echo | echoe | echok | echonl | iexten);
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(termios.AsSpan(0), input);
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(termios.AsSpan(12), local);
+            termios[22] = 0; // VTIME, c_cc[5]
+            termios[23] = 1; // VMIN, c_cc[6]
+            TcSetAttr(0, 0, termios);
+        }
+        catch
+        {
+            // Best-effort: a non-tty stdin keeps the caller's mode.
+        }
+    }
+
+    [DllImport("libc", EntryPoint = "isatty")]
+    private static extern int IsAtty(int fd);
+
+    [DllImport("libc", EntryPoint = "tcgetattr", SetLastError = true)]
+    private static extern int TcGetAttr(int fd, byte[] termios);
+
+    [DllImport("libc", EntryPoint = "tcsetattr", SetLastError = true)]
+    private static extern int TcSetAttr(int fd, int actions, byte[] termios);
 
     private const int STD_INPUT_HANDLE = -10;
     private const int STD_OUTPUT_HANDLE = -11;

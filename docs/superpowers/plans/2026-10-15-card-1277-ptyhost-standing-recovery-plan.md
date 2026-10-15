@@ -23,25 +23,27 @@ the nonce, and `VerifiedPromptSubmitter` keeps its body write followed by a sepa
 - Claude: `TryEnableRawConsole` returns off Windows, so the Linux slave stays canonical. A
   body and a later CR then arrive as one read with a trailing newline, `SubmitTurn` does not
   run, and `conversation.jsonl` stays the empty file created at startup.
-  `TranscriptNormalizer` yields no parts. The fixture takes Linux stdin out of canonical mode
-  inside `TryEnableRawConsole` (clear ICANON, the echo local flags, IEXTEN, ISIG, and ICRNL,
-  with VMIN 1 and VTIME 0). A trailing CR in the same write stays a non-submit
+  `TranscriptNormalizer` yields no parts. S1 run `20261015-073635-162c` showed that shape for
+  both fakes: the screen held the channel body twice and the JSONL the normalizer reads was
+  empty, so Grok's Linux stdin gets the same raw-mode call. The fixture takes Linux stdin out
+  of canonical mode inside `TryEnableRawConsole` (clear ICANON, the echo local flags, IEXTEN,
+  ISIG, and ICRNL, with VMIN 1 and VTIME 0). A trailing CR in the same write stays a non-submit
   (`FakeClaudeContractTests.Text_and_CR_in_one_write_does_NOT_submit`).
   `ANTIPHON_FAKE_LF_ENTER` stays unset. The Claude transcript assistant text uses the same
   split as Grok: screen echo at 60 characters, transcript text the escaped prompt.
 
 `Card1277PtyHostFixtureTests.Grok_jsonl_reply_keeps_the_nonce_past_the_screen_cut` and
 `Card1277PtyHostFixtureTests.Claude_two_write_submit_is_a_normalizer_turn` are the pins.
-If the Claude red shows a UserPrompt already, the raw-mode edit is the wrong fix and stays
-out; the failure text (raw JSONL and screen) decides.
+S1 run `20261015-073635-162c` is the red for both: 2 executed, 2 failed, 0 skipped.
 
 ## Slices
 
 - S1 (red): the two methods above, with the CARD-1277 `Skip.Test` calls left in place.
   CP-1 expects both methods failed.
 - S2 (fix): FakeGrok and FakeClaude store the escaped prompt in the transcript assistant
-  text and keep the 60-character screen echo. FakeClaude enables the Linux raw stdin above
-  when the S1 failure shows no UserPrompt. The two CARD-1277 `Skip.Test` calls come out.
+  text and keep the 60-character screen echo. Both fakes enable the Linux raw stdin above,
+  because S1 run `20261015-073635-162c` had an empty JSONL for each. The two CARD-1277
+  `Skip.Test` calls come out.
   CP-2 expects both methods passed. CP-3 expects the four PtyHost rows passed, 0 skipped.
 
 ## Verification
@@ -56,11 +58,15 @@ PCs pending for SourceLanding Mutation (not run here):
 - PC-1: restore the 60-character cut on the FakeGrok updates.jsonl assistant text.
   `Grok_jsonl_reply_keeps_the_nonce_past_the_screen_cut` fails because the nonce is absent
   from the assistant text.
-- PC-2: remove the Linux `tcsetattr` call. `Claude_two_write_submit_is_a_normalizer_turn`
-  fails because the normalizer yields no UserPrompt for the two-write body.
+- PC-2: remove the FakeClaude Linux `tcsetattr` call.
+  `Claude_two_write_submit_is_a_normalizer_turn` fails because the normalizer yields no
+  UserPrompt for the two-write body.
 - PC-3: restore the 60-character cut on the FakeClaude conversation.jsonl assistant text.
   `Claude_two_write_submit_is_a_normalizer_turn` fails because the nonce is absent from
   the assistant text.
+- PC-4: remove the FakeGrok Linux `tcsetattr` call.
+  `Grok_jsonl_reply_keeps_the_nonce_past_the_screen_cut` fails because the 60-character
+  screen echo is absent.
 
 ### Checkpoints
 
