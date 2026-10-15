@@ -45,7 +45,8 @@ public class AdvisoryChangePolicyTests
     [Test]
     public async Task C1281_SeparateDocsIdentity()
     {
-        new AdvisoryChangePolicy().CanUseSeparateDocs([Narrative()]).ShouldBeTrue("narrative-helper-eligible");
+        var policy = new AdvisoryChangePolicy();
+        policy.CanUseSeparateDocs([Narrative()]).ShouldBeTrue("narrative-helper-eligible");
         await using var git = new LandingGitFixture();
         await git.InitializeAsync();
         var originalSha = git.SeedSha;
@@ -54,8 +55,11 @@ public class AdvisoryChangePolicyTests
         await git.RequiredAsync(git.Repository, "worktree", "add", "-b", "feat/docs-followup",
             Path.Combine(git.Root, "docs"), originalSha);
         var docsPath = Path.Combine(git.Root, "docs");
-        await File.WriteAllTextAsync(Path.Combine(docsPath, "story.md"), Narrative().After);
-        await git.RequiredAsync(docsPath, "add", "story.md");
+        var delta = Narrative() with { Before = "", BeforeMode = "000000" };
+        var file = Path.Combine(docsPath, delta.Path);
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        await File.WriteAllTextAsync(file, delta.After);
+        await git.RequiredAsync(docsPath, "add", delta.Path);
         await git.RequiredAsync(docsPath, "commit", "-m", "narrative correction");
         var docsSha = (await git.RequiredAsync(docsPath, "rev-parse", "HEAD")).Trim();
         docsSha.ShouldNotBe(originalSha);
@@ -68,6 +72,27 @@ public class AdvisoryChangePolicyTests
         var helper = TaskRow(docsPath, git.Repository, "refs/heads/feat/docs-followup", AgentTaskRole.Docs);
         db.AgentTasks.AddRange(owner, helper);
         var evidence = Review(owner, originalSha, StageOutcomeKind.Clean);
+        var actualDelta = delta with { After = await git.RequiredAsync(docsPath, "show", docsSha + ":" + delta.Path) };
+        (await git.RequiredAsync(docsPath, "diff", "--name-only", originalSha, docsSha)).Trim().ShouldBe(actualDelta.Path);
+        var source = new AdvisoryFollowUp(owner, evidence, helper,
+            (await git.RequiredAsync(git.Source, "rev-parse", "HEAD")).Trim(),
+            (await git.RequiredAsync(git.Remote, "rev-parse", "refs/heads/master")).Trim(), docsSha);
+        policy.CanPrepareSeparateDocs(source, [actualDelta]).ShouldBeTrue("separate-published-helper");
+        policy.CanPrepareSeparateDocs(source with { CurrentReviewedTip = docsSha }, [actualDelta])
+            .ShouldBeFalse("reviewed-tip-must-stay-frozen");
+        policy.CanPrepareSeparateDocs(source with { PublishedReviewedSourceSha = "" }, [actualDelta])
+            .ShouldBeFalse("publication-first");
+        policy.CanPrepareSeparateDocs(source with { HelperSha = originalSha }, [actualDelta])
+            .ShouldBeFalse("new-sha-separate-approval");
+        helper.RequiresFinalVerificationReview = true;
+        policy.CanPrepareSeparateDocs(source, [actualDelta]).ShouldBeFalse("latched-helper-policy-refused");
+        helper.RequiresFinalVerificationReview = false;
+        owner.RequiresFinalVerificationReview = true;
+        policy.CanPrepareSeparateDocs(source, [actualDelta]).ShouldBeFalse("latched-owner-policy-refused");
+        owner.RequiresFinalVerificationReview = false;
+        evidence.ReviewedSourceClean = null;
+        policy.CanPrepareSeparateDocs(source, [actualDelta]).ShouldBeFalse("full-does-not-imply-clean");
+        evidence.ReviewedSourceClean = true;
         db.StageOutcomes.Add(evidence);
         await db.SaveChangesAsync();
         var queue = new AgentTaskLandQueue();
@@ -115,6 +140,12 @@ public class AdvisoryChangePolicyTests
         foreach (var path in new[] { "AGENTS.md", "CLAUDE.md", "docs/testing-and-build.md",
             "docs/superpowers/plans/story.md", "server/Bundles/story.md", "tests/story.md", "../story.md", "/story.md" })
             policy.CanUseSeparateDocs([narrative with { Path = path }]).ShouldBeFalse("policy-doc-refused: " + path);
+        policy.CanUseSeparateDocs([narrative with { OriginalPath = "AGENTS.md" }]).ShouldBeFalse("protected-rename-refused");
+        foreach (var mode in new[] { "120000", "160000", "100755" })
+        {
+            policy.CanUseSeparateDocs([narrative with { BeforeMode = mode }]).ShouldBeFalse("old-mode-refused");
+            policy.CanUseSeparateDocs([narrative with { AfterMode = mode }]).ShouldBeFalse("new-mode-refused");
+        }
         foreach (var text in new[] { "```sh\nrelease\n```", "Use `release`.", "<!-- input -->", "[script](run.ps1)" })
             policy.CanUseSeparateDocs([narrative with { After = text }]).ShouldBeFalse("active-markup-refused");
         policy.CanUseSeparateDocs([]).ShouldBeFalse("empty-delta-refused");
