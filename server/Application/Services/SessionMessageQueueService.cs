@@ -813,7 +813,7 @@ public sealed partial class SessionMessageQueueService
                 var frontier = await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId)
                     .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
                 db.SessionRuntimeActions.Add(new SessionRuntimeAction { Id = Guid.NewGuid(), AgentSessionId = sessionId,
-                    AcceptedGeneration = generation, Sequence = frontier, TriggerKind = $"review:{row.Id}",
+                    AcceptedGeneration = generation, Sequence = frontier, TriggerKind = $"review:{row.Id:N}",
                     Phase = SessionRuntimeActionCoordinator.QueuePhase, CreatedAt = now, DueAt = now });
             }
             var stampCompletion = CompletionNoteStamp.IsCallerCompletionNote(

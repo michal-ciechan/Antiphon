@@ -37,6 +37,7 @@ public sealed class SessionRuntimeActionCoordinator(
         var action = new SessionRuntimeAction { Id = Guid.NewGuid(), AgentSessionId = row.AgentSessionId,
             TranscriptEntryId = row.Id, AcceptedGeneration = generation, Sequence = row.Sequence,
             ProducerSequence = source.Sequence, TurnBoundary = boundary, CreatedAt = now, DueAt = now,
+            ManualCompactBoundary = TranscriptKinds.IsManualCompactBoundary(source.Kind, source.Text),
             UiProjectionDelta = TranscriptUiProjection.Capture(source, row) };
         db.SessionRuntimeActions.Add(action);
         return action;
@@ -172,7 +173,7 @@ public sealed class SessionRuntimeActionCoordinator(
             await db.SaveChangesAsync(ct);
         }
         if (row is not null && !action.TurnBoundary
-            && !TranscriptKinds.IsManualCompactBoundary(row.Kind, row.Text)
+            && !action.ManualCompactBoundary
             || action.TriggerKind == "catchup")
         {
             db.SessionRuntimeActions.Remove(action);
