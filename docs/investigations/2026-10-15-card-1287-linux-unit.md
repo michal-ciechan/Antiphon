@@ -17,6 +17,8 @@ pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1287-linux-final1 -- dotnet
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1287-linux-final2 -- dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c1287-67a7e42a/ --property:UseAppHost=false -- --treenode-filter "$roster_filter" --output Detailed --report-trx --report-trx-filename run.trx --results-directory "$PWD/.antiphon/c1287-67a7e42a/final2"
 ```
 
+For an exact-SHA replay in a clean `f6310a452a911b45b0a0946feb9ac49dcc71bbfd` checkout, read `roster_filter` from the retained `/work/evidence/task-67a7e42a/raw/final1/filter.txt` instead of the repository-relative path. The original build preceded creation of these three documentation/roster files, so they are absent at that Git SHA. The filter values and native argv are identical either way. Rebuilding the later artifact branch produces its own Git source identity; carrying this frozen list to a different source SHA requires a new build/census/qualification rather than inheriting these results.
+
 The build passed with 0 errors (1056 warnings), MSBuild wall 193.96s, a granted slot with zero wait, and 194s lease hold. All tests reuse that original output; documentation commits do not change the compiled source. Runtime: Debian 12, .NET 9.0.20, SDK 10.0.401, TUnit 1.44 / Microsoft Testing Platform 2.2.2. TUNIT_MAX_PARALLEL_TESTS is unset; process-spawning cases share the assembly's one-wide limiter. This is a shared-host sample, with one owned assembly driver at a time.
 
 ## Exclusions
