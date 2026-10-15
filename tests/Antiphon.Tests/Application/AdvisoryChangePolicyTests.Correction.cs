@@ -88,11 +88,17 @@ public partial class AdvisoryChangePolicyTests
         await w.BehaviorAsync("Satisfied");
         using var valid = await w.PostAsync(w.Request);
         valid.StatusCode.ShouldBe(HttpStatusCode.OK, "restored-valid-control");
-        foreach (var defect in new[] { "failed-row", "missing-trx", "missing-provenance", "wrong-receipt" })
+        foreach (var defect in new[] { "failed-row", "missing-trx", "missing-provenance", "wrong-receipt", "bad-number" })
         {
             await using var invalid = await CorrectionWorld.CreateAsync(defect);
             using var response = await invalid.PostAsync(invalid.Request);
-            if (defect == "wrong-receipt") response.StatusCode.ShouldBe(HttpStatusCode.Conflict, defect);
+            if (defect is "wrong-receipt" or "bad-number")
+            {
+                response.StatusCode.ShouldBe(HttpStatusCode.Conflict, defect);
+                using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                problem.RootElement.GetProperty("code").GetString().ShouldBe("review_evidence_correction_" +
+                    (defect == "bad-number" ? "receipt_invalid" : "receipt_coordinates_mismatch"));
+            }
             else
             {
                 response.StatusCode.ShouldBe(HttpStatusCode.OK, defect);
@@ -106,7 +112,7 @@ public partial class AdvisoryChangePolicyTests
         }
     }
 
-    private sealed class CorrectionWorld : IAsyncDisposable
+    internal sealed class CorrectionWorld : IAsyncDisposable
     {
         private IsolatedTestSchema _schema = null!;
         private WebApplication _app = null!;
@@ -148,11 +154,12 @@ public partial class AdvisoryChangePolicyTests
             {
                 var run = node["cleanCheckpointRun"]!.GetValue<string>();
                 var reportRelative = $".antiphon/checkpoints/{run}/report.json";
-                if (defect is "failed-row" or "wrong-receipt")
+                if (defect is "failed-row" or "wrong-receipt" or "bad-number")
                 {
                     var path = Path.Combine(w.ProducerRoot, reportRelative);
                     var report = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
-                    if (defect == "wrong-receipt") report["commit"] = new string('a', 40);
+                    if (defect == "bad-number") report["schemaVersion"] = 2.5;
+                    else if (defect == "wrong-receipt") report["commit"] = new string('a', 40);
                     else report["rows"]!.AsArray().Single(r => r!["id"]!.GetValue<string>() == "CP-15")!["state"] = "red";
                     var content = report.ToJsonString();
                     await File.WriteAllTextAsync(path, content);
