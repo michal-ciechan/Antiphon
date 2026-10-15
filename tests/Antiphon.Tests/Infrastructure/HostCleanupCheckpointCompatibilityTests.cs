@@ -101,13 +101,16 @@ public sealed class HostCleanupCheckpointCompatibilityTests
         f.Owner.Launched = new ProcessIdentityProbe(f.Context).Current();
         RunOwnershipStore.Write(f.Run, f.Owner, f.Context);
         f.Cleanup().Sweep(Path.GetDirectoryName(f.Run)!).ShouldBe(0);
+        HostCleanupCheckpointFixture.AssertNoSignalCalls(typeof(ToolCopyCleanup));
         f.Io.Processes[f.Io.CurrentProcessId].HasExited.ShouldBeFalse();
         f.Io.DirectoryExists(f.Tool).ShouldBeTrue();
         f.Io.Count("process", f.Io.CurrentProcessId.ToString()).ShouldBeGreaterThan(0);
     }
 
     [Test]
-    public async Task failed_delete_receipt_is_truthful_and_retryable()
+    public Task failed_delete_receipt_is_truthful_and_retryable() => RetryDelayProof("C987.failed_delete_receipt_is_truthful_and_retryable.retry");
+
+    internal static async Task RetryDelayProof(string label)
     {
         var f = new HostCleanupToolFixture();
         var attempts = 0;
@@ -117,7 +120,7 @@ public sealed class HostCleanupCheckpointCompatibilityTests
             var timer = await f.Files.Clock.WaitForTimerAsync(e => e.Action == "create" && e.DueTime == TimeSpan.FromMilliseconds(50 * (i + 1)));
             f.Files.Clock.Advance(timer.DueTime);
         }
-        (await task).Outcome.ShouldBe("Failed", "failed-delete-truthful"); attempts.ShouldBe(10);
+        (await task).Outcome.ShouldBe("Failed", label); attempts.ShouldBe(10, label);
         f.Io.DirectoryExists(f.Tool).ShouldBeTrue();
         f.Cleanup().Remove(f.Run).Outcome.ShouldBe("Removed"); f.Io.DirectoryExists(f.Tool).ShouldBeFalse();
     }
