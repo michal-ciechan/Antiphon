@@ -162,12 +162,12 @@ public sealed partial class PipelineSpeedIntegrationTests
         owner.NextStage = PipelineHandoffKind.Code;
         owner.ParentSessionId = w.CallerSessionId;
         var sourceEvent = new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = w.Owner.Id,
-            Type = AgentTaskEventType.Completed, At = w.Clock.GetUtcNow().UtcDateTime };
+            Type = AgentTaskEventType.Completed, At = owner.CompletedAt!.Value };
         db.Add(sourceEvent);
         var action = new PipelineHandoffAction { Id = Guid.NewGuid(), PredecessorTaskId = w.Owner.Id,
             Attempt = w.Owner.Attempt, SettlementEventId = sourceEvent.Id, NextStage = AgentTaskRole.Code,
             CardId = w.Card.Id, ProjectId = w.Project.Id, RecipientSessionId = w.CallerSessionId,
-            Actor = "fixture", CreatedAt = sourceEvent.At, ConsumedAt = sourceEvent.At, EligibleAt = sourceEvent.At };
+            Actor = "fixture", SettledAt = sourceEvent.At, CreatedAt = sourceEvent.At, ConsumedAt = sourceEvent.At, EligibleAt = sourceEvent.At };
         db.Add(action); await db.SaveChangesAsync(); return action;
     }
 

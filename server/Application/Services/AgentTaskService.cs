@@ -1579,7 +1579,7 @@ public sealed class AgentTaskService
                 await _db.Entry(handoff).ReloadAsync(ct);
                 if (handoff.CardId != task.CardId || handoff.ProjectId != task.ProjectId
                     || handoff.NextStage != task.Role
-                    || (!caller.IsOperator && handoff.RecipientSessionId != caller.SessionId))
+                    || (!caller.IsOperator && (handoff.RecipientSessionId is null || handoff.RecipientSessionId != caller.SessionId)))
                     throw new ConflictException("Handoff scope does not match the requested child.", "handoff_scope_changed");
                 if (handoff.RequestDigest is not null && handoff.RequestDigest != handoffDigest)
                     throw new ConflictException("The handoff already binds a different request.", "handoff_request_changed");
@@ -1602,7 +1602,8 @@ public sealed class AgentTaskService
                 if (predecessor is null || predecessor.Attempt != handoff.Attempt
                     || predecessor.CardId != handoff.CardId || predecessor.ProjectId != handoff.ProjectId
                     || !await _db.AgentTaskEvents.AnyAsync(e => e.Id == handoff.SettlementEventId
-                        && e.AgentTaskId == handoff.PredecessorTaskId && e.Type == AgentTaskEventType.Completed, ct))
+                        && e.AgentTaskId == handoff.PredecessorTaskId && e.Type == AgentTaskEventType.Completed
+                        && e.At == predecessor.CompletedAt && e.At == handoff.SettledAt, ct))
                     throw new ConflictException("The handoff predecessor changed.", "handoff_predecessor_changed");
                 if (admissionCard?.ActiveWorkflowRunId != handoff.WorkflowRunId)
                     throw new ConflictException("The handoff workflow changed.", "handoff_workflow_changed");

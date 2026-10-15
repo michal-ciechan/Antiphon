@@ -10,7 +10,7 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Api.Endpoints;
 
-/// <summary>Component routes; registration belongs to the sequential S6 integration slice.</summary>
+/// <summary>Explicit, recipient-authorized caller accounting and keyed child requests.</summary>
 public static class PipelineHandoffActionEndpoints
 {
     public static void MapPipelineHandoffActionEndpoints(this WebApplication app)
@@ -30,6 +30,23 @@ public static class PipelineHandoffActionEndpoints
         {
             await AuthorizeAsync(predecessorId, http, tasks, db, settings.Value, ct);
             return Results.Ok(await actions.GetAsync(predecessorId, ct));
+        });
+        app.MapPost("/api/agent-tasks/{predecessorId:guid}/handoff-actions/{actionId:guid}/child", async (
+            Guid predecessorId, Guid actionId, PipelineHandoffChildRequest request, HttpContext http,
+            AgentTaskService tasks, PipelineHandoffActionService actions, AppDbContext db,
+            IOptions<PhoneHomeRunnerSettings> settings, CancellationToken ct) =>
+        {
+            var actor = await AuthorizeAsync(predecessorId, http, tasks, db, settings.Value, ct);
+            AgentTaskService.Caller caller;
+            if (actor == "operator")
+            {
+                var predecessor = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == predecessorId, ct)
+                    ?? throw new NotFoundException(nameof(AgentTask), predecessorId);
+                caller = new(null, predecessor.ParentSessionId, predecessor.RepoPath ?? predecessor.WorkingDirectory,
+                    ProjectId: predecessor.ProjectId, IsOperator: true);
+            }
+            else caller = await tasks.AuthenticateAsync(http.Request.Headers["X-Antiphon-Task-Token"].FirstOrDefault(), ct);
+            return Results.Ok(await actions.RequestChildAsync(predecessorId, actionId, request, caller, actor, ct));
         });
     }
 
