@@ -770,8 +770,9 @@ GET    /api/complexity-chains                          any-role ×3 first (Hard/
 GET    /api/complexity-chains?role=Plan                the three EFFECTIVE Plan cells, each with
                                                        resolvedFrom and effective
 PUT    /api/complexity-chains/{role}/{complexity}      upsert the cell; role = any|Plan|Code|…;
-                                                       body unchanged
-DELETE /api/complexity-chains/{role}/{complexity}      clear the cell (204 if already clear)
+                                                       optional body concurrencyToken (CARD-1275)
+DELETE /api/complexity-chains/{role}/{complexity}      clear the cell (204 if already clear);
+                                                       optional ?concurrencyToken= (CARD-1275)
 PUT    /api/complexity-chains/{complexity}             alias of /any/{complexity}
 DELETE /api/complexity-chains/{complexity}             alias of /any/{complexity}
 POST   /api/agent-tasks/{id}/reroute                   { agentKind, modelLevel } — Blocked-for-routing or Queued
@@ -786,14 +787,43 @@ The role view adds `effective: { source, candidates, stagePin, governsDefault, w
 Sources are `pin`, `pin+chain`, `role`, `any`, `config`, `rolePolicy` or `agent`; candidates retain
 `agentKind`, `modelLevel`, `alias`, `availableNow` and `unavailableReason`. `effective` is null on
 the unfiltered list and any-role rows. `defaultComplexity` is the configured ordinary Worker tier,
-shipped as `Medium`. A cell PUT is last-writer-wins; it takes no concurrency token.
+shipped as `Medium`.
+
+**Concurrency token (CARD-1275).** Each entry carries `concurrencyToken`: the version of the cell's
+own active row, rotated by each write and clear. It is null when the cell has no row; on the
+`?role=` view that includes a role cell answered by the any-role row or by config, so a writer
+sends the token of the row it would replace. A PUT body `concurrencyToken` or a DELETE
+`?concurrencyToken=` is the version the writer read:
+
+| Sent | Active row | Result |
+|---|---|---|
+| omitted | — | unconditional write (callers that predate CARD-1275; `migrate-stage-pins-to-cells.ps1` restore) |
+| `00000000-0000-0000-0000-000000000000` | absent | PUT creates the row; DELETE is a 204 no-op |
+| `00000000-0000-0000-0000-000000000000` | present | 409 `complexity_chain_stale` |
+| the row's token | present | write; the response carries the new token |
+| another value | present, or absent on PUT | 409 `complexity_chain_stale` |
+| a value | absent on DELETE | 204 no-op (already clear) |
+
+The 409 problem body adds `current`: the cell's row as GET returns it now (camelCase, enum names,
+nulls kept). The check is repeated by the UPDATE itself (EF concurrency token) and by the unique
+active-row index, so two writers that read the same version end with one write and one 409.
+`complexity-chain.ps1 set|clear` reads `GET /api/complexity-chains` once and sends each cell's
+token from that read. The settings editor sends the version it opened; on a 409 it shows the stored
+row beside the draft as "Changed since you opened this: reload", and adopts the new version when
+the operator presses Reload. An editor whose stored row or metadata failed to read sends no token
+once the operator confirms the overwrite.
 
 | Behaviour | Named test | What it asserts or does not cover |
 |---|---|---|
 | Role view includes the effective overlay and default complexity | `ComplexityEffectiveHttpTests.Get_role_view_carries_effective_and_default_complexity_and_card_pins_are_excluded` | Default Medium, role-view effective candidates, excluded card pins and null effective on the list view |
 | Candidate ordering reflects Required/Preferred stage pins | `ComplexityEffectiveComposeTests.A_required_pin_replaces_the_cell_and_sources_pin`, `A_preferred_pin_prepends_and_sources_pin_plus_chain` | Exact candidate arrays and `pin` / `pin+chain` sources |
 | A target can be withheld | `ComplexityEffectiveComposeTests.An_unlaunchable_policy_is_withheld_with_its_reason`; `ComplexityEffectiveHttpTests.Get_role_view_reports_an_agent_only_stage_pin_as_agent_bound` | Unsupported policy has an empty target and reason; agent-bound pin has `source: agent`, empty candidates and `governsDefault: false` |
-| A later PUT replaces the cell | `ComplexityEffectiveHttpTests.Put_twice_is_last_writer_wins_without_a_409` | Second candidates and reason returned by GET, updated timestamp and no 409 |
+| A later PUT without a token replaces the cell | `ComplexityEffectiveHttpTests.Put_twice_is_last_writer_wins_without_a_409` | Second candidates and reason returned by GET, updated timestamp and no 409 |
+| A stale PUT or DELETE is refused with the current row | `ComplexityChainConcurrencyHttpTests.Stale_put_is_409_with_the_current_row_and_leaves_it_unchanged`, `Stale_delete_is_409_and_keeps_the_row` | 409 `complexity_chain_stale`, `current.concurrencyToken` equals the stored token, stored row unchanged; a fresh DELETE is 204 and a repeat is 204 |
+| Create when absent, expect-absent and a cleared row | `ComplexityChainConcurrencyHttpTests.Create_when_absent_needs_no_version_and_the_empty_token_refuses_an_existing_row` | No-token create 200; empty token over a row 409; no-token overwrite 200; a token for a cleared row 409 with `current.source` `config` |
+| Concurrent writers | `ComplexityChainConcurrencyHttpTests.Concurrent_writers_with_one_token_leave_exactly_one_winner` | Six parallel creates and six parallel updates from one version: one 200 and five 409 each; GET equals the winner |
+| A role cell's token is its own row's | `ComplexityChainConcurrencyHttpTests.Effective_view_carries_the_cells_own_token_not_the_any_role_rows` | `?role=Review` Hard carries the cell token; Medium (via any-role) carries null; the list's any-role Medium carries its token |
+| Script sends the read token | `ComplexityChainScriptTests.Set_and_clear_send_each_cells_token_from_one_read_and_stop_on_stale` | One GET, then per-cell token or the empty GUID; a 409 stops `set -Complexity All` with `code complexity_chain_stale` |
 | Ordinary Worker default-tier adoption | `MatrixDefaultComplexityCreateTests.A_plain_create_walks_the_role_row_at_the_default_tier`, `An_unset_row_keeps_the_role_policy_path` | Resolved Plan/Medium is stamped and walked; unset Plan uses RolePolicy |
 
 ```

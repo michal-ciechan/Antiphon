@@ -1,0 +1,121 @@
+# CARD-1275 complexity-chain concurrency token — Code plan
+
+Card: CARD-1275 (found by Final Review 9ea4cb0e of CARD-1270, disclosure 1). Base: master
+`e7b6b80378dffe7b2326a8bc46ee5a91d30e9e69`. Branch `feat/card-task-8f76f70e`.
+
+## Design
+
+**Version field: a row token, not `updatedAt`.** `ComplexityChain.ConcurrencyToken` (uuid, EF
+`IsConcurrencyToken`) is rotated on each write and clear. `updatedAt` was rejected:
+
+- Postgres stores microseconds while the written `DateTime` carries 100 ns ticks, so the value a
+  client read back can differ from the in-memory value the same request compares against.
+- Two writes inside one clock tick (and every write under a fixed test `TimeProvider`) carry the
+  same `updatedAt`, so it does not identify a version.
+- A clear sets `ClearedAt` and leaves `UpdatedAt`; a token rotates on both.
+
+Migration `20261015090000_AddComplexityChainConcurrencyToken` adds the column with
+`gen_random_uuid()` for existing rows, then drops the default (the model has none). The entity
+initialises a fresh GUID so fixtures that insert rows directly never store the empty GUID, which
+the wire reserves for "expect no row".
+
+**Wire contract.** `ComplexityChainDto.concurrencyToken` is the token of the cell's own row
+(null when absent; on the `?role=` view, null when the role cell resolves through the any-role row
+or config). PUT body `concurrencyToken` and DELETE `?concurrencyToken=` carry the version the writer
+read: omitted = unconditional (backward compatible), empty GUID = expect no active row, other =
+must equal the active row's token. A mismatch is 409 `complexity_chain_stale` with a `current`
+problem-details extension holding the row as GET returns it (pre-serialized with string enums and
+nulls kept, because the problem-details writer drops nulls and writes enum numbers). A DELETE whose
+row is already absent stays a 204 no-op. The read-then-write window is closed by the EF concurrency
+token on UPDATE and the unique active-row index on INSERT; both map to the same 409, and a clear
+that lost to another clear returns 204.
+
+**Backward compatibility.** `complexity-chain.ps1 set|clear` reads `GET /api/complexity-chains`
+once and sends each cell's token (or the empty GUID). `migrate-stage-pins-to-cells.ps1` is
+unchanged: its apply and restore paths send no token and keep the unconditional write, which the
+restore path wants (it re-imposes a before-image). Callers outside the repo that omit the token
+keep working.
+
+**Client.** `usePutComplexityChain`/`useClearComplexityChain` take an optional `concurrencyToken`
+(omitted from the body/query when undefined). The cell editor sends the version it opened (empty
+GUID for an absent row; no token when the stored row or its metadata failed to read, behind the
+existing overwrite confirmation). A 409 stale shows "Changed since you opened this: reload" with
+the stored row beside the draft and disables Save/Clear; Reload replaces the draft and the token
+with the stored row; no retry happens without that click. A paused (offline) mutation shows a
+"Queued" note. `MatrixSection` renders the open editor at a fixed tree position outside the list
+read's pending/error branches, so a failed list refresh keeps the draft.
+
+Not changed (disclosed, out of the card's task list): closing the modal does not cancel an
+in-flight or queued PUT; the token makes a late queued PUT refuse rather than overwrite.
+
+## Slices
+
+| Slice | Commit | Content |
+|---|---|---|
+| S1 | test | `ComplexityChainConcurrencyHttpTests` (red: no token in DTO/request) |
+| S2 | feat | entity, migration, DTOs, service, endpoint |
+| S3 | test | `ComplexityChainScriptTests` token expectations, `ScriptedApi` tokens |
+| S4 | feat | `complexity-chain.ps1` read-then-write |
+| S5 | test | client API, editor and routing-tab tests |
+| S6 | feat | client API, editor, `MatrixSection` |
+| S7 | docs | `docs/antiphon-api.md`, this plan |
+
+## Verification design
+
+| ID | Kind | Test | Asserts |
+|---|---|---|---|
+| V-1 | new | `ComplexityChainConcurrencyHttpTests.Stale_put_is_409_with_the_current_row_and_leaves_it_unchanged` | 409 `complexity_chain_stale`; `current.concurrencyToken`, reason and candidates are the intervening write's; GET unchanged |
+| V-2 | new | `ComplexityChainConcurrencyHttpTests.Stale_delete_is_409_and_keeps_the_row` | stale DELETE 409 with current token, row kept; fresh DELETE 204, `resolvedFrom` none, null token; repeat 204 |
+| V-3 | new | `ComplexityChainConcurrencyHttpTests.Create_when_absent_needs_no_version_and_the_empty_token_refuses_an_existing_row` | no-token create 200; empty token over a row 409; no-token overwrite 200 with a new token; token of a cleared row 409 with `current.source` config |
+| V-4 | new | `ComplexityChainConcurrencyHttpTests.Concurrent_writers_with_one_token_leave_exactly_one_winner` | six parallel empty-token creates: one 200, five 409; six parallel updates from one token: one 200, five 409; GET equals the winner |
+| V-5 | new | `ComplexityChainConcurrencyHttpTests.Effective_view_carries_the_cells_own_token_not_the_any_role_rows` | role cell token on `?role=`; null for a cell resolved via the any-role row; list any-role token |
+| V-6 | new | `ComplexityChainScriptTests.Set_and_clear_send_each_cells_token_from_one_read_and_stop_on_stale` | one GET then per-cell token or empty GUID on PUT and DELETE; 409 stops `All` with `code complexity_chain_stale` |
+| V-7 | changed | `ComplexityChainScriptTests` request-sequence and path assertions (`C470_mutation_cell_round_trip`, `Set_puts_the_tier_provenance_and_candidates`, `Clear_deletes_by_complexity`, `Clear_Role_Plan_deletes_the_cell`, `Set_All_*`, `ClearStagePin_*`, `Clear_All_deletes_three_cells`) | leading `GET /api/complexity-chains`; DELETE `?concurrencyToken=`; PUT body token from the stub list |
+| V-8 | new | `complexityChains.test.tsx` `C1275 sends concurrencyToken in the PUT body and as ?concurrencyToken= on DELETE`, `C1275 reads the current row from a 409 complexity_chain_stale and nothing else` | exact PUT body with token; DELETE search string; `staleComplexityChain` returns `current` only for 409 + stale code + object |
+| V-9 | new | `ComplexityChainCellEditor.test.tsx` `C1275 a stale Save shows the stored row, does not retry, and Reload adopts the new version only on click` | stale alert text, Save/Clear disabled, one PUT before Reload, draft kept, Reload loads stored row, second PUT carries the new token |
+| V-10 | new | `ComplexityChainCellEditor.test.tsx` `C1275 a stale Clear sends the opened token and shows that the row is now absent` | DELETE search `?concurrencyToken=<opened>`; "Stored now: no own row for this cell" |
+| V-11 | new | `ComplexityChainCellEditor.test.tsx` `C1275 an unset cell sends the empty token; an unread cell confirmed for overwrite sends none` | empty GUID for an absent row; no `concurrencyToken` key after a metadata read failure |
+| V-12 | new | `ComplexityChainCellEditor.test.tsx` `C1275 an offline Save shows queued and sends once with the opened token when back online` | queued note while offline with zero PUTs; one PUT with the opened token after reconnect |
+| V-13 | new | `RoutingSettingsTab.test.tsx` `C1275 a failed list refresh keeps the open Any role editor and its unsaved draft` | same editor element and draft value through a failed and then a successful list refresh |
+| V-14 | changed | `ComplexityChainCellEditor.test.tsx` `PUTs the exact Human wire payload…`, `PUTs the any-role cell…` | exact payloads now include the opened token |
+| R-1 | regression | `ComplexityChainHttpTests`, `ComplexityChainRoleHttpTests`, `ComplexityEffectiveHttpTests` | no-token callers unchanged (incl. `Put_twice_is_last_writer_wins_without_a_409`) |
+| R-2 | regression | `ComplexityChainServiceTests`, `ComplexityChainRoleTests`, `AppDbContextModelTests` | service paths; model matches the hand-written migration snapshot |
+| R-3 | regression | `MigrateStagePinsScriptTests` | migration apply/restore through the shared `ScriptedApi` (query stripped from the cell key, tokens kept out of `Cells`) |
+| R-4 | regression | client files listed in CP-5 | routing tab, editor, model and settings page |
+| R-5 | regression | `npm --prefix client run build`, `npm --prefix client run lint` | typecheck, production build, ESLint |
+
+### Positive controls (pending for SourceLanding Mutation)
+
+| PC | Mutant | Expected red |
+|---|---|---|
+| PC-1 | `ThrowIfStaleAsync` returns without checking | V-1, V-2, V-3 |
+| PC-2 | treat `Guid.Empty` as "no expectation" | V-3 (empty token over a row), V-11 server side via V-3 |
+| PC-3 | drop `IsConcurrencyToken()` (and snapshot line) | V-4 update half (two 200s when the race window is hit) |
+| PC-4 | `IsLostRace` returns false | V-4 (500s instead of 409) |
+| PC-5 | effective view returns `answering?.ConcurrencyToken` regardless of `ResolvedFrom` | V-5 |
+| PC-6 | do not rotate the token in `UpsertAsync` | V-1 (`current.ShouldNotBe(opened)`) |
+| PC-7 | serialize `current` as the raw DTO (middleware options) | V-3 (`current.concurrencyToken` null omitted), V-1 enum names |
+| PC-8 | script sends `$EmptyToken` for every cell | V-6, V-7 (`Set_puts_the_tier_provenance_and_candidates`) |
+| PC-9 | client `staleComplexityChain` ignores `code` | V-8 |
+| PC-10 | editor retries the PUT with `current.concurrencyToken` on 409 | V-9 (`bodies` length) |
+| PC-11 | editor sends `chain.concurrencyToken ?? EMPTY` even when metadata is unread | V-11 |
+| PC-12 | `queued` reads `isPending` instead of `isPaused` / note removed | V-12 |
+| PC-13 | editor node moved back inside the list-success branch | V-13 |
+
+V-4's update half depends on two requests reaching the read-then-write window together; PC-3 may
+stay green when they serialize, in which case the unique-index create half and PC-4 remain the
+controls. This is a disclosure, recorded for Mutation.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-1 | S1-S7 | `tests/Antiphon.Tests -> bin-c1275/` | chain-concurrency | `/*/*/ComplexityChainConcurrencyHttpTests/*` | V-1, V-2, V-3, V-4, V-5 | 5 executed, 0 failed/skipped | 5 | 12 | false |
+| CP-2 | S1-S7 | `CP-1` | chain-http | `/*/*/(ComplexityChainHttpTests*)\|(ComplexityChainRoleHttpTests*)\|(ComplexityEffectiveHttpTests*)/*` | R-1 | 9 executed, 0 failed/skipped | 9 | 8 | false |
+| CP-3 | S1-S7 | `CP-1` | chain-service | `/*/*/(ComplexityChainServiceTests*)\|(ComplexityChainRoleTests*)\|(AppDbContextModelTests*)/*` | R-2 | at least 26 executed, 0 failed/skipped | 26 | 8 | false |
+| CP-4 | S1-S7 | `CP-1` | chain-scripts | `/*/*/(ComplexityChainScriptTests*)\|(MigrateStagePinsScriptTests*)/*` | V-6, V-7, R-3 | at least 24 executed, 0 failed/skipped | 24 | 10 | false |
+| CP-5 | S1-S7 | n/a | client-tests | `pwsh -NoProfile -File scripts/test-client.ps1 src/api/complexityChains.test.tsx src/features/settings/ComplexityChainCellEditor.test.tsx src/features/settings/RoutingSettingsTab.test.tsx src/features/settings/routingSettingsModel.test.ts src/features/settings/SettingsPage.test.tsx src/features/orchestrator/ComplexityChainPanel.test.tsx` | V-8, V-9, V-10, V-11, V-12, V-13, V-14, R-4 | 6 files, nonzero count, 0 failed/skipped, `CLIENT TESTS EXIT CODE: 0` | n/a | 5 | false |
+| CP-6 | S1-S7 | n/a | client-build | `npm --prefix client run build` | R-5 | typecheck and production build exit 0 | n/a | 4 | false |
+| CP-7 | S1-S7 | n/a | client-lint | `npm --prefix client run lint` | R-5 | ESLint exit 0 | n/a | 4 | false |
+
+Red-first is by commit order (S1, S3, S5 precede their fixes); the red runs belong to Mutation.
