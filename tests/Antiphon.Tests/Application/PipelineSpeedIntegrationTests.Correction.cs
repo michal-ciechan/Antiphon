@@ -138,6 +138,55 @@ public sealed partial class PipelineSpeedIntegrationTests
             Observe?.Invoke(boundary) ?? Task.CompletedTask;
     }
 
+    private static async Task ReceiptVariantsAsync()
+    {
+        await using var w = await AdvisoryChangePolicyTests.CorrectionWorld.CreateAsync();
+        using (var producer = await w.PostAsync(w.Request with { ProducerIdentity = "foreign-producer" }))
+            await RequireProblemAsync(producer, "review_evidence_correction_producer_untrusted");
+        foreach (var selection in new[] { w.Request.Selection with { CommitSha = new string('a', 40) },
+            w.Request.Selection with { Section = "## Different selection" }, w.Request.Selection with { Rows = ["CP-14"] } })
+        {
+            using var denied = await w.PostAsync(w.Request with { Selection = selection });
+            await RequireProblemAsync(denied, "review_evidence_correction_commissioned_selection_mismatch");
+        }
+        var settings = w.App.Services.GetRequiredService<IOptions<CheckpointReceiptSettings>>().Value;
+        var storage = settings.StorageRoot;
+        settings.StorageRoot = Path.Combine(w.Root, "occupied-storage");
+        await File.WriteAllTextAsync(settings.StorageRoot, "owned fixture blocks directory import");
+        using (var denied = await w.PostAsync(w.Request))
+            await RequireProblemAsync(denied, "review_evidence_correction_receipt_invalid");
+        await using (var db = w.Db())
+        {
+            (await db.ReviewEvidenceCorrections.CountAsync()).ShouldBe(0, "import-failure-no-approval");
+            (await db.StageOutcomes.CountAsync()).ShouldBe(1);
+        }
+        settings.StorageRoot = storage;
+        using var good = await w.PostAsync(w.Request);
+        good.StatusCode.ShouldBe(HttpStatusCode.OK);
+        await using var fresh = w.Db();
+        var retained = await fresh.ReviewEvidenceCorrections.SingleAsync();
+        using var proof = JsonDocument.Parse(retained.ValidationResultJson);
+        var arguments = proof.RootElement.GetProperty("arguments").EnumerateArray().Select(a => a.GetString()).ToArray();
+        arguments.ShouldContain(w.Request.SourceSha, "actual-validator-source-argument");
+        arguments.ShouldContain(string.Join(',', w.Request.Selection.Rows), "actual-validator-rows-argument");
+        AdvisoryChangePolicyTests.CorrectionWorld.Digest(await File.ReadAllTextAsync(retained.ImportedEvidenceIdentity))
+            .ShouldBe(w.Request.BundleDigest, "retained-content-digest");
+        // The input was copied from the authentic producer. Corrupt a referenced blob only;
+        // the pinned inventory stays unchanged, so import must detect its digest mismatch.
+        await using var tampered = await AdvisoryChangePolicyTests.CorrectionWorld.CreateAsync();
+        var inventory = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(tampered.ProducerRoot, "producer-pack-index.json")));
+        using (inventory)
+        {
+            var relative = inventory.RootElement.GetProperty("files").EnumerateArray()
+                .Select(e => e.GetProperty("relativePath").GetString()!).Single(p => p.EndsWith("manifest.resolved.yaml"));
+            await File.AppendAllTextAsync(Path.Combine(tampered.ProducerRoot, relative), "\n# tampered fixture\n");
+        }
+        using var corrupted = await tampered.PostAsync(tampered.Request);
+        await RequireProblemAsync(corrupted, "review_evidence_correction_receipt_invalid");
+        await using var rejected = tampered.Db();
+        (await rejected.ReviewEvidenceCorrections.CountAsync()).ShouldBe(0, "tampered-blob-refused");
+    }
+
     private static async Task CorrectionTransactionsAsync()
     {
         foreach (var cut in new[] { "before-audit", "before-save", "before-commit", "committed", "prepared-report", "prepared-predecessor" })
