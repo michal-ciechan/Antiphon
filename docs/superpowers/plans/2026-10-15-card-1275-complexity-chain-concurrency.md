@@ -34,8 +34,10 @@ lost to another clear returns 204. The lazy `NotAfter` sweep rotates the token a
 lost race, up to the same bound; after the third lost race its `DbUpdateConcurrencyException`
 leaves `FindActiveAsync` (V-23 witnesses that, not an HTTP status; repair D2 of Review 72440e28).
 What each request kind then answers (500 for the unfiltered GET, PUT, DELETE and an
-explicit-complexity task creation; 200 with a withheld reason on `?role=`; a created task with a
-`Routing read failed` warning at the default tier) is the sweep table in `docs/antiphon-api.md`,
+explicit-complexity task creation; 200 with a withheld reason on `?role=`; 500 for a default-tier
+task creation too, because its `Routing read failed` catch leaves the failed sweep row tracked and the
+task's save sends it again, read from the code and driven by no test, repair D1 of Review 2f23c01d,
+follow-up CARD-1278) is the sweep table in `docs/antiphon-api.md`,
 which cites the code for each row (repair D1 of Review a11e0948). The `?role=` view reads a
 role cell's token, reason and expiry before its candidates, so a cell created or re-created between
 the reads pairs newer candidates with an older token (or none) and a save with it is 409 (V-21,
