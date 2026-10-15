@@ -1,5 +1,28 @@
 # Session runtime invariants
 
+## Deferred transcript effects (CARD-1259)
+
+Transcript ingestion commits each stored row and its `SessionRuntimeAction` in the
+same transaction under the session write lease. UI publication, queue confirmation,
+compaction recovery and reply routing run after the lease is released. Catch-up and
+blocked-exit admission must not await those effects. Stored transcript rows remain
+the delivery and working-state authority; the binary UI projection delta restores
+display payloads only. A safe stub retains a separate manual-compaction scheduling
+flag, which never overrides the stored working-state gate.
+
+Four hosted workers consume at most 128 session hints; ingestion uses nonblocking
+offers. Durable discovery uses 128-session keyset pages, startup/overflow wakeups
+and a one-second injected-clock backstop. Failed phases retain their action and
+retry after 1/2/4/8/16/30 seconds. Session/transcript retention excludes outstanding
+actions and rechecks under the transcript mutation lease. Host registration stops
+the event pump before joining the action workers; a shutdown deadline does not
+release an owner while its external effect is still running. This remains a
+single-server-writer design.
+
+Implementation and qualification status, including remaining routing/recovery
+work, is recorded in
+[the continuation evidence](superpowers/plans/2026-10-15-card-1259-code-s2-s4-evidence.md).
+
 ## Stale Working transcript recovery (CARD-1205 S4)
 
 `StaleWorkingTranscript` defaults to enabled, interval 120 seconds, poll 15,
