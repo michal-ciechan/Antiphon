@@ -97,10 +97,10 @@ public static class ReportWriter
     {
         try
         {
+            if (state.Source?.Start is null) return "state-receipt-source-unreadable";
             ReceiptJson.Validate(state);
             if (state.ToolOwner != SafeWrite.Marker || state.RunId != Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(runDirectory))))
                 return "receipt-run-directory-mismatching";
-            if (state.Source?.Start is null) return "state-receipt-source-unreadable";
             var markdownPath = Path.Combine(runDirectory, "report.md");
             var jsonPath = Path.Combine(runDirectory, "report.json");
             foreach (var path in new[] { markdownPath, jsonPath })
