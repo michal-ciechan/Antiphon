@@ -1,7 +1,8 @@
 import { type ReactElement } from 'react';
-import { render, renderHook, type RenderOptions } from '@testing-library/react';
+import { act, render, renderHook, type RenderOptions } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MantineProvider } from '@mantine/core';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { defaultScheduler, notifyManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router';
 import { createElement } from 'react';
 
@@ -87,6 +88,63 @@ function providersFor(queryClient: QueryClient) {
       ),
     );
   };
+}
+
+/**
+ * Waits, inside act, until `queryClient` has no query or mutation in flight, flushing React after
+ * each round, so the next assertion can be a synchronous getBy* (CARD-1246).
+ *
+ * A findBy or waitFor after a fetch-driven render polls inside a 1 000 ms window; on a loaded host
+ * the MSW reply plus the render can outlast it, and the test fails with nothing wrong. This waits
+ * on the cache's own events instead of a clock: each round awaits the idle event, then one
+ * zero-delay tick, and act renders what arrived before it returns. React Query hands a result to a
+ * component in two scheduler hops (the batch flush, then useQuery's batched store callback); by
+ * default each is a setTimeout 0, so the second landed after the tick and the round ended with the
+ * data cached but not rendered (seen in AgentsPage). While settling, the scheduler is a microtask,
+ * which the tick drains, and the default is restored after. A render can mount new queries in its
+ * effects, so the loop ends when a flush leaves nothing in flight. The suite's testTimeout stays
+ * the only bound (a hang detector): a request that never answers hangs here, so do not use it with
+ * held handlers.
+ */
+export async function settleQueries(queryClient: QueryClient): Promise<void> {
+  const busy = () => queryClient.isFetching() > 0 || queryClient.isMutating() > 0;
+  notifyManager.setScheduler(queueMicrotask);
+  try {
+    do {
+      await act(async () => {
+        await new Promise<void>((resolve) => {
+          if (!busy()) {
+            resolve();
+            return;
+          }
+          const check = () => {
+            if (busy()) return;
+            unsubscribeQueries();
+            unsubscribeMutations();
+            resolve();
+          };
+          const unsubscribeQueries = queryClient.getQueryCache().subscribe(check);
+          const unsubscribeMutations = queryClient.getMutationCache().subscribe(check);
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    } while (busy());
+  } finally {
+    notifyManager.setScheduler(defaultScheduler);
+  }
+}
+
+/**
+ * Focuses `element` and pastes `text` as one input event (CARD-1246). Per-keystroke
+ * `userEvent.type` re-renders a large form once per character: seconds of CPU on a loaded host,
+ * enough to reach the hang detector, and the abandoned keystrokes of a timed-out test then land in
+ * the next test's field (seen at base under a stressor: 'hOrch2', 'redi'). Use it where the test
+ * asserts the final value, not intermediate keystrokes.
+ */
+export async function pasteInto(element: HTMLElement, text: string): Promise<void> {
+  const user = userEvent.setup();
+  await user.click(element);
+  await user.paste(text);
 }
 
 // Re-export everything from @testing-library/react for convenience

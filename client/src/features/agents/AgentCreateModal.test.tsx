@@ -2,7 +2,7 @@ import { HttpResponse, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import type { CreateAgentRequest } from '../../api/agents'
 import type { AgentTuiProfileDto } from '../../api/agentTui'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { pasteInto, renderWithProviders, screen, settleQueries, userEvent } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { AgentCreateModal } from './AgentCreateModal'
 
@@ -86,12 +86,12 @@ function seedCreate(onPost: (request: CreateAgentRequest) => void) {
 
 async function fillRequiredFields() {
   const name = screen.getAllByLabelText('Name').find((el) => el instanceof HTMLInputElement) as HTMLInputElement
-  await userEvent.type(name, 'CARD-0255 throwaway')
+  await pasteInto(name, 'CARD-0255 throwaway')
   const directory = screen
     .getAllByLabelText('Working directory')
     .find((el): el is HTMLInputElement => el instanceof HTMLInputElement)!
   await userEvent.clear(directory)
-  await userEvent.type(directory, 'D:\\src\\card-0255')
+  await pasteInto(directory, 'D:\\src\\card-0255')
 }
 
 describe('AgentCreateModal presets', () => {
@@ -99,14 +99,17 @@ describe('AgentCreateModal presets', () => {
     let submitted: CreateAgentRequest | null = null
     seedCreate((request) => { submitted = request })
 
-    renderWithProviders(<AgentCreateModal opened onClose={() => {}} />)
+    // Settled, not polled: the profile and bundle reads plus the preset render outran a findBy
+    // window under load, and the per-key typing reached the hang detector (CARD-1246).
+    const { queryClient } = renderWithProviders(<AgentCreateModal opened onClose={() => {}} />)
+    await settleQueries(queryClient)
 
-    expect(await screen.findByText('Standing orchestrator')).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByRole('switch', { name: /Always on/i })).toBeChecked())
+    expect(screen.getByText('Standing orchestrator')).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: /Always on/i })).toBeChecked()
 
     await fillRequiredFields()
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
-    await waitFor(() => expect(submitted).not.toBeNull())
+    await settleQueries(queryClient)
     expect(submitted).toMatchObject({
       preset: 'orchestrator',
       replyStyle: 'Normal',
@@ -120,15 +123,16 @@ describe('AgentCreateModal presets', () => {
     let submitted: CreateAgentRequest | null = null
     seedCreate((request) => { submitted = request })
 
-    renderWithProviders(<AgentCreateModal opened onClose={() => {}} />)
+    const { queryClient } = renderWithProviders(<AgentCreateModal opened onClose={() => {}} />)
+    await settleQueries(queryClient)
 
-    expect(await screen.findByText('Standing orchestrator')).toBeInTheDocument()
+    expect(screen.getByText('Standing orchestrator')).toBeInTheDocument()
     await userEvent.click(screen.getByText('Worker'))
-    await waitFor(() => expect(screen.getByRole('switch', { name: /Always on/i })).not.toBeChecked())
+    expect(screen.getByRole('switch', { name: /Always on/i })).not.toBeChecked()
 
     await fillRequiredFields()
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
-    await waitFor(() => expect(submitted).not.toBeNull())
+    await settleQueries(queryClient)
     expect(submitted).toMatchObject({
       preset: 'worker',
       replyStyle: 'Normal',
@@ -141,11 +145,13 @@ describe('AgentCreateModal presets', () => {
   it('creates an explicitly Phone agent', async () => {
     let submitted: CreateAgentRequest | null = null
     seedCreate(request => { submitted = request })
-    renderWithProviders(<AgentCreateModal opened onClose={() => {}} />)
-    await userEvent.click(await screen.findByRole('radio', { name: 'Phone' }))
+    const { queryClient } = renderWithProviders(<AgentCreateModal opened onClose={() => {}} />)
+    await settleQueries(queryClient)
+    await userEvent.click(screen.getByRole('radio', { name: 'Phone' }))
     await fillRequiredFields()
     expect(screen.getByRole('radio', { name: 'Phone' })).toBeChecked()
     await userEvent.click(screen.getByRole('button', { name: 'Create' }))
-    await waitFor(() => expect(submitted?.replyStyle).toBe('Phone'))
+    await settleQueries(queryClient)
+    expect(submitted?.replyStyle).toBe('Phone')
   })
 })
