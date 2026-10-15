@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -11,6 +12,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -1693,12 +1695,161 @@ public class AgentServiceIntegrationTests
         }
     }
 
+    // CARD-1235: a session bound to a phone-home runner takes its overlay from that runner's
+    // inventory, not from the local runner's list.
+    [Test]
+    public async Task C1235_remote_bound_live_session_takes_transcriptBinding_from_its_runners_inventory()
+    {
+        var (agentId, sessionId) = await SeedStartedAgentAsync(SessionStatus.Running);
+        try
+        {
+            var runnerId = await BindToRemoteRunnerAsync(sessionId);
+            var directory = new InventoryDirectory();
+            directory.Answer(runnerId, RunnerRow(sessionId, transcriptBound: false, transcriptUnboundReason: "awaiting-input"));
+
+            await using var db = CreateContext();
+            var detail = await CreateService(
+                    db, new MockEventBus(), runnerClient: new ListedRunnerClient(), runnerDirectory: directory)
+                .GetByIdAsync(agentId, CancellationToken.None);
+
+            detail.LiveSession.ShouldNotBeNull();
+            detail.LiveSession!.TranscriptBinding.ShouldBe("awaiting-input");
+            directory.Asked.ShouldBe([runnerId]);
+        }
+        finally
+        {
+            await CleanupSessionsAsync(sessionId);
+        }
+    }
+
+    // CARD-1235: the local runner's list answers for local sessions only. A row it lists under a
+    // remote-bound session's id is not that session's state; an unavailable owner stays unknown.
+    [Test]
+    public async Task C1235_local_runner_row_does_not_overlay_a_remote_bound_session()
+    {
+        var (agentId, sessionId) = await SeedStartedAgentAsync(SessionStatus.Running);
+        try
+        {
+            var runnerId = await BindToRemoteRunnerAsync(sessionId);
+            var directory = new InventoryDirectory();
+            directory.Unavailable(runnerId, "phone-home runner unavailable");
+
+            await using var db = CreateContext();
+            var detail = await CreateService(
+                    db,
+                    new MockEventBus(),
+                    runnerClient: new ListedRunnerClient(RunnerRow(sessionId, transcriptBound: true)),
+                    runnerDirectory: directory)
+                .GetByIdAsync(agentId, CancellationToken.None);
+
+            detail.LiveSession.ShouldNotBeNull();
+            detail.LiveSession!.TranscriptBinding.ShouldBeNull();
+            directory.Asked.ShouldBe([runnerId]);
+        }
+        finally
+        {
+            await CleanupSessionsAsync(sessionId);
+        }
+    }
+
+    // CARD-1235: the agent list (the board's overlay source) answers each session from its own
+    // runner in one read.
+    [Test]
+    public async Task C1235_agent_list_overlays_local_and_remote_sessions_from_their_own_runners()
+    {
+        var (localAgentId, localSessionId) = await SeedStartedAgentAsync(SessionStatus.Running);
+        var (remoteAgentId, remoteSessionId) = await SeedStartedAgentAsync(SessionStatus.Running);
+        try
+        {
+            var runnerId = await BindToRemoteRunnerAsync(remoteSessionId);
+            var directory = new InventoryDirectory();
+            directory.Answer(runnerId, RunnerRow(remoteSessionId, transcriptBound: true));
+            var local = new ListedRunnerClient(
+                RunnerRow(localSessionId, transcriptBound: false, transcriptUnboundReason: "awaiting-input"));
+
+            await using var db = CreateContext();
+            var agents = await CreateService(db, new MockEventBus(), runnerClient: local, runnerDirectory: directory)
+                .GetAllAsync(CancellationToken.None);
+
+            agents.Single(a => a.Id == localAgentId).LiveSession!.TranscriptBinding.ShouldBe("awaiting-input");
+            agents.Single(a => a.Id == remoteAgentId).LiveSession!.TranscriptBinding.ShouldBe("bound");
+        }
+        finally
+        {
+            await CleanupSessionsAsync(localSessionId, remoteSessionId);
+        }
+    }
+
+    // CARD-1235: a remote runner that does not answer within the list deadline leaves only its own
+    // sessions unknown; the local overlay still arrives.
+    [Test]
+    public async Task C1235_hung_remote_runner_leaves_its_session_unknown_and_keeps_the_local_overlay()
+    {
+        var (localAgentId, localSessionId) = await SeedStartedAgentAsync(SessionStatus.Running);
+        var (remoteAgentId, remoteSessionId) = await SeedStartedAgentAsync(SessionStatus.Running);
+        try
+        {
+            var runnerId = await BindToRemoteRunnerAsync(remoteSessionId);
+            var directory = new InventoryDirectory();
+            directory.Hang(runnerId);
+            var local = new ListedRunnerClient(
+                RunnerRow(localSessionId, transcriptBound: false, transcriptUnboundReason: "awaiting-input"));
+
+            await using var db = CreateContext();
+            var agents = await CreateService(
+                    db,
+                    new MockEventBus(),
+                    runnerClient: local,
+                    runnerDirectory: directory,
+                    runnerSettings: new SessionRunnerSettings { ListTimeoutSeconds = 1 })
+                .GetAllAsync(CancellationToken.None);
+
+            directory.Asked.ShouldContain(runnerId);
+            agents.Single(a => a.Id == localAgentId).LiveSession!.TranscriptBinding.ShouldBe("awaiting-input");
+            agents.Single(a => a.Id == remoteAgentId).LiveSession!.TranscriptBinding.ShouldBeNull();
+        }
+        finally
+        {
+            await CleanupSessionsAsync(localSessionId, remoteSessionId);
+        }
+    }
+
+    // Binds the session to a unique remote runner the way a phone-home launch records it
+    // (PhoneHomeRunnerDirectory.GetBindingAsync reads the same three columns).
+    private static async Task<string> BindToRemoteRunnerAsync(Guid sessionId)
+    {
+        var runnerId = $"c1235-{Guid.NewGuid():N}";
+        await using var db = CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        session.RunnerId = runnerId;
+        session.RunnerStoreId = Guid.NewGuid();
+        session.RunnerCwd = $"/work/worktrees/{sessionId:N}";
+        await db.SaveChangesAsync();
+        return runnerId;
+    }
+
+    private static SessionRunnerSessionDto RunnerRow(
+        Guid sessionId, bool? transcriptBound, string? transcriptUnboundReason = null) =>
+        new(
+            sessionId,
+            Pid: 1,
+            StartedAt: DateTime.UtcNow,
+            Status: "Running",
+            ExitCode: null,
+            ExitReason: AgentExitReason.Unknown,
+            LastSequence: 0,
+            TranscriptBound: transcriptBound,
+            TranscriptBindHow: transcriptBound == true ? TranscriptBindMethods.Exact : null,
+            TranscriptUnboundReason: transcriptUnboundReason);
+
     private static AgentService CreateService(
         AppDbContext db,
         IEventBus eventBus,
         IDirectoryWriter? directoryWriter = null,
         ISessionRunnerClient? runnerClient = null,
-        IDelegateSessionStopper? sessions = null)
+        IDelegateSessionStopper? sessions = null,
+        ISessionRunnerDirectory? runnerDirectory = null,
+        SessionRunnerSettings? runnerSettings = null)
     {
         return new AgentService(
             db,
@@ -1708,7 +1859,94 @@ public class AgentServiceIntegrationTests
             directoryWriter ?? new NoOpDirectoryWriter(),
             NullLogger<AgentService>.Instance,
             runnerClient: runnerClient,
-            sessions: sessions);
+            runnerSettings: runnerSettings is null ? null : Options.Create(runnerSettings),
+            sessions: sessions,
+            runnerDirectory: runnerDirectory);
+    }
+
+    /// <summary>CARD-1235. Per-runner inventories; records which runners the overlay asked.</summary>
+    private sealed class InventoryDirectory : ISessionRunnerDirectory
+    {
+        private readonly Dictionary<string, Func<CancellationToken, Task<RunnerInventory>>> _inventories = [];
+
+        public List<string?> Asked { get; } = [];
+
+        public void Answer(string runnerId, params SessionRunnerSessionDto[] sessions) =>
+            _inventories[runnerId] = _ => Task.FromResult<RunnerInventory>(new RunnerInventory.Available(sessions));
+
+        public void Unavailable(string runnerId, string reason) =>
+            _inventories[runnerId] = _ => Task.FromResult<RunnerInventory>(new RunnerInventory.Unavailable(reason));
+
+        public void Hang(string runnerId) =>
+            _inventories[runnerId] = async ct =>
+            {
+                await Task.Delay(Timeout.Infinite, ct);
+                throw new InvalidOperationException("unreachable");
+            };
+
+        public ISessionRunnerClient Local => throw new NotSupportedException();
+
+        public ISessionRunnerClient Resolve(string? runnerId) => throw new NotSupportedException();
+
+        public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct)
+        {
+            lock (Asked)
+                Asked.Add(runnerId);
+            // Rows of other tests' sessions bound to other runners stay unanswered.
+            return runnerId is not null && _inventories.TryGetValue(runnerId, out var inventory)
+                ? inventory(ct)
+                : Task.FromResult<RunnerInventory>(new RunnerInventory.Unavailable("not in this test"));
+        }
+
+        public IReadOnlyList<string> KnownRunnerIds => [.. _inventories.Keys];
+
+        public Guid? GetLiveStoreId(string? runnerId) => null;
+    }
+
+    private sealed class ListedRunnerClient(params SessionRunnerSessionDto[] sessions) : ISessionRunnerClient
+    {
+        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>(sessions);
+
+        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
     }
 
     private sealed class BindingRunnerClient : ISessionRunnerClient

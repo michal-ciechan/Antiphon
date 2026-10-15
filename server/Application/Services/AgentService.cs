@@ -45,6 +45,7 @@ public sealed class AgentService
     private readonly IDelegateSessionStopper? _sessions;
     private readonly AgentSessionRuntime? _runtime;
     private readonly SessionStateStore? _states;
+    private readonly ISessionRunnerDirectory? _runnerDirectory;
 
     /// <summary>
     /// CARD-1190 test seam. Runs after the specialist delete commits its session-then-agent
@@ -76,9 +77,13 @@ public sealed class AgentService
         // a harness without it cannot delete an agent whose session is live (409), never orphans one.
         IDelegateSessionStopper? sessions = null,
         AgentSessionRuntime? runtime = null,
-        SessionStateStore? states = null)
+        SessionStateStore? states = null,
+        // CARD-1235: answers the live overlay of sessions bound to a phone-home runner. Optional for
+        // the same reason; without it such a session's runner state stays unknown.
+        ISessionRunnerDirectory? runnerDirectory = null)
     {
         _states = states;
+        _runnerDirectory = runnerDirectory;
         _phoneHome = phoneHome;
         _sessions = sessions;
         _runtime = runtime;
