@@ -215,7 +215,7 @@ public class OrchestratorInstructionsRefreshTests
         var state = await ReadStateAsync(h);
         var file = await File.ReadAllTextAsync(state.WrittenPath);
         var line = file.Split('\n').Single(value => value.StartsWith("- Plan:", StringComparison.Ordinal));
-        fault.Failures.ShouldBe(tier is null ? 3 : 1);
+        fault.Failures.ShouldBe(fault.Tiers.Length * ChainReadFault.ReadsPerCell);
         foreach (var affected in fault.Tiers)
             line.ShouldContain($"{affected}{(affected == TaskComplexity.Medium ? " (default)" : "")} unknown (chain read failed)");
         Encoding.UTF8.GetByteCount(line).ShouldBeLessThanOrEqualTo(160);
@@ -246,7 +246,7 @@ public class OrchestratorInstructionsRefreshTests
         fault.Enabled = true;
         await Instructions(h).ReconcileNowAsync("chain read failure");
 
-        fault.Failures.ShouldBe(tier is null ? 3 : 1);
+        fault.Failures.ShouldBe(fault.Tiers.Length * ChainReadFault.ReadsPerCell);
         h.Adapter.SubmittedBodies.Count.ShouldBe(1);
         h.Adapter.SubmittedBodies[0].Length.ShouldBeLessThanOrEqualTo(700);
         foreach (var affected in fault.Tiers)
@@ -303,6 +303,9 @@ public class OrchestratorInstructionsRefreshTests
 
     private sealed class ChainReadFault(TaskComplexity? tier) : DbCommandInterceptor
     {
+        /// <summary>A role cell is read twice: its metadata and token, then its candidates (CARD-1275).</summary>
+        public const int ReadsPerCell = 2;
+
         public bool Enabled { get; set; }
         public int Failures { get; private set; }
         public TaskComplexity[] Tiers { get; } = tier is { } selected
