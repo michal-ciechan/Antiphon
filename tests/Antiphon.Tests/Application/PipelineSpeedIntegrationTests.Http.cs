@@ -45,7 +45,7 @@ public sealed partial class PipelineSpeedIntegrationTests
             await host.RestartHttpAsync();
             var read = await host.ReadAsync();
             read.Action.ChildTaskId.ShouldBeNull("refusal-durable-zero-child");
-            read.Observations.Last().Detail.ShouldContain("handoff_", "refusal-durable-zero-child");
+            read.Observations.Last().Detail.Contains("handoff_", StringComparison.Ordinal).ShouldBeTrue("refusal-durable-zero-child");
             read.Observations.Last().NextObservationAt.ShouldNotBeNull("refusal-next-observation");
         }
         host.App.Services.GetRequiredService<IEventBus>().ShouldBeOfType<MockEventBus>().ThrowOnceOnEvent = "AgentTaskChanged";
@@ -141,6 +141,7 @@ public sealed partial class PipelineSpeedIntegrationTests
                 catch (IOException error) when (error.Message.StartsWith("c544 completion persistence cut", StringComparison.Ordinal)) { }
             }
             if (cut != "wakeup-dropped") rig.Fault.Throws.ShouldBe(1, label + ": cut reached");
+            else rig.Boundary.DropCompletionWakeup.ShouldBeFalse(label + ": dropped-wakeup-cut-reached");
             await rig.RestartAsync(); rig.World.Clock.Advance(TimeSpan.FromMinutes(10));
             await rig.ScanAsync(); if (rig.Busy) await rig.EndCallerTurnAsync();
             await rig.FlushAsync(); await rig.ScanAsync();
