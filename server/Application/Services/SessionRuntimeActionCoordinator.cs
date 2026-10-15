@@ -21,9 +21,15 @@ public sealed class SessionRuntimeActionCoordinator(
         { FullMode = BoundedChannelFullMode.Wait, AllowSynchronousContinuations = false });
     // Contains active execution owners only, at most WorkerCount. Overflow lives in PostgreSQL.
     private readonly ConcurrentDictionary<Guid, byte> _owners = new();
+    private readonly Channel<bool> _scan = Channel.CreateBounded<bool>(1);
     private int _running;
 
-    internal bool Hint(Guid sessionId) => _hints.Writer.TryWrite(sessionId);
+    internal bool Hint(Guid sessionId)
+    {
+        if (_hints.Writer.TryWrite(sessionId)) return true;
+        _scan.Writer.TryWrite(true);
+        return false;
+    }
 
     internal static SessionRuntimeAction Admit(AppDbContext db, TranscriptEntry row,
         SessionRunnerTranscriptEvent source, DateTime generation, bool boundary, DateTime now)
@@ -80,13 +86,21 @@ public sealed class SessionRuntimeActionCoordinator(
                 var query = db.SessionRuntimeActions.Where(a => a.DueAt <= now);
                 if (cursor is { } after) query = query.Where(a => a.AgentSessionId.CompareTo(after) > 0);
                 var sessions = await query.Select(a => a.AgentSessionId).Distinct().OrderBy(id => id).Take(PageSize).ToListAsync(ct);
-                foreach (var sessionId in sessions) Hint(sessionId);
+                // Discovery may wait for capacity; ingestion only offers nonblocking hints.
+                // Retaining this bounded page avoids losing overflow IDs on a frozen clock.
+                foreach (var sessionId in sessions) await _hints.Writer.WriteAsync(sessionId, ct);
                 cursor = sessions.Count == PageSize ? sessions[^1] : null;
+                if (cursor is not null) continue;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (Exception ex) { Diagnostic(ex, "Action discovery failed", Guid.Empty); }
-            try { await Task.Delay(TimeSpan.FromSeconds(1), clock, ct); }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            using var wait = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var backstop = Task.Delay(TimeSpan.FromSeconds(1), clock, wait.Token);
+            var overflow = _scan.Reader.ReadAsync(wait.Token).AsTask();
+            await Task.WhenAny(backstop, overflow);
+            await wait.CancelAsync();
+            try { await Task.WhenAll(backstop, overflow); }
+            catch (OperationCanceledException) { }
         }
     }
 

@@ -45,8 +45,8 @@ public sealed class CompactionRecoveryService
     {
         using (var rulesScope = _scopeFactory.CreateScope())
         {
-            var db = rulesScope.ServiceProvider.GetRequiredService<AppDbContext>();
-            if (await db.AgentSessions.AnyAsync(s => s.Id == sessionId && s.AgentKind == AgentKind.Grok && s.GrokRulesGeneration != null, ct))
+            var rulesDb = rulesScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            if (await rulesDb.AgentSessions.AnyAsync(s => s.Id == sessionId && s.AgentKind == AgentKind.Grok && s.GrokRulesGeneration != null, ct))
             {
                 await rulesScope.ServiceProvider.GetRequiredService<GrokRulesRefreshService>().ReconcileAsync(sessionId, ct);
                 return;
