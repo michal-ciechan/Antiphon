@@ -790,39 +790,62 @@ the unfiltered list and any-role rows. `defaultComplexity` is the configured ord
 shipped as `Medium`.
 
 **Concurrency token (CARD-1275).** Each entry carries `concurrencyToken`: the version of the cell's
-own active row, rotated by each write and clear, including the lazy `notAfter` expiry sweep. It is
-null when the cell has no row; on the `?role=` view that includes a role cell answered by the
-any-role row or by config, so a writer sends the token of the row it would replace. A PUT body
-`concurrencyToken` or a DELETE `?concurrencyToken=` is the version the writer read:
+own active row, rotated by each write and clear, including the lazy `notAfter` expiry sweep
+(`ComplexityChainService.StageUpsertAsync`, `ClearAsync`; `ComplexityRoutingService.SweepExpiredAsync`).
+It is null when the cell has no row; on the `?role=` view that includes a role cell answered by the
+any-role row or by config (`GetEffectiveAsync`; `Effective_view_carries_the_cells_own_token_not_the_any_role_rows`),
+so a writer sends the token of the row it would replace. A PUT body `concurrencyToken` or a DELETE
+`?concurrencyToken=` is the version the writer read; `ThrowIfStaleAsync` compares it with the row
+the request reads:
 
-| Sent | Active row | Result |
-|---|---|---|
-| omitted | — | write without a version check (callers that predate CARD-1275; `migrate-stage-pins-to-cells.ps1`): last writer wins; see below for a lost race |
-| `00000000-0000-0000-0000-000000000000` | absent | PUT creates the row; DELETE is a 204 no-op |
-| `00000000-0000-0000-0000-000000000000` | present | 409 `complexity_chain_stale` |
-| the row's token | present | write; the response carries the new token |
-| another value | present, or absent on PUT | 409 `complexity_chain_stale` |
-| a value | absent on DELETE | 204 no-op (already clear) |
+| Sent | Active row | Result | Source |
+|---|---|---|---|
+| omitted | — | write without a version check (callers that predate CARD-1275; `migrate-stage-pins-to-cells.ps1`): last writer wins; see below for a lost race | `ThrowIfStaleAsync` returns at once; `Put_twice_is_last_writer_wins_without_a_409` |
+| `00000000-0000-0000-0000-000000000000` | absent | PUT creates the row; DELETE is a 204 no-op | `Stale_delete_is_409_and_keeps_the_row` (PUT); `ClearAsync` returns before the check (DELETE) |
+| `00000000-0000-0000-0000-000000000000` | present | 409 `complexity_chain_stale` | `Create_when_absent_needs_no_version_and_the_empty_token_refuses_an_existing_row` |
+| the row's token | present | write: a PUT is 200 with the new token, a DELETE 204 | `Stale_delete_is_409_and_keeps_the_row` (second PUT, fresh DELETE) |
+| another value | present, or absent on PUT | 409 `complexity_chain_stale` | `Stale_put_is_409_with_the_current_row_and_leaves_it_unchanged`; `Create_when_absent_…` (token of a cleared row) |
+| a value | absent on DELETE | 204 no-op (already clear) | `Stale_delete_is_409_and_keeps_the_row` (repeat DELETE) |
 
 The 409 problem body adds `current`: the cell's row as GET returns it now (camelCase, enum names,
-nulls kept). The server reads the row, then saves; a write committed in between makes the save
-fail, through the UPDATE's EF concurrency token or the unique active-row index. A write that sent a
-token is then 409 `complexity_chain_stale` with no second attempt. A write without a token reads
-the row again and re-applies its values, up to 3 attempts (`ComplexityChainService.UnconditionalAttempts`),
-and only a race lost on each attempt is 409 `complexity_chain_stale`; a DELETE without a token whose
-row was cleared meanwhile is the usual 204. The expiry sweep also re-reads after a lost race, up to
-3 saves; after the third lost race its `DbUpdateConcurrencyException` propagates out of the request
-that ran the sweep (a chain GET, PUT or DELETE, or a task creation that loads a chain), which
-`ExceptionMiddleware` returns as 500. On the `?role=` view a role cell's token, reason and expiry
-are read before its candidates, so a cell created or re-created between the two reads is returned
-with the newer candidates and the older token (or none), and a save with it is 409; a cell cleared
-between them is returned without its row or token. The unfiltered list takes each entry's
-candidates and token from one row read. `complexity-chain.ps1 set|clear` reads
-`GET /api/complexity-chains` once and sends each cell's token from that read. The settings editor
-sends the version it opened; on a 409 it shows the stored row beside the draft as "Changed since
-you opened this: reload", and adopts the new version when the operator presses Reload. An editor whose stored row or metadata failed to read sends no token
-once the operator confirms the overwrite; its offline-queued note then says the write replaces the
-row stored when it is sent.
+nulls kept; `StaleAsync`). The server reads the row, then saves; a write committed in between makes
+the save fail, through the UPDATE's EF concurrency token or the unique active-row index
+(`TrySaveAsync`, `IsLostRace`). A write that sent a token is then 409 `complexity_chain_stale` with
+no second attempt (`RetriesLostRace`; `A_write_with_a_token_that_loses_a_race_is_stale_at_once_with_the_current_row`).
+A write without a token reads the row again and re-applies its values, up to 3 attempts
+(`ComplexityChainService.UnconditionalAttempts`), and only a race lost on each attempt is 409
+`complexity_chain_stale` (`A_race_lost_on_every_attempt_exhausts_the_bound_and_is_stale`); a DELETE
+without a token whose row was cleared meanwhile is the usual 204
+(`A_delete_without_a_token_that_loses_a_race_is_retried_and_clears`).
+
+The expiry sweep also re-reads after a lost race, up to 3 saves (`ComplexityRoutingService.SweepAttempts`).
+After the third lost race its `DbUpdateConcurrencyException` leaves `FindActiveAsync`
+(`A_sweep_that_loses_every_attempt_lets_the_concurrency_error_propagate`; no test drives it through
+HTTP). What the request then answers depends on whether its caller catches it:
+
+| Request | Answer | Source |
+|---|---|---|
+| `GET /api/complexity-chains` (unfiltered), chain PUT, chain DELETE | 500 | `GetAsync`, `StageUpsertAsync` and `ClearAsync` call `FindActiveAsync`, and the list calls `ListLiveCellsAsync` (same sweep), with no catch; `ExceptionMiddleware.Classify` maps it to 500 |
+| `GET /api/complexity-chains?role=` | 200, not 500: the cell falls back as for any failed read, and `effective.withheldReason` carries `chain read failed (DbUpdateConcurrencyException)`, or `chain metadata read failed (DbUpdateConcurrencyException)` when the cell still resolves from its own row | `GetEffectiveAsync` runs each chain read through `ReadPartAsync`, which catches it |
+| `POST /api/agent-tasks` with an explicit `complexity` | 500 | `AgentTaskService.CreateAsync` calls `WalkAsync` with no catch |
+| `POST /api/agent-tasks` that reads the chain at the default tier | the task is created with the warning `Routing read failed (DbUpdateConcurrencyException); using today's path.` | `AgentTaskService.CreateAsync` default-tier `catch (Exception)` |
+
+On the `?role=` view a role cell's token, reason and expiry are read before its candidates, so a
+cell created or re-created between the two reads is returned with the newer candidates and the older
+token (or none), and a save with it is 409; a cell cleared between them is returned without its row
+or token (`GetEffectiveAsync`;
+`The_role_view_reads_the_token_before_the_candidates_so_a_change_between_them_makes_a_save_stale`).
+The unfiltered list takes each entry's candidates and token from one row read (`GetAsync` and
+`ListLiveCellsAsync`, then `ToRowDtoAsync`). `complexity-chain.ps1 set|clear` reads
+`GET /api/complexity-chains` once and sends each cell's token from that read
+(`Set_and_clear_send_each_cells_token_from_one_read_and_stop_on_stale`). The settings editor sends
+the version it opened; on a 409 it shows the stored row beside the draft as "Changed since you
+opened this: reload", and adopts the new version when the operator presses Reload
+(`ComplexityChainCellEditor.test.tsx` `C1275 a stale Save shows the stored row…`). An editor whose
+stored row or metadata failed to read sends no token once the operator confirms the overwrite; its
+offline-queued note then says the write replaces the row stored when it is sent (`C1275 an unset
+cell sends the empty token; an unread cell confirmed for overwrite sends none`, `C1275 D2 an offline
+Save from an unread row says the queued write overwrites and sends no token`).
 
 | Behaviour | Named test | What it asserts or does not cover |
 |---|---|---|
