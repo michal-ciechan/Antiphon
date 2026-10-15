@@ -1,5 +1,7 @@
-import { HttpResponse, http } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { onlineManager, type QueryClient } from '@tanstack/react-query'
+import { act, cleanup, fireEvent } from '@testing-library/react'
+import { HttpResponse, http, delay } from 'msw'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectSetupCatalogDto, ProjectSetupRequest } from '../../api/projectSetup'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
@@ -258,5 +260,205 @@ describe('ProjectSetupModal', () => {
 
     const summary = await screen.findByText(/concurrent task/)
     expect(summary.textContent).toBe(`Up to 1 concurrent task, depth 2, ${expected}`)
+  })
+})
+
+const repairStates = ['loading', 'paused', 'failed', 'stale failure'] as const
+type RepairState = typeof repairStates[number]
+const supportedProfile = {
+  id: 'tui-claude', displayName: 'Claude', kind: 'ClaudeCode', isEnabled: true, isDefault: true,
+  revisionDetails: { authenticationMode: 'WrapperManaged' }, validationSummary: { status: 'Succeeded' },
+  capabilities: [{ name: 'remoteControl', state: 'Supported', reason: 'supported' }],
+}
+const repairCatalog = {
+  ...catalog,
+  profiles: [{ id: 'tui-claude', displayName: 'Claude', kind: 'ClaudeCode', isDefault: true, hasActiveRevision: true }],
+  bundles: ['orchestrator', 'board-api'].map((key) => ({ key, version: '1', stamp: 's', summary: '', chars: 1 })),
+  presets: [{ ...catalog.presets[0], modelLevel: 'Frontier', replyStyle: 'Phone' }],
+}
+
+function seedRepair() {
+  const submitted = vi.fn()
+  seed((request) => {
+    submitted(request)
+    return HttpResponse.json({
+      project: { id: 'project-1', name: 'starter', localRepositoryPath: directory },
+      board: { id: 'board-1', projectId: 'project-1', projectName: 'starter', name: 'starter' },
+      agent: null, readiness, notes: [],
+    })
+  })
+  server.use(
+    http.get('/api/projects/setup-catalog', () => HttpResponse.json(repairCatalog)),
+    http.get('/api/agent-tui/profiles', () => HttpResponse.json([supportedProfile])),
+    http.get('/api/agent-tui/profiles/tui-claude/models', () => HttpResponse.json([])),
+  )
+  return submitted
+}
+
+function unreadHandler(url: string, state: RepairState) {
+  server.use(http.get(url, async () => {
+    if (state === 'loading') await delay('infinite')
+    return HttpResponse.json({ detail: 'catalog unavailable' }, { status: 503 })
+  }))
+}
+
+async function firstAgent() {
+  fireEvent.change(await screen.findByRole('textbox', { name: 'Project directory' }), { target: { value: directory } })
+  await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+}
+
+async function expectRead(queryClient: QueryClient, key: readonly string[], state: RepairState) {
+  await waitFor(() => expect(queryClient.getQueryState(key)).toMatchObject({
+    status: state.includes('fail') ? 'error' : 'pending',
+    fetchStatus: state === 'loading' ? 'fetching' : state === 'paused' ? 'paused' : 'idle',
+  }))
+}
+
+async function recover(queryClient: QueryClient, key: readonly string[]) {
+  await act(async () => {
+    onlineManager.setOnline(true)
+    await queryClient.cancelQueries({ queryKey: key, exact: true })
+    await queryClient.refetchQueries({ queryKey: key, exact: true })
+  })
+}
+
+describe('C1274 repair setup read boundaries', () => {
+  afterEach(() => { cleanup(); onlineManager.setOnline(true) })
+
+  it.each(repairStates)('C1274 repair setup catalog %s withholds the agent draft and recovers preset payload', async (state) => {
+    const submitted = seedRepair()
+    const key = ['projects', 'setup-catalog']
+    if (state === 'paused') onlineManager.setOnline(false)
+    else if (state !== 'stale failure') unreadHandler('/api/projects/setup-catalog', state)
+    const { queryClient } = renderWithProviders(<ProjectSetupModal opened onClose={() => undefined} />)
+    if (state === 'stale failure') {
+      await waitFor(() => expect(queryClient.getQueryData(key)).toEqual(repairCatalog))
+      unreadHandler('/api/projects/setup-catalog', state)
+      await act(async () => { await queryClient.refetchQueries({ queryKey: key, exact: true }) })
+    }
+    await expectRead(queryClient, key, state)
+    await firstAgent()
+    const label = state === 'loading' ? 'Setup catalog loading.' : state === 'paused'
+      ? 'Setup catalog unknown (read paused offline).' : 'Setup catalog unknown (read failed: catalog unavailable).'
+    expect(await screen.findByText(label)).toBeInTheDocument()
+    expect(screen.queryByLabelText('Attached bundles')).not.toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Always on' })).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('No preset prompt')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByRole('button', { name: 'Create project' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Create project' }))
+    expect(submitted).not.toHaveBeenCalled()
+
+    server.use(http.get('/api/projects/setup-catalog', () => HttpResponse.json(repairCatalog)))
+    await recover(queryClient, key)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create project' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Create project' }))
+    await waitFor(() => expect(submitted).toHaveBeenCalledWith(expect.objectContaining({
+      agent: expect.objectContaining({ preset: 'orchestrator', modelLevel: 'Frontier', replyStyle: 'Phone',
+        alwaysOn: true, remoteControlEnabled: true, bundleKeys: ['orchestrator', 'board-api'] }),
+    })))
+  })
+
+  it.each(repairStates)('C1274 repair delegation catalog %s shows unknown instead of zero limits', async (state) => {
+    seedRepair()
+    const key = ['projects', 'setup-catalog']
+    if (state === 'paused') onlineManager.setOnline(false)
+    else if (state !== 'stale failure') unreadHandler('/api/projects/setup-catalog', state)
+    const { queryClient } = renderWithProviders(<ProjectSetupModal opened onClose={() => undefined} />)
+    if (state === 'stale failure') {
+      await waitFor(() => expect(queryClient.getQueryData(key)).toEqual(repairCatalog))
+      unreadHandler('/api/projects/setup-catalog', state)
+      await act(async () => { await queryClient.refetchQueries({ queryKey: key, exact: true }) })
+    }
+    await expectRead(queryClient, key, state)
+    await firstAgent()
+    await userEvent.click(screen.getByLabelText('Skip — no agent yet'))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    const label = state === 'loading' ? 'Delegation settings loading.' : state === 'paused'
+      ? 'Delegation settings unknown (read paused offline).' : 'Delegation settings unknown (read failed: catalog unavailable).'
+    expect(await screen.findByText(label)).toBeInTheDocument()
+    expect(screen.queryByText('This directory is not under an allowed delegation root.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Up to .* concurrent task/)).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByRole('button', { name: 'Create project' })).toBeDisabled()
+  })
+
+  it.each(repairStates)('C1274 repair profiles %s show remote support unknown and block agent create', async (state) => {
+    const submitted = seedRepair()
+    const key = ['agent-tui', 'profiles']
+    const { queryClient } = renderWithProviders(<ProjectSetupModal opened onClose={() => undefined} />)
+    await firstAgent()
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Remote control' })).toBeChecked())
+    if (state === 'paused') onlineManager.setOnline(false)
+    else unreadHandler('/api/agent-tui/profiles', state)
+    act(() => {
+      if (state === 'stale failure') void queryClient.refetchQueries({ queryKey: key, exact: true })
+      else void queryClient.resetQueries({ queryKey: key, exact: true })
+    })
+    await expectRead(queryClient, key, state)
+    const label = state === 'loading' ? 'AI Agent TUI profiles loading.' : state === 'paused'
+      ? 'AI Agent TUI profiles unknown (read paused offline).' : 'AI Agent TUI profiles unknown (read failed: catalog unavailable).'
+    expect(await screen.findByText(label)).toBeInTheDocument()
+    expect(screen.queryByText('Not available for this runner.')).not.toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Remote control' })).toBeDisabled()
+    expect(screen.getByRole('switch', { name: 'Remote control' })).toHaveAccessibleDescription('Remote control support unknown until AI Agent TUI profiles load.')
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByRole('button', { name: 'Create project' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Create project' }))
+    expect(submitted).not.toHaveBeenCalled()
+    server.use(http.get('/api/agent-tui/profiles', () => HttpResponse.json([supportedProfile])))
+    await recover(queryClient, key)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create project' })).toBeEnabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Create project' }))
+    await waitFor(() => expect(submitted).toHaveBeenCalledWith(expect.objectContaining({
+      agent: expect.objectContaining({ remoteControlEnabled: true, alwaysOn: true, bundleKeys: ['orchestrator', 'board-api'] }),
+    })))
+  })
+
+  it.each(repairStates)('C1274 repair selected models %s show unknown and block agent create', async (state) => {
+    const submitted = seedRepair()
+    const { queryClient } = renderWithProviders(<ProjectSetupModal opened onClose={() => undefined} />)
+    await firstAgent()
+    await userEvent.click(await screen.findByRole('textbox', { name: /Runner profile/ }))
+    await userEvent.click(await screen.findByRole('option', { name: 'Claude (ClaudeCode) · default' }))
+    const key = ['agent-tui', 'models', 'tui-claude']
+    await waitFor(() => expect(queryClient.getQueryData(key)).toEqual([]))
+    if (state === 'paused') onlineManager.setOnline(false)
+    else unreadHandler('/api/agent-tui/profiles/tui-claude/models', state)
+    act(() => {
+      if (state === 'stale failure') void queryClient.refetchQueries({ queryKey: key, exact: true })
+      else void queryClient.resetQueries({ queryKey: key, exact: true })
+    })
+    await expectRead(queryClient, key, state)
+    const label = state === 'loading' ? 'Agent models loading.' : state === 'paused'
+      ? 'Agent models unknown (read paused offline).' : 'Agent models unknown (read failed: catalog unavailable).'
+    expect(await screen.findByText(label)).toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Exact model' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByRole('button', { name: 'Create project' })).toBeDisabled()
+    expect(submitted).not.toHaveBeenCalled()
+  })
+
+  it('C1274 repair empty presets are explicit and require skipping the first agent', async () => {
+    const submitted = seedRepair()
+    server.use(http.get('/api/projects/setup-catalog', () => HttpResponse.json({ ...repairCatalog, presets: [], bundles: [] })))
+    renderWithProviders(<ProjectSetupModal opened onClose={() => undefined} />)
+    await firstAgent()
+    expect(await screen.findByText('No agent presets available.')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByRole('button', { name: 'Create project' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }))
+    await userEvent.click(screen.getByLabelText('Skip — no agent yet'))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByRole('button', { name: 'Create project' })).toBeEnabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Create project' }))
+    await waitFor(() => expect(submitted).toHaveBeenCalledWith(expect.objectContaining({ agent: null, startAgent: false })))
   })
 })
