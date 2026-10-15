@@ -790,14 +790,14 @@ the unfiltered list and any-role rows. `defaultComplexity` is the configured ord
 shipped as `Medium`.
 
 **Concurrency token (CARD-1275).** Each entry carries `concurrencyToken`: the version of the cell's
-own active row, rotated by each write and clear. It is null when the cell has no row; on the
-`?role=` view that includes a role cell answered by the any-role row or by config, so a writer
-sends the token of the row it would replace. A PUT body `concurrencyToken` or a DELETE
-`?concurrencyToken=` is the version the writer read:
+own active row, rotated by each write and clear, including the lazy `notAfter` expiry sweep. It is
+null when the cell has no row; on the `?role=` view that includes a role cell answered by the
+any-role row or by config, so a writer sends the token of the row it would replace. A PUT body
+`concurrencyToken` or a DELETE `?concurrencyToken=` is the version the writer read:
 
 | Sent | Active row | Result |
 |---|---|---|
-| omitted | — | unconditional write (callers that predate CARD-1275; `migrate-stage-pins-to-cells.ps1` restore) |
+| omitted | — | write without a version check (callers that predate CARD-1275; `migrate-stage-pins-to-cells.ps1`): last writer wins; see below for a lost race |
 | `00000000-0000-0000-0000-000000000000` | absent | PUT creates the row; DELETE is a 204 no-op |
 | `00000000-0000-0000-0000-000000000000` | present | 409 `complexity_chain_stale` |
 | the row's token | present | write; the response carries the new token |
@@ -805,13 +805,21 @@ sends the token of the row it would replace. A PUT body `concurrencyToken` or a 
 | a value | absent on DELETE | 204 no-op (already clear) |
 
 The 409 problem body adds `current`: the cell's row as GET returns it now (camelCase, enum names,
-nulls kept). The check is repeated by the UPDATE itself (EF concurrency token) and by the unique
-active-row index, so two writers that read the same version end with one write and one 409.
+nulls kept). The server reads the row, then saves; a write committed in between makes the save
+fail, through the UPDATE's EF concurrency token or the unique active-row index. A write that sent a
+token is then 409 `complexity_chain_stale` with no second attempt. A write without a token reads
+the row again and re-applies its values, up to 3 attempts (`ComplexityChainService.UnconditionalAttempts`),
+and only a race lost on each attempt is 409 `complexity_chain_stale`; a DELETE without a token whose
+row was cleared meanwhile is the usual 204. The expiry sweep is such a write too: it re-reads after
+a lost race, up to the same bound. On the `?role=` view the candidates and the token come from two
+reads, so a clear and re-create of the role cell between them returns the earlier candidates with
+the newer row's token, reason and expiry; a writer that sends that token replaces the newer row.
 `complexity-chain.ps1 set|clear` reads `GET /api/complexity-chains` once and sends each cell's
 token from that read. The settings editor sends the version it opened; on a 409 it shows the stored
 row beside the draft as "Changed since you opened this: reload", and adopts the new version when
 the operator presses Reload. An editor whose stored row or metadata failed to read sends no token
-once the operator confirms the overwrite.
+once the operator confirms the overwrite; its offline-queued note then says the write replaces the
+row stored when it is sent.
 
 | Behaviour | Named test | What it asserts or does not cover |
 |---|---|---|
@@ -822,6 +830,11 @@ once the operator confirms the overwrite.
 | A stale PUT or DELETE is refused with the current row | `ComplexityChainConcurrencyHttpTests.Stale_put_is_409_with_the_current_row_and_leaves_it_unchanged`, `Stale_delete_is_409_and_keeps_the_row` | 409 `complexity_chain_stale`, `current.concurrencyToken` equals the stored token, stored row unchanged; a fresh DELETE is 204 and a repeat is 204 |
 | Create when absent, expect-absent and a cleared row | `ComplexityChainConcurrencyHttpTests.Create_when_absent_needs_no_version_and_the_empty_token_refuses_an_existing_row` | No-token create 200; empty token over a row 409; no-token overwrite 200; a token for a cleared row 409 with `current.source` `config` |
 | Concurrent writers | `ComplexityChainConcurrencyHttpTests.Concurrent_writers_with_one_token_leave_exactly_one_winner` | Six parallel creates and six parallel updates from one version: one 200 and five 409 each; GET equals the winner |
+| A lost race without a token is re-run | `ComplexityChainRaceTests.A_write_without_a_token_that_loses_a_race_is_retried_and_the_callers_values_win`, `A_delete_without_a_token_that_loses_a_race_is_retried_and_clears` | A competing commit between the read and the save: the no-token PUT (update and create) saves on the second attempt with the caller's values and a new token; the no-token DELETE clears, and returns at once after losing to a clear |
+| A lost race with a token is stale at once | `ComplexityChainRaceTests.A_write_with_a_token_that_loses_a_race_is_stale_at_once_with_the_current_row` | One save attempt; 409 with `current` equal to the competitor's row for a token PUT, a token DELETE and an empty-token create; the old token sent again is 409 |
+| The re-run is bounded | `ComplexityChainRaceTests.A_race_lost_on_every_attempt_exhausts_the_bound_and_is_stale` | A competing commit before each save: PUT and DELETE without a token make `UnconditionalAttempts` saves, then 409 |
+| The expiry sweep rotates the token and re-reads after a lost race | `ComplexityChainRaceTests.The_expiry_sweep_rotates_the_token_so_a_write_that_read_the_row_live_loses_its_save`, `A_sweep_that_loses_to_a_write_reads_again_and_returns_the_writers_row` | A token PUT that read the row before the sweep is 409 with no row; a no-token PUT recreates it; a sweep that lost to a write returns the writer's row |
+| The `?role=` view reads candidates and token separately | `ComplexityChainRaceTests.The_role_view_reads_candidates_and_token_separately_and_a_recreate_between_them_shows_the_new_token` | A clear and re-create between the two reads: earlier candidates, newer reason and token |
 | A role cell's token is its own row's | `ComplexityChainConcurrencyHttpTests.Effective_view_carries_the_cells_own_token_not_the_any_role_rows` | `?role=Review` Hard carries the cell token; Medium (via any-role) carries null; the list's any-role Medium carries its token |
 | Script sends the read token | `ComplexityChainScriptTests.Set_and_clear_send_each_cells_token_from_one_read_and_stop_on_stale` | One GET, then per-cell token or the empty GUID; a 409 stops `set -Complexity All` with `code complexity_chain_stale` |
 | Ordinary Worker default-tier adoption | `MatrixDefaultComplexityCreateTests.A_plain_create_walks_the_role_row_at_the_default_tier`, `An_unset_row_keeps_the_role_policy_path` | Resolved Plan/Medium is stamped and walked; unset Plan uses RolePolicy |

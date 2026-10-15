@@ -10,7 +10,8 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-1275: PUT/DELETE /api/complexity-chains carry the cell row's <c>concurrencyToken</c>.
 /// A stale token is 409 <c>complexity_chain_stale</c> with the current row; the empty GUID
-/// means "expect no active row"; an omitted token keeps the legacy unconditional write.
+/// means "expect no active row"; an omitted token writes without a version check (sequential
+/// requests here; the race paths are in <see cref="ComplexityChainRaceTests"/>).
 /// </summary>
 [NotInParallel]
 [ClassDataSource<ComplexityChainConcurrencyWebAppFactory>(Shared = SharedType.PerClass)]

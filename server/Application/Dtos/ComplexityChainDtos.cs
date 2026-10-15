@@ -10,8 +10,10 @@ public sealed record PutComplexityChainRequest(
     DateTimeOffset? NotAfter = null,
     /// <summary>
     /// CARD-1275: the <see cref="ComplexityChainDto.ConcurrencyToken"/> the writer read. Omitted =
-    /// unconditional (legacy callers); the empty GUID = "expect no active row"; any other value
-    /// must equal the active row's token, else 409 <c>complexity_chain_stale</c>.
+    /// no version check: the write applies to the row stored when it saves, and a save that loses
+    /// a race is re-run up to <c>ComplexityChainService.UnconditionalAttempts</c> times before 409
+    /// <c>complexity_chain_stale</c>. The empty GUID = "expect no active row"; any other value must
+    /// equal the active row's token, else 409 <c>complexity_chain_stale</c> without a re-run.
     /// </summary>
     Guid? ConcurrencyToken = null);
 
@@ -49,7 +51,10 @@ public sealed record ComplexityChainDto(
     /// <summary>
     /// CARD-1275: token of this cell's own active row (the role cell for a role entry, the
     /// any-role row otherwise); null when the cell has no row, including a role cell that
-    /// resolves through the any-role row or config.
+    /// resolves through the any-role row or config. On the <c>?role=</c> view the candidates and
+    /// the token come from two reads: a clear and re-create between them pairs the earlier
+    /// candidates with the newer row's token, reason and expiry
+    /// (<c>ComplexityChainRaceTests.The_role_view_reads_candidates_and_token_separately_and_a_recreate_between_them_shows_the_new_token</c>).
     /// </summary>
     Guid? ConcurrencyToken = null);
 

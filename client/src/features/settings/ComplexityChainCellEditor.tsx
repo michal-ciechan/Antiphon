@@ -33,6 +33,7 @@ import {
   CHAIN_KIND_OPTIONS,
   CHAIN_MUTATION_EFFECT,
   CHAIN_QUEUED_NOTE,
+  CHAIN_QUEUED_UNCONDITIONAL_NOTE,
   CHAIN_SAVE_SUCCESS,
   CHAIN_STALE_BODY,
   CHAIN_STALE_TITLE,
@@ -166,6 +167,8 @@ export function ComplexityChainCellEditor({
   const listError = candidateListError(candidates)
   const busy = put.isPending || clear.isPending
   const queued = put.isPaused || clear.isPaused
+  // The note follows what the queued request carries: no token means it overwrites (CARD-1275 D2).
+  const queuedToken = put.isPaused ? put.variables?.concurrencyToken : clear.variables?.concurrencyToken
 
   const focusOperation = (operation: 'save' | 'clear') => {
     window.setTimeout(() => {
@@ -452,7 +455,7 @@ export function ComplexityChainCellEditor({
 
         {queued ? (
           <Alert color="yellow" variant="light" data-testid="routing-cell-editor-queued">
-            {CHAIN_QUEUED_NOTE}
+            {queuedToken === undefined ? CHAIN_QUEUED_UNCONDITIONAL_NOTE : CHAIN_QUEUED_NOTE}
           </Alert>
         ) : null}
 
