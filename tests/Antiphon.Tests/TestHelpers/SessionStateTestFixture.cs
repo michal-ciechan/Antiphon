@@ -20,6 +20,7 @@ internal sealed class SessionStateTestFixture : IAsyncDisposable
     private readonly Func<ISessionStateLoader, ISessionStateLoader>? _decorate;
     private readonly SessionStateSettings _settings;
     private readonly TimeProvider _clock;
+    private readonly Action<IServiceCollection>? _configure;
     public Guid SessionId { get; } = Guid.NewGuid();
     public Guid OtherId { get; } = Guid.NewGuid();
     public ServiceProvider Services { get; }
@@ -30,10 +31,12 @@ internal sealed class SessionStateTestFixture : IAsyncDisposable
     public int SeedQueries => Capture.Reads.Count(c => c.Sql.Contains("session-state.seed"));
 
     private SessionStateTestFixture(IsolatedTestSchema schema, IInterceptor? fault,
-        Func<ISessionStateLoader, ISessionStateLoader>? decorate, SessionStateSettings? settings, TimeProvider? clock)
+        Func<ISessionStateLoader, ISessionStateLoader>? decorate, SessionStateSettings? settings, TimeProvider? clock,
+        Action<IServiceCollection>? configure)
     {
         _schema = schema; _fault = fault; _decorate = decorate;
         _settings = settings ?? new SessionStateSettings(); _clock = clock ?? TimeProvider.System;
+        _configure = configure;
         Services = NewContainer();
     }
 
@@ -60,6 +63,7 @@ internal sealed class SessionStateTestFixture : IAsyncDisposable
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionRuntimeActionCoordinator>();
         services.AddSingleton<SessionMessageQueueService>();
+        _configure?.Invoke(services);
         return services.BuildServiceProvider();
     }
 
@@ -76,9 +80,10 @@ internal sealed class SessionStateTestFixture : IAsyncDisposable
     }
 
     public static async Task<SessionStateTestFixture> CreateAsync(IInterceptor? fault = null,
-        Func<ISessionStateLoader, ISessionStateLoader>? decorate = null, SessionStateSettings? settings = null, TimeProvider? clock = null)
+        Func<ISessionStateLoader, ISessionStateLoader>? decorate = null, SessionStateSettings? settings = null, TimeProvider? clock = null,
+        Action<IServiceCollection>? configure = null)
     {
-        var f = new SessionStateTestFixture(await TestDbFixture.CreateIsolatedSchemaAsync(), fault, decorate, settings, clock);
+        var f = new SessionStateTestFixture(await TestDbFixture.CreateIsolatedSchemaAsync(), fault, decorate, settings, clock, configure);
         try
         {
             await using var db = f.Db();

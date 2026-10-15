@@ -302,3 +302,4 @@ Antiphon.Tests.Application.PhoneHomeCompletedCardTransportTests
 
 # CARD-1032 S7: real PostgreSQL, scratch Git, phone-home recipient and receipt refusal matrices.
 Antiphon.Tests.Application.CardWorktreeMirrorCleanupTests
+Antiphon.Tests.Application.SessionRuntimeActionTests
