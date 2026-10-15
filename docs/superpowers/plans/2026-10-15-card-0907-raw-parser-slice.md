@@ -58,7 +58,7 @@ No full assembly or whole Unit invocation; operator brief explicitly excludes it
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---:|---|---|
 | CP-3 | Raw-tests,Raw-fix,D1-tests,D1-fix | `tests/Antiphon.Tests -> bin-c907-raw/` | codex-raw | `/*/*/(CodexResponseAnalyzerTests*)\|(SubscriptionUsageParserTests*)\|(UsageLimitWallParserTests*)\|(ProviderQuotaRefusalTests*)/*` | V-5,R-3,D1 | Linux 73; Windows 73; 0 failed/skipped after repair | 73 | 6 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1;C804_ORPHAN_SWEEP_ROOT=c907-disabled` |
-| CP-6 | Raw-fix | `tests/Antiphon.Tests -> bin-c907-adjacent/` | codex-adjacent | `/*/*/(RunnerCodexAdapterTurnCompleteTests*)\|(SubscriptionUsageMonitorTests*)/*` | adjacent R-2 and persistence | Linux 21; Windows 21; 0 failed/skipped | 21 | 8 | 9 | true | `TUNIT_MAX_PARALLEL_TESTS=1;C804_ORPHAN_SWEEP_ROOT=c907-disabled` |
+| CP-6 | Raw-fix,D1-fix | `tests/Antiphon.Tests -> bin-c907-adjacent/` | codex-adjacent | `/*/*/(RunnerCodexAdapterTurnCompleteTests*)\|(SubscriptionUsageMonitorTests*)/*` | adjacent R-2 and persistence | Linux 21; Windows 21; 0 failed/skipped | 21 | 8 | 9 | true | `TUNIT_MAX_PARALLEL_TESTS=1;C804_ORPHAN_SWEEP_ROOT=c907-disabled` |
 | CP-7 | D1-tests,D1-fix | `tests/Antiphon.Tests -> bin-c907-callers/` | raw-callers | `/*/*/(RunnerGrokAdapterTurnCompleteTests*)\|(OpenCodeAdapterTests*)\|(CodexAdapterRawResponseTests*)/*` | D1,adjacent R-2 | Linux 20; Windows 20; 0 failed/skipped after repair | 20 | 6 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1;C804_ORPHAN_SWEEP_ROOT=c907-disabled` |
 
 Use the checkpoint tool with committed HEAD as expected-source-sha; await terminal
@@ -74,6 +74,8 @@ The four V0160 tests and all 67 earlier parser results must stay green. Cost: 12
 test-first plus 20 minutes final, including isolated builds; no full assembly or repeat
 proof is justified. Add no timeout increases or weakened assertions. The repair alone
 goes next to Review; the parent card's remaining acceptance remains incomplete below.
+The 73-result D1 row includes two D1 echo methods, not the two still-missing V-6
+methods in the parent selection. Equal counts do not discharge those named obligations.
 
 ## Remaining card obligations
 

@@ -29,8 +29,8 @@ public class CodexResponseAnalyzerTests
 
     private static async Task AssertEchoExcluded(string prompt, string raw)
     {
-        CodexResponseAnalyzer.ExtractResponse(raw, prompt).ShouldBe("Done.", "C907-D1-codex-echo");
-        CodexResponseAnalyzer.IsAskingQuestion(raw, prompt).ShouldBeFalse("C907-D1-codex-question");
+        CodexResponseAnalyzer.ExtractResponse(raw, prompt, preserveCursorWordBoundaries: true).ShouldBe("Done.", "C907-D1-codex-echo");
+        CodexResponseAnalyzer.IsAskingQuestion(raw, prompt, preserveCursorWordBoundaries: true).ShouldBeFalse("C907-D1-codex-question");
 
         var client = new ScriptedCodexRunnerClient { RawOutput = raw };
         await using var adapter = new RunnerCodexAdapter(client, Options.Create(new AgentRegistrySettings()));
@@ -52,11 +52,11 @@ public class CodexResponseAnalyzerTests
     {
         const string prompt = "Echo this?";
         const string raw = "Echo\u001b[1;6Hthis?\r\nC907 alpha beta.";
-        var answer = CodexResponseAnalyzer.ExtractResponse(raw, prompt);
+        var answer = CodexResponseAnalyzer.ExtractResponse(raw, prompt, preserveCursorWordBoundaries: true);
 
         answer.Contains('?').ShouldBeFalse("C907-echo-excluded");
         answer.ShouldBe("C907 alpha beta.", "C907-echo-answer");
-        CodexResponseAnalyzer.IsAskingQuestion(raw, prompt).ShouldBeFalse("C907-echo-question");
+        CodexResponseAnalyzer.IsAskingQuestion(raw, prompt, preserveCursorWordBoundaries: true).ShouldBeFalse("C907-echo-question");
     }
 
     [Test]
@@ -73,7 +73,7 @@ public class CodexResponseAnalyzerTests
         ];
         foreach (var (label, raw) in cases)
         {
-            CodexResponseAnalyzer.ExtractResponse(raw)
+            CodexResponseAnalyzer.ExtractResponse(raw, preserveCursorWordBoundaries: true)
                 .ShouldBe("C907 alpha beta.", "C907-answer-word-boundaries-" + label);
 
             var client = new ScriptedCodexRunnerClient { RawOutput = raw };
@@ -99,7 +99,7 @@ public class CodexResponseAnalyzerTests
         const string prompt = "Please inspect this?";
         const string raw = "\x1b]0;codex\aPlease inspect this?\r\nI inspected it and found no blocker.\r\n";
 
-        CodexResponseAnalyzer.IsAskingQuestion(raw, prompt).ShouldBeFalse();
+        CodexResponseAnalyzer.IsAskingQuestion(raw, prompt, preserveCursorWordBoundaries: true).ShouldBeFalse();
     }
 
     [Test]
@@ -108,7 +108,7 @@ public class CodexResponseAnalyzerTests
         const string prompt = "Continue the work";
         const string raw = "Continue the work\r\nI need one decision: should I update the tests too?\r\n";
 
-        CodexResponseAnalyzer.IsAskingQuestion(raw, prompt).ShouldBeTrue();
+        CodexResponseAnalyzer.IsAskingQuestion(raw, prompt, preserveCursorWordBoundaries: true).ShouldBeTrue();
     }
 
     [Test]
@@ -117,7 +117,7 @@ public class CodexResponseAnalyzerTests
         const string prompt = "Run analysis";
         const string raw = "\x1b[32mRun analysis\x1b[0m\r\n\x1b[1mAnalysis complete\x1b[0m\r\n";
 
-        CodexResponseAnalyzer.ExtractResponse(raw, prompt).ShouldBe("Analysis complete");
+        CodexResponseAnalyzer.ExtractResponse(raw, prompt, preserveCursorWordBoundaries: true).ShouldBe("Analysis complete");
     }
 
     // The echo is hard-wrapped by the terminal at the window width, so the prompt is not
@@ -134,7 +134,7 @@ public class CodexResponseAnalyzerTests
     {
         const string prompt = "echo answer has no question & rem prompt has a question?";
 
-        CodexResponseAnalyzer.ExtractResponse(WrappedEchoRaw, prompt)
+        CodexResponseAnalyzer.ExtractResponse(WrappedEchoRaw, prompt, preserveCursorWordBoundaries: true)
             .ShouldBe("answer has no question");
     }
 
@@ -143,7 +143,7 @@ public class CodexResponseAnalyzerTests
     {
         const string prompt = "echo answer has no question & rem prompt has a question?";
 
-        CodexResponseAnalyzer.IsAskingQuestion(WrappedEchoRaw, prompt).ShouldBeFalse();
+        CodexResponseAnalyzer.IsAskingQuestion(WrappedEchoRaw, prompt, preserveCursorWordBoundaries: true).ShouldBeFalse();
     }
 
     [Test]
@@ -155,7 +155,7 @@ public class CodexResponseAnalyzerTests
             + "wrapping\r\n"
             + "Should I also update the tests?\r\n";
 
-        CodexResponseAnalyzer.IsAskingQuestion(raw, prompt).ShouldBeTrue();
+        CodexResponseAnalyzer.IsAskingQuestion(raw, prompt, preserveCursorWordBoundaries: true).ShouldBeTrue();
     }
 
     [Test]

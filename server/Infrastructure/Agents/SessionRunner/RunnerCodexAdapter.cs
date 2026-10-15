@@ -273,8 +273,8 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
         var raw = await _terminal.SnapshotTextAsync(ct);
         return new AgentTurnResult(
             TurnCompleted: screenDone,
-            ResponseText: CodexResponseAnalyzer.ExtractResponse(raw, _lastPrompt),
-            IsAskingQuestion: CodexResponseAnalyzer.IsAskingQuestion(raw, _lastPrompt),
+            ResponseText: CodexResponseAnalyzer.ExtractResponse(raw, _lastPrompt, preserveCursorWordBoundaries: true),
+            IsAskingQuestion: CodexResponseAnalyzer.IsAskingQuestion(raw, _lastPrompt, preserveCursorWordBoundaries: true),
             RawSnapshot: raw);
     }
 
@@ -306,8 +306,8 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
             // read): the screen scrape is all there is, and it carries the scrape's known flaws.
             return new AgentTurnResult(
                 TurnCompleted: true,
-                ResponseText: CodexResponseAnalyzer.ExtractResponse(raw, _lastPrompt),
-                IsAskingQuestion: CodexResponseAnalyzer.IsAskingQuestion(raw, _lastPrompt),
+                ResponseText: CodexResponseAnalyzer.ExtractResponse(raw, _lastPrompt, preserveCursorWordBoundaries: true),
+                IsAskingQuestion: CodexResponseAnalyzer.IsAskingQuestion(raw, _lastPrompt, preserveCursorWordBoundaries: true),
                 RawSnapshot: raw);
         }
 
