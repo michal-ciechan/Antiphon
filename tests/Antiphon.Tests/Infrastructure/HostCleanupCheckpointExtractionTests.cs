@@ -94,7 +94,7 @@ public sealed class HostCleanupCheckpointExtractionTests
         f.Io.Events.Clear();
         var fresh = new CheckpointDelete(f.FreshContext()).DeleteCreatedFile(path);
         fresh.Disposition.ShouldBe(DeleteDisposition.Refused, "C987.File_only_delete_uses_supplied_registry.fresh.refusal");
-        fresh.Reason.ShouldContain("current-process creation record missing or changed",
+        fresh.Reason.ShouldContain("current-process creation record missing or changed", Case.Sensitive,
             "C987.File_only_delete_uses_supplied_registry.fresh.match-reached");
         f.Io.Text(path).ShouldBe("owned-sentinel", "C987.File_only_delete_uses_supplied_registry.fresh.sentinel");
         f.Io.Count("unlink").ShouldBe(0, "C987.File_only_delete_uses_supplied_registry.fresh.no-unlink");
