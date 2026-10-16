@@ -34,7 +34,27 @@ runner sample. The real HTTP pipeline endpoint still projects database occupancy
 policies, defaults and runner evidence. Observation timestamps must parse before
 normalization; the defaults import timestamp is seeded in the database. An ignored
 `pipeline.actual.json` aids inspection, never automatic acceptance.
-Pipeline JSON additions are pending inspection in the first implementation slice.
+Pipeline JSON was inspected against the deterministic actual response at
+`f9b55b74630ef23ee8d66b96e0b20d910e8abdbc`: all old values equal. Its only root
+additions are `hosts` (CARD-0654 `01840c26c33d0a0a1d1948bb7a1748cbb1b9d39c`),
+`taskScope`, `hostSummaryScope`, `concurrencyScopes` (CARD-0505
+`be539dd6e705c392a210ac68c5d805597ff957a5`), and `runners`, `runnerDefaults`
+(CARD-0881 `7c4e40b8b95b1d208ab12373880bd97e850e926a`). Every added JSON line
+belongs to these objects: local host 1 occupied/2 capacity/1 remaining; null and
+scenario-project effective policy/occupancy; fixed desktop capability evidence and
+revision-1 migration defaults. The nested CLI version fields are CARD-0959
+`2c80d38bc0e8f25d3fe9121b9345ed5ad92ab722`; draining/accepting fields are CARD-0727.
+Observation clocks are normalized only after type validation; fixed input version
+1.2.3 remains exact. No old snapshot field changed.
+
+The first CP-5 build succeeded but confinement refused two 93,580,104-byte Playwright
+node.exe files in unused prior output: the receipt reader has a 64-MiB ceiling.
+Recursive cleanup was rejected by automatic approval review (`blocked by policy`).
+Owned prior outputs were instead moved intact into ignored `red-build-retained` and
+`probe-build-retained` evidence directories. No source bytes were restored or changed.
+The second CP-5 produced the intended equality failure, 1 executed/1 failed, source
+clean and build provenance verified. A batch-start Git timeout was also retained;
+foreground checkpoint rows avoided that launcher failure. No deadline was widened.
 
 ## Verification and consumers
 
@@ -66,3 +86,4 @@ CP-9/10/11 results belong in the stored report after source is frozen.
 
 Zero authored PC rows; SourceLanding Mutation owns missing-control discovery after
 ordinary Review and caller landing. Restart: none. D-7/D-12 remain outside this task.
+

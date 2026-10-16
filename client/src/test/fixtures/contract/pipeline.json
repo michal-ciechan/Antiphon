@@ -264,5 +264,622 @@
         "position": 5
       }
     ]
+  },
+  "hosts": [
+    {
+      "hostId": "local",
+      "inFlight": 1,
+      "effectiveLimit": 2,
+      "configured": null,
+      "declared": null,
+      "source": "config",
+      "scope": "fleet",
+      "remaining": 1
+    }
+  ],
+  "taskScope": "fleet",
+  "hostSummaryScope": "fleet",
+  "concurrencyScopes": [
+    {
+      "projectId": null,
+      "nullBucket": true,
+      "effective": {
+        "mode": "LegacyOpen",
+        "modeSource": "default",
+        "maxParallel": 6,
+        "maxParallelSource": "default",
+        "maxQueued": null,
+        "maxQueuedSource": "default",
+        "roles": [
+          {
+            "role": "Custom",
+            "maxParallel": null,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 6
+          },
+          {
+            "role": "Plan",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Code",
+            "maxParallel": 2,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 2
+          },
+          {
+            "role": "Review",
+            "maxParallel": 2,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 2
+          },
+          {
+            "role": "Debug",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Coverage",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Docs",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Commit",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Test",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Deploy",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Merge",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Investigate",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "TestDesign",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Mutation",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          }
+        ],
+        "globalRevision": 1,
+        "projectRevision": 0
+      },
+      "occupancy": {
+        "open": 2,
+        "parallel": 1,
+        "queued": 1,
+        "parallelRemaining": 4,
+        "queuedRemaining": null,
+        "parallelOverage": 0,
+        "queuedOverage": 0,
+        "exceedsBounds": true,
+        "roles": [
+          {
+            "role": "Custom",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": null,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Plan",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Code",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 2,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Review",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 2,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Debug",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Coverage",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Docs",
+            "open": 2,
+            "parallel": 1,
+            "queued": 1,
+            "parallelRemaining": 0,
+            "queuedRemaining": null,
+            "parallelOverage": 1,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Commit",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Test",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Deploy",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Merge",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Investigate",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "TestDesign",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Mutation",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          }
+        ]
+      }
+    },
+    {
+      "projectId": "dddddddd-0000-0000-0000-000000000021",
+      "nullBucket": false,
+      "effective": {
+        "mode": "LegacyOpen",
+        "modeSource": "default",
+        "maxParallel": 6,
+        "maxParallelSource": "default",
+        "maxQueued": null,
+        "maxQueuedSource": "default",
+        "roles": [
+          {
+            "role": "Custom",
+            "maxParallel": null,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 6
+          },
+          {
+            "role": "Plan",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Code",
+            "maxParallel": 2,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 2
+          },
+          {
+            "role": "Review",
+            "maxParallel": 2,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 2
+          },
+          {
+            "role": "Debug",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Coverage",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Docs",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Commit",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Test",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Deploy",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Merge",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Investigate",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "TestDesign",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          },
+          {
+            "role": "Mutation",
+            "maxParallel": 1,
+            "maxParallelSource": "default",
+            "maxQueued": null,
+            "maxQueuedSource": "default",
+            "combinedParallel": 1
+          }
+        ],
+        "globalRevision": 1,
+        "projectRevision": 0
+      },
+      "occupancy": {
+        "open": 0,
+        "parallel": 0,
+        "queued": 0,
+        "parallelRemaining": 6,
+        "queuedRemaining": null,
+        "parallelOverage": 0,
+        "queuedOverage": 0,
+        "exceedsBounds": false,
+        "roles": [
+          {
+            "role": "Custom",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": null,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Plan",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Code",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 2,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Review",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 2,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Debug",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Coverage",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Docs",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Commit",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Test",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Deploy",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Merge",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Investigate",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "TestDesign",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          },
+          {
+            "role": "Mutation",
+            "open": 0,
+            "parallel": 0,
+            "queued": 0,
+            "parallelRemaining": 1,
+            "queuedRemaining": null,
+            "parallelOverage": 0,
+            "queuedOverage": 0
+          }
+        ]
+      }
+    }
+  ],
+  "runners": [
+    {
+      "runnerId": "desktop",
+      "displayName": "Desktop",
+      "platform": "windows",
+      "platformObservedAt": "2026-02-03T09:00:00Z",
+      "available": true,
+      "dispatchEligible": true,
+      "unavailableReason": null,
+      "capacity": 2,
+      "occupied": 1,
+      "capacityKind": "delegatedTasks",
+      "capacityObservedAt": "2026-02-03T09:00:00Z",
+      "stale": false,
+      "features": [
+        "required-platform-v1",
+        "codex-cli-version-v1"
+      ],
+      "draining": false,
+      "acceptingNewWork": true,
+      "codexCliVersion": "1.2.3",
+      "codexCliVersionCheckedAtUtc": "2026-02-03T09:00:00Z",
+      "codexCliVersionError": null,
+      "codexCliVersionStale": false
+    }
+  ],
+  "runnerDefaults": {
+    "revision": 1,
+    "globalRunnerId": null,
+    "kindDefaults": [],
+    "updatedAt": "2026-02-03T09:00:00Z",
+    "lastReason": "Imported Delegation:DefaultRunnerId.",
+    "lastProvenance": "Migration",
+    "lastCallerTaskId": null,
+    "supportedKinds": [
+      "Grok",
+      "ClaudeCode",
+      "Codex"
+    ],
+    "unresolvedReferences": []
   }
 }
