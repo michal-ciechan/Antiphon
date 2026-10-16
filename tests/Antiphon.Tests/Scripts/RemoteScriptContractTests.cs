@@ -6459,6 +6459,7 @@ public sealed class RemoteScriptContractTests
                 [ "$1" = allow-cold ] || write_result false CacheFullSeedRequired 2
                 C849_KIND=cold; C849_SCHEMA=2; C849_DIGEST_TYPE=none; C849_DIGEST=none
             }
+            c849_cold_reuse_receipts() { :; }
             docker() {
                 [ "$1" = ps ] || { printf 'unexpected-docker\n' >> "$root/trace"; return 1; }
                 case "$MODE" in
@@ -6493,6 +6494,117 @@ public sealed class RemoteScriptContractTests
             "ROW mode=stopped exit=2 receipt=0 donor=0 unexpected=0 verdict=accepted=false diagnosis=CacheTempContainerExists body=",
             "ROW mode=garbage exit=2 receipt=0 donor=0 unexpected=0 verdict=accepted=false diagnosis=CacheTempContainerExists body=",
             "ROW mode=ps-error exit=2 receipt=0 donor=0 unexpected=0 verdict=accepted=false diagnosis=CacheDonorLookupFailed body=");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Cold_marker_reuse_writes_gate_receipts()
+    {
+        RequireLinuxJq();
+        const string statusJson = "{\"sessions\":0,\"runnerSessions\":null,\"queuedTasks\":0,\"retiredAt\":\"2026-10-11T14:23:12.192262+00:00\",\"available\":false,\"dispatchEligible\":false,\"acceptingNewWork\":false,\"draining\":true,\"retireWhenIdle\":true,\"redirectTo\":\"server2\"}";
+        const string holdJson = "{\"sessions\":0,\"runnerSessions\":null,\"queuedTasks\":0,\"retiredAt\":null,\"available\":false,\"dispatchEligible\":false,\"acceptingNewWork\":false,\"draining\":true,\"retireWhenIdle\":false,\"redirectTo\":\"server2\"}";
+        const string mainJson = "{\"sessions\":4,\"runnerSessions\":4,\"queuedTasks\":0,\"dispatchEligible\":true,\"acceptingNewWork\":true,\"draining\":false}";
+        var remote = Remote();
+        var output = LinuxShell(ColdReuseBlocks(remote) + """
+            root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
+            SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
+            CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
+            C849_READY="$SERVER2_ROOT/cache/seed-accepted"
+            printf 'kind=cold\n' > "$C849_READY"
+            RUN=red; LANE=host; TEMP_PROJECT=antiphon-runner-temp; WROTE=0
+            write_result() { printf 'accepted=%s diagnosis=%s\n' "$1" "$2"; exit "$3"; }
+            require_lane() { :; }
+            c849_prepare() { :; }
+            c849_payload_select() { printf host; }
+            c849_image() { printf image; }
+            c849_optional_donor() { printf 'donor-probed\n' >> "$root/trace"; printf donor; }
+            c849_require_ready() {
+                [ "$1" = allow-cold ] || write_result false CacheFullSeedRequired 2
+                C849_KIND=cold; C849_SCHEMA=2; C849_DIGEST_TYPE=none; C849_DIGEST=none
+            }
+            c849_status_body() {
+                if [ "$1" = server2 ]; then
+                    printf '%s' '{"sessions":4,"runnerSessions":4,"queuedTasks":0,"acceptingNewWork":true,"draining":false,"dispatchEligible":true}'
+                elif [ "$MODE" = hold ]; then
+                    printf '%s' '{"retiredAt":null,"available":false,"dispatchEligible":false,"acceptingNewWork":false,"draining":true,"retireWhenIdle":false,"redirectTo":"server2","sessions":0,"queuedTasks":0,"runnerSessions":null}'
+                elif [ "$MODE" = serving ]; then
+                    printf '%s' '{"retiredAt":null,"available":true,"dispatchEligible":false,"acceptingNewWork":false,"draining":false,"retireWhenIdle":false,"redirectTo":"server2","sessions":0,"queuedTasks":0,"runnerSessions":null}'
+                else
+                    printf '%s' '{"retiredAt":"2026-10-11T14:23:12.192262+00:00","available":false,"dispatchEligible":false,"acceptingNewWork":false,"draining":true,"retireWhenIdle":true,"redirectTo":"server2","sessions":0,"queuedTasks":0,"runnerSessions":null}'
+                fi
+            }
+            docker() {
+                [ "$1" = ps ] || { printf 'unexpected-docker\n' >> "$root/trace"; return 1; }
+                return 0
+            }
+            for MODE in retired hold serving; do
+                : > "$root/trace"
+                rm -f "$CASE_DIR/seed.txt" "$CASE_DIR/seed-contract.txt" "$CASE_DIR/seed-kind.txt" \
+                    "$CASE_DIR/status.json" "$CASE_DIR/main-status.json"
+                (
+                    set -euo pipefail
+                    c849_seed
+                ) > "$root/out" 2>"$root/err"
+                code=$?
+                seed=''; contract=''; status=''; main=''; status_nl=0; main_nl=0; donor=0
+                if [ -f "$CASE_DIR/seed.txt" ]; then seed="$(tr -d '\r\n' < "$CASE_DIR/seed.txt")"; fi
+                if [ -f "$CASE_DIR/seed-contract.txt" ]; then
+                    contract="$(awk 'BEGIN{ORS="|"} {gsub(/\r/,""); print}' "$CASE_DIR/seed-contract.txt")"
+                fi
+                if [ -f "$CASE_DIR/status.json" ]; then
+                    status="$(tr -d '\r\n' < "$CASE_DIR/status.json")"
+                    printf '%s\n' "$status" > "$root/expect-status"
+                    if cmp -s "$root/expect-status" "$CASE_DIR/status.json"; then status_nl=1; fi
+                fi
+                if [ -f "$CASE_DIR/main-status.json" ]; then
+                    main="$(tr -d '\r\n' < "$CASE_DIR/main-status.json")"
+                    printf '%s\n' "$main" > "$root/expect-main"
+                    if cmp -s "$root/expect-main" "$CASE_DIR/main-status.json"; then main_nl=1; fi
+                fi
+                if grep -qx 'donor-probed' "$root/trace"; then donor=1; fi
+                verdict="$(head -n 1 "$root/out" | tr -d '\r')"
+                printf 'ROW mode=%s exit=%s donor=%s seed=%s contract=%s status_nl=%s main_nl=%s verdict=%s status=%s main=%s\n' \
+                    "$MODE" "$code" "$donor" "$seed" "$contract" "$status_nl" "$main_nl" "$verdict" "$status" "$main"
+            done
+            """);
+        const string accepted = "donor=0 seed=ready=true kind=cold writable=3 contract=schema=2|kind=cold|digest-type=none|digest=none|smoke=not-run| status_nl=1 main_nl=1 verdict=accepted=true diagnosis=";
+        RequireExactRows(output,
+            "ROW mode=retired exit=0 " + accepted + " status=" + statusJson + " main=" + mainJson,
+            "ROW mode=hold exit=0 " + accepted + " status=" + holdJson + " main=" + mainJson,
+            "ROW mode=serving exit=2 donor=0 seed= contract=schema=2|kind=cold|digest-type=none|digest=none|smoke=not-run| status_nl=0 main_nl=0 verdict=accepted=false diagnosis=CacheFirstSeedTempNotRetired status= main=");
+        var statusNode = JsonNode.Parse(statusJson)!;
+        (statusNode["retiredAt"] is not null).ShouldBeTrue();
+        statusNode["available"]!.GetValue<bool>().ShouldBeFalse();
+        statusNode["dispatchEligible"]!.GetValue<bool>().ShouldBeFalse();
+        statusNode["acceptingNewWork"]!.GetValue<bool>().ShouldBeFalse();
+        statusNode["draining"]!.GetValue<bool>().ShouldBeTrue();
+        statusNode["retireWhenIdle"]!.GetValue<bool>().ShouldBeTrue();
+        statusNode["redirectTo"]!.GetValue<string>().ShouldBe("server2");
+        statusNode["sessions"]!.GetValue<int>().ShouldBe(0);
+        statusNode["queuedTasks"]!.GetValue<int>().ShouldBe(0);
+        (statusNode["runnerSessions"] is null || statusNode["runnerSessions"]!.GetValue<int>() == 0).ShouldBeTrue();
+        var holdNode = JsonNode.Parse(holdJson)!;
+        (holdNode["retiredAt"] is null).ShouldBeTrue();
+        holdNode["available"]!.GetValue<bool>().ShouldBeFalse();
+        holdNode["dispatchEligible"]!.GetValue<bool>().ShouldBeFalse();
+        holdNode["acceptingNewWork"]!.GetValue<bool>().ShouldBeFalse();
+        holdNode["draining"]!.GetValue<bool>().ShouldBeTrue();
+        holdNode["retireWhenIdle"]!.GetValue<bool>().ShouldBeFalse();
+        holdNode["redirectTo"]!.GetValue<string>().ShouldBe("server2");
+        holdNode["sessions"]!.GetValue<int>().ShouldBe(0);
+        holdNode["queuedTasks"]!.GetValue<int>().ShouldBe(0);
+        (holdNode["runnerSessions"] is null || holdNode["runnerSessions"]!.GetValue<int>() == 0).ShouldBeTrue();
+        var mainNode = JsonNode.Parse(mainJson)!;
+        mainNode["sessions"].ShouldNotBeNull();
+        mainNode["queuedTasks"].ShouldNotBeNull();
+        if (remote.Contains("c849_write_cold_status_receipts() {", StringComparison.Ordinal))
+        {
+            ColdReadyArm(Block(remote, "c849_seed")).ShouldContain("c849_cold_reuse_receipts");
+            Block(remote, "c849_cold_proof").ShouldContain("c849_write_cold_status_receipts \"$status\" \"$temp\"");
+            var writer = Block(remote, "c849_write_cold_status_receipts");
+            writer.ShouldContain("'{sessions,runnerSessions,queuedTasks,retiredAt,available,dispatchEligible,acceptingNewWork,draining,retireWhenIdle,redirectTo}'");
+            writer.ShouldContain("'{sessions,runnerSessions,queuedTasks,dispatchEligible,acceptingNewWork,draining}'");
+        }
     }
 
     [Test]
@@ -7196,6 +7308,7 @@ public sealed class RemoteScriptContractTests
             }
             """ + "\n" +
             Block(source, "c849_cold_volume_facts") + "\n" +
+            Block(source, "c849_write_cold_status_receipts") + "\n" +
             Block(source, "c849_cold_proof") + "\n" +
             Block(source, "c849_cold_probe") + "\n" +
             Block(source, "c849_cold_seed") + "\n";
@@ -8437,6 +8550,20 @@ public sealed class RemoteScriptContractTests
         }
 
         return commands;
+    }
+
+    private static string ColdReuseBlocks(string remote)
+    {
+        var script = Block(remote, "c849_no_temp_containers") + "\n"
+            + Block(remote, "c849_contract_receipt") + "\n"
+            + Block(remote, "c849_seed") + "\n";
+        foreach (var name in new[] { "c849_write_cold_status_receipts", "c849_cold_reuse_receipts" })
+        {
+            if (remote.Contains(name + "() {", StringComparison.Ordinal))
+                script += Block(remote, name) + "\n";
+        }
+
+        return script;
     }
 
     private static string ColdReadyArm(string seed)
