@@ -72,7 +72,7 @@ public class ClaudeVerifiedDeliveryTests
             var stderr = process.StandardError.ReadToEndAsync();
             await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
             process.ExitCode.ShouldBe(0, await stdout + await stderr);
-            var text = string.Join("\n", Directory.GetFiles(root, "*.log").Select(File.ReadAllText));
+            var text = string.Join("\n", Directory.GetFiles(root, "*.diag").Select(File.ReadAllText));
             var records = Regex.Matches(text, @"(?m)^.*TestNodeUid \{ Value = (?<uid>[^}]+) \}.*DiscoveredTestNodeStateProperty.*$");
             var delivery = records.Cast<Match>().Where(m =>
                 m.Value.Contains("MethodName = Fake_evidence_appears_then_submit_completes_a_turn") ||
