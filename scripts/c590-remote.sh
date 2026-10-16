@@ -4999,6 +4999,7 @@ c849_fixture_consumer_release() {
 # C1208_Foreign_cache_is_dropped_and_untouched checks foreign cache refusal, ledger removal and untouched volume; C1208_Legacy_container_replacement_is_untouched and C1208_Legacy_network_replacement_is_untouched check legacy replacement retention/refusal; C1208_Unacquired_roster_is_untouched checks unacquired consumer/helper retention; C1208_Acquired_objects_are_removed and C1208_Recorded_container_id_does_not_delete_replacement check acquired disposal and ID-only removal; C1208_Legacy_owned_markers_are_migrated checks verified legacy migration, and C1208_Unknown_identity_retains_residue checks unknown refusal/residue. CP-45..53 retain positive-absence checks. CARD-1207 records Compose project resources before teardown, probes each recorded name afterward, and refuses success unless absence is confirmed; live Docker W-1 is pending.
 c849_fixture_finalize() {
     local project file name marker identity network="c849-${RUN}-npm" code=0 owned=0
+    local -a compose_audits=()
     [ "${C849_FIXTURE_FINALIZED:-0}" != 1 ] || return "${C849_FIXTURE_FINALIZATION_STATUS:-0}"
     # Preserve acquisition uncertainty even if finalization can later remove it.
     c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" ensure true || return 2
@@ -5021,11 +5022,13 @@ c849_fixture_finalize() {
                 if c849_fixture_compose_record "c849${RUN}${project}"; then
                     docker compose -p "c849${RUN}${project}" -f "$file" down -v >/dev/null 2>&1 \
                         || c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf 'compose:%s\n' "$project" || return 2
-                    c849_fixture_compose_confirm "c849${RUN}${project}" || return 2
+                    if [ "${C849_COMPOSE_EMPTY_PROJECT:-}" != "c849${RUN}${project}" ]; then
+                        compose_audits+=("c849${RUN}${project}")
+                    fi
                 else
                     c849_fixture_cleanup_unknown compose "c849${RUN}${project}" || return 2
                     if c849_fixture_metadata_regular "$CASE_DIR/.fixture-compose-c849${RUN}${project}"; then
-                        c849_fixture_compose_confirm "c849${RUN}${project}" || return 2
+                        compose_audits+=("c849${RUN}${project}")
                     fi
                 fi
             fi
@@ -5069,6 +5072,13 @@ c849_fixture_finalize() {
         else
             c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf '%s\n' "$name" || return 2
         fi
+    done
+    # The separately acquired donor shares temp's project but is not the probe
+    # service in shared.yml. Audit its recorded absence only after identity-safe
+    # release; a failed/foreign/unknown release still leaves refusal evidence.
+    C849_COMPOSE_EMPTY_PROJECT=''
+    for project in "${compose_audits[@]}"; do
+        c849_fixture_compose_confirm "$project" || return 2
     done
     c849_fixture_helper_release "c849-${RUN}-masked" || return 2
     c849_fixture_helper_release "c849-${RUN}-apphost" || return 2
