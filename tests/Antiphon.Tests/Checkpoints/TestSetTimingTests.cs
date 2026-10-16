@@ -23,7 +23,7 @@ public sealed class TestSetTimingTests : CheckpointTestBase
             result.State.ShouldBe("green");
             var events = Directory.GetFiles(root, "events.jsonl", SearchOption.AllDirectories);
             var receipt = string.Concat(events.Select(File.ReadAllText));
-            receipt.ShouldContain("\"eventKind\":\"set-completed\"", "producer-receipt");
+            receipt.Contains("\"eventKind\":\"set-completed\"", StringComparison.Ordinal).ShouldBeTrue("producer-receipt");
         }
         finally
         {
