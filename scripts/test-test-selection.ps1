@@ -9,6 +9,7 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/c487-harness.ps1"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
+$script:C1313GitFixtures = [Collections.Generic.List[string]]::new()
 
 function Test-C1313_ProjectAndCatalogUniverse {
     $policy = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
@@ -62,6 +63,7 @@ function Invoke-C1313Git($Root,$Arguments){return (Invoke-TestSelectionGit $Root
 function Write-C1313File($Root,$Path,$Text){$file=Join-Path $Root $Path;[void](New-Item -ItemType Directory (Split-Path $file) -Force);[IO.File]::WriteAllText($file,$Text)}
 function New-C1313GitFixture {
     $root=Join-Path $ResultsDirectory ([guid]::NewGuid().ToString('N'));[void](New-Item -ItemType Directory $root)
+    $script:C1313GitFixtures.Add($root)
     [void](Invoke-C1313Git $root @('init','--quiet'))
     [void](Invoke-C1313Git $root @('config','user.name','C1313 fixture'));[void](Invoke-C1313Git $root @('config','user.email','c1313@example.invalid'))
     [void](Invoke-C1313Git $root @('config','core.autocrlf','false'))
@@ -156,7 +158,10 @@ function Test-C1313_PathIdentity_nul_paths {
     # Index objects make newline and case identity independent of Windows filename restrictions.
     $blob=Invoke-C1313Git $fx.Root @('rev-parse',"$($fx.B):tests/test-selection-policy.json")
     [void](Invoke-C1313Git $fx.Root @('read-tree',$fx.B))
-    foreach($path in $paths){[void](Invoke-C1313Git $fx.Root @('update-index','--add','--cacheinfo',"100644,$blob,$path"))}
+    # Git for Windows rejects control characters even for index-only entries by
+    # default. Disable that checkout protection for these fixture index writes
+    # only; the paths are never materialized in the Windows working tree.
+    foreach($path in $paths){[void](Invoke-C1313Git $fx.Root @('-c','core.protectNTFS=false','update-index','--add','--cacheinfo',"100644,$blob,$path"))}
     [void](Invoke-C1313Git $fx.Root @('update-index','--add','--cacheinfo',"160000,$($fx.B),notes/gitlink"));$paths+='notes/gitlink'
     [void](Invoke-C1313Git $fx.Root @('update-index','--add','--cacheinfo',"120000,$blob,notes/link"));$paths+='notes/link'
     $tree=Invoke-C1313Git $fx.Root @('write-tree');$a=Invoke-C1313Git $fx.Root @('commit-tree',$tree,'-p',$fx.B,'-m','paths')
@@ -326,5 +331,15 @@ function Test-C1313_NewUidRemainder {
     Assert-C487 ($r.Widened -and $r.RequiredUids -ccontains $new -and $r.RequiredUids.Count -eq $discovery.nodes.Count -and $refused.StartsWith('new-uid-required') -and -not (Test-Path (Join-Path $ResultsDirectory 'must-not-launch'))) 'C1313 new-uid-required' $refused
 }
 
-& "Test-$Case"
+try { & "Test-$Case" }
+finally {
+    # Git loose objects in our disposable fixtures are read-only on Windows.
+    # Normalize only those objects, then let ScriptHarness own deletion/retention.
+    foreach ($fixture in $script:C1313GitFixtures) {
+        $objects = Join-Path $fixture '.git/objects'
+        if (Test-Path -LiteralPath $objects) {
+            Get-ChildItem -LiteralPath $objects -Recurse -Force -File | ForEach-Object { $_.IsReadOnly = $false }
+        }
+    }
+}
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 0
