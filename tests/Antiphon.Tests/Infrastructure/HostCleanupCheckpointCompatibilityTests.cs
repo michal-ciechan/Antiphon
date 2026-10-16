@@ -28,6 +28,7 @@ public sealed class HostCleanupCheckpointCompatibilityTests
 
         // Removing only the live-owner veto must let this same candidate finish.
         f.MarkRun(f.Dead);
+        f.Sweep.Register(f.Root);
         f.Sweep.SweepOnce().CompletedRoots.ShouldBe(1, "C987.nested-live-positive-pair");
         f.Files.Io.DirectoryExists(f.Root).ShouldBeFalse();
         f.Files.Io.RecursiveIntents.ShouldBe(0);
@@ -51,6 +52,7 @@ public sealed class HostCleanupCheckpointCompatibilityTests
 
         // Supply real serialized custody, never a canned deletion decision.
         f.MarkRun(f.Dead);
+        f.Sweep.Register(f.Root);
         f.Sweep.SweepOnce().CompletedRoots.ShouldBe(1, "C987.nested-missing-positive-pair");
         f.Files.Io.DirectoryExists(f.Root).ShouldBeFalse();
         f.Files.Io.RecursiveIntents.ShouldBe(0);

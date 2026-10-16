@@ -241,10 +241,19 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
         Opens.Add((path, mode, access, share));
         if (_held.TryGetValue(path, out var held) && held.Any(s => s == FileShare.None || share == FileShare.None)) throw new IOException("sharing violation");
         if (mode == FileMode.CreateNew && Nodes.ContainsKey(path)) throw new IOException("already exists");
-        if (!Nodes.ContainsKey(path) || mode is FileMode.Create or FileMode.CreateNew) Put(path, "");
+        if (!Nodes.ContainsKey(path) && mode is FileMode.Open or FileMode.Truncate) throw new FileNotFoundException(path);
+        if (!Nodes.ContainsKey(path) || mode is FileMode.Create or FileMode.CreateNew or FileMode.Truncate) Put(path, "");
         if (!_held.TryGetValue(path, out held)) _held[path] = held = [];
         held.Add(share);
-        return new WriteStream(path, Nodes[path].Bytes, mode == FileMode.Append, access != FileAccess.Read, bytes => { Nodes[path].Bytes = bytes; Nodes[path].Stat = Nodes[path].Stat with { Size = bytes.Length, Modified = Now, Changed = Now }; held.Remove(share); });
+        return new WriteStream(path, Nodes[path].Bytes, mode == FileMode.Append, access != FileAccess.Read, bytes =>
+        {
+            if (access != FileAccess.Read)
+            {
+                Nodes[path].Bytes = bytes;
+                Nodes[path].Stat = Nodes[path].Stat with { Size = bytes.Length, Modified = Now, Changed = Now };
+            }
+            held.Remove(share);
+        });
     }
     public ICheckpointReadHandle OpenRead(string path, CheckpointReadOpen request)
     {
@@ -307,10 +316,15 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
         private readonly Action<byte[]> _closed;
         public string Path { get; }
         private readonly bool _writable;
+        private bool _disposed;
         public override bool CanWrite => _writable;
         public WriteStream(string path, byte[] bytes, bool append, bool writable, Action<byte[]> closed)
         { _writable = true; Write(bytes); Position = append ? Length : 0; _closed = closed; Path = path; _writable = writable; }
-        protected override void Dispose(bool disposing) { if (disposing) _closed(ToArray()); base.Dispose(disposing); }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && !_disposed) { _disposed = true; _closed(ToArray()); }
+            base.Dispose(disposing);
+        }
     }
 }
 
