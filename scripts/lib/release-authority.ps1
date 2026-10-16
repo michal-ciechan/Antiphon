@@ -368,7 +368,8 @@ function New-ReleaseGateExecutionPlan {
             $plan.suites += [ordered]@{ id = $id; kind = 'roster'; entries = @($Rosters[$id]) }
             continue
         }
-        $nodes = @($Discovery[$id])
+        $nodes = @()
+        if ($Discovery.ContainsKey($id) -and $null -ne $Discovery[$id]) { $nodes = @($Discovery[$id]) }
         $discoveryDoc.suites[$id] = $nodes
         $required = @(Get-ReleaseAuthorityRequiredUids -Nodes $nodes -Exclusions $authority.exclusions -SuiteId $id)
         $byClass = [ordered]@{}

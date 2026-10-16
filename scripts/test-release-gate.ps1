@@ -263,9 +263,10 @@ function New-C599RcGreen {
 $script:C599RepoPolicyPath = Join-Path $repoRoot (Join-Path 'tests' 'test-execution-policy.json')
 $script:C599IntentId = 'intent-20260923T083000Z'
 $script:C599RunId = 'rc-run-1'
-$script:C599NativeSuites = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'e2e')
+$script:C599NativeSuites = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'e2e', 'markdown-pdf')
 $script:C599Rosters = @{ client = @('lint', 'build', 'vitest'); scripts = @('test-release-gate.ps1', 'test-nightly.ps1') }
 $script:C599ABasePolicy = $null
+$script:C599PolicyClones = [System.Collections.Generic.List[string]]::new()
 # The release card bound to the intent (the prepublication receipt's recipient) and
 # the injected publisher clock: after every fixture instant, never the wall clock.
 $script:C599ReleaseCardId = '5b0e6c1e-8f1c-4c3e-9a55-0c5990c5990a'
@@ -287,6 +288,7 @@ function New-C599PolicyCheckout {
     param([string]$Root, [byte[]]$PolicyBytes = $null)
     $clone = Join-Path $Root 'checkout'
     New-Item -ItemType Directory -Path (Join-Path $clone 'tests') -Force | Out-Null
+    $script:C599PolicyClones.Add($clone)
     if ($null -eq $PolicyBytes) { $PolicyBytes = [System.IO.File]::ReadAllBytes($script:C599RepoPolicyPath) }
     [System.IO.File]::WriteAllBytes((Join-Path $clone (Join-Path 'tests' 'test-execution-policy.json')), $PolicyBytes)
     [void](Invoke-C599RealGit -Repo $clone -Arguments @('init', '-q'))
@@ -1954,7 +1956,7 @@ function Test-C599B_MissingDiscovery {
 
 function Test-C599B_PinnedPolicy {
     # V-18 / R-9 ordinary contract: the pinned policy blob, not the report, decides.
-    $fx = New-C599PublishFx
+    $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     $ok = Invoke-C599Publish -Fx $fx
     $rel = Get-C599Release -Gh $fx.Gh -Tag ([string]$ok.Tag)
     Assert-C487 -Cond ([int]$ok.ExitCode -eq 0 -and [bool]$ok.Published) -Name 'C599 V-18: a valid eight-suite pinned authority publishes' -Detail ([string]$ok.Refusal)
@@ -1965,7 +1967,7 @@ function Test-C599B_PinnedPolicy {
     Assert-C487 -Cond ($ids.Count -eq 8 -and ([string]$manifest.sha -eq $fx.Head)) -Name 'C599 V-18: the manifest names all eight pinned suites at the tested sha' -Detail ($ids -join ',')
 
     # A shrunken summary alone confers nothing: it is not read, the eight stay required.
-    $fxS = New-C599PublishFx
+    $fxS = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     Update-C599Json -Path (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fxS.ReleaseRoot -CandidateId $CandidateId) 'summary.json') -Mutate {
         param($s) $s.requiredSuites = @('antiphon'); $s.suites = @($s.suites | Where-Object { [string]$_.id -eq 'antiphon' }) }
     $shrunk = Invoke-C599Publish -Fx $fxS
@@ -1974,7 +1976,7 @@ function Test-C599B_PinnedPolicy {
 
     # G-224: a seven-suite report (plan, ledger and summary agree on seven) cannot
     # publish against the eight-suite pinned policy.
-    $fx7 = New-C599PublishFx
+    $fx7 = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     Update-C599Ledger -Fx $fx7 -Plan { param($p) $p.suites = @($p.suites | Where-Object { [string]$_.id -ne 'e2e' }) } `
         -Ledger { param($l) $l.chunks = @($l.chunks | Where-Object { [string]$_.suite -ne 'e2e' }) }
     Update-C599Json -Path (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx7.ReleaseRoot -CandidateId $CandidateId) 'summary.json') -Mutate {
@@ -1983,19 +1985,19 @@ function Test-C599B_PinnedPolicy {
     Assert-C487 -Cond (([string]$seven.Refusal -match 'required-suite-missing:e2e') -and (Test-C599NoRemoteWrite -Fx $fx7)) -Name 'C599 G-224: seven-suite report cannot publish eight-suite policy' -Detail ([string]$seven.Refusal)
 
     # G-225: a stale pinned hash in the frozen authority blocks before any remote write.
-    $fxH = New-C599PublishFx
+    $fxH = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     Update-C599Json -Path (Join-Path (Get-C599AuthorityDir -Fx $fxH) 'authority.json') -Mutate { param($a) $a.policyHash = ('0' * 64) }
     $stale = Invoke-C599Publish -Fx $fxH
     Assert-C487 -Cond (([string]$stale.Refusal -match 'policy-hash-mismatch') -and (Test-C599NoRemoteWrite -Fx $fxH)) -Name 'C599 G-225: wrong pinned hash blocks before any remote write' -Detail ([string]$stale.Refusal)
 
     # Stale blob identity: the recorded blob is not the one at the pinned commit.
-    $fxB = New-C599PublishFx
+    $fxB = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     Update-C599Json -Path (Join-Path (Get-C599AuthorityDir -Fx $fxB) 'authority.json') -Mutate { param($a) $a.policyBlobId = ('1' * 40) }
     $blob = Invoke-C599Publish -Fx $fxB
     Assert-C487 -Cond (([string]$blob.Refusal -match 'policy-blob-id-mismatch') -and (Test-C599NoRemoteWrite -Fx $fxB)) -Name 'C599 V-18: a stale pinned blob id blocks before any remote write' -Detail ([string]$blob.Refusal)
 
     # R-9: a legacy candidate with no authority cannot publish; nothing is synthesized.
-    $fxL = New-C599PublishFx -NoAuthority
+    $fxL = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes) -NoAuthority
     $legacy = Invoke-C599Publish -Fx $fxL
     Assert-C487 -Cond (([string]$legacy.Refusal -match 'missing-authority') -and -not [bool]$legacy.Published) -Name 'C599 R-9: a legacy candidate with no authority refuses' -Detail ([string]$legacy.Refusal)
     Assert-C487 -Cond (Test-C599NoRemoteWrite -Fx $fxL) -Name 'C599 R-9: the legacy refusal made zero remote writes'
@@ -2214,16 +2216,12 @@ function Update-C599AReceipt {
 
 function Get-C599ABasePolicyBytes {
     <#
-      The live policy (schema, suites, profiles and the exact eight-suite rc set)
-      with its rc exclusions pruned to the two that name fixture classes, hash
-      restated. Pinned-exclusion handling is still exercised; the pruning only keeps
-      the per-variant canonical hashing inside the harness child time limit.
+      Explicit historical schema-2 policy for the eight-suite authority controls.
+      Current-policy publication controls continue to read C599RepoPolicyPath.
+      The fixture retains the two exclusions that name these fixture classes.
     #>
     if ($null -eq $script:C599ABasePolicy) {
-        $obj = Get-Content -LiteralPath $script:C599RepoPolicyPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        $obj.profiles.rc.exclusions = @($obj.profiles.rc.exclusions | Where-Object { @('ClaudeAdapterIntegrationTests', 'DelegationPipelineE2ETests') -contains [string]$_.class })
-        $obj.policyHash = (Get-NightlyPolicyHash -Object $obj)
-        $script:C599ABasePolicy = [System.Text.Encoding]::UTF8.GetBytes(($obj | ConvertTo-Json -Depth 20))
+        $script:C599ABasePolicy = [System.IO.File]::ReadAllBytes((Join-Path $here 'fixtures/c599-policy-v2.json'))
     }
     return $script:C599ABasePolicy
 }
@@ -2376,7 +2374,7 @@ function Test-C599A_PinnedPolicySchema {
     Restore-C599ASnapshot -Snap $snap
     Assert-C487 -Cond ($repin.Ok) -Name 'C599 G-286: re-pinning the candidate to a new commit with a valid blob is accepted (repin control)' -Detail (@($repin.Reasons) -join ' ')
     $shapes = @(
-        @{ l = 'schema 3'; t = 'policy-schema-unsupported'; e = { param($o) $o.schemaVersion = 3 } },
+        @{ l = 'schema 4'; t = 'policy-schema-unsupported'; e = { param($o) $o.schemaVersion = 4 } },
         @{ l = 'schema 1'; t = 'policy-schema-unsupported'; e = { param($o) $o.schemaVersion = 1 } },
         @{ l = 'schema string'; t = 'policy-schema-unsupported'; e = { param($o) $o.schemaVersion = '2' } },
         @{ l = 'schema absent'; t = 'policy-schema-unsupported'; e = { param($o) $o.PSObject.Properties.Remove('schemaVersion') } },
@@ -2397,8 +2395,8 @@ function Test-C599A_PinnedPolicySchema {
     $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'unparseable blob' -Expect @('policy-unparseable') -Mutate {
         Set-C599APinnedPolicy -Fx $fx -PolicyBytes ([System.Text.Encoding]::UTF8.GetBytes('{ not json'))
     }
-    $bytes = New-C599APolicyBytes -Edit { param($o) $o.schemaVersion = 3 }
-    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher schema 3' -Publish -Expect @('policy-schema-unsupported') -Mutate { Set-C599APinnedPolicy -Fx $fx -PolicyBytes $bytes }
+    $bytes = New-C599APolicyBytes -Edit { param($o) $o.schemaVersion = 4 }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher schema 4' -Publish -Expect @('policy-schema-unsupported') -Mutate { Set-C599APinnedPolicy -Fx $fx -PolicyBytes $bytes }
     $bytes = New-C599APolicyBytes -Edit { param($o) $o.profiles.rc.requiredSuites = @($o.profiles.rc.requiredSuites | Where-Object { $_ -ne 'scripts' }) }
     $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher rc without scripts' -Publish -Expect @('policy-rc-suite-missing:scripts') -Mutate { Set-C599APinnedPolicy -Fx $fx -PolicyBytes $bytes }
     Assert-C599AMatrix -Name 'C599 G-286: an unknown schema, missing or empty rc profile and each absent suite in the pinned blob refuse' -Results $m
@@ -3365,13 +3363,24 @@ function Test-C599A_PublisherTestMode {
 
 # ====================================================================== run ===
 
+function Clear-C599FixtureReadOnly {
+    # Only our disposable clones: Git marks loose objects read-only on Windows.
+    # Leave deletion and failure retention to the owning ScriptHarness process.
+    foreach ($clone in $script:C599PolicyClones) {
+        $objects = Join-Path $clone '.git/objects'
+        if (Test-Path -LiteralPath $objects) {
+            Get-ChildItem -LiteralPath $objects -Recurse -Force -File | ForEach-Object { $_.IsReadOnly = $false }
+        }
+    }
+}
+
 $cases = Get-C487CaseFunctions -Prefix 'C599_'
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -CommandType Function -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
-    try { & $fn } finally { Stop-C599CardStub }
+    try { & $fn } finally { Stop-C599CardStub; Clear-C599FixtureReadOnly }
 } else {
-    try { foreach ($fn in $cases) { & $fn } } finally { Stop-C599CardStub }
+    try { foreach ($fn in $cases) { & $fn } } finally { Stop-C599CardStub; Clear-C599FixtureReadOnly }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'release-gate-summary' -Body @{
     passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows
