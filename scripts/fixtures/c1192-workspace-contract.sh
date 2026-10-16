@@ -1208,7 +1208,7 @@ docker() {
             fi
             return 0 ;;
         compose)
-            if [ "$mode" = retention ] || [ "$mode" = compose-absence ]; then shift; retention_compose "$@";
+            if [ "$mode" = retention ] || [ "$mode" = retention-inspect ] || [ "$mode" = compose-absence ]; then shift; retention_compose "$@";
             elif [ "$mode" = finalization ] || [ "$mode" = cleanup-probe ]; then
                 local previous="" token
                 for token in "$@"; do
