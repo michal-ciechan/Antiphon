@@ -1033,3 +1033,66 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         census = $censusOut
     }
 }
+
+# CARD-1313: exact membership is a multiset contract over expanded UIDs.
+function Test-NightlyExactCoverage {
+    param([string[]]$RequiredUids, [object[]]$TerminalNodes)
+    $required = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $reasons = [Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($uid in $RequiredUids) {
+        if (-not $uid -or -not $required.Add($uid)) { [void]$reasons.Add('invalid-required') }
+    }
+    if ($required.Count -eq 0 -or @($TerminalNodes).Count -eq 0) { [void]$reasons.Add('zero-required') }
+    foreach ($node in $TerminalNodes) {
+        $uid = [string]$node.Uid
+        if (-not $seen.Add($uid)) { [void]$reasons.Add('duplicate-uid') }
+        if (-not $required.Contains($uid)) { [void]$reasons.Add('extra-uid') }
+        $outcome = ConvertTo-NightlyNormalizedOutcome ([string]$node.Outcome)
+        if ($outcome -eq 'Skipped') { [void]$reasons.Add('required-skip') }
+        elseif ($outcome -ne 'Passed') { [void]$reasons.Add('failed-outcome') }
+    }
+    foreach ($uid in $required) { if (-not $seen.Contains($uid)) { [void]$reasons.Add('missing-uid') } }
+    return [pscustomobject]@{ Ok = ($reasons.Count -eq 0); Reasons = @($reasons); Required = $required.Count; Executed = @($TerminalNodes).Count }
+}
+
+function New-NightlyExactRoster {
+    param($Discovery, [object[]]$Members, [string[]]$ClassifiedUids = $null)
+    $parsed = ConvertFrom-NightlyDiscoveryDocument $Discovery $script:NightlyDiscoveryFormat
+    if (@($parsed.Nodes).Count -eq 0) { throw 'empty-discovery' }
+    $selected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($member in $Members) {
+        $class = [string]$member.class; $method = [string]$member.method
+        if ($class -notmatch '^[A-Za-z_][A-Za-z0-9_.]*$' -or ($method -and $method -notmatch '^[A-Za-z_][A-Za-z0-9_]*$')) { throw 'unresolvable-exact-member' }
+        $matches = @($parsed.Nodes | Where-Object { $_.ClassName -ceq $class -and (-not $method -or $_.Method -ceq $method) })
+        if ($matches.Count -eq 0) { throw ('missing-exact-member:' + $class + '.' + $method) }
+        foreach ($node in $matches) { [void]$selected.Add($node.Uid) }
+    }
+    $unresolved = @()
+    if ($null -ne $ClassifiedUids) {
+        $known = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($uid in $ClassifiedUids) { [void]$known.Add($uid) }
+        $unresolved = @($parsed.Nodes | Where-Object { -not $known.Contains($_.Uid) } | ForEach-Object { $_.Uid })
+        if ($unresolved.Count -gt 0) {
+            # Widen the owning assembly before launch. Unknown resources cannot be run unattended.
+            foreach ($node in $parsed.Nodes) { [void]$selected.Add($node.Uid) }
+        }
+    }
+    if ($selected.Count -eq 0) { throw 'zero-required' }
+    $groups = [Collections.Generic.SortedDictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($node in $parsed.Nodes) {
+        if (-not $selected.Contains($node.Uid)) { continue }
+        foreach ($part in @($node.Namespace, $node.Type, $node.Method)) {
+            if ($part -notmatch '^[A-Za-z_][A-Za-z0-9_.]*$') { throw 'unresolvable-filter-identity' }
+        }
+        $filter = '/*/{0}/{1}/{2}' -f $node.Namespace, $node.Type, $node.Method
+        if (-not $groups.ContainsKey($filter)) { $groups.Add($filter, [Collections.Generic.List[string]]::new()) }
+        $groups[$filter].Add($node.Uid)
+    }
+    $chunks = @()
+    foreach ($filter in $groups.Keys) {
+        $uids = [string[]]$groups[$filter].ToArray(); [Array]::Sort($uids, [StringComparer]::Ordinal)
+        $chunks += [pscustomobject]@{ Filter = $filter; RequiredUids = $uids }
+    }
+    return [pscustomobject]@{ AssemblyHash = $parsed.AssemblyHash; Chunks = $chunks; RequiredUids = @($selected); Widened = ($unresolved.Count -gt 0); UnresolvedUids = $unresolved }
+}

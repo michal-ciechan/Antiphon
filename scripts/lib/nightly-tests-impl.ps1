@@ -121,7 +121,8 @@ function Get-NightlyNativeExecutionArguments {
     param(
         [string]$TrxPath,
         [string]$DiagnosticDirectory,
-        [string[]]$Classes
+        [string[]]$Classes,
+        [string]$ExactFilter = ''
     )
     if ([string]::IsNullOrWhiteSpace($TrxPath)) { throw 'missing trx path' }
     if ([string]::IsNullOrWhiteSpace($DiagnosticDirectory)) { throw 'missing diagnostic directory' }
@@ -139,10 +140,19 @@ function Get-NightlyNativeExecutionArguments {
         '--diagnostic',
         '--diagnostic-output-directory', $DiagnosticDirectory
     )
-    if ($Classes -and @($Classes).Count -gt 0) {
-        $or = (@($Classes) | ForEach-Object { '({0}*)' -f $_ }) -join '|'
+    if ($ExactFilter) {
+        if ($ExactFilter -notmatch '^/\*/[A-Za-z_][A-Za-z0-9_.]*/[A-Za-z_][A-Za-z0-9_]*/[A-Za-z_][A-Za-z0-9_]*$') { throw 'invalid-exact-filter' }
         $nativeArgs += '--treenode-filter'
-        $nativeArgs += ('/*/*/({0})/*' -f $or)
+        $nativeArgs += $ExactFilter
+    } elseif ($Classes -and @($Classes).Count -gt 0) {
+        if (@($Classes).Count -ne 1) { throw 'multiple classes require split exact roster chunks' }
+        $class = [string]$Classes[0]
+        if ($class -notmatch '^[A-Za-z_][A-Za-z0-9_.]*$') { throw 'invalid-class-filter' }
+        $dot = $class.LastIndexOf('.')
+        $namespace = if ($dot -lt 0) { '*' } else { $class.Substring(0, $dot) }
+        $type = if ($dot -lt 0) { $class } else { $class.Substring($dot + 1) }
+        $nativeArgs += '--treenode-filter'
+        $nativeArgs += ('/*/{0}/{1}/*' -f $namespace, $type)
     }
     return $nativeArgs
 }
@@ -391,6 +401,19 @@ function Invoke-AntiphonNightlyTests {
                 } else {
                     $chunks = @([pscustomobject]@{ id = 'all'; classes = @() })
                 }
+
+                # The pinned filter parser requires prefix forms for combined operands.
+                # Separate exact class chunks so no suffix class can ever be launched.
+                $exactChunks = @()
+                foreach ($chunk in $chunks) {
+                    if (@($chunk.classes).Count -gt 1) {
+                        $classIndex = 0
+                        foreach ($class in $chunk.classes) {
+                            $exactChunks += [pscustomobject]@{ id = ('{0}-class-{1}' -f $chunk.id, (++$classIndex)); classes = @($class) }
+                        }
+                    } else { $exactChunks += $chunk }
+                }
+                $chunks = $exactChunks
 
                 if ($suiteId -eq 'e2e') {
                     $bundle = Join-Path $RepoRoot (Join-Path 'client' (Join-Path 'dist' 'index.html'))
@@ -650,4 +673,47 @@ function Invoke-AntiphonNightlyTests {
         NativeActiveMax = $nativeActiveMax
         PolicyHash = $policyHash
     }
+}
+
+# Exact selected execution front door. Full-profile publication accounting is unchanged;
+# a caller cannot promote this receipt to Full or activate ChangeAware with it.
+function Invoke-NightlyExactRoster {
+    param([string]$AssemblyPath, $Discovery, [object[]]$Members, [string]$ResultsDirectory,
+          [string[]]$ClassifiedUids = $null, [hashtable]$Environment = $null)
+    $roster = New-NightlyExactRoster -Discovery $Discovery -Members $Members -ClassifiedUids $ClassifiedUids
+    if ($roster.AssemblyHash -cne (Get-NightlyAssemblyHash $AssemblyPath)) { throw 'discovery-build-mismatch' }
+    if ($roster.UnresolvedUids.Count -gt 0) { throw 'new-uid-required: classification required before launch' }
+    if (Test-Path -LiteralPath $ResultsDirectory) { throw 'execution-output-already-exists' }
+    [void][IO.Directory]::CreateDirectory($ResultsDirectory)
+    . (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')
+    $terminal = @(); $receipts = @(); $index = 0
+    foreach ($chunk in $roster.Chunks) {
+        if ($roster.AssemblyHash -cne (Get-NightlyAssemblyHash $AssemblyPath)) { throw 'discovery-build-mismatch' }
+        $dir = Join-Path $ResultsDirectory ('leaf-' + (++$index))
+        [void][IO.Directory]::CreateDirectory($dir)
+        $trx = Join-Path $dir 'run.trx'
+        $args = @(Get-NightlyNativeExecutionArguments -TrxPath $trx -DiagnosticDirectory $dir -ExactFilter $chunk.Filter)
+        $start = [Diagnostics.ProcessStartInfo]::new('dotnet')
+        $start.WorkingDirectory = $ResultsDirectory
+        $start.ArgumentList.Add([IO.Path]::GetFullPath($AssemblyPath))
+        foreach ($arg in $args) { $start.ArgumentList.Add($arg) }
+        if ($Environment) { foreach ($key in $Environment.Keys) { $start.Environment[$key] = [string]$Environment[$key] } }
+        $run = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start, 600000, $false)
+        [IO.File]::WriteAllText((Join-Path $dir 'console.log'), $run.Stdout + $run.Stderr)
+        if ($run.TimedOut) { throw 'exact-execution-timeout' }
+        $actual = ConvertFrom-NightlyDiagnosticLog (Get-NightlyLatestDiagnosticLog $dir) execution
+        $trxRows = @(Read-NightlyTrxIdentities $trx)
+        $cross = Test-NightlyTrxDiagnosticCrossCheck $trxRows $actual.Nodes
+        $verdict = Test-NightlyExactCoverage $chunk.RequiredUids $actual.Nodes
+        $receipts += [ordered]@{ filter = $chunk.Filter; requiredUids = @($chunk.RequiredUids); executedUids = @($actual.Nodes.Uid); exitCode = $run.Exit; trx = $trx; complete = ($cross.Ok -and $verdict.Ok -and $run.Exit -eq 0) }
+        $terminal += @($actual.Nodes)
+        if (-not $cross.Ok -or -not $verdict.Ok -or $run.Exit -ne 0) {
+            Write-NightlyAtomicJson (Join-Path $ResultsDirectory 'receipt.json') @{ format='antiphon-exact-roster-v1'; complete=$false; assemblyHash=$roster.AssemblyHash; chunks=$receipts; reasons=@($verdict.Reasons) }
+            throw ('exact-execution-incomplete:' + ($verdict.Reasons -join ','))
+        }
+    }
+    $verdict = Test-NightlyExactCoverage $roster.RequiredUids $terminal
+    $result = [ordered]@{ format='antiphon-exact-roster-v1'; complete=$verdict.Ok; executionEvidence=$true; releaseCredit=$false; assemblyHash=$roster.AssemblyHash; requiredUids=@($roster.RequiredUids); executedUids=@($terminal.Uid); chunks=$receipts }
+    Write-NightlyAtomicJson (Join-Path $ResultsDirectory 'receipt.json') $result
+    return $result
 }
