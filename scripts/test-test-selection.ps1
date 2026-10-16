@@ -52,12 +52,174 @@ function Test-C1313_MixedDeliveryInventory {
     Assert-C487 -Cond ($oracles.Count -eq 2 -and @($oracles|Where-Object {$_.resources.api -ne 'none' -or $_.resources.vendorExecutable -eq 'none' -or $_.eligibility -ne 'manual'}).Count -eq 0) -Name 'C1313 vendor-oracles-are-not-fakes'
 }
 
+function Invoke-C1313Git($Root,$Arguments){return (Invoke-TestSelectionGit $Root $Arguments).Stdout.Trim()}
+function Write-C1313File($Root,$Path,$Text){$file=Join-Path $Root $Path;[void](New-Item -ItemType Directory (Split-Path $file) -Force);[IO.File]::WriteAllText($file,$Text)}
+function New-C1313GitFixture {
+    $root=Join-Path $ResultsDirectory ([guid]::NewGuid().ToString('N'));[void](New-Item -ItemType Directory $root)
+    [void](Invoke-C1313Git $root @('init','--quiet'))
+    [void](Invoke-C1313Git $root @('config','user.name','C1313 fixture'));[void](Invoke-C1313Git $root @('config','user.email','c1313@example.invalid'))
+    [void](Invoke-C1313Git $root @('config','core.autocrlf','false'))
+    foreach($file in @('tests/test-execution-policy.json','tests/test-selection-policy.json','scripts/select-test-rosters.ps1','scripts/lib/test-selection.ps1')){Write-C1313File $root $file ([IO.File]::ReadAllText((Join-Path $repoRoot $file)))}
+    $catalog=Get-Content "$root/tests/test-selection-policy.json" -Raw|ConvertFrom-Json -AsHashtable
+    foreach($path in @(Get-TestSelectionSorted @($catalog.sets.sourceInputs + $catalog.sets.members.source))){if($path){Write-C1313File $root $path 'fixture source'}}
+    [void](Invoke-C1313Git $root @('add','--all'));[void](Invoke-C1313Git $root @('commit','--quiet','-m','baseline'))
+    return @{Root=$root;B=(Invoke-C1313Git $root @('rev-parse','HEAD'));Catalog=$catalog}
+}
+function New-C1313Candidate($Fx,[string[]]$Paths,[string]$Content='changed'){
+    [void](Invoke-C1313Git $Fx.Root @('read-tree',$Fx.B))
+    foreach($path in $Paths){Write-C1313File $Fx.Root $path $Content;[void](Invoke-C1313Git $Fx.Root @('add','--',$path))}
+    $tree=Invoke-C1313Git $Fx.Root @('write-tree')
+    return Invoke-C1313Git $Fx.Root @('commit-tree',$tree,'-p',$Fx.B,'-m','candidate')
+}
+function New-C1313PolicyCandidate($Fx,$Catalog){
+    $Catalog.catalogHash=Get-TestSelectionCatalogHash $Catalog
+    $p=Get-Content "$repoRoot/tests/test-execution-policy.json" -Raw|ConvertFrom-Json -AsHashtable
+    $p.selectionCatalog.hash=$Catalog.catalogHash;$p.policyHash=Get-NightlyPolicyHash $p
+    [void](Invoke-C1313Git $Fx.Root @('read-tree',$Fx.B))
+    Write-C1313File $Fx.Root 'tests/test-selection-policy.json' ($Catalog|ConvertTo-Json -Depth 30)
+    Write-C1313File $Fx.Root 'tests/test-execution-policy.json' ($p|ConvertTo-Json -Depth 30)
+    [void](Invoke-C1313Git $Fx.Root @('add','--','tests/test-selection-policy.json','tests/test-execution-policy.json'))
+    $tree=Invoke-C1313Git $Fx.Root @('write-tree');return Invoke-C1313Git $Fx.Root @('commit-tree',$tree,'-p',$Fx.B,'-m','policy')
+}
+function Invoke-C1313Selection($Fx,$A,$B=$Fx.B){
+    . "$PSScriptRoot/lib/checkpoint-process-runner.ps1"
+    $start=[Diagnostics.ProcessStartInfo]::new('pwsh');$start.WorkingDirectory=$repoRoot
+    foreach($a in @('-NoProfile','-File',"$PSScriptRoot/select-test-rosters.ps1",'-RepositoryRoot',$Fx.Root,'-BaselineSha',$B,'-CandidateSha',$A,'-Json')){$start.ArgumentList.Add($a)}
+    $run=[Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start,60000,$false)
+    $doc=$null;if($run.Exit -eq 0){$doc=$run.Stdout|ConvertFrom-Json -AsHashtable}
+    return @{Exit=$run.Exit;Document=$doc;Error=$run.Stderr}
+}
+function Get-C1313Selection($Fx,$A,$B=$Fx.B){$r=Invoke-C1313Selection $Fx $A $B;if($r.Exit -ne 0){throw "control did not reach selector: $($r.Error)"};return $r.Document}
+function Same-C1313Set($Actual,$Expected){return ((@(Get-TestSelectionSorted $Actual) -join "`n") -ceq (@(Get-TestSelectionSorted $Expected) -join "`n"))}
+
+function Test-C1313_InputRefusal {
+    $fx=New-C1313GitFixture
+    $blob=Invoke-C1313Git $fx.Root @('rev-parse',"$($fx.B):tests/test-selection-policy.json")
+    $bad=@();foreach($b in @('HEAD',$fx.B.Substring(0,8),('0'*40),$blob,'--help')){$r=Invoke-C1313Selection $fx $fx.B $b;if($r.Exit -ne 2 -or $r.Document){$bad+=$b}}
+    Assert-C487 ($bad.Count -eq 0) 'C1313 invalid-intent-refused' ($bad -join ',')
+    $r=Invoke-C1313Selection @{Root=(Join-Path $ResultsDirectory 'absent')} $fx.B $fx.B
+    Assert-C487 ($r.Exit -eq 2 -and -not $r.Document) 'C1313 failed-git-read' $r.Error
+}
+function Test-C1313_CoreAndUnknownFallback {
+    $fx=New-C1313GitFixture;$empty=Get-C1313Selection $fx $fx.B
+    $expected=@('C1313_ProjectAndCatalogUniverse','C1313_CoreAndUnknownFallback','C1044_DiscoveryReconciliation','D13_ExecutionGuards','C599_ExpandedCoverage','Caps_concurrent_process_spawning_tests_at_one','Process_spawning_classes_carry_the_limiter')
+    Assert-C487 ($empty.mode -ceq 'narrow' -and (Same-C1313Set $empty.selectedSets.id @('core')) -and (Same-C1313Set $empty.selectedSets.members.method $expected) -and -not $empty.executionEvidence) 'C1313 seven-method-core'
+    $a=New-C1313Candidate $fx @('notes/unmapped.txt');$full=Get-C1313Selection $fx $a
+    Assert-C487 ($full.mode -ceq 'full' -and (Same-C1313Set $full.selectedSets.id $fx.Catalog.sets.id) -and $full.unselectedSets.Count -eq 0 -and $full.unresolvedObligations.Count -gt 0 -and $full.fallbackReasons -ccontains 'unknown-path:notes/unmapped.txt') 'C1313 unknown-full'
+}
+function Test-C1313_PinnedPolicy {
+    $fx=New-C1313GitFixture;$a=New-C1313Candidate $fx @('client/src/App.tsx')
+    Write-C1313File $fx.Root 'tests/test-selection-policy.json' 'not json';Write-C1313File $fx.Root 'tests/test-execution-policy.json' 'not json'
+    $good=Get-C1313Selection $fx $a
+    Assert-C487 ($good.mode -ceq 'narrow' -and $good.selectedSets.id -ccontains 'client' -and $good.catalogHash -ceq $fx.Catalog.catalogHash) 'C1313 candidate-blob'
+    $p=Get-Content "$repoRoot/tests/test-execution-policy.json" -Raw|ConvertFrom-Json -AsHashtable;$p.policyHash='0'*64
+    $a=New-C1313Candidate $fx @('tests/test-execution-policy.json') ($p|ConvertTo-Json -Depth 30)
+    $bad=Invoke-C1313Selection $fx $a
+    Assert-C487 ($bad.Exit -eq 2 -and $bad.Error.Contains('policy-hash-stale')) 'C1313 stale-policy-refused' $bad.Error
+}
+function Test-C1313_PathIdentity_delete {
+    $fx=New-C1313GitFixture;$path='tests/Antiphon.Tests/Agents/CodexResponseAnalyzerTests.cs'
+    [void](Invoke-C1313Git $fx.Root @('read-tree',$fx.B));[void](Invoke-C1313Git $fx.Root @('update-index','--force-remove','--',$path))
+    $tree=Invoke-C1313Git $fx.Root @('write-tree');$a=Invoke-C1313Git $fx.Root @('commit-tree',$tree,'-p',$fx.B,'-m','delete')
+    $r=Get-C1313Selection $fx $a
+    Assert-C487 (@($r.changedPaths|Where-Object {$_.path -ceq $path -and $_.role -ceq 'old'}).Count -eq 1 -and $r.selectedSets.id -ccontains 'provider.codex.offline' -and $r.removedMembers.member.class -ccontains 'Antiphon.Tests.Agents.CodexResponseAnalyzerTests' -and $r.selectedSets.members.class -cnotcontains 'Antiphon.Tests.Agents.CodexResponseAnalyzerTests') 'C1313 old-new-union'
+}
+function Test-C1313_PathIdentity_case_rename {
+    $fx=New-C1313GitFixture;$old='tests/Antiphon.Tests/Agents/CodexResponseAnalyzerTests.cs';$new='tests/Antiphon.Tests/Agents/codexResponseAnalyzerTests.cs'
+    $blob=Invoke-C1313Git $fx.Root @('rev-parse',"$($fx.B):$old")
+    [void](Invoke-C1313Git $fx.Root @('read-tree',$fx.B));[void](Invoke-C1313Git $fx.Root @('update-index','--force-remove','--',$old));[void](Invoke-C1313Git $fx.Root @('update-index','--add','--cacheinfo',"100644,$blob,$new"))
+    $tree=Invoke-C1313Git $fx.Root @('write-tree');$a=Invoke-C1313Git $fx.Root @('commit-tree',$tree,'-p',$fx.B,'-m','case')
+    $r=Get-C1313Selection $fx $a
+    Assert-C487 ((Same-C1313Set $r.changedPaths.path @($old,$new)) -and $r.mode -ceq 'full') 'C1313 ordinal-paths'
+}
+function Test-C1313_PathIdentity_nul_paths {
+    $fx=New-C1313GitFixture;$paths=@("notes/white space.txt","notes/line`nbreak.txt",'notes/uni-λ.txt')
+    # Index objects make newline and case identity independent of Windows filename restrictions.
+    $blob=Invoke-C1313Git $fx.Root @('rev-parse',"$($fx.B):tests/test-selection-policy.json")
+    [void](Invoke-C1313Git $fx.Root @('read-tree',$fx.B))
+    foreach($path in $paths){[void](Invoke-C1313Git $fx.Root @('update-index','--add','--cacheinfo',"100644,$blob,$path"))}
+    [void](Invoke-C1313Git $fx.Root @('update-index','--add','--cacheinfo',"160000,$($fx.B),notes/gitlink"));$paths+='notes/gitlink'
+    [void](Invoke-C1313Git $fx.Root @('update-index','--add','--cacheinfo',"120000,$blob,notes/link"));$paths+='notes/link'
+    $tree=Invoke-C1313Git $fx.Root @('write-tree');$a=Invoke-C1313Git $fx.Root @('commit-tree',$tree,'-p',$fx.B,'-m','paths')
+    $r=Get-C1313Selection $fx $a
+    Assert-C487 ((Same-C1313Set $r.changedPaths.path $paths) -and $r.mode -ceq 'full') 'C1313 ordinal-paths'
+}
+function Test-C1313_AuthorityChanges {
+    $fx=New-C1313GitFixture;$bad=@()
+    foreach($path in @('scripts/lib/release-authority.ps1','Directory.Build.props')){$a=New-C1313Candidate $fx @($path);$r=Get-C1313Selection $fx $a;if($r.mode -cne 'full' -or $r.fallbackReasons -cnotcontains 'selection-authority-changed'){$bad+=$path}}
+    $a=New-C1313PolicyCandidate $fx $fx.Catalog;$r=Get-C1313Selection $fx $a
+    if($r.fallbackReasons -cnotcontains 'selection-authority-changed'){$bad+='catalog'}
+    Assert-C487 ($bad.Count -eq 0) 'C1313 selection-authority-changed' ($bad -join ',')
+    $tree=Invoke-C1313Git $fx.Root @('rev-parse',"$($fx.B)^{tree}");$other=Invoke-C1313Git $fx.Root @('commit-tree',$tree,'-m','unrelated')
+    $r=Get-C1313Selection $fx $fx.B $other
+    Assert-C487 ($r.mode -ceq 'full' -and $r.fallbackReasons -ccontains 'baseline-not-ancestor') 'C1313 baseline-not-ancestor'
+}
+function Test-C1313_DeterministicReasons {
+    $fx=New-C1313GitFixture;$bad=@()
+    $cases=@(
+        @('server/Program.cs','P-SERVER','full','main.remainder'),@('serverish/Program.cs','P-UNKNOWN','full','core'),
+        @('client/src/App.tsx','P-CLIENT','narrow','e2e.browser'),@('clientish/src/App.tsx','P-UNKNOWN','full','core'),
+        @('src/Antiphon.Messaging.Service/Program.cs','P-MSG','narrow','main.outbound-broker'),@('src/Antiphon.MessagingExtra/Program.cs','P-UNKNOWN','full','core'),
+        @('tools/Antiphon.MarkdownPdf/MarkdownPdfRenderer.cs','P-PDF','narrow','pdf.browser-linux'),@('tools/Antiphon.MarkdownPdfExtra/Renderer.cs','P-UNKNOWN','full','core'),
+        @('scripts/deploy-server2.ps1','P-DOCKER','narrow','docker.operations'),@('scripts/deploy-server20-unknown.ps1','P-UNKNOWN','full','core'),
+        @('notes/release-authority.ps1','P-UNKNOWN','full','core'),@('notes/Directory.Build.props.txt','P-UNKNOWN','full','core'))
+    foreach($case in $cases){$a=New-C1313Candidate $fx @($case[0]);$r=Get-C1313Selection $fx $a;if($r.mode -cne $case[2] -or $r.changedPaths.ruleIds -cnotcontains $case[1] -or $r.selectedSets.id -cnotcontains $case[3]){$bad+=$case[0]}}
+    $a=New-C1313Candidate $fx @('client/src/App.tsx');$one=Get-C1313Selection $fx $a;$two=Get-C1313Selection $fx $a
+    $browser=@($one.selectedSets|Where-Object id -eq 'e2e.browser')[0]
+    $names=@('AgentE2ETests','BoardE2ETests','DirectoryAutocompleteE2ETests','DispatchConcurrencySettingsE2ETests','OrchestratorE2ETests','PipelineGlanceE2ETests','ProjectDeleteE2ETests','SmokeE2ETests','WorkflowDeleteTests','WorkflowOutputTests')|ForEach-Object{"Antiphon.E2E.$_"}
+    if($one.digest -cne $two.digest -or -not (Same-C1313Set $browser.members.class $names)){$bad+='digest/browser-roster'}
+    Assert-C487 ($bad.Count -eq 0) 'C1313 deterministic-reasons' ($bad -join ',')
+}
 function Test-C1313_ProviderAndShared {
-    # Test-only legacy characterization. S2 replaces this path with the production CLI.
-    $policy=Read-NightlyExecutionPolicy $repoRoot
-    $actual=@(Resolve-NightlySelectedSuites $policy.Object @())
-    $expected=@('core','provider.claude.offline','provider.claude.fake-native','provider.claude.tui-stub','provider.claude.tui-live','provider.claude.vendor-offline','provider.claude.server-runner','main.remainder','e2e.remainder')
-    Assert-C487 -Cond ((($actual|Sort-Object) -join ',') -ceq (($expected|Sort-Object) -join ',')) -Name 'C1313 provider-exact' -Detail ($actual -join ',')
+    $fx=New-C1313GitFixture;$bad=@();$sharedBad=@()
+    foreach($provider in @('claude','codex','grok')){
+        $title=(Get-Culture).TextInfo.ToTitleCase($provider);$a=New-C1313Candidate $fx @("src/Antiphon.Agents.Pty/${title}Detectors.cs");$r=Get-C1313Selection $fx $a
+        $expected=@('core',"provider.$provider.offline","provider.$provider.fake-native","provider.$provider.tui-stub","provider.$provider.tui-live","provider.$provider.vendor-offline","provider.$provider.server-runner",'main.remainder','e2e.remainder')
+        if(-not (Same-C1313Set $r.selectedSets.id $expected) -or $r.changedPaths.ruleIds -cnotcontains "P-$($provider.ToUpperInvariant())"){$bad+=$provider}
+        $a=New-C1313Candidate $fx @("src/Antiphon.Agents.Pty/${title}NewShared.cs");$r=Get-C1313Selection $fx $a
+        foreach($p in @('claude','codex','grok')){if($r.selectedSets.id -cnotcontains "provider.$p.tui-live"){$sharedBad+=$p}}
+    }
+    Assert-C487 ($bad.Count -eq 0) 'C1313 provider-exact' ($bad -join ',')
+    $a=New-C1313Candidate $fx @('src/Antiphon.Agents.Pty/PtyAgentRunner.cs');$r=Get-C1313Selection $fx $a
+    foreach($p in @('claude','codex','grok')){if($r.selectedSets.id -cnotcontains "provider.$p.offline"){$sharedBad+=$p}}
+    $a=New-C1313Candidate $fx @('src/Antiphon.Agents.PtyExtra/Unknown.cs');$r=Get-C1313Selection $fx $a
+    Assert-C487 ($sharedBad.Count -eq 0 -and $r.mode -ceq 'full') 'C1313 shared-all-providers' ($sharedBad -join ',')
+}
+function Test-C1313_RuntimeEdges {
+    $fx=New-C1313GitFixture
+    foreach($case in @(@('tests/Antiphon.Messaging.Tests/FakeSlack/FakeSlackServer.cs','linked-slack','e2e.remainder','linked-consumer'),@('tests/Antiphon.Checkpoints.FilterHost/FilterHostTests.cs','staged-filter-host','main.remainder','staged-consumer'),@('scripts/lib/nightly-common.ps1','helper-nightly','scripts','helper-consumer'),@('client/dist/index.html','bundle-client','e2e.browser','bundle-consumer'))){
+        $a=New-C1313Candidate $fx @($case[0]);$r=Get-C1313Selection $fx $a
+        Assert-C487 ($r.selectedSets.id -ccontains $case[2] -and $r.explanationEdges.id -ccontains $case[1]) ('C1313 '+$case[3])
+    }
+    # Rule boundary checks must reach the selector, not just a regex helper.
+    foreach($path in @('src/Antiphon.FakeLlmApi/FakeLlmApiServer.cs','src/Antiphon.FakeOther/Program.cs','tests/UnmappedSharedHelper.cs')){
+        $a=New-C1313Candidate $fx @($path);$r=Get-C1313Selection $fx $a
+        if($path.Contains('FakeLlmApi')){if($r.changedPaths.ruleIds -cnotcontains 'P-FAKE'){throw 'fake consumer missing'}}elseif($r.mode -cne 'full'){throw 'unknown helper did not select Full'}
+    }
+}
+function Test-C1313_InvalidGraph {
+    $fx=New-C1313GitFixture;$graphBad=@();$ruleBad=@()
+    foreach($variant in @('missing-set','cycle','missing-prerequisite','prerequisite-cycle','bad-regex','script','regex-timeout')){
+        $c=Get-Content "$repoRoot/tests/test-selection-policy.json" -Raw|ConvertFrom-Json -AsHashtable
+        switch($variant){
+            'missing-set' {$c.sets[0].dependsOn=@('missing')}
+            'cycle' {$c.sets[0].dependsOn=@($c.sets[0].id)}
+            'missing-prerequisite' {$c.sets[0].prerequisites=@('missing')}
+            'prerequisite-cycle' {$c.prerequisites[0].dependsOn=@($c.prerequisites[0].id)}
+            'bad-regex' {$c.rules+=@{id='bad';pattern='^([$';sets=@('core');full=$false}}
+            'script' {$c.rules[0].command='Write-Output unsafe'}
+            'regex-timeout' {$c.rules+=@{id='slow';pattern='^(a+)+$';sets=@('core');full=$false}}
+        }
+        $a=New-C1313PolicyCandidate $fx $c
+        if($variant -eq 'regex-timeout'){
+            $blob=Invoke-C1313Git $fx.Root @('rev-parse',"$($fx.B):tests/test-selection-policy.json");$path=('a'*200)+'!'
+            [void](Invoke-C1313Git $fx.Root @('update-index','--add','--cacheinfo',"100644,$blob,$path"));$tree=Invoke-C1313Git $fx.Root @('write-tree');$a=Invoke-C1313Git $fx.Root @('commit-tree',$tree,'-p',$fx.B,'-m','regex')
+        }
+        $r=Invoke-C1313Selection $fx $a
+        if($r.Exit -ne 2){if($variant -in @('bad-regex','script','regex-timeout')){$ruleBad+=$variant}else{$graphBad+=$variant}}
+    }
+    Assert-C487 ($graphBad.Count -eq 0) 'C1313 invalid-graph' ($graphBad -join ',')
+    Assert-C487 ($ruleBad.Count -eq 0) 'C1313 invalid-rule' ($ruleBad -join ',')
 }
 
 & "Test-$Case"

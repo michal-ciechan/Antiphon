@@ -557,7 +557,7 @@ function Test-ReleaseGatePinnedAuthority {
         if ($suitesTyped) {
             $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
             foreach ($id in $recorded) {
-                if ($script:ReleaseAuthorityRcSuites -cnotcontains $id -or -not $seen.Add($id)) { $suitesTyped = $false }
+                if ($policy.RequiredSuites -cnotcontains $id -or -not $seen.Add($id)) { $suitesTyped = $false }
             }
         }
         if (-not $suitesTyped) { $reasons += 'authority-suites-type'; $reasons += 'authority-suites-mismatch' }
