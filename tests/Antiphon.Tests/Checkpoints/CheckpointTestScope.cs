@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Checkpoints;
+using Antiphon.HostCleanup.Checkpoints;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
@@ -11,6 +12,10 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
     private readonly List<string> _roots = [];
     private readonly List<Task> _work = [];
     private readonly List<ProcessIdentity> _children = [];
+    private readonly HashSet<ProcessIdentity> _syntheticChildren = [];
+    private readonly CheckpointCleanupContext _context;
+    private readonly ICheckpointCleanupIo _io;
+    private readonly string _temp;
     private readonly ProcessIdentityProbe _probe;
     private readonly Action<string>? _beforeMarker;
     private readonly Action<string, IReadOnlyList<string>>? _beforeReturn;
@@ -22,12 +27,22 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
     public CheckpointTestScope(ProcessIdentityProbe? probe = null, Action<string>? beforeMarker = null,
         Action<string, IReadOnlyList<string>>? beforeReturn = null, Action<string>? beforeDelete = null,
         TimeProvider? cleanupClock = null)
+        : this(CheckpointCleanupDefaults.Context, Path.GetTempPath(), probe, beforeMarker,
+            beforeReturn, beforeDelete, cleanupClock) { }
+
+    public CheckpointTestScope(CheckpointCleanupContext context, string temp,
+        ProcessIdentityProbe? probe = null, Action<string>? beforeMarker = null,
+        Action<string, IReadOnlyList<string>>? beforeReturn = null, Action<string>? beforeDelete = null,
+        TimeProvider? cleanupClock = null)
     {
-        _probe = probe ?? new ProcessIdentityProbe();
+        _context = context;
+        _io = context.Io;
+        _temp = Path.GetFullPath(temp);
+        _probe = probe ?? new ProcessIdentityProbe(context);
         _beforeMarker = beforeMarker;
         _beforeReturn = beforeReturn;
         _beforeDelete = beforeDelete;
-        _cleanupClock = cleanupClock ?? TimeProvider.System;
+        _cleanupClock = cleanupClock ?? context.Time;
     }
 
     public IReadOnlyList<string> Roots => _roots;
@@ -36,8 +51,8 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
     {
         if (_sealed) throw new InvalidOperationException("checkpoint test scope is sealed");
         var id = Guid.CreateVersion7().ToString("N");
-        var path = Path.Combine(Path.GetTempPath(), "c723-" + id);
-        Directory.CreateDirectory(path);
+        var path = Path.Combine(_temp, "c723-" + id);
+        _io.CreateDirectory(path);
         try
         {
             var owner = _probe.Current();
@@ -45,18 +60,19 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
             {
                 RootId = id, AttemptId = _attemptId,
                 AssemblyInvocationId = $"{owner.Host}:{owner.Boot}:{owner.PidNamespace}:{owner.Pid}:{owner.StartUtcTicks}",
-                CreatedAt = DateTimeOffset.UtcNow, RootPath = Path.GetFullPath(path), Owner = owner,
+                CreatedAt = _context.Time.GetUtcNow(), RootPath = Path.GetFullPath(path), Owner = owner,
             };
             var markerPath = Path.Combine(path, MarkerName);
             _beforeMarker?.Invoke(path);
-            SafeWrite.Require(SafeWrite.OpenCreate(markerPath, SafeWrite.Under(path), out var markerFile));
+            var write = new CheckpointWrite(_context);
+            SafeWrite.Require(write.OpenCreate(markerPath, write.Under(path), out var markerFile));
             using (markerFile)
                 JsonSerializer.Serialize(markerFile!, marker);
-            var coordinator = new CheckpointTempRootSweep();
+            var coordinator = new CheckpointTempRootSweep(_context, _temp);
             coordinator.Register(path);
             // Registration precedes the caller's first observation of the root.
             _roots.Add(path);
-            CheckpointUsageEvent.Write("root-create", path);
+            CheckpointUsageEvent.Write("root-create", path, context: _context);
             _beforeReturn?.Invoke(path, _roots);
             coordinator.SweepOnce(Console.Out);
             return path;
@@ -64,8 +80,8 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
         catch
         {
             var marker = Path.Combine(path, MarkerName);
-            if (File.Exists(marker)) File.Delete(marker);
-            if (Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any()) Directory.Delete(path);
+            if (_io.FileExists(marker)) _io.Unlink(marker);
+            if (_io.DirectoryExists(path) && !_io.Enumerate(path).Any()) _io.RemoveDirectory(path, recursive: false);
             throw;
         }
     }
@@ -80,6 +96,13 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
     {
         if (_sealed) throw new InvalidOperationException("checkpoint test scope is sealed");
         _children.Add(_probe.Capture(process.Id));
+    }
+
+    public void Register(ProcessIdentity child)
+    {
+        if (_sealed) throw new InvalidOperationException("checkpoint test scope is sealed");
+        _children.Add(child);
+        _syntheticChildren.Add(child);
     }
 
     public ValueTask DisposeAsync() => DisposeAsync(null);
@@ -103,6 +126,8 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
             var observed = _probe.Observe(child);
             if (observed.Verdict == ProcessVerdict.AliveSame)
             {
+                if (_syntheticChildren.Contains(child))
+                { failures.Add("child " + child.Pid + ": " + observed.Reason); unsafeChild = true; continue; }
                 try
                 {
                     using var process = Process.GetProcessById(child.Pid);
@@ -121,34 +146,46 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
         {
             try
             {
-                if (!Directory.Exists(root)) continue;
+                if (!_io.DirectoryExists(root)) continue;
                 if (unfinishedWork) { failures.Add(root + ": unfinished registered work; root retained"); continue; }
                 if (unsafeChild) { failures.Add(root + ": live or uncertain child"); continue; }
-                if (!ContainedCleanup.SafeAncestors(root) || !ContainedCleanup.SafeTree(root, 100000))
+                if (!ContainedCleanup.SafeAncestors(root, _context) || !ContainedCleanup.SafeTree(root, 100000, _context))
                     throw new IOException("linked or incomplete root inventory");
-                foreach (var journal in Directory.EnumerateFiles(root, RunOwnershipStore.FileName, SearchOption.AllDirectories))
+                foreach (var journal in Journals(root))
                 {
                     var run = Path.GetDirectoryName(journal)!;
-                    var record = RunOwnershipStore.Read(run);
+                    var record = RunOwnershipStore.Read(run, _context);
                     if (record is null) throw new IOException("invalid nested run custody: " + run);
                     if (record.Phase is "launched" or "launch-attempted")
                     {
-                        var status = new ToolCopyCleanup(_probe).ObserveExecutor(run);
-                        var child = ExecutorOwnershipStore.Read(run)?.Executor ?? record.Launched;
+                        var status = new ToolCopyCleanup(_probe, context: _context).ObserveExecutor(run);
+                        var child = ExecutorOwnershipStore.Read(run, _context)?.Executor ?? record.Launched;
                         var inline = child is not null && child == _probe.Current();
                         if (status.Verdict != ProcessVerdict.Dead && !inline)
                             throw new IOException("nested executor " + status.Reason + ": " + run);
                     }
                 }
                 _beforeDelete?.Invoke(root);
-                Directory.Delete(root, recursive: true);
-                new CheckpointTempRootSweep().Unregister(root);
-                CheckpointUsageEvent.Write("root-delete", root);
+                _io.RemoveDirectory(root, recursive: true);
+                new CheckpointTempRootSweep(_context, _temp).Unregister(root);
+                CheckpointUsageEvent.Write("root-delete", root, context: _context);
             }
             catch (Exception ex) { failures.Add(root + ": " + ex.Message); }
         }
         if (failures.Count > 0)
             throw new IOException("checkpoint fixture teardown failed: " + string.Join("; ", failures));
+    }
+
+    private IEnumerable<string> Journals(string root)
+    {
+        foreach (var entry in _io.Enumerate(root))
+        {
+            if ((_io.Attributes(entry) & FileAttributes.Directory) != 0)
+            {
+                foreach (var journal in Journals(entry)) yield return journal;
+            }
+            else if (Path.GetFileName(entry) == RunOwnershipStore.FileName) yield return entry;
+        }
     }
 }
 
