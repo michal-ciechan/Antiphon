@@ -37,3 +37,21 @@ The stored final task report supplies fresh receipts, exact tested SHA, counts,
 unedited CHECKPOINT lines, CP-5 result and any remaining verification gap. This
 file records the source and selection before execution; it is not a green receipt.
 No production restart is required by this evidence-only task.
+
+### Checkpoints
+
+The original table cannot be imported by the current tool: CP-1 and CP-3 both
+declare `bin-c628` for different projects. The first import refused before any
+build or test. This scoped table preserves CP-1's exact filter and execution floor,
+with a unique output identity. CP-5 remains a direct build-slot invocation because
+the brief requests that driver explicitly; do not nest that wrapper inside the
+checkpoint tool's own command-row slot. Run the tool with `--rows CP-1`.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | inherited-D1 | `tests/Antiphon.Tests -> bin-ef29-contracts/` | contract-guards | `/*/*/(DockerStackContractTests*)\|(DindRunnerContractTests*)\|(VerifyDindRunnerScriptTests*)/*` | R-3, V-5 contract portion | all listed, 0 failed/skipped | 124 | 12 |
+| CP-5 | inherited-D1 | n/a | dind-local | `pwsh -NoProfile -File scripts/verify-card0604-dind-runner.ps1 -Image antiphon-session-testing:c628-<sha12> -Build` | V-2, V-3, V-4 | C604 HARNESS EXIT CODE: 0; claude=2.1.280 claudeAuth=logged-out | n/a | 30 |
+
+Cost: one contract build/test row (12 minutes estimated), one image/harness row
+(30 minutes estimated), plus the completed tool bootstrap. No assembly-wide run,
+repeat proof or production deployment is selected.
