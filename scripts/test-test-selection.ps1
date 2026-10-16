@@ -109,7 +109,8 @@ function Test-C1313_InputRefusal {
     $tree=Invoke-C1313Git $fx.Root @('write-tree');$a=Invoke-C1313Git $fx.Root @('commit-tree',$tree,'-p',$fx.B,'-m','remove subtree')
     [void](Get-C1313Selection $fx $a)
     $tree=Invoke-C1313Git $fx.Root @('rev-parse',"$($fx.B):notes")
-    Remove-Item -LiteralPath (Join-Path $fx.Root ('.git/objects/'+$tree.Substring(0,2)+'/'+$tree.Substring(2)))
+    # Git loose objects are read-only; this object belongs only to our disposable fixture.
+    Remove-Item -LiteralPath (Join-Path $fx.Root ('.git/objects/'+$tree.Substring(0,2)+'/'+$tree.Substring(2))) -Force
     $r=Invoke-C1313Selection $fx $a
     Assert-C487 ($r.Exit -eq 2 -and -not $r.Document -and $r.Error.Contains('git-read-failed:diff')) 'C1313 git-read-refused' $r.Error
 }
