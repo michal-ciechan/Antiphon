@@ -6,7 +6,8 @@ param(
     [string]$Profile='rc',
     [string]$RepositoryRoot=(Split-Path -Parent $PSScriptRoot),
     [string]$OutputPath,
-    [switch]$Json
+    [switch]$Json,
+    [string[]]$TimingRoots
 )
 $ErrorActionPreference='Stop'
 # The JSON pipe is UTF-8 even when a Windows child has no console code page.
@@ -16,6 +17,13 @@ try {
     . "$PSScriptRoot/lib/nightly-policy.ps1"
     . "$PSScriptRoot/lib/test-selection.ps1"
     $selection=Get-TestSelection $RepositoryRoot $BaselineSha $CandidateSha $Profile
+    if ($TimingRoots) {
+        try {
+            . "$PSScriptRoot/lib/test-timings.ps1"
+            $timingReport = Get-TestTimingReport -Roots $TimingRoots -GroupBy roster
+            $selection = Add-TestTimingEstimates -Selection $selection -Report $timingReport
+        } catch { }
+    }
     $text=ConvertTo-TestSelectionCanonicalJson $selection
     if($OutputPath){
         # Never overwrite an older intent and leave it looking like the requested run.
