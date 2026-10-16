@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -36,6 +38,26 @@ public sealed class CacheFixtureCompletionTests
     public void Running_inventory_refuses_each_failed_probe() =>
         Run("c913-seed-contract.sh", "inventory-running", "PASS inventory-running-complete");
 
+    [Test]
+    public async Task Bridge_retains_diagnostics_and_refuses_failed_transport()
+    {
+        var start = new ProcessStartInfo("pwsh")
+        {
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+            ArgumentList = { "-NoProfile", "-File", Path.Combine(DelegateScriptRunner.RepoRoot,
+                "scripts/fixtures/cache-bridge-diagnostics.ps1"), "-Repo", DelegateScriptRunner.RepoRoot }
+        };
+        using var process = Process.Start(start)!;
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try { await process.WaitForExitAsync(timeout.Token); }
+        catch { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
+        var output = await stdout + await stderr;
+        process.ExitCode.ShouldBe(0, output);
+        output.ShouldContain("BRIDGE_COMPLETE", customMessage: output);
+    }
+
     private static void Run(string script, string mode, string witness, string argument = "")
     {
         var output = RemoteScriptContractTests.LinuxShell(
@@ -43,6 +65,7 @@ public sealed class CacheFixtureCompletionTests
             "\nprintf 'MODEL_EXIT=%s\\n' \"$?\"\n", "repo");
         output.ShouldContain("MODEL_EXIT=0", customMessage: output);
         output.ShouldContain(witness, customMessage: output);
-        output.ShouldNotContain("FAIL", customMessage: output);
+        System.Text.RegularExpressions.Regex.IsMatch(output, @"(?m)^(FAIL |C1192_FAIL)")
+            .ShouldBeFalse(output);
     }
 }

@@ -28,6 +28,7 @@ is limited to affected named methods. No full assembly is needed.
   acquired donor before positive-absence audit. Foreign/replaced/unknown stay protected.
 - V-4: `CacheFixtureCompletionTests.Fixture_prune_retains_inner_refusal`
   preview/apply inner diagnosis and exit survive outer failure in durable receipts.
+- V-6: `CacheFixtureCompletionTests.Bridge_retains_diagnostics_and_refuses_failed_transport` retains bounded safe stdout, numeric SSH exit, and refuses contradictory success or missing receipts.
 - V-5: `CacheFixtureCompletionTests.Running_inventory_refuses_each_failed_probe`
   UID-1654 command body runs; dotnet/npm/four du/stat failures each refuse;
   absent optional cache directories remain represented as absent.
@@ -53,5 +54,5 @@ authoring and host slot wait. Target only newly exposed red rows after repairs.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S5 | `tests/Antiphon.Tests -> bin-fixture-completion/` | fixture-completion | `/*/*/CacheFixtureCompletionTests/*` | V-1, V-2, V-3, V-4, V-5 | 10 cases, no failed/skipped after repair; expected red at S1 | 10 | 5 |
+| CP-1 | S5 | `tests/Antiphon.Tests -> bin-fixture-completion/` | fixture-completion | `/*/*/CacheFixtureCompletionTests/*` | V-1, V-2, V-3, V-4, V-5, V-6 | 11 cases, no failed/skipped after repair; expected red at S1 | 11 | 5 |
 | CP-2 | S5 | `tests/Antiphon.Tests -> bin-fixture-adjacent/` | fixture-adjacent | `/*/*/(CacheSeedNpmOwnershipTests)\|(RemoteScriptContractTests)/(Volume_seed*)\|(C1192_Fixture_seed_and_rerun_keep_payloads_in_volume*)\|(C1192_Recovery_controls_validate_volume_bytes_modes_and_manifest*)\|(C849_Seed_refuses_invalid_donors_and_partial_payloads*)\|(C1195_Seed_import_chmod_restores_volume_root*)\|(C1207_Compose_teardown_requires_recorded_positive_absence*)\|(C1208_Legacy_container_replacement_is_untouched*)\|(C1208_Unknown_identity_retains_residue*)` | R-1, R-2 | 14 cases, no failed/skipped | 14 | 5 |

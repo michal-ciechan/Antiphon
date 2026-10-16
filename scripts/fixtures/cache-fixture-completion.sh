@@ -37,6 +37,7 @@ if [ "$mode" = inventory-running ]; then
 fi
 
 CASE=runner-cache-fixture
+c849_image() { printf '%s\n' "$image_id"; }
 printf 'runners=idle processes=0 leases=0\n' > "$SERVER2_ROOT/fixture-consumers.txt"
 c849_observe_volume() {
     local budget="$3" bytes=80000
