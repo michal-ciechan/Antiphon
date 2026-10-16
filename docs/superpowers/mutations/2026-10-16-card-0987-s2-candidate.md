@@ -6,7 +6,7 @@ Branch: `feat/card-task-aed84ae3`. Base: `9ec9a4542d6beead31b133ed9f45b7effd361d
 Plan: [S2 extraction refresh](../plans/2026-10-16-card-0987-s2-extraction-refresh-plan.md).
 Retained ledger: [frozen verification design](../plans/2026-10-15-card-0987-test-design.md).
 
-This is an unbound candidate, not a Mutation execution pack. Every **PC-1..421** and
+This is an unbound candidate, not a Mutation execution pack. Every **PC-1..422** and
 every frozen variant is **pending SourceLanding Mutation**. That includes PC-414's
 four (pendingTemp, missingDirectory) pairs and PC-415..421 below. Code ran no deliberate
 mutants. Mutation owns missing-control discovery, exact landed-source bindings and
@@ -115,3 +115,35 @@ Post-move ordinary results and exact tested SHA are in the Code task report.
 CP-33 requires native Windows at the same post-move source; Linux cannot discharge it.
 Review precedes landing; caller lands original Code task, then commissions SourceLanding Mutation.
 Restart: none.
+
+## Introduced scope-casing repair and PC-422
+
+The first post-move group at `4b842b285ffbee705122153f53ec8d58302fd731` built all
+four isolated outputs and reported the same two compiler diagnostics from one incorrect
+Shouldly overload in the new FileOnly witness. All nine rows were build-failed; no tests
+executed and no runtime-red proof is claimed. The overload was corrected without changing
+the expected message or adding a retry.
+
+Inspection found that the context port's journal enumeration used ordinal equality, losing
+the original Windows Directory.EnumerateFiles case behavior. Test-first commit
+`1be240cffb3f36c307be9e70d20ee22b4eeae704` adds a Windows primitive filesystem comparer and
+an uppercase `OWNERSHIP.JSON` variant inside the existing
+`teardown_preserves_failure_and_attempts_other_roots` method. The 45-method/54-result roster
+is unchanged. CP-2 executed 54: 53 passed, 1 failed at
+`C987.teardown_preserves_failure_and_attempts_other_roots.windows-journal.refusal`:
+DisposeAsync returned instead of throwing IOException. This is a reached policy assertion,
+not a compilation error, and demonstrates an introduced extraction defect.
+
+Repair source `7b3f9e10314816038187d57ec14a228b2fd66638` changes only
+`tests/Antiphon.Tests/Checkpoints/CheckpointTestScope.cs:188` to use
+`_context.PathComparison`. Required ordinary green is CP-2 plus the full affected Linux
+group on the final committed source; results belong to the task report.
+
+**PC-422 remains pending SourceLanding Mutation.** Bind the exact method filter
+`/*/*/HostCleanupCheckpointCompatibilityTests/teardown_preserves_failure_and_attempts_other_roots`.
+Replace the path comparison with StringComparison.Ordinal; expect the named
+windows-journal.refusal assertion above to fail. Restoration must also pass the owner,
+reached verified-read, retained-root and sentinel assertions. The fixture supplies
+case-insensitive primitive lookup and serialized foreign nested custody; it does not supply
+the scope's eligibility decision. This extra control does not renumber PC-1..421 and is
+not discharged by the ordinary regression. Mutation still owns missing-control discovery.
