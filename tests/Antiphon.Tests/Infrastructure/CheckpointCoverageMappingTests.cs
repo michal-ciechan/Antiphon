@@ -20,8 +20,16 @@ public sealed class CheckpointCoverageMappingTests
         var path = Path.Combine(f.Root, Mapping);
         SafeWrite.Require(f.Write.Text(path, First, f.Write.Under(f.Root)));
         f.Clock.Advance(TimeSpan.FromMilliseconds(100));
-        f.Io.AppendText(path, Next);
+        Append(f, path, Next);
         return (f, path);
+    }
+
+    private static void Append(HostCleanupCheckpointFixture f, string path, string value)
+    {
+        // The shared fixture's AppendText replaces its node; a build append must retain identity.
+        using var stream = f.Io.Open(path, FileMode.Append, FileAccess.Write, FileShare.None);
+        using var writer = new StreamWriter(stream);
+        writer.Write(value);
     }
 
     [Test]
@@ -47,12 +55,12 @@ public sealed class CheckpointCoverageMappingTests
         var (f, _) = Build();
         var unrelated = Path.Combine(f.Root, "unrelated.txt");
         SafeWrite.Require(f.Write.Text(unrelated, "ORIGINAL", f.Write.Under(f.Root)));
-        if (variant == "changed") f.Io.AppendText(unrelated, "CHANGED");
-        if (variant == "added") f.Io.Put(Path.Combine(f.Root, "added.txt"), "USER");
+        if (variant == "changed") Append(f, unrelated, "CHANGED");
         if (variant == "replaced") f.Io.Put(unrelated, "REPLACED");
         if (variant == "link") f.Io.Nodes[unrelated].Target = Path.Combine(f.Parent, "outside");
         if (variant == "hardlink") f.Io.Nodes[unrelated].Stat = f.Io.Nodes[unrelated].Stat with { Links = 2 };
         f.Ledger.Seal(f.Root, f.Exit);
+        if (variant == "added") f.Io.Put(Path.Combine(f.Root, "added.txt"), "USER");
         if (variant == "tracked") f.Io.GitResult = _ => new(0, unrelated + "\0", "", false);
         f.Ledger.Remove(f.Root).ShouldNotBeNull(variant);
         f.Io.FileExists(unrelated).ShouldBeTrue(variant);
@@ -72,12 +80,12 @@ public sealed class CheckpointCoverageMappingTests
         var exit = f.Exit;
         if (variant == "rewrite") f.Io.Nodes[path].Bytes[0] = (byte)'X';
         if (variant == "replace") f.Io.Put(path, First + Next);
-        if (variant == "late") { f.Clock.Advance(TimeSpan.FromSeconds(2)); f.Io.AppendText(path, Next); }
+        if (variant == "late") { f.Clock.Advance(TimeSpan.FromSeconds(2)); Append(f, path, Next); }
         f.Ledger.Seal(f.Root, variant == "no-exit" ? null : exit).ShouldBeNull();
         if (variant is "after-seal" or "reseal")
         {
             f.Clock.Advance(TimeSpan.FromSeconds(2));
-            f.Io.AppendText(path, Next);
+            Append(f, path, Next);
             if (variant == "reseal") f.Ledger.Seal(f.Root, f.Exit).ShouldBeNull();
         }
         f.Ledger.Remove(f.Root).ShouldNotBeNull(variant);
