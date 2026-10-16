@@ -2579,9 +2579,20 @@ c849_preview() {
     recovery_bytes=0
     if [ -s "$C849_READY" ]; then
         recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
-        case "$recovery" in "$SERVER2_ROOT"/cache/recovery-[a-z0-9]*) ;; *) write_result false CacheRecoveryInvalid 2 ;; esac
-        [ -d "$recovery" ] && [ ! -L "$recovery" ] || write_result false CacheRecoveryMissing 2
-        recovery_bytes="$(sudo -n du -s -B1 -- "$recovery" | cut -f1)"
+        [ "${recovery%/*}" = "$(c849_payload_root)" ] && [[ "${recovery##*/}" =~ ^recovery-[a-z0-9-]+$ ]] \
+            || write_result false CacheRecoveryInvalid 2
+        c849_payload_fs reader '[ -d "$1" ] && [ ! -L "$1" ] && [ "$(realpath -e -- "$1")" = "$1" ]' bash "$recovery" \
+            || write_result false CacheRecoveryMissing 2
+        # Check du itself before parsing its output: a partial size is not an observation.
+        if [ "$(c849_payload_select)" = volume ]; then
+            recovery_bytes="$(c849_payload_fs reader 'du -s -B1 -- "$1"' bash "$recovery")" \
+                || write_result false CacheRecoverySizeUnavailable 2
+        else
+            recovery_bytes="$(sudo -n du -s -B1 -- "$recovery")" \
+                || write_result false CacheRecoverySizeUnavailable 2
+        fi
+        recovery_bytes="${recovery_bytes%%$'\t'*}"
+        [[ "$recovery_bytes" =~ ^[0-9]+$ ]] || write_result false CacheRecoverySizeUnavailable 2
     fi
     available_kb="$(df -Pk "$(docker info -f '{{.DockerRootDir}}')" | awk 'NR==2 {print $4}')"
     [[ "$available_kb" =~ ^[0-9]+$ ]] || write_result false CacheDiskUnavailable 2
