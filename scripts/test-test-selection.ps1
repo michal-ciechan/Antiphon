@@ -52,5 +52,13 @@ function Test-C1313_MixedDeliveryInventory {
     Assert-C487 -Cond ($oracles.Count -eq 2 -and @($oracles|Where-Object {$_.resources.api -ne 'none' -or $_.resources.vendorExecutable -eq 'none' -or $_.eligibility -ne 'manual'}).Count -eq 0) -Name 'C1313 vendor-oracles-are-not-fakes'
 }
 
+function Test-C1313_ProviderAndShared {
+    # Test-only legacy characterization. S2 replaces this path with the production CLI.
+    $policy=Read-NightlyExecutionPolicy $repoRoot
+    $actual=@(Resolve-NightlySelectedSuites $policy.Object @())
+    $expected=@('core','provider.claude.offline','provider.claude.fake-native','provider.claude.tui-stub','provider.claude.tui-live','provider.claude.vendor-offline','provider.claude.server-runner','main.remainder','e2e.remainder')
+    Assert-C487 -Cond (($actual|Sort-Object) -join ',' -ceq ($expected|Sort-Object) -join ',') -Name 'C1313 provider-exact' -Detail ($actual -join ',')
+}
+
 & "Test-$Case"
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 0
