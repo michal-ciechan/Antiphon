@@ -50,7 +50,7 @@ public sealed partial class PipelineSpeedIntegrationTests
             await Task.WhenAny(sessionInsert.Inserted.Task, claim).WaitAsync(Guard);
             sessionInsert.Inserted.Task.IsCompleted.ShouldBeTrue(
                 "claim session insert must complete while create holds the card admission lock; "
-                + (claim.IsCompleted ? (await claim)?.Message : "claim still running"));
+                + (claim.IsCompleted ? (await claim)?.GetBaseException().Message : "claim still running"));
             create.IsCompleted.ShouldBeFalse("session insert did not release admission");
             // This independent NOWAIT probe also rejects simply removing the admission lock.
             await ProbeCardLockAsync(w);
