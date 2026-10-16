@@ -71,6 +71,19 @@ PC-1 variants (remove each of the ten null clauses independently, exact method
 `SessionRuntimeActionTests`, same guard method), and PC-4 (remove one new
 inventory name, `C1149_Queue_columns_are_accounted_for`). All remain pending;
 Mutation owns mutant design, missing-control discovery and red/restore/green.
+The unbound candidate is [the Mutation handoff](../mutations/2026-10-16-rc2-gate-contract-repair.md).
+
+S1 red evidence: committed `a562ec689b60f62ae9976e82584f0bc164301960`, checkpoint
+run `20261016-084234-1d65`. CP-1: 1 failed; CP-2: 1 failed; CP-3: 87 executed,
+76 passed, 11 failed (inventory plus exactly the ten added field arguments).
+No skips. Every new case reached the expected false-versus-true assertion after
+its positive companion passed. All rows have clean source, verified build
+provenance, `slot=granted waited=0s`; the tool exited 1 and deleted its red output.
+This is the intentional red baseline, not a passed gate. A transient owner-read
+HTTP 502 after the rows did not alter the recorded RED result. The tool bootstrap
+succeeded with two warnings and no errors; an initial invocation used a nonexistent
+`net9.0` subdirectory and exited 1 without starting a checkpoint/build/test, then
+the built DLL at the actual OutputPath root launched this run.
 
 ### Checkpoints
 
@@ -94,4 +107,5 @@ actual counts and unedited CHECKPOINT lines in `.antiphon/task-8a76c085.md`.
 
 Ordinary checkpoint estimate: 12 minutes including two isolated builds; authoring,
 attribution and reporting fit within the brief's 45-minute budget. No repeated
-proof after green. No required manual service action or restart. Restart: none.
+proof after green. No service restart is performed during Code. Restart: server
+for activation after the caller lands/deploys this production policy repair.
