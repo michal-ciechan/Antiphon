@@ -25,8 +25,8 @@ and retains another project's records.
 
 R-1: Pipeline_evidence_is_restored_when_the_parent_delete_fails (board/project)
 asserts transaction rollback restores all five tables and their scope parents.
-R-2: full ProjectCascadeForeignKeyTests, BoardServiceTests and ProjectServiceTests
-(use the actual board class name in the manifest) cover adjacent deletion behavior.
+R-2: full ProjectCascadeForeignKeyTests, ProjectDeletionTests,
+BoardProjectArchiveApiTests and ProjectServiceTests cover adjacent deletion behavior.
 R-3: whole Unit lane required by the Final profile and stage instruction; the task
 paragraph's narrower no-Unit sentence conflicts with that profile. No full assembly
 run is planned. Unit costs an estimated 10 minutes; persistence is bounded by R-2.
@@ -50,5 +50,5 @@ S1; S2 must rerun it green. Each group uses a fresh isolated output.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-r14-red/` | regression-red | `/*/*/ProjectCascadeForeignKeyTests/Pipeline*` | V-1, V-2, R-1 | all 3 methods; V-1/V-2 expected red before fix | 6 | 5 |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-r14-final/` | cascade | `/*/*/ProjectCascadeForeignKeyTests/*` | V-1, V-2, R-1 | all listed, 0 failed | 47 | 5 |
-| CP-3 | S2 | CP-2 | adjacent | `/*/*/(BoardTests)\|(ProjectServiceTests)/*` | R-2 | all listed, 0 failed | 1 | 2 |
+| CP-3 | S2 | CP-2 | adjacent | `/*/*/(ProjectDeletionTests)\|(BoardProjectArchiveApiTests)\|(ProjectServiceTests)/*` | R-2 | all listed, 0 failed | 1 | 2 |
 | CP-4 | S2 | CP-2 | unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed | 1 | 10 |
