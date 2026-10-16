@@ -21,9 +21,9 @@ internal sealed class HostCleanupCheckpointFixture
     public DateTimeOffset Exit => Clock.GetUtcNow().AddSeconds(1);
     public OutputCustody.Window Window => OutputCustody.For(Context, Root, Exit)!;
 
-    public HostCleanupCheckpointFixture()
+    public HostCleanupCheckpointFixture(CheckpointPlatform platform = CheckpointPlatform.Linux)
     {
-        Io = new(Clock);
+        Io = new(Clock, platform);
         Context = new(Io, Io, Clock);
         Io.CreateDirectory("/");
         Io.CreateDirectory("/c987");
@@ -136,7 +136,7 @@ internal sealed class HostCleanupReceiptFixture
     public void ClearEvents() { Io.Events.Clear(); Io.Opens.Clear(); Io.ReadRequests.Clear(); }
 }
 
-internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheckpointCleanupIo, ICheckpointGitRunner
+internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, CheckpointPlatform platform = CheckpointPlatform.Linux) : ICheckpointCleanupIo, ICheckpointGitRunner
 {
     internal sealed class Node
     {
@@ -163,7 +163,8 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
     public DateTime LastWriteTimeUtc(string path) { Enter("modified", path); return DateTime.UnixEpoch.AddTicks(Nodes[path].Stat.Modified / 100); }
     public string StreamPath(Stream stream) => ((WriteStream)stream).Path;
     public Dictionary<string, string> Environment { get; } = [];
-    public Dictionary<string, Node> Nodes { get; } = new(StringComparer.Ordinal);
+    public Dictionary<string, Node> Nodes { get; } = new(platform == CheckpointPlatform.Windows
+        ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     public List<(string Operation, string Path)> Events { get; } = [];
     public List<CheckpointReadOpen> ReadRequests { get; } = [];
     public List<(string Path, FileMode Mode, FileAccess Access, FileShare Share)> Opens { get; } = [];
@@ -175,7 +176,7 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
     public Func<Stream>? StreamFactory { get; set; }
     public bool InspectFails { get; set; }
     public string Repository { get; set; } = "/c987";
-    public CheckpointPlatform Platform { get; set; } = CheckpointPlatform.Linux;
+    public CheckpointPlatform Platform { get; set; } = platform;
     public uint Owner => 1000;
     public int RecursiveIntents { get; private set; }
     private ulong _inode = 10;

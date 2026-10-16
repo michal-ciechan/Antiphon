@@ -172,6 +172,35 @@ public sealed class HostCleanupCheckpointCompatibilityTests
         await scope.DisposeAsync();
         f.Io.DirectoryExists(denied).ShouldBeFalse("denied-root-released");
         f.Io.FileExists(IndexPath(f.Parent, denied)).ShouldBeFalse("denied-root-unregistered");
+
+        // Preserve the native Windows enumeration's case-insensitive journal matching.
+        var windows = new HostCleanupCheckpointFixture(Antiphon.HostCleanup.Checkpoints.CheckpointPlatform.Windows);
+        var caseScope = new CheckpointTestScope(windows.Context, windows.Parent);
+        var retained = caseScope.TempDir();
+        var run = Path.Combine(retained, "run");
+        windows.Io.CreateDirectory(run);
+        var owner = new ProcessIdentityProbe(windows.Context).Current();
+        RunOwnershipStore.Write(run, new()
+        {
+            RunId = "run", RunDirectory = run, Starter = owner,
+            Launched = owner with { Host = "foreign-host" }, Phase = "launched",
+        }, windows.Context);
+        var journal = Path.Combine(run, RunOwnershipStore.FileName);
+        var bytes = windows.Io.Nodes[journal].Bytes.ToArray();
+        windows.Io.Nodes.Remove(journal);
+        windows.Io.Put(Path.Combine(run, "OWNERSHIP.JSON"), bytes);
+        windows.Io.Put(Path.Combine(run, "sentinel"), "keep");
+        windows.Io.Events.Clear();
+        var custodyFailure = await Should.ThrowAsync<IOException>(async () => await caseScope.DisposeAsync(),
+            "C987.teardown_preserves_failure_and_attempts_other_roots.windows-journal.refusal");
+        custodyFailure.Message.ShouldContain("identity-foreign", Case.Sensitive,
+            "C987.teardown_preserves_failure_and_attempts_other_roots.windows-journal.owner");
+        windows.Io.Count("open-read", journal).ShouldBeGreaterThan(0,
+            "C987.teardown_preserves_failure_and_attempts_other_roots.windows-journal.reached");
+        windows.Io.DirectoryExists(retained).ShouldBeTrue(
+            "C987.teardown_preserves_failure_and_attempts_other_roots.windows-journal.retained");
+        windows.Io.Text(Path.Combine(run, "sentinel")).ShouldBe("keep",
+            "C987.teardown_preserves_failure_and_attempts_other_roots.windows-journal.sentinel");
     }
 
     [Test]
