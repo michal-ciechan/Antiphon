@@ -20,6 +20,12 @@ namespace Antiphon.Tests.Scripts;
 public sealed class ReleaseGateAuthorityContractTests
 {
     [Test]
+    public Task C599B_MissingDiscovery() => RunCaseAsync("C599B_MissingDiscovery", 3,
+        "C599 missing-discovery-missing",
+        "C599 missing-discovery-empty",
+        "C599 missing-discovery-null");
+
+    [Test]
     public Task C599B_PinnedPolicy() => RunCaseAsync("C599B_PinnedPolicy", 10,
         "C599 V-18: a valid eight-suite pinned authority publishes",
         "C599 V-18: the recipient holds a published non-draft release",
