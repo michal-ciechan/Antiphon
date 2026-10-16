@@ -184,7 +184,8 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
             {
                 foreach (var journal in Journals(entry)) yield return journal;
             }
-            else if (Path.GetFileName(entry) == RunOwnershipStore.FileName) yield return entry;
+            else if (string.Equals(Path.GetFileName(entry), RunOwnershipStore.FileName, _context.PathComparison))
+                yield return entry;
         }
     }
 }
