@@ -54,7 +54,7 @@
     "boardName": "gym-stat board",
     "scopeSource": "Task",
     "requiredPlatform": "Any",
-    "runnerId": null,
+    "runnerId": "desktop",
     "requirementSource": "Default",
     "observedPlatform": null,
     "runnerDefaultsRevision": null,

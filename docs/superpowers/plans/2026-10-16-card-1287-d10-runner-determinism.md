@@ -8,8 +8,10 @@ including its V-1 through V-4 and R-1 through R-3. Historical results stay uncha
 ## Verification design
 
 S0 commits this selection and reproduces D-10's existing equality failure.
-S1 pins only the delegated contract fixture's runner configuration to its original
-unassigned scenario. Preserve every snapshot, assertion and timeout. The D-10
+S1 corrects the six delegated summary runnerId expectations from null to desktop,
+matching CARD-0710's public display mapping, as authorized on continuation.
+Do not pin configuration for this field. Preserve full equality, every other
+snapshot value, every assertion and timeout. The D-10
 method must reach drawer equality, recorded-base values and summary exclusion.
 V-1 pipeline, V-2 backlog, V-3 delegations, V-4 home; R-1 verifies the E2E reader
 inventory and all four readers; R-2 verifies six client consumers; R-3 builds the
@@ -61,5 +63,6 @@ Restart: none.
 CP-1 reproduced the intended red at `1f2211da08d5af737d4a0ce5e1bc4a91518cebc5`.
 The [projection investigation](../../investigations/2026-10-16-card-1287-d10-runner-projection.md)
 shows that configuration cannot produce the required null display value. S1 and
-CP-2 through CP-8 remain pending scope clarification to correct six snapshot
-values to the documented desktop display ID. No fixture pin was added.
+CP-2 through CP-8 were held for scope clarification. The caller subsequently
+authorized exactly six snapshot corrections to desktop, retaining full equality
+and requiring CARD-0710 in the commit message. No fixture pin was added.
