@@ -85,6 +85,16 @@ public class AbsentLaunchPolicyTests
     [Arguments("row.SubmissionStartedAt")]
     [Arguments("row.MaintenanceSlotActive")]
     [Arguments("row.DeferredFromRunAttemptId")]
+    [Arguments("row.ReviewThreadId")]
+    [Arguments("row.ReviewReplyConsumedAt")]
+    [Arguments("row.RuntimeActionKey")]
+    [Arguments("row.DirectReplyPromptSequence")]
+    [Arguments("row.DirectReplyThroughSequence")]
+    [Arguments("row.DirectReplyPendingThroughSequence")]
+    [Arguments("row.DirectReplyProvider")]
+    [Arguments("row.DirectReplyConversationId")]
+    [Arguments("row.DirectReplyHandle")]
+    [Arguments("row.DirectReplyTailClosedAt")]
     public void C1149_Whitelist_requires_every_fact(string condition)
     {
         var task = Guid.NewGuid();
