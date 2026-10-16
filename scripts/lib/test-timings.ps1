@@ -86,8 +86,11 @@ function Read-TestTimingEvents {
             for ($i = 0; $i -lt $last; $i++) {
                 if (-not $lines[$i]) { continue }
                 try { $item = $lines[$i] | ConvertFrom-Json } catch { $corrupt++; continue }
-                if ($seen.ContainsKey($item.eventId)) { continue }
-                $seen[$item.eventId] = $true
+                $id = [string]$item.eventId
+                if (-not [string]::IsNullOrEmpty($id)) {
+                    if ($seen.ContainsKey($id)) { continue }
+                    $seen[$id] = $true
+                }
                 $events += $item
             }
             if ($torn -and $lines[$last]) { $warnings += 'torn-tail' }

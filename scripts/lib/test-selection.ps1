@@ -21,6 +21,14 @@ function ConvertTo-TestSelectionCanonicalJson {
 
 function Get-TestSelectionDigest {
     param($Value)
+    # Estimates are attached after the digest. Hashing an augmented object stays stable.
+    if ($Value -is [System.Collections.IDictionary] -and ($Value.Contains('estimates') -or $Value.Contains('budgetObservations'))) {
+        $copy = [ordered]@{}
+        foreach ($key in @($Value.Keys)) {
+            if ($key -cne 'estimates' -and $key -cne 'budgetObservations') { $copy[$key] = $Value[$key] }
+        }
+        $Value = $copy
+    }
     $bytes = [Text.Encoding]::UTF8.GetBytes((ConvertTo-TestSelectionCanonicalJson $Value))
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
 }
