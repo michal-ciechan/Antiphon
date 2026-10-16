@@ -1,5 +1,4 @@
 using Antiphon.HostCleanup.Checkpoints;
-using System.Text.RegularExpressions;
 
 namespace Antiphon.Checkpoints;
 
@@ -17,22 +16,8 @@ public sealed class CheckpointOutputCleanup(CheckpointCleanupContext context)
     // PC-4 drops "bin" from this list. Descending into bin/ would delete a nested owned name.
     private readonly string[] PruneNames = ["bin", "obj", "workspace", ".git", "node_modules", ".antiphon"];
 
-    // CARD-1199: a build id is a directory name only when it is an isolated bin-<name> output.
-    private readonly Regex IsolatedOutputId = new(@"^bin-[A-Za-z0-9._-]+$", RegexOptions.CultureInvariant);
-
-    public bool IsPathSegment(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value) || value is "." or "..")
-            return false;
-        if (value.Contains("..", StringComparison.Ordinal))
-            return false;
-        if (value.IndexOfAny(['/', '\\', ':']) >= 0)
-            return false;
-        return !Path.IsPathRooted(value);
-    }
-
-    public bool IsIsolatedOutputId(string value) =>
-        IsPathSegment(value) && IsolatedOutputId.IsMatch(value);
+    public bool IsPathSegment(string value) => CheckpointOutputNames.IsPathSegment(value);
+    public bool IsIsolatedOutputId(string value) => CheckpointOutputNames.IsIsolatedOutputId(value);
 
     public bool IsStrictlyInside(string root, string candidate)
     {
@@ -246,9 +231,9 @@ public sealed class CheckpointOutputCleanup(CheckpointCleanupContext context)
 public static class OutputCleanup
 {
     public static bool IsPathSegment(string value) =>
-        new CheckpointOutputCleanup(CheckpointCleanupDefaults.Context).IsPathSegment(value);
+        CheckpointOutputNames.IsPathSegment(value);
     public static bool IsIsolatedOutputId(string value) =>
-        new CheckpointOutputCleanup(CheckpointCleanupDefaults.Context).IsIsolatedOutputId(value);
+        CheckpointOutputNames.IsIsolatedOutputId(value);
     public static bool IsStrictlyInside(string root, string candidate) =>
         new CheckpointOutputCleanup(CheckpointCleanupDefaults.Context).IsStrictlyInside(root, candidate);
     public static CleanResult CleanOwnedOutputs(string repoRoot, IReadOnlyCollection<string> ownedIds, int exitCode, bool cleanOnRed, bool dryRun,
