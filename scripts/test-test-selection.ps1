@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/nightly-policy.ps1"
 . "$PSScriptRoot/lib/nightly-coverage.ps1"
 . "$PSScriptRoot/lib/test-selection.ps1"
+. "$PSScriptRoot/lib/release-authority.ps1"
 . "$PSScriptRoot/lib/c487-harness.ps1"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
@@ -14,7 +15,8 @@ function Test-C1313_ProjectAndCatalogUniverse {
     $census = Test-NightlyPolicyProjectUniverse -RepoRoot $repoRoot -PolicyObject $policy.Object
     Assert-C487 -Cond ($census.Ok -and $census.Disk.Count -eq 11) -Name 'C1313 project-universe' -Detail ($census | ConvertTo-Json -Compress)
     $roles = $policy.Object.projectDispositions
-    Assert-C487 -Cond (@($roles | Where-Object role -eq primary).Count -eq 7 -and @($roles | Where-Object role -eq child).Count -eq 4) -Name 'C1313 seven-primary-four-child'
+    $authority=ConvertFrom-ReleaseAuthorityPolicyBytes ([IO.File]::ReadAllBytes("$repoRoot/tests/test-execution-policy.json"))
+    Assert-C487 -Cond (@($roles | Where-Object role -eq primary).Count -eq 7 -and @($roles | Where-Object role -eq child).Count -eq 4 -and $authority.RequiredSuites.Count -eq 9 -and $authority.RequiredSuites -ccontains 'markdown-pdf' -and $policy.Object.profiles.nightly.requiredSuites.Count -eq 7) -Name 'C1313 seven-primary-four-child'
     $catalog = Read-TestSelectionCatalog "$repoRoot/tests/test-selection-policy.json" $policy.Object.selectionCatalog.hash
     Assert-C487 -Cond (@($catalog.sets | Where-Object id -eq core).members.Count -eq 7) -Name 'C1313 seven-method-core'
     $root=Join-Path $ResultsDirectory 'universe';[void](New-Item -ItemType Directory $root)
@@ -94,11 +96,14 @@ function Same-C1313Set($Actual,$Expected){return ((@(Get-TestSelectionSorted $Ac
 
 function Test-C1313_InputRefusal {
     $fx=New-C1313GitFixture
+    [void](Get-C1313Selection $fx $fx.B)
     $blob=Invoke-C1313Git $fx.Root @('rev-parse',"$($fx.B):tests/test-selection-policy.json")
     $bad=@();foreach($b in @('HEAD',$fx.B.Substring(0,8),('0'*40),$blob,'--help')){$r=Invoke-C1313Selection $fx $fx.B $b;if($r.Exit -ne 2 -or $r.Document){$bad+=$b}}
     Assert-C487 ($bad.Count -eq 0) 'C1313 invalid-intent-refused' ($bad -join ',')
-    $r=Invoke-C1313Selection @{Root=(Join-Path $ResultsDirectory 'absent')} $fx.B $fx.B
-    Assert-C487 ($r.Exit -eq 2 -and -not $r.Document) 'C1313 failed-git-read' $r.Error
+    $tree=Invoke-C1313Git $fx.Root @('rev-parse',"$($fx.B)^{tree}")
+    Remove-Item -LiteralPath (Join-Path $fx.Root ('.git/objects/'+$tree.Substring(0,2)+'/'+$tree.Substring(2)))
+    $r=Invoke-C1313Selection $fx $fx.B
+    Assert-C487 ($r.Exit -eq 2 -and -not $r.Document -and $r.Error.Contains('git-read-failed')) 'C1313 failed-git-read' $r.Error
 }
 function Test-C1313_CoreAndUnknownFallback {
     $fx=New-C1313GitFixture;$empty=Get-C1313Selection $fx $fx.B
@@ -199,6 +204,7 @@ function Test-C1313_RuntimeEdges {
 }
 function Test-C1313_InvalidGraph {
     $fx=New-C1313GitFixture;$graphBad=@();$ruleBad=@()
+    [void](Get-C1313Selection $fx $fx.B)
     foreach($variant in @('missing-set','cycle','missing-prerequisite','prerequisite-cycle','bad-regex','script','regex-timeout')){
         $c=Get-Content "$repoRoot/tests/test-selection-policy.json" -Raw|ConvertFrom-Json -AsHashtable
         switch($variant){
@@ -216,8 +222,17 @@ function Test-C1313_InvalidGraph {
             [void](Invoke-C1313Git $fx.Root @('update-index','--add','--cacheinfo',"100644,$blob,$path"));$tree=Invoke-C1313Git $fx.Root @('write-tree');$a=Invoke-C1313Git $fx.Root @('commit-tree',$tree,'-p',$fx.B,'-m','regex')
         }
         $r=Invoke-C1313Selection $fx $a
-        if($r.Exit -ne 2){if($variant -in @('bad-regex','script','regex-timeout')){$ruleBad+=$variant}else{$graphBad+=$variant}}
+        $reason=switch($variant){'missing-set'{'missing-dependency'};'cycle'{'dependency-cycle'};'missing-prerequisite'{'missing-prerequisite'};'prerequisite-cycle'{'dependency-cycle'};'bad-regex'{'invalid-rule'};'script'{'invalid-catalog-field:command'};'regex-timeout'{'invalid-rule-timeout'}}
+        if($r.Exit -ne 2 -or -not $r.Error.Contains($reason)){if($variant -in @('bad-regex','script','regex-timeout')){$ruleBad+="$variant : $($r.Error)"}else{$graphBad+="$variant : $($r.Error)"}}
     }
+    $c=Get-Content "$repoRoot/tests/test-selection-policy.json" -Raw|ConvertFrom-Json -AsHashtable
+    $c.rules+=@{id='P-OVERLAP';paths=@('src/Antiphon.Agents.Pty/ClaudeDetectors.cs');sets=@('core');full=$true}
+    @($c.sets|Where-Object id -eq 'provider.claude.offline')[0].dependsOn=@('provider.codex.offline')
+    $a=New-C1313PolicyCandidate $fx $c
+    Write-C1313File $fx.Root 'src/Antiphon.Agents.Pty/ClaudeDetectors.cs' 'changed'
+    [void](Invoke-C1313Git $fx.Root @('add','--','src/Antiphon.Agents.Pty/ClaudeDetectors.cs'));$tree=Invoke-C1313Git $fx.Root @('write-tree');$a=Invoke-C1313Git $fx.Root @('commit-tree',$tree,'-p',$fx.B,'-m','overlap')
+    $r=Get-C1313Selection $fx $a
+    if($r.mode -cne 'full' -or $r.fallbackReasons -cnotcontains 'rule-full:P-OVERLAP' -or $r.changedPaths.ruleIds -cnotcontains 'P-CLAUDE' -or $r.explanationEdges.id -cnotcontains 'set:provider.claude.offline->provider.codex.offline'){$graphBad+='overlap/dependency-closure'}
     Assert-C487 ($graphBad.Count -eq 0) 'C1313 invalid-graph' ($graphBad -join ',')
     Assert-C487 ($ruleBad.Count -eq 0) 'C1313 invalid-rule' ($ruleBad -join ',')
 }
@@ -243,13 +258,47 @@ function Test-C1313_ExactExpandedExecution {
     . "$PSScriptRoot/lib/nightly-tests-impl.ps1"
     $discovery=Get-C1313FilterDiscovery
     $expected=@($discovery.nodes | Where-Object {$_.type -ceq 'C1313Offline' -and $_.method -cin @('One','Rows')})
-    $dir=Join-Path $ResultsDirectory 'execution';[void](New-Item -ItemType Directory $dir)
-    # Red-first: exercise the actual legacy prefix compiler, with harmless forbidden children.
-    $args=@(Get-NightlyNativeExecutionArguments (Join-Path $dir 'run.trx') $dir @('C1313Offline'))
-    $run=Invoke-C1313FilterChild $args (Join-Path $dir 'stdout.txt')
-    $actual=ConvertFrom-NightlyDiagnosticLog (Get-NightlyLatestDiagnosticLog $dir) execution
-    Assert-C487 ($expected.Count -eq 4 -and $actual.Nodes.Count -eq 4 -and (Same-C1313Set $actual.Nodes.Uid $expected.uid)) 'C1313 exact-uid-union' ($actual.Nodes.Uid -join ',')
+    $dir=Join-Path $ResultsDirectory 'execution'
+    $members=@(@{class='Antiphon.Tests.FilterHost.C1313Offline';method='One'},@{class='Antiphon.Tests.FilterHost.C1313Offline';method='Rows'})
+    $actual=Invoke-NightlyExactRoster -AssemblyPath $FilterHost -Discovery $discovery -Members $members -ResultsDirectory $dir -Environment @{C1313_SENTINEL=(Join-Path $ResultsDirectory 'forbidden.txt')}
+    $readback=Get-Content (Join-Path $dir 'receipt.json') -Raw|ConvertFrom-Json
+    # Retain child TRX/diagnostics after ScriptHarness reclaims its owned scratch.
+    $retained=Join-Path $repoRoot ('.antiphon/test-output/c1313/'+[guid]::NewGuid().ToString('N'))
+    [void](New-Item -ItemType Directory $retained)
+    Copy-Item -LiteralPath $dir -Destination (Join-Path $retained 'execution') -Recurse
+    Copy-Item -LiteralPath (Join-Path $ResultsDirectory 'discovery') -Destination (Join-Path $retained 'discovery') -Recurse
+    Assert-C487 ($expected.Count -eq 4 -and $readback.complete -and $readback.executedUids.Count -eq 4 -and (Same-C1313Set $readback.executedUids $expected.uid)) 'C1313 exact-uid-union' ($readback.executedUids -join ',')
     Assert-C487 (-not (Test-Path (Join-Path $ResultsDirectory 'forbidden.txt'))) 'C1313 forbidden-not-launched'
+}
+
+function Test-C1313_CoverageRefusal {
+    $required=@('one','row-1','row-2','row-3')
+    $green=@($required|ForEach-Object {[pscustomobject]@{Uid=$_;Outcome='Passed'}})
+    Assert-C487 (Test-NightlyExactCoverage $required $green).Ok 'C1313 coverage-control'
+    foreach($fault in @('missing-uid','extra-uid','duplicate-uid','required-skip','zero-required')){
+        $rows=@($required|ForEach-Object {[pscustomobject]@{Uid=$_;Outcome='Passed'}})
+        switch($fault){
+            'missing-uid' {$rows=$rows[0..2]}
+            'extra-uid' {$rows += [pscustomobject]@{Uid='forbidden';Outcome='Passed'}}
+            'duplicate-uid' {$rows += $rows[0]}
+            'required-skip' {$rows[0].Outcome='Skipped'}
+            'zero-required' {$rows=@()}
+        }
+        $r=Test-NightlyExactCoverage $required $rows
+        Assert-C487 (-not $r.Ok -and $r.Reasons -ccontains $fault) ('C1313 '+$fault) ($r.Reasons -join ',')
+    }
+}
+function Test-C1313_NewUidRemainder {
+    $discovery=Get-C1313FilterDiscovery
+    $members=@(@{class='Antiphon.Tests.FilterHost.C1313Offline';method='One'})
+    $control=New-NightlyExactRoster $discovery $members @($discovery.nodes.uid)
+    if($control.Widened -or $control.RequiredUids.Count -ne 1){throw 'valid remainder control failed'}
+    $new=@($discovery.nodes|Where-Object {$_.type -ceq 'C1313Offline' -and $_.method -ceq 'Rows'})[0].uid
+    $known=@($discovery.nodes.uid|Where-Object {$_ -cne $new})
+    $r=New-NightlyExactRoster $discovery $members $known
+    . "$PSScriptRoot/lib/nightly-tests-impl.ps1"
+    $refused='';try{[void](Invoke-NightlyExactRoster -AssemblyPath $FilterHost -Discovery $discovery -Members $members -ClassifiedUids $known -ResultsDirectory (Join-Path $ResultsDirectory 'must-not-launch'))}catch{$refused=$_.Exception.Message}
+    Assert-C487 ($r.Widened -and $r.RequiredUids -ccontains $new -and $r.RequiredUids.Count -eq $discovery.nodes.Count -and $refused.StartsWith('new-uid-required') -and -not (Test-Path (Join-Path $ResultsDirectory 'must-not-launch'))) 'C1313 new-uid-required' $refused
 }
 
 & "Test-$Case"
