@@ -40,7 +40,8 @@ named adjacent methods below run. No full assembly or Unit lane is authorized.
 
 The native harness models Docker transport and unrelated donor/import/smoke
 checks, but executes npm and ownership/deletion with kernel UID semantics.
-Windows uses local WSL root; Linux requires root. Every write is in a unique
+Windows uses local WSL root; Linux requires root (non-root runs explicitly skip
+and cannot qualify this checkpoint). Every write is in a unique
 native /tmp directory removed by EXIT; no actual Docker or SSH command runs.
 This is not full live Fixture qualification; release activation owns that later.
 Mutation candidate: `docs/superpowers/mutations/2026-10-16-cache-fixture-npm-ownership.md`.

@@ -81,6 +81,8 @@ public sealed class CacheSeedNpmOwnershipTests
         var errors = stderr.GetAwaiter().GetResult();
         Console.WriteLine(output);
         Console.WriteLine(errors);
+        if (process.ExitCode == 90 && !OperatingSystem.IsWindows())
+            Skip.Test("Native UID ownership proof requires Linux root or Windows with WSL root; non-root execution cannot qualify it.");
         process.ExitCode.ShouldBe(0, output + errors);
         output.ShouldContain("HARNESS_COMPLETE");
         return output;

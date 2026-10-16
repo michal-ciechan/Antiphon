@@ -84,6 +84,12 @@ Run `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Fixture -Sha
 otherwise use the [documented Seed source](#legacy-full-seed-and-maintenance). Stop if Seed or
 the inventory refuses; `Reset` is not an automatic recovery.
 
+Fixture's volume-backed seed verifies npm through its existing UID/GID 1654 writer.
+npm creates `_logs` beside `_cacache`, so verification and checked removal must use
+the same uid. A root verifier leaves logs the writer cannot remove and fails the
+Fixture gate. Keep the host-backed isolated verifier separate; do not escalate
+Fixture cleanup or change live cache ownership to recover this failure.
+
 For status checks below, run `pwsh -NoProfile -File scripts/runner-drain.ps1 status -RunnerId
 server2` (or `server2-temp`). A healthy deployment needs `buildVersion=<sha>`,
 `dispatchEligible=true`, and `acceptingNewWork=true`; a drained runner needs fresh non-null zero
