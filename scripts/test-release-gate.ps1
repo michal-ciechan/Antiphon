@@ -1933,6 +1933,25 @@ function Test-C599_ExecutionArtifacts {
 
 # ================================================= CARD-0599 D-15 authority (B1) ===
 
+function Test-C599B_MissingDiscovery {
+    foreach ($variant in @('missing', 'empty', 'null')) {
+        $root = New-C599Root
+        $dir = Get-ReleaseAuthorityDir -CandidateRoot $root
+        Write-NightlyAtomicJson -Path (Join-Path $dir 'authority.json') -Object ([ordered]@{
+            candidateId = $CandidateId; intentId = $script:C599IntentId; sha = $ShaB
+            requiredSuites = @('markdown-pdf'); exclusions = @()
+        })
+        $discovery = @{}
+        if ($variant -eq 'empty') { $discovery['markdown-pdf'] = @() }
+        if ($variant -eq 'null') { $discovery['markdown-pdf'] = $null }
+        $plan = New-ReleaseGateExecutionPlan -CandidateRoot $root -Discovery $discovery -Rosters @{}
+        $frozen = Get-Content -LiteralPath (Join-Path $dir 'discovery.json') -Raw | ConvertFrom-Json
+        Assert-C487 -Cond (@($plan.suites).Count -eq 1 -and @($plan.suites[0].chunks).Count -eq 0 -and
+            @($frozen.suites.'markdown-pdf').Count -eq 0) -Name ('C599 missing-discovery-' + $variant) `
+            -Detail ($plan | ConvertTo-Json -Depth 10 -Compress)
+    }
+}
+
 function Test-C599B_PinnedPolicy {
     # V-18 / R-9 ordinary contract: the pinned policy blob, not the report, decides.
     $fx = New-C599PublishFx
