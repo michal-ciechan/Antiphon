@@ -14,6 +14,13 @@ public sealed class PhaseTimings
     public string Method { get; set; } = "utc-trx-and-monotonic-host";
     public string? UnavailableReason { get; set; }
 
+    // Journal measurements. Receipt JSON keeps the fields above; these stay off the receipt.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public double? CaseWindowSeconds { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public double? CaseDurationSumSeconds { get; set; }
+
     public static PhaseTimings Reduce(DateTimeOffset launched, DateTimeOffset exited,
         TimeSpan monotonicElapsed, IReadOnlyList<TrxCaseResult> cases)
     {
@@ -31,6 +38,8 @@ public sealed class PhaseTimings
         value.TestsWallSeconds = (last - first).TotalSeconds;
         value.TeardownSeconds = (exited - last).TotalSeconds;
         value.TestHostWallSeconds = monotonicElapsed.TotalSeconds;
+        value.CaseWindowSeconds = value.TestsWallSeconds;
+        value.CaseDurationSumSeconds = cases.Sum(item => item.DurationSeconds);
         return value;
     }
 

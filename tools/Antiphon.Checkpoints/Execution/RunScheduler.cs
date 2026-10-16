@@ -22,6 +22,7 @@ public sealed class SchedulerRequest
     public bool OwnerBound { get; init; }
     public SourceRunGuard? SourceGuard { get; init; }
     public string? ExpectedSourceSha { get; init; }
+    public string? TimingRoot { get; init; }
 }
 
 public sealed class SchedulerResult
@@ -548,6 +549,10 @@ public sealed class RunScheduler
             Deadline = TimeSpan.FromMinutes(minutes),
             BeforeLaunch = request.BeforeLaunch,
             Environment = spec.Environment,
+            TimingRoot = request.TimingRoot,
+            TimingRunId = Path.GetFileName(request.RunDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)),
+            TimingProducer = "tool",
+            ProducingBuildId = spec.Build,
         }, TextWriter.Null, cancellationToken).ConfigureAwait(false);
         progress.LastOutputAt = DateTimeOffset.UtcNow;
         result.Id = spec.Id;

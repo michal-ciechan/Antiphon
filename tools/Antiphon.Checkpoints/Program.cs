@@ -574,6 +574,9 @@ public static class Program
             SlotReason = lease.SlotReason,
             WaitedSeconds = lease.WaitedSeconds,
             MaxCpuCount = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4,
+            TimingRoot = Environment.GetEnvironmentVariable("ANTIPHON_TEST_TIMING_ROOT"),
+            TimingRunId = name,
+            ProducingBuildId = options.Get("output-path"),
         }, output, CancellationToken.None).ConfigureAwait(false);
         result.Source = source;
         ReportWriter.WriteFiles(results, new ReportModel
