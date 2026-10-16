@@ -25,6 +25,9 @@ internal static class AbsentLaunchPolicy
         "RulesPromptSequence RulesTurnEndSequence RulesCoveredByMessageId RulesChainId " +
         "RulesFollowOnCount RulesBoundarySequence SourceChannelInboundId ChannelOutboundDeliveryId " +
         "ChannelReplyDiscoveryClosedAt ChannelReplySettledAt CapacityRecoveryActionKey CapacityWaitId " +
+        "ReviewThreadId ReviewReplyConsumedAt RuntimeActionKey DirectReplyPromptSequence " +
+        "DirectReplyThroughSequence DirectReplyPendingThroughSequence DirectReplyProvider " +
+        "DirectReplyConversationId DirectReplyHandle DirectReplyTailClosedAt " +
         "CapacityWaitVersion MaintenanceKind MaintenanceAcceptedStartedAt MaintenanceResult " +
         "MaintenanceResultAt MaintenanceEvidence SubmissionStartedAt MaintenanceSlotActive DeferredFromRunAttemptId";
 
@@ -59,6 +62,10 @@ internal static class AbsentLaunchPolicy
             RulesChainId: null, RulesFollowOnCount: 0, RulesBoundarySequence: null,
             SourceChannelInboundId: null, ChannelOutboundDeliveryId: null,
             ChannelReplyDiscoveryClosedAt: null, ChannelReplySettledAt: null,
+            ReviewThreadId: null, ReviewReplyConsumedAt: null, RuntimeActionKey: null,
+            DirectReplyPromptSequence: null, DirectReplyThroughSequence: null,
+            DirectReplyPendingThroughSequence: null, DirectReplyProvider: null,
+            DirectReplyConversationId: null, DirectReplyHandle: null, DirectReplyTailClosedAt: null,
             CapacityRecoveryActionKey: null, CapacityWaitId: null, CapacityWaitVersion: null,
             MaintenanceKind: RemoteControlMaintenanceKind.None, MaintenanceAcceptedStartedAt: null,
             MaintenanceResult: null, MaintenanceResultAt: null, MaintenanceEvidence: null,
