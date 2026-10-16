@@ -257,6 +257,7 @@ public class ProjectService
         await SessionStateDeletion.RunAsync(_db, _states, boardIds, async ct =>
         {
             await ProjectCascade.DeleteBoardsAsync(_db, boardIds, ct);
+            await ProjectCascade.DeleteProjectEvidenceAsync(_db, id, ct);
             await _db.Projects.Where(p => p.Id == id).ExecuteDeleteAsync(ct);
         }, cancellationToken);
         _readinessCache?.Remove(id);

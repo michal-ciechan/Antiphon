@@ -124,6 +124,12 @@ public static class ProjectCascade
                 .SetProperty(a => a.BoardId, (Guid?)null)
                 .SetProperty(a => a.CurrentCardId, (Guid?)null), ct);
 
+        await DeletePipelineEvidenceAsync(db,
+            db.PipelineHandoffActions.Where(a => a.CardId != null && cardIds.Contains(a.CardId.Value)),
+            db.ReviewEvidenceCorrections.Where(c => (c.CardId != null && cardIds.Contains(c.CardId.Value))
+                || (c.BoardId != null && boardIds.Contains(c.BoardId.Value))),
+            db.CardCompletionAcceptances.Where(a => cardIds.Contains(a.CardId) || boardIds.Contains(a.BoardId)), ct);
+
         if (cardIds.Count > 0)
         {
             await db.CardWorkflowStages.Where(s => runIds.Contains(s.CardWorkflowRunId)).ExecuteDeleteAsync(ct);
@@ -174,6 +180,32 @@ public static class ProjectCascade
         await db.BoardWorkflowDefinitions.Where(d => boardIds.Contains(d.BoardId)).ExecuteDeleteAsync(ct);
         await db.BoardColumns.Where(c => boardIds.Contains(c.BoardId)).ExecuteDeleteAsync(ct);
         await db.Boards.Where(b => boardIds.Contains(b.Id)).ExecuteDeleteAsync(ct);
+    }
+
+    /// <summary>
+    /// Removes evidence that can belong to a project without a board or card. Call only when
+    /// the project itself is being deleted, inside the same transaction as the board cascade.
+    /// </summary>
+    public static Task DeleteProjectEvidenceAsync(AppDbContext db, Guid projectId, CancellationToken ct) =>
+        DeletePipelineEvidenceAsync(db,
+            db.PipelineHandoffActions.Where(a => a.ProjectId == projectId),
+            db.ReviewEvidenceCorrections.Where(c => c.ProjectId == projectId),
+            db.CardCompletionAcceptances.Where(a => a.ProjectId == projectId), ct);
+
+    private static async Task DeletePipelineEvidenceAsync(
+        AppDbContext db, IQueryable<PipelineHandoffAction> actions,
+        IQueryable<ReviewEvidenceCorrection> corrections, IQueryable<CardCompletionAcceptance> acceptances,
+        CancellationToken ct)
+    {
+        // Scope IDs are logical references, so the database cannot cascade these rows.
+        // The two internal Restrict FKs require leaf-first deletion. Task history survives.
+        await db.PipelineHandoffObservations.Where(o => actions.Select(a => a.Id).Contains(o.ActionId))
+            .ExecuteDeleteAsync(ct);
+        await actions.ExecuteDeleteAsync(ct);
+        await db.CardCompletionReceipts.Where(r => acceptances.Select(a => a.Id).Contains(r.AcceptanceId))
+            .ExecuteDeleteAsync(ct);
+        await acceptances.ExecuteDeleteAsync(ct);
+        await corrections.ExecuteDeleteAsync(ct);
     }
 
     private static async Task RefuseCurrentGenerationHoldsAsync(
