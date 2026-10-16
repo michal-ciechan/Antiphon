@@ -24,7 +24,7 @@ mkdir -p "$SERVER2_ROOT/cache" "$CASE_DIR" "$root/bin" "$root/donor/packages" "$
 c849_fixture_case_bind
 for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do mkdir -m 700 -p "$root/volumes/$name/_data"; done
 printf outside > "$root/outside"
-for command in dotnet npm curl pwsh; do
+for command in dotnet npm curl pwsh docker; do
     printf '#!/bin/sh\nprintf "DENIED %%s\\n" "$0" >> "$C913_ROOT/denied"\nexit 93\n' > "$root/bin/$command"
     chmod 755 "$root/bin/$command"
 done
@@ -397,7 +397,7 @@ c913_fixture_wrapper() (
 )
 
 # S5: controller admission and helper filesystem recipients, without a Docker daemon.
-if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ] || [ "$mode" = volume-prune ]; then
+if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ] || [ "$mode" = volume-prune ] || [ "$mode" = preview-volume ] || [ "$mode" = fixture-prune ] || [[ "$mode" == prune-diagnostic-* ]]; then
     mkdir -p "$CASE_DIR/fixture-controller" "$root/volumes/c849${RUN}-work/_data/cache"
     printf '%s\n' "c849${RUN}-work" > "$CASE_DIR/.fixture-volumes"
     c849_payload_own volume
@@ -442,6 +442,12 @@ if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ] || [ "$mode" = vo
         "${args[@]}" <<< "$code"
     }
 fi
+case "$mode" in
+ preview-*|fixture-prune|prune-diagnostic-*|inventory-running)
+    source "$repo/scripts/fixtures/cache-fixture-completion.sh"
+    [ ! -e "$root/denied" ] || fail unexpected-external-call
+    exit 0 ;;
+esac
 case "$mode" in
  fixture-seed)
     ordinary "$root/donor"

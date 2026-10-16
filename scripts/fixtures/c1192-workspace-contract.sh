@@ -2696,6 +2696,10 @@ retention_compose() {
 # CARD-1207 modeled project lists and post-teardown observations.
 c1207_docker() {
     local kind="$1" name="${*: -1}" scoped=0 project='' path item
+    if [ "$COMPOSE_CASE" = donor-unknown ] && { [ "$kind" = inspect ] || [ "$kind:${2:-}" = container:inspect ]; } \
+        && { [ "$name" = "c849-${RUN}-donor" ] || [ "$name" = "${COMPLETION_DONOR_ID:-}" ]; }; then
+        printf 'Cannot connect to the Docker daemon\n' >&2; return 1
+    fi
     local token
     for token in "$@"; do
         case "$token" in label=com.docker.compose.project=*) scoped=1; project="${token#label=com.docker.compose.project=}" ;; esac
@@ -2747,6 +2751,18 @@ mode_compose_absence() {
     source <(declare -f c849_fixture_seed | sed '1s/c849_fixture_seed/c1207_seed/')
     c849_fixture_seed() {
         c1207_seed
+        if [[ "$COMPOSE_CASE" == donor* ]]; then
+            local donor="c849-${RUN}-donor"
+            plant_container "$donor" c849-fixture "$RUN" donor "$ADMITTED" ""
+            printf '%s\n' "c849${RUN}temp" > "$C1192_ROOT/containers/$donor/label-project"
+            printf 'session-runner\n' > "$C1192_ROOT/containers/$donor/label-service"
+            COMPLETION_DONOR_ID=$(cat "$C1192_ROOT/containers/$donor/id")
+            printf '%s\n' "$COMPLETION_DONOR_ID" > "$CASE_DIR/.fixture-donor"
+            case "$COMPOSE_CASE" in
+                donor-foreign) printf foreign > "$C1192_ROOT/containers/$donor/label-owner" ;;
+                donor-replaced) printf '%064d\n' 7 > "$C1192_ROOT/containers/$donor/id" ;;
+            esac
+        fi
         C849_PACKAGES="c849${RUN}smoke-packages"; C849_SCRATCH="c849${RUN}smoke-scratch"; C849_NPM="c849${RUN}npmcache-npm"
         local volume
         for volume in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
@@ -2766,13 +2782,24 @@ mode_compose_absence() {
     cat "$C1192_ROOT/compose-output"
     cat "$CASE_DIR/c590-result.json"
     printf '\n'
-    expected=false; [ "$COMPOSE_CASE" != absent ] || expected=true
+    expected=false; { [ "$COMPOSE_CASE" != absent ] && [ "$COMPOSE_CASE" != donor ]; } || expected=true
     good=0; jq -e --argjson expected "$expected" '.accepted==$expected' "$CASE_DIR/c590-result.json" >/dev/null && good=1
     emit verdict "$good"
     good=0
     if [ "$expected" = true ]; then [ "$code" = 0 ] && grep -q '^C849_FIXTURE ' "$C1192_ROOT/compose-output" && good=1
     else [ "$code" != 0 ] && ! grep -q '^C849_FIXTURE ' "$C1192_ROOT/compose-output" && good=1; fi
     emit marker "$good"
+    if [[ "$COMPOSE_CASE" == donor* ]]; then
+        good=0; name="c849-${RUN}-donor"
+        if [ "$COMPOSE_CASE" = donor ]; then
+            if [ "$code" = 0 ] && ! container_exists "$name" && [ ! -s "$CASE_DIR/fixture-cleanup-residue.txt" ] \
+                && grep -Fxq "confirmed-absent container $name" "$CASE_DIR/fixture-cleanup-ledger.txt"; then good=1; fi
+        else
+            if [ "$code" != 0 ] && container_exists "$name" && [ -s "$CASE_DIR/fixture-cleanup-residue.txt" ] \
+                && ! grep -Fxq "container $name" "$C1192_ROOT/order"; then good=1; fi
+        fi
+        emit donor-checked "$good"
+    fi
     if [ "$COMPOSE_CASE" = recording ]; then
         good=0; ! grep -Fxq "c849${RUN}main" "$C1192_ROOT/teardowns" && good=1; emit no-unrecorded-down "$good"
         good=0; grep -Fxq "unknown-cleanup-outcome compose c849${RUN}main" "$CASE_DIR/fixture-cleanup-ledger.txt" && good=1; emit recording-ledger "$good"
