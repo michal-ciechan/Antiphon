@@ -49,6 +49,18 @@ S1; S2 must rerun it green. Each group uses a fresh isolated output.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-r14-red/` | regression-red | `/*/*/ProjectCascadeForeignKeyTests/Pipeline*` | V-1, V-2, R-1 | all 3 methods; V-1/V-2 expected red before fix | 6 | 5 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-r14-final/` | cascade | `/*/*/ProjectCascadeForeignKeyTests/*` | V-1, V-2, R-1 | all listed, 0 failed | 47 | 5 |
-| CP-3 | S2 | CP-2 | adjacent | `/*/*/(ProjectDeletionTests)\|(BoardProjectArchiveApiTests)\|(ProjectServiceTests)/*` | R-2 | all listed, 0 failed | 1 | 2 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-r14-repair/` | cascade | `/*/*/ProjectCascadeForeignKeyTests/*` | V-1, V-2, R-1 | all listed, 0 failed | 47 | 5 |
+| CP-3 | S2 | CP-2 | adjacent | `/*/*/(ProjectDeletionTests*)\|(BoardProjectArchiveApiTests*)\|(ProjectServiceTests*)/*` | R-2 | all listed, 0 failed | 1 | 2 |
 | CP-4 | S2 | CP-2 | unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed | 1 | 10 |
+
+### Execution correction
+
+At a705c360a7a042fe64144aac10f131258cd3fed1, CP-2 passed all 47 cases.
+CP-3 selected zero cases because the pinned TUnit combined-class hint extractor
+requires trailing wildcards. The corrected filter above retains the same classes.
+CP-4 was aborted after 735.85 seconds to preserve the 45-minute task budget, with
+no terminal TRX. Its interrupted test left card0306-prior-settings.json in the build
+output; cleanup_refused invalidates the run's receipt qualification, including CP-2.
+Rerun CP-2/CP-3 with the corrected selection and a fresh build output. R-3 remains
+incomplete, never passed or attributed to an inherited defect. No timeout or
+assertion was loosened. Preserve the original run's outcomes and costs in the report.
