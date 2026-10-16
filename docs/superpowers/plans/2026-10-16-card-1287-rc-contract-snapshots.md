@@ -19,7 +19,7 @@ The specific CARD-1287 brief excludes the whole Unit lane. No product change or 
 - V-3: delegated list plus drawer and recorded-base assertions, including absence from summaries.
 - V-4: home rail item and nested worker contracts.
 - R-1: consumer inventory: these four methods are the only E2E readers of the six affected
-  snapshot files. There is no additional E2E reader to select; CP-5 through CP-8 cover them all.
+  snapshot files. There is no additional E2E reader to select; CP-6 covers them all.
 - R-2: named component tests for the five story consumers and drawer.
 - R-3: compile the fresh frontend and all Storybook consumers.
 - Manual: inspect full semantic snapshot diff and story imports; inspect fresh TRX names/counts,
@@ -41,17 +41,15 @@ sessions or restart the shared AppHost. E2E fixture owns its random-port runner 
 | CP-2 | S0 | CP-1 | red-backlog | `/*/*/ContractSnapshotTests/Backlog_quadrant_contract` | V-2 red | Backlog_quadrant_contract | 1 | 2 |
 | CP-3 | S0 | CP-1 | red-delegations | `/*/*/ContractSnapshotTests/Delegated_task_board_and_drawer_contracts` | V-3 red | Delegated_task_board_and_drawer_contracts | 1 | 2 |
 | CP-4 | S0 | CP-1 | red-home | `/*/*/ContractSnapshotTests/Home_tasks_rail_contract` | V-4 red | Home_tasks_rail_contract | 1 | 2 |
-| CP-5 | S1 | `tests/Antiphon.E2E -> bin-c1287-green/` | pipeline | `/*/*/ContractSnapshotTests/Pipeline_status_contract` | V-1, R-1 | Pipeline_status_contract | 1 | 4 |
-| CP-6 | S1 | CP-5 | backlog | `/*/*/ContractSnapshotTests/Backlog_quadrant_contract` | V-2, R-1 | Backlog_quadrant_contract | 1 | 2 |
-| CP-7 | S1 | CP-5 | delegations | `/*/*/ContractSnapshotTests/Delegated_task_board_and_drawer_contracts` | V-3, R-1 | Delegated_task_board_and_drawer_contracts | 1 | 2 |
-| CP-8 | S1 | CP-5 | home | `/*/*/ContractSnapshotTests/Home_tasks_rail_contract` | V-4, R-1 | Home_tasks_rail_contract | 1 | 2 |
+| CP-5 | Probe | `tests/Antiphon.E2E -> bin-c1287-green/` | pipeline | `/*/*/ContractSnapshotTests/Pipeline_status_contract` | V-1, R-1 | Pipeline_status_contract | 1 | 4 |
+| CP-6 | S1 | `tests/Antiphon.E2E -> bin-c1287-final/` | contracts | `/*/*/ContractSnapshotTests/(Pipeline_status_contract*)\|(Backlog_quadrant_contract*)\|(Delegated_task_board_and_drawer_contracts*)\|(Home_tasks_rail_contract*)` | V-1, V-2, V-3, V-4, R-1 | exactly the four named methods, 0 failed/skipped | 4 | 5 |
 | CP-9 | S2 | n/a | consumers | `pwsh -NoProfile -File scripts/test-client.ps1 PipelineStagesPanel.test.tsx BacklogSection.test.tsx DelegationsBoard.test.tsx DelegationsHistory.test.tsx TaskDrawer.test.tsx TasksSection.test.tsx` | R-2 | six files, zero failures | n/a | 2 |
 | CP-10 | S2 | n/a | frontend | `npm --prefix client run build` | R-3 | exit 0 | n/a | 2 |
 | CP-11 | S2 | n/a | stories | `npm --prefix client run build-storybook -- --output-dir storybook-static` | R-3 | exit 0 | n/a | 2 |
 
 ### Cost
 
-27 minutes checkpoint estimate, plus prerequisites/authoring, within the 60-minute brief.
+24 minutes checkpoint estimate, plus prerequisites/authoring, within the 60-minute brief.
 No full assembly: impact is bounded to the four contracts and their named consumers.
 Red rows are diagnostic failures, never green receipts. No repeat proof after green.
 
@@ -66,3 +64,6 @@ property otherwise disagrees with its Windows launch command. S1 and S2 share th
 source commit; restore the generated frontend dependency cache between their runs.
 CP-5 may first remain red while its deterministic full response is inspected; update only
 reviewed additions, commit, and rerun the red row with all final S1 rows.
+
+Final selection refinement: CP-6 replaces the unexecuted separate green CP-6/7/8 selections and final CP-5 rerun with the same four methods in one process. Verify exactly four fresh TRX method identities. CP-5 records the deterministic-scenario red. Run S2 first to rebuild client/dist before Final S1 E2E; move only generated dependencies between runs. No test is deferred or omitted.
+
