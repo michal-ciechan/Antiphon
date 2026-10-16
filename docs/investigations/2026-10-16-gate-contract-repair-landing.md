@@ -2,7 +2,7 @@
 
 Current status: in progress. The caller authorized the production policy change
 after the initial stop, citing clean Full Grok Review `3c95fb03`. The gate repair
-has been published to RC and master. Both R3 publications remain pending. The
+has been published to RC and master. R3 is published to RC; master remains pending. The
 initial stop below is retained as historical evidence.
 
 ## Initial stop (historical)
@@ -86,6 +86,7 @@ additional production changes were found.
 |---|---|---|---|---|
 | Gate repair | RC | `41d6f6adf431622b3982f9ac41417a8e555072ba` | `46fd97a187866e26f56a6f261038ada4d7d57870` | Build passed; 89/89 tests passed, zero skipped |
 | Gate repair | master | `bc3168594e598cb4206b5e11f6d3aabc04561fd9` | `7bb30f231217c8a28ad549b40f7964764ebf354e` | Build passed; 89/89 tests passed, zero skipped |
+| CARD-1303 R3 | RC | `46fd97a187866e26f56a6f261038ada4d7d57870` | `b7265a05aa8773f08dbf457b93c7561e7874822d` | Build passed; regression 1/1, class 36/36 passed, zero skipped |
 
 The RC gate cherry-picks are
 `48d1edaabe618087b478471693fb1f19e0954871` and
@@ -125,6 +126,26 @@ The master gate build used `OutputPath=bin-5160-master-gate/` and
 same three selections passed 1 + 1 + 87 cases in fresh TRX files. All drivers held
 granted host build slots, and `git ls-remote` confirmed the fast-forward push.
 
+The R3 RC cherry-picks, in source order, are:
+
+1. `09e768077c986c5408be8d90b8ae8937f8545873`
+2. `c55c33a0779e2191245de6d625e474cda2056b40`
+3. `4b956c1c13a534f3cbb21ab76313df9435cf6543`
+4. `b7265a05aa8773f08dbf457b93c7561e7874822d`
+
+All applied cleanly, individually with `-x`, and with a clean tree between picks.
+The isolated R3 RC build used `OutputPath=bin-5160-rc-r3/` and
+`UseAppHost=false`: 2m17s, 1060 warnings, zero errors. The exact regression passed
+1/1 in 53s; the complete `PipelineSpeedIntegrationTests` class passed 36/36 in
+5m55s. Both actually used PostgreSQL; no build-only fallback was necessary. Fresh
+TRX rosters include `C1303_CardAdmissionAllowsClaimSessionInsert` in both runs.
+All three drivers held granted host build slots. Remote readback confirmed the
+fast-forward RC publication.
+
+Master advanced independently after the gate repair, through two CARD-1291 docs
+commits, to `56a1550eb895fabfac6eabc7c1ba6054128bced3`. R3's master publication
+will start at that current remote tip, in a fresh detached landing checkout.
+
 Raw build logs and TRX evidence remain ignored under
 `.antiphon/landing-evidence/`. Separate detached landing checkouts keep the
 assigned task branch unchanged except for this report. No canonical checkout,
@@ -132,5 +153,5 @@ AppHost, runner, or tag has been changed.
 
 --- next stage ---
 next: merge
-handoff: Publish R3 to RC and master with narrow verification.
+handoff: Publish R3 to current master with narrow verification.
 artifact: docs/investigations/2026-10-16-gate-contract-repair-landing.md
