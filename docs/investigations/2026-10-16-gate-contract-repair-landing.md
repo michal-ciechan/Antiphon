@@ -1,8 +1,8 @@
 # RC2 gate contract repair and CARD-1303 R3 landing
 
-Current status: in progress. The caller authorized the production policy change
+Current status: complete. The caller authorized the production policy change
 after the initial stop, citing clean Full Grok Review `3c95fb03`. The gate repair
-has been published to RC and master. R3 is published to RC; master remains pending. The
+and CARD-1303 R3 have both been published to RC and master. The
 initial stop below is retained as historical evidence.
 
 ## Initial stop (historical)
@@ -87,6 +87,7 @@ additional production changes were found.
 | Gate repair | RC | `41d6f6adf431622b3982f9ac41417a8e555072ba` | `46fd97a187866e26f56a6f261038ada4d7d57870` | Build passed; 89/89 tests passed, zero skipped |
 | Gate repair | master | `bc3168594e598cb4206b5e11f6d3aabc04561fd9` | `7bb30f231217c8a28ad549b40f7964764ebf354e` | Build passed; 89/89 tests passed, zero skipped |
 | CARD-1303 R3 | RC | `46fd97a187866e26f56a6f261038ada4d7d57870` | `b7265a05aa8773f08dbf457b93c7561e7874822d` | Build passed; regression 1/1, class 36/36 passed, zero skipped |
+| CARD-1303 R3 | master | `56a1550eb895fabfac6eabc7c1ba6054128bced3` | `cd038acb3b62efbb67431866449ed6152acdb0db` | Build passed; regression 1/1, class 36/36 passed, zero skipped |
 
 The RC gate cherry-picks are
 `48d1edaabe618087b478471693fb1f19e0954871` and
@@ -144,7 +145,48 @@ fast-forward RC publication.
 
 Master advanced independently after the gate repair, through two CARD-1291 docs
 commits, to `56a1550eb895fabfac6eabc7c1ba6054128bced3`. R3's master publication
-will start at that current remote tip, in a fresh detached landing checkout.
+started at that current remote tip, in a fresh detached landing checkout.
+
+The R3 master cherry-picks, in source order, are:
+
+1. `3f22336b467cba3ad65890e735eab78e106899c7`
+2. `2c9b6842a28b867a099fd44e7c1e8b0fc8d5b263`
+3. `57f0145bee0fc4a43621a4b099a78b320be525a9`
+4. `cd038acb3b62efbb67431866449ed6152acdb0db`
+
+All applied cleanly, individually with `-x`, and with a clean tree between picks.
+The isolated R3 master build used `OutputPath=bin-5160-master-r3/` and
+`UseAppHost=false`: 2m07s, 1062 warnings, zero errors. Its exact regression passed
+1/1 in 55s, and its complete integration class passed 36/36 in 5m43s. Fresh TRX
+rosters confirmed the regression and intended class; both used PostgreSQL. All
+three drivers held granted build slots. Remote readback confirmed the
+fast-forward master publication.
+
+### Verification selections and totals
+
+Each of the four committed landing results received one isolated build through
+`scripts/build-slot.ps1`, followed by `dotnet run --no-build` invocations through
+the same gate, using the same `OutputPath` and `UseAppHost=false` properties.
+The exact filters were:
+
+| Publication | Filter | Passed per target |
+|---|---|---:|
+| Gate repair | `/*/Antiphon.TestSupport/TestClassificationGuardTests/Registry_matches_compiled_metadata` | 1 |
+| Gate repair | `/*/Antiphon.Tests.TestHelpers/TestClassificationPolicyTests/C487_G059` | 1 |
+| Gate repair | `/*/Antiphon.Tests.Application/AbsentLaunchPolicyTests/*` | 87 |
+| R3 | `/*/*/PipelineSpeedIntegrationTests/C1303_CardAdmissionAllowsClaimSessionInsert` | 1 |
+| R3 | `/*/*/PipelineSpeedIntegrationTests/*` | 36 |
+
+Total: four successful build drivers and ten successful test drivers, all with
+granted host slots; 252 test executions passed, zero failed, zero skipped. The R3
+regression is intentionally included in both its exact-method and full-class
+executions. No whole suite or Unit-lane run was performed in this Merge pass.
+
+All three temporary landing checkouts were removed after their runs exited and
+their committed tips were confirmed published. Every owned `bin-5160-*` output
+was removed with them; a final search found none remaining. The output inventory
+and raw logs/TRX remain under the ignored evidence root. No source repair or
+manual cherry-pick conflict resolution was necessary in this pass.
 
 Raw build logs and TRX evidence remain ignored under
 `.antiphon/landing-evidence/`. Separate detached landing checkouts keep the
@@ -152,6 +194,6 @@ assigned task branch unchanged except for this report. No canonical checkout,
 AppHost, runner, or tag has been changed.
 
 --- next stage ---
-next: merge
-handoff: Publish R3 to current master with narrow verification.
+next: deploy
+handoff: Caller owns RC activation and subsequent qualification; publication is complete. AppHost, runners, canonical checkout and tags were untouched. SourceLanding Mutation controls remain separate and pending.
 artifact: docs/investigations/2026-10-16-gate-contract-repair-landing.md
