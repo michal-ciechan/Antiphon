@@ -12,7 +12,9 @@ No live rollout, drain, restart, container or server2 volume work is authorized.
 
 S1 commits native ownership regression before the fix; CP-1 must be red on the
 unmodified production seed. S2 changes only verifier dispatch, then reruns CP-1
-and runs CP-2. S3 records receipts and evidence without changing executable code.
+and runs CP-2. S3 adapts the adjacent fixture model to writer npm dispatch and
+reruns CP-2 in its own build. Preserve earlier CP-1 green evidence; its production
+seed and native harness are unchanged by S3. S4 records receipts and evidence.
 
 ## Verification design
 
@@ -57,7 +59,7 @@ the failed no-TRX attempt as infrastructure evidence, not defect reproduction.
 
 ### Cost
 
-Ordinary floor: 7 minutes plus authoring. One expected-red CP-1 run precedes
+Ordinary floor: 10 minutes plus authoring. One expected-red CP-1 run precedes
 the fix; no repeated proof after green. Checkpoint tool bootstrap is an explicit
 unlisted build through build-slot.ps1 because the tool must exist to run rows.
 
@@ -66,4 +68,4 @@ unlisted build through build-slot.ps1 because the tool must exist to run rows.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-npm-ownership/` | native-npm-ownership | `/*/*/CacheSeedNpmOwnershipTests/*` | V-1, V-2, V-3 | all 3 cases, 0 failed/skipped after S2; expected red at S1 | 3 | 5 |
-| CP-2 | S2 | CP-1 | adjacent-cache-contracts | `/*/*/RemoteScriptContractTests/(C1192_Real_cache_cases_keep_the_host_payload_backend*)\|(C1192_Fixture_seed_and_rerun_keep_payloads_in_volume*)\|(C849_Seed_refuses_invalid_donors_and_partial_payloads*)\|(C1195_Seed_import_chmod_restores_volume_root*)` | R-1, R-2, R-3 | all 4 methods, 0 failed/skipped | 4 | 2 |
+| CP-2 | S3 | `tests/Antiphon.Tests -> bin-npm-adjacent/` | adjacent-cache-contracts | `/*/*/RemoteScriptContractTests/(C1192_Real_cache_cases_keep_the_host_payload_backend*)\|(C1192_Fixture_seed_and_rerun_keep_payloads_in_volume*)\|(C849_Seed_refuses_invalid_donors_and_partial_payloads*)\|(C1195_Seed_import_chmod_restores_volume_root*)` | R-1, R-2, R-3 | all 4 methods, 0 failed/skipped | 4 | 5 |

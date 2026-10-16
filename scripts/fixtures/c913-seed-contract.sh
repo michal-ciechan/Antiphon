@@ -409,7 +409,7 @@ if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ] || [ "$mode" = vo
         if [ "$1" = npm ]; then
             [ "$role" = writer ] && [ "$#" = 5 ] && [ "$2" = cache ] \
                 && [ "$3" = verify ] && [ "$4" = --cache ] || return 94
-            [[ "$5" == /fixture/cache/stage-"$RUN"-*/npm-cache ]] || return 94
+            [[ "$5" == "$root/volumes/c849${RUN}-work/_data/cache"/stage-"$RUN"-*/npm-cache ]] || return 94
             [ "$FAULT" != npm-verify ] || return 1
             barrier after-npm-verify
             return
