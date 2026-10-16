@@ -4,6 +4,8 @@
 
 ## Source and selection
 
+**Final remote-ref change:** after all execution and report publication, `git ls-remote` observed `refs/heads/rc/2026-10-15` at `41d6f6adf431622b3982f9ac41417a8e555072ba`, rather than the initially verified pin. All results below bind only `f7900158ef3416894c720d892bb1c21cc8095057` product/test source. Per the stop-on-mismatch instruction, no execution was started against the advanced tip; this report does not qualify that current branch tip. The RC owner must reconcile the moved ref before commissioning another gate.
+
 Candidate `refs/heads/rc/2026-10-15` was verified by `git ls-remote origin refs/heads/rc/2026-10-15` as exactly `f7900158ef3416894c720d892bb1c21cc8095057` before execution. The assigned branch is `feat/card-task-ca4254f8`. RC1 comparison source is exactly `067b47e2dc903247f1a7c8aa539032cc4266e4ad`, built in the task-created detached checkout `/work/evidence/task-ca4254f8/rc1-checkout`.
 
 The [Linux qualification document](2026-10-15-card-1287-linux-unit.md), [class roster](2026-10-15-card-1287-linux-unit-roster.txt) and [literal filter](2026-10-15-card-1287-linux-unit-filter.txt) matched `origin/master` at initial inspection, `69031cfa11244dc988c8d79d3f516bc627dd3824`. The exact frozen selection and all historical exclusions were retained. The brief's explicit full frozen-roster run and isolated candidate comparisons are the verification scope; no whole-Unit or unrelated suite was added.
