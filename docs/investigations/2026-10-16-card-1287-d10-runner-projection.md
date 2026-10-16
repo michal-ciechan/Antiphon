@@ -1,4 +1,4 @@
-# D-10: runner display projection contradicts fixture-only diagnosis
+# D-10: runner display projection and snapshot correction
 
 Code/landing owner: `8aa5fb3c-2f0b-42f8-adb4-9ece8d838ea4`.
 Branch: `feat/card-task-8aa5fb3c`.
@@ -101,3 +101,15 @@ Automatic approval review rejected the containment-checked recursive removal of
 and `tests/Antiphon.E2E/bin-d10-red` with `blocked by policy`. These ignored outputs
 remain in their original locations; no process was left running and no output was
 relocated to evade the evidence policy.
+
+## Authorized continuation
+
+The caller explicitly approved the six null-to-desktop corrections and prohibited
+configuration pins for this field. The correction changes only five
+`items[].runnerId` values in `agent-tasks.json` and `summary.runnerId` in
+`agent-task-detail.json`. CARD-0710 is cited in the implementation commit.
+Full-object equality, every downstream drawer and recorded-base assertion, every
+timeout, and product behavior are unchanged. No configuration fields were added.
+The historical red and earlier blocked result above remain intact. Final CP-2
+through CP-8 results and exact tested SHA are recorded in the ignored stored task
+report after this source is committed and frozen for verification.
