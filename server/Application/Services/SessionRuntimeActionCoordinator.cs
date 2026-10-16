@@ -202,6 +202,7 @@ public sealed class SessionRuntimeActionCoordinator(
         var row = action.TranscriptEntryId is { } id
             ? await db.TranscriptEntries.AsNoTracking().SingleAsync(t => t.Id == id, ct) : null;
         var runtime = services.GetRequiredService<AgentSessionRuntime>();
+        var routed = action.Phase < QueuePhase;
         while (action.Phase < QueuePhase)
         {
             ct.ThrowIfCancellationRequested();
@@ -219,6 +220,9 @@ public sealed class SessionRuntimeActionCoordinator(
             await db.SaveChangesAsync(ct);
             return;
         }
+        // Re-select after routing so an older deferred queue wakeup can observe this
+        // replacement before the new request completes and disappears.
+        if (routed) return;
         // Re-query after routing: ingestion may have advanced while a downstream awaited.
         if (await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == action.AgentSessionId
             && a.Id != action.Id && a.Phase < QueuePhase, ct)) return;
