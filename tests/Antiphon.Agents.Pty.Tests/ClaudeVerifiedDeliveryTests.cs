@@ -77,7 +77,7 @@ public class ClaudeVerifiedDeliveryTests
             var delivery = records.Cast<Match>().Where(m =>
                 m.Value.Contains("MethodName = Fake_evidence_appears_then_submit_completes_a_turn") ||
                 m.Value.Contains("MethodName = Real_evidence_appears_then_submit_completes_a_turn")).ToArray();
-            delivery.Length.ShouldBe(5, "five expanded delivery UIDs must survive the split");
+            delivery.Length.ShouldBe(5, "five-delivery-uids: five expanded delivery UIDs must survive the split");
             delivery.Select(m => m.Groups["uid"].Value).Distinct().Count().ShouldBe(5);
             delivery.Count(m => m.Value.Contains("MethodName = Fake_")).ShouldBe(1);
             delivery.Count(m => m.Value.Contains("MethodName = Real_")).ShouldBe(4);
