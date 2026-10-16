@@ -22,7 +22,7 @@ files, replacement mappings, links, tracked paths and post-seal writes stay refu
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1310/` | mapping | `/*/*/(CheckpointCoverageMappingTests*)\|(CheckpointCoverageMappingNativeTests*)/*` | V-1,V-2,V-3 | all 15 results, 0 failed/skipped | 15 | 7 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1310/` | mapping | `/*/*/(CheckpointCoverageMappingTests*)\|(CheckpointCoverageMappingNativeTests*)/*` | V-1,V-2,V-3 | all 17 results, 0 failed/skipped | 17 | 7 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-2 | S1 | CP-1 | custody | `/*/*/(OutputCleanupTests*)\|(CheckpointOwnedOutputTests*)\|(HostCleanupCheckpointCustodyTests*)\|(HostCleanupCheckpointAuthorityTests*)/*` | R-1 | all available Windows results, report existing platform skips separately | 65 | 5 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 
 Run CP-1 red before the fix, then CP-1/CP-2 after the fix. CLI bootstrap builds

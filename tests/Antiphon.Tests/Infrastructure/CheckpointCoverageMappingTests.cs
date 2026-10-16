@@ -47,6 +47,7 @@ public sealed class CheckpointCoverageMappingTests
     [Arguments("changed")]
     [Arguments("added")]
     [Arguments("replaced")]
+    [Arguments("replaced-identical")]
     [Arguments("link")]
     [Arguments("hardlink")]
     [Arguments("tracked")]
@@ -60,6 +61,7 @@ public sealed class CheckpointCoverageMappingTests
         if (variant == "link") f.Io.Nodes[unrelated].Target = Path.Combine(f.Parent, "outside");
         if (variant == "hardlink") f.Io.Nodes[unrelated].Stat = f.Io.Nodes[unrelated].Stat with { Links = 2 };
         f.Ledger.Seal(f.Root, f.Exit);
+        if (variant == "replaced-identical") f.Io.Put(unrelated, "ORIGINAL");
         if (variant == "added") f.Io.Put(Path.Combine(f.Root, "added.txt"), "USER");
         if (variant == "tracked") f.Io.GitResult = _ => new(0, unrelated + "\0", "", false);
         f.Ledger.Remove(f.Root).ShouldNotBeNull(variant);
