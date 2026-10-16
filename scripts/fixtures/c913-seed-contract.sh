@@ -141,6 +141,7 @@ c849_status_body() {
 }
 sudo() {
     [ "$1" != -n ] || shift
+    if [ "$1" = du ] && [ "$FAULT" = preview-size ]; then printf '123\tpartial\n'; return 45; fi
     case "$1" in
         install) mkdir -p "${@: -1}" ;;
         stat) [ "$2" = -c ] && [ "$3" = '%u:%g:%a' ] && { printf '1654:1654:700\n'; return; }; command "$@" ;;

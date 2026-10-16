@@ -75,7 +75,7 @@ if [[ "$mode" == preview-* ]]; then
             link) mv "$physical" "$physical.saved"; ln -s "$physical.saved" "$physical" ;;
             escape) target="$logical/../outside"; diagnosis=CacheRecoveryInvalid ;;
             noncanonical) target="$(c849_payload_root)/../cache/recovery-$RUN"; diagnosis=CacheRecoveryInvalid ;;
-            size) du() { printf '123\tpartial\n'; return 45; }; export -f du; diagnosis=CacheRecoverySizeUnavailable ;;
+            size) FAULT=preview-size; du() { printf '123\tpartial\n'; return 45; }; export -f du; diagnosis=CacheRecoverySizeUnavailable ;;
         esac
         printf 'recovery=%s\n' "$target" > "$C849_READY"
         run c849_preview; refuse "preview-$fault-refused" "$diagnosis"
@@ -83,7 +83,7 @@ if [[ "$mode" == preview-* ]]; then
         case "$fault" in
             missing) mv "$physical.saved" "$physical" ;;
             link) rm "$physical"; mv "$physical.saved" "$physical" ;;
-            size) unset -f du ;;
+            size) FAULT=none; unset -f du ;;
         esac
         [ "$(cat "$physical/sentinel")" = recovery-payload ] || fail preview-fault-mutated-payload
     done
