@@ -174,7 +174,8 @@ public sealed partial class PipelineSpeedIntegrationTests
     private static async Task ProbeCardLockAsync(C544World w)
     {
         await using var connection = new NpgsqlConnection(w.Schema.ConnectionString); await connection.OpenAsync();
-        await using var command = new NpgsqlCommand("SELECT 1 FROM \"Cards\" WHERE \"Id\" = @id FOR UPDATE NOWAIT", connection);
+        // FK KEY SHARE alone must not satisfy the admission-fence witness.
+        await using var command = new NpgsqlCommand("SELECT 1 FROM \"Cards\" WHERE \"Id\" = @id FOR NO KEY UPDATE NOWAIT", connection);
         command.Parameters.AddWithValue("id", w.Card.Id);
         var error = await Should.ThrowAsync<PostgresException>(() => command.ExecuteScalarAsync(), "admission-waits-for-card-lock");
         error.SqlState.ShouldBe(PostgresErrorCodes.LockNotAvailable, "admission-waits-for-card-lock");
