@@ -422,7 +422,7 @@ if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ] || [ "$mode" = vo
         fi
         if [ "${2:-}" = -c ]; then
             local script="$3"
-            script="${script//\/fixture/$root/volumes/c849${RUN}-work/_data}"
+            script="${script//\/fixture\//$root/volumes/c849${RUN}-work/_data/}"
             shift 3
             local -a args=()
             for arg in "$@"; do
@@ -433,7 +433,7 @@ if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ] || [ "$mode" = vo
             return
         fi
         code=$(cat)
-        code="${code//\/fixture/$root/volumes/c849${RUN}-work/_data}"
+        code="${code//\/fixture\//$root/volumes/c849${RUN}-work/_data/}"
         local -a args=()
         for arg in "$@"; do
             case "$arg" in /fixture|/fixture/*) arg="$root/volumes/c849${RUN}-work/_data${arg#/fixture}" ;; esac
