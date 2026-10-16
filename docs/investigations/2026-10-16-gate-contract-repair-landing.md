@@ -2,8 +2,8 @@
 
 Current status: in progress. The caller authorized the production policy change
 after the initial stop, citing clean Full Grok Review `3c95fb03`. The gate repair
-has been published to RC. Its master publication and both R3 publications remain
-pending. The initial stop below is retained as historical evidence.
+has been published to RC and master. Both R3 publications remain pending. The
+initial stop below is retained as historical evidence.
 
 ## Initial stop (historical)
 
@@ -85,6 +85,7 @@ additional production changes were found.
 | Publication | Target | Old SHA | New SHA | Verification |
 |---|---|---|---|---|
 | Gate repair | RC | `41d6f6adf431622b3982f9ac41417a8e555072ba` | `46fd97a187866e26f56a6f261038ada4d7d57870` | Build passed; 89/89 tests passed, zero skipped |
+| Gate repair | master | `bc3168594e598cb4206b5e11f6d3aabc04561fd9` | `7bb30f231217c8a28ad549b40f7964764ebf354e` | Build passed; 89/89 tests passed, zero skipped |
 
 The RC gate cherry-picks are
 `48d1edaabe618087b478471693fb1f19e0954871` and
@@ -98,6 +99,32 @@ All four drivers held granted host build slots. Fresh TRX files verified the
 registry method (1), `C487_G059` (1), and the complete `AbsentLaunchPolicyTests`
 class (87), including `C1149_Queue_columns_are_accounted_for`.
 
+The master gate cherry-picks are
+`398d3cddd3456c0e976ca955fe2538214cf63fad` and
+`7bb30f231217c8a28ad549b40f7964764ebf354e`. Both applied cleanly, with `-x`
+provenance and a clean tree between them. No registry conflict occurred on current
+master; Git automatically retained the reviewed superset, and the resulting
+registry is byte-identical to the repair source's registry. No existing entry was
+removed. The resulting hunk is:
+
+```diff
+ # CARD-1032 S7: real PostgreSQL, scratch Git, phone-home recipient and receipt refusal matrices.
+ Antiphon.Tests.Application.CardWorktreeMirrorCleanupTests
++# CARD-1259: isolated PostgreSQL commit faults, durable action debt and hosted worker lifecycle.
+ Antiphon.Tests.Application.SessionRuntimeActionTests
+ # CARD-1259: isolated schema recovery, real queue and retained transcript leases.
+ Antiphon.Tests.Application.SessionRuntimeActionRecoveryTests
+ # CARD-1259: hosted pump, actual review producer and real queue receipts on isolated schemas.
+ Antiphon.Tests.Application.SessionRuntimeActionRoutingTests
++# CARD-1259: isolated schemas, real queue deferral/backoff and transcript retention leases.
++Antiphon.Tests.Application.SessionRuntimeActionDeferralTests
+```
+
+The master gate build used `OutputPath=bin-5160-master-gate/` and
+`UseAppHost=false`, finishing in 2m03s with 1062 warnings and zero errors. The
+same three selections passed 1 + 1 + 87 cases in fresh TRX files. All drivers held
+granted host build slots, and `git ls-remote` confirmed the fast-forward push.
+
 Raw build logs and TRX evidence remain ignored under
 `.antiphon/landing-evidence/`. Separate detached landing checkouts keep the
 assigned task branch unchanged except for this report. No canonical checkout,
@@ -105,5 +132,5 @@ AppHost, runner, or tag has been changed.
 
 --- next stage ---
 next: merge
-handoff: Continue master gate repair, then publish R3 to RC and master with narrow verification.
+handoff: Publish R3 to RC and master with narrow verification.
 artifact: docs/investigations/2026-10-16-gate-contract-repair-landing.md
