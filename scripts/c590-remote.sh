@@ -5245,12 +5245,12 @@ case_runner_cache_inventory() {
             "$container" > "$CASE_DIR/$runner-mounts.txt" || write_result false CacheInventoryMountsUnavailable 2
         if [ "$running" = true ]; then
             docker exec -u 1654:1654 -e HOME=/home/app "$container" /bin/sh -c '
-                dotnet nuget locals all --list
-                npm config get cache
+                dotnet nuget locals all --list || exit $?
+                npm config get cache || exit $?
                 for p in /home/app/.nuget/packages /home/app/.npm/_cacache /home/app/.local/share/NuGet/http-cache /tmp/NuGetScratchapp; do
-                    if [ -d "$p" ]; then du -s -B1 "$p"; else printf "absent %s\n" "$p"; fi
+                    if [ -d "$p" ]; then du -s -B1 "$p" || exit $?; else printf "absent %s\n" "$p"; fi
                 done
-                stat -c "%u:%g %a %n" /tmp /home/app/.nuget/packages
+                stat -c "%u:%g %a %n" /tmp /home/app/.nuget/packages || exit $?
             ' > "$CASE_DIR/$runner-cache-paths.txt" || write_result false CacheInventoryPathsUnavailable 2
         else printf 'stopped\n' > "$CASE_DIR/$runner-cache-paths.txt"; fi
     done
