@@ -4,6 +4,11 @@ Task: feb1f83b-6798-4f04-a6f5-b8c52ede4c1b (Deploy, CARD-1311).
 Requested release: `rc/2026-10-15` at exactly
 `b7265a05aa8773f08dbf457b93c7561e7874822d`.
 
+Latest status (11:11 UTC): the caller activated canonical/AppHost/desktop on RC.
+The resumed server2 rollout stopped at the cache Fixture prerequisite with
+`FixtureSeedFailed`; server2 still accepts work on its previous image. See the
+appended resumption record. The original first-attempt record below is retained.
+
 Outcome: **blocked before switching or restarting anything**. The local execution
 process is in a Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
 The canonical restart implementation has no Scheduled Task handoff, and the
@@ -126,4 +131,66 @@ recovery. This pass made no such workaround. No half-switched stack was left.
 --- next stage ---
 next: Deploy
 handoff: Blocked on a documented independent AppHost restart environment (or separately reviewed CARD-0381 repair). Preserve canonical patches; activate exactly b7265a05aa8773f08dbf457b93c7561e7874822d, keep canonical pinned, recheck live task/land gates, verify AppHost and desktop runner, then execute all server2 rolling gates with the same SHA.
+artifact: docs/investigations/2026-10-16-rc-activation.md
+
+## Resumption: caller activated RC; server2 cache prerequisite failed
+
+At resumption the caller reported that, from its independent environment, it had
+pinned canonical detached at the requested RC, restarted AppHost successfully,
+verified exact API SHA plus `land-v2`, passed `verify-dev-stack.ps1 -SkipBrowser`,
+and soft-restarted the healthy desktop runner. Those restart/verification results
+are caller evidence. This resumed pass did not restart or change either service,
+switch canonical, or change its untracked patches.
+
+All commands below ran from `C:\src\Antiphon`, except report editing/commit/push
+in the assigned task worktree. Each rolling invocation supplied
+`-Rolling -Sha b7265a05aa8773f08dbf457b93c7561e7874822d` and the explicit project
+`-ProjectId d4ea7ae9-e769-474b-95b9-aa25fbc1303f`. Every command was awaited.
+
+| UTC on 2026-10-16 | Gate / observation | Result |
+|---|---|---|
+| 11:08:17 | Read the canonical RC rollout owner and scripts; inspect canonical and API identity | Canonical detached at `b7265a05aa8773f08dbf457b93c7561e7874822d`; only the original two untracked patches; API exact same SHA with `land-v2`; `/health` HTTP 200. |
+| 11:08:25–11:08:45 | `deploy-server2.ps1 ... -Phase check-census -ProjectId d4ea7ae9-e769-474b-95b9-aa25fbc1303f` | Exit 0. Project Antiphon resolved explicitly. Main: open=11, boundOpen=3, landPending=0, scopes=2. Temp: open=11, boundOpen=0, landPending=0, scopes=2. Receipt root `C:\src\Antiphon\.antiphon\rolling-server2\c72737a9b4c10a82`. |
+| 11:08:49–11:08:54 | `deploy-server2.ps1 ... -Phase check-host-jq -ProjectId d4ea7ae9-e769-474b-95b9-aa25fbc1303f` | Exit 0, qualified existing `/usr/local/bin/jq`, jq-1.7.1, uid/gid 0, mode 755; trueExit=0, falseExit=1, installed=false. Digest `5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5`. No provision phase: the documented provision authorization is only `HostJqMissing`, which did not occur. Check/no-op receipt retained. |
+| 11:09:05–11:10:30 | `verify-card0849-caches.ps1 -Case Fixture -Sha b7265a05aa8773f08dbf457b93c7561e7874822d` | **Failed**, wrapper exit 1; case receipt `accepted=false`, `diagnosis=FixtureSeedFailed`, `exit=2`. Local result lastWriteTimeUtc `2026-10-16T11:10:30.4428303Z`. Mandatory stop before Inventory, Seed or gate 1. |
+| During failed Fixture | stderr symptom | Twice: `rm: cannot remove '/fixture/cache/stage-c8490fb677fc8c7642420-37NLzwfN/npm-cache/_logs/2026-10-16T11_10_17_996Z-debug-0.log': Permission denied`. This is observed failure context, not a proven root-cause attribution. No repair, permission change or retry was attempted. |
+| 11:10:54–11:10:57 | Read main/temp status and canonical state after stop | Main healthy/accepting and not draining, buildVersion still `7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce`; sessions=3, runnerSessions=3, queuedTasks=0. Temp remains offline, not eligible/accepting, draining toward main, retireWhenIdle=true, retiredAt `2026-10-11T14:23:12.192262+00:00`; sessions=0, queuedTasks=0, runnerSessions=null. Canonical remains detached at requested RC with the two patches. |
+| 11:10:54 | Read-only SSH container census | Main container `fc2983ea4991fe85b31f54ee2ef66150e0d8fef03897d6cf1c2d6ca9c0889832`, StartedAt `2026-10-11T13:42:57.09302366Z`, image ID `sha256:ea8bafe24373694b3421d63afdffb4533faf0710f709d96dea661123b55e6835`. Main container SOURCE_REVISION is `7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce`. Temp Compose project census (including stopped containers) returned no IDs, SSH exit 0. |
+| 11:10:54 | Requested pipeline URL `/api/agent-tasks/pipeline?unscoped=false&projectId=d4ea7ae9-e769-474b-95b9-aa25fbc1303f` | HTTP 422 `validation_failed`: `projectId and unscoped are mutually exclusive.` This is not evidence of no Working tasks. No drain was attempted. |
+| 11:11:20 | Documented project-only pipeline query `/api/agent-tasks/pipeline?projectId=d4ea7ae9-e769-474b-95b9-aa25fbc1303f` | Successful snapshot: only Working row is this Deploy `feb1f83b-6798-4f04-a6f5-b8c52ede4c1b`; Plan `58a7e5b9-30a8-4b75-b716-5ad6e321893a` is Dispatched. Pipeline row runnerId is not exposed, so no runner assignment is inferred from it. Runner defaults revision 2, global server2, no kind overrides. Re-read and resolve task runner identity before any future drain. |
+| 11:11:20 | Read-only SSH image identity | The main image's `org.opencontainers.image.revision` label is `7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce`, matching registered buildVersion and differing from requested RC. No claim of RC activation on server2. |
+
+Retained generated evidence (ignored, not committed):
+
+- Census: `C:\src\Antiphon\.antiphon\rolling-server2\c72737a9b4c10a82\`.
+- Host jq: `C:\src\Antiphon\.antiphon\rolling-server2\c72791dac230f7e6\host-jq-check-host-jq.json`,
+  observedAtUtc `2026-10-16T11:08:53.4175233Z`, sshExit=0, requested source SHA.
+- Fixture wrapper: `C:\src\Antiphon\.antiphon\c849-c8490fb677fc8c764242\0\c590-result.json`.
+- Fixture case: `C:\src\Antiphon\.antiphon\c849-c8490fb677fc8c764242\0\runner-cache-fixture\c590-result.json`.
+  Both result files contain `{"accepted":false,"diagnosis":"FixtureSeedFailed","exit":2}`.
+  Case receipts record two completed groups (`PASS F-1`, `PASS F-2`) and 15
+  expected-red control observations before the failure; these do **not** make
+  the fixture pass. The fixture cleanup-residue and cleanup-ledger files were
+  empty when read. Remote gate evidence is under
+  `/work/test-evidence/c8490fb677fc8c7642420/runner-cache-fixture/` (manifest
+  runId `c8490fb677fc8c7642420`, source SHA exactly the requested RC).
+
+Resumed verification totals: **2 prerequisite checks passed; 1 cache Fixture
+command failed**. No full test suite or standalone build was run. Inventory,
+Seed, deploy-temp, temp smoke/canary, drain-old, redeploy-old, main smoke/Both,
+drain-temp and retire-temp were **not run**, because the earlier mandatory
+prerequisite failed. No standing runner was stopped, replaced or drained; no
+sessions were killed. No background command remains owned by this pass.
+
+Next action belongs to the caller: commission a bounded investigation/repair of
+the cache fixture's seed/cleanup permission failure on the requested RC. Retain
+the receipts; do not bypass Fixture, reset caches, change live ownership, or
+restart services as an improvised recovery. Resume the full remaining staged
+sequence only after the prerequisite is qualified, with canonical still pinned
+to the intended RC and a fresh task/land census. If a source repair changes the
+release SHA, the caller must explicitly supply the new tested RC target.
+
+--- next stage ---
+next: Debug
+handoff: Investigate FixtureSeedFailed at RC b7265a05aa8773f08dbf457b93c7561e7874822d using retained c849-c8490fb677fc8c764242 evidence; permission-denied fixture npm log observed. Server2 remains accepting on 7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce; temp retired/absent; no drain/deploy occurred. Preserve canonical RC and user patches, and do not bypass the cache prerequisite. After qualified recovery, resume Deploy from fresh preconditions.
 artifact: docs/investigations/2026-10-16-rc-activation.md
