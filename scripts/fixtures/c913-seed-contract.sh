@@ -24,7 +24,7 @@ mkdir -p "$SERVER2_ROOT/cache" "$CASE_DIR" "$root/bin" "$root/donor/packages" "$
 c849_fixture_case_bind
 for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do mkdir -m 700 -p "$root/volumes/$name/_data"; done
 printf outside > "$root/outside"
-for command in dotnet npm curl pwsh; do
+for command in dotnet npm curl pwsh docker; do
     printf '#!/bin/sh\nprintf "DENIED %%s\\n" "$0" >> "$C913_ROOT/denied"\nexit 93\n' > "$root/bin/$command"
     chmod 755 "$root/bin/$command"
 done
@@ -141,6 +141,7 @@ c849_status_body() {
 }
 sudo() {
     [ "$1" != -n ] || shift
+    if [ "$1" = du ] && [ "$FAULT" = preview-size ]; then printf '123\tpartial\n'; return 45; fi
     case "$1" in
         install) mkdir -p "${@: -1}" ;;
         stat) [ "$2" = -c ] && [ "$3" = '%u:%g:%a' ] && { printf '1654:1654:700\n'; return; }; command "$@" ;;
@@ -223,6 +224,7 @@ docker() {
       stop:*) barrier before-stop; [ "$FAULT" != stop ] || return 1; printf 'stop\n' >> "$root/trace"; barrier after-stop ;;
       start:*) barrier before-restart; [ "$FAULT" != restart ] || return 1; printf 'restart\n' >> "$root/trace"; barrier after-restart ;;
       rm:*)
+        if [ "$FAULT" = helper-remove ] && [ "${@: -1}" = "c849-seed-$RUN" ]; then return 1; fi
         if [ "${@: -1}" = dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd ]; then rm -f "$root/seed-helper"; fi
         if [ "${@: -1}" = "$donor_id" ]; then rm -f "$root/donor-project"; fi
         return 0 ;;
@@ -397,7 +399,7 @@ c913_fixture_wrapper() (
 )
 
 # S5: controller admission and helper filesystem recipients, without a Docker daemon.
-if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ] || [ "$mode" = volume-prune ]; then
+if [ "$mode" = fixture-seed ] || [ "$mode" = seed-metadata ] || [ "$mode" = volume-recovery ] || [ "$mode" = volume-prune ] || [ "$mode" = preview-volume ] || [ "$mode" = fixture-prune ] || [[ "$mode" == prune-diagnostic-* ]]; then
     mkdir -p "$CASE_DIR/fixture-controller" "$root/volumes/c849${RUN}-work/_data/cache"
     printf '%s\n' "c849${RUN}-work" > "$CASE_DIR/.fixture-volumes"
     c849_payload_own volume
@@ -422,7 +424,7 @@ if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ] || [ "$mode" = vo
         fi
         if [ "${2:-}" = -c ]; then
             local script="$3"
-            script="${script//\/fixture/$root/volumes/c849${RUN}-work/_data}"
+            script="${script//\/fixture\//$root/volumes/c849${RUN}-work/_data/}"
             shift 3
             local -a args=()
             for arg in "$@"; do
@@ -433,7 +435,7 @@ if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ] || [ "$mode" = vo
             return
         fi
         code=$(cat)
-        code="${code//\/fixture/$root/volumes/c849${RUN}-work/_data}"
+        code="${code//\/fixture\//$root/volumes/c849${RUN}-work/_data/}"
         local -a args=()
         for arg in "$@"; do
             case "$arg" in /fixture|/fixture/*) arg="$root/volumes/c849${RUN}-work/_data${arg#/fixture}" ;; esac
@@ -442,6 +444,12 @@ if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ] || [ "$mode" = vo
         "${args[@]}" <<< "$code"
     }
 fi
+case "$mode" in
+ preview-*|fixture-prune|prune-diagnostic-*|inventory-running)
+    source "$repo/scripts/fixtures/cache-fixture-completion.sh"
+    [ ! -e "$root/denied" ] || fail unexpected-external-call
+    exit 0 ;;
+esac
 case "$mode" in
  fixture-seed)
     ordinary "$root/donor"
@@ -505,6 +513,49 @@ case "$mode" in
     run c913_fixture_wrapper; refuse fixture-wrapper-failure-no-success FixtureSeedFailed
     ! grep -q '^true ' "$root/outer-results" || fail fixture-wrapper-failure-no-success
     [ ! -e "$SERVER2_ROOT/cache/fixture-seed-ready" ] || fail fixture-wrapper-failure-no-marker
+    ;;
+ seed-metadata)
+    ordinary "$root/donor"
+    physical="$root/volumes/c849${RUN}-work/_data/cache/recovery-$RUN"
+    sha256sum() {
+        if [ "$FAULT" = manifest-hash ] && [[ "$*" == *recovery.manifest ]]; then
+            printf 'partialhash\n'
+            return 41
+        fi
+        command sha256sum "$@"
+    }
+    du() {
+        if [ "$FAULT" = package-bytes ] && [[ "$*" == */packages ]]; then
+            printf '12\tpartial\n'
+            return 43
+        fi
+        if [ "$FAULT" = npm-bytes ] && [[ "$*" == */npm ]]; then
+            printf '12\tpartial\n'
+            return 43
+        fi
+        command du "$@"
+    }
+    export -f sha256sum du
+    for FAULT in manifest-hash package-bytes npm-bytes; do
+        rm -f -- "$C849_READY"
+        rm -rf -- "$physical"
+        for name in "$C849_PACKAGES" "$C849_NPM"; do
+            find "$root/volumes/$name/_data" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+        done
+        : > "$root/trace"
+        run c849_seed
+        refuse "seed-$FAULT-refused" CacheSeedMetadataFailed
+        [ ! -e "$C849_READY" ] || fail "seed-$FAULT-published"
+        ! grep -q 'RESULT true' "$root/out" || fail "seed-$FAULT-success"
+    done
+    ;;
+ seed-helper-removal)
+    ordinary "$root/donor"
+    FAULT=helper-remove
+    run c849_seed
+    refuse seed-helper-removal-refused CacheSeedHelperRemovalFailed
+    [ ! -e "$C849_READY" ] || fail seed-helper-removal-published
+    ! grep -q 'RESULT true' "$root/out" || fail seed-helper-removal-success
     ;;
  volume-recovery)
     recovery="/fixture/cache/recovery-$RUN"
