@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([string]$Case, [string]$ResultsDirectory)
+param([string]$Case, [string]$ResultsDirectory, [string]$FilterHost)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/nightly-common.ps1"
 . "$PSScriptRoot/lib/nightly-policy.ps1"
@@ -220,6 +220,36 @@ function Test-C1313_InvalidGraph {
     }
     Assert-C487 ($graphBad.Count -eq 0) 'C1313 invalid-graph' ($graphBad -join ',')
     Assert-C487 ($ruleBad.Count -eq 0) 'C1313 invalid-rule' ($ruleBad -join ',')
+}
+
+function Invoke-C1313FilterChild($Arguments,$LogPath) {
+    . "$PSScriptRoot/lib/checkpoint-process-runner.ps1"
+    $start=[Diagnostics.ProcessStartInfo]::new('dotnet');$start.WorkingDirectory=$ResultsDirectory
+    $start.Environment['C1313_SENTINEL']=Join-Path $ResultsDirectory 'forbidden.txt'
+    foreach($arg in @($FilterHost)+$Arguments){$start.ArgumentList.Add($arg)}
+    $r=[Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start,30000,$false)
+    [IO.File]::WriteAllText($LogPath,$r.Stdout+$r.Stderr)
+    if($r.TimedOut){throw 'owned filter child timeout'}
+    return $r
+}
+function Get-C1313FilterDiscovery {
+    $dir=Join-Path $ResultsDirectory 'discovery';[void](New-Item -ItemType Directory $dir)
+    $r=Invoke-C1313FilterChild @('--list-tests','--no-progress','--no-ansi','--diagnostic','--diagnostic-output-directory',$dir,'--results-directory',$dir) (Join-Path $dir 'stdout.txt')
+    if($r.Exit -ne 0){throw 'discovery child failed'}
+    $parsed=ConvertFrom-NightlyDiagnosticLog (Get-NightlyLatestDiagnosticLog $dir) discovery
+    return ConvertTo-NightlyDiscoveryDocument $parsed.Nodes (Get-NightlyAssemblyHash $FilterHost)
+}
+function Test-C1313_ExactExpandedExecution {
+    . "$PSScriptRoot/lib/nightly-tests-impl.ps1"
+    $discovery=Get-C1313FilterDiscovery
+    $expected=@($discovery.nodes | Where-Object {$_.type -ceq 'C1313Offline' -and $_.method -cin @('One','Rows')})
+    $dir=Join-Path $ResultsDirectory 'execution';[void](New-Item -ItemType Directory $dir)
+    # Red-first: exercise the actual legacy prefix compiler, with harmless forbidden children.
+    $args=@(Get-NightlyNativeExecutionArguments (Join-Path $dir 'run.trx') $dir @('C1313Offline'))
+    $run=Invoke-C1313FilterChild $args (Join-Path $dir 'stdout.txt')
+    $actual=ConvertFrom-NightlyDiagnosticLog (Get-NightlyLatestDiagnosticLog $dir) execution
+    Assert-C487 ($expected.Count -eq 4 -and $actual.Nodes.Count -eq 4 -and (Same-C1313Set $actual.Nodes.Uid $expected.uid)) 'C1313 exact-uid-union' ($actual.Nodes.Uid -join ',')
+    Assert-C487 (-not (Test-Path (Join-Path $ResultsDirectory 'forbidden.txt'))) 'C1313 forbidden-not-launched'
 }
 
 & "Test-$Case"
