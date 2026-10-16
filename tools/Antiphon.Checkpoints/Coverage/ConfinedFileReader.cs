@@ -1,4 +1,5 @@
 using System.Text;
+using System.Security.Cryptography;
 using Antiphon.HostCleanup.Checkpoints;
 
 namespace Antiphon.Checkpoints.Coverage;
@@ -37,6 +38,24 @@ public static class ConfinedFileReader
     public static byte[] ReadBytes(CheckpointCleanupContext context, string root, string path, int limit,
         Action? afterVerification = null, CancellationToken cancellationToken = default)
     {
+        using var content = new MemoryStream();
+        ReadContent(context, root, path, limit, 8192, (buffer, count) => content.Write(buffer, 0, count),
+            afterVerification, cancellationToken);
+        return content.ToArray();
+    }
+
+    public static (long Length, string Sha256) Hash(CheckpointCleanupContext context, string root, string path, int limit,
+        CancellationToken cancellationToken = default)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var length = ReadContent(context, root, path, limit, 64 * 1024,
+            (buffer, count) => hash.AppendData(buffer, 0, count), null, cancellationToken);
+        return (length, Convert.ToHexString(hash.GetHashAndReset()));
+    }
+
+    private static long ReadContent(CheckpointCleanupContext context, string root, string path, int limit,
+        int bufferSize, Action<byte[], int> consume, Action? afterVerification, CancellationToken cancellationToken)
+    {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3), context.Time);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         deadline.Token.ThrowIfCancellationRequested();
@@ -62,14 +81,15 @@ public static class ConfinedFileReader
         if (metadata.Size > (ulong)limit) throw new InvalidDataException("selected file exceeds size limit");
         afterVerification?.Invoke();
         using var stream = handle.OpenStream();
-        using var content = new MemoryStream();
-        var buffer = new byte[8192];
+        var buffer = new byte[bufferSize];
+        long length = 0;
         int count;
-        while ((count = stream.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, limit - (int)content.Length + 1)), deadline.Token).AsTask().WaitAsync(deadline.Token).GetAwaiter().GetResult()) != 0)
+        while ((count = stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, (long)limit - length + 1)), deadline.Token).AsTask().WaitAsync(deadline.Token).GetAwaiter().GetResult()) != 0)
         {
-            if (content.Length + count > limit) throw new InvalidDataException("selected file exceeds size limit");
-            content.Write(buffer, 0, count);
+            if (length + count > limit) throw new InvalidDataException("selected file exceeds size limit");
+            consume(buffer, count);
+            length += count;
         }
-        return content.ToArray();
+        return length;
     }
 }

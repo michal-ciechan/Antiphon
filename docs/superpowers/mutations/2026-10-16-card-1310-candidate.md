@@ -13,6 +13,9 @@ mutant was run by Code. Bind to the published source before execution.
 | PC-4 | CheckpointCoverageMappingNativeTests | omit Windows custody; omit owner-only root check; omit exit bound | exact Native_build_append_and_child_output_are_sealed_and_removed, Windows_root_with_other_writers_does_not_adopt_child_output, Native_child_write_after_build_exit_is_retained methods respectively |
 | PC-5 | CheckpointCoverageMappingNativeTests.Windows_copied_old_timestamps_inside_creation_window_are_adopted | restore the Windows change-time lower bound | copied-output adoption/cleanup assertion |
 | PC-6 | CheckpointCoverageMappingNativeTests.Windows_file_created_before_root_is_retained | omit the Windows creation-time lower bound | refusal/preservation assertion |
+| PC-7 | CheckpointCoverageMappingNativeTests.Large_child_output_is_streamed_and_tail_changes_are_detected | restore 64 MiB output cap; materialize output bytes; omit final chunk from hash | adoption, allocation-bound or tail-change assertion respectively |
+| PC-8 | CheckpointCoverageMappingTests.Output_above_one_gib_ceiling_is_refused_before_streaming | remove/raise opened-handle output ceiling | refusal and zero stream-open assertion |
+| PC-9 | CheckpointConfinementLedgerTests.Large_ignored_output_is_hashed_and_tail_rewrite_is_refused | restore capped receipt reader in ledger; omit content hash/tail; skip strict admission or final rehash | unchanged-ledger or changed-tail assertions |
 
 Mutation owns additional missing-control discovery, native Windows variants, and
 red/restore/green. Do not widen deadlines or weaken assertions. Restart: none.
