@@ -2964,6 +2964,28 @@ c849_fixture_control_output() {
     [ "$control_code" != 0 ]
 }
 
+# Preserve inner verdicts without exporting arbitrary command output or payloads.
+# The atomic case publisher retains its directory/identity/link protections.
+c849_fixture_inner() {
+    local inner_phase="$1"
+    shift
+    case "$inner_phase" in seed|seed-rerun|prune-preview|prune-apply|inventory) ;; *) return 2 ;; esac
+    (
+        inner_recorded=0
+        trap 'inner_exit=$?; if [ "$inner_recorded" = 0 ]; then c849_fixture_write "$CASE_DIR/fixture-$inner_phase.txt" replace printf "diagnosis=UnhandledExit\nexit=%s\n" "$inner_exit" || exit 2; fi' EXIT
+        write_result() {
+            local inner_diagnosis="${2%% *}"
+            if [ "$1" = true ] && [ "$3" = 0 ]; then inner_diagnosis=OK; fi
+            [[ "$inner_diagnosis" =~ ^[A-Za-z][A-Za-z0-9]{0,95}$ ]] || inner_diagnosis=InnerFailure
+            c849_fixture_write "$CASE_DIR/fixture-$inner_phase.txt" replace printf 'diagnosis=%s\nexit=%s\n' "$inner_diagnosis" "$3" || exit 2
+            inner_recorded=1
+            printf '%s\n' "$inner_diagnosis"
+            exit "$3"
+        }
+        "$@"
+    )
+}
+
 c849_fixture_control() {
     local id="$1" diagnosis="$2" actual code=0
     actual="$CASE_DIR/.control-$id"
@@ -3851,12 +3873,11 @@ c849_fixture_seed() {
     c849_fixture_control PC-11 CacheDonorIdentityInvalid c849_fixture_wrong_donor
     # c849_seed's success calls write_result, which would publish the case receipt from this
     # subshell and leave the parent WROTE flag at 0. Print and exit the subshell only.
-    ( write_result() { printf '%s\n' "$2"; exit "$3"; }
-      c849_status_zero() {
+    ( c849_status_zero() {
           [ "$1" = server2-temp ] || return 1
           [ "$(docker inspect -f '{{.State.Running}}' "$donor")" = true ]
       }
-      c849_seed ) || write_result false FixtureSeedFailed 2
+      c849_fixture_inner seed c849_seed ) || write_result false FixtureSeedFailed 2
     [ -s "$CASE_DIR/smoke-summary.txt" ] && [ -s "$C849_READY" ] \
         || write_result false FixtureSeedMarkerOrderInvalid 2
     recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
@@ -3873,9 +3894,8 @@ c849_fixture_seed() {
         --mount "type=volume,source=$C849_PACKAGES,target=/cache,volume-nocopy" "$image" \
         -c 'printf "keep-after-rerun\n" > /cache/rerun-sentinel' \
         || write_result false FixtureSeedRerunSetupFailed 2
-    ( write_result() { printf '%s\n' "$2"; exit "$3"; }
-      c849_status_zero() { [ "$1" = server2-temp ] && [ "$(docker inspect -f '{{.State.Running}}' "$donor")" = true ]; }
-      c849_seed ) || write_result false FixtureSeedRerunFailed 2
+    ( c849_status_zero() { [ "$1" = server2-temp ] && [ "$(docker inspect -f '{{.State.Running}}' "$donor")" = true ]; }
+      c849_fixture_inner seed-rerun c849_seed ) || write_result false FixtureSeedRerunFailed 2
     docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
         --mount "type=volume,source=$C849_PACKAGES,target=/cache,volume-nocopy" "$image" \
         -c 'test "$(cat /cache/rerun-sentinel)" = keep-after-rerun' \
@@ -4692,7 +4712,7 @@ c849_fixture_prune() {
     c849_fixture_assign_budget C849_FIXTURE_NPM_BUDGET "$C849_NPM" npm-content 2147483648
     [ "$C849_FIXTURE_PACKAGES_BUDGET" -gt 0 ] && [ "$C849_FIXTURE_NPM_BUDGET" -gt 0 ] \
         || write_result false FixtureBudgetInvalid 2
-    ( write_result() { printf '%s\n' "$2"; exit "$3"; }; c849_preview ) \
+    c849_fixture_inner prune-preview c849_preview \
         || write_result false FixturePrunePreviewFailed 2
     C590_PREVIEW_RUN="$RUN"
     printf 'runners=busy processes=0 leases=0\n' > "$SERVER2_ROOT/fixture-consumers.txt"
@@ -4711,7 +4731,7 @@ c849_fixture_prune() {
     c849_payload_fs writer 'mv "$1" "$2"' bash "$recovery" "$recovery.missing" || write_result false FixtureControlSetupFailed 2
     c849_fixture_control PC-25 CacheRecoveryMissing c849_fixture_prune_case
     c849_payload_fs writer 'mv "$1" "$2"' bash "$recovery.missing" "$recovery" || write_result false FixtureControlSetupFailed 2
-    ( write_result() { printf '%s\n' "$2"; exit "$3"; }; c849_prune ) \
+    c849_fixture_inner prune-apply c849_prune \
         || write_result false FixturePruneApplyFailed 2
     [ -s "$CASE_DIR/prune.txt" ] && [ -s "$CASE_DIR/smoke-summary.txt" ] \
         || write_result false FixturePruneReceiptMissing 2
@@ -4887,8 +4907,7 @@ c849_fixture_evidence_payloads() {
 
 c849_fixture_evidence() {
     ( TEMP_PROJECT=antiphon-runner-temp
-      write_result() { printf '%s\n' "$2"; exit "$3"; }
-      case_runner_cache_inventory ) >/dev/null \
+      c849_fixture_inner inventory case_runner_cache_inventory ) >/dev/null \
         || write_result false FixtureInventoryFailed 2
     [ -s "$CASE_DIR/server2-status.json" ] && [ -s "$CASE_DIR/server2-temp-status.json" ] \
         || write_result false FixtureInventoriesMissing 2
