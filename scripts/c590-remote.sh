@@ -2380,7 +2380,8 @@ c849_seed() {
         "${helper_release[@]}" "$helper" >/dev/null 2>&1 || true
         c849_seed_failure "$donor" CacheSeedSmokeFailed
     fi
-    "${helper_release[@]}" "$helper" >/dev/null 2>&1 || true
+    "${helper_release[@]}" "$helper" >/dev/null 2>&1 \
+        || c849_seed_failure "$donor" CacheSeedHelperRemovalFailed
     recovery="$(c849_payload_root)/recovery-$RUN"
     c849_payload_fs reader '[ ! -e "$1" ] && [ ! -L "$1" ]' bash "$recovery" || c849_seed_failure "$donor" CacheRecoveryExists
     c849_payload_fs writer 'mv "$1" "$2"' bash "$stage" "$recovery" || c849_seed_failure "$donor" CacheRecoverySaveFailed
