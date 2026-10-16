@@ -44,10 +44,17 @@ Three launches, each after a fresh 10013 proof, none of them a prompt submission
 1. `node.exe` plus `codex.js`. Node aborted with `EPERM` on `lstat` of `C:\` before the native binary. The npm launcher is unusable in this container.
 2. Native `codex.exe` with `CODEX_HOME` set to the scratch directory. The grid showed `Error finding codex home: failed to canonicalize CODEX_HOME ... Access is denied. (os error 5)`. `codex.exe --version` still printed `codex-cli 0.160.0`.
 3. Native `codex.exe` with `CODEX_HOME` unset. `--version` printed `codex-cli 0.160.0` plus a non-fatal PATH-alias warning. The TUI then stopped with `Error finding codex home: Could not find home directory`.
+4. After the refinement, native `codex.exe` with `CODEX_HOME` set to the verbatim `\\?\` scratch home, and again with `\\.\GLOBALROOT\Device\HarddiskVolume3\...`. Both exited 1 with `failed to canonicalize CODEX_HOME ... Access is denied. (os error 5)`. Neither reached a banner.
 
 No startup, trust, ready, working, update, or done screen was produced. The usage-limit line was not written, because there is no captured session to attach it to. Existing adapter, detector, and readiness tests were not re-run: there is no new fixture for them to load. Linux results from the 2026-10-15 raw-parser slice stay historical. Windows checkpoint rows were not run.
 
 This is the same split as [openai/codex#45871](https://github.com/openai/codex/issues/45871) (open; `find_codex_home` still canonicalizes on the 0.160.0 sources) and [microsoft/mxc#694](https://github.com/microsoft/mxc/issues/694). The MXC investigation names the four object-namespace grants `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)` needs: `\GLOBAL??` (directory query/traverse), `\GLOBAL??\C:` (symbolic-link query), `\GLOBAL??\MountPointManager`, and `\\.\MountPointManager`. Those grants are a shared object-namespace DACL. They were not applied. No firewall rule was added. No elevation prompt was raised.
+
+## Refinement
+
+A caller refinement (`task-ab0e6467-refinement-20261016171907.md`) allows a synthetic `version.json` only inside the scratch Codex home, so an update modal can render, and requires that fixture header to say it was synthesised and how. Real screens (startup, trust, ready, working, done) come first. The usage-limit line stays synthesised from vendor text. The time budget says to commit what exists.
+
+That does not unblock rendering. There is still no TUI, so no scratch `version.json` was used to draw a modal, and no synthesised screen fixture was invented in place of a capture.
 
 ## Operator decision
 
