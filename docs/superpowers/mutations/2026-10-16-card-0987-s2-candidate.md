@@ -147,3 +147,15 @@ reached verified-read, retained-root and sentinel assertions. The fixture suppli
 case-insensitive primitive lookup and serialized foreign nested custody; it does not supply
 the scope's eligibility decision. This extra control does not renumber PC-1..421 and is
 not discharged by the ordinary regression. Mutation still owns missing-control discovery.
+
+## Ordinary filter repair
+
+The nine-row run at `8f89a8ada1af4facf000f44ed036c692727d0d19` completed with seven
+green rows (227 results) and two zero-test rows: CP-32 and CP-34. Neither zero-test
+row counts as proof. The pinned TUnit source-generated discovery needs the trailing
+wildcards documented in `docs/testing-and-build.md` for OR operands. The S2 manifest
+now adds those wildcards to the same six script methods and two linked-host methods,
+including the equivalent Windows CP-33 selector. Required names, counts, assertions,
+deadlines and execution environments are unchanged. Rerun CP-32/34 on the committed
+manifest repair; inspect their fresh TRX for exactly six and two intended results.
+The seven prior green rows retain their actual tested SHA and validated receipts.
