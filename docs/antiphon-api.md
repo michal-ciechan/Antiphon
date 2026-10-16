@@ -983,9 +983,12 @@ Ordinary creation refusals also apply to a new child (including `concurrency_lim
 `handoff_requires_fresh_task` is **422**, not a 409. Card-bound implementation admission
 (`Code`, `Custom`, `Debug`, `Docs`, `Merge`, `Commit`, `Deploy`) on ordinary create as well
 as a new handoff child can return **409 `card_implementation_closed`** for Done, Canceled or
-archived cards, or **409 `card_admission_changed`** when status/archive/board/identifier/active
-workflow/platform/verification-policy coordinates change between the pre-read and locked decision. Re-read the card and
-make a fresh admission decision; do not blindly replay or bypass a closed-card refusal.
+archived cards, or **409 `card_admission_changed`** when board, identifier, required platform,
+or either verification policy changes between the pre-read and the locked decision, or when
+status leaves the open columns (Backlog, In Progress, Review) for NeedsDecision. A
+transition-sweep move among those open columns, or an active workflow run change, is re-read
+under the card lock and admitted from that locked state; it is not `card_admission_changed`.
+Re-read the card after a fence refusal; do not replay or bypass a closed-card refusal.
 
 **Correct Review evidence.** `ReviewEvidenceCorrectionRequest` in
 `server/Application/Dtos/ReviewEvidenceCorrectionDtos.cs` has required fields
