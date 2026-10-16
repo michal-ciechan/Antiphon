@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -199,7 +200,14 @@ public sealed class CheckpointReceiptValidator(IOptions<CheckpointReceiptSetting
             foreach (var entry in inventory.Files) await ReadEntryAsync(root, entry, ct);
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException or UnauthorizedAccessException)
-        { throw ReviewEvidenceCorrectionService.Refuse("retained_evidence_unavailable"); }
+        {
+            throw new ConflictException(
+                $"Retained checkpoint bundle '{digest}' (inventory '{inventoryPath}') is missing, unreadable, or changed. " +
+                "Restore the original bundle at this path and ensure CheckpointReceipts:StorageRoot is mounted and readable " +
+                "by the validating server, then retry land. If the original bundle cannot be restored, commission a new Review " +
+                "of the exact source and use its evidence. Unverifiable retained evidence cannot approve landing.",
+                "review_evidence_correction_retained_evidence_unavailable");
+        }
     }
 
     private static async Task<byte[]> ReadEntryAsync(string root, Entry entry, CancellationToken ct)

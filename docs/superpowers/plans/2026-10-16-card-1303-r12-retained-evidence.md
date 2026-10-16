@@ -32,7 +32,7 @@ No assembly-wide run is needed: impact is the correction validator's refusal det
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1303-r12-red/` | retained-red | `/*/*/AdvisoryChangePolicyTests/C1303_R12_LandRefusesUnavailableCorrectedEvidence` | V-1, R-1, R-2 | 3 executed; expected red at actionable message assertion before S2 | 3 | 3 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1303-r12-final/` | retained-final | `/*/*/(AdvisoryChangePolicyTests)\|(PipelineSpeedIntegrationTests)\|(PipelineHandoffRouteDocumentationTests)/*` | V-1, R-1, R-2, R-3 | all listed, 0 failed/skipped | 3 | 5 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1303-r12-final/` | retained-final | `/*/*/(AdvisoryChangePolicyTests*)\|(PipelineSpeedIntegrationTests*)\|(PipelineHandoffRouteDocumentationTests*)/*` | V-1, R-1, R-2, R-3 | all listed, 0 failed/skipped | 35 | 5 |
 
 CP-1 is the deliberate pre-fix baseline, not an outstanding final gate; CP-2
 reruns all its cases after repair. Check fresh TRX identities and counts. The

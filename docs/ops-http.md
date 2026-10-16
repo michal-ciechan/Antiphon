@@ -375,6 +375,13 @@ Correction conflicts (**409**, full code names):
 Invalid selection path/commit/section shape is **422 `verification_selection_invalid`**.
 Preserve the bundle in `CheckpointReceipts:StorageRoot` and make it available to the validating
 server: replay and land re-hash the retained files and refuse unavailable/changed evidence.
+CARD-1303 R12: land returns **409 `review_evidence_correction_retained_evidence_unavailable`**
+when the retained inventory or a referenced blob is missing, unreadable, or changed. Its detail
+names the bundle digest and absolute inventory path. Restore the original bundle at that path
+and ensure `CheckpointReceipts:StorageRoot` is mounted and readable by the validating server,
+then retry land. If those exact bytes cannot be restored, commission a new Review of the exact
+source and use its evidence. The saved corrected outcome alone cannot approve landing;
+the refusal preserves the correction/history and creates no landing request or queue entry.
 
 Authorization failures are **403**, not conflicts: `handoff_principal_denied`,
 `handoff_project_denied`, `handoff_repository_denied`, `handoff_card_denied`,
