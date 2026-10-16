@@ -6,6 +6,13 @@ Assigned branch: `feat/card-task-cd89ada2`.
 Inspected source: `6e23e0b4c8d6b2ae12218c2c0058593dbf773530`.
 Fetched master: `bc3168594e598cb4206b5e11f6d3aabc04561fd9`.
 
+Reconciliation completed on 2026-10-16 by task `00679518`: the six scoped
+checkpoints passed (11/11 executions), both source validators passed, and the
+stored S6a landing confirms the guards are already on master. No remaining
+admission defect was reproduced. See the [investigation report](../../investigations/2026-10-16-card-1291-pre-child-blocker-overlap-spend-refusals-in-admission.md).
+The original plan and conditional slices below are preserved as history; S2/S3
+were not activated. Current handoff: `next: none`, reconcile CARD-1291 as covered.
+
 ## Outcome and scope
 
 The card's missing-implementation premise is stale. CARD-1281 S6a already added
@@ -81,7 +88,7 @@ an OS only for a demonstrated native requirement. Embed no fleet location.
 | Slice | Work and files | Tests / completion condition |
 |---|---|---|
 | S0: this Plan | Add only `docs/superpowers/plans/2026-10-16-card-1291-pre-child-refusals-plan.md`; commit/push the assigned task branch. | Documentation/static checks only. No test execution or runtime changes claimed. |
-| S1: investigate current admission | Read `server/Application/Services/AgentTaskService.cs`, `PipelineHandoffActionService.cs`, `CardBlockers.cs`; `server/Application/Dtos/PipelineHandoffActionDtos.cs`; `server/Api/Endpoints/PipelineHandoffActionEndpoints.cs`; `server/Program.cs`. Read the two historical evidence reports above and the full stored S6a/Review outcome if available. Write findings under `docs/superpowers/investigations/2026-10-16-card-1291-pre-child-admission.md` on the new task's assigned branch. | Qualify available same-source receipts first; absent current-source proof, run CP-1..CP-6 once. Report exact source, row counts, codes, absence of persisted children and historical versus newly established results. |
+| S1: investigate current admission | Read `server/Application/Services/AgentTaskService.cs`, `PipelineHandoffActionService.cs`, `CardBlockers.cs`; `server/Application/Dtos/PipelineHandoffActionDtos.cs`; `server/Api/Endpoints/PipelineHandoffActionEndpoints.cs`; `server/Program.cs`. Read the two historical evidence reports above and the full stored S6a/Review outcome if available. Findings are in `docs/investigations/2026-10-16-card-1291-pre-child-blocker-overlap-spend-refusals-in-admission.md` on the investigation task's assigned branch. | Qualify available same-source receipts first; absent current-source proof, run CP-1..CP-6 once. Report exact source, row counts, codes, absence of persisted children and historical versus newly established results. |
 | S2: conditional red-first repair | Only if S1 reproduces a remaining acceptance failure, add its isolated method to new `tests/Antiphon.Tests/Application/PipelineSpeedIntegrationTests.PreChildRefusals.cs`, reusing the existing partial class helpers. Commit/push the failing test before the fix. Amend this plan's executable table to the exact method(s) and committed slice before any new run. | One concrete failing assertion against the current baseline; missing symbols, bad fixtures, build failures and zero selections are not red. Proposed method names and witnesses are below. A green existing behavior needs no duplicate implementation. |
 | S3: conditional production repair | Change only the implicated admission predicate in `AgentTaskService.cs`, or the request/refusal boundary in `PipelineHandoffActionService.cs`. Touch DTO/endpoint only if a reproduced input-binding/authorization defect requires it. `Program.cs` is relevant only if current composition is actually absent. Update `docs/antiphon-api.md`/`docs/orchestration-loop.md` only for a changed public contract; no schema/migration/bundle work is planned. | Same exact red method green, plus only its affected rows below. Preserve atomicity and ordinary-create compatibility. Commit/push each meaningful slice; ordinary Review then normal master landing. |
 
