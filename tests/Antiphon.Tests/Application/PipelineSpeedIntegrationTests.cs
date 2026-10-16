@@ -186,7 +186,9 @@ public sealed partial class PipelineSpeedIntegrationTests
         public TaskCompletionSource Insertion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private void Observe(DbCommand command)
         {
-            if (command.CommandText.Contains("\"Cards\"") && command.CommandText.Contains("FOR UPDATE")) Attempt.TrySetResult();
+            if (command.CommandText.Contains("\"Cards\"")
+                && (command.CommandText.Contains("FOR UPDATE") || command.CommandText.Contains("FOR NO KEY UPDATE")))
+                Attempt.TrySetResult();
             if (command.CommandText.Contains("INSERT INTO \"AgentTasks\"")) Insertion.TrySetResult();
         }
         public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,

@@ -4,6 +4,8 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Git;
@@ -11,6 +13,8 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using Shouldly;
 using TUnit.Core;
@@ -19,6 +23,89 @@ namespace Antiphon.Tests.Application;
 
 public sealed partial class PipelineSpeedIntegrationTests
 {
+    [Test]
+    public async Task C1303_CardAdmissionAllowsClaimSessionInsert()
+    {
+        await using var w = await C544World.CreateAsync();
+        var admission = new HoldAdmissionCommit();
+        await w.RestartAsync(admission);
+        var create = CreateAsync(w, ChildRequest(w));
+        var sessionInsert = new HoldClaimSessionInsert();
+        await using var claimDb = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(w.Schema.ConnectionString).AddInterceptors(sessionInsert).Options);
+        await claimDb.Database.OpenConnectionAsync();
+        // Fail on a conflicting FK lock, before either barrier's existing 30-second guard.
+        await claimDb.Database.ExecuteSqlRawAsync("SET lock_timeout = '2s'");
+        var dispatcher = new OrchestratorService(claimDb, null!, null!, null!, null!, null!, null!, null!,
+            new MockEventBus(), Options.Create(new OrchestratorSettings()), Options.Create(w.Delegation),
+            w.Clock, NullLogger<OrchestratorService>.Instance);
+        Task<Exception?>? claim = null;
+        Guid? sessionId = null;
+        try
+        {
+            await Task.WhenAny(admission.Entered.Task, create).WaitAsync(Guard);
+            admission.Entered.Task.IsCompleted.ShouldBeTrue("create holds its admission transaction");
+            await ProbeCardLockAsync(w);
+            claim = ClaimAsync();
+            await Task.WhenAny(sessionInsert.Inserted.Task, claim).WaitAsync(Guard);
+            sessionInsert.Inserted.Task.IsCompleted.ShouldBeTrue(
+                "claim session insert must complete while create holds the card admission lock; "
+                + (claim.IsCompleted ? (await claim)?.Message : "claim still running"));
+            create.IsCompleted.ShouldBeFalse("session insert did not release admission");
+            // This independent NOWAIT probe also rejects simply removing the admission lock.
+            await ProbeCardLockAsync(w);
+        }
+        finally
+        {
+            admission.Release.TrySetResult();
+            try { await create.WaitAsync(Guard); }
+            finally
+            {
+                // The claim's subsequent card UPDATE still requires the admission fence.
+                sessionInsert.Release.TrySetResult();
+                if (claim is not null) await claim.WaitAsync(Guard);
+            }
+        }
+        (await claim!).ShouldBeNull("claim commits after admission releases the card");
+        sessionId.ShouldNotBeNull();
+        sessionId.ShouldBe(sessionInsert.SessionId);
+        await using var verify = w.CreateContext();
+        (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).CardId.ShouldBe(w.Card.Id);
+        (await verify.Cards.SingleAsync(c => c.Id == w.Card.Id)).OwnerSessionId.ShouldBe(sessionId);
+        (await verify.AgentTasks.SingleAsync(t => t.Id == create.Result.Id)).CardId.ShouldBe(w.Card.Id);
+
+        async Task<Exception?> ClaimAsync()
+        {
+            try
+            {
+                sessionId = await dispatcher.TryClaimCardAsync(w.Card.Id, w.Card.ConcurrencyToken,
+                    "fixture", AgentKind.Raw, 120, 30, w.Clock.GetUtcNow().UtcDateTime, CancellationToken.None);
+                return null;
+            }
+            catch (Exception error) { return error; }
+        }
+    }
+
+    private sealed class HoldClaimSessionInsert : SaveChangesInterceptor
+    {
+        public TaskCompletionSource Inserted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Guid SessionId { get; private set; }
+        public override async ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data,
+            int result, CancellationToken ct = default)
+        {
+            if (Inserted.Task.IsCompleted) return result;
+            var session = data.Context!.ChangeTracker.Entries<AgentSession>()
+                .Single(e => e.Entity.CardId is not null).Entity;
+            SessionId = session.Id;
+            (await data.Context.Set<AgentSession>().AsNoTracking().SingleAsync(s => s.Id == SessionId, ct))
+                .CardId.ShouldBe(session.CardId, "real claim inserted its session before the card UPDATE");
+            Inserted.TrySetResult();
+            await Release.Task.WaitAsync(Guard, ct);
+            return result;
+        }
+    }
+
     [Test]
     [Arguments("title")]
     [Arguments("description")]
@@ -140,7 +227,7 @@ public sealed partial class PipelineSpeedIntegrationTests
             int result, CancellationToken ct = default)
         {
             var sql = command.CommandText;
-            if (sql.Contains("FOR UPDATE"))
+            if (sql.Contains("FOR UPDATE") || sql.Contains("FOR NO KEY UPDATE"))
             {
                 if (sql.Contains("\"Cards\"")) { Order.Add("card"); _locked = Stopwatch.GetTimestamp(); }
                 else if (sql.Contains("\"PipelineHandoffActions\"")) Order.Add("action");
