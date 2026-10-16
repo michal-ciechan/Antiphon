@@ -6502,6 +6502,7 @@ public sealed class RemoteScriptContractTests
     {
         RequireLinuxJq();
         const string statusJson = "{\"sessions\":0,\"runnerSessions\":null,\"queuedTasks\":0,\"retiredAt\":\"2026-10-11T14:23:12.192262+00:00\",\"available\":false,\"dispatchEligible\":false,\"acceptingNewWork\":false,\"draining\":true,\"retireWhenIdle\":true,\"redirectTo\":\"server2\"}";
+        const string holdJson = "{\"sessions\":0,\"runnerSessions\":null,\"queuedTasks\":0,\"retiredAt\":null,\"available\":false,\"dispatchEligible\":false,\"acceptingNewWork\":false,\"draining\":true,\"retireWhenIdle\":false,\"redirectTo\":\"server2\"}";
         const string mainJson = "{\"sessions\":4,\"runnerSessions\":4,\"queuedTasks\":0,\"dispatchEligible\":true,\"acceptingNewWork\":true,\"draining\":false}";
         var remote = Remote();
         var output = LinuxShell(ColdReuseBlocks(remote) + """
@@ -6524,6 +6525,10 @@ public sealed class RemoteScriptContractTests
             c849_status_body() {
                 if [ "$1" = server2 ]; then
                     printf '%s' '{"sessions":4,"runnerSessions":4,"queuedTasks":0,"acceptingNewWork":true,"draining":false,"dispatchEligible":true}'
+                elif [ "$MODE" = hold ]; then
+                    printf '%s' '{"retiredAt":null,"available":false,"dispatchEligible":false,"acceptingNewWork":false,"draining":true,"retireWhenIdle":false,"redirectTo":"server2","sessions":0,"queuedTasks":0,"runnerSessions":null}'
+                elif [ "$MODE" = serving ]; then
+                    printf '%s' '{"retiredAt":null,"available":true,"dispatchEligible":false,"acceptingNewWork":false,"draining":false,"retireWhenIdle":false,"redirectTo":"server2","sessions":0,"queuedTasks":0,"runnerSessions":null}'
                 else
                     printf '%s' '{"retiredAt":"2026-10-11T14:23:12.192262+00:00","available":false,"dispatchEligible":false,"acceptingNewWork":false,"draining":true,"retireWhenIdle":true,"redirectTo":"server2","sessions":0,"queuedTasks":0,"runnerSessions":null}'
                 fi
@@ -6532,45 +6537,41 @@ public sealed class RemoteScriptContractTests
                 [ "$1" = ps ] || { printf 'unexpected-docker\n' >> "$root/trace"; return 1; }
                 return 0
             }
-            : > "$root/trace"
-            (
-                set -euo pipefail
-                c849_seed
-            ) > "$root/out" 2>"$root/err"
-            code=$?
-            seed=''; contract=''; status=''; main=''; status_nl=0; main_nl=0; donor=0
-            if [ -f "$CASE_DIR/seed.txt" ]; then seed="$(tr -d '\r\n' < "$CASE_DIR/seed.txt")"; fi
-            if [ -f "$CASE_DIR/seed-contract.txt" ]; then
-                contract="$(awk 'BEGIN{ORS="|"} {gsub(/\r/,""); print}' "$CASE_DIR/seed-contract.txt")"
-            fi
-            if [ -f "$CASE_DIR/status.json" ]; then
-                status="$(tr -d '\r\n' < "$CASE_DIR/status.json")"
-                printf '%s\n' "$status" > "$root/expect-status"
-                if cmp -s "$root/expect-status" "$CASE_DIR/status.json"; then status_nl=1; fi
-            fi
-            if [ -f "$CASE_DIR/main-status.json" ]; then
-                main="$(tr -d '\r\n' < "$CASE_DIR/main-status.json")"
-                printf '%s\n' "$main" > "$root/expect-main"
-                if cmp -s "$root/expect-main" "$CASE_DIR/main-status.json"; then main_nl=1; fi
-            fi
-            if grep -qx 'donor-probed' "$root/trace"; then donor=1; fi
-            printf 'EXIT=%s\n' "$code"
-            printf 'DONOR=%s\n' "$donor"
-            printf 'SEED=%s\n' "$seed"
-            printf 'CONTRACT=%s\n' "$contract"
-            printf 'STATUS_NL=%s\n' "$status_nl"
-            printf 'STATUS=%s\n' "$status"
-            printf 'MAIN_NL=%s\n' "$main_nl"
-            printf 'MAIN=%s\n' "$main"
+            for MODE in retired hold serving; do
+                : > "$root/trace"
+                rm -f "$CASE_DIR/seed.txt" "$CASE_DIR/seed-contract.txt" "$CASE_DIR/seed-kind.txt" \
+                    "$CASE_DIR/status.json" "$CASE_DIR/main-status.json"
+                (
+                    set -euo pipefail
+                    c849_seed
+                ) > "$root/out" 2>"$root/err"
+                code=$?
+                seed=''; contract=''; status=''; main=''; status_nl=0; main_nl=0; donor=0
+                if [ -f "$CASE_DIR/seed.txt" ]; then seed="$(tr -d '\r\n' < "$CASE_DIR/seed.txt")"; fi
+                if [ -f "$CASE_DIR/seed-contract.txt" ]; then
+                    contract="$(awk 'BEGIN{ORS="|"} {gsub(/\r/,""); print}' "$CASE_DIR/seed-contract.txt")"
+                fi
+                if [ -f "$CASE_DIR/status.json" ]; then
+                    status="$(tr -d '\r\n' < "$CASE_DIR/status.json")"
+                    printf '%s\n' "$status" > "$root/expect-status"
+                    if cmp -s "$root/expect-status" "$CASE_DIR/status.json"; then status_nl=1; fi
+                fi
+                if [ -f "$CASE_DIR/main-status.json" ]; then
+                    main="$(tr -d '\r\n' < "$CASE_DIR/main-status.json")"
+                    printf '%s\n' "$main" > "$root/expect-main"
+                    if cmp -s "$root/expect-main" "$CASE_DIR/main-status.json"; then main_nl=1; fi
+                fi
+                if grep -qx 'donor-probed' "$root/trace"; then donor=1; fi
+                verdict="$(head -n 1 "$root/out" | tr -d '\r')"
+                printf 'ROW mode=%s exit=%s donor=%s seed=%s contract=%s status_nl=%s main_nl=%s verdict=%s status=%s main=%s\n' \
+                    "$MODE" "$code" "$donor" "$seed" "$contract" "$status_nl" "$main_nl" "$verdict" "$status" "$main"
+            done
             """);
-        Fact(output, "EXIT").ShouldBe("0", output);
-        Fact(output, "DONOR").ShouldBe("0", output);
-        Fact(output, "SEED").ShouldBe("ready=true kind=cold writable=3", output);
-        Fact(output, "CONTRACT").ShouldBe("schema=2|kind=cold|digest-type=none|digest=none|smoke=not-run|", output);
-        Fact(output, "STATUS").ShouldBe(statusJson, output);
-        Fact(output, "MAIN").ShouldBe(mainJson, output);
-        Fact(output, "STATUS_NL").ShouldBe("1", output);
-        Fact(output, "MAIN_NL").ShouldBe("1", output);
+        const string accepted = "donor=0 seed=ready=true kind=cold writable=3 contract=schema=2|kind=cold|digest-type=none|digest=none|smoke=not-run| status_nl=1 main_nl=1 verdict=accepted=true diagnosis=";
+        RequireExactRows(output,
+            "ROW mode=retired exit=0 " + accepted + " status=" + statusJson + " main=" + mainJson,
+            "ROW mode=hold exit=0 " + accepted + " status=" + holdJson + " main=" + mainJson,
+            "ROW mode=serving exit=2 donor=0 seed= contract=schema=2|kind=cold|digest-type=none|digest=none|smoke=not-run| status_nl=0 main_nl=0 verdict=accepted=false diagnosis=CacheFirstSeedTempNotRetired status= main=");
         var statusNode = JsonNode.Parse(statusJson)!;
         (statusNode["retiredAt"] is not null).ShouldBeTrue();
         statusNode["available"]!.GetValue<bool>().ShouldBeFalse();
@@ -6582,6 +6583,17 @@ public sealed class RemoteScriptContractTests
         statusNode["sessions"]!.GetValue<int>().ShouldBe(0);
         statusNode["queuedTasks"]!.GetValue<int>().ShouldBe(0);
         (statusNode["runnerSessions"] is null || statusNode["runnerSessions"]!.GetValue<int>() == 0).ShouldBeTrue();
+        var holdNode = JsonNode.Parse(holdJson)!;
+        (holdNode["retiredAt"] is null).ShouldBeTrue();
+        holdNode["available"]!.GetValue<bool>().ShouldBeFalse();
+        holdNode["dispatchEligible"]!.GetValue<bool>().ShouldBeFalse();
+        holdNode["acceptingNewWork"]!.GetValue<bool>().ShouldBeFalse();
+        holdNode["draining"]!.GetValue<bool>().ShouldBeTrue();
+        holdNode["retireWhenIdle"]!.GetValue<bool>().ShouldBeFalse();
+        holdNode["redirectTo"]!.GetValue<string>().ShouldBe("server2");
+        holdNode["sessions"]!.GetValue<int>().ShouldBe(0);
+        holdNode["queuedTasks"]!.GetValue<int>().ShouldBe(0);
+        (holdNode["runnerSessions"] is null || holdNode["runnerSessions"]!.GetValue<int>() == 0).ShouldBeTrue();
         var mainNode = JsonNode.Parse(mainJson)!;
         mainNode["sessions"].ShouldNotBeNull();
         mainNode["queuedTasks"].ShouldNotBeNull();
