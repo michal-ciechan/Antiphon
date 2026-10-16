@@ -29,17 +29,27 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
             stream.Position = length - 1;
             stream.WriteByte(0x31);
         }
-        var ledger = Capture(root);
-        ledger.Files["node_modules/large.dll"].ShouldNotBe("unreadable");
-        BuildConfinement.AdmitLedger(ledger, strict: true).Settlement.Kind.ShouldBeNull();
-        BuildConfinement.VerifyLedger(ledger).Kind.ShouldBeNull();
-        using (var stream = File.OpenWrite(path))
+        try
         {
-            stream.Position = length - 1;
-            stream.WriteByte(0x32);
+            var ledger = Capture(root);
+            ledger.Files["node_modules/large.dll"].ShouldNotBe("unreadable");
+            BuildConfinement.AdmitLedger(ledger, strict: true).Settlement.Kind.ShouldBeNull();
+            BuildConfinement.VerifyLedger(ledger).Kind.ShouldBeNull();
+            using (var stream = File.OpenWrite(path))
+            {
+                stream.Position = length - 1;
+                stream.WriteByte(0x32);
+            }
+            BuildConfinement.AdmitLedger(ledger, strict: true).Settlement.Paths.ShouldContain("node_modules/large.dll");
+            BuildConfinement.VerifyLedger(ledger).Paths.ShouldContain("node_modules/large.dll");
         }
-        BuildConfinement.AdmitLedger(ledger, strict: true).Settlement.Paths.ShouldContain("node_modules/large.dll");
-        BuildConfinement.VerifyLedger(ledger).Paths.ShouldContain("node_modules/large.dll");
+        finally
+        {
+            // Git creates readonly object files on Windows. These objects belong to
+            // this fixture; allow the existing scope teardown to remove them.
+            foreach (var ownedObject in Directory.EnumerateFiles(Path.Combine(root, ".git", "objects"), "*", SearchOption.AllDirectories))
+                File.SetAttributes(ownedObject, File.GetAttributes(ownedObject) & ~FileAttributes.ReadOnly);
+        }
     }
 
     [Test]
