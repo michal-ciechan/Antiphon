@@ -4,10 +4,10 @@ Task: feb1f83b-6798-4f04-a6f5-b8c52ede4c1b (Deploy, CARD-1311).
 Requested release: `rc/2026-10-15` at exactly
 `b7265a05aa8773f08dbf457b93c7561e7874822d`.
 
-Latest status (13:00 UTC): the caller advanced canonical/AppHost to the fixed RC
-`6ca859d006b0a3cac9a88dc6bd551c37e98b2217`. Its cache Fixture rerun got past the
-previous seed failure but stopped at `FixturePrunePreviewFailed`. Server2 still
-accepts work on its previous image. See the latest appended resumption record.
+Latest status (15:37 UTC): canonical/AppHost are on final-round RC
+`e02719a9fca650c3f5415e57a090d720deb36597`. The first `check-census` gate stopped
+with `RecycleLandUnknown`, before host jq or Fixture. Server2 still accepts work
+on its previous image. See the latest appended resumption record.
 Earlier attempts and their historical targets/results below are retained.
 
 Outcome: **blocked before switching or restarting anything**. The local execution
@@ -254,4 +254,51 @@ publication and an explicitly supplied tested RC SHA before another Deploy pass.
 --- next stage ---
 next: Debug
 handoff: Investigate FixturePrunePreviewFailed on 6ca859d006b0a3cac9a88dc6bd551c37e98b2217 using c849-c849a76febf8be3e43f3 evidence. Fixture reached F-1..F-7 and PC-01..PC-20, then failed; donor cleanup outcome was unknown at the gate, while later run-filtered host census found no fixture resources. Main remains accepting on 7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce; temp retired/absent. No rollout/drain phase ran. Preserve pinned canonical RC and user patches; qualify Fixture before resuming Deploy.
+artifact: docs/investigations/2026-10-16-rc-activation.md
+
+## Final-round RC resumption: check-census refused RecycleLandUnknown
+
+The caller supplied final-round RC
+`e02719a9fca650c3f5415e57a090d720deb36597`, reporting both rollout repairs,
+Seed fail-closed hardening and R12/R14 published, AppHost reactivated and stack
+verified, and no desktop-runner action needed. This attempt followed the requested
+order (census, host jq, Fixture, Inventory, Seed, named rolling gates) and minimal
+verification scope. **The first gate refused, so no later gate was run or retried.**
+
+| UTC on 2026-10-16 | Action | Result |
+|---|---|---|
+| 15:36:43 | Read current canonical rollout owner and source identity | Canonical detached at exactly `e02719a9fca650c3f5415e57a090d720deb36597`; tracked source clean; original two untracked patches present. |
+| 15:36:54 | Named before-operation API/health check | `/api/version` exactly `e02719a9fca650c3f5415e57a090d720deb36597`, with `land-v2`; `/health` HTTP 200. |
+| 15:36:54–15:37:08 | From `C:\src\Antiphon`, `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha e02719a9fca650c3f5415e57a090d720deb36597 -Phase check-census -ProjectId d4ea7ae9-e769-474b-95b9-aa25fbc1303f` | **Exit 2**, exact output `Rolling deploy stopped: RecycleLandUnknown`. Project Antiphon resolved explicitly. The required complete census lines were not produced. Receipt lastWriteTimeUtc is 15:37:08. |
+| 15:37:25–15:37:31 | Read named main/temp status for exact stop state | Main available, dispatch eligible and accepting; not draining; buildVersion=`7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce`; sessions=4, runnerSessions=4, queuedTasks=0. Temp remains offline/unavailable, not eligible/accepting, draining toward main, retireWhenIdle=true, retiredAt=`2026-10-11T14:23:12.192262+00:00`; sessions=0, queuedTasks=0, runnerSessions=null, buildVersion=null. |
+| 15:37:25 | Read-only SSH main build identity, as required for final SHA comparison | Main container `fc2983ea4991fe85b31f54ee2ef66150e0d8fef03897d6cf1c2d6ca9c0889832`, StartedAt=`2026-10-11T13:42:57.09302366Z`, image ID=`sha256:ea8bafe24373694b3421d63afdffb4533faf0710f709d96dea661123b55e6835`. Its `org.opencontainers.image.revision` label equals registered buildVersion `7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce`, **not** the final-round RC. |
+| 15:37:38 | Read retained partial census receipt | One receipt exists: `census-check-census-server2.json` (7,762 bytes). No temp census receipt was produced. Last recorded successful HTTP detail read is task `58555867-2a2f-4c0c-a6ff-ab4239ca7747`; its retained partial task facts show Queued, desktop, null project, null landRequestedAt/landStartedAt, without a `landRequest` proof. This is the failure boundary, not a diagnosed root cause. |
+
+Exact gate: **phase `check-census`, token `RecycleLandUnknown`, exit 2**.
+Retained evidence:
+`C:\src\Antiphon\.antiphon\rolling-server2\c7279c7fa87435b2\census-check-census-server2.json`.
+The receipt contains reduced task/land facts and read timings only and remains
+ignored; it is not committed. A partial census cannot establish no pending lands.
+The documented guard uses `RecycleLandUnknown` for missing/invalid land proof,
+detail/summary disagreement or inconsistent repeated proof; no live retry or
+additional test was used to distinguish those conditions.
+
+This attempt executed **1 read-only prerequisite gate, failed; 0 tests/builds**.
+Host jq, Fixture, Inventory, Seed, deploy-temp, smoke/canaries, drain-old,
+redeploy-old, Both, drain-temp and retire-temp were not run. The new Fixture/Seed
+repairs have not been exercised by this attempt. No runner state, routing,
+containers or volumes were changed. No AppHost/desktop-runner action, checkout
+switch, patch modification, reset, forced cleanup or session kill occurred; all
+commands finished before reporting.
+
+Caller action: resolve or qualify the census's task-detail/land-proof refusal
+using the exact retained receipt, then explicitly resume the staged Deploy at
+the intended pinned RC. Do not bypass `check-census` or treat the partial receipt
+as a completed safety gate. A separate investigation can determine whether the
+refusal reflects a concurrent task change or a data/contract defect; this Deploy
+pass does not claim either explanation.
+
+--- next stage ---
+next: Debug
+handoff: Resolve RecycleLandUnknown in phase check-census at e02719a9fca650c3f5415e57a090d720deb36597; retained receipt C:\src\Antiphon\.antiphon\rolling-server2\c7279c7fa87435b2\census-check-census-server2.json, last detail read 58555867-2a2f-4c0c-a6ff-ab4239ca7747. No retry or later gate ran. Main remains accepting on 7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce; temp offline/retired. Preserve pinned canonical RC, user patches and all live sessions; qualify census before resuming Deploy.
 artifact: docs/investigations/2026-10-16-rc-activation.md
