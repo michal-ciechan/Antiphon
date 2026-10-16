@@ -5,6 +5,18 @@ Base: `6ca859d006b0a3cac9a88dc6bd551c37e98b2217`; target RC `rc/2026-10-15`.
 Diagnosis: Debug `5676e3a4`, commit `43a3f8700ec14dc83a6d8aef2d948ef3e821376e`.
 The caller skipped Plan; this records the executable verification selection.
 
+## Operator refinement (2026-10-16)
+
+The caller capped remaining work at one narrow green run after the fix, no
+adjacent sweeps and no retries of output-confinement/cleanup refusals (CARD-1310).
+The historical manifest below is retained for traceability. CP-2 / R-1 / R-2
+are deferred to the RC roster, not passed. CP-1 produced 10/11 green; its sole
+fixture newline failure was corrected and its exact bridge method passed in
+the one final narrow run. No further ordinary runs are authorized by this task.
+The unchanged compiled test method uses current scripts at runtime; final
+script source is 61b6e2d3d51171e33bc26be0453d179acc67bace, compiled test source
+is aef0eadde7b357cb28fb37f80edad34ff939955b. See the evidence report for receipts.
+
 S1 adds failing fixture-model regressions. S2 repairs payload preview, S3 repairs
 donor ordering, S4 retains safe diagnostics, S5 checks every Inventory probe.
 Commit and push each slice. Run CP-1 red at S1 and green after S2-S5. CP-2 is
