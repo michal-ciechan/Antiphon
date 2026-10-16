@@ -25,7 +25,7 @@ public static class RunOwnershipStore
         try
         {
             var path = Path.Combine(runDirectory, FileName);
-            var record = ReceiptJson.Read<RunOwnership>(context, path, Json, cancellationToken);
+            var record = CheckpointReceiptJson.Read<RunOwnership>(context, path, Json, cancellationToken);
             return record is { Version: 1 }
                 && record.RunId == Path.GetFileName(Path.GetFullPath(runDirectory))
                 && SamePath(record.RunDirectory, runDirectory, context) ? record : null;

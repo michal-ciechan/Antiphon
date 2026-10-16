@@ -159,6 +159,10 @@ public sealed class HostCleanupCheckpointReceiptTests
             Should.Throw<JsonException>(() => ReceiptJson.Validate(f.Report)).Message.ShouldStartWith("receipt-shape:", Case.Sensitive, label + variant);
             Should.Throw<JsonException>(() => ReceiptJson.Parse<ReportModel>(ReportWriter.JsonText(f.Report), ReportWriter.Json))
                 .Message.ShouldStartWith("receipt-shape:", Case.Sensitive, label + variant + ":parse");
+            f.SaveReport();
+            Should.Throw<JsonException>(() => ReceiptJson.Read<ReportModel>(f.Context, f.JsonPath, ReportWriter.Json))
+                .Message.ShouldStartWith("receipt-shape:", Case.Sensitive, label + variant + ":read");
+            f.Io.Count("open-read", f.JsonPath).ShouldBe(1, label + variant + ":read-reached");
             NoMutation(f, label + variant);
         }
         foreach (var blank in new string?[] { null, "", " \t" })
