@@ -4502,18 +4502,22 @@ c849_fixture_compose_confirm() {
 }
 
 c849_fixture_nonexternal_loss() {
-    local root="$SERVER2_ROOT/compose-retention" project="c849${RUN}negative" volume
+    local root="$SERVER2_ROOT/compose-retention" project="c849${RUN}negative" volume state=0
     docker compose -p "$project" -f "$root/negative.yml" up -d >/dev/null || return 1
     volume="${project}_cache"
     c849_fixture_compose_record "$project" "${project}_cache" || return 2
     docker compose -p "$project" -f "$root/negative.yml" down >/dev/null || return 1
     docker compose -p "$project" -f "$root/negative.yml" down -v >/dev/null || return 1
-    if docker volume inspect "$volume" >/dev/null 2>&1; then return 1; fi
-    printf 'ExternalCacheLost\n'; return 2
+    c849_fixture_resource_state volume "$volume" || state=$?
+    case "$state" in
+        0) return 1 ;;
+        1) printf 'ExternalCacheLost\n'; return 2 ;;
+        *) printf 'FixtureVolumeInspectFailed\n'; return 2 ;;
+    esac
 }
 
 c849_fixture_retention() {
-    local image root main temp name volume target
+    local image root main temp name volume target state
     image="$(c849_image)" || {
         if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
         write_result false CacheHelperImageMissing 2
@@ -4594,17 +4598,32 @@ EOF
     docker compose -p "$temp" -f "$root/shared.yml" down -v >/dev/null \
         || write_result false FixtureTempDownFailed 2
     for volume in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
-        docker volume inspect "$volume" >/dev/null 2>&1 \
-            || write_result false FixtureExternalCacheLost 2
+        state=0
+        c849_fixture_resource_state volume "$volume" || state=$?
+        case "$state" in
+            0) ;;
+            1) write_result false FixtureExternalCacheLost 2 ;;
+            *) write_result false FixtureVolumeInspectFailed 2 ;;
+        esac
     done
     docker compose -p "$main" -f "$root/shared.yml" exec -T probe /bin/sh -c \
         'test "$(cat /home/app/.nuget/packages/retention-sentinel)" = retained && test "$(cat /var/cache/antiphon/nuget-scratch/retention-sentinel)" = retained && test "$(cat /home/app/.npm/_cacache/retention-sentinel)" = retained && test "$(stat -c %a /tmp)" = 1777' \
         || write_result false FixtureRetentionReadFailed 2
     for volume in runner-tmp work runner-state dind-data; do
-        docker volume inspect "${temp}_$volume" >/dev/null 2>&1 \
-            && write_result false FixtureTempPrivateVolumeRetained 2
-        docker volume inspect "${main}_$volume" >/dev/null 2>&1 \
-            || write_result false FixtureMainPrivateVolumeLost 2
+        state=0
+        c849_fixture_resource_state volume "${temp}_$volume" || state=$?
+        case "$state" in
+            1) ;;
+            0) write_result false FixtureTempPrivateVolumeRetained 2 ;;
+            *) write_result false FixtureVolumeInspectFailed 2 ;;
+        esac
+        state=0
+        c849_fixture_resource_state volume "${main}_$volume" || state=$?
+        case "$state" in
+            0) ;;
+            1) write_result false FixtureMainPrivateVolumeLost 2 ;;
+            *) write_result false FixtureVolumeInspectFailed 2 ;;
+        esac
     done
     c849_fixture_control PC-20 ExternalCacheLost c849_fixture_nonexternal_loss
     c849_fixture_compose_record "$main" "${main}_runner-tmp" "${main}_work" "${main}_runner-state" "${main}_dind-data" \
