@@ -12,6 +12,22 @@ public sealed class CheckpointCoverageMappingTests
     private const string First = "Antiphon.Server|C:/src/server/\n";
     private const string Next = "Antiphon.Contracts|C:/src/contracts/\n";
 
+    [Test]
+    public void Output_above_one_gib_ceiling_is_refused_before_streaming()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        // The verified handle reports the oversized file while its backing bytes stay
+        // small: removing the ceiling would adopt it, not accidentally time out.
+        f.Io.Nodes[f.Payload].Stat = f.Io.Nodes[f.Payload].Stat with { Size = 1024L * 1024 * 1024 + 1 };
+        f.Write.AdoptCreated(f.Payload, f.Window);
+        f.Context.Registry.Content(f.Payload).ShouldBeNull();
+        f.Io.Count("stream", f.Payload).ShouldBe(0, "reject the opened handle before allocating or reading content");
+        f.Ledger.Seal(f.Root, f.Exit).ShouldBeNull();
+        f.Ledger.Remove(f.Root).ShouldNotBeNull();
+        f.Io.FileExists(f.Payload).ShouldBeTrue();
+        f.Io.Count("unlink").ShouldBe(0);
+    }
+
     private static (HostCleanupCheckpointFixture Files, string Path) Build()
     {
         var f = new HostCleanupCheckpointFixture();

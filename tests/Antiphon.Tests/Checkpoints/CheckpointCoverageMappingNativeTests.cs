@@ -12,6 +12,42 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class CheckpointCoverageMappingNativeTests : CheckpointTestBase
 {
     [Test]
+    [NotInParallel]
+    public void Large_child_output_is_streamed_and_tail_changes_are_detected()
+    {
+        var root = TempDir();
+        var output = Path.Combine(root, "bin-c1310-stream");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
+        var file = Path.Combine(output, "large.dll");
+        const long length = 65L * 1024 * 1024;
+        using (var writer = File.Create(file))
+        {
+            writer.SetLength(length);
+            writer.WriteByte(0x43);
+            writer.Position = length - 1;
+            writer.WriteByte(0x31);
+        }
+        var allocated = GC.GetTotalAllocatedBytes(precise: true);
+        SafeWrite.Require(OwnedOutputLedger.Seal(output, DateTimeOffset.UtcNow));
+        OwnedOutputLedger.Check(output).ShouldBeNull("outputs above the receipt cap need streaming custody");
+        (GC.GetTotalAllocatedBytes(precise: true) - allocated).ShouldBeLessThan(32L * 1024 * 1024,
+            "adoption and validation must not materialize the 65 MiB output");
+        using (var writer = File.OpenWrite(file))
+        {
+            writer.Position = length - 1;
+            writer.WriteByte(0x32);
+        }
+        OwnedOutputLedger.Check(output).ShouldNotBeNull("the streaming hash must cover the final byte");
+        using (var writer = File.OpenWrite(file))
+        {
+            writer.Position = length - 1;
+            writer.WriteByte(0x31);
+        }
+        OwnedOutputLedger.Remove(output).ShouldBeNull();
+        Directory.Exists(output).ShouldBeFalse();
+    }
+
+    [Test]
     public void Windows_copied_old_timestamps_inside_creation_window_are_adopted()
     {
         if (!OperatingSystem.IsWindows()) Skip.Test("native Windows creation-time qualification");
