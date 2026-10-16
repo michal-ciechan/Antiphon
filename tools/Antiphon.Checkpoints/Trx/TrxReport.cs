@@ -45,6 +45,7 @@ public sealed class TrxCaseResult
     public string StdOut { get; init; } = "";
     public DateTimeOffset? StartedAt { get; init; }
     public DateTimeOffset? EndedAt { get; init; }
+    public double DurationSeconds { get; init; }
 }
 
 public static class TrxReport
@@ -108,6 +109,7 @@ public static class TrxReport
             }
 
             var output = result.Element(ns + "Output");
+            var seconds = ParseDuration((string?)result.Attribute("duration"));
             cases.Add(new TrxCaseResult
             {
                 ExecutionId = (string?)result.Attribute("executionId") ?? "",
@@ -117,6 +119,7 @@ public static class TrxReport
                 StdOut = output?.Element(ns + "StdOut")?.Value ?? "",
                 StartedAt = DateTimeOffset.TryParse((string?)result.Attribute("startTime"), out var start) ? start : null,
                 EndedAt = DateTimeOffset.TryParse((string?)result.Attribute("endTime"), out var end) ? end : null,
+                DurationSeconds = seconds,
             });
             if (outcome.Equals("NotExecuted", StringComparison.Ordinal))
             {
@@ -125,7 +128,6 @@ public static class TrxReport
                 continue;
             }
 
-            var seconds = ParseDuration((string?)result.Attribute("duration"));
             if (className.Length > 0)
             {
                 classSeconds.TryGetValue(className, out var acc);

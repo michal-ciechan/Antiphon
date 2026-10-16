@@ -698,7 +698,31 @@ function Invoke-NightlyExactRoster {
         $start.ArgumentList.Add([IO.Path]::GetFullPath($AssemblyPath))
         foreach ($arg in $args) { $start.ArgumentList.Add($arg) }
         if ($Environment) { foreach ($key in $Environment.Keys) { $start.Environment[$key] = [string]$Environment[$key] } }
+        $timingRoot = $env:ANTIPHON_TEST_TIMING_ROOT
+        if ($timingRoot) {
+            try {
+                . (Join-Path $PSScriptRoot 'test-timings.ps1')
+                $stamp = [DateTimeOffset]::UtcNow.ToString('o')
+                Write-TestTimingEvent -Root $timingRoot -Event ([ordered]@{
+                    schemaVersion = 'antiphon-test-timing-v1'; eventId = ('nightly-start-' + $index); eventKind = 'run-started'
+                    runId = 'nightly'; attempt = 1; producer = 'nightly'; setKind = 'chunk'; setId = [string]$chunk.Filter
+                    outcome = 'started'; startedAt = $stamp; timingPersistence = 'complete'
+                })
+            } catch { }
+        }
         $run = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start, 600000, $false)
+        if ($timingRoot) {
+            try {
+                . (Join-Path $PSScriptRoot 'test-timings.ps1')
+                $stamp = [DateTimeOffset]::UtcNow.ToString('o')
+                Write-TestTimingEvent -Root $timingRoot -Event ([ordered]@{
+                    schemaVersion = 'antiphon-test-timing-v1'; eventId = ('nightly-done-' + $index); eventKind = 'set-completed'
+                    runId = 'nightly'; attempt = 1; producer = 'nightly'; setKind = 'chunk'; setId = [string]$chunk.Filter
+                    outcome = $(if ($run.Exit -eq 0) { 'passed' } else { 'failed' }); exitCode = $run.Exit
+                    startedAt = $stamp; endedAt = $stamp; category = 'unavailable'; timingPersistence = 'complete'
+                })
+            } catch { }
+        }
         [IO.File]::WriteAllText((Join-Path $dir 'console.log'), $run.Stdout + $run.Stderr)
         if ($run.TimedOut) { throw 'exact-execution-timeout' }
         $actual = ConvertFrom-NightlyDiagnosticLog (Get-NightlyLatestDiagnosticLog $dir) execution

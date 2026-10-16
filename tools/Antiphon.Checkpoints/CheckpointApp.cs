@@ -222,6 +222,7 @@ public static class CheckpointApp
                 OwnerBound = owner.Bound,
                 SourceGuard = sourceGuard,
                 ExpectedSourceSha = request.ExpectedSourceSha,
+                TimingRoot = Environment.GetEnvironmentVariable("ANTIPHON_TEST_TIMING_ROOT"),
             }, workCancel.Token).ConfigureAwait(false);
             }
             else if (sourceGuard.Reason is not null)

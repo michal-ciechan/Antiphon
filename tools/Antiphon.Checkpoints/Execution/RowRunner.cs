@@ -29,6 +29,14 @@ public sealed class RowRequest
     public string? GitExecutable { get; init; }
     public Func<CancellationToken, Task>? BeforeLaunch { get; init; }
     public IReadOnlyDictionary<string, string> Environment { get; init; } = new Dictionary<string, string>();
+    public string? TimingRoot { get; init; }
+    public TimingJournal? TimingJournal { get; init; }
+    public string TimingProducer { get; init; } = "tool";
+    public string? TimingRunId { get; init; }
+    public int TimingAttempt { get; init; } = 1;
+    public string? ProducingBuildId { get; init; }
+    public string? TimingDiscoveryJson { get; init; }
+    public string? TimingAssemblyHash { get; init; }
 }
 
 public sealed class RowRunResult
@@ -66,6 +74,31 @@ public sealed class RowRunner
 
     public async Task<RowRunResult> RunAsync(RowRequest request, TextWriter output, CancellationToken cancellationToken)
     {
+        TimingRowRecorder? timing = null;
+        TimingOutcome? timingOutcome = null;
+        try
+        {
+        async Task EnsureTimingAsync()
+        {
+            if (timing is not null)
+                return;
+            try
+            {
+                timing = TimingRowRecorder.TryCreate(request);
+                if (timing is not null)
+                    await timing.StartedAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsTimingFault(ex))
+            {
+            }
+        }
+
+        RowRunResult WithTiming(RowRunResult result, TimingOutcome outcome)
+        {
+            timingOutcome = outcome;
+            return result;
+        }
+
         var buffer = new StringWriter();
         var combined = new TeeWriter(output, buffer);
         if (!string.IsNullOrWhiteSpace(request.OutputPath)
@@ -110,6 +143,7 @@ public sealed class RowRunner
         {
             if (request.BeforeLaunch is not null)
                 await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
+            await EnsureTimingAsync().ConfigureAwait(false);
             var shell = _platform.IsWindows ? "cmd.exe" : "/bin/sh";
             var shellArgs = _platform.IsWindows
                 ? new[] { "/d", "/s", "/c", request.Command }
@@ -121,7 +155,7 @@ public sealed class RowRunner
                 cancellationToken).ConfigureAwait(false);
             var sourceOk = request.SourceBoundary?.Invoke() != false;
             if (ran.TimedOut)
-                return TimeoutResult(request, "n/a", buffer, combined);
+                return WithTiming(TimeoutResult(request, "n/a", buffer, combined), CommandOutcome(ExitCodes.Timeout, true));
             var commandLine = CheckpointLine.Format(new CheckpointLineModel
             {
                 Name = request.Name,
@@ -138,8 +172,8 @@ public sealed class RowRunner
             combined.WriteLine(commandLine);
             var commandExit = sourceOk ? ran.ExitCode == 0 ? ExitCodes.Green : ExitCodes.FailedTests : ExitCodes.Invalid;
             combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: {commandExit}");
-            return Finish(commandExit, "n/a", commandLine, buffer, 0, [], null, null, false,
-                commandExit == 0 ? "green" : "red");
+            return WithTiming(Finish(commandExit, "n/a", commandLine, buffer, 0, [], null, null, false,
+                commandExit == 0 ? "green" : "red"), CommandOutcome(commandExit, false));
         }
 
         var buildState = request.BuildStateOverride ?? (request.NoBuild ? "reused" : "ok");
@@ -168,15 +202,19 @@ public sealed class RowRunner
             if (request.BeforeLaunch is not null)
                 await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
 
+            await EnsureTimingAsync().ConfigureAwait(false);
+            var buildWatch = System.Diagnostics.Stopwatch.StartNew();
             var buildArgs = BuildStep.BuildArguments(request.Project!, request.OutputPath!, properties, request.MaxCpuCount);
             var built = await RowTimeout.RunWithDeadlineAsync(
                 _driver,
                 new DriverRequest(fileName, buildArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "build.log"), Environment: request.Environment),
                 request.Deadline,
                 cancellationToken).ConfigureAwait(false);
+            buildWatch.Stop();
+            var buildSeconds = buildWatch.Elapsed.TotalSeconds;
             var buildSourceOk = request.SourceBoundary?.Invoke() != false;
             if (built.TimedOut)
-                return TimeoutResult(request, "failed", buffer, combined);
+                return WithTiming(TimeoutResult(request, "failed", buffer, combined), BuildOutcome(ExitCodes.Timeout, buildSeconds, true));
             if (built.ExitCode != 0)
             {
                 EchoGuard(combined, built.Stdout);
@@ -188,9 +226,9 @@ public sealed class RowRunner
                     : ExitCodes.Invalid;
                 combined.WriteLine($"CHECKPOINT {request.Name} build=failed project={request.Project} outputPath={request.OutputPath} exit={built.ExitCode} slot={request.Slot} waited={request.WaitedSeconds}s" + (request.SlotReason is null ? "" : " slot-reason=" + request.SlotReason));
                 combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: {code}");
-                return Finish(code, "failed", "", buffer, 0, [], null, null, false, "build-failed");
+                return WithTiming(Finish(code, "failed", "", buffer, 0, [], null, null, false, "build-failed"), BuildOutcome(code, buildSeconds, false));
             }
-            if (!buildSourceOk) return SourceFailure(request, buffer, combined);
+            if (!buildSourceOk) return WithTiming(SourceFailure(request, buffer, combined), BuildOutcome(ExitCodes.Invalid, buildSeconds, false));
             if (binding is not null)
             {
                 var written = binding.Write(built.Exited);
@@ -198,7 +236,7 @@ public sealed class RowRunner
                 {
                     combined.WriteLine($"CHECKPOINT {request.Name} refused: {written}");
                     combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
-                    return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "build-failed");
+                    return WithTiming(Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "build-failed"), BuildOutcome(ExitCodes.Invalid, buildSeconds, false));
                 }
             }
             request.Source.BuildSource = "verified";
@@ -208,7 +246,11 @@ public sealed class RowRunner
         if (request.BeforeLaunch is not null)
             await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
         if (request.SourceBoundary?.Invoke() == false)
-            return SourceFailure(request, buffer, combined);
+        {
+            var sourceFailed = SourceFailure(request, buffer, combined);
+            return timing is null ? sourceFailed : WithTiming(sourceFailed, Unmeasured(sourceFailed.ExitCode, "source"));
+        }
+        await EnsureTimingAsync().ConfigureAwait(false);
         var runArgs = BuildStep.RunArguments(request.Project!, runOutput, properties, request.Filter!, request.ResultsDirectory, "run.trx");
         var nonce = request.Repeat > 1 ? Guid.NewGuid().ToString("N") : null;
         var runEnvironment = request.Repeat > 1
@@ -230,16 +272,16 @@ public sealed class RowRunner
         {
             combined.WriteLine("refused: checkpoint-build-source.json receipt-missing-or-mismatching");
             request.Source.BuildSource = "mismatch";
-            return Finish(ExitCodes.Invalid, buildState, "", buffer, 0, [], trxPath, null, false, "build-source-mismatch");
+            return WithTiming(Finish(ExitCodes.Invalid, buildState, "", buffer, 0, [], trxPath, null, false, "build-source-mismatch"), Unmeasured(ExitCodes.Invalid, "build-source"));
         }
         if (run.TimedOut)
-            return TimeoutResult(request, buildState, buffer, combined);
+            return WithTiming(TimeoutResult(request, buildState, buffer, combined), Unmeasured(ExitCodes.Timeout, "run", timedOut: true));
 
         if (!File.Exists(trxPath))
         {
             combined.WriteLine($"CHECKPOINT {request.Name} no TRX written to {trxPath} (runner exit {run.ExitCode})");
             combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
-            return Finish(ExitCodes.Invalid, buildState, "", buffer, 0, [], trxPath, null, false, "no-trx");
+            return WithTiming(Finish(ExitCodes.Invalid, buildState, "", buffer, 0, [], trxPath, null, false, "no-trx"), Unmeasured(ExitCodes.Invalid, "no-trx"));
         }
 
         var parsed = TrxReport.Parse(trxPath);
@@ -247,7 +289,7 @@ public sealed class RowRunner
         {
             combined.WriteLine($"CHECKPOINT {request.Name} malformed TRX {trxPath}: {parsed.Error}");
             combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
-            return Finish(ExitCodes.Invalid, buildState, "", buffer, 0, [], trxPath, parsed, false, "malformed");
+            return WithTiming(Finish(ExitCodes.Invalid, buildState, "", buffer, 0, [], trxPath, parsed, false, "malformed"), Unmeasured(ExitCodes.Invalid, "malformed"));
         }
         var timings = PhaseTimings.Reduce(hostLaunch, hostExit, hostElapsed, parsed.Results);
 
@@ -397,7 +439,13 @@ public sealed class RowRunner
         var completed = Finish(exit, buildState, lineModel, buffer, reruns, rerunLines, Path.GetFullPath(trxPath), parsed, false, state);
         completed.Repeat = repeatCheck?.Evidence;
         completed.Timings = timings;
+        timingOutcome = MeasuredOutcome(exit, parsed, timings, state);
         return completed;
+        }
+        finally
+        {
+            await CompleteTimingAsync(timing, timingOutcome).ConfigureAwait(false);
+        }
     }
 
     private RowRunResult TimeoutResult(RowRequest request, string buildState, StringWriter buffer, TextWriter output)
@@ -445,6 +493,77 @@ public sealed class RowRunner
             TimedOut = timedOut,
             State = state,
         };
+
+    private static bool IsTimingFault(Exception ex) =>
+        ex is TimingPersistenceException or IOException or TimingIntegrityException or TimingRootException or UnauthorizedAccessException;
+
+    private static async Task CompleteTimingAsync(TimingRowRecorder? timing, TimingOutcome? outcome)
+    {
+        if (timing is null || outcome is null)
+            return;
+        try
+        {
+            await timing.CompletedAsync(outcome, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (IsTimingFault(ex))
+        {
+        }
+    }
+
+    private static TimingOutcome CommandOutcome(int exitCode, bool timedOut) => new()
+    {
+        Outcome = timedOut ? "timeout" : exitCode == ExitCodes.Green ? "passed" : "failed",
+        ExitCode = exitCode,
+        TimedOut = timedOut,
+        FailurePhase = timedOut || exitCode != ExitCodes.Green ? "command" : null,
+        SetKind = "command",
+        Category = "unavailable",
+        CountsUnknown = true,
+    };
+
+    private static TimingOutcome BuildOutcome(int exitCode, double? buildSeconds, bool timedOut) => new()
+    {
+        Outcome = timedOut ? "timeout" : "failed",
+        ExitCode = exitCode,
+        TimedOut = timedOut,
+        FailurePhase = "build",
+        CountsUnknown = true,
+        BuildSeconds = buildSeconds,
+        SetKind = "checkpoint-row",
+        Measurement = buildSeconds is double seconds
+            ? new TimingMeasurement { HostWallSeconds = seconds, MeasurementKind = "host-wall" }
+            : null,
+    };
+
+    private static TimingOutcome Unmeasured(int exitCode, string phase, bool timedOut = false) => new()
+    {
+        Outcome = timedOut ? "timeout" : "failed",
+        ExitCode = exitCode,
+        TimedOut = timedOut,
+        FailurePhase = phase,
+        CountsUnknown = true,
+        SetKind = "checkpoint-row",
+    };
+
+    private static TimingOutcome MeasuredOutcome(int exit, TrxParseResult parsed, PhaseTimings timings, string state) => new()
+    {
+        Outcome = exit == ExitCodes.Green ? "passed" : "failed",
+        ExitCode = exit,
+        FailurePhase = exit == ExitCodes.Green ? null : state,
+        SetKind = "checkpoint-row",
+        Trx = parsed,
+        Measurement = timings.UnavailableReason is null
+            ? new TimingMeasurement
+            {
+                HostWallSeconds = timings.TestHostWallSeconds,
+                CaseWindowSeconds = timings.CaseWindowSeconds,
+                CaseDurationSumSeconds = timings.CaseDurationSumSeconds,
+                StartupSeconds = timings.StartupSeconds,
+                TeardownSeconds = timings.TeardownSeconds,
+                MeasurementKind = "inclusive-case-window",
+            }
+            : new TimingMeasurement { UnavailableReason = timings.UnavailableReason, MeasurementKind = "unknown" },
+    };
 
     private static void EchoGuard(TextWriter writer, string? text)
     {

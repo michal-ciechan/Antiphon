@@ -54,7 +54,8 @@ param(
     [string]$ExpectedSourceSha,
     [string]$DotnetShim,
     [double]$SlotWaitMinutes = 45,
-    [switch]$NoSlot
+    [switch]$NoSlot,
+    [string]$TimingRoot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -431,6 +432,35 @@ function Test-CheckpointBuildBinding {
     return $true
 }
 
+function Write-WrapperTiming {
+    param([string]$Kind, [int]$Code = 0)
+    $root = $TimingRoot
+    if (-not $root) { $root = $env:ANTIPHON_TEST_TIMING_ROOT }
+    if (-not $root) { return }
+    try {
+        . (Join-Path $PSScriptRoot (Join-Path 'lib' 'test-timings.ps1'))
+        $stamp = [DateTimeOffset]::UtcNow.ToString('o')
+        $outcome = if ($Kind -eq 'run-started') { 'started' } elseif ($Code -eq 0) { 'passed' } else { 'failed' }
+        Write-TestTimingEvent -Root $root -Event ([ordered]@{
+            schemaVersion = 'antiphon-test-timing-v1'
+            eventId = ([guid]::NewGuid().ToString('N'))
+            eventKind = $(if ($Kind -eq 'run-started') { 'run-started' } else { 'set-completed' })
+            runId = 'wrapper'
+            attempt = 1
+            producer = 'wrapper'
+            setKind = 'checkpoint-row'
+            setId = $Name
+            outcome = $outcome
+            exitCode = $Code
+            startedAt = $stamp
+            endedAt = $stamp
+            category = 'unavailable'
+            timingPersistence = 'complete'
+            durabilityClass = 'configured-root'
+        })
+    } catch { }
+}
+
 function Write-Trailer {
     param([int]$Code)
     if ($Code -eq 0 -and $null -ne $script:expectedBinding) {
@@ -479,6 +509,7 @@ function Write-Trailer {
         $gitWrite = Write-CheckpointSafeText (Join-Path $script:resultsDirectory 'git.txt') (('commit={0} source={1} sourceState={2} buildSource={3}' -f $commit, (Get-CheckpointSourceToken $start), $state, $script:buildSource) + "`n") $script:resultsDirectory
         if ($null -ne $gitWrite) { Write-Host ('refused: ' + $gitWrite) }
     }
+    Write-WrapperTiming -Kind 'set-completed' -Code $Code
     Write-Host ('CHECKPOINT {0} EXIT CODE: {1}' -f $Name, $Code)
     if ($Code -eq 2) { exit 2 }
 }
@@ -651,6 +682,7 @@ function Invoke-Dotnet {
     try {
         $launched = [DateTimeOffset]::UtcNow
         $watch = [System.Diagnostics.Stopwatch]::StartNew()
+        if ($Phase -eq 'run') { Write-WrapperTiming -Kind 'run-started' }
         $proc = [System.Diagnostics.Process]::Start($psi)
         try {
             $stdoutTask = $proc.StandardOutput.ReadLineAsync()
