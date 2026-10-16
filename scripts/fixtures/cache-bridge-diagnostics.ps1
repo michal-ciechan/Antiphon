@@ -33,7 +33,7 @@ try {
         try { Invoke-C590LiveCase -Case runner-cache-fixture -Manifest $manifest }
         catch { if ($_.Exception.Message -ne 'MODEL_RESULT') { throw } }
         if ($script:observed.accepted -or $script:observed.exit -eq 0) { throw 'transport accepted' }
-        $log = Get-Content -LiteralPath (Join-Path $script:caseRoot 'remote-output.txt') -Raw
+        $log = (Get-Content -LiteralPath (Join-Path $script:caseRoot 'remote-output.txt') -Raw).Replace("`r`n", "`n")
         if ($log -notmatch '(?m)^CacheRecoveryInvalid$' -or $log -match 'TOKEN_SENTINEL|password|credential') { throw 'safe diagnostic not retained' }
         $expectedExit = if ($script:scenario -eq 'inner') { 2 } else { 255 }
         if ($log -notmatch "(?m)^transport-exit=$expectedExit$") { throw 'numeric exit not retained' }

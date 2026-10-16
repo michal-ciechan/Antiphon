@@ -520,7 +520,7 @@ function Invoke-C590LiveCase {
             "export C1008_CLEANUP_OPERATION='$cleanupOperation'"
             "bash /home/mc/antiphon-c590/c590-remote.sh"
         )) -join '; '
-        $code = Invoke-C590Ssh -Remote $remote -ReceiptPath (Join-Path $root 'remote-output.txt')
+        $code = Invoke-C590Ssh $remote -ReceiptPath (Join-Path $root 'remote-output.txt')
         $destParent = $root
         & scp -o BatchMode=yes -r ("mc@server2:/work/test-evidence/" + $run + "/" + $Case) $destParent | Out-Null
         if ($LASTEXITCODE -ne 0 -and ($recycleContext -or $null -ne $cleanup)) {
