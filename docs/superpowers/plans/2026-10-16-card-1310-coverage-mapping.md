@@ -35,6 +35,13 @@ through build-slot.ps1 are necessary unlisted setup, reported separately. No PCs
 run in Code. PC-1..PC-4 and every variant remain pending SourceLanding Mutation.
 Restart: none.
 
+Round 3 changes only the Windows lower bound to entry creation time. Change time
+and write time must still be at or before the observed build exit. Linux retains
+its change-time lower bound. Run CP-3 separately from known-red CP-2 so its cleanup
+and both receipt validators can be qualified independently. CP-1 now has the
+original 17 cases plus two native creation-time regressions. The pre-root case
+uses recent change/write times, isolating the creation-time rejection.
+
 Windows inspection found build adoption is Linux-only at this base. Extend the
 same seal-time window to native Windows identity/change-time/owner facts, creating
 the fresh root with a protected current-owner-only ACL. Preserve portable ledger

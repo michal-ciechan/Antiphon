@@ -11,6 +11,8 @@ mutant was run by Code. Bind to the published source before execution.
 | PC-2 | CheckpointCoverageMappingTests.Mapping_authority_rejects_non_build_appends | omit prefix check; omit identity check; omit exit/window; allow reseal; ignore final bytes/stat | preservation/refusal for rewrite, replace, late, no-exit, after-seal, reseal |
 | PC-3 | CheckpointCoverageMappingTests.Mapping_append_does_not_authorize_unrelated_entries | generalize mapping exception; trust disk inventory; bypass identity/hash, link, hardlink or Git guard | preservation/refusal for changed, added, replaced, replaced-identical, link, hardlink, tracked |
 | PC-4 | CheckpointCoverageMappingNativeTests | omit Windows custody; omit owner-only root check; omit exit bound | exact Native_build_append_and_child_output_are_sealed_and_removed, Windows_root_with_other_writers_does_not_adopt_child_output, Native_child_write_after_build_exit_is_retained methods respectively |
+| PC-5 | CheckpointCoverageMappingNativeTests.Windows_copied_old_timestamps_inside_creation_window_are_adopted | restore the Windows change-time lower bound | copied-output adoption/cleanup assertion |
+| PC-6 | CheckpointCoverageMappingNativeTests.Windows_file_created_before_root_is_retained | omit the Windows creation-time lower bound | refusal/preservation assertion |
 
 Mutation owns additional missing-control discovery, native Windows variants, and
 red/restore/green. Do not widen deadlines or weaken assertions. Restart: none.

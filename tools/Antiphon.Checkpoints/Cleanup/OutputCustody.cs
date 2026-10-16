@@ -11,10 +11,13 @@ namespace Antiphon.Checkpoints;
 // nothing; the entry stays unrecorded and cleanup refuses it. Boundary, not closed: a same-uid
 // writer inside the build window (the root is 0700, so it shares the build's trust domain) and a
 // write within one kernel timestamp tick after the observed exit are indistinguishable from the
-// build. Windows uses no-follow handle identity/change time and a protected owner-only root.
+// build. Windows uses creation time for the lower bound because build copies preserve source
+// change/write times; both still bound the build exit. No-follow identity checks and the
+// protected owner-only root remain required.
 public static class OutputCustody
 {
-    public readonly record struct Entry(ushort Mode, uint Links, uint Owner, ulong Inode, ulong Size, DateTimeOffset Changed, DateTimeOffset Modified)
+    public readonly record struct Entry(ushort Mode, uint Links, uint Owner, ulong Inode, ulong Size, DateTimeOffset Changed, DateTimeOffset Modified,
+        DateTimeOffset? Created = null)
     {
         public bool IsRegular => (Mode & 0xF000) == 0x8000;
         public bool IsDirectory => (Mode & 0xF000) == 0x4000;
@@ -29,7 +32,11 @@ public static class OutputCustody
         if (!entry.IsRegular && !entry.IsDirectory) return "not-regular";
         if (entry.IsRegular && entry.Links != 1) return "multiple-links";
         if (entry.Owner != window.Owner) return "foreign-owner";
-        if (entry.Changed < window.RootCreated) return "changed-before-root";
+        if (entry.Created is { } created)
+        {
+            if (created < window.RootCreated) return "created-before-root";
+        }
+        else if (entry.Changed < window.RootCreated) return "changed-before-root";
         if (entry.Changed > window.BuildExited) return "changed-after-build";
         if (entry.Modified > window.BuildExited) return "modified-after-build";
         return null;
@@ -54,6 +61,7 @@ public static class OutputCustody
         var stat = context.Io.Stat(path);
         if (stat.Kind is "unknown" or "absent" || stat.Inode == 0 || stat.Changed == 0) return null;
         return new Entry(stat.Mode, stat.Links, stat.Owner, stat.Inode, (ulong)stat.Size,
-            DateTimeOffset.UnixEpoch.AddTicks(stat.Changed / 100), DateTimeOffset.UnixEpoch.AddTicks(stat.Modified / 100));
+            DateTimeOffset.UnixEpoch.AddTicks(stat.Changed / 100), DateTimeOffset.UnixEpoch.AddTicks(stat.Modified / 100),
+            context.Io.Platform == CheckpointPlatform.Windows ? context.Io.CreationTimeUtc(path) : null);
     }
 }
