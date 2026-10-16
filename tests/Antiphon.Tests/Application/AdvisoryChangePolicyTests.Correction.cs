@@ -32,6 +32,72 @@ namespace Antiphon.Tests.Application;
 public partial class AdvisoryChangePolicyTests
 {
     [Test]
+    [Arguments("missing-blob")]
+    [Arguments("missing-bundle")]
+    [Arguments("changed-blob")]
+    public async Task C1303_R12_LandRefusesUnavailableCorrectedEvidence(string defect)
+    {
+        await using var w = await CorrectionWorld.CreateAsync();
+        using var corrected = await w.PostAsync(w.Request);
+        corrected.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var receipt = (await corrected.Content.ReadFromJsonAsync<ReviewEvidenceCorrectionResponse>()).ShouldNotBeNull();
+        receipt.Disposition.ShouldBe("corrected");
+        var evidenceId = receipt.SuccessorEvidenceId.ShouldNotBeNull();
+        string inventoryPath;
+        await using (var db = w.Db())
+        {
+            inventoryPath = (await db.ReviewEvidenceCorrections.SingleAsync()).ImportedEvidenceIdentity;
+            var subject = await db.AgentTasks.SingleAsync(t => t.Id == w.Request.SubjectTaskId);
+            (await LandApproval.LoadUsableEvidenceAsync(db, evidenceId, w.Request.SourceSha,
+                subject, CancellationToken.None)).Id.ShouldBe(evidenceId, "intact correction approves this source");
+        }
+        using var inventory = JsonDocument.Parse(await File.ReadAllTextAsync(inventoryPath));
+        var relative = inventory.RootElement.GetProperty("files")[0].GetProperty("relativePath").GetString()!;
+        var missingPath = defect == "missing-bundle" ? inventoryPath
+            : Path.Combine(Path.GetDirectoryName(inventoryPath)!, relative);
+        var original = await File.ReadAllBytesAsync(missingPath);
+        if (defect == "changed-blob") await File.AppendAllTextAsync(missingPath, "changed retained bytes");
+        else File.Delete(missingPath);
+
+        var queue = new AgentTaskLandQueue();
+        await using (var db = w.Db())
+        {
+            var error = await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
+                Land(db, queue).RequestAsync(w.Request.SubjectTaskId,
+                    new LandAgentTaskRequest(ExpectedSourceSha: w.Request.SourceSha, ReviewEvidenceId: evidenceId),
+                    CancellationToken.None));
+            error.StatusCode.ShouldBe(409);
+            error.Code.ShouldBe("review_evidence_correction_retained_evidence_unavailable");
+            error.Message.ShouldContain("Retained checkpoint bundle");
+            error.Message.ShouldContain(w.Request.BundleDigest);
+            error.Message.ShouldContain(inventoryPath);
+            error.Message.ShouldContain("missing, unreadable, or changed");
+            error.Message.ShouldContain("CheckpointReceipts:StorageRoot");
+            error.Message.ShouldContain("Restore the original bundle");
+            error.Message.ShouldContain("retry land");
+            error.Message.ShouldContain("commission a new Review");
+        }
+        await using (var fresh = w.Db())
+        {
+            (await fresh.AgentTaskLandRequests.CountAsync()).ShouldBe(0, "refusal persists no landing request");
+            var subject = await fresh.AgentTasks.SingleAsync(t => t.Id == w.Request.SubjectTaskId);
+            subject.LandRequestedAt.ShouldBeNull();
+            subject.CurrentLandRequestId.ShouldBeNull();
+            (await fresh.StageOutcomes.CountAsync()).ShouldBe(2, "historical and corrected outcomes survive refusal");
+        }
+        queue.PendingCount.ShouldBe(0, "unverifiable evidence cannot enqueue publication");
+
+        await File.WriteAllBytesAsync(missingPath, original);
+        await using var restored = w.Db();
+        var accepted = await Land(restored, queue).RequestAsync(w.Request.SubjectTaskId,
+            new LandAgentTaskRequest(ExpectedSourceSha: w.Request.SourceSha, ReviewEvidenceId: evidenceId),
+            CancellationToken.None);
+        accepted.Status.ShouldBe("queued", "restoring the exact bundle permits retry");
+        (await restored.AgentTaskLandRequests.SingleAsync()).ReviewEvidenceId.ShouldBe(evidenceId);
+        queue.PendingCount.ShouldBe(1);
+    }
+
+    [Test]
     public async Task C1281_ReceiptCorrection()
     {
         await using var w = await CorrectionWorld.CreateAsync();
