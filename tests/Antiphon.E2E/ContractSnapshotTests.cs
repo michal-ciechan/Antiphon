@@ -57,7 +57,8 @@ public class ContractSnapshotTests
 
             var create = await app.HttpClient.PostAsJsonAsync("/api/agents", new
             {
-                name = $"Contract Agent {Guid.NewGuid():N}"[..24],
+                // The provisioner includes this name in CLAUDE.md, whose real hash is snapshotted.
+                name = "Contract Agent",
                 workingDirectory = workspace,
             });
             create.EnsureSuccessStatusCode();

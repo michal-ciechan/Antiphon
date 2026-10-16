@@ -4,6 +4,18 @@
   "isGitRepository": true,
   "files": [
     {
+      "path": "CLAUDE.md",
+      "gitStatus": "Untracked",
+      "external": false,
+      "agentEdits": 0,
+      "lastAgentEditAt": null,
+      "contentHash": "e496e93baf369739",
+      "reviewLevel": null,
+      "reviewStale": false,
+      "sizeBytes": 767,
+      "isMarkdown": true
+    },
+    {
       "path": "notes/report.md",
       "gitStatus": "Untracked",
       "external": false,

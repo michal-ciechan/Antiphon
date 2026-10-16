@@ -18,7 +18,12 @@
       "inputTokens": null,
       "outputTokens": null,
       "cacheReadTokens": null,
-      "cacheCreationTokens": null
+      "cacheCreationTokens": null,
+      "isApiError": null,
+      "apiErrorClass": null,
+      "apiErrorStatus": null,
+      "model": null,
+      "apiErrorTimeZoneId": null
     },
     {
       "sequence": 2,
@@ -37,7 +42,12 @@
       "inputTokens": 4,
       "outputTokens": 210,
       "cacheReadTokens": 15000,
-      "cacheCreationTokens": 2000
+      "cacheCreationTokens": 2000,
+      "isApiError": null,
+      "apiErrorClass": null,
+      "apiErrorStatus": null,
+      "model": null,
+      "apiErrorTimeZoneId": null
     },
     {
       "sequence": 3,
@@ -56,7 +66,12 @@
       "inputTokens": 4,
       "outputTokens": 210,
       "cacheReadTokens": 15000,
-      "cacheCreationTokens": 2000
+      "cacheCreationTokens": 2000,
+      "isApiError": null,
+      "apiErrorClass": null,
+      "apiErrorStatus": null,
+      "model": null,
+      "apiErrorTimeZoneId": null
     },
     {
       "sequence": 4,
@@ -75,7 +90,12 @@
       "inputTokens": null,
       "outputTokens": null,
       "cacheReadTokens": null,
-      "cacheCreationTokens": null
+      "cacheCreationTokens": null,
+      "isApiError": null,
+      "apiErrorClass": null,
+      "apiErrorStatus": null,
+      "model": null,
+      "apiErrorTimeZoneId": null
     },
     {
       "sequence": 5,
@@ -94,7 +114,12 @@
       "inputTokens": 6,
       "outputTokens": 180,
       "cacheReadTokens": 17000,
-      "cacheCreationTokens": 0
+      "cacheCreationTokens": 0,
+      "isApiError": null,
+      "apiErrorClass": null,
+      "apiErrorStatus": null,
+      "model": null,
+      "apiErrorTimeZoneId": null
     },
     {
       "sequence": 6,
@@ -113,7 +138,12 @@
       "inputTokens": 6,
       "outputTokens": 180,
       "cacheReadTokens": 17000,
-      "cacheCreationTokens": 0
+      "cacheCreationTokens": 0,
+      "isApiError": null,
+      "apiErrorClass": null,
+      "apiErrorStatus": null,
+      "model": null,
+      "apiErrorTimeZoneId": null
     },
     {
       "sequence": 7,
@@ -132,7 +162,12 @@
       "inputTokens": null,
       "outputTokens": null,
       "cacheReadTokens": null,
-      "cacheCreationTokens": null
+      "cacheCreationTokens": null,
+      "isApiError": null,
+      "apiErrorClass": null,
+      "apiErrorStatus": null,
+      "model": null,
+      "apiErrorTimeZoneId": null
     },
     {
       "sequence": 8,
@@ -151,7 +186,12 @@
       "inputTokens": 3,
       "outputTokens": 45,
       "cacheReadTokens": 17200,
-      "cacheCreationTokens": 0
+      "cacheCreationTokens": 0,
+      "isApiError": null,
+      "apiErrorClass": null,
+      "apiErrorStatus": null,
+      "model": null,
+      "apiErrorTimeZoneId": null
     },
     {
       "sequence": 9,
@@ -170,7 +210,12 @@
       "inputTokens": 3,
       "outputTokens": 45,
       "cacheReadTokens": 17200,
-      "cacheCreationTokens": 0
+      "cacheCreationTokens": 0,
+      "isApiError": null,
+      "apiErrorClass": null,
+      "apiErrorStatus": null,
+      "model": null,
+      "apiErrorTimeZoneId": null
     }
   ],
   "lastSequence": 9
