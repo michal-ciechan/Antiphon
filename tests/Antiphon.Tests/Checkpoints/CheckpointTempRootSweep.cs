@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Antiphon.Checkpoints;
+using Antiphon.HostCleanup.Checkpoints;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
@@ -44,15 +45,21 @@ internal sealed class CheckpointTempRootSweep
     private readonly ProcessIdentityProbe _probe;
     private readonly CheckpointSweepOptions _options;
     private readonly Func<DateTimeOffset> _clock;
+    private readonly CheckpointCleanupContext _context;
     private static readonly Regex Name = new("^c723-[0-9a-f]{32}$", RegexOptions.CultureInvariant);
 
     public CheckpointTempRootSweep(string? temp = null, ProcessIdentityProbe? probe = null,
         CheckpointSweepOptions? options = null, Func<DateTimeOffset>? clock = null)
+        : this(CheckpointCleanupDefaults.Context, temp ?? Path.GetTempPath(), probe, options, clock) { }
+
+    public CheckpointTempRootSweep(CheckpointCleanupContext context, string temp, ProcessIdentityProbe? probe = null,
+        CheckpointSweepOptions? options = null, Func<DateTimeOffset>? clock = null)
     {
-        _temp = Path.GetFullPath(temp ?? Path.GetTempPath());
-        _probe = probe ?? new ProcessIdentityProbe();
+        _context = context;
+        _temp = Path.GetFullPath(temp);
+        _probe = probe ?? new ProcessIdentityProbe(context);
         _options = options ?? new CheckpointSweepOptions();
-        _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _clock = clock ?? context.Time.GetUtcNow;
     }
 
     private string LockPath => Path.Combine(_temp, ".checkpoint-temp-coordinator.lock");

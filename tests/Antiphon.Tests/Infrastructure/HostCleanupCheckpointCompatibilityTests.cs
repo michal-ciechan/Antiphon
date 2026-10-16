@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Antiphon.Checkpoints;
+using Antiphon.Tests.Checkpoints;
 using Shouldly;
 using TUnit.Core;
 
@@ -9,6 +10,97 @@ namespace Antiphon.Tests.Infrastructure;
 [Category("Unit")]
 public sealed class HostCleanupCheckpointCompatibilityTests
 {
+    [Test]
+    public void nested_live_executor_vetoes_whole_root()
+    {
+        var f = new SweepFixture();
+        f.MarkRun(new ProcessIdentityProbe(f.Files.Context).Current());
+        f.Files.Io.Put(f.Root + "/sentinel", "keep");
+        f.ClearEvents();
+
+        var receipt = f.Sweep.SweepOnce();
+        receipt.Examined.ShouldBe(1, "C987.nested-live-reached");
+        receipt.CompletedRoots.ShouldBe(0, "nested-live-retained");
+        receipt.Skips.GetValueOrDefault("nested-identity-alive").ShouldBe(1, "C987.nested-live-guard");
+        f.Files.Io.Text(f.Root + "/sentinel").ShouldBe("keep", "nested-live-retained");
+        f.AssertGateAndNoDelete();
+        f.Files.Io.Count("open-read", f.Run + "/executor-ownership.json").ShouldBeGreaterThan(0);
+
+        // Removing only the live-owner veto must let this same candidate finish.
+        f.MarkRun(f.Dead);
+        f.Sweep.SweepOnce().CompletedRoots.ShouldBe(1, "C987.nested-live-positive-pair");
+        f.Files.Io.DirectoryExists(f.Root).ShouldBeFalse();
+        f.Files.Io.RecursiveIntents.ShouldBe(0);
+    }
+
+    [Test]
+    public void unknown_nested_custody_vetoes_whole_root()
+    {
+        var f = new SweepFixture();
+        var sentinel = f.Run + "/tool/sentinel";
+        f.Files.Io.Put(sentinel, "keep");
+        f.ClearEvents();
+
+        var receipt = f.Sweep.SweepOnce();
+        receipt.Examined.ShouldBe(1, "C987.nested-missing-reached");
+        receipt.CompletedRoots.ShouldBe(0, "nested-missing-retained");
+        receipt.Skips.GetValueOrDefault("nested-custody-missing").ShouldBe(1, "C987.nested-missing-guard");
+        f.Files.Io.Text(sentinel).ShouldBe("keep", "nested-missing-retained");
+        f.AssertGateAndNoDelete();
+        f.Files.Io.Count("file-exists", f.Run + "/ownership.json").ShouldBeGreaterThan(0);
+
+        // Supply real serialized custody, never a canned deletion decision.
+        f.MarkRun(f.Dead);
+        f.Sweep.SweepOnce().CompletedRoots.ShouldBe(1, "C987.nested-missing-positive-pair");
+        f.Files.Io.DirectoryExists(f.Root).ShouldBeFalse();
+        f.Files.Io.RecursiveIntents.ShouldBe(0);
+    }
+
+    private sealed class SweepFixture
+    {
+        public HostCleanupCheckpointFixture Files { get; } = new();
+        public string Root { get; }
+        public string Run => Root + "/custom-results/run";
+        public ProcessIdentity Dead => new(999, 1, Files.Io.MachineName, Files.Io.BootId, Files.Io.PidNamespace);
+        public CheckpointTempRootSweep Sweep { get; }
+
+        public SweepFixture()
+        {
+            Root = Files.Parent + "/c723-" + Guid.NewGuid().ToString("N");
+            Files.Io.CreateDirectory(Run + "/tool");
+            TestRootGuard.Write(Root, new()
+            {
+                RootId = Path.GetFileName(Root)["c723-".Length..], RootPath = Root,
+                AttemptId = "virtual-attempt", AssemblyInvocationId = "virtual-assembly",
+                CreatedAt = Files.Clock.GetUtcNow().AddHours(-1), Owner = Dead
+            }, Files.Context);
+            var index = Files.Parent + "/.checkpoint-temp-roots";
+            Files.Io.CreateDirectory(index);
+            Files.Io.Put(index + "/" + Path.GetFileName(Root) + ".json", JsonSerializer.Serialize(Root));
+            Sweep = new(Files.Context, Files.Parent, options: new() { Interval = TimeSpan.Zero });
+        }
+
+        public void MarkRun(ProcessIdentity executor)
+        {
+            RunOwnershipStore.Write(Run, new()
+            {
+                RunId = "run", RunDirectory = Run, Starter = Dead, Launched = executor, Phase = "launched"
+            }, Files.Context);
+            ExecutorOwnershipStore.Write(Run, executor, Files.Context);
+        }
+
+        public void ClearEvents() { Files.Io.Events.Clear(); Files.Io.Opens.Clear(); }
+
+        public void AssertGateAndNoDelete()
+        {
+            Files.Io.Opens.ShouldContain(o => o.Path == Root + "/" + TestRootGuard.LockName
+                && o.Share == FileShare.None, "C987.nested-guard-under-root-gate");
+            Files.Io.Count("unlink").ShouldBe(0);
+            Files.Io.Count("rmdir").ShouldBe(0);
+            TestRootGuard.Read(Root, Files.Context)!.State.ShouldBe("active");
+        }
+    }
+
     [Test]
     public async Task wait_uses_custody_not_progress_pid()
     {
