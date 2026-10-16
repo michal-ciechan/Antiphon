@@ -1574,8 +1574,9 @@ public sealed class AgentTaskService
             Card? admissionCard = null;
             if (task.CardId is Guid admissionCardId)
             {
+                // Fence card changes while allowing FK inserts to take FOR KEY SHARE.
                 await _db.Database.ExecuteSqlInterpolatedAsync(
-                    $"SELECT 1 FROM \"Cards\" WHERE \"Id\" = {admissionCardId} FOR UPDATE", ct);
+                    $"SELECT 1 FROM \"Cards\" WHERE \"Id\" = {admissionCardId} FOR NO KEY UPDATE", ct);
                 admissionCard = await _db.Cards.AsNoTracking().SingleAsync(c => c.Id == admissionCardId, ct);
             }
             if (handoffActionId is Guid actionId)
