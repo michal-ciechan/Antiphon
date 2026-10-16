@@ -338,9 +338,11 @@ routing/model/provider refusals and 422 placement validation. `handoff_requires_
 is **422**. New handoff children and ordinary `POST /api/agent-tasks` implementation roles
 (`Code`, `Custom`, `Debug`, `Docs`, `Merge`, `Commit`, `Deploy`) also face **409
 `card_implementation_closed`** on Done/Canceled/archived cards and **409 `card_admission_changed`**
-when status/archive/board/identifier/active workflow/platform/verification policies changed
-between pre-read and lock. Re-read and make a fresh admission decision; a closed card needs
-an explicit disposition, not a blind retry.
+when board, identifier, required platform, or either verification policy changes between the
+pre-read and the lock, or when status leaves Backlog, In Progress, or Review for NeedsDecision.
+A transition-sweep move among those open columns, or an active workflow run change, is re-read
+under the card lock and admitted from that locked state. Re-read after a fence refusal; a closed
+card needs an explicit disposition, not a blind retry.
 
 For correction, send `{ predecessorEvidenceId, expectedReportDigest, subjectTaskId, sourceSha,
 sourceRef, repositoryPath, selection, producerIdentity, bundleDigest, reason }`.

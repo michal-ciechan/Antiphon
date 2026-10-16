@@ -1652,7 +1652,11 @@ public sealed class AgentTaskService
             {
                 if (admissionCard.Status is CardStatus.Done or CardStatus.Canceled || admissionCard.ArchivedAt is not null)
                     throw new ConflictException("Implementation work requires an open card.", "card_implementation_closed");
-                if (CardAdmissionState.From(admissionCard) != proposedCardState)
+                // CARD-1303 R4: decide from the locked row when a sweep moves an open
+                // card or the active workflow run changes. Other fence fields still refuse.
+                var lockedCardState = CardAdmissionState.From(admissionCard);
+                if (lockedCardState != proposedCardState
+                    && (proposedCardState is not { } observed || !IsBenignAdmissionTransition(observed, lockedCardState)))
                     throw new ConflictException("The card changed during admission; request a fresh decision.", "card_admission_changed");
             }
             if (task.SourceLandingOperationId is Guid sourceOperation)
@@ -1806,6 +1810,19 @@ public sealed class AgentTaskService
             card.BoardId, card.Identifier, card.ActiveWorkflowRunId, card.RequiredPlatform,
             card.CodeVerificationPolicy, card.ReviewVerificationPolicy);
     }
+
+    private static bool IsBenignAdmissionTransition(CardAdmissionState observed, CardAdmissionState locked) =>
+        observed.ArchivedAt == locked.ArchivedAt
+        && observed.BoardId == locked.BoardId
+        && observed.Identifier == locked.Identifier
+        && observed.Platform == locked.Platform
+        && observed.CodePolicy == locked.CodePolicy
+        && observed.ReviewPolicy == locked.ReviewPolicy
+        && (observed.Status == locked.Status
+            || (IsSweepColumn(observed.Status) && IsSweepColumn(locked.Status)));
+
+    private static bool IsSweepColumn(CardStatus status) =>
+        status is CardStatus.Backlog or CardStatus.InProgress or CardStatus.Review;
 
     private async Task<CardWorktreeBaseSelection?> PrepareWorktreeBaseAsync(AgentTask task,
         CreateAgentTaskRequest request, DateTime now, CancellationToken ct)
