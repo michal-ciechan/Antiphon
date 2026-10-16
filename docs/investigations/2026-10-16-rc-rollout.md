@@ -7,6 +7,8 @@ Ran from the canonical desktop checkout `C:\src\Antiphon`, detached at that SHA.
 
 Stopped after the temp smoke gate. The Plan canary dispatch was refused, so `drain-old` was not run. The standing `server2` container was left accepting on its previous build.
 
+The sections through "Caller next step" are that first stop. Later phases are in [Continuation](#continuation). The current stop is `redeploy-old` refusing `RecycleWorktreeDirty` on `worktrees/task-2d835afa`. Standing `server2` is still build `7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce`.
+
 ## Preconditions
 
 Observed 2026-10-16T17:40Z before census.
@@ -131,3 +133,71 @@ The smoke/canary gate treats that as a handoff failure. `drain-old` was not star
 Dispatch the documented Plan canary from an orchestrator, pinned `-Runner server2-temp` on a sanctioned card, and wait until it starts, runs, and reports. Then continue from `drain-old` only if that canary succeeds.
 
 Before `redeploy-old`, the two Blocked `server2` tasks above have to leave the open set. A four-hour seat release zeros session counters and does not remove a Blocked `runnerId=server2` row, so the census still refuses `RecycleBoundTasks`.
+
+## Continuation
+
+### Canary on server2-temp
+
+Orchestrator Plan task `bb77d5c0-49d3-4461-8da9-71830995f55c`, pinned to `server2-temp`. `delegate.ps1 -Status` read Succeeded. Session `e760c606-ff5c-487c-b053-dc7b56cca062` ended 2026-10-16 18:06:10. Report commit `6b5a7caccee41faacd4cb5a9766d9ff54e65231d` on `feat/card-task-bb77d5c0`. Deliverable `docs/investigations/2026-10-16-canary-server2-temp.md`. This Deploy task created no further tasks.
+
+### drain-old
+
+Live status after the phase: `acceptingNewWork` false, `draining` true, `drainedAt` 2026-10-16T18:08:22.5303066Z, reason `CARD-0727 rolling upgrade`, `redirectTo` `server2-temp`, `retireWhenIdle` false, sessions/queued/runnerSessions `0/0/0`. Receipt directory `C:\src\Antiphon\.antiphon\rolling-server2\c7276c0c13034b0b`. Temp stayed accepting at `09e48c5d6f1d404cfea8ec0d992270424fd2a184`. `runner-defaults` stayed revision 2, `globalRunnerId=server2`.
+
+### redeploy-old, first refusal
+
+`2026-10-16T18:08:35Z` to `2026-10-16T18:12:27Z`. Exit 2. Token `RecycleWorktreeDirty`. Diagnosis `RecycleWorktreeDirty audit check=index-content status=0 repo=worktrees/task-71fd0d46`. Receipt `C:\src\Antiphon\.antiphon\rolling-server2\c727727675c15e1c`. `recycle.json` phase `preflight`, outcome `refused`, `ownedRemoved` false, operationId `c1008ce5bf1ed6d4b4ed7918d807e8489c390`. No volume was removed. The phase was not retried in that pass.
+
+The cause was later fixed outside this task: one extra CR hidden by `* text=auto` in settled worktree `task-71fd0d46`. Note `docs/investigations/2026-10-16-server2-dirty-worktree-71fd0d46.md` on `origin/feat/card-task-41ae0aac` at `ea8838e412c6258c6d1f5abae999ae4a7d107692`.
+
+### redeploy-old, retry
+
+`2026-10-16T18:31:56.5716005Z` to `2026-10-16T19:02:17.5828677Z`. Exit 2. Token `RecycleWorktreeDirty`. Diagnosis `RecycleWorktreeDirty audit check=status status=0 repo=worktrees/task-2d835afa`. Receipt `C:\src\Antiphon\.antiphon\rolling-server2\c7278850b26e2f71`. `deploy-parent\c590-result.json` `accepted` false, exit 2. `recycle.json` phase `preflight`, outcome `refused`, `ownedRemoved` false, volume outcomes `pending`, operationId `c1008bd48f43e1fa54a19ba070d3ea30986b9`. `remote-output.txt` is `transport-exit=2`.
+
+`check=status` is the porcelain gate in `consider_dirty`: `git status --porcelain --untracked-files=all` was non-empty. The hidden-CR class fails later, at `check=index-content`, with empty porcelain. This refusal is not that class.
+
+Read-only exec as uid 1654 in `antiphon-runner-session-runner-1`, audit Git environment, `safe.directory=*`:
+
+| Fact | Value |
+|---|---|
+| Checkout | `/work/worktrees/task-2d835afa` |
+| Branch | `feat/card-task-2d835afa` |
+| HEAD | `41fc37326f168da528428d02164d01cc85320d6d` |
+| Commits not in `origin` | 0 |
+| Task | `2d835afa`, CARD-1241, Worker/Code, Delegate Canceled, publication unconfirmed, cleanup NotStarted, session `6db9f6b9-77c3-4d29-91a1-10d384e864f4` ended 2026-10-14 11:50:19 |
+
+Staged index (`A ` added, `M ` staged modification), 799 porcelain bytes:
+
+- `.antiphon/task-c4110a03.md`
+- `docs/superpowers/reports/2026-10-14-card-1241-code-repair-2.md`
+- `docs/superpowers/reports/2026-10-14-card-1241-code-repair-3.md`
+- `docs/superpowers/reports/2026-10-14-card-1241-code-repair.md`
+- `docs/superpowers/reports/2026-10-14-card-1241-code.md`
+- `docs/testing-and-build.md`
+- `scripts/lib/checkpoint-usage.ps1`
+- `tests/Antiphon.Tests/Checkpoints/CheckpointConfinementLedgerTests.cs`
+- `tools/Antiphon.Checkpoints/BuildConfinement.cs`
+- `tools/Antiphon.Checkpoints/Execution/IDriver.cs`
+- `tools/Antiphon.Checkpoints/Execution/ProcessDriver.cs`
+- `tools/Antiphon.Checkpoints/Execution/RunScheduler.cs`
+- `tools/Antiphon.Checkpoints/LedgerStat.cs`
+- `tools/Antiphon.Checkpoints/Manifest/CheckpointManifest.cs`
+- `tools/Antiphon.Checkpoints/Manifest/ManifestValidator.cs`
+
+No blob rewrite was applied. The retry was not run again.
+
+### Still in place
+
+Observed 2026-10-16T19:04Z.
+
+| Check | Result |
+|---|---|
+| Standing container | `fc2983ea4991fe85b31f54ee2ef66150e0d8fef03897d6cf1c2d6ca9c0889832`, running, started `2026-10-11T13:42:57.09302366Z` |
+| Image | `sha256:ea8bafe24373694b3421d63afdffb4533faf0710f709d96dea661123b55e6835`, tag `antiphon-server2/session-testing:7507b3cfe0e2` |
+| `server2` `buildVersion` | `7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce` |
+| `server2` drain | still drained to `server2-temp`, counters `0/0/0`, store `f519bd08-e53a-47d1-adb1-2ab33475446f`, boot `9a6d75cc-09cb-4034-818e-440ceb9e2d2f` |
+| `server2-temp` | accepting, `buildVersion=09e48c5d6f1d404cfea8ec0d992270424fd2a184`, store `1559ba5a-92e3-42a4-a891-74bce5267a2e`, boot `6810dd8b-8ea1-4fd5-8c96-fed890286a36` |
+
+Smoke of upgraded old, `Both`, `drain-temp`, and `retire-temp` were not run. Registered `buildVersion` and image revision do not equal `09e48c5d6f1d404cfea8ec0d992270424fd2a184`.
+
+The staged index in `worktrees/task-2d835afa` has to be published or cleared on a reviewed path before `redeploy-old` can run again at that SHA. Temp stays accepting. Old stays drained.
