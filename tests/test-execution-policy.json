@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 2,
-  "policyHash": "922cce2a0064bebfc90e211fe33db10dc74cb61ecb5d9f050bd00ec669e10ada",
+  "schemaVersion": 3,
+  "policyHash": "c90bdfe0429cc5e24df927f49532154a10911441e35a4d2dbb4c444379cd8b86",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -33,9 +33,10 @@
         "messaging",
         "client",
         "scripts",
-        "e2e"
+        "e2e",
+        "markdown-pdf"
       ],
-      "description": "The full automated Windows profile: the seven nightly suites plus automated E2E. OptIn alone is not exclusion here; only the rows below are excluded, each with its reason and owner. Live provider, headed, distiller-approval, QEMU and Linux-only cases are named; nothing else may vanish from the census.",
+      "description": "Full automated Windows profile including portable MarkdownPdf; explicit other-platform and manual obligations remain excluded with owners.",
       "exclusions": [
         {
           "suite": "e2e",
@@ -390,30 +391,34 @@
         {
           "suite": "agents-pty",
           "class": "PtyPasteMarkerExperiments",
-          "reason": "headed or real-provider experiment owned by its own canary workflow",
-          "owner": "CARD-0599"
+          "reason": "Only these methods launch real Claude; other methods retain Windows/Node/native prerequisites.",
+          "owner": "CARD-1313",
+          "methods": [
+            "Real_claude_by_conpty_backend",
+            "Real_claude_controls_and_size_sweep",
+            "Real_claude_delivery_envelope"
+          ]
         },
         {
           "suite": "agents-pty",
           "class": "ClaudeVerifiedDeliveryTests",
           "methods": [
-            "Evidence_appears_then_submit_completes_a_turn(claude,short)",
-            "Evidence_appears_then_submit_completes_a_turn(claude,hugeLine)",
-            "Evidence_appears_then_submit_completes_a_turn(claude,multiLine)",
-            "Evidence_appears_then_submit_completes_a_turn(claude,batch)"
+            "Real_evidence_appears_then_submit_completes_a_turn"
           ],
-          "reason": "live claude rows; the fakeclaude/short row stays required",
-          "owner": "CARD-0599"
+          "reason": "ClSession real Claude TUI gate; fake-native method remains required.",
+          "owner": "CARD-1313"
         },
         {
           "suite": "agents-pty",
           "class": "OrchestratorWorkspaceLayoutCanaryTests",
           "methods": [
             "Claude_loads_parent_CLAUDE_md_from_a_nested_checkout",
-            "Claude_sibling_import_is_dropped_without_the_forward_slash_approval"
+            "Claude_sibling_import_is_dropped_without_the_forward_slash_approval",
+            "Codex_prompt_input_is_bounded_at_the_nested_checkout_git_root",
+            "Grok_inspect_is_bounded_at_the_nested_checkout_git_root"
           ],
-          "reason": "live Claude rows; the offline Codex/Grok rows stay required",
-          "owner": "CARD-0599"
+          "reason": "Two live Claude TUI methods and two real executable oracles gated by ANTIPHON_PTY_PROVIDER_ORACLES=1; no API in Codex/Grok oracles.",
+          "owner": "CARD-1313"
         },
         {
           "suite": "agents-pty",
@@ -484,6 +489,55 @@
           ],
           "reason": "QEMU/native placeholder control",
           "owner": "CARD-0490"
+        },
+        {
+          "reason": "ClSession: Windows, ANTIPHON_HEADED_TESTS, real Claude TUI; long live canary.",
+          "suite": "agents-pty",
+          "class": "ClaudeHeadedLongTests",
+          "owner": "CARD-1313"
+        },
+        {
+          "reason": "GkSession: Windows, ANTIPHON_HEADED_TESTS, real Grok TUI and model API.",
+          "suite": "agents-pty",
+          "class": "GrokMidTurnInterruptCanaryTests",
+          "owner": "CARD-1313"
+        },
+        {
+          "reason": "C861_CAPTURE=1 and installed real Grok/native PTY; no model input.",
+          "suite": "antiphon",
+          "class": "GrokSizeCaptureTests",
+          "owner": "CARD-1313"
+        },
+        {
+          "reason": "HerdrLiveSession flag and installed stock Herdr; dummy child, no real provider.",
+          "suite": "session-runner",
+          "class": "HerdrPaneDisposalGuardedLiveTests",
+          "owner": "CARD-1313"
+        },
+        {
+          "reason": "Non-Windows filesystem behaviour; does not earn Windows behaviour credit.",
+          "suite": "markdown-pdf",
+          "class": "MarkdownPdfCommandTests",
+          "methods": [
+            "Symlinked_staged_document_is_refused_before_browser_launch"
+          ],
+          "owner": "CARD-1313"
+        },
+        {
+          "reason": "Non-Windows shell browser fixture; does not earn Windows behaviour credit.",
+          "suite": "markdown-pdf",
+          "class": "MarkdownPdfRendererTests",
+          "methods": [
+            "Real_browser_exit_zero_requires_a_fresh_nonempty_pdf",
+            "Browser_nonzero_exit_cannot_reuse_a_stale_pdf"
+          ],
+          "owner": "CARD-1313"
+        },
+        {
+          "reason": "Linux Docker browser image plus ANTIPHON_HEADED_TESTS=1.",
+          "suite": "markdown-pdf",
+          "class": "MarkdownPdfRealBrowserTests",
+          "owner": "CARD-1313"
         }
       ]
     }
@@ -494,7 +548,8 @@
     "tests/Antiphon.Messaging.Tests/Antiphon.Messaging.Tests.csproj",
     "tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj",
     "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
-    "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+    "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+    "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
   ],
   "suites": {
     "antiphon": {
@@ -561,6 +616,13 @@
       "processGroup": "e2e",
       "slowRegistry": "tests/Antiphon.E2E/slow-tests-allowlist.txt",
       "reason": "requires fresh client/dist and isolated random runner"
+    },
+    "markdown-pdf": {
+      "processGroup": "native-dotnet",
+      "name": "Antiphon.MarkdownPdf.Tests",
+      "mode": "unattended",
+      "assembly": "Antiphon.MarkdownPdf.Tests",
+      "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
     }
   },
   "safeEnvironment": {
@@ -676,7 +738,88 @@
     "agents-pty": 1200000,
     "messaging": 1200000,
     "client": 1200000,
-    "scripts": 1200000
+    "scripts": 1200000,
+    "markdown-pdf": 1200000
   },
-  "reducedDispatchPolicy": "inactive"
+  "reducedDispatchPolicy": "inactive",
+  "projectDispositions": [
+    {
+      "reason": "Primary test assembly; profile defines execution obligations.",
+      "consumers": [],
+      "role": "primary",
+      "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+    },
+    {
+      "reason": "Primary test assembly; profile defines execution obligations.",
+      "consumers": [],
+      "role": "primary",
+      "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+    },
+    {
+      "reason": "Primary test assembly; profile defines execution obligations.",
+      "consumers": [],
+      "role": "primary",
+      "project": "tests/Antiphon.Messaging.Tests/Antiphon.Messaging.Tests.csproj"
+    },
+    {
+      "reason": "Primary test assembly; profile defines execution obligations.",
+      "consumers": [],
+      "role": "primary",
+      "project": "tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj"
+    },
+    {
+      "reason": "Primary test assembly; profile defines execution obligations.",
+      "consumers": [],
+      "role": "primary",
+      "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+    },
+    {
+      "reason": "Primary test assembly; profile defines execution obligations.",
+      "consumers": [],
+      "role": "primary",
+      "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+    },
+    {
+      "reason": "Primary test assembly; profile defines execution obligations.",
+      "consumers": [],
+      "role": "primary",
+      "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+    },
+    {
+      "reason": "Explicit child host launched and reconciled by main script/checkpoint tests.",
+      "consumers": [
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ],
+      "role": "child",
+      "project": "scripts/fixtures/nightly/c487-probe/Probe.csproj"
+    },
+    {
+      "reason": "Explicit child host launched and reconciled by main script/checkpoint tests.",
+      "consumers": [
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ],
+      "role": "child",
+      "project": "tests/Antiphon.Checkpoints.FilterHost/Antiphon.Checkpoints.FilterHost.csproj"
+    },
+    {
+      "reason": "Explicit child host launched and reconciled by main script/checkpoint tests.",
+      "consumers": [
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ],
+      "role": "child",
+      "project": "tests/Antiphon.Checkpoints.LifecycleHost/Antiphon.Checkpoints.LifecycleHost.csproj"
+    },
+    {
+      "reason": "Explicit child host launched and reconciled by main script/checkpoint tests.",
+      "consumers": [
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ],
+      "role": "child",
+      "project": "tests/Antiphon.Checkpoints.RepeatHost/Antiphon.Checkpoints.RepeatHost.csproj"
+    }
+  ],
+  "selectionCatalog": {
+    "hash": "543d091fd625c25d4caf10cdbf6f4e6017696840c4e1722256a0d8d33c87024a",
+    "path": "tests/test-selection-policy.json"
+  }
 }

@@ -25,7 +25,7 @@ public sealed class ReleaseGatePolicyTests
         "C599 ProfileSchema rc on a v1 policy refuses",
         "C599 ProfileSchema unknown profile refuses",
         "C599 ProfileSchema stale hash refuses",
-        "C599 ProfileSchema shipped policy is v2",
+        "C599 ProfileSchema shipped policy is v3",
         "C599 ProfileSchema shipped policy defines rc");
 
     [Test]

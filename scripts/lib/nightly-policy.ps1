@@ -7,8 +7,8 @@ $script:AntiphonNightlyPolicyLoaded = $true
 
 # CARD-0599 D-5: schema v2 adds profiles.nightly / profiles.rc. v1 stays readable so an
 # older checked-out policy still loads; only v2 can name an rc profile.
-$script:NightlyPolicySchemaVersion = 2
-$script:NightlyPolicySupportedSchemaVersions = @(1, 2)
+$script:NightlyPolicySchemaVersion = 3
+$script:NightlyPolicySupportedSchemaVersions = @(1, 2, 3)
 $script:NightlyPolicyProfiles = @('nightly', 'rc')
 
 function Get-NightlyRepoRootFromScript {
@@ -122,6 +122,10 @@ function Get-NightlyIsTestProjectPaths {
 
 function Get-NightlyPolicyProjectUniverse {
     param($PolicyObject)
+    if ([int]$PolicyObject.schemaVersion -ge 3) {
+        Test-NightlyProjectDispositions -PolicyObject $PolicyObject
+        return @($PolicyObject.projectDispositions | ForEach-Object { [string]$_.project })
+    }
     $ids = @()
     if ($PolicyObject.suites) {
         foreach ($p in $PolicyObject.suites.PSObject.Properties) {
@@ -137,6 +141,27 @@ function Get-NightlyPolicyProjectUniverse {
         }
     }
     return @($ids | Select-Object -Unique | Sort-Object)
+}
+
+function Test-NightlyProjectDispositions {
+    param($PolicyObject)
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $primary = @($PolicyObject.projectDispositions | Where-Object { $_.role -eq 'primary' })
+    $suiteProjects = @($PolicyObject.suites.PSObject.Properties | ForEach-Object { if ($_.Value.project) { [string]$_.Value.project } })
+    if ($primary.Count -ne $suiteProjects.Count) { throw 'project-dispositions primary census mismatch' }
+    foreach ($row in @($PolicyObject.projectDispositions)) {
+        $path = [string]$row.project
+        if ($path -notmatch '^[^\\]+\.csproj$' -or $path.StartsWith('/') -or $path.Split('/') -contains '..' -or -not $seen.Add($path)) { throw 'project-dispositions invalid or duplicate project' }
+        if ([string]::IsNullOrWhiteSpace([string]$row.reason)) { throw 'project-dispositions missing reason' }
+        if ($row.role -eq 'primary') {
+            if ($suiteProjects -cnotcontains $path) { throw 'project-dispositions undefined primary' }
+        } elseif ($row.role -eq 'child') {
+            if (@($row.consumers).Count -eq 0) { throw 'project-dispositions child without consumer' }
+            foreach ($consumer in $row.consumers) {
+                if ($suiteProjects -cnotcontains $consumer) { throw 'project-dispositions unknown consumer' }
+            }
+        } else { throw 'project-dispositions unknown role' }
+    }
 }
 
 function Test-NightlyPolicyProjectUniverse {
