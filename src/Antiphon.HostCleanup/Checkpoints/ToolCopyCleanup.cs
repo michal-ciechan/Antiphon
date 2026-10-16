@@ -167,7 +167,7 @@ public static class ExecutorOwnershipStore
     {
         try
         {
-            var record = ReceiptJson.Read<ExecutorOwnership>(context ?? CheckpointCleanupDefaults.Context, Path.Combine(runDirectory, FileName), new System.Text.Json.JsonSerializerOptions(), cancellationToken);
+            var record = CheckpointReceiptJson.Read<ExecutorOwnership>(context ?? CheckpointCleanupDefaults.Context, Path.Combine(runDirectory, FileName), new System.Text.Json.JsonSerializerOptions(), cancellationToken);
             return record is { Version: 1, Executor: not null }
                 && record.RunId == Path.GetFileName(Path.GetFullPath(runDirectory))
                 && RunOwnershipStore.SamePath(record.RunDirectory, runDirectory, context) ? record : null;

@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Antiphon.Tests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Antiphon.Checkpoints")]
 
 namespace Antiphon.Checkpoints;
 
@@ -71,7 +72,7 @@ internal sealed class ToolCopyAuthority
             var bytes = ReceiptFile.ReadBytes(context, Path.Combine(run, FileName), cancellationToken);
             if (seal.Sha256 != Hash(bytes)) { refusal = "tool-authority-digest-mismatch"; return null; }
             using (var json = JsonDocument.Parse(bytes)) RequireUniqueProperties(json.RootElement);
-            var record = ReceiptJson.Parse<CopyRecord>(Encoding.UTF8.GetString(bytes), Json);
+            var record = CheckpointReceiptJson.Parse<CopyRecord>(Encoding.UTF8.GetString(bytes), Json);
             if (record.Version != 1 || record.RunId != owner.RunId
                 || !RunOwnershipStore.SamePath(record.RunDirectory, run, context)
                 || !RunOwnershipStore.SamePath(record.ToolDirectory, Path.Combine(run, "tool"), context)

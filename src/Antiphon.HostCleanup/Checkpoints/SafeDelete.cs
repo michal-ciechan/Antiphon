@@ -154,10 +154,10 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
         {
             var parent = Path.GetFileName(Path.GetDirectoryName(full) ?? "");
             if (!string.Equals(Path.GetFileName(full), "checkpoint-build-source.json", StringComparison.Ordinal)
-                || !OutputCleanup.IsIsolatedOutputId(parent))
+                || !CheckpointOutputNames.IsIsolatedOutputId(parent))
                 return "not-isolated-output";
         }
-        else if (ownership.RequireBinName && !OutputCleanup.IsIsolatedOutputId(Path.GetFileName(full)))
+        else if (ownership.RequireBinName && !CheckpointOutputNames.IsIsolatedOutputId(Path.GetFileName(full)))
             return "not-isolated-output";
         if (ownership.RequireInventory)
         {

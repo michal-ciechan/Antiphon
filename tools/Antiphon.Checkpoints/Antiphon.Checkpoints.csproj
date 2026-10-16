@@ -18,7 +18,6 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Antiphon.HostCleanup/Antiphon.HostCleanup.csproj" />
-    <Compile Include="../../scripts/lib/CheckpointProcessRunner.cs" Link="Execution/CheckpointProcessRunner.cs" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
