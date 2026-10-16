@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Antiphon.Checkpoints;
 using Antiphon.Tests.Checkpoints;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -10,6 +11,652 @@ namespace Antiphon.Tests.Infrastructure;
 [Category("Unit")]
 public sealed class HostCleanupCheckpointCompatibilityTests
 {
+    [Test]
+    public async Task unfinished_registered_work_retains_roots(CancellationToken cancellationToken)
+    {
+        var f = new HostCleanupCheckpointFixture();
+        using var timing = new CheckpointTimingHarness(nameof(unfinished_registered_work_retains_roots), "two-roots", cancellationToken);
+        var clock = f.Clock;
+        var scope = new CheckpointTestScope(f.Context, f.Parent, cleanupClock: clock);
+        var roots = new[] { scope.TempDir(), scope.TempDir() };
+        foreach (var root in roots) f.Io.Put(Path.Combine(root, "payload"), "keep");
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        scope.Register(held.Task);
+        var disposal = scope.DisposeAsync().AsTask();
+        try
+        {
+            clock.Events.Any(e => e.Action == "create" && e.DueTime == TimeSpan.FromSeconds(10)).ShouldBeTrue();
+            clock.Advance(TimeSpan.FromSeconds(10));
+            var failure = await Should.ThrowAsync<IOException>(() => disposal.WaitAsync(timing.Token));
+            failure.Message.ShouldContain("unfinished registered work");
+            foreach (var root in roots)
+            {
+                f.Io.Text(Path.Combine(root, "payload")).ShouldBe("keep", "unfinished-work-roots-retained");
+                f.Io.FileExists(Path.Combine(root, CheckpointTestScope.MarkerName)).ShouldBeTrue("unfinished-work-roots-retained");
+                f.Io.FileExists(IndexPath(f.Parent, root)).ShouldBeTrue("unfinished-work-roots-retained");
+            }
+        }
+        finally
+        {
+            held.TrySetResult();
+            using var cleanup = new CancellationTokenSource(CheckpointTimingHarness.CleanupBudget);
+            await held.Task.WaitAsync(cleanup.Token);
+            try { await disposal.WaitAsync(cleanup.Token); }
+            catch (IOException) { }
+            // A second safe teardown removes only the roots this scope owns.
+            await scope.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task completed_faulted_work_reports_failure_and_deletes_roots()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var scope = new CheckpointTestScope(f.Context, f.Parent);
+        var roots = new[] { scope.TempDir(), scope.TempDir() };
+        scope.Register(Task.FromException(new IOException("synthetic-registered-fault")));
+        var failure = await Should.ThrowAsync<IOException>(async () => await scope.DisposeAsync(), "registered-fault-reported");
+        failure.Message.Contains("synthetic-registered-fault", StringComparison.Ordinal).ShouldBeTrue("registered-fault-reported");
+        foreach (var root in roots)
+        {
+            f.Io.DirectoryExists(root).ShouldBeFalse("completed-work-roots-deleted");
+            f.Io.FileExists(IndexPath(f.Parent, root)).ShouldBeFalse("completed-work-roots-deleted");
+        }
+    }
+
+    [Test]
+    public void allocation_requires_an_owner()
+    {
+        Should.Throw<InvalidOperationException>(() => new UnopenedProbe().Allocate());
+    }
+
+    [Test]
+    public async Task root_is_registered_before_return()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var observed = false;
+        await using var scope = new CheckpointTestScope(f.Context, f.Parent, beforeReturn: (root, roots) =>
+            observed = roots.Contains(root)
+                && f.Io.FileExists(Path.Combine(root, CheckpointTestScope.MarkerName))
+                && f.Io.FileExists(IndexPath(f.Parent, root)));
+        var path = scope.TempDir();
+        observed.ShouldBeTrue();
+        f.Io.FileExists(Path.Combine(path, CheckpointTestScope.MarkerName)).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task sealed_scope_awaits_registered_work()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scope = new CheckpointTestScope(f.Context, f.Parent);
+        var root = scope.TempDir();
+        scope.Register(gate.Task);
+        var disposal = scope.DisposeAsync().AsTask();
+        f.Io.DirectoryExists(root).ShouldBeTrue();
+        disposal.IsCompleted.ShouldBeFalse();
+        gate.SetResult();
+        await disposal;
+        f.Io.DirectoryExists(root).ShouldBeFalse();
+        f.Io.FileExists(Path.Combine(f.Parent, ".checkpoint-temp-roots",
+            Path.GetFileName(root) + ".json")).ShouldBeFalse();
+        Should.Throw<InvalidOperationException>(() => scope.TempDir());
+    }
+
+    [Test]
+    public async Task live_child_prevents_scope_deletion()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var probe = new UnknownProbe(f.Context);
+        var scope = new CheckpointTestScope(f.Context, f.Parent, probe);
+        var root = scope.TempDir();
+        scope.Register(new ProcessIdentityProbe(f.Context).Current());
+        try
+        {
+            var failure = await Should.ThrowAsync<IOException>(async () => await scope.DisposeAsync());
+            failure.Message.ShouldContain("identity-unknown");
+            f.Io.DirectoryExists(root).ShouldBeTrue();
+            f.Io.FileExists(IndexPath(f.Parent, root)).ShouldBeTrue("retained-root-stays-indexed");
+        }
+        finally
+        {
+            probe.Verdict = ProcessVerdict.Dead;
+            await scope.DisposeAsync();
+            f.Io.DirectoryExists(root).ShouldBeFalse("released-after-dead-verdict");
+            f.Io.FileExists(IndexPath(f.Parent, root)).ShouldBeFalse("released-root-unregistered");
+        }
+    }
+
+    [Test]
+    public async Task canceled_test_gets_a_fresh_cleanup_token()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        var scope = new CheckpointTestScope(f.Context, f.Parent);
+        var root = scope.TempDir();
+        var work = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        scope.Register(work.Task);
+        var disposal = scope.DisposeAsync().AsTask();
+        f.Clock.Events.ShouldContain(e => e.Action == "create" && e.DueTime == TimeSpan.FromSeconds(10),
+            "C987.canceled_test_gets_a_fresh_cleanup_token.fresh.timer");
+        disposal.IsCompleted.ShouldBeFalse("C987.canceled_test_gets_a_fresh_cleanup_token.fresh.join");
+        work.SetResult();
+        await disposal;
+        canceled.IsCancellationRequested.ShouldBeTrue();
+        f.Io.DirectoryExists(root).ShouldBeFalse();
+        f.Clock.TimerStates.Values.ShouldAllBe(state => state == "dispose");
+    }
+
+    [Test]
+    public async Task teardown_preserves_failure_and_attempts_other_roots()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        string? denied = null;
+        var deny = true;
+        var scope = new CheckpointTestScope(f.Context, f.Parent, beforeDelete: root =>
+        {
+            if (deny && root == denied) throw new IOException("delete-denied");
+        });
+        denied = scope.TempDir();
+        var other = scope.TempDir();
+        var failure = await Should.ThrowAsync<IOException>(async () =>
+            await scope.DisposeAsync(new InvalidOperationException("original-assertion")));
+        failure.Message.ShouldContain("original-assertion");
+        failure.Message.ShouldContain("delete-denied");
+        f.Io.DirectoryExists(denied).ShouldBeTrue();
+        f.Io.DirectoryExists(other).ShouldBeFalse();
+        f.Io.FileExists(IndexPath(f.Parent, denied)).ShouldBeTrue("retained-root-stays-indexed");
+        f.Io.FileExists(IndexPath(f.Parent, other)).ShouldBeFalse("deleted-root-unregistered");
+        deny = false;
+        await scope.DisposeAsync();
+        f.Io.DirectoryExists(denied).ShouldBeFalse("denied-root-released");
+        f.Io.FileExists(IndexPath(f.Parent, denied)).ShouldBeFalse("denied-root-unregistered");
+    }
+
+    [Test]
+    public void marker_failure_rolls_back_empty_root()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        string? root = null;
+        var scope = new CheckpointTestScope(f.Context, f.Parent, beforeMarker: path =>
+        {
+            root = path;
+            throw new IOException("marker-write-failed");
+        });
+        Should.Throw<IOException>(() => scope.TempDir()).Message.ShouldContain("marker-write-failed");
+        root.ShouldNotBeNull();
+        f.Io.DirectoryExists(root).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task parallel_scopes_have_distinct_attempt_ownership()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        await using var first = new CheckpointTestScope(f.Context, f.Parent);
+        await using var second = new CheckpointTestScope(f.Context, f.Parent);
+        var a = first.TempDir();
+        var b = second.TempDir();
+        a.ShouldNotBe(b);
+        var markerA = JsonSerializer.Deserialize<CheckpointRootMarker>(f.Io.Text(Path.Combine(a, CheckpointTestScope.MarkerName)))!;
+        var markerB = JsonSerializer.Deserialize<CheckpointRootMarker>(f.Io.Text(Path.Combine(b, CheckpointTestScope.MarkerName)))!;
+        markerA.AttemptId.ShouldNotBe(markerB.AttemptId);
+        markerA.RootId.ShouldNotBe(markerB.RootId);
+    }
+
+    [Test]
+    public async Task owned_disposal_does_not_require_dead_test_host()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var scope = new CheckpointTestScope(f.Context, f.Parent);
+        var root = scope.TempDir();
+        new ProcessIdentityProbe(f.Context).Observe(new ProcessIdentityProbe(f.Context).Current()).Verdict.ShouldBe(ProcessVerdict.AliveSame);
+        await scope.DisposeAsync();
+        f.Io.DirectoryExists(root).ShouldBeFalse();
+    }
+
+
+    private sealed class UnopenedProbe : CheckpointTestBase
+    {
+        public string Allocate() => TempDir();
+    }
+
+    private sealed class UnknownProbe(Antiphon.HostCleanup.Checkpoints.CheckpointCleanupContext context) : ProcessIdentityProbe(context)
+    {
+        public ProcessVerdict Verdict = ProcessVerdict.Unknown;
+        public override ProcessObservation Observe(ProcessIdentity? expected) =>
+            new(Verdict, Verdict == ProcessVerdict.Dead ? "identity-dead" : "identity-unknown");
+    }
+    [Test]
+    public void live_roots_are_skipped_without_taking_the_root_lock() =>
+        AssertRegistrationDuringObservation(ProcessVerdict.AliveSame, "live-preflight-registers");
+
+    [Test]
+    [Arguments(ProcessVerdict.Unknown)]
+    [Arguments(ProcessVerdict.ReusedPid)]
+    public void uncertain_roots_are_skipped_without_taking_the_root_lock(ProcessVerdict verdict) =>
+        AssertRegistrationDuringObservation(verdict, "uncertain-preflight-registers");
+
+    private void AssertRegistrationDuringObservation(ProcessVerdict verdict, string label)
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var root = Candidate(f, sandbox, payloadBytes: 16, alive: true);
+        var attempts = new List<(string Run, Exception? Failure)>();
+        var probe = new CallbackProbe(f.Context, _ =>
+        {
+            // Every observation attempts real registration, including a second
+            // observation under the lock if preflight wrongly falls through.
+            var run = Path.Combine(root, "run-" + attempts.Count);
+            f.Io.CreateDirectory(run);
+            Exception? failure = null;
+            try { TestRootGuard.RegisterRun(run, f.Context); }
+            catch (IOException ex) { failure = ex; }
+            attempts.Add((run, failure));
+            return new(verdict, "scripted-" + verdict);
+        });
+        var receipt = Sweep(f, sandbox, probe: probe).SweepOnce();
+        attempts.ShouldNotBeEmpty(label);
+        foreach (var (run, failure) in attempts)
+        {
+            failure.ShouldBeNull(label);
+            var journal = f.Io.Text(Path.Combine(root, TestRootGuard.RunsName)).Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => JsonSerializer.Deserialize<string>(line)).ToArray();
+            journal.ShouldContain(Path.GetFullPath(run), label);
+            f.Io.DirectoryExists(run).ShouldBeTrue(label);
+        }
+        receipt.CompletedRoots.ShouldBe(0, label);
+        receipt.Skips["scripted-" + verdict].ShouldBe(1, label);
+        f.Io.Nodes[Path.Combine(root, "payload.bin")].Bytes.ShouldBe(new byte[16], label);
+        TestRootGuard.Read(root, f.Context).ShouldNotBeNull(label);
+        f.Io.FileExists(IndexPath(sandbox, root)).ShouldBeTrue(label);
+    }
+
+    [Test]
+    public void young_roots_are_skipped_without_taking_the_root_lock()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var now = f.Clock.GetUtcNow();
+        var root = Candidate(f, sandbox, createdAt: now);
+        var receipt = Sweep(f, sandbox, clock: () => now, grace: TimeSpan.FromMinutes(10)).SweepOnce();
+        f.Io.FileExists(Path.Combine(root, TestRootGuard.LockName)).ShouldBeFalse("young-preflight-no-lock");
+        receipt.Skips["grace"].ShouldBe(1);
+        TestRootGuard.Read(root, f.Context).ShouldNotBeNull();
+    }
+
+    [Test]
+    public void root_lock_is_still_required_for_dead_candidates()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var root = Candidate(f, sandbox, payloadBytes: 16);
+        using var gate = TestRootGuard.TryLock(f.Context, root);
+        gate.ShouldNotBeNull();
+        var receipt = Sweep(f, sandbox).SweepOnce();
+        receipt.CompletedRoots.ShouldBe(0, "root-busy-retains-payload");
+        receipt.Skips["root-busy"].ShouldBe(1);
+        f.Io.Nodes[Path.Combine(root, "payload.bin")].Bytes.ShouldBe(new byte[16], "root-busy-retains-payload");
+        TestRootGuard.Read(root, f.Context).ShouldNotBeNull();
+    }
+
+    [Test]
+    [Arguments("live")]
+    [Arguments("unknown")]
+    [Arguments("reused")]
+    [Arguments("grace")]
+    [Arguments("marker")]
+    [Arguments("inventory")]
+    public void eligibility_is_rechecked_after_the_root_lock(string change)
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var now = f.Clock.GetUtcNow();
+        var root = Candidate(f, sandbox, payloadBytes: 16, createdAt: now.AddHours(-1));
+        var marker = TestRootGuard.Read(root, f.Context)!;
+        var changed = false;
+        var probe = new CallbackProbe(f.Context, _ =>
+        {
+            if (!changed)
+            {
+                changed = true;
+                switch (change)
+                {
+                    case "grace": marker.CreatedAt = now; TestRootGuard.Write(root, marker, f.Context); break;
+                    case "marker": marker.RootId = Guid.NewGuid().ToString("N"); TestRootGuard.Write(root, marker, f.Context); break;
+                    case "inventory":
+                        for (var i = 0; i < 9; i++) f.Io.Put(Path.Combine(root, "extra-" + i), "keep");
+                        break;
+                }
+                return new(ProcessVerdict.Dead, "scripted-dead");
+            }
+            var verdict = change switch
+            {
+                "live" => ProcessVerdict.AliveSame,
+                "unknown" => ProcessVerdict.Unknown,
+                "reused" => ProcessVerdict.ReusedPid,
+                _ => ProcessVerdict.Dead,
+            };
+            return new(verdict, "scripted-" + verdict);
+        });
+        var receipt = Sweep(f, sandbox, clock: () => now, grace: TimeSpan.FromMinutes(10),
+            maxDescendants: 8, probe: probe).SweepOnce();
+        changed.ShouldBeTrue();
+        var label = change is "live" or "unknown" or "reused" ? "locked-owner-retained" : "locked-" + change + "-retained";
+        receipt.CompletedRoots.ShouldBe(0, label);
+        f.Io.Nodes[Path.Combine(root, "payload.bin")].Bytes.ShouldBe(new byte[16], label);
+        f.Io.FileExists(Path.Combine(root, TestRootGuard.MarkerName)).ShouldBeTrue(label);
+        f.Io.FileExists(IndexPath(sandbox, root)).ShouldBeTrue(label);
+        var reason = change switch
+        {
+            "grace" => "grace", "marker" => "marker-invalid", "inventory" => "inventory-incomplete-or-linked",
+            "live" => "scripted-AliveSame", "unknown" => "scripted-Unknown", _ => "scripted-ReusedPid",
+        };
+        receipt.Skips[reason].ShouldBe(1, label);
+    }
+
+    [Test]
+    public async Task two_hundred_concurrent_allocations_ignore_the_sweep_gate()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var gatePath = Path.Combine(sandbox, ".checkpoint-temp-coordinator.lock");
+        using var gate = f.Io.Open(gatePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var allocations = Task.WhenAll(Enumerable.Range(0, 200).Select(_ => Task.Factory.StartNew(
+            () => Candidate(f, sandbox), CancellationToken.None, TaskCreationOptions.LongRunning,
+            TaskScheduler.Default)));
+        var completedWhileGateHeld = await Task.WhenAny(allocations, Task.Delay(TimeSpan.FromSeconds(20)))
+            == allocations;
+        gate.Dispose();
+        var roots = await allocations;
+        roots.Length.ShouldBe(200);
+        roots.ShouldAllBe(root => f.Io.DirectoryExists(root));
+        completedWhileGateHeld.ShouldBeTrue("registration must not queue behind the sweep gate");
+    }
+
+    [Test]
+    public void grace_is_additional_to_dead_ownership()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var created = DateTimeOffset.Parse("2026-09-29T00:00:00Z");
+        var root = Candidate(f, sandbox, createdAt: created);
+        var now = created.AddMinutes(10).AddTicks(-1);
+        var sweep = Sweep(f, sandbox, clock: () => now, grace: TimeSpan.FromMinutes(10));
+        sweep.SweepOnce().CompletedRoots.ShouldBe(0);
+        f.Io.DirectoryExists(root).ShouldBeTrue();
+        now = created.AddMinutes(10);
+        sweep.SweepOnce().CompletedRoots.ShouldBe(1);
+        f.Io.DirectoryExists(root).ShouldBeFalse();
+    }
+
+    [Test]
+    public void sweep_interval_is_shared_across_hosts()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var now = f.Clock.GetUtcNow();
+        Candidate(f, sandbox);
+        var first = Sweep(f, sandbox, clock: () => now, interval: TimeSpan.FromMinutes(5));
+        first.SweepOnce().CompletedRoots.ShouldBe(1);
+        var secondRoot = Candidate(f, sandbox);
+        var second = Sweep(f, sandbox, clock: () => now.AddMinutes(1), interval: TimeSpan.FromMinutes(5));
+        using var gate = f.Io.Open(Path.Combine(sandbox, ".checkpoint-temp-coordinator.lock"),
+            FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var receipt = second.SweepOnce();
+        receipt.Examined.ShouldBe(0);
+        receipt.Skips.ShouldContainKey("interval");
+        receipt.Skips.ShouldNotContainKey("coordinator-busy");
+        f.Io.DirectoryExists(secondRoot).ShouldBeTrue();
+    }
+
+    [Test]
+    public void cursor_write_failure_does_not_fail_the_sweep()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var root = Candidate(f, sandbox);
+        // A directory at the cursor path makes replacement fail on Linux too.
+        var cursor = Path.Combine(sandbox, ".checkpoint-temp-cursor.json");
+        f.Io.Before = (op, path) => { if (op == "move" && path == cursor) throw new IOException("cursor replacement denied"); };
+        var receipt = Sweep(f, sandbox).SweepOnce();
+        receipt.CompletedRoots.ShouldBe(1);
+        f.Io.DirectoryExists(root).ShouldBeFalse();
+    }
+
+    [Test]
+    public void sweep_removes_only_stale_index_temp_files()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var root = Candidate(f, sandbox, alive: true);
+        var index = Path.Combine(sandbox, ".checkpoint-temp-roots");
+        var prefix = Path.GetFileName(root) + ".json.";
+        var stale = Path.Combine(index, prefix + Guid.NewGuid().ToString("N") + ".tmp");
+        var fresh = Path.Combine(index, prefix + Guid.NewGuid().ToString("N") + ".tmp");
+        f.Io.Put(stale, "pending");
+        f.Io.Put(fresh, "pending");
+        f.Io.Nodes[stale].Stat = f.Io.Nodes[stale].Stat with { Modified = (f.Clock.GetUtcNow().AddMinutes(-11).UtcTicks - DateTime.UnixEpoch.Ticks) * 100 };
+        Sweep(f, sandbox).SweepOnce();
+        f.Io.FileExists(stale).ShouldBeFalse();
+        f.Io.FileExists(fresh).ShouldBeTrue();
+    }
+
+    [Test]
+    public void root_delete_count_is_bounded()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var roots = Enumerable.Range(0, 3).Select(_ => Candidate(f, sandbox)).ToArray();
+        var sweep = Sweep(f, sandbox, maxRoots: 2);
+        sweep.SweepOnce().CompletedRoots.ShouldBe(2);
+        roots.Count(f.Io.DirectoryExists).ShouldBe(1);
+    }
+
+    [Test]
+    public void actual_deleted_bytes_are_bounded()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var root = Candidate(f, sandbox, payloadBytes: 16 * 1024);
+        var sweep = Sweep(f, sandbox, maxBytes: 8 * 1024);
+        var receipt = sweep.SweepOnce();
+        receipt.ReclaimedBytes.ShouldBeLessThanOrEqualTo(8 * 1024);
+        f.Io.DirectoryExists(root).ShouldBeTrue();
+        f.Io.FileExists(Path.Combine(root, TestRootGuard.MarkerName)).ShouldBeTrue();
+        f.Io.Length(Path.Combine(root, "payload.bin")).ShouldBe(8 * 1024);
+    }
+
+    [Test]
+    public void direct_entry_scan_is_bounded()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var roots = Enumerable.Range(0, 3).Select(_ => Candidate(f, sandbox)).ToArray();
+        var sweep = Sweep(f, sandbox, maxDirect: 2);
+        sweep.SweepOnce().Examined.ShouldBe(2);
+        roots.Count(f.Io.DirectoryExists).ShouldBe(1);
+        sweep.SweepOnce().CompletedRoots.ShouldBe(1);
+    }
+
+    [Test]
+    public void descendant_scan_is_bounded()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var root = Candidate(f, sandbox);
+        for (var i = 0; i < 4; i++) f.Io.Put(Path.Combine(root, "f" + i), "x");
+        var sweep = Sweep(f, sandbox, maxDescendants: 2);
+        var receipt = sweep.SweepOnce();
+        receipt.CompletedRoots.ShouldBe(0);
+        receipt.Skips["inventory-incomplete-or-linked"].ShouldBe(1);
+        f.Io.DirectoryExists(root).ShouldBeTrue();
+    }
+
+    [Test]
+    public void monotonic_deadline_stops_new_operations()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var root = Candidate(f, sandbox);
+        var probe = new CountingProbe(f.Context);
+        var sweep = new CheckpointTempRootSweep(f.Context, sandbox, probe,
+            new CheckpointSweepOptions { Grace = TimeSpan.Zero, Interval = TimeSpan.Zero,
+                MaxDuration = TimeSpan.Zero });
+        var receipt = sweep.SweepOnce();
+        receipt.Examined.ShouldBe(0);
+        receipt.BudgetExhausted.ShouldBeTrue();
+        probe.Calls.ShouldBe(0);
+        f.Io.DirectoryExists(root).ShouldBeTrue();
+    }
+
+    [Test]
+    public void resumed_deletion_rechecks_every_veto()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var root = Candidate(f, sandbox, payloadBytes: 16 * 1024);
+        var sweep = Sweep(f, sandbox, maxBytes: 8 * 1024);
+        sweep.SweepOnce().CompletedRoots.ShouldBe(0);
+        var payload = Path.Combine(root, "payload.bin");
+        var remaining = f.Io.Length(payload);
+        var marker = TestRootGuard.Read(root, f.Context)!;
+        marker.Owner = new ProcessIdentityProbe(f.Context).Current();
+        TestRootGuard.Write(root, marker, f.Context);
+        sweep.SweepOnce().CompletedRoots.ShouldBe(0);
+        f.Io.Length(payload).ShouldBe(remaining);
+        f.Io.DirectoryExists(root).ShouldBeTrue();
+    }
+
+    [Test]
+    public void marker_survives_partial_deletion()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var root = Candidate(f, sandbox, payloadBytes: 16 * 1024);
+        var sweep = Sweep(f, sandbox, maxBytes: 8 * 1024);
+        sweep.SweepOnce().CompletedRoots.ShouldBe(0);
+        var marker = TestRootGuard.Read(root, f.Context);
+        marker.ShouldNotBeNull("partial-marker-retained");
+        marker.State.ShouldBe("deleting", "partial-marker-retained");
+        sweep.SweepOnce().CompletedRoots.ShouldBe(1);
+        f.Io.DirectoryExists(root).ShouldBeFalse();
+    }
+
+    [Test]
+    public void cursor_prevents_new_arrival_starvation()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var old = Enumerable.Range(0, 5).Select(_ => Candidate(f, sandbox)).ToArray();
+        var sweep = Sweep(f, sandbox, maxDirect: 2);
+        sweep.SweepOnce().CompletedRoots.ShouldBe(2);
+        Candidate(f, sandbox);
+        Candidate(f, sandbox);
+        sweep.SweepOnce().CompletedRoots.ShouldBe(2);
+        sweep.SweepOnce().CompletedRoots.ShouldBeGreaterThanOrEqualTo(1);
+        old.ShouldAllBe(path => !f.Io.DirectoryExists(path));
+    }
+
+    [Test]
+    public void absent_root_pointer_is_dropped_by_the_sweep()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var root = Candidate(f, sandbox);
+        f.Io.RemoveDirectory(root, recursive: true);
+        var receipt = Sweep(f, sandbox).SweepOnce();
+        receipt.Skips["absent"].ShouldBe(1, "absent-pointer-counted");
+        receipt.CompletedRoots.ShouldBe(0, "absent-pointer-deletes-nothing");
+        f.Io.FileExists(IndexPath(sandbox, root)).ShouldBeFalse("absent-pointer-dropped");
+    }
+
+    [Test]
+    public void disposed_roots_do_not_consume_the_next_sweep_budget()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var index = new CheckpointTempRootSweep(f.Context, sandbox);
+        var legacyEntries = new List<string>();
+        for (var i = 0; i < 700; i++)
+        {
+            var disposed = Candidate(f, sandbox);
+            f.Io.RemoveDirectory(disposed, recursive: true);
+            index.Unregister(disposed);
+            legacyEntries.Add(JsonSerializer.Serialize(disposed));
+        }
+        var orphan = Candidate(f, sandbox);
+        index.Unregister(orphan);
+        legacyEntries.Add(JsonSerializer.Serialize(orphan));
+        f.Io.Put(Path.Combine(sandbox, ".checkpoint-temp-roots.jsonl"), string.Join('\n', legacyEntries) + "\n");
+        var receipt = Sweep(f, sandbox, maxDirect: 1).SweepOnce();
+        receipt.Examined.ShouldBe(1);
+        receipt.CompletedRoots.ShouldBe(1);
+        f.Io.DirectoryExists(orphan).ShouldBeFalse();
+    }
+
+    [Test]
+    public void eligible_backlog_drains_without_touching_exclusions()
+    {
+        var f = new HostCleanupCheckpointFixture();
+        var sandbox = f.Parent;
+        var eligible = Enumerable.Range(0, 4).Select(_ => Candidate(f, sandbox)).ToArray();
+        var live = Candidate(f, sandbox, alive: true);
+        var sweep = Sweep(f, sandbox, maxRoots: 2);
+        for (var i = 0; i < 4 && eligible.Any(f.Io.DirectoryExists); i++) sweep.SweepOnce();
+        eligible.ShouldAllBe(path => !f.Io.DirectoryExists(path));
+        f.Io.DirectoryExists(live).ShouldBeTrue();
+        TestRootGuard.Read(live).ShouldNotBeNull();
+    }
+
+
+    private static CheckpointTempRootSweep Sweep(HostCleanupCheckpointFixture f, string sandbox, Func<DateTimeOffset>? clock = null,
+        TimeSpan? grace = null, TimeSpan? interval = null, int maxRoots = 16, long maxBytes = 256L * 1024 * 1024,
+        int maxDirect = 512, int maxDescendants = 10000, ProcessIdentityProbe? probe = null) => new(f.Context, sandbox, probe,
+        options: new CheckpointSweepOptions
+        {
+            Grace = grace ?? TimeSpan.Zero, Interval = interval ?? TimeSpan.Zero,
+            MaxRoots = maxRoots, MaxBytes = maxBytes, MaxDirectEntries = maxDirect,
+            MaxDescendantEntries = maxDescendants, MaxDuration = TimeSpan.FromSeconds(5),
+        }, clock: clock);
+
+    private static string Candidate(HostCleanupCheckpointFixture f, string sandbox, int payloadBytes = 0,
+        DateTimeOffset? createdAt = null, bool alive = false)
+    {
+        // Primitive dictionaries are single-threaded; this is independent of the held sweep gate.
+        lock (f.Io)
+        {
+            var root = Path.Combine(sandbox, "c723-" + Guid.CreateVersion7().ToString("N"));
+            f.Io.CreateDirectory(root);
+            var current = new ProcessIdentityProbe(f.Context).Current();
+            TestRootGuard.Write(root, new CheckpointRootMarker
+            {
+                RootId = Path.GetFileName(root)[5..], RootPath = root,
+                AttemptId = Guid.NewGuid().ToString("N"), AssemblyInvocationId = "virtual-sweep",
+                CreatedAt = createdAt ?? f.Clock.GetUtcNow().AddHours(-1),
+                Owner = alive ? current : current with { Pid = int.MaxValue, StartUtcTicks = 1 },
+            }, f.Context);
+            if (payloadBytes > 0) f.Io.Put(Path.Combine(root, "payload.bin"), new byte[payloadBytes]);
+            new CheckpointTempRootSweep(f.Context, sandbox).Register(root);
+            return root;
+        }
+    }
+
+    private sealed class CountingProbe(Antiphon.HostCleanup.Checkpoints.CheckpointCleanupContext context) : ProcessIdentityProbe(context)
+    {
+        public int Calls { get; private set; }
+        public override ProcessObservation Observe(ProcessIdentity? expected)
+        { Calls++; return base.Observe(expected); }
+    }
+
+    private static string IndexPath(string sandbox, string root) =>
+        Path.Combine(sandbox, ".checkpoint-temp-roots", Path.GetFileName(root) + ".json");
+
+    private sealed class CallbackProbe(Antiphon.HostCleanup.Checkpoints.CheckpointCleanupContext context,
+        Func<ProcessIdentity?, ProcessObservation> observe) : ProcessIdentityProbe(context)
+    {
+        public override ProcessObservation Observe(ProcessIdentity? expected) => observe(expected);
+    }
     [Test]
     public void nested_live_executor_vetoes_whole_root()
     {

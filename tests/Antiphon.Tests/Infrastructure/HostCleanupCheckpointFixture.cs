@@ -274,7 +274,12 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock) : ICheck
     public void RemoveDirectory(string path, bool recursive)
     {
         Enter("rmdir", path);
-        if (recursive) RecursiveIntents++;
+        if (recursive)
+        {
+            RecursiveIntents++;
+            foreach (var entry in Nodes.Keys.Where(p => p.StartsWith(path + Path.DirectorySeparatorChar, StringComparison.Ordinal)).ToArray())
+                Nodes.Remove(entry);
+        }
         if (Nodes.Keys.Any(p => Path.GetDirectoryName(p) == path)) throw new IOException("directory not empty");
         Nodes.Remove(path);
     }
