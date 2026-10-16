@@ -2013,6 +2013,46 @@ c849_cold_volume_facts() {
     fi
 }
 
+c849_write_cold_status_receipts() {
+    local status="$1" temp="$2"
+    printf '%s' "$temp" | jq -c '{sessions,runnerSessions,queuedTasks,retiredAt,available,dispatchEligible,acceptingNewWork,draining,retireWhenIdle,redirectTo}' \
+        > "$CASE_DIR/status.json" || write_result false CacheFirstSeedPreconditionUnknown 2
+    printf '%s' "$status" | jq -c '{sessions,runnerSessions,queuedTasks,dispatchEligible,acceptingNewWork,draining}' \
+        > "$CASE_DIR/main-status.json" || write_result false CacheFirstSeedPreconditionUnknown 2
+}
+
+c849_cold_reuse_receipts() {
+    local status temp
+    command -v jq >/dev/null || write_result false CacheFirstSeedPreconditionUnknown 2
+    status="$(c849_status_body server2)" || write_result false CacheFirstSeedPreconditionUnknown 2
+    printf '%s' "$status" | jq -e '
+      (.sessions | type) == "number" and .sessions >= 0 and .sessions == (.sessions | floor) and
+      (.queuedTasks | type) == "number" and .queuedTasks >= 0 and .queuedTasks == (.queuedTasks | floor) and
+      ((.runnerSessions | type) == "number" and .runnerSessions >= 0 and .runnerSessions == (.runnerSessions | floor)) and
+      (.acceptingNewWork | type) == "boolean" and (.draining | type) == "boolean" and
+      (.dispatchEligible | type) == "boolean"' >/dev/null \
+        || write_result false CacheFirstSeedPreconditionUnknown 2
+    temp="$(c849_status_body server2-temp)" || write_result false CacheFirstSeedPreconditionUnknown 2
+    printf '%s' "$temp" | jq -e '
+      has("retiredAt") and has("available") and has("dispatchEligible") and
+      has("acceptingNewWork") and has("draining") and has("retireWhenIdle") and
+      has("redirectTo") and has("sessions") and has("queuedTasks") and
+      has("runnerSessions") and
+      (.sessions | type) == "number" and (.queuedTasks | type) == "number" and
+      (.runnerSessions == null or (.runnerSessions | type) == "number")' >/dev/null \
+        || write_result false CacheFirstSeedPreconditionUnknown 2
+    printf '%s' "$temp" | jq -e '
+      has("runnerSessions") and .retiredAt != null and .available == false and
+      .dispatchEligible == false and .acceptingNewWork == false and
+      .draining == true and .retireWhenIdle == true and .redirectTo == "server2" and
+      (.sessions | type) == "number" and .sessions == 0 and
+      (.queuedTasks | type) == "number" and .queuedTasks == 0 and
+      (.runnerSessions == null or ((.runnerSessions | type) == "number" and .runnerSessions == 0))' >/dev/null \
+        || write_result false CacheFirstSeedTempNotRetired 2
+    c849_no_temp_containers
+    c849_write_cold_status_receipts "$status" "$temp"
+}
+
 c849_cold_proof() {
     local phase="$1" require_empty="$2" allowed_helper="${3:-}" allow_uninitialized="${4:-}" main_list main facts status temp containers container id mounts source destination canonical name target
     command -v jq >/dev/null || write_result false CacheFirstSeedPreconditionUnknown 2
@@ -2082,10 +2122,7 @@ c849_cold_proof() {
         || write_result false CacheFirstSeedTempNotRetired 2
     c849_no_temp_containers
     if [ "$phase" = P6 ]; then
-        printf '%s' "$temp" | jq -c '{sessions,runnerSessions,queuedTasks,retiredAt,available,dispatchEligible,acceptingNewWork,draining,retireWhenIdle,redirectTo}' \
-            > "$CASE_DIR/status.json" || write_result false CacheFirstSeedPreconditionUnknown 2
-        printf '%s' "$status" | jq -c '{sessions,runnerSessions,queuedTasks,dispatchEligible,acceptingNewWork,draining}' \
-            > "$CASE_DIR/main-status.json" || write_result false CacheFirstSeedPreconditionUnknown 2
+        c849_write_cold_status_receipts "$status" "$temp"
     fi
     c849_cold_volume_facts "$C849_PACKAGES" nuget-packages "$require_empty" "$allow_uninitialized"
     c849_cold_volume_facts "$C849_SCRATCH" nuget-scratch "$require_empty" "$allow_uninitialized"
@@ -2237,6 +2274,7 @@ c849_seed() {
         c849_contract_receipt not-run
         if [ "$C849_KIND" = cold ]; then
             c849_no_temp_containers
+            c849_cold_reuse_receipts
             printf 'ready=true kind=cold writable=3\n' > "$CASE_DIR/seed.txt"
             write_result true '' 0
         fi

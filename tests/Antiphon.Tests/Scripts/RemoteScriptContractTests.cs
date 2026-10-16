@@ -6459,6 +6459,7 @@ public sealed class RemoteScriptContractTests
                 [ "$1" = allow-cold ] || write_result false CacheFullSeedRequired 2
                 C849_KIND=cold; C849_SCHEMA=2; C849_DIGEST_TYPE=none; C849_DIGEST=none
             }
+            c849_cold_reuse_receipts() { :; }
             docker() {
                 [ "$1" = ps ] || { printf 'unexpected-docker\n' >> "$root/trace"; return 1; }
                 case "$MODE" in
@@ -7293,6 +7294,7 @@ public sealed class RemoteScriptContractTests
             }
             """ + "\n" +
             Block(source, "c849_cold_volume_facts") + "\n" +
+            Block(source, "c849_write_cold_status_receipts") + "\n" +
             Block(source, "c849_cold_proof") + "\n" +
             Block(source, "c849_cold_probe") + "\n" +
             Block(source, "c849_cold_seed") + "\n";
