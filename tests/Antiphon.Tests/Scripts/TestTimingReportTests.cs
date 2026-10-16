@@ -35,7 +35,7 @@ public sealed class TestTimingReportTests : CheckpointTestBase
         WriteEvents(root, events);
 
         using var doc = await Report(root);
-        var main = One(doc, "main", "mem");
+        var main = One(doc, "main", "mem", host: "host-a", os: "linux", runtime: "9.0.0", concurrency: 1);
         main.GetProperty("sampleCount").GetInt32().ShouldBe(10, "comparable-series");
         main.GetProperty("median").GetDouble().ShouldBe(5.5);
         main.GetProperty("p90").GetDouble().ShouldBe(9);
@@ -196,9 +196,14 @@ public sealed class TestTimingReportTests : CheckpointTestBase
         File.WriteAllText(Path.Combine(root, "events.jsonl"), string.Join('\n', lines) + "\n");
     }
 
-    private static JsonElement One(JsonDocument doc, string setId, string membership) =>
+    private static JsonElement One(JsonDocument doc, string setId, string membership, string? host = null,
+        string? os = null, string? runtime = null, int? concurrency = null) =>
         Groups(doc).Single(item => item.GetProperty("setId").GetString() == setId
-            && item.GetProperty("membershipDigest").GetString() == membership);
+            && item.GetProperty("membershipDigest").GetString() == membership
+            && (host is null || item.GetProperty("hostId").GetString() == host)
+            && (os is null || item.GetProperty("os").GetString() == os)
+            && (runtime is null || item.GetProperty("runtimeVersion").GetString() == runtime)
+            && (concurrency is null || item.GetProperty("concurrency").GetDouble() == concurrency));
 
     private static JsonElement Estimate(JsonDocument doc, string setId) =>
         doc.RootElement.GetProperty("estimates").EnumerateArray().Single(item => item.GetProperty("setId").GetString() == setId);
