@@ -1628,7 +1628,7 @@ c849_empty_volume() {
 }
 
 # Host filesystem unless this run's initialized fixture controller recorded volume.
-# C849_PAYLOAD_BACKEND is not a selector. Fixture seed does not record volume (S5).
+# C849_PAYLOAD_BACKEND is not a selector. Fixture seed records volume, then returns host.
 c849_payload_controller() {
     printf '%s\n' "$CASE_DIR/fixture-controller"
 }
@@ -1682,6 +1682,11 @@ c849_payload_note() {
     if [ "$backend" = volume ]; then
         root=/fixture/cache
         status=86
+        # Seed is the volume payload. The note-only file still stops before the donor loop.
+        if [ "$entry" = seed ] \
+            && { [ ! -e "$CASE_DIR/.payload-note-only" ] || [ -L "$CASE_DIR/.payload-note-only" ]; }; then
+            status=0
+        fi
     else
         backend=host
         root="$SERVER2_ROOT/cache"
@@ -1713,6 +1718,25 @@ c849_payload_transfer() {
     return "$status"
 }
 
+# Donor home caches and /fixture trees. Same pipefail archive as the fixture transfer.
+# A host path is not an end: the archive is never extracted onto the host.
+c849_payload_stream() {
+    local src_container="$1" src_dir="$2" dest_container="$3" dest_dir="$4" status=0
+    case "$src_dir" in
+        /fixture/*|/home/app/.nuget/packages|/home/app/.npm/_cacache) ;;
+        *) return 2 ;;
+    esac
+    case "$dest_dir" in
+        /fixture/*|/home/app/.nuget/packages|/home/app/.npm/_cacache) ;;
+        *) return 2 ;;
+    esac
+    set -o pipefail
+    docker cp "${src_container}:${src_dir}/." - \
+        | docker exec -i --user 0:0 "$dest_container" tar -x -p -C "$dest_dir" \
+        || status=$?
+    return "$status"
+}
+
 # Transfer, validate with the real tree validator, then import and mark.
 # Either failed copy end returns before import and before the marker.
 c849_payload_accept_transfer() {
@@ -1723,7 +1747,7 @@ c849_payload_accept_transfer() {
     {
         declare -f c849_validate_seed_relative c849_validate_seed_tree
         printf '%s\n' 'c849_validate_seed_tree "$1"'
-    } | c849_fixture_helper_exec reader /bin/bash -s -- "$dest_dir" || return 2
+    } | c849_fixture_helper_exec writer /bin/bash -s -- "$dest_dir" || return 2
     docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
         --mount "type=volume,source=c849${RUN}-work,target=/fixture,volume-nocopy" \
         "$image" \
@@ -1734,9 +1758,17 @@ c849_payload_accept_transfer() {
 
 c849_seed_failure() {
     local donor="$1" diagnosis="$2"
-    if [ -n "${stage:-}" ] && [[ "$stage" == "$SERVER2_ROOT"/cache/stage-"$RUN"-* ]] \
-        && [ -d "$stage" ] && [ ! -L "$stage" ]; then
-        rm -rf -- "$stage"
+    if [ -n "${stage:-}" ]; then
+        case "$stage" in
+            /fixture/cache/stage-"$RUN"|/fixture/cache/stage-"$RUN"-*)
+                c849_fixture_helper_exec writer /bin/sh -c 'rm -rf -- "$1"' sh "$stage" || true
+                ;;
+            "$SERVER2_ROOT"/cache/stage-"$RUN"-*)
+                if [ -d "$stage" ] && [ ! -L "$stage" ]; then
+                    rm -rf -- "$stage"
+                fi
+                ;;
+        esac
     fi
     if [ -n "$donor" ] && [ "$(docker inspect -f '{{.State.Running}}' "$donor" 2>/dev/null || true)" = false ]; then
         docker start "$donor" >/dev/null 2>&1 || true
@@ -1848,8 +1880,27 @@ c849_manifest_compare() {
     return "$status"
 }
 
+# Work volume mounted whole. The manifest path is an argument, not a host bind.
+c849_compare_import_volume() {
+    local stage="$1" image="$2"
+    {
+        declare -f c849_validate_seed_relative c849_manifest_write c849_manifest_validate c849_manifest_compare
+        printf '\nc849_manifest_compare /import "$1"\n'
+    } | docker run --rm -i --network none --user 0:0 --entrypoint /bin/bash \
+        --mount "type=volume,source=c849${RUN}-work,target=/fixture,readonly,volume-nocopy" \
+        --mount "type=volume,source=$C849_PACKAGES,target=/import/packages,readonly,volume-nocopy" \
+        --mount "type=volume,source=$C849_NPM,target=/import/npm,readonly,volume-nocopy" \
+        "$image" -s -- "$stage/recovery.manifest"
+}
+
 c849_compare_import() {
     local stage="$1" image="$2"
+    case "$stage" in
+        /fixture/*)
+            c849_compare_import_volume "$stage" "$image"
+            return
+            ;;
+    esac
     # The helper sees only the two imported trees and the staged manifest, all read-only.
     {
         declare -f c849_validate_seed_relative c849_manifest_write c849_manifest_validate c849_manifest_compare
@@ -1861,8 +1912,40 @@ c849_compare_import() {
         "$image" -s
 }
 
-c849_recovery_check() {
+# Runs inside the reader. Prints OK, MISSING, or CHANGED. The path stays an argument.
+c849_recovery_volume_read() {
     local recovery="$1" expected="$2" actual
+    [ -d "$recovery" ] && [ ! -L "$recovery" ] && [ "$(realpath -e -- "$recovery")" = "$recovery" ] \
+        || { printf 'MISSING\n'; return 0; }
+    [ -d "$recovery/packages" ] && [ ! -L "$recovery/packages" ] \
+        && [ -d "$recovery/npm" ] && [ ! -L "$recovery/npm" ] \
+        && [ -f "$recovery/recovery.manifest" ] && [ ! -L "$recovery/recovery.manifest" ] \
+        || { printf 'MISSING\n'; return 0; }
+    actual="$(sha256sum -- "$recovery/recovery.manifest")" || { printf 'CHANGED\n'; return 0; }
+    [ "${actual%% *}" = "$expected" ] || { printf 'CHANGED\n'; return 0; }
+    c849_manifest_compare "$recovery" "$recovery/recovery.manifest" || { printf 'CHANGED\n'; return 0; }
+    printf 'OK\n'
+}
+
+c849_recovery_check() {
+    local recovery="$1" expected="$2" actual verdict
+    case "$recovery" in
+        /fixture|/fixture/*)
+            [ "${recovery%/*}" = /fixture/cache ] && [[ "${recovery##*/}" =~ ^recovery-[a-z0-9-]+$ ]] \
+                || write_result false CacheRecoveryInvalid 2
+            verdict="$(
+                {
+                    declare -f c849_validate_seed_relative c849_manifest_write c849_manifest_validate c849_manifest_compare c849_recovery_volume_read
+                    printf '%s\n' 'c849_recovery_volume_read "$1" "$2"'
+                } | c849_fixture_helper_exec reader /bin/bash -s -- "$recovery" "$expected"
+            )" || write_result false CacheRecoveryChanged 2
+            case "$verdict" in
+                OK) return 0 ;;
+                MISSING) write_result false CacheRecoveryMissing 2 ;;
+                *) write_result false CacheRecoveryChanged 2 ;;
+            esac
+            ;;
+    esac
     [ "${recovery%/*}" = "$SERVER2_ROOT/cache" ] && [[ "${recovery##*/}" =~ ^recovery-[a-z0-9-]+$ ]] \
         || write_result false CacheRecoveryInvalid 2
     [ -d "$recovery" ] && [ ! -L "$recovery" ] && [ "$(realpath -e -- "$recovery")" = "$recovery" ] \
@@ -2133,6 +2216,59 @@ c849_cold_seed() {
     write_result true '' 0
 }
 
+# Fixture volume payload. Assigns the caller's stage, recovery, manifest_hash,
+# package_bytes, npm_bytes and donor_type. The host import line stays in c849_seed.
+c849_seed_volume_payload() {
+    local donor="$1" tree_diagnosis name source item
+    stage="/fixture/cache/stage-$RUN"
+    recovery="/fixture/cache/recovery-$RUN"
+    donor_type=live
+    c849_fixture_helper_exec writer /bin/sh -c 'mkdir -p -m 0700 -- "$1/packages" "$1/npm"' sh "$stage" \
+        || c849_seed_failure "$donor" CacheStageCreateFailed
+    c849_status_zero server2-temp || write_result false CacheDonorNotIdleDrained 2
+    docker stop "$donor" >/dev/null || c849_seed_failure "$donor" CacheDonorStopFailed
+    c849_payload_stream "$donor" /home/app/.nuget/packages "c849-${RUN}-writer" "$stage/packages" \
+        || c849_seed_failure "$donor" CacheDonorPackageCopyFailed
+    c849_payload_stream "$donor" /home/app/.npm/_cacache "c849-${RUN}-writer" "$stage/npm" \
+        || c849_seed_failure "$donor" CacheDonorNpmCopyFailed
+    tree_diagnosis="$(
+        {
+            declare -f c849_validate_seed_relative c849_validate_seed_tree
+            printf '%s\n' 'c849_validate_seed_tree "$1"'
+        } | c849_fixture_helper_exec writer /bin/bash -s -- "$stage"
+    )" || c849_seed_failure "$donor" "${tree_diagnosis:-CacheDonorVersionInvalid}"
+    docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+        --mount "type=volume,source=c849${RUN}-work,target=/fixture,readonly,volume-nocopy" \
+        "$image" \
+        -c 'set -eu; mkdir -p /tmp/c849-npm; ln -s "$1" /tmp/c849-npm/_cacache; npm cache verify --cache /tmp/c849-npm' \
+        sh "$stage/npm" >/dev/null 2>&1 \
+        || c849_seed_failure "$donor" NpmStagedIntegrityFailed
+    printf 'npm-integrity=passed\n' > "$CASE_DIR/npm-integrity.txt"
+    {
+        declare -f c849_validate_seed_relative c849_manifest_write
+        printf '%s\n' 'c849_manifest_write "$1" "$1/recovery.manifest"'
+    } | c849_fixture_helper_exec writer /bin/bash -s -- "$stage" \
+        || c849_seed_failure "$donor" CacheManifestFailed
+    manifest_hash="$(c849_fixture_helper_exec reader /bin/sh -c 'sha256sum -- "$1"' sh "$stage/recovery.manifest")" \
+        || c849_seed_failure "$donor" CacheManifestFailed
+    manifest_hash="${manifest_hash%% *}"
+    package_bytes="$(c849_fixture_helper_exec reader /bin/sh -c 'du -s -B1 -- "$1"' sh "$stage/packages" | cut -f1)" \
+        || c849_seed_failure "$donor" CacheManifestFailed
+    npm_bytes="$(c849_fixture_helper_exec reader /bin/sh -c 'du -s -B1 -- "$1"' sh "$stage/npm" | cut -f1)" \
+        || c849_seed_failure "$donor" CacheManifestFailed
+    for item in "$C849_PACKAGES:packages" "$C849_NPM:npm"; do
+        name="${item%%:*}"; source="${item#*:}"
+        docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+            --mount "type=volume,source=c849${RUN}-work,target=/fixture,readonly,volume-nocopy" \
+            --mount "type=volume,source=$name,target=/cache,volume-nocopy" \
+            "$image" \
+            -c 'set -eu; src="$1"; cp -a "$src/." /cache/; chown -R 1654:1654 /cache; find /cache -type d -exec chmod u+rwx {} +; find /cache -type f -exec chmod u+rw {} +; chmod 0700 /cache' \
+            sh "$stage/$source" >/dev/null \
+            || c849_seed_failure "$donor" CacheSeedImportFailed
+    done
+    c849_compare_import "$stage" "$image" || c849_seed_failure "$donor" CacheSeedImportChanged
+}
+
 c849_seed() {
     require_lane host
     if declare -F c849_payload_note >/dev/null 2>&1; then
@@ -2207,6 +2343,10 @@ c849_seed() {
             || write_result false CacheDonorConsumerUnknown 2
         [ "$active" = 0 ] || write_result false CacheDonorConsumerBusy 2
     fi
+    if [ "$(c849_payload_select)" = volume ]; then
+        [ -z "$saved" ] || write_result false CacheDonorSourceConflict 2
+        c849_seed_volume_payload "$donor"
+    else
     sudo -n install -d -o mc -g mc -m 0700 "$SERVER2_ROOT/cache"
     stage="$(mktemp -d "$SERVER2_ROOT/cache/stage-$RUN-XXXXXXXX")"
     mkdir -m 0700 "$stage/packages" "$stage/npm" || c849_seed_failure "$donor" CacheStageCreateFailed
@@ -2252,6 +2392,7 @@ c849_seed() {
             >/dev/null || c849_seed_failure "$donor" CacheSeedImportFailed
     done
     c849_compare_import "$stage" "$image" || c849_seed_failure "$donor" CacheSeedImportChanged
+    fi
     helper="c849-seed-$RUN"
     docker run -d --name "$helper" --network antiphon-build-slots --user 1654:1654 \
         --entrypoint sleep -e HOME=/home/app \
@@ -2270,9 +2411,16 @@ c849_seed() {
         c849_seed_failure "$donor" CacheSeedSmokeFailed
     fi
     docker rm -f "$helper" >/dev/null 2>&1 || true
-    recovery="$SERVER2_ROOT/cache/recovery-$RUN"
-    [ ! -e "$recovery" ] || c849_seed_failure "$donor" CacheRecoveryExists
-    mv "$stage" "$recovery" || c849_seed_failure "$donor" CacheRecoverySaveFailed
+    if [ "$(c849_payload_select)" = volume ]; then
+        c849_fixture_helper_exec reader /bin/sh -c 'test ! -e "$1" && test ! -L "$1"' sh "$recovery" \
+            || c849_seed_failure "$donor" CacheRecoveryExists
+        c849_fixture_helper_exec writer /bin/sh -c 'mv -- "$1" "$2"' sh "$stage" "$recovery" \
+            || c849_seed_failure "$donor" CacheRecoverySaveFailed
+    else
+        recovery="$SERVER2_ROOT/cache/recovery-$RUN"
+        [ ! -e "$recovery" ] || c849_seed_failure "$donor" CacheRecoveryExists
+        mv "$stage" "$recovery" || c849_seed_failure "$donor" CacheRecoverySaveFailed
+    fi
     if [ -n "$donor" ]; then
         docker start "$donor" >/dev/null || c849_seed_failure "$donor" CacheDonorRestartFailed
         [ "$(docker inspect -f '{{.Id}}' "$donor")" = "$donor" ] \
@@ -2478,9 +2626,19 @@ c849_preview() {
     recovery_bytes=0
     if [ -s "$C849_READY" ]; then
         recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
-        case "$recovery" in "$SERVER2_ROOT"/cache/recovery-[a-z0-9]*) ;; *) write_result false CacheRecoveryInvalid 2 ;; esac
-        [ -d "$recovery" ] && [ ! -L "$recovery" ] || write_result false CacheRecoveryMissing 2
-        recovery_bytes="$(sudo -n du -s -B1 -- "$recovery" | cut -f1)"
+        case "$recovery" in
+            "$SERVER2_ROOT"/cache/recovery-[a-z0-9]*)
+                [ -d "$recovery" ] && [ ! -L "$recovery" ] || write_result false CacheRecoveryMissing 2
+                recovery_bytes="$(sudo -n du -s -B1 -- "$recovery" | cut -f1)"
+                ;;
+            /fixture/cache/recovery-[a-z0-9]*)
+                [ "${recovery%/*}" = /fixture/cache ] && [[ "${recovery##*/}" =~ ^recovery-[a-z0-9-]+$ ]] \
+                    || write_result false CacheRecoveryInvalid 2
+                recovery_bytes="$(c849_fixture_helper_exec reader /bin/sh -c 'du -s -B1 -- "$1"' sh "$recovery" | cut -f1)" \
+                    || write_result false CacheRecoveryMissing 2
+                ;;
+            *) write_result false CacheRecoveryInvalid 2 ;;
+        esac
     fi
     available_kb="$(df -Pk "$(docker info -f '{{.DockerRootDir}}')" | awk 'NR==2 {print $4}')"
     [[ "$available_kb" =~ ^[0-9]+$ ]] || write_result false CacheDiskUnavailable 2
@@ -2720,6 +2878,9 @@ c849_prune() {
     if [ "$C849_SCHEMA" = 3 ]; then
         c849_recovery_check "$recovery" "$C849_DIGEST"
     else
+    case "$recovery" in
+        /fixture|/fixture/*) write_result false CacheRecoveryInvalid 2 ;;
+    esac
     [ -d "$recovery/packages" ] && [ ! -L "$recovery" ] \
         && [ -s "$recovery/packages/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata" ] \
         || write_result false CacheRecoveryMissing 2
@@ -3249,6 +3410,7 @@ c849_fixture_seed() {
         if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
         write_result false CacheHelperImageMissing 2
     }
+    c849_payload_own volume || write_result false FixturePayloadBackend 2
     TEMP_PROJECT="c849${RUN}temp"
     C849_PACKAGES="c849${RUN}seed-packages"
     C849_SCRATCH="c849${RUN}seed-scratch"
@@ -3282,7 +3444,12 @@ c849_fixture_seed() {
     docker start "$donor" >/dev/null || write_result false FixtureDonorStartFailed 2
     docker exec "$donor" mkdir -p /home/app/.nuget/packages /home/app/.npm/_cacache \
         || write_result false FixtureDonorSetupFailed 2
-    docker cp "$tree/packages/." "$donor:/home/app/.nuget/packages/" \
+    c849_fixture_helper_exec writer /bin/sh -c 'mkdir -p -- "$1"' sh /fixture/donor/packages \
+        || write_result false FixtureDonorCopyFailed 2
+    tar -C "$tree/packages" -cf - . \
+        | c849_fixture_helper_exec writer /bin/sh -c 'tar -x -p -C "$1"' sh /fixture/donor/packages \
+        || write_result false FixtureDonorCopyFailed 2
+    c849_payload_stream "c849-${RUN}-writer" /fixture/donor/packages "$donor" /home/app/.nuget/packages \
         || write_result false FixtureDonorCopyFailed 2
     c849_fixture_npm_work "$image" "$donor" || npm_status=$?
     case "$npm_status" in
@@ -3302,14 +3469,29 @@ c849_fixture_seed() {
     [ -s "$CASE_DIR/smoke-summary.txt" ] && [ -s "$C849_READY" ] \
         || write_result false FixtureSeedMarkerOrderInvalid 2
     recovery="$(sed -n 's/^recovery=//p' "$C849_READY" | head -n 1)"
-    [ -s "$recovery/packages/c913.tools/2.0.0/.nupkg.metadata" ] \
-        && [ -s "$CASE_DIR/npm-integrity.txt" ] \
-        && [ -n "$(find "$recovery/npm" -type f -print -quit)" ] \
-        || write_result false FixtureRecoveryMissing 2
-    before="$(sha256sum "$tree/packages/c913.tools/2.0.0/tool" | cut -d' ' -f1)"
-    after="$(sha256sum "$recovery/packages/c913.tools/2.0.0/tool" | cut -d' ' -f1)"
-    [ "$before" = "$after" ] && [ "$(stat -c %a "$recovery/packages/c913.tools/2.0.0/tool")" = 755 ] \
-        || write_result false FixtureSeedPayloadChanged 2
+    case "$recovery" in
+        /fixture/*)
+            c849_fixture_helper_exec reader /bin/sh -c 'test -s "$1"' sh "$recovery/packages/c913.tools/2.0.0/.nupkg.metadata" \
+                && [ -s "$CASE_DIR/npm-integrity.txt" ] \
+                && [ -n "$(c849_fixture_helper_exec reader /bin/sh -c 'find "$1" -type f -print -quit' sh "$recovery/npm")" ] \
+                || write_result false FixtureRecoveryMissing 2
+            before="$(c849_fixture_helper_exec reader /bin/sh -c 'sha256sum -- "$1"' sh /fixture/donor/packages/c913.tools/2.0.0/tool | cut -d' ' -f1)"
+            after="$(c849_fixture_helper_exec reader /bin/sh -c 'sha256sum -- "$1"' sh "$recovery/packages/c913.tools/2.0.0/tool" | cut -d' ' -f1)"
+            [ "$before" = "$after" ] \
+                && [ "$(c849_fixture_helper_exec reader /bin/sh -c 'stat -c %a -- "$1"' sh "$recovery/packages/c913.tools/2.0.0/tool")" = 755 ] \
+                || write_result false FixtureSeedPayloadChanged 2
+            ;;
+        *)
+            [ -s "$recovery/packages/c913.tools/2.0.0/.nupkg.metadata" ] \
+                && [ -s "$CASE_DIR/npm-integrity.txt" ] \
+                && [ -n "$(find "$recovery/npm" -type f -print -quit)" ] \
+                || write_result false FixtureRecoveryMissing 2
+            before="$(sha256sum "$tree/packages/c913.tools/2.0.0/tool" | cut -d' ' -f1)"
+            after="$(sha256sum "$recovery/packages/c913.tools/2.0.0/tool" | cut -d' ' -f1)"
+            [ "$before" = "$after" ] && [ "$(stat -c %a "$recovery/packages/c913.tools/2.0.0/tool")" = 755 ] \
+                || write_result false FixtureSeedPayloadChanged 2
+            ;;
+    esac
     [ "$(docker inspect -f '{{.State.Running}}' "$donor")" = true ] \
         || write_result false FixtureDonorNotRestarted 2
     docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
@@ -3328,6 +3510,7 @@ c849_fixture_seed() {
     docker rm -f "$(cat "$CASE_DIR/.fixture-busy")" >/dev/null \
         || write_result false FixtureConsumerCleanupFailed 2
     rm -f "$CASE_DIR/.fixture-busy"
+    c849_payload_own host || write_result false FixturePayloadBackend 2
     printf 'PASS F-3\n' >> "$CASE_DIR/fixture-groups.txt"
 }
 
@@ -4003,6 +4186,72 @@ c849_fixture_assign_budget() {
     printf -v "$dest" '%s' "$scaled"
 }
 
+# Host cp/chmod/mv stay on host paths. A /fixture path uses the reader or writer.
+c849_fixture_recovery_save() {
+    local src="$1" dest="$2" mode
+    case "$src" in
+        /fixture/*)
+            c849_fixture_helper_exec reader /bin/sh -c 'cat -- "$1"' sh "$src" > "$dest" || return 1
+            mode=$(c849_fixture_helper_exec reader /bin/sh -c 'stat -c %a -- "$1"' sh "$src") || return 1
+            printf '%s\n' "$mode" > "$dest.mode" || return 1
+            ;;
+        *)
+            cp -p -- "$src" "$dest" || return 1
+            stat -c %a -- "$src" > "$dest.mode" || return 1
+            ;;
+    esac
+}
+
+c849_fixture_recovery_restore() {
+    local src="$1" dest="$2" mode
+    case "$dest" in
+        /fixture/*)
+            c849_fixture_helper_exec writer /bin/sh -c 'cat > "$1"' sh "$dest" < "$src" || return 1
+            mode=$(cat -- "$src.mode") || return 1
+            c849_fixture_helper_exec writer /bin/sh -c 'chmod -- "$1" "$2"' sh "$mode" "$dest" || return 1
+            ;;
+        *)
+            cp -p -- "$src" "$dest" || return 1
+            ;;
+    esac
+}
+
+c849_fixture_recovery_append() {
+    local dest="$1" text="$2"
+    case "$dest" in
+        /fixture/*)
+            printf '%s' "$text" | c849_fixture_helper_exec writer /bin/sh -c 'cat >> "$1"' sh "$dest"
+            ;;
+        *)
+            printf '%s' "$text" >> "$dest"
+            ;;
+    esac
+}
+
+c849_fixture_recovery_chmod() {
+    local dest="$1" mode="$2"
+    case "$dest" in
+        /fixture/*)
+            c849_fixture_helper_exec writer /bin/sh -c 'chmod -- "$1" "$2"' sh "$mode" "$dest"
+            ;;
+        *)
+            chmod "$mode" -- "$dest"
+            ;;
+    esac
+}
+
+c849_fixture_recovery_move() {
+    local src="$1" dest="$2"
+    case "$src" in
+        /fixture/*)
+            c849_fixture_helper_exec writer /bin/sh -c 'mv -- "$1" "$2"' sh "$src" "$dest"
+            ;;
+        *)
+            mv -- "$src" "$dest"
+            ;;
+    esac
+}
+
 c849_fixture_prune() {
     local image recovery payload image_id name path mode bytes budget source_root
     image="$(c849_image)" || {
@@ -4046,9 +4295,9 @@ c849_fixture_prune() {
     C849_FIXTURE_PACKAGES_BUDGET=1
     c849_fixture_control PC-24 CacheBudgetExceeded c849_budget_gate
     C849_FIXTURE_PACKAGES_BUDGET="$(awk '$2=="nuget-packages" {print $6}' "$SERVER2_ROOT/volumes-backup.txt")"
-    mv "$recovery" "$recovery.missing"
+    c849_fixture_recovery_move "$recovery" "$recovery.missing"
     c849_fixture_control PC-25 CacheRecoveryMissing c849_fixture_prune_case
-    mv "$recovery.missing" "$recovery"
+    c849_fixture_recovery_move "$recovery.missing" "$recovery"
     ( write_result() { printf '%s\n' "$2"; exit "$3"; }; c849_prune ) \
         || write_result false FixturePruneApplyFailed 2
     [ -s "$CASE_DIR/prune.txt" ] && [ -s "$CASE_DIR/smoke-summary.txt" ] \
@@ -4136,17 +4385,21 @@ c849_fixture_contract_controls() {
             manifest) file="$recovery/recovery.manifest" ;;
         esac
         saved="$SERVER2_ROOT/control-backup"
-        cp -p "$file" "$saved" || write_result false FixtureControlSetupFailed 2
-        if [ "$kind" = executable ]; then chmod 0600 "$file"; else printf changed >> "$file"; fi
+        c849_fixture_recovery_save "$file" "$saved" || write_result false FixtureControlSetupFailed 2
+        if [ "$kind" = executable ]; then
+            c849_fixture_recovery_chmod "$file" 0600 || write_result false FixtureControlSetupFailed 2
+        else
+            c849_fixture_recovery_append "$file" changed || write_result false FixtureControlSetupFailed 2
+        fi
         c849_fixture_control PC-28 CacheRecoveryChanged c849_recovery_check "$recovery" "$expected"
-        cp -p "$saved" "$file" || write_result false FixtureControlSetupFailed 2
+        c849_fixture_recovery_restore "$saved" "$file" || write_result false FixtureControlSetupFailed 2
     done
-    mv "$recovery" "$recovery.missing"
+    c849_fixture_recovery_move "$recovery" "$recovery.missing"
     c849_fixture_control PC-29 CacheRecoveryMissing c849_recovery_check "$recovery" "$expected"
-    mv "$recovery.missing" "$recovery"
-    mv "$recovery/recovery.manifest" "$recovery/manifest.missing"
+    c849_fixture_recovery_move "$recovery.missing" "$recovery"
+    c849_fixture_recovery_move "$recovery/recovery.manifest" "$recovery/manifest.missing"
     c849_fixture_control PC-29 CacheRecoveryMissing c849_recovery_check "$recovery" "$expected"
-    mv "$recovery/manifest.missing" "$recovery/recovery.manifest"
+    c849_fixture_recovery_move "$recovery/manifest.missing" "$recovery/recovery.manifest"
     cp "$C849_READY" "$SERVER2_ROOT/marker-backup"
     printf 'payload-sha256=%064d\n' 0 >> "$C849_READY"
     c849_fixture_control PC-30 CacheSeedMarkerInvalid c849_require_ready allow-cold

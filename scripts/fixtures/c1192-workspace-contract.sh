@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CARD-1192 S1 workspace model, S2 race barriers, S3 npm volume reads, and S4 payload boundary.
+# CARD-1192 S1 workspace model, S2 race barriers, S3 npm volume reads, S4 payload boundary, and S5 volume seed.
 # Extracted c849_* functions against a filesystem Docker model.
 # Never source dispatch. Never call the host docker daemon.
 set -euo pipefail
@@ -310,7 +310,21 @@ write_result() {
     exit "$code"
 }
 c849_lock() { :; }
-sudo() { printf 'SUDO %s\n' "$*" >> "$C1192_ROOT/order"; return 1; }
+# realpath, test -L, stat, du and install -d are the observe/prepare calls.
+# Every other sudo command stays a refusal.
+sudo() {
+    printf 'SUDO %s\n' "$*" >> "$C1192_ROOT/order"
+    local -a args=("$@")
+    if [ "${args[0]:-}" = -n ]; then args=("${args[@]:1}"); fi
+    case "${args[0]:-}" in
+        realpath) printf '%s\n' "${args[-1]}"; return 0 ;;
+        test) return 1 ;;
+        stat) printf '1654:1654:700\n'; return 0 ;;
+        du) printf '128\t%s\n' "${args[-1]}"; return 0 ;;
+        install) mkdir -p -- "${args[-1]}"; return 0 ;;
+    esac
+    return 1
+}
 chown() { printf '%s\n' "$*" >> "$C1192_ROOT/chown.log"; }
 export -f chown
 
@@ -439,6 +453,91 @@ run_script() {
     bash -c "$script" "$@"
 }
 
+# Mount every parsed volume or bind, then run the script with the caller's $0/$1.
+# bash -s reads the script from the file because docker()'s stdin was already consumed.
+c1192_bind_mounts() {
+    local spec="$1" script="$2" mode="$3" data target ro
+    shift 3
+    set -euo pipefail
+    while IFS=$'\t' read -r data target ro; do
+        [ -n "${target:-}" ] || continue
+        mkdir -p -- "$target"
+        if [ "$ro" = 1 ]; then
+            mount --bind -o ro -- "$data" "$target"
+        else
+            mount --bind -- "$data" "$target"
+        fi
+    done < "$spec"
+    if [ "$mode" = -s ]; then
+        bash -s -- "$@" < "$script"
+    else
+        bash -c "$(cat -- "$script")" "$@"
+    fi
+}
+export -f c1192_bind_mounts
+
+run_bound() {
+    local -a cmd=("$@")
+    local script="" mode=-c specfile scriptfile mount target source typ data ro st=0 f
+    local -a mounts=()
+    if [ "${cmd[0]:-}" = -c ]; then
+        script="${cmd[1]}"
+        cmd=("${cmd[@]:2}")
+    elif [ "${cmd[0]:-}" = -s ]; then
+        mode=-s
+        script=$(cat)
+        cmd=("${cmd[@]:1}")
+        [ "${cmd[0]:-}" = -- ] && cmd=("${cmd[@]:1}")
+    else
+        printf 'UNEXPECTED-COMMAND %s\n' "$*" >> "$C1192_ROOT/scenario.err"
+        return 97
+    fi
+    case "$script" in
+        *'stat -c %u'*) script="stat() { printf '1654:1654:700\n'; }; $script" ;;
+    esac
+    case "$script" in
+        *'cp -a "$src/."'*) printf '1\n' >> "$C1192_ROOT/import-count" ;;
+    esac
+    specfile=$(mktemp "$C1192_ROOT/spec.XXXXXX")
+    scriptfile=$(mktemp "$C1192_ROOT/script.XXXXXX")
+    printf '%s\n' "$script" > "$scriptfile"
+    IFS=';' read -r -a mounts <<< "$PARSED_MOUNTS"
+    for mount in "${mounts[@]}"; do
+        [ -n "$mount" ] || continue
+        target=$(mount_field "$mount" target)
+        source=$(mount_field "$mount" source)
+        typ=$(mount_field "$mount" type)
+        ro=0
+        case "$mount" in *readonly*) ro=1 ;; esac
+        if [ "$typ" = bind ]; then
+            data="$source"
+        else
+            data="$C1192_ROOT/volumes/$source/data"
+            mkdir -p -- "$data"
+        fi
+        printf '%s\t%s\t%s\n' "$data" "$target" "$ro" >> "$specfile"
+    done
+    unshare --user --map-root-user --mount bash -c 'c1192_bind_mounts "$@"' \
+        bash "$specfile" "$scriptfile" "$mode" "${cmd[@]}" || st=$?
+    if [ "$st" = 0 ] && [ "${C1192_FAULT:-}" = import ]; then
+        case "$script" in
+            *'cp -a "$src/."'*)
+                for mount in "${mounts[@]}"; do
+                    [ -n "$mount" ] || continue
+                    target=$(mount_field "$mount" target)
+                    [ "$target" = /cache ] || continue
+                    source=$(mount_field "$mount" source)
+                    data="$C1192_ROOT/volumes/$source/data"
+                    f=$(find "$data" -type f -print -quit || true)
+                    if [ -n "$f" ]; then printf 'x' >> "$f"; fi
+                done
+                ;;
+        esac
+    fi
+    rm -f -- "$specfile" "$scriptfile"
+    return "$st"
+}
+
 mount_source_for_target() {
     local want="$1" mount
     local IFS=';'
@@ -538,14 +637,43 @@ simulate_lock() {
     printf '1\n' > "$entered"
 }
 
+container_dir() {
+    local key="$1" dir id
+    if [ -d "$C1192_ROOT/containers/$key" ]; then
+        printf '%s\n' "$C1192_ROOT/containers/$key"
+        return 0
+    fi
+    for dir in "$C1192_ROOT/containers"/*; do
+        [ -f "$dir/id" ] || continue
+        id=$(cat "$dir/id")
+        if [ "$id" = "$key" ]; then
+            printf '%s\n' "$dir"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Bind the volume data directory onto itself read-only. A writer mount never calls this.
+c1192_exec_ro() {
+    local data="$1" bin="$2"
+    shift 2
+    unshare --user --map-root-user --mount bash -c \
+        'mount --bind -o ro -- "$1" "$1" || exit 97; shift; exec "$@"' \
+        bash "$data" "$bin" "$@"
+}
+
 exec_in() {
     local name="$1"
     shift
-    local mount source data arg script_text=""
+    local mount source data arg script_text="" ro=0
     mount=$(cat "$C1192_ROOT/containers/$name/mount")
     source=$(mount_field "$mount" source)
     data="$C1192_ROOT/volumes/$source/data"
     mkdir -p "$data"
+    case "$mount" in
+        *readonly*) ro=1 ;;
+    esac
     if [ "${C1192_FAULT:-}" = touch-release ]; then
         for arg in "$@"; do
             if [ "$arg" = /fixture/race/shared-release ]; then
@@ -576,13 +704,21 @@ exec_in() {
             ;;
     esac
     if [ "${REWRITE[1]:-}" = -c ]; then
-        "$bin" -c "${REWRITE[2]}" "${REWRITE[@]:3}"
+        if [ "$ro" = 1 ]; then
+            c1192_exec_ro "$data" "$bin" -c "${REWRITE[2]}" "${REWRITE[@]:3}"
+        else
+            "$bin" -c "${REWRITE[2]}" "${REWRITE[@]:3}"
+        fi
         return
     fi
     if [ "${REWRITE[1]:-}" = -s ]; then
         local rest=("${REWRITE[@]:2}")
         [ "${rest[0]:-}" = -- ] && rest=("${rest[@]:1}")
-        "$bin" -s -- "${rest[@]}"
+        if [ "$ro" = 1 ]; then
+            c1192_exec_ro "$data" "$bin" -s -- "${rest[@]}"
+        else
+            "$bin" -s -- "${rest[@]}"
+        fi
         return
     fi
     printf 'UNEXPECTED-EXEC %s\n' "$*" >> "$C1192_ROOT/scenario.err"
@@ -683,6 +819,7 @@ docker_volume() {
                 *fixture-role*) label_value "$dir/label-role" ;;
                 *cache-schema*) label_value "$dir/label-schema" ;;
                 *cache-role*) label_value "$dir/label-cache-role" ;;
+                *Mountpoint*) printf '/var/lib/docker/volumes/%s/_data\n' "$name" ;;
                 *) printf 'UNEXPECTED-FMT %s\n' "$fmt" >> "$C1192_ROOT/scenario.err"; return 97 ;;
             esac
             ;;
@@ -751,6 +888,8 @@ store_container() {
             io.antiphon.owner) printf '%s\n' "$val" > "$dir/label-owner" ;;
             io.antiphon.fixture-run) printf '%s\n' "$val" > "$dir/label-run" ;;
             io.antiphon.fixture-role) printf '%s\n' "$val" > "$dir/label-role" ;;
+            com.docker.compose.project) printf '%s\n' "$val" > "$dir/label-project" ;;
+            com.docker.compose.service) printf '%s\n' "$val" > "$dir/label-service" ;;
         esac
     done
 }
@@ -766,6 +905,12 @@ docker_create() {
     if [ "$C1192_CUT" = writer-create ] && [ "$role" = writer ]; then return 1; fi
     if [ "$C1192_CUT" = reader-create ] && [ "$role" = reader ]; then return 1; fi
     store_container "$PARSED_NAME" "$PARSED_IMAGE" "$PARSED_MOUNTS" "$PARSED_LABELS"
+    local dir="$C1192_ROOT/containers/$PARSED_NAME" id
+    id=$(printf '%s' "$PARSED_NAME" | sha256sum | awk '{print $1}')
+    printf '%s\n' "$id" > "$dir/id"
+    printf '0\n' > "$dir/running"
+    mkdir -p -- "$dir/root"
+    printf '%s\n' "$id"
 }
 
 simulate_npm_cache_add() {
@@ -864,12 +1009,35 @@ docker_run() {
             ;;
         *c849-npm-http:8080*) return 0 ;;
     esac
+    if [[ "$joined" == *'npm cache verify'* ]]; then
+        if [ "${C1192_FAULT:-}" = integrity ]; then return 1; fi
+        return 0
+    fi
     if [ "$PARSED_ENTRY" = sleep ]; then
+        if [ -n "$PARSED_NAME" ]; then
+            local sleep_dir sleep_id
+            store_container "$PARSED_NAME" "$PARSED_IMAGE" "$PARSED_MOUNTS" "$PARSED_LABELS"
+            sleep_dir="$C1192_ROOT/containers/$PARSED_NAME"
+            sleep_id=$(printf '%s' "$PARSED_NAME" | sha256sum | awk '{print $1}')
+            printf '%s\n' "$sleep_id" > "$sleep_dir/id"
+            printf '1\n' > "$sleep_dir/running"
+            mkdir -p -- "$sleep_dir/root"
+            printf '%s\n' "$sleep_id"
+            return 0
+        fi
         printf 'UNEXPECTED-SLEEP\n' >> "$C1192_ROOT/scenario.err"
         return 97
     fi
-    local mount
+    local mount nmount=0
+    local -a mounts=()
     IFS=';' read -r -a mounts <<< "$PARSED_MOUNTS"
+    for mount in "${mounts[@]}"; do
+        [ -n "$mount" ] && nmount=$((nmount + 1))
+    done
+    if [ "${PARSED_CMD[0]:-}" = -s ] || { [ "$nmount" -ge 2 ] && [[ "$joined" == *'cp -a "$src/."'* ]]; }; then
+        run_bound "${PARSED_CMD[@]}"
+        return
+    fi
     mount="${mounts[0]:-}"
     # A curl wait has no mount. run_script would rewrite an empty target globally.
     if [ -z "$mount" ]; then
@@ -887,12 +1055,31 @@ docker_inspect_container() {
             *) name="$1"; shift ;;
         esac
     done
-    local dir="$C1192_ROOT/containers/$name"
-    [ -d "$dir" ] || return 1
+    local dir base
+    dir=$(container_dir "$name") || return 1
+    base=$(basename "$dir")
     [ -n "$fmt" ] || return 0
     case "$fmt" in
-        '{{.Name}}') printf '/%s\n' "$name" ;;
+        '{{.Name}}') printf '/%s\n' "$base" ;;
+        '{{.Id}}')
+            if [ "${C1192_FAULT:-}" = identity ] && [ -f "$dir/restarted" ] && [ "$(cat "$dir/restarted")" = 1 ]; then
+                printf '%s\n' '1111111111111111111111111111111111111111111111111111111111111111'
+            elif [ -f "$dir/id" ]; then
+                cat "$dir/id"
+            else
+                printf '%s\n' "$base"
+            fi
+            ;;
+        '{{.Image}}') printf '%s\n' "$IMAGE_ID" ;;
+        '{{.State.Running}}')
+            if [ -f "$dir/running" ] && [ "$(cat "$dir/running")" = 1 ]; then
+                printf 'true\n'
+            else
+                printf 'false\n'
+            fi
+            ;;
         *compose.project*) label_value "$dir/label-project" ;;
+        *compose.service*) label_value "$dir/label-service" ;;
         *io.antiphon.owner*) label_value "$dir/label-owner" ;;
         *fixture-run*) label_value "$dir/label-run" ;;
         *fixture-role*) label_value "$dir/label-role" ;;
@@ -903,14 +1090,23 @@ docker_inspect_container() {
 # docker cp container:/fixture/dir/. - streams a tar of that directory.
 # A trailing * is the glob mutation and omits dotfiles. source-copy fails before any bytes.
 payload_cp_stream() {
-    local spec="$1" name path mount source data rel archive
+    local spec="$1" name path mount source data rel archive cdir
     name="${spec%%:*}"
     path="${spec#*:}"
-    [ -d "$C1192_ROOT/containers/$name" ] || return 1
+    cdir=$(container_dir "$name") || return 1
     if [ "${C1192_FAULT:-}" = source-copy ]; then
         return 1
     fi
-    mount=$(cat "$C1192_ROOT/containers/$name/mount")
+    case "$path" in
+        /home/app/.nuget/packages|/home/app/.nuget/packages/.|/home/app/.npm/_cacache|/home/app/.npm/_cacache/.)
+            rel="${path%/.}"
+            archive="$cdir/root$rel"
+            [ -d "$archive" ] || return 1
+            tar -C "$archive" -cf - . || return $?
+            return 0
+            ;;
+    esac
+    mount=$(cat "$cdir/mount")
     source=$(mount_field "$mount" source)
     data="$C1192_ROOT/volumes/$source/data"
     case "$path" in
@@ -941,7 +1137,7 @@ payload_cp_stream() {
 # An empty archive is success so a failed docker cp is visible only under pipefail.
 # sink-copy consumes the archive and then returns 1.
 payload_tar_exec() {
-    local name="$1" preserve=0 dest="" tmp st=0 mount source data rel
+    local name="$1" preserve=0 dest="" tmp st=0 mount source data rel cdir
     shift
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -961,7 +1157,23 @@ payload_tar_exec() {
         rm -f -- "$tmp"
         return 0
     fi
-    mount=$(cat "$C1192_ROOT/containers/$name/mount")
+    cdir=$(container_dir "$name") || { rm -f -- "$tmp"; return 1; }
+    mount=$(cat "$cdir/mount" 2>/dev/null || true)
+    case "$mount" in
+        *readonly*) rm -f -- "$tmp"; return 1 ;;
+    esac
+    case "$dest" in
+        /home/app/.nuget/packages|/home/app/.npm/_cacache)
+            mkdir -p -- "$cdir/root$dest"
+            if [ "$preserve" = 1 ]; then
+                tar -x -p -C "$cdir/root$dest" -f "$tmp" || st=$?
+            else
+                tar -x -C "$cdir/root$dest" -f "$tmp" || st=$?
+            fi
+            rm -f -- "$tmp"
+            return "$st"
+            ;;
+    esac
     source=$(mount_field "$mount" source)
     data="$C1192_ROOT/volumes/$source/data"
     case "$dest" in
@@ -1021,11 +1233,26 @@ docker() {
         create) shift; docker_create "$@" ;;
         start)
             shift
-            local name="$1"
+            local name="$1" cdir cname
             order_log "start $name"
             if [ "$C1192_CUT" = writer-start ] && [ "$name" = "$WRITER" ]; then return 1; fi
             if [ "$C1192_CUT" = reader-start ] && [ "$name" = "$READER" ]; then return 1; fi
-            [ -d "$C1192_ROOT/containers/$name" ] || return 1
+            cdir=$(container_dir "$name") || return 1
+            cname=$(basename "$cdir")
+            if [ "${C1192_FAULT:-}" = restart ] && [[ "$cname" == *-donor ]]; then
+                return 1
+            fi
+            if [ -f "$cdir/stopped" ] && [ "$(cat "$cdir/stopped")" = 1 ]; then
+                printf '1\n' > "$cdir/restarted"
+            fi
+            printf '1\n' > "$cdir/running"
+            ;;
+        stop)
+            shift
+            local stop_name="$1" stop_dir
+            stop_dir=$(container_dir "$stop_name") || return 1
+            printf '0\n' > "$stop_dir/running"
+            printf '1\n' > "$stop_dir/stopped"
             ;;
         rm)
             shift
@@ -1041,38 +1268,122 @@ docker() {
             ;;
         exec)
             shift
-            local name=""
+            local name="" cdir cname
             while [ $# -gt 0 ]; do
                 case "$1" in
                     -i|-t|-d) shift ;;
-                    -u|--user) shift 2 ;;
+                    -u|--user|-e|--env) shift 2 ;;
                     *) name="$1"; shift; break ;;
                 esac
             done
             local joined="" part
             for part in "$@"; do joined+="$part"$'\x1e'; done
             event "$(printf 'exec\t%s' "$joined")"
-            [ -d "$C1192_ROOT/containers/$name" ] || return 1
+            cdir=$(container_dir "$name") || return 1
+            cname=$(basename "$cdir")
             if [ "${1:-}" = tar ]; then
-                payload_tar_exec "$name" "$@"
+                payload_tar_exec "$cname" "$@"
                 return
             fi
-            if [ "$name" = "c849-${RUN}-donor" ]; then
+            if [ "$cname" = "c849-${RUN}-donor" ]; then
+                case "${1:-}" in
+                    ps)
+                        printf 'UID COMMAND\n'
+                        return 0
+                        ;;
+                    mkdir)
+                        local dest
+                        for dest in "$@"; do
+                            case "$dest" in
+                                /home/app/*) mkdir -p -- "$cdir/root$dest" ;;
+                            esac
+                        done
+                        return 0
+                        ;;
+                esac
                 case "$*" in
                     *tar*-xf*)
-                        mkdir -p "$C1192_ROOT/donor-npm"
-                        tar -C "$C1192_ROOT/donor-npm" -xf - || return 1
+                        local donor_tar
+                        donor_tar=$(mktemp "$C1192_ROOT/tar.XXXXXX") || return 1
+                        cat > "$donor_tar" || { rm -f -- "$donor_tar"; return 1; }
+                        mkdir -p "$C1192_ROOT/donor-npm" "$cdir/root/home/app/.npm/_cacache"
+                        tar -C "$C1192_ROOT/donor-npm" -xf "$donor_tar" || { rm -f -- "$donor_tar"; return 1; }
+                        tar -C "$cdir/root/home/app/.npm/_cacache" -xf "$donor_tar" || true
+                        rm -f -- "$donor_tar"
                         return 0
                         ;;
                 esac
                 printf 'UNEXPECTED-DONOR %s\n' "$*" >> "$C1192_ROOT/scenario.err"
                 return 97
             fi
-            exec_in "$name" "$@"
+            if [[ "$cname" == c849-seed-* ]] && { [ "${1:-}" = /bin/sh ] || [ "${1:-}" = sh ]; }; then
+                cat >/dev/null || true
+                if [ "${C1192_FAULT:-}" = smoke ]; then return 1; fi
+                printf 'C849_SMOKE uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK\n'
+                return 0
+            fi
+            if [ "${C1192_FAULT:-}" = save ] && [[ "$cname" == *-writer ]] && [[ "$*" == *'mv --'* ]]; then
+                return 1
+            fi
+            exec_in "$cname" "$@"
             ;;
         inspect) shift; docker_inspect_container "$@" ;;
         run) shift; docker_run "$@" ;;
-        ps|network) return 0 ;;
+        network) return 0 ;;
+        info) printf '/var/lib/docker\n' ;;
+        ps)
+            shift
+            local ps_all=0 ps_filtered=0 ps_dir ps_id ps_running ps_ok ps_filter ps_key ps_val ps_file ps_have
+            local -a ps_filters=()
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    -aq|-a|--all) ps_all=1; shift ;;
+                    -q|--no-trunc) shift ;;
+                    --filter) ps_filters+=("$2"); ps_filtered=1; shift 2 ;;
+                    --format|-f) shift 2 ;;
+                    *) shift ;;
+                esac
+            done
+            [ "$ps_filtered" = 1 ] || return 0
+            for ps_dir in "$C1192_ROOT/containers"/*; do
+                [ -d "$ps_dir" ] || continue
+                ps_running=0
+                [ -f "$ps_dir/running" ] && ps_running=$(cat "$ps_dir/running")
+                if [ "$ps_all" != 1 ] && [ "$ps_running" != 1 ]; then continue; fi
+                ps_ok=1
+                for ps_filter in "${ps_filters[@]}"; do
+                    ps_key="${ps_filter%%=*}"
+                    ps_val="${ps_filter#*=}"
+                    case "$ps_key" in
+                        label)
+                            ps_file=""
+                            case "${ps_val%%=*}" in
+                                com.docker.compose.project) ps_file=label-project ;;
+                                com.docker.compose.service) ps_file=label-service ;;
+                                io.antiphon.owner) ps_file=label-owner ;;
+                                io.antiphon.fixture-run) ps_file=label-run ;;
+                                io.antiphon.fixture-role) ps_file=label-role ;;
+                                *) ps_ok=0 ;;
+                            esac
+                            ps_have="${ps_val#*=}"
+                            if [ -z "$ps_file" ] || [ ! -f "$ps_dir/$ps_file" ] || [ "$(cat "$ps_dir/$ps_file")" != "$ps_have" ]; then
+                                ps_ok=0
+                            fi
+                            ;;
+                        volume)
+                            if [ ! -f "$ps_dir/mount" ] || ! grep -q "source=${ps_val}" "$ps_dir/mount"; then
+                                ps_ok=0
+                            fi
+                            ;;
+                        *) ps_ok=0 ;;
+                    esac
+                    [ "$ps_ok" = 1 ] || break
+                done
+                [ "$ps_ok" = 1 ] || continue
+                if [ -f "$ps_dir/id" ]; then ps_id=$(cat "$ps_dir/id"); else ps_id=$(basename "$ps_dir"); fi
+                printf '%s\n' "$ps_id"
+            done
+            ;;
         compose) return 1 ;;
         cp)
             shift
@@ -2205,6 +2516,251 @@ transfer_once() {
     cp -- "$C1192_ROOT/trace" "$C1192_ROOT/transfer-trace"
 }
 
+plant_running_donor() {
+    local fault="$1" name="c849-${RUN}-donor" id dir
+    id=$(printf '%s' "$name" | sha256sum | awk '{print $1}')
+    dir="$C1192_ROOT/containers/$name"
+    mkdir -p -- "$dir/root/home/app/.nuget/packages/c913.tools/2.0.0" \
+        "$dir/root/home/app/.npm/_cacache"
+    printf 'meta\n' > "$dir/root/home/app/.nuget/packages/c913.tools/2.0.0/.nupkg.metadata"
+    printf 'tool-bytes\n' > "$dir/root/home/app/.nuget/packages/c913.tools/2.0.0/tool"
+    chmod 755 "$dir/root/home/app/.nuget/packages/c913.tools/2.0.0/tool"
+    printf 'npm-bytes\n' > "$dir/root/home/app/.npm/_cacache/content"
+    if [ "$fault" = unsafe ]; then
+        ln -s tool "$dir/root/home/app/.nuget/packages/c913.tools/2.0.0/link"
+    fi
+    printf '%s\n' "$id" > "$dir/id"
+    printf '1\n' > "$dir/running"
+    printf '0\n' > "$dir/stopped"
+    printf '%s\n' "c849${RUN}temp" > "$dir/label-project"
+    printf '%s\n' session-runner > "$dir/label-service"
+    printf '%s\n' "$IMAGE_ID" > "$dir/image"
+    : > "$dir/mount"
+    printf '%s\n' c849-fixture > "$dir/label-owner"
+    printf '%s\n' "$RUN" > "$dir/label-run"
+    printf '%s\n' donor > "$dir/label-role"
+}
+
+# reuse skips workspace reset so the second seed takes the marker branch.
+seed_case() {
+    local fault="$1" reuse="${2:-}"
+    SEED_STATUS=0
+    SEED_DIAG=
+    C849_PACKAGES=antiphon-runner-cache-nuget-packages
+    C849_SCRATCH=antiphon-runner-cache-nuget-scratch
+    C849_NPM=antiphon-runner-cache-npm-content
+    C849_READY="$SERVER2_ROOT/cache/seed-accepted"
+    TEMP_PROJECT="c849${RUN}temp"
+    if [ "$reuse" != reuse ]; then
+        reset_runtime
+        rm -rf -- "$SERVER2_ROOT/cache"
+        mkdir -p -- "$SERVER2_ROOT/cache"
+        rm -f -- "$C1192_ROOT/import-count"
+        : > "$C1192_ROOT/scenario.err"
+        require_init
+        if ! c849_payload_own volume; then
+            SEED_STATUS=98
+            SEED_DIAG=FixturePayloadBackend
+            return 0
+        fi
+        plant_running_donor "$fault"
+    fi
+    C1192_FAULT=$fault
+    (
+        write_result() { printf '%s\n' "$2"; exit "$3"; }
+        sleep() { :; }
+        c849_status_body() {
+            local eligible=true
+            if [ "${C1192_FAULT:-}" = reconnect ]; then eligible=false; fi
+            printf '%s\n' '{"sessions":0,"runnerSessions":0,"queuedTasks":0,"draining":true,"acceptingNewWork":false,"redirectTo":"server2","retireWhenIdle":true,"dispatchEligible":'"$eligible"'}'
+        }
+        c849_seed
+    ) > "$C1192_ROOT/seed-out" 2>>"$C1192_ROOT/scenario.err" || SEED_STATUS=$?
+    C1192_FAULT=
+    SEED_DIAG=$(tail -n 1 "$C1192_ROOT/seed-out" || true)
+}
+
+refused_diag() {
+    local want="$1"
+    [ "$SEED_STATUS" != 0 ] && [ "$SEED_DIAG" = "$want" ] \
+        && [ ! -e "$C849_READY" ] && [ ! -L "$C849_READY" ]
+}
+
+# Reader prune uses the validator through the read-only reader mount.
+# Removing ,readonly from c849_fixture_helper_acquire makes this label 0.
+mode_fixture_seed() {
+    local data refused=0 volume=0 sentinel=0
+    local unsafe=0 integrity=0 corrupt=0 smoke=0 save=0 restart=0 identity=0 reconnect=0 publication=0
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    require_init
+    data="$C1192_ROOT/volumes/$WORK/data"
+    mkdir -p -- "$data/probe-stage/packages/c913.keep/1.0.0" \
+        "$data/probe-stage/packages/c913.drop/1.0.0" "$data/probe-stage/npm"
+    printf 'meta\n' > "$data/probe-stage/packages/c913.keep/1.0.0/.nupkg.metadata"
+    printf 'keep\n' > "$data/probe-stage/packages/c913.keep/1.0.0/tool"
+    printf 'drop\n' > "$data/probe-stage/packages/c913.drop/1.0.0/payload"
+    {
+        declare -f c849_validate_seed_relative c849_validate_seed_tree
+        printf '%s\n' 'c849_validate_seed_tree "$1"'
+    } | c849_fixture_helper_exec reader /bin/bash -s -- /fixture/probe-stage >/dev/null 2>&1 || true
+    if [ -d "$data/probe-stage/packages/c913.drop/1.0.0" ]; then refused=1; fi
+
+    seed_case ""
+    local rec="$C1192_ROOT/volumes/$WORK/data/cache/recovery-$RUN"
+    local pkg="$C1192_ROOT/volumes/$C849_PACKAGES/data/c913.tools/2.0.0/tool"
+    local npm="$C1192_ROOT/volumes/$C849_NPM/data/content"
+    local imports=0
+    [ -f "$C1192_ROOT/import-count" ] && imports=$(wc -l < "$C1192_ROOT/import-count")
+    if [ "$SEED_STATUS" = 0 ] && [ -f "$C849_READY" ] \
+        && [ -f "$rec/packages/c913.tools/2.0.0/tool" ] \
+        && [ "$(cat "$rec/packages/c913.tools/2.0.0/tool")" = tool-bytes ] \
+        && [ -f "$rec/npm/content" ] && [ "$(cat "$rec/npm/content")" = npm-bytes ] \
+        && [ -f "$pkg" ] && [ "$(cat "$pkg")" = tool-bytes ] \
+        && [ -f "$npm" ] && [ "$(cat "$npm")" = npm-bytes ] \
+        && [ "$imports" = 2 ] \
+        && ! compgen -G "$SERVER2_ROOT/cache/stage-*" >/dev/null \
+        && grep -q '^recovery=/fixture/cache/recovery-' "$C849_READY"; then
+        volume=1
+    fi
+    if [ "$volume" = 1 ]; then
+        docker run --rm --network none --entrypoint /bin/sh \
+            --mount "type=volume,source=$C849_PACKAGES,target=/cache,volume-nocopy" \
+            "$ADMITTED" -c 'printf keep-after-rerun > /cache/keep-after-rerun' \
+            >/dev/null 2>>"$C1192_ROOT/scenario.err" || true
+        local before after imports_after=0
+        before=$(cat "$C1192_ROOT/volumes/$C849_PACKAGES/data/keep-after-rerun" 2>/dev/null || true)
+        seed_case "" reuse
+        after=$(cat "$C1192_ROOT/volumes/$C849_PACKAGES/data/keep-after-rerun" 2>/dev/null || true)
+        [ -f "$C1192_ROOT/import-count" ] && imports_after=$(wc -l < "$C1192_ROOT/import-count")
+        if [ "$before" = keep-after-rerun ] && [ "$after" = "$before" ] \
+            && [ "$imports_after" = 2 ] && [ "$SEED_STATUS" = 0 ]; then
+            sentinel=1
+        fi
+    else
+        printf 'volume-debug status=%s diag=%s imports=%s\n' "$SEED_STATUS" "$SEED_DIAG" "$imports" >&2
+        tail -n 30 "$C1192_ROOT/scenario.err" >&2 || true
+        tail -n 20 "$C1192_ROOT/seed-out" >&2 || true
+    fi
+    seed_case unsafe; refused_diag CacheDonorUnsafeEntry && unsafe=1
+    seed_case integrity; refused_diag NpmStagedIntegrityFailed && integrity=1
+    seed_case import; refused_diag CacheSeedImportChanged && corrupt=1
+    seed_case smoke; refused_diag CacheSmokeFailed && smoke=1
+    seed_case save
+    refused_diag CacheRecoverySaveFailed && save=1
+    if [ ! -e "$C849_READY" ] && [ ! -L "$C849_READY" ]; then publication=1; fi
+    seed_case restart; refused_diag CacheDonorRestartFailed && restart=1
+    seed_case identity; refused_diag CacheDonorIdentityChanged && identity=1
+    seed_case reconnect; refused_diag CacheDonorReconnectFailed && reconnect=1
+    emit reader-prune-refused "$refused"
+    emit fixture-volume-seed "$volume"
+    emit fixture-unsafe-tree-refused "$unsafe"
+    emit fixture-integrity-before-import "$integrity"
+    emit fixture-import-corruption-no-marker "$corrupt"
+    emit fixture-smoke-no-marker "$smoke"
+    emit fixture-recovery-save-no-marker "$save"
+    emit fixture-restart-no-marker "$restart"
+    emit fixture-donor-identity-no-marker "$identity"
+    emit fixture-reconnect-no-marker "$reconnect"
+    emit fixture-publication-last "$publication"
+    emit fixture-rerun-sentinel-retained "$sentinel"
+    emit fixture-outer-receipt-unpublished "$([ "$WROTE" = 0 ] && printf 1 || printf 0)"
+}
+
+expect_recovery() {
+    local path="$1" hash="$2" want="$3" status=0 diag
+    diag=$(
+        write_result() { printf '%s\n' "$2"; exit "$3"; }
+        c849_recovery_check "$path" "$hash"
+        printf 'OK\n'
+        exit 0
+    ) || status=$?
+    [ "$status" != 0 ] && [ "$diag" = "$want" ]
+}
+
+mode_recovery() {
+    local data rec hash escape=0 link=0 tree=0 manifest=0 mlink=0 digest=0 package=0 npm=0 execb=0
+    local bytes=0 mode_ok=0 busy=0
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    require_init
+    data="$C1192_ROOT/volumes/$WORK/data"
+    rec="$data/cache/recovery-$RUN"
+    mkdir -p -- "$rec/packages/c913.tools/2.0.0" "$rec/npm"
+    printf 'meta\n' > "$rec/packages/c913.tools/2.0.0/.nupkg.metadata"
+    printf 'tool-bytes\n' > "$rec/packages/c913.tools/2.0.0/tool"
+    chmod 755 "$rec/packages/c913.tools/2.0.0/tool"
+    printf 'npm-bytes\n' > "$rec/npm/content"
+    c849_manifest_write "$rec" "$rec/recovery.manifest"
+    hash=$(sha256sum -- "$rec/recovery.manifest" | awk '{print $1}')
+    tar -C "$data/cache" -cf "$SERVER2_ROOT/rec.tar" "recovery-$RUN"
+    restore_recovery() {
+        rm -rf -- "$rec"
+        tar -C "$data/cache" -xf "$SERVER2_ROOT/rec.tar"
+    }
+    expect_recovery "/fixture/cache/not-recovery" "$hash" CacheRecoveryInvalid && escape=1
+    mv -- "$rec" "$rec.real"
+    ln -s "recovery-$RUN.real" "$rec"
+    expect_recovery "/fixture/cache/recovery-$RUN" "$hash" CacheRecoveryMissing && link=1
+    restore_recovery
+    mv -- "$rec/packages" "$rec/packages.aside"
+    expect_recovery "/fixture/cache/recovery-$RUN" "$hash" CacheRecoveryMissing && tree=1
+    restore_recovery
+    mv -- "$rec/recovery.manifest" "$rec/manifest.aside"
+    expect_recovery "/fixture/cache/recovery-$RUN" "$hash" CacheRecoveryMissing && manifest=1
+    restore_recovery
+    mv -- "$rec/recovery.manifest" "$rec/manifest.real"
+    ln -s manifest.real "$rec/recovery.manifest"
+    expect_recovery "/fixture/cache/recovery-$RUN" "$hash" CacheRecoveryMissing && mlink=1
+    restore_recovery
+    expect_recovery "/fixture/cache/recovery-$RUN" "0000000000000000000000000000000000000000000000000000000000000000" CacheRecoveryChanged && digest=1
+    printf 'x' >> "$rec/packages/c913.tools/2.0.0/.nupkg.metadata"
+    expect_recovery "/fixture/cache/recovery-$RUN" "$hash" CacheRecoveryChanged && package=1
+    restore_recovery
+    printf 'x' >> "$rec/npm/content"
+    expect_recovery "/fixture/cache/recovery-$RUN" "$hash" CacheRecoveryChanged && npm=1
+    restore_recovery
+    chmod 644 "$rec/packages/c913.tools/2.0.0/tool"
+    expect_recovery "/fixture/cache/recovery-$RUN" "$hash" CacheRecoveryChanged && execb=1
+    restore_recovery
+    local file="/fixture/cache/recovery-$RUN/packages/c913.tools/2.0.0/tool"
+    local host="$rec/packages/c913.tools/2.0.0/tool" saved="$SERVER2_ROOT/control-tool" orig orig_mode
+    orig=$(cat "$host")
+    orig_mode=$(stat -c %a -- "$host")
+    c849_fixture_recovery_save "$file" "$saved"
+    c849_fixture_recovery_append "$file" EXTRA
+    c849_fixture_recovery_restore "$saved" "$file"
+    [ "$(cat "$host")" = "$orig" ] && bytes=1
+    c849_fixture_recovery_save "$file" "$saved"
+    c849_fixture_recovery_chmod "$file" 600
+    c849_fixture_recovery_restore "$saved" "$file"
+    [ "$(stat -c %a -- "$host")" = "$orig_mode" ] && mode_ok=1
+    C849_PACKAGES=antiphon-runner-cache-nuget-packages
+    C849_SCRATCH=antiphon-runner-cache-nuget-scratch
+    C849_NPM=antiphon-runner-cache-npm-content
+    printf 'runners=busy processes=0 leases=0\n' > "$SERVER2_ROOT/fixture-consumers.txt"
+    local busy_diag="" busy_status=0
+    busy_diag=$(
+        write_result() { printf '%s\n' "$2"; exit "$3"; }
+        c849_prune_idle
+        printf 'OK\n'
+        exit 0
+    ) || busy_status=$?
+    [ "$busy_status" != 0 ] && [ "$busy_diag" = CacheConsumersBusy ] && busy=1
+    emit recovery-escape-refused "$escape"
+    emit recovery-link-refused "$link"
+    emit recovery-tree-required "$tree"
+    emit recovery-manifest-required "$manifest"
+    emit recovery-manifest-link-refused "$mlink"
+    emit recovery-manifest-digest-bound "$digest"
+    emit recovery-package-bytes-bound "$package"
+    emit recovery-npm-bytes-bound "$npm"
+    emit recovery-exec-bound "$execb"
+    emit control-bytes-restored "$bytes"
+    emit control-mode-restored "$mode_ok"
+    emit recovery-busy-refused "$busy"
+}
+
 mode_transfer() {
     local data stage imported source_ok=0 sink_ok=0
     local dot_ok=0 exec_ok=0 space_ok=0 mode
@@ -2264,6 +2820,8 @@ case "$mode" in
     npm-sentinel) mode_npm_sentinel ;;
     backend) mode_backend ;;
     transfer) mode_transfer ;;
+    fixture-seed) mode_fixture_seed ;;
+    recovery) mode_recovery ;;
     *) fail "unknown mode $mode" ;;
 esac
 if [ -s "$C1192_ROOT/unexpected" ]; then
