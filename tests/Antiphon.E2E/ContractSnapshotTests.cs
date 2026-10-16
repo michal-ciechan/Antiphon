@@ -7,6 +7,7 @@ using Antiphon.E2E.Fixtures;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Application.Services;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -552,7 +553,11 @@ public class ContractSnapshotTests
     [Test]
     public async Task Pipeline_status_contract()
     {
-        var app = new AntiphonAppFixture();
+        var app = new AntiphonAppFixture
+        {
+            ConfigureOwnedHost = PipelineContractScenario.Configure,
+            ConfigureOwnedServices = PipelineContractScenario.ConfigureServices,
+        };
         await app.InitializeAsync();
         try
         {
@@ -563,6 +568,10 @@ public class ContractSnapshotTests
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             await SeedPipelineScenarioAsync(db, cwd, t0);
+            await scope.ServiceProvider.GetRequiredService<RunnerDefaultSettingsService>()
+                .EnsureInitializedAsync(CancellationToken.None);
+            (await db.RunnerRoutingSettings.SingleAsync()).UpdatedAt = t0;
+            await db.SaveChangesAsync();
         }
 
         await SnapshotPipelineAsync(
@@ -1265,8 +1274,20 @@ public class ContractSnapshotTests
 
         node["inFlightAgainstCap"] = keptInFlight;
 
+        // Only observation clocks vary. Keep their wire names/types and all projected values.
+        foreach (var runner in node["runners"]!.AsArray())
+        {
+            foreach (var field in new[] { "platformObservedAt", "capacityObservedAt", "codexCliVersionCheckedAtUtc" })
+            {
+                DateTimeOffset.TryParse(runner![field]!.GetValue<string>(), out _)
+                    .ShouldBeTrue($"{field} must remain a timestamp");
+                runner[field] = "2026-02-03T09:00:00Z";
+            }
+        }
+
         var fixtureName = "pipeline.json";
         var pretty = PrettyPrint(node.ToJsonString());
+        await File.WriteAllTextAsync(Path.Combine(app.DiagnosticsDirectory!, "pipeline.actual.json"), pretty);
         var fixturePath = Path.Combine(FixturesDir(), fixtureName);
         if (!File.Exists(fixturePath))
         {

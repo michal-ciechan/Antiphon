@@ -52,7 +52,16 @@
     "projectName": "gym-stat",
     "boardId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb3",
     "boardName": "gym-stat board",
-    "scopeSource": "Task"
+    "scopeSource": "Task",
+    "requiredPlatform": "Any",
+    "runnerId": null,
+    "requirementSource": "Default",
+    "observedPlatform": null,
+    "runnerDefaultsRevision": null,
+    "runnerSelectionSource": null,
+    "interruptWritten": null,
+    "refinementDelivered": null,
+    "effectiveModelId": null
   },
   "goal": "Rewrite the Windows install section.",
   "result": "Rewrote \u0022## Windows install\u0022 in docs/setup.md \u2014 34 lines changed, every command now pwsh 7.\n\nOne decision is yours: should the old cmd examples be deleted, or kept alongside?",
@@ -148,5 +157,12 @@
   "session": null,
   "commitOnSettle": null,
   "commitBaselineSha": null,
-  "verification": null
+  "verification": null,
+  "requestedWorktreeBaseMode": "Auto",
+  "requestedWorktreeBaseTaskId": null,
+  "worktreeBaseBranch": null,
+  "worktreeBasePreviewJson": null,
+  "internalDecisionQuestions": [],
+  "parkSync": null,
+  "syncDebt": null
 }
