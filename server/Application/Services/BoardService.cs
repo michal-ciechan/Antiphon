@@ -232,7 +232,10 @@ public sealed class BoardService
             projectIsEmpty = !await _db.Boards.AnyAsync(b => b.ProjectId == board.ProjectId, cancellationToken)
                 && !await _db.Workflows.AnyAsync(w => w.ProjectId == board.ProjectId, cancellationToken);
             if (projectIsEmpty)
+            {
+                await ProjectCascade.DeleteProjectEvidenceAsync(_db, board.ProjectId, cancellationToken);
                 await _db.Projects.Where(p => p.Id == board.ProjectId).ExecuteDeleteAsync(cancellationToken);
+            }
         }, ct);
         _cardFiles?.InvalidateBoardLookups();
 
