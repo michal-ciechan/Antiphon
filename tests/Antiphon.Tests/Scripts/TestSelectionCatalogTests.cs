@@ -15,7 +15,7 @@ public sealed class TestSelectionCatalogTests
     [Test]
     public Task C1313_LiveEligibility() =>
         ScriptHarness.RunHarnessCaseAsync("test-test-selection.ps1", "C1313",
-            "C1313_LiveEligibility", 4, "C1313 live-obligations-visible", "C1313 unknown-resource");
+            "C1313_LiveEligibility", 4, "C1313 live-obligations-visible", "C1313 unknown-resource-ineligible");
 
     [Test]
     public Task C1313_MixedDeliveryInventory() =>

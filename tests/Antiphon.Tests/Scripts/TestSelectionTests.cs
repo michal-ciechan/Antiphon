@@ -8,9 +8,9 @@ namespace Antiphon.Tests.Scripts;
 public sealed class TestSelectionTests
 {
     [Test]
-    public Task C1313_InputRefusal() => Run("C1313_InputRefusal", 2, "invalid-intent-refused", "failed-git-read");
+    public Task C1313_InputRefusal() => Run("C1313_InputRefusal", 2, "invalid-intent-refused", "git-read-refused");
     [Test]
-    public Task C1313_CoreAndUnknownFallback() => Run("C1313_CoreAndUnknownFallback", 2, "seven-method-core", "unknown-full");
+    public Task C1313_CoreAndUnknownFallback() => Run("C1313_CoreAndUnknownFallback", 2, "core-seven", "unknown-full");
     [Test]
     public Task C1313_PinnedPolicy() => Run("C1313_PinnedPolicy", 2, "candidate-blob", "stale-policy-refused");
     [Test]
@@ -20,7 +20,7 @@ public sealed class TestSelectionTests
     public Task C1313_PathIdentity(string variant) => Run("C1313_PathIdentity_" + variant.Replace('-', '_'), 1,
         variant == "delete" ? "old-new-union" : "ordinal-paths");
     [Test]
-    public Task C1313_AuthorityChanges() => Run("C1313_AuthorityChanges", 2, "selection-authority-changed", "baseline-not-ancestor");
+    public Task C1313_AuthorityChanges() => Run("C1313_AuthorityChanges", 2, "authority-full", "nonancestor-full");
     [Test]
     public Task C1313_DeterministicReasons() => Run("C1313_DeterministicReasons", 1, "deterministic-reasons");
     private static Task Run(string name, int rows, params string[] labels) =>

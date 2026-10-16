@@ -37,10 +37,14 @@ function Test-C1313_LiveEligibility {
     $live=@($catalog.sets|Where-Object {$_.id -in @('provider.claude.tui-live','provider.grok.tui-live','desktop.herdr')})
     Assert-C487 -Cond ($live.Count -eq 3 -and @($live|Where-Object eligibility -ne manual).Count -eq 0 -and @($live.members.class) -contains 'Antiphon.Tests.Agents.ClaudeEffortPromptCanaryTests') -Name 'C1313 live-gates-owned'
     $linux=@($catalog.sets|Where-Object id -eq 'pdf.linux')[0]
-    Assert-C487 -Cond ($linux.platforms -ceq 'linux' -and $linux.members.Count -eq 3) -Name 'C1313 other-platform-visible'
+    $missingPlatformExclusions=@($linux.members|Where-Object {
+        $member=$_;$simple=($member.class -split '\.')[-1]
+        @($policy.Object.profiles.rc.exclusions|Where-Object {$_.suite -ceq 'markdown-pdf' -and $_.class -ceq $simple -and $_.methods -ccontains $member.method}).Count -ne 1
+    })
+    Assert-C487 -Cond ($linux.platforms -ceq 'linux' -and $linux.members.Count -eq 3 -and $missingPlatformExclusions.Count -eq 0) -Name 'C1313 other-os-obligation'
     $core=@($catalog.sets|Where-Object id -eq core)[0];$core.resources.api='unknown';$catalog.catalogHash=Get-TestSelectionCatalogHash $catalog
     $msg='';try{[void](Assert-TestSelectionCatalog $catalog)}catch{$msg=$_.Exception.Message}
-    Assert-C487 -Cond ($msg -eq 'unknown-resource') -Name 'C1313 unknown-resource'
+    Assert-C487 -Cond ($msg -eq 'unknown-resource') -Name 'C1313 unknown-resource-ineligible'
 }
 
 function Test-C1313_MixedDeliveryInventory {
@@ -100,15 +104,19 @@ function Test-C1313_InputRefusal {
     $blob=Invoke-C1313Git $fx.Root @('rev-parse',"$($fx.B):tests/test-selection-policy.json")
     $bad=@();foreach($b in @('HEAD',$fx.B.Substring(0,8),('0'*40),$blob,'--help')){$r=Invoke-C1313Selection $fx $fx.B $b;if($r.Exit -ne 2 -or $r.Document){$bad+=$b}}
     Assert-C487 ($bad.Count -eq 0) 'C1313 invalid-intent-refused' ($bad -join ',')
-    $tree=Invoke-C1313Git $fx.Root @('rev-parse',"$($fx.B)^{tree}")
+    $fx.B=New-C1313Candidate $fx @('notes/nested/file.txt')
+    [void](Invoke-C1313Git $fx.Root @('read-tree',$fx.B));[void](Invoke-C1313Git $fx.Root @('update-index','--force-remove','--','notes/nested/file.txt'))
+    $tree=Invoke-C1313Git $fx.Root @('write-tree');$a=Invoke-C1313Git $fx.Root @('commit-tree',$tree,'-p',$fx.B,'-m','remove subtree')
+    [void](Get-C1313Selection $fx $a)
+    $tree=Invoke-C1313Git $fx.Root @('rev-parse',"$($fx.B):notes")
     Remove-Item -LiteralPath (Join-Path $fx.Root ('.git/objects/'+$tree.Substring(0,2)+'/'+$tree.Substring(2)))
-    $r=Invoke-C1313Selection $fx $fx.B
-    Assert-C487 ($r.Exit -eq 2 -and -not $r.Document -and $r.Error.Contains('git-read-failed')) 'C1313 failed-git-read' $r.Error
+    $r=Invoke-C1313Selection $fx $a
+    Assert-C487 ($r.Exit -eq 2 -and -not $r.Document -and $r.Error.Contains('git-read-failed:diff')) 'C1313 git-read-refused' $r.Error
 }
 function Test-C1313_CoreAndUnknownFallback {
     $fx=New-C1313GitFixture;$empty=Get-C1313Selection $fx $fx.B
     $expected=@('C1313_ProjectAndCatalogUniverse','C1313_CoreAndUnknownFallback','C1044_DiscoveryReconciliation','D13_ExecutionGuards','C599_ExpandedCoverage','Caps_concurrent_process_spawning_tests_at_one','Process_spawning_classes_carry_the_limiter')
-    Assert-C487 ($empty.mode -ceq 'narrow' -and (Same-C1313Set $empty.selectedSets.id @('core')) -and (Same-C1313Set $empty.selectedSets.members.method $expected) -and -not $empty.executionEvidence) 'C1313 seven-method-core'
+    Assert-C487 ($empty.mode -ceq 'narrow' -and (Same-C1313Set $empty.selectedSets.id @('core')) -and (Same-C1313Set $empty.selectedSets.members.method $expected) -and -not $empty.executionEvidence) 'C1313 core-seven'
     $a=New-C1313Candidate $fx @('notes/unmapped.txt');$full=Get-C1313Selection $fx $a
     Assert-C487 ($full.mode -ceq 'full' -and (Same-C1313Set $full.selectedSets.id $fx.Catalog.sets.id) -and $full.unselectedSets.Count -eq 0 -and $full.unresolvedObligations.Count -gt 0 -and $full.fallbackReasons -ccontains 'unknown-path:notes/unmapped.txt') 'C1313 unknown-full'
 }
@@ -124,10 +132,15 @@ function Test-C1313_PinnedPolicy {
 }
 function Test-C1313_PathIdentity_delete {
     $fx=New-C1313GitFixture;$path='tests/Antiphon.Tests/Agents/CodexResponseAnalyzerTests.cs'
-    [void](Invoke-C1313Git $fx.Root @('read-tree',$fx.B));[void](Invoke-C1313Git $fx.Root @('update-index','--force-remove','--',$path))
+    $c=$fx.Catalog
+    $c.rules=@($c.rules|Where-Object {$_.paths -cnotcontains $path})
+    $c.rules+=@{id='P-TEST-NEW-OWNER';paths=@($path);sets=@('main.remainder');full=$false}
+    [void](New-C1313PolicyCandidate $fx $c)
+    [void](Invoke-C1313Git $fx.Root @('update-index','--force-remove','--',$path))
     $tree=Invoke-C1313Git $fx.Root @('write-tree');$a=Invoke-C1313Git $fx.Root @('commit-tree',$tree,'-p',$fx.B,'-m','delete')
     $r=Get-C1313Selection $fx $a
-    Assert-C487 (@($r.changedPaths|Where-Object {$_.path -ceq $path -and $_.role -ceq 'old'}).Count -eq 1 -and $r.selectedSets.id -ccontains 'provider.codex.offline' -and $r.removedMembers.member.class -ccontains 'Antiphon.Tests.Agents.CodexResponseAnalyzerTests' -and $r.selectedSets.members.class -cnotcontains 'Antiphon.Tests.Agents.CodexResponseAnalyzerTests') 'C1313 old-new-union'
+    $old=@($r.changedPaths|Where-Object {$_.path -ceq $path -and $_.role -ceq 'old'})
+    Assert-C487 ($old.Count -eq 1 -and $old.sets -ccontains 'provider.codex.offline' -and $r.selectedSets.id -ccontains 'provider.codex.offline' -and $r.removedMembers.member.class -ccontains 'Antiphon.Tests.Agents.CodexResponseAnalyzerTests' -and $r.selectedSets.members.class -cnotcontains 'Antiphon.Tests.Agents.CodexResponseAnalyzerTests') 'C1313 old-new-union'
 }
 function Test-C1313_PathIdentity_case_rename {
     $fx=New-C1313GitFixture;$old='tests/Antiphon.Tests/Agents/CodexResponseAnalyzerTests.cs';$new='tests/Antiphon.Tests/Agents/codexResponseAnalyzerTests.cs'
@@ -154,10 +167,10 @@ function Test-C1313_AuthorityChanges {
     foreach($path in @('scripts/lib/release-authority.ps1','Directory.Build.props')){$a=New-C1313Candidate $fx @($path);$r=Get-C1313Selection $fx $a;if($r.mode -cne 'full' -or $r.fallbackReasons -cnotcontains 'selection-authority-changed'){$bad+=$path}}
     $a=New-C1313PolicyCandidate $fx $fx.Catalog;$r=Get-C1313Selection $fx $a
     if($r.fallbackReasons -cnotcontains 'selection-authority-changed'){$bad+='catalog'}
-    Assert-C487 ($bad.Count -eq 0) 'C1313 selection-authority-changed' ($bad -join ',')
+    Assert-C487 ($bad.Count -eq 0) 'C1313 authority-full' ($bad -join ',')
     $tree=Invoke-C1313Git $fx.Root @('rev-parse',"$($fx.B)^{tree}");$other=Invoke-C1313Git $fx.Root @('commit-tree',$tree,'-m','unrelated')
     $r=Get-C1313Selection $fx $fx.B $other
-    Assert-C487 ($r.mode -ceq 'full' -and $r.fallbackReasons -ccontains 'baseline-not-ancestor') 'C1313 baseline-not-ancestor'
+    Assert-C487 ($r.mode -ceq 'full' -and $r.fallbackReasons -ccontains 'baseline-not-ancestor') 'C1313 nonancestor-full'
 }
 function Test-C1313_DeterministicReasons {
     $fx=New-C1313GitFixture;$bad=@()
@@ -189,6 +202,13 @@ function Test-C1313_ProviderAndShared {
     foreach($p in @('claude','codex','grok')){if($r.selectedSets.id -cnotcontains "provider.$p.offline"){$sharedBad+=$p}}
     $a=New-C1313Candidate $fx @('src/Antiphon.Agents.PtyExtra/Unknown.cs');$r=Get-C1313Selection $fx $a
     Assert-C487 ($sharedBad.Count -eq 0 -and $r.mode -ceq 'full') 'C1313 shared-all-providers' ($sharedBad -join ',')
+    $c=Get-Content "$repoRoot/tests/test-selection-policy.json" -Raw|ConvertFrom-Json -AsHashtable
+    $c.rules+=@{id='P-OVERLAP';paths=@('src/Antiphon.Agents.Pty/ClaudeDetectors.cs');sets=@('core');full=$true}
+    [void](New-C1313PolicyCandidate $fx $c)
+    Write-C1313File $fx.Root 'src/Antiphon.Agents.Pty/ClaudeDetectors.cs' 'changed'
+    [void](Invoke-C1313Git $fx.Root @('add','--','src/Antiphon.Agents.Pty/ClaudeDetectors.cs'));$tree=Invoke-C1313Git $fx.Root @('write-tree');$a=Invoke-C1313Git $fx.Root @('commit-tree',$tree,'-p',$fx.B,'-m','overlap')
+    $r=Get-C1313Selection $fx $a
+    Assert-C487 ($r.mode -ceq 'full' -and $r.fallbackReasons -ccontains 'rule-full:P-OVERLAP' -and $r.changedPaths.ruleIds -ccontains 'P-CLAUDE') 'C1313 full-dominates'
 }
 function Test-C1313_RuntimeEdges {
     $fx=New-C1313GitFixture
@@ -203,7 +223,7 @@ function Test-C1313_RuntimeEdges {
     }
 }
 function Test-C1313_InvalidGraph {
-    $fx=New-C1313GitFixture;$graphBad=@();$ruleBad=@()
+    $fx=New-C1313GitFixture;$graphBad=@();$ruleBad=@();$variantResults=@{}
     [void](Get-C1313Selection $fx $fx.B)
     foreach($variant in @('missing-set','cycle','missing-prerequisite','prerequisite-cycle','bad-regex','script','regex-timeout')){
         $c=Get-Content "$repoRoot/tests/test-selection-policy.json" -Raw|ConvertFrom-Json -AsHashtable
@@ -211,7 +231,7 @@ function Test-C1313_InvalidGraph {
             'missing-set' {$c.sets[0].dependsOn=@('missing')}
             'cycle' {$c.sets[0].dependsOn=@($c.sets[0].id)}
             'missing-prerequisite' {$c.sets[0].prerequisites=@('missing')}
-            'prerequisite-cycle' {$c.prerequisites[0].dependsOn=@($c.prerequisites[0].id)}
+            'prerequisite-cycle' {$c.prerequisites[0].dependsOn=@($c.prerequisites[1].id);$c.prerequisites[1].dependsOn=@($c.prerequisites[0].id)}
             'bad-regex' {$c.rules+=@{id='bad';pattern='^([$';sets=@('core');full=$false}}
             'script' {$c.rules[0].command='Write-Output unsafe'}
             'regex-timeout' {$c.rules+=@{id='slow';pattern='^(a+)+$';sets=@('core');full=$false}}
@@ -223,6 +243,7 @@ function Test-C1313_InvalidGraph {
         }
         $r=Invoke-C1313Selection $fx $a
         $reason=switch($variant){'missing-set'{'missing-dependency'};'cycle'{'dependency-cycle'};'missing-prerequisite'{'missing-prerequisite'};'prerequisite-cycle'{'dependency-cycle'};'bad-regex'{'invalid-rule'};'script'{'invalid-catalog-field:command'};'regex-timeout'{'invalid-rule-timeout'}}
+        $variantResults[$variant]=($r.Exit -eq 2 -and $r.Error.Contains($reason))
         if($r.Exit -ne 2 -or -not $r.Error.Contains($reason)){if($variant -in @('bad-regex','script','regex-timeout')){$ruleBad+="$variant : $($r.Error)"}else{$graphBad+="$variant : $($r.Error)"}}
     }
     $c=Get-Content "$repoRoot/tests/test-selection-policy.json" -Raw|ConvertFrom-Json -AsHashtable
@@ -235,6 +256,9 @@ function Test-C1313_InvalidGraph {
     if($r.mode -cne 'full' -or $r.fallbackReasons -cnotcontains 'rule-full:P-OVERLAP' -or $r.changedPaths.ruleIds -cnotcontains 'P-CLAUDE' -or $r.explanationEdges.id -cnotcontains 'set:provider.claude.offline->provider.codex.offline'){$graphBad+='overlap/dependency-closure'}
     Assert-C487 ($graphBad.Count -eq 0) 'C1313 invalid-graph' ($graphBad -join ',')
     Assert-C487 ($ruleBad.Count -eq 0) 'C1313 invalid-rule' ($ruleBad -join ',')
+    Assert-C487 $variantResults['prerequisite-cycle'] 'C1313 cycle-refused'
+    Assert-C487 $variantResults['regex-timeout'] 'C1313 regex-timeout-refused'
+    Assert-C487 $variantResults['script'] 'C1313 data-not-code'
 }
 
 function Invoke-C1313FilterChild($Arguments,$LogPath) {
