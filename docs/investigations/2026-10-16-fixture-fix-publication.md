@@ -2,10 +2,13 @@
 
 Task: `a45ceeca-20ce-464e-a7d9-f6bac4bc7afa` (Merge), 2026-10-16.
 
-RC publication succeeded. Master publication is blocked by the required native
-ownership rerun: this Linux session runs as UID/GID 1654, so all three native
-cases explicitly skip. Passwordless general sudo is unavailable. No product
-failure or merge conflict was observed. The prepared master merge remains local.
+RC and master publication succeeded. Master is now
+`347b3fc16970d89dc7a8f3c6b713e69d692d85e7`, published by a non-force
+fast-forward push. The initial attempt stopped after the three native cases
+skipped under this session's UID/GID 1654. The caller subsequently authorized
+completion using the existing same-source root-host passes identified below,
+with no further native rerun here. No product failure or merge conflict was
+observed.
 
 ## Source and RC publication
 
@@ -65,8 +68,19 @@ non-root execution cannot qualify it."
 
 Fresh TRX identities were inspected: the native success method and its verify
 and cleanup argument cases are all `NotExecuted`; the four named adjacent
-methods are all `Passed`. This is incomplete native verification, not green
-qualification and not an assertion regression. No baseline failure rerun applies.
+methods are all `Passed`. This local attempt did not qualify native ownership
+and did not demonstrate an assertion regression. No baseline failure rerun applies.
+
+On resumption, the caller supplied existing native qualification: all three cases
+passed on a root-capable host in Review `ac5a8536`, run
+`20261016-132554-501d`, at reviewed source
+`6ca859d006b0a3cac9a88dc6bd551c37e98b2217`; they also passed in the owner's
+CP-1. The caller explicitly authorized publication using those passes and the
+identical merge delta, and instructed this task not to rerun the native cases
+here. This is caller-supplied prior-run provenance; this task did not independently
+rerun or revalidate those receipts. The local skips and the historical CARD-1310
+aggregate-receipt outcome remain unchanged. No additional build or test ran on
+resumption.
 
 Built test DLL SHA-256:
 `d3ae6fb3b0f12ff25be6e1849094417c484800d1bd9b3c06e947eb68eac3d271`.
@@ -74,9 +88,9 @@ All 28 inventoried `bin-a45ceeca` output roots were removed after both test host
 exited. Build/test logs, fresh TRX files, summary and output inventory remain
 outside Git under `/work/evidence/task-a45ceeca/`.
 
-## Prepared master merge and preservation proof
+## Published master merge and preservation proof
 
-Current fetched and remotely observed master:
+Old fetched and remotely observed master before publication:
 `2d2b30364d1793aedd9dae725a68246e127e7dd0`.
 A clean detached worktree at `/work/evidence/task-a45ceeca/master` ran:
 
@@ -84,7 +98,7 @@ A clean detached worktree at `/work/evidence/task-a45ceeca/master` ran:
 git merge --no-ff origin/rc/2026-10-15 -m 'Merge rc/2026-10-15 into master (cache Fixture npm ownership fix)'
 ```
 
-The merge completed without conflicts or resolved hunks. Prepared merge:
+The merge completed without conflicts or resolved hunks. Published merge:
 `347b3fc16970d89dc7a8f3c6b713e69d692d85e7`.
 Its first parent is the old master above and its second parent is
 `6ca859d006b0a3cac9a88dc6bd551c37e98b2217`.
@@ -95,23 +109,32 @@ SHA-256 `f96868a31aa933c6364f2b0045559613066fb84e80a9bc4fed17ed062dc3af98`.
 There is no additional change or revert of master-only work, including
 CARD-0987 S1/S2 and CARD-1313. The merge worktree is clean.
 
-The prepared commit was **not pushed to master** because the mandatory native
-selection could not execute. It is also retained in the verified incremental
-bundle `/work/evidence/task-a45ceeca/prepared-master.bundle`; its prerequisites
-are the old master and RC base above. This generated evidence is not committed.
-No tags, canonical checkout, AppHost or runners were changed.
+The initial attempt left this commit unpublished because the native selection
+could not execute locally. Following the caller's explicit resumption
+authorization, `git fetch origin` and fresh remote observations confirmed master
+was still the old master above and RC was still the reviewed source above.
+Both parent identities, fast-forward ancestry, exact binary-delta equality and
+`git diff --check` were checked again before publication. This command succeeded
+without force:
 
-## Completion required
+```sh
+git push origin 347b3fc16970d89dc7a8f3c6b713e69d692d85e7:refs/heads/master
+```
 
-Run only the three native ownership cases at the exact reviewed source on Linux
-root or Windows with WSL root. The four adjacent passes above already cover the
-same source. Require three passes with no skips. Recheck both remote tips before
-publishing master; if master changed, prepare a new merge from current master and
-repeat the preservation/parent checks. Use a non-force fast-forward push, then
-verify the published commit's first parent is its old master and its second
-parent is the published RC tip. No source repair is indicated by this run.
+A subsequent fetch and `git ls-remote` confirmed:
+
+- `refs/heads/master`: `347b3fc16970d89dc7a8f3c6b713e69d692d85e7`
+- First parent: `2d2b30364d1793aedd9dae725a68246e127e7dd0` (old master)
+- Second parent: `6ca859d006b0a3cac9a88dc6bd551c37e98b2217` (published RC)
+- `refs/heads/rc/2026-10-15`: `6ca859d006b0a3cac9a88dc6bd551c37e98b2217`
+
+The commit is also retained in the verified incremental bundle
+`/work/evidence/task-a45ceeca/prepared-master.bundle`; its prerequisites are the
+old master and RC base above. This generated evidence is not committed.
+No tags, canonical checkout, AppHost or runners were changed. Publication is
+complete; no activation or deployment was requested.
 
 --- next stage ---
-next: decide
-handoff: Provide root-capable native verification for the three skipped cases, then finish master publication under the original merge authorization.
+next: none
+handoff: RC and master publication complete; caller-supplied root-host qualification accepted under explicit authorization. No remaining publication work.
 artifact: docs/investigations/2026-10-16-fixture-fix-publication.md
