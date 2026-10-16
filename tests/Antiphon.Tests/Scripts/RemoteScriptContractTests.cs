@@ -6497,6 +6497,103 @@ public sealed class RemoteScriptContractTests
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Cold_marker_reuse_writes_gate_receipts()
+    {
+        RequireLinuxJq();
+        const string statusJson = "{\"sessions\":0,\"runnerSessions\":null,\"queuedTasks\":0,\"retiredAt\":\"2026-10-11T14:23:12.192262+00:00\",\"available\":false,\"dispatchEligible\":false,\"acceptingNewWork\":false,\"draining\":true,\"retireWhenIdle\":true,\"redirectTo\":\"server2\"}";
+        const string mainJson = "{\"sessions\":4,\"runnerSessions\":4,\"queuedTasks\":0,\"dispatchEligible\":true,\"acceptingNewWork\":true,\"draining\":false}";
+        var remote = Remote();
+        var output = LinuxShell(ColdReuseBlocks(remote) + """
+            root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
+            SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
+            CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
+            C849_READY="$SERVER2_ROOT/cache/seed-accepted"
+            printf 'kind=cold\n' > "$C849_READY"
+            RUN=red; LANE=host; TEMP_PROJECT=antiphon-runner-temp; WROTE=0
+            write_result() { printf 'accepted=%s diagnosis=%s\n' "$1" "$2"; exit "$3"; }
+            require_lane() { :; }
+            c849_prepare() { :; }
+            c849_payload_select() { printf host; }
+            c849_image() { printf image; }
+            c849_optional_donor() { printf 'donor-probed\n' >> "$root/trace"; printf donor; }
+            c849_require_ready() {
+                [ "$1" = allow-cold ] || write_result false CacheFullSeedRequired 2
+                C849_KIND=cold; C849_SCHEMA=2; C849_DIGEST_TYPE=none; C849_DIGEST=none
+            }
+            c849_status_body() {
+                if [ "$1" = server2 ]; then
+                    printf '%s' '{"sessions":4,"runnerSessions":4,"queuedTasks":0,"acceptingNewWork":true,"draining":false,"dispatchEligible":true}'
+                else
+                    printf '%s' '{"retiredAt":"2026-10-11T14:23:12.192262+00:00","available":false,"dispatchEligible":false,"acceptingNewWork":false,"draining":true,"retireWhenIdle":true,"redirectTo":"server2","sessions":0,"queuedTasks":0,"runnerSessions":null}'
+                fi
+            }
+            docker() {
+                [ "$1" = ps ] || { printf 'unexpected-docker\n' >> "$root/trace"; return 1; }
+                return 0
+            }
+            : > "$root/trace"
+            (
+                set -euo pipefail
+                c849_seed
+            ) > "$root/out" 2>"$root/err"
+            code=$?
+            seed=''; contract=''; status=''; main=''; status_nl=0; main_nl=0; donor=0
+            if [ -f "$CASE_DIR/seed.txt" ]; then seed="$(tr -d '\r\n' < "$CASE_DIR/seed.txt")"; fi
+            if [ -f "$CASE_DIR/seed-contract.txt" ]; then
+                contract="$(awk 'BEGIN{ORS="|"} {gsub(/\r/,""); print}' "$CASE_DIR/seed-contract.txt")"
+            fi
+            if [ -f "$CASE_DIR/status.json" ]; then
+                status="$(tr -d '\r\n' < "$CASE_DIR/status.json")"
+                if [ "$(tail -c 1 "$CASE_DIR/status.json")" = $'\n' ]; then status_nl=1; fi
+            fi
+            if [ -f "$CASE_DIR/main-status.json" ]; then
+                main="$(tr -d '\r\n' < "$CASE_DIR/main-status.json")"
+                if [ "$(tail -c 1 "$CASE_DIR/main-status.json")" = $'\n' ]; then main_nl=1; fi
+            fi
+            if grep -qx 'donor-probed' "$root/trace"; then donor=1; fi
+            printf 'EXIT=%s\n' "$code"
+            printf 'DONOR=%s\n' "$donor"
+            printf 'SEED=%s\n' "$seed"
+            printf 'CONTRACT=%s\n' "$contract"
+            printf 'STATUS_NL=%s\n' "$status_nl"
+            printf 'STATUS=%s\n' "$status"
+            printf 'MAIN_NL=%s\n' "$main_nl"
+            printf 'MAIN=%s\n' "$main"
+            """);
+        Fact(output, "EXIT").ShouldBe("0", output);
+        Fact(output, "DONOR").ShouldBe("0", output);
+        Fact(output, "SEED").ShouldBe("ready=true kind=cold writable=3", output);
+        Fact(output, "CONTRACT").ShouldBe("schema=2|kind=cold|digest-type=none|digest=none|smoke=not-run|", output);
+        Fact(output, "STATUS").ShouldBe(statusJson, output);
+        Fact(output, "MAIN").ShouldBe(mainJson, output);
+        Fact(output, "STATUS_NL").ShouldBe("1", output);
+        Fact(output, "MAIN_NL").ShouldBe("1", output);
+        var statusNode = JsonNode.Parse(statusJson)!;
+        (statusNode["retiredAt"] is not null).ShouldBeTrue();
+        statusNode["available"]!.GetValue<bool>().ShouldBeFalse();
+        statusNode["dispatchEligible"]!.GetValue<bool>().ShouldBeFalse();
+        statusNode["acceptingNewWork"]!.GetValue<bool>().ShouldBeFalse();
+        statusNode["draining"]!.GetValue<bool>().ShouldBeTrue();
+        statusNode["retireWhenIdle"]!.GetValue<bool>().ShouldBeTrue();
+        statusNode["redirectTo"]!.GetValue<string>().ShouldBe("server2");
+        statusNode["sessions"]!.GetValue<int>().ShouldBe(0);
+        statusNode["queuedTasks"]!.GetValue<int>().ShouldBe(0);
+        (statusNode["runnerSessions"] is null || statusNode["runnerSessions"]!.GetValue<int>() == 0).ShouldBeTrue();
+        var mainNode = JsonNode.Parse(mainJson)!;
+        mainNode["sessions"].ShouldNotBeNull();
+        mainNode["queuedTasks"].ShouldNotBeNull();
+        if (remote.Contains("c849_write_cold_status_receipts() {", StringComparison.Ordinal))
+        {
+            ColdReadyArm(Block(remote, "c849_seed")).ShouldContain("c849_cold_reuse_receipts");
+            Block(remote, "c849_cold_proof").ShouldContain("c849_write_cold_status_receipts \"$status\" \"$temp\"");
+            var writer = Block(remote, "c849_write_cold_status_receipts");
+            writer.ShouldContain("'{sessions,runnerSessions,queuedTasks,retiredAt,available,dispatchEligible,acceptingNewWork,draining,retireWhenIdle,redirectTo}'");
+            writer.ShouldContain("'{sessions,runnerSessions,queuedTasks,dispatchEligible,acceptingNewWork,draining}'");
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Deploy_temp_names_saved_import_when_seed_is_missing()
     {
         var remote = Remote();
@@ -8437,6 +8534,20 @@ public sealed class RemoteScriptContractTests
         }
 
         return commands;
+    }
+
+    private static string ColdReuseBlocks(string remote)
+    {
+        var script = Block(remote, "c849_no_temp_containers") + "\n"
+            + Block(remote, "c849_contract_receipt") + "\n"
+            + Block(remote, "c849_seed") + "\n";
+        foreach (var name in new[] { "c849_write_cold_status_receipts", "c849_cold_reuse_receipts" })
+        {
+            if (remote.Contains(name + "() {", StringComparison.Ordinal))
+                script += Block(remote, name) + "\n";
+        }
+
+        return script;
     }
 
     private static string ColdReadyArm(string seed)
