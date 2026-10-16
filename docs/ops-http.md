@@ -262,6 +262,126 @@ Invoke-RestMethod "$api/api/agents/$agentId/start" -Method Post -Headers $h `
     -ContentType 'application/json' -Body '{"fresh":true}'
 ```
 
+## Caller handoff and Review correction routes (CARD-1303 R10)
+
+These are server routes on 17202, with full GUIDs (no task short IDs). `{id}` names the
+predecessor for handoffs and the Review task for corrections. Use the operator header
+`X-Antiphon-Operator-Token`, or `X-Antiphon-Task-Token` with delegation permission and matching
+project/repository-root plus applicable card/board scope. Handoff callers must also be the
+predecessor's completion-recipient session. These routes have no anonymous UI fallback.
+
+| Job | Method | Route / successful response |
+|---|---|---|
+| Record consumption, eligibility or a hold | POST | `/api/agent-tasks/{id}/handoff-actions` — 200 `PipelineHandoffActionDto` |
+| Recover the action and its observation history | GET | `/api/agent-tasks/{id}/handoff-actions` — 200 array of `PipelineHandoffActionDto`, ordered by creation time then ID |
+| Request or recover the one keyed child | POST | `/api/agent-tasks/{id}/handoff-actions/{actionId}/child` — 200 `AgentTaskCreatedDto`, including on replay |
+| Attach exact execution to a retained typed Review | POST | `/api/agent-tasks/{id}/review-evidence/corrections` — 200 `ReviewEvidenceCorrectionResponse` |
+
+The request authorities are `server/Application/Dtos/PipelineHandoffActionDtos.cs` and
+`ReviewEvidenceCorrectionDtos.cs`; implementations are the correspondingly named endpoint files,
+`PipelineHandoffActionService`, `AgentTaskService`, `ReviewEvidenceCorrectionService` and
+`CheckpointReceiptValidator`. The [API reference](antiphon-api.md#caller-handoff-actions-and-review-evidence-corrections-card-1303-r10)
+lists the complete action snapshot fields and correction prerequisites. These bodies reject
+unknown JSON members (400); enum values are names. Missing tasks/actions are 404, service
+validation is 422 with field-keyed `errors`, and conflicts are 409 Problem Details with a `code`.
+
+For a handoff observation, send `attempt` (nonnegative int), `settlementEventId` (nonempty GUID),
+`nextStage` (authorized `AgentTaskRole`), `expectedObservationSequence` (nonnegative long),
+`reasonCode` and nonblank `detail` (<= 2000 characters). Optional nullable fields are
+`nextObservationAt`, `workflowRunId`, `pipelineDefinitionRevisionId`, `currentStageId`,
+`workflowUpdatedAt`, `receipt`. The predecessor must still be Succeeded at the exact attempt,
+Completed settlement event and next stage. Copy the current card workflow fence; all other
+workflow coordinates must be null if there is no active run. Reasons are `consumed`, `eligible`,
+or `dependency`, `decision`, `capacity`, `overlap`, `priority`, `evidence`, `quota`, `placement`.
+Those holds require a future `nextObservationAt`; supplied timestamps must be UTC.
+Start at sequence 0, then read the latest observation sequence before a new write. Identical
+last-observation replay uses the original expected sequence and actor.
+
+Optional `receipt` is `{ notificationId, queueId, recipientSessionId, recipientGeneration,
+receiptSequence, wireDigest }`, with the UTC session-start timestamp as generation. A supplied
+receipt must prove confirmed completion delivery against the queue, generation, transcript
+UserPrompt and wire/spill digest. Once bound, it cannot change or be omitted. The current API
+allows receipt-less `consumed`/`eligible` observations: they record a caller decision, not
+independent transcript delivery proof.
+
+An action DTO is `{ action, observations, requestedWithinFiveMinutes,
+unexplainedWaitRequiresInvestigation }`. `action` includes identity/workflow/receipt coordinates,
+`childTaskId`, `requestDigest`, reason/next-observation state, actor and settlement/delivery/
+consumption/eligibility/child clocks. Observations are ordered by `sequence` and have
+`{ id, actionId, sequence, reasonCode, detail, actor, observedAt, nextObservationAt }`.
+`requestedWithinFiveMinutes` is nullable until eligibility and child exist, then measures child
+creation in the five-minute interval starting at eligibility. The investigation flag requires
+no child, a latest `eligible` reason, and eligibility older than 15 minutes. Reading creates no work.
+
+For the child, send `{ task: CreateAgentTaskRequest, acceptSpend: true, trigger: "caller" }`.
+The defaults are `acceptSpend: false` and `trigger: "caller"`. Use a fresh Worker matching
+the action's card/project/next stage, with no specialist role, pinned agent or `followUpOnTask`.
+The pilot refuses `ignoreConcurrencyLimit`, `ignoreSubscriptionQuota`, `ignoreModelDisabled`,
+`ignoreRoutingPin` and `allowUnauthenticatedProvider`. Its 200 creation DTO exposes `id`,
+`shortId`, `status`, `modelLevel`, `agentKind`, card/platform/runner fields and ordinary optional
+creation metadata. Replaying the original request digest on that action recovers the same
+child without spending again. A 409/422 before binding a child appends refusal history with
+the code and a five-minute next-observation time. After a lost answer, GET the action first.
+
+Handoff conflicts (**409**, full code names):
+
+| Codes | Action |
+|---|---|
+| `handoff_predecessor_changed`, `handoff_settlement_changed`, `handoff_workflow_changed`, `handoff_scope_changed` | Re-read the predecessor and card/workflow coordinates before deciding again. |
+| `handoff_observation_changed`, `handoff_already_requested`, `handoff_receipt_changed`, `handoff_foreign_receipt` | Reconcile sequence/history, child state or the receipt proof. |
+| `handoff_request_changed`, `handoff_child_missing`, `handoff_child_mismatch` | Recover the original keyed request; investigate an invalid child binding. |
+| `handoff_trigger_held`, `handoff_spend_held`, `handoff_override_held`, `handoff_transaction_owned` | Use the explicit spend-accepted caller pilot without overrides; admission must own its transaction. |
+| `handoff_stage_held`, `handoff_decision_held`, `handoff_dependency_held`, `handoff_overlap_held`, `handoff_not_eligible`, `handoff_capacity_held` | Resolve the named stage/decision/dependency/overlap/eligibility/capacity hold. |
+
+Ordinary create gates still apply, including 409 `concurrency_limit`, `subscription_quota_low`,
+routing/model/provider refusals and 422 placement validation. `handoff_requires_fresh_task`
+is **422**. New handoff children and ordinary `POST /api/agent-tasks` implementation roles
+(`Code`, `Custom`, `Debug`, `Docs`, `Merge`, `Commit`, `Deploy`) also face **409
+`card_implementation_closed`** on Done/Canceled/archived cards and **409 `card_admission_changed`**
+when status/archive/board/identifier/active workflow/platform/verification policies changed
+between pre-read and lock. Re-read and make a fresh admission decision; a closed card needs
+an explicit disposition, not a blind retry.
+
+For correction, send `{ predecessorEvidenceId, expectedReportDigest, subjectTaskId, sourceSha,
+sourceRef, repositoryPath, selection, producerIdentity, bundleDigest, reason }`.
+`selection` is `{ path, commitSha, section, digest, rows }`, naming a committed
+repository-relative `docs/**/*.md` file, full Git commit ID, exact single-line section
+(<= 200 characters), SHA-256 digest and 1–100 distinct `CP-n` row IDs. `sourceSha` is a full
+Git object ID and `sourceRef` starts `refs/heads/`; report/bundle/selection digests are 64
+lowercase hex characters. The report digest hashes the retained Review result's UTF-8 bytes;
+`reason` is nonblank and <= 2000 characters. `producerIdentity` must match an operator-owned
+`CheckpointReceipts:Producers` pin and `bundleDigest` its inventory; callers cannot choose a
+receipt filesystem path.
+
+Only an existing Succeeded Final/profile-v1 Review with its retained typed `Satisfied` behavior
+assessment and exact commissioned selection can be corrected. The subject must be the same
+Code/Worktree and repository/source coordinates. The server retains history/costs and appends
+a linked Clean Final/Full successor only after receipt validation. The 200 response is
+`{ disposition, correctionId, successorEvidenceId, missingRows }`: `corrected` or
+`already-corrected` has both GUIDs and an empty array; `incomplete` has null IDs and the missing
+row IDs. A bundle pin mismatch or incomplete execution/validator result can be `incomplete`
+rather than a conflict. Supply the exact missing execution; incomplete never approves land.
+
+Correction conflicts (**409**, full code names):
+
+| Codes | Action |
+|---|---|
+| `review_evidence_correction_review_ineligible`, `review_evidence_correction_predecessor_ineligible`, `review_evidence_correction_behavior_requires_review` | Check Review/predecessor eligibility; behavior gaps require ordinary Review. |
+| `review_evidence_correction_report_changed`, `review_evidence_correction_prepared_report_changed`, `review_evidence_correction_assessment_coordinates_mismatch`, `review_evidence_correction_subject_changed`, `review_evidence_correction_predecessor_superseded`, `review_evidence_correction_correction_changed` | Reconcile retained report, subject, predecessor or existing correction before retrying. |
+| `review_evidence_correction_commissioned_selection_mismatch`, `review_evidence_correction_selection_invalid`, `review_evidence_correction_selection_not_committed`, `review_evidence_correction_selection_digest_mismatch`, `review_evidence_correction_selection_section_ambiguous`, `review_evidence_correction_selection_table_missing`, `review_evidence_correction_selection_row_unsupported`, `review_evidence_correction_selection_rows_missing` | Restore proof of the exact commissioned checkpoint table and row set. |
+| `review_evidence_correction_producer_untrusted`, `review_evidence_correction_producer_repository_mismatch`, `review_evidence_correction_inventory_digest_mismatch`, `review_evidence_correction_producer_mismatch`, `review_evidence_correction_receipt_coordinates_mismatch`, `review_evidence_correction_duplicate_rows`, `review_evidence_correction_manifest_digest_mismatch`, `review_evidence_correction_receipt_invalid`, `review_evidence_correction_storage_unconfigured`, `review_evidence_correction_retained_evidence_unavailable` | Repair producer pins, provenance/integrity or access to retained evidence. |
+| `review_evidence_correction_link_missing`, `review_evidence_correction_link_mismatch`, `review_evidence_correction_link_report_changed`, `review_evidence_correction_link_validation_mismatch`, `review_evidence_correction_link_validation_invalid` | Replay/land cannot prove the correction link or saved validation; inspect the audit chain. |
+
+Invalid selection path/commit/section shape is **422 `verification_selection_invalid`**.
+Preserve the bundle in `CheckpointReceipts:StorageRoot` and make it available to the validating
+server: replay and land re-hash the retained files and refuse unavailable/changed evidence.
+
+Authorization failures are **403**, not conflicts: `handoff_principal_denied`,
+`handoff_project_denied`, `handoff_repository_denied`, `handoff_card_denied`,
+`handoff_board_denied`, `handoff_recipient_denied`; corrections use
+`review_correction_principal_denied`, `review_correction_project_denied`,
+`review_correction_repository_denied`, `review_correction_card_denied`, `review_correction_board_denied`.
+
 ## Shapes that bite
 
 - **PLURAL, OR 404.** `/api/boards`, `/api/agents`, `/api/cards`. There is no `/api/board`, and a
