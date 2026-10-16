@@ -20,3 +20,8 @@ Mutation owns method-scoped red/restore/green and missing-control discovery, inc
 independent terminal-while-Working gates, transport/Herdr transient branches, late-confirm
 obligations carried by superseded actions, and the existing send-before-ack uncertainty.
 No exactly-once external transport guarantee across acceptance-before-ack is added.
+
+| PC-118 | Remove the boundary/manual/status restriction on the action being replaced | `/*/*/SessionRuntimeActionRoutingTests/C1259_review_recovery_uses_authorized_queue_identity_once` | enqueue-failure H3 busy: original typed review handoff action must remain at phase 8 while submission is held and shutdown joins it |
+
+PC-118 also remains pending. Its existing assertion exposed the over-broad replacement in
+Code's first full routing run; the assertion and fixture were preserved.

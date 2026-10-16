@@ -28,6 +28,8 @@ an older deferred queue wakeup even before its due time. Replacement completes
 the older boundary's finished notification and preserves its separate late-confirm
 publication phase; narrow requests do not publish SessionFinished. Input attempts,
 transcript confirmation and the 30-second delivery window are unchanged.
+Typed review handoff actions retain their original identity through acknowledgement;
+they are not coalescible boundary/status wakeups.
 
 Deferred task actions capture the task ID and attempt at admission. The action
 entry point checks that identity and session generation; its database context

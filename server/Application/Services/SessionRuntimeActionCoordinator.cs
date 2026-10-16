@@ -160,6 +160,7 @@ public sealed class SessionRuntimeActionCoordinator(
             // A queue wakeup is coalescible only after all of its routing has completed.
             // New work must be able to replace a deferred wakeup before its retry is due.
             var superseded = action.Phase == QueuePhase && action.FailureReason == DeferredReason
+                && (action.TurnBoundary || action.ManualCompactBoundary || action.TriggerKind == "status")
                 && await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == sessionId
                     && a.Id != action.Id && a.Phase == QueuePhase
                     && (a.TurnBoundary || a.ManualCompactBoundary
