@@ -12,7 +12,8 @@
     "updatedAt": "2026-02-03T09:00:00Z",
     "archivedAt": null,
     "archivedReason": null,
-    "archivedBy": null
+    "archivedBy": null,
+    "syncCardFiles": false
   },
   {
     "id": "eeeeeeee-0000-0000-0000-000000000004",
@@ -27,6 +28,7 @@
     "updatedAt": "2026-02-03T09:00:00Z",
     "archivedAt": null,
     "archivedReason": null,
-    "archivedBy": null
+    "archivedBy": null,
+    "syncCardFiles": false
   }
 ]

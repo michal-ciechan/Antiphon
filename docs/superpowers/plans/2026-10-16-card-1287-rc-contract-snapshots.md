@@ -45,9 +45,9 @@ sessions or restart the shared AppHost. E2E fixture owns its random-port runner 
 | CP-6 | S1 | CP-5 | backlog | `/*/*/ContractSnapshotTests/Backlog_quadrant_contract` | V-2, R-1 | Backlog_quadrant_contract | 1 | 2 |
 | CP-7 | S1 | CP-5 | delegations | `/*/*/ContractSnapshotTests/Delegated_task_board_and_drawer_contracts` | V-3, R-1 | Delegated_task_board_and_drawer_contracts | 1 | 2 |
 | CP-8 | S1 | CP-5 | home | `/*/*/ContractSnapshotTests/Home_tasks_rail_contract` | V-4, R-1 | Home_tasks_rail_contract | 1 | 2 |
-| CP-9 | S1 | n/a | consumers | `pwsh -NoProfile -File scripts/test-client.ps1 PipelineStagesPanel.test.tsx BacklogSection.test.tsx DelegationsBoard.test.tsx DelegationsHistory.test.tsx TaskDrawer.test.tsx TasksSection.test.tsx` | R-2 | six files, zero failures | n/a | 2 |
-| CP-10 | S1 | n/a | frontend | `npm --prefix client run build` | R-3 | exit 0 | n/a | 2 |
-| CP-11 | S1 | n/a | stories | `npm --prefix client run build-storybook -- --output-dir storybook-static-c1287` | R-3 | exit 0 | n/a | 2 |
+| CP-9 | S2 | n/a | consumers | `pwsh -NoProfile -File scripts/test-client.ps1 PipelineStagesPanel.test.tsx BacklogSection.test.tsx DelegationsBoard.test.tsx DelegationsHistory.test.tsx TaskDrawer.test.tsx TasksSection.test.tsx` | R-2 | six files, zero failures | n/a | 2 |
+| CP-10 | S2 | n/a | frontend | `npm --prefix client run build` | R-3 | exit 0 | n/a | 2 |
+| CP-11 | S2 | n/a | stories | `npm --prefix client run build-storybook -- --output-dir storybook-static` | R-3 | exit 0 | n/a | 2 |
 
 ### Cost
 
@@ -59,3 +59,10 @@ Red rows are diagnostic failures, never green receipts. No repeat proof after gr
 
 Zero authored PC rows. SourceLanding Mutation still owns missing-control discovery and
 deliberate red/restore/green cycles after ordinary Review and caller landing. No PC discharged here.
+
+Execution refinement: import this table to an ignored YAML manifest and explicitly set
+`build.properties.UseAppHost: "true"` on Windows. The tool's implicit false build
+property otherwise disagrees with its Windows launch command. S1 and S2 share the final
+source commit; restore the generated frontend dependency cache between their runs.
+CP-5 may first remain red while its deterministic full response is inspected; update only
+reviewed additions, commit, and rerun the red row with all final S1 rows.

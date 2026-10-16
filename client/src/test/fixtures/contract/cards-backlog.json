@@ -39,7 +39,12 @@
       "archivedBy": null,
       "autoDispatchHeldAt": null,
       "externalIssue": null,
-      "alias": null
+      "alias": null,
+      "cardFileVisibility": "Inherit",
+      "hasPrivateNotes": false,
+      "codeVerificationPolicy": "FullOnly",
+      "reviewVerificationPolicy": "FullOnly",
+      "requiredPlatform": "Any"
     },
     {
       "id": "eeeeeeee-0000-0000-0000-000000000201",
@@ -80,7 +85,12 @@
       "archivedBy": null,
       "autoDispatchHeldAt": null,
       "externalIssue": null,
-      "alias": null
+      "alias": null,
+      "cardFileVisibility": "Inherit",
+      "hasPrivateNotes": false,
+      "codeVerificationPolicy": "FullOnly",
+      "reviewVerificationPolicy": "FullOnly",
+      "requiredPlatform": "Any"
     },
     {
       "id": "eeeeeeee-0000-0000-0000-000000000102",
@@ -121,7 +131,12 @@
       "archivedBy": null,
       "autoDispatchHeldAt": null,
       "externalIssue": null,
-      "alias": null
+      "alias": null,
+      "cardFileVisibility": "Inherit",
+      "hasPrivateNotes": false,
+      "codeVerificationPolicy": "FullOnly",
+      "reviewVerificationPolicy": "FullOnly",
+      "requiredPlatform": "Any"
     },
     {
       "id": "eeeeeeee-0000-0000-0000-000000000202",
@@ -162,7 +177,12 @@
       "archivedBy": null,
       "autoDispatchHeldAt": null,
       "externalIssue": null,
-      "alias": null
+      "alias": null,
+      "cardFileVisibility": "Inherit",
+      "hasPrivateNotes": false,
+      "codeVerificationPolicy": "FullOnly",
+      "reviewVerificationPolicy": "FullOnly",
+      "requiredPlatform": "Any"
     },
     {
       "id": "eeeeeeee-0000-0000-0000-000000000103",
@@ -203,7 +223,12 @@
       "archivedBy": null,
       "autoDispatchHeldAt": null,
       "externalIssue": null,
-      "alias": null
+      "alias": null,
+      "cardFileVisibility": "Inherit",
+      "hasPrivateNotes": false,
+      "codeVerificationPolicy": "FullOnly",
+      "reviewVerificationPolicy": "FullOnly",
+      "requiredPlatform": "Any"
     },
     {
       "id": "eeeeeeee-0000-0000-0000-000000000104",
@@ -244,7 +269,12 @@
       "archivedBy": null,
       "autoDispatchHeldAt": null,
       "externalIssue": null,
-      "alias": null
+      "alias": null,
+      "cardFileVisibility": "Inherit",
+      "hasPrivateNotes": false,
+      "codeVerificationPolicy": "FullOnly",
+      "reviewVerificationPolicy": "FullOnly",
+      "requiredPlatform": "Any"
     },
     {
       "id": "eeeeeeee-0000-0000-0000-000000000105",
@@ -285,8 +315,14 @@
       "archivedBy": null,
       "autoDispatchHeldAt": null,
       "externalIssue": null,
-      "alias": null
+      "alias": null,
+      "cardFileVisibility": "Inherit",
+      "hasPrivateNotes": false,
+      "codeVerificationPolicy": "FullOnly",
+      "reviewVerificationPolicy": "FullOnly",
+      "requiredPlatform": "Any"
     }
   ],
-  "truncated": false
+  "truncated": false,
+  "nextPageToken": null
 }
