@@ -1,0 +1,33 @@
+# CARD-1313 S4-S5 Review (task 5fb8b11a)
+
+Verdict: clean. No regression of existing behaviour and no new fail-open in `git diff 3eaf10c7..c78139c5`. Reviewed tip c07c2b4a7a959b9b12a68468873e1ba44b3b313e (adds only `.antiphon/task-25c628b6.md` over tested tip c78139c59b3c411a32dea3e40013dbf955e8513d). Landing owner 25c628b6-5c19-4925-afb3-c907daf49944, branch feat/card-task-25c628b6. Review ran in mirror /work/worktrees/task-5fb8b11a at the same SHA; the subject branch was not checked out, committed to or pushed.
+
+## Judgments
+
+1. Journal and recorder. `TimingJournal.AppendAsync` opens the shard with `FileMode.Append` and `WriteThrough`, flushes before acknowledging, deletes the spool entry only after the flush, refuses a changed payload under the same eventId (`event-conflict`) and resumes the sequence from the shard on reopen. Shards are per run/attempt; there is no sweep or age deletion. No stdout, transcript, environment dump or credential is written. `RowRunner.RunAsync` wraps the row in try/finally; `EnsureTimingAsync` and `CompleteTimingAsync` swallow TimingPersistence/IO/Integrity/Root/UnauthorizedAccess faults, and `C1313_RecoveryHandoffs` proves a post-flush journal fault still returns exit FailedTests, state red (`persistence-not-test-outcome`). `Write-WrapperTiming` (run-checkpoint.ps1) and the nightly producer (`Invoke-NightlyExactRoster`) write inside empty catch blocks and never touch the exit code.
+2. Selection. Only `Get-TestSelectionDigest` changed in test-selection.ps1 (strips `estimates`/`budgetObservations` before hashing); `Get-TestSelection` and its unknown-path full fallback are untouched. select-test-rosters.ps1 attaches estimates only under `-TimingRoots`, inside try/catch, keeping the unaugmented selection on failure; `Add-TestTimingEstimates` copies every key and reassigns `selectedSets` from the input. `C1313_EstimatesNeverSelect` holds ids A-D and the digest field.
+3. Gate credit. docs/release-gates.md has no timing or estimate consumer; no release script (candidate, cut, gate, publish, authority) dot-sources test-timings.ps1 or reads events. Only run-checkpoint.ps1 and nightly-tests-impl.ps1 produce events, and select-test-rosters.ps1 still prints `activation=unqualified executionEvidence=false`.
+4. Red witness. f47b626bc added `C1313_ProducerReceipts`; d167244de (one line) named the `producer-receipt` label. At d167244de `tools/Antiphon.Checkpoints/Timing/` did not exist and the test referenced only `ANTIPHON_TEST_TIMING_ROOT` plus a filesystem read, so it compiled against the base tool and failed on the absent `set-completed` event: a behavioural red, not an API-missing red. The red TRX (`.antiphon/c1313-s4-red/`) exists only in the owner worktree and was not readable from this mirror. Green: fresh 14/14 rerun below.
+
+## Rerun (operator cap: one narrow run)
+
+- Build: build-slot lease 52fb0056-9ffd-421f-a159-ca8799da0deb waited=0s; `dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c1313-review/ --property:UseAppHost=false`; exit 0; 2026-10-16T16:17:38Z to 16:20:52Z; tree git-clean at HEAD c07c2b4a7 before the build and after the run.
+- Run: lease 586bf060-cdd6-4de5-ae4f-41dc8288c227 waited=0s held=10s; filter `/*/*/(TestSetTimingTests*)|(TimingJournalTests*)|(TestTimingReportTests*)|(TrxReportTests*)|(RowRunnerTests*)|(CheckpointBuildBindingPathTests*)/(C1313_*)|(aggregates_seconds_per_class*)|(no_trx_is_exit_2*)|(Different_directory_or_provenance_is_refused*)`; total 14, passed 14, failed 0, skipped 0; TRX `.antiphon/c1313-review/c1313-review.trx` sha256 f72ea63f37c4f4cd3009e3ed9f1b98518ca705ef8eafd59373fc8b563cd6d6f8, created 2026-10-16T16:21:36Z.
+- Per row: CP-9 TestSetTimingTests 4/4 (C1313_WallEnvelopes, C1313_UnavailableMeasurements, C1313_DiscoveryJoin, C1313_ProducerReceipts); CP-10 TimingJournalTests 4/4 (C1313_RootCustody, C1313_ReplayIdentity, C1313_RecoveryHandoffs, C1313_TornTail); CP-11 TestTimingReportTests 3/3 (C1313_ComparableHistory, C1313_AttemptCost, C1313_EstimatesNeverSelect); CP-12 aggregates_seconds_per_class 1/1; CP-13 no_trx_is_exit_2 1/1; CP-14 Different_directory_or_provenance_is_refused 1/1. CP-12..CP-14 (R-2) had not run in Code.
+- A first run under lease 35b54b7a-5f4b-494c-b1ef-b4d20dc95929 executed zero tests (3 s) because my OR-combined class operands lacked the runner's trailing stars; it is not evidence.
+- Evidence diff 3eaf10c7..c07c2b4a7: commits=8 entries=1 violations=0. `git merge-tree --write-tree origin/master HEAD` (origin/master 473ba2133d0911aab481bc1354d81a6a04c55f60) wrote tree 9691e712f13b9a533cee4414fb00cb295700f8e1 with no conflicts; not merged. All 28 `bin-c1313-review` directories removed.
+- Census: checkpoint-usage.ps1 `selected` 586 to 594 matches the 8 new Antiphon.Tests.Checkpoints methods (TestTimingReportTests is in the Scripts namespace); CheckpointNamespaceCensusUsageTests did not run here.
+- No checkpoint-tool receipt binds the built DLL to the SHA, so reviewedSourceClean is reported false; the tree was verified git-clean manually.
+
+## Not run (cap)
+
+Whole Unit lane; CP-1..CP-8 (S1-S3); CP-20 Windows replay; CheckpointNamespaceCensusUsageTests; wrapper and nightly producers end to end. S6-S7 rows are out of scope. PC-1..PC-81 pending, executed 0.
+
+## Advisory (not defects under the brief's criterion)
+
+- A1 `TimingRowRecorder` writes `Environment.MachineName` as hostId. The plan allows an opaque host in internal records; the S6/S7 public projection must allowlist it out.
+- A2 `RowRunner` swallows only the listed fault types; a malformed configured root raising NotSupportedException or ArgumentException would escape the finally and fail the row closed, never open. Misconfiguration only.
+- A3 `Write-WrapperTiming` mints a fresh GUID eventId per call, so a wrapper retry is not idempotent (plan asks same id and payload). Tool/wrapper single-producer suppression still holds per shard.
+- A4 `C1313_ProducerReceipts` drives a FakeDriver, not a real owned child, and covers the wrapper only as a producer string; test-timings.ps1 and the nightly producer have no executed test. `C1313_RecoveryHandoffs` injects faults in-process, not from a second process. `C1313_EstimatesNeverSelect` uses test-timing-report.ps1 `-SelectionPath` with a hand-written selection, not select-test-rosters.ps1 `-TimingRoots`, and `Get-TestSelectionDigest` strips estimates only for IDictionary input. PC-33, PC-34, PC-38..PC-44 and PC-48 remain the sensitivity proof.
+- A5 S5 red 5dc99ec08 (`wall-ranking` characterization) was committed but never executed; PC-46 and PC-47 own report sensitivity.
+- A6 `TimingJournal.DisposableOutputs` ignores its timingRoot argument and has no production caller, so `history-survives-output` holds by construction (PC-37 pending).
