@@ -606,7 +606,7 @@ public sealed class HostCleanupCheckpointCompatibilityTests
         for (var i = 0; i < 4 && eligible.Any(f.Io.DirectoryExists); i++) sweep.SweepOnce();
         eligible.ShouldAllBe(path => !f.Io.DirectoryExists(path));
         f.Io.DirectoryExists(live).ShouldBeTrue();
-        TestRootGuard.Read(live).ShouldNotBeNull();
+        TestRootGuard.Read(live, f.Context).ShouldNotBeNull();
     }
 
 
