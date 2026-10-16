@@ -127,7 +127,7 @@ internal sealed class CheckpointTempRootSweep
         RemoveStaleIndexTemps(started);
         // Entries exist only while roots are live or retained. Sorting the small active
         // roster gives a stable cursor even as other test hosts add and remove roots.
-        var entries = EnumerateFiles(IndexDirectory, "c723-*.json", SearchOption.TopDirectoryOnly)
+        var entries = EnumerateIndexFiles("c723-*.json")
             .OrderBy(Path.GetFileName, StringComparer.Ordinal).ToArray();
         var start = Array.FindIndex(entries, entry => string.CompareOrdinal(
             Path.GetFileName(entry), state.LastRootId) > 0);
@@ -338,7 +338,7 @@ internal sealed class CheckpointTempRootSweep
     {
         // Registration does not take the sweep gate. A fixed age protects an active
         // writer even when a test coordinator uses zero grace/interval overrides.
-        foreach (var temp in EnumerateFiles(IndexDirectory, "*.tmp", SearchOption.TopDirectoryOnly)
+        foreach (var temp in EnumerateIndexFiles("*.tmp")
                      .Take(_options.MaxDirectEntries))
         {
             if (Elapsed(started) >= _options.MaxDuration) break;
@@ -389,6 +389,23 @@ internal sealed class CheckpointTempRootSweep
     }
 
     private void WriteText(string path, string text) => _io.WriteBytes(path, Encoding.UTF8.GetBytes(text));
+
+    private IEnumerable<string> EnumerateIndexFiles(string pattern)
+    {
+        foreach (var entry in _io.Enumerate(IndexDirectory))
+        {
+            FileAttributes attributes;
+            try { attributes = _io.Attributes(entry); }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+            {
+                // Register/Unregister do not take the sweep gate. A listed index
+                // entry or pending write may have disappeared before this read.
+                continue;
+            }
+            if ((attributes & FileAttributes.Directory) == 0 && Matches(pattern, entry))
+                yield return entry;
+        }
+    }
 
     private IEnumerable<string> EnumerateFiles(string path, string pattern, SearchOption search) =>
         Entries(path, search).Where(entry => (_io.Attributes(entry) & FileAttributes.Directory) == 0
