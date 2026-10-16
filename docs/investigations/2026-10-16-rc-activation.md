@@ -4,10 +4,11 @@ Task: feb1f83b-6798-4f04-a6f5-b8c52ede4c1b (Deploy, CARD-1311).
 Requested release: `rc/2026-10-15` at exactly
 `b7265a05aa8773f08dbf457b93c7561e7874822d`.
 
-Latest status (11:11 UTC): the caller activated canonical/AppHost/desktop on RC.
-The resumed server2 rollout stopped at the cache Fixture prerequisite with
-`FixtureSeedFailed`; server2 still accepts work on its previous image. See the
-appended resumption record. The original first-attempt record below is retained.
+Latest status (13:00 UTC): the caller advanced canonical/AppHost to the fixed RC
+`6ca859d006b0a3cac9a88dc6bd551c37e98b2217`. Its cache Fixture rerun got past the
+previous seed failure but stopped at `FixturePrunePreviewFailed`. Server2 still
+accepts work on its previous image. See the latest appended resumption record.
+Earlier attempts and their historical targets/results below are retained.
 
 Outcome: **blocked before switching or restarting anything**. The local execution
 process is in a Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
@@ -193,4 +194,64 @@ release SHA, the caller must explicitly supply the new tested RC target.
 --- next stage ---
 next: Debug
 handoff: Investigate FixtureSeedFailed at RC b7265a05aa8773f08dbf457b93c7561e7874822d using retained c849-c8490fb677fc8c764242 evidence; permission-denied fixture npm log observed. Server2 remains accepting on 7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce; temp retired/absent; no drain/deploy occurred. Preserve canonical RC and user patches, and do not bypass the cache prerequisite. After qualified recovery, resume Deploy from fresh preconditions.
+artifact: docs/investigations/2026-10-16-rc-activation.md
+
+## Resumption at fixed RC: FixturePrunePreviewFailed
+
+The caller supplied a new tested target,
+`6ca859d006b0a3cac9a88dc6bd551c37e98b2217` on `rc/2026-10-15`, reporting its fix
+published and merged to master (`347b3fc1`), and AppHost reactivated and stack
+verified on that SHA. This pass accepted those publication/activation results as
+caller evidence and obeyed the explicit instruction to rerun **Fixture first**.
+No AppHost or desktop-runner restart/change was performed.
+
+| UTC on 2026-10-16 | Action | Result |
+|---|---|---|
+| 12:54:33 | Read current canonical rollout owner and inspect canonical HEAD/status | Detached at exactly `6ca859d006b0a3cac9a88dc6bd551c37e98b2217`; tracked files clean; original two untracked patches present. No switch or reset. |
+| 12:54:39–12:59:38 | From `C:\src\Antiphon`, `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Fixture -Sha 6ca859d006b0a3cac9a88dc6bd551c37e98b2217` | **Failed**, wrapper exit 1; local result lastWriteTimeUtc `2026-10-16T12:59:38.6318785Z`. Receipt: `accepted=false`, `diagnosis=FixturePrunePreviewFailed`, `exit=2`. Stop before every later prerequisite and rolling gate. |
+| During Fixture | Progress and cleanup observations | Receipts contain `PASS F-1` through `PASS F-7` and 20 expected-red controls (PC-01 through PC-20). The previous seed permission failure did not recur in this run. Fixture still failed overall. Command reported unknown cleanup outcome for donor `c849-c849a76febf8be3e43f30-donor`; identity retained in residue. Disposable main/temp/negative Compose probes were removed by the fixture. |
+| 13:00:06 | Read canonical/API identity and standing runner status after failure | Canonical and API both `6ca859d006b0a3cac9a88dc6bd551c37e98b2217`; API advertises `land-v2`. The same untracked patches remain. Main available=true, dispatchEligible=true, acceptingNewWork=true, draining=false, buildVersion=`7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce`; sessions=3, runnerSessions=3, queuedTasks=0. |
+| 13:00:06 | Temp status | Offline/unavailable, not eligible or accepting; draining=true, redirectTo=server2, retireWhenIdle=true, retiredAt=`2026-10-11T14:23:12.192262+00:00`; sessions=0, queuedTasks=0, runnerSessions=null, buildVersion=null. Host temp Compose census, including stopped containers, returned no IDs, SSH exit 0. |
+| 13:00:06 | Read-only SSH main container/image identity | Container `fc2983ea4991fe85b31f54ee2ef66150e0d8fef03897d6cf1c2d6ca9c0889832`, StartedAt `2026-10-11T13:42:57.09302366Z`, image `sha256:ea8bafe24373694b3421d63afdffb4533faf0710f709d96dea661123b55e6835`; image revision label `7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce`, matching registered buildVersion. It **does not equal** the requested new RC. |
+| 13:00:27 | Read-only SSH fixture-resource census after cleanup warning | `docker ps -a`, `docker volume ls`, and `docker network ls`, each filtered by unique run substring `a76febf8be3e43f3`, returned no entries, SSH exit 0. No cleanup/stop/removal was issued by the delegate. The gate's unknown cleanup record remains historical evidence; later absence does not turn the failed gate green. |
+
+Retained evidence:
+
+- Local wrapper root:
+  `C:\src\Antiphon\.antiphon\c849-c849a76febf8be3e43f3\0\`.
+- `manifest.json` binds `sourceSha=6ca859d006b0a3cac9a88dc6bd551c37e98b2217`,
+  `runId=c849a76febf8be3e43f30`, and the local evidence root; `c604Branch=master`
+  is the bootstrap branch, as described earlier.
+- Both `c590-result.json` at that root and
+  `runner-cache-fixture\c590-result.json` record
+  `{"accepted":false,"diagnosis":"FixturePrunePreviewFailed","exit":2}`.
+- `runner-cache-fixture\fixture-groups.txt`, `fixture-controls.txt`,
+  `fixture-cleanup-ledger.txt`, and `fixture-cleanup-residue.txt` retain the
+  partial outcomes and cleanup observations. The ledger includes exactly:
+  `unknown-cleanup-outcome container c849-c849a76febf8be3e43f30-donor`.
+  The residue contains `c849-c849a76febf8be3e43f30-donor`.
+  The `.fixture-donor` identity is
+  `c5daa7b49ba8b1d0f9b98963f1a2a5d7be47bdc815ad73d5de8b2a66ad449aa3`.
+- Remote evidence root:
+  `/work/test-evidence/c849a76febf8be3e43f30/runner-cache-fixture/`.
+  Generated payloads remain ignored and were not committed.
+
+This attempt ran **1 Fixture gate, failed** (7 completed groups and 20 expected-red
+control observations are partial evidence only). No full test suite was run.
+Fresh census/host-jq, Inventory, Seed and all named deployment/drain/retirement
+phases were **not run**, because the caller-required first gate failed. No drain
+was attempted, so no pre-drain Working-task authorization was exercised. A future
+attempt must refresh project task/land census and host qualification and re-read
+Working task runner assignments before any drain. No gate was bypassed, no
+standing runner changed, no sessions killed, and no local command remains running.
+
+The caller needs a bounded Debug investigation of `FixturePrunePreviewFailed`
+using the new run's receipts, including the donor cleanup observation. Do not
+reset/re-own caches, remove deployment markers or improvise Docker cleanup.
+Retain canonical at the fixed RC; a source fix requires a separately reviewed
+publication and an explicitly supplied tested RC SHA before another Deploy pass.
+
+--- next stage ---
+next: Debug
+handoff: Investigate FixturePrunePreviewFailed on 6ca859d006b0a3cac9a88dc6bd551c37e98b2217 using c849-c849a76febf8be3e43f3 evidence. Fixture reached F-1..F-7 and PC-01..PC-20, then failed; donor cleanup outcome was unknown at the gate, while later run-filtered host census found no fixture resources. Main remains accepting on 7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce; temp retired/absent. No rollout/drain phase ran. Preserve pinned canonical RC and user patches; qualify Fixture before resuming Deploy.
 artifact: docs/investigations/2026-10-16-rc-activation.md
