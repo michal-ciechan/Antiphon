@@ -46,7 +46,7 @@ public sealed class PipelineHandoffRouteDocumentationTests
             "review_evidence_correction_commissioned_selection_mismatch",
             "review_evidence_correction_receipt_invalid", "review_evidence_correction_retained_evidence_unavailable",
             "card_admission_changed", "card_implementation_closed",
-        }) text.ShouldContain(required, document);
+        }) text.Contains(required, StringComparison.Ordinal).ShouldBeTrue($"{document}: {required}");
     }
 
     private static string RepositoryRoot()
