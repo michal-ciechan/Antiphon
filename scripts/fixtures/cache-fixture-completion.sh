@@ -37,7 +37,14 @@ if [ "$mode" = inventory-running ]; then
 fi
 
 CASE=runner-cache-fixture
-c849_image() { printf '%s\n' "$image_id"; }
+C913_COMPLETION_IMAGE="$image_id"
+c849_image() { printf '%s\n' "$C913_COMPLETION_IMAGE"; }
+declare -f docker | sed '1s/docker/completion_docker/' > "$root/completion-docker"
+source "$root/completion-docker"
+docker() {
+    if [ "$1:${2:-}" = image:inspect ]; then printf '%s\n' "$C913_COMPLETION_IMAGE"; return; fi
+    completion_docker "$@"
+}
 printf 'runners=idle processes=0 leases=0\n' > "$SERVER2_ROOT/fixture-consumers.txt"
 c849_observe_volume() {
     local budget="$3" bytes=80000
