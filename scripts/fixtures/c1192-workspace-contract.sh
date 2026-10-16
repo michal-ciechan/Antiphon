@@ -685,6 +685,11 @@ docker_volume() {
                 esac
             done
             local dir="$C1192_ROOT/volumes/$name"
+            # Daemon loss is not the missing-volume response. F-7 must not treat it as absence.
+            if [ "${RETENTION_INSPECT_FAULT:-}" = temp-private ] && [[ "$name" == "c849${RUN}temp_"* ]]; then
+                printf 'Cannot connect to the Docker daemon\n' >&2
+                return 1
+            fi
             [ -d "$dir" ] || { printf 'Error response from daemon: No such volume: %s\n' "$name" >&2; return 1; }
             if [ "$mode" = acquisition-probe ] && [ "$name" = "$ACQUIRE_NAME" ]; then
                 if [ "$ACQUIRE_OUTCOME" = daemon ]; then
@@ -1203,7 +1208,7 @@ docker() {
             fi
             return 0 ;;
         compose)
-            if [ "$mode" = retention ] || [ "$mode" = compose-absence ]; then shift; retention_compose "$@";
+            if [ "$mode" = retention ] || [ "$mode" = retention-inspect ] || [ "$mode" = compose-absence ]; then shift; retention_compose "$@";
             elif [ "$mode" = finalization ] || [ "$mode" = cleanup-probe ]; then
                 local previous="" token
                 for token in "$@"; do
@@ -2696,6 +2701,10 @@ retention_compose() {
 # CARD-1207 modeled project lists and post-teardown observations.
 c1207_docker() {
     local kind="$1" name="${*: -1}" scoped=0 project='' path item
+    if [ "$COMPOSE_CASE" = donor-unknown ] && { [ "$kind" = inspect ] || [ "$kind:${2:-}" = container:inspect ]; } \
+        && { [ "$name" = "c849-${RUN}-donor" ] || [ "$name" = "${COMPLETION_DONOR_ID:-}" ]; }; then
+        printf 'Cannot connect to the Docker daemon\n' >&2; return 1
+    fi
     local token
     for token in "$@"; do
         case "$token" in label=com.docker.compose.project=*) scoped=1; project="${token#label=com.docker.compose.project=}" ;; esac
@@ -2747,6 +2756,18 @@ mode_compose_absence() {
     source <(declare -f c849_fixture_seed | sed '1s/c849_fixture_seed/c1207_seed/')
     c849_fixture_seed() {
         c1207_seed
+        if [[ "$COMPOSE_CASE" == donor* ]]; then
+            local donor="c849-${RUN}-donor"
+            plant_container "$donor" c849-fixture "$RUN" donor "$ADMITTED" ""
+            printf '%s\n' "c849${RUN}temp" > "$C1192_ROOT/containers/$donor/label-project"
+            printf 'session-runner\n' > "$C1192_ROOT/containers/$donor/label-service"
+            COMPLETION_DONOR_ID=$(cat "$C1192_ROOT/containers/$donor/id")
+            printf '%s\n' "$COMPLETION_DONOR_ID" > "$CASE_DIR/.fixture-donor"
+            case "$COMPOSE_CASE" in
+                donor-foreign) printf foreign > "$C1192_ROOT/containers/$donor/label-owner" ;;
+                donor-replaced) printf '%064d\n' 7 > "$C1192_ROOT/containers/$donor/id" ;;
+            esac
+        fi
         C849_PACKAGES="c849${RUN}smoke-packages"; C849_SCRATCH="c849${RUN}smoke-scratch"; C849_NPM="c849${RUN}npmcache-npm"
         local volume
         for volume in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
@@ -2766,13 +2787,24 @@ mode_compose_absence() {
     cat "$C1192_ROOT/compose-output"
     cat "$CASE_DIR/c590-result.json"
     printf '\n'
-    expected=false; [ "$COMPOSE_CASE" != absent ] || expected=true
+    expected=false; { [ "$COMPOSE_CASE" != absent ] && [ "$COMPOSE_CASE" != donor ]; } || expected=true
     good=0; jq -e --argjson expected "$expected" '.accepted==$expected' "$CASE_DIR/c590-result.json" >/dev/null && good=1
     emit verdict "$good"
     good=0
     if [ "$expected" = true ]; then [ "$code" = 0 ] && grep -q '^C849_FIXTURE ' "$C1192_ROOT/compose-output" && good=1
     else [ "$code" != 0 ] && ! grep -q '^C849_FIXTURE ' "$C1192_ROOT/compose-output" && good=1; fi
     emit marker "$good"
+    if [[ "$COMPOSE_CASE" == donor* ]]; then
+        good=0; name="c849-${RUN}-donor"
+        if [ "$COMPOSE_CASE" = donor ]; then
+            if [ "$code" = 0 ] && ! container_exists "$name" && [ ! -s "$CASE_DIR/fixture-cleanup-residue.txt" ] \
+                && grep -Fxq "confirmed-absent container $name" "$CASE_DIR/fixture-cleanup-ledger.txt"; then good=1; fi
+        else
+            if [ "$code" != 0 ] && container_exists "$name" && [ -s "$CASE_DIR/fixture-cleanup-residue.txt" ] \
+                && ! grep -Fxq "container $name" "$C1192_ROOT/order"; then good=1; fi
+        fi
+        emit donor-checked "$good"
+    fi
     if [ "$COMPOSE_CASE" = recording ]; then
         good=0; ! grep -Fxq "c849${RUN}main" "$C1192_ROOT/teardowns" && good=1; emit no-unrecorded-down "$good"
         good=0; grep -Fxq "unknown-cleanup-outcome compose c849${RUN}main" "$CASE_DIR/fixture-cleanup-ledger.txt" && good=1; emit recording-ledger "$good"
@@ -2793,6 +2825,30 @@ mode_compose_absence() {
         fi
     fi
     refuse_unexpected
+}
+
+mode_retention_inspect() {
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    : > "$C1192_ROOT/compose-actions"
+    C849_PACKAGES="c849${RUN}smoke-packages"; C849_SCRATCH="c849${RUN}smoke-scratch"; C849_NPM="c849${RUN}npmcache-npm"
+    local volume code=0 out
+    for volume in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        plant_volume "$volume" local null server2-runner "$RUN" cache
+        chmod 700 "$C1192_ROOT/volumes/$volume/data"
+    done
+    RETENTION_INSPECT_FAULT=temp-private
+    out=$(c849_fixture_retention 2>&1) || code=$?
+    if [ "$code" != 2 ] || ! printf '%s\n' "$out" | grep -Fxq 'DIAGNOSIS=FixtureVolumeInspectFailed'; then
+        fail "retention-inspect code=$code $out"
+    fi
+    if [ -f "$CASE_DIR/fixture-groups.txt" ] && grep -Fxq 'PASS F-7' "$CASE_DIR/fixture-groups.txt"; then
+        fail retention-inspect-published-success
+    fi
+    if printf '%s\n' "$out" | grep -Fxq 'DIAGNOSIS=FixtureTempPrivateVolumeRetained'; then
+        fail retention-inspect-absence-token
+    fi
+    printf 'PASS retention-inspect-refused\n'
 }
 
 mode_retention() {
@@ -3765,6 +3821,7 @@ case "$mode" in
     finalization) mode_finalization ;;
     evidence) mode_evidence ;;
     retention) mode_retention ;;
+    retention-inspect) mode_retention_inspect ;;
     apphost) mode_apphost ;;
     writable-pruning) mode_writable_pruning ;;
     register) mode_register ;;

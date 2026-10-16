@@ -108,9 +108,27 @@ function Get-C590Sha {
 }
 
 function Invoke-C590Ssh {
-    param([Parameter(Mandatory = $true)][string]$Remote)
-    & ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=240 mc@server2 $Remote
-    return $LASTEXITCODE
+    param([Parameter(Mandatory = $true)][string]$Remote, [string]$ReceiptPath = '')
+    $safeLines = [System.Collections.Generic.List[string]]::new()
+    # Only diagnosis tokens and fixed fixture progress survive. Never retain raw
+    # stderr, inspect output, package metadata or the remainder of a diagnosis.
+    & ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=240 mc@server2 $Remote 2>&1 |
+        ForEach-Object {
+            if ($ReceiptPath -and $safeLines.Count -lt 256) {
+                $line = [string]$_
+                if ($line -cmatch '^(?:DIAGNOSIS=)?((?:Cache|Fixture|Npm|Nuget)[A-Z][A-Za-z0-9]{0,95})(?:\s|$)') {
+                    $safeLines.Add($Matches[1])
+                } elseif ($line -cmatch '^PASS (?:F-[1-9]|PC-[0-9]{2})$') {
+                    $safeLines.Add($line)
+                }
+            }
+        }
+    $transportExit = [int]$LASTEXITCODE
+    if ($ReceiptPath) {
+        $safeLines.Add('transport-exit=' + $transportExit)
+        [System.IO.File]::WriteAllLines($ReceiptPath, $safeLines)
+    }
+    return $transportExit
 }
 
 # CARD-0628 D-1 / CARD-0737. The vault read is opt-in. A normal deploy-parent does not call bw
@@ -502,7 +520,7 @@ function Invoke-C590LiveCase {
             "export C1008_CLEANUP_OPERATION='$cleanupOperation'"
             "bash /home/mc/antiphon-c590/c590-remote.sh"
         )) -join '; '
-        $code = Invoke-C590Ssh $remote
+        $code = Invoke-C590Ssh $remote -ReceiptPath (Join-Path $root 'remote-output.txt')
         $destParent = $root
         & scp -o BatchMode=yes -r ("mc@server2:/work/test-evidence/" + $run + "/" + $Case) $destParent | Out-Null
         if ($LASTEXITCODE -ne 0 -and ($recycleContext -or $null -ne $cleanup)) {
@@ -513,6 +531,9 @@ function Invoke-C590LiveCase {
             Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis ("RemoteResultMissing exit=" + $code) -ExitCode 2
         }
         $result = Get-Content -Raw -LiteralPath $resultPath | ConvertFrom-Json
+        if ($code -ne 0 -and [bool]$result.accepted) {
+            Write-C590Result -EvidenceRoot $root -Accepted $false -Diagnosis 'RemoteTransportFailed' -ExitCode 2
+        }
         Write-C590Result -EvidenceRoot $root -Accepted ([bool]$result.accepted) -Diagnosis ([string]$result.diagnosis) -ExitCode ([int]$result.exit)
     }
     finally {
