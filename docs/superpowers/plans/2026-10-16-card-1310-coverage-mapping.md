@@ -24,6 +24,7 @@ files, replacement mappings, links, tracked paths and post-seal writes stay refu
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1310/` | mapping | `/*/*/(CheckpointCoverageMappingTests*)\|(CheckpointCoverageMappingNativeTests*)/*` | V-1,V-2,V-3 | all 17 results, 0 failed/skipped | 17 | 7 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-2 | S1 | CP-1 | custody | `/*/*/(OutputCleanupTests*)\|(CheckpointOwnedOutputTests*)\|(HostCleanupCheckpointCustodyTests*)\|(HostCleanupCheckpointAuthorityTests*)/*` | R-1 | all available Windows results, report existing platform skips separately | 65 | 5 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S1 | `tests/Antiphon.E2E -> bin-c1310-e2e/` | e2e-receipt | `/*/*/OutputDistillationCanaryGuardTests/Configuration_refuses_unowned_resources_before_start` | M-1 | all 12 results, 0 failed/skipped; both validators accept | 12 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 Run CP-1 red before the fix, then CP-1/CP-2 after the fix. CLI bootstrap builds
 through build-slot.ps1 are necessary unlisted setup, reported separately. No PCs
