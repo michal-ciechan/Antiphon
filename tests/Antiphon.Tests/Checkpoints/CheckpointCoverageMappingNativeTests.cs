@@ -3,12 +3,87 @@ using Shouldly;
 using TUnit.Core;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
 public sealed class CheckpointCoverageMappingNativeTests : CheckpointTestBase
 {
+    [Test]
+    public void Windows_copied_old_timestamps_inside_creation_window_are_adopted()
+    {
+        if (!OperatingSystem.IsWindows()) Skip.Test("native Windows creation-time qualification");
+        var root = TempDir();
+        var old = DateTimeOffset.UtcNow.AddDays(-1);
+        var source = Path.Combine(root, "source.dll");
+        File.WriteAllText(source, "COPIED BUILD OUTPUT");
+        SetWindowsTimes(source, old, old, old);
+        var output = Path.Combine(root, "bin-c1310-copy");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
+        var copied = Path.Combine(output, "copied.dll");
+        File.Copy(source, copied);
+        // Reproduce MSBuild's preserved source write/change times while retaining the
+        // destination's new creation time, independent of the CopyFile implementation.
+        SetWindowsTimes(copied, File.GetCreationTimeUtc(copied), old, old);
+        var window = OutputCustody.For(output, DateTimeOffset.UtcNow)!;
+        File.GetCreationTimeUtc(copied).ShouldBeGreaterThanOrEqualTo(window.RootCreated.UtcDateTime);
+        OutputCustody.Stat(copied)!.Value.Changed.ShouldBeLessThan(window.RootCreated);
+        OutputCustody.Stat(copied)!.Value.Modified.ShouldBeLessThan(window.RootCreated);
+        SafeWrite.Require(OwnedOutputLedger.Seal(output, window.BuildExited));
+        OwnedOutputLedger.Check(output).ShouldBeNull("a file created during the build may carry old copied timestamps");
+        OwnedOutputLedger.Remove(output).ShouldBeNull();
+        Directory.Exists(output).ShouldBeFalse();
+        File.ReadAllText(source).ShouldBe("COPIED BUILD OUTPUT");
+    }
+
+    [Test]
+    public void Windows_file_created_before_root_is_retained()
+    {
+        if (!OperatingSystem.IsWindows()) Skip.Test("native Windows creation-time qualification");
+        var root = TempDir();
+        var old = DateTimeOffset.UtcNow.AddDays(-1);
+        var original = Path.Combine(root, "user.txt");
+        File.WriteAllText(original, "USER");
+        SetWindowsTimes(original, old, old, old);
+        var output = Path.Combine(root, "bin-c1310-preexisting");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
+        var moved = Path.Combine(output, "user.txt");
+        File.Move(original, moved);
+        var now = DateTimeOffset.UtcNow;
+        SetWindowsTimes(moved, old, now, now);
+        var window = OutputCustody.For(output, DateTimeOffset.UtcNow)!;
+        File.GetCreationTimeUtc(moved).ShouldBeLessThan(window.RootCreated.UtcDateTime);
+        OutputCustody.Stat(moved)!.Value.Changed.ShouldBeGreaterThanOrEqualTo(window.RootCreated);
+        SafeWrite.Require(OwnedOutputLedger.Seal(output, window.BuildExited));
+        OwnedOutputLedger.Remove(output).ShouldNotBeNull("recent change/write times do not confer creation custody");
+        File.ReadAllText(moved).ShouldBe("USER");
+    }
+
+    private static void SetWindowsTimes(string path, DateTimeOffset created, DateTimeOffset written, DateTimeOffset changed)
+    {
+        using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+        var basic = new WindowsBasicInfo
+        {
+            Creation = created.ToFileTime(), Write = written.ToFileTime(), Change = changed.ToFileTime()
+        };
+        SetFileInformationByHandle(handle, 0, ref basic, (uint)Marshal.SizeOf<WindowsBasicInfo>())
+            .ShouldBeTrue("native timestamp fixture must be established");
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowsBasicInfo
+    {
+        public long Creation, Access, Write, Change;
+        public uint Attributes;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int infoClass,
+        ref WindowsBasicInfo info, uint size);
+
     [Test]
     public void Windows_root_with_other_writers_does_not_adopt_child_output()
     {
