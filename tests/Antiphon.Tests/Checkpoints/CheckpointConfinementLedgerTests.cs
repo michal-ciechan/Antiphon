@@ -18,6 +18,31 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     private static readonly string Sha = new('a', 40);
 
     [Test]
+    public void Large_ignored_output_is_hashed_and_tail_rewrite_is_refused()
+    {
+        var root = BeginRepo();
+        var path = Path.Combine(root, "node_modules", "large.dll");
+        const long length = 65L * 1024 * 1024;
+        using (var stream = File.Create(path))
+        {
+            stream.SetLength(length);
+            stream.Position = length - 1;
+            stream.WriteByte(0x31);
+        }
+        var ledger = Capture(root);
+        ledger.Files["node_modules/large.dll"].ShouldNotBe("unreadable");
+        BuildConfinement.AdmitLedger(ledger, strict: true).Settlement.Kind.ShouldBeNull();
+        BuildConfinement.VerifyLedger(ledger).Kind.ShouldBeNull();
+        using (var stream = File.OpenWrite(path))
+        {
+            stream.Position = length - 1;
+            stream.WriteByte(0x32);
+        }
+        BuildConfinement.AdmitLedger(ledger, strict: true).Settlement.Paths.ShouldContain("node_modules/large.dll");
+        BuildConfinement.VerifyLedger(ledger).Paths.ShouldContain("node_modules/large.dll");
+    }
+
+    [Test]
     [Timeout(300_000)]
     public Task ignored_tree_outside_write_roots_is_stamped_before_the_slot_not_inside_it(CancellationToken cancellationToken)
     {
