@@ -684,9 +684,9 @@ function Test-C599_ProfileSchema {
     try { [void](Read-NightlyExecutionPolicy -RepoRoot $repoRoot -PolicyPath $bad) } catch { $badMsg = $_.Exception.Message }
     Assert-C487 -Cond ($badMsg -match 'unsupported policy schema') -Name 'C599 ProfileSchema unknown version refuses' -Detail $badMsg
 
-    # The shipped policy must itself be v2 and carry both profiles.
+    # Historical v1/v2 fixtures remain supported; the shipped inventory is v3.
     $ship = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
-    Assert-C487 -Cond ([int]$ship.SchemaVersion -eq 2) -Name 'C599 ProfileSchema shipped policy is v2' -Detail ([string]$ship.SchemaVersion)
+    Assert-C487 -Cond ([int]$ship.SchemaVersion -eq 3) -Name 'C599 ProfileSchema shipped policy is v3' -Detail ([string]$ship.SchemaVersion)
     Assert-C487 -Cond ($null -ne $ship.Object.profiles.rc) -Name 'C599 ProfileSchema shipped policy defines rc' -Detail ''
 }
 

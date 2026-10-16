@@ -1,0 +1,3001 @@
+{
+  "activation": "unqualified",
+  "rules": [
+    {
+      "partition": "provider",
+      "paths": [
+        "src/Antiphon.Agents.Pty/ClaudeDetectors.cs"
+      ],
+      "sets": [
+        "provider.claude.offline",
+        "provider.claude.fake-native",
+        "provider.claude.tui-stub",
+        "provider.claude.tui-live",
+        "provider.claude.vendor-offline",
+        "provider.claude.server-runner",
+        "main.remainder",
+        "e2e.remainder"
+      ],
+      "full": false,
+      "id": "P-CLAUDE"
+    },
+    {
+      "partition": "provider",
+      "paths": [
+        "src/Antiphon.Agents.Pty/CodexDetectors.cs"
+      ],
+      "sets": [
+        "provider.codex.offline",
+        "provider.codex.fake-native",
+        "provider.codex.tui-stub",
+        "provider.codex.tui-live",
+        "provider.codex.vendor-offline",
+        "provider.codex.server-runner",
+        "main.remainder",
+        "e2e.remainder"
+      ],
+      "full": false,
+      "id": "P-CODEX"
+    },
+    {
+      "partition": "provider",
+      "paths": [
+        "src/Antiphon.Agents.Pty/GrokDetectors.cs"
+      ],
+      "sets": [
+        "provider.grok.offline",
+        "provider.grok.fake-native",
+        "provider.grok.tui-stub",
+        "provider.grok.tui-live",
+        "provider.grok.vendor-offline",
+        "provider.grok.server-runner",
+        "main.remainder",
+        "e2e.remainder"
+      ],
+      "full": false,
+      "id": "P-GROK"
+    },
+    {
+      "partition": "shared",
+      "pattern": "^src/Antiphon\\.(Agents\\.Pty|SessionRunner|SessionRunner\\.Contracts|PtyHost(?:\\.(?:Client|Protocol))?)/.*$",
+      "sets": [
+        "provider.claude.offline",
+        "provider.codex.offline",
+        "provider.grok.offline",
+        "provider.claude.fake-native",
+        "provider.grok.fake-native",
+        "provider.codex.fake-native",
+        "provider.claude.tui-stub",
+        "provider.claude.tui-live",
+        "provider.claude.vendor-offline",
+        "provider.claude.server-runner",
+        "provider.codex.tui-stub",
+        "provider.codex.tui-live",
+        "provider.codex.vendor-offline",
+        "provider.codex.server-runner",
+        "provider.grok.tui-stub",
+        "provider.grok.tui-live",
+        "provider.grok.vendor-offline",
+        "provider.grok.server-runner",
+        "main.remainder",
+        "shared.pty",
+        "shared.pty-host",
+        "shared.runner",
+        "e2e.remainder",
+        "desktop.herdr"
+      ],
+      "full": false,
+      "id": "P-SHARED"
+    },
+    {
+      "partition": "",
+      "pattern": "^server/.*$",
+      "sets": [],
+      "full": true,
+      "id": "P-SERVER"
+    },
+    {
+      "partition": "",
+      "pattern": "^client/.*$",
+      "sets": [
+        "client",
+        "e2e.browser",
+        "e2e.api",
+        "e2e.remainder"
+      ],
+      "full": false,
+      "id": "P-CLIENT"
+    },
+    {
+      "partition": "",
+      "pattern": "^(src/Antiphon\\.Messaging(?:\\.[^/]+)?/|tools/Antiphon\\.Messaging\\.SchemaGen/).*$",
+      "sets": [
+        "messaging.remainder",
+        "main.outbound-broker",
+        "messaging.postgres-broker",
+        "e2e.remainder"
+      ],
+      "full": false,
+      "id": "P-MSG"
+    },
+    {
+      "partition": "",
+      "pattern": "^(tools/Antiphon\\.MarkdownPdf/|tests/Antiphon\\.MarkdownPdf[^/]*/).*$",
+      "sets": [
+        "pdf.portable",
+        "pdf.linux",
+        "pdf.browser-linux",
+        "main.outbound-broker",
+        "e2e.remainder"
+      ],
+      "full": false,
+      "id": "P-PDF"
+    },
+    {
+      "partition": "",
+      "pattern": "^src/Antiphon\\.Fake(Claude|Grok|LlmApi)/.*$",
+      "sets": [
+        "provider.claude.offline",
+        "provider.codex.offline",
+        "provider.grok.offline",
+        "provider.claude.fake-native",
+        "provider.grok.fake-native",
+        "provider.codex.fake-native",
+        "provider.claude.tui-stub",
+        "provider.claude.tui-live",
+        "provider.claude.vendor-offline",
+        "provider.claude.server-runner",
+        "provider.codex.tui-stub",
+        "provider.codex.tui-live",
+        "provider.codex.vendor-offline",
+        "provider.codex.server-runner",
+        "provider.grok.tui-stub",
+        "provider.grok.tui-live",
+        "provider.grok.vendor-offline",
+        "provider.grok.server-runner",
+        "main.remainder",
+        "shared.pty",
+        "shared.pty-host",
+        "shared.runner",
+        "e2e.remainder",
+        "desktop.herdr"
+      ],
+      "full": false,
+      "id": "P-FAKE"
+    },
+    {
+      "partition": "",
+      "pattern": "^(tests/test-(execution|selection)-policy\\.json|scripts/(lib/)?(nightly[^/]*|release[^/]*|test-selection|test-timings)\\.ps1|scripts/(select-test-rosters|test-test-selection|test-timing-report|run-checkpoint|build-slot|publish-release)\\.ps1|tools/Antiphon\\.Checkpoints/.*|AGENTS\\.md|CLAUDE\\.md|docs/(testing-and-build|release-gates|orchestration-loop)\\.md)$",
+      "sets": [],
+      "full": true,
+      "id": "P-AUTHORITY"
+    },
+    {
+      "partition": "",
+      "pattern": "^(Directory\\.Build\\.(props|targets)|Directory\\.Packages\\.props|global\\.json|NuGet\\.Config|Antiphon\\.sln|.*\\.(csproj|props|targets)|.*/(package(-lock)?\\.json|.*\\.lock))$",
+      "sets": [],
+      "full": true,
+      "id": "P-BUILD"
+    },
+    {
+      "paths": [
+        "scripts/deploy-server2.ps1",
+        "docker-compose.dev.yml",
+        "docker-compose.yml"
+      ],
+      "sets": [
+        "docker.operations",
+        "scripts",
+        "e2e.remainder"
+      ],
+      "full": false,
+      "id": "P-DOCKER"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/ProcessSpawnLimitTests.cs"
+      ],
+      "sets": [
+        "core"
+      ],
+      "full": false,
+      "id": "P-TEST-bae15f398508"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Scripts/NightlyDiscoveryParserTests.cs"
+      ],
+      "sets": [
+        "core"
+      ],
+      "full": false,
+      "id": "P-TEST-0784d615096b"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Scripts/NightlyExecutionDiagnosticTests.cs"
+      ],
+      "sets": [
+        "core"
+      ],
+      "full": false,
+      "id": "P-TEST-72ccb609a86d"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Scripts/ReleaseGatePolicyTests.cs"
+      ],
+      "sets": [
+        "core"
+      ],
+      "full": false,
+      "id": "P-TEST-04bf687a1ac5"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Scripts/TestSelectionCatalogTests.cs"
+      ],
+      "sets": [
+        "core"
+      ],
+      "full": false,
+      "id": "P-TEST-48a0a67949f1"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeEffortDismissalReplayTests.cs"
+      ],
+      "sets": [
+        "provider.claude.offline"
+      ],
+      "full": false,
+      "id": "P-TEST-b18be2d2be53"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeGoldenReplayTests.cs"
+      ],
+      "sets": [
+        "provider.claude.offline"
+      ],
+      "full": false,
+      "id": "P-TEST-1e890420e17d"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Agents/CodexResponseAnalyzerTests.cs"
+      ],
+      "sets": [
+        "provider.codex.offline"
+      ],
+      "full": false,
+      "id": "P-TEST-cd33f5e9a7de"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Agents/GrokSignInPromptDetectorTests.cs"
+      ],
+      "sets": [
+        "provider.grok.offline"
+      ],
+      "full": false,
+      "id": "P-TEST-dc5bfc06446d"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Agents/GrokTrustPromptDetectorTests.cs"
+      ],
+      "sets": [
+        "provider.grok.offline"
+      ],
+      "full": false,
+      "id": "P-TEST-2ad19cdd63e4"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeDetectorsTests.cs"
+      ],
+      "sets": [
+        "provider.claude.fake-native"
+      ],
+      "full": false,
+      "id": "P-TEST-d9acfa87ee33"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractTests.cs"
+      ],
+      "sets": [
+        "provider.claude.fake-native"
+      ],
+      "full": false,
+      "id": "P-TEST-7a522e42604b"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeVerifiedDeliveryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.fake-native",
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-b66a8e166bf8"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Agents/RunnerGrokAdapterReadyTestsPty.cs"
+      ],
+      "sets": [
+        "provider.grok.fake-native"
+      ],
+      "full": false,
+      "id": "P-TEST-149037fd9974"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Agents/RunnerCodexAdapterReadyTests.cs"
+      ],
+      "sets": [
+        "provider.codex.fake-native",
+        "provider.codex.server-runner"
+      ],
+      "full": false,
+      "id": "P-TEST-9550ee5235a5"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Agents/ClaudeHerdrRealCliStubProxyCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-stub"
+      ],
+      "full": false,
+      "id": "P-TEST-1b7f3985a093"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Agents/ClaudeRealCliStubProxyCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-stub"
+      ],
+      "full": false,
+      "id": "P-TEST-f87d08194c6d"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeAppendSystemPromptCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-56decc243a4c"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeCompactionCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-9f1c50bdf5dd"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeComposerCaptureProbeTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-a07fd0b294ab"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeComposerRenderCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-d909b039e77a"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeDangerousTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-1f7a2d04852d"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeHeadedTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-8ea228bf1285"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeHookAdditionalContextCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-775474ffe01f"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeInputProbeCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-90c4922833ad"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeInteractionTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-3f03b265cba5"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeInterruptCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-97b97dd43085"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeLocalCommandCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-611bc7c14ea2"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeOverlayCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-7040213375fa"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudePasteLossCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-1e46f5ae7f49"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-4eac92485ea4"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlMenuCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-8803dfc91cde"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeSignalCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-56ba30171db6"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitConfirmCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-ee5cda410a6a"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractLiveTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-41d64e1601f5"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeTrustPromptCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-224f830a0ac3"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeTuiModeTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-63a928eaabca"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/OrchestratorWorkspaceLayoutCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live",
+        "provider.codex.vendor-offline",
+        "provider.grok.vendor-offline"
+      ],
+      "full": false,
+      "id": "P-TEST-d82e52411d67"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/PtyPasteMarkerExperiments.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-6f2fbc2a5dd2"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Agents/ClaudeEffortPromptCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.claude.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-152c93d9af3c"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.SessionRunner.Tests/ClaudeAuthProbeTests.cs"
+      ],
+      "sets": [
+        "provider.claude.server-runner"
+      ],
+      "full": false,
+      "id": "P-TEST-622aa36090b6"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Agents/CodexHerdrRealCliStubProxyCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.codex.tui-stub"
+      ],
+      "full": false,
+      "id": "P-TEST-b08272532ce6"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Agents/CodexRealCliStubProxyCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.codex.tui-stub"
+      ],
+      "full": false,
+      "id": "P-TEST-edad615372c5"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/CodexCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.codex.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-a5578f28b8dd"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/CodexComposerCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.codex.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-e1467b284edf"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/CodexDoneDetectionCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.codex.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-bc7f70fa5e23"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/CodexMcpBootProbeTests.cs"
+      ],
+      "sets": [
+        "provider.codex.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-f27ade9acb1b"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/CodexOverlayCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.codex.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-a8d8843452ad"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.SessionRunner.Tests/CodexAuthProbeTests.cs"
+      ],
+      "sets": [
+        "provider.codex.server-runner"
+      ],
+      "full": false,
+      "id": "P-TEST-48e0694c2c4c"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.SessionRunner.Tests/CodexTranscriptNormalizerTests.cs"
+      ],
+      "sets": [
+        "provider.codex.server-runner"
+      ],
+      "full": false,
+      "id": "P-TEST-d64e721900e1"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.SessionRunner.Tests/CodexTranscriptTailerTests.cs"
+      ],
+      "sets": [
+        "provider.codex.server-runner"
+      ],
+      "full": false,
+      "id": "P-TEST-6dffa137c132"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Agents/GrokHerdrRealCliStubProxyCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.grok.tui-stub"
+      ],
+      "full": false,
+      "id": "P-TEST-4c0b0cfff55c"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Agents/GrokRealCliStubProxyCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.grok.tui-stub"
+      ],
+      "full": false,
+      "id": "P-TEST-51aeab6a098a"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/GrokCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.grok.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-1d15ad6b13a5"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/GrokMidTurnInterruptCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.grok.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-1569e4d3d61b"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/GrokNativeSessionCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.grok.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-85dc8b6043c7"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/GrokQuestionPopupCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.grok.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-62a55f13180e"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/GrokSignInCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.grok.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-1c862f60ebd5"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/GrokSubmitWhileWorkingCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.grok.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-be09b4b8fbad"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/GrokUsageOverlayCanaryTests.cs"
+      ],
+      "sets": [
+        "provider.grok.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-01138666a5b4"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Agents/GrokSizeCaptureTests.cs"
+      ],
+      "sets": [
+        "provider.grok.tui-live"
+      ],
+      "full": false,
+      "id": "P-TEST-c2070b322140"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.SessionRunner.Tests/GrokAuthProbeTests.cs"
+      ],
+      "sets": [
+        "provider.grok.server-runner"
+      ],
+      "full": false,
+      "id": "P-TEST-d9781373ce44"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.SessionRunner.Tests/GrokRulesFileStoreTests.cs"
+      ],
+      "sets": [
+        "provider.grok.server-runner"
+      ],
+      "full": false,
+      "id": "P-TEST-ecb0f9103b26"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.SessionRunner.Tests/GrokTranscriptTailerTests.cs"
+      ],
+      "sets": [
+        "provider.grok.server-runner"
+      ],
+      "full": false,
+      "id": "P-TEST-950aafa4cc0a"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Agents/RunnerGrokAdapterReadyTests.cs"
+      ],
+      "sets": [
+        "provider.grok.server-runner"
+      ],
+      "full": false,
+      "id": "P-TEST-2827b88aa471"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/AgentE2ETests.cs"
+      ],
+      "sets": [
+        "e2e.browser"
+      ],
+      "full": false,
+      "id": "P-TEST-1e814c6eefff"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/BoardE2ETests.cs"
+      ],
+      "sets": [
+        "e2e.browser"
+      ],
+      "full": false,
+      "id": "P-TEST-c4f5950d170e"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/DirectoryAutocompleteE2ETests.cs"
+      ],
+      "sets": [
+        "e2e.browser"
+      ],
+      "full": false,
+      "id": "P-TEST-23578dcb12bf"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/DispatchConcurrencySettingsE2ETests.cs"
+      ],
+      "sets": [
+        "e2e.browser"
+      ],
+      "full": false,
+      "id": "P-TEST-858e70f4eef2"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/OrchestratorE2ETests.cs"
+      ],
+      "sets": [
+        "e2e.browser"
+      ],
+      "full": false,
+      "id": "P-TEST-58ef7a8c34c8"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/PipelineGlanceE2ETests.cs"
+      ],
+      "sets": [
+        "e2e.browser"
+      ],
+      "full": false,
+      "id": "P-TEST-3cdd83d2922b"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/ProjectDeleteE2ETests.cs"
+      ],
+      "sets": [
+        "e2e.browser"
+      ],
+      "full": false,
+      "id": "P-TEST-7e9b343e5111"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/SmokeE2ETests.cs"
+      ],
+      "sets": [
+        "e2e.browser"
+      ],
+      "full": false,
+      "id": "P-TEST-b7f25f81bd9e"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/WorkflowDeleteTests.cs"
+      ],
+      "sets": [
+        "e2e.browser"
+      ],
+      "full": false,
+      "id": "P-TEST-c0bacd7bf774"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/WorkflowOutputTests.cs"
+      ],
+      "sets": [
+        "e2e.browser"
+      ],
+      "full": false,
+      "id": "P-TEST-f3fd50910774"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/CardCliE2ETests.cs"
+      ],
+      "sets": [
+        "e2e.api"
+      ],
+      "full": false,
+      "id": "P-TEST-523a46f3d1ea"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/ChannelE2ETests.cs"
+      ],
+      "sets": [
+        "e2e.api"
+      ],
+      "full": false,
+      "id": "P-TEST-c5f05b2dea09"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/ContractSnapshotTests.cs"
+      ],
+      "sets": [
+        "e2e.api"
+      ],
+      "full": false,
+      "id": "P-TEST-4029a061bfe4"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/ReleaseGateIsolationTests.cs"
+      ],
+      "sets": [
+        "e2e.api"
+      ],
+      "full": false,
+      "id": "P-TEST-0d33d8765341"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/ReleaseGateReportDeliveryTests.cs"
+      ],
+      "sets": [
+        "e2e.api"
+      ],
+      "full": false,
+      "id": "P-TEST-dc96709e5ede"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/ScheduleCliE2ETests.cs"
+      ],
+      "sets": [
+        "e2e.api"
+      ],
+      "full": false,
+      "id": "P-TEST-031378c7dfa1"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/AgentTaskLandDeliveryE2ETests.cs"
+      ],
+      "sets": [
+        "e2e.windows-delivery"
+      ],
+      "full": false,
+      "id": "P-TEST-573e48f39743"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/DispatchBaseWarningDeliveryE2ETests.cs"
+      ],
+      "sets": [
+        "e2e.windows-delivery"
+      ],
+      "full": false,
+      "id": "P-TEST-43cb0e6edcd1"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/LandDeliveryFixtureProbeTests.cs"
+      ],
+      "sets": [
+        "e2e.windows-delivery"
+      ],
+      "full": false,
+      "id": "P-TEST-6209820ea15e"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.E2E/WorktreeRetirementDeliveryE2ETests.cs"
+      ],
+      "sets": [
+        "e2e.windows-delivery"
+      ],
+      "full": false,
+      "id": "P-TEST-713588d03ac0"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.SessionRunner.Tests/HerdrLabelFollowLiveTests.cs"
+      ],
+      "sets": [
+        "desktop.herdr"
+      ],
+      "full": false,
+      "id": "P-TEST-a491c45d5300"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.SessionRunner.Tests/HerdrNamedTabPlacementLiveTests.cs"
+      ],
+      "sets": [
+        "desktop.herdr"
+      ],
+      "full": false,
+      "id": "P-TEST-a64b0dba498a"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.SessionRunner.Tests/HerdrPaneDisposalGuardedLiveTests.cs"
+      ],
+      "sets": [
+        "desktop.herdr"
+      ],
+      "full": false,
+      "id": "P-TEST-2a44de67d799"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Application/ChannelOutboundComposedTransportTests.cs"
+      ],
+      "sets": [
+        "main.outbound-broker"
+      ],
+      "full": false,
+      "id": "P-TEST-181fa984ecf7"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Application/ChannelOutboundRecoveryTests.cs"
+      ],
+      "sets": [
+        "main.outbound-broker"
+      ],
+      "full": false,
+      "id": "P-TEST-4e568ca8130b"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Application/ChannelOutboundUnifiedCrashTests.cs"
+      ],
+      "sets": [
+        "main.outbound-broker"
+      ],
+      "full": false,
+      "id": "P-TEST-267c7649088b"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Application/ChannelOutboundUnifiedTransportTests.cs"
+      ],
+      "sets": [
+        "main.outbound-broker"
+      ],
+      "full": false,
+      "id": "P-TEST-4ee7fc376f37"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Scripts/RetiredTempContainerDockerTests.cs"
+      ],
+      "sets": [
+        "docker.operations"
+      ],
+      "full": false,
+      "id": "P-TEST-ee1410665884"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.Tests/Scripts/RollingVolumeRecycleDockerTests.cs"
+      ],
+      "sets": [
+        "docker.operations"
+      ],
+      "full": false,
+      "id": "P-TEST-edcf0557a2ec"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfCommandTests.cs"
+      ],
+      "sets": [
+        "pdf.linux",
+        "pdf.portable"
+      ],
+      "full": false,
+      "id": "P-TEST-212cbb71fe51"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRendererTests.cs"
+      ],
+      "sets": [
+        "pdf.linux",
+        "pdf.portable"
+      ],
+      "full": false,
+      "id": "P-TEST-59bec0dffa0a"
+    },
+    {
+      "paths": [
+        "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRealBrowserTests.cs"
+      ],
+      "sets": [
+        "pdf.browser-linux"
+      ],
+      "full": false,
+      "id": "P-TEST-e5f5dbdfca3e"
+    }
+  ],
+  "sets": [
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Tests/ProcessSpawnLimitTests.cs",
+        "tests/Antiphon.Tests/Scripts/NightlyDiscoveryParserTests.cs",
+        "tests/Antiphon.Tests/Scripts/NightlyExecutionDiagnosticTests.cs",
+        "tests/Antiphon.Tests/Scripts/ReleaseGatePolicyTests.cs",
+        "tests/Antiphon.Tests/Scripts/TestSelectionCatalogTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "method": "C1313_ProjectAndCatalogUniverse",
+          "class": "Antiphon.Tests.Scripts.TestSelectionCatalogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        },
+        {
+          "method": "C1313_CoreAndUnknownFallback",
+          "class": "Antiphon.Tests.Scripts.TestSelectionTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        },
+        {
+          "method": "C1044_DiscoveryReconciliation",
+          "class": "Antiphon.Tests.Scripts.NightlyDiscoveryParserTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        },
+        {
+          "method": "D13_ExecutionGuards",
+          "class": "Antiphon.Tests.Scripts.NightlyExecutionDiagnosticTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        },
+        {
+          "method": "C599_ExpandedCoverage",
+          "class": "Antiphon.Tests.Scripts.ReleaseGatePolicyTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        },
+        {
+          "method": "Caps_concurrent_process_spawning_tests_at_one",
+          "class": "Antiphon.Tests.ProcessSpawnLimitTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        },
+        {
+          "method": "Process_spawning_classes_carry_the_limiter",
+          "class": "Antiphon.Tests.ProcessSpawnLimitTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        }
+      ],
+      "prerequisites": [],
+      "id": "core",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unclassified",
+      "dependsOn": [],
+      "remainderProjects": [
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ],
+      "sourceInputs": [],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [],
+      "prerequisites": [],
+      "id": "main.remainder",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "unknown",
+        "desktopUi": "unknown",
+        "broker": "unknown",
+        "api": "unknown",
+        "nativePty": "unknown",
+        "vendorExecutable": "unknown",
+        "postgres": "unknown",
+        "browser": "unknown",
+        "docker": "unknown"
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unclassified",
+      "dependsOn": [],
+      "remainderProjects": [
+        "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+      ],
+      "sourceInputs": [],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [],
+      "prerequisites": [],
+      "id": "shared.pty",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "unknown",
+        "desktopUi": "unknown",
+        "broker": "unknown",
+        "api": "unknown",
+        "nativePty": "unknown",
+        "vendorExecutable": "unknown",
+        "postgres": "unknown",
+        "browser": "unknown",
+        "docker": "unknown"
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unclassified",
+      "dependsOn": [],
+      "remainderProjects": [
+        "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+      ],
+      "sourceInputs": [],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [],
+      "prerequisites": [],
+      "id": "shared.runner",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "unknown",
+        "desktopUi": "unknown",
+        "broker": "unknown",
+        "api": "unknown",
+        "nativePty": "unknown",
+        "vendorExecutable": "unknown",
+        "postgres": "unknown",
+        "browser": "unknown",
+        "docker": "unknown"
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unclassified",
+      "dependsOn": [],
+      "remainderProjects": [
+        "tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj"
+      ],
+      "sourceInputs": [],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [],
+      "prerequisites": [],
+      "id": "shared.pty-host",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "unknown",
+        "desktopUi": "unknown",
+        "broker": "unknown",
+        "api": "unknown",
+        "nativePty": "unknown",
+        "vendorExecutable": "unknown",
+        "postgres": "unknown",
+        "browser": "unknown",
+        "docker": "unknown"
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unclassified",
+      "dependsOn": [],
+      "remainderProjects": [
+        "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+      ],
+      "sourceInputs": [],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [],
+      "prerequisites": [],
+      "id": "e2e.remainder",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "unknown",
+        "desktopUi": "unknown",
+        "broker": "unknown",
+        "api": "unknown",
+        "nativePty": "unknown",
+        "vendorExecutable": "unknown",
+        "postgres": "unknown",
+        "browser": "unknown",
+        "docker": "unknown"
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unclassified",
+      "dependsOn": [],
+      "remainderProjects": [
+        "tests/Antiphon.Messaging.Tests/Antiphon.Messaging.Tests.csproj"
+      ],
+      "sourceInputs": [],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [],
+      "prerequisites": [],
+      "id": "messaging.remainder",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "unknown",
+        "desktopUi": "unknown",
+        "broker": "unknown",
+        "api": "unknown",
+        "nativePty": "unknown",
+        "vendorExecutable": "unknown",
+        "postgres": "unknown",
+        "browser": "unknown",
+        "docker": "unknown"
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeEffortDismissalReplayTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeGoldenReplayTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeGoldenReplayTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeEffortDismissalReplayTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        }
+      ],
+      "prerequisites": [],
+      "id": "provider.claude.offline",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Tests/Agents/CodexResponseAnalyzerTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.Tests.Agents.CodexResponseAnalyzerTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        }
+      ],
+      "prerequisites": [],
+      "id": "provider.codex.offline",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Tests/Agents/GrokSignInPromptDetectorTests.cs",
+        "tests/Antiphon.Tests/Agents/GrokTrustPromptDetectorTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.Tests.Agents.GrokSignInPromptDetectorTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Tests.Agents.GrokTrustPromptDetectorTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        }
+      ],
+      "prerequisites": [],
+      "id": "provider.grok.offline",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeDetectorsTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeVerifiedDeliveryTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "method": "Fake_evidence_appears_then_submit_completes_a_turn",
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeVerifiedDeliveryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeSubmitContractTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeDetectorsTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        }
+      ],
+      "prerequisites": [
+        "native-child"
+      ],
+      "id": "provider.claude.fake-native",
+      "platforms": [
+        "windows"
+      ],
+      "resources": {
+        "interaction": "native-probe",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": true,
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "manual",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Tests/Agents/RunnerGrokAdapterReadyTestsPty.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.Tests.Agents.RunnerGrokAdapterReadyTestsPty",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        }
+      ],
+      "prerequisites": [
+        "native-child"
+      ],
+      "id": "provider.grok.fake-native",
+      "platforms": [
+        "windows"
+      ],
+      "resources": {
+        "interaction": "native-probe",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": true,
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unclassified",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Tests/Agents/RunnerCodexAdapterReadyTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.Tests.Agents.RunnerCodexAdapterReadyTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        }
+      ],
+      "prerequisites": [
+        "native-child"
+      ],
+      "id": "provider.codex.fake-native",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "native-probe",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": "unknown",
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "manual",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Tests/Agents/ClaudeHerdrRealCliStubProxyCanaryTests.cs",
+        "tests/Antiphon.Tests/Agents/ClaudeRealCliStubProxyCanaryTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.Tests.Agents.ClaudeRealCliStubProxyCanaryTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Tests.Agents.ClaudeHerdrRealCliStubProxyCanaryTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        }
+      ],
+      "prerequisites": [
+        "native-child"
+      ],
+      "id": "provider.claude.tui-stub",
+      "platforms": [
+        "windows"
+      ],
+      "resources": {
+        "interaction": "tui",
+        "desktopUi": true,
+        "broker": false,
+        "api": "stub",
+        "nativePty": true,
+        "vendorExecutable": "claude",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "manual",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeAppendSystemPromptCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeCompactionCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeComposerCaptureProbeTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeComposerRenderCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeDangerousTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeHeadedTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeHookAdditionalContextCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeInputProbeCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeInteractionTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeInterruptCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeLocalCommandCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeOverlayCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudePasteLossCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlMenuCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeSignalCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitConfirmCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractLiveTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeTrustPromptCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeTuiModeTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeVerifiedDeliveryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/OrchestratorWorkspaceLayoutCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/PtyPasteMarkerExperiments.cs",
+        "tests/Antiphon.Tests/Agents/ClaudeEffortPromptCanaryTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeAppendSystemPromptCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeCompactionCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeComposerCaptureProbeTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeComposerRenderCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeDangerousTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeHeadedTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeHookAdditionalContextCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeInputProbeCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeInteractionTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeInterruptCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeLocalCommandCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeOverlayCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudePasteLossCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlAtStartupCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlMenuCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeSignalCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeSubmitConfirmCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeSubmitContractLiveTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeTrustPromptCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeTuiModeTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeHeadedLongTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "method": "Real_evidence_appears_then_submit_completes_a_turn",
+          "class": "Antiphon.Agents.Pty.Tests.ClaudeVerifiedDeliveryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "method": "Real_effort_picker_preserves_xhigh_and_reaches_an_empty_composer",
+          "class": "Antiphon.Tests.Agents.ClaudeEffortPromptCanaryTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        },
+        {
+          "method": "Claude_loads_parent_CLAUDE_md_from_a_nested_checkout",
+          "class": "Antiphon.Agents.Pty.Tests.OrchestratorWorkspaceLayoutCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "method": "Claude_sibling_import_is_dropped_without_the_forward_slash_approval",
+          "class": "Antiphon.Agents.Pty.Tests.OrchestratorWorkspaceLayoutCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "method": "Real_claude_by_conpty_backend",
+          "class": "Antiphon.Agents.Pty.Tests.PtyPasteMarkerExperiments",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "method": "Real_claude_controls_and_size_sweep",
+          "class": "Antiphon.Agents.Pty.Tests.PtyPasteMarkerExperiments",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "method": "Real_claude_delivery_envelope",
+          "class": "Antiphon.Agents.Pty.Tests.PtyPasteMarkerExperiments",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        }
+      ],
+      "prerequisites": [
+        "native-child"
+      ],
+      "id": "provider.claude.tui-live",
+      "platforms": [
+        "windows"
+      ],
+      "resources": {
+        "interaction": "tui",
+        "desktopUi": false,
+        "broker": false,
+        "api": "live",
+        "nativePty": true,
+        "vendorExecutable": "claude",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "manual",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [],
+      "prerequisites": [],
+      "id": "provider.claude.vendor-offline",
+      "platforms": [
+        "windows"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "claude",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unclassified",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.SessionRunner.Tests/ClaudeAuthProbeTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.SessionRunner.Tests.ClaudeAuthProbeTests",
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+        }
+      ],
+      "prerequisites": [],
+      "id": "provider.claude.server-runner",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": "unknown",
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "manual",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Tests/Agents/CodexHerdrRealCliStubProxyCanaryTests.cs",
+        "tests/Antiphon.Tests/Agents/CodexRealCliStubProxyCanaryTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.Tests.Agents.CodexRealCliStubProxyCanaryTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Tests.Agents.CodexHerdrRealCliStubProxyCanaryTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        }
+      ],
+      "prerequisites": [
+        "native-child"
+      ],
+      "id": "provider.codex.tui-stub",
+      "platforms": [
+        "windows"
+      ],
+      "resources": {
+        "interaction": "tui",
+        "desktopUi": true,
+        "broker": false,
+        "api": "stub",
+        "nativePty": true,
+        "vendorExecutable": "codex",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "manual",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Agents.Pty.Tests/CodexCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/CodexComposerCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/CodexDoneDetectionCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/CodexMcpBootProbeTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/CodexOverlayCanaryTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.Agents.Pty.Tests.CodexCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.CodexComposerCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.CodexDoneDetectionCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.CodexMcpBootProbeTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.CodexOverlayCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        }
+      ],
+      "prerequisites": [
+        "native-child"
+      ],
+      "id": "provider.codex.tui-live",
+      "platforms": [
+        "windows"
+      ],
+      "resources": {
+        "interaction": "tui",
+        "desktopUi": false,
+        "broker": false,
+        "api": "live",
+        "nativePty": true,
+        "vendorExecutable": "codex",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "manual",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Agents.Pty.Tests/OrchestratorWorkspaceLayoutCanaryTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "method": "Codex_prompt_input_is_bounded_at_the_nested_checkout_git_root",
+          "class": "Antiphon.Agents.Pty.Tests.OrchestratorWorkspaceLayoutCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        }
+      ],
+      "prerequisites": [],
+      "id": "provider.codex.vendor-offline",
+      "platforms": [
+        "windows"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "codex",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unclassified",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.SessionRunner.Tests/CodexAuthProbeTests.cs",
+        "tests/Antiphon.SessionRunner.Tests/CodexTranscriptNormalizerTests.cs",
+        "tests/Antiphon.SessionRunner.Tests/CodexTranscriptTailerTests.cs",
+        "tests/Antiphon.Tests/Agents/RunnerCodexAdapterReadyTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.SessionRunner.Tests.CodexAuthProbeTests",
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.SessionRunner.Tests.CodexTranscriptTailerTests",
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.SessionRunner.Tests.CodexTranscriptNormalizerTests",
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Tests.Agents.RunnerCodexAdapterReadyTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        }
+      ],
+      "prerequisites": [],
+      "id": "provider.codex.server-runner",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": "unknown",
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "manual",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Tests/Agents/GrokHerdrRealCliStubProxyCanaryTests.cs",
+        "tests/Antiphon.Tests/Agents/GrokRealCliStubProxyCanaryTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.Tests.Agents.GrokRealCliStubProxyCanaryTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Tests.Agents.GrokHerdrRealCliStubProxyCanaryTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        }
+      ],
+      "prerequisites": [
+        "native-child"
+      ],
+      "id": "provider.grok.tui-stub",
+      "platforms": [
+        "windows"
+      ],
+      "resources": {
+        "interaction": "tui",
+        "desktopUi": true,
+        "broker": false,
+        "api": "stub",
+        "nativePty": true,
+        "vendorExecutable": "grok",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "manual",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Agents.Pty.Tests/GrokCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/GrokMidTurnInterruptCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/GrokNativeSessionCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/GrokQuestionPopupCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/GrokSignInCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/GrokSubmitWhileWorkingCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/GrokUsageOverlayCanaryTests.cs",
+        "tests/Antiphon.Tests/Agents/GrokSizeCaptureTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.Agents.Pty.Tests.GrokCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.GrokNativeSessionCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.GrokQuestionPopupCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.GrokSignInCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.GrokSubmitWhileWorkingCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.GrokUsageOverlayCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Agents.Pty.Tests.GrokMidTurnInterruptCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Tests.Agents.GrokSizeCaptureTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        }
+      ],
+      "prerequisites": [
+        "native-child"
+      ],
+      "id": "provider.grok.tui-live",
+      "platforms": [
+        "windows"
+      ],
+      "resources": {
+        "interaction": "tui",
+        "desktopUi": false,
+        "broker": false,
+        "api": "live",
+        "nativePty": true,
+        "vendorExecutable": "grok",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "manual",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Agents.Pty.Tests/OrchestratorWorkspaceLayoutCanaryTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "method": "Grok_inspect_is_bounded_at_the_nested_checkout_git_root",
+          "class": "Antiphon.Agents.Pty.Tests.OrchestratorWorkspaceLayoutCanaryTests",
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+        }
+      ],
+      "prerequisites": [],
+      "id": "provider.grok.vendor-offline",
+      "platforms": [
+        "windows"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "grok",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unclassified",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.SessionRunner.Tests/GrokAuthProbeTests.cs",
+        "tests/Antiphon.SessionRunner.Tests/GrokRulesFileStoreTests.cs",
+        "tests/Antiphon.SessionRunner.Tests/GrokTranscriptTailerTests.cs",
+        "tests/Antiphon.Tests/Agents/RunnerGrokAdapterReadyTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.SessionRunner.Tests.GrokAuthProbeTests",
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.SessionRunner.Tests.GrokRulesFileStoreTests",
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.SessionRunner.Tests.GrokTranscriptTailerTests",
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Tests.Agents.RunnerGrokAdapterReadyTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        }
+      ],
+      "prerequisites": [],
+      "id": "provider.grok.server-runner",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": "unknown",
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.E2E/AgentE2ETests.cs",
+        "tests/Antiphon.E2E/BoardE2ETests.cs",
+        "tests/Antiphon.E2E/DirectoryAutocompleteE2ETests.cs",
+        "tests/Antiphon.E2E/DispatchConcurrencySettingsE2ETests.cs",
+        "tests/Antiphon.E2E/OrchestratorE2ETests.cs",
+        "tests/Antiphon.E2E/PipelineGlanceE2ETests.cs",
+        "tests/Antiphon.E2E/ProjectDeleteE2ETests.cs",
+        "tests/Antiphon.E2E/SmokeE2ETests.cs",
+        "tests/Antiphon.E2E/WorkflowDeleteTests.cs",
+        "tests/Antiphon.E2E/WorkflowOutputTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.E2E.AgentE2ETests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.BoardE2ETests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.DirectoryAutocompleteE2ETests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.DispatchConcurrencySettingsE2ETests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.OrchestratorE2ETests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.PipelineGlanceE2ETests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.ProjectDeleteE2ETests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.SmokeE2ETests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.WorkflowDeleteTests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.WorkflowOutputTests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        }
+      ],
+      "prerequisites": [
+        "browser",
+        "app-db"
+      ],
+      "id": "e2e.browser",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": true,
+        "browser": true,
+        "docker": true
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.E2E/CardCliE2ETests.cs",
+        "tests/Antiphon.E2E/ChannelE2ETests.cs",
+        "tests/Antiphon.E2E/ContractSnapshotTests.cs",
+        "tests/Antiphon.E2E/ReleaseGateIsolationTests.cs",
+        "tests/Antiphon.E2E/ReleaseGateReportDeliveryTests.cs",
+        "tests/Antiphon.E2E/ScheduleCliE2ETests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.E2E.CardCliE2ETests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.ChannelE2ETests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.ContractSnapshotTests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.ScheduleCliE2ETests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.ReleaseGateIsolationTests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.ReleaseGateReportDeliveryTests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        }
+      ],
+      "prerequisites": [
+        "app-db"
+      ],
+      "id": "e2e.api",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": true,
+        "browser": false,
+        "docker": true
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.E2E/AgentTaskLandDeliveryE2ETests.cs",
+        "tests/Antiphon.E2E/DispatchBaseWarningDeliveryE2ETests.cs",
+        "tests/Antiphon.E2E/LandDeliveryFixtureProbeTests.cs",
+        "tests/Antiphon.E2E/WorktreeRetirementDeliveryE2ETests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.E2E.AgentTaskLandDeliveryE2ETests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.DispatchBaseWarningDeliveryE2ETests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.WorktreeRetirementDeliveryE2ETests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        },
+        {
+          "class": "Antiphon.E2E.LandDeliveryFixtureProbeTests",
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+        }
+      ],
+      "prerequisites": [
+        "app-db",
+        "native-child"
+      ],
+      "id": "e2e.windows-delivery",
+      "platforms": [
+        "windows"
+      ],
+      "resources": {
+        "interaction": "native-probe",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": true,
+        "vendorExecutable": "none",
+        "postgres": true,
+        "browser": false,
+        "docker": true
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "manual",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.SessionRunner.Tests/HerdrLabelFollowLiveTests.cs",
+        "tests/Antiphon.SessionRunner.Tests/HerdrNamedTabPlacementLiveTests.cs",
+        "tests/Antiphon.SessionRunner.Tests/HerdrPaneDisposalGuardedLiveTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.SessionRunner.Tests.HerdrPaneDisposalGuardedLiveTests",
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.SessionRunner.Tests.HerdrLabelFollowLiveTests",
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.SessionRunner.Tests.HerdrNamedTabPlacementLiveTests",
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+        }
+      ],
+      "prerequisites": [
+        "native-child"
+      ],
+      "id": "desktop.herdr",
+      "platforms": [
+        "windows"
+      ],
+      "resources": {
+        "interaction": "native-probe",
+        "desktopUi": true,
+        "broker": false,
+        "api": "none",
+        "nativePty": true,
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unclassified",
+      "dependsOn": [],
+      "remainderProjects": [
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ],
+      "sourceInputs": [],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [],
+      "prerequisites": [
+        "app-db"
+      ],
+      "id": "main.postgres",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": true,
+        "browser": false,
+        "docker": true
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Tests/Application/ChannelOutboundComposedTransportTests.cs",
+        "tests/Antiphon.Tests/Application/ChannelOutboundRecoveryTests.cs",
+        "tests/Antiphon.Tests/Application/ChannelOutboundUnifiedCrashTests.cs",
+        "tests/Antiphon.Tests/Application/ChannelOutboundUnifiedTransportTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.Tests.Application.ChannelOutboundRecoveryTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Tests.Application.ChannelOutboundUnifiedCrashTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Tests.Application.ChannelOutboundComposedTransportTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        }
+      ],
+      "prerequisites": [
+        "broker",
+        "app-db"
+      ],
+      "id": "main.outbound-broker",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": true,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": true,
+        "browser": false,
+        "docker": true
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unclassified",
+      "dependsOn": [],
+      "remainderProjects": [
+        "tests/Antiphon.Messaging.Tests/Antiphon.Messaging.Tests.csproj"
+      ],
+      "sourceInputs": [],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [],
+      "prerequisites": [
+        "broker",
+        "app-db"
+      ],
+      "id": "messaging.postgres-broker",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": true,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": true,
+        "browser": false,
+        "docker": true
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.Tests/Scripts/RetiredTempContainerDockerTests.cs",
+        "tests/Antiphon.Tests/Scripts/RollingVolumeRecycleDockerTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "class": "Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        },
+        {
+          "class": "Antiphon.Tests.Scripts.RetiredTempContainerDockerTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+        }
+      ],
+      "prerequisites": [],
+      "id": "docker.operations",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": true
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfCommandTests.cs",
+        "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRendererTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "method": "Symlinked_staged_document_is_refused_before_browser_launch",
+          "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfCommandTests",
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+        },
+        {
+          "method": "Real_browser_exit_zero_requires_a_fresh_nonempty_pdf",
+          "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+        },
+        {
+          "method": "Browser_nonzero_exit_cannot_reuse_a_stale_pdf",
+          "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+        }
+      ],
+      "prerequisites": [],
+      "id": "pdf.linux",
+      "platforms": [
+        "linux"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfCommandTests.cs",
+        "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRendererTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "method": "Invalid_requests_never_invoke_a_browser_or_claim_a_pdf",
+          "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfCommandTests",
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+        },
+        {
+          "method": "Invalid_manifest_is_rejected_without_creating_output",
+          "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfCommandTests",
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+        },
+        {
+          "method": "Valid_manifest_with_missing_browser_reports_failure_without_pdf",
+          "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfCommandTests",
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+        },
+        {
+          "method": "Markdig_renders_a_gfm_table_fenced_code_and_task_list",
+          "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+        },
+        {
+          "method": "ToHtml_wraps_each_document_as_a_section_with_its_path_as_h1",
+          "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+        },
+        {
+          "method": "Cover_and_document_paths_are_html_escaped_without_losing_unicode",
+          "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+        },
+        {
+          "method": "BuildArguments_match_the_headless_print_to_pdf_contract",
+          "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+        },
+        {
+          "method": "A_missing_browser_returns_failure_and_does_not_throw",
+          "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+        },
+        {
+          "method": "A_timeout_returns_failure_and_does_not_throw",
+          "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+        },
+        {
+          "method": "A_real_browser_timeout_stops_its_child_process",
+          "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+        },
+        {
+          "method": "Caller_cancellation_stops_the_real_browser_process_tree",
+          "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+        }
+      ],
+      "prerequisites": [],
+      "id": "pdf.portable",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "manual",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [
+        "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRealBrowserTests.cs"
+      ],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "method": "Four_documents_produce_readable_combined_pdf",
+          "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRealBrowserTests",
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+        }
+      ],
+      "prerequisites": [],
+      "id": "pdf.browser-linux",
+      "platforms": [
+        "linux"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": true,
+        "docker": true
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "script": "scripts/test-client.ps1"
+        }
+      ],
+      "prerequisites": [
+        "client-build"
+      ],
+      "id": "client",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    },
+    {
+      "categories": [],
+      "eligibility": "unclassified",
+      "dependsOn": [],
+      "remainderProjects": [],
+      "sourceInputs": [],
+      "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
+      "owner": "CARD-1313",
+      "members": [
+        {
+          "script": "scripts/test-apphost-graceful-stop.ps1"
+        },
+        {
+          "script": "scripts/test-apphost-lock-age.ps1"
+        },
+        {
+          "script": "scripts/test-apphost-main-worktree-guard.ps1"
+        },
+        {
+          "script": "scripts/test-apphost-probe-class.ps1"
+        },
+        {
+          "script": "scripts/test-cleanup-claude-sessions.ps1"
+        },
+        {
+          "script": "scripts/test-cleanup-codex-test-residue.ps1"
+        },
+        {
+          "script": "scripts/test-client.ps1"
+        },
+        {
+          "script": "scripts/test-client-mode.ps1"
+        },
+        {
+          "script": "scripts/test-deploy-am-service.ps1"
+        },
+        {
+          "script": "scripts/test-deploy-nightly-watchdog.ps1"
+        },
+        {
+          "script": "scripts/test-duration-tripwire.ps1"
+        },
+        {
+          "script": "scripts/test-hooks.ps1"
+        },
+        {
+          "script": "scripts/test-nightly-report.ps1"
+        },
+        {
+          "script": "scripts/test-reap-zombie-agents.ps1"
+        },
+        {
+          "script": "scripts/test-stage-value-report.ps1"
+        }
+      ],
+      "prerequisites": [],
+      "id": "scripts",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "interaction": "none",
+        "desktopUi": false,
+        "broker": false,
+        "api": "none",
+        "nativePty": false,
+        "vendorExecutable": "none",
+        "postgres": false,
+        "browser": false,
+        "docker": false
+      }
+    }
+  ],
+  "edges": [
+    {
+      "kind": "linked-compile",
+      "path": "tests/Antiphon.Messaging.Tests/FakeSlack/FakeSlackServer.cs",
+      "sets": [
+        "messaging.remainder",
+        "e2e.remainder",
+        "main.remainder"
+      ],
+      "id": "linked-slack"
+    },
+    {
+      "kind": "staged-child",
+      "path": "tests/Antiphon.Checkpoints.FilterHost/FilterHostTests.cs",
+      "sets": [
+        "main.remainder"
+      ],
+      "id": "staged-filter-host"
+    },
+    {
+      "kind": "imported-helper",
+      "path": "scripts/lib/nightly-common.ps1",
+      "sets": [
+        "scripts",
+        "main.remainder"
+      ],
+      "id": "helper-nightly"
+    },
+    {
+      "kind": "runtime-bundle",
+      "path": "client/dist/index.html",
+      "sets": [
+        "e2e.browser",
+        "e2e.api",
+        "e2e.remainder"
+      ],
+      "id": "bundle-client"
+    }
+  ],
+  "catalogHash": "543d091fd625c25d4caf10cdbf6f4e6017696840c4e1722256a0d8d33c87024a",
+  "prerequisites": [
+    {
+      "reason": "Stage owned native test children from the candidate build.",
+      "dependsOn": [],
+      "id": "native-child"
+    },
+    {
+      "reason": "Build candidate client/dist.",
+      "dependsOn": [],
+      "id": "client-build"
+    },
+    {
+      "reason": "Install pinned Playwright browser.",
+      "dependsOn": [
+        "client-build",
+        "app-db"
+      ],
+      "id": "browser"
+    },
+    {
+      "reason": "Disposable PostgreSQL and isolated application/runner fixture.",
+      "dependsOn": [],
+      "id": "app-db"
+    },
+    {
+      "reason": "Disposable broker; never the live messaging broker.",
+      "dependsOn": [],
+      "id": "broker"
+    }
+  ],
+  "schemaVersion": 1
+}

@@ -202,7 +202,7 @@ function ConvertFrom-ReleaseAuthorityPolicyBytes {
     try { $obj = $text | ConvertFrom-Json } catch { throw 'policy-unparseable' }
     if ($null -eq $obj) { throw 'policy-unparseable' }
     $version = $obj.schemaVersion
-    if ($null -eq $version -or ($version -isnot [int] -and $version -isnot [long]) -or [int]$version -ne 2) { throw 'policy-schema-unsupported' }
+    if ($null -eq $version -or ($version -isnot [int] -and $version -isnot [long]) -or [int]$version -notin @(2, 3)) { throw 'policy-schema-unsupported' }
     $computed = Get-NightlyPolicyHash -Object $obj
     $stated = [string]$obj.policyHash
     if ([string]::IsNullOrWhiteSpace($stated) -or -not [string]::Equals($stated, $computed, [StringComparison]::OrdinalIgnoreCase)) {
@@ -210,8 +210,13 @@ function ConvertFrom-ReleaseAuthorityPolicyBytes {
     }
     try { $profile = Get-NightlyPolicyProfile -PolicyObject $obj -Profile 'rc' } catch { throw 'policy-rc-profile-missing' }
     $suites = @($profile.RequiredSuites | ForEach-Object { [string]$_ })
-    $missing = @($script:ReleaseAuthorityRcSuites | Where-Object { $suites -notcontains $_ })
-    $unknown = @($suites | Where-Object { $script:ReleaseAuthorityRcSuites -notcontains $_ })
+    $required = @($script:ReleaseAuthorityRcSuites)
+    if ([int]$version -eq 3) {
+        $required += 'markdown-pdf'
+        Test-NightlyProjectDispositions -PolicyObject $obj
+    }
+    $missing = @($required | Where-Object { $suites -notcontains $_ })
+    $unknown = @($suites | Where-Object { $required -notcontains $_ })
     if ($missing.Count -gt 0) { throw ('policy-rc-suite-missing:' + ($missing -join '+')) }
     if ($unknown.Count -gt 0) { throw ('policy-rc-suite-unknown:' + ($unknown -join '+')) }
     $map = Get-NightlySuiteMap -PolicyObject $obj

@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using Antiphon.Agents.Pty;
@@ -21,8 +22,6 @@ namespace Antiphon.Agents.Pty.Tests;
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Pty")]
-[Category("Headed")]
-[Category("OptIn")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class ClaudeVerifiedDeliveryTests
 {
@@ -34,12 +33,65 @@ public class ClaudeVerifiedDeliveryTests
         Path.Combine(AppContext.BaseDirectory, "fakeclaude", "fakeclaude.exe");
 
     [Test]
-    [Arguments("fakeclaude", "short")]
-    [Arguments("claude", "short")]
-    [Arguments("claude", "hugeLine")]
-    [Arguments("claude", "multiLine")]
-    [Arguments("claude", "batch")] // risk row 7: a batched body (context/current markers) verifies on the real composer
-    public async Task Evidence_appears_then_submit_completes_a_turn(string backend, string shape)
+    public Task Fake_evidence_appears_then_submit_completes_a_turn() =>
+        VerifyDeliveryAsync("fakeclaude", "short");
+
+    [Test]
+    [Category("Headed")]
+    [Category("OptIn")]
+    [Arguments("short")]
+    [Arguments("hugeLine")]
+    [Arguments("multiLine")]
+    [Arguments("batch")]
+    public Task Real_evidence_appears_then_submit_completes_a_turn(string shape) =>
+        VerifyDeliveryAsync("claude", shape);
+
+    [Test]
+    [Category("Unit")]
+    public async Task C1313_DeliveryDiscovery()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c1313-delivery-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo("dotnet")
+            {
+                UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+                WorkingDirectory = root,
+            },
+        };
+        foreach (var argument in new[] { typeof(ClaudeVerifiedDeliveryTests).Assembly.Location,
+            "--list-tests", "--no-progress", "--no-ansi", "--diagnostic", "--diagnostic-output-directory", root,
+            "--results-directory", root, "--treenode-filter", "/*/*/ClaudeVerifiedDeliveryTests/*" })
+            process.StartInfo.ArgumentList.Add(argument);
+        var started = false;
+        try
+        {
+            started = process.Start();
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            process.ExitCode.ShouldBe(0, await stdout + await stderr);
+            var text = string.Join("\n", Directory.GetFiles(root, "*.log").Select(File.ReadAllText));
+            var records = Regex.Matches(text, @"(?m)^.*TestNodeUid \{ Value = (?<uid>[^}]+) \}.*DiscoveredTestNodeStateProperty.*$");
+            var delivery = records.Cast<Match>().Where(m =>
+                m.Value.Contains("MethodName = Fake_evidence_appears_then_submit_completes_a_turn") ||
+                m.Value.Contains("MethodName = Real_evidence_appears_then_submit_completes_a_turn")).ToArray();
+            delivery.Length.ShouldBe(5, "five expanded delivery UIDs must survive the split");
+            delivery.Select(m => m.Groups["uid"].Value).Distinct().Count().ShouldBe(5);
+            delivery.Count(m => m.Value.Contains("MethodName = Fake_")).ShouldBe(1);
+            delivery.Count(m => m.Value.Contains("MethodName = Real_")).ShouldBe(4);
+            foreach (var shape in new[] { "short", "hugeLine", "multiLine", "batch" })
+                delivery.ShouldContain(m => m.Value.Contains(shape));
+        }
+        finally
+        {
+            if (started && !process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private async Task VerifyDeliveryAsync(string backend, string shape)
     {
         await using var runner = await LaunchReadyAsync(backend);
         var body = BodyFor(backend, shape);
