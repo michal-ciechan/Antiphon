@@ -87,3 +87,27 @@ CP-9/10/11 results belong in the stored report after source is frozen.
 Zero authored PC rows; SourceLanding Mutation owns missing-control discovery after
 ordinary Review and caller landing. Restart: none. D-7/D-12 remain outside this task.
 
+## Final attempt: incomplete within the 60-minute budget
+
+Tested source b007524bf94bf84894a8d4b94e1cb227c5d29372. CP-6 executed exactly the
+four intended TRX TestMethod identities: pipeline, backlog, and home passed; delegated
+board/drawer failed at the first list snapshot (3 passed, 1 failed, 0 skipped).
+The API returned runnerId `desktop` for seeded tasks while agent-tasks.json expects
+null. This was newly exposed after stale fields were added; the drawer and later
+recorded-base assertions remain unverified. Do not claim D-10 repaired. The next Code
+slice should make the scenario's runner assignment deterministic, then rerun the exact
+delegated method and affected consumers without weakening equality or changing product.
+
+V-1 PASS, V-2 PASS, V-3 FAIL/incomplete, V-4 PASS. R-1 reader inventory complete,
+but its four-case execution remains red. R-2 PASS: 86 tests in six files. R-3 PASS:
+frontend and Storybook builds. No whole Unit lane, as explicitly excluded by CARD-1287.
+CP-6 slot=granted waited=45s. CP-9/10/11 slot=granted waited=135s/135s/105s.
+Client receipts validate at the tested SHA. CP-6 receipt has sourceState=clean and
+buildSource=verified, but validator correctly rejects it with reason=row_failed;
+this is not a green eligible receipt. Raw receipts and CHECKPOINT lines remain ignored
+under .antiphon/task-98df1e5f and .antiphon/checkpoints/20261016-015221-ed45.
+
+No task-owned Antiphon/dotnet/node child processes remained after final execution.
+Dependencies are restored to client/node_modules; owned alternate outputs are retained
+under the ignored task evidence root after the recursive cleanup approval rejection.
+No further verification was started because the allotted 60 minutes expired. Next: Code.
