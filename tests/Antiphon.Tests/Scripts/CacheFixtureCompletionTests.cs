@@ -39,6 +39,18 @@ public sealed class CacheFixtureCompletionTests
         Run("c913-seed-contract.sh", "inventory-running", "PASS inventory-running-complete");
 
     [Test]
+    public void Seed_metadata_pipeline_failure_is_refused() =>
+        Run("c913-seed-contract.sh", "seed-metadata", "PASS seed-metadata-complete");
+
+    [Test]
+    public void Seed_helper_removal_failure_is_refused() =>
+        Run("c913-seed-contract.sh", "seed-helper-removal", "PASS seed-helper-removal-complete");
+
+    [Test]
+    public void Retention_failed_volume_inspect_is_not_absence() =>
+        Run("c1192-workspace-contract.sh", "retention-inspect", "PASS retention-inspect-refused");
+
+    [Test]
     public async Task Bridge_retains_diagnostics_and_refuses_failed_transport()
     {
         var start = new ProcessStartInfo("pwsh")

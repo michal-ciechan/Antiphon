@@ -685,6 +685,11 @@ docker_volume() {
                 esac
             done
             local dir="$C1192_ROOT/volumes/$name"
+            # Daemon loss is not the missing-volume response. F-7 must not treat it as absence.
+            if [ "${RETENTION_INSPECT_FAULT:-}" = temp-private ] && [[ "$name" == "c849${RUN}temp_"* ]]; then
+                printf 'Cannot connect to the Docker daemon\n' >&2
+                return 1
+            fi
             [ -d "$dir" ] || { printf 'Error response from daemon: No such volume: %s\n' "$name" >&2; return 1; }
             if [ "$mode" = acquisition-probe ] && [ "$name" = "$ACQUIRE_NAME" ]; then
                 if [ "$ACQUIRE_OUTCOME" = daemon ]; then
@@ -2822,6 +2827,30 @@ mode_compose_absence() {
     refuse_unexpected
 }
 
+mode_retention_inspect() {
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    : > "$C1192_ROOT/compose-actions"
+    C849_PACKAGES="c849${RUN}smoke-packages"; C849_SCRATCH="c849${RUN}smoke-scratch"; C849_NPM="c849${RUN}npmcache-npm"
+    local volume code=0 out
+    for volume in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        plant_volume "$volume" local null server2-runner "$RUN" cache
+        chmod 700 "$C1192_ROOT/volumes/$volume/data"
+    done
+    RETENTION_INSPECT_FAULT=temp-private
+    out=$(c849_fixture_retention 2>&1) || code=$?
+    if [ "$code" != 2 ] || ! printf '%s\n' "$out" | grep -Fxq 'DIAGNOSIS=FixtureVolumeInspectFailed'; then
+        fail "retention-inspect code=$code $out"
+    fi
+    if [ -f "$CASE_DIR/fixture-groups.txt" ] && grep -Fxq 'PASS F-7' "$CASE_DIR/fixture-groups.txt"; then
+        fail retention-inspect-published-success
+    fi
+    if printf '%s\n' "$out" | grep -Fxq 'DIAGNOSIS=FixtureTempPrivateVolumeRetained'; then
+        fail retention-inspect-absence-token
+    fi
+    printf 'PASS retention-inspect-refused\n'
+}
+
 mode_retention() {
     reset_runtime
     : > "$C1192_ROOT/scenario.err"
@@ -3792,6 +3821,7 @@ case "$mode" in
     finalization) mode_finalization ;;
     evidence) mode_evidence ;;
     retention) mode_retention ;;
+    retention-inspect) mode_retention_inspect ;;
     apphost) mode_apphost ;;
     writable-pruning) mode_writable_pruning ;;
     register) mode_register ;;
