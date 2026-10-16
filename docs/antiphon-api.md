@@ -1026,6 +1026,13 @@ Correction **409** codes from `ReviewEvidenceCorrectionService` and `CheckpointR
 Invalid selection path/commit/section shape is **422 `verification_selection_invalid`**.
 Corrected evidence remains dependent on the retained bundle under `CheckpointReceipts:StorageRoot`:
 replay and land re-hash it and can refuse with `review_evidence_correction_retained_evidence_unavailable`.
+For land this is **409**, with a detail naming the retained bundle digest and absolute inventory
+path when its inventory or any referenced blob is missing, unreadable, or changed (CARD-1303 R12).
+Restore the original bundle at that path, ensure the validating server can read the
+`CheckpointReceipts:StorageRoot` mount, then retry land. If the exact retained bytes cannot be
+restored, commission a new Review of the exact source and use its evidence. Refusal preserves
+the correction/history and creates no landing request or queue entry; unverifiable evidence
+never approves landing.
 Preserve that bundle and make it available to the validating server; the correction ID alone is not proof.
 
 ### Schedules
