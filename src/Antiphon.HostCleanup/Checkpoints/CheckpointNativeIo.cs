@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.Win32.SafeHandles;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Runtime.Versioning;
 
 namespace Antiphon.HostCleanup.Checkpoints;
 
@@ -98,6 +99,7 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
         return success ? 0 : Marshal.GetLastPInvokeError();
     }
 
+    [SupportedOSPlatform("windows")]
     private static int CreatePrivateWindowsDirectory(string path)
     {
         using var current = WindowsIdentity.GetCurrent();
@@ -145,6 +147,7 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
         { return new("unknown", 0, 0, 0, 0, 0); }
     }
 
+    [SupportedOSPlatform("windows")]
     private static CheckpointStat WindowsStat(string path)
     {
         try
