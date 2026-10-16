@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
+using System.Security.AccessControl;
+using System.Security.Principal;
 
 namespace Antiphon.HostCleanup.Checkpoints;
 
@@ -72,7 +74,7 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
         : "windows-local";
     public CheckpointPlatform Platform => OperatingSystem.IsLinux() ? CheckpointPlatform.Linux
         : OperatingSystem.IsWindows() ? CheckpointPlatform.Windows : CheckpointPlatform.Other;
-    public uint Owner => OperatingSystem.IsLinux() ? GetEuid() : uint.MaxValue;
+    public uint Owner => OperatingSystem.IsLinux() ? GetEuid() : OperatingSystem.IsWindows() ? 1u : uint.MaxValue;
     public bool FileExists(string path) => File.Exists(path);
     public bool DirectoryExists(string path) => Directory.Exists(path);
     public FileAttributes Attributes(string path) => File.GetAttributes(path);
@@ -91,12 +93,30 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
 
     public int CreateExclusiveDirectory(string path)
     {
-        var success = OperatingSystem.IsWindows() ? MakeWindows(path, IntPtr.Zero) : MakeUnix(path, 448) == 0;
+        if (OperatingSystem.IsWindows()) return CreatePrivateWindowsDirectory(path);
+        var success = MakeUnix(path, 448) == 0;
         return success ? 0 : Marshal.GetLastPInvokeError();
+    }
+
+    private static int CreatePrivateWindowsDirectory(string path)
+    {
+        using var current = WindowsIdentity.GetCurrent();
+        var sid = current.User?.Value ?? throw new IOException("current owner unavailable");
+        // Protected DACL; child files/directories inherit only this owner's full control.
+        if (!ConvertSecurityDescriptor($"O:{sid}D:P(A;OICI;FA;;;{sid})", 1, out var descriptor, out _))
+            return Marshal.GetLastPInvokeError();
+        try
+        {
+            var security = new SecurityAttributes { Length = Marshal.SizeOf<SecurityAttributes>(), Descriptor = descriptor };
+            var success = MakePrivateWindows(path, ref security);
+            return success ? 0 : Marshal.GetLastPInvokeError();
+        }
+        finally { LocalFree(descriptor); }
     }
 
     public CheckpointStat Stat(string path, bool portable = false)
     {
+        if (!portable && OperatingSystem.IsWindows()) return WindowsStat(path);
         if (!portable && OperatingSystem.IsLinux())
         {
             try
@@ -124,6 +144,39 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         { return new("unknown", 0, 0, 0, 0, 0); }
     }
+
+    private static CheckpointStat WindowsStat(string path)
+    {
+        try
+        {
+            // READ_ATTRIBUTES, OPEN_REPARSE_POINT and BACKUP_SEMANTICS: inspect the entry,
+            // including directories, without following a reparse target.
+            using var handle = CreateFile(path, 0x80, 7, IntPtr.Zero, 3, 0x00200000 | 0x02000000, IntPtr.Zero);
+            if (handle.IsInvalid) return new(Marshal.GetLastPInvokeError() is 2 or 3 ? "absent" : "unknown", 0, 0, 0, 0, 0);
+            if (!GetFileInformationByHandle(handle, out var info)
+                || !GetFileInformationByHandleEx(handle, 0, out var basic, (uint)Marshal.SizeOf<WindowsBasicInfo>()))
+                return new("unknown", 0, 0, 0, 0, 0);
+            if ((info.Attributes & 0x400) != 0) return new("symlink", 0, 0, 0, 0, 0);
+            if (GetFileType(handle) != 1) return new("other", 0, 0, 0, 0, 0);
+            var directory = (info.Attributes & 0x10) != 0;
+            FileSystemSecurity security = directory
+                ? new DirectoryInfo(path).GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access)
+                : new FileInfo(path).GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access);
+            using var current = WindowsIdentity.GetCurrent();
+            var owner = security.GetOwner(typeof(SecurityIdentifier));
+            var owned = current.User is not null && current.User.Equals(owner);
+            var privateAcl = !security.GetAccessRules(true, true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>()
+                .Any(rule => rule.AccessControlType == AccessControlType.Allow && !rule.IdentityReference.Equals(current.User));
+            var mode = (ushort)((directory ? 0x41C0 : 0x8180) | (privateAcl ? 0 : 0x3F));
+            return new(directory ? "directory" : "file", info.Volume,
+                ((ulong)info.IndexHigh << 32) | info.IndexLow, directory ? 0 : (long)(((ulong)info.SizeHigh << 32) | info.SizeLow),
+                UnixNanoseconds(basic.Write), UnixNanoseconds(basic.Change), mode, info.Links, owned ? 1u : 0u);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        { return new("unknown", 0, 0, 0, 0, 0); }
+    }
+
+    private static long UnixNanoseconds(long fileTime) => (DateTime.FromFileTimeUtc(fileTime).Ticks - DateTime.UnixEpoch.Ticks) * 100;
 
     public ICheckpointReadHandle OpenRead(string path, CheckpointReadOpen request)
     {
@@ -194,12 +247,29 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
         public System.Runtime.InteropServices.ComTypes.FILETIME Creation, Access, Write;
         public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
     }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowsBasicInfo
+    {
+        public long Creation, Access, Write, Change;
+        public uint Attributes;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SecurityAttributes
+    {
+        public int Length;
+        public IntPtr Descriptor;
+        public int InheritHandle;
+    }
     [DllImport("libc", EntryPoint = "statx", SetLastError = true)] private static extern int Statx(int fd, string path, int flags, uint mask, out LinuxStatx stat);
     [DllImport("libc", EntryPoint = "geteuid")] private static extern uint GetEuid();
     [DllImport("libc", EntryPoint = "mkdir", SetLastError = true)] private static extern int MakeUnix(string path, uint mode);
     [DllImport("libc", EntryPoint = "open", SetLastError = true)] private static extern int OpenNative(string path, int flags);
     [DllImport("libc", EntryPoint = "readlink", SetLastError = true)] private static extern nint ReadLink(string path, byte[] buffer, nuint size);
     [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool MakeWindows(string path, IntPtr security);
+    [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool MakePrivateWindows(string path, ref SecurityAttributes security);
+    [DllImport("advapi32.dll", EntryPoint = "ConvertStringSecurityDescriptorToSecurityDescriptorW", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ConvertSecurityDescriptor(string descriptor, uint revision, out IntPtr security, out uint size);
+    [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr memory);
+    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int kind, out WindowsBasicInfo info, uint size);
     [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)] private static extern SafeFileHandle CreateFile(string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out WindowsInfo info);
     [DllImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", CharSet = CharSet.Unicode, SetLastError = true)] private static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder path, uint capacity, uint flags);

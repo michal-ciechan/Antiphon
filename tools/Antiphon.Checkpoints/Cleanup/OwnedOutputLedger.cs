@@ -24,6 +24,7 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
         {
             if (!Io.FileExists(Path.Combine(root, ".checkpoint-output-owner.json"))) return "output-owner-missing";
             var entries = Inventory(root);
+            var firstSeal = context.Registry.BeginSeal(root);
             // CARD-1242: adopt only entries inside the custody window of this process's fresh root
             // and the driver-observed build exit, with size and hash taken now (OutputCustody holds
             // the threat model). Later additions, changes and links still refuse; a root this
@@ -31,7 +32,10 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
             var window = SafeWrite.WasCreated(root) ? OutputCustody.For(context, root, buildExited) : null;
             if (window is not null)
                 foreach (var relative in entries.Keys)
+                {
+                    if (firstSeal) new CoverageMappingCustody(context).Seal(Path.Combine(root, relative), window);
                     SafeWrite.AdoptCreated(Path.Combine(root, relative), window);
+                }
             return SafeWrite.Text(Path.Combine(root, Ledger), JsonSerializer.Serialize(entries), SafeWrite.Under(root));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
@@ -48,7 +52,7 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
             if (!SafeWrite.WasCreated(root)) return "output-memory-authority-missing; left in place: " + root + "; remove it manually";
             var actual = Inventory(root);
             foreach (var path in actual.Keys.Append(Ledger))
-                if (!SafeWrite.MatchesCreation(Path.Combine(root, path)))
+                if (!Matches(Path.Combine(root, path)))
                     return "output-ledger-mismatch; left in place: " + Path.Combine(root, path);
             return null;
         }
@@ -66,7 +70,7 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
             {
                 var full = Path.Combine(root, relative);
                 var linked = SafeWrite.Preflight(root, [full]);
-                if (linked is not null || !SafeWrite.MatchesCreation(full)) return "left in place: " + full;
+                if (linked is not null || !Matches(full)) return "left in place: " + full;
                 Io.Unlink(full);
             }
             foreach (var relative in entries.Where(path => Io.DirectoryExists(Path.Combine(root, path))))
@@ -78,6 +82,9 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
             Io.RemoveDirectory(root, recursive: false);
             return null;
     }
+
+    private bool Matches(string path) => context.Registry.MappingSeal(path) is not null
+        ? new CoverageMappingCustody(context).Matches(path) : SafeWrite.MatchesCreation(path);
 
     private Dictionary<string, string> Inventory(string root)
     {

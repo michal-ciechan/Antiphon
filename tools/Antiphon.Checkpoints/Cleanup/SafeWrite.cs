@@ -85,7 +85,16 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
     public const string Marker = "antiphon-checkpoints";
 
     // The context owns append-only creation records; disk ledgers never populate them.
-    private void RecordContent(string path) => context.Registry.RecordContent(path, Describe(path));
+    private void RecordContent(string path)
+    {
+        var before = Io.Stat(path);
+        var content = Describe(path);
+        if (before == Io.Stat(path))
+        {
+            context.Registry.RecordContent(path, content);
+            context.Registry.RecordIdentity(path, before);
+        }
+    }
     private string Describe(string path)
     {
         if (Io.DirectoryExists(path)) return "directory";
@@ -100,10 +109,15 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         try
         {
+            var identity = Io.Stat(full);
             var before = OutputCustody.Stat(context, full);
             if (before is null || OutputCustody.Refusal(before.Value, window) is not null) return;
             var record = Describe(full);
-            if (OutputCustody.Stat(context, full) == before) context.Registry.RecordContent(full, record);
+            if (OutputCustody.Stat(context, full) == before && Io.Stat(full) == identity)
+            {
+                context.Registry.RecordContent(full, record);
+                context.Registry.RecordIdentity(full, identity);
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
@@ -112,6 +126,11 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
     public bool MatchesCreation(string path)
     {
         if (context.Registry.Content(path) is not { } recorded) return false;
+        if (context.Registry.Identity(path) is { Inode: not 0 } identity)
+        {
+            var current = Io.Stat(path);
+            if (current.Device != identity.Device || current.Inode != identity.Inode || current.Kind != identity.Kind) return false;
+        }
         if (Io.DirectoryExists(path)) return recorded == "directory";
         var bytes = ReceiptFile.ReadBytes(context, path);
         return recorded == bytes.LongLength + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));

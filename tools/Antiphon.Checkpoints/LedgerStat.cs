@@ -26,7 +26,8 @@ public readonly record struct LedgerStat(string Kind, ulong Device, ulong Inode,
     public static long Now(CheckpointCleanupContext context) => (context.Time.GetUtcNow().UtcTicks - DateTime.UnixEpoch.Ticks) * 100;
 
     public static LedgerStat Of(string full) => Of(CheckpointCleanupDefaults.Context, full);
-    public static LedgerStat Of(CheckpointCleanupContext context, string full) => From(context.Io.Stat(full));
+    public static LedgerStat Of(CheckpointCleanupContext context, string full) =>
+        From(context.Io.Stat(full, portable: context.Io.Platform != CheckpointPlatform.Linux));
     public static LedgerStat Portable(string full) => From(CheckpointCleanupDefaults.Context.Io.Stat(full, portable: true));
     private static LedgerStat From(CheckpointStat stat) => new(stat.Kind, stat.Device, stat.Inode, stat.Size, stat.Modified, stat.Changed);
 }
