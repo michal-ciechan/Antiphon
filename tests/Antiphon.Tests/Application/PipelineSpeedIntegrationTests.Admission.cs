@@ -218,6 +218,154 @@ public sealed partial class PipelineSpeedIntegrationTests
         string.Join(",", locks.Order).ShouldBe("card,action,host,concurrency", "admission lock order");
     }
 
+    [Test]
+    public async Task C1303_R4_ConcurrentCodeCreatesSurviveTransitionSweep()
+    {
+        var pause = new AdmissionPreReadPause();
+        await using var w = await C544World.CreateAsync(pause, delegation: settings =>
+        {
+            settings.MaxOpenTasks = 20;
+            settings.RolePolicy["Code"].RecommendedInFlight = 8;
+        });
+        var evidenceAt = await SeedSweepEvidenceAsync(w);
+        var first = ObserveAsync(CreateAsync(w, ChildRequest(w)));
+        var second = ObserveAsync(CreateAsync(w, ChildRequest(w)));
+        Exception? setup = null;
+        try
+        {
+            try { await pause.BothPreReads.Task.WaitAsync(Guard); }
+            catch (TimeoutException ex)
+            {
+                throw new TimeoutException(
+                    "admission pre-read not reached; card SQL: " + pause.Describe(), ex);
+            }
+            (await SweepAsync(w)).ShouldBe(1, "the transition sweep moves the card while both creates hold the pre-read");
+            await using var moved = w.CreateContext();
+            var card = await moved.Cards.SingleAsync(c => c.Id == w.Card.Id);
+            card.Status.ShouldBe(CardStatus.InProgress);
+            (await moved.CardRevisions.Where(r => r.CardId == w.Card.Id && r.Kind == CardRevisionKind.Move)
+                .OrderByDescending(r => r.RevisionNumber).FirstAsync()).EditedBy.ShouldBe(CardService.TransitionActor);
+            evidenceAt.ShouldBeGreaterThan(card.CreatedAt);
+        }
+        catch (Exception error) { setup = error; }
+        finally { pause.Release.TrySetResult(); }
+        var results = await AwaitPairAsync(first, second);
+        if (setup is not null) throw setup;
+
+        pause.BothPreReads.Task.IsCompleted.ShouldBeTrue(
+            "both creates reach the admission pre-read; card SQL: " + pause.Describe());
+        foreach (var result in new[] { results.Item1, results.Item2 })
+        {
+            result.Error.ShouldBeNull(
+                "an open-column sweep move is not card_admission_changed: "
+                + (result.Error is ConflictException conflict
+                    ? conflict.Code + " " + conflict.Message
+                    : result.Error?.GetBaseException().Message));
+            result.Created!.CardId.ShouldBe(w.Card.Id);
+        }
+        results.Item1.Created!.Id.ShouldNotBe(results.Item2.Created!.Id);
+        (await w.TaskCountAsync()).ShouldBe(3, "sweep evidence plus both Code creates");
+    }
+
+    private static async Task<DateTime> SeedSweepEvidenceAsync(C544World w)
+    {
+        await using var db = w.CreateContext();
+        var card = await db.Cards.SingleAsync(c => c.Id == w.Card.Id);
+        var now = card.UpdatedAt;
+        db.BoardColumns.Add(new BoardColumn
+        {
+            Id = Guid.NewGuid(), BoardId = w.Board.Id, StateKey = "in-progress", Name = "In Progress",
+            ColumnOrder = 1, CardStatus = CardStatus.InProgress, IsActive = true,
+            CreatedAt = now, UpdatedAt = now,
+        });
+        var id = Guid.NewGuid();
+        var dispatchedAt = now.AddSeconds(1);
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = id, RootTaskId = id, Title = "Sibling dispatch", Goal = "Move the card.",
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Custom, AgentKind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.High, Status = AgentTaskStatus.Dispatched,
+            CardId = w.Card.Id, ProjectId = w.Project.Id, WorkingDirectory = w.RepositoryPath,
+            DispatchedAt = dispatchedAt, CreatedAt = dispatchedAt,
+        });
+        await db.SaveChangesAsync();
+        return dispatchedAt;
+    }
+
+    private static async Task<int> SweepAsync(C544World w)
+    {
+        await using var db = w.CreateContext();
+        await using var scope = w.Services.CreateAsyncScope();
+        var services = scope.ServiceProvider;
+        var cards = new CardService(
+            db,
+            services.GetRequiredService<AgentRegistry>(),
+            null!,
+            services.GetRequiredService<AgentSessionLaunchQueue>(),
+            services.GetRequiredService<IEventBus>(),
+            w.Clock,
+            services.GetRequiredService<AgentReviewCheckpointService>());
+        var sweep = new CardWorkTransitionService(
+            db, cards, Options.Create(new CardWorkTransitionSettings { Enabled = true }),
+            NullLogger<CardWorkTransitionService>.Instance);
+        return await sweep.ScanAsync(CancellationToken.None);
+    }
+
+    private static async Task<CreateResult> ObserveAsync(Task<AgentTaskCreatedDto> create)
+    {
+        try { return new CreateResult(await create, null); }
+        catch (Exception error) { return new CreateResult(null, error); }
+    }
+
+    private static async Task<(CreateResult, CreateResult)> AwaitPairAsync(Task<CreateResult> first, Task<CreateResult> second)
+    {
+        var pair = await Task.WhenAll(first, second).WaitAsync(Guard);
+        return (pair[0], pair[1]);
+    }
+
+    private sealed record CreateResult(AgentTaskCreatedDto? Created, Exception? Error);
+
+    private sealed class AdmissionPreReadPause : DbCommandInterceptor
+    {
+        private int _preReads;
+        public TaskCompletionSource BothPreReads { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly List<string> _seen = [];
+
+        public string Describe()
+        {
+            lock (_seen) return _seen.Count == 0 ? "(none)" : string.Join(" || ", _seen);
+        }
+
+        public override async ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command,
+            CommandExecutedEventData data, DbDataReader result, CancellationToken ct = default)
+        {
+            var sql = command.CommandText;
+            if (sql.Contains("\"Cards\"", StringComparison.Ordinal))
+            {
+                lock (_seen)
+                {
+                    if (_seen.Count < 6) _seen.Add(sql.ReplaceLineEndings(" "));
+                }
+            }
+            if (!IsAdmissionProjection(sql)) return result;
+            var seen = Interlocked.Increment(ref _preReads);
+            if (seen <= 2)
+            {
+                if (seen == 2) BothPreReads.TrySetResult();
+                await Release.Task.WaitAsync(Guard, ct);
+            }
+            return result;
+        }
+
+        private static bool IsAdmissionProjection(string sql) =>
+            sql.Contains("\"CodeVerificationPolicy\"", StringComparison.Ordinal)
+            && sql.Contains("\"ReviewVerificationPolicy\"", StringComparison.Ordinal)
+            && sql.Contains("\"ActiveWorkflowRunId\"", StringComparison.Ordinal)
+            && !sql.Contains("FOR UPDATE", StringComparison.Ordinal)
+            && !sql.Contains("FOR NO KEY UPDATE", StringComparison.Ordinal);
+    }
+
     private sealed class AdmissionLocks : DbCommandInterceptor, IDbTransactionInterceptor
     {
         public List<string> Order { get; } = [];
