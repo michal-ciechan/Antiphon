@@ -166,7 +166,8 @@ function Test-C1313_PathIdentity_nul_paths {
     [void](Invoke-C1313Git $fx.Root @('update-index','--add','--cacheinfo',"120000,$blob,notes/link"));$paths+='notes/link'
     $tree=Invoke-C1313Git $fx.Root @('write-tree');$a=Invoke-C1313Git $fx.Root @('commit-tree',$tree,'-p',$fx.B,'-m','paths')
     $r=Get-C1313Selection $fx $a
-    Assert-C487 ((Same-C1313Set $r.changedPaths.path $paths) -and $r.mode -ceq 'full') 'C1313 ordinal-paths'
+    Assert-C487 ((Same-C1313Set $r.changedPaths.path $paths) -and $r.mode -ceq 'full') 'C1313 ordinal-paths' `
+        (@{expected=$paths;actual=$r.changedPaths.path;mode=$r.mode}|ConvertTo-Json -Depth 5 -Compress)
 }
 function Test-C1313_AuthorityChanges {
     $fx=New-C1313GitFixture;$bad=@()
