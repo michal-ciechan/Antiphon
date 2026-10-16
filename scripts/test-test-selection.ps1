@@ -92,6 +92,7 @@ function New-C1313PolicyCandidate($Fx,$Catalog){
 function Invoke-C1313Selection($Fx,$A,$B=$Fx.B){
     . "$PSScriptRoot/lib/checkpoint-process-runner.ps1"
     $start=[Diagnostics.ProcessStartInfo]::new('pwsh');$start.WorkingDirectory=$repoRoot
+    $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false,$true)
     foreach($a in @('-NoProfile','-File',"$PSScriptRoot/select-test-rosters.ps1",'-RepositoryRoot',$Fx.Root,'-BaselineSha',$B,'-CandidateSha',$A,'-Json')){$start.ArgumentList.Add($a)}
     $run=[Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start,60000,$false)
     $doc=$null;if($run.Exit -eq 0){$doc=$run.Stdout|ConvertFrom-Json -AsHashtable}

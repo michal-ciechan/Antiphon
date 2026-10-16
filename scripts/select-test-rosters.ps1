@@ -9,6 +9,8 @@ param(
     [switch]$Json
 )
 $ErrorActionPreference='Stop'
+# The JSON pipe is UTF-8 even when a Windows child has no console code page.
+if ($Json) { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) }
 try {
     . "$PSScriptRoot/lib/nightly-common.ps1"
     . "$PSScriptRoot/lib/nightly-policy.ps1"
