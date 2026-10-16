@@ -1187,37 +1187,44 @@
         {
           "method": "C1313_ProjectAndCatalogUniverse",
           "class": "Antiphon.Tests.Scripts.TestSelectionCatalogTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Scripts/TestSelectionCatalogTests.cs"
         },
         {
           "method": "C1313_CoreAndUnknownFallback",
           "class": "Antiphon.Tests.Scripts.TestSelectionTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Scripts/TestSelectionTests.cs"
         },
         {
           "method": "C1044_DiscoveryReconciliation",
           "class": "Antiphon.Tests.Scripts.NightlyDiscoveryParserTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Scripts/NightlyDiscoveryParserTests.cs"
         },
         {
           "method": "D13_ExecutionGuards",
           "class": "Antiphon.Tests.Scripts.NightlyExecutionDiagnosticTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Scripts/NightlyExecutionDiagnosticTests.cs"
         },
         {
           "method": "C599_ExpandedCoverage",
           "class": "Antiphon.Tests.Scripts.ReleaseGatePolicyTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Scripts/ReleaseGatePolicyTests.cs"
         },
         {
           "method": "Caps_concurrent_process_spawning_tests_at_one",
           "class": "Antiphon.Tests.ProcessSpawnLimitTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/ProcessSpawnLimitTests.cs"
         },
         {
           "method": "Process_spawning_classes_carry_the_limiter",
           "class": "Antiphon.Tests.ProcessSpawnLimitTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/ProcessSpawnLimitTests.cs"
         }
       ],
       "prerequisites": [],
@@ -1419,11 +1426,13 @@
       "members": [
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeGoldenReplayTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeGoldenReplayTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeEffortDismissalReplayTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeEffortDismissalReplayTests.cs"
         }
       ],
       "prerequisites": [],
@@ -1456,7 +1465,8 @@
       "members": [
         {
           "class": "Antiphon.Tests.Agents.CodexResponseAnalyzerTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Agents/CodexResponseAnalyzerTests.cs"
         }
       ],
       "prerequisites": [],
@@ -1490,11 +1500,13 @@
       "members": [
         {
           "class": "Antiphon.Tests.Agents.GrokSignInPromptDetectorTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Agents/GrokSignInPromptDetectorTests.cs"
         },
         {
           "class": "Antiphon.Tests.Agents.GrokTrustPromptDetectorTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Agents/GrokTrustPromptDetectorTests.cs"
         }
       ],
       "prerequisites": [],
@@ -1530,15 +1542,18 @@
         {
           "method": "Fake_evidence_appears_then_submit_completes_a_turn",
           "class": "Antiphon.Agents.Pty.Tests.ClaudeVerifiedDeliveryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeVerifiedDeliveryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeSubmitContractTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeDetectorsTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeDetectorsTests.cs"
         }
       ],
       "prerequisites": [
@@ -1573,7 +1588,8 @@
       "members": [
         {
           "class": "Antiphon.Tests.Agents.RunnerGrokAdapterReadyTestsPty",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Agents/RunnerGrokAdapterReadyTestsPty.cs"
         }
       ],
       "prerequisites": [
@@ -1608,7 +1624,8 @@
       "members": [
         {
           "class": "Antiphon.Tests.Agents.RunnerCodexAdapterReadyTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Agents/RunnerCodexAdapterReadyTests.cs"
         }
       ],
       "prerequisites": [
@@ -1644,11 +1661,13 @@
       "members": [
         {
           "class": "Antiphon.Tests.Agents.ClaudeRealCliStubProxyCanaryTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Agents/ClaudeRealCliStubProxyCanaryTests.cs"
         },
         {
           "class": "Antiphon.Tests.Agents.ClaudeHerdrRealCliStubProxyCanaryTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Agents/ClaudeHerdrRealCliStubProxyCanaryTests.cs"
         }
       ],
       "prerequisites": [
@@ -1706,83 +1725,103 @@
       "members": [
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeAppendSystemPromptCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeAppendSystemPromptCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeCompactionCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeCompactionCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeComposerCaptureProbeTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeComposerCaptureProbeTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeComposerRenderCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeComposerRenderCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeDangerousTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeDangerousTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeHeadedTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeHeadedTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeHookAdditionalContextCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeHookAdditionalContextCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeInputProbeCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeInputProbeCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeInteractionTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeInteractionTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeInterruptCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeInterruptCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeLocalCommandCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeLocalCommandCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeOverlayCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeOverlayCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudePasteLossCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudePasteLossCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlAtStartupCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlMenuCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlMenuCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeSignalCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeSignalCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeSubmitConfirmCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitConfirmCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeSubmitContractLiveTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractLiveTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeTrustPromptCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeTrustPromptCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeTuiModeTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeTuiModeTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeHeadedLongTests",
@@ -1791,37 +1830,44 @@
         {
           "method": "Real_evidence_appears_then_submit_completes_a_turn",
           "class": "Antiphon.Agents.Pty.Tests.ClaudeVerifiedDeliveryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeVerifiedDeliveryTests.cs"
         },
         {
           "method": "Real_effort_picker_preserves_xhigh_and_reaches_an_empty_composer",
           "class": "Antiphon.Tests.Agents.ClaudeEffortPromptCanaryTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Agents/ClaudeEffortPromptCanaryTests.cs"
         },
         {
           "method": "Claude_loads_parent_CLAUDE_md_from_a_nested_checkout",
           "class": "Antiphon.Agents.Pty.Tests.OrchestratorWorkspaceLayoutCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/OrchestratorWorkspaceLayoutCanaryTests.cs"
         },
         {
           "method": "Claude_sibling_import_is_dropped_without_the_forward_slash_approval",
           "class": "Antiphon.Agents.Pty.Tests.OrchestratorWorkspaceLayoutCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/OrchestratorWorkspaceLayoutCanaryTests.cs"
         },
         {
           "method": "Real_claude_by_conpty_backend",
           "class": "Antiphon.Agents.Pty.Tests.PtyPasteMarkerExperiments",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/PtyPasteMarkerExperiments.cs"
         },
         {
           "method": "Real_claude_controls_and_size_sweep",
           "class": "Antiphon.Agents.Pty.Tests.PtyPasteMarkerExperiments",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/PtyPasteMarkerExperiments.cs"
         },
         {
           "method": "Real_claude_delivery_envelope",
           "class": "Antiphon.Agents.Pty.Tests.PtyPasteMarkerExperiments",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/PtyPasteMarkerExperiments.cs"
         }
       ],
       "prerequisites": [
@@ -1882,7 +1928,8 @@
       "members": [
         {
           "class": "Antiphon.SessionRunner.Tests.ClaudeAuthProbeTests",
-          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+          "source": "tests/Antiphon.SessionRunner.Tests/ClaudeAuthProbeTests.cs"
         }
       ],
       "prerequisites": [],
@@ -1916,11 +1963,13 @@
       "members": [
         {
           "class": "Antiphon.Tests.Agents.CodexRealCliStubProxyCanaryTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Agents/CodexRealCliStubProxyCanaryTests.cs"
         },
         {
           "class": "Antiphon.Tests.Agents.CodexHerdrRealCliStubProxyCanaryTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Agents/CodexHerdrRealCliStubProxyCanaryTests.cs"
         }
       ],
       "prerequisites": [
@@ -1959,23 +2008,28 @@
       "members": [
         {
           "class": "Antiphon.Agents.Pty.Tests.CodexCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/CodexCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.CodexComposerCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/CodexComposerCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.CodexDoneDetectionCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/CodexDoneDetectionCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.CodexMcpBootProbeTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/CodexMcpBootProbeTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.CodexOverlayCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/CodexOverlayCanaryTests.cs"
         }
       ],
       "prerequisites": [
@@ -2011,7 +2065,8 @@
         {
           "method": "Codex_prompt_input_is_bounded_at_the_nested_checkout_git_root",
           "class": "Antiphon.Agents.Pty.Tests.OrchestratorWorkspaceLayoutCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/OrchestratorWorkspaceLayoutCanaryTests.cs"
         }
       ],
       "prerequisites": [],
@@ -2047,19 +2102,23 @@
       "members": [
         {
           "class": "Antiphon.SessionRunner.Tests.CodexAuthProbeTests",
-          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+          "source": "tests/Antiphon.SessionRunner.Tests/CodexAuthProbeTests.cs"
         },
         {
           "class": "Antiphon.SessionRunner.Tests.CodexTranscriptTailerTests",
-          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+          "source": "tests/Antiphon.SessionRunner.Tests/CodexTranscriptTailerTests.cs"
         },
         {
           "class": "Antiphon.SessionRunner.Tests.CodexTranscriptNormalizerTests",
-          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+          "source": "tests/Antiphon.SessionRunner.Tests/CodexTranscriptNormalizerTests.cs"
         },
         {
           "class": "Antiphon.Tests.Agents.RunnerCodexAdapterReadyTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Agents/RunnerCodexAdapterReadyTests.cs"
         }
       ],
       "prerequisites": [],
@@ -2093,11 +2152,13 @@
       "members": [
         {
           "class": "Antiphon.Tests.Agents.GrokRealCliStubProxyCanaryTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Agents/GrokRealCliStubProxyCanaryTests.cs"
         },
         {
           "class": "Antiphon.Tests.Agents.GrokHerdrRealCliStubProxyCanaryTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Agents/GrokHerdrRealCliStubProxyCanaryTests.cs"
         }
       ],
       "prerequisites": [
@@ -2139,35 +2200,43 @@
       "members": [
         {
           "class": "Antiphon.Agents.Pty.Tests.GrokCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/GrokCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.GrokNativeSessionCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/GrokNativeSessionCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.GrokQuestionPopupCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/GrokQuestionPopupCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.GrokSignInCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/GrokSignInCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.GrokSubmitWhileWorkingCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/GrokSubmitWhileWorkingCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.GrokUsageOverlayCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/GrokUsageOverlayCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.GrokMidTurnInterruptCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/GrokMidTurnInterruptCanaryTests.cs"
         },
         {
           "class": "Antiphon.Tests.Agents.GrokSizeCaptureTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Agents/GrokSizeCaptureTests.cs"
         }
       ],
       "prerequisites": [
@@ -2203,7 +2272,8 @@
         {
           "method": "Grok_inspect_is_bounded_at_the_nested_checkout_git_root",
           "class": "Antiphon.Agents.Pty.Tests.OrchestratorWorkspaceLayoutCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"
+          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+          "source": "tests/Antiphon.Agents.Pty.Tests/OrchestratorWorkspaceLayoutCanaryTests.cs"
         }
       ],
       "prerequisites": [],
@@ -2239,19 +2309,23 @@
       "members": [
         {
           "class": "Antiphon.SessionRunner.Tests.GrokAuthProbeTests",
-          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+          "source": "tests/Antiphon.SessionRunner.Tests/GrokAuthProbeTests.cs"
         },
         {
           "class": "Antiphon.SessionRunner.Tests.GrokRulesFileStoreTests",
-          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+          "source": "tests/Antiphon.SessionRunner.Tests/GrokRulesFileStoreTests.cs"
         },
         {
           "class": "Antiphon.SessionRunner.Tests.GrokTranscriptTailerTests",
-          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+          "source": "tests/Antiphon.SessionRunner.Tests/GrokTranscriptTailerTests.cs"
         },
         {
           "class": "Antiphon.Tests.Agents.RunnerGrokAdapterReadyTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Agents/RunnerGrokAdapterReadyTests.cs"
         }
       ],
       "prerequisites": [],
@@ -2293,43 +2367,53 @@
       "members": [
         {
           "class": "Antiphon.E2E.AgentE2ETests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/AgentE2ETests.cs"
         },
         {
           "class": "Antiphon.E2E.BoardE2ETests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/BoardE2ETests.cs"
         },
         {
           "class": "Antiphon.E2E.DirectoryAutocompleteE2ETests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/DirectoryAutocompleteE2ETests.cs"
         },
         {
           "class": "Antiphon.E2E.DispatchConcurrencySettingsE2ETests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/DispatchConcurrencySettingsE2ETests.cs"
         },
         {
           "class": "Antiphon.E2E.OrchestratorE2ETests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/OrchestratorE2ETests.cs"
         },
         {
           "class": "Antiphon.E2E.PipelineGlanceE2ETests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/PipelineGlanceE2ETests.cs"
         },
         {
           "class": "Antiphon.E2E.ProjectDeleteE2ETests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/ProjectDeleteE2ETests.cs"
         },
         {
           "class": "Antiphon.E2E.SmokeE2ETests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/SmokeE2ETests.cs"
         },
         {
           "class": "Antiphon.E2E.WorkflowDeleteTests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/WorkflowDeleteTests.cs"
         },
         {
           "class": "Antiphon.E2E.WorkflowOutputTests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/WorkflowOutputTests.cs"
         }
       ],
       "prerequisites": [
@@ -2370,27 +2454,33 @@
       "members": [
         {
           "class": "Antiphon.E2E.CardCliE2ETests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/CardCliE2ETests.cs"
         },
         {
           "class": "Antiphon.E2E.ChannelE2ETests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/ChannelE2ETests.cs"
         },
         {
           "class": "Antiphon.E2E.ContractSnapshotTests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/ContractSnapshotTests.cs"
         },
         {
           "class": "Antiphon.E2E.ScheduleCliE2ETests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/ScheduleCliE2ETests.cs"
         },
         {
           "class": "Antiphon.E2E.ReleaseGateIsolationTests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/ReleaseGateIsolationTests.cs"
         },
         {
           "class": "Antiphon.E2E.ReleaseGateReportDeliveryTests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/ReleaseGateReportDeliveryTests.cs"
         }
       ],
       "prerequisites": [
@@ -2428,19 +2518,23 @@
       "members": [
         {
           "class": "Antiphon.E2E.AgentTaskLandDeliveryE2ETests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/AgentTaskLandDeliveryE2ETests.cs"
         },
         {
           "class": "Antiphon.E2E.DispatchBaseWarningDeliveryE2ETests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/DispatchBaseWarningDeliveryE2ETests.cs"
         },
         {
           "class": "Antiphon.E2E.WorktreeRetirementDeliveryE2ETests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/WorktreeRetirementDeliveryE2ETests.cs"
         },
         {
           "class": "Antiphon.E2E.LandDeliveryFixtureProbeTests",
-          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj"
+          "project": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+          "source": "tests/Antiphon.E2E/LandDeliveryFixtureProbeTests.cs"
         }
       ],
       "prerequisites": [
@@ -2478,15 +2572,18 @@
       "members": [
         {
           "class": "Antiphon.SessionRunner.Tests.HerdrPaneDisposalGuardedLiveTests",
-          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+          "source": "tests/Antiphon.SessionRunner.Tests/HerdrPaneDisposalGuardedLiveTests.cs"
         },
         {
           "class": "Antiphon.SessionRunner.Tests.HerdrLabelFollowLiveTests",
-          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+          "source": "tests/Antiphon.SessionRunner.Tests/HerdrLabelFollowLiveTests.cs"
         },
         {
           "class": "Antiphon.SessionRunner.Tests.HerdrNamedTabPlacementLiveTests",
-          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+          "project": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+          "source": "tests/Antiphon.SessionRunner.Tests/HerdrNamedTabPlacementLiveTests.cs"
         }
       ],
       "prerequisites": [
@@ -2554,19 +2651,23 @@
       "members": [
         {
           "class": "Antiphon.Tests.Application.ChannelOutboundRecoveryTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/ChannelOutboundRecoveryTests.cs"
         },
         {
           "class": "Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/ChannelOutboundUnifiedTransportTests.cs"
         },
         {
           "class": "Antiphon.Tests.Application.ChannelOutboundUnifiedCrashTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/ChannelOutboundUnifiedCrashTests.cs"
         },
         {
           "class": "Antiphon.Tests.Application.ChannelOutboundComposedTransportTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/ChannelOutboundComposedTransportTests.cs"
         }
       ],
       "prerequisites": [
@@ -2634,11 +2735,13 @@
       "members": [
         {
           "class": "Antiphon.Tests.Scripts.RollingVolumeRecycleDockerTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Scripts/RollingVolumeRecycleDockerTests.cs"
         },
         {
           "class": "Antiphon.Tests.Scripts.RetiredTempContainerDockerTests",
-          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Scripts/RetiredTempContainerDockerTests.cs"
         }
       ],
       "prerequisites": [],
@@ -2673,17 +2776,20 @@
         {
           "method": "Symlinked_staged_document_is_refused_before_browser_launch",
           "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfCommandTests",
-          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+          "source": "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfCommandTests.cs"
         },
         {
           "method": "Real_browser_exit_zero_requires_a_fresh_nonempty_pdf",
           "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
-          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+          "source": "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRendererTests.cs"
         },
         {
           "method": "Browser_nonzero_exit_cannot_reuse_a_stale_pdf",
           "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
-          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+          "source": "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRendererTests.cs"
         }
       ],
       "prerequisites": [],
@@ -2718,57 +2824,68 @@
         {
           "method": "Invalid_requests_never_invoke_a_browser_or_claim_a_pdf",
           "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfCommandTests",
-          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+          "source": "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfCommandTests.cs"
         },
         {
           "method": "Invalid_manifest_is_rejected_without_creating_output",
           "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfCommandTests",
-          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+          "source": "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfCommandTests.cs"
         },
         {
           "method": "Valid_manifest_with_missing_browser_reports_failure_without_pdf",
           "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfCommandTests",
-          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+          "source": "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfCommandTests.cs"
         },
         {
           "method": "Markdig_renders_a_gfm_table_fenced_code_and_task_list",
           "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
-          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+          "source": "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRendererTests.cs"
         },
         {
           "method": "ToHtml_wraps_each_document_as_a_section_with_its_path_as_h1",
           "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
-          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+          "source": "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRendererTests.cs"
         },
         {
           "method": "Cover_and_document_paths_are_html_escaped_without_losing_unicode",
           "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
-          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+          "source": "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRendererTests.cs"
         },
         {
           "method": "BuildArguments_match_the_headless_print_to_pdf_contract",
           "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
-          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+          "source": "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRendererTests.cs"
         },
         {
           "method": "A_missing_browser_returns_failure_and_does_not_throw",
           "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
-          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+          "source": "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRendererTests.cs"
         },
         {
           "method": "A_timeout_returns_failure_and_does_not_throw",
           "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
-          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+          "source": "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRendererTests.cs"
         },
         {
           "method": "A_real_browser_timeout_stops_its_child_process",
           "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
-          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+          "source": "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRendererTests.cs"
         },
         {
           "method": "Caller_cancellation_stops_the_real_browser_process_tree",
           "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRendererTests",
-          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+          "source": "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRendererTests.cs"
         }
       ],
       "prerequisites": [],
@@ -2802,7 +2919,8 @@
         {
           "method": "Four_documents_produce_readable_combined_pdf",
           "class": "Antiphon.MarkdownPdf.Tests.MarkdownPdfRealBrowserTests",
-          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+          "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+          "source": "tests/Antiphon.MarkdownPdf.Tests/MarkdownPdfRealBrowserTests.cs"
         }
       ],
       "prerequisites": [],
@@ -2966,7 +3084,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "543d091fd625c25d4caf10cdbf6f4e6017696840c4e1722256a0d8d33c87024a",
+  "catalogHash": "622274b4d95a49bb26d277fcee23085ab61339cc1372ab83799f79835a100c24",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",
