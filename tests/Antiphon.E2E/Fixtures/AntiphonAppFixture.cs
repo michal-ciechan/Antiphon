@@ -639,7 +639,9 @@ public class AntiphonAppFixture
                     ["GitHub:Enabled"] = "false",
                     ["Agents:DefaultDefinition"] = "e2e-raw",
                     ["Agents:Definitions:e2e-raw:Kind"] = "Raw",
-                    ["Agents:Definitions:e2e-raw:Exe"] = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                    ["Agents:Definitions:e2e-raw:Exe"] = OperatingSystem.IsWindows()
+                        ? Path.Combine(Environment.SystemDirectory, "cmd.exe")
+                        : "/bin/sh",
                     ["SessionRunner:BaseUrl"] = _sessionRunnerBaseUrl,
                     ["Delegation:DiagnoseEnabled"] = "false",
                     ["Delegation:DiagnoseWorkingDirectory"] = Path.Combine(_workspacePath, "diagnose"),
