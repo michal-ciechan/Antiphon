@@ -57,7 +57,7 @@ function Test-C1313_ProviderAndShared {
     $policy=Read-NightlyExecutionPolicy $repoRoot
     $actual=@(Resolve-NightlySelectedSuites $policy.Object @())
     $expected=@('core','provider.claude.offline','provider.claude.fake-native','provider.claude.tui-stub','provider.claude.tui-live','provider.claude.vendor-offline','provider.claude.server-runner','main.remainder','e2e.remainder')
-    Assert-C487 -Cond (($actual|Sort-Object) -join ',' -ceq ($expected|Sort-Object) -join ',') -Name 'C1313 provider-exact' -Detail ($actual -join ',')
+    Assert-C487 -Cond ((($actual|Sort-Object) -join ',') -ceq (($expected|Sort-Object) -join ',')) -Name 'C1313 provider-exact' -Detail ($actual -join ',')
 }
 
 & "Test-$Case"
