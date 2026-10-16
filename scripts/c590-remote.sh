@@ -2215,7 +2215,7 @@ c849_seed() {
         c849_cold_seed
     fi
     c849_prepare yes
-    local image donor donor_image stage recovery helper manifest_hash donor_type package_bytes npm_bytes now i saved name item source backend mount seed_path
+    local image donor donor_image stage recovery helper manifest_hash manifest_line donor_type package_bytes package_line npm_bytes npm_line now i saved name item source backend mount seed_path
     backend="$(c849_payload_select)"
     image="$(c849_image)" || {
         if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
@@ -2330,13 +2330,24 @@ c849_seed() {
     if [ "$backend" = volume ]; then c849_payload_fs writer 'rm -rf -- "$1/npm-cache"' bash "$stage" || c849_seed_failure "$donor" NpmStagedIntegrityFailed; fi
     printf 'npm-integrity=passed\n' > "$CASE_DIR/npm-integrity.txt"
     c849_payload_call writer c849_manifest_write "$stage" "$stage/recovery.manifest" || c849_seed_failure "$donor" CacheManifestFailed
-    manifest_hash="$(c849_payload_fs reader 'sha256sum "$1"' bash "$stage/recovery.manifest" | cut -d' ' -f1)"
+    # A failed reader or a partial line is not a seed measurement. Capture the
+    # status before parsing so the phase names CacheSeedMetadataFailed.
+    manifest_line="$(c849_payload_fs reader 'sha256sum "$1"' bash "$stage/recovery.manifest")" \
+        || c849_seed_failure "$donor" CacheSeedMetadataFailed
+    manifest_hash="${manifest_line%% *}"
+    [[ "$manifest_hash" =~ ^[0-9a-f]{64}$ ]] || c849_seed_failure "$donor" CacheSeedMetadataFailed
     donor_type=live
     if [ -n "$saved" ]; then
         if [ -d "$saved" ]; then donor_type=saved-directory; else donor_type=saved-tar; fi
     fi
-    package_bytes="$(c849_payload_fs reader 'du -s -B1 "$1"' bash "$stage/packages" | cut -f1)"
-    npm_bytes="$(c849_payload_fs reader 'du -s -B1 "$1"' bash "$stage/npm" | cut -f1)"
+    package_line="$(c849_payload_fs reader 'du -s -B1 "$1"' bash "$stage/packages")" \
+        || c849_seed_failure "$donor" CacheSeedMetadataFailed
+    package_bytes="${package_line%%$'\t'*}"
+    [[ "$package_bytes" =~ ^[0-9]+$ ]] || c849_seed_failure "$donor" CacheSeedMetadataFailed
+    npm_line="$(c849_payload_fs reader 'du -s -B1 "$1"' bash "$stage/npm")" \
+        || c849_seed_failure "$donor" CacheSeedMetadataFailed
+    npm_bytes="${npm_line%%$'\t'*}"
+    [[ "$npm_bytes" =~ ^[0-9]+$ ]] || c849_seed_failure "$donor" CacheSeedMetadataFailed
     for item in "$C849_PACKAGES:packages" "$C849_NPM:npm"; do
         if [ -n "$saved" ]; then c849_no_cache_attachments; fi
         name="${item%%:*}"; source="${item#*:}"
