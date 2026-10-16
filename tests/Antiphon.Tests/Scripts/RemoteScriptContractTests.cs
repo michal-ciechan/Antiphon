@@ -6545,11 +6545,13 @@ public sealed class RemoteScriptContractTests
             fi
             if [ -f "$CASE_DIR/status.json" ]; then
                 status="$(tr -d '\r\n' < "$CASE_DIR/status.json")"
-                if [ "$(tail -c 1 "$CASE_DIR/status.json")" = $'\n' ]; then status_nl=1; fi
+                printf '%s\n' "$status" > "$root/expect-status"
+                if cmp -s "$root/expect-status" "$CASE_DIR/status.json"; then status_nl=1; fi
             fi
             if [ -f "$CASE_DIR/main-status.json" ]; then
                 main="$(tr -d '\r\n' < "$CASE_DIR/main-status.json")"
-                if [ "$(tail -c 1 "$CASE_DIR/main-status.json")" = $'\n' ]; then main_nl=1; fi
+                printf '%s\n' "$main" > "$root/expect-main"
+                if cmp -s "$root/expect-main" "$CASE_DIR/main-status.json"; then main_nl=1; fi
             fi
             if grep -qx 'donor-probed' "$root/trace"; then donor=1; fi
             printf 'EXIT=%s\n' "$code"
