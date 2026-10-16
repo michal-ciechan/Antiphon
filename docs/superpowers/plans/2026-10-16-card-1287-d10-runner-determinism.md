@@ -55,3 +55,11 @@ Zero authored PC rows or variants. SourceLanding Mutation owns deliberate mutant
 red/restore/green and missing-control discovery after Review and caller landing.
 No PC discharged here. Candidate directory: `docs/superpowers/mutations/`.
 Restart: none.
+
+## S0 finding
+
+CP-1 reproduced the intended red at `1f2211da08d5af737d4a0ce5e1bc4a91518cebc5`.
+The [projection investigation](../../investigations/2026-10-16-card-1287-d10-runner-projection.md)
+shows that configuration cannot produce the required null display value. S1 and
+CP-2 through CP-8 remain pending scope clarification to correct six snapshot
+values to the documented desktop display ID. No fixture pin was added.
