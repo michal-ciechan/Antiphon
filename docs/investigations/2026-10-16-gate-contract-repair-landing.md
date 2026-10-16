@@ -1,4 +1,11 @@
-# RC2 gate contract repair landing: blocked
+# RC2 gate contract repair and CARD-1303 R3 landing
+
+Current status: in progress. The caller authorized the production policy change
+after the initial stop, citing clean Full Grok Review `3c95fb03`. The gate repair
+has been published to RC. Its master publication and both R3 publications remain
+pending. The initial stop below is retained as historical evidence.
+
+## Initial stop (historical)
 
 Task: `5160a7b5` (Merge), 2026-10-16 UTC.
 
@@ -47,13 +54,56 @@ tests were performed. Build/test execution counts are zero because the source
 scope check is a prerequisite. No canonical checkout, AppHost, runner, or tag was
 changed. This report is the only task-branch change.
 
-## Required decision
+## Original required decision (resolved by caller)
 
 Provide a corrected test/inventory-only source range, or explicitly recommission
 landing of the production repair with its required review and verification
 requirements. The existing test-only authorization does not cover this range.
 
+## Authorized continuation
+
+The caller explicitly included the seven policy lines in scope and commissioned
+Part A and Part B again. The caller also commissioned CARD-1303 R3, citing clean
+Grok Review `c1bd8e6c`, with `reviewedSourceClean=true`.
+
+The R3 range
+`b227f814c02a88ea2e4c9f0731c22d8ff0ffcd4d..f30b84754bcea458b206e3a67b915c78c493c448`
+on `origin/feat/card-task-6121c04b` contains exactly:
+
+1. `953c0f9a18390e649f919adc14ffc3bfc113f2ea`
+2. `5503f4f428b4b9b6d445b65ac163b5f80aa06cdc`
+3. `b59d918bb97ed95719589342b0ec78eed34e7b2d`
+4. `f30b84754bcea458b206e3a67b915c78c493c448`
+
+Its six-file delta is limited to `AgentTaskService.cs`'s admission lock mode,
+`PipelineSpeedIntegrationTests.Admission.cs`, the shared observers/probe in
+`PipelineSpeedIntegrationTests.cs`, and its plan/evidence/mutation notes. No
+additional production changes were found.
+
+### Publication receipts
+
+| Publication | Target | Old SHA | New SHA | Verification |
+|---|---|---|---|---|
+| Gate repair | RC | `41d6f6adf431622b3982f9ac41417a8e555072ba` | `46fd97a187866e26f56a6f261038ada4d7d57870` | Build passed; 89/89 tests passed, zero skipped |
+
+The RC gate cherry-picks are
+`48d1edaabe618087b478471693fb1f19e0954871` and
+`46fd97a187866e26f56a6f261038ada4d7d57870`, each with `-x` provenance and
+a clean tree between them. The target push was a fast-forward, confirmed by
+`git ls-remote`.
+
+The RC build used `scripts/build-slot.ps1`, `OutputPath=bin-5160-rc-gate/`,
+and `UseAppHost=false`; it completed in 2m20s with 1060 warnings and zero errors.
+All four drivers held granted host build slots. Fresh TRX files verified the
+registry method (1), `C487_G059` (1), and the complete `AbsentLaunchPolicyTests`
+class (87), including `C1149_Queue_columns_are_accounted_for`.
+
+Raw build logs and TRX evidence remain ignored under
+`.antiphon/landing-evidence/`. Separate detached landing checkouts keep the
+assigned task branch unchanged except for this report. No canonical checkout,
+AppHost, runner, or tag has been changed.
+
 --- next stage ---
-next: decide
-handoff: Resolve the production-code scope mismatch before commissioning another landing pass.
+next: merge
+handoff: Continue master gate repair, then publish R3 to RC and master with narrow verification.
 artifact: docs/investigations/2026-10-16-gate-contract-repair-landing.md
