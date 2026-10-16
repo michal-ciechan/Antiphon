@@ -289,3 +289,345 @@ Run any real TUI/browser/Docker/Windows qualification only through a separately 
 Main risks are incomplete dependency declarations, new body gates, unstable expanded identities, prefix filter leakage, a changed publisher schema omitted from one consumer, durable roots accidentally inside cleanup scopes, and misleading timing comparisons under concurrency. Conservative remainder/full fallback, method-level inventory, fresh discovery, scoped authority and explicit measurement kinds address these at the cost of lower initial savings. Track fallback frequency and cost; only narrow a new family after evidence and reviewed policy changes. Do not promise a percentage saving before paired measurements.
 
 TestDesign should finish the executable verification manifest and then hand Code the exact approved artifact. Code implements S1-S7, commits/pushes each slice, reports the closed checkpoints and leaves live activation evidence separate. It must carry the inventory and live-gate prerequisites, the operator timing requirement, and the master-only target into its own brief. No unresolved design question prevents TestDesign from proceeding.
+
+
+## Verification design
+
+TestDesign append, 2026-10-16, task `38202b83`, source `3c73433172b3b1db64e613076cb61e03209b6cd3`. The fix design above is unchanged. This section replaces only the proposed verification inventory as the executable Code contract. Target remains **master only**. Full/Shadow implementation is not qualification or activation of ChangeAware. No builds, tests, discovery, PCs, provider calls or deployment ran in TestDesign.
+
+### Inspection
+
+- Read `ReleaseGatePolicyTests` (all five bodies), `NightlyDiscoveryParserTests`, `NightlyExecutionDiagnosticTests`, `ScriptHarness.RunHarnessCaseAsync/Validate`; `test-release-gate.ps1` profile/census/expanded-coverage bodies, real-Git checkout/authority/ledger helpers, run and publication fixtures, parameter hops and receipt readback | S1-S3 -> V-1..V-4/R-1; S6 -> V-8/R-3. Harness PASS assertions are not TUnit executions.
+- Read `RerunFilterHostTests.parenthesized_class_filter_runs_both_methods_on_a_real_host`, its child runner, `FilterHostTests.alpha/beta`, FilterHost project and main-project staging references; `Get-NightlyNativeExecutionArguments` | V-4. Current class operands append `*`; the new child witness must detect a forbidden sibling **before launch**, not merely reject its TRX afterwards.
+- Read `ClaudeVerifiedDeliveryTests` and `ClSession` in full; live gate/body witnesses in `ClaudeHeadedLongTests`, `GrokMidTurnInterruptCanaryTests`, `GrokSizeCaptureTests`, `HerdrPaneDisposalGuardedLiveTests.LiveFixture`; MarkdownPdf browser gate and method-level OS returns | V-1. No live method execution is authorized by discovery/classification checks.
+- Read `TrxReportTests`, `RowRunnerTests` selected bodies and driver helper, `CheckpointBuildBindingPathTests`, `CheckpointTimingHarnessTests` and harness, `CheckpointTestSupport` fixture/driver bodies and `CheckpointTestBase`; production `TrxReport` and `PhaseTimings.Reduce`, RowRunner/Scheduler integration sites | V-5..V-7/R-2. Existing `SlowClasses.Seconds` is a sum. New tests use these nearest fixtures, not an invented test clock or unowned process helper.
+- Read `ReleaseGateAuthorityContractTests`, `ReleaseGatePublicationAuthorityTests`, `ReleaseGateRunTests`, `ReleaseGateReportDeliveryTests` including recipient reads/recovery/process helper, and `AntiphonAppFixture` initialization/restart/isolated runner configuration; `release-cut.ps1`, release authority constants and report entrypoint | V-8..V-10/R-3. The script fixture's `New-C599Authority` fabricates ledger/receipt input through validators; it is **not** the production producer. Existing report recovery proves incident-card delivery, not the missing typed prepublication producer.
+- Read testing/build checkpoint schema, runner and delivery contracts; release-gates authority/qualification owner; project conventions; orchestration stage order and D-2 | all rows. Existing process limiter methods read for the exact core roster. Full historical publisher matrices and unrelated checkpoint custody/native tests are excluded from ordinary scope; only named affected methods below run.
+
+Recipes shared by the case inventory:
+
+- **SG (script/Git):** new script cases use the existing ScriptHarness owner and exact named assertions; each C# method dispatches one same-named `Test-C1313_*` PowerShell case. Selector/catalog cases live in `scripts/test-test-selection.ps1`; release cases extend `scripts/test-release-gate.ps1`. Create owned temporary real Git repositories with `core.autocrlf=false`, immutable B/A objects, independent literal expected rosters and a candidate policy/catalog. Create case-only paths through Git index/tree objects on Windows; never depend on two case-distinct files coexisting on that filesystem. Invoke the production front door, parse JSON independently, compare sorted logical identities and reasons, and inspect child-launch logs for zero builds/network/providers. No expected result is computed by the selector being tested.
+- **FH (real filter child):** extend the staged FilterHost with safe `C1313Offline`/`C1313OfflineLive` sibling classes, `One`/`OneLive` sibling methods, and `Rows` with exactly three `[Arguments]` values. Forbidden leaves write a sandbox sentinel then fail; all bodies are harmless. Discover the real pinned TUnit assembly and pass its frozen expanded UIDs into the production compiler/runner. Assert exact receipt UIDs and absence of sentinels. Owned children write only into registered scratch, are joined, and carry the process limiter. Child executions do not inflate the parent TUnit Min.
+- **TJ (timing):** reuse CheckpointTestBase, FakeDriver and the controlled clock for arithmetic/fault boundaries; use literal timestamped TRX plus discovery metadata. Use real filesystem shards and the production journal/import/report readers for persistence. One owned staged child supplies real host/discovery/TRX timing evidence. FakeDriver proves reducer/scheduling contracts only; it cannot prove durable storage or native process wall measurement.
+- **RA (release authority):** extend the real-Git C599 fixture with a small fixed discovery census, a genuine Full baseline-shaped fixture, an explicit qualified-contract fixture and independent remote-store observer. Restore one valid input before each negative case, change one thing, and repair unrelated digests so the intended guard is reached. These are isolated contract fixtures, never real qualification receipts. Only a file-backed Git/GitHub recipient is substituted; no remote release is written.
+- **RC (real recipient composition):** use the existing E2E app fixture, disposable PostgreSQL and isolated runner, plus owned Git repositories and FH test children staged by the E2E build. Execute the actual cut/run/report producer and publisher gates. Read the bound card independently through GET by GUID, including the whole description and revision. Do not hand-write authority, frozen plan, terminal ledger or typed receipt. Use tiny actual child executions for the fixture's declared suite/prerequisite roster, not fabricated green outputs or the full repository suite. Preserve seamed/diagnostic provenance and its refusal of real release credit; the real recipient receipt proves this composition, not live qualification. The new coordinator's concrete entrypoint/queue binding is a **binding-required** Code deliverable; see DL-3. No test accepts a canned receipt in its place.
+
+All new methods below are single `[Test]` executions except `C1313_PathIdentity`, which has exactly three arguments (`delete`, `case-rename`, `nul-paths`). Script assertion labels below are the required decisive oracle labels, not a second test count. Every fixture first proves its valid control reaches the intended consumer. New subprocess tests use the assembly-local ProcessSpawnLimit and existing ownership helpers. A failing fixture, unavailable infrastructure, missing API, zero selected tests or compile error is not a useful red.
+
+### Delivery inventory
+
+| ID | Producer -> destination | Durable identity and persistence boundary | Recovery and observable receipt |
+|---|---|---|---|
+| DL-1 | RowRunner/Scheduler, legacy checkpoint wrapper, nightly chunk/run producers -> timing journal -> report query | `(repository, A, runId, attempt, eventId, setId, producingBuildId)`; start flushed before launch, completion flushed after owned-child join; one selected producer per wrapped row | TJ `C1313_ProducerReceipts` reads the completed event and category join with a **fresh independent reader**, for tool, wrapper and nightly producers. Assert one row event, preserved outcome and attempt, correlated digest, no acknowledgement before flush. A call to Append or a start event alone proves nothing about completion. |
+| DL-2 | local timing spool/restart importer -> durable shard -> report query | Same original event identity, payload bytes and timestamps; real on-disk spool is the retry queue, durable shard is the recipient | `C1313_RecoveryHandoffs` runs an already eligible sink and a sink held busy by a barrier/owned file handle; faults before spool persistence, after spool persistence/before append, after durable flush/before local acknowledgement, and completion-write failure. Reopen/replay through production code, then query from another process: exact single terminal event or explicit unfinished/incomplete record. No receipt for failed enqueue; no zero-duration success after hard death. No mocked queue. PC-38..PC-43 protect the separate acknowledgement/replay/recovery guards. |
+| DL-3 | release-cut/coordinator -> candidate journal -> discovery/plan -> execution ledger -> prepublication report destination -> publisher | Existing coordinator intent + releaseCardId, candidateId/ref, B/A, runId, selection digest; freeze before launch; terminal chunk/prerequisite records persisted before report; typed receipt binds card revision and whole run correlation | `ReleaseGateReportDeliveryTests.C1313_ProductionReceipt` must drive the real producer through an eligible recipient and a busy/conflicting recipient, with restart/failure before intent persistence, before report enqueue/write, after recipient commit before receipt persistence, and after receipt before publisher readback. Reuse the same durable identity and independently read exactly one logical report at the bound card. If the coordinator has a queue, use **that real durable queue and worker**, asserting enqueue failure leaves recoverable intent, then successful recovery; a queue insert/Sent/ack is not receipt. Current report is synchronous HTTP, so its corresponding cuts are failed write and lost response. Never invent a queue service for this card. |
+| DL-4 | publisher -> isolated Git/GitHub recipient | Candidate/ref/A + frozen publication-authority digest + tag/release identity; existing publication journal | RA `C1313_ScopeAuthority` and R-3 independently read stored manifest/release state; negative scope/receipt cases make zero writes. Existing remote timeout/tag/draft/asset recovery is unchanged and excluded; fixture storage does not qualify GitHub deployment. |
+
+DL-3 is a mandatory **producer prerequisite**, not optional follow-up coverage. The inspected source has no production caller of `New-ReleaseGateAuthority` / `New-ReleaseGateExecutionPlan`. Code must bind the coordinator supplied by CARD-1281 (entrypoint, persisted intent, receipt producer and any queue) and make CP-24 pass before claiming S6 complete. If it remains absent, commit/push completed selector/timing/Shadow work, preserve CP-24 and its PCs as **binding required**, report the exact dependency and return `next: plan`; no publishable ChangeAware claim or clean whole-scope verdict. This is an integration dependency already in the fix design, not a human-default question.
+
+No new session-input delivery path is designed. Fake Claude's composer/done witness is a test-preservation check only. If the supplied coordinator delivers session input, DL-3 must bind its real queue and the matching **complete UserPrompt transcript** (recipient/session/run/payload and attempt floor), with busy/already-eligible/crash recovery; card readback, screen redraws, requests and events cannot substitute. Unbound delivery payloads remain binding required after Code and block completeness.
+
+### Proves it works now
+
+“Now” below describes the required post-Code result, not a TestDesign execution claim. Method names are exact contracts. New classes are under `tests/Antiphon.Tests/Scripts/`, except TJ classes under `Checkpoints/`, and the two stated Pty/E2E additions.
+
+| ID | Behaviour / layer | Exact test case(s), recipe and variant | Oracle and reachability / classification |
+|---|---|---|---|
+| V-1 | Inventory, eligibility and split entrypoints / policy + metadata + fake native | `TestSelectionCatalogTests.C1313_ProjectAndCatalogUniverse`, `.C1313_LiveEligibility`, `.C1313_MixedDeliveryInventory` (SG); `ClaudeVerifiedDeliveryTests.C1313_DeliveryDiscovery` and `.Fake_evidence_appears_then_submit_completes_a_turn` | Real source census is seven primaries + four exact child projects, including MarkdownPdf; add one unknown fixture-looking project and refuse (`unclassified-project`). Exact four missing live classes have owned gate/resource dispositions (`live-obligations-visible`); Integration-only Claude effort and method-level Linux PDF obligations remain visible; unknown resources cannot run unattended. Candidate discovery has exactly one fake delivery UID plus four real rows `short/hugeLine/multiLine/batch` under `Real_evidence_appears_then_submit_completes_a_turn`; metadata test itself is excluded from this five-row census. `fake-required-real-excluded`; Windows fake completes the existing composer/turn assertions. Native real-TUI behaviour remains unqualified. |
+| V-2 | Two immutable commits / SG | `TestSelectionTests.C1313_InputRefusal`, `.C1313_CoreAndUnknownFallback`, `.C1313_PinnedPolicy`, `.C1313_PathIdentity` (3 rows), `.C1313_AuthorityChanges`, `.C1313_DeterministicReasons` | Invalid/noncommit/unavailable input or failed Git read => exit 2, no runnable manifest (`invalid-intent-refused`); B=A selects exact seven-method core; unknown path => complete catalog (`unknown-full`). Dirty worktree policy cannot replace A (`candidate-blob`). Delete uses B's owner and surviving A consumers; case rename preserves both spellings; NUL-delimited whitespace/newline/Unicode paths and type/mode/gitlink records preserve identity (`old-new-union`, `ordinal-paths`). Policy/catalog/build graph changes => `selection-authority-changed`; nonancestor => Full. Reordered rules/paths give same digest excluding time/absolute root, with every reason retained. |
+| V-3 | Provider/shared/dependency closure / SG | `TestSelectionDependencyTests.C1313_ProviderAndShared`, `.C1313_RuntimeEdges`, `.C1313_InvalidGraph` | Explicit approved provider path selects that provider plus core, unrelated provider offline sets absent; new similarly named file is shared/Full. Shared input includes all three provider obligations (`shared-all-providers`). Four single-edge witnesses: linked Compile, build-only/staged child, imported helper, client bundle; assert literal surviving consumer roster and edge id (`linked-consumer`, `staged-consumer`, `helper-consumer`, `bundle-consumer`). Invalid/missing/cyclic dependency/prerequisite or unsafe/invalid/timed-out regex refuses reduced execution (`invalid-graph`, `invalid-rule`); full-impact rule dominates a narrow overlap. |
+| V-4 | Exact execution / production runner + real FH | `TestSelectionExecutionTests.C1313_ExactExpandedExecution`, `.C1313_CoverageRefusal`, `.C1313_NewUidRemainder` | Real executed selected UID multiset is exactly the frozen three argument UIDs plus selected ordinary leaf, each once (`exact-uid-union`); no sibling sentinel (`forbidden-not-launched`). Separately remove one required UID, add one extra UID, duplicate a UID, mark required skip, and supply zero results: each refuses with its own label `missing-uid`, `extra-uid`, `duplicate-uid`, `required-skip`, `zero-required`. Fresh unclassified UID widens before launch (`new-uid-required`). These are five minimal fault witnesses, not a Cartesian schema matrix. |
+| V-5 | Wall/category/count truth / TJ reducer + owned child | `TestSetTimingTests.C1313_WallEnvelopes`, `.C1313_UnavailableMeasurements`, `.C1313_DiscoveryJoin`, `.C1313_ProducerReceipts` | Literal cases [1,5] and [2,6] in host [0,8]: host 8, inclusive class/category window 5, duration sum 8, startup 1, teardown 2; legacy sum unchanged (`wall-not-sum`). Missing/reversed/out-of-range/discontinuous timestamps yield null + reason (`unknown-not-zero`). Same-build discovery joins expanded IDs and all raw categories; foreign assembly digest refuses the join (`category-build-bound`). Real child success emits normal category records; wrapper/tool emits once; client/script class/category unavailable is explicit. Build failure, timeout/cancel and failed assertion preserve actual counts/outcome and producingBuildId (`producer-receipt`). |
+| V-6 | Durable history / TJ filesystem + real spool queue | `TimingJournalTests.C1313_RootCustody`, `.C1313_ReplayIdentity`, `.C1313_RecoveryHandoffs`, `.C1313_TornTail` | Resolve explicit/env/git-common root; reject traversal and hosted root inside checkout/output/cleanup (`root-outside-custody`). Two shards can append independently; same shard serializes and reopens sequence. Exact event replay is one event (`replay-once`), changed same-id bytes refuse (`event-conflict`). DL-2 cuts yield durable readback, retained spool on failure and unchanged test verdict (`flush-before-ack`, `recoverable-handoff`, `persistence-not-test-outcome`). Delete only owned disposable run output and still read history (`history-survives-output`). Ignore only torn final fragment with warning; complete malformed row remains corrupt (`corrupt-not-truncated`). |
+| V-7 | Report/trend/estimates / script reader | `TestTimingReportTests.C1313_ComparableHistory`, `.C1313_AttemptCost`, `.C1313_EstimatesNeverSelect` (TJ + SG) | Literal successful values 1..10 give median 5.5, nearest-rank p90 9, prior-five median 3/latest-five 8/change +5/+166.666…%; different SHA may compare, different membership/platform/runtime/concurrency/host may not (`comparable-series`). Nine observations => insufficient history; zero prior median => percentage null. Failures/retries contribute cost, not success percentiles; duplicate events/build IDs count once (`attempt-cost`). <5 success samples provisional, unknown unbudgeted; change all timing estimates and selected UID digest remains identical (`budget-never-omits`). |
+| V-8 | Release modes and authority / RA | `ChangeAwareReleaseTests.C1313_ModeCredit`, `.C1313_BaselineAuthority`, `.C1313_ScopeAuthority`, `.C1313_CandidateBinding`, `.C1313_ParameterHops` | Default Full unchanged, Shadow executes full union (`shadow-full`); unqualified diagnostic ChangeAware earns none; explicit current qualification required. Only compatible qualified Full B admits narrowed A; absent/stale baseline => Full before launch, contradictory claimed authority refuses (`baseline-full-only`, `baseline-absent-full`, `baseline-corrupt-refused`). Historical B uses immutable receipt, not today's old card revision. Fresh clean build/discovery A required. Tampered omission with recalculated JSON hashes refuses on recomputation; selected pass never becomes Full/master credit. Runtime trace carries mode/B/A/selection path+digest/timing root through cut, wrappers, self-reexec and tests; no source-text-only forwarding proof. |
+| V-9 | Train and rollout contract / RA + document check | `ChangeAwareReleaseTests.C1313_TrainAggregate`, `.C1313_RolloutContract` | Actual B..A including integration-only edit determines sets; changed target/A/membership invalidates prior authority (`aggregate-bound`); failed aggregate/recomposition runs Full (`recomposition-full`). Readiness/native coordination retained by R-3. Documents and real defaults agree: Full, no enabled schedule/Interim, durable timing root and explicit qualification/rollback required (`rollout-unqualified`). This tests the hook, not a train scheduler. |
+| V-10 | Production receipt and public projection / RC + RA | `ReleaseGateReportDeliveryTests.C1313_ProductionReceipt`; `ChangeAwareReleaseTests.C1313_PublicProjection` | DL-3 readback carries exact intent/card/candidate/A/run/selection and all selected obligations (`producer-to-card-receipt`); resume yields one report with same identity. No authority can be synthesized from an exit-zero summary. Public manifest exposes scoped omission counts/digests, never host/private paths/raw categories (`public-allowlist`). Fake GitHub observer proves contract only; deployment stays unqualified. |
+
+### Guards the regression
+
+The SG fixture's fixed rule witnesses below are mandatory cases within V-2/V-3, not additional TUnit executions. Use one positive and one negative boundary per rule, with all other inputs valid. Negative paths are deliberately created in the temporary Git fixture; they need not exist in the checkout. Assert the actual contributing rule ID and the expected roster/Full decision, not just a regex match. Provider paths use the reviewed exact-file catalog; if S1 finds shared consumers, the conservative shared result wins and the catalog/test binding must record that evidence before Code narrows it.
+
+| Rule | Positive path | Negative boundary path | Oracle / exact method |
+|---|---|---|---|
+| P-CLAUDE | `src/Antiphon.Agents.Pty/ClaudeDetectors.cs` | `src/Antiphon.Agents.Pty/ClaudeNewShared.cs` | Approved provider closure vs shared/Full; `TestSelectionDependencyTests.C1313_ProviderAndShared` |
+| P-CODEX | `src/Antiphon.Agents.Pty/CodexDetectors.cs` | `src/Antiphon.Agents.Pty/CodexNewShared.cs` | Approved provider closure vs shared/Full; same exact method |
+| P-GROK | `src/Antiphon.Agents.Pty/GrokDetectors.cs` | `src/Antiphon.Agents.Pty/GrokNewShared.cs` | Approved provider closure vs shared/Full; same exact method |
+| P-SHARED | `src/Antiphon.Agents.Pty/PtyAgentRunner.cs` | `src/Antiphon.Agents.PtyExtra/Unknown.cs` | All providers/native consumers vs unknown Full; same exact method |
+| P-SERVER | `server/Program.cs` | `serverish/Program.cs` | Full with P-SERVER vs P-UNKNOWN reason; `TestSelectionTests.C1313_DeterministicReasons` |
+| P-CLIENT | `client/src/App.tsx` | `clientish/src/App.tsx` | Client + exact ten browser classes + recorded bundle consumers vs unknown Full; same exact method |
+| P-MSG | `src/Antiphon.Messaging.Service/Program.cs` | `src/Antiphon.MessagingExtra/Program.cs` | Messaging/main outbound/E2E consumers vs unknown Full; same exact method |
+| P-PDF | `tools/Antiphon.MarkdownPdf/MarkdownPdfRenderer.cs` | `tools/Antiphon.MarkdownPdfExtra/Renderer.cs` | PDF/Linux-browser/outbound consumers vs unknown Full; same exact method |
+| P-FAKE | `src/Antiphon.FakeLlmApi/FakeLlmApiServer.cs` | `src/Antiphon.FakeOther/Program.cs` | All declared stub/vendor/native consumers vs unknown Full; `TestSelectionDependencyTests.C1313_RuntimeEdges` |
+| P-TEST | `tests/Antiphon.Messaging.Tests/FakeSlack/FakeSlackServer.cs` | `tests/UnmappedSharedHelper.cs` | Owning and linked E2E consumers vs Full; same exact method |
+| P-DOCKER | `scripts/deploy-server2.ps1` | `scripts/deploy-server20-unknown.ps1` | Exact known image/command/real-Docker consumers; similarly prefixed unknown input broadens if consumer mapping is absent; `TestSelectionTests.C1313_DeterministicReasons` |
+| P-AUTHORITY | `scripts/lib/release-authority.ps1` | `notes/release-authority.ps1` | Full with authority-changed vs unknown reason; `TestSelectionTests.C1313_AuthorityChanges` |
+| P-BUILD | `Directory.Build.props` | `notes/Directory.Build.props.txt` | Full with authority/build reason vs unknown reason; same exact method |
+| P-UNKNOWN | `notes/unmapped.txt` | B=A, no changed path | Entire catalog with unresolved lanes vs exact seven-method core; `TestSelectionTests.C1313_CoreAndUnknownFallback` |
+
+- R-1: `ReleaseGatePolicyTests.C599_ProfileSchema`, `C599_ProfileSuites`, `C599_EligibilityCensus`, `C599_ExpandedCoverage`; `NightlyDiscoveryParserTests.C1044_DiscoveryReconciliation`; `NightlyExecutionDiagnosticTests.D13_ExecutionGuards`; both exact core ProcessSpawnLimit methods. Retain historical v1/v2 fixtures and refusals while adding the new shipped schema; update only shipped-schema expectations. Exact live method exclusions leave siblings required; missing expanded/diagnostic UID remains incomplete; orphan/duplicate/version guards remain active. Internal 9/9/15/9/8/4 assertion inventories are **six** TUnit executions, plus two limiter executions.
+- R-2: `TrxReportTests.aggregates_seconds_per_class` keeps 0.03 seconds as duration sum; `RowRunnerTests.no_trx_is_exit_2` keeps missing execution evidence invalid even if a timing completion exists; `CheckpointBuildBindingPathTests.Different_directory_or_provenance_is_refused` keeps foreign/dirty build source refused. Three executions. Do not turn timing history into a replacement execution receipt.
+- R-3: `ReleaseGateAuthorityContractTests.C599B_PinnedPolicy`, `C599B_AllChunks`; `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerReceipt`, `C599A_ReceiptReadback`; `ReleaseGateRunTests.C599_CreditVerdicts`, `C599_MasterStateIsolation`, `C599_SharedLock`. Seven executions. Retain old Full schema fixtures, selected ledger completeness, typed prepublication receipt/current-candidate readback and zero remote writes on refusal; no RC-to-master credit; four master files byte-identical; live native lock owner not stolen. No whole publication-field matrix is selected.
+
+Red-first sequence (separate from ordinary green CP rows): commit/push each slice's test-only change before its fix. Use exact filter `/*/*/<Class>/<Method>` below through the slot-gated checkpoint row driver, isolated `bin-c1313-red-sN/`, Min 1. `S5` characterization reuses the prior committed build only if source/build binding permits; otherwise rebuild and report the cost. Each listed red must be an executed assertion at its named label, followed by its CP green after implementation.
+
+| Slice | Exact red-first method | Reached legacy behavior and expected assertion red |
+|---|---|---|
+| S1 | `TestSelectionCatalogTests.C1313_ProjectAndCatalogUniverse` | Existing `Test-NightlyPolicyProjectUniverse` on the real tree reports unmatched MarkdownPdf/children; assert complete seven/four roles (`project-universe`). No selector API is needed. |
+| S2 | `TestSelectionDependencyTests.C1313_ProviderAndShared` | A **test-only characterization adapter** feeds the real legacy `Resolve-NightlySelectedSuites` result into the fixed provider-impact oracle. Its suite-wide result cannot equal the precise provider/core roster (`provider-exact`). It does not prove the new selector. Once present, the ordinary SG method must invoke only `select-test-rosters.ps1`; remove the adapter from the green path. |
+| S3 | `TestSelectionExecutionTests.C1313_ExactExpandedExecution` | Legacy `Get-NightlyNativeExecutionArguments` expands the safe suffix sibling in FH; `forbidden-not-launched`/`exact-uid-union` fails with actual terminal UIDs. No real provider process is involved. |
+| S4 | `TestSetTimingTests.C1313_ProducerReceipts` | Existing RowRunner executes its owned child successfully but writes no durable per-set completion; independent reader fails `producer-receipt`. Absence of an event after a completed production run is the missing behavior, not a missing API/build failure. |
+| S5 | `TestTimingReportTests.C1313_ComparableHistory` | Test-only legacy characterization uses `TrxReport.Parse(...).SlowClasses` ordering with overlapping durations: class X has sum 8/window 5, class Y sum/window 6. The expected wall ranking Y-before-X fails `wall-ranking`. After S5 the ordinary method invokes only the production report CLI and ten-run data. No invented legacy report command. |
+| S6 | `ReleaseGateReportDeliveryTests.C1313_ProductionReceipt` | Run existing production cut/report path with owned fixture leaves; recipient has no bound correlated typed prepublication report/producer ledger (`producer-to-card-receipt`). A missing coordinator remains an integration prerequisite, not a green substitute. Count this one E2E red separately; do not run all E2E. |
+| S7 | `ChangeAwareReleaseTests.C1313_RolloutContract` | Existing owner docs omit the new scope/qualification/root-retention contract; explicit `rollout-unqualified` contract assertion red. Documentation-only, not proof of runtime qualification. |
+
+Brand-new CLI/API negative guards without a callable old seam obtain their sensitivity proof from the post-land PCs, **not** a claimed pre-fix API-not-found red. Record characterization limitations and exact red commits; never claim those adapters are production-entrypoint acceptance. Final V/R uses no legacy fallback adapter. Red-first commands are the seven authorized additional runs, not repeated broad CP batteries.
+
+### Guard inventory
+
+Each row is one independently bypassable safety guard in the changed selection/timing/authority path. Existing untouched guards keep R-1..R-3 coverage; this inventory does not commission mutation of unrelated historical safety systems. No guard is justified away. Pure sorting/rounding/presentation checks are ordinary V/R; timing cannot itself confer release authority.
+
+| Guard | Plan reference and invariant | Control |
+|---|---|---|
+| G-1 | S1/D-2: Every literal test project has exactly one primary/explicit-child role | PC-1 |
+| G-2 | S1/D-4: Impact-selected live obligations cannot become unattended passes | PC-2 |
+| G-3 | S1/D-5: The fake delivery row stays required and all four real shapes survive | PC-3 |
+| G-4 | S1/versioning: Unsupported policy schema refuses | PC-4 |
+| G-5 | S1/versioning: Stale canonical policy/catalog hashes refuse | PC-5 |
+| G-6 | S2/1: Only full commit object inputs are admitted | PC-6 |
+| G-7 | S2/1-2: Git read failure cannot become empty impact | PC-7 |
+| G-8 | S2/2: A-pinned policy/catalog owns selection | PC-8 |
+| G-9 | S2/4: Core remains for an empty diff | PC-9 |
+| G-10 | S2/4: Unknown impact selects Full | PC-10 |
+| G-11 | S2/4: Authority/build graph changes dominate narrowing | PC-11 |
+| G-12 | S2/3: Nonancestor baseline cannot authorize narrowing | PC-12 |
+| G-13 | S2/6: Deleted and changed ownership unions old/new surviving consumers | PC-13 |
+| G-14 | S2/2: Ordinal NUL-delimited path identity survives every platform | PC-14 |
+| G-15 | S2/5: Explicit provider ownership cannot be inferred from a new filename | PC-15 |
+| G-16 | S2/closure: Linked Compile consumer is retained | PC-16 |
+| G-17 | S2/closure: Build-only/staged-child runtime consumer is retained | PC-17 |
+| G-18 | S2/closure: Imported helper consumer is retained | PC-18 |
+| G-19 | S2/closure: Client bundle consumer is retained | PC-19 |
+| G-20 | S2/5: Global Full dominates overlapping narrow matches | PC-20 |
+| G-21 | S2/DAG: Missing dependency/prerequisite targets cannot authorize reduced work | PC-21 |
+| G-22 | S2/catalog: Invalid rule syntax refuses instead of omitting impact | PC-22 |
+| G-23 | S3/D-5: Exact compiler prevents forbidden sibling launch | PC-23 |
+| G-24 | S3/ledger: Missing required expanded UID blocks completeness | PC-24 |
+| G-25 | S3/ledger: Extra executed UID blocks completeness | PC-25 |
+| G-26 | S3/ledger: Duplicate executed UID blocks completeness | PC-26 |
+| G-27 | S3/ledger: A required skip is not success | PC-27 |
+| G-28 | S3/ledger: Zero required executions cannot be green | PC-28 |
+| G-29 | S3/remainder: Fresh unclassified candidate UID cannot inherit not-impacted | PC-29 |
+| G-30 | S4/D-8: Elapsed wall/envelopes cannot be duration sums | PC-30 |
+| G-31 | S4/D-8: Invalid/missing timestamps stay unknown | PC-31 |
+| G-32 | S4/discovery: Category metadata must bind the producing assembly | PC-32 |
+| G-33 | S4/producers: Wrapped checkpoint has exactly one timing producer | PC-33 |
+| G-34 | S4/order: Completion follows owned-child join | PC-34 |
+| G-35 | S4/root: Run/attempt components cannot traverse the root | PC-35 |
+| G-36 | S4/root: Hosted timing root cannot live under disposable custody | PC-36 |
+| G-37 | S4/root: Normal output cleanup cannot erase retained timing history | PC-37 |
+| G-38 | S4/DL-2: Append acknowledgement requires completed stable flush | PC-38 |
+| G-39 | S4/DL-2: Exact event replay is idempotent | PC-39 |
+| G-40 | S4/DL-2: Conflicting same-id bytes are an integrity error | PC-40 |
+| G-41 | S4/DL-2: Sequence/ownership is recovered before appending | PC-41 |
+| G-42 | S4/DL-2: Failed enqueue/append cannot discard recoverable original spool | PC-42 |
+| G-43 | S4/DL-2: Hard death without terminal evidence stays unfinished | PC-43 |
+| G-44 | S4/DL-2: Persistence failure is separate from test outcome | PC-44 |
+| G-45 | S4/reader: Only a torn final fragment may be ignored | PC-45 |
+| G-46 | S5/D-8: Incomparable timing series cannot be pooled | PC-46 |
+| G-47 | S5/D-9: Failed/retried attempt cost remains and shared builds count once | PC-47 |
+| G-48 | S5/D-9: Timing budgets cannot omit required coverage | PC-48 |
+| G-49 | S6/modes: Shadow executes the Full census | PC-49 |
+| G-50 | S6/qualification: Explicit current qualification is required for reduced credit | PC-50 |
+| G-51 | S6/baseline: Only compatible Full B is a baseline, never selected/readiness/member credit | PC-51 |
+| G-52 | S6/baseline: Unavailable usable baseline forces Full before launch | PC-52 |
+| G-53 | S6/baseline: Contradictory claimed baseline authority refuses | PC-53 |
+| G-54 | S6/baseline: Qualification binds current policy/catalog/selector/runtime hashes | PC-54 |
+| G-55 | S6/candidate: Fresh candidate build/discovery belongs to A | PC-55 |
+| G-56 | S6/omissions: Every omission is recomputed from pinned Git input | PC-56 |
+| G-57 | S6/credit: Scoped selected success cannot claim Full or master readiness | PC-57 |
+| G-58 | S6/versioning: Old Full readers reject new scope/schema authority | PC-58 |
+| G-59 | S6/hops: Frozen selection identity survives every entrypoint hop | PC-59 |
+| G-60 | S6/train: Aggregate B/A/membership drift invalidates prior selection | PC-60 |
+| G-61 | S6/train: Failed aggregate/recomposition forces Full rerun | PC-61 |
+| G-62 | S6/DL-3: Production creates authority/plan/ledger from durable intent | PC-62 |
+| G-63 | S6/DL-3: Failed report enqueue/write retains recoverable intent | PC-63 |
+| G-64 | S6/DL-3: Lost acknowledgement recovery reuses report identity | PC-64 |
+| G-65 | S6/DL-3: Typed prepublication receipt binds the intended card/run | PC-65 |
+| G-66 | S6/DL-3: Current candidate publication requires recipient readback | PC-66 |
+| G-67 | S6/DL-3: Receipt revision must equal current recipient revision | PC-67 |
+| G-68 | S6/DL-3: Readback body must contain the whole matching run correlation | PC-68 |
+| G-69 | S6/public output: Public manifest excludes private timing data | PC-69 |
+
+| G-70 | S1/D-4: Other-platform obligations cannot earn current-platform behaviour credit | PC-70 |
+| G-71 | S1/D-4: Unknown resource requirements cannot be unattended runnable | PC-71 |
+| G-72 | S2/DAG: Dependency/prerequisite cycles refuse reduced execution | PC-72 |
+| G-73 | S2/catalog: Rule evaluation has a finite bound and timeout refuses | PC-73 |
+| G-74 | S4/discovery: Category joins use stable expanded identities, never display names | PC-74 |
+| G-75 | S6/candidate: Dirty or changed candidate source cannot earn scoped authority | PC-75 |
+| G-76 | S6/DL-3: Readback must be the bound release card, not another card | PC-76 |
+| G-77 | S4/DL-2: Concurrent appends to one shard serialize complete records | PC-77 |
+| G-78 | S4/producers: Pre-test failure still records attempted cost with unknown case counts | PC-78 |
+| G-79 | S2/catalog: Catalog data cannot execute arbitrary script or commands | PC-79 |
+| G-80 | S6/qualification: Selector cannot create or approve its own qualification | PC-80 |
+| G-81 | S4/order: Run-started event is durable before child work begins | PC-81 |
+
+### Positive controls
+
+Every PC below has one compiling defect and one exact method target. Recipe is inherited from that method's V/R row; variant is the stated single defect; oracle is the named assertion. Reachability requires the restored valid companion, original fixture identity and unchanged unrelated guards. Classification is **planned sensitivity control**, never evidence of an introduced product defect. Mutate production/data guard sites, not the expected result/test/fixture, except PC-3 which deliberately mutates production test inventory metadata. Match the specific expected assertion; unrelated refusal, build error, timeout or zero execution is not red.
+
+Mutation runs **break/red/restore/fresh-build/green after land** on its SourceLanding snapshot. Code runs ordinary V/R; Review judges source/evidence before land. Execute all PCs, none sampled. Before Mutation, Code binds each semantic mutation site below to the actual file/symbol and a minimal patch, records the exact test FQN/expanded count and valid fixture payload digest in the bound pack. Newly introduced function/queue names and payload schemas do not exist yet: they stay **binding required**, including after Code if not supplied. Review must not silently promote an unbound control to executable or clean. Mutation must retain per-PC evidence and restoration externally.
+
+For each row use `/*/*/<Class>/<ExactMethod>` (split the qualified name in the table at its final dot), never its whole checkpoint/class filter. `C1313_PathIdentity` runs all three argument rows; every other target is one outer execution. Independent defects may batch only across different production files **and** different test methods, with each exact result retained. No broad mutation matrix. The count reflects one single-defect control per independent guard across seven slices; there is no per-field/type/transport Cartesian expansion. Ordinary V/R stays at 62 executions.
+
+| PC | Break | Exact method expected red | Decisive assertion |
+|---|---|---|---|
+| PC-1 | G-1: ignore an unknown fixture-looking project in the project-role validator | `TestSelectionCatalogTests.C1313_ProjectAndCatalogUniverse` | `unclassified-project` |
+| PC-2 | G-2: admit the exact ClaudeHeadedLongTests row as unattended without its gate | `TestSelectionCatalogTests.C1313_LiveEligibility` | `live-obligations-visible` |
+| PC-3 | G-3: drop only the real batch Arguments attribute (compiles) | `ClaudeVerifiedDeliveryTests.C1313_DeliveryDiscovery` | `five-delivery-uids` |
+| PC-4 | G-4: add fixture schema 7 to the supported versions | `ReleaseGatePolicyTests.C599_ProfileSchema` | `C599 ProfileSchema unknown version refuses` |
+| PC-5 | G-5: bypass the canonical hash inequality check | `ReleaseGatePolicyTests.C599_ProfileSchema` | `C599 ProfileSchema stale hash refuses` |
+| PC-6 | G-6: resolve the valid fixture's 12-hex candidate abbreviation instead of refusing it, then continue with that commit | `TestSelectionTests.C1313_InputRefusal` | `invalid-intent-refused` |
+| PC-7 | G-7: convert a nonzero diff exit into an empty path list | `TestSelectionTests.C1313_InputRefusal` | `git-read-refused` |
+| PC-8 | G-8: read the edited working-tree catalog instead of the candidate blob | `TestSelectionTests.C1313_PinnedPolicy` | `candidate-blob` |
+| PC-9 | G-9: return an empty selected set for B=A | `TestSelectionTests.C1313_CoreAndUnknownFallback` | `core-seven` |
+| PC-10 | G-10: return core-only for the unknown fixture path | `TestSelectionTests.C1313_CoreAndUnknownFallback` | `unknown-full` |
+| PC-11 | G-11: omit the selection-authority-changed full fallback for a changed catalog | `TestSelectionTests.C1313_AuthorityChanges` | `authority-full` |
+| PC-12 | G-12: remove the ancestry-to-Full branch | `TestSelectionTests.C1313_AuthorityChanges` | `nonancestor-full` |
+| PC-13 | G-13: look up deletion ownership only in A | `TestSelectionTests.C1313_PathIdentity` | `old-new-union` |
+| PC-14 | G-14: lowercase parsed Git paths before ownership lookup | `TestSelectionTests.C1313_PathIdentity` | `ordinal-paths` |
+| PC-15 | G-15: classify the unlisted ClaudeNewShared fixture by its prefix | `TestSelectionDependencyTests.C1313_ProviderAndShared` | `shared-all-providers` |
+| PC-16 | G-16: drop the one fixture linked-Compile edge | `TestSelectionDependencyTests.C1313_RuntimeEdges` | `linked-consumer` |
+| PC-17 | G-17: drop the staged-child edge while leaving normal references intact | `TestSelectionDependencyTests.C1313_RuntimeEdges` | `staged-consumer` |
+| PC-18 | G-18: drop the helper import edge | `TestSelectionDependencyTests.C1313_RuntimeEdges` | `helper-consumer` |
+| PC-19 | G-19: drop the client/dist runtime edge | `TestSelectionDependencyTests.C1313_RuntimeEdges` | `bundle-consumer` |
+| PC-20 | G-20: stop matching after the first provider rule | `TestSelectionDependencyTests.C1313_ProviderAndShared` | `full-dominates` |
+| PC-21 | G-21: ignore a missing prerequisite target | `TestSelectionDependencyTests.C1313_InvalidGraph` | `invalid-graph` |
+| PC-22 | G-22: catch regex validation/timeout and treat it as no match | `TestSelectionDependencyTests.C1313_InvalidGraph` | `invalid-rule` |
+| PC-23 | G-23: restore the legacy class-prefix star for the colliding class | `TestSelectionExecutionTests.C1313_ExactExpandedExecution` | `forbidden-not-launched` |
+| PC-24 | G-24: ignore the missing UID set | `TestSelectionExecutionTests.C1313_CoverageRefusal` | `missing-uid` |
+| PC-25 | G-25: ignore the extra executed UID set | `TestSelectionExecutionTests.C1313_CoverageRefusal` | `extra-uid` |
+| PC-26 | G-26: deduplicate duplicate terminal UIDs silently | `TestSelectionExecutionTests.C1313_CoverageRefusal` | `duplicate-uid` |
+| PC-27 | G-27: normalize required Skipped to Passed | `TestSelectionExecutionTests.C1313_CoverageRefusal` | `required-skip` |
+| PC-28 | G-28: accept a zero-required/zero-executed ledger | `TestSelectionExecutionTests.C1313_CoverageRefusal` | `zero-required` |
+| PC-29 | G-29: assign the new fixture UID not-impacted instead of suite remainder | `TestSelectionExecutionTests.C1313_NewUidRemainder` | `new-uid-required` |
+| PC-30 | G-30: assign caseDurationSumSeconds to caseWindowSeconds | `TestSetTimingTests.C1313_WallEnvelopes` | `wall-not-sum` |
+| PC-31 | G-31: coalesce an unavailable wall measurement to zero | `TestSetTimingTests.C1313_UnavailableMeasurements` | `unknown-not-zero` |
+| PC-32 | G-32: accept the fixture foreign assembly digest in the metadata join | `TestSetTimingTests.C1313_DiscoveryJoin` | `category-build-bound` |
+| PC-33 | G-33: enable both tool and wrapper row completion writers | `TestSetTimingTests.C1313_ProducerReceipts` | `one-row-producer` |
+| PC-34 | G-34: append terminal completion before releasing/joining the held child | `TestSetTimingTests.C1313_ProducerReceipts` | `completion-after-join` |
+| PC-35 | G-35: allow ../escape as the run component | `TimingJournalTests.C1313_RootCustody` | `path-component-refused` |
+| PC-36 | G-36: accept the output-contained hosted root | `TimingJournalTests.C1313_RootCustody` | `root-outside-custody` |
+| PC-37 | G-37: include the external timing shard in the producer cleanup list | `TimingJournalTests.C1313_RootCustody` | `history-survives-output` |
+| PC-38 | G-38: return append success before the injected flush barrier completes | `TimingJournalTests.C1313_RecoveryHandoffs` | `flush-before-ack` |
+| PC-39 | G-39: append an exact duplicate event instead of recognizing it | `TimingJournalTests.C1313_ReplayIdentity` | `replay-once` |
+| PC-40 | G-40: accept the changed payload with the same event id | `TimingJournalTests.C1313_ReplayIdentity` | `event-conflict` |
+| PC-41 | G-41: restart sequence at zero for an existing shard | `TimingJournalTests.C1313_ReplayIdentity` | `sequence-resumed` |
+| PC-42 | G-42: remove spool after a failed append | `TimingJournalTests.C1313_RecoveryHandoffs` | `recoverable-handoff` |
+| PC-43 | G-43: synthesize success for a start-only attempt | `TimingJournalTests.C1313_RecoveryHandoffs` | `unfinished-not-success` |
+| PC-44 | G-44: overwrite failed test outcome with pass when the timing writer fails | `TimingJournalTests.C1313_RecoveryHandoffs` | `persistence-not-test-outcome` |
+| PC-45 | G-45: ignore a malformed complete middle record | `TimingJournalTests.C1313_TornTail` | `corrupt-not-truncated` |
+| PC-46 | G-46: omit membership digest from the comparability key | `TestTimingReportTests.C1313_ComparableHistory` | `comparable-series` |
+| PC-47 | G-47: filter failed attempts out of total incurred cost | `TestTimingReportTests.C1313_AttemptCost` | `attempt-cost` |
+| PC-48 | G-48: drop an expensive set when its p90 exceeds the budget | `TestTimingReportTests.C1313_EstimatesNeverSelect` | `budget-never-omits` |
+| PC-49 | G-49: execute the proposed narrow union in Shadow | `ChangeAwareReleaseTests.C1313_ModeCredit` | `shadow-full` |
+| PC-50 | G-50: treat absence/revocation of activation as qualified | `ChangeAwareReleaseTests.C1313_ModeCredit` | `unqualified-no-credit` |
+| PC-51 | G-51: accept a ChangeAware receipt as the Full baseline | `ChangeAwareReleaseTests.C1313_BaselineAuthority` | `baseline-full-only` |
+| PC-52 | G-52: keep narrow mode when baseline receipt is absent | `ChangeAwareReleaseTests.C1313_BaselineAuthority` | `baseline-absent-full` |
+| PC-53 | G-53: treat a foreign baseline digest as missing and fall back silently | `ChangeAwareReleaseTests.C1313_BaselineAuthority` | `baseline-corrupt-refused` |
+| PC-54 | G-54: accept a baseline with a changed selector contract hash | `ChangeAwareReleaseTests.C1313_BaselineAuthority` | `contract-hash-bound` |
+| PC-55 | G-55: accept discovery built at B for candidate A | `ChangeAwareReleaseTests.C1313_CandidateBinding` | `candidate-build-bound` |
+| PC-56 | G-56: trust the edited not-impacted list after its local hashes are repaired | `ChangeAwareReleaseTests.C1313_ScopeAuthority` | `forged-omission-refused` |
+| PC-57 | G-57: emit coverageScope=Full for a result with omissions | `ChangeAwareReleaseTests.C1313_ScopeAuthority` | `selected-not-full` |
+| PC-58 | G-58: admit new scoped authority through the legacy Full reader | `ChangeAwareReleaseTests.C1313_ScopeAuthority` | `legacy-rejects-scoped` |
+| PC-59 | G-59: omit BaselineSha only from the self-reexec argument list | `ChangeAwareReleaseTests.C1313_ParameterHops` | `hop-baseline-bound` |
+| PC-60 | G-60: reuse the selection after the aggregate membership digest changes | `ChangeAwareReleaseTests.C1313_TrainAggregate` | `aggregate-bound` |
+| PC-61 | G-61: reuse narrow selection after recomposition failure | `ChangeAwareReleaseTests.C1313_TrainAggregate` | `recomposition-full` |
+| PC-62 | G-62: skip production authority/plan creation while retaining exit-zero child results | `ReleaseGateReportDeliveryTests.C1313_ProductionReceipt` | `producer-ledger-present` |
+| PC-63 | G-63: mark report complete when the actual queue/write fails | `ReleaseGateReportDeliveryTests.C1313_ProductionReceipt` | `report-pending-until-receipt` |
+| PC-64 | G-64: allocate a new report identity after recipient commit before receipt persistence | `ReleaseGateReportDeliveryTests.C1313_ProductionReceipt` | `one-logical-report` |
+| PC-65 | G-65: accept a final/foreign receipt kind as prepublication | `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedgerReceipt` | `C599 G-306: a final or foreign receipt kind where the prepublication receipt is required refuses` |
+| PC-66 | G-66: use the local ledger copy when recipient GET fails | `ReleaseGatePublicationAuthorityTests.C599A_ReceiptReadback` | `C599 V-12: an unavailable, failed, unknown or non-object release card readback refuses (fail closed)` |
+| PC-67 | G-67: ignore the current-card revision inequality | `ReleaseGatePublicationAuthorityTests.C599A_ReceiptReadback` | `C599 V-12: a receipt revision other than the release card current revision refuses` |
+| PC-68 | G-68: ignore a foreign runId in the card body | `ReleaseGatePublicationAuthorityTests.C599A_ReceiptReadback` | `C599 V-12: a release card body without exactly this run correlation refuses` |
+| PC-69 | G-69: copy host identity from a timing row into the manifest | `ChangeAwareReleaseTests.C1313_PublicProjection` | `public-allowlist` |
+
+| PC-70 | G-70: mark the Linux-only PDF method runnable on the Windows profile | `TestSelectionCatalogTests.C1313_LiveEligibility` | `other-os-obligation` |
+| PC-71 | G-71: default the unknown resource fixture to no prerequisites | `TestSelectionCatalogTests.C1313_LiveEligibility` | `unknown-resource-ineligible` |
+| PC-72 | G-72: treat the back edge of the two-node prerequisite cycle as already satisfied | `TestSelectionDependencyTests.C1313_InvalidGraph` | `cycle-refused` |
+| PC-73 | G-73: catch the bounded matcher timeout as a successful non-match | `TestSelectionDependencyTests.C1313_InvalidGraph` | `regex-timeout-refused` |
+| PC-74 | G-74: join the two colliding display names instead of expanded UID | `TestSetTimingTests.C1313_DiscoveryJoin` | `category-uid-bound` |
+| PC-75 | G-75: ignore a dirty candidate observation while preserving its SHA | `ChangeAwareReleaseTests.C1313_CandidateBinding` | `candidate-clean-required` |
+| PC-76 | G-76: skip the returned-card id comparison | `ReleaseGatePublicationAuthorityTests.C599A_ReceiptReadback` | `C599 V-12: a readback of any card but the bound release card refuses` |
+| PC-77 | G-77: remove the shard writer lock while holding two append calls at the sequence barrier | `TimingJournalTests.C1313_ReplayIdentity` | `serialized-shard` |
+| PC-78 | G-78: skip completion emission for the build-failed path | `TestSetTimingTests.C1313_ProducerReceipts` | `failed-attempt-recorded` |
+| PC-79 | G-79: accept a script-block rule and evaluate it in the controlled fixture | `TestSelectionDependencyTests.C1313_InvalidGraph` | `data-not-code` |
+| PC-80 | G-80: write an active qualification record as a side effect of selection | `ChangeAwareReleaseTests.C1313_ModeCredit` | `qualification-root-unchanged` |
+| PC-81 | G-81: launch the child before releasing the start-event flush barrier | `TestSetTimingTests.C1313_ProducerReceipts` | `start-before-launch` |
+
+### Out of scope
+
+- Real provider/headed/API-spend, installed Herdr, real browser PDF and broad Full/Shadow qualification; all remain visible selected obligations. Separate exact-roster commissioning and receipts are required. Fake native/discovery evidence cannot earn these credits.
+- Production schedule/Interim activation, deployed train admission, release publication and operational timing-volume retention qualification. RC composition uses a disposable app and fake GitHub destination; it cannot qualify those deployments.
+- Unchanged native coordination internals, generic cleanup authority, session queue/reconciliation logic, historical publisher field matrices and whole Unit/assembly runs. Their changed call boundaries receive the named regressions; expanding implementation scope requires an amended manifest before extra runs.
+- No claim that discovery executed a test, timing proved a pass, a request delivered a report, or a fake composer check supplied a complete session transcript.
+
+### Checkpoints
+
+Closed ordinary Code scope below; this is the sole executable checkpoint table. All rows require clean committed source, isolated output and verified producing-build binding. Rows sharing output use exactly the same After group. Discovery of each producing assembly (once, same assembly hash) is an explicit prerequisite charged to its build row: record its exact command, hash, expanded roster and wall cost; it is **not** counted in Min. FilterHost discovery/owned-child invocation cost is included in CP-5/CP-9. CP-22 also discovers only the delivery methods before CP-23's five-row assertion; no real TUI runs. This adds no implicit discovery of every repo assembly.
+
+The discovery argument vector is `--list-tests --no-progress --no-ansi --diagnostic --diagnostic-output-directory <owned-discovery-dir>` against the producing assembly (`dotnet <absolute-dll>` where UseAppHost=false). Use the existing owned-process boundary and `ConvertFrom-NightlyDiagnosticLog` / `ConvertTo-NightlyDiscoveryDocument` with the actual assembly hash; the scheduler holds the build slot for this prerequisite. Never write discovery output beside a sealed DLL. CP-22 discovery adds the exact class filter `/*/*/ClaudeVerifiedDeliveryTests/*`; CP-23 independently selects the five delivery UIDs from that metadata. S1-S3 can use the existing discovery producer before S4 adds its timing integration.
+
+Portable rows CP-1..18 run on one eligible .NET/PowerShell/Git host. CP-19..23 require Windows (CP-22 requires staged fakeclaude and native PTY). CP-24 requires the isolated E2E app/PostgreSQL/Docker/runner prerequisites; use Windows if required by the supplied coordinator, otherwise portable. Missing required capability is incomplete, never an early-return pass. Do not count a Linux execution of a Windows method as the Windows row.
+
+Use the checkpoint tool through the host slot gate once per committed group, then await the run to its terminal result (75 means continue waiting). Example: `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1313-checkpoints -- dotnet run --project tools/Antiphon.Checkpoints -- run --plan docs/superpowers/plans/2026-10-16-card-1313-change-aware-selection-plan.md --rows CP-1,CP-2,CP-3,CP-4,CP-5,CP-6,CP-7,CP-8`. Restrict each subsequent run to its named rows; do not rebuild the same group for every method. Main/Pty rows run sequentially; native child rows are serial. Preserve exact CHECKPOINT lines, full verified SHA and fresh source/build receipts; Code/Review run the evidence-diff guard. Remove only owned alternate outputs through current cleanup APIs after all consumers finish.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1313-selection/` | catalog | `/*/*/TestSelectionCatalogTests/*` | V-1 | exactly 3 outer executions; named roster; 0 failed/skipped | 3 | 6 | false |
+| CP-2 | S1-S3 | `CP-1` | policy | `/*/*/ReleaseGatePolicyTests/(C599_ProfileSchema*)\|(C599_ProfileSuites*)\|(C599_EligibilityCensus*)\|(C599_ExpandedCoverage*)` | V-1,R-1 | exactly 4 outer executions; named roster; 0 failed/skipped | 4 | 1 | false |
+| CP-3 | S1-S3 | `CP-1` | two-sha | `/*/*/TestSelectionTests/*` | V-2 | exactly 8 outer executions; named roster; 0 failed/skipped | 8 | 2 | false |
+| CP-4 | S1-S3 | `CP-1` | dependencies | `/*/*/TestSelectionDependencyTests/*` | V-3 | exactly 3 outer executions; named roster; 0 failed/skipped | 3 | 1 | false |
+| CP-5 | S1-S3 | `CP-1` | exact-execution | `/*/*/TestSelectionExecutionTests/*` | V-4,R-1 | exactly 3 outer executions; named roster; 0 failed/skipped | 3 | 2 | true |
+| CP-6 | S1-S3 | `CP-1` | discovery-regression | `/*/*/NightlyDiscoveryParserTests/C1044_DiscoveryReconciliation` | R-1 | exactly 1 outer executions; named roster; 0 failed/skipped | 1 | 0.5 | false |
+| CP-7 | S1-S3 | `CP-1` | terminal-regression | `/*/*/NightlyExecutionDiagnosticTests/D13_ExecutionGuards` | R-1 | exactly 1 outer executions; named roster; 0 failed/skipped | 1 | 0.5 | false |
+| CP-8 | S1-S3 | `CP-1` | core-limiter | `/*/Antiphon.Tests/ProcessSpawnLimitTests/(Caps_concurrent_process_spawning_tests_at_one*)\|(Process_spawning_classes_carry_the_limiter*)` | R-1 | exactly 2 outer executions; named roster; 0 failed/skipped | 2 | 0.25 | false |
+| CP-9 | S4-S5 | `tests/Antiphon.Tests -> bin-c1313-timing/` | timing-measurement | `/*/*/TestSetTimingTests/*` | V-5 | exactly 4 outer executions; named roster; 0 failed/skipped | 4 | 6 | true |
+| CP-10 | S4-S5 | `CP-9` | timing-journal | `/*/*/TimingJournalTests/*` | V-6 | exactly 4 outer executions; named roster; 0 failed/skipped | 4 | 3 | true |
+| CP-11 | S4-S5 | `CP-9` | timing-report | `/*/*/TestTimingReportTests/*` | V-7 | exactly 3 outer executions; named roster; 0 failed/skipped | 3 | 1 | false |
+| CP-12 | S4-S5 | `CP-9` | legacy-duration | `/*/*/TrxReportTests/aggregates_seconds_per_class` | R-2 | exactly 1 outer executions; named roster; 0 failed/skipped | 1 | 0.25 | false |
+| CP-13 | S4-S5 | `CP-9` | receipt-required | `/*/*/RowRunnerTests/no_trx_is_exit_2` | R-2 | exactly 1 outer executions; named roster; 0 failed/skipped | 1 | 0.25 | false |
+| CP-14 | S4-S5 | `CP-9` | build-binding | `/*/*/CheckpointBuildBindingPathTests/Different_directory_or_provenance_is_refused` | R-2 | exactly 1 outer executions; named roster; 0 failed/skipped | 1 | 0.25 | false |
+| CP-15 | S6-S7 | `tests/Antiphon.Tests -> bin-c1313-release/` | release-selection | `/*/*/ChangeAwareReleaseTests/*` | V-8,V-9,V-10 | exactly 8 outer executions; named roster; 0 failed/skipped | 8 | 7 | false |
+| CP-16 | S6-S7 | `CP-15` | full-authority | `/*/*/ReleaseGateAuthorityContractTests/(C599B_PinnedPolicy*)\|(C599B_AllChunks*)` | R-3 | exactly 2 outer executions; named roster; 0 failed/skipped | 2 | 1 | false |
+| CP-17 | S6-S7 | `CP-15` | receipt-authority | `/*/*/ReleaseGatePublicationAuthorityTests/(C599A_ExecutionLedgerReceipt*)\|(C599A_ReceiptReadback*)` | R-3 | exactly 2 outer executions; named roster; 0 failed/skipped | 2 | 1 | false |
+| CP-18 | S6-S7 | `CP-15` | credit-coordination | `/*/*/ReleaseGateRunTests/(C599_CreditVerdicts*)\|(C599_MasterStateIsolation*)\|(C599_SharedLock*)` | R-3 | exactly 3 outer executions; named roster; 0 failed/skipped | 3 | 1 | false |
+| CP-19 | all | `tests/Antiphon.Tests -> bin-c1313-windows/` | windows-git-paths | `/*/*/TestSelectionTests/C1313_PathIdentity` | V-2 | exactly 3 outer executions; named roster; 0 failed/skipped | 3 | 5 | false |
+| CP-20 | all | `CP-19` | windows-journal | `/*/*/TimingJournalTests/C1313_ReplayIdentity` | V-6 | exactly 1 outer executions; named roster; 0 failed/skipped | 1 | 1 | false |
+| CP-21 | all | `CP-19` | windows-forwarding | `/*/*/ChangeAwareReleaseTests/C1313_ParameterHops` | V-8 | exactly 1 outer executions; named roster; 0 failed/skipped | 1 | 1 | false |
+| CP-22 | all | `tests/Antiphon.Agents.Pty.Tests -> bin-c1313-fake/` | fake-delivery | `/*/*/ClaudeVerifiedDeliveryTests/Fake_evidence_appears_then_submit_completes_a_turn` | V-1 | exactly 1 outer executions; named roster; 0 failed/skipped | 1 | 6 | true |
+| CP-23 | all | `CP-22` | delivery-metadata | `/*/*/ClaudeVerifiedDeliveryTests/C1313_DeliveryDiscovery` | V-1 | exactly 1 outer executions; named roster; 0 failed/skipped | 1 | 0.5 | true |
+| CP-24 | all | `tests/Antiphon.E2E -> bin-c1313-recipient/` | producer-recipient | `/*/*/ReleaseGateReportDeliveryTests/C1313_ProductionReceipt` | V-8,V-10,R-3 | exactly 1 outer executions; named roster; 0 failed/skipped | 1 | 7 | true |
+
+The table totals **62 outer TUnit executions**, including the three argument-expanded path cases twice (portable + Windows). FH argument executions, script PASS lines and five discovered delivery rows are separate receipts, not additions to Min. Combined method operands use the pinned runner's required trailing stars, but their permitted executed names are exactly the listed methods; any suffix collision splits that row before execution and is reported as a manifest correction. New-class `*` filters refer only to the finite method inventories above, never to a category/assembly lane.
+
+### Cost
+
+All numbers are **estimated minutes**, not measured timings or a savings claim. TestDesign execution cost: **0** builds/tests/PCs. Ordinary Code V/R floor = sum of CP-1..24 EstimatedMinutes = **54.5**. This contains six isolated producing builds (estimated **22**) plus six once-per-build category discoveries (**3**) and narrow V/R/fixture execution (**29.5**). Builds/discovery are included, not charged twice.
+
+Seven exact red-first filters above add **15** (isolated incremental setup/build **7**, assertion runs/owned E2E recipient **8**); no whole CP group runs red. Code verification budget before authoring = **69.5**. One preflight/manifest/source-pack setup allowance = **2** outside that floor. CP-24 adds 7 minutes above the original 47-minute proposal because validator fixtures cannot prove the release producer/recipient prerequisite; finer filters and shared builds offset other additions. Full live qualification has no invented cost/receipt here and needs its separately commissioned roster.
+
+Post-land Mutation floor: **81** exact-method PC cycles, broken down below. Each cycle includes its own compiling defect, build, intended assertion red, restore, fresh build and green; no build/green reuse across changed source and no savings assumed from batching.
+
+| PC filters / IDs | Cycles | Build + red + restore + build + green estimate per cycle | Subtotal |
+|---|---:|---|---:|
+| SG/RA/report exact methods in the PC table; PC IDs 1,2,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,65,66,67,68,69,70,71,72,73,75,76,79,80 | 57 | 0.5 + 0.3 + 0.2 + 0.5 + 0.5 = 2 | 114 |
+| TJ exact methods in the PC table; PC IDs 30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,74,77,78,81 | 20 | 0.75 + 0.5 + 0.25 + 0.75 + 0.75 = 3 | 60 |
+| ClaudeVerifiedDeliveryTests.C1313_DeliveryDiscovery; PC IDs 3 | 1 | 1 + 0.5 + 0.5 + 1 + 1 = 4 | 4 |
+| ReleaseGateReportDeliveryTests.C1313_ProductionReceipt; PC IDs 62,63,64 | 3 | 1 + 1.5 + 0.5 + 1 + 2 = 6 | 18 |
+
+Mutation setup/binding/discovery/report allowance **5**; PC floor **196**; total Mutation verification estimate **201**. Combined ordinary V/R + PC floors = **250.5**. Total planned setup/build/red-first/V/R/each-PC-red-restore-green = **2 + 15 + 54.5 + 5 + 196 = 272.5 minutes**, excluding authoring and separately commissioned rollout. If actual incremental builds exceed the estimate, retain measured cost and update the budget; do not omit controls.
+
+Savings: six producing builds instead of 24 row-local builds saves **18 builds**; at a conservative 2 minutes each, **36 estimated minutes**. No elapsed percentage saving is inferred from CARD-1287's incomparable rosters. Mutation batching savings are **0** until independent file/method bindings prove them.
+
+Handoff audit: **guards=81, mapped=81, missing=0, duplicate PC maps=0**. All 81 PCs are required to run post-land; **executed now=0**, not PC-clean. No unexecuted or unbound control may be reported as passed. Ordinary scope is the union of the 24 CP rows; the seven red-first runs are explicitly budgeted. Code must return the bound mutation pack, actual expanded counts and delivery bindings, run all ordinary rows, then `next: review`. Missing DL-3 coordinator/queue/payload binding instead retains incomplete S6 and returns `next: plan`. No deployment or human decision is implied by this TestDesign handoff.
