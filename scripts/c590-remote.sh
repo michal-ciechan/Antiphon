@@ -2318,11 +2318,15 @@ c849_seed() {
         mount="$(c849_fixture_work_mount)" || c849_seed_failure "$donor" CacheStageCreateFailed
         seed_path="$stage/npm-cache"
         c849_payload_fs writer 'mkdir "$1"; ln -s ../npm "$1/_cacache"' bash "$seed_path" || c849_seed_failure "$donor" CacheStageCreateFailed
+        # npm creates _logs here; use the writer that must remove them afterward.
+        c849_fixture_helper_exec writer npm cache verify --cache "$seed_path" >/dev/null 2>&1 \
+            || c849_seed_failure "$donor" NpmStagedIntegrityFailed
+    else
+        docker run --rm --network none --user 0:0 --entrypoint npm \
+            --mount "$mount" "$image" \
+            cache verify --cache "$seed_path" >/dev/null 2>&1 \
+            || c849_seed_failure "$donor" NpmStagedIntegrityFailed
     fi
-    docker run --rm --network none --user 0:0 --entrypoint npm \
-        --mount "$mount" "$image" \
-        cache verify --cache "$seed_path" >/dev/null 2>&1 \
-        || c849_seed_failure "$donor" NpmStagedIntegrityFailed
     if [ "$backend" = volume ]; then c849_payload_fs writer 'rm -rf -- "$1/npm-cache"' bash "$stage" || c849_seed_failure "$donor" NpmStagedIntegrityFailed; fi
     printf 'npm-integrity=passed\n' > "$CASE_DIR/npm-integrity.txt"
     c849_payload_call writer c849_manifest_write "$stage" "$stage/recovery.manifest" || c849_seed_failure "$donor" CacheManifestFailed
