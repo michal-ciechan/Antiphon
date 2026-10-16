@@ -454,8 +454,11 @@ internal static class CheckpointTempSweepAssemblyHook
     public static void Sweep()
     {
         if (Environment.GetEnvironmentVariable("C804_ORPHAN_SWEEP_ROOT") is not null) return;
-        new CheckpointTempRootSweep().SweepOnce(Console.Out);
+        Sweep(CheckpointCleanupDefaults.Context, Path.GetTempPath(), Console.Out);
     }
+
+    public static CheckpointSweepReceipt Sweep(CheckpointCleanupContext context, string temp, TextWriter? output = null) =>
+        new CheckpointTempRootSweep(context, temp).SweepOnce(output);
 
     [Before(Assembly)]
     public static void RecordSelectedRoster(AssemblyHookContext context)
