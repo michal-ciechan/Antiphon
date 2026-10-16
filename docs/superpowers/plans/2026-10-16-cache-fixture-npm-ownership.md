@@ -66,4 +66,4 @@ unlisted build through build-slot.ps1 because the tool must exist to run rows.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-npm-ownership/` | native-npm-ownership | `/*/*/CacheSeedNpmOwnershipTests/*` | V-1, V-2, V-3 | all 3 cases, 0 failed/skipped after S2; expected red at S1 | 3 | 5 |
-| CP-2 | S2 | CP-1 | adjacent-cache-contracts | `/*/*/RemoteScriptContractTests/(C1192_Real_cache_cases_keep_the_host_payload_backend)\|(C1192_Fixture_seed_and_rerun_keep_payloads_in_volume)\|(C849_Seed_refuses_invalid_donors_and_partial_payloads)\|(C1195_Seed_import_chmod_restores_volume_root)` | R-1, R-2, R-3 | all 4 methods, 0 failed/skipped | 4 | 2 |
+| CP-2 | S2 | CP-1 | adjacent-cache-contracts | `/*/*/RemoteScriptContractTests/(C1192_Real_cache_cases_keep_the_host_payload_backend*)\|(C1192_Fixture_seed_and_rerun_keep_payloads_in_volume*)\|(C849_Seed_refuses_invalid_donors_and_partial_payloads*)\|(C1195_Seed_import_chmod_restores_volume_root*)` | R-1, R-2, R-3 | all 4 methods, 0 failed/skipped | 4 | 2 |
