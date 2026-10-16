@@ -2042,12 +2042,14 @@ c849_cold_reuse_receipts() {
       (.runnerSessions == null or (.runnerSessions | type) == "number")' >/dev/null \
         || write_result false CacheFirstSeedPreconditionUnknown 2
     printf '%s' "$temp" | jq -e '
-      has("runnerSessions") and .retiredAt != null and .available == false and
+      has("runnerSessions") and .available == false and
       .dispatchEligible == false and .acceptingNewWork == false and
-      .draining == true and .retireWhenIdle == true and .redirectTo == "server2" and
+      .draining == true and .redirectTo == "server2" and
       (.sessions | type) == "number" and .sessions == 0 and
       (.queuedTasks | type) == "number" and .queuedTasks == 0 and
-      (.runnerSessions == null or ((.runnerSessions | type) == "number" and .runnerSessions == 0))' >/dev/null \
+      (.runnerSessions == null or ((.runnerSessions | type) == "number" and .runnerSessions == 0)) and
+      ((.retiredAt != null and .retireWhenIdle == true) or
+       (.retiredAt == null and .retireWhenIdle == false))' >/dev/null \
         || write_result false CacheFirstSeedTempNotRetired 2
     c849_no_temp_containers
     c849_write_cold_status_receipts "$status" "$temp"
