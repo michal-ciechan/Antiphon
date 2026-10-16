@@ -46,6 +46,14 @@ This is not full live Fixture qualification; release activation owns that later.
 Mutation candidate: `docs/superpowers/mutations/2026-10-16-cache-fixture-npm-ownership.md`.
 All PCs remain pending for SourceLanding Mutation.
 
+Windows runner compatibility: import this table with the checkpoint tool into
+`.antiphon/npm-ownership.yaml`, set only `build.properties.UseAppHost` to `false`,
+and run that manifest with the committed `--expected-source-sha`. This RC's tool
+implicitly disables apphosts during its confined build but otherwise launches
+the Windows test executable; an explicit property aligns build and execution.
+The imported rows, filters, counts and deadlines must remain unchanged. Retain
+the failed no-TRX attempt as infrastructure evidence, not defect reproduction.
+
 ### Cost
 
 Ordinary floor: 7 minutes plus authoring. One expected-red CP-1 run precedes
