@@ -824,12 +824,105 @@ function Test-D13_ExecutionGuards {
         }
     }
     $path = Write-C1044Diagnostic -Name 'd13-guard-error' -Text $text
-    $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution).Nodes)
-    $missing = Test-NightlyExpandedRowsPresent -DiscoveryNodes @() -TerminalRows @() `
-        -RequiredUids @('Antiphon.E2E.AgentTaskLandDeliveryE2ETests.1.1.C488_ApprovalPollingCannotConfirm.1.1.0')
-    Assert-C487 -Cond (-not $missing.Ok -and $missing.Missing.Count -eq 1) -Name 'D13 missing failed UID refuses'
-    $extra = Test-NightlyTrxDiagnosticCrossCheck -TrxRows @() -TerminalNodes $nodes
+    $parsed = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution).Nodes)
+    $requiredUid = 'Antiphon.E2E.AgentTaskLandDeliveryE2ETests.1.1.C488_ApprovalPollingCannotConfirm.1.1.0'
+    $omittedUid = 'Antiphon.E2E.AgentTaskLandDeliveryE2ETests.1.1.OtherMethod.1.1.0'
+    $omitPath = Write-C1044Diagnostic -Name 'd13-guard-omit' -Text ($text.Replace($requiredUid, $omittedUid))
+    $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $omitPath -Kind execution).Nodes)
+    $missing = Test-NightlyExpandedRowsPresent -DiscoveryNodes @() -TerminalRows $nodes -RequiredUids @($requiredUid)
+    Assert-C487 -Cond ($nodes.Count -eq 1 -and $nodes[0].Uid -ceq $omittedUid -and
+        -not $missing.Ok -and @($missing.Missing).Count -eq 1 -and [string]$missing.Missing[0] -ceq $requiredUid) `
+        -Name 'D13 missing failed UID refuses'
+    $extra = Test-NightlyTrxDiagnosticCrossCheck -TrxRows @() -TerminalNodes $parsed
     Assert-C487 -Cond (-not $extra.Ok -and $extra.Mismatch.Count -eq 1) -Name 'D13 extra failed identity refuses'
+}
+
+function New-D13StateRecord {
+    param(
+        [string]$Uid,
+        [string]$TypeName,
+        [string]$Method,
+        [string]$StateName,
+        [string]$Explanation,
+        [string]$ExceptionText = 'System.Exception: outer'
+    )
+    $state = '{0}TestNodeStateProperty {{ Explanation = {1}, Exception = {2} }}' -f $StateName, $Explanation, $ExceptionText
+    return ('TestNodeUpdateMessage { DisplayName = TestNode update, Description = This data is used to report a TestNode state change., Properties = [], ParentTestNodeUid = <null>, TestNode = TestNode { Uid = TestNodeUid { Value = ' + $Uid + ' }, DisplayName = ' + $Method + ', Properties = [ TestMethodIdentifierProperty { AssemblyFullName = Probe, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null, Namespace = Probe, TypeName = ' + $TypeName + ', MethodName = ' + $Method + ', MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }, ' + $state + ' ] } }')
+}
+
+function Get-D13StateText {
+    param([string[]]$Records)
+    return ("Version: '1.44.0.0'`nVersion: 2.2.2`n" + ($Records -join "`n"))
+}
+
+function ConvertFrom-D13StateText {
+    param([string]$Name, [string]$Text)
+    $path = Write-C1044Diagnostic -Name $Name -Text $Text
+    $errorText = ''
+    $nodes = @()
+    try {
+        $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution).Nodes)
+    } catch {
+        $errorText = [string]$_.Exception.Message
+    }
+    return [pscustomobject]@{ Nodes = @($nodes); Error = $errorText }
+}
+
+function Test-D13_StateClassification {
+    $timeoutUid = 'Probe.TimeoutCases.1.1.Only.1.1.0'
+    $timeout = ConvertFrom-D13StateText -Name 'd13-timeout-only' -Text (Get-D13StateText -Records @(
+        (New-D13StateRecord -Uid $timeoutUid -TypeName 'TimeoutCases' -Method 'Only' -StateName 'Timeout' -Explanation 'timed out' -ExceptionText 'System.TimeoutException: timed out')))
+    Assert-C487 -Cond ($timeout.Error -eq '' -and @($timeout.Nodes).Count -eq 1 -and
+        $timeout.Nodes[0].Uid -ceq $timeoutUid -and $timeout.Nodes[0].Outcome -ceq 'Failed' -and
+        $timeout.Nodes[0].Message -ceq 'timed out') -Name 'D13 timeout-only is failed' `
+        -Detail ('error=' + $timeout.Error + ' outcome=' + [string]$timeout.Nodes[0].Outcome + ' message=' + [string]$timeout.Nodes[0].Message)
+
+    $cancelledUid = 'Probe.CancelledCases.1.1.Only.1.1.0'
+    $cancelled = ConvertFrom-D13StateText -Name 'd13-cancelled-only' -Text (Get-D13StateText -Records @(
+        (New-D13StateRecord -Uid $cancelledUid -TypeName 'CancelledCases' -Method 'Only' -StateName 'Cancelled' -Explanation 'cancelled by the run' -ExceptionText 'System.OperationCanceledException: cancelled')))
+    Assert-C487 -Cond ($cancelled.Error -eq '' -and @($cancelled.Nodes).Count -eq 1 -and
+        $cancelled.Nodes[0].Uid -ceq $cancelledUid -and $cancelled.Nodes[0].Outcome -ceq 'Failed' -and
+        $cancelled.Nodes[0].Message -ceq 'cancelled by the run') -Name 'D13 cancelled-only is failed' `
+        -Detail ('error=' + $cancelled.Error + ' outcome=' + [string]$cancelled.Nodes[0].Outcome + ' message=' + [string]$cancelled.Nodes[0].Message)
+
+    $passUid = 'Probe.Ordinary.1.1.Plain.1.1.0'
+    $mixedUid = 'Probe.SlowCases.1.1.SlowOne.1.1.0'
+    $mixed = ConvertFrom-D13StateText -Name 'd13-mixed-timeout' -Text (Get-D13StateText -Records @(
+        (New-D13StateRecord -Uid $passUid -TypeName 'Ordinary' -Method 'Plain' -StateName 'Passed' -Explanation 'ok' -ExceptionText 'none'),
+        (New-D13StateRecord -Uid $mixedUid -TypeName 'SlowCases' -Method 'SlowOne' -StateName 'Timeout' -Explanation 'slow timed out' -ExceptionText 'System.TimeoutException: slow timed out')))
+    $passNode = @($mixed.Nodes | Where-Object { $_.Uid -ceq $passUid })
+    $timeoutNode = @($mixed.Nodes | Where-Object { $_.Uid -ceq $mixedUid })
+    Assert-C487 -Cond ($mixed.Error -eq '' -and @($mixed.Nodes).Count -eq 2 -and
+        $passNode.Count -eq 1 -and $passNode[0].Outcome -ceq 'Passed' -and
+        $timeoutNode.Count -eq 1 -and $timeoutNode[0].Outcome -ceq 'Failed' -and
+        $timeoutNode[0].Message -ceq 'slow timed out') -Name 'D13 mixed pass and timeout keeps both' `
+        -Detail ('error=' + $mixed.Error + ' count=' + @($mixed.Nodes).Count + ' uids=' + ((@($mixed.Nodes) | ForEach-Object { $_.Uid }) -join ','))
+
+    $quoted = 'saw PassedTestNodeStateProperty in the text'
+    $misUid = 'Probe.Ordinary.1.1.Mislabel.1.1.0'
+    $mis = ConvertFrom-D13StateText -Name 'd13-passed-quote' -Text (Get-D13StateText -Records @(
+        (New-D13StateRecord -Uid $misUid -TypeName 'Ordinary' -Method 'Mislabel' -StateName 'Error' -Explanation $quoted -ExceptionText 'System.Exception: quoted')))
+    Assert-C487 -Cond ($mis.Error -eq '' -and @($mis.Nodes).Count -eq 1 -and
+        $mis.Nodes[0].Outcome -ceq 'Failed' -and $mis.Nodes[0].Message -ceq $quoted) `
+        -Name 'D13 error quoting PassedTestNodeStateProperty stays failed' `
+        -Detail ('error=' + $mis.Error + ' outcome=' + [string]$mis.Nodes[0].Outcome + ' message=' + [string]$mis.Nodes[0].Message)
+
+    $full = 'boom, Exception = INNER still the explanation'
+    $cutUid = 'Probe.Ordinary.1.1.Truncated.1.1.0'
+    $cut = ConvertFrom-D13StateText -Name 'd13-exception-text' -Text (Get-D13StateText -Records @(
+        (New-D13StateRecord -Uid $cutUid -TypeName 'Ordinary' -Method 'Truncated' -StateName 'Error' -Explanation $full -ExceptionText 'System.Exception: outer')))
+    Assert-C487 -Cond ($cut.Error -eq '' -and @($cut.Nodes).Count -eq 1 -and
+        $cut.Nodes[0].Outcome -ceq 'Failed' -and $cut.Nodes[0].Message -ceq $full) `
+        -Name 'D13 explanation keeps text through the last exception field' `
+        -Detail ('message=' + [string]$cut.Nodes[0].Message)
+
+    $unknownUid = 'Probe.UnknownCases.1.1.Only.1.1.0'
+    $unknown = ConvertFrom-D13StateText -Name 'd13-unknown-state' -Text (Get-D13StateText -Records @(
+        (New-D13StateRecord -Uid $unknownUid -TypeName 'UnknownCases' -Method 'Only' -StateName 'NotStarted' -Explanation 'not started' -ExceptionText 'System.Exception: not started')))
+    Assert-C487 -Cond ($unknown.Error -eq '' -and @($unknown.Nodes).Count -eq 1 -and
+        $unknown.Nodes[0].Uid -ceq $unknownUid -and $unknown.Nodes[0].Outcome -ceq 'Failed' -and
+        $unknown.Nodes[0].Message -ceq 'not started') -Name 'D13 unknown state is failed' `
+        -Detail ('error=' + $unknown.Error + ' outcome=' + [string]$unknown.Nodes[0].Outcome + ' message=' + [string]$unknown.Nodes[0].Message)
 }
 
 if ($Case) {
