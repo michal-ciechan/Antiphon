@@ -466,9 +466,15 @@ public static class BuildConfinement
             result.Add("--property:ArtifactsPath=" + artifacts);
         if (!useSeen)
             result.Add("--property:UseArtifactsOutput=true");
-        if (!hostSeen)
-            result.Add("--property:UseAppHost=false");
+        AddConfinedUseAppHost(result, hostSeen);
         return result;
+    }
+
+    // CARD-0671: off Windows the extensionless fakeclaude apphost collides with the fakeclaude directory.
+    private static void AddConfinedUseAppHost(List<string> args, bool hostSeen)
+    {
+        if (!hostSeen && !OperatingSystem.IsWindows())
+            args.Add("--property:UseAppHost=false");
     }
 
     private static List<string> Forwarded(IReadOnlyList<string> arguments)
@@ -550,8 +556,7 @@ public static class BuildConfinement
             "--property:UseArtifactsOutput=true",
         };
         args.AddRange(forwarded);
-        if (!forwarded.Any(token => token.StartsWith("--property:UseAppHost=", StringComparison.OrdinalIgnoreCase)))
-            args.Add("--property:UseAppHost=false");
+        AddConfinedUseAppHost(args, forwarded.Any(token => token.StartsWith("--property:UseAppHost=", StringComparison.OrdinalIgnoreCase)));
 
         var psi = new ProcessStartInfo("dotnet")
         {

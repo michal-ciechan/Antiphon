@@ -102,29 +102,31 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         Git(root, "add", "-A");
         CommitAll(root);
 
-        var prepared = BuildConfinement.Prepare(
-            root,
-            ["build", "App/App.csproj", "--property:OutputPath=bin-c1310/"],
-            null,
-            cancellationToken);
-        prepared.Refusal.ShouldBeNull(prepared.Detail);
-        prepared.Arguments.Any(arg => arg.Contains("UseAppHost", StringComparison.OrdinalIgnoreCase))
-            .ShouldBeFalse(string.Join("\n", prepared.Arguments));
-
-        var explicitHost = BuildConfinement.Prepare(
-            root,
-            ["build", "App/App.csproj", "--property:OutputPath=bin-c1310/", "--property:UseAppHost=true"],
-            null,
-            cancellationToken);
-        explicitHost.Refusal.ShouldBeNull(explicitHost.Detail);
-        explicitHost.Arguments.ShouldContain("--property:UseAppHost=true");
-        explicitHost.Arguments.Any(arg => arg.Contains("UseAppHost=false", StringComparison.OrdinalIgnoreCase))
-            .ShouldBeFalse(string.Join("\n", explicitHost.Arguments));
-
-        var shimRoot = Path.Combine(Path.GetTempPath(), "c1310-shim-" + Guid.NewGuid().ToString("N"));
-        var resultsRoot = Path.Combine(Path.GetTempPath(), "c1310-results-" + Guid.NewGuid().ToString("N"));
+        string? shimRoot = null;
+        string? resultsRoot = null;
         try
         {
+            var prepared = BuildConfinement.Prepare(
+                root,
+                ["build", "App/App.csproj", "--property:OutputPath=bin-c1310/"],
+                null,
+                cancellationToken);
+            prepared.Refusal.ShouldBeNull(prepared.Detail);
+            prepared.Arguments.Any(arg => arg.Contains("UseAppHost", StringComparison.OrdinalIgnoreCase))
+                .ShouldBeFalse(string.Join("\n", prepared.Arguments));
+
+            var explicitHost = BuildConfinement.Prepare(
+                root,
+                ["build", "App/App.csproj", "--property:OutputPath=bin-c1310/", "--property:UseAppHost=true"],
+                null,
+                cancellationToken);
+            explicitHost.Refusal.ShouldBeNull(explicitHost.Detail);
+            explicitHost.Arguments.ShouldContain("--property:UseAppHost=true");
+            explicitHost.Arguments.Any(arg => arg.Contains("UseAppHost=false", StringComparison.OrdinalIgnoreCase))
+                .ShouldBeFalse(string.Join("\n", explicitHost.Arguments));
+
+            shimRoot = Path.Combine(Path.GetTempPath(), "c1310-shim-" + Guid.NewGuid().ToString("N"));
+            resultsRoot = Path.Combine(Path.GetTempPath(), "c1310-results-" + Guid.NewGuid().ToString("N"));
             var shimBin = BuildUseAppHostShim(shimRoot);
             Directory.CreateDirectory(resultsRoot);
             var log = Path.Combine(shimRoot, "calls.log");
@@ -143,8 +145,12 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         }
         finally
         {
-            DeleteIfPresent(shimRoot);
-            DeleteIfPresent(resultsRoot);
+            // Git loose objects are read-only. Directory.Delete in fixture teardown denies them.
+            ClearReadOnly(root);
+            if (shimRoot is not null)
+                DeleteIfPresent(shimRoot);
+            if (resultsRoot is not null)
+                DeleteIfPresent(resultsRoot);
         }
     }
 
@@ -320,6 +326,15 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
     {
         if (Directory.Exists(path))
             Directory.Delete(path, recursive: true);
+    }
+
+    private static void ClearReadOnly(string path)
+    {
+        if (!Directory.Exists(path))
+            return;
+        var root = new DirectoryInfo(path) { Attributes = FileAttributes.Normal };
+        foreach (var entry in root.EnumerateFileSystemInfos("*", SearchOption.AllDirectories))
+            entry.Attributes = FileAttributes.Normal;
     }
 
     private Fixture CreateImportedProps()
