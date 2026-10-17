@@ -833,6 +833,7 @@ public class OrchestratorInstructionsRefreshTests
                 services.AddSingleton<RecordingSignals>();
                 services.AddSingleton<IOrchestratorInstructionsSignals>(sp =>
                     sp.GetRequiredService<RecordingSignals>());
+                services.AddScoped<KeepSixShortfall>();
                 services.AddScoped<KeepSixService>();
                 services.AddScoped<OrchestratorInstructionsSnapshotBuilder>();
                 services.AddScoped<RunnerDefaultSettingsService>();

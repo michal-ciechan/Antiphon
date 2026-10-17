@@ -139,17 +139,9 @@ public sealed class AgentTaskPipelineStatusService
                     c.ArchivedAt, c.Importance, c.Urgency, c.DueAt, c.Position, c.CreatedAt))
                 .ToDictionaryAsync(c => c.Id, ct);
 
-        // This is a narrow, uncapped fleet read. The card-list route caps by UpdatedAt and can
-        // omit the highest-ranked work. Stage history is already materialized for this snapshot.
-        var backlogCards = await _db.Cards.AsNoTracking()
-            .Where(c => c.Status == CardStatus.Backlog && c.ArchivedAt == null
-                && c.Board.ArchivedAt == null && !c.BoardColumn.IsTerminal
-                && c.OwnerSessionId == null)
-            .Select(c => new BacklogRow(c.Id, c.BoardId, c.Identifier, c.Title,
-                c.Importance, c.Urgency, c.DueAt, c.Position, c.CreatedAt, c.LabelsJson))
-            .ToListAsync(ct);
+        var selection = await PipelineBacklogSelection.SelectAsync(_db, scope, asOf, ct);
         var boardIds = cards.Values.Select(c => c.BoardId)
-            .Concat(backlogCards.Select(c => c.BoardId))
+            .Concat(selection.BoardIds)
             .Distinct()
             .ToList();
         var boardProjects = boardIds.Count == 0
@@ -158,25 +150,8 @@ public sealed class AgentTaskPipelineStatusService
                 .Where(b => boardIds.Contains(b.Id))
                 .ToDictionaryAsync(b => b.Id, b => b.ProjectId, ct);
         var scopedStages = boundStages.Where(task => TaskInScope(scope, task)).ToList();
-        var startedCardIds = boundStages
-            .Where(t => t.CardId is not null && t.Status is
-                AgentTaskStatus.Queued or AgentTaskStatus.Dispatched or AgentTaskStatus.Working
-                or AgentTaskStatus.Blocked or AgentTaskStatus.Succeeded)
-            .Select(t => t.CardId!.Value)
-            .ToHashSet();
-        var unstarted = backlogCards
-            .Where(c => CardInScope(scope, c.BoardId, boardProjects)
-                && !startedCardIds.Contains(c.Id)
-                && !BoardService.ParseLabels(c.LabelsJson).Contains("post-land-verification", StringComparer.Ordinal))
-            .OrderBy(c => CardRanking.OrderKey(c.Importance, c.Urgency, c.DueAt,
-                c.Position, c.CreatedAt, asOf))
-            .ThenBy(c => c.BoardId)
-            .ThenBy(c => c.Id)
-            .ToList();
-        // CARD-0100: a card with an open blocker is held, not a candidate; the snapshot lists it.
-        var openBlockers = await LoadOpenBlockersAsync(unstarted.Select(c => c.Id).ToList(), ct);
-        var candidates = unstarted.Where(c => !openBlockers.ContainsKey(c.Id)).ToList();
-        var held = unstarted.Where(c => openBlockers.ContainsKey(c.Id)).ToList();
+        var candidates = selection.Candidates;
+        var held = selection.Held;
         var investigateBacklog = new AgentTaskPipelineBacklogDto(
             candidates.Count,
             candidates.Take(5).Select(c => new AgentTaskPipelineBacklogItemDto(
@@ -186,7 +161,7 @@ public sealed class AgentTaskPipelineStatusService
             held.Count == 0
                 ? null
                 : held.Take(5).Select(c => new AgentTaskPipelineBlockedBacklogItemDto(
-                    c.Id, c.BoardId, c.Identifier, c.Title, openBlockers[c.Id])).ToList());
+                    c.Id, c.BoardId, c.Identifier, c.Title, selection.OpenBlockers[c.Id])).ToList());
 
         // CARD-0305, read-only: the pins that the NEXT dispatch in each stage would resolve
         // through. Expiry is filtered rather than cleared — this projection never writes, so a
@@ -338,17 +313,6 @@ public sealed class AgentTaskPipelineStatusService
             PipelineScopeKind.Project => task.ProjectId == scope.ProjectId,
             _ => task.ProjectId is null,
         };
-
-    private static bool CardInScope(
-        PipelineScope scope, Guid boardId, IReadOnlyDictionary<Guid, Guid> boardProjects)
-    {
-        if (scope.Kind == PipelineScopeKind.Fleet)
-            return true;
-        return boardProjects.TryGetValue(boardId, out var project)
-            && (scope.Kind == PipelineScopeKind.Project
-                ? project == scope.ProjectId
-                : false);
-    }
 
     private async Task<(CoherentPolicies? Policies, IReadOnlyList<Guid?> Scopes)> ReadPoliciesAsync(
         PipelineScope scope,
@@ -1000,34 +964,10 @@ public sealed class AgentTaskPipelineStatusService
             new Dictionary<Guid, Guid?>());
     }
 
-    /// <summary>
-    /// CARD-0100. The open blockers of each card, by identifier (ordinal order), through the shared
-    /// <see cref="CardBlockers.IsOpenBlocker"/> predicate. Cards with none are absent.
-    /// </summary>
-    private async Task<Dictionary<Guid, IReadOnlyList<string>>> LoadOpenBlockersAsync(
-        IReadOnlyCollection<Guid> cardIds, CancellationToken ct)
-    {
-        if (cardIds.Count == 0)
-            return new Dictionary<Guid, IReadOnlyList<string>>();
-        var rows = await _db.CardRelationships.AsNoTracking()
-            .Where(r => cardIds.Contains(r.CardId))
-            .Where(CardBlockers.IsOpenBlocker)
-            .Select(r => new { r.CardId, r.RelatedCard.Identifier })
-            .ToListAsync(ct);
-        return rows.GroupBy(r => r.CardId).ToDictionary(
-            g => g.Key,
-            g => (IReadOnlyList<string>)g.Select(r => r.Identifier).Order(StringComparer.Ordinal).ToList());
-    }
-
     private sealed record CardRow(
         Guid Id, Guid BoardId, string Identifier, string Title, CardStatus Status,
         DateTime? ArchivedAt, CardImportance Importance, CardUrgency Urgency,
         DateTime? DueAt, int? Position, DateTime CreatedAt);
-
-    private sealed record BacklogRow(
-        Guid Id, Guid BoardId, string Identifier, string Title,
-        CardImportance Importance, CardUrgency Urgency, DateTime? DueAt,
-        int? Position, DateTime CreatedAt, string LabelsJson);
 }
 
 public enum PipelineScopeKind
