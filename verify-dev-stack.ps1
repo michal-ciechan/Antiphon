@@ -14,6 +14,7 @@
 .PARAMETER SimpleMode   Check the docker-compose stack (API 17281 / client 17282; runner 17204) instead of Aspire.
 .PARAMETER SkipBrowser  Skip the Playwright browser smoke test.
 .PARAMETER TimeoutSec   Per-request HTTP timeout (default 10).
+.PARAMETER ProbeListeningPorts  Print listening TCP ports and return. Uses Get-NetTCPConnection when that cmdlet exists, otherwise ss -ltn.
 #>
 param(
     [switch]$SimpleMode,

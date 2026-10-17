@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "policyHash": "d2e79b4fa45f101f929af86ab9a6baacda7eb0cf8319d9369207a4fcdfd0d816",
+  "policyHash": "9d58816258ac606910dd5b5fb8dc09e3cb69c06cafffa498963b6e7531610a7a",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -484,24 +484,6 @@
           ],
           "reason": "QEMU/native placeholder control",
           "owner": "CARD-0490"
-        },
-        {
-          "suite": "e2e",
-          "class": "AgentTaskLandDeliveryE2ETests",
-          "reason": "Windows land-delivery admission (LandDeliveryFixture requires OperatingSystem.IsWindows); excluded from the Linux rc lane",
-          "owner": "CARD-1305"
-        },
-        {
-          "suite": "e2e",
-          "class": "DispatchBaseWarningDeliveryE2ETests",
-          "reason": "Windows land-delivery admission (LandDeliveryFixture requires OperatingSystem.IsWindows); excluded from the Linux rc lane",
-          "owner": "CARD-1305"
-        },
-        {
-          "suite": "e2e",
-          "class": "WorktreeRetirementDeliveryE2ETests",
-          "reason": "Windows land-delivery admission (LandDeliveryFixture requires OperatingSystem.IsWindows); excluded from the Linux rc lane",
-          "owner": "CARD-1305"
         },
         {
           "suite": "e2e",
