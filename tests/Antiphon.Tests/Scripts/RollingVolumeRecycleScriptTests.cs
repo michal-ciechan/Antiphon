@@ -701,10 +701,11 @@ public sealed class RollingVolumeRecycleScriptTests
             new JsonObject { ["state"] = "Completed" }, omitLandRequest: false, pass: false);
         report += await C1317WrapperCensus("wrapper-settled", settled, "Queued", "Succeeded", null, omitLandRequest: false, pass: true);
         report.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, report);
+        report.IndexOf("HOST_DONE", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
         foreach (var name in new[]
         {
             "host-unknown", "host-unproven", "host-settled",
-            "wrapper-unknown", "wrapper-unproven", "wrapper-settled", "HOST_DONE"
+            "wrapper-unknown", "wrapper-unproven", "wrapper-settled"
         })
             report.IndexOf("PASS " + name, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
     }
