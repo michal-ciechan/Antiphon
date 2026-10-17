@@ -92,3 +92,24 @@ Archive, hashes matched before removal:
 | `/tmp/card1259-base-d636249e` | `C:\src\Antiphon\.antiphon\server2-rescue-20261016\r5\card1259-base-d636249e.tar` | `58e5012749c22061f57e931c6f555fd8ce6f4444a98ae706ade92fd0f167c2ae` | 167792640 | none |
 
 Container, server2 host, and desktop sha256 were the same. Removal was `docker exec -u 1654:1654` of that one path. It is absent. The worktree admin index still matches HEAD. Staging tars under container `/tmp` and server2 `/tmp` were removed.
+
+## Redeploy after the tmp-git repair (2026-10-17)
+
+One new `redeploy-old` was authorized at `09e48c5d6f1d404cfea8ec0d992270424fd2a184`. A settled `RecycleLandUnknown` (CARD-1317) may be retried up to three times, about 60 seconds apart. A different token or a second git-audit refusal stops the rollout. The script was not edited.
+
+Preflight: land-pending `items` empty (`excluded.total=0`). Queued/Dispatched on the project was desktop Review `c5ca49ae-2c36-4386-b4b3-663d17ea0fa1` only. No Queued or Dispatched task on `server2` or `server2-temp`. `server2` was drained and idle on `7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce`, redirect `server2-temp`, counters 0. `server2-temp` was accepting `09e48c5d6f1d404cfea8ec0d992270424fd2a184`, counters 0.
+
+| Attempt | UTC | Exit | Receipt | Diagnosis |
+|---|---|---|---|---|
+| authorized run | start `2026-10-17T06:33:14.2953432Z`, end `2026-10-17T06:33:49.5199369Z` | 2 | `C:\src\Antiphon\.antiphon\rolling-server2\c727e2276123cc58` | `RecycleLandUnknown` |
+| retry 1 of 3 | start `2026-10-17T06:35:56.9745858Z`, end `2026-10-17T08:07:19.2750228Z` | 2 | `C:\src\Antiphon\.antiphon\rolling-server2\c727e5269bca698d` | `RecycleGitAuditUnknown audit check=for-each-ref status=128 repo=repos/antiphon/.git/worktrees/card1259-base-d636249e` |
+| retry 2 of 3 | not started | | | |
+| retry 3 of 3 | not started | | | |
+
+The authorized run's host census row with no `landRequest` merged was `761a19e7-d116-4600-bff1-b1a7e750df72`, `status=Queued`, `runnerId=desktop`, `scopeSource=None`. A later read was `summary.status=Succeeded`, `role=Diagnose`, `landRequest=null`. Same settled-land class. After about 60 seconds the land list was empty again and server2 queue hits were still 0. Runners were unchanged, so retry 1 started.
+
+Retry 1 host census `refusal` is empty, so the land race did not fire. The audit then refused `for-each-ref` status 128 on `repos/antiphon/.git/worktrees/card1259-base-d636249e`. That command is `consider_tips`: `git --git-dir=<directory> for-each-ref --format='%(objectname)'`. The path is the admin git directory of the checkout archived and removed above. The live checkout `/tmp/card1259-base-d636249e` stays absent. This pass did not modify `/work`. This is a second git-audit refusal and a different token from `tmp-git status=1`, so retries 2 and 3 were not started. Smoke/Both, `drain-temp`, and `retire-temp` were not started.
+
+`deploy-parent\recycle.json` for `c727e5269bca698d` is `phase=preflight`, `outcome=refused`, operation `c1008001b165462094cb4a27f484ffe6fc850`, `composeDigest` `0c0d1515ccc640731beca6942613a1d489c3c364898eb35e0bd02dcc441e1147`, image `sha256:ea8bafe24373694b3421d63afdffb4533faf0710f709d96dea661123b55e6835` (the previous image), `stopReceipts` and `removeReceipts` empty, volume outcomes `pending`.
+
+After this refusal, `server2` was still drained and idle on `7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce` with redirect `server2-temp`. `server2-temp` was still accepting `09e48c5d6f1d404cfea8ec0d992270424fd2a184`. Standing `server2` `buildVersion` is not the requested SHA. A later `redeploy-old` needs an explicit decision. This pass did not start one.
