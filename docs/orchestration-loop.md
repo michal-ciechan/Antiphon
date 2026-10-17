@@ -534,6 +534,14 @@ Raising a host budget releases eligible held work on the next dispatch tick. Thi
 the existing explicit/default/local placement order; local overflow from a full default runner
 is a follow-on placement policy.
 
+### Keep-six in-flight reminder (CARD-1320)
+
+The in-flight target is a server setting, one row per standing orchestrator, default off.
+`GET /api/orchestrators/keep-six` lists it, and section 9 of the orchestrator instructions
+renders a row only when that row is enabled or held. A reminder names the shortfall. Dispatch
+up to that shortfall under the same pipeline rules, or declare a hold with
+`scripts/keep-six.ps1`. The server does not dispatch.
+
 ### Post-land miss retrospective (CARD-0811)
 
 Rule 6's post-land sibling. A defect that a Clean Review approved and that was found only in the

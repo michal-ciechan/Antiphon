@@ -35,6 +35,6 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // CARD-1213 points -StartRef children at their reported WorktreeBranch.
         // CARD-1213 S2 adds the git-common sentence: delegates carry it, briefs do not restate it.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("cf14d2c5261929b555d8416105428dce46a8f7dd8658a8907e4f8559d71caa00", "orchestrator-approved-bytes");
+            .ShouldBe("d05f063b3d21f5898c0f9bcf36913dd0ed84fd6a66cf57c973207efd698f7ce0", "orchestrator-approved-bytes");
     }
 }

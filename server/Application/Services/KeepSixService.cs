@@ -10,7 +10,8 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>
 /// CARD-1320. Reads the standing-orchestrator population and stores the Human toggle, hold, and ack.
-/// Turning the toggle off cancels a still-pending keep-six note. This service does not dispatch.
+/// Turning the toggle off cancels a still-pending keep-six note, including one that has
+/// already failed a typing attempt. This service does not dispatch.
 /// </summary>
 public sealed class KeepSixService(
     AppDbContext db,
@@ -279,7 +280,18 @@ public sealed class KeepSixService(
             .ToListAsync(ct)
             .ConfigureAwait(false);
         foreach (var messageId in pending)
-            await messages.CancelPendingIfUntypedAsync(sessionId, messageId, ct).ConfigureAwait(false);
+        {
+            try
+            {
+                // Pending covers a never-typed row and a row that failed a typing attempt
+                // and was reverted. Untyped-only cancel leaves the second one in the queue.
+                await messages.CancelAsync(sessionId, messageId, ct).ConfigureAwait(false);
+            }
+            catch (NotFoundException)
+            {
+                // The row left the queue between the read and the locked cancel.
+            }
+        }
     }
 
     private static void Validate(PutKeepSixRequest request)
