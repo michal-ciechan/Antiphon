@@ -11,6 +11,7 @@ public class KeepSixOrchestrator
     public const int MaxTarget = 24;
     public const int ReasonMaxLength = 400;
     public const int HoldReasonMaxLength = 200;
+    public const int HoldMaxDays = 7;
 
     public Guid AgentId { get; set; }
     public bool Enabled { get; set; }

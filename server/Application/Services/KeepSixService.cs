@@ -9,14 +9,15 @@ using Npgsql;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-1320. Reads the standing-orchestrator population, stores a Human toggle, and fills
-/// the shortfall from the project's open count. This service does not enqueue or dispatch.
+/// CARD-1320. Reads the standing-orchestrator population and stores the Human toggle, hold, and ack.
+/// Turning the toggle off cancels a still-pending keep-six note. This service does not dispatch.
 /// </summary>
 public sealed class KeepSixService(
     AppDbContext db,
     TimeProvider clock,
     OrchestratorInstructionsService instructions,
-    KeepSixShortfall shortfall)
+    KeepSixShortfall shortfall,
+    SessionMessageQueueService messages)
 {
     public const string HumanProvenance = "Human";
 
@@ -109,12 +110,71 @@ public sealed class KeepSixService(
                 "keep_six_revision");
         }
 
+        if (!request.Enabled)
+            await CancelPendingReminderAsync(agent, ct).ConfigureAwait(false);
+
         instructions.Signal("keep-six " + agent.Name);
         var counts = await shortfall.ReadAsync([agent], new Dictionary<Guid, KeepSixOrchestrator>
         {
             [agent.Id] = row,
         }, ct).ConfigureAwait(false);
         return ToDto(agent, row, counts[agent.Id]);
+    }
+
+    public async Task<IReadOnlyList<Agent>> ListStandingOrchestratorsAsync(CancellationToken ct) =>
+        await LoadPopulationAsync(ct).ConfigureAwait(false);
+
+    public async Task<KeepSixOrchestratorDto> HoldAsync(
+        Guid agentId, HoldKeepSixRequest request, string? token, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var reason = (request.Reason ?? "").Trim();
+        if (reason.Length is < 1 or > KeepSixOrchestrator.HoldReasonMaxLength)
+            throw new BadRequestException(
+                $"reason is required and must be at most {KeepSixOrchestrator.HoldReasonMaxLength} characters.");
+        var now = clock.GetUtcNow();
+        var until = request.Until.ToUniversalTime();
+        if (until <= now || until > now.AddDays(KeepSixOrchestrator.HoldMaxDays))
+            throw new BadRequestException("until must be in the future and at most 7 days ahead.");
+
+        var agent = await RequireAgentAsync(agentId, ct).ConfigureAwait(false);
+        await EnsureWriterAsync(agent, token, ct).ConfigureAwait(false);
+        var row = await RequireRowAsync(agentId, ct).ConfigureAwait(false);
+        row.HoldReason = reason;
+        row.HoldUntil = until.UtcDateTime;
+        row.Revision += 1;
+        row.UpdatedAt = now.UtcDateTime;
+        await SaveRowAsync(ct).ConfigureAwait(false);
+        instructions.Signal("keep-six hold " + agent.Name);
+        return await ReadBackAsync(agent, row, ct).ConfigureAwait(false);
+    }
+
+    public async Task<KeepSixOrchestratorDto> ClearHoldAsync(Guid agentId, string? token, CancellationToken ct)
+    {
+        var agent = await RequireAgentAsync(agentId, ct).ConfigureAwait(false);
+        await EnsureWriterAsync(agent, token, ct).ConfigureAwait(false);
+        var row = await RequireRowAsync(agentId, ct).ConfigureAwait(false);
+        var now = clock.GetUtcNow().UtcDateTime;
+        row.HoldReason = null;
+        row.HoldUntil = null;
+        row.Revision += 1;
+        row.UpdatedAt = now;
+        await SaveRowAsync(ct).ConfigureAwait(false);
+        instructions.Signal("keep-six hold cleared " + agent.Name);
+        return await ReadBackAsync(agent, row, ct).ConfigureAwait(false);
+    }
+
+    public async Task<KeepSixOrchestratorDto> AckAsync(Guid agentId, string? token, CancellationToken ct)
+    {
+        var agent = await RequireAgentAsync(agentId, ct).ConfigureAwait(false);
+        await EnsureWriterAsync(agent, token, ct).ConfigureAwait(false);
+        var row = await RequireRowAsync(agentId, ct).ConfigureAwait(false);
+        var now = clock.GetUtcNow().UtcDateTime;
+        row.LastAcknowledgedAt = now;
+        row.Revision += 1;
+        row.UpdatedAt = now;
+        await SaveRowAsync(ct).ConfigureAwait(false);
+        return await ReadBackAsync(agent, row, ct).ConfigureAwait(false);
     }
 
     private async Task<List<Agent>> LoadPopulationAsync(CancellationToken ct)
@@ -141,6 +201,85 @@ public sealed class KeepSixService(
             .ToListAsync(ct)
             .ConfigureAwait(false);
         return rows.ToDictionary(row => row.AgentId);
+    }
+
+    private async Task<Agent> RequireAgentAsync(Guid agentId, CancellationToken ct)
+    {
+        var agents = await LoadPopulationAsync(ct).ConfigureAwait(false);
+        return agents.SingleOrDefault(candidate => candidate.Id == agentId)
+            ?? throw new NotFoundException("KeepSixOrchestrator", agentId);
+    }
+
+    private async Task<KeepSixOrchestrator> RequireRowAsync(Guid agentId, CancellationToken ct) =>
+        await db.KeepSixOrchestrators
+            .SingleOrDefaultAsync(candidate => candidate.AgentId == agentId, ct)
+            .ConfigureAwait(false)
+        ?? throw new NotFoundException("KeepSixOrchestrator", agentId);
+
+    private async Task EnsureWriterAsync(Agent agent, string? token, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return;
+
+        var hash = AgentTaskService.HashToken(token.Trim());
+        var taskMatch = await db.AgentTasks.AsNoTracking()
+            .AnyAsync(task => task.AgentId == agent.Id && task.TokenHash == hash, ct)
+            .ConfigureAwait(false);
+        if (taskMatch)
+            return;
+
+        var standingMatch = await db.AgentSessions.AsNoTracking()
+            .AnyAsync(session => session.DelegationTokenHash == hash && session.StandingAgentId == agent.Id, ct)
+            .ConfigureAwait(false);
+        if (standingMatch)
+            return;
+        if (Guid.TryParse(agent.PersistentSessionId, out var persistentId))
+        {
+            var persistentMatch = await db.AgentSessions.AsNoTracking()
+                .AnyAsync(session => session.DelegationTokenHash == hash && session.Id == persistentId, ct)
+                .ConfigureAwait(false);
+            if (persistentMatch)
+                return;
+        }
+
+        throw new ForbiddenException("This token is not this orchestrator's.", "token_agent");
+    }
+
+    private async Task SaveRowAsync(CancellationToken ct)
+    {
+        try
+        {
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            throw new ConflictException("Keep-six revision changed during the write.", ex, "keep_six_revision");
+        }
+    }
+
+    private async Task<KeepSixOrchestratorDto> ReadBackAsync(
+        Agent agent, KeepSixOrchestrator row, CancellationToken ct)
+    {
+        var counts = await shortfall.ReadAsync([agent], new Dictionary<Guid, KeepSixOrchestrator>
+        {
+            [agent.Id] = row,
+        }, ct).ConfigureAwait(false);
+        return ToDto(agent, row, counts[agent.Id]);
+    }
+
+    private async Task CancelPendingReminderAsync(Agent agent, CancellationToken ct)
+    {
+        if (!Guid.TryParse(agent.PersistentSessionId, out var sessionId))
+            return;
+        var pending = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(message => message.AgentSessionId == sessionId
+                && message.NoteHeader == KeepSixReminderText.NoteHeader
+                && message.Status == QueuedMessageStatus.Pending)
+            .Select(message => message.Id)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        foreach (var messageId in pending)
+            await messages.CancelPendingIfUntypedAsync(sessionId, messageId, ct).ConfigureAwait(false);
     }
 
     private static void Validate(PutKeepSixRequest request)

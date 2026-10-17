@@ -33,3 +33,5 @@ public sealed record PutKeepSixRequest(
     int Target,
     string Reason,
     string Provenance);
+
+public sealed record HoldKeepSixRequest(string Reason, DateTimeOffset Until);
