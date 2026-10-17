@@ -186,12 +186,35 @@ function Test-NightlyPinnedDiagnosticVersions {
 
 function Get-NightlyDiagnosticStateName {
     param([string]$Record)
-    if ($Record -match 'PassedTestNodeStateProperty') { return 'Passed' }
-    if ($Record -match '(?:Failed|Error)TestNodeStateProperty') { return 'Failed' }
-    if ($Record -match 'SkippedTestNodeStateProperty') { return 'Skipped' }
-    if ($Record -match 'DiscoveredTestNodeStateProperty') { return 'Discovered' }
-    if ($Record -match 'InProgressTestNodeStateProperty') { return 'InProgress' }
-    return ''
+    # The last structural state property wins. An explanation may quote an
+    # earlier name such as PassedTestNodeStateProperty without being that state.
+    $hits = [regex]::Matches($Record, '(?<![A-Za-z])(Passed|Failed|Error|Skipped|Timeout|Cancelled|Discovered|InProgress)TestNodeStateProperty \{')
+    if ($hits.Count -eq 0) { return '' }
+    switch ($hits[$hits.Count - 1].Groups[1].Value) {
+        'Passed' { return 'Passed' }
+        'Skipped' { return 'Skipped' }
+        'Discovered' { return 'Discovered' }
+        'InProgress' { return 'InProgress' }
+        default { return 'Failed' }
+    }
+}
+
+function Get-NightlyDiagnosticFailureMessage {
+    param([string]$Record)
+    $known = [regex]::Matches($Record, '(?s)(?<![A-Za-z])(?:Failed|Error|Timeout|Cancelled)TestNodeStateProperty \{ Explanation = ')
+    $hits = $known
+    if ($hits.Count -eq 0) {
+        $hits = [regex]::Matches($Record, '(?s)(?<![A-Za-z])[A-Za-z]+TestNodeStateProperty \{ Explanation = ')
+    }
+    if ($hits.Count -eq 0) { return $null }
+    $hit = $hits[$hits.Count - 1]
+    $tail = $Record.Substring($hit.Index + $hit.Length)
+    $marker = ', Exception = '
+    $idx = $tail.LastIndexOf($marker)
+    if ($idx -ge 0) { return $tail.Substring(0, $idx) }
+    $close = [regex]::Match($tail, '(?s)^(?<message>.*?)(?: \} \] \} \}\s*$)')
+    if ($close.Success) { return $close.Groups['message'].Value }
+    return $tail
 }
 
 function ConvertFrom-NightlyDiagnosticRecord {
@@ -234,9 +257,14 @@ function ConvertFrom-NightlyDiagnosticRecord {
         Excluded = $excluded
         Categories = $categories
     }
-    # Native MTP Error explanations include the multiline failure message.
-    if ($State -eq 'Failed' -and $Record -match '(?s)(?:Failed|Error)TestNodeStateProperty \{ Explanation = (?<message>.*?)(?:, Exception = | \} \] \} \}\s*$)') {
-        $node | Add-Member -NotePropertyName Message -NotePropertyValue $Matches['message']
+    # Native MTP failure explanations include the multiline failure message.
+    # Timeout and Cancelled are failed states. The separator is the last
+    # ", Exception = " field, so an explanation that quotes that text is kept.
+    if ($State -eq 'Failed') {
+        $message = Get-NightlyDiagnosticFailureMessage -Record $Record
+        if ($null -ne $message) {
+            $node | Add-Member -NotePropertyName Message -NotePropertyValue $message
+        }
     }
     return $node
 }
@@ -332,7 +360,10 @@ function ConvertFrom-NightlyDiagnosticLog {
         $state = Get-NightlyDiagnosticStateName -Record $record
         if ([string]::IsNullOrWhiteSpace($state)) {
             if ($Kind -eq 'discovery') { throw ('malformed discovery record: missing state {0}' -f $Path) }
-            continue
+            # A framed TestNode with no known state is a failure. A log with no
+            # TestNode still throws unknown diagnostic format below.
+            if ($record -match 'TestNode \{ Uid = TestNodeUid') { $state = 'Failed' }
+            else { continue }
         }
         $recognized = $true
         if ($Kind -eq 'discovery') {
