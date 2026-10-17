@@ -76,3 +76,19 @@ Preflight before attempt 1: land-pending `items` empty; no Queued or Dispatched 
 Attempt 1 diagnosis: `RecycleGitAuditUnknown audit check=tmp-git status=1 repo=/tmp/card1259-base-d636249e`. The host census `refusal` is empty, so the land race did not fire. `deploy-parent\recycle.json` is `phase=preflight`, `outcome=refused`, operation `c1008ffe0deb1d99946b6940cf84f675909ad`, `stopReceipts` and `removeReceipts` empty, volume outcomes `pending`. The token is not `RecycleLandUnknown`, so attempts 2 and 3 were not run. Smoke/Both, `drain-temp`, and `retire-temp` were not started.
 
 After this refusal, `server2` was still drained and idle on `7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce` with redirect `server2-temp`. `server2-temp` was still accepting `09e48c5d6f1d404cfea8ec0d992270424fd2a184`.
+
+## tmp-git repair (2026-10-17)
+
+The audit's `consider_tmp_git` command is `find <checkout> -xdev -mindepth 1 -name .git -print0 -prune -o -type f -name HEAD -print0`. Status 1 is that `find` exiting 1. Reproduced as uid 1654 inside `antiphon-runner-session-runner-1` with the audit's empty git config (`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null`, `core.commitGraph=false`, `gc.writeCommitGraph=false`). On the live mount the same command now exits 0, stderr empty, one match `/tmp/card1259-base-d636249e/.git`. No directory in that tree is unreadable or owned by anyone but `app`. The earlier status 1 was not reproducible; a read error during the long read-only walk is the remaining explanation.
+
+The path is a linked base checkout of `/work/repos/antiphon`, not its own object store. `.git` is `gitdir: /work/repos/antiphon/.git/worktrees/card1259-base-d636249e`. Detached HEAD `41289ba905c64a99a12bd42369fbaa74987bfdc3`. `git rev-list --count HEAD --not --remotes=origin` is 0. Stash count 0. Porcelain 0. `git --git-dir` `diff-index --cached --quiet HEAD` is 0. Reflog has 1 line. `/work` was not modified.
+
+The same `find` was run on every other `.git` parent under `/tmp`: 216 repos, 0 offenders. No other directory was archived or removed. No other container was touched.
+
+Archive, hashes matched before removal:
+
+| Source | Archive | sha256 | Size | Specials |
+|---|---|---|---|---|
+| `/tmp/card1259-base-d636249e` | `C:\src\Antiphon\.antiphon\server2-rescue-20261016\r5\card1259-base-d636249e.tar` | `58e5012749c22061f57e931c6f555fd8ce6f4444a98ae706ade92fd0f167c2ae` | 167792640 | none |
+
+Container, server2 host, and desktop sha256 were the same. Removal was `docker exec -u 1654:1654` of that one path. It is absent. The worktree admin index still matches HEAD. Staging tars under container `/tmp` and server2 `/tmp` were removed.
