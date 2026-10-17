@@ -190,6 +190,9 @@ public class KeepSixReminderTests
     public async Task off_rows_do_not_read_shortfall()
     {
         var seated = await ReadyAsync("ks-noop", "KS-D1-OFF", DateTime.UtcNow.AddMinutes(-30));
+        // This class shares one schema. Sibling tests leave enabled rows, and one of those
+        // would still be a real shortfall read. The witness is an off fleet, so turn them off.
+        await DisableOtherRowsAsync(seated.AgentId);
         await EditRowAsync(seated.AgentId, row => row.Enabled = false);
 
         (await CountShortfallReadsAsync()).ShouldBe(0);
@@ -205,6 +208,7 @@ public class KeepSixReminderTests
     public async Task an_active_hold_does_not_read_shortfall()
     {
         var seated = await ReadyAsync("ks-held-read", "KS-D1-HOLD", DateTime.UtcNow.AddMinutes(-30));
+        await DisableOtherRowsAsync(seated.AgentId);
         await HoldAsync(seated.AgentId, DateTime.UtcNow.AddDays(1));
 
         (await CountShortfallReadsAsync()).ShouldBe(0);
@@ -417,6 +421,16 @@ public class KeepSixReminderTests
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var row = await db.KeepSixOrchestrators.SingleAsync(candidate => candidate.AgentId == agentId);
         edit(row);
+        await db.SaveChangesAsync();
+    }
+
+    private async Task DisableOtherRowsAsync(Guid keep)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var rows = await db.KeepSixOrchestrators.Where(row => row.AgentId != keep).ToListAsync();
+        foreach (var row in rows)
+            row.Enabled = false;
         await db.SaveChangesAsync();
     }
 
