@@ -327,16 +327,17 @@ receipt's verified commit, confirm the canonical checkout contains it, and check
 running API's `GET /api/version`. A client that expects `land-v2` POSTs only
 `/api/agent-tasks/{id}/land/v2` and refuses (exit 1, zero land POSTs) when the
 marker is absent; it never falls back to `/land`. If the build does not demonstrably
-include the required change, restart from the canonical checkout with the intended
-full HEAD as `-ExpectedServerSha`, then confirm the reported SHA and a direct
-capability/feature probe. Do not treat `/health`, a runner SHA, a pushed branch, or
+include the required change, and the landed commit is the rc tip those hosts run,
+restart onto that tip with it as `-ExpectedServerSha`, then confirm the reported SHA
+and a direct capability/feature probe. A master-only land is not that restart. Do not treat `/health`, a runner SHA, a pushed branch, or
 a succeeded delegate as activation evidence. Use the landing receipt's post-rebase
 identity, not an assumption that the Code worktree SHA survived landing unchanged.
 On every terminal card move or close, including UI/API moves and tracker closes that
 bypass `card.ps1`, perform this activation check as an operator step. A successful
-card move and task settlement do not verify deployment. Compare the running
-`GET /api/version` SHA with the intended landed commit from the updated canonical
-checkout (`HEAD` or `origin/master`), and probe the changed feature. For runner or
+card move and task settlement do not verify deployment. AppHost and server2 run the current `rc/YYYY-MM-DD` rc tip, never master. A
+master-only land is not a restart. When a restart is due, compare the running
+`GET /api/version` SHA with that rc tip, and probe the changed feature. See
+[release gates](release-gates.md). For runner or
 fake-gateway changes, run `pwsh -File scripts/check-daemon-build.ps1` from that
 checkout, restart or redeploy only the affected service when indicated, and recheck
 its reported build. A remote worktree's own HEAD is not a deployment target.
@@ -413,7 +414,8 @@ is to send it back to the *same* delegate (§0's ladder), never to read the diff
 bundle and the block is optional for them (§2).
 
 Landing (fetch, rebase, verify, fast-forward, push, worktree removal, branch deletion) is the
-`-Land` operation's job, not a manual step — see §5. The fleet's stage glance — one line per card,
+`-Land` operation's job, not a manual step — see §5. The rc-to-master merge commit is not this
+operation; it is manual ([release gates](release-gates.md)). The fleet's stage glance — one line per card,
 in-flight / queued / ready per stage, generalised across all six stage roles (CARD-0146 S4) — is
 `/orchestrator?tab=pipeline`.
 

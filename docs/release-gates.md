@@ -4,28 +4,55 @@ Owner document for CARD-0599. It covers the credit split between the nightly mas
 and the release-candidate lane, the RC coverage profile including automated E2E, CalVer
 tags and GitHub Releases, and the dormant Interim activation configuration.
 
-> **Deployment status: UNQUALIFIED.** S1-S4 are implemented and reviewed, but nothing here
-> is registered or running. There is no Windmill RC job, no enabled RC schedule, no
-> qualification receipt, no published tag and no Interim pilot. `InterimVerification.Enabled`
-> ships `false`. CARD-0599's operating acceptance stays open until the S5 and S6 receipts
-> exist. Do not describe the release-gate model as operational, and do not treat a checked-in
-> definition file as registration evidence.
+> **Deployment status.** Annotated tags `v2026.10.15.1` (peels to
+> `067b47e2dc903247f1a7c8aa539032cc4266e4ad`) and `v2026.10.15.2` (peels to
+> `6ca859d006b0a3cac9a88dc6bd551c37e98b2217`) exist. Both are historical direct finals;
+> do not invent `-rc.K` parents for them. The Windmill RC job is not registered, its
+> schedule stays disabled, and the scheduled lane is not qualified. There is no
+> qualification receipt and no Interim pilot. `InterimVerification.Enabled` ships
+> `false`. CARD-0599's operating acceptance stays open until the S5 and S6 receipts
+> exist. Do not treat a checked-in definition file as registration evidence.
 
 Related owners: [testing and build](testing-and-build.md), [nightly watchdog](nightly-watchdog.md),
 [orchestration loop](orchestration-loop.md), [Windmill definitions](../scripts/windmill/README.md),
 [HTTP operations](ops-http.md), [AppHost runbook](apphost-runbook.md).
 
+## The release line
+
+The release line is a long-lived `rc/YYYY-MM-DD` branch. The current line is
+`rc/2026-10-15`. Bug and test fixes for code already on that line land on it.
+Features and refactors, including CARD-1311, are master-only. Every rc-line land
+is merged to master with a merge commit. That merge commit is an explicit
+exception to rebase-only landing, and `-Land` does not create it.
+
+Releases are cut from the rc line. `publish-release.ps1` writes
+`vYYYY.MM.DD.N-rc.K` and a GitHub pre-release. `scripts/promote-release.ps1`
+writes the final `vYYYY.MM.DD.N` at that same peeled SHA. Tags are immutable:
+they are never deleted or moved. Legacy `release/rc-YYYYMMDDTHHMMSSZ` refs remain
+valid until a later card removes them. New cuts do not allocate a stamp.
+
+AppHost and server2 run the current rc tip, never master. A feature release from
+master is at most once per UTC day, and only after the current rc line is fully
+fixed and those hosts are running that tip. This card does not implement that gate.
+
+S2-S4 have not changed the scripts yet.
+
+Change-aware heavy TUI selection is CARD-1313 on master, not this tree. The rc
+profile, the credit split, the eight-suite roster, and the rule that RC green is
+not master readiness stay as written below.
+
 ## Two lanes, two kinds of credit
 
-Master is still the integration branch, and its scheduled readiness contract is unchanged.
-A release candidate is an immutable cut of master that is tested under a wider profile.
-The two lanes earn **different credit** and write **different files**.
+Master remains the integration branch for features, and its scheduled readiness
+contract is unchanged. The rc lane tests one pinned SHA of the long-lived
+`rc/YYYY-MM-DD` line; a legacy stamp ref remains valid. The two lanes earn
+**different credit** and write **different files**.
 
 | | master lane | RC lane |
 |---|---|---|
 | Profile | `nightly` | `rc` |
 | Trigger | `scheduled` | `rc` |
-| Ref | `master` / `origin/master` | `release/rc-YYYYMMDDTHHMMSSZ` |
+| Ref | `master` / `origin/master` | `rc/YYYY-MM-DD` (legacy `release/rc-YYYYMMDDTHHMMSSZ` still accepted) |
 | Credit kind | `master-scheduled` | `rc-release` |
 | Green written to | `C:\Antiphon\nightly\last-complete-green.json` | `C:\Antiphon\releases\candidates\<candidate-id>\complete-green.json` |
 | Earns | master daily readiness (Interim admission) | permission to publish one release |
@@ -45,9 +72,9 @@ earns **nothing**; there is no default kind and unknown combinations fail closed
 
 Consequences that are deliberate, not incidental:
 
-- **RC green never substitutes for master readiness.** An immutable older candidate says
-  nothing about the current integration stream. An RC success cannot repair a failed,
-  missing, stale or overdue scheduled master run.
+- **RC green never substitutes for master readiness.** A green SHA on the rc line,
+  including an older stamp candidate, says nothing about master. An RC success cannot
+  repair a failed, missing, stale or overdue scheduled master run.
 - **RC failure does not revoke a healthy master green.** It blocks that release only.
 - An RC run refuses to start against the master state root at all, and an RC run leaves
   `last-run.json`, `last-complete-green.json`, `last-monitor.json` and
@@ -131,51 +158,66 @@ selection was accepted and then dropped. Use `-Profile rc`.
 
 | Script | Job |
 |---|---|
-| `scripts/release-candidate.ps1` | Pin `origin/master` once in a producer-owned clone and push the create-only candidate branch. |
-| `scripts/release-cut.ps1` | The lane entrypoint: cut, run the `rc` profile, publish only on RC complete-green. |
-| `scripts/publish-release.ps1` | CalVer tag plus GitHub Release, bound to the tested SHA. |
+| `scripts/release-candidate.ps1` | Journal an existing `rc/YYYY-MM-DD` tip, or keep today's create-only push for a legacy stamp ref. An omitted `-Ref` refuses. |
+| `scripts/release-cut.ps1` | The lane entrypoint: test the named rc ref under the `rc` profile and publish only on RC complete-green. |
+| `scripts/publish-release.ps1` | On a long-lived id, write `vYYYY.MM.DD.N-rc.K` and a GitHub pre-release at the tested SHA. A legacy stamp id still publishes a final tag directly. |
+| `scripts/promote-release.ps1` | Write final `vYYYY.MM.DD.N` at the same peeled SHA. It does not delete the pre-release tag. |
 | `scripts/release-status.ps1` | Is the running build a published release? Read-only. |
 | `scripts/register-release-gates.ps1` | Idempotent Windmill registration front door. |
 
-**Cut.** The candidate ref is exactly `release/rc-YYYYMMDDTHHMMSSZ`; `release/current` and
-any other shape refuse. The full SHA is pinned **once** and written to the candidate journal
-**before** the remote push. There is no force push, no repair commit on the candidate, and
-no moving a tested branch. An existing remote candidate ref at a different SHA is a hard
-refusal. The same journal/ref/SHA is an idempotent resume, and a lost push response is
-resolved by re-reading the remote rather than pushing again under a new identity. The
-producer clone must be owned: the canonical checkout, a linked worktree and an unmarked
-clone are all refused.
+**Cut.** The release ref is `rc/YYYY-MM-DD`, with an optional `refs/heads/` prefix.
+A legacy stamp `release/rc-YYYYMMDDTHHMMSSZ` remains valid. `release/current` and any
+other shape refuse. The full SHA is pinned **once** and written to the candidate journal
+before any remote update. There is no force push, and tags are never deleted or moved.
+A long-lived ref must already exist on the remote; the cut journals that tip and does
+not create the branch. An omitted ref refuses `rc-ref-required`. A stamp ref keeps
+today's create-only push: an existing remote stamp at a different SHA is a hard refusal,
+there is no repair commit on that stamp, and the same journal/ref/SHA is an idempotent
+resume. A lost push response is resolved by re-reading the remote rather than pushing
+again under a new identity. The producer clone must be owned: the canonical checkout, a
+linked worktree and an unmarked clone are all refused.
 
 **Test.** `nightly-run.ps1 -Profile rc -Trigger rc -Ref <candidate> -ExpectedSha <sha>` runs
 against `C:\Antiphon\releases\checkout` and the candidate's private state root. `-Profile`,
 `-ExpectedSha`, `-CandidateId`, `-ReleaseRoot` and `-CoordinationRoot` survive the
 wrapper -> core -> self-reexec -> tests hops. Before tests and again before publication, the
-checkout HEAD, candidate journal and remote candidate ref are compared to the pinned SHA. A
-moved ref fails; it is never retested implicitly under its old identity.
+checkout HEAD, candidate journal and remote ref are compared to the pinned SHA. A moved
+ref fails that run (`remote-candidate-moved`) and is never retested under the old candidate
+id. The long-lived line may move after a successful tag; the next SHA is a new candidate id.
 
-**Fix.** RC findings are fixed through ordinary Code / Review / land onto master, then a
-**new** candidate is cut and its full profile runs from scratch. The failed candidate's
-evidence is kept and linked to its successor. A scheduled cut is skipped when that exact
-master SHA already has a published release under the current profile and hash. A partial run
-or a green under a different policy is never reused.
+**Fix.** A bug or test fix for code already on the rc line lands on that line. A feature
+or refactor stays master-only. The failed run's evidence is kept. The line's new tip is
+tested from scratch under the rc profile. A partial run or a green under a different
+policy is never reused.
 
 **Publish.** Only on RC complete-green, and only after the gate re-validates the candidate
 journal, profile/policy hash, every required suite result, report delivery and the remote
-candidate SHA. Diagnostic, `-NoReport` and seam-driven runs are refused outright. The
-sequence, each transition journalled **before** the next begins:
+candidate SHA. Diagnostic, `-NoReport` and seam-driven runs are refused outright. For a
+long-lived candidate id the reserved name is `vYYYY.MM.DD.N-rc.K`. While the UTC day
+matches, the next new SHA on that day uses the same `N` and the next `K`. After a final
+tag exists for that `N`, or the UTC day changes, the next pre-release starts the next free
+`N` at `K=1`. The same SHA reuses its reservation. A legacy stamp id still reserves a
+final `vYYYY.MM.DD.N` and publishes it directly, without `--prerelease`.
 
-1. reserve `vYYYY.MM.DD.N` (UTC cut date, positive daily sequence) in the publication journal
+The pre-release sequence, each transition journalled **before** the next begins:
+
+1. reserve `vYYYY.MM.DD.N-rc.K` in the publication journal
 2. create the local annotated tag at that SHA
 3. push that tag alone, never with `--force`
 4. verify the peeled remote target equals the tested SHA
-5. `gh release create <tag> --verify-tag --draft --notes-file <file>`
+5. `gh release create <tag> --verify-tag --draft --prerelease --notes-file <file>`
 6. upload `release-manifest.json` and the sanitized verification summary
 7. read tag and asset digests back
 8. publish the draft, then persist the release id and URL
 
+`scripts/promote-release.ps1` then writes `vYYYY.MM.DD.N` at that same peeled SHA. It
+refuses when the final tag already exists at another SHA, when the pre-release tag is
+missing, or when the peel is not a full 40-hex SHA. It does not delete the pre-release
+tag or its GitHub pre-release, and it does not restart anything.
+
 A retry resumes the same journal. Same tag/SHA/manifest is success or recovery; any mismatch
 is a hard refusal. A tag with no published release stays **pending**, not released, and so
-does a draft missing its assets. Tags are never deleted or recreated and another release's
+does a draft missing its assets. Tags are never deleted or moved, and another release's
 evidence is never overwritten. After an ambiguous timeout, remote state is re-read before
 another write; a crash after publication but before local acknowledgement recovers the
 existing release id rather than allocating another `N`.
@@ -205,11 +247,13 @@ one of:
 
 An ancestor tag, or simply the newest release, is never reported as a newer running SHA's
 identity. Creating a release never restarts AppHost or the runner and never checks a tag out
-in the main worktree. Updating master and restarting normally may correctly leave the dev
-stack ahead of the latest release. If an operator later deploys a release, require
+in the main worktree. AppHost and server2 run the current `rc/YYYY-MM-DD` rc tip, never
+master. A master-only land is not a restart of those hosts, and this card does not add a
+deploy-script guard that probes the tip before a feature release. The rc tip may sit ahead
+of the latest tag after a later fix lands. If an operator later deploys a release, require
 `/api/version` SHA equality to that tag's peeled SHA and the intended capabilities, using the
-[canonical restart runbook](apphost-runbook.md). A server2 runner upgrade that carries that
-release follows the staged rolling rollout and keeps dispatching:
+[canonical restart runbook](apphost-runbook.md). A server2 runner upgrade that carries the
+rc tip follows the staged rolling rollout and keeps dispatching:
 [continuous dispatch](docker-stack.md#continuous-dispatch-during-rollout).
 
 ## GitHub Actions is not a release prerequisite
@@ -218,7 +262,8 @@ Neither candidate admission nor publication depends on Actions being green; they
 this profile's fresh native evidence. CARD-0610 owns Actions repair, and the missing CI
 signal is stated in initial release notes and qualification. That separation does **not**
 waive an overlapping defect: the same client lint failure that reddens CI also reddens this
-harness, and it blocks qualification and release until it is repaired on master. There is no
+harness, and it blocks qualification and release until it is repaired on the branch
+that owns that code. There is no
 baseline-red waiver, retry loop or exclusion created solely to get past a failure. Linux
 coverage stays owned by CARD-0590 / CARD-0605.
 
@@ -339,7 +384,7 @@ acceptance run.
 
 ## Failure handling and rollback
 
-- **Failed RC:** retain evidence and the incident, publish nothing, fix through master, recut.
+- **Failed RC:** retain evidence and the incident, publish nothing, fix on the rc line when the defect is in code already there (master-only when it is a feature or refactor), then retest that tip.
 - **Failed publication after green:** resume the same journal. Never change tested source.
 - **Lost master readiness:** Interim admission and queued launch fail closed; existing owner
   latches persist and require Final. RC green cannot restore eligibility.
