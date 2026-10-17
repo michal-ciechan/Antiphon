@@ -8264,6 +8264,29 @@ public sealed class RemoteScriptContractTests
         Regex.Matches(own, @"\bchown\b").Count.ShouldBe(2);
     }
 
+    // CARD-1331. own_tree must spend one chown process on each find batch.
+    // paths/32 sits above a batched walk of this fixture and below one process per path.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1331_State_init_chowns_a_populated_tree_in_find_batches()
+    {
+        var output = LinuxShell(C1168Harness("batch")).Replace("\r\n", "\n");
+        output.ShouldContain("batch exit=0\n");
+        output.ShouldContain("batch | state-init owned uid=");
+        output.ShouldContain("survivor-owned=yes\n");
+        output.ShouldContain("crowd-owned=yes\n");
+        output.ShouldContain("link-present=yes\n");
+        output.ShouldContain("link-target-present=no\n");
+        output.ShouldContain("link-chown=-h\n");
+        output.ShouldContain("link-chown-count=1\n");
+        output.ShouldContain("chown-flags=h\n");
+        var paths = int.Parse(Field(output, "chown-paths"));
+        var invocations = int.Parse(Field(output, "chown-invocations"));
+        paths.ShouldBeGreaterThanOrEqualTo(256);
+        invocations.ShouldBeGreaterThan(0);
+        invocations.ShouldBeLessThanOrEqualTo(paths / 32);
+    }
+
     [Test]
     public void C1168_Rollout_docs_keep_redeploy_while_temp_holds_the_shared_store()
     {
@@ -8298,6 +8321,9 @@ public sealed class RemoteScriptContractTests
             cat > "$root/bin/chown" <<'C1168_CHOWN'
             #!/bin/sh
             set -eu
+            if [ -n "${CHOWN_INVOCATIONS:-}" ]; then
+              printf '1\n' >> "$CHOWN_INVOCATIONS"
+            fi
             real=/usr/bin/chown
             flags=
             if [ "${1:-}" = "-h" ]; then
@@ -8324,6 +8350,9 @@ public sealed class RemoteScriptContractTests
             fi
             spec=$1
             shift
+            if [ "${1:-}" = "--" ]; then
+              shift
+            fi
             status=0
             for path in "$@"; do
               if [ -n "${CHOWN_TRACE:-}" ]; then
@@ -8383,6 +8412,20 @@ public sealed class RemoteScriptContractTests
               : > "$CHOWN_TRACE"
               unset CHOWN_FAULT_MODE
               unset CHOWN_FAULT_PATH
+            elif [ "{{mode}}" = batch ]; then
+              mkdir -p "$R/work/crowd"
+              i=0
+              while [ "$i" -lt 256 ]; do
+                printf x > "$R/work/crowd/f$i"
+                i=$((i + 1))
+              done
+              ln -s /opt/codex/missing "$R/work/crowd/dangling"
+              export CHOWN_TRACE="$root/chown-trace"
+              export CHOWN_INVOCATIONS="$root/chown-invocations"
+              : > "$CHOWN_TRACE"
+              : > "$CHOWN_INVOCATIONS"
+              unset CHOWN_FAULT_MODE
+              unset CHOWN_FAULT_PATH
             else
               export CHOWN_FAULT_MODE={{mode}}
               export CHOWN_FAULT_PATH="$R/runner-state/grok/victim"
@@ -8414,6 +8457,35 @@ public sealed class RemoteScriptContractTests
               echo "link-chown-count=$count"
               owner=$(stat -c %u "$link" 2>/dev/null || echo missing)
               if [ "$owner" = "$uid" ]; then echo link-owned=yes; else echo link-owned=no; fi
+            fi
+            if [ "{{mode}}" = batch ]; then
+              ok=yes
+              i=0
+              while [ "$i" -lt 256 ]; do
+                [ "$(stat -c %u "$R/work/crowd/f$i")" = "$uid" ] || ok=no
+                i=$((i + 1))
+              done
+              echo "crowd-owned=$ok"
+              link="$R/work/crowd/dangling"
+              if [ -L "$link" ]; then echo link-present=yes; else echo link-present=no; fi
+              if [ -e "$link" ]; then echo link-target-present=yes; else echo link-target-present=no; fi
+              count=0
+              flag=-
+              while IFS=' ' read -r seen rest; do
+                if [ "$rest" = "$link" ]; then
+                  count=$((count + 1))
+                  if [ "$count" -eq 1 ]; then flag=$seen; fi
+                fi
+              done < "$CHOWN_TRACE"
+              echo "link-chown=$flag"
+              echo "link-chown-count=$count"
+              echo "chown-paths=$(wc -l < "$CHOWN_TRACE" | tr -d ' ')"
+              echo "chown-invocations=$(wc -l < "$CHOWN_INVOCATIONS" | tr -d ' ')"
+              flags=h
+              while IFS=' ' read -r seen rest; do
+                [ "$seen" = "-h" ] || flags=other
+              done < "$CHOWN_TRACE"
+              echo "chown-flags=$flags"
             fi
             """;
     }
