@@ -11,7 +11,10 @@ namespace Antiphon.Checkpoints;
 // nothing; the entry stays unrecorded and cleanup refuses it. Boundary, not closed: a same-uid
 // writer inside the build window (the root is 0700, so it shares the build's trust domain) and a
 // write within one kernel timestamp tick after the observed exit are indistinguishable from the
-// build. Off Linux there is no statx, so nothing is adopted.
+// build. Windows has no statx: CustodyStat reads the opened handle after the observed exit and
+// adopts a regular file or directory with one link that is not a reparse. A second link or a
+// reparse stays unrecorded. Other platforms adopt nothing. The build ledger still uses Stat,
+// which on Windows has no inode and no change time.
 public static class OutputCustody
 {
     public readonly record struct Entry(ushort Mode, uint Links, uint Owner, ulong Inode, ulong Size, DateTimeOffset Changed, DateTimeOffset Modified)
@@ -50,8 +53,8 @@ public static class OutputCustody
 
     public static Entry? Stat(CheckpointCleanupContext context, string path)
     {
-        if (context.Io.Platform != CheckpointPlatform.Linux) return null;
-        var stat = context.Io.Stat(path);
+        if (context.Io.Platform == CheckpointPlatform.Other) return null;
+        var stat = context.Io.CustodyStat(path);
         if (stat.Kind is "unknown" or "absent" || stat.Inode == 0 || stat.Changed == 0) return null;
         return new Entry(stat.Mode, stat.Links, stat.Owner, stat.Inode, (ulong)stat.Size,
             DateTimeOffset.UnixEpoch.AddTicks(stat.Changed / 100), DateTimeOffset.UnixEpoch.AddTicks(stat.Modified / 100));

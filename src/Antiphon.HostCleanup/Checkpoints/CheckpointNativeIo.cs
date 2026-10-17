@@ -31,6 +31,54 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
         return success ? 0 : Marshal.GetLastPInvokeError();
     }
 
+    public CheckpointStat CustodyStat(string path)
+    {
+        if (!OperatingSystem.IsWindows())
+            return Stat(path);
+        try
+        {
+            // BACKUP_SEMANTICS opens a directory. OPEN_REPARSE_POINT keeps a junction from looking like its target.
+            const uint flags = 0x02000000 | 0x00200000;
+            var handle = CreateFile(path, 0x80000000, 7, IntPtr.Zero, 3, flags, IntPtr.Zero);
+            if (handle.IsInvalid)
+            {
+                handle.Dispose();
+                return new(File.Exists(path) || Directory.Exists(path) ? "unknown" : "absent", 0, 0, 0, 0, 0);
+            }
+
+            using (handle)
+            {
+                if (!GetFileInformationByHandle(handle, out var info))
+                    return new("unknown", 0, 0, 0, 0, 0);
+                var reparse = (info.Attributes & 0x400u) != 0;
+                var directory = (info.Attributes & 0x10u) != 0;
+                var (kind, mode) = reparse ? ("symlink", (ushort)0xA000)
+                    : directory ? ("directory", (ushort)0x4000)
+                    : GetFileType(handle) == 1 ? ("file", (ushort)0x8000)
+                    : ("other", (ushort)0);
+                var inode = ((ulong)info.IndexHigh << 32) | info.IndexLow;
+                var changed = FileTimeToUnixNs(info.Creation);
+                if (inode == 0 || changed == 0)
+                    return new("unknown", 0, 0, 0, 0, 0);
+                var size = (long)(((ulong)info.SizeHigh << 32) | info.SizeLow);
+                return new(kind, 0, inode, kind == "file" ? size : 0, FileTimeToUnixNs(info.Write), changed, mode, info.Links, Owner);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return new("unknown", 0, 0, 0, 0, 0);
+        }
+    }
+
+    private static long FileTimeToUnixNs(System.Runtime.InteropServices.ComTypes.FILETIME time)
+    {
+        var fileTime = ((long)time.dwHighDateTime << 32) | (uint)time.dwLowDateTime;
+        if (fileTime <= 0)
+            return 0;
+        var utc = DateTime.FromFileTimeUtc(fileTime);
+        return (utc.Ticks - DateTime.UnixEpoch.Ticks) * 100;
+    }
+
     public CheckpointStat Stat(string path, bool portable = false)
     {
         if (!portable && OperatingSystem.IsLinux())
