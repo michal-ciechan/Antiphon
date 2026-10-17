@@ -48,6 +48,10 @@ namespace Antiphon.SessionRunner;
 /// <c>error</c> (measured: an unsupported model returns HTTP 400 and the turn ends there) is
 /// STILL <c>end_turn</c> — the turn is over and the queue must flush — with the failure carried on
 /// the API-error fields instead.</item>
+/// <item><c>turn_aborted</c> → one <c>TurnEnd</c> with <c>StopReason</c> exactly
+/// <c>cancelled</c> (CARD-0242). <c>ApiCallId</c> is <c>turn_id</c> when the row carries one.
+/// That is the existing idle-not-report boundary: the queue flushes and the task stays
+/// Working. <c>IsApiError</c> stays unset; an API failure remains <c>task_complete.error</c>.</item>
 /// <item><c>token_count</c> → per-turn usage, stamped on that turn's <c>TurnEnd</c> (see
 /// <see cref="TurnUsage"/> for why it is a delta and not the row's own numbers).</item>
 /// </list>
@@ -175,6 +179,7 @@ public sealed class CodexTranscriptNormalizer
                 "item_completed" => FromThreadItem(payload, uuid, ts),
                 "token_count" => AbsorbTokenCount(payload),
                 "task_complete" => FromTaskComplete(payload, uuid, ts),
+                "turn_aborted" => FromTurnAborted(payload, uuid, ts),
                 _ => [],
             };
         }
@@ -346,6 +351,28 @@ public sealed class CodexTranscriptNormalizer
                 CacheReadTokens: cacheRead, CacheCreationTokens: cacheWrite,
                 IsApiError: isError, ApiErrorClass: errorClass, ApiErrorStatus: errorStatus,
                 ApiErrorTimeZoneId: isError == true ? _apiErrorTimeZoneId : null),
+        ];
+    }
+
+    /// <summary>
+    /// CARD-0242: a live interrupt persisted as <c>event_msg</c> / <c>turn_aborted</c>.
+    /// Every abort reason shares this arm. <c>StopReason</c> is exactly
+    /// <see cref="TranscriptKinds.StopReasons.Cancelled"/>, which
+    /// <see cref="TranscriptKinds.IsReportBoundary"/> excludes, so the queue flushes and
+    /// the task stays Working. <c>turn_id</c> is optional. <c>reason</c> is not required.
+    /// <c>error</c> on this row is ignored; an API failure remains <c>task_complete.error</c>.
+    /// The usage baseline stays with <c>task_complete</c>.
+    /// </summary>
+    private static List<TranscriptPart> FromTurnAborted(JsonElement payload, string? uuid, DateTimeOffset? ts)
+    {
+        var turnId = Fit(GetString(payload, "turn_id"));
+        return
+        [
+            new TranscriptPart(
+                TranscriptKinds.TurnEnd, uuid ?? turnId, null, ts, "assistant",
+                null, null, null, null, null,
+                StopReason: TranscriptKinds.StopReasons.Cancelled,
+                ApiCallId: turnId),
         ];
     }
 
