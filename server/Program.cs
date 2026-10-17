@@ -1098,6 +1098,9 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
                 HangfireConfiguration.AddOrUpdateRunnerSlotReconcileJob(recurringJobManager, phoneHome);
                 HangfireConfiguration.AddOrUpdateRunnerRetireJob(recurringJobManager, phoneHome);
             }
+
+            // CARD-1320: one minute reminder. No startup trigger; the per-agent toggle is the switch.
+            HangfireConfiguration.AddOrUpdateKeepSixJob(recurringJobManager);
         }
 
         // CARD-0653: create the operator token now so scripts/runner-slots.ps1 can read it before

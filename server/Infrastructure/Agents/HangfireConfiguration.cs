@@ -78,4 +78,14 @@ internal static class HangfireConfiguration
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
         manager.Trigger(ExpectationWatchdogJob.RecurringJobId);
     }
+
+    /// <summary>CARD-1320. Minute reminder. The per-agent toggle is the switch. No startup trigger.</summary>
+    public static void AddOrUpdateKeepSixJob(IRecurringJobManager manager)
+    {
+        manager.AddOrUpdate<KeepSixReminderJob>(
+            KeepSixReminderJob.RecurringJobId,
+            job => job.ExecuteAsync(CancellationToken.None),
+            "* * * * *",
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+    }
 }
