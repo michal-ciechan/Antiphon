@@ -718,6 +718,7 @@ try
     builder.Services.AddScoped<ExpectationOperatorDeliveryService>();
     builder.Services.AddScoped<ExpectationWatchdogStatusService>();
     builder.Services.AddTransient<ExpectationWatchdogJob>();
+    builder.Services.AddTransient<Antiphon.Server.Infrastructure.Agents.KeepSixReminderJob>();
     // CARD-0082 S3: idle auto-compact sweep. Singleton because the in-memory per-session attempt
     // stamp has to survive the supervisor hosted service's per-tick scope.
     builder.Services.AddSingleton<ContextCompactionService>();
