@@ -124,6 +124,36 @@ public class CodexTranscriptNormalizerTests
         await Task.CompletedTask;
     }
 
+    /// <summary>
+    /// CARD-0242: Codex persists a live interrupt as <c>event_msg</c> / <c>turn_aborted</c>.
+    /// That row is one <c>TurnEnd</c> whose <c>StopReason</c> is exactly <c>cancelled</c>, so
+    /// the existing idle-not-report path flushes the queue and leaves the task Working.
+    /// <c>end_turn</c> would settle the partial narration as Succeeded (CARD-0159).
+    /// <c>turn_id</c> is optional; <c>IsApiError</c> stays unset because an API failure is
+    /// still <c>task_complete.error</c>.
+    /// </summary>
+    [Test]
+    public async Task Turn_aborted_is_a_cancelled_boundary_and_not_end_turn()
+    {
+        var withTurn = new CodexTranscriptNormalizer().Normalize(
+            """{"timestamp":"2026-08-13T15:24:10.773Z","type":"event_msg","payload":{"type":"turn_aborted","turn_id":"01a0abort","reason":"interrupted","duration_ms":865}}""");
+        var aborted = withTurn.ShouldHaveSingleItem();
+        aborted.Kind.ShouldBe(TranscriptKinds.TurnEnd);
+        aborted.StopReason.ShouldBe("cancelled");
+        aborted.ApiCallId.ShouldBe("01a0abort");
+        aborted.IsApiError.ShouldNotBe(true);
+
+        var withoutTurn = new CodexTranscriptNormalizer().Normalize(
+            """{"timestamp":"2026-08-13T15:24:11.000Z","type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}""");
+        var omitted = withoutTurn.ShouldHaveSingleItem();
+        omitted.Kind.ShouldBe(TranscriptKinds.TurnEnd);
+        omitted.StopReason.ShouldBe("cancelled");
+        omitted.ApiCallId.ShouldBeNull();
+        omitted.IsApiError.ShouldNotBe(true);
+
+        await Task.CompletedTask;
+    }
+
     /// <summary>The other dialect: <c>codex exec</c> (and the Desktop app) write flat rows.</summary>
     [Test]
     public async Task Real_exec_rollout_yields_the_same_normalized_rows_from_the_flat_dialect()
