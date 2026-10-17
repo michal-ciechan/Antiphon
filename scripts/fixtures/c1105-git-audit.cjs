@@ -637,7 +637,7 @@ try {
         }
         case 'audit-timeout': {
             // The overall budget, shortened: an audit that cannot finish refuses, never passes.
-            const budget = 'timeout --kill-after=10s 3000s bash -c';
+            const budget = 'timeout --kill-after=10s "${audit_cap}s" bash -c';
             helper(text => { assert.equal(text.split(budget).length, 2); return text.replace(budget, 'timeout --kill-after=10s 0.01s bash -c'); });
             expected = K; expectedCheck = 'check=audit-timeout'; break;
         }
