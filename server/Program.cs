@@ -433,6 +433,7 @@ try
     builder.Services.AddScoped<VerificationCleanupService>();
     builder.Services.AddScoped<AgentTaskPipelineStatusService>();
     builder.Services.AddScoped<HostBudgetService>();
+    builder.Services.AddScoped<KeepSixService>();
     builder.Services.AddScoped<OrchestratorInstructionsSnapshotBuilder>();
     builder.Services.AddSingleton<AgentTaskLandQueue>();
     builder.Services.AddSingleton<ILandingGit, LandingGit>();
@@ -1157,6 +1158,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapRunnerDefaultEndpoints();
     app.MapDispatchConcurrencyEndpoints();
     app.MapOrchestratorInstructionsEndpoints();
+    app.MapKeepSixEndpoints();
     app.MapStandingSpecialistRoutingEndpoints();
     app.MapStageOutcomeEndpoints();
     app.MapComplexityChainEndpoints();

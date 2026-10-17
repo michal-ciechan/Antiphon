@@ -21,6 +21,7 @@ public sealed class OrchestratorInstructionsSnapshotBuilder(
     HostBudgetService budgets,
     DispatchConcurrencySettingsService concurrency,
     RunnerDefaultSettingsService runnerDefaults,
+    KeepSixService keepSix,
     TimeProvider clock,
     IServiceProvider services)
 {
@@ -51,7 +52,8 @@ public sealed class OrchestratorInstructionsSnapshotBuilder(
             Levels(),
             _settings.OrchestratorInstructions.StandingInstructions.ToArray(),
             await ReadAsync("matrix", "matrix", () => ReadMatrixAsync(ct), new MatrixSection(_settings.DefaultComplexity.GetValueOrDefault().ToString(), [])),
-            failures);
+            failures,
+            await keepSix.ReadInstructionRowsAsync(ct));
     }
 
     /// <summary>

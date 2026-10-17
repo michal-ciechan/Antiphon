@@ -6334,6 +6334,58 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("HostOccupancySamples");
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.KeepSixOrchestrator", b =>
+                {
+                    b.Property<Guid>("AgentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("EnabledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("HoldReason")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime?>("HoldUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastAcknowledgedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastReminderEnqueuedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("OutstandingMessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Provenance")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Target")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("AgentId");
+
+                    b.ToTable("KeepSixOrchestrators", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.LegacyCheckNotePublication", b =>
                 {
                     b.Property<Guid>("Id")
@@ -11024,6 +11076,17 @@ namespace Antiphon.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("Run");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.KeepSixOrchestrator", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.Agent", "Agent")
+                        .WithMany()
+                        .HasForeignKey("AgentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Agent");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.LegacyCheckNotePublication", b =>

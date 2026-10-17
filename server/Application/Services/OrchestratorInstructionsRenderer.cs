@@ -244,6 +244,7 @@ public static class OrchestratorInstructionsRenderer
             builder.AppendLine("- " + line);
         builder.AppendLine(
             "Per-agent pinned instructions (CARD-0262) are projected into the agent's own workspace and are not repeated here.");
+        AppendKeepSix(builder, snapshot.KeepSix);
 
         // Cut notices follow the truncation priority, not the section order, so a reader sees
         // what was dropped first: card pins, holds, standing lines, then the features column.
@@ -349,6 +350,31 @@ public static class OrchestratorInstructionsRenderer
             .OrderByDescending(h => h.ObservedAt ?? DateTimeOffset.MinValue)
             .Take(Math.Max(0, limit))
             .ToList();
+    }
+
+    private static void AppendKeepSix(StringBuilder builder, IReadOnlyList<KeepSixInstructionRow>? rows)
+    {
+        if (rows is null || rows.Count == 0)
+            return;
+        var shown = rows
+            .Where(row => row.Enabled || row.HoldReason is not null || row.HoldUntil is not null)
+            .OrderBy(row => row.Name, StringComparer.Ordinal)
+            .ThenBy(row => row.AgentId)
+            .ToList();
+        if (shown.Count == 0)
+            return;
+
+        var off = rows.Count(row => !row.Enabled && row.HoldReason is null && row.HoldUntil is null);
+        builder.AppendLine();
+        builder.AppendLine("## 9. In-flight target");
+        foreach (var row in shown)
+        {
+            var state = row.Enabled ? "on" : "off";
+            builder.AppendLine(
+                $"- {row.Name}: {state}; target {row.Target}; hold {row.HoldReason ?? "none"} until {row.HoldUntil ?? "none"}");
+        }
+
+        builder.AppendLine($"Off: {off}");
     }
 
     private static string FormatInFlight(int? value) => value?.ToString() ?? "unbounded";
