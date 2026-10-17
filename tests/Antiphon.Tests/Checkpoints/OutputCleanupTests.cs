@@ -1354,7 +1354,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         testing.Contains("off Linux each entry is hashed", StringComparison.Ordinal)
             .ShouldBeTrue("admission-stamp rule stays");
 
-        var helperAt = source.IndexOf(
+        var helperAt = source.LastIndexOf(
             "private (string Root, string Output, DateTimeOffset Exited) ExternalBuild(string id)",
             StringComparison.Ordinal);
         helperAt.ShouldBeGreaterThanOrEqualTo(0, "ExternalBuild");
@@ -1371,11 +1371,12 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     }
 
     // A fresh owned root whose payload is written outside SafeWrite, as the child dotnet build writes it.
-    // Exited stands for the driver-observed build exit; seal-time custody uses Linux statx.
+    // Exited stands for the driver-observed build exit. This helper needs Linux statx
+    // (ctime, ln, and UtcNow); the Windows seal is witnessed separately.
     private (string Root, string Output, DateTimeOffset Exited) ExternalBuild(string id)
     {
         if (!OperatingSystem.IsLinux())
-            Skip.Test("seal-time custody needs statx; off Linux nothing is adopted");
+            Skip.Test("this helper needs Linux statx");
         var root = InitGitRepo();
         var output = Path.Combine(root, id);
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
