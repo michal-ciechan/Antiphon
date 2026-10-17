@@ -70,15 +70,35 @@ public sealed class KeepSixShortfall(
         var candidatesByBoard = selection.Candidates
             .GroupBy(card => card.BoardId)
             .ToDictionary(group => group.Key, group => (IReadOnlyList<PipelineBacklogSelection.Row>)group.ToList());
-        var stamps = projectIds.Length == 0
-            ? new List<TaskStamp>()
-            : await db.AgentTasks.AsNoTracking()
+        // The cards tab polls this every five seconds. Open is a count of Queued, Dispatched,
+        // and Working rows; last dispatch and completion are MAX aggregates, so a terminal row
+        // still supplies its timestamp without the GET loading every task.
+        var byProject = new Dictionary<Guid, ProjectRollup>();
+        if (projectIds.Length > 0)
+        {
+            var rollups = await db.AgentTasks.AsNoTracking()
                 .Where(task => task.ProjectId != null && projectIds.Contains(task.ProjectId.Value))
-                .Select(task => new TaskStamp(
-                    task.Id, task.ProjectId, task.Role, task.Status, task.CreatedAt,
-                    task.CompletedAt, task.CapacityWaitRetained, task.Title))
+                .Where(AgentTaskRoles.NotSpecialist)
+                .GroupBy(task => task.ProjectId)
+                .Select(group => new
+                {
+                    ProjectId = group.Key,
+                    Open = group.Count(task =>
+                        task.Status == AgentTaskStatus.Queued
+                        || task.Status == AgentTaskStatus.Dispatched
+                        || task.Status == AgentTaskStatus.Working),
+                    LastCreated = group.Max(task => (DateTime?)task.CreatedAt),
+                    LastCompleted = group.Max(task => task.CompletedAt),
+                })
                 .ToListAsync(ct)
                 .ConfigureAwait(false);
+            foreach (var rollup in rollups)
+            {
+                if (rollup.ProjectId is Guid projectId)
+                    byProject[projectId] = new ProjectRollup(rollup.Open, rollup.LastCreated, rollup.LastCompleted);
+            }
+        }
+
         var policies = projectIds.Length == 0
             ? null
             : await concurrency.ReadCoherentAsync(projectIds.Select(id => (Guid?)id).ToArray(), ct)
@@ -97,26 +117,21 @@ public sealed class KeepSixShortfall(
                 continue;
             }
 
-            var population = DispatchConcurrencyPolicy.Count(
-                stamps.Select(stamp => new TaskPopulationRow(
-                    stamp.Id, stamp.ProjectId, stamp.Role, stamp.Status, stamp.CreatedAt,
-                    stamp.CapacityWaitRetained, stamp.Title)),
-                projectId);
-            var projectStamps = stamps.Where(stamp =>
-                stamp.ProjectId == projectId && !AgentTaskRoles.IsSpecialist(stamp.Role)).ToList();
+            byProject.TryGetValue(projectId, out var rollup);
+            var countedOpen = rollup?.Open ?? 0;
             var ceiling = policies?.For(projectId) is { } policy ? Ceiling(policy) : (int?)null;
             var effectiveTarget = ceiling is int cap ? Math.Min(storedTarget, cap) : storedTarget;
             candidatesByBoard.TryGetValue(boardId, out var candidates);
             var dispatchable = candidates ?? [];
-            var shortfall = Compute(population.Open, effectiveTarget, dispatchable.Count);
+            var shortfall = Compute(countedOpen, effectiveTarget, dispatchable.Count);
             result[agent.Id] = new Counts(
-                population.Open,
+                countedOpen,
                 effectiveTarget,
                 dispatchable.Count,
                 shortfall,
                 dispatchable.Take(TopCardLimit).Select(card => card.Identifier).ToArray(),
-                Latest(projectStamps, stamp => stamp.CreatedAt),
-                Latest(projectStamps, stamp => stamp.CompletedAt),
+                AsUtc(rollup?.LastCreated),
+                AsUtc(rollup?.LastCompleted),
                 Badge(enabled, shortfall));
         }
 
@@ -147,28 +162,10 @@ public sealed class KeepSixShortfall(
     /// D-5's last create is the newest non-specialist <see cref="AgentTask.CreatedAt"/>.
     /// The GET field for that instant is <c>lastDispatchAt</c>.
     /// </summary>
-    private static DateTimeOffset? Latest(IReadOnlyList<TaskStamp> stamps, Func<TaskStamp, DateTime?> pick)
-    {
-        DateTime? latest = null;
-        foreach (var stamp in stamps)
-        {
-            var value = pick(stamp);
-            if (value is DateTime instant && (latest is null || instant > latest))
-                latest = instant;
-        }
-
-        return latest is DateTime found
+    private static DateTimeOffset? AsUtc(DateTime? value) =>
+        value is DateTime found
             ? new DateTimeOffset(DateTime.SpecifyKind(found, DateTimeKind.Utc))
             : null;
-    }
 
-    private sealed record TaskStamp(
-        Guid Id,
-        Guid? ProjectId,
-        AgentTaskRole Role,
-        AgentTaskStatus Status,
-        DateTime CreatedAt,
-        DateTime? CompletedAt,
-        bool CapacityWaitRetained,
-        string Title);
+    private sealed record ProjectRollup(int Open, DateTime? LastCreated, DateTime? LastCompleted);
 }
