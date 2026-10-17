@@ -18,10 +18,21 @@
 param(
     [switch]$SimpleMode,
     [switch]$SkipBrowser,
-    [int]$TimeoutSec = 10
+    [int]$TimeoutSec = 10,
+    [switch]$ProbeListeningPorts
 )
 
 $ErrorActionPreference = "Stop"
+
+function Get-DevStackListeningPorts {
+    (Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue).LocalPort | Sort-Object -Unique
+}
+
+if ($ProbeListeningPorts) {
+    foreach ($port in @(Get-DevStackListeningPorts)) { Write-Output $port }
+    return
+}
+
 $RepoRoot = $PSScriptRoot
 . (Join-Path $RepoRoot 'scripts\apphost-common.ps1')
 
@@ -76,7 +87,7 @@ if (-not $SimpleMode) {
 }
 
 # ── 2. Listening ports ──────────────────────────────────────────────────────
-$listening = (Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue).LocalPort | Sort-Object -Unique
+$listening = @(Get-DevStackListeningPorts)
 foreach ($p in $corePorts) {
     $open = $listening -contains $p
     Add-Result "Port $p" $open ($open ? "listening" : "closed")
