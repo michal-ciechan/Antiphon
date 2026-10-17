@@ -25,7 +25,28 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Get-DevStackListeningPorts {
-    (Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue).LocalPort | Sort-Object -Unique
+    # Get-NetTCPConnection is a Windows cmdlet. -ErrorAction does not bind when
+    # the command itself is absent, so Linux lists listeners with ss -ltn.
+    if (Get-Command -Name Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+        return @((Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue).LocalPort | Sort-Object -Unique)
+    }
+
+    $raw = & ss -ltn 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw ("ss -ltn failed: {0}" -f (($raw | Out-String).Trim()))
+    }
+    $ports = foreach ($line in @($raw)) {
+        $text = [string]$line
+        if ($text -notmatch '^\s*LISTEN\b') { continue }
+        $fields = @($text -split '\s+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($fields.Count -lt 4) { continue }
+        $local = [string]$fields[3]
+        $colon = $local.LastIndexOf(':')
+        if ($colon -lt 0 -or $colon -ge ($local.Length - 1)) { continue }
+        $portValue = 0
+        if ([int]::TryParse($local.Substring($colon + 1), [ref]$portValue)) { $portValue }
+    }
+    return @($ports | Sort-Object -Unique)
 }
 
 if ($ProbeListeningPorts) {
