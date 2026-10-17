@@ -1340,6 +1340,44 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         OutputCustody.For(daclOutput, daclExit).ShouldBeNull();
     }
 
+    // CARD-1318 D-1: CopyFile keeps the source NTFS change time. A file copied into the fresh
+    // root from an older file is adopted and deleted when its creation time is inside the window.
+    [Test]
+    public void windows_copied_old_change_time_is_adopted()
+    {
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1318 Windows copy change time");
+
+        var root = InitGitRepo();
+        var old = Path.Combine(root, "package.dll");
+        File.WriteAllText(old, "PACKAGE");
+        var ancient = DateTime.UtcNow.AddDays(-30);
+        File.SetCreationTimeUtc(old, ancient);
+        File.SetLastWriteTimeUtc(old, ancient);
+        var oldChanged = OutputCustody.Stat(old)!.Value.Changed;
+        for (var i = 0; i < 50 && DateTimeOffset.UtcNow <= oldChanged; i++)
+            Thread.Sleep(20);
+
+        var output = Path.Combine(root, "bin-c1318");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
+        var copied = Path.Combine(output, "package.dll");
+        File.Copy(old, copied);
+        var rootCreated = SafeWrite.FreshRootCreated(output)!.Value;
+        var copiedStat = OutputCustody.Stat(copied)!.Value;
+        (copiedStat.Changed < rootCreated).ShouldBeTrue("copy kept a change time from before the root");
+        var copyCreated = new DateTimeOffset(DateTime.SpecifyKind(File.GetCreationTimeUtc(copied), DateTimeKind.Utc));
+        (copyCreated >= rootCreated).ShouldBeTrue("copy creation is not before the root");
+        var exited = AfterFileClock(copied);
+        (copyCreated <= exited).ShouldBeTrue("copy creation is not after the observed exit");
+        SafeWrite.Require(OwnedOutputLedger.Seal(output, exited));
+        SafeWrite.MatchesCreation(copied).ShouldBeTrue();
+        var cleaned = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1318"], 0, false, false, createdPaths: [output]);
+        cleaned.Refusals.ShouldBeEmpty();
+        cleaned.Deleted.ShouldBe([output]);
+        Directory.Exists(output).ShouldBeFalse();
+        File.ReadAllText(old).ShouldBe("PACKAGE");
+    }
+
     // CARD-1318 (c): FileShare.None across the first stat, released inside the retry bound, is adopted.
     // A holder kept for the whole bound stays unrecorded and cleanup refuses. The release delay sits
     // inside CheckpointNativeIo's sharing-violation bound.
