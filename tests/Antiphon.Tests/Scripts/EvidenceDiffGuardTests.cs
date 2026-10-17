@@ -248,6 +248,23 @@ public sealed class EvidenceDiffGuardTests
     }
 
     [Test]
+    public async Task Names_a_moved_master_base_that_is_not_an_ancestor()
+    {
+        await using var f = await EvidenceGitFixture.CreateAsync();
+        var feature = await f.AddCommitAsync(f.Base, "feature.txt", Text("feature"));
+        await f.GitAsync("update-ref", "refs/heads/feature", feature);
+        var moved = await f.AddCommitAsync(f.Base, "master-moved.txt", Text("moved"));
+        await f.GitAsync("update-ref", "refs/heads/master", moved);
+        var refused = await f.HistoryAsync("master", "feature");
+        refused.Exit.ShouldBe(2, "moved-master-base");
+        refused.Output.ShouldContain(
+            "EVIDENCE error reason=base_not_ancestor ancestor=" + moved + " descendant=" + feature,
+            Case.Sensitive);
+        refused.Output.ShouldNotContain("EVIDENCE result");
+        refused.Output.ShouldNotContain("git_result_merge-base");
+    }
+
+    [Test]
     public async Task Refuses_failed_or_malformed_git_results()
     {
         await using var f = await EvidenceGitFixture.CreateAsync();

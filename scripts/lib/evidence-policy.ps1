@@ -69,7 +69,11 @@ function Assert-EvidenceHistory {
 
 function Assert-EvidenceAncestor {
     param([string]$Repository, [string]$Ancestor, [string]$Descendant)
-    [void](Read-EvidenceGit $Repository @('merge-base', '--is-ancestor', $Ancestor, $Descendant))
+    $result = Get-EvidenceGitResult -Repository $Repository -Arguments @('merge-base', '--is-ancestor', $Ancestor, $Descendant)
+    if ($null -eq $result -or $result.Bytes -isnot [byte[]]) { throw 'git_result_merge-base' }
+    if ($result.ExitCode -eq 0) { return }
+    if ($result.ExitCode -eq 1) { throw ('base_not_ancestor ancestor=' + $Ancestor + ' descendant=' + $Descendant) }
+    throw 'git_result_merge-base'
 }
 
 function Read-EvidenceCommits {
