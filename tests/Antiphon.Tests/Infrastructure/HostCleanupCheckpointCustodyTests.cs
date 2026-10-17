@@ -242,6 +242,33 @@ public sealed class HostCleanupCheckpointCustodyTests
         finally { stream.Release.TrySetResult(); try { await read; } catch (IOException) { } }
     }
 
+    // CARD-1318: a filter can stall the first read of a new image until the receipt deadline.
+    // One more read adopts a file that then answers. A read that never answers stays unrecorded.
+    [Test]
+    public async Task Stalled_receipt_read_is_retried_once()
+    {
+        var stuck = new HostCleanupCheckpointFixture();
+        stuck.Io.StreamFactory = () => throw new IOException("receipt stalled");
+        stuck.Write.AdoptCreated(stuck.Payload, stuck.Window);
+        stuck.Write.MatchesCreation(stuck.Payload).ShouldBeFalse("CARD-1318 a read that never answers stays unrecorded");
+        stuck.Io.Count("stream").ShouldBe(2, "CARD-1318 a refused read is tried once more and then stops");
+
+        var stalled = new HostCleanupCheckpointFixture();
+        var first = new BlockedStream();
+        var reads = 0;
+        stalled.Io.StreamFactory = () =>
+        {
+            if (Interlocked.Increment(ref reads) == 1) return first;
+            stalled.Io.StreamFactory = null;
+            return new MemoryStream(Encoding.UTF8.GetBytes("original"));
+        };
+        var adopt = Task.Run(() => stalled.Write.AdoptCreated(stalled.Payload, stalled.Window));
+        await first.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        stalled.Clock.Advance(TimeSpan.FromSeconds(3));
+        await adopt.WaitAsync(TimeSpan.FromSeconds(5));
+        stalled.Write.MatchesCreation(stalled.Payload).ShouldBeTrue("CARD-1318 a stalled receipt read is adopted on the retry");
+    }
+
     private sealed class BlockedStream : MemoryStream
     {
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
