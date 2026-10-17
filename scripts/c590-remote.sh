@@ -6586,6 +6586,15 @@ consider_tips() {
     audit_check=for-each-ref
     git --git-dir="$directory" for-each-ref --format='%(objectname)' >> "$scratch/tips" 2> "$scratch/ref-errors" || fail $?
     [ ! -s "$scratch/ref-errors" ] || fail 2
+    # Unset in production. When set, scratch still holding consider_dirty payloads
+    # refuses here; reap_dirty removes those files before this check.
+    if [ -n "${C1008_SCRATCH_QUOTA_BYTES:-}" ]; then
+        local used
+        audit_check=scratch-quota
+        used="$(du -sb "$scratch" | awk '{ print $1 }')" || fail $?
+        [[ "$used" =~ ^[0-9]+$ && "$C1008_SCRATCH_QUOTA_BYTES" =~ ^[0-9]+$ ]] || fail 2
+        [ "$used" -le "$C1008_SCRATCH_QUOTA_BYTES" ] || fail 1
+    fi
     audit_check=head
     git --git-dir="$directory" rev-parse --verify HEAD >> "$scratch/tips" 2>/dev/null || fail $?
 }
@@ -7290,6 +7299,10 @@ c1008_audit() {
         return 2
     fi
     mounts+=(--env "C1008_AUDIT_TIMEOUT_SECONDS=$cap")
+    # Unset in production. The witness sets it so consider_tips can see a retained payload.
+    if [ -n "${C1008_SCRATCH_QUOTA_BYTES:-}" ]; then
+        mounts+=(--env "C1008_SCRATCH_QUOTA_BYTES=$C1008_SCRATCH_QUOTA_BYTES")
+    fi
     program="$(c1008_git_program)"
     helper="$(docker create --user 1654:1654 --entrypoint /bin/bash \
         "${mounts[@]}" "$image" -c "$program" 2>/dev/null)" \
