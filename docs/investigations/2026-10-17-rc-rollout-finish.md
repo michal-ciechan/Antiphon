@@ -46,3 +46,17 @@ The wrapper open list for project `d4ea7ae9-e769-474b-95b9-aa25fbc1303f` had 5 i
 `server2` was still `7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce`, drained, idle, redirect `server2-temp`, not accepting. `server2-temp` was still accepting `09e48c5d6f1d404cfea8ec0d992270424fd2a184`. Standing `server2` `buildVersion` is not the requested SHA. `server2-temp` is not retired.
 
 A later `redeploy-old` needs an explicit decision. This pass did not start one.
+
+## Authorized retry (2026-10-17)
+
+One new `redeploy-old` was authorized after `55eaef83` had settled. Preflight: land-pending `items` empty; no Queued or Dispatched task on `server2` or `server2-temp`. `be14f4d6` was Dispatched on desktop. `server2` was still drained and idle on `7507b3cf`; `server2-temp` was still accepting `09e48c5d`.
+
+| Phase | UTC | Exit | Result |
+|---|---|---|---|
+| `redeploy-old` | start `2026-10-17T04:46:13.0431861Z`, end `2026-10-17T04:46:33.6622924Z` | 2 | `HostCaseFailed deploy-parent exit=2`, `DIAGNOSIS=RecycleLandUnknown` |
+
+Evidence root: `C:\src\Antiphon\.antiphon\rolling-server2\c727f40d601ff14e`
+
+The host open list had 6 items. The row with no `landRequest` merged was `c066e2f4-2472-44f3-9717-1e7a453cb1e0`, `status=Dispatched`, `runnerId=desktop`, `role` not stored on the census row, `projectId=null`, `scopeSource=None`. A later read of that task was `summary.status=Succeeded`, `role=Check`, `landRequest=null`. Same token as the first refusal, different task. No second retry. Smoke/Both, `drain-temp`, and `retire-temp` were not started.
+
+After this refusal, `server2` was still drained and idle on `7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce` with redirect `server2-temp`. `server2-temp` was still accepting `09e48c5d6f1d404cfea8ec0d992270424fd2a184`.
