@@ -4,7 +4,7 @@ public enum CheckpointPlatform { Linux, Windows, Other }
 
 // Observations only. Custody, admission and receipt interpretation belong to callers.
 public readonly record struct CheckpointStat(string Kind, ulong Device, ulong Inode, long Size,
-    long Modified, long Changed, ushort Mode = 0, uint Links = 0, uint Owner = 0);
+    long Modified, long Changed, ushort Mode = 0, uint Links = 0, uint Owner = 0, long Created = 0);
 public readonly record struct CheckpointHandleStat(bool Regular, ulong Links, ulong Size, string Path);
 public readonly record struct CheckpointReadOpen(int UnixFlags, uint WindowsFlags);
 public sealed record CheckpointGitRequest(string Executable, string WorkingDirectory,
