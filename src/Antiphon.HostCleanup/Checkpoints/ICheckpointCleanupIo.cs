@@ -45,6 +45,9 @@ public interface ICheckpointCleanupIo
     long Length(string path);
     IEnumerable<string> Enumerate(string path);
     CheckpointStat Stat(string path, bool portable = false);
+    // Seal custody. Linux returns Stat. Windows reads the opened handle. The ledger stamp stays Stat,
+    // which on Windows has no inode and no change time.
+    CheckpointStat CustodyStat(string path);
     int CreateExclusiveDirectory(string path);
     void CreateDirectory(string path);
     Stream Open(string path, FileMode mode, FileAccess access, FileShare share);

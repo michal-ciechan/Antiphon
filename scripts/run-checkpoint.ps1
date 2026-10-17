@@ -754,7 +754,7 @@ function Invoke-CheckpointGraphEval {
         $evalArgs += $token
         if ($token.StartsWith('--property:UseAppHost=', [StringComparison]::OrdinalIgnoreCase)) { $sawHost = $true }
     }
-    if (-not $sawHost) { $evalArgs += '--property:UseAppHost=false' }
+    if (-not $sawHost -and -not $onWindows) { $evalArgs += '--property:UseAppHost=false' }
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = 'dotnet'
     $psi.WorkingDirectory = $root
@@ -1012,7 +1012,7 @@ function Invoke-ConfinedCheckpointBuild {
     }
     if (-not $sawArtifacts) { [void]$rewritten.Add('--property:ArtifactsPath=' + $layout.Artifacts) }
     if (-not $sawUse) { [void]$rewritten.Add('--property:UseArtifactsOutput=true') }
-    if (-not $sawHost) { [void]$rewritten.Add('--property:UseAppHost=false') }
+    if (-not $sawHost -and -not $onWindows) { [void]$rewritten.Add('--property:UseAppHost=false') }
     $forwarded = New-Object System.Collections.Generic.List[string]
     foreach ($token in @($Arguments)) {
         $pair = Get-CheckpointPropertyPair $token

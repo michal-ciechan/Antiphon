@@ -217,6 +217,7 @@ internal sealed class VirtualCheckpointIo(ControlledTimeProvider clock, Checkpoi
         Enter("stat", path);
         return Nodes.TryGetValue(path, out var n) ? n.Stat : new("absent", 0, 0, 0, 0, 0);
     }
+    public CheckpointStat CustodyStat(string path) => Stat(path);
     public int CreateExclusiveDirectory(string path)
     {
         Enter("mkdir-exclusive", path);
