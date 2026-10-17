@@ -2393,6 +2393,102 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1105_Git_audit_overall_timeout() => C1105AuditContract("audit-timeout");
 
+    // CARD-1316. A clean standing volume measured 5225 s. The hardcoded 3000 s
+    // cap returns status 124 and redeploy-old cannot pass. The default is 10800 s,
+    // overridable, and 124/137 stay RecycleGitAuditUnknown. The redeploy-old ssh
+    // path has no shorter wall deadline around that cap.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1316_Recycle_audit_cap_clears_the_standing_volume()
+    {
+        var remote = Remote();
+        remote.Contains("timeout --kill-after=10s 3000s", StringComparison.Ordinal)
+            .ShouldBeFalse("3000s is below the measured 5225s clean audit");
+        var fn = Block(remote, "c1008_resolve_audit_cap");
+        var output = LinuxShell("set -u\n" + fn + "\n" + """
+            unset C1008_AUDIT_TIMEOUT_SECONDS
+            printf 'DEFAULT=%s\n' "$(c1008_resolve_audit_cap)"
+            C1008_AUDIT_TIMEOUT_SECONDS=
+            printf 'EMPTY=%s\n' "$(c1008_resolve_audit_cap)"
+            C1008_AUDIT_TIMEOUT_SECONDS=3000
+            printf 'OVERRIDE=%s\n' "$(c1008_resolve_audit_cap)"
+            C1008_AUDIT_TIMEOUT_SECONDS=9999999
+            printf 'MAX=%s\n' "$(c1008_resolve_audit_cap)"
+            for bad in 0 08 10000000 abc -1 10800s; do
+                C1008_AUDIT_TIMEOUT_SECONDS="$bad"
+                set +e
+                got="$(c1008_resolve_audit_cap)"
+                code=$?
+                set -e
+                set -u
+                printf 'BAD value=%s code=%s\n' "$bad" "$code"
+                printf '%s\n' "$got"
+            done
+            """);
+        output.ShouldContain("DEFAULT=10800");
+        output.ShouldContain("EMPTY=10800");
+        output.ShouldContain("OVERRIDE=3000");
+        output.ShouldContain("MAX=9999999");
+        foreach (var bad in new[] { "0", "08", "10000000", "abc", "-1", "10800s" })
+        {
+            output.Contains("BAD value=" + bad + " code=2", StringComparison.Ordinal)
+                .ShouldBeTrue(bad);
+        }
+        output.Contains("RecycleGitAuditUnknown", StringComparison.Ordinal).ShouldBeTrue();
+        output.Contains("audit check=audit-timeout status=2 repo=.", StringComparison.Ordinal).ShouldBeTrue();
+
+        const string invocation = "timeout --kill-after=10s \"${audit_cap}s\" bash -c \"$c1008_audit_body\"";
+        var at = remote.IndexOf(invocation, StringComparison.Ordinal);
+        at.ShouldBeGreaterThanOrEqualTo(0, "the helper budget is the resolved cap");
+        var window = remote[at..Math.Min(remote.Length, at + 450)];
+        window.Contains("124|137)", StringComparison.Ordinal).ShouldBeTrue("124 and 137 stay the timeout refusal");
+        window.Contains("check=audit-timeout", StringComparison.Ordinal).ShouldBeTrue();
+        window.Contains("RecycleGitAuditUnknown", StringComparison.Ordinal).ShouldBeTrue();
+        remote.Contains("audit_cap=\"${C1008_AUDIT_TIMEOUT_SECONDS:-10800}\"", StringComparison.Ordinal)
+            .ShouldBeTrue("the helper defaults when the host did not forward a cap");
+
+        var audit = Block(remote, "c1008_audit");
+        var resolveAt = audit.IndexOf("c1008_resolve_audit_cap", StringComparison.Ordinal);
+        var envAt = audit.IndexOf("--env \"C1008_AUDIT_TIMEOUT_SECONDS=$cap\"", StringComparison.Ordinal);
+        var createAt = audit.IndexOf("docker create", StringComparison.Ordinal);
+        resolveAt.ShouldBeGreaterThanOrEqualTo(0);
+        envAt.ShouldBeGreaterThan(resolveAt);
+        createAt.ShouldBeGreaterThan(envAt);
+
+        var bridge = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c590-real.ps1"));
+        bridge.Contains("throw 'AuditTimeoutInvalid'", StringComparison.Ordinal).ShouldBeTrue();
+        bridge.Contains("-notmatch '^[1-9][0-9]{0,6}$'", StringComparison.Ordinal).ShouldBeTrue();
+        bridge.Contains("export C1008_AUDIT_TIMEOUT_SECONDS='$($env:C1008_AUDIT_TIMEOUT_SECONDS)'", StringComparison.Ordinal)
+            .ShouldBeTrue("a desktop override has to cross ssh");
+        var sshAt = bridge.IndexOf("function Invoke-C590Ssh", StringComparison.Ordinal);
+        var sshEnd = bridge.IndexOf("\nfunction ", sshAt + 1, StringComparison.Ordinal);
+        sshAt.ShouldBeGreaterThanOrEqualTo(0);
+        sshEnd.ShouldBeGreaterThan(sshAt);
+        var ssh = bridge[sshAt..sshEnd];
+        ssh.Contains("-o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=240", StringComparison.Ordinal)
+            .ShouldBeTrue();
+        ssh.Contains("WaitForExit", StringComparison.Ordinal).ShouldBeFalse("Invoke-C590Ssh has no wall deadline");
+        ssh.Contains("timeout ", StringComparison.Ordinal).ShouldBeFalse();
+
+        var rolling = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "deploy-server2.ps1"));
+        var armAt = rolling.IndexOf("'redeploy-old' {", StringComparison.Ordinal);
+        var armEnd = rolling.IndexOf("'drain-temp' {", armAt, StringComparison.Ordinal);
+        armAt.ShouldBeGreaterThanOrEqualTo(0);
+        armEnd.ShouldBeGreaterThan(armAt);
+        var arm = rolling[armAt..armEnd];
+        arm.Contains("Invoke-HostCase -Case 'deploy-parent'", StringComparison.Ordinal).ShouldBeTrue();
+        arm.Contains("WaitForExit", StringComparison.Ordinal).ShouldBeFalse("redeploy-old does not time-box deploy-parent");
+
+        var doc = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "docs", "docker-stack.md"));
+        doc.Contains("the whole audit has a 3-hour (10800 s) budget by default (`C1008_AUDIT_TIMEOUT_SECONDS`", StringComparison.Ordinal)
+            .ShouldBeTrue();
+        doc.Contains("add no shorter wall deadline", StringComparison.Ordinal).ShouldBeTrue();
+
+        var fixture = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "fixtures", "c1105-git-audit.cjs"));
+        fixture.Contains("timeout --kill-after=10s \"${audit_cap}s\" bash -c", StringComparison.Ordinal).ShouldBeTrue();
+        fixture.Contains("timeout --kill-after=10s 3000s bash -c", StringComparison.Ordinal).ShouldBeFalse();
+    }
+
     // CARD-1105 repair 4 (server2 replay F-4): a volume shaped like the replay, one blobless
     // mirror and 250 linked worktrees of 300 tracked files plus ignored build output, is
     // audited within 240 s (measured 22 s on server2-temp); each common directory is read
