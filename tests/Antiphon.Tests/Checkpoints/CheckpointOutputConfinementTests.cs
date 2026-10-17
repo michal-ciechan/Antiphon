@@ -79,6 +79,72 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         AssertUnevaluable(script, sentinel, root);
     }
 
+    // CreateProcess resolves "dotnet" from the launching process PATH, and only as dotnet.exe.
+    // The checkpoint script is that parent, so its Path starts with a logging apphost.
+    [Test]
+    [Timeout(300_000)]
+    public async Task windows_confined_build_leaves_use_app_host_unset(CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1310 confined Windows build leaves UseAppHost unset");
+
+        var root = InitGitRepo();
+        Write(root, ".gitignore", "bin-*/\nobj/\n.antiphon/\n");
+        Write(root, "App/App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup>
+            </Project>
+            """);
+        Write(root, "App/Program.cs", "Console.WriteLine(1);\n");
+        Git(root, "add", "-A");
+        CommitAll(root);
+
+        var prepared = BuildConfinement.Prepare(
+            root,
+            ["build", "App/App.csproj", "--property:OutputPath=bin-c1310/"],
+            null,
+            cancellationToken);
+        prepared.Refusal.ShouldBeNull(prepared.Detail);
+        prepared.Arguments.Any(arg => arg.Contains("UseAppHost", StringComparison.OrdinalIgnoreCase))
+            .ShouldBeFalse(string.Join("\n", prepared.Arguments));
+
+        var explicitHost = BuildConfinement.Prepare(
+            root,
+            ["build", "App/App.csproj", "--property:OutputPath=bin-c1310/", "--property:UseAppHost=true"],
+            null,
+            cancellationToken);
+        explicitHost.Refusal.ShouldBeNull(explicitHost.Detail);
+        explicitHost.Arguments.ShouldContain("--property:UseAppHost=true");
+        explicitHost.Arguments.Any(arg => arg.Contains("UseAppHost=false", StringComparison.OrdinalIgnoreCase))
+            .ShouldBeFalse(string.Join("\n", explicitHost.Arguments));
+
+        var shimRoot = Path.Combine(Path.GetTempPath(), "c1310-shim-" + Guid.NewGuid().ToString("N"));
+        var resultsRoot = Path.Combine(Path.GetTempPath(), "c1310-results-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var shimBin = BuildUseAppHostShim(shimRoot);
+            Directory.CreateDirectory(resultsRoot);
+            var log = Path.Combine(shimRoot, "calls.log");
+            var output = await RunConfinedScriptAsync(root, resultsRoot, shimBin, log, cancellationToken);
+            var lines = File.Exists(log) ? File.ReadAllLines(log) : [];
+            var detail = output + "\n--- log ---\n" + string.Join("\n", lines);
+            var msbuild = FirstVerb(lines, "msbuild");
+            var build = FirstVerb(lines, "build");
+            (msbuild is not null).ShouldBeTrue(detail);
+            (build is not null).ShouldBeTrue(detail);
+            msbuild!.Contains("UseAppHost=false", StringComparison.OrdinalIgnoreCase).ShouldBeFalse(detail);
+            build!.Contains("UseAppHost=false", StringComparison.OrdinalIgnoreCase).ShouldBeFalse(detail);
+            var run = FirstVerb(lines, "run");
+            if (run is not null)
+                run.Contains("UseAppHost", StringComparison.OrdinalIgnoreCase).ShouldBeFalse(detail);
+        }
+        finally
+        {
+            DeleteIfPresent(shimRoot);
+            DeleteIfPresent(resultsRoot);
+        }
+    }
+
     private async Task AssertPreservedAsync(Fixture fixture, string name, CancellationToken cancellationToken)
     {
         var tool = await RunToolAsync(fixture.Root, name + "-tool", cancellationToken);
@@ -147,6 +213,110 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken);
         return (await stdoutTask) + (await stderrTask);
+    }
+
+    private static string BuildUseAppHostShim(string shimRoot)
+    {
+        var projectDir = Path.Combine(shimRoot, "src");
+        Directory.CreateDirectory(projectDir);
+        File.WriteAllText(Path.Combine(projectDir, "shim.csproj"), """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <OutputType>Exe</OutputType>
+                <TargetFramework>net9.0</TargetFramework>
+                <AssemblyName>dotnet</AssemblyName>
+                <ImplicitUsings>disable</ImplicitUsings>
+                <Nullable>disable</Nullable>
+                <UseAppHost>true</UseAppHost>
+              </PropertyGroup>
+            </Project>
+            """);
+        File.WriteAllText(Path.Combine(projectDir, "Program.cs"), """
+            using System;
+            using System.IO;
+            internal static class Program
+            {
+                private static int Main(string[] args)
+                {
+                    var log = Environment.GetEnvironmentVariable("C1310_DOTNET_LOG");
+                    if (!string.IsNullOrEmpty(log))
+                        File.AppendAllText(log, string.Join(" ", args) + "\n");
+                    if (args.Length > 0 && string.Equals(args[0], "msbuild", StringComparison.Ordinal))
+                        Console.WriteLine("{\"Items\":{}}");
+                    return 0;
+                }
+            }
+            """);
+        var bin = Path.Combine(shimRoot, "bin");
+        var output = bin.Replace('\\', '/').TrimEnd('/') + "/";
+        var start = new ProcessStartInfo(SdkDotnet()) { WorkingDirectory = projectDir };
+        foreach (var arg in new[] { "build", "shim.csproj", "--property:OutputPath=" + output, "--nologo" })
+            start.ArgumentList.Add(arg);
+        start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
+        start.Environment["DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER"] = "1";
+        var built = CheckpointFixtureProcess.Run(start, 120_000);
+        var exe = Path.Combine(bin, "dotnet.exe");
+        File.Exists(exe).ShouldBeTrue(built.Stdout + built.Stderr);
+        built.Exit.ShouldBe(0, built.Stdout + built.Stderr);
+        return bin;
+    }
+
+    private async Task<string> RunConfinedScriptAsync(
+        string root, string resultsRoot, string shimBin, string log, CancellationToken cancellationToken)
+    {
+        var start = new ProcessStartInfo("pwsh")
+        {
+            WorkingDirectory = root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var arg in new[]
+        {
+            "-NoProfile", "-NonInteractive", "-File",
+            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1"),
+            "-Name", "CP-1", "-Project", "App/App.csproj", "-OutputPath", "bin-c1310s/",
+            "-Filter", "/*/*/Unused/*", "-ResultsRoot", resultsRoot,
+            "-MinExecuted", "1", "-NoSlot",
+        })
+            start.ArgumentList.Add(arg);
+        var path = Environment.GetEnvironmentVariable("Path") ?? Environment.GetEnvironmentVariable("PATH") ?? "";
+        start.Environment["Path"] = shimBin + Path.PathSeparator + path;
+        start.Environment["C1310_DOTNET_LOG"] = log;
+        using var process = Process.Start(start);
+        process.ShouldNotBeNull();
+        RegisterCheckpointChild(process);
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        return (await stdoutTask) + (await stderrTask);
+    }
+
+    private static string SdkDotnet()
+    {
+        var path = Environment.GetEnvironmentVariable("Path") ?? Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var candidate = Path.Combine(dir.Trim(), "dotnet.exe");
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        throw new FileNotFoundException("dotnet.exe");
+    }
+
+    private static string? FirstVerb(string[] lines, string verb)
+    {
+        foreach (var line in lines)
+            if (line.Equals(verb, StringComparison.Ordinal) || line.StartsWith(verb + " ", StringComparison.Ordinal))
+                return line;
+        return null;
+    }
+
+    private static void DeleteIfPresent(string path)
+    {
+        if (Directory.Exists(path))
+            Directory.Delete(path, recursive: true);
     }
 
     private Fixture CreateImportedProps()
