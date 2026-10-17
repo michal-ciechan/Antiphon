@@ -6197,7 +6197,7 @@ rel_repo() {
 }
 fail() {
     trap - ERR
-    printf 'audit check=%s status=%s repo=%s\n' "${audit_check:-unclassified}" "${1:-}" "$(rel_repo "${audit_repo:-}")"
+    printf 'audit check=%s status=%s repo=%s%s\n' "${audit_check:-unclassified}" "${1:-}" "$(rel_repo "${audit_repo:-}")" "${2:-}"
     printf 'RecycleGitAuditUnknown\n'
     exit 2
 }
@@ -6349,15 +6349,19 @@ queue_dirty() {
     dirty_paths+=("$where")
 }
 reap_dirty() {
-    local status=0 output
+    local status=0 output n
     wait "${dirty_pids[$dirty_next]}" || status=$?
+    n="$dirty_next"
     dirty_next=$((dirty_next + 1))
+    output="$(< "$scratch/dirty-$n.out")" || output=''
+    rm -f -- "$scratch/dirty-$n.out" "$scratch/dirty-$n.flags" "$scratch/dirty-$n.index" \
+        "$scratch/dirty-$n.paths" "$scratch/dirty-$n.expected" "$scratch/dirty-$n.actual" \
+        "$scratch/dirty-$n.stash"
     [ "$status" != 0 ] || return 0
     trap - ERR
-    output="$(< "$scratch/dirty-$((dirty_next - 1)).out")" || output=''
     case "$output" in
         *'audit check='*) printf '%s\n' "$output" ;;
-        *) printf 'audit check=worktree-status status=%s repo=%s\nRecycleGitAuditUnknown\n' "$status" "$(rel_repo "${dirty_paths[$((dirty_next - 1))]}")" ;;
+        *) printf 'audit check=worktree-status status=%s repo=%s\nRecycleGitAuditUnknown\n' "$status" "$(rel_repo "${dirty_paths[$n]}")" ;;
     esac
     exit 2
 }
@@ -6582,9 +6586,19 @@ consider_gitdir() {
 # Git's own view of one Git directory's refs and HEAD: the shared refs plus that
 # directory's per-worktree refs.
 consider_tips() {
-    local directory="$1"
+    local directory="$1" status=0 avail='' suffix=''
     audit_check=for-each-ref
-    git --git-dir="$directory" for-each-ref --format='%(objectname)' >> "$scratch/tips" 2> "$scratch/ref-errors" || fail $?
+    git --git-dir="$directory" for-each-ref --format='%(objectname)' >> "$scratch/tips" 2> "$scratch/ref-errors" || status=$?
+    if [ "$status" != 0 ]; then
+        # An empty stderr file is the full-scratch shape: git's fatal line never lands.
+        # df writes on the helper stdout docker captures, not on the tmpfs.
+        if [ ! -s "$scratch/ref-errors" ]; then
+            avail="$(df -B1 /tmp 2>/dev/null | awk 'NR==2 { print $4 }')" || avail=''
+            [[ "$avail" =~ ^[0-9]+$ ]] || avail=?
+            suffix=" scratch-avail=$avail"
+        fi
+        fail "$status" "$suffix"
+    fi
     [ ! -s "$scratch/ref-errors" ] || fail 2
     # Unset in production. When set, scratch still holding consider_dirty payloads
     # refuses here; reap_dirty removes those files before this check.
