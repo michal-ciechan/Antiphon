@@ -10,6 +10,14 @@ both runners or drain the only accepting runner. A refusal means stop, record it
 receipt under `.antiphon/rolling-server2/`, and report it; do not force a phase or improvise a
 Docker replacement. The only timed stop exception is step 5 below.
 
+<a id="continuous-dispatch-during-rollout"></a>
+
+### Continuous dispatch during the rollout (CARD-1311)
+
+During a staged server2 rolling rollout, keep dispatching new work to `server2-temp` until the standing `server2` is fully ready (`redeploy-old` exit 0 and smoke/Both passed); the moment it is ready send new work to `server2` and start `drain-temp` (which waits for temp's running tasks, `-WaitIdleMinutes 240`); there must always be a server2 (standing or temp) accepting work, and the orchestrator never pauses dispatch or drops below its in-flight target (6) because of a rollout. Tasks on `server2-temp` do not block `drain-temp`, it waits for them to settle.
+
+That paragraph is the rule. The orchestrator copy is [operational autonomy](orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout). `redeploy-old` clears the standing runner's drain before gate 7's separate smoke and Both. Readiness for moving new work is that exit 0 together with smoke/Both passed, so pin new work to `server2-temp` until both have passed. Start `drain-temp` at that moment; tasks already running on temp settle under `-WaitIdleMinutes 240`.
+
 Before starting, verify no land is pending, the checkout has no half-reset worktree, and the
 running server's `/health` and `GET /api/version` SHA match the canonical source-root `HEAD`
 (see [the autonomy policy](orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout)).
@@ -102,6 +110,7 @@ runner still requires a known zero `runnerSessions`. Run `Invoke-RestMethod 'htt
 to record the configured global and per-kind preferences; these phases do not change that
 setting or a routing pin. If the intended unpinned work does not currently prefer `server2`,
 the drain redirect cannot promote temp for it: stop and report the missing routing prerequisite.
+Keep dispatching through every gate under [Continuous dispatch](#continuous-dispatch-during-rollout).
 
 | Gate | Exact phase / verification command | Stop and rollback |
 |---|---|---|
@@ -680,6 +689,9 @@ remain for operator inspection.
 
 The rolling sequence remains explicit: CP-3 Fixture and inventory, Seed, `deploy-temp`,
 `drain-old`, `redeploy-old`, CP-4 Both, `drain-temp`, `retire-temp`, then CP-5 Retired.
+Until CP-4 Both has passed, new work stays on `server2-temp`; when Both passes, send it to
+`server2` and start `drain-temp`
+([continuous dispatch](#continuous-dispatch-during-rollout)).
 The deploy wrapper verifies real mounts before clearing either drain. Full markers also
 require a uid-1654 image-pack native apphost smoke; cold markers retain their filesystem
 writability checks without package smoke. A failed

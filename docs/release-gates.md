@@ -208,7 +208,9 @@ identity. Creating a release never restarts AppHost or the runner and never chec
 in the main worktree. Updating master and restarting normally may correctly leave the dev
 stack ahead of the latest release. If an operator later deploys a release, require
 `/api/version` SHA equality to that tag's peeled SHA and the intended capabilities, using the
-[canonical restart runbook](apphost-runbook.md).
+[canonical restart runbook](apphost-runbook.md). A server2 runner upgrade that carries that
+release follows the staged rolling rollout and keeps dispatching:
+[continuous dispatch](docker-stack.md#continuous-dispatch-during-rollout).
 
 ## GitHub Actions is not a release prerequisite
 

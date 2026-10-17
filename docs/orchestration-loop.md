@@ -21,6 +21,7 @@ while detached PtyHosts are active (they are re-adopted), the cold first Seed, a
 `deploy-server2.ps1 -Rolling` phases `deploy-temp`, `drain-old`, `redeploy-old`, and `drain-temp`. Restart the
 standing server2 runner only through those rolling phases. Follow the
 [AppHost restart](apphost-runbook.md) and [staged server2 rollout](docker-stack.md#staged-server2-rolling-rollout-card-0934) runbooks.
+During a staged server2 rolling rollout, keep dispatching new work to `server2-temp` until the standing `server2` is fully ready (`redeploy-old` exit 0 and smoke/Both passed); the moment it is ready send new work to `server2` and start `drain-temp` (which waits for temp's running tasks, `-WaitIdleMinutes 240`); there must always be a server2 (standing or temp) accepting work, and the orchestrator never pauses dispatch or drops below its in-flight target (6) because of a rollout. Tasks on `server2-temp` do not block `drain-temp`, it waits for them to settle. Canonical statement: [Continuous dispatch during the rollout](docker-stack.md#continuous-dispatch-during-rollout).
 For a desktop runner restart, use `pwsh -NoProfile -File scripts/restart-session-runner.ps1`;
 use `-Hard` only for a planned supervisor refresh under the AppHost runbook.
 `-KillSessions` kills detached sessions and is human-only, never part of this autonomy grant.
@@ -475,7 +476,10 @@ is the `orchestrator` bundle; this section carries the reasons.
    `PUT /api/hosts/server2/budget` with `{ "maxInFlight": <n>, "reason": "<why>" }` can
    hold new dispatch, but is an operator-only setting; the orchestrator does not write it on its
    own initiative. The orchestrator still keeps its six-task server2 default when no lower host
-   budget is enforced. Live operating settings: read the file at ANTIPHON_ORCHESTRATOR_INSTRUCTIONS
+   budget is enforced. During a staged server2 rolling rollout, hold that target of 6 by
+   dispatching to the accepting runner in [continuous dispatch](docker-stack.md#continuous-dispatch-during-rollout):
+   `server2-temp` until `redeploy-old` exits 0 and smoke/Both has passed, then `server2` as
+   `drain-temp` starts. Live operating settings: read the file at ANTIPHON_ORCHESTRATOR_INSTRUCTIONS
    (or GET /api/orchestrator-instructions) at session start, after compaction and when a
    settings-changed note arrives; it outranks the numbers in AGENTS.md.
 2. **On every completion, dispatch the named next stage.** Read `next=` and `handoff:` off the
