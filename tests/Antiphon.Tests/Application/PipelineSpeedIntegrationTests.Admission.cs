@@ -159,6 +159,85 @@ public sealed partial class PipelineSpeedIntegrationTests
         }
     }
 
+    /// <summary>
+    /// CARD-1288. The sweep sentence stays the sweep. CreateAsync still returns
+    /// card_implementation_closed for Code on a card that is already Done, by explicit id,
+    /// by title, and by the caller parent's card.
+    /// </summary>
+    [Test]
+    public async Task C1288_ClosedCardBindingForms()
+    {
+        const string sentence =
+            "The sweep still leaves a task created after the close uncanceled, including a post-Done `Mutation`. "
+            + "`CreateAsync` (ordinary create and a new handoff child) returns 409 `card_implementation_closed` for "
+            + "`Code`, `Custom`, `Debug`, `Docs`, `Merge`, `Commit`, and `Deploy` when the resolved card is Done, "
+            + "Canceled, or archived. That resolution includes an explicit card, the first `CARD-nnnn` in the title, "
+            + "the caller parent's card, and a follow-up's card. Unbound creates stay admitted. "
+            + "`CreateMergeTaskAsync` and `CreateCommitTaskAsync` copy the parent card and do not apply this refusal.";
+        var lifecycle = CollapseWhitespace(ReadRepoFile("docs/agent-card-lifecycle.md"));
+        var expected = CollapseWhitespace(sentence);
+        lifecycle.ShouldContain(expected, Case.Sensitive, "c1288-closed-card-sentence");
+        var sweepEnd = lifecycle.IndexOf("is left alone.", StringComparison.Ordinal);
+        sweepEnd.ShouldBeGreaterThanOrEqualTo(0, "c1288-sweep-sentence");
+        lifecycle[(sweepEnd + "is left alone.".Length)..].TrimStart()
+            .StartsWith("The sweep still leaves a task created after the close uncanceled", StringComparison.Ordinal)
+            .ShouldBeTrue("c1288-sentence-follows-sweep");
+
+        await using var w = await C544World.CreateAsync();
+        await using (var db = w.CreateContext())
+        {
+            var card = await db.Cards.SingleAsync(c => c.Id == w.Card.Id);
+            card.Status = CardStatus.Done;
+            card.ConcurrencyToken = Guid.NewGuid();
+            await db.SaveChangesAsync();
+        }
+
+        await RefuseClosedCodeAsync(w, ChildRequest(w), w.Caller());
+        await RefuseClosedCodeAsync(w, ChildRequest(w) with
+        {
+            Card = null,
+            Title = w.Card.Identifier + " closed title",
+        }, w.Caller());
+        // A worker cannot delegate. The in-memory parent is the bound orchestrator; its card is the Done card.
+        var parent = new AgentTask
+        {
+            Id = w.Owner.Id,
+            RootTaskId = w.Owner.RootTaskId,
+            Depth = w.Owner.Depth,
+            Kind = AgentTaskKind.Orchestrator,
+            CardId = w.Card.Id,
+        };
+        await RefuseClosedCodeAsync(w, ChildRequest(w) with
+        {
+            Card = null,
+            Title = "closed parent bind",
+        }, new AgentTaskService.Caller(parent, w.CallerSessionId, w.RepositoryPath, ProjectId: w.Project.Id));
+    }
+
+    private static async Task RefuseClosedCodeAsync(
+        C544World w, CreateAgentTaskRequest request, AgentTaskService.Caller caller)
+    {
+        await using var scope = w.Services.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
+        var error = await Should.ThrowAsync<ConflictException>(() =>
+            service.CreateAsync(request, caller, CancellationToken.None));
+        error.Code.ShouldBe("card_implementation_closed");
+        (await w.TaskCountAsync()).ShouldBe(0);
+    }
+
+    private static string CollapseWhitespace(string text) =>
+        string.Join(" ", text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    private static string ReadRepoFile(string relative)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Antiphon.sln")))
+            directory = directory.Parent;
+        if (directory is null)
+            throw new DirectoryNotFoundException("Antiphon.sln was not found.");
+        return File.ReadAllText(Path.Combine(directory.FullName, relative));
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
