@@ -5911,10 +5911,20 @@ c1008_tasks_collect() {
                 c1008_http "/api/agent-tasks/$id" || return 2
                 detail="$C1008_HTTP_BODY"
                 C1008_TASK_ERROR=RecycleLandUnknown
-                printf '%s' "$detail" | jq -e --argjson row "$row" 'has("landRequest") and
-                  (.summary|{id,status,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt})==$row and
+                # Terminal detail with landRequest null settled after the open list. Status may move.
+                printf '%s' "$detail" | jq -e --argjson row "$row" '
+                  has("landRequest") and
                   (.summary|has("id") and has("status") and has("runnerId") and has("projectId") and
-                    has("scopeSource") and has("landRequestedAt") and has("landStartedAt"))' >/dev/null || return 2
+                    has("scopeSource") and has("landRequestedAt") and has("landStartedAt")) and
+                  (
+                    ((.summary|{id,status,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt})==$row)
+                    or (
+                      .landRequest==null and
+                      ((.summary.status=="Succeeded") or (.summary.status=="Failed") or (.summary.status=="Canceled")) and
+                      ((.summary|{id,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt})
+                        ==($row|{id,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt}))
+                    )
+                  )' >/dev/null || return 2
                 if printf '%s' "$detail" | jq -e '.landRequest!=null and (.landRequest.state as $s | ["Queued","Held","Running","NeedsResolution"] | index($s)!=null)' >/dev/null; then
                     C1008_TASK_ERROR="RecycleLandInFlight $id"; return 3
                 fi
