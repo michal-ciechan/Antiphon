@@ -38,6 +38,16 @@ public sealed class D2AdvisoryDocumentationTests
     }
 
     [Test]
+    public void VerificationIncompleteRoutesToCodeOnce()
+    {
+        var section = ResolveSection(Basics(), Owner());
+        section.ShouldContain(
+            "An ungated run, a broad run without a named invariant, a missing row, a zero count, or an unprovable build is verification incomplete and is exact missing execution: its next stage is code for that selection once, never land and never another Review only to relabel it.",
+            Case.Sensitive,
+            "ungated, unnamed-broad, missing-row, zero-count and unprovable-build runs route to code once");
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public void MissingOrRenamedSectionFailsTheSameGuard(bool rename)
