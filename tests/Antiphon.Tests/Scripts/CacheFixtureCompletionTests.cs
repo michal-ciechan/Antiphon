@@ -51,6 +51,22 @@ public sealed class CacheFixtureCompletionTests
         Run("c1192-workspace-contract.sh", "retention-inspect", "PASS retention-inspect-refused");
 
     [Test]
+    public void Fixture_seed_tool_hash_failure_is_named() =>
+        Run("c1315-fail-closed.sh", "seed-tool-hash", "PASS seed-tool-hash-named");
+
+    [Test]
+    public void Fixture_prune_manifest_hash_failure_is_named() =>
+        Run("c1315-fail-closed.sh", "prune-manifest-hash", "PASS prune-manifest-hash-named");
+
+    [Test]
+    public void Fixture_namespace_inspect_failure_is_not_free() =>
+        Run("c1315-fail-closed.sh", "namespace-inspect", "PASS namespace-inspect-not-free");
+
+    [Test]
+    public void Retired_cache_inspect_failure_is_not_absence() =>
+        Run("c1315-fail-closed.sh", "retired-inspect", "PASS retired-inspect-not-absence");
+
+    [Test]
     public async Task Bridge_retains_diagnostics_and_refuses_failed_transport()
     {
         var start = new ProcessStartInfo("pwsh")
