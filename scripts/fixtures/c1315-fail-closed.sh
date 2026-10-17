@@ -122,7 +122,7 @@ prune-manifest-hash)
     printf 'PASS prune-manifest-hash-named\n'
     ;;
 namespace-inspect)
-    c849_fixture_work_mount() { printf 'type=bind,source=%s,target=/fixture\n' "$root"; }
+    c849_fixture_work_mount() { printf 'type=bind,source=%s,target=/fixture\n' "$CASE_DIR"; }
     c849_fixture_cache_mount_ok() { return 0; }
     c849_fixture_helper_exec() { return 0; }
     c849_prepare() { return 0; }

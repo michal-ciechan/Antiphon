@@ -82,7 +82,7 @@ docker() {
             name="${@: -1}"
             [ "$variant" != missing-volume ] || { printf 'No such volume\n' >&2; return 1; }
             # Retired verification checks that temp private volumes are absent.
-            [[ "$name" == "$TEMP_PROJECT"_* ]] && return 1
+            [[ "$name" == "$TEMP_PROJECT"_* ]] && { printf 'No such volume: %s\n' "$name" >&2; return 1; }
             [[ "$name" == "$HOST_PROJECT"_* ]] && return 0
             role=nuget-packages; [ "$name" = "$C849_SCRATCH" ] && role=nuget-scratch
             [ "$name" = "$C849_NPM" ] && role=npm-content
