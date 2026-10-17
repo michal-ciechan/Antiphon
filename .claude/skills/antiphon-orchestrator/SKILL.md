@@ -29,6 +29,7 @@ Use -Reply for a Blocked answer, -Continue only for a question with standing aut
 The owner is `docs/orchestration-loop.md` §1, "Standing pipeline policy" (CARD-0533); this is the
 short form.
 For AppHost and runner restarts or server2 rollouts without human confirmation, follow [orchestrator operational autonomy](../../../docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout).
+During a staged server2 rolling rollout, keep dispatching new work to `server2-temp` until the standing `server2` is fully ready (`redeploy-old` exit 0 and smoke/Both passed), then send new work to `server2` and start `drain-temp`; there must always be a server2 accepting work, and the orchestrator never drops below its in-flight target (6) for a rollout ([continuous dispatch](../../../docs/docker-stack.md#continuous-dispatch-during-rollout)).
 For a desktop runner restart use `pwsh -NoProfile -File scripts/restart-session-runner.ps1` (`-Hard` only for a planned supervisor refresh; `-KillSessions` is human-only); check `logs/apphost.restart.lock` and `logs/apphost.launch.lock` first, and inspect AppHost exit 3 before retrying.
 
 - **Each pipeline stage at up to four; at most six tasks on server2 across all stages.** These are
