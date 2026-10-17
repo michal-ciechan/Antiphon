@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "policyHash": "782e65af27bd88d5a484598c6dfe7f5093ac36b6612dcc6f5143c2ee01315b73",
+  "policyHash": "de492ab11aa3a325af46b5447e7f5e2c66d81bb1b84f626bb6f3fea3d3d4b279",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -538,6 +538,12 @@
           "suite": "markdown-pdf",
           "class": "MarkdownPdfRealBrowserTests",
           "owner": "CARD-1313"
+        },
+        {
+          "reason": "F-5 isolated canary skips unless ANTIPHON_HEADED_TESTS, ANTIPHON_BROKER_TESTS and ANTIPHON_CHANNEL_OUTBOUND_ISOLATED are all 1",
+          "suite": "e2e",
+          "class": "ChannelOutboundIsolatedTests",
+          "owner": "CARD-1305"
         }
       ]
     }

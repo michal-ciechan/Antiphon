@@ -14,14 +14,47 @@
 .PARAMETER SimpleMode   Check the docker-compose stack (API 17281 / client 17282; runner 17204) instead of Aspire.
 .PARAMETER SkipBrowser  Skip the Playwright browser smoke test.
 .PARAMETER TimeoutSec   Per-request HTTP timeout (default 10).
+.PARAMETER ProbeListeningPorts  Print listening TCP ports and return. Uses Get-NetTCPConnection when that cmdlet exists, otherwise ss -ltn.
 #>
 param(
     [switch]$SimpleMode,
     [switch]$SkipBrowser,
-    [int]$TimeoutSec = 10
+    [int]$TimeoutSec = 10,
+    [switch]$ProbeListeningPorts
 )
 
 $ErrorActionPreference = "Stop"
+
+function Get-DevStackListeningPorts {
+    # Get-NetTCPConnection is a Windows cmdlet. -ErrorAction does not bind when
+    # the command itself is absent, so Linux lists listeners with ss -ltn.
+    if (Get-Command -Name Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+        return @((Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue).LocalPort | Sort-Object -Unique)
+    }
+
+    $raw = & ss -ltn 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw ("ss -ltn failed: {0}" -f (($raw | Out-String).Trim()))
+    }
+    $ports = foreach ($line in @($raw)) {
+        $text = [string]$line
+        if ($text -notmatch '^\s*LISTEN\b') { continue }
+        $fields = @($text -split '\s+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($fields.Count -lt 4) { continue }
+        $local = [string]$fields[3]
+        $colon = $local.LastIndexOf(':')
+        if ($colon -lt 0 -or $colon -ge ($local.Length - 1)) { continue }
+        $portValue = 0
+        if ([int]::TryParse($local.Substring($colon + 1), [ref]$portValue)) { $portValue }
+    }
+    return @($ports | Sort-Object -Unique)
+}
+
+if ($ProbeListeningPorts) {
+    foreach ($port in @(Get-DevStackListeningPorts)) { Write-Output $port }
+    return
+}
+
 $RepoRoot = $PSScriptRoot
 . (Join-Path $RepoRoot 'scripts\apphost-common.ps1')
 
@@ -76,7 +109,7 @@ if (-not $SimpleMode) {
 }
 
 # ── 2. Listening ports ──────────────────────────────────────────────────────
-$listening = (Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue).LocalPort | Sort-Object -Unique
+$listening = @(Get-DevStackListeningPorts)
 foreach ($p in $corePorts) {
     $open = $listening -contains $p
     Add-Result "Port $p" $open ($open ? "listening" : "closed")
