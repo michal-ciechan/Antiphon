@@ -488,6 +488,13 @@ function Invoke-C590LiveCase {
 
         [void](Invoke-C590Ssh "mkdir -p /home/mc/antiphon-c590")
         & scp -o BatchMode=yes (Join-Path $PSScriptRoot 'c590-remote.sh') mc@server2:/home/mc/antiphon-c590/c590-remote.sh
+        # CARD-1316. The shell resolver accepts the same positive integer. Reject a
+        # bad desktop override before it is quoted into the remote command.
+        $auditTimeoutExport = @()
+        if (-not [string]::IsNullOrEmpty($env:C1008_AUDIT_TIMEOUT_SECONDS)) {
+            if ($env:C1008_AUDIT_TIMEOUT_SECONDS -notmatch '^[1-9][0-9]{0,6}$') { throw 'AuditTimeoutInvalid' }
+            $auditTimeoutExport = @("export C1008_AUDIT_TIMEOUT_SECONDS='$($env:C1008_AUDIT_TIMEOUT_SECONDS)'")
+        }
         if ($Case -eq 'runner-cache-seed') {
             & scp -o BatchMode=yes (Join-Path $PSScriptRoot 'c849-import-saved-donor.ps1') mc@server2:/home/mc/antiphon-c590/c849-import-saved-donor.ps1
         }
@@ -518,6 +525,7 @@ function Invoke-C590LiveCase {
             "export C1008_DRY_RUN='$recycleDryRun'"
             "export C1008_RESUME='$recycleResume'"
             "export C1008_CLEANUP_OPERATION='$cleanupOperation'"
+        ) + $auditTimeoutExport + @(
             "bash /home/mc/antiphon-c590/c590-remote.sh"
         )) -join '; '
         $code = Invoke-C590Ssh $remote -ReceiptPath (Join-Path $root 'remote-output.txt')
