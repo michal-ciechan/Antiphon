@@ -60,3 +60,19 @@ Evidence root: `C:\src\Antiphon\.antiphon\rolling-server2\c727f40d601ff14e`
 The host open list had 6 items. The row with no `landRequest` merged was `c066e2f4-2472-44f3-9717-1e7a453cb1e0`, `status=Dispatched`, `runnerId=desktop`, `role` not stored on the census row, `projectId=null`, `scopeSource=None`. A later read of that task was `summary.status=Succeeded`, `role=Check`, `landRequest=null`. Same token as the first refusal, different task. No second retry. Smoke/Both, `drain-temp`, and `retire-temp` were not started.
 
 After this refusal, `server2` was still drained and idle on `7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce` with redirect `server2-temp`. `server2-temp` was still accepting `09e48c5d6f1d404cfea8ec0d992270424fd2a184`.
+
+## Three further attempts authorized (2026-10-17)
+
+Up to three more `redeploy-old` runs were authorized for the `RecycleLandUnknown` race. Stop on the first exit 0, on a changed refusal token, or on a census task that is Working with a land in flight. The script was not edited.
+
+Preflight before attempt 1: land-pending `items` empty; no Queued or Dispatched task on `server2` or `server2-temp`. Desktop task `2422f580-d862-4f6c-9293-dfb8021cbea3` was Dispatched, role Code.
+
+| Attempt | UTC | Exit | Receipt |
+|---|---|---|---|
+| 1 of 3 | start `2026-10-17T04:49:08.5400755Z`, end `2026-10-17T06:18:40.2673050Z` | 2 | `C:\src\Antiphon\.antiphon\rolling-server2\c7275058e9744a15` |
+| 2 of 3 | not started | | |
+| 3 of 3 | not started | | |
+
+Attempt 1 diagnosis: `RecycleGitAuditUnknown audit check=tmp-git status=1 repo=/tmp/card1259-base-d636249e`. The host census `refusal` is empty, so the land race did not fire. `deploy-parent\recycle.json` is `phase=preflight`, `outcome=refused`, operation `c1008ffe0deb1d99946b6940cf84f675909ad`, `stopReceipts` and `removeReceipts` empty, volume outcomes `pending`. The token is not `RecycleLandUnknown`, so attempts 2 and 3 were not run. Smoke/Both, `drain-temp`, and `retire-temp` were not started.
+
+After this refusal, `server2` was still drained and idle on `7507b3cfe0e2f7660a0c9f9f8eb19dc89a937bce` with redirect `server2-temp`. `server2-temp` was still accepting `09e48c5d6f1d404cfea8ec0d992270424fd2a184`.
