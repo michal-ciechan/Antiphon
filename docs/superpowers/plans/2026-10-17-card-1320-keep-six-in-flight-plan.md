@@ -228,7 +228,7 @@ V-27 The client test `renders off, healthy, and under-target badges with the cou
 
 V-28 The client test `the switch puts Human provenance and does not call tick` clicks the switch, asserts the PUT body, and asserts pause/tick were not called.
 
-R-1 `AgentTaskPipelineStatusC100Tests.C100_investigate_backlog_omits_blocked_cards_and_lists_them_as_blocked` still passes after the backlog helper is shared. That is the witness that the extract did not drop or add a held card.
+R-1 `AgentTaskPipelineStatusTests.C100_investigate_backlog_omits_blocked_cards_and_lists_them_as_blocked` (file `AgentTaskPipelineStatusC100Tests.cs`) still passes after the backlog helper is shared. That is the witness that the extract did not drop or add a held card.
 
 R-2 `CheckpointRepeatDocumentationTests.repeat_budget_reaches_code_briefs_without_bundle_growth` passes with the recomputed orchestrator bundle SHA. The 14310-character cap is unchanged and is not a new test.
 
@@ -241,7 +241,7 @@ R-3 V-6 is also the regression that an unused feature does not change the instru
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1320-s1/` | keep-six-settings | `/*/*/KeepSixSettingsTests/*` | V-1, V-2, V-3, V-4, V-5 | all 5 methods, 0 failed/skipped | 5 | 12 | true |
 | CP-2 | S1 | CP-1 | keep-six-projection | `/*/*/KeepSixProjectionTests/*` | V-6, V-7, V-8, V-9, R-3 | all 4 methods, 0 failed/skipped | 4 | 4 | false |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1320-s2/` | keep-six-shortfall | `/*/*/KeepSixShortfallTests/*` | V-10, V-11, V-12, V-13, V-14, V-15 | all 6 methods, 0 failed/skipped | 6 | 8 | false |
-| CP-4 | S2 | CP-3 | keep-six-backlog | `/*/*/AgentTaskPipelineStatusC100Tests/C100_investigate_backlog_omits_blocked_cards_and_lists_them_as_blocked` | R-1 | all 1 method, 0 failed/skipped | 1 | 6 | true |
+| CP-4 | S2 | CP-3 | keep-six-backlog | `/*/*/AgentTaskPipelineStatusTests/C100_investigate_backlog_omits_blocked_cards_and_lists_them_as_blocked` | R-1 | all 1 method, 0 failed/skipped | 1 | 6 | true |
 | CP-5 | S3 | `tests/Antiphon.Tests -> bin-c1320-s3/` | keep-six-reminder | `/*/*/KeepSixReminderTests/*` | V-16, V-17, V-18, V-19, V-20, V-21, V-22, V-23 | all 8 methods, 0 failed/skipped | 8 | 14 | true |
 | CP-6 | S4 | `tests/Antiphon.Tests -> bin-c1320-s4/` | keep-six-docs | `/*/*/KeepSixDocumentationTests/*` | V-24, V-25, V-26 | all 3 methods, 0 failed/skipped | 3 | 8 | false |
 | CP-7 | S4 | CP-6 | keep-six-bundle-pin | `/*/*/CheckpointRepeatDocumentationTests/*` | R-2 | all 1 method, 0 failed/skipped | 1 | 3 | false |
