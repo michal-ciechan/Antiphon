@@ -74,8 +74,12 @@ public class KeepSixShortfallTests
         var agent = await AgentAsync("ks-empty-on", home.BoardId);
         await EnableAsync(agent, 6);
         await TaskAsync(home.ProjectId, AgentTaskRole.Code, AgentTaskStatus.Queued, T0);
-        var blocker = await CardAsync(home, "KS11-DONE", CardImportance.Normal, CardUrgency.Normal,
+        // A Done blocker is resolved (CARD-0100), so it would leave KS11-HELD dispatchable.
+        // The open blocker is InProgress, and the Done card is only a non-candidate.
+        await CardAsync(home, "KS11-DONE", CardImportance.Normal, CardUrgency.Normal,
             status: CardStatus.Done);
+        var blocker = await CardAsync(home, "KS11-OPEN", CardImportance.Normal, CardUrgency.Normal,
+            status: CardStatus.InProgress);
         var held = await CardAsync(home, "KS11-HELD", CardImportance.Critical, CardUrgency.Now);
         await BlockAsync(held, blocker);
         await CardAsync(home, "KS11-LABEL", CardImportance.Critical, CardUrgency.Now,
