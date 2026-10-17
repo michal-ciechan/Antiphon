@@ -162,7 +162,8 @@ public sealed partial class PipelineSpeedIntegrationTests
     /// <summary>
     /// CARD-1288. The sweep sentence stays the sweep. CreateAsync still returns
     /// card_implementation_closed for Code on a card that is already Done, by explicit id,
-    /// by title, and by the caller parent's card.
+    /// by title, and by the caller parent's card. CARD-1321 also refuses an explicit id on a
+    /// Canceled card, and a Shared follow-up whose prior task's card is Done.
     /// </summary>
     [Test]
     public async Task C1288_ClosedCardBindingForms()
@@ -212,17 +213,63 @@ public sealed partial class PipelineSpeedIntegrationTests
             Card = null,
             Title = "closed parent bind",
         }, new AgentTaskService.Caller(parent, w.CallerSessionId, w.RepositoryPath, ProjectId: w.Project.Id));
+
+        await using (var db = w.CreateContext())
+        {
+            var card = await db.Cards.SingleAsync(c => c.Id == w.Card.Id);
+            card.Status = CardStatus.Canceled;
+            card.ConcurrencyToken = Guid.NewGuid();
+            await db.SaveChangesAsync();
+        }
+        await RefuseClosedCodeAsync(w, ChildRequest(w), w.Caller());
+
+        Guid priorId;
+        await using (var db = w.CreateContext())
+        {
+            var card = await db.Cards.SingleAsync(c => c.Id == w.Card.Id);
+            card.Status = CardStatus.Done;
+            card.ConcurrencyToken = Guid.NewGuid();
+            priorId = Guid.NewGuid();
+            var now = DateTime.UtcNow;
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = priorId,
+                RootTaskId = priorId,
+                Title = "shared prior",
+                Goal = "Earlier shared work.",
+                Kind = AgentTaskKind.Worker,
+                Role = AgentTaskRole.Code,
+                Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = w.RepositoryPath,
+                Status = AgentTaskStatus.Succeeded,
+                CardId = w.Card.Id,
+                ProjectId = w.Project.Id,
+                CreatedAt = now.AddHours(-1),
+                CompletedAt = now,
+            });
+            await db.SaveChangesAsync();
+        }
+        // Caller() has a null task, so a parent card cannot mask the follow-up.
+        // Shared skips the frozen worktree tip. The title has no CARD- token.
+        // TaskCountAsync excludes only the owner, so the seeded prior is the one counted row.
+        await RefuseClosedCodeAsync(w, ChildRequest(w) with
+        {
+            Card = null,
+            Title = "closed follow-up bind",
+            Workspace = WorkspaceMode.Shared,
+            FollowUpOnTask = priorId.ToString(),
+        }, w.Caller(), expectedTasks: 1);
     }
 
     private static async Task RefuseClosedCodeAsync(
-        C544World w, CreateAgentTaskRequest request, AgentTaskService.Caller caller)
+        C544World w, CreateAgentTaskRequest request, AgentTaskService.Caller caller, int expectedTasks = 0)
     {
         await using var scope = w.Services.CreateAsyncScope();
         var service = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
         var error = await Should.ThrowAsync<ConflictException>(() =>
             service.CreateAsync(request, caller, CancellationToken.None));
         error.Code.ShouldBe("card_implementation_closed");
-        (await w.TaskCountAsync()).ShouldBe(0);
+        (await w.TaskCountAsync()).ShouldBe(expectedTasks);
     }
 
     private static string CollapseWhitespace(string text) =>
