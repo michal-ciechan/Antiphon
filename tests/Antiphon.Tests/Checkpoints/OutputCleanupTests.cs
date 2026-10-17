@@ -1,7 +1,10 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using Antiphon.Checkpoints;
+using Antiphon.HostCleanup.Checkpoints;
 using Shouldly;
 using TUnit.Core;
 
@@ -1286,6 +1289,118 @@ public sealed class OutputCleanupTests : CheckpointTestBase
             if (Directory.Exists(junction))
                 Directory.Delete(junction);
         }
+    }
+
+    // CARD-1318 (b): a post-exit write whose creation and last-write times are stamped back inside
+    // the window stays unrecorded, a root DACL that grants another SID makes For return null, and
+    // an owner-only root still seals and deletes.
+    [Test]
+    public void windows_set_clock_and_foreign_dacl_are_not_adopted()
+    {
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1318 Windows custody hardening");
+
+        var root = InitGitRepo();
+        var output = Path.Combine(root, "bin-c1318");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
+        var built = Path.Combine(output, "app.dll");
+        File.WriteAllText(built, "COMPILER");
+        var exited = AfterFileClock(built);
+        SafeWrite.Require(OwnedOutputLedger.Seal(output, exited));
+        SafeWrite.MatchesCreation(built).ShouldBeTrue();
+        var cleaned = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1318"], 0, false, false, createdPaths: [output]);
+        cleaned.Refusals.ShouldBeEmpty();
+        cleaned.Deleted.ShouldBe([output]);
+        Directory.Exists(output).ShouldBeFalse();
+
+        var clockRoot = InitGitRepo();
+        var clockOutput = Path.Combine(clockRoot, "bin-c1318");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(clockOutput, SafeWrite.Under(clockRoot)));
+        var stamped = Path.Combine(clockOutput, "app.dll");
+        File.WriteAllText(stamped, "COMPILER");
+        var created = SafeWrite.FreshRootCreated(clockOutput)!.Value;
+        var clockExit = AfterFileClock(stamped);
+        File.WriteAllText(stamped, "TAMPERED");
+        var inside = created + (clockExit - created) / 2;
+        File.SetCreationTimeUtc(stamped, inside.UtcDateTime);
+        File.SetLastWriteTimeUtc(stamped, inside.UtcDateTime);
+        SafeWrite.Require(OwnedOutputLedger.Seal(clockOutput, clockExit));
+        SafeWrite.MatchesCreation(stamped).ShouldBeFalse();
+        var stampedResult = OutputCleanup.CleanOwnedOutputs(clockRoot, ["bin-c1318"], 0, false, false, createdPaths: [clockOutput]);
+        stampedResult.Refusals.ShouldBe(["output-ledger-mismatch; left in place: " + stamped]);
+        stampedResult.Deleted.ShouldBeEmpty();
+        File.ReadAllText(stamped).ShouldBe("TAMPERED");
+
+        var daclRoot = InitGitRepo();
+        var daclOutput = Path.Combine(daclRoot, "bin-c1318");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(daclOutput, SafeWrite.Under(daclRoot)));
+        var daclExit = SafeWrite.FreshRootCreated(daclOutput)!.Value.AddMinutes(1);
+        OutputCustody.For(daclOutput, daclExit).ShouldNotBeNull();
+        GrantWorld(daclOutput);
+        OutputCustody.For(daclOutput, daclExit).ShouldBeNull();
+    }
+
+    // CARD-1318 (c): FileShare.None across the first stat, released inside the retry bound, is adopted.
+    // A holder kept for the whole bound stays unrecorded and cleanup refuses. The release delay sits
+    // inside CheckpointNativeIo's sharing-violation bound (20 waits of 50 ms).
+    [Test]
+    public void windows_sharing_violation_retries_then_adopts()
+    {
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1318 Windows custody hardening");
+
+        var root = InitGitRepo();
+        var output = Path.Combine(root, "bin-c1318");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
+        var payload = Path.Combine(output, "app.dll");
+        File.WriteAllText(payload, "COMPILER");
+        var exited = AfterFileClock(payload);
+        var hold = new FileStream(payload, FileMode.Open, FileAccess.Read, FileShare.None);
+        var releaser = Task.Run(() =>
+        {
+            Thread.Sleep(400);
+            hold.Dispose();
+        });
+        try
+        {
+            SafeWrite.Require(OwnedOutputLedger.Seal(output, exited));
+        }
+        finally
+        {
+            releaser.GetAwaiter().GetResult();
+        }
+
+        SafeWrite.MatchesCreation(payload).ShouldBeTrue();
+        var adopted = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1318"], 0, false, false, createdPaths: [output]);
+        adopted.Refusals.ShouldBeEmpty();
+        adopted.Deleted.ShouldBe([output]);
+
+        var heldRoot = InitGitRepo();
+        var heldOutput = Path.Combine(heldRoot, "bin-c1318");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(heldOutput, SafeWrite.Under(heldRoot)));
+        var heldPayload = Path.Combine(heldOutput, "app.dll");
+        File.WriteAllText(heldPayload, "COMPILER");
+        var heldExit = AfterFileClock(heldPayload);
+        using (new FileStream(heldPayload, FileMode.Open, FileAccess.Read, FileShare.None))
+            SafeWrite.Require(OwnedOutputLedger.Seal(heldOutput, heldExit));
+        SafeWrite.MatchesCreation(heldPayload).ShouldBeFalse();
+        var refused = OutputCleanup.CleanOwnedOutputs(heldRoot, ["bin-c1318"], 0, false, false, createdPaths: [heldOutput]);
+        refused.Refusals.ShouldBe(["output-ledger-mismatch; left in place: " + heldPayload]);
+        refused.Deleted.ShouldBeEmpty();
+        File.ReadAllText(heldPayload).ShouldBe("COMPILER");
+    }
+
+    private static void GrantWorld(string directory)
+    {
+        var info = new DirectoryInfo(directory);
+        var security = info.GetAccessControl();
+        security.AddAccessRule(new FileSystemAccessRule(
+            new SecurityIdentifier(WellKnownSidType.WorldSid, null),
+            FileSystemRights.ReadAndExecute,
+            InheritanceFlags.None,
+            PropagationFlags.None,
+            AccessControlType.Allow));
+        info.SetAccessControl(security);
     }
 
     private static DateTimeOffset AfterFileClock(params string[] paths)
