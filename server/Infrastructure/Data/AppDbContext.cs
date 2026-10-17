@@ -58,6 +58,7 @@ public class AppDbContext : DbContext
     public DbSet<AgentIncident> AgentIncidents => Set<AgentIncident>();
     public DbSet<HostBudget> HostBudgets => Set<HostBudget>();
     public DbSet<OrchestratorInstructionsState> OrchestratorInstructionsStates => Set<OrchestratorInstructionsState>();
+    public DbSet<KeepSixOrchestrator> KeepSixOrchestrators => Set<KeepSixOrchestrator>();
     public DbSet<HostCleanupRun> HostCleanupRuns => Set<HostCleanupRun>();
     public DbSet<HostCleanupCandidate> HostCleanupCandidates => Set<HostCleanupCandidate>();
     public DbSet<HostCleanupHold> HostCleanupHolds => Set<HostCleanupHold>();
@@ -393,6 +394,21 @@ public class AppDbContext : DbContext
             entity.Property(state => state.WrittenPath).IsRequired().HasMaxLength(1000);
             entity.Property(state => state.LastReason).HasMaxLength(200);
             entity.Property(state => state.LastWriteError).HasMaxLength(2000);
+        });
+
+        modelBuilder.Entity<KeepSixOrchestrator>(entity =>
+        {
+            entity.ToTable("KeepSixOrchestrators");
+            entity.HasKey(row => row.AgentId);
+            entity.Property(row => row.Provenance).IsRequired().HasMaxLength(32);
+            entity.Property(row => row.Reason).IsRequired().HasMaxLength(KeepSixOrchestrator.ReasonMaxLength);
+            entity.Property(row => row.HoldReason).HasMaxLength(KeepSixOrchestrator.HoldReasonMaxLength);
+            entity.Property(row => row.UpdatedAt).IsRequired();
+            entity.Property(row => row.Revision).IsConcurrencyToken();
+            entity.HasOne(row => row.Agent)
+                .WithMany()
+                .HasForeignKey(row => row.AgentId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<SessionRunnerState>(entity =>

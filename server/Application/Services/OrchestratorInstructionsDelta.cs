@@ -1,3 +1,5 @@
+using Antiphon.Server.Domain.Entities;
+
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
@@ -40,6 +42,7 @@ public static class OrchestratorInstructionsDelta
             DiffPins(lines, before?.Pins ?? [], after.Pins);
         DiffLevels(lines, before?.Levels ?? [], after.Levels);
         DiffStanding(lines, before?.StandingLines ?? [], after.StandingLines);
+        DiffKeepSix(lines, before?.KeepSix ?? [], after.KeepSix ?? []);
         return Cap(lines);
     }
 
@@ -257,6 +260,52 @@ public static class OrchestratorInstructionsDelta
             lines.Add($"standing: {line} removed");
         foreach (var line in added)
             lines.Add($"standing: {line} added");
+    }
+
+    private static void DiffKeepSix(
+        List<string> lines,
+        IReadOnlyList<KeepSixInstructionRow> before,
+        IReadOnlyList<KeepSixInstructionRow> after)
+    {
+        var beforeBy = before.ToDictionary(row => row.AgentId);
+        var afterBy = after.ToDictionary(row => row.AgentId);
+        var ids = before.Select(row => row.AgentId).Concat(after.Select(row => row.AgentId)).Distinct()
+            .OrderBy(id => NameOf(id, beforeBy, afterBy), StringComparer.Ordinal)
+            .ThenBy(id => id);
+        foreach (var id in ids)
+        {
+            beforeBy.TryGetValue(id, out var oldRow);
+            afterBy.TryGetValue(id, out var newRow);
+            var oldFact = Fact(oldRow);
+            var newFact = Fact(newRow);
+            if (string.Equals(oldFact, newFact, StringComparison.Ordinal))
+                continue;
+            if (oldFact is null)
+                lines.Add($"keep-six: {newFact}");
+            else if (newFact is null)
+                lines.Add($"keep-six: {oldFact} removed");
+            else
+                lines.Add($"keep-six: {oldFact} → {newFact}");
+        }
+    }
+
+    private static string NameOf(
+        Guid id,
+        IReadOnlyDictionary<Guid, KeepSixInstructionRow> before,
+        IReadOnlyDictionary<Guid, KeepSixInstructionRow> after) =>
+        (after.TryGetValue(id, out var row) ? row.Name : before[id].Name);
+
+    private static string? Fact(KeepSixInstructionRow? row)
+    {
+        if (row is null)
+            return null;
+        if (!row.Enabled
+            && row.Target == KeepSixOrchestrator.DefaultTarget
+            && row.HoldReason is null
+            && row.HoldUntil is null)
+            return null;
+        var state = row.Enabled ? "on" : "off";
+        return $"{row.Name} {state} target {row.Target} hold {row.HoldReason ?? "none"} until {row.HoldUntil ?? "none"}";
     }
 
     private static void DiffScalar(List<string> lines, string section, string key, string? oldValue, string? newValue)
