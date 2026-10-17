@@ -13,7 +13,8 @@ public sealed record OrchestratorInstructionsSnapshot(
     IReadOnlyList<LevelInstructionRow> Levels,
     IReadOnlyList<string> StandingLines,
     MatrixSection? Matrix = null,
-    IReadOnlyDictionary<string, string>? ReadFailures = null)
+    IReadOnlyDictionary<string, string>? ReadFailures = null,
+    IReadOnlyList<KeepSixInstructionRow>? KeepSix = null)
 {
     public string? UnknownSection(string section) =>
         ReadFailures?.TryGetValue(section, out var reason) == true ? $"unknown ({reason})" : null;
@@ -86,3 +87,15 @@ public sealed record PinInstructionRow(
     DateTimeOffset CreatedAt);
 
 public sealed record LevelInstructionRow(string Kind, string Level, string Alias);
+
+/// <summary>
+/// CARD-1320. One standing orchestrator's stored keep-six setting. Live open counts,
+/// shortfall, and reminder timestamps are not on this row.
+/// </summary>
+public sealed record KeepSixInstructionRow(
+    Guid AgentId,
+    string Name,
+    bool Enabled,
+    int Target,
+    string? HoldReason,
+    string? HoldUntil);
