@@ -230,7 +230,9 @@ No time window hides an older pending land. Both closures must agree across two 
 Every read has a 60-second budget. `RecycleTaskCensusUnknown` keeps its stable first
 token and appends `cause=Timeout|Http|Transport|Empty|Malformed|UnfilteredRow|Unstable|ScopeLimit`,
 with safe `path=`, `status=`, `field=` or `scopes=` details where applicable. Detail/summary
-disagreement or invalid land proof remains `RecycleLandUnknown`. Project resolution
+disagreement or invalid land proof remains `RecycleLandUnknown`, except a terminal detail
+(`Succeeded`, `Failed` or `Canceled`) with `landRequest` null, which is proven no-land and may
+be absent from the next pass's list without `Unstable`. Project resolution
 uses `RecycleProjectUnresolved` and its cause. Each census retains approved read
 timings/counts and reduced task/land facts; no task prose, credentials or response body
 is retained. A refusal stops the phase before destructive work, including on resume.
