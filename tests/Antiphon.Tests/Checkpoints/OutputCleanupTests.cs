@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using Antiphon.Checkpoints;
 using Shouldly;
@@ -1208,6 +1209,119 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         '@
         & ([scriptblock]::Create($invoke))
         """;
+
+    // CARD-1310: Windows seal must adopt a file the build overwrote before the observed exit, and must
+    // still refuse a write after that exit, a second link, and a reparse point.
+    [Test]
+    public void windows_seal_adopts_an_overwrite_before_exit_and_keeps_a_later_write()
+    {
+        if (!OperatingSystem.IsWindows())
+            Skip.Test("CARD-1310 Windows output custody");
+
+        var root = InitGitRepo();
+        var output = Path.Combine(root, "bin-c1310");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
+        var map = Path.Combine(output, ".msCoverageExtensionSourceRootsMapping_App");
+        File.WriteAllText(map, "EARLY");
+        File.WriteAllText(map, "FINAL");
+        var exited = AfterFileClock(map);
+        SafeWrite.Require(OwnedOutputLedger.Seal(output, exited));
+
+        SafeWrite.MatchesCreation(map).ShouldBeTrue();
+        var cleaned = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1310"], 0, false, false, createdPaths: [output]);
+        cleaned.Refusals.ShouldBeEmpty();
+        cleaned.Deleted.ShouldBe([output]);
+        Directory.Exists(output).ShouldBeFalse();
+
+        var lateRoot = InitGitRepo();
+        var lateOutput = Path.Combine(lateRoot, "bin-c1310");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(lateOutput, SafeWrite.Under(lateRoot)));
+        var built = Path.Combine(lateOutput, "app.dll");
+        File.WriteAllText(built, "COMPILER");
+        var lateExit = AfterFileClock(built);
+        SafeWrite.Require(OwnedOutputLedger.Seal(lateOutput, lateExit));
+        var late = Path.Combine(lateOutput, "late.txt");
+        File.WriteAllText(late, "USER");
+        var kept = OutputCleanup.CleanOwnedOutputs(lateRoot, ["bin-c1310"], 0, false, false, createdPaths: [lateOutput]);
+        kept.Refusals.ShouldBe(["output-ledger-mismatch; left in place: " + late]);
+        kept.Deleted.ShouldBeEmpty();
+        File.ReadAllText(late).ShouldBe("USER");
+        File.ReadAllText(built).ShouldBe("COMPILER");
+
+        var linkRoot = InitGitRepo();
+        var linkOutput = Path.Combine(linkRoot, "bin-c1310");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(linkOutput, SafeWrite.Under(linkRoot)));
+        var outside = Path.Combine(linkRoot, "outside.txt");
+        File.WriteAllText(outside, "OUTSIDE");
+        var linked = Path.Combine(linkOutput, "linked.dll");
+        CreateHardLink(linked, outside, IntPtr.Zero).ShouldBeTrue(Marshal.GetLastWin32Error().ToString());
+        var sibling = Path.Combine(linkOutput, "app.dll");
+        File.WriteAllText(sibling, "COMPILER");
+        var linkExit = AfterFileClock(sibling, linked);
+        SafeWrite.Require(OwnedOutputLedger.Seal(linkOutput, linkExit));
+        SafeWrite.MatchesCreation(linked).ShouldBeFalse();
+        SafeWrite.MatchesCreation(sibling).ShouldBeTrue();
+        var linkedResult = OutputCleanup.CleanOwnedOutputs(linkRoot, ["bin-c1310"], 0, false, false, createdPaths: [linkOutput]);
+        linkedResult.Refusals.ShouldBe(["output-ledger-mismatch; left in place: " + linked]);
+        linkedResult.Deleted.ShouldBeEmpty();
+        File.ReadAllText(outside).ShouldBe("OUTSIDE");
+
+        var reparseRoot = InitGitRepo();
+        var reparseOutput = Path.Combine(reparseRoot, "bin-c1310");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(reparseOutput, SafeWrite.Under(reparseRoot)));
+        var target = Path.Combine(reparseRoot, "target");
+        Directory.CreateDirectory(target);
+        var keptBytes = Path.Combine(target, "kept.txt");
+        File.WriteAllText(keptBytes, "KEPT");
+        var junction = Path.Combine(reparseOutput, "joined");
+        try
+        {
+            Junction(junction, target);
+            OwnedOutputLedger.Seal(reparseOutput, DateTimeOffset.UtcNow).ShouldBe("output-inventory-failed");
+            File.ReadAllText(keptBytes).ShouldBe("KEPT");
+            Directory.Exists(reparseOutput).ShouldBeTrue();
+        }
+        finally
+        {
+            if (Directory.Exists(junction))
+                Directory.Delete(junction);
+        }
+    }
+
+    private static DateTimeOffset AfterFileClock(params string[] paths)
+    {
+        for (var i = 0; i < 50; i++)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var pending = false;
+            foreach (var path in paths)
+            {
+                var info = new FileInfo(path);
+                info.Refresh();
+                if (new DateTimeOffset(DateTime.SpecifyKind(info.LastWriteTimeUtc, DateTimeKind.Utc)) > now
+                    || new DateTimeOffset(DateTime.SpecifyKind(info.CreationTimeUtc, DateTimeKind.Utc)) > now)
+                    pending = true;
+            }
+            if (!pending)
+                return now;
+            Thread.Sleep(20);
+        }
+
+        throw new TimeoutException("file clock stayed ahead of UtcNow");
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateHardLinkW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateHardLink(string link, string existing, IntPtr security);
+
+    private static void Junction(string link, string target)
+    {
+        var start = new ProcessStartInfo("cmd.exe");
+        foreach (var arg in new[] { "/d", "/c", "mklink", "/J", link, target })
+            start.ArgumentList.Add(arg);
+        var result = CheckpointFixtureProcess.Run(start, 30_000);
+        result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
+    }
 
     // A fresh owned root whose payload is written outside SafeWrite, as the child dotnet build writes it.
     // Exited stands for the driver-observed build exit; seal-time custody uses Linux statx.
