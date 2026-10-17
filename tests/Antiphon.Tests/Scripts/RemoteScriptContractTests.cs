@@ -2181,6 +2181,20 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+    // A clean checkout's consider_dirty payload is larger than C1008_SCRATCH_QUOTA_BYTES.
+    // reap_dirty drops it before consider_tips measures scratch, so removal is reached.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_reaps_dirty_scratch()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var f = new C1008HostFixture();
+        var quota = await C1008DirtyPayloadQuota(f.Root);
+        var run = await f.Run("deploy-parent", "export C1008_SCRATCH_QUOTA_BYTES=" + quota + "\n");
+        f.Removed.Length.ShouldBe(3, "recycle-reaps-dirty-scratch: a reaped payload stays under the quota and reaches removal; " + run.Output);
+        run.Exit.ShouldBe(0, run.Output);
+    }
+
     // CARD-1105. The deploy seeds `git clone --filter=blob:none --no-checkout`. That promisor
     // checkout is auditable when its commit graph is complete. A missing object, an unpublished
     // tip, a dirty worktree, a failing rev-list, and a failing ls-remote stay refusals, and the
@@ -3704,6 +3718,59 @@ public sealed class RemoteScriptContractTests
         psi.ArgumentList.Add("-c"); psi.ArgumentList.Add("set -e; " + script);
         using var proc = Process.Start(psi)!; var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
         await proc.WaitForExitAsync(); proc.ExitCode.ShouldBe(0, await stdout + await stderr);
+    }
+
+    private static async Task<string> C1008DirtyPayloadQuota(string root)
+    {
+        var script = $$"""
+            set -euo pipefail
+            git init -q --bare '{{root}}/origin'
+            git init -q -b master '{{root}}/work/repo'
+            git -C '{{root}}/work/repo' config user.name Fixture
+            git -C '{{root}}/work/repo' config user.email fixture@example.invalid
+            git -C '{{root}}/work/repo' remote add origin '{{root}}/origin'
+            mkdir -p '{{root}}/work/repo/d'
+            i=0
+            while [ "$i" -lt 2000 ]; do
+                printf 'x\n' > '{{root}}/work/repo/d/'"$(printf '%04d' "$i")"
+                i=$((i + 1))
+            done
+            git -C '{{root}}/work/repo' add d
+            git -C '{{root}}/work/repo' commit -qm A
+            git -C '{{root}}/work/repo' push -q origin master
+            where='{{root}}/work/repo'
+            flags="$(mktemp)"
+            index="$(mktemp)"
+            paths="$(mktemp)"
+            expected="$(mktemp)"
+            trap 'rm -f -- "$flags" "$index" "$paths" "$expected"' EXIT
+            git -C "$where" ls-files -v -z > "$flags"
+            git -C "$where" ls-files --stage -z > "$index"
+            : > "$paths"
+            : > "$expected"
+            while IFS= read -r -d '' entry; do
+                metadata="${entry%%$'\t'*}"
+                path="${entry#*$'\t'}"
+                rest="${metadata#* }"
+                oid="${rest%% *}"
+                printf '%s\n' "$where/$path" >> "$paths"
+                printf '%s\n' "$oid" >> "$expected"
+            done < "$index"
+            payload=$(( $(wc -c < "$flags") + $(wc -c < "$index") + $(wc -c < "$paths") + $(wc -c < "$expected") + $(wc -c < "$expected") ))
+            [ "$payload" -gt 1 ]
+            printf '%s\n' "$((payload - 1))"
+            """;
+        var psi = new ProcessStartInfo("bash") { RedirectStandardOutput = true, RedirectStandardError = true };
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(script);
+        using var proc = Process.Start(psi)!;
+        var stdout = proc.StandardOutput.ReadToEndAsync();
+        var stderr = proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+        var output = (await stdout).Trim();
+        proc.ExitCode.ShouldBe(0, output + await stderr);
+        Regex.IsMatch(output, "^[0-9]+$").ShouldBeTrue("recycle-reaps-dirty-scratch: quota is the payload minus one byte; " + output);
+        return output;
     }
 
     private static async Task C1008GitGraph(C1008HostFixture fixture, string fault = "")

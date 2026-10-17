@@ -121,6 +121,7 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1008_Recycle_audits_work_as_1654", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1008_Recycle_refuses_unpublished_and_dirty_work", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1008_Recycle_refuses_uninspectable_git", 1, ExistingReason),
+        new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1008_Recycle_reaps_dirty_scratch", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1008_Recycle_audits_promisor_checkout", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1105_Git_audit_volume_scale", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1105_Jq_argv_limit", 3, ExistingReason),
