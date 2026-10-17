@@ -68,6 +68,7 @@ function serve(items: AttentionItemDto[]) {
     }),
     // The Cards tab renders eagerly alongside the others, so its own endpoint has to answer with a
     // real shape — an empty object throws inside OrchestratorPanel and takes the page down with it.
+    http.get('/api/orchestrators/keep-six', () => HttpResponse.json([])),
     http.get('/api/orchestrator/state', () => {
       orchestratorStateRequests += 1
       return HttpResponse.json({

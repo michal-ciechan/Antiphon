@@ -1,6 +1,7 @@
 import { useEffect, type RefObject } from 'react'
 import type { HubConnection } from '@microsoft/signalr'
 import { useQueryClient } from '@tanstack/react-query'
+import { keepSixKeys } from '../api/keepSix'
 
 /**
  * SignalR event → TanStack Query invalidation mapping.
@@ -83,6 +84,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
       ['attention'],
       ['homeTasks'],
       ['agentTasks', 'pipeline'],
+      keepSixKeys.list,
     ],
   },
   {
@@ -137,7 +139,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
   },
   {
     event: 'OrchestratorTick',
-    getKeys: () => [['orchestrator', 'state']],
+    getKeys: () => [['orchestrator', 'state'], keepSixKeys.list],
   },
   {
     // Delegated tasks change from three directions — the dispatcher, the delegate's turn-end, and
@@ -154,6 +156,7 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
       ['cards', 'thread'],
       ['homeTasks'],
       ['agentTasks', 'pipeline'],
+      keepSixKeys.list,
     ],
   },
   {
