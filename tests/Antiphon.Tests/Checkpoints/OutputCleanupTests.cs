@@ -1323,6 +1323,53 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
     }
 
+    // CARD-1318: the landed Windows seal adopts a regular single-link non-reparse file
+    // after the observed exit. Red while the owner doc or this helper still denies that.
+    // The CARD-1242 matrix keeps its Linux skip; the admission-stamp sentence stays.
+    [Test]
+    public void windows_seal_docs_match_the_landed_adoption()
+    {
+        var root = CheckpointFixtures.RepoRoot;
+        var testing = File.ReadAllText(Path.Combine(root, "docs", "testing-and-build.md"));
+        var source = File.ReadAllText(Path.Combine(
+            root, "tests", "Antiphon.Tests", "Checkpoints", "OutputCleanupTests.cs"));
+        var denied = "off Linux nothing is " + "adopted";
+        var linuxOnlySeal = "seal-time custody window above (" + "Linux only)";
+
+        testing.Contains(denied, StringComparison.Ordinal)
+            .ShouldBeFalse("owner doc still denies adoption off Linux");
+        testing.Contains(linuxOnlySeal, StringComparison.Ordinal)
+            .ShouldBeFalse("owner doc still limits the seal to Linux");
+        source.Contains(denied, StringComparison.Ordinal)
+            .ShouldBeFalse("ExternalBuild still denies adoption off Linux");
+
+        const string custody =
+            "after the observed build exit the seal adopts a regular single-link file or directory that is not a reparse";
+        const string exitCodes =
+            "on Windows a regular single-link file or directory that is not a reparse after the observed build exit";
+        testing.Contains(custody, StringComparison.Ordinal)
+            .ShouldBeTrue("custody paragraph states the landed Windows seal");
+        testing.Contains(exitCodes, StringComparison.Ordinal)
+            .ShouldBeTrue("exit-code paragraph states the landed Windows seal");
+        testing.Contains("off Linux each entry is hashed", StringComparison.Ordinal)
+            .ShouldBeTrue("admission-stamp rule stays");
+
+        var helperAt = source.IndexOf(
+            "private (string Root, string Output, DateTimeOffset Exited) ExternalBuild(string id)",
+            StringComparison.Ordinal);
+        helperAt.ShouldBeGreaterThanOrEqualTo(0, "ExternalBuild");
+        var commentAt = source.LastIndexOf("A fresh owned root", helperAt, StringComparison.Ordinal);
+        var helperEnd = source.IndexOf("private void PastKernelClock", helperAt, StringComparison.Ordinal);
+        (commentAt >= 0 && helperEnd > helperAt).ShouldBeTrue("ExternalBuild region");
+        var helper = source[commentAt..helperEnd];
+        helper.Contains("if (!OperatingSystem.IsLinux())", StringComparison.Ordinal)
+            .ShouldBeTrue("CARD-1242 matrix stays on Linux");
+        helper.Contains("This helper needs Linux statx", StringComparison.Ordinal)
+            .ShouldBeTrue("comment names the helper, not the platform");
+        helper.Contains("Skip.Test(\"this helper needs Linux statx\")", StringComparison.Ordinal)
+            .ShouldBeTrue("skip names the helper, not the platform");
+    }
+
     // A fresh owned root whose payload is written outside SafeWrite, as the child dotnet build writes it.
     // Exited stands for the driver-observed build exit; seal-time custody uses Linux statx.
     private (string Root, string Output, DateTimeOffset Exited) ExternalBuild(string id)
