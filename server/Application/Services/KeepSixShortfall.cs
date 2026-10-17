@@ -1,3 +1,4 @@
+using System.Threading;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -20,6 +21,17 @@ public sealed class KeepSixShortfall(
     public const string BadgeUnderTarget = "under-target";
     public const int TopCardLimit = 5;
 
+    /// <summary>
+    /// CARD-1320 D1 witness. Production leaves this unset. A reminder test arms a counter on
+    /// its own call so a shortfall read is visible without a process-wide tally.
+    /// </summary>
+    internal static readonly AsyncLocal<ReadProbeCounter?> ReadProbe = new();
+
+    internal sealed class ReadProbeCounter
+    {
+        public int Count;
+    }
+
     public sealed record Counts(
         int CountedOpen,
         int EffectiveTarget,
@@ -35,6 +47,8 @@ public sealed class KeepSixShortfall(
         IReadOnlyDictionary<Guid, KeepSixOrchestrator> rows,
         CancellationToken ct)
     {
+        if (ReadProbe.Value is { } probe)
+            probe.Count++;
         if (agents.Count == 0)
             return new Dictionary<Guid, Counts>();
 

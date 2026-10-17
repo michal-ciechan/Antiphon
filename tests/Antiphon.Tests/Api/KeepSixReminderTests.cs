@@ -186,6 +186,47 @@ public class KeepSixReminderTests
         after.Status.ShouldBe(QueuedMessageStatus.Pending);
     }
 
+    [Test]
+    public async Task off_rows_do_not_read_shortfall()
+    {
+        var seated = await ReadyAsync("ks-noop", "KS-D1-OFF", DateTime.UtcNow.AddMinutes(-30));
+        await EditRowAsync(seated.AgentId, row => row.Enabled = false);
+
+        (await CountShortfallReadsAsync()).ShouldBe(0);
+        (await RemindersAsync(seated.SessionId)).ShouldBeEmpty();
+
+        await EditRowAsync(seated.AgentId, row => row.Enabled = true);
+        (await CountShortfallReadsAsync()).ShouldBe(1);
+        var message = (await RemindersAsync(seated.SessionId)).ShouldHaveSingleItem();
+        AssertReminder(message, "KS-D1-OFF");
+    }
+
+    [Test]
+    public async Task an_active_hold_does_not_read_shortfall()
+    {
+        var seated = await ReadyAsync("ks-held-read", "KS-D1-HOLD", DateTime.UtcNow.AddMinutes(-30));
+        await HoldAsync(seated.AgentId, DateTime.UtcNow.AddDays(1));
+
+        (await CountShortfallReadsAsync()).ShouldBe(0);
+        (await RemindersAsync(seated.SessionId)).ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task disabling_cancels_a_pending_reminder_after_one_failed_typing_attempt()
+    {
+        var seated = await ReadyAsync("ks-typed", "KS-D2-READY", DateTime.UtcNow.AddMinutes(-3).AddSeconds(-1));
+        await RunAsync();
+        var pending = (await RemindersAsync(seated.SessionId)).ShouldHaveSingleItem();
+        await MarkFailedAttemptAsync(pending.Id);
+
+        await DisableAsync(seated.AgentId, revision: 1);
+
+        var canceled = (await RemindersAsync(seated.SessionId)).ShouldHaveSingleItem();
+        canceled.Id.ShouldBe(pending.Id);
+        canceled.Status.ShouldBe(QueuedMessageStatus.Canceled);
+        canceled.DeliveryAttempts.ShouldBe(1);
+    }
+
     private async Task<SeedBoard> BoardAsync(string name)
     {
         await using var scope = _factory.Services.CreateAsyncScope();
@@ -387,6 +428,34 @@ public class KeepSixReminderTests
         message.Status = QueuedMessageStatus.Sent;
         message.SentAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
+    }
+
+    private async Task MarkFailedAttemptAsync(Guid messageId)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var message = await db.SessionQueuedMessages.SingleAsync(candidate => candidate.Id == messageId);
+        message.Status = QueuedMessageStatus.Pending;
+        message.DeliveryAttempts = 1;
+        message.DeliveryVerdict = DeliveryVerdict.NoTranscriptRecord;
+        message.DeliveryVerdictAt = DateTime.UtcNow;
+        message.LastDeliveryStartedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<int> CountShortfallReadsAsync()
+    {
+        var probe = new KeepSixShortfall.ReadProbeCounter();
+        KeepSixShortfall.ReadProbe.Value = probe;
+        try
+        {
+            await RunAsync();
+            return probe.Count;
+        }
+        finally
+        {
+            KeepSixShortfall.ReadProbe.Value = null;
+        }
     }
 
     private async Task RunAsync()
