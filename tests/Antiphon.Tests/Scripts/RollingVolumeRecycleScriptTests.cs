@@ -688,6 +688,134 @@ public sealed class RollingVolumeRecycleScriptTests
         await GetRetirementRequestAsync(cancellationToken);
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1317_Census_tolerates_a_task_that_settles_without_a_land()
+    {
+        const string settled = "11111111-1111-1111-1111-111111111111";
+        const string unknown = "22222222-2222-2222-2222-222222222222";
+        const string unproven = "33333333-3333-3333-3333-333333333333";
+        var report = RemoteScriptContractTests.LinuxShell(C1317HostCensusScript());
+        report += await C1317WrapperCensus("wrapper-unknown", unknown, "Working", "Working", null, omitLandRequest: true, pass: false);
+        report += await C1317WrapperCensus("wrapper-unproven", unproven, "Dispatched", "Succeeded",
+            new JsonObject { ["state"] = "Completed" }, omitLandRequest: false, pass: false);
+        report += await C1317WrapperCensus("wrapper-settled", settled, "Queued", "Succeeded", null, omitLandRequest: false, pass: true);
+        report.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, report);
+        report.IndexOf("HOST_DONE", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
+        foreach (var name in new[]
+        {
+            "host-unknown", "host-unproven", "host-settled",
+            "wrapper-unknown", "wrapper-unproven", "wrapper-settled"
+        })
+            report.IndexOf("PASS " + name, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
+    }
+
+    private static async Task<string> C1317WrapperCensus(string name, string id, string listStatus, string detailStatus,
+        JsonNode? landRequest, bool omitLandRequest, bool pass)
+    {
+        using var f = new C1008WrapperFixture();
+        var row = new JsonObject
+        {
+            ["id"] = id, ["status"] = listStatus, ["runnerId"] = "desktop", ["projectId"] = null,
+            ["scopeSource"] = "None", ["landRequestedAt"] = null, ["landStartedAt"] = null
+        };
+        f.State["tasks"]!["items"]!.AsArray().Add(row);
+        var summary = row.DeepClone().AsObject();
+        summary["status"] = detailStatus;
+        var detail = new JsonObject { ["summary"] = summary };
+        if (!omitLandRequest) detail["landRequest"] = landRequest is null ? null : landRequest.DeepClone();
+        f.State["details"] = new JsonObject { [id] = detail };
+        var run = await f.Run("check-census");
+        var proved = false;
+        if (pass && run.Exit == 0)
+        {
+            var root = Regex.Match(run.Output, @"(?m)^Census check complete: (.+)$").Groups[1].Value.Trim();
+            var receiptPath = Path.Combine(root, "census-check-census-server2.json");
+            var receiptText = File.ReadAllText(receiptPath);
+            var task = JsonNode.Parse(receiptText)!["tasks"]!.AsArray().Single()!;
+            proved = task["id"]!.GetValue<string>() == id
+                && task["status"]!.GetValue<string>() == listStatus
+                && task["landRequest"] is null
+                && receiptText.Contains("\"landRequest\": null", StringComparison.Ordinal)
+                && run.Output.Contains("RECYCLE_CENSUS runner=server2 open=1 boundOpen=0 landPending=0", StringComparison.Ordinal)
+                && run.Output.Contains("RECYCLE_CENSUS runner=server2-temp open=1 boundOpen=0 landPending=0", StringComparison.Ordinal)
+                && run.Trace.Any(t => t["path"]?.GetValue<string>() == "/api/agent-tasks/" + id);
+        }
+        var refused = !pass && run.Exit == 2
+            && run.Output.Contains("RecycleLandUnknown", StringComparison.Ordinal)
+            && !run.Output.Contains("Census check complete:", StringComparison.Ordinal)
+            && run.Trace.All(t => t["kind"]?.GetValue<string>() != "case");
+        if (proved || refused) return "PASS " + name + "\n";
+        return "FAIL " + name + " exit=" + run.Exit + "\n" + run.Output + "\n";
+    }
+
+    private static string C1317HostCensusScript()
+    {
+        var remote = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c590-remote.sh"));
+        var fixture = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "fixtures", "c1087-host-http.sh"));
+        return C1317ShellFunction(fixture, "c1087_fixture_body") + "\n" + """
+            c1008_http() {
+                printf '%s\n' "$1" >> "$C1008_FIXTURE_ROOT/http-trace"
+                C1008_HTTP_BODY="$(c1087_fixture_body "$1")" || {
+                    C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Transport path=$1"
+                    return 2
+                }
+            }
+            """ + "\n" + C1317ShellFunction(remote, "c1008_tasks_collect") + "\n"
+            + C1317ShellFunction(remote, "c1008_tasks") + "\n" + """
+            set -u
+            root="$(mktemp -d)"
+            trap 'rm -rf -- "$root"' EXIT
+            CASE_DIR="$root/case"
+            mkdir -p "$CASE_DIR"
+            CASE=deploy-parent
+            C1008_RUNNER=server2
+            C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1
+            C1008_FIXTURE_ROOT="$root"
+            probe() {
+                local name="$1" id="$2" list="$3" detail_status="$4" mode="$5" status=0 land='null'
+                if [ "$mode" = unproven ]; then land='{"state":"Completed"}'; fi
+                jq -n --arg id "$id" --arg list "$list" --arg detail "$detail_status" --argjson land "$land" \
+                    '{scopes:{"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1":{items:[{id:$id,status:$list,runnerId:"desktop",projectId:null,scopeSource:"None",landRequestedAt:null,landStartedAt:null}],scope:{projectId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1",unscoped:"include"},excluded:{total:0,unscoped:0,byProject:[]}}},details:{($id):{summary:{id:$id,status:$detail,runnerId:"desktop",projectId:null,scopeSource:"None",landRequestedAt:null,landStartedAt:null},landRequest:$land}},faults:{}}' \
+                    > "$root/tasks.json"
+                if [ "$mode" = omit ]; then
+                    jq --arg id "$id" 'del(.details[$id].landRequest)' "$root/tasks.json" > "$root/tasks-next.json"
+                    mv "$root/tasks-next.json" "$root/tasks.json"
+                fi
+                : > "$root/http-trace"
+                c1008_tasks > "$root/snapshot.json" || status=$?
+                if [ "$mode" = pass ]; then
+                    if [ "$status" = 0 ] \
+                        && jq -e --arg id "$id" '.open.land|has($id) and .[$id]==null' "$root/snapshot.json" >/dev/null \
+                        && jq -e --arg id "$id" '.tasks[$id].landRequest==null' "$CASE_DIR/census-deploy-parent-server2.json" >/dev/null \
+                        && grep -F -q "/api/agent-tasks/$id" "$root/http-trace"; then
+                        printf 'PASS host-%s\n' "$name"
+                    else
+                        printf 'FAIL host-%s status=%s error=%s\n' "$name" "$status" "$C1008_TASK_ERROR"
+                    fi
+                elif [ "$status" = 2 ] && [ "$C1008_TASK_ERROR" = RecycleLandUnknown ]; then
+                    printf 'PASS host-%s\n' "$name"
+                else
+                    printf 'FAIL host-%s status=%s error=%s\n' "$name" "$status" "$C1008_TASK_ERROR"
+                fi
+            }
+            probe unknown 22222222-2222-2222-2222-222222222222 Working Working omit
+            probe unproven 33333333-3333-3333-3333-333333333333 Dispatched Succeeded unproven
+            probe settled 11111111-1111-1111-1111-111111111111 Queued Succeeded pass
+            printf 'HOST_DONE\n'
+            """;
+    }
+
+    private static string C1317ShellFunction(string text, string name)
+    {
+        var lines = text.Replace("\r\n", "\n").Split('\n');
+        var start = Array.FindIndex(lines, line => line.StartsWith(name + "() {", StringComparison.Ordinal));
+        start.ShouldBeGreaterThanOrEqualTo(0, "function " + name + " is missing");
+        var end = Array.FindIndex(lines, start + 1, line => line == "}");
+        end.ShouldBeGreaterThan(start, "function " + name + " never closes");
+        return string.Join('\n', lines[start..(end + 1)]);
+    }
+
     private static async Task<JsonObject> GetRetirementRequestAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

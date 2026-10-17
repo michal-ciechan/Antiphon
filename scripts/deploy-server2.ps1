@@ -645,9 +645,14 @@ function Assert-RecycleTaskCensus {
                 if ($kind -eq 'land') { continue }
                 $detail = Invoke-RecycleRead -Path ('/api/agent-tasks/' + $id)
                 if ($detail.PSObject.Properties.Name -notcontains 'landRequest' -or [string]$detail.summary.id -ne $id) { throw 'RecycleLandUnknown' }
+                # A short-lived task can settle between the open list and this detail.
+                # Terminal status plus a null landRequest is proven no-land, so status may move.
+                # Any other summary disagreement, a missing landRequest, or an unproven landRequest still refuses.
+                $settledWithoutLand = $null -eq $detail.landRequest -and [string]$detail.summary.status -cin @('Succeeded','Failed','Canceled')
                 foreach ($key in @('id','status','runnerId','projectId','scopeSource','landRequestedAt','landStartedAt')) {
-                    if ($detail.summary.PSObject.Properties.Name -notcontains $key -or
-                        ($detail.summary.$key | ConvertTo-Json -Compress) -cne ($task.$key | ConvertTo-Json -Compress)) { throw 'RecycleLandUnknown' }
+                    if ($detail.summary.PSObject.Properties.Name -notcontains $key) { throw 'RecycleLandUnknown' }
+                    if ($settledWithoutLand -and $key -ceq 'status') { continue }
+                    if (($detail.summary.$key | ConvertTo-Json -Compress) -cne ($task.$key | ConvertTo-Json -Compress)) { throw 'RecycleLandUnknown' }
                 }
                 if ($null -ne $detail.landRequest) {
                     if ([string]$detail.landRequest.state -cin @('Queued','Held','Running','NeedsResolution')) {
