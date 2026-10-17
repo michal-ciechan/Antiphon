@@ -9,13 +9,14 @@ using Npgsql;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-1320 S1. Reads the standing-orchestrator population and stores a Human toggle.
-/// Shortfall and reminders are later slices; this service does not enqueue or dispatch.
+/// CARD-1320. Reads the standing-orchestrator population, stores a Human toggle, and fills
+/// the shortfall from the project's open count. This service does not enqueue or dispatch.
 /// </summary>
 public sealed class KeepSixService(
     AppDbContext db,
     TimeProvider clock,
-    OrchestratorInstructionsService instructions)
+    OrchestratorInstructionsService instructions,
+    KeepSixShortfall shortfall)
 {
     public const string HumanProvenance = "Human";
 
@@ -23,10 +24,11 @@ public sealed class KeepSixService(
     {
         var agents = await LoadPopulationAsync(ct).ConfigureAwait(false);
         var stored = await LoadRowsAsync(agents, ct).ConfigureAwait(false);
+        var counts = await shortfall.ReadAsync(agents, stored, ct).ConfigureAwait(false);
         return agents
             .OrderBy(agent => agent.Name, StringComparer.Ordinal)
             .ThenBy(agent => agent.Id)
-            .Select(agent => ToDto(agent, stored.GetValueOrDefault(agent.Id)))
+            .Select(agent => ToDto(agent, stored.GetValueOrDefault(agent.Id), counts[agent.Id]))
             .ToArray();
     }
 
@@ -108,7 +110,11 @@ public sealed class KeepSixService(
         }
 
         instructions.Signal("keep-six " + agent.Name);
-        return ToDto(agent, row);
+        var counts = await shortfall.ReadAsync([agent], new Dictionary<Guid, KeepSixOrchestrator>
+        {
+            [agent.Id] = row,
+        }, ct).ConfigureAwait(false);
+        return ToDto(agent, row, counts[agent.Id]);
     }
 
     private async Task<List<Agent>> LoadPopulationAsync(CancellationToken ct)
@@ -152,7 +158,8 @@ public sealed class KeepSixService(
             throw new BadRequestException("expectedRevision must be zero or greater.");
     }
 
-    private static KeepSixOrchestratorDto ToDto(Agent agent, KeepSixOrchestrator? row) => new(
+    private static KeepSixOrchestratorDto ToDto(
+        Agent agent, KeepSixOrchestrator? row, KeepSixShortfall.Counts? counts = null) => new(
         agent.Id,
         agent.Name,
         row?.Enabled ?? false,
@@ -167,14 +174,14 @@ public sealed class KeepSixService(
         Instant(row?.LastReminderEnqueuedAt),
         row?.OutstandingMessageId,
         Instant(row?.LastAcknowledgedAt),
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null);
+        counts?.CountedOpen,
+        counts?.EffectiveTarget,
+        counts?.DispatchableBacklog,
+        counts?.Shortfall,
+        counts?.TopCards,
+        counts?.LastDispatchAt,
+        counts?.LastCompletionAt,
+        counts?.Badge);
 
     private static DateTimeOffset? Instant(DateTime? value) =>
         value is DateTime instant

@@ -1,7 +1,7 @@
 namespace Antiphon.Server.Application.Dtos;
 
 /// <summary>
-/// CARD-1320. One standing orchestrator. Count fields stay null until shortfall is filled.
+/// CARD-1320. One standing orchestrator. GET and PUT fill the shortfall fields.
 /// </summary>
 public sealed record KeepSixOrchestratorDto(
     Guid AgentId,
