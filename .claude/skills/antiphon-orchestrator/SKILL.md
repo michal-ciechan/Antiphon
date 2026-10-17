@@ -170,10 +170,12 @@ in `docs/orchestration-loop.md`.
 5. A `Conflicted` outcome (master moved since the branch's base) usually auto-spawns a `Merge`-role
    task to resolve it — check for one (`role=Merge`, `status=Dispatched`) before manually retrying;
    don't duplicate it.
-6. After a confirmed `Landed` outcome: advance the canonical checkout to the landed SHA (`git pull
-   --rebase` there; `git fetch` alone moves no local HEAD), then `restart-apphost.ps1
-   -ExpectedServerSha <sha>`, which refuses with exit 3 when that SHA is not the checkout HEAD, and
-   follow the Post-land server activation check (CARD-0495) in `docs/orchestration-loop.md`.
+6. After a confirmed `Landed` outcome, restart AppHost only when the landed commit is the
+   `rc/YYYY-MM-DD` rc tip the hosts run. A master-only land does not restart AppHost or server2.
+   When a restart is due, advance the checkout those hosts run to that tip (`git pull --rebase`
+   there; `git fetch` alone moves no local HEAD), then `restart-apphost.ps1 -ExpectedServerSha <sha>`,
+   which refuses with exit 3 when that SHA is not the checkout HEAD, and follow the Post-land
+   server activation check (CARD-0495) in `docs/orchestration-loop.md`.
    **Then** close the card with a reason summarizing the whole stage history (defects found, how
    fixed, final verified counts) — this is the last thing anyone reads about the card.
 7. A stale `.git/index.lock` holds the land as `git_index_lock_stale` or

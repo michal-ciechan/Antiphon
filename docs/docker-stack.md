@@ -2,9 +2,10 @@
 
 ## Staged server2 rolling rollout (CARD-0934)
 
-Run from the reviewed, landed **canonical desktop checkout**, with `<sha>` its full lowercase
-`HEAD`. Use one `scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase <name>` call per gate;
-never use the default `-Phase all`. The phase list in that script is the authority. Keep the
+The SHA deployed to AppHost and server2 is the current `rc/YYYY-MM-DD` tip, never master
+([release gates](release-gates.md)). Use one `scripts/deploy-server2.ps1 -Rolling -Sha <sha>
+-Phase <name>` call per gate, with `<sha>` that tip; never use the default `-Phase all`.
+The phase list in that script is the authority. Keep the
 standing `server2` container accepting until `server2-temp` has passed its canary. Do not drain
 both runners or drain the only accepting runner. A refusal means stop, record its exact code and
 receipt under `.antiphon/rolling-server2/`, and report it; do not force a phase or improvise a
@@ -19,7 +20,7 @@ During a staged server2 rolling rollout, keep dispatching new work to `server2-t
 That paragraph is the rule. The orchestrator copy is [operational autonomy](orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout). `redeploy-old` clears the standing runner's drain before gate 7's separate smoke and Both. Readiness for moving new work is that exit 0 together with smoke/Both passed, so pin new work to `server2-temp` until both have passed. Start `drain-temp` at that moment; tasks already running on temp settle under `-WaitIdleMinutes 240`.
 
 Before starting, verify no land is pending, the checkout has no half-reset worktree, and the
-running server's `/health` and `GET /api/version` SHA match the canonical source-root `HEAD`
+running server's `/health` and `GET /api/version` SHA match that `rc/YYYY-MM-DD` tip
 (see [the autonomy policy](orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout)).
 Before host qualification or gate 1, check project identity and both filtered task
 closures without changing runner state:
@@ -43,11 +44,12 @@ phase and record it in the rollout receipt. Never use a partial project PUT. Mul
 matches (`cause=Ambiguous`), an archived row (`cause=Archived`), an absent explicit id
 (`cause=NotFound`) or invalid id (`cause=InvalidId`) require correcting the identity.
 `cause=Http status=400` can mean the server predates the `landPending` filter: land
-the reviewed server change and restart AppHost, then verify `/api/version` against HEAD.
+that fix on the current `rc/YYYY-MM-DD` line and restart AppHost onto that rc tip, then
+verify `/api/version` against the tip.
 
 Before cache preparation or gate 1, qualify **outer-host jq** in the non-login SSH
 deployment shell. The runner image's jq does not satisfy this prerequisite.
-Use the reviewed, landed canonical checkout at `<sha>`:
+Use that same `<sha>`:
 
 ```powershell
 pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase check-host-jq

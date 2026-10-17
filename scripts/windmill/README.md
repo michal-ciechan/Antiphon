@@ -18,13 +18,13 @@ domain. Outage detection and notification now belong to the nightly watchdog, wh
 Windmill and outside the Windows host: see `docs/nightly-watchdog.md`.
 
 - `u/lndcobra/antiphon_release_candidates` — desktop tag, `0 30 8,16 * * *`, Europe/London, empty
-  args. **NOT REGISTERED and its schedule payload is `enabled: false`.** CARD-0599's RC lane:
-  `scripts/release-cut.ps1` cuts `release/rc-<UTC stamp>` from origin/master, runs
+  args. **NOT REGISTERED and its schedule payload is `enabled: false`.** The lane tests the named
+  `rc/YYYY-MM-DD` ref. It does not cut `release/rc-<UTC stamp>` from `origin/master`. It runs
   `nightly-run.ps1 -Profile rc -Trigger rc -Ref <candidate> -ExpectedSha <sha>` against the
   candidate's own state root, and publishes a CalVer tag plus GitHub Release only on RC
   complete-green. RC green earns release credit only — it never writes the master attempt, green,
   monitor or Interim qualification receipt. Two cuts a day are attempts, not a guarantee of two
-  releases. Owner: `docs/release-gates.md`.
+  releases. The scheduled lane is not qualified. Owner: `docs/release-gates.md`.
 
 CARD-0599 D-7 also corrected trigger provenance: the master wrapper used to pass no args at all and
 let the native `-Trigger` default to `scheduled`, including for manual invocations. Both wrappers now
