@@ -95,17 +95,26 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
     // Seal-time custody for entries a child process wrote under a root this process created
     // (OwnedOutputLedger.Seal). An existing record wins; an entry outside the custody window,
     // unreadable, or whose statx changes across the read stays unrecorded (OutputCustody).
+    // A receipt read that hits its deadline is tried once more: a Windows filter can stall the
+    // first read of a new image for that whole deadline. The second failure stays unrecorded.
     public void AdoptCreated(string path, OutputCustody.Window window)
     {
         var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        try
+        for (var attempt = 1; attempt <= 2; attempt++)
         {
-            var before = OutputCustody.Stat(context, full);
-            if (before is null || OutputCustody.Refusal(before.Value, window) is not null) return;
-            var record = Describe(full);
-            if (OutputCustody.Stat(context, full) == before) context.Registry.RecordContent(full, record);
+            try
+            {
+                var before = OutputCustody.Stat(context, full);
+                if (before is null || OutputCustody.Refusal(before.Value, window) is not null) return;
+                var record = Describe(full);
+                if (OutputCustody.Stat(context, full) == before) context.Registry.RecordContent(full, record);
+                return;
+            }
+            catch (IOException) when (attempt < 2) { }
+            catch (UnauthorizedAccessException) when (attempt < 2) { }
+            catch (IOException) { return; }
+            catch (UnauthorizedAccessException) { return; }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
     public DateTimeOffset? FreshRootCreated(string path) =>
         context.Registry.FreshRoot(path);
