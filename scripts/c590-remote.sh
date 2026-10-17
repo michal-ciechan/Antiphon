@@ -5957,7 +5957,8 @@ c1008_tasks_collect() {
         snapshot="$closures"
         if [ "$pass" = 1 ]; then settled_pass0="$settled_now"; fi
         # A pass-0 settled-without-land task may be absent from the pass-1 open list.
-        # Any other disappearance or appearance still fails the byte compare below.
+        # A pass-1 task with landRequest null, outside landPending, and no land timestamp may appear.
+        # Any other disappearance, appearance, or changed row still fails the byte compare below.
         if [ "$pass" = 2 ] && [ "$snapshot" != "$previous" ] && [ -n "$settled_pass0" ]; then
             if forgiven="$(printf '%s' "$previous" | jq -Sc --argjson current "$snapshot" --arg ids "$settled_pass0" '
                 . as $prev
@@ -5969,6 +5970,33 @@ c1008_tasks_collect() {
                     | .open.tasks |= delpaths([$gone[] | [.]])
                     | .open.land |= delpaths([$gone[] | [.]])
                     | .open.scopes |= with_entries(.value.ids |= map(select(. as $id | ($gone | index($id)) == null)))
+                  end
+            ')"; then
+                previous="$forgiven"
+            fi
+        fi
+        if [ "$pass" = 2 ] && [ "$snapshot" != "$previous" ]; then
+            if forgiven="$(printf '%s' "$previous" | jq -Sc --argjson current "$snapshot" '
+                . as $prev
+                | [ $current.open.tasks | keys[] | select(. as $id | ($prev.open.tasks | has($id) | not)) ] as $appeared
+                | [ $appeared[] | select(. as $id |
+                    ($current.open.land | has($id)) and ($current.open.land[$id] == null)
+                    and (($current.land.tasks | has($id)) | not)
+                    and ($current.open.tasks[$id].landRequestedAt == null)
+                    and ($current.open.tasks[$id].landStartedAt == null)
+                  ) ] as $fresh
+                | if ($fresh | length) == 0 then $prev
+                  else
+                    $prev
+                    | .open.tasks += ($current.open.tasks | with_entries(select(.key as $k | ($fresh | index($k)) != null)))
+                    | .open.land += ($current.open.land | with_entries(select(.key as $k | ($fresh | index($k)) != null)))
+                    | .open.scopes |= with_entries(
+                        .key as $scope
+                        | .value.ids = (
+                            (.value.ids + [ ($current.open.scopes[$scope].ids // [])[] | select(. as $id | ($fresh | index($id)) != null) ])
+                            | unique | sort
+                          )
+                      )
                   end
             ')"; then
                 previous="$forgiven"

@@ -241,7 +241,9 @@ token and appends `cause=Timeout|Http|Transport|Empty|Malformed|UnfilteredRow|Un
 with safe `path=`, `status=`, `field=` or `scopes=` details where applicable. Detail/summary
 disagreement or invalid land proof remains `RecycleLandUnknown`, except a terminal detail
 (`Succeeded`, `Failed` or `Canceled`) with `landRequest` null, which is proven no-land and may
-be absent from the next pass's list without `Unstable`. Project resolution
+be absent from the next pass's list without `Unstable`, and except a task that first appears
+on that pass with `landRequest` null, outside the `landPending` closure, and with neither land
+timestamp set. A land request, an unknown land state, or a changed row still refuses. Project resolution
 uses `RecycleProjectUnresolved` and its cause. Each census retains approved read
 timings/counts and reduced task/land facts; no task prose, credentials or response body
 is retained. A refusal stops the phase before destructive work, including on resume.

@@ -214,8 +214,10 @@ public sealed class RollingVolumeRecycleScriptTests
                     queries[C1087ListPath(project, "land")] = envelope;
                     expected = "RecycleTaskCensusUnknown cause=UnfilteredRow id=" + id; break;
                 case "unstable":
+                    // A no-land appearance is CARD-1324. This vector keeps the land-request refusal.
                     queries[C1087ListPath(project, "open")] = new JsonArray(empty.DeepClone(), envelope);
-                    f.State["details"] = new JsonObject { [id] = new JsonObject { ["summary"] = row.DeepClone(), ["landRequest"] = null } };
+                    f.State["details"] = new JsonObject { [id] = new JsonObject { ["summary"] = row.DeepClone(), ["landRequest"] = new JsonObject {
+                        ["state"] = "Completed", ["terminalEventId"] = "44444444-4444-4444-4444-444444444444" } } };
                     expected = "RecycleTaskCensusUnknown cause=Unstable"; break;
                 case "closure":
                     const string other = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -814,7 +816,7 @@ public sealed class RollingVolumeRecycleScriptTests
         report += await C1319WrapperProbe("settled-vanish", pass: true);
         report += await C1319WrapperProbe("settled-companion", pass: true);
         report += await C1319WrapperProbe("open-vanish", pass: false);
-        report += await C1319WrapperProbe("settled-appear", pass: false);
+        report += await C1319WrapperProbe("settled-appear", pass: true);
         report.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, report);
         report.IndexOf("HOST_DONE", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
         foreach (var name in new[]
@@ -887,6 +889,21 @@ public sealed class RollingVolumeRecycleScriptTests
                 var tasks = snapshot["open"]!["tasks"]!.AsObject();
                 proved = !tasks.ContainsKey(settled) && tasks.ContainsKey(companion)
                     && snapshot["open"]!["land"]!.AsObject().ContainsKey(companion)
+                    && !snapshot["open"]!["land"]!.AsObject().ContainsKey(settled);
+            }
+        }
+        if (proved && mode == "settled-appear")
+        {
+            proved = run.Output.Contains("RECYCLE_CENSUS runner=server2 open=1 ", StringComparison.Ordinal)
+                && run.Output.Contains("RECYCLE_CENSUS runner=server2-temp open=1 ", StringComparison.Ordinal);
+            if (proved)
+            {
+                var root = Regex.Match(run.Output, @"(?m)^Census check complete: (.+)$").Groups[1].Value.Trim();
+                var snapshot = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "census-check-census-server2.json")))!["snapshot"]!;
+                var tasks = snapshot["open"]!["tasks"]!.AsObject();
+                proved = !tasks.ContainsKey(settled) && tasks.ContainsKey(appeared)
+                    && snapshot["open"]!["land"]!.AsObject().ContainsKey(appeared)
+                    && snapshot["open"]!["land"]![appeared] is null
                     && !snapshot["open"]!["land"]!.AsObject().ContainsKey(settled);
             }
         }
@@ -1003,6 +1020,8 @@ public sealed class RollingVolumeRecycleScriptTests
                         jq -e '.open.tasks=={} and .open.land=={}' "$root/snapshot.json" >/dev/null || extra=snapshot
                     elif [ "$mode" = settled-companion ]; then
                         jq -e --arg a "$settled" --arg b "$companion" '(.open.tasks|has($a)|not) and (.open.tasks|has($b)) and (.open.land|has($a)|not) and (.open.land[$b]==null)' "$root/snapshot.json" >/dev/null || extra=snapshot
+                    elif [ "$mode" = settled-appear ]; then
+                        jq -e --arg a "$settled" --arg c "$appeared" '(.open.tasks|has($a)|not) and (.open.tasks|has($c)) and (.open.land|has($a)|not) and (.open.land|has($c)) and (.open.land[$c]==null) and ((.land.tasks|has($c))|not)' "$root/snapshot.json" >/dev/null || extra=snapshot
                     fi
                 fi
                 if [ "$expect" = pass ] && [ "$status" = 0 ] && [ "$extra" = ok ] && [ -z "$C1008_TASK_ERROR" ]; then
@@ -1016,7 +1035,221 @@ public sealed class RollingVolumeRecycleScriptTests
             probe settled-vanish settled-vanish pass
             probe settled-companion settled-companion pass
             probe open-vanish open-vanish unstable
-            probe settled-appear settled-appear unstable
+            probe settled-appear settled-appear pass
+            printf 'HOST_DONE\n'
+            """;
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1324_Census_tolerates_a_no_land_task_that_appears_in_pass1()
+    {
+        var report = RemoteScriptContractTests.LinuxShell(C1324HostCensusScript());
+        report += await C1324WrapperProbe("appears-no-land", "pass");
+        report += await C1324WrapperProbe("appears-with-landRequest", "unstable");
+        report += await C1324WrapperProbe("appears-with-unknown-detail", "land-unknown");
+        report += await C1324WrapperProbe("changed-row", "unstable");
+        report.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, report);
+        report.IndexOf("HOST_DONE", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
+        foreach (var name in new[]
+        {
+            "host-appears-no-land", "host-appears-with-landRequest", "host-appears-with-unknown-detail", "host-changed-row",
+            "wrapper-appears-no-land", "wrapper-appears-with-landRequest", "wrapper-appears-with-unknown-detail", "wrapper-changed-row"
+        })
+            report.IndexOf("PASS " + name, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
+    }
+
+    private static async Task<string> C1324WrapperProbe(string mode, string expect)
+    {
+        const string project = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1";
+        const string appeared = "33333333-3333-3333-3333-333333333333";
+        const string changed = "11111111-1111-1111-1111-111111111111";
+        using var f = new C1008WrapperFixture();
+        JsonObject first;
+        JsonObject second;
+        var details = new JsonObject();
+        switch (mode)
+        {
+            case "appears-with-landRequest":
+                var landed = C1319Row(appeared, "Working");
+                first = C1319Envelope(f);
+                second = C1319Envelope(f, landed);
+                var requested = C1319Detail(landed, "Working");
+                requested["landRequest"] = new JsonObject
+                {
+                    ["state"] = "Completed",
+                    ["terminalEventId"] = "44444444-4444-4444-4444-444444444444"
+                };
+                details[appeared] = requested;
+                break;
+            case "appears-with-unknown-detail":
+                var unknown = C1319Row(appeared, "Working");
+                first = C1319Envelope(f);
+                second = C1319Envelope(f, unknown);
+                var omitted = C1319Detail(unknown, "Working");
+                omitted.Remove("landRequest");
+                details[appeared] = omitted;
+                break;
+            case "changed-row":
+                var before = C1319Row(changed, "Queued");
+                var after = C1319Row(changed, "Working");
+                first = C1319Envelope(f, before);
+                second = C1319Envelope(f, after);
+                details[changed] = new JsonArray(C1319Detail(before, "Queued"), C1319Detail(after, "Working"));
+                break;
+            default:
+                var fresh = C1319Row(appeared, "Working");
+                first = C1319Envelope(f);
+                second = C1319Envelope(f, fresh);
+                details[appeared] = C1319Detail(fresh, "Working");
+                break;
+        }
+        f.State["taskQueries"] = new JsonObject { [C1087ListPath(project, "open")] = new JsonArray(first, second) };
+        f.State["details"] = details;
+        var run = await f.Run("check-census");
+        var proved = false;
+        if (expect == "pass" && run.Exit == 0
+            && run.Output.Contains("Census check complete:", StringComparison.Ordinal)
+            && !run.Output.Contains("Unstable", StringComparison.Ordinal)
+            && !run.Output.Contains("RecycleLandUnknown", StringComparison.Ordinal))
+        {
+            proved = run.Output.Contains("RECYCLE_CENSUS runner=server2 open=1 ", StringComparison.Ordinal)
+                && run.Output.Contains("RECYCLE_CENSUS runner=server2-temp open=1 ", StringComparison.Ordinal);
+            if (proved)
+            {
+                var root = Regex.Match(run.Output, @"(?m)^Census check complete: (.+)$").Groups[1].Value.Trim();
+                var snapshot = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "census-check-census-server2.json")))!["snapshot"]!;
+                var tasks = snapshot["open"]!["tasks"]!.AsObject();
+                var land = snapshot["open"]!["land"]!.AsObject();
+                proved = tasks.ContainsKey(appeared)
+                    && land.ContainsKey(appeared)
+                    && land[appeared] is null
+                    && !snapshot["land"]!["tasks"]!.AsObject().ContainsKey(appeared);
+            }
+        }
+        var refused = expect == "unstable" && run.Exit == 2
+            && run.Output.Contains("RecycleTaskCensusUnknown cause=Unstable", StringComparison.Ordinal)
+            && !run.Output.Contains("Census check complete:", StringComparison.Ordinal);
+        var unknownRefused = expect == "land-unknown" && run.Exit == 2
+            && run.Output.Contains("RecycleLandUnknown", StringComparison.Ordinal)
+            && !run.Output.Contains("Census check complete:", StringComparison.Ordinal)
+            && !run.Output.Contains("cause=Unstable", StringComparison.Ordinal);
+        if (proved || refused || unknownRefused) return "PASS wrapper-" + mode + "\n";
+        return "FAIL wrapper-" + mode + " exit=" + run.Exit + "\n" + run.Output + "\n";
+    }
+
+    private static string C1324HostCensusScript()
+    {
+        var remote = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c590-remote.sh"));
+        return """
+            c1008_http() {
+                printf '%s\n' "$1" >> "$root/http-trace"
+                local body id
+                case "$1" in
+                    *'&status='*)
+                        open_reads=$((open_reads + 1))
+                        if [ "$open_reads" -eq 1 ]; then body="$open_first"; else body="$open_later"; fi
+                        ;;
+                    *landPending=true*) body="$empty" ;;
+                    /api/agent-tasks/*)
+                        id="${1##*/}"
+                        if [ "$detail_mode" = sequence ]; then
+                            if [ "$open_reads" -le 1 ]; then body="$detail_first"; else body="$detail_later"; fi
+                        else
+                            body="$(printf '%s' "$details" | jq -ec --arg id "$id" '.[$id]')" || {
+                                C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Transport path=$1"
+                                return 2
+                            }
+                            if [ "$detail_mode" = omit ]; then body="$(printf '%s' "$body" | jq -c 'del(.landRequest)')"; fi
+                        fi
+                        ;;
+                    *)
+                        C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Transport path=$1"
+                        return 2
+                        ;;
+                esac
+                C1008_HTTP_BODY="$body"
+            }
+            """ + "\n" + C1317ShellFunction(remote, "c1008_tasks_collect") + "\n"
+            + C1317ShellFunction(remote, "c1008_tasks") + "\n" + """
+            set -u
+            root="$(mktemp -d)"
+            trap 'rm -rf -- "$root"' EXIT
+            CASE_DIR="$root/case"
+            mkdir -p "$CASE_DIR"
+            CASE=deploy-parent
+            C1008_RUNNER=server2
+            C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1
+            empty='{"items":[],"scope":{"projectId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","unscoped":"include"},"excluded":{"total":0,"unscoped":0,"byProject":[]}}'
+            open_first="$empty"
+            open_later="$empty"
+            details='{}'
+            detail_mode=object
+            detail_first='{}'
+            detail_later='{}'
+            open_reads=0
+            row_of() { jq -nc --arg id "$1" --arg status "$2" '{id:$id,status:$status,runnerId:"desktop",projectId:null,scopeSource:"None",landRequestedAt:null,landStartedAt:null}'; }
+            envelope() {
+                local rows='[]' row
+                for row in "$@"; do rows="$(printf '%s' "$rows" | jq -c --argjson row "$row" '. + [$row]')"; done
+                jq -nc --argjson items "$rows" '{items:$items,scope:{projectId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1",unscoped:"include"},excluded:{total:0,unscoped:0,byProject:[]}}'
+            }
+            detail_of() { jq -nc --argjson row "$1" --arg status "$2" '{summary:($row + {status:$status}),landRequest:null}'; }
+            probe() {
+                local name="$1" mode="$2" expect="$3" status=0 extra=ok
+                local appeared=33333333-3333-3333-3333-333333333333
+                local changed=11111111-1111-1111-1111-111111111111
+                local fresh before after
+                fresh="$(row_of "$appeared" Working)"
+                before="$(row_of "$changed" Queued)"
+                after="$(row_of "$changed" Working)"
+                detail_mode=object
+                case "$mode" in
+                    appears-no-land)
+                        open_first="$(envelope)"
+                        open_later="$(envelope "$fresh")"
+                        details="$(jq -nc --arg id "$appeared" --argjson d "$(detail_of "$fresh" Working)" '{($id):$d}')"
+                        ;;
+                    appears-with-landRequest)
+                        open_first="$(envelope)"
+                        open_later="$(envelope "$fresh")"
+                        details="$(jq -nc --arg id "$appeared" --argjson d "$(detail_of "$fresh" Working)" '{($id):($d + {landRequest:{state:"Completed",terminalEventId:"44444444-4444-4444-4444-444444444444"}})}')"
+                        ;;
+                    appears-with-unknown-detail)
+                        open_first="$(envelope)"
+                        open_later="$(envelope "$fresh")"
+                        details="$(jq -nc --arg id "$appeared" --argjson d "$(detail_of "$fresh" Working)" '{($id):$d}')"
+                        detail_mode=omit
+                        ;;
+                    changed-row)
+                        open_first="$(envelope "$before")"
+                        open_later="$(envelope "$after")"
+                        detail_mode=sequence
+                        detail_first="$(detail_of "$before" Queued)"
+                        detail_later="$(detail_of "$after" Working)"
+                        ;;
+                esac
+                open_reads=0
+                : > "$root/http-trace"
+                C1008_TASK_ERROR=''
+                c1008_tasks > "$root/snapshot.json" || status=$?
+                if [ "$expect" = pass ] && [ "$status" = 0 ]; then
+                    jq -e --arg id "$appeared" '(.open.tasks|has($id)) and (.open.land|has($id)) and (.open.land[$id]==null) and ((.land.tasks|has($id))|not)' "$root/snapshot.json" >/dev/null || extra=snapshot
+                fi
+                if [ "$expect" = pass ] && [ "$status" = 0 ] && [ "$extra" = ok ] && [ -z "$C1008_TASK_ERROR" ]; then
+                    printf 'PASS host-%s\n' "$name"
+                elif [ "$expect" = unstable ] && [ "$status" = 2 ] && [ "$C1008_TASK_ERROR" = 'RecycleTaskCensusUnknown cause=Unstable' ]; then
+                    printf 'PASS host-%s\n' "$name"
+                elif [ "$expect" = land-unknown ] && [ "$status" = 2 ] && [ "$C1008_TASK_ERROR" = RecycleLandUnknown ]; then
+                    printf 'PASS host-%s\n' "$name"
+                else
+                    printf 'FAIL host-%s status=%s extra=%s error=%s\n' "$name" "$status" "$extra" "$C1008_TASK_ERROR"
+                fi
+            }
+            probe appears-no-land appears-no-land pass
+            probe appears-with-landRequest appears-with-landRequest unstable
+            probe appears-with-unknown-detail appears-with-unknown-detail land-unknown
+            probe changed-row changed-row unstable
             printf 'HOST_DONE\n'
             """;
     }

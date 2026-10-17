@@ -582,26 +582,16 @@ function Test-RecycleJsonEqual {
     return "$Left" -ceq "$Right"
 }
 
-# Drop pass-0 tasks proven settled without a land when the pass-1 open list no longer has them.
-# Returns true only when that absence is the sole difference.
-function Test-RecycleSettledAbsenceOnly {
-    param([string]$Previous, [string]$Current, $SettledIds)
-    if ($null -eq $SettledIds -or @($SettledIds).Count -eq 0) { return $false }
-    $prior = $Previous | ConvertFrom-Json
-    $live = $Current | ConvertFrom-Json
-    $gone = New-Object System.Collections.Generic.List[string]
-    $liveNames = @($live.open.tasks.PSObject.Properties.Name)
-    $priorNames = @($prior.open.tasks.PSObject.Properties.Name)
-    foreach ($id in @($SettledIds)) {
-        if (($priorNames -ccontains $id) -and ($liveNames -cnotcontains $id)) { $gone.Add($id) }
-    }
-    if ($gone.Count -eq 0) { return $false }
-    foreach ($id in $gone) {
-        [void]$prior.open.tasks.PSObject.Properties.Remove($id)
-        if (@($prior.open.land.PSObject.Properties.Name) -ccontains $id) {
-            [void]$prior.open.land.PSObject.Properties.Remove($id)
+function Remove-RecycleOpenIds {
+    param($Closure, [string[]]$Ids)
+    foreach ($id in $Ids) {
+        if (@($Closure.tasks.PSObject.Properties.Name) -ccontains $id) {
+            [void]$Closure.tasks.PSObject.Properties.Remove($id)
         }
-        foreach ($scopeProp in @($prior.open.scopes.PSObject.Properties)) {
+        if (@($Closure.land.PSObject.Properties.Name) -ccontains $id) {
+            [void]$Closure.land.PSObject.Properties.Remove($id)
+        }
+        foreach ($scopeProp in @($Closure.scopes.PSObject.Properties)) {
             $value = [string]$scopeProp.Value
             $pipe = $value.IndexOf('|')
             if ($pipe -ge 0) {
@@ -612,9 +602,38 @@ function Test-RecycleSettledAbsenceOnly {
                 $suffix = ''
             }
             $kept = @($idPart.Split(',') | Where-Object { $_ -and ($_ -cne $id) })
-            $prior.open.scopes.($scopeProp.Name) = (($kept -join ',') + $suffix)
+            $Closure.scopes.($scopeProp.Name) = (($kept -join ',') + $suffix)
         }
     }
+}
+
+# Pass-0 tasks proven settled without a land may leave the pass-1 list.
+# Pass-1 tasks proven to carry no land (null landRequest, outside landPending,
+# neither land timestamp set) may appear. Returns true only when that drift is the sole difference.
+function Test-RecycleForgivenDrift {
+    param([string]$Previous, [string]$Current, $SettledIds)
+    $prior = $Previous | ConvertFrom-Json
+    $live = $Current | ConvertFrom-Json
+    $priorNames = @($prior.open.tasks.PSObject.Properties.Name)
+    $liveNames = @($live.open.tasks.PSObject.Properties.Name)
+    $gone = New-Object System.Collections.Generic.List[string]
+    foreach ($id in @($SettledIds)) {
+        if (($priorNames -ccontains $id) -and ($liveNames -cnotcontains $id)) { $gone.Add($id) }
+    }
+    if ($gone.Count -gt 0) { Remove-RecycleOpenIds -Closure $prior.open -Ids @($gone) }
+    $landNames = @($live.land.tasks.PSObject.Properties.Name)
+    $fresh = New-Object System.Collections.Generic.List[string]
+    foreach ($id in $liveNames) {
+        if ($priorNames -ccontains $id) { continue }
+        $task = $live.open.tasks.$id
+        if ($null -ne $task.landRequestedAt -or $null -ne $task.landStartedAt) { continue }
+        if ($landNames -ccontains $id) { continue }
+        $landProp = @($live.open.land.PSObject.Properties) | Where-Object { $_.Name -ceq $id } | Select-Object -First 1
+        if ($null -eq $landProp -or $null -ne $landProp.Value) { continue }
+        $fresh.Add($id)
+    }
+    if ($fresh.Count -gt 0) { Remove-RecycleOpenIds -Closure $live.open -Ids @($fresh) }
+    if ($gone.Count -eq 0 -and $fresh.Count -eq 0) { return $false }
     return Test-RecycleJsonEqual -Left $prior -Right $live
 }
 
@@ -758,8 +777,8 @@ function Assert-RecycleTaskCensus {
         if ($null -ne $script:recycleReceipt) { $script:recycleReceipt['snapshot'] = $closures }
         if ($pass -eq 0) { $pass0Settled = $settledThisPass }
         # A pass-0 task recorded as settled without a land may leave the pass-1 list.
-        # Any other disappearance or appearance remains Unstable.
-        if ($pass -eq 1 -and $snapshot -cne $previous -and -not (Test-RecycleSettledAbsenceOnly -Previous $previous -Current $snapshot -SettledIds $pass0Settled)) {
+        # A pass-1 task proven to carry no land may appear. Any other drift remains Unstable.
+        if ($pass -eq 1 -and $snapshot -cne $previous -and -not (Test-RecycleForgivenDrift -Previous $previous -Current $snapshot -SettledIds $pass0Settled)) {
             throw 'RecycleTaskCensusUnknown cause=Unstable'
         }
         $previous = $snapshot
