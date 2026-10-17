@@ -5817,7 +5817,9 @@ c1008_tasks() {
 
 c1008_tasks_collect() {
     local pass kind path scope envelope excluded id row detail previous='' snapshot scopes rows pending counts land closures status field
+    local settled_pass0='' settled_now='' forgiven=''
     for pass in 1 2; do
+        settled_now=''
         closures='{}'
         for kind in open land; do
         scopes='[]'; rows='{}'; pending="$C1008_PROJECT_ID"; snapshot='{}'; counts='{}'; land='{}'
@@ -5925,6 +5927,13 @@ c1008_tasks_collect() {
                         ==($row|{id,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt}))
                     )
                   )' >/dev/null || return 2
+                # Proven no-land: terminal detail and landRequest null. Remember it for the pass compare.
+                if printf '%s' "$detail" | jq -e --argjson row "$row" '
+                    .landRequest==null and
+                    ((.summary.status=="Succeeded") or (.summary.status=="Failed") or (.summary.status=="Canceled"))
+                  ' >/dev/null; then
+                    settled_now="${settled_now:+$settled_now$'\n'}$id"
+                fi
                 if printf '%s' "$detail" | jq -e '.landRequest!=null and (.landRequest.state as $s | ["Queued","Held","Running","NeedsResolution"] | index($s)!=null)' >/dev/null; then
                     C1008_TASK_ERROR="RecycleLandInFlight $id"; return 3
                 fi
@@ -5946,6 +5955,25 @@ c1008_tasks_collect() {
         C1008_TASKS="$closures"
         done
         snapshot="$closures"
+        if [ "$pass" = 1 ]; then settled_pass0="$settled_now"; fi
+        # A pass-0 settled-without-land task may be absent from the pass-1 open list.
+        # Any other disappearance or appearance still fails the byte compare below.
+        if [ "$pass" = 2 ] && [ "$snapshot" != "$previous" ] && [ -n "$settled_pass0" ]; then
+            if forgiven="$(printf '%s' "$previous" | jq -Sc --argjson current "$snapshot" --arg ids "$settled_pass0" '
+                . as $prev
+                | ($ids | split("\n") | map(select(length>0)) | unique) as $settled
+                | [ $settled[] | select(. as $id | (($current.open.tasks | has($id)) | not) and ($prev.open.tasks | has($id))) ] as $gone
+                | if ($gone | length) == 0 then $prev
+                  else
+                    $prev
+                    | .open.tasks |= delpaths([$gone[] | [.]])
+                    | .open.land |= delpaths([$gone[] | [.]])
+                    | .open.scopes |= with_entries(.value.ids |= map(select(. as $id | ($gone | index($id)) == null)))
+                  end
+            ')"; then
+                previous="$forgiven"
+            fi
+        fi
         if [ "$pass" = 2 ] && [ "$snapshot" != "$previous" ]; then C1008_TASK_ERROR='RecycleTaskCensusUnknown cause=Unstable'; return 2; fi
         previous="$snapshot"
     done

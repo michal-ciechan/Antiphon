@@ -806,6 +806,221 @@ public sealed class RollingVolumeRecycleScriptTests
             """;
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1319_Census_tolerates_a_pass0_settled_task_that_leaves_before_pass1()
+    {
+        var report = RemoteScriptContractTests.LinuxShell(C1319HostCensusScript());
+        report += await C1319WrapperProbe("settled-vanish", pass: true);
+        report += await C1319WrapperProbe("settled-companion", pass: true);
+        report += await C1319WrapperProbe("open-vanish", pass: false);
+        report += await C1319WrapperProbe("settled-appear", pass: false);
+        report.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, report);
+        report.IndexOf("HOST_DONE", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
+        foreach (var name in new[]
+        {
+            "host-settled-vanish", "host-settled-companion", "host-open-vanish", "host-settled-appear",
+            "wrapper-settled-vanish", "wrapper-settled-companion", "wrapper-open-vanish", "wrapper-settled-appear"
+        })
+            report.IndexOf("PASS " + name, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
+    }
+
+    private static async Task<string> C1319WrapperProbe(string mode, bool pass)
+    {
+        const string project = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1";
+        const string settled = "11111111-1111-1111-1111-111111111111";
+        const string companion = "22222222-2222-2222-2222-222222222222";
+        const string appeared = "33333333-3333-3333-3333-333333333333";
+        using var f = new C1008WrapperFixture();
+        var settledRow = C1319Row(settled, "Queued");
+        var companionRow = C1319Row(companion, "Blocked");
+        var appearedRow = C1319Row(appeared, "Working");
+        JsonObject first;
+        JsonObject second;
+        var details = new JsonObject();
+        switch (mode)
+        {
+            case "settled-vanish":
+                first = C1319Envelope(f, settledRow);
+                second = C1319Envelope(f);
+                details[settled] = C1319Detail(settledRow, "Succeeded");
+                break;
+            case "settled-companion":
+                first = C1319Envelope(f, settledRow, companionRow);
+                second = C1319Envelope(f, companionRow);
+                details[settled] = C1319Detail(settledRow, "Succeeded");
+                details[companion] = C1319Detail(companionRow, "Blocked");
+                break;
+            case "open-vanish":
+                first = C1319Envelope(f, settledRow);
+                second = C1319Envelope(f);
+                details[settled] = C1319Detail(settledRow, "Queued");
+                break;
+            default:
+                first = C1319Envelope(f, settledRow);
+                second = C1319Envelope(f, appearedRow);
+                details[settled] = C1319Detail(settledRow, "Succeeded");
+                details[appeared] = C1319Detail(appearedRow, "Working");
+                break;
+        }
+        f.State["taskQueries"] = new JsonObject { [C1087ListPath(project, "open")] = new JsonArray(first, second) };
+        f.State["details"] = details;
+        var run = await f.Run("check-census");
+        var proved = pass && run.Exit == 0
+            && run.Output.Contains("Census check complete:", StringComparison.Ordinal)
+            && !run.Output.Contains("Unstable", StringComparison.Ordinal)
+            && !run.Output.Contains("RecycleLandUnknown", StringComparison.Ordinal);
+        var refused = !pass && run.Exit == 2
+            && run.Output.Contains("RecycleTaskCensusUnknown cause=Unstable", StringComparison.Ordinal)
+            && !run.Output.Contains("Census check complete:", StringComparison.Ordinal);
+        if (proved && mode == "settled-vanish")
+            proved = run.Output.Contains("RECYCLE_CENSUS runner=server2 open=0 ", StringComparison.Ordinal)
+                && run.Output.Contains("RECYCLE_CENSUS runner=server2-temp open=0 ", StringComparison.Ordinal);
+        if (proved && mode == "settled-companion")
+        {
+            proved = run.Output.Contains("RECYCLE_CENSUS runner=server2 open=1 ", StringComparison.Ordinal)
+                && run.Output.Contains("RECYCLE_CENSUS runner=server2-temp open=1 ", StringComparison.Ordinal);
+            if (proved)
+            {
+                var root = Regex.Match(run.Output, @"(?m)^Census check complete: (.+)$").Groups[1].Value.Trim();
+                var snapshot = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "census-check-census-server2.json")))!["snapshot"]!;
+                var tasks = snapshot["open"]!["tasks"]!.AsObject();
+                proved = !tasks.ContainsKey(settled) && tasks.ContainsKey(companion)
+                    && snapshot["open"]!["land"]!.AsObject().ContainsKey(companion)
+                    && !snapshot["open"]!["land"]!.AsObject().ContainsKey(settled);
+            }
+        }
+        if (proved || refused) return "PASS wrapper-" + mode + "\n";
+        return "FAIL wrapper-" + mode + " exit=" + run.Exit + "\n" + run.Output + "\n";
+    }
+
+    private static JsonObject C1319Row(string id, string status) => new()
+    {
+        ["id"] = id, ["status"] = status, ["runnerId"] = "desktop", ["projectId"] = null,
+        ["scopeSource"] = "None", ["landRequestedAt"] = null, ["landStartedAt"] = null
+    };
+
+    private static JsonObject C1319Envelope(C1008WrapperFixture fixture, params JsonObject[] rows)
+    {
+        var envelope = fixture.State["tasks"]!.DeepClone().AsObject();
+        foreach (var row in rows) envelope["items"]!.AsArray().Add(row.DeepClone());
+        return envelope;
+    }
+
+    private static JsonObject C1319Detail(JsonObject row, string status)
+    {
+        var summary = row.DeepClone().AsObject();
+        summary["status"] = status;
+        return new JsonObject { ["summary"] = summary, ["landRequest"] = null };
+    }
+
+    private static string C1319HostCensusScript()
+    {
+        var remote = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c590-remote.sh"));
+        return """
+            c1008_http() {
+                printf '%s\n' "$1" >> "$root/http-trace"
+                local body id
+                case "$1" in
+                    *'&status='*)
+                        open_reads=$((open_reads + 1))
+                        if [ "$open_reads" -eq 1 ]; then body="$open_first"; else body="$open_later"; fi
+                        ;;
+                    *landPending=true*) body="$empty" ;;
+                    /api/agent-tasks/*)
+                        id="${1##*/}"
+                        body="$(printf '%s' "$details" | jq -ec --arg id "$id" '.[$id]')" || {
+                            C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Transport path=$1"
+                            return 2
+                        }
+                        ;;
+                    *)
+                        C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Transport path=$1"
+                        return 2
+                        ;;
+                esac
+                C1008_HTTP_BODY="$body"
+            }
+            """ + "\n" + C1317ShellFunction(remote, "c1008_tasks_collect") + "\n"
+            + C1317ShellFunction(remote, "c1008_tasks") + "\n" + """
+            set -u
+            root="$(mktemp -d)"
+            trap 'rm -rf -- "$root"' EXIT
+            CASE_DIR="$root/case"
+            mkdir -p "$CASE_DIR"
+            CASE=deploy-parent
+            C1008_RUNNER=server2
+            C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1
+            empty='{"items":[],"scope":{"projectId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","unscoped":"include"},"excluded":{"total":0,"unscoped":0,"byProject":[]}}'
+            open_first="$empty"
+            open_later="$empty"
+            details='{}'
+            open_reads=0
+            row_of() { jq -nc --arg id "$1" --arg status "$2" '{id:$id,status:$status,runnerId:"desktop",projectId:null,scopeSource:"None",landRequestedAt:null,landStartedAt:null}'; }
+            envelope() {
+                local rows='[]' row
+                for row in "$@"; do rows="$(printf '%s' "$rows" | jq -c --argjson row "$row" '. + [$row]')"; done
+                jq -nc --argjson items "$rows" '{items:$items,scope:{projectId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1",unscoped:"include"},excluded:{total:0,unscoped:0,byProject:[]}}'
+            }
+            detail_of() { jq -nc --argjson row "$1" --arg status "$2" '{summary:($row + {status:$status}),landRequest:null}'; }
+            probe() {
+                local name="$1" mode="$2" expect="$3" status=0 extra=ok
+                local settled=11111111-1111-1111-1111-111111111111
+                local companion=22222222-2222-2222-2222-222222222222
+                local appeared=33333333-3333-3333-3333-333333333333
+                local a b c
+                a="$(row_of "$settled" Queued)"
+                b="$(row_of "$companion" Blocked)"
+                c="$(row_of "$appeared" Working)"
+                case "$mode" in
+                    settled-vanish)
+                        open_first="$(envelope "$a")"
+                        open_later="$(envelope)"
+                        details="$(jq -nc --arg id "$settled" --argjson d "$(detail_of "$a" Succeeded)" '{($id):$d}')"
+                        ;;
+                    settled-companion)
+                        open_first="$(envelope "$a" "$b")"
+                        open_later="$(envelope "$b")"
+                        details="$(jq -nc --arg ida "$settled" --arg idb "$companion" --argjson da "$(detail_of "$a" Succeeded)" --argjson db "$(detail_of "$b" Blocked)" '{($ida):$da,($idb):$db}')"
+                        ;;
+                    open-vanish)
+                        open_first="$(envelope "$a")"
+                        open_later="$(envelope)"
+                        details="$(jq -nc --arg id "$settled" --argjson d "$(detail_of "$a" Queued)" '{($id):$d}')"
+                        ;;
+                    settled-appear)
+                        open_first="$(envelope "$a")"
+                        open_later="$(envelope "$c")"
+                        details="$(jq -nc --arg ida "$settled" --arg idc "$appeared" --argjson da "$(detail_of "$a" Succeeded)" --argjson dc "$(detail_of "$c" Working)" '{($ida):$da,($idc):$dc}')"
+                        ;;
+                esac
+                open_reads=0
+                : > "$root/http-trace"
+                C1008_TASK_ERROR=''
+                c1008_tasks > "$root/snapshot.json" || status=$?
+                if [ "$expect" = pass ] && [ "$status" = 0 ]; then
+                    if [ "$mode" = settled-vanish ]; then
+                        jq -e '.open.tasks=={} and .open.land=={}' "$root/snapshot.json" >/dev/null || extra=snapshot
+                    elif [ "$mode" = settled-companion ]; then
+                        jq -e --arg a "$settled" --arg b "$companion" '(.open.tasks|has($a)|not) and (.open.tasks|has($b)) and (.open.land|has($a)|not) and (.open.land[$b]==null)' "$root/snapshot.json" >/dev/null || extra=snapshot
+                    fi
+                fi
+                if [ "$expect" = pass ] && [ "$status" = 0 ] && [ "$extra" = ok ] && [ -z "$C1008_TASK_ERROR" ]; then
+                    printf 'PASS host-%s\n' "$name"
+                elif [ "$expect" = unstable ] && [ "$status" = 2 ] && [ "$C1008_TASK_ERROR" = 'RecycleTaskCensusUnknown cause=Unstable' ]; then
+                    printf 'PASS host-%s\n' "$name"
+                else
+                    printf 'FAIL host-%s status=%s extra=%s error=%s\n' "$name" "$status" "$extra" "$C1008_TASK_ERROR"
+                fi
+            }
+            probe settled-vanish settled-vanish pass
+            probe settled-companion settled-companion pass
+            probe open-vanish open-vanish unstable
+            probe settled-appear settled-appear unstable
+            printf 'HOST_DONE\n'
+            """;
+    }
+
     private static string C1317ShellFunction(string text, string name)
     {
         var lines = text.Replace("\r\n", "\n").Split('\n');
