@@ -179,14 +179,15 @@ public sealed class CheckpointNativeIo : ICheckpointCleanupIo
                     : GetFileType(handle) == 1 ? ("file", (ushort)0x8000)
                     : ("other", (ushort)0);
                 var inode = ((ulong)info.IndexHigh << 32) | info.IndexLow;
-                // NTFS change time moves when creation or last-write is stamped back. Creation time does not.
+                // NTFS change time moves when creation or last-write is stamped back. CopyFile keeps it.
                 var changed = FileTimeToUnixNs(basic.ChangeTime);
                 if (inode == 0 || changed == 0 || !TryWindowsOwner(handle, out var owner, out var ownerOnly))
                     return new("unknown", 0, 0, 0, 0, 0);
                 if (!ownerOnly)
                     mode = (ushort)(mode | 0x3F);
                 var size = (long)(((ulong)info.SizeHigh << 32) | info.SizeLow);
-                return new(kind, 0, inode, kind == "file" ? size : 0, FileTimeToUnixNs(info.Write), changed, mode, info.Links, owner);
+                return new(kind, 0, inode, kind == "file" ? size : 0, FileTimeToUnixNs(info.Write), changed, mode, info.Links, owner,
+                    FileTimeToUnixNs(basic.CreationTime));
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
