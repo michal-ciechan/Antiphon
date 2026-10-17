@@ -169,7 +169,10 @@ worktree's HEAD, to compare with `GET /api/version` and probe the changed featur
 For runner or fake-gateway changes, run
 `pwsh -File scripts/check-daemon-build.ps1` from that canonical checkout, restart
 or redeploy only the affected service when indicated, and recheck its reported
-build. A failed or unavailable probe leaves activation unverified; it does not
+build. When that service is the standing server2 runner, the redeploy is the staged
+rolling rollout; keep dispatching under
+[continuous dispatch](docker-stack.md#continuous-dispatch-during-rollout).
+A failed or unavailable probe leaves activation unverified; it does not
 undo the card move.
 Before relying on newly landed server behavior:
 
