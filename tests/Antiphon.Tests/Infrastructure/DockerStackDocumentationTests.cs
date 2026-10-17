@@ -73,11 +73,13 @@ public sealed class DockerStackDocumentationTests
         section.ShouldContain("a non-empty `antiphon/children/` journal means a repository mutation may still be running and refuses unknown");
         section.ShouldContain("`review-evidence/` are product and agent state, not repository state");
         section.ShouldContain("a file hidden by an ignore rule is accepted by design");
-        // CARD-1105 repair 7: the budget is 3000 s (more than twice the 1404 s replay), the proof fetches
-        // share a 600 s allowance, tmp paths are translated before resolving, nested Git metadata in a
+        // CARD-1105 repair 7, raised by CARD-1316: the default budget is 10800 s
+        // (a clean standing volume measured 5225 s). The proof fetches share a 600 s
+        // allowance, tmp paths are translated before resolving, nested Git metadata in a
         // tmp checkout is classified as under /work.
-        section.ShouldContain("the whole audit has a 50-minute (3000 s) budget");
-        section.ShouldNotContain("30-minute budget", Case.Sensitive, "the budget is 3000 s");
+        section.ShouldContain("the whole audit has a 3-hour (10800 s) budget");
+        section.ShouldNotContain("30-minute budget", Case.Sensitive, "the budget is 10800 s");
+        section.ShouldNotContain("50-minute (3000 s) budget", Case.Sensitive, "CARD-1316 raised the standing-volume cap");
         section.ShouldContain("once all proof fetches of the audit together have used their 600 s allowance");
         section.ShouldContain("is translated to the tmp mount before anything resolves it");
         section.ShouldContain("a `..` in the recorded path refuses");

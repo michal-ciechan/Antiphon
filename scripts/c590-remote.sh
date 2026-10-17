@@ -6055,15 +6055,33 @@ c1008_status_proof() {
     C1008_CENSUS="$census"; C1008_TASKS="$tasks"; C1008_RETIRED_AT="${normalized:-}"
 }
 
+# CARD-1316. A clean standing server2 volume (800 repositories) measured 5225 s.
+# The old 3000 s cap returned status 124 on that volume. Default 10800 s. Override
+# with C1008_AUDIT_TIMEOUT_SECONDS: a positive integer of at most 7 digits. Anything
+# else refuses RecycleGitAuditUnknown before timeout runs.
+c1008_resolve_audit_cap() {
+    local cap="${C1008_AUDIT_TIMEOUT_SECONDS:-10800}"
+    case "$cap" in
+        [1-9]|[1-9][0-9]|[1-9][0-9][0-9]|[1-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9][0-9][0-9])
+            printf '%s\n' "$cap"
+            ;;
+        *)
+            printf 'audit check=audit-timeout status=2 repo=.\nRecycleGitAuditUnknown\n'
+            return 2
+            ;;
+    esac
+}
+
 c1008_git_program() {
     cat <<'C1008_GIT'
-# CARD-1105: one overall budget for the whole audit. The read-only replay over the
-# server2 OLD volume (390 entries, two common directories) took 1404 s at load 17;
-# 3000 s is more than twice that, and still about 1000 s above it with the whole
-# 600 s origin proof-fetch allowance (fetch_origin) spent. Nothing that starts the
-# audit (deploy-server2.ps1, verify-docker-stack.ps1, the ssh in c590-real.ps1,
-# docker start -a) has a shorter wall deadline. A timeout is RecycleGitAuditUnknown,
-# never a pass.
+# CARD-1105 / CARD-1316. One overall budget for the whole audit. A clean standing
+# server2 volume (800 repositories) measured 5225 s, so the default is 10800 s
+# (C1008_AUDIT_TIMEOUT_SECONDS, resolved by c1008_resolve_audit_cap on the host).
+# The read-only OLD-volume replay took 1404 s at load 17. deploy-server2.ps1 does
+# not wrap redeploy-old's deploy-parent in a wall deadline. Invoke-C590Ssh waits
+# until ssh exits: ConnectTimeout only bounds the handshake, and ServerAlive
+# disconnects only when the server stops answering. docker start -a waits until
+# this helper exits. Status 124 or 137 is RecycleGitAuditUnknown, never a pass.
 set -u
 c1008_audit_body=''
 IFS= read -r -d '' c1008_audit_body <<'C1008_AUDIT_BODY' || :
@@ -7083,7 +7101,16 @@ case "$c1008_audit_body" in
     *) printf 'audit check=audit-body status=2 repo=.\nRecycleGitAuditUnknown\n'; exit 2 ;;
 esac
 c1008_audit_status=0
-timeout --kill-after=10s 3000s bash -c "$c1008_audit_body" || c1008_audit_status=$?
+audit_cap="${C1008_AUDIT_TIMEOUT_SECONDS:-10800}"
+case "$audit_cap" in
+    [1-9]|[1-9][0-9]|[1-9][0-9][0-9]|[1-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+    *)
+        printf 'audit check=audit-timeout status=2 repo=.\n'
+        printf 'RecycleGitAuditUnknown\n'
+        exit 2
+        ;;
+esac
+timeout --kill-after=10s "${audit_cap}s" bash -c "$c1008_audit_body" || c1008_audit_status=$?
 case "$c1008_audit_status" in
     124|137)
         printf 'audit check=audit-timeout status=%s repo=.\n' "$c1008_audit_status"
@@ -7218,6 +7245,13 @@ c1008_audit() {
     fi
     [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
     [ "$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null)" = "$image" ] || return 2
+    local cap resolve_status=0
+    cap="$(c1008_resolve_audit_cap)" || resolve_status=$?
+    if [ "$resolve_status" != 0 ]; then
+        printf '%s\n' "$cap"
+        return 2
+    fi
+    mounts+=(--env "C1008_AUDIT_TIMEOUT_SECONDS=$cap")
     program="$(c1008_git_program)"
     helper="$(docker create --user 1654:1654 --entrypoint /bin/bash \
         "${mounts[@]}" "$image" -c "$program" 2>/dev/null)" \
