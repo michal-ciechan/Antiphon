@@ -214,8 +214,10 @@ public sealed class RollingVolumeRecycleScriptTests
                     queries[C1087ListPath(project, "land")] = envelope;
                     expected = "RecycleTaskCensusUnknown cause=UnfilteredRow id=" + id; break;
                 case "unstable":
+                    // A no-land appearance is CARD-1324. This vector keeps the land-request refusal.
                     queries[C1087ListPath(project, "open")] = new JsonArray(empty.DeepClone(), envelope);
-                    f.State["details"] = new JsonObject { [id] = new JsonObject { ["summary"] = row.DeepClone(), ["landRequest"] = null } };
+                    f.State["details"] = new JsonObject { [id] = new JsonObject { ["summary"] = row.DeepClone(), ["landRequest"] = new JsonObject {
+                        ["state"] = "Completed", ["terminalEventId"] = "44444444-4444-4444-4444-444444444444" } } };
                     expected = "RecycleTaskCensusUnknown cause=Unstable"; break;
                 case "closure":
                     const string other = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -814,7 +816,7 @@ public sealed class RollingVolumeRecycleScriptTests
         report += await C1319WrapperProbe("settled-vanish", pass: true);
         report += await C1319WrapperProbe("settled-companion", pass: true);
         report += await C1319WrapperProbe("open-vanish", pass: false);
-        report += await C1319WrapperProbe("settled-appear", pass: false);
+        report += await C1319WrapperProbe("settled-appear", pass: true);
         report.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, report);
         report.IndexOf("HOST_DONE", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
         foreach (var name in new[]
@@ -887,6 +889,21 @@ public sealed class RollingVolumeRecycleScriptTests
                 var tasks = snapshot["open"]!["tasks"]!.AsObject();
                 proved = !tasks.ContainsKey(settled) && tasks.ContainsKey(companion)
                     && snapshot["open"]!["land"]!.AsObject().ContainsKey(companion)
+                    && !snapshot["open"]!["land"]!.AsObject().ContainsKey(settled);
+            }
+        }
+        if (proved && mode == "settled-appear")
+        {
+            proved = run.Output.Contains("RECYCLE_CENSUS runner=server2 open=1 ", StringComparison.Ordinal)
+                && run.Output.Contains("RECYCLE_CENSUS runner=server2-temp open=1 ", StringComparison.Ordinal);
+            if (proved)
+            {
+                var root = Regex.Match(run.Output, @"(?m)^Census check complete: (.+)$").Groups[1].Value.Trim();
+                var snapshot = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "census-check-census-server2.json")))!["snapshot"]!;
+                var tasks = snapshot["open"]!["tasks"]!.AsObject();
+                proved = !tasks.ContainsKey(settled) && tasks.ContainsKey(appeared)
+                    && snapshot["open"]!["land"]!.AsObject().ContainsKey(appeared)
+                    && snapshot["open"]!["land"]![appeared] is null
                     && !snapshot["open"]!["land"]!.AsObject().ContainsKey(settled);
             }
         }
@@ -1003,6 +1020,8 @@ public sealed class RollingVolumeRecycleScriptTests
                         jq -e '.open.tasks=={} and .open.land=={}' "$root/snapshot.json" >/dev/null || extra=snapshot
                     elif [ "$mode" = settled-companion ]; then
                         jq -e --arg a "$settled" --arg b "$companion" '(.open.tasks|has($a)|not) and (.open.tasks|has($b)) and (.open.land|has($a)|not) and (.open.land[$b]==null)' "$root/snapshot.json" >/dev/null || extra=snapshot
+                    elif [ "$mode" = settled-appear ]; then
+                        jq -e --arg a "$settled" --arg c "$appeared" '(.open.tasks|has($a)|not) and (.open.tasks|has($c)) and (.open.land|has($a)|not) and (.open.land|has($c)) and (.open.land[$c]==null) and ((.land.tasks|has($c))|not)' "$root/snapshot.json" >/dev/null || extra=snapshot
                     fi
                 fi
                 if [ "$expect" = pass ] && [ "$status" = 0 ] && [ "$extra" = ok ] && [ -z "$C1008_TASK_ERROR" ]; then
@@ -1016,7 +1035,7 @@ public sealed class RollingVolumeRecycleScriptTests
             probe settled-vanish settled-vanish pass
             probe settled-companion settled-companion pass
             probe open-vanish open-vanish unstable
-            probe settled-appear settled-appear unstable
+            probe settled-appear settled-appear pass
             printf 'HOST_DONE\n'
             """;
     }
