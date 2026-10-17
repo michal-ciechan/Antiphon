@@ -145,9 +145,13 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
  const vol=mount.match(/source=([^,]+)/)[1];if(!state.volumes[vol])fail();
  if(mounts[1]!=='type=tmpfs,destination=/tmp,tmpfs-mode=1777,tmpfs-size=2147483648')fail();
  const tmpVol=vol.replace(/_work$/,'_runner-tmp'),Mounts=[{Type:'volume',Name:vol,Source:state.volumes[vol].Mountpoint,Destination:'/work'}];
- if(mounts.length===3){if(mounts[2]!=='type=volume,source='+tmpVol+',target=/runner-tmp,readonly'||!state.volumes[tmpVol]||envs.join()!=='C1008_TMP_MOUNT=/runner-tmp')fail();
+ // The host always forwards the audit cap. C1008_SCRATCH_QUOTA_BYTES is optional and unset in production.
+ const mountEnv=envs.filter(e=>e==='C1008_TMP_MOUNT=/runner-tmp');
+ const extra=envs.filter(e=>e!=='C1008_TMP_MOUNT=/runner-tmp');
+ const forwarded=extra.every(e=>/^C1008_AUDIT_TIMEOUT_SECONDS=[1-9][0-9]{0,6}$/.test(e)||/^C1008_SCRATCH_QUOTA_BYTES=[0-9]+$/.test(e))&&new Set(extra.map(e=>e.split('=',1)[0])).size===extra.length;
+ if(mounts.length===3){if(mounts[2]!=='type=volume,source='+tmpVol+',target=/runner-tmp,readonly'||!state.volumes[tmpVol]||mountEnv.length!==1||!forwarded)fail();
   Mounts.push({Type:'volume',Name:tmpVol,Source:state.volumes[tmpVol].Mountpoint,Destination:'/runner-tmp'});}
- else if(mounts.length!==2||envs.length||state.volumes[tmpVol])fail();
+ else if(mounts.length!==2||mountEnv.length||!forwarded||state.volumes[tmpVol])fail();
  const id='6'.repeat(64);state.auditProgram=args[args.indexOf('-c')+1];state.auditEnv=envs;state.containers.push({Id:id,Image:'sha256:'+'a'.repeat(64),State:{Running:false,Status:'created'},Config:{Labels:{'io.antiphon.audit':'true'}},Mounts});save();out(id+'\n');
 } else if(args[0]==='start') {
  const id=args.at(-1),c=state.containers.find(c=>c.Id===id);if(!c)fail();
