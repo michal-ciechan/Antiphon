@@ -53,8 +53,26 @@ public sealed class KeepSixReminderJob(
             .Where(row => ids.Contains(row.AgentId))
             .ToDictionaryAsync(row => row.AgentId, ct)
             .ConfigureAwait(false);
-        var counts = await shortfall.ReadAsync(agents, stored, ct).ConfigureAwait(false);
-        var sessionIds = agents
+        // D-9: the toggle is the switch. An off fleet, and an enabled row that is still held,
+        // must not scan the backlog. Shortfall runs only for rows that can be reminded.
+        var due = new List<Agent>(agents.Count);
+        foreach (var agent in agents)
+        {
+            if (!stored.TryGetValue(agent.Id, out var row) || !row.Enabled)
+                continue;
+            if (row.HoldUntil is DateTime holdUntil && now < holdUntil)
+                continue;
+            due.Add(agent);
+        }
+
+        if (due.Count == 0)
+        {
+            await tx.CommitAsync(ct).ConfigureAwait(false);
+            return;
+        }
+
+        var counts = await shortfall.ReadAsync(due, stored, ct).ConfigureAwait(false);
+        var sessionIds = due
             .Select(agent => ParseSession(agent.PersistentSessionId))
             .Where(id => id is Guid)
             .Select(id => id!.Value)
@@ -66,7 +84,7 @@ public sealed class KeepSixReminderJob(
                 .Where(session => sessionIds.Contains(session.Id))
                 .ToDictionaryAsync(session => session.Id, ct)
                 .ConfigureAwait(false);
-        var boardIds = agents
+        var boardIds = due
             .Where(agent => agent.BoardId is Guid)
             .Select(agent => agent.BoardId!.Value)
             .Distinct()
@@ -79,7 +97,7 @@ public sealed class KeepSixReminderJob(
                 .ConfigureAwait(false);
         var pipelines = new Dictionary<Guid, AgentTaskPipelineDto>();
 
-        foreach (var agent in agents)
+        foreach (var agent in due)
         {
             if (!stored.TryGetValue(agent.Id, out var row) || !row.Enabled)
                 continue;
