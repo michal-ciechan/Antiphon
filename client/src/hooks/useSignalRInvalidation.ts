@@ -20,7 +20,9 @@ interface EventPayload {
 
 type InvalidationMapping = {
   event: string
-  getKeys: (payload: EventPayload) => unknown[][]
+  // `as const` query keys (keepSixKeys.list) are readonly tuples. A mutable
+  // unknown[][] rejects them (TS4104 / TS2322).
+  getKeys: (payload: EventPayload) => ReadonlyArray<readonly unknown[]>
 }
 
 const INVALIDATION_MAP: InvalidationMapping[] = [
