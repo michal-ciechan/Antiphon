@@ -63,7 +63,20 @@ if ($Path) {
     }
     if ($Path -like '/api/agent-tasks/*') {
         $id = $Path.Substring('/api/agent-tasks/'.Length)
-        if ($state.details -and $state.details.PSObject.Properties.Name -contains $id) { $state.details.$id | ConvertTo-Json -Compress -Depth 20 }
+        if ($state.details -and $state.details.PSObject.Properties.Name -contains $id) {
+            $detail = $state.details.$id
+            # A per-id array is consumed one observation at a time so a later pass can
+            # disagree with the first. A single object stays the standing detail.
+            if ($detail -is [System.Collections.IEnumerable] -and $detail -isnot [string] -and $detail -isnot [pscustomobject]) {
+                $detail = @($detail)
+                $chosen = $detail[0]
+                if ($detail.Count -gt 1) {
+                    $state.details.$id = @($detail | Select-Object -Skip 1)
+                    $state | ConvertTo-Json -Compress -Depth 30 | Set-Content -LiteralPath $env:C727_TEST_STATE
+                }
+                ConvertTo-Json -InputObject $chosen -Compress -Depth 20
+            } else { $detail | ConvertTo-Json -Compress -Depth 20 }
+        }
         else {
             $summary = @($state.tasks.items | Where-Object id -eq $id) | Select-Object -First 1
             if (-not $summary) { $summary = @{ id=$id } }
