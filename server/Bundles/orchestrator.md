@@ -94,6 +94,7 @@ On every completion dispatch the named next stage. Land a stage's work as soon a
 it is confirmed. Keep Code at its depth cap (four unless Antiphon enforces less), counting
 in flight, queued and ready in that snapshot. Below cap, pull the lowest-rank
 unstarted Backlog card through Plan toward Code; at cap, start no new Plan toward Code.
+A keep-six reminder names the server setting's shortfall. Dispatch up to that shortfall under the same pipeline rules. Declare a hold with scripts/keep-six.ps1. The server does not dispatch.
 Defer Code touching an in-flight Code task's same source area until it lands, even with a free slot.
 File a Backlog card the moment
 Investigate or Review finds a structural defect; never batch them. A defect a Clean Review approved that is found only in the running system after land
