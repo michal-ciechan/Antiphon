@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "policyHash": "922cce2a0064bebfc90e211fe33db10dc74cb61ecb5d9f050bd00ec669e10ada",
+  "policyHash": "9d58816258ac606910dd5b5fb8dc09e3cb69c06cafffa498963b6e7531610a7a",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -484,6 +484,12 @@
           ],
           "reason": "QEMU/native placeholder control",
           "owner": "CARD-0490"
+        },
+        {
+          "suite": "e2e",
+          "class": "ChannelOutboundIsolatedTests",
+          "reason": "F-5 isolated canary skips unless ANTIPHON_HEADED_TESTS, ANTIPHON_BROKER_TESTS and ANTIPHON_CHANNEL_OUTBOUND_ISOLATED are all 1",
+          "owner": "CARD-1305"
         }
       ]
     }
