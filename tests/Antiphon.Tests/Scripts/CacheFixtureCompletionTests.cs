@@ -67,6 +67,10 @@ public sealed class CacheFixtureCompletionTests
         Run("c1315-fail-closed.sh", "retired-inspect", "PASS retired-inspect-not-absence");
 
     [Test]
+    public void Modern_daemon_missing_volume_text_is_positive_absence() =>
+        Run("c1315-fail-closed.sh", "modern-volume-absent", "PASS modern-volume-absent");
+
+    [Test]
     public async Task Bridge_retains_diagnostics_and_refuses_failed_transport()
     {
         var start = new ProcessStartInfo("pwsh")

@@ -251,6 +251,23 @@ retired-inspect)
     printf '%s\n' "$CASE_OUT" | grep -Fq 'RecycleVolumeCensusUnknown' && fail retired-ps-census-token
     printf 'PASS retired-inspect-not-absence\n'
     ;;
+modern-volume-absent)
+    # Pin the modern daemon line, including the real CLI's stdout [].
+    # The same bytes on a non-volume inspect stay unknown.
+    docker() {
+        if [ "${2:-}" != inspect ]; then return 0; fi
+        printf '[]\n'
+        printf 'Error response from daemon: get %s: no such volume\n' "${*: -1}" >&2
+        return 1
+    }
+    state=0
+    c849_fixture_resource_state volume "c849${RUN}-packages" || state=$?
+    [ "$state" = 1 ] || fail "modern-volume-absent state=$state"
+    state=0
+    c849_fixture_resource_state network "c849${RUN}-packages" || state=$?
+    [ "$state" = 2 ] || fail "modern-volume-text-on-network state=$state"
+    printf 'PASS modern-volume-absent\n'
+    ;;
 *)
     fail "unknown mode $mode"
     ;;

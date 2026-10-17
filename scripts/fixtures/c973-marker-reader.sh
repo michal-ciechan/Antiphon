@@ -131,7 +131,7 @@ docker() {
         *) return 2 ;;
     esac
 }
-for function in c1008_volume c1008_cache_preservation c849_image c849_empty_volume c849_volume c849_prepare c849_cold_volume_facts c849_require_ready c849_contract_receipt c849_assert_mounts c849_seed case_verify_runner_caches case_verify_runner_caches_retired; do
+for function in c1008_volume c1008_cache_preservation c849_image c849_empty_volume c849_volume c849_prepare c849_cold_volume_facts c849_require_ready c849_contract_receipt c849_assert_mounts c849_seed c849_fixture_resource_state case_verify_runner_caches case_verify_runner_caches_retired; do
     eval "$(extract "$function")"
 done
 # Cold reuse must not consult a donor or run smoke. Unexpected work is a refusal.
