@@ -1342,7 +1342,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
 
     // CARD-1318 (c): FileShare.None across the first stat, released inside the retry bound, is adopted.
     // A holder kept for the whole bound stays unrecorded and cleanup refuses. The release delay sits
-    // inside CheckpointNativeIo's sharing-violation bound (20 waits of 50 ms).
+    // inside CheckpointNativeIo's sharing-violation bound.
     [Test]
     public void windows_sharing_violation_retries_then_adopts()
     {
@@ -1355,10 +1355,14 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         var payload = Path.Combine(output, "app.dll");
         File.WriteAllText(payload, "COMPILER");
         var exited = AfterFileClock(payload);
+        var boundMs = (CheckpointNativeIo.CustodySharingViolationAttempts - 1)
+            * CheckpointNativeIo.CustodySharingViolationDelayMilliseconds;
+        const int releaseMs = 400;
+        (boundMs > releaseMs).ShouldBeTrue("release delay must sit inside the sharing retry");
         var hold = new FileStream(payload, FileMode.Open, FileAccess.Read, FileShare.None);
         var releaser = Task.Run(() =>
         {
-            Thread.Sleep(400);
+            Thread.Sleep(releaseMs);
             hold.Dispose();
         });
         try

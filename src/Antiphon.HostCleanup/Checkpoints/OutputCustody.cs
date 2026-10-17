@@ -11,8 +11,12 @@ namespace Antiphon.Checkpoints;
 // nothing; the entry stays unrecorded and cleanup refuses it. Boundary, not closed: a same-uid
 // writer inside the build window (the root is 0700, so it shares the build's trust domain) and a
 // write within one kernel timestamp tick after the observed exit are indistinguishable from the
-// build. Windows has no statx: CustodyStat reads the opened handle after the observed exit and
-// adopts a regular file or directory with one link that is not a reparse. A second link or a
+// build. Windows has no statx. CustodyStat reads the opened handle after the observed exit and
+// adopts a regular file or directory with one link that is not a reparse, owned by this process,
+// with NTFS change time (not the settable creation time) inside that window and mtime not after
+// the exit. The fresh root is created with an owner-only DACL; a DACL that grants another SID
+// sets the low mode bits, so For returns no window. CreateFile error 32 (sharing violation) is
+// retried for a short bound and then stays unknown, so cleanup still refuses. A second link or a
 // reparse stays unrecorded. Other platforms adopt nothing. The build ledger still uses Stat,
 // which on Windows has no inode and no change time.
 public static class OutputCustody
