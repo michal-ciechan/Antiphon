@@ -89,6 +89,9 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
             Skip.Test("CARD-1310 confined Windows build leaves UseAppHost unset");
 
         var root = InitGitRepo();
+        // Prepare and the script stat with system git config disabled. A host autocrlf commit
+        // then looks dirty. Store the fixture bytes as written.
+        Git(root, "config", "core.autocrlf", "false");
         Write(root, ".gitignore", "bin-*/\nobj/\n.antiphon/\n");
         Write(root, "App/App.csproj", """
             <Project Sdk="Microsoft.NET.Sdk">
