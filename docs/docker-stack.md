@@ -279,7 +279,8 @@ no cold seed.
 `antiphon-runner_runner-state` grok directory (`RUNNER_GROK_STORE_DIR`, that volume's mountpoint
 plus `/grok`) at `/state/grok` through `docker-compose.server2-runner.temp.yml`.
 `drain-temp` is still later, so the rollout order is unchanged. `docker/stack/init-state.sh`
-owns `/state`, `/work` and `/runner-state` one path at a time. A missing path is not a failure:
+owns `/state`, `/work` and `/runner-state` with one `chown -h` per find batch, and falls back
+to one path at a time only when that batch fails. A missing path is not a failure:
 a live Grok process can unlink a file after the walk has listed it.
 A path that is still present and cannot be owned still fails the init, and `compose up` still stops on that error.
 

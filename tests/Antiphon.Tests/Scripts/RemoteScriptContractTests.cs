@@ -8260,8 +8260,9 @@ public sealed class RemoteScriptContractTests
         var end = script.IndexOf("\n}\n", start, StringComparison.Ordinal);
         end.ShouldBeGreaterThan(start);
         var own = script[start..(end + 2)];
+        Regex.Matches(own, @"chown -h ""\$uid:\$gid"" -- ""\$@""").Count.ShouldBe(1);
         Regex.Matches(own, @"chown -h ""\$uid:\$gid"" ""\$path""").Count.ShouldBe(2);
-        Regex.Matches(own, @"\bchown\b").Count.ShouldBe(2);
+        Regex.Matches(own, @"\bchown\b").Count.ShouldBe(3);
     }
 
     // CARD-1331. own_tree must spend one chown process on each find batch.

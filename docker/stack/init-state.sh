@@ -73,6 +73,7 @@ fi
 # listed name can disappear before it is owned. A path that is already gone is not a
 # failure. A path that is still present and cannot be owned still fails the init.
 # chown -h owns the path itself, including a dangling symlink, and does not follow it.
+# One chown covers each find batch. A failed batch falls back to the per-path walk.
 own_tree() {
   owned_status=$(mktemp)
   find_status=0
@@ -81,17 +82,19 @@ own_tree() {
     gid=$2
     owned_status=$3
     shift 3
-    for path do
-      if chown -h "$uid:$gid" "$path" 2>/dev/null; then
-        continue
-      fi
-      if [ -e "$path" ] || [ -L "$path" ]; then
-        chown -h "$uid:$gid" "$path" || {
-          echo fail >> "$owned_status"
-          exit 1
-        }
-      fi
-    done
+    if ! chown -h "$uid:$gid" -- "$@" 2>/dev/null; then
+      for path do
+        if chown -h "$uid:$gid" "$path" 2>/dev/null; then
+          continue
+        fi
+        if [ -e "$path" ] || [ -L "$path" ]; then
+          chown -h "$uid:$gid" "$path" || {
+            echo fail >> "$owned_status"
+            exit 1
+          }
+        fi
+      done
+    fi
   ' sh "$uid" "$gid" "$owned_status" {} + || find_status=$?
   if [ -s "$owned_status" ] || [ "$find_status" -ne 0 ]; then
     rm -f "$owned_status"
