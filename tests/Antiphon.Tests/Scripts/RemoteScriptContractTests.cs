@@ -2998,6 +2998,39 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+    // CARD-1338. The fixture exports RUNNER_GROK_STORE_DIR. Production dry-run does not:
+    // the intercept calls c1008_recycle before case_retire_temp_runner reads stack.temp.env.
+    // compose_temp then exports the empty value over that file, and the temp overlay rejects
+    // the missing /state/grok source. The preview must name the four temp volumes and remove nothing.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1338_Retire_temp_dry_run_lists_exactly_the_temp_volumes()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var f = new C1008HostFixture(main: false);
+        var run = await f.Run("retire-temp-runner", dryRun: true, extra: "unset RUNNER_GROK_STORE_DIR");
+        run.Exit.ShouldBe(0, "c1338-preview: " + run.Output);
+        run.Output.ShouldNotContain("RecycleComposeMismatch");
+        run.Output.ShouldNotContain("MUTATION", Case.Sensitive, "c1338-preview: preview precedes generic setup");
+        var removes = run.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.TrimEnd('\r'))
+            .Where(line => line.StartsWith("C1008_PREVIEW remove=", StringComparison.Ordinal))
+            .ToArray();
+        removes.ShouldBe(new[]
+        {
+            "C1008_PREVIEW remove=antiphon-runner-temp_work",
+            "C1008_PREVIEW remove=antiphon-runner-temp_runner-tmp",
+            "C1008_PREVIEW remove=antiphon-runner-temp_dind-data",
+            "C1008_PREVIEW remove=antiphon-runner-temp_runner-state"
+        });
+        run.Output.ShouldContain(
+            "C1008_PREVIEW preserve=antiphon-runner_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=true");
+        f.Removed.ShouldBeEmpty("c1338-preview: dry-run removes nothing");
+        f.Trace.Any(a => new[] { "stop", "rm", "create", "start", "run" }.Contains(a[0])
+            || a.Take(2).SequenceEqual(new[] { "volume", "rm" })).ShouldBeFalse();
+        File.Exists(C1105Journal(f)).ShouldBeFalse("c1338-preview: dry-run writes no journal");
+    }
+
     // CARD-1105 V-2. The running roster is the previous generation; the replacement must carry the new bind.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
