@@ -6288,9 +6288,14 @@ fail() {
 }
 refuse_unknown() {
     trap - ERR
-    printf 'audit check=%s status=%s repo=%s\n' "$1" "$2" "$(rel_repo "$3")"
+    printf 'audit check=%s status=%s repo=%s%s\n' "$1" "$2" "$(rel_repo "$3")" "${4:+ $4}"
     printf 'RecycleGitAuditUnknown\n'
     exit 2
+}
+# consider_gitdir classifies a linked admin without changing audit_repo, which
+# consider_common set to the checkout. Name that admin (relative, redacted).
+refuse_gitdir_entry() {
+    refuse_unknown gitdir-entry 0 "$audit_repo" "admin=$(rel_repo "$1")"
 }
 refuse_dirty() {
     trap - ERR
@@ -6498,6 +6503,11 @@ consider_stale_index() {
 # Common directory only: antiphon/ (product state; a pending children/ journal is
 # unknown), review-evidence/ (agent evidence, not repository state), an empty
 # common/ and an empty git-daemon-export-ok. Editor swap/backup files: unknown.
+# Linked worktree admin only: antiphon-mirror-owner.json (RunnerWorkspaceBindingStore
+# WriteOwnerStamp). A regular file, not a symlink or directory, one link, at most
+# 4096 bytes, owned by the uid running this audit. The same name in the common
+# directory, any other shape, and every other unknown name refuse gitdir-entry.
+# That refusal names the admin, relative to the work volume.
 # Configuration, hooks, descriptions and message files name no object.
 consider_pseudoref() {
     local file="$1" name="$2" line
@@ -6617,6 +6627,17 @@ consider_antiphon() {
         [ -z "$pending" ] || refuse_unknown antiphon-children 0 "$audit_repo"
     fi
 }
+# CARD-1335. The runner writes this file into every linked worktree admin. It
+# names no object. Anything other than the allowed shape refuses gitdir-entry.
+consider_mirror_owner() {
+    local entry="$1" level="$2" directory="$3" meta
+    [ "$level" = linked ] || refuse_gitdir_entry "$directory"
+    [ -f "$entry" ] && [ ! -L "$entry" ] || refuse_gitdir_entry "$directory"
+    meta="$(stat -c '%h %u %s' -- "$entry")" || fail $?
+    [[ "$meta" =~ ^([0-9]+)\ ([0-9]+)\ ([0-9]+)$ ]] || fail 2
+    [ "${BASH_REMATCH[1]}" = 1 ] && [ "${BASH_REMATCH[2]}" = "$(id -u)" ] && [ "${BASH_REMATCH[3]}" -le 4096 ] \
+        || refuse_gitdir_entry "$directory"
+}
 consider_gitdir() {
     local directory="$1" level="$2" entry name linked held
     audit_check=gitdir-list
@@ -6634,7 +6655,7 @@ consider_gitdir() {
             logs) consider_logs "$entry" ;;
             info) consider_info "$entry" ;;
             worktrees)
-                [ "$level" = common ] && [ -d "$entry" ] && [ ! -L "$entry" ] || refuse_unknown gitdir-entry 0 "$audit_repo"
+                [ "$level" = common ] && [ -d "$entry" ] && [ ! -L "$entry" ] || refuse_gitdir_entry "$directory"
                 find "$entry" -mindepth 1 -maxdepth 1 -print0 > "$scratch/linked" 2>/dev/null || fail $?
                 while IFS= read -r -d '' linked; do
                     consider_gitdir "$linked" linked
@@ -6642,13 +6663,13 @@ consider_gitdir() {
                 ;;
             index) [ "$level" = linked ] || [ "$top_bare" = false ] || refuse_unknown bare-index 0 "$audit_repo" ;;
             antiphon)
-                [ "$level" = common ] || refuse_unknown gitdir-entry 0 "$audit_repo"
+                [ "$level" = common ] || refuse_gitdir_entry "$directory"
                 consider_antiphon "$entry"
                 ;;
             review-evidence)
-                [ "$level" = common ] && [ -d "$entry" ] && [ ! -L "$entry" ] || refuse_unknown gitdir-entry 0 "$audit_repo" ;;
+                [ "$level" = common ] && [ -d "$entry" ] && [ ! -L "$entry" ] || refuse_gitdir_entry "$directory" ;;
             common)
-                [ "$level" = common ] && [ -d "$entry" ] && [ ! -L "$entry" ] || refuse_unknown gitdir-entry 0 "$audit_repo"
+                [ "$level" = common ] && [ -d "$entry" ] && [ ! -L "$entry" ] || refuse_gitdir_entry "$directory"
                 audit_check=gitdir-common
                 held="$(find "$entry" -mindepth 1 -print -quit 2>/dev/null)" || fail $?
                 [ -z "$held" ] || refuse_unknown gitdir-common 0 "$audit_repo"
@@ -6664,7 +6685,8 @@ consider_gitdir() {
             rr-cache|sharedindex.*|fsmonitor--daemon|fsmonitor--daemon.ipc) ;;
             # An editor swap or backup may hold unrecovered text: recover or delete it.
             .*.sw[a-p]|*~) refuse_unknown gitdir-editor 0 "$audit_repo" ;;
-            *) refuse_unknown gitdir-entry 0 "$audit_repo" ;;
+            antiphon-mirror-owner.json) consider_mirror_owner "$entry" "$level" "$directory" ;;
+            *) refuse_gitdir_entry "$directory" ;;
         esac
     done < "$scratch/sorted-$level"
 }
