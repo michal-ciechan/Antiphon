@@ -2536,6 +2536,25 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1105_Git_audit_hidden_locations(string location) => C1105AuditContract(location);
 
+    // CARD-1335. A regular antiphon-mirror-owner.json in a linked admin passes. An unknown
+    // sibling, a symlink, a directory, a second link, another owner, a file over 4096 bytes
+    // and the same name in the common directory refuse gitdir-entry status 0 and name that admin.
+    [Test]
+    [Arguments("mirror-owner")]
+    [Arguments("mirror-owner-bound")]
+    [Arguments("mirror-owner-oversize")]
+    [Arguments("mirror-owner-unknown")]
+    [Arguments("mirror-owner-symlink")]
+    [Arguments("mirror-owner-directory")]
+    [Arguments("mirror-owner-hardlink")]
+    [Arguments("mirror-owner-other-uid")]
+    [Arguments("mirror-owner-common")]
+    [Arguments("unknown-entry")]
+    [Arguments("antiphon-linked")]
+    [Arguments("review-evidence-linked")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1335_Mirror_owner_stamp_in_linked_admin(string variant) => C1105AuditContract(variant);
+
     public static IEnumerable<string> C1105HiddenLocations()
     {
         var fixture = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1105-git-audit.cjs"));

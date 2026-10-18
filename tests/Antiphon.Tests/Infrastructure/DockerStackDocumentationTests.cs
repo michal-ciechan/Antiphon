@@ -72,6 +72,11 @@ public sealed class DockerStackDocumentationTests
         section.ShouldContain("audited whether or not its checkout still exists");
         section.ShouldContain("a non-empty `antiphon/children/` journal means a repository mutation may still be running and refuses unknown");
         section.ShouldContain("`review-evidence/` are product and agent state, not repository state");
+        // CARD-1335: the linked-admin mirror-owner stamp is on the closed list, and a
+        // gitdir-entry refusal names that admin.
+        section.ShouldContain("antiphon-mirror-owner.json");
+        section.ShouldContain("at most 4096 bytes");
+        section.ShouldContain("A `gitdir-entry` refusal names that admin directory");
         section.ShouldContain("a file hidden by an ignore rule is accepted by design");
         // CARD-1105 repair 7, raised by CARD-1316: the default budget is 10800 s
         // (a clean standing volume measured 5225 s). The proof fetches share a 600 s

@@ -250,6 +250,20 @@ function volumeScale(count, files) {
     }
     git('push', '-q', 'origin', 'refs/heads/task-*:refs/heads/task-*');
 }
+// CARD-1335. gitdir-entry names the admin directory being classified, relative to
+// the work volume. A linked admin is worktrees/<id>; the common directory is .git.
+const linkedAdmin = /^audit check=gitdir-entry status=0 repo=repo admin=repo\/\.git\/worktrees\/linked$/m;
+const commonAdmin = /^audit check=gitdir-entry status=0 repo=repo admin=repo\/\.git$/m;
+function mirrorStamp(text) {
+    put(linked() + 'antiphon-mirror-owner.json', text ?? '{"taskId":"d3c62283-34af-4c7a-b79a-16e068fde52e","creationGeneration":"695a5dab-0e8d-4efb-89ae-d4deb96d8045","preparationId":"148c04fe-58ac-4f89-b082-652dd77c4eca"}\n');
+}
+function otherAuditUid() {
+    const bin = path.join(root, 'fake-bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'id'), "#!/bin/sh\nif [ \"$1\" = -u ]; then printf '%s\\n' 99999; exit 0; fi\nexec /usr/bin/id \"$@\"\n");
+    fs.chmodSync(path.join(bin, 'id'), 0o755);
+    env.PATH = bin + path.delimiter + env.PATH;
+}
 // HIDDEN-LOCATIONS-BEGIN: one row per Git-directory location (closure table in
 // docs/investigations/2026-10-07-card-1105-git-audit-promisor.md). A private commit
 // stored only in that location must refuse; a published one must pass.
@@ -296,7 +310,7 @@ const hidden = {
     'replace-packed': [K, () => add('packed-refs', `${head()} refs/replace/${priv()}\n`), 'check=replace-ref'],
     'grafts': [K, () => put('info/grafts', `${head()} ${priv()}\n`), 'check=grafts'],
     'info-entry': [K, () => put('info/private', priv() + '\n'), 'check=gitdir-info'],
-    'unknown-entry': [K, () => { const oid = priv(); put('lost-found/commit/' + oid, oid + '\n'); }, 'check=gitdir-entry'],
+    'unknown-entry': [K, () => { const oid = priv(); put('lost-found/commit/' + oid, oid + '\n'); }, commonAdmin],
     'modules': [K, moduleDir, 'check=gitdir-modules'],
     'reftable': [K, reftable, 'check=ref-storage'],
     'bare-index': [K, () => { const bare = bareMirror(), blob = run('git', ['-C', bare, 'hash-object', '-w', '--stdin'], {input: 'private'});
@@ -338,9 +352,9 @@ const hidden = {
         put('antiphon/reviews/task/review.md', 'notes'); fs.mkdirSync(gd('antiphon/children'));
     }],
     'antiphon-children': [K, () => put('antiphon/children/child.json', '{}'), 'check=antiphon-children'],
-    'antiphon-linked': [K, () => put(linked() + 'antiphon/landing.lock', ''), 'check=gitdir-entry'],
+    'antiphon-linked': [K, () => put(linked() + 'antiphon/landing.lock', ''), linkedAdmin],
     'review-evidence': [P, () => put('review-evidence/4a14585d/review.md', 'evidence')],
-    'review-evidence-linked': [K, () => put(linked() + 'review-evidence/review.md', 'evidence'), 'check=gitdir-entry'],
+    'review-evidence-linked': [K, () => put(linked() + 'review-evidence/review.md', 'evidence'), linkedAdmin],
     // Content-free layout markers pass; anything that can hold bytes refuses.
     'common-empty': [P, () => fs.mkdirSync(gd('common'))],
     'common-content': [K, () => put('common/private', priv() + '\n'), 'check=gitdir-common'],
@@ -545,8 +559,18 @@ const hidden = {
         seedClone(path.join(work, 'repo2')); seedClone(path.join(work, 'repo3')); staleMaster(); allowance(600000, 301);
     }, /^audit check=rev-list status=0 repo=repo[23]? proof=present /m,
         () => assert.equal(starts('+refs/heads/*:refs/c1008/origin/*'), 2, 'the allowance pays for two fetches')],
-};
 // HIDDEN-LOCATIONS-END
+    // CARD-1335. Not a hidden object location: C1335_Mirror_owner_stamp_in_linked_admin runs these.
+    'mirror-owner': [P, () => mirrorStamp()],
+    'mirror-owner-bound': [P, () => mirrorStamp('x'.repeat(4096))],
+    'mirror-owner-oversize': [K, () => mirrorStamp('x'.repeat(4097)), linkedAdmin],
+    'mirror-owner-unknown': [K, () => { mirrorStamp(); put('worktrees/linked/antiphon-mirror-owner.json.tmp', ''); }, linkedAdmin],
+    'mirror-owner-symlink': [K, () => { linked(); fs.symlinkSync('HEAD', gd('worktrees/linked/antiphon-mirror-owner.json')); }, linkedAdmin],
+    'mirror-owner-directory': [K, () => { linked(); fs.mkdirSync(gd('worktrees/linked/antiphon-mirror-owner.json')); }, linkedAdmin],
+    'mirror-owner-hardlink': [K, () => { mirrorStamp(); fs.linkSync(gd('worktrees/linked/antiphon-mirror-owner.json'), path.join(work, 'stamp-alias')); }, linkedAdmin],
+    'mirror-owner-other-uid': [K, () => { mirrorStamp(); otherAuditUid(); }, linkedAdmin],
+    'mirror-owner-common': [K, () => put('antiphon-mirror-owner.json', '{}'), commonAdmin],
+};
 try {
     setup(); helper();
     let expected = 'RecycleUnpublishedWork', expectedCheck, after = () => {};
