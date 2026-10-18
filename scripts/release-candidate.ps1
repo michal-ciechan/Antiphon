@@ -1,17 +1,18 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    CARD-0599 D-3: cut one immutable release candidate from origin/master.
+    Journal one release candidate.
 
-    Fetches origin/master in a producer-owned isolated clone, pins its full SHA
-    once, and pushes a create-only branch release/rc-YYYYMMDDTHHMMSSZ. The
-    candidate journal is written before the push, so an ambiguous response
-    resumes the same identity instead of allocating a second candidate.
+    An omitted -Ref refuses rc-ref-required and pushes nothing. A long-lived
+    rc/YYYY-MM-DD must already exist on the remote: the script journals that
+    tip under rc-YYYY-MM-DD- plus the first 12 hex digits of the tested SHA
+    and does not create or push the branch. A missing ref is rc-ref-missing.
 
-    No force push, no direct repair commits, no moving a tested branch. An
-    existing candidate ref pointing at a different SHA is a hard refusal. The
-    same journal/ref/SHA is an idempotent resume.
+    A legacy release/rc-YYYYMMDDTHHMMSSZ -Ref keeps today's create-only push.
+    The journal is written before that push. An existing stamp at a different
+    SHA is remote-candidate-conflict. The same journal/ref/SHA resumes.
 
+    No force push, no direct repair commits, no moving a tested branch.
     This script does not run tests, publish a release or restart anything.
 
     ASCII-only on purpose - parseable under Windows PowerShell 5.1.
@@ -24,8 +25,9 @@
     checkout and never a linked worktree.
 
 .PARAMETER Ref
-    Candidate ref to cut or resume. Generated from the current UTC time when
-    omitted.
+    Required. rc/YYYY-MM-DD journals the existing remote tip. A legacy
+    release/rc-YYYYMMDDTHHMMSSZ stamp keeps the create-only push. Omitted
+    refuses rc-ref-required.
 
 .PARAMETER SeamsPath
     Injectable Git boundary for the offline contract tests. Never used in
@@ -76,7 +78,13 @@ function Invoke-AntiphonReleaseCandidate {
 
     if ([string]::IsNullOrWhiteSpace($CheckoutRoot)) { $CheckoutRoot = Join-Path $ReleaseRoot 'checkout' }
 
-    if ([string]::IsNullOrWhiteSpace($Ref)) { $Ref = New-ReleaseGateCandidateRef -Utc (Get-NightlyUtcNow) }
+    if ([string]::IsNullOrWhiteSpace($Ref)) {
+        Write-CandidateLine 'REFUSED: candidate ref (rc-ref-required).'
+        $result.Refusal = 'rc-ref-required'
+        $result.ExitCode = 3
+        $result.Pushed = $false
+        return [pscustomobject]$result
+    }
     $candidate = Test-ReleaseGateCandidateRef -Ref $Ref
     if (-not $candidate.Ok) {
         Write-CandidateLine ('REFUSED: candidate ref ({0}).' -f $candidate.Reason)
@@ -107,16 +115,19 @@ function Invoke-AntiphonReleaseCandidate {
         $result.Refusal = 'unmarked-clone'; $result.ExitCode = 3; return [pscustomobject]$result
     }
 
-    $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $ReleaseRoot -CandidateId $candidate.CandidateId
-    New-Item -ItemType Directory -Path $root -Force | Out-Null
-    $journalPath = Join-Path $root 'candidate.json'
-    $result.JournalPath = $journalPath
-
+    # A long-lived id includes the tested SHA, which is not known until the remote
+    # tip is read. Do not create a root from the empty pre-SHA id.
     $existing = $null
-    if (Test-Path -LiteralPath $journalPath) {
-        try { $existing = Get-Content -LiteralPath $journalPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch {
-            Write-CandidateLine ('REFUSED: unreadable candidate journal ({0}).' -f $_.Exception.Message)
-            $result.Refusal = 'journal-unreadable'; $result.ExitCode = 3; return [pscustomobject]$result
+    if ($candidate.Kind -ne 'long-lived') {
+        $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $ReleaseRoot -CandidateId $candidate.CandidateId
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $journalPath = Join-Path $root 'candidate.json'
+        $result.JournalPath = $journalPath
+        if (Test-Path -LiteralPath $journalPath) {
+            try { $existing = Get-Content -LiteralPath $journalPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch {
+                Write-CandidateLine ('REFUSED: unreadable candidate journal ({0}).' -f $_.Exception.Message)
+                $result.Refusal = 'journal-unreadable'; $result.ExitCode = 3; return [pscustomobject]$result
+            }
         }
     }
 
@@ -131,6 +142,74 @@ function Invoke-AntiphonReleaseCandidate {
             }
             Write-NightlyAtomicJson -Path (Join-Path $CheckoutRoot '.antiphon-release-owned') -Object ([ordered]@{ origin = $RemoteUrl; kind = 'release-clone' })
         }
+    }
+
+    # A long-lived ref is already on the remote. Journal that tip. Do not push.
+    if ($candidate.Kind -eq 'long-lived') {
+        $remote = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('ls-remote', '--heads', 'origin', $candidate.Ref)
+        if ([int]$remote.ExitCode -ne 0) {
+            Write-CandidateLine 'REFUSED: could not read the long-lived rc ref.'
+            $result.Refusal = 'rc-ref-unresolved'; $result.ExitCode = 3; return [pscustomobject]$result
+        }
+        $remoteSha = ''
+        $line = ([string]$remote.Output).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($line)) { $remoteSha = ($line -split '\s+')[0].Trim() }
+        if ([string]::IsNullOrWhiteSpace($remoteSha)) {
+            Write-CandidateLine ('REFUSED: remote {0} does not exist.' -f $candidate.Ref)
+            $result.Refusal = 'rc-ref-missing'; $result.ExitCode = 3; return [pscustomobject]$result
+        }
+        if (-not (Test-ReleaseGateFullSha -Sha $remoteSha)) {
+            Write-CandidateLine ('REFUSED: remote {0} did not resolve to a full sha ({1}).' -f $candidate.Ref, $remoteSha)
+            $result.Refusal = 'sha-unresolved'; $result.ExitCode = 1; return [pscustomobject]$result
+        }
+        $candidate = Test-ReleaseGateCandidateRef -Ref $candidate.Ref -Sha $remoteSha
+        if (-not $candidate.Ok -or [string]::IsNullOrWhiteSpace([string]$candidate.CandidateId)) {
+            Write-CandidateLine 'REFUSED: long-lived candidate id.'
+            $result.Refusal = 'candidate-id'; $result.ExitCode = 3; return [pscustomobject]$result
+        }
+        $result.CandidateId = $candidate.CandidateId
+        $result.Ref = $candidate.Ref
+        $result.Sha = $remoteSha
+        $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $ReleaseRoot -CandidateId $candidate.CandidateId
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $journalPath = Join-Path $root 'candidate.json'
+        $result.JournalPath = $journalPath
+        $existing = $null
+        if (Test-Path -LiteralPath $journalPath) {
+            try { $existing = Get-Content -LiteralPath $journalPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch {
+                Write-CandidateLine ('REFUSED: unreadable candidate journal ({0}).' -f $_.Exception.Message)
+                $result.Refusal = 'journal-unreadable'; $result.ExitCode = 3; return [pscustomobject]$result
+            }
+        }
+        if ($null -ne $existing -and -not [string]::IsNullOrWhiteSpace([string]$existing.sha) -and
+            -not [string]::Equals([string]$existing.sha, $remoteSha, [StringComparison]::OrdinalIgnoreCase)) {
+            Write-CandidateLine ('REFUSED: candidate {0} already pinned to {1}.' -f $candidate.CandidateId, $existing.sha)
+            $result.Refusal = 'candidate-repinned'; $result.ExitCode = 3; return [pscustomobject]$result
+        }
+        if ($null -ne $existing -and -not [string]::IsNullOrWhiteSpace([string]$existing.sha)) { $result.Resumed = $true }
+        $journal = [ordered]@{
+            schemaVersion = 1
+            candidateId = $candidate.CandidateId
+            ref = $candidate.Ref
+            sha = $remoteSha
+            sourceRef = $candidate.Ref
+            remoteUrl = $RemoteUrl
+            scheduleSlot = $ScheduleSlot
+            cutUtc = $candidate.CutUtc.ToString('o')
+            createdAt = (Get-NightlyUtcNow).ToString('o')
+            pushed = $false
+        }
+        if ($WhatIf) {
+            Write-CandidateLine ('WhatIf: would journal {0} at {1}' -f $candidate.Ref, $remoteSha)
+            $result.Pushed = $false
+            $result.ExitCode = 0
+            return [pscustomobject]$result
+        }
+        Write-NightlyAtomicJson -Path $journalPath -Object $journal
+        Write-CandidateLine ('journalled {0} at {1}; not pushed' -f $candidate.Ref, $remoteSha)
+        $result.Pushed = $false
+        $result.ExitCode = 0
+        return [pscustomobject]$result
     }
 
     # Pin once. A resume never re-pins: it reuses the journal's SHA and only

@@ -176,7 +176,7 @@ function Invoke-AntiphonNightlyRunCore {
             # green, monitor and receipt files all live under its own candidate root.
             $candidate = Test-ReleaseGateCandidateRef -Ref $Ref
             if (-not $candidate.Ok) {
-                Write-Host ('REFUSED: rc profile needs a release/rc-<stamp> ref ({0}).' -f $candidate.Reason)
+                Write-Host ('REFUSED: rc profile needs an rc/YYYY-MM-DD ref or a legacy release/rc-<stamp> ({0}).' -f $candidate.Reason)
                 $result.Refusal = 'rc-ref'
                 $result.Phase = 'profile'
                 $result.ExitCode = 3
