@@ -171,9 +171,105 @@ Console failures, `file :: test`:
 - `TestHelpers\TranscriptHotPathFixture.cs :: Repeated_hot_reads_do_not_add_transcript_sequential_scans`
 - `TestHelpers\TranscriptHotPathFixture.cs :: Uuid_membership_seeks_by_session_and_uuid`
 
-#### session-runner (in progress at 18:55)
+#### session-runner (ended 19:10 local)
 
-`Antiphon.SessionRunner.Tests.exe` pid `30976` (parent `10828`) started at 18:50:00 local. Its watchdog is `1200000` ms. At 18:55:48 cpu was 35 and the working set was 200MB. `session-runner-all-tests.log.stdout.tmp` and `.stderr.tmp` were still 0 bytes, and `session-runner-all.trx` was not written yet.
+`Antiphon.SessionRunner.Tests.exe` pid `30976` started at 18:50:00 local and was gone by 19:11. The profile watchdog is `1200000` ms. The diagnostic file's last write is 19:10:00 and `session-runner-all-tests.log` closed at 19:10:02. `session-runner-all.trx` was not written. Same shape as `antiphon`: the wall clock matches the watchdog, and `FailedTestNodeStateProperty` was not the last flushed state of any uid.
+
+| Outcome | Count | Source |
+|---|---|---|
+| Passed | 1408 | diagnostic, last flushed state (1552 uids) |
+| Skipped | 18 | diagnostic and console |
+| Failed, terminal diagnostic record | 0 | diagnostic |
+| No flushed terminal state | 126 | diagnostic last state `InProgress` |
+| Failed lines | 119 | `session-runner-all-tests.log` |
+
+The 119 console failures are unclassified while pid `38396` is alive. Named brief suspects `C1192`, `C1191`, `C1105`, `C599`, and `LandDelivery` do not appear in this log.
+
+Exception groups: 92 `UnauthorizedAccessException`, 15 `InvalidOperationException`, 11 `ShouldAssertException`, 1 `TimeoutException`.
+
+Skipped names: `Arm_A_unknown_resume_is_refused_before_allocation`, `Arm_B_create_is_detected_as_grok`, `Arm_C_resume_of_the_created_directory_is_detected`, `Arm_D_detect_timeout_on_an_idle_shell_keeps_the_pane_for_relaunch`, `C1032_InspectionR3Mode(add-executable)`, `C1032_InspectionR3Mode(remove-executable)`, `C1032_RemovalLinuxIgnoredFifoRefuses`, `C1032_StoreIdentityRefused(unreadable)`, `C461_G083_Foreign_after_runner_inspection`, `C461_G084_External_tree_race_at_teardown`, `C461_G085_Backend_rpc_fence`, `Isolated_backend_closes_only_reviewed_incarnation(False)`, `Isolated_backend_closes_only_reviewed_incarnation(True)`, `Isolated_backend_recovers_lost_close_result`, `Linux_probe_reads_live_proc`, `Live_herdr_creates_reuses_and_refuses_on_a_labelled_tab`, `Owned_tab_and_workspace_getters_support_rename_follow_validation`, `Restart_adopts_same_store_session_and_generation`.
+
+Console failures, `file :: test` (one row has no `in` path in the first 20 lines of its stack):
+
+- `(no path) :: C1065_RepositoryIdentityReadIsBoundToSessionCheckout`
+- `Antiphon.SessionRunner.Tests\AgentPinPublicationTests.cs :: V13_PublicationCustody`
+- `Antiphon.SessionRunner.Tests\AgentPinPublicationTests.cs :: V14_PublicationFences`
+- `Antiphon.SessionRunner.Tests\AgentPinPublicationTests.cs :: V14_PublicationReplay`
+- `Antiphon.SessionRunner.Tests\AgentPinPublicationTests.cs :: V14_PublicationSerialization`
+- `Antiphon.SessionRunner.Tests\AgentPinPublicationTests.cs :: V15_PublicationCleanup`
+- `Antiphon.SessionRunner.Tests\AgentPinPublicationTests.cs :: V34_PublicationAdmission`
+- `Antiphon.SessionRunner.Tests\AgentPinWorkspaceStoreTests.cs :: V13_InspectPathSafety`
+- `Antiphon.SessionRunner.Tests\AgentPinWorkspaceStoreTests.cs :: V32_InspectPosixPaths`
+- `Antiphon.SessionRunner.Tests\AgentPinWorkspaceStoreTests.cs :: V34_InspectProtocolAdmission`
+- `Antiphon.SessionRunner.Tests\CodexAuthProbeTests.cs :: Symlinked_auth_file_is_not_presence_but_a_linked_home_is_judged_by_its_file`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_GuardedOperationIsDistinct`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerAttemptIdentity`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerBranchIdentity`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerDigestReplay`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerDirtySource`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerFreshFinalInspection`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerHeadIdentity`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerIgnoredPolicy`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerIntentBeforeIo`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerNoFollow`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerNoForceBypass`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerPathIdentity`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerPreservationProof`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerProcessOwnerHolds`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerReadoptionFence`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerRepositoryIdentity`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerSourceLandingExcluded`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerStoreIdentity`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_RunnerTaskIdentity`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1017_UnknownProcessOwnershipHolds`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_FenceAttachOrders`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_FenceCreationOrders`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_FenceHerdrReadoptionOrders`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_FenceStartOrders`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_FenceStartupAdoptionOrders`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_FenceUnknownJournal`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_InspectionHoldShapes` (42 argument cases: admin-custom lock, admin-gc pid, admin-HEAD lock, admin-index lock, assume-clean, assume-dirty, bare, BISECT_LOG, both-flags, case-twin, CHERRY_PICK_HEAD, common-gc pid, common-index lock, common-MERGE_HEAD, common-packed-refs lock, common-refs/heads/side lock, common-shallow lock, detached, evidence, flagged-newline-path, gitlink, ignored-bare, ignored-nested, link, locked-registration, merge, nested, other-repository, protected, prunable-registration, rebase-apply, rebase-merge, REVERT_HEAD, sequencer, shallow, skip-clean, skip-dirty, sparse, staged, tracked, unborn, untracked)
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_InspectionPolicyParity`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_InspectionR3Bare` (case-head, case-objects, case-refs, directory-head, missing-head, missing-objects, missing-refs)
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_InspectionR3Filter` (changed, unchanged)
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_InspectionR3History` (custom-replace, grafts, replace)
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_InspectionReadOnlyBound`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_InspectionReadOnlyGitCalls`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_InspectionSourceProof`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_RemovalComponentRecovery`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_RemovalEligiblePhysical`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_RemovalLateRootIdentityRefuses`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_RemovalOriginalReplacement`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_TransportDefaultInert`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_TransportDispatchReplay`
+- `Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs :: C1032_TransportRequiredPayload`
+- `Antiphon.SessionRunner.Tests\GrokRulesHttpAcceptanceTests.cs :: Real_http_capability_and_session_receipts_exclude_rules_body_with_herdr_disabled`
+- `Antiphon.SessionRunner.Tests\PhoneHomeConnectionServiceTests.cs :: Websocket_connect_that_hangs_ends_within_the_connect_timeout`
+- `Antiphon.SessionRunner.Tests\UnixPtyArgvAdmissionTests.cs :: Malformed_inputs_reach_existing_runtime_validation`
+- `Antiphon.SessionRunner.Tests\UnixPtyArgvAdmissionTests.cs :: Nul_refusal_is_named_on_both_launch_routes` (ordinary, platform_constrained)
+- `Antiphon.SessionRunner.Tests\UnixPtyArgvAdmissionTests.cs :: Nul_request_is_refused_before_effects` (grok_payload, grok, plain, tracked)
+- `Antiphon.SessionRunner.Tests\UnixPtyArgvAdmissionTests.cs :: Null_exe_keeps_existing_validation_message_on_launch_routes` (ordinary, platform_constrained)
+- `Antiphon.SessionRunner.Tests\UnixPtyArgvAdmissionTests.cs :: Phone_home_nul_refusal_is_named` (launch, platform_constrained)
+- `Antiphon.SessionRunner.Tests\UnixPtyArgvAdmissionTests.cs :: Platform_and_backend_boundaries_keep_existing_verdicts` (herdr_nul, platform_invalid, platform_mismatch, unknown_backend)
+
+The grouped rows above are the 119 console lines. `C1032_InspectionHoldShapes` is 42 cases, `C1032_InspectionR3Bare` is 7, `C1032_InspectionR3Filter` is 2, `C1032_InspectionR3History` is 3, and the `UnixPtyArgvAdmissionTests` rows expand to 15.
+
+#### pty-host (passed)
+
+`Antiphon.PtyHost.Tests` finished in 22s 545ms and wrote `pty-host-all.trx` (230019 bytes, 19:10:25) plus `pty-host-all.discovery.json`. The console summary and the TRX agree.
+
+| Outcome | Count |
+|---|---|
+| Total | 147 |
+| Passed | 116 |
+| Failed | 0 |
+| Skipped | 31 |
+
+TRX outcome `NotExecuted` is 31, matching the skipped count. Log: `pty-host-all-tests.log`.
+
+#### agents-pty (in progress at 19:11)
+
+`Antiphon.Agents.Pty.Tests.exe` pid `78640` (parent `10828`) started at 19:10:37 local. Its watchdog is `1200000` ms. At 19:11 the stdout and stderr temps were still 0 bytes and cpu was 15.6.
 
 ## Linux lane
 
@@ -181,4 +277,4 @@ Not started. `server2` has git and no host `pwsh` or `dotnet`. The rc profile en
 
 ## Resume
 
-Watch pid `38396`. The current suite process at 18:55 was pid `30976` (`Antiphon.SessionRunner.Tests`). When `38396` exits, read the last JSON line of `C:\Antiphon\releases\rc-2026-10-18-nightly-nosync.log` and `C:\Antiphon\releases\candidates\rc-2026-10-18-a1d24b6fc92d\state\last-run.json`. Suite logs and TRX stay under the run log directory above. Do not publish, tag, or start a second Windows run at this SHA until that process has exited.
+Watch pid `38396`. The current suite process at 19:11 was pid `78640` (`Antiphon.Agents.Pty.Tests`). When `38396` exits, read the last JSON line of `C:\Antiphon\releases\rc-2026-10-18-nightly-nosync.log` and `C:\Antiphon\releases\candidates\rc-2026-10-18-a1d24b6fc92d\state\last-run.json`. Suite logs and TRX stay under the run log directory above. Do not publish, tag, or start a second Windows run at this SHA until that process has exited.
