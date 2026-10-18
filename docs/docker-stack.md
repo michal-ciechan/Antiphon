@@ -243,7 +243,16 @@ disagreement or invalid land proof remains `RecycleLandUnknown`, except a termin
 (`Succeeded`, `Failed` or `Canceled`) with `landRequest` null, which is proven no-land and may
 be absent from the next pass's list without `Unstable`, and except a task that first appears
 on that pass with `landRequest` null, outside the `landPending` closure, and with neither land
-timestamp set. A land request, an unknown land state, or a changed row still refuses. Project resolution
+timestamp set. A land request, an unknown land state, or a changed row still refuses.
+CARD-1326 keeps two edges of that exception. A task that appears under a nested excluded
+scope still ends `RecycleTaskCensusUnknown cause=Unstable`: forgiveness rewrites the open
+task, its null land proof and the scope id list only, and leaves `excluded.byProject` counts
+and any scope pass 0 did not contain untouched. Each pass already reconciles those counts
+with the rows it walked, so a nested appearance is a different closure. `check-census` stays
+the read-only count report, so a row with `landRequestedAt` or `landStartedAt` increments
+`landPending`. When that row, or a row whose id is in the `landPending` closure, is the
+pass-1 appearance, the two-pass compare refuses `cause=Unstable`. Mutating phases and the
+host census refuse `RecycleLandInFlight` on the row itself. Project resolution
 uses `RecycleProjectUnresolved` and its cause. Each census retains approved read
 timings/counts and reduced task/land facts; no task prose, credentials or response body
 is retained. A refusal stops the phase before destructive work, including on resume.
@@ -288,7 +297,8 @@ no cold seed.
 `antiphon-runner_runner-state` grok directory (`RUNNER_GROK_STORE_DIR`, that volume's mountpoint
 plus `/grok`) at `/state/grok` through `docker-compose.server2-runner.temp.yml`.
 `drain-temp` is still later, so the rollout order is unchanged. `docker/stack/init-state.sh`
-owns `/state`, `/work` and `/runner-state` one path at a time. A missing path is not a failure:
+owns `/state`, `/work` and `/runner-state` with one `chown -h` per find batch, and falls back
+to one path at a time only when that batch fails. A missing path is not a failure:
 a live Grok process can unlink a file after the walk has listed it.
 A path that is still present and cannot be owned still fails the init, and `compose up` still stops on that error.
 

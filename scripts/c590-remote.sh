@@ -3775,7 +3775,7 @@ c849_fixture_volume_fault() {
 }
 
 c849_fixture_prepare() {
-    local image name original_mode
+    local image name original_mode state
     C849_PACKAGES="c849${RUN}-packages"
     C849_SCRATCH="c849${RUN}-scratch"
     C849_NPM="c849${RUN}-npm"
@@ -3795,8 +3795,13 @@ c849_fixture_prepare() {
     for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
         [[ "$name" =~ ^c849[a-z0-9]{1,64}-(packages|scratch|npm)$ ]] \
             || write_result false FixtureNamespaceInvalid 2
-        docker volume inspect "$name" >/dev/null 2>&1 \
-            && write_result false FixtureNamespaceOccupied 2
+        state=0
+        c849_fixture_resource_state volume "$name" || state=$?
+        case "$state" in
+            0) write_result false FixtureNamespaceOccupied 2 ;;
+            1) ;;
+            *) write_result false FixtureVolumeInspectFailed 2 ;;
+        esac
         printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
     done
     image="$(c849_image)" || {
@@ -3870,7 +3875,7 @@ c849_fixture_tree_fault() {
 }
 
 c849_fixture_seed() {
-    local image donor tree name before after recovery npm_status=0
+    local image donor tree name before after recovery npm_status=0 state
     image="$(c849_image)" || {
         if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
         write_result false CacheHelperImageMissing 2
@@ -3881,7 +3886,13 @@ c849_fixture_seed() {
     C849_NPM="c849${RUN}seed-npm"
     C849_READY="$SERVER2_ROOT/cache/fixture-seed-ready"
     for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
-        docker volume inspect "$name" >/dev/null 2>&1 && write_result false FixtureNamespaceOccupied 2
+        state=0
+        c849_fixture_resource_state volume "$name" || state=$?
+        case "$state" in
+            0) write_result false FixtureNamespaceOccupied 2 ;;
+            1) ;;
+            *) write_result false FixtureVolumeInspectFailed 2 ;;
+        esac
         printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
     done
     c849_payload_own volume || write_result false FixtureWorkspaceUnknown 2
@@ -3936,9 +3947,15 @@ c849_fixture_seed() {
     c849_payload_fs reader '[ -s "$1/packages/c913.tools/2.0.0/.nupkg.metadata" ] && [ -n "$(find "$1/npm" -type f -print -quit)" ]' bash "$recovery" \
         && [ -s "$CASE_DIR/npm-integrity.txt" ] \
         || write_result false FixtureRecoveryMissing 2
-    before="$(c849_payload_fs reader 'sha256sum "$1"' bash "$tree/packages/c913.tools/2.0.0/tool" | cut -d' ' -f1)"
-    after="$(c849_payload_fs reader 'sha256sum "$1"' bash "$recovery/packages/c913.tools/2.0.0/tool" | cut -d' ' -f1)"
-    [ "$before" = "$after" ] && [ "$(c849_payload_fs reader 'stat -c %a "$1"' bash "$recovery/packages/c913.tools/2.0.0/tool")" = 755 ] \
+    before="$(c849_payload_fs reader 'sha256sum "$1"' bash "$tree/packages/c913.tools/2.0.0/tool")" \
+        || write_result false FixtureSeedPayloadChanged 2
+    before="${before%% *}"
+    after="$(c849_payload_fs reader 'sha256sum "$1"' bash "$recovery/packages/c913.tools/2.0.0/tool")" \
+        || write_result false FixtureSeedPayloadChanged 2
+    after="${after%% *}"
+    [[ "$before" =~ ^[0-9a-f]{64}$ ]] && [[ "$after" =~ ^[0-9a-f]{64}$ ]] \
+        && [ "$before" = "$after" ] \
+        && [ "$(c849_payload_fs reader 'stat -c %a "$1"' bash "$recovery/packages/c913.tools/2.0.0/tool")" = 755 ] \
         || write_result false FixtureSeedPayloadChanged 2
     [ "$(docker inspect -f '{{.State.Running}}' "$donor")" = true ] \
         || write_result false FixtureDonorNotRestarted 2
@@ -4213,7 +4230,7 @@ c849_fixture_race_lock_probe() {
 }
 
 c849_fixture_nuget_race() {
-    local image packages scratch private_scratch name
+    local image packages scratch private_scratch name state
     image="$(c849_image)" || {
         if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
         write_result false CacheHelperImageMissing 2
@@ -4222,7 +4239,13 @@ c849_fixture_nuget_race() {
     scratch="c849${RUN}race-scratch"
     private_scratch="c849${RUN}private-scratch"
     for name in "$packages" "$scratch" "$private_scratch"; do
-        docker volume inspect "$name" >/dev/null 2>&1 && write_result false FixtureNamespaceOccupied 2
+        state=0
+        c849_fixture_resource_state volume "$name" || state=$?
+        case "$state" in
+            0) write_result false FixtureNamespaceOccupied 2 ;;
+            1) ;;
+            *) write_result false FixtureVolumeInspectFailed 2 ;;
+        esac
         printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
     done
     C849_PACKAGES="$packages"; C849_SCRATCH="$scratch"
@@ -4271,7 +4294,7 @@ c849_fixture_masked_pack() {
 }
 
 c849_fixture_apphost() {
-    local image packages scratch name root helper pack work_mount lookup=0
+    local image packages scratch name root helper pack work_mount lookup=0 state
     image="$(c849_image)" || write_result false CacheHelperImageMissing 2
     work_mount="$(c849_fixture_work_mount)" || write_result false FixtureWorkspaceForeign 2
     c849_fixture_cache_mount_ok "$C849_NPM" npm-content || write_result false CacheVolumeForeign 2
@@ -4288,7 +4311,13 @@ c849_fixture_apphost() {
     ' sh "$root" || write_result false FixtureOrdinarySetupFailed 2
     packages="c849${RUN}smoke-packages"; scratch="c849${RUN}smoke-scratch"
     for name in "$packages" "$scratch"; do
-        docker volume inspect "$name" >/dev/null 2>&1 && write_result false FixtureNamespaceOccupied 2
+        state=0
+        c849_fixture_resource_state volume "$name" || state=$?
+        case "$state" in
+            0) write_result false FixtureNamespaceOccupied 2 ;;
+            1) ;;
+            *) write_result false FixtureVolumeInspectFailed 2 ;;
+        esac
         printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
     done
     C849_PACKAGES="$packages"; C849_SCRATCH="$scratch"
@@ -4390,7 +4419,7 @@ c849_fixture_npm_install() {
 }
 
 c849_fixture_npm() {
-    local identity image cache empty_cache network integrity name work_mount
+    local identity image cache empty_cache network integrity name work_mount state
     image="$(c849_image)" || {
         if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
         write_result false CacheHelperImageMissing 2
@@ -4398,7 +4427,13 @@ c849_fixture_npm() {
     cache="c849${RUN}npmcache-npm"; empty_cache="c849${RUN}npmempty-npm"
     network="c849-${RUN}-npm"
     for name in "$cache" "$empty_cache"; do
-        docker volume inspect "$name" >/dev/null 2>&1 && write_result false FixtureNamespaceOccupied 2
+        state=0
+        c849_fixture_resource_state volume "$name" || state=$?
+        case "$state" in
+            0) write_result false FixtureNamespaceOccupied 2 ;;
+            1) ;;
+            *) write_result false FixtureVolumeInspectFailed 2 ;;
+        esac
         printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
     done
     C849_NPM="$cache"; c849_volume "$cache" npm-content yes "$image"
@@ -4773,7 +4808,10 @@ c849_fixture_prune() {
     c849_fixture_recovery_copy "$image" "$recovery" || write_result false CacheRecoveryMissing 2
     c849_payload_fs writer 'printf npm-content > "$1/npm/fixture-content"' bash "$recovery" || write_result false CacheRecoveryMissing 2
     c849_payload_call writer c849_manifest_write "$recovery" "$recovery/recovery.manifest" || write_result false CacheManifestFailed 2
-    payload="$(c849_payload_fs reader 'sha256sum "$1"' bash "$recovery/recovery.manifest" | cut -d' ' -f1)"
+    payload="$(c849_payload_fs reader 'sha256sum "$1"' bash "$recovery/recovery.manifest")" \
+        || write_result false CacheSeedMarkerInvalid 2
+    payload="${payload%% *}"
+    [[ "$payload" =~ ^[0-9a-f]{64}$ ]] || write_result false CacheSeedMarkerInvalid 2
     image_id="$(docker image inspect -f '{{.Id}}' "$image")" || write_result false CacheRecoveryImageMissing 2
     printf 'schema=3\nkind=full\nsource-sha=%s\nimage=%s\ndonor-type=saved-directory\ndonor=saved\ntime=%s\npackages=%s\nscratch=%s\nnpm=%s\npackage-bytes=0\nnpm-bytes=0\nrecovery=%s\nmanifest-sha256=%s\n' \
         "$SHA" "$image_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" "$recovery" "$payload" > "$C849_READY"
@@ -4867,11 +4905,17 @@ c849_fixture_cleanup_scope() (
 )
 
 c849_fixture_contract_controls() {
-    local image old_packages="$C849_PACKAGES" old_scratch="$C849_SCRATCH" recovery expected file saved kind name
+    local image old_packages="$C849_PACKAGES" old_scratch="$C849_SCRATCH" recovery expected file saved kind name state
     image="$(c849_image)" || write_result false CacheHelperImageMissing 2
     C849_PACKAGES="c849${RUN}warm-packages"; C849_SCRATCH="c849${RUN}warm-scratch"
     for name in "$C849_PACKAGES" "$C849_SCRATCH"; do
-        docker volume inspect "$name" >/dev/null 2>&1 && write_result false FixtureNamespaceOccupied 2
+        state=0
+        c849_fixture_resource_state volume "$name" || state=$?
+        case "$state" in
+            0) write_result false FixtureNamespaceOccupied 2 ;;
+            1) ;;
+            *) write_result false FixtureVolumeInspectFailed 2 ;;
+        esac
         printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
     done
     c849_volume "$C849_PACKAGES" nuget-packages yes "$image"
@@ -5352,17 +5396,30 @@ case_verify_runner_caches_retired() {
         > "$CASE_DIR/status.json" || write_result false MainRunnerStatusInvalid 2
     printf '%s\n' "$C849_KIND" > "$CASE_DIR/seed-kind.txt"
 
-    if [ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$TEMP_PROJECT")" ]; then
+    local listed ps_status=0 volume_state=0 volume
+    listed="$(docker ps -aq --filter "label=com.docker.compose.project=$TEMP_PROJECT")" || ps_status=$?
+    if [ "$ps_status" != 0 ]; then
+        write_result false CacheDonorLookupFailed 2
+    fi
+    if [ -n "$listed" ]; then
         write_result false TempContainersRemain 2
     fi
-    local volume
     for volume in runner-tmp work runner-state dind-data; do
-        if docker volume inspect "${TEMP_PROJECT}_$volume" >/dev/null 2>&1; then
-            write_result false TempPrivateVolumeRemains 2
-        fi
+        volume_state=0
+        c849_fixture_resource_state volume "${TEMP_PROJECT}_$volume" || volume_state=$?
+        case "$volume_state" in
+            0) write_result false TempPrivateVolumeRemains 2 ;;
+            1) ;;
+            *) write_result false CacheVolumeInspectFailed 2 ;;
+        esac
     done
-    docker volume inspect "${HOST_PROJECT}_runner-tmp" >/dev/null 2>&1 \
-        || write_result false MainTmpMissing 2
+    volume_state=0
+    c849_fixture_resource_state volume "${HOST_PROJECT}_runner-tmp" || volume_state=$?
+    case "$volume_state" in
+        0) ;;
+        1) write_result false MainTmpMissing 2 ;;
+        *) write_result false CacheVolumeInspectFailed 2 ;;
+    esac
     local container tmp_mode
     container="$(docker ps -q --filter "label=com.docker.compose.project=$HOST_PROJECT" \
         --filter 'label=com.docker.compose.service=session-runner')"

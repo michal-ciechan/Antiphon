@@ -175,7 +175,15 @@ docker() {
       volume:ls) printf '%s\n' "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" ;;
       volume:create) name="${@: -1}"; mkdir -p "$root/volumes/$name/_data"; echo "$name" ;;
       volume:inspect)
-        name="${@: -1}"; [ -d "$root/volumes/$name/_data" ] || return 1; role=nuget-packages
+        name="${@: -1}"
+        # Real `docker volume inspect` prints [] on stdout and this daemon line on stderr.
+        # A bare exit 1 is unknown to c849_fixture_resource_state, not absence.
+        if [ ! -d "$root/volumes/$name/_data" ]; then
+          printf '[]\n'
+          printf 'Error response from daemon: get %s: no such volume\n' "$name" >&2
+          return 1
+        fi
+        role=nuget-packages
         [ "$name" != "$C849_SCRATCH" ] || role=nuget-scratch
         [ "$name" != "$C849_NPM" ] || role=npm-content
         if [ "${3:-}" = -f ]; then
