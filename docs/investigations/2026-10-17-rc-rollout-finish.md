@@ -83,3 +83,11 @@ The sealed operation is no longer in that set. None of these five files were edi
 Standing server2 is up on `09e48c5d`, store `f519bd08-e53a-47d1-adb1-2ab33475446f`, healthy, drained onto server2-temp, `acceptingNewWork=false`, counters 0. server2-temp still accepts `09e48c5d`. Volumes named above are present. Drain was not cleared.
 
 Another `redeploy-old` without a change to those five journals throws `RecycleResumeRequired` again. `-ResumeRecycle` on `c100808382374392e4ce1ac7dde48ca3b195f` is the wrong command: `phase=completed` with outcomes `kept` refuses, and a resume that still sees `pending` deletes the three volumes.
+
+## Archive, then stand-down
+
+Operator approval on 2026-10-18: archive the five refused-preflight journals, nothing deleted. Re-read at 2026-10-18T10:27:25Z: each was still `phase=preflight`, `outcome=refused`, `ownedRemoved=false`, `stopReceipts=[]`, `removeReceipts=[]`, `sourceSha=09e48c5d6f1d404cfea8ec0d992270424fd2a184`, project `antiphon-runner`.
+
+At 2026-10-18T10:28:08Z those five files were moved with `mv` (not `rm`) from `/home/mc/antiphon-server2/recycle/` to `/home/mc/antiphon-server2/recycle/archived-refused/`, names unchanged. The sealed journal `c100808382374392e4ce1ac7dde48ca3b195f.json` was not moved and was still `phase=completed` with the three outcomes `kept`. Copies: `C:\src\Antiphon\.antiphon\rolling-server2\c727de92cd220c2a\archived-refused\archived-refused\`.
+
+No census and no `redeploy-old` ran after that move. The orchestrator stood this task down at its ceiling before step 3. A new Deploy task owns archive confirmation, `redeploy-old`, smoke, `drain-temp`, and `retire-temp`.
