@@ -710,8 +710,9 @@ public sealed class RemoteScriptContractTests
         }
     }
 
-    // CARD-1191. Seed success published accepted:true from a subshell, and the fixture trap
-    // replaced the global UnhandledExit trap, so an F-4 death left an empty diagnosis.
+    // CARD-1191. An F-4 death records UnhandledExit after finalization. Seed and
+    // seed-rerun go through c849_fixture_inner, whose write_result prints the diagnosis
+    // and exits "$3". An inner exit with inner_recorded still 0 is UnhandledExit.
     [Test]
     public void C1191_Fixture_failure_records_unhandled_exit_without_seed_receipt()
     {
@@ -722,18 +723,25 @@ public sealed class RemoteScriptContractTests
         exit.ShouldContain("write_result false \"UnhandledExit $ec\" \"$ec\"");
         Order(exit, "c849_fixture_finalize", "UnhandledExit").ShouldBeTrue("failure receipt follows finalization");
 
+        var inner = Block(Remote(), "c849_fixture_inner");
+        Order(inner, "if [ \"$inner_recorded\" = 0 ]", "diagnosis=UnhandledExit").ShouldBeTrue(
+            "an unrecorded inner exit is UnhandledExit");
+        Order(inner, "printf '%s\\n' \"$inner_diagnosis\"", "exit \"$3\"").ShouldBeTrue(
+            "the inner verdict prints its diagnosis and exits the subshell");
+
         var seed = Block(Remote(), "c849_fixture_seed");
-        const string guard = "write_result() { printf '%s\\n' \"$2\"; exit \"$3\"; }";
         foreach (var diagnosis in new[] { "FixtureSeedFailed", "FixtureSeedRerunFailed" })
         {
+            var phase = diagnosis == "FixtureSeedFailed" ? "seed" : "seed-rerun";
             var close = "c849_seed ) || write_result false " + diagnosis;
             var at = seed.IndexOf(close, StringComparison.Ordinal);
             at.ShouldBeGreaterThanOrEqualTo(0, diagnosis);
             var open = seed.LastIndexOf("\n    (", at, StringComparison.Ordinal);
             open.ShouldBeGreaterThanOrEqualTo(0, diagnosis);
             var subshell = seed[open..(at + "c849_seed".Length)];
-            subshell.ShouldContain(guard, customMessage: diagnosis);
-            Order(subshell, guard, "c849_seed").ShouldBeTrue(diagnosis);
+            var call = "c849_fixture_inner " + phase + " c849_seed";
+            subshell.ShouldContain(call, customMessage: diagnosis);
+            Order(subshell, "c849_fixture_inner " + phase, "c849_seed").ShouldBeTrue(diagnosis);
         }
     }
 
@@ -1079,6 +1087,18 @@ public sealed class RemoteScriptContractTests
         Fact(output, "missing-sentinel-refused").ShouldBe("1", "missing-sentinel-refused");
         Fact(output, "wrong-sentinel-refused").ShouldBe("1", "wrong-sentinel-refused");
         Fact(output, "offline-miss-refused").ShouldBe("1", "offline-miss-refused");
+    }
+
+    // CARD-1333. A non-zero `docker network create` is FixtureNpmNetworkFailed at exit 2.
+    // Refill does not run. The success create still prints the CARD-1328 id.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1333_Npm_network_create_failure_reports_FixtureNpmNetworkFailed()
+    {
+        var output = C1192Run("npm-network-create");
+        Fact(output, "npm-diagnosis").ShouldBe("FixtureNpmNetworkFailed", output);
+        Fact(output, "npm-code").ShouldBe("2", output);
+        Fact(output, "refill-volume-source").ShouldBe("0", output);
     }
 
     // CARD-1192 S4. real-cases-host-backend: Seed, saved copy, cold seed, Preview and Prune
