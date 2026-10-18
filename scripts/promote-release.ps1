@@ -1,17 +1,18 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    CARD-1311 S3: promote one pre-release tag vYYYY.MM.DD.N-rc.K to the final
+    CARD-1311: promote one pre-release tag vYYYY.MM.DD.N-rc.K to the final
     CalVer tag vYYYY.MM.DD.N at the same peeled SHA.
 
     The pre-release tag must already exist and must peel to a full SHA that the
-    candidate's RC complete-green credits. The final tag is created at that SHA.
+    candidate's RC complete-green credits. The live candidate ref tip must be
+    that same SHA. A different tip refuses remote-candidate-moved, and an
+    unresolved tip refuses remote-candidate-unresolved, before any tag or
+    GitHub write. The final tag is created at the peeled SHA.
     An existing final tag at the same SHA is success and creates nothing. An
     existing final tag at another SHA is a refusal. The pre-release tag and its
-    GitHub pre-release are left in place.
-
-    This script does not read the live rc ref. A later slice refuses a tip that
-    no longer matches the peeled SHA. The tag written here is the peel of -Tag.
+    GitHub pre-release are left in place. An older tested SHA stays promotable
+    only while the live tip still equals its peeled SHA.
 
     -SeamsPath is test-only and uses the same admission as publish-release.ps1.
 
@@ -43,6 +44,16 @@ function Get-PromoteRemoteTagSha {
     $verify = Invoke-ReleaseGateGit -WorkingDirectory $Checkout -Arguments @('ls-remote', '--tags', 'origin', ('refs/tags/{0}^{{}}' -f $TagName))
     if ($null -eq $verify -or [int]$verify.ExitCode -ne 0) { return '' }
     $line = ([string]$verify.Output).Trim()
+    if ([string]::IsNullOrWhiteSpace($line)) { return '' }
+    return (($line -split '\s+')[0].Trim())
+}
+
+function Get-PromoteRemoteHeadSha {
+    param([string]$Checkout, [string]$RefName)
+    if ([string]::IsNullOrWhiteSpace($RefName)) { return '' }
+    $remote = Invoke-ReleaseGateGit -WorkingDirectory $Checkout -Arguments @('ls-remote', '--heads', 'origin', $RefName)
+    if ($null -eq $remote -or [int]$remote.ExitCode -ne 0) { return '' }
+    $line = ([string]$remote.Output).Trim()
     if ([string]::IsNullOrWhiteSpace($line)) { return '' }
     return (($line -split '\s+')[0].Trim())
 }
@@ -129,6 +140,18 @@ function Invoke-AntiphonPromoteRelease {
         -not [string]::Equals([string]$candidate.sha, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
         Write-PromoteLine ('REFUSED: credited sha {0} does not match peeled sha {1}.' -f [string]$green.sha, $peeled)
         $result.Refusal = 'credited-sha-mismatch'; $result.ExitCode = 3; return [pscustomobject]$result
+    }
+
+    # The tested SHA is what is promoted. A live tip that has moved is a
+    # different candidate. Refuse before any tag or GitHub write.
+    $liveSha = Get-PromoteRemoteHeadSha -Checkout $CheckoutRoot -RefName ([string]$candidate.ref)
+    if ([string]::IsNullOrWhiteSpace($liveSha)) {
+        Write-PromoteLine ('REFUSED: live ref {0} did not resolve.' -f [string]$candidate.ref)
+        $result.Refusal = 'remote-candidate-unresolved'; $result.ExitCode = 3; return [pscustomobject]$result
+    }
+    if (-not [string]::Equals($liveSha, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-PromoteLine ('REFUSED: live {0} is {1}; pre-release peels to {2}.' -f [string]$candidate.ref, $liveSha, $peeled)
+        $result.Refusal = 'remote-candidate-moved'; $result.ExitCode = 3; return [pscustomobject]$result
     }
 
     $finalPeeled = Get-PromoteRemoteTagSha -Checkout $CheckoutRoot -TagName $finalName
