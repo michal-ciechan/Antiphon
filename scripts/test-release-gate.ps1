@@ -468,7 +468,9 @@ function New-C599GitHubSeams {
     param(`$Verb, `$Arguments, `$WorkingDirectory)
     `$store = '$store'
     `$failPath = '$failPath'
-    Add-Content -LiteralPath (Join-Path (Split-Path -Parent `$store) 'gh-trace.log') -Value ('GH ' + `$Verb + ' ' + [string]`$Arguments.tag) -Encoding ASCII
+    `$preFlag = ''
+    if (`$Arguments -and `$Arguments.ContainsKey('prerelease') -and [bool]`$Arguments['prerelease']) { `$preFlag = ' --prerelease' }
+    Add-Content -LiteralPath (Join-Path (Split-Path -Parent `$store) 'gh-trace.log') -Value ('GH ' + `$Verb + ' ' + [string]`$Arguments.tag + `$preFlag) -Encoding ASCII
     `$fail = Get-Content -LiteralPath `$failPath -Raw | ConvertFrom-Json
     `$db = Get-Content -LiteralPath `$store -Raw | ConvertFrom-Json
     `$rows = @()
@@ -626,11 +628,12 @@ function Get-C599CardBody {
 function New-C599CardApi {
     # The fixture's release card as the API serves it: revision 4 (the receipt's) and
     # a body correlated to this intent, candidate, SHA and native run.
-    param([string]$Root, [string]$Sha)
+    param([string]$Root, [string]$Sha, [string]$Candidate = '')
+    if ([string]::IsNullOrWhiteSpace($Candidate)) { $Candidate = $script:CandidateId }
     $store = Join-Path $Root 'card-api.json'
     $card = [ordered]@{
-        id = $script:C599ReleaseCardId; identifier = 'CARD-0601'; title = ('Release {0}' -f $CandidateId)
-        description = (Get-C599CardBody -Sha $Sha); revisionCount = 4; status = 'Review'
+        id = $script:C599ReleaseCardId; identifier = 'CARD-0601'; title = ('Release {0}' -f $Candidate)
+        description = (Get-C599CardBody -Candidate $Candidate -Sha $Sha); revisionCount = 4; status = 'Review'
         concurrencyToken = '0b0e6c1e-8f1c-4c3e-9a55-0c5990c59900'
     }
     Write-NightlyAtomicJson -Path $store -Object ([ordered]@{ status = 200; raw = $null; cards = [ordered]@{ ($script:C599ReleaseCardId) = $card } })
@@ -1194,10 +1197,19 @@ function New-C599PublishFx {
       the policy, so the candidate SHA is real and the publisher re-reads the pinned
       blob itself. The remote/GitHub stay file-backed recipients behind the seams.
     #>
-    param([byte[]]$PolicyBytes = $null, [switch]$NoAuthority)
+    param([byte[]]$PolicyBytes = $null, [switch]$NoAuthority, [switch]$LongLivedCandidate)
     $root = New-C599Root
     $co = New-C599PolicyCheckout -Root $root -PolicyBytes $PolicyBytes
     $Head = $co.Sha
+    # Any assignment makes these locals for the whole function. Start from the
+    # script stamp identity, then override for a long-lived fixture.
+    $CandidateId = $script:CandidateId
+    $CandidateRef = $script:CandidateRef
+    if ($LongLivedCandidate) {
+        # Fixture date only. Production scripts must not hard-code a line date.
+        $CandidateRef = 'rc/2026-10-15'
+        $CandidateId = 'rc-2026-10-15-' + $Head.Substring(0, 12)
+    }
     $git = New-C599GitSeams -Root $root -HeadSha $Head
     $gitText = Get-Content -LiteralPath $git.Path -Raw
     $gh = New-C599GitHubSeams -Root $root -GitSeamsText $gitText
@@ -1215,17 +1227,20 @@ function New-C599PublishFx {
     # The publisher's clock is injected at the seam boundary, never the wall clock.
     Add-Content -LiteralPath $gh.Path -Encoding ASCII -Value ("`n`$ReleaseGateSeams.UtcNow = {{ return [datetime]::Parse('{0}', [System.Globalization.CultureInfo]::InvariantCulture, ([System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal)) }}" -f $script:C599Now.ToString('o'))
     # The remote holds the candidate at the tested sha.
-    $state = [ordered]@{ ('release_rc_20260923T083000Z') = $Head }
+    $remoteKey = (($CandidateRef -replace '^refs/heads/', '') -replace '[^A-Za-z0-9]', '_')
+    $state = [ordered]@{ $remoteKey = $Head }
     Write-NightlyAtomicJson -Path $git.RemotePath -Object $state
     # The release card the receipt names, served by the fake Antiphon API.
-    $cardApi = New-C599CardApi -Root $root -Sha $Head
+    $cardApi = New-C599CardApi -Root $root -Sha $Head -Candidate $CandidateId
     return [pscustomobject]@{
         Root = $root; Git = $git; Gh = $gh; ReleaseRoot = $releaseRoot; Checkout = $checkout; Head = $Head; CardApi = $cardApi
+        CandidateId = $CandidateId; CandidateRef = $CandidateRef
     }
 }
 
 function Invoke-C599Publish {
-    param($Fx, [hashtable]$Extra)
+    param($Fx, [hashtable]$Extra, [string]$CandidateId = '')
+    if ([string]::IsNullOrWhiteSpace($CandidateId)) { $CandidateId = $script:CandidateId }
     $splat = @{
         ReleaseRoot = $Fx.ReleaseRoot
         CandidateId = $CandidateId
@@ -3426,6 +3441,251 @@ function Test-C1311_LongLivedRcRef {
         $journalId -eq ('rc-2026-10-15-' + $prefix) -and
         $observed -eq $ShaB -and
         $liveTrace -notmatch 'GIT push') -Name 'C1311 LongLivedRcRef an existing rc/2026-10-15 tip is journalled and not pushed' -Detail ('exit=' + [string]$live.ExitCode + ' refusal=' + [string]$live.Refusal + ' sha=' + $journalSha + ' id=' + $journalId)
+}
+
+# ====================================================== CARD-1311 S3 tag ===
+
+function Get-C1311Utc([string]$Text) {
+    return [datetime]::Parse($Text, [System.Globalization.CultureInfo]::InvariantCulture, ([System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal))
+}
+
+function Get-C1311TagKey([string]$Tag) {
+    return (('refs/tags/' + $Tag) -replace '[^A-Za-z0-9]', '_')
+}
+
+function Invoke-C1311Promote {
+    <#
+      Drive scripts/promote-release.ps1 against a file-backed remote. The live
+      ref tip is whatever -RefTip seeds; the happy path passes the peeled SHA.
+    #>
+    param(
+        [string]$PreTag = '',
+        [string]$RemotePeel = '',
+        [string]$HeadSha = '',
+        [string]$CandidateId = '',
+        [string]$CreditSha = '',
+        [string]$RefTip = '',
+        [hashtable]$ExtraRemote = @{},
+        [switch]$SeedGitHub,
+        [switch]$SkipRemote,
+        [switch]$Reserve
+    )
+    if ([string]::IsNullOrWhiteSpace($HeadSha)) { $HeadSha = $ShaB }
+    $root = New-C599Root
+    $release = Join-Path $root 'releases'
+    $reservedTag = ''
+    if ($Reserve) {
+        $creditForReserve = $CreditSha
+        if ([string]::IsNullOrWhiteSpace($creditForReserve)) { $creditForReserve = $HeadSha }
+        $reserved = New-ReleaseGateTagReservation -JournalPath (Join-Path $release 'publications.json') -CandidateId $CandidateId -Sha $creditForReserve -CutUtc (Get-C1311Utc '2026-10-15T00:00:00Z')
+        $reservedTag = [string]$reserved.Tag
+        if ([string]::IsNullOrWhiteSpace($PreTag)) { $PreTag = $reservedTag }
+    }
+    $refs = @{}
+    if (-not [string]::IsNullOrWhiteSpace($RefTip)) { $refs['rc_2026_10_15'] = $RefTip }
+    if (-not $SkipRemote -and -not [string]::IsNullOrWhiteSpace($PreTag)) {
+        $peel = $RemotePeel
+        if ([string]::IsNullOrWhiteSpace($peel)) { $peel = $HeadSha }
+        $refs[(Get-C1311TagKey $PreTag)] = $peel
+    }
+    foreach ($key in @($ExtraRemote.Keys)) { $refs[$key] = $ExtraRemote[$key] }
+    $git = New-C599GitSeams -Root $root -HeadSha $HeadSha -Refs $refs
+    $gitText = Get-Content -LiteralPath $git.Path -Raw
+    $gh = New-C599GitHubSeams -Root $root -GitSeamsText $gitText
+    if ($SeedGitHub -and -not [string]::IsNullOrWhiteSpace($PreTag)) {
+        Write-NightlyAtomicJson -Path $gh.StorePath -Object ([ordered]@{
+            releases = @([ordered]@{ id = 'R-pre'; name = $PreTag; tagName = $PreTag; url = 'https://example/releases/tag/pre'; isDraft = $false; assets = @('release-manifest.json') })
+        })
+    }
+    $credit = $CreditSha
+    if ([string]::IsNullOrWhiteSpace($credit)) { $credit = $RemotePeel }
+    if ([string]::IsNullOrWhiteSpace($credit)) { $credit = $HeadSha }
+    if (-not [string]::IsNullOrWhiteSpace($CandidateId) -and (Test-ReleaseGateFullSha -Sha $credit)) {
+        [void](New-C599RcGreen -ReleaseRoot $release -Sha $credit -CandidateId $CandidateId -Ref 'rc/2026-10-15' -PolicyHash 'policy-1')
+    }
+    $checkout = New-C599OwnedReleaseClone -Root $root
+    $scriptPath = Join-Path $here 'promote-release.ps1'
+    if (Test-Path -LiteralPath $scriptPath) {
+        $result = & $scriptPath -ReleaseRoot $release -Tag $PreTag -CandidateId $CandidateId -CheckoutRoot $checkout -SeamsPath $gh.Path -PassThru
+    } else {
+        $result = [pscustomobject]@{ ExitCode = 1; Refusal = 'missing-script'; Tag = ''; Sha = ''; Promoted = $false; Resumed = $false; PreReleaseTag = $PreTag }
+    }
+    return [pscustomobject]@{
+        Result = $result; Git = $git; Gh = $gh; Root = $root; ReleaseRoot = $release; Checkout = $checkout
+        PreTag = $PreTag; CandidateId = $CandidateId; ReservedTag = $reservedTag; Script = $scriptPath
+    }
+}
+
+function Test-C1311TraceClean([string]$Trace) {
+    if ([string]::IsNullOrWhiteSpace($Trace)) { return $false }
+    $bad = @($Trace -split "`n" | Where-Object { $_ -match '--force' -or $_ -match '\+refs/' -or $_ -match 'tag -d' -or $_ -match 'push.*--delete' -or $_ -match ':refs/tags' })
+    return ($bad.Count -eq 0)
+}
+
+function Test-C1311_PreReleaseTag {
+    # D-3/D-4: -rc.K parses, a long-lived id proposes one, and promote writes the
+    # final tag beside it. Stamp publication stays a final tag without --prerelease.
+    $accepted = Test-ReleaseGateTag -Tag 'v2026.10.15.2-rc.1'
+    $bareRc = Test-ReleaseGateTag -Tag 'v2026.10.15.2-rc'
+    Assert-C487 -Cond (
+        [bool]$accepted.Ok -and [bool]$accepted.Prerelease -and [int]$accepted.Rc -eq 1 -and [int]$accepted.Sequence -eq 2 -and
+        (-not [bool]$bareRc.Ok) -and [string]$bareRc.Reason -eq 'tag-shape') `
+        -Name 'C1311 PreReleaseTag v2026.10.15.2-rc.1 is accepted' -Detail ('rc1=' + [string]$accepted.Reason + '/' + [string]$accepted.Prerelease + ' bare=' + [string]$bareRc.Reason)
+
+    $finalOnly = Test-ReleaseGateTag -Tag 'v2026.10.15.2'
+    Assert-C487 -Cond ([bool]$finalOnly.Ok -and -not [bool]$finalOnly.Prerelease -and [int]$finalOnly.Sequence -eq 2) `
+        -Name 'C1311 PreReleaseTag v2026.10.15.2 is accepted' -Detail ([string]$finalOnly.Reason + '/' + [string]$finalOnly.Prerelease)
+
+    $zero = Test-ReleaseGateTag -Tag 'v2026.10.15.2-rc.0'
+    Assert-C487 -Cond ((-not [bool]$zero.Ok) -and [string]$zero.Reason -eq 'tag-shape') `
+        -Name 'C1311 PreReleaseTag v2026.10.15.2-rc.0 refuses tag-shape' -Detail ([string]$zero.Reason)
+
+    $proposalRoot = New-C599Root
+    $proposalJournal = Join-Path $proposalRoot 'publications.json'
+    $cut = Get-C1311Utc '2026-10-15T00:00:00Z'
+    $id1 = 'rc-2026-10-15-' + $ShaB.Substring(0, 12)
+    $id2 = 'rc-2026-10-15-' + $ShaC.Substring(0, 12)
+    $shaD = ('d' * 40)
+    $shaE = ('e' * 40)
+    $id3 = 'rc-2026-10-15-' + $shaD.Substring(0, 12)
+    $id4 = 'rc-2026-10-16-' + $shaE.Substring(0, 12)
+    $p1 = Get-ReleaseGateTagProposal -JournalPath $proposalJournal -CandidateId $id1 -Sha $ShaB -CutUtc $cut
+    [void](New-ReleaseGateTagReservation -JournalPath $proposalJournal -CandidateId $id1 -Sha $ShaB -CutUtc $cut)
+    $p2 = Get-ReleaseGateTagProposal -JournalPath $proposalJournal -CandidateId $id2 -Sha $ShaC -CutUtc $cut
+    [void](New-ReleaseGateTagReservation -JournalPath $proposalJournal -CandidateId $id2 -Sha $ShaC -CutUtc $cut)
+    $closed = $false
+    if (Get-Command -Name Set-ReleaseGateReservationFinalTag -ErrorAction SilentlyContinue) {
+        $closed = [bool](Set-ReleaseGateReservationFinalTag -JournalPath $proposalJournal -CandidateId $id1 -FinalTag 'v2026.10.15.1')
+    }
+    $p3 = Get-ReleaseGateTagProposal -JournalPath $proposalJournal -CandidateId $id3 -Sha $shaD -CutUtc $cut
+    $p4 = Get-ReleaseGateTagProposal -JournalPath $proposalJournal -CandidateId $id4 -Sha $shaE -CutUtc (Get-C1311Utc '2026-10-16T00:00:00Z')
+    $stampJournal = Join-Path $proposalRoot 'stamp.json'
+    $stampCut = Get-C1311Utc '2026-09-23T08:30:00Z'
+    $stampProposal = Get-ReleaseGateTagProposal -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaB -CutUtc $stampCut
+    [void](New-ReleaseGateTagReservation -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaB -CutUtc $stampCut)
+    $reused = Get-ReleaseGateTagProposal -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaB -CutUtc $stampCut
+    $threw = ''
+    try { [void](Get-ReleaseGateTagProposal -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaC -CutUtc $stampCut) } catch { $threw = $_.Exception.Message }
+    Assert-C487 -Cond (
+        [string]$p1.Tag -eq 'v2026.10.15.1-rc.1' -and
+        [string]$p2.Tag -eq 'v2026.10.15.1-rc.2' -and
+        $closed -and
+        [string]$p3.Tag -eq 'v2026.10.15.2-rc.1' -and
+        [string]$p4.Tag -eq 'v2026.10.16.1-rc.1' -and
+        [string]$stampProposal.Tag -eq 'v2026.09.23.1' -and
+        [bool]$reused.Reused -and [string]$reused.Tag -eq 'v2026.09.23.1' -and
+        $threw -match 'already reserved') `
+        -Name 'C1311 PreReleaseTag a long-lived proposal is vYYYY.MM.DD.N-rc.K' `
+        -Detail ('p1=' + [string]$p1.Tag + ' p2=' + [string]$p2.Tag + ' closed=' + $closed + ' p3=' + [string]$p3.Tag + ' p4=' + [string]$p4.Tag + ' stamp=' + [string]$stampProposal.Tag + ' reused=' + [string]$reused.Tag + ' threw=' + $threw)
+
+    $happy = Invoke-C1311Promote -Reserve -RemotePeel $ShaB -HeadSha $ShaB -CandidateId $id1 -CreditSha $ShaB -RefTip $ShaB -SeedGitHub
+    $finalSha = Read-C599Remote -Seams $happy.Git -Ref ('refs/tags/' + ($happy.PreTag -replace '-rc\.[0-9]+$', ''))
+    $again = $null
+    $secondTrace = ''
+    if ([int]$happy.Result.ExitCode -eq 0 -and (Test-Path -LiteralPath $happy.Script)) {
+        $before = @(Get-Content -LiteralPath $happy.Git.Trace -ErrorAction SilentlyContinue).Count
+        $again = & $happy.Script -ReleaseRoot $happy.ReleaseRoot -Tag $happy.PreTag -CandidateId $happy.CandidateId -CheckoutRoot $happy.Checkout -SeamsPath $happy.Gh.Path -PassThru
+        $lines = @(Get-Content -LiteralPath $happy.Git.Trace -ErrorAction SilentlyContinue)
+        if ($lines.Count -gt $before) { $secondTrace = ($lines | Select-Object -Skip $before) -join "`n" }
+    }
+    $journalFinal = ''
+    $journalPath = Join-Path $happy.ReleaseRoot 'publications.json'
+    if (Test-Path -LiteralPath $journalPath) {
+        $journalDoc = Get-Content -LiteralPath $journalPath -Raw | ConvertFrom-Json
+        foreach ($row in @($journalDoc.reservations)) {
+            if ([string]$row.candidateId -eq $id1) { $journalFinal = [string]$row.finalTag }
+        }
+    }
+    $expectedFinal = $happy.PreTag -replace '-rc\.[0-9]+$', ''
+    Assert-C487 -Cond (
+        [int]$happy.Result.ExitCode -eq 0 -and [bool]$happy.Result.Promoted -and
+        [string]$happy.Result.Tag -eq $expectedFinal -and [string]$happy.Result.Sha -eq $ShaB -and
+        $finalSha -eq $ShaB -and (Read-C599Remote -Seams $happy.Git -Ref 'rc/2026-10-15') -eq $ShaB -and
+        $null -ne $again -and [int]$again.ExitCode -eq 0 -and [bool]$again.Resumed -and
+        $secondTrace -notmatch 'GIT push' -and $secondTrace -notmatch 'GIT tag' -and
+        $journalFinal -eq $expectedFinal) `
+        -Name 'C1311 PreReleaseTag promote creates the final tag at the peeled sha' `
+        -Detail ('exit=' + [string]$happy.Result.ExitCode + ' refusal=' + [string]$happy.Result.Refusal + ' tag=' + [string]$happy.Result.Tag + ' pre=' + $happy.PreTag + ' finalSha=' + $finalSha + ' journal=' + $journalFinal + ' again=' + [string]$again.ExitCode + '/' + [string]$again.Resumed)
+
+    $preLeft = Read-C599Remote -Seams $happy.Git -Ref ('refs/tags/' + $happy.PreTag)
+    $ghLeft = Get-C599Release -Gh $happy.Gh -Tag $happy.PreTag
+    Assert-C487 -Cond (
+        $happy.PreTag -match '-rc\.[1-9][0-9]*$' -and
+        $preLeft -eq $ShaB -and $null -ne $ghLeft -and [string]$ghLeft.tagName -eq $happy.PreTag -and
+        $finalSha -eq $ShaB) `
+        -Name 'C1311 PreReleaseTag promote leaves the pre-release tag in place' -Detail ('pre=' + $happy.PreTag + '/' + $preLeft + ' gh=' + [string]$ghLeft.tagName)
+
+    $conflict = Invoke-C1311Promote -PreTag 'v2026.10.15.1-rc.1' -RemotePeel $ShaB -HeadSha $ShaB -CandidateId $id1 -CreditSha $ShaB -RefTip $ShaB -ExtraRemote @{ (Get-C1311TagKey 'v2026.10.15.1') = $ShaA }
+    $missing = Invoke-C1311Promote -PreTag 'v2026.10.15.1-rc.1' -SkipRemote -HeadSha $ShaB -CandidateId $id1 -CreditSha $ShaB -RefTip $ShaB
+    $short = Invoke-C1311Promote -PreTag 'v2026.10.15.1-rc.1' -RemotePeel 'abcd' -HeadSha $ShaB -CandidateId $id1 -CreditSha $ShaB -RefTip $ShaB
+    $mismatch = Invoke-C1311Promote -PreTag 'v2026.10.15.1-rc.1' -RemotePeel $ShaB -HeadSha $ShaB -CandidateId $id1 -CreditSha $ShaC -RefTip $ShaB
+    $conflictTrace = ''
+    if (Test-Path -LiteralPath $conflict.Git.Trace) { $conflictTrace = [string](Get-Content -LiteralPath $conflict.Git.Trace -Raw) }
+    Assert-C487 -Cond (
+        [string]$conflict.Result.Refusal -eq 'final-tag-conflict' -and [int]$conflict.Result.ExitCode -eq 3 -and
+        (Read-C599Remote -Seams $conflict.Git -Ref 'refs/tags/v2026.10.15.1') -eq $ShaA -and
+        (Read-C599Remote -Seams $conflict.Git -Ref 'refs/tags/v2026.10.15.1-rc.1') -eq $ShaB -and
+        $conflictTrace -notmatch 'GIT push' -and $conflictTrace -notmatch '--force' -and
+        [string]$missing.Result.Refusal -eq 'prerelease-missing' -and
+        [string]$short.Result.Refusal -eq 'tag-peel' -and
+        [string]$mismatch.Result.Refusal -eq 'credited-sha-mismatch' -and
+        [string]::IsNullOrWhiteSpace((Read-C599Remote -Seams $missing.Git -Ref 'refs/tags/v2026.10.15.1')) -and
+        [string]::IsNullOrWhiteSpace((Read-C599Remote -Seams $short.Git -Ref 'refs/tags/v2026.10.15.1')) -and
+        [string]::IsNullOrWhiteSpace((Read-C599Remote -Seams $mismatch.Git -Ref 'refs/tags/v2026.10.15.1'))) `
+        -Name 'C1311 PreReleaseTag promote refuses a final tag at another sha' `
+        -Detail ('conflict=' + [string]$conflict.Result.Refusal + ' missing=' + [string]$missing.Result.Refusal + ' short=' + [string]$short.Result.Refusal + ' mismatch=' + [string]$mismatch.Result.Refusal)
+
+    $stampPublished = $false
+    $stampPre = -1
+    $stampCreates = 0
+    $stampTrace = ''
+    $longPublished = $false
+    $longPre = -1
+    $longCreates = 0
+    $longTrace = ''
+    $longTagOk = $false
+    $longPeeled = ''
+    $promoteText = ''
+    $promoteTrace = ''
+    $promoteScript = Join-Path $here 'promote-release.ps1'
+    try {
+        $fxS = New-C599PublishFx
+        $pubS = Invoke-C599Publish -Fx $fxS
+        $stampPublished = ([int]$pubS.ExitCode -eq 0 -and [bool]$pubS.Published -and [string]$pubS.Tag -eq 'v2026.09.23.1')
+        $stampGh = ''
+        $stampGhPath = Join-Path $fxS.Root 'gh-trace.log'
+        if (Test-Path -LiteralPath $stampGhPath) { $stampGh = [string](Get-Content -LiteralPath $stampGhPath -Raw) }
+        $stampCreateLines = @(($stampGh -split "`n") | Where-Object { $_ -match '^GH release-create' })
+        $stampCreates = $stampCreateLines.Count
+        $stampPre = @($stampCreateLines | Where-Object { $_ -match '--prerelease' }).Count
+        if (Test-Path -LiteralPath $fxS.Git.Trace) { $stampTrace = [string](Get-Content -LiteralPath $fxS.Git.Trace -Raw) }
+    } catch { $stampTrace = $_.Exception.Message }
+    try {
+        $fxL = New-C599PublishFx -LongLivedCandidate
+        $pubL = Invoke-C599Publish -Fx $fxL -CandidateId $fxL.CandidateId
+        $parsedLong = Test-ReleaseGateTag -Tag ([string]$pubL.Tag)
+        $longPublished = ([int]$pubL.ExitCode -eq 0 -and [bool]$pubL.Published)
+        $longTagOk = ($longPublished -and [bool]$parsedLong.Ok -and [bool]$parsedLong.Prerelease)
+        $longPeeled = Read-C599Remote -Seams $fxL.Git -Ref ('refs/tags/' + [string]$pubL.Tag)
+        $longTagOk = $longTagOk -and ($longPeeled -eq [string]$fxL.Head) -and ((Read-C599Remote -Seams $fxL.Git -Ref 'rc/2026-10-15') -eq [string]$fxL.Head)
+        $longGh = ''
+        $longGhPath = Join-Path $fxL.Root 'gh-trace.log'
+        if (Test-Path -LiteralPath $longGhPath) { $longGh = [string](Get-Content -LiteralPath $longGhPath -Raw) }
+        $longCreateLines = @(($longGh -split "`n") | Where-Object { $_ -match '^GH release-create' })
+        $longCreates = $longCreateLines.Count
+        $longPre = @($longCreateLines | Where-Object { $_ -match '--prerelease' }).Count
+        if (Test-Path -LiteralPath $fxL.Git.Trace) { $longTrace = [string](Get-Content -LiteralPath $fxL.Git.Trace -Raw) }
+    } catch { $longTrace = $_.Exception.Message }
+    if (Test-Path -LiteralPath $promoteScript) { $promoteText = [string](Get-Content -LiteralPath $promoteScript -Raw) }
+    if (Test-Path -LiteralPath $happy.Git.Trace) { $promoteTrace = [string](Get-Content -LiteralPath $happy.Git.Trace -Raw) }
+    $promoteQuiet = ($promoteText -notmatch 'restart-apphost') -and ($promoteText -notmatch 'Stop-Process') -and ($promoteText -notmatch 'taskkill') -and ($promoteText -notmatch 'deploy-local') -and ($promoteText -notmatch '--force') -and ($promoteText -notmatch 'tag -d')
+    Assert-C487 -Cond (
+        $stampPublished -and $stampCreates -ge 1 -and $stampPre -eq 0 -and (Test-C1311TraceClean $stampTrace) -and ($stampTrace -match 'GIT push') -and
+        $longPublished -and $longTagOk -and $longCreates -ge 1 -and $longPre -eq $longCreates -and (Test-C1311TraceClean $longTrace) -and ($longTrace -match 'GIT push') -and
+        (Test-C1311TraceClean $promoteTrace) -and ($promoteTrace -match 'GIT push') -and
+        $promoteQuiet -and (Test-Path -LiteralPath $promoteScript)) `
+        -Name 'C1311 PreReleaseTag no tag delete and no force push' `
+        -Detail ('stamp=' + $stampPublished + '/' + $stampCreates + '/' + $stampPre + ' long=' + $longPublished + '/' + $longTagOk + '/' + $longCreates + '/' + $longPre + ' peel=' + $longPeeled + ' quiet=' + $promoteQuiet)
 }
 
 # ====================================================================== run ===
