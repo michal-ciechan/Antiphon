@@ -8605,10 +8605,20 @@ trap 'ec=$?; if [ "$WROTE" != 1 ] && [ "$ec" != 0 ]; then write_result false "Un
 
 detect_lane > /dev/null
 # Preview intercepts before generic checkout, recursive ownership or boot setup.
+# CARD-1338. c1008_recycle returns from this intercept, so the temp store has to be
+# loaded here. case_retire_temp_runner reads the same file only on the apply path.
 if [ "${C1008_CONTEXT:-}" = default ] && [ "${C1008_DRY_RUN:-0}" = 1 ]; then
     require_lane host
     c849_evidence_dir
-    case "$CASE" in deploy-parent) c1008_recycle "$HOST_PROJECT" ;; retire-temp-runner) c1008_recycle "$TEMP_PROJECT" ;; *) write_result false RecycleContextInvalid 2 ;; esac
+    case "$CASE" in
+        deploy-parent) c1008_recycle "$HOST_PROJECT" ;;
+        retire-temp-runner)
+            if [ ! -s "$SERVER2_TEMP_ENV" ]; then write_result false TempStackMissing 2; fi
+            RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"
+            c1008_recycle "$TEMP_PROJECT"
+            ;;
+        *) write_result false RecycleContextInvalid 2 ;;
+    esac
 fi
 case "$CASE" in
     retire-temp-containers) c849_evidence_dir ;;
