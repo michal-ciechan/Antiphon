@@ -204,7 +204,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             remoteTask.WorktreeBranch = "feat/card-1214-mutation-" + remoteTask.Id.ToString("N")[..8];
             await Should.ThrowAsync<ConflictException>(() => remoteService.ValidateVerificationAsync(remoteTask, remoteLease, default));
         }
-        finally { Directory.Delete(remoteRoot, true); }
+        finally { ReadOnlyDirectory.Delete(remoteRoot); }
 
     }
 

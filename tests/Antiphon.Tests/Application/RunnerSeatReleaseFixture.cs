@@ -641,7 +641,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         Wire.Dispose();
         await Schema.DisposeAsync();
         foreach (var root in _roots)
-            if (System.IO.Directory.Exists(root)) System.IO.Directory.Delete(root, true);
+            if (System.IO.Directory.Exists(root)) ReadOnlyDirectory.Delete(root);
     }
 
     /// <summary>Only I/O is faked: the child writes the bytes it actually received into a
