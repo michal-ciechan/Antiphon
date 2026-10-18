@@ -3361,6 +3361,73 @@ function Test-C599A_PublisherTestMode {
     Assert-C599AMatrix -Name 'C599 V-18: test mode refuses a real remote: no seams file, or one without the Git or GitHub adapter' -Results $m
 }
 
+# ====================================================== CARD-1311 S2 ref ===
+
+function Test-C1311_LongLivedRcRef {
+    # D-1/D-2: rc/YYYY-MM-DD is a candidate. Its id is one per tested SHA.
+    # A legacy stamp still parses and still earns rc-release.
+    $accepted = Test-ReleaseGateCandidateRef -Ref 'rc/2026-10-15'
+    Assert-C487 -Cond ([bool]$accepted.Ok -and [string]$accepted.Ref -eq 'rc/2026-10-15') -Name 'C1311 LongLivedRcRef rc/2026-10-15 is accepted' -Detail ([string]$accepted.Reason)
+
+    $prefixed = Test-ReleaseGateCandidateRef -Ref 'refs/heads/rc/2026-10-15'
+    Assert-C487 -Cond ([bool]$prefixed.Ok -and [string]$prefixed.Ref -eq 'rc/2026-10-15') -Name 'C1311 LongLivedRcRef refs/heads/rc/2026-10-15 normalizes to rc/2026-10-15' -Detail ([string]$prefixed.Ref)
+
+    $prefix = $ShaB.Substring(0, 12)
+    $withSha = Test-ReleaseGateCandidateRef -Ref 'rc/2026-10-15' -Sha $ShaB
+    Assert-C487 -Cond ([string]$withSha.CandidateId -eq ('rc-2026-10-15-' + $prefix)) -Name ('C1311 LongLivedRcRef candidate id is rc-2026-10-15-' + $prefix) -Detail ([string]$withSha.CandidateId)
+
+    $badDate = Test-ReleaseGateCandidateRef -Ref 'rc/2026-13-01'
+    Assert-C487 -Cond ((-not [bool]$badDate.Ok) -and [string]$badDate.Reason -eq 'ref-date') -Name 'C1311 LongLivedRcRef rc/2026-13-01 refuses ref-date' -Detail ([string]$badDate.Reason)
+
+    $badShape = Test-ReleaseGateCandidateRef -Ref 'rc/20261015'
+    Assert-C487 -Cond ((-not [bool]$badShape.Ok) -and [string]$badShape.Reason -eq 'ref-shape') -Name 'C1311 LongLivedRcRef rc/20261015 refuses ref-shape' -Detail ([string]$badShape.Reason)
+
+    $stamp = Test-ReleaseGateCandidateRef -Ref $CandidateRef
+    Assert-C487 -Cond ([bool]$stamp.Ok -and [string]$stamp.CandidateId -eq $CandidateId -and [string]$stamp.Ref -eq $CandidateRef) -Name 'C1311 LongLivedRcRef legacy stamp release/rc-20260923T083000Z is accepted' -Detail ([string]$stamp.Reason)
+
+    $longCredit = Get-ReleaseGateCreditKind -Profile 'rc' -Trigger 'rc' -Ref 'rc/2026-10-15'
+    Assert-C487 -Cond ([string]$longCredit -eq 'rc-release') -Name 'C1311 LongLivedRcRef credit rc/rc/rc/2026-10-15 earns rc-release' -Detail ([string]$longCredit)
+
+    $stampCredit = Get-ReleaseGateCreditKind -Profile 'rc' -Trigger 'rc' -Ref $CandidateRef
+    Assert-C487 -Cond ([string]$stampCredit -eq 'rc-release') -Name 'C1311 LongLivedRcRef credit rc/rc/release/rc-20260923T083000Z earns rc-release' -Detail ([string]$stampCredit)
+
+    $omitRoot = New-C599Root
+    $omitGit = New-C599GitSeams -Root $omitRoot -HeadSha $ShaB
+    $omitRelease = Join-Path $omitRoot 'releases'
+    $omitCheckout = New-C599OwnedReleaseClone -Root $omitRoot
+    $omitted = & (Join-Path $here 'release-candidate.ps1') -ReleaseRoot $omitRelease -CheckoutRoot $omitCheckout -SeamsPath $omitGit.Path -PassThru
+    $omitTrace = ''
+    if (Test-Path -LiteralPath $omitGit.Trace) { $omitTrace = [string](Get-Content -LiteralPath $omitGit.Trace -Raw -ErrorAction SilentlyContinue) }
+    Assert-C487 -Cond ([string]$omitted.Refusal -eq 'rc-ref-required' -and [int]$omitted.ExitCode -eq 3 -and -not [bool]$omitted.Pushed -and $omitTrace -notmatch 'GIT push') -Name 'C1311 LongLivedRcRef omitted Ref refuses rc-ref-required' -Detail ([string]$omitted.Refusal)
+
+    # The remote tip is ShaB. rev-parse would answer ShaC, so a master pin is visible.
+    $liveRoot = New-C599Root
+    $liveGit = New-C599GitSeams -Root $liveRoot -HeadSha $ShaC -Refs @{ rc_2026_10_15 = $ShaB }
+    $liveRelease = Join-Path $liveRoot 'releases'
+    $liveCheckout = New-C599OwnedReleaseClone -Root $liveRoot
+    $live = Invoke-C599Candidate -ReleaseRoot $liveRelease -Checkout $liveCheckout -Seams $liveGit -Ref 'rc/2026-10-15'
+    $liveTrace = ''
+    if (Test-Path -LiteralPath $liveGit.Trace) { $liveTrace = [string](Get-Content -LiteralPath $liveGit.Trace -Raw -ErrorAction SilentlyContinue) }
+    $journalSha = ''
+    $journalRef = ''
+    $journalId = ''
+    if (-not [string]::IsNullOrWhiteSpace([string]$live.JournalPath) -and (Test-Path -LiteralPath $live.JournalPath)) {
+        $journal = Get-Content -LiteralPath $live.JournalPath -Raw | ConvertFrom-Json
+        $journalSha = [string]$journal.sha
+        $journalRef = [string]$journal.ref
+        $journalId = [string]$journal.candidateId
+    }
+    $observed = Read-C599Remote -Seams $liveGit -Ref 'rc/2026-10-15'
+    Assert-C487 -Cond (
+        [int]$live.ExitCode -eq 0 -and
+        -not [bool]$live.Pushed -and
+        $journalSha -eq $ShaB -and
+        $journalRef -eq 'rc/2026-10-15' -and
+        $journalId -eq ('rc-2026-10-15-' + $prefix) -and
+        $observed -eq $ShaB -and
+        $liveTrace -notmatch 'GIT push') -Name 'C1311 LongLivedRcRef an existing rc/2026-10-15 tip is journalled and not pushed' -Detail ('exit=' + [string]$live.ExitCode + ' refusal=' + [string]$live.Refusal + ' sha=' + $journalSha + ' id=' + $journalId)
+}
+
 # ====================================================================== run ===
 
 function Clear-C599FixtureReadOnly {
