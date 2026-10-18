@@ -157,6 +157,35 @@ function Get-NightlyNativeExecutionArguments {
     return $nativeArgs
 }
 
+function Resolve-NightlyNpmLauncher {
+    param([string]$PathValue = $env:PATH)
+    if ([string]::IsNullOrWhiteSpace($PathValue)) { throw 'npm launcher not found' }
+    $names = @('npm.cmd', 'npm.exe', 'npm')
+    $separator = [string][System.IO.Path]::PathSeparator
+    foreach ($dir in ($PathValue -split [regex]::Escape($separator))) {
+        if ([string]::IsNullOrWhiteSpace($dir)) { continue }
+        foreach ($name in $names) {
+            $candidate = Join-Path $dir.Trim() $name
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                $full = [System.IO.Path]::GetFullPath($candidate)
+                if (-not [System.IO.Path]::IsPathRooted($full)) { throw 'npm launcher is not absolute' }
+                return $full
+            }
+        }
+    }
+    throw 'npm launcher not found'
+}
+
+function Get-NightlyNpmLaunch {
+    param([Parameter(Mandatory = $true)][string[]]$NpmArguments)
+    # A quoted bare npm.cmd makes cmd.exe set %~dp0 to the client cwd (CARD-1341).
+    $launcher = Resolve-NightlyNpmLauncher
+    return [pscustomobject]@{
+        FilePath = "$env:ComSpec"
+        ArgumentList = @('/c', $launcher) + @($NpmArguments)
+    }
+}
+
 function Invoke-AntiphonNightlyTests {
     param(
         [string]$RepoRoot = '',
@@ -337,13 +366,15 @@ function Invoke-AntiphonNightlyTests {
 
         if ($dockerOk -and $diskOk) {
             $clientDir = Join-Path $RepoRoot 'client'
-            $npmCi = Invoke-NightlyOwnedProcess -FilePath "$env:ComSpec" -ArgumentList @('/c', 'npm.cmd', 'ci') `
+            $npmCiLaunch = Get-NightlyNpmLaunch -NpmArguments @('ci')
+            $npmCi = Invoke-NightlyOwnedProcess -FilePath $npmCiLaunch.FilePath -ArgumentList $npmCiLaunch.ArgumentList `
                 -WorkingDirectory $clientDir -TimeoutMilliseconds 600000 -LogPath (Join-Path $LogRoot 'npm-ci.log')
             $buildResults += [ordered]@{ name = 'npm ci'; exitCode = $npmCi.ExitCode; timedOut = $npmCi.TimedOut; result = $(if ($npmCi.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
             if ($npmCi.ExitCode -ne 0) { $npmOk = $false; $overallFailed = $true; Set-NightlyOutcome BUILD; $coverageComplete = $false }
 
             if ($npmOk) {
-                $npmBuild = Invoke-NightlyOwnedProcess -FilePath "$env:ComSpec" -ArgumentList @('/c', 'npm.cmd', 'run', 'build') `
+                $npmBuildLaunch = Get-NightlyNpmLaunch -NpmArguments @('run', 'build')
+                $npmBuild = Invoke-NightlyOwnedProcess -FilePath $npmBuildLaunch.FilePath -ArgumentList $npmBuildLaunch.ArgumentList `
                     -WorkingDirectory $clientDir -TimeoutMilliseconds 600000 -LogPath (Join-Path $LogRoot 'npm-build.log')
                 $buildResults += [ordered]@{ name = 'npm run build'; exitCode = $npmBuild.ExitCode; timedOut = $npmBuild.TimedOut; result = $(if ($npmBuild.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
                 if ($npmBuild.ExitCode -ne 0) { $npmOk = $false; $overallFailed = $true; Set-NightlyOutcome BUILD; $coverageComplete = $false }
@@ -355,7 +386,8 @@ function Invoke-AntiphonNightlyTests {
             }
 
             if ($npmOk) {
-                $lint = Invoke-NightlyOwnedProcess -FilePath "$env:ComSpec" -ArgumentList @('/c', 'npm.cmd', 'run', 'lint') `
+                $lintLaunch = Get-NightlyNpmLaunch -NpmArguments @('run', 'lint')
+                $lint = Invoke-NightlyOwnedProcess -FilePath $lintLaunch.FilePath -ArgumentList $lintLaunch.ArgumentList `
                     -WorkingDirectory $clientDir -TimeoutMilliseconds 600000 -LogPath (Join-Path $LogRoot 'client-lint.log')
                 $buildResults += [ordered]@{ name = 'client lint'; exitCode = $lint.ExitCode; timedOut = $lint.TimedOut; result = $(if ($lint.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
                 if ($lint.ExitCode -ne 0) { $lintOk = $false; $overallFailed = $true; Set-NightlyOutcome BUILD; $coverageComplete = $false }
