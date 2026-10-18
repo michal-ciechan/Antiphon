@@ -59,9 +59,25 @@ A later status read still had server2 accepting the same SHA and store, with `se
 
 ## Decision
 
-The preview did not list the four temp volumes, so the real `retire-temp` was not started. Do not pass `-ResumeRecycle` on `c1008a24aceabd9ff4ec9a174752ae3ca8475`: it removed nothing, and a new apply uses a new operation id. Do not delete the volumes by hand.
+The preview did not list the four temp volumes, so the real `retire-temp` was not started in that pass. The handoff was to authorize the apply despite the dry-run refusal, or to fix the preview path first.
+
+## Apply
+
+Authorized apply, still without `-ResumeRecycle`. Before it, the refused journal's volume names were exactly `antiphon-runner-temp_dind-data`, `antiphon-runner-temp_runner-state`, `antiphon-runner-temp_runner-tmp`, and `antiphon-runner-temp_work`. `docker volume ls --filter label=com.docker.compose.project=antiphon-runner-temp` listed those same four names. No `antiphon-runner_*` name was in either set. `antiphon-runner_work`, `antiphon-runner_runner-tmp`, and `antiphon-runner_dind-data` existed and were mounted on `a6457bc895084a5cefbe5e13de377f90e60fb5693b9030604b20bf612b6451d0`. Temp containers were 0. `check-census` `C:\src\Antiphon\.antiphon\rolling-server2\c727fe4456f7f041` reported `landPending=0` for both runners (`server2` boundOpen=1, `server2-temp` boundOpen=0).
+
+Command, from the canonical script:
+
+```
+pwsh -NoProfile -File C:\src\Antiphon\scripts\deploy-server2.ps1 -Rolling -Sha 09e48c5d6f1d404cfea8ec0d992270424fd2a184 -Phase retire-temp
+```
+
+Exit 0 at `2026-10-18T15:09:06Z`. Log `C:\src\Antiphon\.antiphon\rolling-server2\retire-temp-53b32920.log`. Receipt `C:\src\Antiphon\.antiphon\rolling-server2\c7276395b1ed1471`.
+
+Container cleanup operation `c99482423dc829c049fb9d44133513f49d92` completed with `candidates=0` and `removals=[]`. Recycle operation `c1008378b136c050f457b897835547f1a9073` is `phase=volumesRemoved`, `outcome=completed`, project `antiphon-runner-temp`. All four temp volume outcomes are `removed`. Preserved names are the three `antiphon-runner-cache-*` volumes and `antiphon-runner_runner-state`. Journal free space went from 196254924800 bytes to 219499913216 bytes. The old journal `c1008a24aceabd9ff4ec9a174752ae3ca8475` is still `phase=preflight`, `outcome=refused`, `ownedRemoved=false`.
+
+After the phase, the temp project volume list is empty and no `antiphon-runner-temp_*` volume remains. Temp containers are 0. Standing container `a6457bc89508` is healthy with the same start `2026-10-18T00:32:45.678349724Z` and still mounts `antiphon-runner_work`, `antiphon-runner_runner-tmp`, `antiphon-runner_dind-data`, `antiphon-runner_runner-state`, and the three cache volumes. server2 accepts `09e48c5d6f1d404cfea8ec0d992270424fd2a184`, store `f519bd08-e53a-47d1-adb1-2ab33475446f`, boot `0e14a3d4-ba81-4ae9-a956-515188b82233`, `acceptingNewWork=true`. server2-temp stays retired at `2026-10-18T11:45:09.071621Z` with `runnerSessions=null`. `df -Pk /` available is 214167472 KiB (70% used), up from 191807288 KiB just before the phase.
 
 --- next stage ---
-next: decide
-handoff: Authorize a real retire-temp despite this dry-run refusal, or fix the dry-run intercept so it loads RUNNER_GROK_STORE_DIR before c1008_recycle and re-preview. No volume was removed. Do not ResumeRecycle the preflight journal and do not touch standing server2.
+next: verify
+handoff: retire-temp removed the four temp volumes. Standing server2 is still accepting 09e48c5d with store f519bd08. The documented next check is CP-5, verify-card0849-caches.ps1 -Case Retired. The dry-run RecycleComposeMismatch is a separate card. Do not ResumeRecycle c1008a24aceabd9ff4ec9a174752ae3ca8475.
 artifact: docs/investigations/2026-10-18-retire-temp-complete.md
