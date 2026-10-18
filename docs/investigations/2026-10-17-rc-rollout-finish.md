@@ -85,4 +85,29 @@ The status row also has `codexCliVersionError=stderr_output` with `codexCliVersi
 
 A second `check-census` at 2026-10-18T10:45Z, receipt `C:\src\Antiphon\.antiphon\rolling-server2\c727d5770d4bf76d`, still had server2 `boundOpen=0` and `landPending=0` on both runners. server2-temp `boundOpen=4`.
 
-The Plan canary, `verify-card0849-caches.ps1 -Case Both`, `drain-temp`, and `retire-temp` were not run. Canonical checkout stayed `69978ec1a246cd7a860f88a364eafc53a416aff7`.
+The Plan canary, `verify-card0849-caches.ps1 -Case Both`, `drain-temp`, and `retire-temp` had not been run at that point. Canonical checkout stayed `69978ec1a246cd7a860f88a364eafc53a416aff7`.
+
+## Continuation: canary, Both, and drain-temp
+
+Plan canary `a648697f` on server2 (CARD-1311) was Queued at 2026-10-18T10:47Z, Dispatched at 10:52:10Z, and Succeeded at 10:53:32Z. Session `5e1bdc76-e7ac-4e2e-bfe0-b47ed515c29a` ended 10:53:24Z. It pushed `e6963c2e7f56c8a5d6c9a9396f306153c26ba420` on `feat/card-task-a648697f`. `docs/investigations/2026-10-18-server2-canary.md` at that commit ends with `canary: ok`. No land was requested.
+
+`verify-card0849-caches.ps1` requires checkout HEAD to equal `-Sha`. Canonical stayed at `69978ec1a246cd7a860f88a364eafc53a416aff7`. Both ran from a detached worktree `C:\Antiphon\worktrees\c849-both-26205ec4` at `09e48c5d6f1d404cfea8ec0d992270424fd2a184`, 2026-10-18T10:55:15Z-10:55:32Z, exit 0:
+
+```
+C849_BOTH kind=cold schema=2 digestType=none runners=2 writableVolumes=3 sharedVolumes=3 privateTmpVolumes=2 tmpMode=1777 failures=0
+```
+
+Receipt copy: `C:\src\Antiphon\.antiphon\c849-c84932264738a8ab43a8`.
+
+`check-census` at 2026-10-18T10:56:19Z, receipt `C:\src\Antiphon\.antiphon\rolling-server2\c7279fa60cdb3480`: server2 `boundOpen=0` `landPending=0`, server2-temp `boundOpen=3` `landPending=0`.
+
+`drain-temp -WaitIdleMinutes 240` started at 2026-10-18T10:56Z from `C:\src\Antiphon`. By 10:57:28Z server2-temp was `draining=true`, `redirectTo=server2`, `retireWhenIdle=true`, `acceptingNewWork=false`, `retiredAt` empty, `sessions=3`. Standing server2 stayed accepting on the target SHA and store `f519bd08-e53a-47d1-adb1-2ab33475446f`.
+
+Temp seats fell from 3 to 2 at 11:11Z when Review `6b367dd6` Succeeded and session `10d3e112-c311-46de-a230-18870b325a3f` stopped. At 11:24Z the two seats still Running were:
+
+| session | age | task | task status |
+|---|---|---|---|
+| `81088675-4185-4faf-aa2d-d458d9bc8339` | 81933 s | `89bf7b58-b629-46ca-9b4e-500fd29014c0` CARD-1320 S3 | Failed, session still Running |
+| `ee2f68fa-b194-4c77-8738-0435a9258246` | 75913 s | `bd6bce3d-816e-469f-a30d-0621ab09b644` CARD-1320 S4 | Failed, session still Running |
+
+`openTaskId` on both slots was null. `orphan=false`. Neither session was released. The local wait was stopped at 11:24:37Z so this report could be written inside the task budget. The server drain was left in place: temp still `draining=true`, `redirectTo=server2`, `retireWhenIdle=true`, `acceptingNewWork=false`, `sessions=2`. Standing server2 was accepting with `sessions=1`. `retire-temp` was not run.
