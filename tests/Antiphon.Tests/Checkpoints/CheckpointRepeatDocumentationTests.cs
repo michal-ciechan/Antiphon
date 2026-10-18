@@ -34,7 +34,8 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // Repeat policy remains in Code's bundle and owner docs.
         // CARD-1213 points -StartRef children at their reported WorktreeBranch.
         // CARD-1213 S2 adds the git-common sentence: delegates carry it, briefs do not restate it.
+        // CARD-1330 removes 197 unpinned characters so the 500-char argv reserve holds. The keep-six line stays.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("d05f063b3d21f5898c0f9bcf36913dd0ed84fd6a66cf57c973207efd698f7ce0", "orchestrator-approved-bytes");
+            .ShouldBe("7b34e63a29128753e2da3667af497d19c687aebe7a13943fe130a83394f6fd41", "orchestrator-approved-bytes");
     }
 }
