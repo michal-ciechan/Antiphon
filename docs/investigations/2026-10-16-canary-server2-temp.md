@@ -1,0 +1,7 @@
+# Canary: inspecting agents and boards over HTTP
+
+Server2-temp rollout canary. Source: [docs/ops-http.md](../ops-http.md). No code change.
+
+- The Antiphon server (Aspire) is `http://localhost:17202`, or `$env:ANTIPHON_API` when that is set, and inspect routes use the `/api/...` prefix. Send `$env:ANTIPHON_TASK_TOKEN` as `X-Antiphon-Task-Token` when it is set. `GET /api/agents` lists every agent and its `liveSession`. `GET /api/boards` lists boards (`?includeArchived=true`); `GET /api/boards/{id}` and `GET /api/boards/{id}/columns` read one board and its columns; `GET /api/cards?boardId={guid}` pages that board's cards.
+- The production session-runner is `http://localhost:17204` and its routes are `/sessions/...` with no `/api` prefix. `GET http://localhost:17204/sessions` lists every session the runner still knows, live and exited. `GET :17204/sessions/{id}/snapshot` is the rendered screen and exists only on the runner. Simple mode serves the server on `17281`; an E2E run owns its own random runner port and never uses `17204`.
+- Sessions and boards are read through the plural, id-scoped server routes. Take a session id from `liveSession` on `GET /api/agents`, or from the runner list, then read `GET /api/sessions/{id}/buffer` and `GET /api/sessions/{id}/transcript`. Boards are `GET /api/boards` (and `/api/agents`, `/api/cards` for the other collections). `GET /api/sessions` and `GET /api/board` are not routes; a 404 from `/api/board` does not say whether the board exists.
