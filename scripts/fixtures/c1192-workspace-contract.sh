@@ -1206,6 +1206,10 @@ docker() {
                     *) fail "unexpected network command $*" ;;
                 esac
             fi
+            # c849_fixture_npm keeps this id and refuses any other create stdout (CARD-1208).
+            if [ "${2:-}" = create ]; then
+                printf '%s\n' "$(printf '%s' "${*: -1}" | sha256sum | cut -d' ' -f1)"
+            fi
             return 0 ;;
         compose)
             if [ "$mode" = retention ] || [ "$mode" = retention-inspect ] || [ "$mode" = compose-absence ]; then shift; retention_compose "$@";
