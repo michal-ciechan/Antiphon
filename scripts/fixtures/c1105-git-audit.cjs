@@ -690,7 +690,7 @@ try {
             const start = source.indexOf('    c1008_audit_checked; audit="$C1008_AUDIT"'), end = source.indexOf('    while IFS= read -r id;', start);
             assert.ok(start > 0 && end > start);
             const wrapper = `set -euo pipefail\nC1008_PROJECT=antiphon-runner\nC1008_RESUME=1\nC1008_RECORD="$(cat "$C1105_JOURNAL")"\nc1008_volume() { echo '{}'; }\nc1008_save() { printf '%s' "$C1008_RECORD" > "$C1105_JOURNAL"; }\nc1008_refuse() { echo "$1"; exit 2; }\nc1008_git_program() { cat "$C1105_HELPER"; }\ndocker() { case "$1 $2" in 'image inspect') echo sha256:${'a'.repeat(64)} ;; 'create --user') echo ${'b'.repeat(64)} ;; 'start -a') bash "$C1105_HELPER" ;; 'rm --') return 0 ;; *) return 2 ;; esac; }\n`;
-            const script = path.join(root,'resume.sh'); fs.writeFileSync(script, wrapper + block('c1008_audit') + '\n' + block('c1008_audit_checked') + '\n' + source.slice(start,end));
+            const script = path.join(root,'resume.sh'); fs.writeFileSync(script, wrapper + block('c1008_resolve_audit_cap') + '\n' + block('c1008_audit') + '\n' + block('c1008_audit_checked') + '\n' + source.slice(start,end));
             const opts = {env:{...env, C1105_WORK:work, C1105_HELPER:path.join(root,'helper.sh'), C1105_RUNNER_TMP:runnerTmp, C1105_JOURNAL:journal}, encoding:'utf8'};
             git('remote','set-url','origin',path.join(root,'absent'));
             const failed = cp.spawnSync('bash',[script],opts); assert.equal(failed.status,2,failed.stdout); assert.match(failed.stdout,/RecycleGitAuditUnknown/);
