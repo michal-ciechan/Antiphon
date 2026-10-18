@@ -3688,6 +3688,163 @@ function Test-C1311_PreReleaseTag {
         -Detail ('stamp=' + $stampPublished + '/' + $stampCreates + '/' + $stampPre + ' long=' + $longPublished + '/' + $longTagOk + '/' + $longCreates + '/' + $longPre + ' peel=' + $longPeeled + ' quiet=' + $promoteQuiet)
 }
 
+function Get-C1311TraceTail {
+    param([string]$Path, [int]$Skip)
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return '' }
+    $lines = @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
+    if ($Skip -ge $lines.Count) { return '' }
+    return (($lines | Select-Object -Skip $Skip) -join "`n")
+}
+
+function Test-C1311_MovingTipAuthority {
+    # D-2/D-5/D-6: a second SHA of the same rc ref gets its own candidate root.
+    # The first authority and tag stay on the first SHA. Publish and promote of
+    # that SHA refuse remote-candidate-moved once the live tip has moved.
+    # scriptHashes stay the six script files.
+    $fx = New-C599PublishFx -LongLivedCandidate
+    $firstSha = [string]$fx.Head
+    $secondSha = $ShaC
+    $firstId = [string]$fx.CandidateId
+    $secondId = 'rc-2026-10-15-' + $secondSha.Substring(0, 12)
+    $firstRoot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $firstId
+    $authPath = Join-Path (Get-ReleaseAuthorityDir -CandidateRoot $firstRoot) 'authority.json'
+    $published = Invoke-C599Publish -Fx $fx -CandidateId $firstId
+    $firstTag = [string]$published.Tag
+    $authBefore = ''
+    if (Test-Path -LiteralPath $authPath) { $authBefore = [string](Get-FileHash -LiteralPath $authPath -Algorithm SHA256).Hash }
+    $authDoc = $null
+    if (Test-Path -LiteralPath $authPath) { $authDoc = Get-Content -LiteralPath $authPath -Raw -Encoding UTF8 | ConvertFrom-Json }
+
+    $remote = Get-Content -LiteralPath $fx.Git.RemotePath -Raw | ConvertFrom-Json
+    $remote | Add-Member -NotePropertyName 'rc_2026_10_15' -NotePropertyValue $secondSha -Force
+    $remote | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $fx.Git.RemotePath -Encoding UTF8
+    $second = Invoke-C599Candidate -ReleaseRoot $fx.ReleaseRoot -Checkout $fx.Checkout -Seams $fx.Git -Ref 'rc/2026-10-15'
+    $secondRoot = ''
+    $secondJournalSha = ''
+    $secondJournalId = ''
+    $secondJournalRef = ''
+    if (-not [string]::IsNullOrWhiteSpace([string]$second.JournalPath) -and (Test-Path -LiteralPath $second.JournalPath)) {
+        $secondRoot = Split-Path -Parent ([string]$second.JournalPath)
+        $secondJournal = Get-Content -LiteralPath $second.JournalPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $secondJournalSha = [string]$secondJournal.sha
+        $secondJournalId = [string]$secondJournal.candidateId
+        $secondJournalRef = [string]$secondJournal.ref
+    }
+    $firstJournalSha = ''
+    $firstJournalPath = Join-Path $firstRoot 'candidate.json'
+    if (Test-Path -LiteralPath $firstJournalPath) {
+        $firstJournalSha = [string](Get-Content -LiteralPath $firstJournalPath -Raw -Encoding UTF8 | ConvertFrom-Json).sha
+    }
+    $rootsDiffer = $false
+    if (-not [string]::IsNullOrWhiteSpace($secondRoot) -and (Test-Path -LiteralPath $secondRoot)) {
+        $rootsDiffer = ([System.IO.Path]::GetFullPath($secondRoot) -ne [System.IO.Path]::GetFullPath($firstRoot))
+    }
+    Assert-C487 -Cond (
+        [int]$second.ExitCode -eq 0 -and
+        -not [bool]$second.Pushed -and
+        $rootsDiffer -and
+        $secondJournalId -eq $secondId -and
+        $secondJournalSha -eq $secondSha -and
+        $secondJournalRef -eq 'rc/2026-10-15' -and
+        $firstJournalSha -eq $firstSha -and
+        $secondId -ne $firstId) `
+        -Name 'C1311 MovingTipAuthority a second sha gets its own candidate root' `
+        -Detail ('exit=' + [string]$second.ExitCode + ' refusal=' + [string]$second.Refusal + ' id=' + $secondJournalId + ' sha=' + $secondJournalSha + ' first=' + $firstJournalSha)
+
+    $authAfter = ''
+    $authSha = ''
+    if (Test-Path -LiteralPath $authPath) {
+        $authAfter = [string](Get-FileHash -LiteralPath $authPath -Algorithm SHA256).Hash
+        $authSha = [string](Get-Content -LiteralPath $authPath -Raw -Encoding UTF8 | ConvertFrom-Json).sha
+    }
+    Assert-C487 -Cond (
+        -not [string]::IsNullOrWhiteSpace($authBefore) -and
+        $authAfter -eq $authBefore -and
+        $authSha -eq $firstSha -and
+        $authSha -ne $secondSha) `
+        -Name 'C1311 MovingTipAuthority the first authority.json still names the first sha' `
+        -Detail ('sha=' + $authSha + ' hash=' + $authBefore + '/' + $authAfter)
+
+    $gitLinesBefore = 0
+    if (Test-Path -LiteralPath $fx.Git.Trace) { $gitLinesBefore = @(Get-Content -LiteralPath $fx.Git.Trace -ErrorAction SilentlyContinue).Count }
+    $republish = Invoke-C599Publish -Fx $fx -CandidateId $firstId
+    $republishTrace = Get-C1311TraceTail -Path $fx.Git.Trace -Skip $gitLinesBefore
+    Assert-C487 -Cond (
+        [int]$republish.ExitCode -eq 3 -and
+        -not [bool]$republish.Published -and
+        [string]$republish.Refusal -match 'remote-candidate-moved' -and
+        $republishTrace -notmatch 'GIT tag' -and
+        $republishTrace -notmatch 'GIT push') `
+        -Name 'C1311 MovingTipAuthority publish of the first sha refuses remote-candidate-moved' `
+        -Detail ('exit=' + [string]$republish.ExitCode + ' refusal=' + [string]$republish.Refusal)
+
+    $stillPeeled = ''
+    if (-not [string]::IsNullOrWhiteSpace($firstTag)) { $stillPeeled = Read-C599Remote -Seams $fx.Git -Ref ('refs/tags/' + $firstTag) }
+    Assert-C487 -Cond (
+        [int]$published.ExitCode -eq 0 -and [bool]$published.Published -and
+        $firstTag -match '-rc\.[1-9][0-9]*$' -and
+        $stillPeeled -eq $firstSha) `
+        -Name 'C1311 MovingTipAuthority the first tag still peels to the first sha' `
+        -Detail ('tag=' + $firstTag + ' peel=' + $stillPeeled + ' published=' + [string]$published.ExitCode + '/' + [string]$published.Refusal)
+
+    $promoteLines = 0
+    if (Test-Path -LiteralPath $fx.Git.Trace) { $promoteLines = @(Get-Content -LiteralPath $fx.Git.Trace -ErrorAction SilentlyContinue).Count }
+    $ghPath = Join-Path $fx.Root 'gh-trace.log'
+    $ghLines = 0
+    if (Test-Path -LiteralPath $ghPath) { $ghLines = @(Get-Content -LiteralPath $ghPath -ErrorAction SilentlyContinue).Count }
+    $promoteScript = Join-Path $here 'promote-release.ps1'
+    $promoted = & $promoteScript -ReleaseRoot $fx.ReleaseRoot -Tag $firstTag -CandidateId $firstId -CheckoutRoot $fx.Checkout -SeamsPath $fx.Gh.Path -PassThru
+    $promoteTrace = Get-C1311TraceTail -Path $fx.Git.Trace -Skip $promoteLines
+    $ghTail = Get-C1311TraceTail -Path $ghPath -Skip $ghLines
+    $finalName = ''
+    if (-not [string]::IsNullOrWhiteSpace($firstTag)) { $finalName = [regex]::Replace($firstTag, '-rc\.[0-9]+$', '') }
+    $finalPeeled = ''
+    if (-not [string]::IsNullOrWhiteSpace($finalName)) { $finalPeeled = Read-C599Remote -Seams $fx.Git -Ref ('refs/tags/' + $finalName) }
+    $preStill = ''
+    if (-not [string]::IsNullOrWhiteSpace($firstTag)) { $preStill = Read-C599Remote -Seams $fx.Git -Ref ('refs/tags/' + $firstTag) }
+    $finalRecorded = ''
+    $pubPath = Join-Path $fx.ReleaseRoot 'publications.json'
+    if (Test-Path -LiteralPath $pubPath) {
+        $pubDoc = Get-Content -LiteralPath $pubPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($row in @($pubDoc.reservations)) {
+            if ([string]$row.candidateId -eq $firstId -and $row.PSObject.Properties.Name -contains 'finalTag') {
+                $finalRecorded = [string]$row.finalTag
+            }
+        }
+    }
+    Assert-C487 -Cond (
+        [string]$promoted.Refusal -eq 'remote-candidate-moved' -and
+        [int]$promoted.ExitCode -eq 3 -and
+        -not [bool]$promoted.Promoted -and
+        [string]::IsNullOrWhiteSpace($finalPeeled) -and
+        [string]::IsNullOrWhiteSpace($finalRecorded) -and
+        $preStill -eq $firstSha -and
+        $promoteTrace -notmatch 'GIT tag' -and
+        $promoteTrace -notmatch 'GIT push' -and
+        $promoteTrace -notmatch '--force' -and
+        $ghTail -notmatch 'GH ') `
+        -Name 'C1311 MovingTipAuthority promote of a moved tip refuses remote-candidate-moved' `
+        -Detail ('exit=' + [string]$promoted.ExitCode + ' refusal=' + [string]$promoted.Refusal + ' final=' + $finalName + '/' + $finalPeeled + ' recorded=' + $finalRecorded + ' pre=' + $preStill)
+
+    $want = @($script:ReleaseAuthorityScripts)
+    $have = @()
+    if ($null -ne $authDoc -and $null -ne $authDoc.scriptHashes) { $have = @($authDoc.scriptHashes.PSObject.Properties.Name) }
+    $fresh = Get-ReleaseAuthorityScriptHashes
+    $same = ($want.Count -eq 6 -and $have.Count -eq $want.Count)
+    $omitsTip = $true
+    foreach ($rel in $want) {
+        if ($have -notcontains $rel) { $same = $false; continue }
+        $got = [string]$authDoc.scriptHashes.$rel
+        if ($got -ne [string]$fresh[$rel] -or [string]::IsNullOrWhiteSpace($got)) { $same = $false }
+        if ($got -eq $firstSha -or $got -eq $secondSha -or $rel -eq $firstSha -or $rel -eq $secondSha) { $omitsTip = $false }
+        if ($got.Contains($firstSha) -or $got.Contains($secondSha)) { $omitsTip = $false }
+    }
+    foreach ($rel in $have) { if ($want -notcontains $rel) { $same = $false } }
+    Assert-C487 -Cond ($same -and $omitsTip -and $null -ne $authDoc -and [string]$authDoc.sha -eq $firstSha) `
+        -Name 'C1311 MovingTipAuthority scriptHashes omit the branch tip' `
+        -Detail ('keys=' + ($have -join ',') + ' same=' + $same + ' omits=' + $omitsTip)
+}
+
 # ====================================================================== run ===
 
 function Clear-C599FixtureReadOnly {
