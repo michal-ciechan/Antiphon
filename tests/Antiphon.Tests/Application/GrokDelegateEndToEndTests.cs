@@ -1013,7 +1013,7 @@ public class GrokDelegateEndToEndTests
         // (CARD-1334).
         var actionStop = new CancellationTokenSource();
         var actionRun = Task.Run(() =>
-            provider.GetRequiredService<SessionRuntimeActionCoordinator>().RunAsync(actionStop.Token)).Unwrap();
+            provider.GetRequiredService<SessionRuntimeActionCoordinator>().RunAsync(actionStop.Token));
         return new Harness(
             provider,
             runner,
