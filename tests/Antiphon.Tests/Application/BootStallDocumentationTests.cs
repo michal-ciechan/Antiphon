@@ -271,22 +271,21 @@ public class BootStallDocumentationTests
     }
 
     /// <summary>
-    /// CARD-1162 D1: the Windows ConPTY witness name must describe the legacy CARD-0353
-    /// kill-and-retry its body still asserts. The false detection-until-explicit-retry name
-    /// must not return. CARD-1151 S6 (CP-36) still owns flipping the assertions.
+    /// CARD-0870: the Windows ConPTY witness name states the CARD-1151 detection contract.
+    /// Both retired CARD-0353 kill-and-retry names must not return.
     /// </summary>
     [Test]
-    public void C1162_Grok_conpty_witness_name_states_the_legacy_kill_and_retry()
+    public void C1162_Grok_conpty_witness_name_states_detection_until_explicit_retry()
     {
-        const string retired =
+        const string retiredOriginal =
             "a_provider_that_never_answers_the_boot_prompt_is_failed_killed_and_retried_once";
-        const string falseDetectionName =
-            "a_provider_that_never_answers_boot_is_detected_until_explicit_retry";
-        const string witness =
+        const string retiredLegacy =
             "a_provider_that_never_answers_boot_is_killed_and_retried_once_legacy_card_0353";
+        const string witness =
+            "a_provider_that_never_answers_boot_is_detected_until_explicit_retry";
         var names = typeof(GrokDelegateEndToEndTests).GetMethods().Select(m => m.Name).ToArray();
-        names.ShouldNotContain(retired);
-        names.ShouldNotContain(falseDetectionName);
+        names.ShouldNotContain(retiredOriginal);
+        names.ShouldNotContain(retiredLegacy);
         names.ShouldContain(witness);
     }
 
