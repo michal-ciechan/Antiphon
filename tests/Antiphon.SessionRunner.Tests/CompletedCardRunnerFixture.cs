@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using Antiphon.SessionRunner;
+using Antiphon.Tests.TestHelpers;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -168,7 +169,7 @@ internal sealed class CompletedCardRunnerFixture : IAsyncDisposable
             await child.WaitForExitAsync();
             child.Dispose();
         }
-        Directory.Delete(Root, recursive: true);
+        ReadOnlyDirectory.Delete(Root);
     }
 }
 
