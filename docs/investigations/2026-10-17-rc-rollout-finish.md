@@ -54,4 +54,35 @@ landPending was 0. server2 had no Queued or Dispatched task. server2-temp still 
 
 Both had null land timestamps. Also bound to server2-temp, not Dispatched: Blocked Code `89bf7b58-b629-46ca-9b4e-500fd29014c0` (CARD-1320 S3 rebase onto master) and Blocked Code `bd6bce3d-816e-469f-a30d-0621ab09b644` (CARD-1320 S4 rebase onto master, land Completed).
 
-This is not the settled-task census race. `redeploy-old` was not run. Smoke, the Plan canary, `verify-card0849-caches.ps1 -Case Both`, `drain-temp`, and `retire-temp` were not run. Standing server2 remains drained onto server2-temp with `acceptingNewWork=false`.
+This is not the settled-task census race. `redeploy-old` was not run in that pass. The continuation below is the later approval.
+
+## Continuation: redeploy-old and gate 7 smoke
+
+Operator reply on this task: the two Dispatched Reviews on server2-temp are expected, and the Blocked Code tasks are not a gate. The hard conditions are `landPending=0` and server2 `boundOpen=0`.
+
+`check-census` from `C:\src\Antiphon` at 2026-10-18T10:43:34Z. Exit 0. Receipt `C:\src\Antiphon\.antiphon\rolling-server2\c727a047200160e8`. server2 `boundOpen=0` `landPending=0`. server2-temp `boundOpen=4` `landPending=0`.
+
+One `redeploy-old` at 2026-10-18T10:43:50Z-10:44:00Z, no `-ResumeRecycle`. Exit 0. Receipt `C:\src\Antiphon\.antiphon\rolling-server2\c72721ffbe14c3d9`. Host jq check passed (`jq-1.7.1`, digest `5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5`, `outcome=existing`). `verify-runner-caches` accepted with `schema=2` `kind=cold` `smoke=not-run`. Mounts included `antiphon-runner_work` `/work`, `antiphon-runner_runner-state` `/state`, `antiphon-runner_dind-data` `/var/lib/docker`, `antiphon-runner_runner-tmp` `/tmp`, and the three cache volumes. The phase skipped `deploy-parent` because `buildVersion` was already the target SHA. Drain clear reason recorded on the runner is `CARD-0727 rolling upgrade complete`.
+
+`GET /api/session-runners/server2/status` after that phase:
+
+- `buildVersion=09e48c5d6f1d404cfea8ec0d992270424fd2a184`
+- `runnerStoreId=f519bd08-e53a-47d1-adb1-2ab33475446f` (unchanged)
+- `processBootId=0e14a3d4-ba81-4ae9-a956-515188b82233` (unchanged)
+- `acceptingNewWork=true` `draining=false` `dispatchEligible=true` `available=true`
+- `sessions=0` `runnerSessions=0` `queuedTasks=0`
+
+Container `antiphon-runner-session-runner-1` stayed `a6457bc89508` on `antiphon-server2/session-testing:09e48c5d6f1d`. server2-temp stayed accepting the same SHA with 4 sessions.
+
+Gate 7 version smoke at 2026-10-18T10:44:39Z, exit 0:
+
+- `runner-drain.ps1 status -RunnerId server2` showed `acceptingNewWork=true` and the target `buildVersion`
+- uid 1654 `codex --version` printed `codex-cli 0.160.0`
+- `pwsh --version` printed `PowerShell 7.5.4`
+- `dotnet --version` printed `10.0.402`
+
+The status row also has `codexCliVersionError=stderr_output` with `codexCliVersion=0.160.0`. The uid 1654 exec itself exited 0.
+
+A second `check-census` at 2026-10-18T10:45Z, receipt `C:\src\Antiphon\.antiphon\rolling-server2\c727d5770d4bf76d`, still had server2 `boundOpen=0` and `landPending=0` on both runners. server2-temp `boundOpen=4`.
+
+The Plan canary, `verify-card0849-caches.ps1 -Case Both`, `drain-temp`, and `retire-temp` were not run. Canonical checkout stayed `69978ec1a246cd7a860f88a364eafc53a416aff7`.
