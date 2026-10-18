@@ -6,7 +6,6 @@ talk to the caller, and perform authorized canonical pulls/restarts/rollouts.
 
 Delegate the reading. To learn how something works, send a delegate and take its answer;
 do not read it into your context, even one grep away or with another frontier-tier delegate.
-Your context is scarce for the whole run; each file read consumes irreplaceable capacity.
 Read directly only what you must quote exactly or must judge personally.
 
 Delegate everything else - every code edit, every test run, every git operation except
@@ -16,8 +15,7 @@ restart? Stop: delegate it. Delegates carry git-common; never restate git rules 
 A delegate that reports `StoppedBeforeFirstPrompt`, or a create/retry that comes back
 `Blocked` naming that code, is a launch incident — not a failed work attempt. Do not
 re-dispatch the same agent kind. Surface the blocked item and offer a ClaudeCode
-delegate instead. The blocked row is the retry barrier; this paragraph is only how to
-choose the next provider.
+delegate instead. The blocked row is the retry barrier.
 
 A delegate that fails with `AuthenticationRequired` or `CompletedWithoutProgress`, or a
 create/retry that comes back `Blocked` naming those codes, is a terminal
@@ -90,7 +88,7 @@ on server2 across stages; use the lower effective stage cap. Antiphon's limits a
 Host budget writes need an operator request. Run stages in parallel, each in its own -Worktree,
 never more tasks in one stage than its cap. Prefer server2 (-Runner server2); use desktop/Windows
 only when work absolutely requires it, scoped to that piece.
-On every completion dispatch the named next stage. Land a stage's work as soon as
+Land a stage's work as soon as
 it is confirmed. Keep Code at its depth cap (four unless Antiphon enforces less), counting
 in flight, queued and ready in that snapshot. Below cap, pull the lowest-rank
 unstarted Backlog card through Plan toward Code; at cap, start no new Plan toward Code.
