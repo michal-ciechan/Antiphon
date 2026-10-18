@@ -1254,6 +1254,151 @@ public sealed class RollingVolumeRecycleScriptTests
             """;
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1326_Census_refuses_a_land_timestamp_or_land_pending_appearance()
+    {
+        var report = RemoteScriptContractTests.LinuxShell(C1326HostCensusScript());
+        report += await C1326WrapperProbe("appears-with-land-timestamp", "unstable");
+        report += await C1326WrapperProbe("appears-in-land-closure", "unstable");
+        report.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, report);
+        report.IndexOf("HOST_DONE", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
+        foreach (var name in new[]
+        {
+            "host-appears-with-land-timestamp", "host-appears-in-land-closure",
+            "wrapper-appears-with-land-timestamp", "wrapper-appears-in-land-closure"
+        })
+            report.IndexOf("PASS " + name, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
+    }
+
+    private static async Task<string> C1326WrapperProbe(string mode, string expect)
+    {
+        const string project = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1";
+        const string appeared = "33333333-3333-3333-3333-333333333333";
+        using var f = new C1008WrapperFixture();
+        var openRow = C1319Row(appeared, "Working");
+        var queries = new JsonObject();
+        if (mode == "appears-with-land-timestamp")
+        {
+            openRow["landRequestedAt"] = "2020-01-01T00:00:00Z";
+            queries[C1087ListPath(project, "open")] = new JsonArray(C1319Envelope(f), C1319Envelope(f, openRow));
+        }
+        else
+        {
+            var landRow = C1319Row(appeared, "Succeeded");
+            landRow["landRequestedAt"] = "2020-01-01T00:00:00Z";
+            var land = C1319Envelope(f, landRow);
+            queries[C1087ListPath(project, "open")] = new JsonArray(C1319Envelope(f), C1319Envelope(f, openRow));
+            queries[C1087ListPath(project, "land")] = new JsonArray(land, land.DeepClone().AsObject());
+        }
+        f.State["taskQueries"] = queries;
+        f.State["details"] = new JsonObject { [appeared] = C1319Detail(openRow, "Working") };
+        var run = await f.Run("check-census");
+        var refused = expect == "unstable" && run.Exit == 2
+            && run.Output.Contains("RecycleTaskCensusUnknown cause=Unstable", StringComparison.Ordinal)
+            && run.Output.Contains("RecycleLandInFlight", StringComparison.Ordinal) == false
+            && run.Output.Contains("Census check complete:", StringComparison.Ordinal) == false;
+        if (refused) return "PASS wrapper-" + mode + "\n";
+        return "FAIL wrapper-" + mode + " exit=" + run.Exit + "\n" + run.Output + "\n";
+    }
+
+    private static string C1326HostCensusScript()
+    {
+        var remote = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c590-remote.sh"));
+        return """
+            c1008_http() {
+                printf '%s\n' "$1" >> "$root/http-trace"
+                local body id
+                case "$1" in
+                    *'&status='*)
+                        open_reads=$((open_reads + 1))
+                        if [ "$open_reads" -eq 1 ]; then body="$open_first"; else body="$open_later"; fi
+                        ;;
+                    *landPending=true*)
+                        land_reads=$((land_reads + 1))
+                        if [ "$land_reads" -eq 1 ]; then body="$land_first"; else body="$land_later"; fi
+                        ;;
+                    /api/agent-tasks/*)
+                        id="${1##*/}"
+                        body="$(printf '%s' "$details" | jq -ec --arg id "$id" '.[$id]')" || {
+                            C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Transport path=$1"
+                            return 2
+                        }
+                        ;;
+                    *)
+                        C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Transport path=$1"
+                        return 2
+                        ;;
+                esac
+                C1008_HTTP_BODY="$body"
+            }
+            """ + "\n" + C1317ShellFunction(remote, "c1008_tasks_collect") + "\n"
+            + C1317ShellFunction(remote, "c1008_tasks") + "\n" + """
+            set -u
+            root="$(mktemp -d)"
+            trap 'rm -rf -- "$root"' EXIT
+            CASE_DIR="$root/case"
+            mkdir -p "$CASE_DIR"
+            CASE=deploy-parent
+            C1008_RUNNER=server2
+            C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1
+            empty='{"items":[],"scope":{"projectId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","unscoped":"include"},"excluded":{"total":0,"unscoped":0,"byProject":[]}}'
+            open_first="$empty"
+            open_later="$empty"
+            land_first="$empty"
+            land_later="$empty"
+            details='{}'
+            open_reads=0
+            land_reads=0
+            row_of() {
+                jq -nc --arg id "$1" --arg status "$2" --arg requested "$3" --arg started "$4" \
+                    '{id:$id,status:$status,runnerId:"desktop",projectId:null,scopeSource:"None",landRequestedAt:(if $requested=="" then null else $requested end),landStartedAt:(if $started=="" then null else $started end)}'
+            }
+            envelope() {
+                local rows='[]' row
+                for row in "$@"; do rows="$(printf '%s' "$rows" | jq -c --argjson row "$row" '. + [$row]')"; done
+                jq -nc --argjson items "$rows" '{items:$items,scope:{projectId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1",unscoped:"include"},excluded:{total:0,unscoped:0,byProject:[]}}'
+            }
+            detail_of() { jq -nc --argjson row "$1" --arg status "$2" '{summary:($row + {status:$status}),landRequest:null}'; }
+            probe() {
+                local name="$1" mode="$2" expect="$3" status=0
+                local appeared=33333333-3333-3333-3333-333333333333
+                local fresh landed
+                fresh="$(row_of "$appeared" Working "" "")"
+                landed="$(row_of "$appeared" Succeeded "2020-01-01T00:00:00Z" "")"
+                case "$mode" in
+                    appears-with-land-timestamp)
+                        fresh="$(row_of "$appeared" Working "2020-01-01T00:00:00Z" "")"
+                        open_first="$(envelope)"
+                        open_later="$(envelope "$fresh")"
+                        land_first="$empty"
+                        land_later="$empty"
+                        ;;
+                    appears-in-land-closure)
+                        open_first="$(envelope)"
+                        open_later="$(envelope "$fresh")"
+                        land_first="$(envelope "$landed")"
+                        land_later="$(envelope "$landed")"
+                        ;;
+                esac
+                details="$(jq -nc --arg id "$appeared" --argjson d "$(detail_of "$fresh" Working)" '{($id):$d}')"
+                open_reads=0
+                land_reads=0
+                : > "$root/http-trace"
+                C1008_TASK_ERROR=''
+                c1008_tasks > "$root/snapshot.json" || status=$?
+                if [ "$expect" = land-in-flight ] && [ "$status" = 3 ] && [ "$C1008_TASK_ERROR" = "RecycleLandInFlight $appeared" ]; then
+                    printf 'PASS host-%s\n' "$name"
+                else
+                    printf 'FAIL host-%s status=%s error=%s\n' "$name" "$status" "$C1008_TASK_ERROR"
+                fi
+            }
+            probe appears-with-land-timestamp appears-with-land-timestamp land-in-flight
+            probe appears-in-land-closure appears-in-land-closure land-in-flight
+            printf 'HOST_DONE\n'
+            """;
+    }
+
     private static string C1317ShellFunction(string text, string name)
     {
         var lines = text.Replace("\r\n", "\n").Split('\n');

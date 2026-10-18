@@ -234,7 +234,16 @@ disagreement or invalid land proof remains `RecycleLandUnknown`, except a termin
 (`Succeeded`, `Failed` or `Canceled`) with `landRequest` null, which is proven no-land and may
 be absent from the next pass's list without `Unstable`, and except a task that first appears
 on that pass with `landRequest` null, outside the `landPending` closure, and with neither land
-timestamp set. A land request, an unknown land state, or a changed row still refuses. Project resolution
+timestamp set. A land request, an unknown land state, or a changed row still refuses.
+CARD-1326 keeps two edges of that exception. A task that appears under a nested excluded
+scope still ends `RecycleTaskCensusUnknown cause=Unstable`: forgiveness rewrites the open
+task, its null land proof and the scope id list only, and leaves `excluded.byProject` counts
+and any scope pass 0 did not contain untouched. Each pass already reconciles those counts
+with the rows it walked, so a nested appearance is a different closure. `check-census` stays
+the read-only count report, so a row with `landRequestedAt` or `landStartedAt` increments
+`landPending`. When that row, or a row whose id is in the `landPending` closure, is the
+pass-1 appearance, the two-pass compare refuses `cause=Unstable`. Mutating phases and the
+host census refuse `RecycleLandInFlight` on the row itself. Project resolution
 uses `RecycleProjectUnresolved` and its cause. Each census retains approved read
 timings/counts and reduced task/land facts; no task prose, credentials or response body
 is retained. A refusal stops the phase before destructive work, including on resume.
