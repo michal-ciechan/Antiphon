@@ -1207,7 +1207,11 @@ docker() {
                 esac
             fi
             # c849_fixture_npm keeps this id and refuses any other create stdout (CARD-1208).
+            # CARD-1333: a non-zero create prints no id, so the production || reports FixtureNpmNetworkFailed.
             if [ "${2:-}" = create ]; then
+                if [ "${C1192_FAULT:-}" = npm-network-create ]; then
+                    return 1
+                fi
                 printf '%s\n' "$(printf '%s' "${*: -1}" | sha256sum | cut -d' ' -f1)"
             fi
             return 0 ;;
@@ -2188,6 +2192,7 @@ mode_npm_sentinel() {
     : > "$C1192_ROOT/scenario.err"
     require_init
     plant_cache "$cache" npm-content
+    printf '%s\n' "$cache" >> "$CASE_DIR/.fixture-volumes"
     data="$C1192_ROOT/volumes/$WORK/data"
     modules="$data/npm-offline/b/node_modules"
     sentinel="$modules/c849-cache-probe/sentinel"
