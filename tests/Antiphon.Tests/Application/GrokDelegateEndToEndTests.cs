@@ -47,8 +47,9 @@ namespace Antiphon.Tests.Application;
 /// <see cref="AgentSessionLaunchQueue"/> into <see cref="AgentSessionService"/> and really starts
 /// fakegrok.exe on a real ConPTY; the brief travels the <see cref="SessionMessageQueueService"/>
 /// delivery path; the transcript is read by the real <c>GrokTranscriptTailer</c> and
-/// <c>GrokTranscriptNormalizer</c> inside the runner; and settlement fires by itself, the way
-/// production fires it, out of <see cref="AgentSessionRuntime.SyncTranscriptAsync"/>.</para>
+/// <c>GrokTranscriptNormalizer</c> inside the runner. Settlement fires by itself, the way
+/// production fires it: <see cref="AgentSessionRuntime.SyncTranscriptAsync"/> admits the action
+/// and hints, and the harness runs <see cref="SessionRuntimeActionCoordinator"/> to drain it.</para>
 ///
 /// <para><b>What is not.</b> Two seams, both named where they are used. The API ENDPOINT is a
 /// three-line relay (<see cref="DelegateTaskApiRelay"/>) rather than the mapped route — everything
@@ -1007,12 +1008,20 @@ public class GrokDelegateEndToEndTests
             backendOverride: ModernBackend));
 
         var provider = services.BuildServiceProvider();
+        // Production starts these workers in SessionRuntimeActionHostedService. The pump only
+        // hints; without RunAsync the channel saturates (owners 0) and settlement never fires
+        // (CARD-1334).
+        var actionStop = new CancellationTokenSource();
+        var actionRun = Task.Run(() =>
+            provider.GetRequiredService<SessionRuntimeActionCoordinator>().RunAsync(actionStop.Token)).Unwrap();
         return new Harness(
             provider,
             runner,
             provider.GetRequiredService<AgentSessionLaunchQueue>(),
             delegation,
-            workspacePath);
+            workspacePath,
+            actionStop,
+            actionRun);
     }
 
     internal sealed record Harness(
@@ -1020,19 +1029,37 @@ public class GrokDelegateEndToEndTests
         RecordingRunnerClient Runner,
         AgentSessionLaunchQueue LaunchQueue,
         DelegationSettings Delegation,
-        string WorkspacePath) : IAsyncDisposable
+        string WorkspacePath,
+        CancellationTokenSource ActionStop,
+        Task ActionRun) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()
         {
-            await Runner.DisposeAsync();
-            await Provider.DisposeAsync();
+            try
+            {
+                await ActionStop.CancelAsync();
+                try
+                {
+                    await ActionRun;
+                }
+                catch (OperationCanceledException)
+                {
+                    // The workers leave when the harness token is cancelled.
+                }
+            }
+            finally
+            {
+                ActionStop.Dispose();
+                await Runner.DisposeAsync();
+                await Provider.DisposeAsync();
+            }
         }
     }
 
     /// <summary>
     /// Stands in for <c>SessionRunnerEventPump</c> by driving the runtime's OWN catch-up, which is
-    /// the same persistence the pump's reconnect path uses — and, because it is the real thing,
-    /// carries the turn-boundary flush that settles the task with nothing in the test calling it.
+    /// the same persistence the pump's reconnect path uses. Persist admits a runtime action and
+    /// hints; the harness-owned coordinator workers drain that hint and settle the task.
     /// </summary>
     internal static async Task PumpTranscriptAsync(IServiceProvider provider, Guid sessionId, CancellationToken ct)
     {
