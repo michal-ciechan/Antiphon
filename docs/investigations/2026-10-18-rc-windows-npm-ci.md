@@ -6,7 +6,7 @@ Task: `e340b1a2`, Debug. Source inspected: `a1d24b6fc92d45ae5274b418bf54c6b8819a
 
 The npm launcher failed **before npm ci started**. It tried to load npm's own entry points relative to the client working directory. There is no npm package in the client dependency graph and no client node_modules directory at inspection time. A normal client dependency installation cannot explain or fix the launcher's incorrect base directory.
 
-The strongest explanation is a repository launcher defect: `NativeProcessOwner` quotes every argument using CRT rules, including the bare `npm.cmd` passed to `cmd.exe /c`. The installed npm batch shim derives its own files from `%~dp0`. This combination is consistent with both missing paths. It is a strong diagnosis, **not a locally reproduced proof**: the scratch native-launch comparison was refused by the host build slot for low memory. Exact historical executable paths were not recorded in the npm log, so the installed paths below are current resolution evidence, not a captured process-start receipt.
+The cause is a **locally reproduced repository launcher defect**: `NativeProcessOwner` quotes every argument using CRT rules, including the bare `npm.cmd` passed to `cmd.exe /c`. The installed npm batch shim derives its own files from `%~dp0`. The exact native owner reproduces both missing paths in an empty scratch cwd, and an instrumented batch file proves `%~dp0` becomes that cwd. Absolute npm.cmd and absolute node plus npm-cli.js both succeed. A scratch PATH shim then passed npm ci, bundle build and lint on an archive of the pinned client. Exact historical executable paths were not recorded in the original npm log, so the installed paths below are current resolution/reproduction evidence, not a captured process-start receipt from the original run.
 
 The run is already ineligible for RC complete-green. The failure is recorded and propagated; continuing .NET tests is **not a fail-open release verdict**. Do not publish based on the eventual .NET results. A launcher repair belongs in a separate Code task; this Debug task did not change executable source.
 
@@ -59,7 +59,7 @@ Error: Cannot find module 'C:\Antiphon\releases\checkout\client\node_modules\npm
 Node.js v24.6.0
 ```
 
-`dotnet-build.log` ends with 1,136 warnings, zero errors, elapsed 2m14.10s. The directory then contains the Antiphon execution diagnostics and pending stdout/stderr files. Neither a successful npm build log nor a client-build receipt existed when inspected.
+`dotnet-build.log` ends with 1,136 warnings, zero errors, elapsed 2m14.10s. Initially the directory contained the Antiphon execution diagnostics and pending stdout/stderr files; it later advanced to SessionRunner tests. Neither a successful npm build log nor a client-build receipt existed when inspected. The wrapper was still running at the final process check.
 
 ## Launcher and filesystem evidence
 
@@ -80,7 +80,7 @@ The two inspected launcher source files are byte-identical between this worktree
 
 The package-lock has zero `node_modules/npm` entries, including nested entries. The occurrences of the key `npm` are engine constraints, not dependencies. Neither `client\node_modules`, `client\node_modules\npm`, nor `client\dist\index.html` exists at inspection. No local node/npm launcher is in client. The release checkout, client, and system nodejs directory are ordinary directories without a link target/reparse attribute. There is no evidence here of an npm self-update, a half-installed npm dependency, a copied nightly npm shim, or a junction redirect. An absent directory does not establish whether an earlier clean removed it; the reported clean can explain absent dependencies, but not why the system shim calculates its home as client.
 
-The native launcher was introduced in `07e616f36bbc4f624456b7b01fdd5948c4b8dd8d` (CARD-1039, October 4), replacing Start-Process with the explicit CreateProcess/CRT quoting path. This is the likely introduction point, not a bisect-confirmed attribution. The caller's dead-lock recovery and `git clean -fdx` are reported context; no retained clean transcript was found in the named outer logs. `-NoSync` skips clone/fetch/reset/clean, **not** npm installation.
+The native launcher was introduced in `07e616f36bbc4f624456b7b01fdd5948c4b8dd8d` (CARD-1039, October 4), replacing Start-Process with the explicit CreateProcess/CRT quoting path. This is the likely introduction point, not a bisect-confirmed attribution. The caller's dead-lock recovery and `git clean -fdx` are reported context; no retained clean transcript was found in the named outer logs. `-NoSync` skips clone/fetch/reset/clean, **not** npm installation. A read of the release checkout's HEAD/ref confirms the pinned SHA on its local master branch; the RC identity comes from the wrapper's ref/expectedSha parameters.
 
 A corroborating first-party repository issue describes the same two errors from quoted bare npm.cmd and success with an absolute npm.cmd on Windows: [openai/codex #52281](https://github.com/openai/codex/issues/52281). That report used `/d /s /c`, so it corroborates the mechanism but is not an exact reproduction of this launcher. The [npm upstream shim](https://github.com/npm/cli/blob/latest/bin/npm.cmd) also derives its entry points from its batch-file directory. Local installed bytes, rather than the moving upstream version, were inspected for this diagnosis.
 
@@ -108,46 +108,61 @@ At nightly-tests-impl.ps1:343, nonzero npm ci sets npmOk=false, overallFailed=tr
 
 File a launcher/Windows batch invocation defect after the caller's duplicate search. Do **not** file the allegation that npm ci is ignored and a passing .NET suite makes this release green. A separate cost/early-stop improvement could avoid hours of work after a mandatory prerequisite fails, but that is a policy choice distinct from a release correctness defect.
 
+## Scratch reproduction and remedy validation
+
+The first attempt was refused by the host build slot: memory_floor (669 MB, later 653 MB, floor 6144 MB), then `BUILD SLOT timeout after 2m position=1`. No rows ran and no unleased retry occurred. Once the active gate advanced from Antiphon to SessionRunner, a new leased attempt succeeded. All native children exited, all output drained, and no termination was requested.
+
+Six native-launch observations, all using the unchanged owner at the inspected source:
+
+| Invocation | Observed result |
+|---|---|
+| `/c`, `npm.cmd`, `--version` | Exit 1; both original MODULE_NOT_FOUND errors reproduced under the scratch client cwd. |
+| `/c`, `call`, `npm.cmd`, `--version` | Exit 1; quoted `call` is not recognized. Merely inserting another argument is not a fix. |
+| `/c`, absolute system npm.cmd, `--version` | Exit 0; npm 11.5.1. |
+| Absolute node.exe, absolute npm-cli.js, `--version` | Exit 0; npm 11.5.1. |
+| `/c`, `probe.cmd`, `hello` | Exit 0; batch resides in shim-bin but `%~dp0` and `%~f0` incorrectly name client cwd. |
+| `/c`, `call`, `probe.cmd`, `hello` | Exit 1; quoted `call` is not recognized. |
+
+Lease `9088b315-0af8-42c2-83ae-776de9b970ee`, waited 0s, held 5s. Evidence: `C:\Antiphon\scratch\e340b1a2-npm\probe-results.json`, `probe.ps1`, and its six logs. These are diagnostic launches, not six application test cases; three exit-zero and three deliberately observed nonzero outcomes.
+
+The validated operational shim is `C:\Antiphon\scratch\e340b1a2-npm\repair-shim\npm.cmd`:
+
+```bat
+@echo off
+"C:\Program Files\nodejs\node.exe" "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" %*
+exit /b %ERRORLEVEL%
+```
+
+It does not use `%~dp0`. SHA256 `AAB3D8573A4A01152B8C1263D8017F5C44C45E2B1562408672BFC7D228EB9C70`. Prepending this directory only to the scratch process's PATH made the **unchanged** native owner and original bare npm.cmd argument arrays work:
+
+| Scratch row | Result |
+|---|---|
+| npm --version | Exit 0, 11.5.1 |
+| npm ci | Exit 0; 818 packages added, 819 audited |
+| npm run build | Exit 0; bundle generated |
+| npm run lint | Exit 0; eslint with max-warnings 0 |
+
+Lease `1a9e8513-b536-4a5a-aee5-dc94c7bc1911`, waited 0s, held 179s. All four children exited/drained with terminationRequested=false. `repair-results.json`, `repair-probe.ps1`, and `shim-*.log` are in the same scratch evidence root. The source was extracted with git archive from `a1d24b6fc92d45ae5274b418bf54c6b8819a8697` into `repair-copy\source\client`; npm used a scratch cache. The build emitted the expected git-rev-parse failure because the archive has no .git, and the configured version fallback is unknown; it also emitted the bundle-size warning. This validates command execution/compilation, **not a release bundle or RC coverage receipt**. No scratch bundle should be copied into the release checkout.
+
+System tool hashes used: node.exe `3428A3D055501883385D78B19128550D3E8BE39A89E7EDBA683A9B06830257C7`; system npm.cmd `21B46C69AD6E2F231F02A9E120F4BA6C8E75FEF5A45637103002EAB99F888AB8`; npm-cli.js `3CE7CBA6F5128DD5F54C98B6A5036B0F850496878CC2E21044B675FE3C594E3E`.
+
 ## Smallest remedy and exact post-run procedure
 
 There is no `-InstallClientDependencies`, `-SkipNpmCi`, or install-only flag on nightly-run.ps1/nightly-tests.ps1 at this SHA. Their supported automatic path already runs npm ci every time. Manually populating client/node_modules, adding npm to package.json, copying the npm package into client, globally updating npm, or repeating git clean does not repair a wrongly based shim. Do not modify the current checkout while its run owns it.
 
-1. After PID 38396 and its owned test children have exited, retain the completed summary/state and all original logs. Verify the run lock has been released and that checkout HEAD, candidate journal and remote rc ref still match the expected SHA. A moved ref requires a new candidate identity; do not reuse the old identity with another SHA. A live lock owner remains a stop condition.
-2. Run the prepared scratch launcher comparison through the host build slot. It uses the exact inspected native owner and only version queries/instrumented scratch batch files; it does not install packages or run an application suite:
+1. After PID 38396 and its owned test children have exited, retain the completed summary/state and all original logs. Verify the candidate's `state\run.lock` and `C:\Antiphon\verification\native-run.lock` have been released, and that checkout HEAD, candidate journal and remote rc ref still match the expected SHA. A moved ref requires a new candidate identity; do not reuse the old identity with another SHA. A live lock owner remains a stop condition. Do not remove locks just to make a rerun start.
+2. Verify the scratch shim's hash above, retain it alongside the toolchain provenance, and prepend its directory to **only the new wrapper child's PATH**. This uses the wrapper's existing inherited command-resolution path; it is a validated local toolchain workaround, not a new documented install flag. Let the wrapper itself run npm ci/build/lint in its checkout. No node_modules deletion, npm dependency addition, global npm update, or copying of scratch dependencies is necessary.
+3. Run the complete command below in a fresh PowerShell process after those checks. It automatically allocates a new run ID. Do not supply -Suites, -NoReport or seams. Preserve the original failed evidence; do not combine its native test passes with another run to claim RC complete-green.
+4. Commission the durable Code fix separately: resolve npm.cmd to its absolute application path before constructing the native cmd invocation, and cover a path with spaces plus a different cwd in a real Windows batch-shim regression test. Preserve Job Object ownership, exit propagation and draining. The absolute-path version probe succeeded; full production implementation/review is still required. Once landed, run a full RC profile at the new pinned source SHA instead of using this old candidate identity.
+
+The following rerun recipe uses the validated scratch shim at the unchanged pinned SHA. **It was not executed against the release checkout by this task.** Use a fresh PowerShell child so the PATH override ends with that child:
 
 ```powershell
-Set-Location 'C:\Antiphon\worktrees\card-task-e340b1a2'
-& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -File scripts/build-slot.ps1 `
-  -Label e340b1a2-npm-launch-probe -SlotWaitMinutes 2 -- `
-  'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -File 'C:\Antiphon\scratch\e340b1a2-npm\probe.ps1'
-```
-
-The six rows compare current relative invocation, `call npm.cmd`, absolute npm.cmd, absolute node plus npm-cli.js, and two scratch batch invocations printing `%0`/`%~dp0`. Require the bad path to reproduce and a replacement to succeed; do not assume all cmd quoting forms are interchangeable. Results will be in `probe-results.json` plus six logs in the scratch root. The prepared script is local evidence, not a checked-in release dependency.
-
-3. If an install-only sanity check is needed, extract the pinned client's source to a **new scratch directory**, then bypass the batch shim with the existing node and npm CLI. This is an unexecuted diagnostic recipe, not RC coverage:
-
-```powershell
-$scratchRoot = 'C:\Antiphon\scratch\e340b1a2-npm\install-check'
-if (Test-Path -LiteralPath $scratchRoot) { throw 'Use a new empty scratch root.' }
-New-Item -ItemType Directory -Path $scratchRoot | Out-Null
-git archive --format=zip --output="$scratchRoot\client.zip" a1d24b6fc92d45ae5274b418bf54c6b8819a8697 client
-if ($LASTEXITCODE -ne 0) { throw 'Archive failed.' }
-Expand-Archive -LiteralPath "$scratchRoot\client.zip" -DestinationPath "$scratchRoot\source"
-& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -File scripts/build-slot.ps1 `
-  -Label e340b1a2-scratch-npm-ci -- 'C:\Program Files\nodejs\node.exe' `
-  'C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js' `
-  --prefix "$scratchRoot\source\client" ci --cache "$scratchRoot\npm-cache"
-if ($LASTEXITCODE -ne 0) { throw 'Scratch install failed; do not repair the release checkout.' }
-```
-
-4. Preferred durable remedy: a separately commissioned Code fix resolves/launches npm safely through the native custody boundary, with a real batch-shim regression test covering paths with spaces and a distinct cwd. Preserve Job Object ownership, exit propagation and draining. Qualify the chosen implementation before landing. Then run the complete RC profile at its new pinned source SHA. A client-only retry cannot turn the original run into RC complete-green.
-
-An operational workaround without editing tracked release source would be a scratch `npm.cmd` on **only the new wrapper child's PATH** that calls absolute node.exe and absolute npm-cli.js directly, without `%~dp0`. The wrapper inherits PATH; it has no dedicated shim override flag. This is **proposed, not validated or installed**. First add that variant to the scratch probe and test ci/build/lint in the scratch copy, record shim/toolchain provenance, then have the caller decide whether to use it. Do not present an untested PATH shim as the supported documented repair. A node_modules-only repair is not recommended.
-
-For a validated toolchain workaround at the unchanged pinned SHA, the supported wrapper rerun is the existing full command below, with a fresh run ID automatically allocated. Do not supply -Suites, -NoReport or seams. Run it only after the checks above and after resolving the launcher; otherwise it repeats the defect:
-
-```powershell
-$env:PATH = 'C:\Program Files\PowerShell\7;' + $env:PATH
+$shim = 'C:\Antiphon\scratch\e340b1a2-npm\repair-shim\npm.cmd'
+if ((Get-FileHash -LiteralPath $shim).Hash -ne 'AAB3D8573A4A01152B8C1263D8017F5C44C45E2B1562408672BFC7D228EB9C70') {
+  throw 'Shim changed; requalify it before use.'
+}
+$env:PATH = 'C:\Antiphon\scratch\e340b1a2-npm\repair-shim;C:\Program Files\PowerShell\7;' + $env:PATH
 & 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile `
   -File 'C:\Antiphon\releases\checkout\scripts\nightly-run.ps1' `
   -NoSync -Profile rc -Trigger rc -Ref rc/2026-10-18 `
@@ -162,11 +177,11 @@ $env:PATH = 'C:\Program Files\PowerShell\7;' + $env:PATH
 
 ## Verification limits and handoff
 
-No project build, install, application test, process termination, live checkout mutation, restart, or gate intervention was performed. The six-row scratch probe executed **zero rows**: the slot reported memory_floor (669 MB, later 653 MB, floor 6144 MB), then `BUILD SLOT timeout after 2m position=1`. No unleased retry occurred. No assertion pass/fail or successful repair is claimed. This blocks local proof of the quoting mechanism and selection of a verified workaround; the gate invalidity and absence of a client npm dependency are established independently.
+No .NET project build, application test suite, process termination, live checkout mutation, restart, or gate intervention was performed. Six launcher observations and four successful scratch prerequisites ran under granted slots after the initial refused attempt. The scratch bundle is not release evidence. Generated logs, JSON receipts, cache, dependencies and bundle remain external to Git in the scratch root; no alternate .NET output directories were created. The scratch probe has zero PowerShell parse errors. The full RC gate remains incomplete and must finish naturally.
 
-The caller needs to commission/route the launcher repair and decide whether to validate the temporary PATH workaround. Keep current RC verification incomplete and retain its useful native diagnostics. This document supplies the exact evidence and deferred commands rather than modifying a running gate.
+The caller needs to commission/route the launcher repair and decide whether to use the now-validated temporary PATH workaround after the current run exits. Keep current RC verification incomplete and retain its useful native diagnostics. This document supplies the exact evidence and deferred commands rather than modifying a running gate.
 
 --- next stage ---
 next: decide
-handoff: Retain this RC attempt as incomplete; validate the scratch launcher comparison once memory permits, then commission the Windows npm launcher repair or explicitly qualify the temporary toolchain workaround before a fresh full RC run.
+handoff: Retain this RC attempt as incomplete; after it exits, use the validated child-local PATH shim for a fresh full RC run if desired, and commission the Windows npm launcher repair separately.
 artifact: docs/investigations/2026-10-18-rc-windows-npm-ci.md
