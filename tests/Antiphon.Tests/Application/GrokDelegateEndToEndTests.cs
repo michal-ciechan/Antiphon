@@ -981,6 +981,7 @@ public class GrokDelegateEndToEndTests
         services.AddSingleton(Options.Create(new SessionStateSettings()));
         services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
         services.AddSingleton<SessionStateStore>();
+        services.AddSingleton<SessionRuntimeActionCoordinator>();
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<AgentTaskReplyService>();
@@ -1139,6 +1140,9 @@ public class GrokDelegateEndToEndTests
 
             await using var db = CreateContext();
             await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId).ExecuteDeleteAsync();
+            // Persist admits a SessionRuntimeAction per row, and that foreign key restricts
+            // transcript deletion (CARD-0870).
+            await db.SessionRuntimeActions.Where(a => a.AgentSessionId == sessionId).ExecuteDeleteAsync();
             await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
             await db.AgentTasks.Where(t => t.AgentSessionId == sessionId)
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.AgentSessionId, (Guid?)null));
