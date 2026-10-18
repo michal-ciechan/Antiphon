@@ -4,10 +4,10 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-1311 S2. <c>Test-C1311_LongLivedRcRef</c> calls the production ref parser,
-/// credit kind, and candidate journal. A long-lived ref is <c>rc/YYYY-MM-DD</c>
-/// with one candidate id per tested SHA. A legacy stamp ref still earns
-/// <c>rc-release</c>.
+/// CARD-1311 S2 and S3. <c>Test-C1311_LongLivedRcRef</c> calls the production ref
+/// parser, credit kind, and candidate journal. <c>Test-C1311_PreReleaseTag</c>
+/// calls tag parsing, the long-lived proposal, publish, and promote-release.
+/// A legacy stamp ref still earns <c>rc-release</c> and still publishes a final tag.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -26,4 +26,16 @@ public sealed class ReleaseBranchModelGateTests
             "C1311 LongLivedRcRef credit rc/rc/release/rc-20260923T083000Z earns rc-release",
             "C1311 LongLivedRcRef omitted Ref refuses rc-ref-required",
             "C1311 LongLivedRcRef an existing rc/2026-10-15 tip is journalled and not pushed");
+
+    [Test]
+    public Task C1311_PreReleaseTag() =>
+        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1311", "C1311_PreReleaseTag", 8,
+            "C1311 PreReleaseTag v2026.10.15.2-rc.1 is accepted",
+            "C1311 PreReleaseTag v2026.10.15.2 is accepted",
+            "C1311 PreReleaseTag v2026.10.15.2-rc.0 refuses tag-shape",
+            "C1311 PreReleaseTag a long-lived proposal is vYYYY.MM.DD.N-rc.K",
+            "C1311 PreReleaseTag promote creates the final tag at the peeled sha",
+            "C1311 PreReleaseTag promote leaves the pre-release tag in place",
+            "C1311 PreReleaseTag promote refuses a final tag at another sha",
+            "C1311 PreReleaseTag no tag delete and no force push");
 }
