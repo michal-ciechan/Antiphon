@@ -145,3 +145,27 @@ Read after the stop:
 - `GET /api/session-runners/server2-temp/slots` then returned 503 `phone_home_unavailable`.
 
 The `VoidTaskResult` line in the phase output is the same benign host-output line seen on the exit-0 `redeploy-old`.
+
+## Continuation: idle temp, drain-temp cleanup, retire-temp audit stop
+
+Operator decision on this task: the two stale server2-temp sessions could be released, then `drain-temp` and `retire-temp` re-run. Both tasks were already terminal before any release call.
+
+| task | status | session | session status | working | endedAt |
+|---|---|---|---|---|---|
+| `89bf7b58-b629-46ca-9b4e-500fd29014c0` | Failed | `81088675-4185-4faf-aa2d-d458d9bc8339` | Stopped | false | `2026-10-18T11:42:19.487146Z` |
+| `bd6bce3d-816e-469f-a30d-0621ab09b644` | Failed | `ee2f68fa-b194-4c77-8738-0435a9258246` | Stopped | false | `2026-10-18T11:42:19.792764Z` |
+
+`check-census` at 2026-10-18T11:52:54Z, exit 0, receipt `C:\src\Antiphon\.antiphon\rolling-server2\c7273c2ebee3950f`. server2 `boundOpen=0` `landPending=0`. server2-temp `boundOpen=0` `landPending=0`. Temp status was already `retiredAt=2026-10-18T11:45:09.0716214Z`, `retireReason=idle`, `sessions=0`, `runnerSessions=null`, `available=false`. `GET /api/session-runners/server2-temp/slots` returned 503 `phone_home_unavailable`. No `runner-slots.ps1 release` was sent. The documented per-session route kills that session's process tree (`POST /api/session-runners/{runnerId}/slots/{sessionId}/release`), and these two sessions had already ended with temp occupancy 0.
+
+`drain-temp -WaitIdleMinutes 240` from `C:\src\Antiphon` at 2026-10-18T11:53:09Z-11:54:13Z. No `-ResumeRecycle`. Exit 0. Receipt `C:\src\Antiphon\.antiphon\rolling-server2\c727cb56f213782e`. Container cleanup `outcome=completed`, `finalCensus` empty, operation `c9943b7ac031fc7746f489d7923bf48d9158`. Removed exited containers `6a2838d8e7fb` and `ac048a240b9f`. Temp project containers were then absent. The four `antiphon-runner-temp_*` volumes were still present.
+
+`retire-temp` from `C:\src\Antiphon` then exited 2 at 2026-10-18T12:04:12Z. Printed text:
+
+```
+DIAGNOSIS=RecycleGitAuditUnknown audit check=gitdir-entry status=0 repo=repos/antiphon
+Rolling deploy stopped: HostCaseFailed retire-temp-runner exit=2
+```
+
+Receipt `C:\src\Antiphon\.antiphon\rolling-server2\c7274aeaa51dc996`. The inner container census completed with empty candidates. The runner recycle journal `c1008a24aceabd9ff4ec9a174752ae3ca8475` is `phase=preflight`, `outcome=refused`, `ownedRemoved=false`, `stopReceipts` empty, `removeReceipts` empty. Volume outcomes stayed `pending` for `antiphon-runner-temp_work`, `antiphon-runner-temp_runner-tmp`, `antiphon-runner-temp_dind-data`, and `antiphon-runner-temp_runner-state`. The journal was not edited. This token is not `RecycleLandUnknown` or `RecycleTaskCensusUnknown cause=Unstable`, so it was not retried.
+
+After the stop, standing server2 was still accepting `09e48c5d6f1d404cfea8ec0d992270424fd2a184`, store `f519bd08-e53a-47d1-adb1-2ab33475446f`, `sessions=0`. Container `a6457bc89508` was still Up (healthy) on `antiphon-server2/session-testing:09e48c5d6f1d`. Build-slots `4cabb8afc676` was left Up. Main volumes and the three cache volumes were still present. Temp containers were absent. `GET /health` was Healthy. `GET /api/version` and canonical HEAD stayed `69978ec1a246cd7a860f88a364eafc53a416aff7` with `land-v2`. AppHost and the desktop runner were not restarted. No volume was deleted.
