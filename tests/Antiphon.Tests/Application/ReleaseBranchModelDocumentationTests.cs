@@ -21,7 +21,7 @@ public sealed class ReleaseBranchModelDocumentationTests
         text.ShouldContain("merge commit", Case.Sensitive);
         text.ShouldContain("rc tip", Case.Sensitive);
         text.ShouldContain(
-            "S2 accepts the long-lived rc ref; S3-S4 have not changed pre-release publication or moving-tip authority yet.",
+            "S3 publishes the long-lived pre-release tag and promote-release.ps1 writes the final tag at that peeled SHA; S4 has not changed moving-tip authority yet.",
             Case.Sensitive);
         text.IndexOf("The candidate ref is exactly", StringComparison.Ordinal).ShouldBe(-1);
         text.IndexOf("S2-S4 have not changed the scripts yet.", StringComparison.Ordinal).ShouldBe(-1);

@@ -6,7 +6,7 @@
 # D-3  candidate identity: legacy release/rc-YYYYMMDDTHHMMSSZ pinned to one full SHA,
 #      or long-lived rc/YYYY-MM-DD whose candidate id is that date plus the tested SHA.
 # D-4  one shared native-run lock serialises the master and RC lanes.
-# D-8  CalVer vYYYY.MM.DD.N tags and the SHA-bound release manifest.
+# D-8  CalVer vYYYY.MM.DD.N, optional pre-release vYYYY.MM.DD.N-rc.K, and the SHA-bound manifest.
 #
 # ASCII-only on purpose - parseable under Windows PowerShell 5.1.
 
@@ -19,7 +19,8 @@ $script:ReleaseGateDefaultReleaseRoot = 'C:\Antiphon\releases'
 $script:ReleaseGateDefaultCoordinationRoot = 'C:\Antiphon\verification'
 $script:ReleaseGateCandidateRefPattern = '^release/rc-(?<stamp>\d{8}T\d{6}Z)$'
 $script:ReleaseGateLongLivedRefPattern = '^rc/(?<y>\d{4})-(?<m>\d{2})-(?<d>\d{2})$'
-$script:ReleaseGateTagPattern = '^v(?<y>\d{4})\.(?<m>\d{2})\.(?<d>\d{2})\.(?<n>[1-9]\d*)$'
+$script:ReleaseGateTagPattern = '^v(?<y>\d{4})\.(?<m>\d{2})\.(?<d>\d{2})\.(?<n>[1-9]\d*)(?:-rc\.(?<k>[1-9]\d*))?$'
+$script:ReleaseGateLongLivedCandidateIdPattern = '^rc-\d{4}-\d{2}-\d{2}-[0-9a-f]{12}$'
 $script:ReleaseGateManifestSchema = 1
 
 # ---------------------------------------------------------------- identity ---
@@ -389,12 +390,26 @@ function Exit-ReleaseGateNativeLock {
 
 function Test-ReleaseGateTag {
     param([string]$Tag)
-    if ([string]::IsNullOrWhiteSpace($Tag)) { return [pscustomobject]@{ Ok = $false; Reason = 'empty-tag' } }
-    if ($Tag -notmatch $script:ReleaseGateTagPattern) { return [pscustomobject]@{ Ok = $false; Reason = 'tag-shape' } }
+    if ([string]::IsNullOrWhiteSpace($Tag)) {
+        return [pscustomobject]@{ Ok = $false; Reason = 'empty-tag'; Prerelease = $false; Rc = 0 }
+    }
+    if ($Tag -notmatch $script:ReleaseGateTagPattern) {
+        return [pscustomobject]@{ Ok = $false; Reason = 'tag-shape'; Prerelease = $false; Rc = 0 }
+    }
     $y = [int]$Matches['y']; $m = [int]$Matches['m']; $d = [int]$Matches['d']; $n = [int]$Matches['n']
-    if ($m -lt 1 -or $m -gt 12 -or $d -lt 1 -or $d -gt 31) { return [pscustomobject]@{ Ok = $false; Reason = 'tag-date' } }
-    try { $date = [datetime]::new($y, $m, $d, 0, 0, 0, [System.DateTimeKind]::Utc) } catch { return [pscustomobject]@{ Ok = $false; Reason = 'tag-date' } }
-    return [pscustomobject]@{ Ok = $true; Reason = ''; Date = $date; Sequence = $n; Tag = $Tag }
+    $k = 0
+    $prerelease = $false
+    if ($Matches.ContainsKey('k') -and -not [string]::IsNullOrWhiteSpace([string]$Matches['k'])) {
+        $k = [int]$Matches['k']
+        $prerelease = $true
+    }
+    if ($m -lt 1 -or $m -gt 12 -or $d -lt 1 -or $d -gt 31) {
+        return [pscustomobject]@{ Ok = $false; Reason = 'tag-date'; Prerelease = $prerelease; Rc = $k }
+    }
+    try { $date = [datetime]::new($y, $m, $d, 0, 0, 0, [System.DateTimeKind]::Utc) } catch {
+        return [pscustomobject]@{ Ok = $false; Reason = 'tag-date'; Prerelease = $prerelease; Rc = $k }
+    }
+    return [pscustomobject]@{ Ok = $true; Reason = ''; Date = $date; Sequence = $n; Tag = $Tag; Prerelease = $prerelease; Rc = $k }
 }
 
 function New-ReleaseGateTag {
@@ -403,6 +418,115 @@ function New-ReleaseGateTag {
     if ($Sequence -lt 1) { throw ('release sequence must be positive, got {0}' -f $Sequence) }
     $u = $CutUtc.ToUniversalTime()
     return ('v{0:0000}.{1:00}.{2:00}.{3}' -f $u.Year, $u.Month, $u.Day, $Sequence)
+}
+
+function New-ReleaseGatePreReleaseTag {
+    # D-4: vYYYY.MM.DD.N-rc.K. K is a positive integer with no leading zero.
+    param([datetime]$CutUtc, [int]$Sequence, [int]$Rc)
+    if ($Rc -lt 1) { throw ('release rc number must be positive, got {0}' -f $Rc) }
+    return ((New-ReleaseGateTag -CutUtc $CutUtc -Sequence $Sequence) + '-rc.' + [string]$Rc)
+}
+
+function Test-ReleaseGateLongLivedCandidateId {
+    param([string]$CandidateId)
+    if ([string]::IsNullOrWhiteSpace($CandidateId)) { return $false }
+    return ($CandidateId -cmatch $script:ReleaseGateLongLivedCandidateIdPattern)
+}
+
+function Get-ReleaseGateOptionalInt {
+    param($Row, [string]$Name)
+    if ($null -eq $Row) { return 0 }
+    if ($Row.PSObject.Properties.Name -notcontains $Name) { return 0 }
+    $text = [string]$Row.$Name
+    if ([string]::IsNullOrWhiteSpace($text)) { return 0 }
+    return [int]$text
+}
+
+function Get-ReleaseGateOptionalText {
+    param($Row, [string]$Name)
+    if ($null -eq $Row) { return '' }
+    if ($Row.PSObject.Properties.Name -notcontains $Name) { return '' }
+    return [string]$Row.$Name
+}
+
+function New-ReleaseGateReservationEntry {
+    # Stamp rows keep the historical keys. rc and finalTag are written only when set,
+    # so a later publish of the same row does not drop them and does not invent them.
+    param(
+        [string]$CandidateId,
+        [string]$Sha,
+        [string]$Tag,
+        [int]$Sequence,
+        [string]$ReservedAt,
+        [bool]$Published,
+        [string]$ReleaseId,
+        [string]$ReleaseUrl,
+        [string]$PublishedAt = '',
+        [int]$Rc = 0,
+        [string]$FinalTag = ''
+    )
+    $entry = [ordered]@{
+        candidateId = $CandidateId
+        sha = $Sha
+        tag = $Tag
+        sequence = $Sequence
+        reservedAt = $ReservedAt
+        published = $Published
+        releaseId = $ReleaseId
+        releaseUrl = $ReleaseUrl
+    }
+    if (-not [string]::IsNullOrWhiteSpace($PublishedAt)) { $entry.publishedAt = $PublishedAt }
+    if ($Rc -ge 1) { $entry.rc = $Rc }
+    if (-not [string]::IsNullOrWhiteSpace($FinalTag)) { $entry.finalTag = $FinalTag }
+    return $entry
+}
+
+function Get-ReleaseGatePreReleaseAllocation {
+    # D-4: one open N per UTC day. The next new SHA on that day takes the next K.
+    # A final tag, or a reservation whose finalTag names that N, closes N.
+    # The next pre-release then takes the next free N at K=1. A new UTC day starts at N=1.
+    param($Journal, [datetime]$CutUtc)
+    $day = $CutUtc.ToUniversalTime().ToString('yyyy.MM.dd')
+    $closed = @()
+    $used = @()
+    $openN = @()
+    $openK = @()
+    foreach ($row in @($Journal.reservations)) {
+        if ($null -eq $row) { continue }
+        $parsed = Test-ReleaseGateTag -Tag ([string]$row.tag)
+        if ($parsed.Ok -and $parsed.Date.ToUniversalTime().ToString('yyyy.MM.dd') -eq $day) {
+            $n = [int]$parsed.Sequence
+            if ($used -notcontains $n) { $used += $n }
+            if ($parsed.Prerelease) {
+                $openN += $n
+                $openK += [int]$parsed.Rc
+            } elseif ($closed -notcontains $n) {
+                $closed += $n
+            }
+        }
+        $finalText = Get-ReleaseGateOptionalText -Row $row -Name 'finalTag'
+        if (-not [string]::IsNullOrWhiteSpace($finalText)) {
+            $finalParsed = Test-ReleaseGateTag -Tag $finalText
+            if ($finalParsed.Ok -and -not $finalParsed.Prerelease -and $finalParsed.Date.ToUniversalTime().ToString('yyyy.MM.dd') -eq $day) {
+                $fn = [int]$finalParsed.Sequence
+                if ($closed -notcontains $fn) { $closed += $fn }
+                if ($used -notcontains $fn) { $used += $fn }
+            }
+        }
+    }
+    $bestN = 0
+    $bestK = 0
+    for ($i = 0; $i -lt $openN.Count; $i++) {
+        if ($closed -contains $openN[$i]) { continue }
+        if ($openN[$i] -gt $bestN -or ($openN[$i] -eq $bestN -and $openK[$i] -gt $bestK)) {
+            $bestN = [int]$openN[$i]
+            $bestK = [int]$openK[$i]
+        }
+    }
+    if ($bestN -ge 1) { return [pscustomobject]@{ Sequence = $bestN; Rc = ($bestK + 1) } }
+    $next = 1
+    while (($used -contains $next) -or ($closed -contains $next)) { $next++ }
+    return [pscustomobject]@{ Sequence = $next; Rc = 1 }
 }
 
 function Get-ReleaseGatePublicationJournal {
@@ -455,17 +579,30 @@ function Get-ReleaseGateTagProposal {
         if (-not [string]::Equals([string]$existing.sha, $Sha, [StringComparison]::OrdinalIgnoreCase)) {
             throw ('candidate {0} already reserved for sha {1}' -f $CandidateId, $existing.sha)
         }
-        return [pscustomobject]@{ Tag = [string]$existing.tag; Sequence = [int]$existing.sequence; Reused = $true; Row = $existing; Journal = $journal }
+        return [pscustomobject]@{
+            Tag = [string]$existing.tag
+            Sequence = [int]$existing.sequence
+            Rc = (Get-ReleaseGateOptionalInt -Row $existing -Name 'rc')
+            Reused = $true
+            Row = $existing
+            Journal = $journal
+        }
+    }
+    if (Test-ReleaseGateLongLivedCandidateId -CandidateId $CandidateId) {
+        $alloc = Get-ReleaseGatePreReleaseAllocation -Journal $journal -CutUtc $CutUtc
+        $pre = New-ReleaseGatePreReleaseTag -CutUtc $CutUtc -Sequence $alloc.Sequence -Rc $alloc.Rc
+        return [pscustomobject]@{ Tag = $pre; Sequence = $alloc.Sequence; Rc = $alloc.Rc; Reused = $false; Row = $null; Journal = $journal }
     }
     $day = $CutUtc.ToUniversalTime().ToString('yyyy.MM.dd')
     $used = @()
     foreach ($row in @($journal.reservations)) {
+        if ($null -eq $row) { continue }
         $parsed = Test-ReleaseGateTag -Tag ([string]$row.tag)
         if ($parsed.Ok -and $parsed.Date.ToString('yyyy.MM.dd') -eq $day) { $used += [int]$parsed.Sequence }
     }
     $next = 1
     while ($used -contains $next) { $next++ }
-    return [pscustomobject]@{ Tag = (New-ReleaseGateTag -CutUtc $CutUtc -Sequence $next); Sequence = $next; Reused = $false; Row = $null; Journal = $journal }
+    return [pscustomobject]@{ Tag = (New-ReleaseGateTag -CutUtc $CutUtc -Sequence $next); Sequence = $next; Rc = 0; Reused = $false; Row = $null; Journal = $journal }
 }
 
 function New-ReleaseGateTagReservation {
@@ -489,16 +626,8 @@ function New-ReleaseGateTagReservation {
     $next = $proposal.Sequence
     $rows = @()
     foreach ($row in @($journal.reservations)) { $rows += $row }
-    $rows += [ordered]@{
-        candidateId = $CandidateId
-        sha = $Sha
-        tag = $tag
-        sequence = $next
-        reservedAt = (Get-NightlyUtcNow).ToString('o')
-        published = $false
-        releaseId = ''
-        releaseUrl = ''
-    }
+    $rows += (New-ReleaseGateReservationEntry -CandidateId $CandidateId -Sha $Sha -Tag $tag -Sequence $next `
+        -ReservedAt (Get-NightlyUtcNow).ToString('o') -Published $false -ReleaseId '' -ReleaseUrl '' -Rc ([int]$proposal.Rc))
     Write-NightlyAtomicJson -Path $JournalPath -Object ([ordered]@{
         schemaVersion = $script:ReleaseGateManifestSchema
         reservations = $rows
@@ -519,20 +648,48 @@ function Set-ReleaseGateReservationPublished {
     foreach ($row in @($journal.reservations)) {
         if ([string]::Equals([string]$row.candidateId, $CandidateId, [StringComparison]::OrdinalIgnoreCase)) {
             $found = $true
-            $rows += [ordered]@{
-                candidateId = [string]$row.candidateId
-                sha = [string]$row.sha
-                tag = [string]$row.tag
-                sequence = [int]$row.sequence
-                reservedAt = [string]$row.reservedAt
-                published = $true
-                releaseId = $ReleaseId
-                releaseUrl = $ReleaseUrl
-                publishedAt = (Get-NightlyUtcNow).ToString('o')
-            }
+            $rows += (New-ReleaseGateReservationEntry -CandidateId ([string]$row.candidateId) -Sha ([string]$row.sha) `
+                -Tag ([string]$row.tag) -Sequence ([int]$row.sequence) -ReservedAt ([string]$row.reservedAt) `
+                -Published $true -ReleaseId $ReleaseId -ReleaseUrl $ReleaseUrl `
+                -PublishedAt (Get-NightlyUtcNow).ToString('o') `
+                -Rc (Get-ReleaseGateOptionalInt -Row $row -Name 'rc') `
+                -FinalTag (Get-ReleaseGateOptionalText -Row $row -Name 'finalTag'))
         } else { $rows += $row }
     }
     if (-not $found) { throw ('no reservation for candidate {0}' -f $CandidateId) }
+    Write-NightlyAtomicJson -Path $JournalPath -Object ([ordered]@{
+        schemaVersion = $script:ReleaseGateManifestSchema
+        reservations = $rows
+    })
+    return $true
+}
+
+function Set-ReleaseGateReservationFinalTag {
+    # Record the final CalVer beside the pre-release reservation. The reserved tag
+    # stays the pre-release name; a second row for the same candidate would make
+    # reuse return the wrong tag. Returns false when the row or the final name is absent.
+    param(
+        [Parameter(Mandatory = $true)][string]$JournalPath,
+        [Parameter(Mandatory = $true)][string]$CandidateId,
+        [Parameter(Mandatory = $true)][string]$FinalTag
+    )
+    $parsed = Test-ReleaseGateTag -Tag $FinalTag
+    if (-not $parsed.Ok -or $parsed.Prerelease) { return $false }
+    $journal = Get-ReleaseGatePublicationJournal -Path $JournalPath
+    $rows = @()
+    $found = $false
+    foreach ($row in @($journal.reservations)) {
+        if ($null -eq $row) { continue }
+        if ([string]::Equals([string]$row.candidateId, $CandidateId, [StringComparison]::OrdinalIgnoreCase)) {
+            $found = $true
+            $rows += (New-ReleaseGateReservationEntry -CandidateId ([string]$row.candidateId) -Sha ([string]$row.sha) `
+                -Tag ([string]$row.tag) -Sequence ([int]$row.sequence) -ReservedAt ([string]$row.reservedAt) `
+                -Published ([bool]$row.published) -ReleaseId ([string]$row.releaseId) -ReleaseUrl ([string]$row.releaseUrl) `
+                -PublishedAt (Get-ReleaseGateOptionalText -Row $row -Name 'publishedAt') `
+                -Rc (Get-ReleaseGateOptionalInt -Row $row -Name 'rc') -FinalTag $FinalTag)
+        } else { $rows += $row }
+    }
+    if (-not $found) { return $false }
     Write-NightlyAtomicJson -Path $JournalPath -Object ([ordered]@{
         schemaVersion = $script:ReleaseGateManifestSchema
         reservations = $rows
@@ -734,6 +891,9 @@ function Invoke-ReleaseGateGitHub {
         'release-create' {
             $ghArgs = @('release', 'create', [string]$Arguments.tag, '--verify-tag', '--draft',
                         '--title', [string]$Arguments.tag, '--notes-file', [string]$Arguments.notesFile)
+            if ($Arguments -and $Arguments.ContainsKey('prerelease') -and [bool]$Arguments['prerelease']) {
+                $ghArgs += '--prerelease'
+            }
         }
         'release-upload' { $ghArgs = @('release', 'upload', [string]$Arguments.tag, [string]$Arguments.asset, '--clobber') }
         'release-publish' { $ghArgs = @('release', 'edit', [string]$Arguments.tag, '--draft=false') }
