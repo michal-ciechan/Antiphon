@@ -1519,6 +1519,9 @@ namespace Antiphon.Server.Migrations
                     b.HasIndex("TokenHash")
                         .HasDatabaseName("IX_AgentTasks_TokenHash");
 
+                    b.HasIndex("ProjectId", "Status")
+                        .HasDatabaseName("IX_AgentTasks_ProjectId_Status");
+
                     b.HasIndex("RootTaskId", "CreatedAt")
                         .HasDatabaseName("IX_AgentTasks_RootTaskId_CreatedAt");
 

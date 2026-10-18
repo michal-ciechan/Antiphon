@@ -6,9 +6,11 @@ using Microsoft.EntityFrameworkCore;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-1320 S2. The Investigate backlog candidate rules, shared by the pipeline snapshot
-/// and keep-six. Callers take their own slice: the snapshot keeps five, keep-six filters
-/// to one board before it takes five. This read is uncapped.
+/// CARD-1320 S2. Investigate backlog candidates shared by the pipeline snapshot and
+/// keep-six. Callers take their own slice. The candidate list stays uncapped: a numeric
+/// cap would hide a started card and change the snapshot. CARD-1329 limits the
+/// started-card read to backlog cards already in scope. Keep-six passes its orchestrator
+/// board ids so the poll does not read every fleet backlog card.
 /// </summary>
 public static class PipelineBacklogSelection
 {
@@ -33,26 +35,41 @@ public static class PipelineBacklogSelection
         IReadOnlyCollection<Guid> BoardIds);
 
     public static async Task<Selection> SelectAsync(
-        AppDbContext db, PipelineScope scope, DateTime asOf, CancellationToken ct)
+        AppDbContext db,
+        PipelineScope scope,
+        DateTime asOf,
+        CancellationToken ct,
+        IReadOnlyCollection<Guid>? boardIds = null)
     {
-        // This is a narrow, uncapped fleet read. The card-list route caps by UpdatedAt and can
-        // omit the highest-ranked work. Stage history is already materialized for this snapshot.
-        var backlogCards = await db.Cards.AsNoTracking()
+        // Candidates stay uncapped. A caller-supplied board limit only drops boards that
+        // caller will not use. Null leaves the fleet board set the pipeline snapshot reads.
+        var limitedBoardIds = boardIds?.Distinct().ToArray();
+        if (limitedBoardIds is { Length: 0 })
+            return EmptySelection();
+
+        var cards = db.Cards.AsNoTracking()
             .Where(c => c.Status == CardStatus.Backlog && c.ArchivedAt == null
                 && c.Board.ArchivedAt == null && !c.BoardColumn.IsTerminal
-                && c.OwnerSessionId == null)
+                && c.OwnerSessionId == null);
+        if (limitedBoardIds is not null)
+            cards = cards.Where(c => limitedBoardIds.Contains(c.BoardId));
+        var backlogCards = await cards
             .Select(c => new Row(c.Id, c.BoardId, c.Identifier, c.Title,
                 c.Importance, c.Urgency, c.DueAt, c.Position, c.CreatedAt, c.LabelsJson))
             .ToListAsync(ct)
             .ConfigureAwait(false);
-        var boardIds = backlogCards.Select(c => c.BoardId).Distinct().ToList();
-        var boardProjects = boardIds.Count == 0
+        var selectedBoardIds = backlogCards.Select(c => c.BoardId).Distinct().ToList();
+        var boardProjects = selectedBoardIds.Count == 0
             ? new Dictionary<Guid, Guid>()
             : await db.Boards.AsNoTracking()
-                .Where(b => boardIds.Contains(b.Id))
+                .Where(b => selectedBoardIds.Contains(b.Id))
                 .ToDictionaryAsync(b => b.Id, b => b.ProjectId, ct)
                 .ConfigureAwait(false);
-        var startedCardIds = await LoadStartedCardIdsAsync(db, ct).ConfigureAwait(false);
+        var inScopeIds = backlogCards
+            .Where(c => CardInScope(scope, c.BoardId, boardProjects))
+            .Select(c => c.Id)
+            .ToArray();
+        var startedCardIds = await LoadStartedCardIdsAsync(db, inScopeIds, ct).ConfigureAwait(false);
         var unstarted = backlogCards
             .Where(c => CardInScope(scope, c.BoardId, boardProjects)
                 && !startedCardIds.Contains(c.Id)
@@ -70,17 +87,29 @@ public static class PipelineBacklogSelection
             unstarted.Where(c => !openBlockers.ContainsKey(c.Id)).ToList(),
             unstarted.Where(c => openBlockers.ContainsKey(c.Id)).ToList(),
             openBlockers,
-            boardIds);
+            selectedBoardIds);
     }
+
+    private static Selection EmptySelection() => new(
+        [],
+        [],
+        new Dictionary<Guid, IReadOnlyList<string>>(),
+        []);
 
     /// <summary>
     /// A card already bound to a Queued, Dispatched, Working, Blocked, or Succeeded stage task.
     /// Failed and Canceled stage tasks, and non-stage roles, leave the card dispatchable.
+    /// The id set is the in-scope backlog cards, not a numeric cap: Done and other
+    /// historical tasks are absent because their cards are not in that set.
     /// </summary>
-    private static async Task<HashSet<Guid>> LoadStartedCardIdsAsync(AppDbContext db, CancellationToken ct)
+    private static async Task<HashSet<Guid>> LoadStartedCardIdsAsync(
+        AppDbContext db, IReadOnlyCollection<Guid> backlogCardIds, CancellationToken ct)
     {
+        if (backlogCardIds.Count == 0)
+            return [];
+
         var ids = await db.AgentTasks.AsNoTracking()
-            .Where(task => task.CardId != null)
+            .Where(task => task.CardId != null && backlogCardIds.Contains(task.CardId.Value))
             .Where(AgentTaskRoles.Stage)
             .Where(task => task.Status == AgentTaskStatus.Queued
                 || task.Status == AgentTaskStatus.Dispatched

@@ -2374,6 +2374,14 @@ public class AppDbContext : DbContext
 
             entity.HasIndex(t => new { t.RootTaskId, t.CreatedAt }).HasDatabaseName("IX_AgentTasks_RootTaskId_CreatedAt");
             entity.HasIndex(t => t.Status).HasDatabaseName("IX_AgentTasks_Status");
+            // CARD-1329. KeepSixShortfall groups every non-specialist task in the project
+            // (open count plus MAX created and completed). IX_AgentTasks_Status does not
+            // lead with ProjectId, so that aggregate scanned AgentTasks. The ProjectId
+            // foreign-key index stays explicit: a composite that leads with ProjectId
+            // would otherwise replace it, and this change is additive.
+            entity.HasIndex(t => t.ProjectId);
+            entity.HasIndex(t => new { t.ProjectId, t.Status })
+                .HasDatabaseName("IX_AgentTasks_ProjectId_Status");
             entity.HasIndex(t => t.ParentTaskId).HasDatabaseName("IX_AgentTasks_ParentTaskId");
             entity.HasIndex(t => t.AgentSessionId).HasDatabaseName("IX_AgentTasks_AgentSessionId");
             entity.HasIndex(t => t.TokenHash).HasDatabaseName("IX_AgentTasks_TokenHash");

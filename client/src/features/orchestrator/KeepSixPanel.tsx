@@ -148,6 +148,7 @@ export function KeepSixPanel() {
                 <Table.Th>Dispatchable</Table.Th>
                 <Table.Th>Last reminder</Table.Th>
                 <Table.Th>Last dispatch</Table.Th>
+                <Table.Th>Last completion</Table.Th>
                 <Table.Th>Hold</Table.Th>
                 <Table.Th>Target</Table.Th>
               </Table.Tr>
@@ -189,6 +190,9 @@ export function KeepSixPanel() {
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm" data-testid="keep-six-dispatch">{formatInstant(row.lastDispatchAt)}</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm" data-testid="keep-six-completion">{formatInstant(row.lastCompletionAt)}</Text>
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm" data-testid="keep-six-hold">{holdText(row, now)}</Text>

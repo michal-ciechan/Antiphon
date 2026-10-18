@@ -65,7 +65,8 @@ public sealed class KeepSixShortfall(
                 .ConfigureAwait(false);
         var projectIds = boardProjects.Values.Distinct().ToArray();
         var asOf = clock.GetUtcNow().UtcDateTime;
-        var selection = await PipelineBacklogSelection.SelectAsync(db, PipelineScope.Fleet, asOf, ct)
+        var selection = await PipelineBacklogSelection.SelectAsync(
+                db, PipelineScope.Fleet, asOf, ct, boardIds)
             .ConfigureAwait(false);
         var candidatesByBoard = selection.Candidates
             .GroupBy(card => card.BoardId)
