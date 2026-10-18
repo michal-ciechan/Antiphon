@@ -72,7 +72,9 @@ code: MODULE_NOT_FOUND
 Node.js v24.6.0
 ```
 
-The `npm.cmd` on this host is `C:\Program Files\nodejs\npm.cmd`. This was not compared with `rc/2026-10-15` at `61117dd1`, so it is not classified as inherited. The runner did not stop on it. `dotnet build Antiphon.sln` was still writing `dotnet-build.log.stdout.tmp` (28672 bytes at 17:48:36 local) when this note was written. No suite TRX yet. No inherited red from the brief (CARD-1216, C1192, C1191, C1105, C599, Windows LandDelivery) has been observed in this run.
+The `npm.cmd` on this host is `C:\Program Files\nodejs\npm.cmd`. This was not compared with `rc/2026-10-15` at `61117dd1`, so it is not classified as inherited. The runner did not stop on it.
+
+`dotnet build Antiphon.sln` then succeeded: 0 errors, 1136 warnings, elapsed 00:02:14.10 (`dotnet-build.log`). The `antiphon` suite started at 17:49:53 local (`antiphon-all-tests.log.stdout.tmp` and `antiphon-all-execution\`). No suite TRX yet. No inherited red from the brief (CARD-1216, C1192, C1191, C1105, C599, Windows LandDelivery) has been observed in this run.
 
 ## Linux lane
 
