@@ -3,7 +3,8 @@
 #
 # D-2  credit kinds: master green earns master readiness credit; RC green earns release
 #       credit only. Unknown combinations fail closed.
-# D-3  immutable candidate identity: release/rc-YYYYMMDDTHHMMSSZ pinned to one full SHA.
+# D-3  candidate identity: legacy release/rc-YYYYMMDDTHHMMSSZ pinned to one full SHA,
+#      or long-lived rc/YYYY-MM-DD whose candidate id is that date plus the tested SHA.
 # D-4  one shared native-run lock serialises the master and RC lanes.
 # D-8  CalVer vYYYY.MM.DD.N tags and the SHA-bound release manifest.
 #
@@ -17,6 +18,7 @@ $script:ReleaseGateCreditKinds = @('master-scheduled', 'rc-release')
 $script:ReleaseGateDefaultReleaseRoot = 'C:\Antiphon\releases'
 $script:ReleaseGateDefaultCoordinationRoot = 'C:\Antiphon\verification'
 $script:ReleaseGateCandidateRefPattern = '^release/rc-(?<stamp>\d{8}T\d{6}Z)$'
+$script:ReleaseGateLongLivedRefPattern = '^rc/(?<y>\d{4})-(?<m>\d{2})-(?<d>\d{2})$'
 $script:ReleaseGateTagPattern = '^v(?<y>\d{4})\.(?<m>\d{2})\.(?<d>\d{2})\.(?<n>[1-9]\d*)$'
 $script:ReleaseGateManifestSchema = 1
 
@@ -37,30 +39,53 @@ function Test-ReleaseGateFullSha {
 }
 
 function Test-ReleaseGateCandidateRef {
-    # D-3: exactly one shape. Anything else is not a candidate.
-    param([string]$Ref)
+    # D-3: a legacy stamp, or a long-lived rc/YYYY-MM-DD. Anything else is not a candidate.
+    # The long-lived candidate id is rc-YYYY-MM-DD- plus the first 12 hex digits of -Sha.
+    param([string]$Ref, [string]$Sha = '')
     if ([string]::IsNullOrWhiteSpace($Ref)) {
-        return [pscustomobject]@{ Ok = $false; Reason = 'empty-ref'; Stamp = ''; CandidateId = '' }
+        return [pscustomobject]@{ Ok = $false; Reason = 'empty-ref'; Stamp = ''; CandidateId = ''; Ref = ''; Kind = '' }
     }
     $normalised = $Ref
     if ($normalised.StartsWith('refs/heads/')) { $normalised = $normalised.Substring('refs/heads/'.Length) }
-    if ($normalised -notmatch $script:ReleaseGateCandidateRefPattern) {
-        return [pscustomobject]@{ Ok = $false; Reason = 'ref-shape'; Stamp = ''; CandidateId = '' }
+    if ($normalised -match $script:ReleaseGateCandidateRefPattern) {
+        $stamp = $Matches['stamp']
+        $parsed = [datetime]::MinValue
+        $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
+        if (-not [datetime]::TryParseExact($stamp, 'yyyyMMddTHHmmssZ', [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$parsed)) {
+            return [pscustomobject]@{ Ok = $false; Reason = 'ref-timestamp'; Stamp = $stamp; CandidateId = ''; Ref = ''; Kind = 'stamp' }
+        }
+        return [pscustomobject]@{
+            Ok = $true
+            Reason = ''
+            Stamp = $stamp
+            Kind = 'stamp'
+            CandidateId = ('rc-{0}' -f $stamp)
+            Ref = ('release/rc-{0}' -f $stamp)
+            CutUtc = $parsed.ToUniversalTime()
+        }
     }
-    $stamp = $Matches['stamp']
-    $parsed = [datetime]::MinValue
-    $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
-    if (-not [datetime]::TryParseExact($stamp, 'yyyyMMddTHHmmssZ', [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$parsed)) {
-        return [pscustomobject]@{ Ok = $false; Reason = 'ref-timestamp'; Stamp = $stamp; CandidateId = '' }
+    if ($normalised -match $script:ReleaseGateLongLivedRefPattern) {
+        $dateText = '{0}-{1}-{2}' -f $Matches['y'], $Matches['m'], $Matches['d']
+        $parsed = [datetime]::MinValue
+        $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
+        if (-not [datetime]::TryParseExact($dateText, 'yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$parsed)) {
+            return [pscustomobject]@{ Ok = $false; Reason = 'ref-date'; Stamp = ''; CandidateId = ''; Ref = ''; Kind = 'long-lived' }
+        }
+        $candidateId = ''
+        if (-not [string]::IsNullOrWhiteSpace($Sha) -and (Test-ReleaseGateFullSha -Sha $Sha)) {
+            $candidateId = 'rc-{0}-{1}' -f $dateText, $Sha.Substring(0, 12)
+        }
+        return [pscustomobject]@{
+            Ok = $true
+            Reason = ''
+            Stamp = ''
+            Kind = 'long-lived'
+            CandidateId = $candidateId
+            Ref = ('rc/{0}' -f $dateText)
+            CutUtc = $parsed.ToUniversalTime()
+        }
     }
-    return [pscustomobject]@{
-        Ok = $true
-        Reason = ''
-        Stamp = $stamp
-        CandidateId = ('rc-{0}' -f $stamp)
-        Ref = ('release/rc-{0}' -f $stamp)
-        CutUtc = $parsed.ToUniversalTime()
-    }
+    return [pscustomobject]@{ Ok = $false; Reason = 'ref-shape'; Stamp = ''; CandidateId = ''; Ref = ''; Kind = '' }
 }
 
 function New-ReleaseGateCandidateRef {

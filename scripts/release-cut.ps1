@@ -1,18 +1,16 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    CARD-0599 D-3: the RC lane entrypoint. Cut, test, publish - in that order.
+    CARD-1311: the RC lane entrypoint. Requires -Ref rc/YYYY-MM-DD.
 
-    1. scripts/release-candidate.ps1 pins origin/master once and pushes the
-       create-only candidate branch.
+    1. scripts/release-candidate.ps1 journals the existing remote tip. It does
+       not cut origin/master and it does not allocate a stamp.
     2. scripts/nightly-run.ps1 -Profile rc -Trigger rc -Ref <candidate>
-       -ExpectedSha <sha> runs the full automated profile against the
-       candidate's own checkout and private state root.
-    3. scripts/publish-release.ps1 publishes a CalVer tag and GitHub Release,
-       but only on RC complete-green.
+       -ExpectedSha <sha> runs the rc profile against the candidate checkout
+       and private state root.
+    3. scripts/publish-release.ps1 runs only on RC complete-green.
 
-    A red or incomplete RC publishes nothing and keeps its evidence. Repairs go
-    through ordinary Code/Review/land onto master and then a NEW candidate; this
+    A red or incomplete RC publishes nothing and keeps its evidence. This
     script never moves a tested ref or retries a failed run in place.
 
     Nothing here writes the master attempt, green, monitor or qualification
@@ -54,6 +52,18 @@ $record = [ordered]@{
     tag = ''
     refusal = ''
     exitCode = 1
+}
+
+$wanted = Test-ReleaseGateCandidateRef -Ref $Ref
+if ([string]::IsNullOrWhiteSpace($Ref) -or -not $wanted.Ok -or $wanted.Kind -ne 'long-lived') {
+    if ([string]::IsNullOrWhiteSpace($Ref)) { $record.refusal = 'rc-ref-required' }
+    elseif (-not $wanted.Ok) { $record.refusal = [string]$wanted.Reason }
+    else { $record.refusal = 'rc-ref-required' }
+    $record.exitCode = 3
+    Write-CutLine ('candidate cut refused ({0}).' -f $record.refusal)
+    if ($PassThru) { return [pscustomobject]$record }
+    Write-Host (ConvertTo-Json -InputObject $record -Compress)
+    exit 3
 }
 
 $cut = & (Join-Path $PSScriptRoot 'release-candidate.ps1') -ReleaseRoot $ReleaseRoot `
