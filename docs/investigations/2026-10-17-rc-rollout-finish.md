@@ -111,3 +111,37 @@ Temp seats fell from 3 to 2 at 11:11Z when Review `6b367dd6` Succeeded and sessi
 | `ee2f68fa-b194-4c77-8738-0435a9258246` | 75913 s | `bd6bce3d-816e-469f-a30d-0621ab09b644` CARD-1320 S4 | Failed, session still Running |
 
 `openTaskId` on both slots was null. `orphan=false`. Neither session was released. The local wait was stopped at 11:24:37Z so this report could be written inside the task budget. The server drain was left in place: temp still `draining=true`, `redirectTo=server2`, `retireWhenIdle=true`, `acceptingNewWork=false`, `sessions=2`. Standing server2 was accepting with `sessions=1`. `retire-temp` was not run.
+
+## Continuation: resumed drain-temp stopped at container cleanup
+
+Refinement `C:\src\Antiphon\.antiphon\task-26205ec4-refinement-20261018105345.md` arrived after that hold. It said the canary passed and to run Both, then `drain-temp -WaitIdleMinutes 240`, then `retire-temp`. Both had already exited 0, so it was not run again. The drain wait was restarted. No session was released.
+
+`check-census` from `C:\src\Antiphon` at 2026-10-18T11:29:21Z. Exit 0. Receipt `C:\src\Antiphon\.antiphon\rolling-server2\c727572d74c3d7ab`. Project `d4ea7ae9-e769-474b-95b9-aa25fbc1303f`.
+
+| Runner | open | boundOpen | landPending |
+|---|---|---|---|
+| server2 | 10 | 1 | 0 |
+| server2-temp | 10 | 0 | 0 |
+
+landPending was 0. server2 `boundOpen=1` is work on the standing runner. The same two temp slots were still Running: `81088675-4185-4faf-aa2d-d458d9bc8339` (pid 22351) and `ee2f68fa-b194-4c77-8738-0435a9258246` (pid 7641), both `openTaskId` null. Temp was already `draining=true`, `redirectTo=server2`, `retireWhenIdle=true`, `acceptingNewWork=false`, `retiredAt` empty, `sessions=2`.
+
+`drain-temp -WaitIdleMinutes 240` restarted from `C:\src\Antiphon` at 2026-10-18T11:30:57Z. No `-ResumeRecycle`. Because temp was already draining with that redirect and `retireWhenIdle`, the phase did not POST drain again. It exited 2 at 2026-10-18T11:46:22Z. Printed text:
+
+```
+Rolling deploy stopped: HostCaseFailed retire-temp-containers exit=2
+```
+
+Receipt `C:\src\Antiphon\.antiphon\rolling-server2\c7272d7884949a76`. The host-case diagnosis is `RecycleTaskCensusUnknown cause=Http status=502` on the open-task list for project `d4ea7ae9-e769-474b-95b9-aa25fbc1303f`, `elapsedMs=3095`. The cause is `Http`, not `Unstable`, so it was not retried. `retire-temp` was not run.
+
+Temp had already retired itself for idle before that census: `idleObservedAt=2026-10-18T11:43:08.890144+00:00`, `retiredAt=2026-10-18T11:45:09.0716214+00:00`, `retireReason=idle`, `sessions=0`, `runnerSessions=null`, `available=false`, `dispatchEligible=false`, `acceptingNewWork=false`, `disconnectReason=transport_abort`. Cleanup receipt `outcome=refused`, `removals=[]`, `finalCensus=null`, operation `c994396e44cdae944edf85623d0fc18d5574`.
+
+Read after the stop:
+
+- Standing server2 `buildVersion=09e48c5d6f1d404cfea8ec0d992270424fd2a184`, store `f519bd08-e53a-47d1-adb1-2ab33475446f`, boot `0e14a3d4-ba81-4ae9-a956-515188b82233`, `acceptingNewWork=true`, `draining=false`, `sessions=0`, `runnerSessions=0`, `queuedTasks=0`.
+- `antiphon-runner-session-runner-1` still `a6457bc89508`, Up (healthy), image `sha256:a9be72ebb98bddae896fd93649897cdc7d8c59449a36629e4dd2100fd956b50c` (`antiphon-server2/session-testing:09e48c5d6f1d`). Build-slots `4cabb8afc676` left Up.
+- Temp containers still present and exited: `6a2838d8e7fb` session-runner Exited (0), `ac048a240b9f` state-init Exited (0).
+- Volumes still present: `antiphon-runner_work`, `antiphon-runner_runner-tmp`, `antiphon-runner_dind-data`, `antiphon-runner_runner-state`, the three `antiphon-runner-cache-*` volumes, and `antiphon-runner-temp_work`, `antiphon-runner-temp_runner-tmp`, `antiphon-runner-temp_dind-data`, `antiphon-runner-temp_runner-state`. No volume was deleted.
+- `GET /health` was Healthy. `GET /api/version` was `69978ec1a246cd7a860f88a364eafc53a416aff7` with `land-v2`. Canonical HEAD stayed that SHA. AppHost and the desktop runner were not restarted.
+- `GET /api/session-runners/server2-temp/slots` then returned 503 `phone_home_unavailable`.
+
+The `VoidTaskResult` line in the phase output is the same benign host-output line seen on the exit-0 `redeploy-old`.
