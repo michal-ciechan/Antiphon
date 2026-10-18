@@ -1081,6 +1081,18 @@ public sealed class RemoteScriptContractTests
         Fact(output, "offline-miss-refused").ShouldBe("1", "offline-miss-refused");
     }
 
+    // CARD-1333. A non-zero `docker network create` is FixtureNpmNetworkFailed at exit 2.
+    // Refill does not run. The success create still prints the CARD-1328 id.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1333_Npm_network_create_failure_reports_FixtureNpmNetworkFailed()
+    {
+        var output = C1192Run("npm-network-create");
+        Fact(output, "npm-diagnosis").ShouldBe("FixtureNpmNetworkFailed", output);
+        Fact(output, "npm-code").ShouldBe("2", output);
+        Fact(output, "refill-volume-source").ShouldBe("0", output);
+    }
+
     // CARD-1192 S4. real-cases-host-backend: Seed, saved copy, cold seed, Preview and Prune
     // stay on $SERVER2_ROOT/cache when C849_PAYLOAD_BACKEND=volume is exported and when the
     // fixture controller is absent or records host. fixture-owned-volume is /fixture/cache

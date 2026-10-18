@@ -2128,7 +2128,11 @@ mode_npm() {
         # have assigned the nuget names before npm runs.
         C849_PACKAGES="c849${RUN}unset-packages"
         C849_SCRATCH="c849${RUN}unset-scratch"
+        if [ "$mode" = npm-network-create ]; then
+            C1192_FAULT=npm-network-create
+        fi
         out=$(c849_fixture_npm 2>>"$C1192_ROOT/scenario.err") || code=$?
+        C1192_FAULT=
     fi
     if [ "$code" = 0 ]; then
         C849_NPM="c849${RUN}npmcache-npm"
@@ -2167,6 +2171,9 @@ mode_npm() {
     emit npm-code "$code"
     emit npm-refill-code "$refill_status"
     emit npm-hash-ok "$hash_ok"
+    if [ "$mode" = npm-network-create ]; then
+        emit npm-diagnosis "$(diagnosis_of "$out")"
+    fi
     refuse_unexpected
 }
 
@@ -3838,7 +3845,7 @@ case "$mode" in
     barriers) mode_barriers ;;
     locks) mode_locks ;;
     handoff) mode_handoff ;;
-    npm) mode_npm ;;
+    npm|npm-network-create) mode_npm ;;
     npm-sentinel) mode_npm_sentinel ;;
     backend) mode_backend ;;
     transfer) mode_transfer ;;
