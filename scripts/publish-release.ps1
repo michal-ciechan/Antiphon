@@ -14,11 +14,12 @@
     candidate with no authority cannot publish and must be recut.
 
     Publication sequence, each transition journalled before the next begins:
-      1. reserve tag vYYYY.MM.DD.N in the publication journal
+      1. reserve the tag (long-lived vYYYY.MM.DD.N-rc.K, stamp vYYYY.MM.DD.N)
       2. create the local annotated tag at that SHA
       3. push only that tag, never with --force
       4. verify the peeled remote target
       5. gh release create --verify-tag --draft --notes-file <file>
+         A long-lived pre-release tag also passes --prerelease. A stamp tag does not.
       6. upload release-manifest.json and the sanitized verification summary
       7. read back tag and asset digests
       8. publish the draft and persist the release id/url
@@ -331,7 +332,10 @@ function Invoke-AntiphonPublishRelease {
     Set-Content -LiteralPath $notesPath -Value (Get-ReleaseGateNotesBody -Manifest $manifest -PreviousTag $previousTag -Commits $commits) -Encoding UTF8
 
     if (-not (Test-ReleaseGateJournalStep -Path $publishJournal -Step 'draft-created')) {
-        $create = Invoke-ReleaseGateGitHub -Verb 'release-create' -WorkingDirectory $CheckoutRoot -Arguments @{ tag = $tag; notesFile = $notesPath }
+        $createArgs = @{ tag = $tag; notesFile = $notesPath }
+        $parsedTag = Test-ReleaseGateTag -Tag $tag
+        if ($parsedTag.Ok -and $parsedTag.Prerelease) { $createArgs['prerelease'] = $true }
+        $create = Invoke-ReleaseGateGitHub -Verb 'release-create' -WorkingDirectory $CheckoutRoot -Arguments $createArgs
         if ([int]$create.ExitCode -ne 0) {
             $view = Invoke-ReleaseGateGitHub -Verb 'release-view' -WorkingDirectory $CheckoutRoot -Arguments @{ tag = $tag }
             if ([int]$view.ExitCode -ne 0) {

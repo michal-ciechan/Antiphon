@@ -35,7 +35,7 @@ AppHost and server2 run the current rc tip, never master. A feature release from
 master is at most once per UTC day, and only after the current rc line is fully
 fixed and those hosts are running that tip. This card does not implement that gate.
 
-S2 accepts the long-lived rc ref; S3-S4 have not changed pre-release publication or moving-tip authority yet.
+S3 publishes the long-lived pre-release tag and promote-release.ps1 writes the final tag at that peeled SHA; S4 has not changed moving-tip authority yet.
 
 Change-aware heavy TUI selection is CARD-1313 on master, not this tree. The rc
 profile, the credit split, the eight-suite roster, and the rule that RC green is
