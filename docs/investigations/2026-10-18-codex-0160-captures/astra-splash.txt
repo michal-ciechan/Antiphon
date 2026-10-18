@@ -1,0 +1,9 @@
+
+  >_ OpenAI Codex (v0.160.0)
+     /tmp/codex-0160-scratch-gpt-6-astra
+  permissions: YOLO mode
+
+  Shall we make the thing that makes the other thing easier?
+
+
+› Ask Codex to do anything

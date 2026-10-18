@@ -1,0 +1,19 @@
+
+
+  >_ OpenAI Codex (v0.160.0)
+     /tmp/codex-0160-scratch-gpt-6-astra
+  permissions: YOLO mode
+
+  Shall we make the thing that makes the other thing easier?
+
+  To get started, describe a task or try one of these commands:
+
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+
+
+› Ask Codex to do anything
+
+  GPT-6-Astra xhigh · /tmp/codex-0160-scratch-gpt-6-astra                                      ⚠ 1 warning · f2 to view
