@@ -342,26 +342,26 @@ public class GrokDelegateEndToEndTests
     /// because Grok Build 1.0.13 has no first-token timeout. The transcript ends at the delegate's
     /// own pointer prompt and the screen sits on "Waiting for response…".
     ///
-    /// <para>CARD-1162 D1 names this method for the legacy CARD-0353 kill-and-retry the body
-    /// still asserts. That body is stale against the CARD-1151 detection policy and the
-    /// CARD-1156 taskless AlwaysOn watch. CARD-1151 S6 CP-36 (Windows ConPTY) replaces the
-    /// assertions with detection until an explicit retry. Do not read this body as the landed
-    /// boot policy, and do not run it on Linux: it skips.</para>
+    /// <para>CARD-1151 (Q-1 option B) makes this detection until an explicit retry. The sweep
+    /// records one <c>BootStallDetected</c> warning and leaves the task Dispatched on attempt 1
+    /// with the same session, a null failure and an empty stopper. It does not kill or requeue.
+    /// An explicit <c>RetryAsync</c> is the only retry; this witness does not drive one, because
+    /// a live ConPTY session keeps the ephemeral slug and the next insert collides on
+    /// <c>IX_Agents_Slug</c> (CARD-0870). That requeue is unchanged. Linux skips: ConPTY only.</para>
     ///
     /// <para>Everything the harness above makes real is real here too: the script, the dispatch,
     /// the launch onto a ConPTY, the delivery path, the runner's own tailer. The one thing that is
-    /// arranged is WHICH turn hangs — <c>ANTIPHON_FAKE_NO_REPLY</c> on the task's launch-env
-    /// override, cleared before the retry so the second attempt finishes the work, which is what
-    /// every stalled task on the night actually did once the provider came back.</para>
+    /// arranged is WHICH turn hangs — <c>ANTIPHON_FAKE_NO_TASK_REPLY</c> on the task's launch-env
+    /// override, so the rules ack is stored and the task brief is never answered.</para>
     ///
     /// <para>The double-jeopardy control matters as much as the positive one: the delivery watchdog
     /// fires on <c>started == false</c> and the boot arm on <c>started == true</c>, so they are
     /// mutually exclusive by construction — and this asserts it against the same task rather than
     /// by reading the two predicates.</para>
     /// </summary>
-    // asserts the legacy CARD-0353 kill-and-retry; stale against the CARD-1151 detection policy, to be flipped by CARD-1151 S6 CP-36 (Windows)
+    // CARD-1151: boot silence is detection. The sweep does not fail, kill, or retry.
     [Test]
-    public async Task a_provider_that_never_answers_boot_is_killed_and_retried_once_legacy_card_0353()
+    public async Task a_provider_that_never_answers_boot_is_detected_until_explicit_retry()
     {
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
         if (!File.Exists(FakeGrokExe))
@@ -376,13 +376,11 @@ public class GrokDelegateEndToEndTests
             // below rather than by loosening the deadline, so this test cannot pass because the
             // number was made generous.
             d.BootModelWaitDeadlineMinutes = 8;
-            // The repeat hold is a different slice's assertion and would otherwise put grok-4.7 on
-            // an AutoDetected hold that the RETRY below would then refuse to dispatch.
+            // The repeat hold is a different slice. Leave it disarmed so it cannot mask detection.
             d.BootStallRepeatHoldMinutes = 0;
         });
 
         Guid sessionId = Guid.Empty;
-        Guid retrySessionId = Guid.Empty;
         try
         {
             using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
@@ -460,8 +458,9 @@ public class GrokDelegateEndToEndTests
             pump.Cancel();
             await pumping;
 
-            // ---- the clock, arranged by back-dating the rows the policy reads ----------------
-            await BackdateAsync(sessionId, taskId, minutes: 30);
+            // Twelve minutes is past the eight-minute boot notice and short of the twenty-minute
+            // operator threshold, so the sweep records BootStallDetected and not NeedsOperator.
+            await BackdateAsync(sessionId, taskId, minutes: 12);
 
             // ---- what a check-in would have SAID about it ------------------------------------
             using (var scope = harness.Provider.CreateScope())
@@ -493,81 +492,44 @@ public class GrokDelegateEndToEndTests
                     .Status.ShouldBe(AgentTaskStatus.Dispatched);
             }
 
-            // ---- the boot arm ----------------------------------------------------------------
-            using (var scope = harness.Provider.CreateScope())
+            // ---- the boot arm: detection twice, still the same attempt ----------------------
+            for (var pass = 0; pass < 2; pass++)
             {
-                var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
-                await dispatcher.FailOverdueTasksAsync(CancellationToken.None);
+                using var scope = harness.Provider.CreateScope();
+                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                    .FailOverdueTasksAsync(CancellationToken.None);
             }
 
             await using (var afterSweep = CreateContext())
             {
-                var retried = await afterSweep.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
-                retried.FailureCode.ShouldBe(AgentTaskFailureCode.ProviderUnresponsive);
-                retried.FailureReason.ShouldNotBeNull();
-                retried.FailureReason.ShouldContain("Provider never answered the boot prompt");
-                retried.Status.ShouldBe(AgentTaskStatus.Queued);
-                retried.Attempt.ShouldBe(2);
+                var detected = await afterSweep.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                detected.Status.ShouldBe(AgentTaskStatus.Dispatched);
+                detected.AgentSessionId.ShouldBe(sessionId);
+                detected.Attempt.ShouldBe(1);
+                detected.FailureCode.ShouldBeNull();
+                detected.FailureReason.ShouldBeNull();
                 (await afterSweep.AgentIncidents.AnyAsync(
                     i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.ProviderUnresponsive))
-                    .ShouldBeTrue();
+                    .ShouldBeFalse();
+                var warnings = await afterSweep.AgentTaskEvents.AsNoTracking()
+                    .Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Warning
+                        && e.Detail.StartsWith("BootStall"))
+                    .Select(e => e.Detail)
+                    .ToListAsync();
+                warnings.Count.ShouldBe(1, string.Join(" | ", warnings));
+                warnings[0].ShouldStartWith(BootStallPolicy.DetectedToken + " ");
+                (await afterSweep.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == taskId
+                    && (e.Type == AgentTaskEventType.Failed || e.Type == AgentTaskEventType.Retried)))
+                    .ShouldBeFalse();
             }
 
             harness.Provider.GetRequiredService<IDelegateSessionStopper>()
                 .ShouldBeOfType<RecordingSessionStopper>()
-                .Killed.ShouldContain(sessionId, customMessage:
-                    "a hung process costs a pool slot and re-adopts nothing");
-
-            // ---- the retry, on a provider that has come back ---------------------------------
-            await using (var clearing = CreateContext())
-            {
-                var task = await clearing.AgentTasks.SingleAsync(t => t.Id == taskId);
-                task.LaunchEnvOverrideJson = "{}";
-                await clearing.SaveChangesAsync();
-            }
-
-            using (var scope = harness.Provider.CreateScope())
-                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
-
-            await using (var afterRetry = CreateContext())
-            {
-                var dispatched = await afterRetry.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
-                dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched, dispatched.FailureReason ?? "no failure reason");
-                retrySessionId = dispatched.AgentSessionId.ShouldNotBeNull();
-                retrySessionId.ShouldNotBe(sessionId, "a fresh session, not the hung one");
-            }
-
-            using var retryPump = new CancellationTokenSource();
-            var retryPumping = PumpTranscriptAsync(harness.Provider, retrySessionId, retryPump.Token);
-            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromMinutes(2), CancellationToken.None);
-
-            await WaitUntilAsync(
-                async () =>
-                {
-                    await using var db = CreateContext();
-                    return await db.AgentTasks.AsNoTracking()
-                        .AnyAsync(t => t.Id == taskId && t.Status != AgentTaskStatus.Dispatched);
-                },
-                TimeSpan.FromSeconds(60),
-                async () => $"the retry never settled. Screen:\n{await ScreenAsync(harness, retrySessionId)}");
-
-            retryPump.Cancel();
-            await retryPumping;
-
-            await using (var settledDb = CreateContext())
-            {
-                var settled = await settledDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
-                settled.Status.ShouldBe(AgentTaskStatus.Succeeded, customMessage:
-                    "a bare retry is the measured cure — every stalled task on 2026-09-03 recovered "
-                    + "on one once the provider did");
-                settled.Attempt.ShouldBe(2);
-            }
+                .Killed.ShouldBeEmpty();
         }
         finally
         {
             await CleanupAsync(harness, sessionId, workspace.Path, grokHome);
-            if (retrySessionId != Guid.Empty)
-                await CleanupAsync(harness, retrySessionId, workspace.Path, grokHome);
         }
     }
 
@@ -1014,6 +976,11 @@ public class GrokDelegateEndToEndTests
         services.AddSingleton<IWorkspaceHookRunner, Antiphon.Server.Infrastructure.WorkspaceHooks.WorkspaceHookRunner>();
         services.AddScoped<WorkspaceHookService>();
         services.AddSingleton<AgentSessionLaunchQueue>();
+        // Without this, PersistTranscriptAsync returns empty and the Grok rules ack is never
+        // stored, so rules init waits out its deadline (CARD-0870).
+        services.AddSingleton(Options.Create(new SessionStateSettings()));
+        services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+        services.AddSingleton<SessionStateStore>();
         services.AddSingleton<AgentSessionRuntime>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<AgentTaskReplyService>();
