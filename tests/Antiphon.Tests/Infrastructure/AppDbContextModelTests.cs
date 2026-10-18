@@ -1,3 +1,4 @@
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -52,6 +53,21 @@ public sealed class AppDbContextModelTests
 
         checkedFragments.ShouldBeGreaterThan(0);
         offenders.ShouldBeEmpty($"Model SQL contains carriage returns: {string.Join(", ", offenders)}");
+    }
+
+    /// <summary>
+    /// CARD-1329. KeepSixShortfall groups AgentTasks by project and counts status.
+    /// IX_AgentTasks_Status does not lead with ProjectId.
+    /// </summary>
+    [Test]
+    public void AgentTasks_has_project_id_status_index()
+    {
+        using var db = NewContext();
+        var index = db.Model.FindEntityType(typeof(AgentTask))!
+            .GetIndexes()
+            .SingleOrDefault(candidate => candidate.GetDatabaseName() == "IX_AgentTasks_ProjectId_Status");
+        index.ShouldNotBeNull();
+        index!.Properties.Select(property => property.Name).ShouldBe(["ProjectId", "Status"]);
     }
 
     private static AppDbContext NewContext() => new(

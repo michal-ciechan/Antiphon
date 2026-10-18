@@ -32,6 +32,8 @@ public partial class AgentTaskPipelineStatusTests
             CreatedAt = C557Now, UpdatedAt = C557Now,
         };
 
+        public Guid ProjectId => _project.Id;
+
         public Guid Board(int number, bool archived = false, bool terminal = false)
         {
             if (db.Projects.Local.All(p => p.Id != _project.Id)) db.Projects.Add(_project);

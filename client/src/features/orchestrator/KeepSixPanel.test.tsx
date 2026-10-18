@@ -1,6 +1,8 @@
 import { HttpResponse, http } from 'msw'
-import { describe, expect, it } from 'vitest'
-import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
+import { describe, expect, it, vi } from 'vitest'
+import { renderWithProviders, screen, settleQueries, userEvent, waitFor, within } from '../../test/utils'
+
+vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 import { server } from '../../test/mocks/server'
 import { KeepSixPanel } from './KeepSixPanel'
 
@@ -93,7 +95,7 @@ const under = row({
   shortfall: 5,
   revision: 4,
   holdReason: 'model quota',
-  holdUntil: '2026-10-18T12:00:00.000Z',
+  holdUntil: '2099-01-01T00:00:00.000Z',
   lastReminderEnqueuedAt: '2026-10-17T09:20:00.000Z',
   lastDispatchAt: '2026-10-17T08:20:00.000Z',
 })
@@ -115,7 +117,7 @@ describe('KeepSixPanel', () => {
     expect(within(screen.getByTestId('keep-six-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2')).getByTestId('keep-six-dispatchable')).toHaveTextContent('1')
     expect(within(short).getByTestId('keep-six-dispatchable')).toHaveTextContent('9')
     expect(within(short).getByTestId('keep-six-hold')).toHaveTextContent('model quota')
-    expect(within(short).getByTestId('keep-six-hold')).toHaveTextContent('2026-10-18T12:00:00.000Z')
+    expect(within(short).getByTestId('keep-six-hold')).toHaveTextContent('2099-01-01T00:00:00.000Z')
     expect(within(short).getByTestId('keep-six-reminder')).toHaveTextContent('2026-10-17T09:20:00.000Z')
     expect(within(short).getByTestId('keep-six-dispatch')).toHaveTextContent('2026-10-17T08:20:00.000Z')
     expect(screen.getByRole('switch', { name: 'Auto-processing Off seat' })).not.toBeChecked()
@@ -153,5 +155,71 @@ describe('KeepSixPanel', () => {
       provenance: 'Human',
     })
     expect(orchestratorPosts).toBe(0)
+  })
+
+  it('a stale revision 409 refetches, notifies, and keeps the server row', async () => {
+    const { notifications } = await import('@mantine/notifications')
+    vi.mocked(notifications.show).mockClear()
+    let reads = 0
+    const initial = row({
+      agentId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+      name: 'Off seat',
+      enabled: false,
+      revision: 1,
+      countedOpen: 2,
+      effectiveTarget: 6,
+      badge: 'off',
+    })
+    const refreshed = { ...initial, revision: 4, countedOpen: 3 }
+    server.use(
+      http.get('/api/orchestrators/keep-six', () => {
+        reads += 1
+        return HttpResponse.json([reads === 1 ? initial : refreshed])
+      }),
+      http.put('/api/orchestrators/:agentId/keep-six', () => HttpResponse.json(
+        { title: 'keep_six_revision', detail: 'Keep-six revision changed during the write.' },
+        { status: 409 },
+      )),
+    )
+
+    const { queryClient } = renderWithProviders(<KeepSixPanel />)
+    const toggle = await screen.findByRole('switch', { name: 'Auto-processing Off seat' })
+    const readsAfterLoad = reads
+    expect(within(screen.getByTestId('keep-six-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1')).getByTestId('keep-six-count')).toHaveTextContent('2 of 6')
+    expect(toggle).not.toBeChecked()
+
+    await userEvent.click(toggle)
+    await settleQueries(queryClient)
+
+    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+      color: 'red',
+      message: 'Keep-six revision changed during the write.',
+    }))
+    expect(reads).toBeGreaterThan(readsAfterLoad)
+    expect(screen.getByRole('switch', { name: 'Auto-processing Off seat' })).not.toBeChecked()
+    expect(within(screen.getByTestId('keep-six-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1')).getByTestId('keep-six-count')).toHaveTextContent('3 of 6')
+  })
+
+  it('renders an em dash when lastCompletionAt is null and the timestamp when it is set', async () => {
+    const absent = row({
+      agentId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
+      name: 'No completion',
+      lastCompletionAt: null,
+      lastDispatchAt: '2026-10-17T08:00:00.000Z',
+    })
+    const present = row({
+      agentId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5',
+      name: 'Completed seat',
+      lastCompletionAt: '2026-10-17T11:00:00.000Z',
+    })
+    server.use(http.get('/api/orchestrators/keep-six', () => HttpResponse.json([absent, present])))
+
+    renderWithProviders(<KeepSixPanel />)
+
+    const missing = await screen.findByTestId('keep-six-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4')
+    const filled = screen.getByTestId('keep-six-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5')
+    expect(within(missing).getByTestId('keep-six-completion')).toHaveTextContent('—')
+    expect(within(missing).getByTestId('keep-six-completion')).not.toHaveTextContent('null')
+    expect(within(filled).getByTestId('keep-six-completion')).toHaveTextContent('2026-10-17T11:00:00.000Z')
   })
 })
