@@ -147,7 +147,8 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                 prompt.Text.ShouldContain(DelegationReportFormatter.TaskMarker(taskId));
                 var spill = DispatchBriefEvidence.AbsoluteSpillPath(brief.Body);
                 var payload = brief.RemoteSpillBody ?? (spill is null ? brief.Body : await File.ReadAllTextAsync(spill));
-                payload.ShouldContain(goal, "the delivered brief pointer must retain the entire owned input");
+                payload.Contains(goal, StringComparison.Ordinal).ShouldBeTrue(
+                    "the delivered brief pointer must retain the entire owned input");
                 PromptSubmissionMatch.IsCompleteIn(brief.Body, prompt.Text!).ShouldBeTrue();
                 runner.Starts.ShouldBe(0); runner.Kills.ShouldBe(0);
             }
