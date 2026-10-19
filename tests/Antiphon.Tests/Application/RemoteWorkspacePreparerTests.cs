@@ -615,7 +615,7 @@ public sealed class RemoteWorkspacePreparerTests
             ids.Add(await rig.SeedAsync(t =>
             {
                 t.WorktreePath = worktree;
-                t.WorktreeBranch = $"feat/test-remote-prep-{i}";
+                t.WorktreeBranch = RemoteWorkspaceService.OwnedBranch(t.Id);
             }));
         }
         var common = Path.GetFullPath(rig.WorkspacePath);
@@ -691,7 +691,7 @@ public sealed class RemoteWorkspacePreparerTests
         var push = git.Pushes.ShouldHaveSingleItem();
         push.Options.Budget.ShouldBe(TimeSpan.FromMinutes(7));
         push.Options.Child.ShouldBe(new RepositoryChildTag(taskId, RepositoryChildPurposes.RemotePrepPush));
-        push.Arguments.ShouldBe(new[] { "push", "origin", "feat/test-remote-prep" });
+        push.Arguments.ShouldBe(new[] { "push", "origin", RemoteWorkspaceService.OwnedBranch(taskId) });
 
         var request = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
         await rig.Peer.EmitAsync(MirrorResult(request, mirror));
@@ -722,7 +722,7 @@ public sealed class RemoteWorkspacePreparerTests
             ids.Add(await rig.SeedAsync(t =>
             {
                 t.WorktreePath = worktree;
-                t.WorktreeBranch = $"feat/test-remote-prep-{i}";
+                t.WorktreeBranch = RemoteWorkspaceService.OwnedBranch(t.Id);
             }));
         }
 
@@ -890,7 +890,7 @@ public sealed class RemoteWorkspacePreparerTests
                 Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Custom, AgentKind = AgentKind.ClaudeCode,
                 ModelLevel = AgentModelLevel.Frontier, Workspace = WorkspaceMode.Worktree,
                 WorkingDirectory = workspace, RepoPath = workspace, WorktreePath = workspace,
-                WorktreeBranch = "feat/test-c672-delivery", RunnerId = host.AllowedRunnerId,
+                WorktreeBranch = RemoteWorkspaceService.OwnedBranch(taskId), RunnerId = host.AllowedRunnerId,
                 Status = AgentTaskStatus.Queued, ReplyTo = AgentTaskReplyTo.None,
                 CreatedAt = DateTime.UtcNow, ConcurrencyToken = Guid.NewGuid(),
             });
@@ -1264,7 +1264,7 @@ public sealed class RemoteWorkspacePreparerTests
                 Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Custom, AgentKind = AgentKind.Grok,
                 ModelLevel = AgentModelLevel.Frontier, Workspace = WorkspaceMode.Worktree,
                 WorkingDirectory = WorkspacePath, RepoPath = WorkspacePath, WorktreePath = WorkspacePath,
-                WorktreeBranch = "feat/test-remote-prep",
+                WorktreeBranch = RemoteWorkspaceService.OwnedBranch(id),
                 RunnerId = RunnerId, Status = AgentTaskStatus.Queued,
                 ReplyTo = AgentTaskReplyTo.None, CreatedAt = now, ConcurrencyToken = Guid.NewGuid(),
             };
@@ -1283,7 +1283,7 @@ public sealed class RemoteWorkspacePreparerTests
             {
                 Id = id, RootTaskId = id, Title = "owner", Goal = "owner", Role = AgentTaskRole.Code,
                 Workspace = WorkspaceMode.Worktree, WorkingDirectory = WorkspacePath, RepoPath = WorkspacePath,
-                WorktreeBranch = "feat/test-remote-owner", Status = AgentTaskStatus.Succeeded,
+                WorktreeBranch = RemoteWorkspaceService.OwnedBranch(id), Status = AgentTaskStatus.Succeeded,
                 ReplyTo = AgentTaskReplyTo.None, CreatedAt = Now, CompletedAt = Now,
             });
             await db.SaveChangesAsync();
