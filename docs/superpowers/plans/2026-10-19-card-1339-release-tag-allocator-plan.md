@@ -630,6 +630,18 @@ absent, binding remains required; do not invent a successful mutation result.
 | PC-69 | S2 / M2 | After real reservation beside remote-only finals .1/.2, journal contains only the new candidate row and no published rows representing those finals. | Append published journal rows for the remote-only final tags while forming the reservation journal. |
 | PC-70 | S2 / M2 | Invoke production proposal and reservation without the inventory argument, all other arguments valid, in a bounded noninteractive fixture child: require argument refusal, no proposal and unchanged journal. Explicit empty inventory remains valid. | Give the required inventory argument an optional empty default, admitting journal-only allocation. |
 
+Code S1 additions (all pending, payload binding still required):
+
+| PC | S / exact case | Variant and decisive oracle | Compiling defect |
+|---|---|---|---|
+| PC-71 | S1 / M1 | G-8 failed stamp precheck returns `remote-candidate-unresolved` with zero tag/push attempts even when failed output contains the expected SHA. | Remove the stamp precheck's `Status -eq 'Failed'` refusal. |
+| PC-72 | S1 / M1 | Two independent variants: G-12 publisher and G-15 promoter create the exact absent tag despite a remote-only nested tag. Inspect the bare recipient's exact peel. | In each caller separately replace the explicit `refs/tags/T:refs/tags/T` push destination with implicit `refs/tags/T`. |
+
+The S1 real-Git run exposed Git's implicit push-destination ambiguity beside a
+nested remote tag. Both tag writers now supply an explicit, identical source and
+destination refspec, still without force. This extends exact identity to the
+write boundary and does not change the 19-row ordinary assertion roster.
+
 Run **every** listed PC after land: baseline green, break, exact-assertion red,
 restore exact source bytes (refresh timestamps), then green. Each phase is scoped
 to `/*/*/ReleaseTagAllocatorTests/<exact M method>` with MinExecuted=1, separate

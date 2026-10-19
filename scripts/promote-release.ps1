@@ -172,7 +172,7 @@ function Invoke-AntiphonPromoteRelease {
             $result.Refusal = 'tag-local-failed'; $result.ExitCode = 1; return [pscustomobject]$result
         }
     }
-    $push = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('push', 'origin', ('refs/tags/{0}' -f $finalName))
+    $push = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('push', 'origin', ('refs/tags/{0}:refs/tags/{0}' -f $finalName))
     if ($null -eq $push -or [int]$push.ExitCode -ne 0) {
         $again = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $finalName
         if ($again.Status -ne 'Found' -or -not [string]::Equals($again.Sha, $peeled, [StringComparison]::OrdinalIgnoreCase)) {

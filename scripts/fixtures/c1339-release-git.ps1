@@ -65,8 +65,10 @@ function Invoke-C1339FixtureGit {
             $forward[$remoteIndex] = $Bare
         }
         'push' {
+            $spec = [string]$Arguments[2]
+            $tagSpec = $spec -cmatch '^(refs/tags/[A-Za-z0-9./-]+):\1$'
             if ($Arguments.Count -ne 3 -or $Arguments[1] -cne 'origin' -or
-                $Arguments[2] -notmatch '^(refs/tags/[A-Za-z0-9./-]+|[a-f0-9]{40}:refs/heads/[A-Za-z0-9./-]+)$') { throw 'fixture-push-form' }
+                (-not $tagSpec -and $spec -notmatch '^(refs/tags/[A-Za-z0-9./-]+|[a-f0-9]{40}:refs/heads/[A-Za-z0-9./-]+)$')) { throw 'fixture-push-form' }
             $forward[1] = $Bare
         }
         'fetch' {
