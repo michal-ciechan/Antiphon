@@ -74,6 +74,7 @@ param(
     [string]$RemoteUrl = 'https://github.com/michal-ciechan/Antiphon',
     [string]$StateRoot = 'C:\Antiphon\nightly',
     [ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full',
+    [string]$Repository = 'michal-ciechan/Antiphon',
     [string]$BaselineSha = '',
     [string]$BaselineReceiptPath = '',
     [string]$QualificationPath = '',
@@ -107,6 +108,7 @@ $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-policy.ps1')
 . (Join-Path $lib 'nightly-coverage.ps1')
 . (Join-Path $lib 'release-gate.ps1')
+. (Join-Path $lib 'release-selection.ps1')
 . (Join-Path $lib 'nightly-run-impl.ps1')
 
 $invoke = @{
@@ -118,6 +120,19 @@ $invoke = @{
     Ref = $Ref
     RemoteUrl = $RemoteUrl
     StateRoot = $StateRoot
+    Repository = $Repository
+    SelectionMode = $SelectionMode
+    BaselineSha = $BaselineSha
+    BaselineReceiptPath = $BaselineReceiptPath
+    QualificationPath = $QualificationPath
+    TimingRoot = $TimingRoot
+    TrainManifestPath = $TrainManifestPath
+    ReleaseIntentPath = $ReleaseIntentPath
+    SelectionAttemptPath = $SelectionAttemptPath
+    SelectionAttemptDigest = $SelectionAttemptDigest
+    SelectionPath = $SelectionPath
+    SelectionDigest = $SelectionDigest
+    Attempt = $Attempt
     SeamsPath = $SeamsPath
     Trigger = $Trigger
     Profile = $Profile

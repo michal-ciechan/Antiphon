@@ -155,6 +155,11 @@ function Get-ReleaseGateCreditVerdict {
     if ([string]::IsNullOrWhiteSpace($kind)) {
         return [pscustomobject]@{ CreditKind = ''; Ok = $false; Reasons = @('unknown-credit-identity') }
     }
+    # Absent scope is the historical v1 Full record. Explicit scope must be Full.
+    $scopePresent = if ($State -is [Collections.IDictionary]) { $State.Contains('coverageScope') } else { $null -ne $State.PSObject.Properties['coverageScope'] }
+    if ($scopePresent -and ($State.coverageScope -isnot [string] -or $State.coverageScope -cne 'Full')) {
+        $reasons += 'full-credit-scope-required'
+    }
     $flags = Test-ReleaseGateGreenFlags -State $State
     if (-not $flags.Ok) { $reasons += @($flags.Reasons) }
     if ($kind -eq 'rc-release') {

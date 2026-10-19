@@ -50,6 +50,7 @@ $ErrorActionPreference = 'Continue'
 $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
 . (Join-Path $lib 'release-gate.ps1')
+. (Join-Path $lib 'release-selection.ps1')
 
 function Write-CutLine { param([string]$Message) Write-Host ('[release-cut] {0}' -f $Message) }
 
@@ -79,6 +80,13 @@ if ([string]::IsNullOrWhiteSpace($Ref) -or -not $wanted.Ok -or $wanted.Kind -ne 
     exit 3
 }
 
+try { [void](Assert-ReleaseSelectionCapability $SelectionMode) }
+catch {
+    $record.refusal=$_.Exception.Message; $record.exitCode=3
+    if ($PassThru) { return [pscustomobject]$record }
+    Write-Host (ConvertTo-Json $record -Compress); exit 3
+}
+
 $cut = & (Join-Path $PSScriptRoot 'release-candidate.ps1') -ReleaseRoot $ReleaseRoot `
     -CheckoutRoot $checkout -RemoteUrl $RemoteUrl -Ref $Ref -ScheduleSlot $ScheduleSlot `
     -SeamsPath $SeamsPath -WhatIf:$WhatIf -PassThru
@@ -98,7 +106,42 @@ $candidateRoot = Get-ReleaseGateCandidateRoot -ReleaseRoot $ReleaseRoot -Candida
 $stateRoot = Join-Path $candidateRoot 'state'
 New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
 
+if ([string]::IsNullOrWhiteSpace($RunId)) { $RunId = New-NightlyRunId }
+try {
+    if (-not $WhatIf) {
+        # Candidate journalling reads the remote ref; acquire its pinned object before
+        # selection without changing the long-lived ref or repinning the journal.
+        $fetch = Invoke-ReleaseGateGit -WorkingDirectory $checkout -Arguments @('fetch','origin',$record.sha)
+        if ($fetch.ExitCode -ne 0) { throw 'selection-candidate-fetch' }
+        $request = @{RepositoryRoot=$checkout;Repository=$Repository;ReleaseRoot=$ReleaseRoot;CandidateSha=$record.sha
+            CandidateId=$record.candidateId;CandidateRef=$record.ref;Profile='rc';RunId=$RunId
+            SelectionMode=$SelectionMode;BaselineSha=$BaselineSha;BaselineReceiptPath=$BaselineReceiptPath;QualificationPath=$QualificationPath;TimingRoot=$TimingRoot;TrainManifestPath=$TrainManifestPath;ReleaseIntentPath=$ReleaseIntentPath;SelectionAttemptPath=$SelectionAttemptPath;SelectionAttemptDigest=$SelectionAttemptDigest;SelectionPath=$SelectionPath;SelectionDigest=$SelectionDigest;Attempt=$Attempt}
+        $bound = New-ReleaseSelectionAttempt $request
+        $SelectionAttemptPath=$bound.SelectionAttemptPath; $SelectionAttemptDigest=$bound.SelectionAttemptDigest
+        $SelectionPath=$bound.SelectionPath; $SelectionDigest=$bound.SelectionDigest; $BaselineSha=$bound.BaselineSha
+        $record.selection = $bound.Selection
+    }
+} catch {
+    $record.refusal=$_.Exception.Message; $record.exitCode=3
+    if ($PassThru) { return [pscustomobject]$record }
+    Write-Host (ConvertTo-Json $record -Compress); exit 3
+}
+
 $runArgs = @{
+    RunId = $RunId
+    Repository = $Repository
+    SelectionMode = $SelectionMode
+    BaselineSha = $BaselineSha
+    BaselineReceiptPath = $BaselineReceiptPath
+    QualificationPath = $QualificationPath
+    TimingRoot = $TimingRoot
+    TrainManifestPath = $TrainManifestPath
+    ReleaseIntentPath = $ReleaseIntentPath
+    SelectionAttemptPath = $SelectionAttemptPath
+    SelectionAttemptDigest = $SelectionAttemptDigest
+    SelectionPath = $SelectionPath
+    SelectionDigest = $SelectionDigest
+    Attempt = $Attempt
     CheckoutRoot = $checkout
     StateRoot = $stateRoot
     LogRoot = (Join-Path $candidateRoot 'logs')

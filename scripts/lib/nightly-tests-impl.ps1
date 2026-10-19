@@ -186,6 +186,8 @@ function Get-NightlyNpmLaunch {
     }
 }
 
+. (Join-Path $PSScriptRoot 'release-selection.ps1')
+
 function Invoke-AntiphonNightlyTests {
     param(
         [string]$RepoRoot = '',
@@ -198,6 +200,9 @@ function Invoke-AntiphonNightlyTests {
         [string]$ExpectedSha = '',
         [string]$RunId = '',
         [ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full',
+        [string]$ReleaseRoot = '',
+        [string]$CandidateId = '',
+        [string]$Repository = 'michal-ciechan/Antiphon',
         [string]$BaselineSha = '',
         [string]$BaselineReceiptPath = '',
         [string]$QualificationPath = '',
@@ -225,6 +230,20 @@ function Invoke-AntiphonNightlyTests {
     }
     $RepoRoot = ConvertTo-NightlyCanonicalPath -Path $RepoRoot
     if ([string]::IsNullOrWhiteSpace($RunId)) { $RunId = New-NightlyRunId }
+
+    $selection = $null
+    try {
+        [void](Assert-ReleaseSelectionCapability $SelectionMode)
+        if ($SelectionAttemptPath) {
+            $selectionRequest = @{RepositoryRoot=$RepoRoot;CandidateSha=$Sha;CandidateRef=$GitRef;Repository=$Repository;Profile=$Profile;
+            ReleaseRoot=$ReleaseRoot;CandidateId=$CandidateId;RunId=$RunId;
+            SelectionMode=$SelectionMode;BaselineSha=$BaselineSha;BaselineReceiptPath=$BaselineReceiptPath;QualificationPath=$QualificationPath;TimingRoot=$TimingRoot;TrainManifestPath=$TrainManifestPath;ReleaseIntentPath=$ReleaseIntentPath;SelectionAttemptPath=$SelectionAttemptPath;SelectionAttemptDigest=$SelectionAttemptDigest;SelectionPath=$SelectionPath;SelectionDigest=$SelectionDigest;Attempt=$Attempt}
+            $selection = Read-ReleaseSelectionAttempt $selectionRequest
+            # Independently read HEAD at the receiving implementation, not just argv.
+            $head = Invoke-NightlyGit -WorkingDirectory $RepoRoot -Arguments @('rev-parse','HEAD')
+            if ($head.ExitCode -ne 0 -or $head.Output.Trim() -cne $Sha) { throw 'selection-hop-head' }
+        } elseif ($SelectionMode -cne 'Full') { throw 'selection-attempt-required' }
+    } catch { return [pscustomobject]@{ExitCode=3;Refusal=$_.Exception.Message;coverageComplete=$false;testsPassed=$false;LaunchCount=0} }
 
     $startedAt = Get-NightlyUtcNow
     $script:NightlyTestsOutcome = 'green'
@@ -300,6 +319,7 @@ function Invoke-AntiphonNightlyTests {
     try {
         if ($null -eq $Suites -or @($Suites).Count -eq 0) {
             $selectedSuites = @($requiredSuites)
+            if ($selection) { $selectedSuites = @(Resolve-ReleaseSelectionMembers $selection $requiredSuites @()) }
         } else {
             $joined = ($Suites | ForEach-Object { [string]$_ }) -join ','
             if ($joined -match '^[\s,]*$') { throw 'empty suite selection' }
@@ -689,6 +709,8 @@ function Invoke-AntiphonNightlyTests {
         clone = $RepoRoot
         logDir = $LogRoot
         selectedSuites = $selectedSuites
+        selection = $selection
+        coverageScope = 'Full'
         outcome = $script:NightlyTestsOutcome
         succeeded = -not $overallFailed
         coverageComplete = [bool]$coverageComplete
@@ -712,6 +734,7 @@ function Invoke-AntiphonNightlyTests {
         testsPassed = $testsPassed
         Profile = $Profile
         RequiredSuites = $requiredSuites
+        Selection = $selection
         SummaryPath = $summaryPath
         Selected = $selectedSuites
         NativeActiveMax = $nativeActiveMax

@@ -35,6 +35,9 @@ param(
     [string]$ExpectedSha = '',
     [string]$RunId = '',
     [ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full',
+    [string]$ReleaseRoot = '',
+    [string]$CandidateId = '',
+    [string]$Repository = 'michal-ciechan/Antiphon',
     [string]$BaselineSha = '',
     [string]$BaselineReceiptPath = '',
     [string]$QualificationPath = '',
@@ -60,6 +63,7 @@ $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-policy.ps1')
 . (Join-Path $lib 'nightly-coverage.ps1')
 . (Join-Path $lib 'release-gate.ps1')
+. (Join-Path $lib 'release-selection.ps1')
 . (Join-Path $lib 'nightly-tests-impl.ps1')
 
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
@@ -76,6 +80,21 @@ $invoke = @{
     Profile = $Profile
     ExpectedSha = $ExpectedSha
     RunId = $RunId
+    Repository = $Repository
+    SelectionMode = $SelectionMode
+    BaselineSha = $BaselineSha
+    BaselineReceiptPath = $BaselineReceiptPath
+    QualificationPath = $QualificationPath
+    TimingRoot = $TimingRoot
+    TrainManifestPath = $TrainManifestPath
+    ReleaseIntentPath = $ReleaseIntentPath
+    SelectionAttemptPath = $SelectionAttemptPath
+    SelectionAttemptDigest = $SelectionAttemptDigest
+    SelectionPath = $SelectionPath
+    SelectionDigest = $SelectionDigest
+    Attempt = $Attempt
+    ReleaseRoot = $ReleaseRoot
+    CandidateId = $CandidateId
     SeamsPath = $SeamsPath
     PolicyPath = $PolicyPath
     AllowSharedTree = $AllowSharedTree

@@ -74,6 +74,9 @@ function Invoke-NightlyWatchedCommand {
         [int]$TimeoutMilliseconds = 0,
         [hashtable]$Environment = $null
     )
+    if ($ArgumentList -contains '-SelectionAttemptPath') {
+        return Invoke-ReleaseSelectionHop -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory
+    }
     Write-NightlyTrace -Kind 'exec' -Message ($FilePath + ' ' + ($ArgumentList -join ' '))
     if ($script:NightlySeams -and $script:NightlySeams.StartProcess) {
         return $script:NightlySeams.StartProcess.Invoke($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
@@ -92,6 +95,8 @@ function Invoke-NightlyWatchedCommand {
     return [pscustomobject]@{ ExitCode = $code; TimedOut = $false; Pid = $(if ($proc) { $proc.Id } else { 0 }) }
 }
 
+. (Join-Path $PSScriptRoot 'release-selection.ps1')
+
 function Invoke-AntiphonNightlyRunCore {
     param(
         [string[]]$Suites,
@@ -103,6 +108,7 @@ function Invoke-AntiphonNightlyRunCore {
         [string]$RemoteUrl = 'https://github.com/michal-ciechan/Antiphon',
         [string]$StateRoot = '',
         [ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full',
+        [string]$Repository = 'michal-ciechan/Antiphon',
         [string]$BaselineSha = '',
         [string]$BaselineReceiptPath = '',
         [string]$QualificationPath = '',
@@ -172,9 +178,12 @@ function Invoke-AntiphonNightlyRunCore {
         LocalDueDate = $localDueDate
         PolicyHash = ''
         SummaryPath = ''
+        Selection = $null
     }
 
     try {
+        try { [void](Assert-ReleaseSelectionCapability $SelectionMode) }
+        catch { $result.Refusal=$_.Exception.Message; $result.ExitCode=3; return [pscustomobject]$result }
         if ($script:ReleaseGateProfiles -notcontains $Profile) {
             Write-Host ('REFUSED: unknown profile {0}.' -f $Profile)
             $result.Refusal = 'unknown-profile'
@@ -391,6 +400,27 @@ function Invoke-AntiphonNightlyRunCore {
                 return [pscustomobject]$result
             }
 
+        if ($Profile -eq 'rc' -or $SelectionMode -cne 'Full' -or $SelectionAttemptPath) {
+            try {
+                $selectionRequest = @{RepositoryRoot=$CheckoutRoot;CandidateSha=$sha;CandidateRef=$Ref;Repository=$Repository;Profile=$Profile;
+            ReleaseRoot=$ReleaseRoot;CandidateId=$CandidateId;RunId=$RunId;
+            SelectionMode=$SelectionMode;BaselineSha=$BaselineSha;BaselineReceiptPath=$BaselineReceiptPath;QualificationPath=$QualificationPath;TimingRoot=$TimingRoot;TrainManifestPath=$TrainManifestPath;ReleaseIntentPath=$ReleaseIntentPath;SelectionAttemptPath=$SelectionAttemptPath;SelectionAttemptDigest=$SelectionAttemptDigest;SelectionPath=$SelectionPath;SelectionDigest=$SelectionDigest;Attempt=$Attempt}
+                if (-not $SelectionAttemptPath) {
+                    $bound = New-ReleaseSelectionAttempt $selectionRequest
+                    $SelectionAttemptPath = $bound.SelectionAttemptPath; $SelectionAttemptDigest = $bound.SelectionAttemptDigest
+                    $SelectionPath = $bound.SelectionPath; $SelectionDigest = $bound.SelectionDigest; $BaselineSha = $bound.BaselineSha
+                    foreach ($name in @('SelectionAttemptPath','SelectionAttemptDigest','SelectionPath','SelectionDigest','BaselineSha')) { $selectionRequest[$name] = Get-Variable -Name $name -ValueOnly }
+                }
+                $selection = Read-ReleaseSelectionAttempt $selectionRequest
+                $result.Selection = $selection
+                $stateObj.selection = $selection
+                $stateObj.coverageScope = $selection.coverageScope
+            } catch {
+                $result.Refusal = $_.Exception.Message; $result.Phase = 'selection'; $result.ExitCode = 3
+                return [pscustomobject]$result
+            }
+        }
+
             $cloneScript = Join-Path $CheckoutRoot (Join-Path 'scripts' 'nightly-run.ps1')
             $running = $PSCommandPath
             if ([string]::IsNullOrWhiteSpace($running)) { $running = $MyInvocation.MyCommand.Path }
@@ -406,13 +436,29 @@ function Invoke-AntiphonNightlyRunCore {
                         '-LogRoot', $LogRoot,
                         '-Ref', $Ref,
                         '-StateRoot', $StateRoot,
+                        '-RemoteUrl', $RemoteUrl,
                         '-Trigger', $Trigger,
                         '-Profile', $Profile,
                         '-RunId', $RunId,
                         '-ContinueRunId', $RunId,
                         '-ContinueParentPid', ([string]$PID),
-                        '-ContinueParentStartedAt', $startedAt.ToString('o')
+                        '-ContinueParentStartedAt', (Get-NightlyProcessStartUtc -ProcessId $PID).ToString('o')
                     )
+                    if ($SelectionAttemptPath) {
+                        $pwshArgs += '-Repository'; $pwshArgs += [string]$Repository
+                        $pwshArgs += '-SelectionMode'; $pwshArgs += [string]$SelectionMode
+                        $pwshArgs += '-BaselineSha'; $pwshArgs += [string]$BaselineSha
+                        $pwshArgs += '-BaselineReceiptPath'; $pwshArgs += [string]$BaselineReceiptPath
+                        $pwshArgs += '-QualificationPath'; $pwshArgs += [string]$QualificationPath
+                        $pwshArgs += '-TimingRoot'; $pwshArgs += [string]$TimingRoot
+                        $pwshArgs += '-TrainManifestPath'; $pwshArgs += [string]$TrainManifestPath
+                        $pwshArgs += '-ReleaseIntentPath'; $pwshArgs += [string]$ReleaseIntentPath
+                        $pwshArgs += '-SelectionAttemptPath'; $pwshArgs += [string]$SelectionAttemptPath
+                        $pwshArgs += '-SelectionAttemptDigest'; $pwshArgs += [string]$SelectionAttemptDigest
+                        $pwshArgs += '-SelectionPath'; $pwshArgs += [string]$SelectionPath
+                        $pwshArgs += '-SelectionDigest'; $pwshArgs += [string]$SelectionDigest
+                        $pwshArgs += '-Attempt'; $pwshArgs += [string]$Attempt
+                    }
                     if ($NoReport) { $pwshArgs += '-NoReport' }
                     # D-2/D-3: profile, pinned sha and candidate identity must survive the hop.
                     if (-not [string]::IsNullOrWhiteSpace($ExpectedSha)) { $pwshArgs += '-ExpectedSha'; $pwshArgs += $ExpectedSha }
@@ -443,6 +489,26 @@ function Invoke-AntiphonNightlyRunCore {
             $rev = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('rev-parse', 'HEAD')
             $sha = ([string]$rev.Output).Trim()
             $stateObj.sha = $sha
+        if ($Profile -eq 'rc' -or $SelectionMode -cne 'Full' -or $SelectionAttemptPath) {
+            try {
+                $selectionRequest = @{RepositoryRoot=$CheckoutRoot;CandidateSha=$sha;CandidateRef=$Ref;Repository=$Repository;Profile=$Profile;
+            ReleaseRoot=$ReleaseRoot;CandidateId=$CandidateId;RunId=$RunId;
+            SelectionMode=$SelectionMode;BaselineSha=$BaselineSha;BaselineReceiptPath=$BaselineReceiptPath;QualificationPath=$QualificationPath;TimingRoot=$TimingRoot;TrainManifestPath=$TrainManifestPath;ReleaseIntentPath=$ReleaseIntentPath;SelectionAttemptPath=$SelectionAttemptPath;SelectionAttemptDigest=$SelectionAttemptDigest;SelectionPath=$SelectionPath;SelectionDigest=$SelectionDigest;Attempt=$Attempt}
+                if (-not $SelectionAttemptPath) {
+                    $bound = New-ReleaseSelectionAttempt $selectionRequest
+                    $SelectionAttemptPath = $bound.SelectionAttemptPath; $SelectionAttemptDigest = $bound.SelectionAttemptDigest
+                    $SelectionPath = $bound.SelectionPath; $SelectionDigest = $bound.SelectionDigest; $BaselineSha = $bound.BaselineSha
+                    foreach ($name in @('SelectionAttemptPath','SelectionAttemptDigest','SelectionPath','SelectionDigest','BaselineSha')) { $selectionRequest[$name] = Get-Variable -Name $name -ValueOnly }
+                }
+                $selection = Read-ReleaseSelectionAttempt $selectionRequest
+                $result.Selection = $selection
+                $stateObj.selection = $selection
+                $stateObj.coverageScope = $selection.coverageScope
+            } catch {
+                $result.Refusal = $_.Exception.Message; $result.Phase = 'selection'; $result.ExitCode = 3
+                return [pscustomobject]$result
+            }
+        }
         }
 
         if ($WhatIf) {
@@ -481,6 +547,23 @@ function Invoke-AntiphonNightlyRunCore {
             '-Profile', $Profile,
             '-RunId', $RunId
         )
+        if ($SelectionAttemptPath) {
+            $testArgs += '-Repository'; $testArgs += [string]$Repository
+            $testArgs += '-SelectionMode'; $testArgs += [string]$SelectionMode
+            $testArgs += '-BaselineSha'; $testArgs += [string]$BaselineSha
+            $testArgs += '-BaselineReceiptPath'; $testArgs += [string]$BaselineReceiptPath
+            $testArgs += '-QualificationPath'; $testArgs += [string]$QualificationPath
+            $testArgs += '-TimingRoot'; $testArgs += [string]$TimingRoot
+            $testArgs += '-TrainManifestPath'; $testArgs += [string]$TrainManifestPath
+            $testArgs += '-ReleaseIntentPath'; $testArgs += [string]$ReleaseIntentPath
+            $testArgs += '-SelectionAttemptPath'; $testArgs += [string]$SelectionAttemptPath
+            $testArgs += '-SelectionAttemptDigest'; $testArgs += [string]$SelectionAttemptDigest
+            $testArgs += '-SelectionPath'; $testArgs += [string]$SelectionPath
+            $testArgs += '-SelectionDigest'; $testArgs += [string]$SelectionDigest
+            $testArgs += '-Attempt'; $testArgs += [string]$Attempt
+            $testArgs += '-ReleaseRoot'; $testArgs += $ReleaseRoot
+            $testArgs += '-CandidateId'; $testArgs += $CandidateId
+        }
         if (-not [string]::IsNullOrWhiteSpace($ExpectedSha)) {
             $testArgs += '-ExpectedSha'
             $testArgs += $ExpectedSha
@@ -706,6 +789,7 @@ function Invoke-AntiphonNightlyRun {
         [string]$RemoteUrl = 'https://github.com/michal-ciechan/Antiphon',
         [string]$StateRoot = '',
         [ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full',
+        [string]$Repository = 'michal-ciechan/Antiphon',
         [string]$BaselineSha = '',
         [string]$BaselineReceiptPath = '',
         [string]$QualificationPath = '',
