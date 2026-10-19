@@ -268,7 +268,6 @@ public sealed class RowRunner
         var hostExit = DateTimeOffset.UtcNow;
         var hostElapsed = System.Diagnostics.Stopwatch.GetElapsedTime(hostStartTick);
         var sourceStable = request.SourceBoundary?.Invoke() != false;
-        if (binding is not null && !run.TimedOut) OwnedOutputLedger.Adopt(binding.OutputPath, run.Exited);
         if (binding is not null && binding.Check() != "verified")
         {
             combined.WriteLine("refused: checkpoint-build-source.json receipt-missing-or-mismatching");
@@ -326,7 +325,6 @@ public sealed class RowRunner
                     request.Deadline,
                     cancellationToken).ConfigureAwait(false);
                 if (request.SourceBoundary?.Invoke() == false) sourceStable = false;
-                if (binding is not null && !second.TimedOut) OwnedOutputLedger.Adopt(binding.OutputPath, second.Exited);
                 var secondParsed = File.Exists(rerunTrx) ? TrxReport.Parse(rerunTrx) : null;
                 if (second.TimedOut || secondParsed is not { Ok: true })
                     sawOk = false;
