@@ -13,6 +13,10 @@ would be caught by the native witness. All such work is pending.
 
 Ordinary verification selection and results are separate from Mutation:
 `docs/superpowers/plans/2026-10-19-card-0870-existing-repair-verification.md`.
-After ordinary verification and Review, the caller must resolve the original
-already-landed Code owner's publication identity before commissioning a sourced
-Mutation pass. Do not infer that identity from these ancestor commit hashes.
+The server's original Code owner is `2a687183-07bc-44e9-af70-6c806311ec8d`.
+Its landing operation `ba47b99e-e0c9-4050-99ce-b3d10999d0bc` reports `Landed`,
+source `63a950e787acc8736fb9283bd69d53915fcc3391`, published
+`cb67130bbe8523f970ea10af8dcfe37d28edff15`. Cleanup was refused for
+`evidence_retention_unavailable`. The caller should use that original owner's
+publication identity if commissioning SourceLanding Mutation of the existing
+repair; this verification-only task does not republish it.
