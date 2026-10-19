@@ -20,7 +20,7 @@ Related owners: [testing and build](testing-and-build.md), [nightly watchdog](ni
 ## The release line
 
 The release line is a long-lived `rc/YYYY-MM-DD` branch. The current line is
-`rc/2026-10-15`. Bug and test fixes for code already on that line land on it.
+`rc/2026-10-18` (it succeeded `rc/2026-10-15` on 2026-10-18). Bug and test fixes for code already on that line land on it.
 Features and refactors, including CARD-1311, are master-only. Every rc-line land
 is merged to master with a merge commit. That merge commit is an explicit
 exception to rebase-only landing, and `-Land` does not create it.
@@ -38,6 +38,23 @@ fixed and those hosts are running that tip. This card does not implement that ga
 Change-aware heavy TUI selection is CARD-1313 on master. The rc profile, the
 credit split, the nine-suite roster, and the rule that RC green is not master
 readiness stay as written below.
+
+### Merging the rc line into master (Merge role)
+
+The rc-to-master merge, and the merge of a reviewed fix branch into the rc line, is a
+`Merge`-role Worktree task, not a `-Land`. What that task needs: dispatch it with `-StartRef` at
+the **target's** current tip (the master tip for an rc-to-master merge; the rc tip when a fix
+branch is merged into the rc line), have it `git merge` the source on its own assigned task
+branch, and have it publish with `git push origin HEAD:refs/heads/<target>`. That push is a
+fast-forward because the task branch began at the target tip and the merge commit descends from
+it. Starting the task branch at the Code branch's tip instead is refused by the launch git
+contract, so a Merge task never starts from the source side. The 2026-10-19 cycle's worked
+examples: `feat/card-task-5d75d6f6` started at master, merged `df6b422c71b0` and master
+fast-forwarded to `d5dec9555bd726ad11bb30073c1733d6b3e7bb0e`; `feat/card-task-a7accc73` started
+at the rc tip `df6b422c71b0`, merged the reviewed smoke-pin branch `feat/card-task-c8c9f3c5`, and
+`rc/2026-10-18` fast-forwarded to `81cfb267a0af5c0ddb65e8b238af355067bee9cc`. The merge commit is
+the explicit exception to rebase-only landing named above; an ordinary `-Land` rebases and
+cannot produce it.
 
 ## Two lanes, two kinds of credit
 
@@ -174,6 +191,29 @@ Normal E2E must not reach a live broker or an authenticated provider to satisfy 
 Replaces the earlier claim that `-Suites e2e` runs E2E: it did not. `nightly-tests-impl.ps1`
 skipped `mode=manual` unconditionally and `$NightlyNativeGroups` omitted E2E, so the
 selection was accepted and then dropped. Use `-Profile rc`.
+
+### The gate accepted for rc/2026-10-18 (CARD-1350)
+
+`rc/2026-10-18` was accepted at `df6b422c71b0828b4bd7f855a86e2a51d1987e79` on a narrower standard
+than `rc-release` complete-green, because no Windows rc run has yet produced that receipt. The
+standard, recorded here so the next line is judged the same way: the frozen Linux CARD-1287
+roster green on server2 (373 classes, 4,528 executed and passed, none failed or skipped;
+[Linux final](investigations/2026-10-19-rc-linux-final.md) on `feat/card-task-aaee7f74`), plus
+every Windows rc-profile suite that completes to a TRX: session-runner, pty-host, agents-pty,
+messaging, client, scripts and markdown-pdf, with each red classified inherited from
+`rc/2026-10-15` or flake and none new ([final Windows re-gate](investigations/2026-10-19-rc-regate.md)
+on `feat/card-task-999f7534`; [new-red classification](investigations/2026-10-19-rc-windows-new-reds.md)
+on `feat/card-task-90dcf4ee`). The Windows `antiphon` and `e2e` suites are **known-incomplete**
+and were not required: `ProcessSpawnLimit.Limit == 1` serialises the 356 class-level limiter
+classes of `Antiphon.Tests` through one lane, so the suite admits about 46 UIDs a minute and a
+60-, 90- or 120-minute watchdog kills it long before its roughly 12,000-method census ends
+([live reds](investigations/2026-10-19-rc-windows-live-reds.md) on `feat/card-task-93971d09`);
+the serial `AgentTaskLandDeliveryE2ETests` class alone fills the e2e window
+([hangs](investigations/2026-10-19-rc-windows-hangs.md) on `feat/card-task-5b8ad483`). The
+watchdog values and their reasons are in [testing and build](testing-and-build.md#nightly).
+Acceptance on this standard is the operator's CARD-1350 decision: it earns no `rc-release` credit
+and authorises no `publish-release.ps1`; publication still needs the full automated Windows
+profile.
 
 ## Cutting, testing and publishing a candidate
 

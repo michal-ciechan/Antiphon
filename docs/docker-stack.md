@@ -572,6 +572,21 @@ Ordinary `PackageReference` packages still need online restore or the best-effor
 shared cache. Qualify the image independently of volumes-only cold Seed, then deploy
 to the temporary runner within the approved rolling window.
 
+**The Fixture gate needs the 9.0.20 targeting-pack pin (2026-10-19).** The image builds from the
+floating `sdk:10.0` tag and has moved past the 10.0.401 above to 10.0.402, whose bundled
+defaults select the net9 reference packs at 9.0.21, while the image deliberately ships only the
+9.0.20 packs; `RuntimeFrameworkVersion=9.0.20` pins the runtime, not the reference packs. The
+rolling rollout's Fixture seed smoke therefore failed its offline restore (`NU1100` on both
+`*.App.Ref` 9.0.21) and surfaced as `CacheSeedSmokeFailed` / `FixtureSeedFailed` at
+`df6b422c71b0`, with the raw restore output discarded; CARD-1333, residue and disk were ruled out
+([Fixture gate diagnosis](investigations/2026-10-19-rollout-fixture-gate.md) on
+`feat/card-task-efe949b4`). The fix landed on the rc line (`81cfb267a`, merged to master): the
+generated smoke project in `scripts/c590-remote.sh` and the image's offline probe carry
+`<FrameworkReference Update="..." TargetingPackVersion="9.0.20" />` for both frameworks, and
+`SeedSmokeTargetingPackContractTests` holds both to the Dockerfile's `NET9_PACK_VERSION` pin. A
+Fixture retry of an unpinned SHA against the same image fails the same way; do not warm the
+deliberately empty package cache or downgrade the SDK to get past it.
+
 The Grok row requires `grok 1.0.41 (<12 lowercase hex>)`, optionally followed by
 ` [stable]`, with no other tokens, exit 0, and empty stderr. The image install
 removes the installer's home, so its binary prints no channel tag. CARD-0986 Review
