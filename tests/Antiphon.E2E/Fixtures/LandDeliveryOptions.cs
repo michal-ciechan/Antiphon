@@ -118,9 +118,18 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
     private sealed class FileBoundary(LandDeliveryOptions options, IServiceScopeFactory scopes) : LandDeliveryBoundary
     {
         private int _enqueueCalls;
-        public override bool DropWakeup(string boundary, Guid identity) => options.Cut == "lost-flush" && boundary == "completion"
-            || options.Cut == "idle-lost-wakeup" && boundary == "completion"
-            || options.Cut == "lost-request" && boundary == "land-request";
+        public override bool DropWakeup(string boundary, Guid identity)
+        {
+            var drop = options.Cut == "lost-flush" && boundary == "completion"
+                || options.Cut == "idle-lost-wakeup" && boundary == "completion"
+                || options.Cut == "lost-request" && boundary == "land-request";
+            // CARD-1305: record each dropped wakeup so a test can witness that its cut fired for the
+            // identity it later sees delivered through the remaining recovery sources.
+            if (drop)
+                File.WriteAllText(Path.Combine(options.Root, $"wakeup-dropped-{boundary}-{Guid.NewGuid():N}.observation.json"),
+                    JsonSerializer.Serialize(new { boundary, identity, cut = options.Cut, at = DateTime.UtcNow, pid = Environment.ProcessId }));
+            return drop;
+        }
         public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
         {
             if (boundary is "completion-scan" or "notification-scan" or "queue-existing-key" or "dispatch-warning-intent-scan")
