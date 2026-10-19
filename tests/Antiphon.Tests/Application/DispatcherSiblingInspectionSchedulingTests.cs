@@ -245,6 +245,19 @@ public partial class DispatcherSiblingInspectionSchedulingTests
     {
         await using var f = await SiblingInspectionFixture.CreateAsync();
         var ids = new List<Guid> { f.Task.Id };
+        var workingId = Guid.NewGuid();
+        var workingSession = Guid.NewGuid();
+        await using (var seed = f.Read())
+        {
+            seed.AgentSessions.Add(new AgentSession { Id = workingSession, DefinitionName = "working-fixture",
+                Cwd = f.Repo.Path, Status = SessionStatus.Running, StartedAt = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
+            seed.AgentTasks.Add(new AgentTask { Id = workingId, RootTaskId = workingId,
+                Title = "unrelated working seat", Goal = "keep running", Status = AgentTaskStatus.Working,
+                AgentSessionId = workingSession, WorkingDirectory = f.Repo.Path,
+                CreatedAt = DateTime.UtcNow, DispatchedAt = DateTime.UtcNow });
+            await seed.SaveChangesAsync();
+        }
         if (scenario is "active limit" or "total capacity" or "fairness" or "shutdown")
         {
             await using var seed = f.Read();
@@ -301,7 +314,14 @@ public partial class DispatcherSiblingInspectionSchedulingTests
             f.Git.Block = false; f.Git.Release.TrySetResult();
         }
         await f.Queue.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(15));
-        if (scenario == "shutdown") return;
+        if (scenario == "shutdown")
+        {
+            await using var read = f.Read();
+            var working = await read.AgentTasks.SingleAsync(t => t.Id == workingId);
+            working.Status.ShouldBe(AgentTaskStatus.Working); working.AgentSessionId.ShouldBe(workingSession);
+            (await read.AgentSessions.SingleAsync(s => s.Id == workingSession)).Status.ShouldBe(SessionStatus.Running);
+            return;
+        }
         if (scenario == "expiry")
         {
             f.Clock.Advance(TimeSpan.FromSeconds(30));

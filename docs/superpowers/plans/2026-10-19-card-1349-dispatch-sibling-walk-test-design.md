@@ -487,6 +487,8 @@ Every `Min` is a TUnit execution count; internal matrices do not inflate it.
 | CP-30 | S1-S4 | CP-1 | late-mirror-regressions | `/*/*/RemoteWorkspacePreparerTests/(C1032_CaptureLateReassignment*)\|(C1032_CaptureAttemptAndCancellation*)\|(C1032_CaptureLostReplyRecovery*)` | V-10, V-11, V-18, R-10, R-11, R-18 | all listed, 0 failed/skipped | 3 | 3 |
 | CP-31 | S1-S4 | CP-1 | claim-atomicity | `/*/*/AgentTaskDispatchBaseGuardTests/(C540_ClaimRollbackHasNoCollapsedIntent*)\|(C540_ClaimLoserOwesNoIntent*)` | V-14, R-14 | all listed, 0 failed/skipped | 5 | 2 |
 | CP-32 | S1-S4 | CP-1 | projection-custody | `/*/*/DispatchBaseNotificationTests/(C540_CollapsedProjectionIsAtomic*)\|(C508_IntentProjectionCustody*)\|(C508_IntentProjectionLostAcknowledgement*)` | V-14, R-14 | all listed, 0 failed/skipped | 6 | 2 |
+| CP-33 | S1-S4 | CP-1 | final-unit | `/*/*/*/*[Category=Unit]` | Final whole Unit lane | all Unit cases, 0 failed/skipped | 1 | 4 |
+| CP-34 | S1-S4 | CP-1 | final-affected-classes | `/*/Antiphon.Tests.Application/(DispatchSiblingInspectionTests*)\|(DispatcherSiblingInspectionSchedulingTests*)\|(RemoteWorkspaceReadinessTests*)\|(DispatchBaseInspectionDiagnosticsTests*)\|(AgentTaskWorktreeBaseResolverTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(RemoteWorkspacePreparerTests*)\|(DispatchBaseNotificationTests*)\|(DispatchHeldAttentionTests*)\|(AgentTaskPipelineStatusTests*)/*` | Final full affected integration classes | every named class, 0 failed/skipped | 1 | 20 |
 
 
 Run through the checkpoint tool using this document, one committed group, and the
@@ -561,3 +563,7 @@ above. A source-declaration audit found all 39 selected existing test methods an
 their 101 argument-expanded cases; the remaining 112 executions are planned new
 cases, not existing coverage. These checks do not substitute for Code's executed
 TRX roster, build provenance or Mutation's red/restore/green results.
+
+## Code Final profile scope amendment
+
+The assigned brief’s explicit Final profile requires the whole Unit lane and every full affected integration class, in addition to the ordinary V/R selections. It supersedes the earlier method-only scope for this task. CP-33 and CP-34 implement that requirement through the same checkpoint tool and isolated build. These are bounded selections, not a full-assembly exception. The shared invariant is safe dispatch admission, immutable warning delivery, mirror readiness, and correct attention after asynchronous inspection. The ten full classes are named in CP-34; no unbounded class set is requested. Additional estimated cost is 24 minutes, to be replaced with actual measured cost in the implementation report. Existing CP-1–CP-32 identities, filters, argument floors and historical outcomes are retained. No positive control is discharged by these ordinary runs.
