@@ -53,10 +53,15 @@ public sealed partial class LandDeliveryFixture
         await GitAsync(Repository, "checkout", "master");
         ExpectedDispatchSiblings = _dispatchSiblings.Where(s => s.Branch is "c540-containing" or "c540-divergent").ToArray();
         await File.WriteAllTextAsync(Path.Combine(Root, "dispatch-graph.json"), JsonSerializer.Serialize(_dispatchSiblings));
+        // CARD-1305: the four same-card branches above are intentionally divergent so the dispatcher
+        // observes and reduces them into sibling warnings. CARD-0442 refuses automatic base selection
+        // on divergent tips, so the queued task records the -FreshWorktree intent (explicit Target
+        // mode, AgentTaskService.cs) exactly as a delegate.ps1 dispatch would.
         db.AgentTasks.Add(new AgentTask { Id = TaskId, RootTaskId = TaskId, CardId = card.Id, ProjectId = project.Id,
             Title = "C540 native queued dispatch", Goal = "Complete this owned fixture turn.", Kind = AgentTaskKind.Worker,
             Role = AgentTaskRole.Code, AgentKind = AgentKind.Grok, Workspace = WorkspaceMode.Worktree,
             WorkingDirectory = Repository, RepoPath = Repository, Status = AgentTaskStatus.Queued,
+            RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Target,
             ReplyTo = AgentTaskReplyTo.Session, ParentSessionId = CallerId, CreatedAt = now });
         await db.SaveChangesAsync();
     }
