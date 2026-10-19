@@ -193,7 +193,10 @@ public sealed class RollingVolumeRecycleScriptTests
                 run.Trace.Any(t => t["path"]?.GetValue<string>() == "/api/agent-tasks/" + id).ShouldBeFalse();
             }
         }
-        foreach (var vector in new[] { "pending-requested", "pending-started", "unfiltered-open", "unfiltered-land", "unstable", "closure" })
+        // CARD-1353 D-1: a pending land refuses only when its row is bound to the recycled runner
+        // (server2-temp for retire-temp). The off-runner pending-* vectors pass and reach the host case.
+        foreach (var vector in new[] { "pending-requested", "pending-started", "bound-pending-requested", "bound-pending-started",
+                     "unfiltered-open", "unfiltered-land", "unstable", "closure" })
         {
             using var f = new C1008WrapperFixture();
             var empty = f.State["tasks"]!.DeepClone();
@@ -201,11 +204,14 @@ public sealed class RollingVolumeRecycleScriptTests
             var envelope = empty.DeepClone(); envelope["items"]!.AsArray().Add(row);
             var queries = new JsonObject(); f.State["taskQueries"] = queries;
             var expected = "RecycleLandInFlight " + id;
+            var accepted = false;
             switch (vector)
             {
-                case "pending-requested": case "pending-started":
+                case "pending-requested": case "pending-started": case "bound-pending-requested": case "bound-pending-started":
                     row["status"] = "Succeeded";
-                    row[vector == "pending-requested" ? "landRequestedAt" : "landStartedAt"] = "2020-01-01T00:00:00Z";
+                    if (vector.StartsWith("bound-", StringComparison.Ordinal)) row["runnerId"] = "server2-temp";
+                    else accepted = true;
+                    row[vector.EndsWith("-requested", StringComparison.Ordinal) ? "landRequestedAt" : "landStartedAt"] = "2020-01-01T00:00:00Z";
                     queries[C1087ListPath(project, "land")] = envelope; break;
                 case "unfiltered-open":
                     row["status"] = "Succeeded"; queries[C1087ListPath(project, "open")] = envelope;
@@ -229,15 +235,28 @@ public sealed class RollingVolumeRecycleScriptTests
                         queries[C1087ListPath(project, kind)] = entry;
                         var next = envelope.DeepClone(); next["scope"]!["projectId"] = other;
                         next["items"]![0]!["projectId"] = other;
-                        if (kind == "land") next["items"]![0]!["landRequestedAt"] = "2020-01-01T00:00:00Z";
+                        // The nested land row is bound to the recycled runner so the nested walk still refuses.
+                        if (kind == "land") { next["items"]![0]!["landRequestedAt"] = "2020-01-01T00:00:00Z"; next["items"]![0]!["runnerId"] = "server2-temp"; }
                         else f.State["details"] = new JsonObject { [id] = new JsonObject { ["summary"] = next["items"]![0]!.DeepClone(), ["landRequest"] = null } };
                         queries[C1087ListPath(other, kind)] = next;
                     }
                     break;
             }
             var run = await f.Run("retire-temp");
-            run.Exit.ShouldBe(2, vector + ": " + run.Output); run.Output.ShouldContain(expected);
-            run.Trace.Any(t => t["kind"]?.GetValue<string>() == "case").ShouldBeFalse();
+            if (accepted)
+            {
+                run.Exit.ShouldBe(0, vector + ": " + run.Output);
+                run.Output.ShouldNotContain("RecycleLandInFlight");
+                run.Trace.Any(t => t["kind"]?.GetValue<string>() == "case" && t["name"]?.GetValue<string>() == "retire-temp-runner")
+                    .ShouldBeTrue(vector + ": an off-runner pending land reaches the host case; " + run.Output);
+                C1087Receipt(run.Trace)["tasks"]!.AsArray().Any(t => t!["id"]!.GetValue<string>() == id)
+                    .ShouldBeTrue(vector + ": the off-runner land is still recorded in the receipt");
+            }
+            else
+            {
+                run.Exit.ShouldBe(2, vector + ": " + run.Output); run.Output.ShouldContain(expected);
+                run.Trace.Any(t => t["kind"]?.GetValue<string>() == "case").ShouldBeFalse();
+            }
             var paths = run.Trace.Select(t => t["path"]?.GetValue<string>()).Where(p => p?.StartsWith("/api/agent-tasks?") == true).ToArray();
             paths.All(p => p!.EndsWith("&status=Queued,Dispatched,Working,Blocked") || p.EndsWith("&landPending=true")).ShouldBeTrue();
             if (vector == "closure") paths.ShouldContain(C1087ListPath("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "land"));
@@ -256,11 +275,16 @@ public sealed class RollingVolumeRecycleScriptTests
         var landed = C1087TaskRow("22222222-2222-2222-2222-222222222222", project);
         landed["status"] = "Succeeded"; landed["landRequestedAt"] = "2020-01-01T00:00:00Z";
         f.State["tasks"]!["items"]!.AsArray().Add(landed);
+        // CARD-1353 D-7: landPending keeps counting every pending land; boundLandPending counts the
+        // lands whose row is bound to the reported runner.
+        var started = C1087TaskRow("33333333-3333-3333-3333-333333333333", project);
+        started["status"] = "Succeeded"; started["landStartedAt"] = "2020-01-01T00:00:00Z"; started["runnerId"] = "server2-temp";
+        f.State["tasks"]!["items"]!.AsArray().Add(started);
         var run = await f.Run("check-census");
         run.Exit.ShouldBe(0, run.Output);
         run.Output.ShouldContain($"RECYCLE_PROJECT id={project} name=Antiphon resolvedBy=url");
-        run.Output.ShouldContain("RECYCLE_CENSUS runner=server2 open=1 boundOpen=1 landPending=1 scopes=1 elapsedMs=");
-        run.Output.ShouldContain("RECYCLE_CENSUS runner=server2-temp open=1 boundOpen=0 landPending=1 scopes=1 elapsedMs=");
+        run.Output.ShouldContain("RECYCLE_CENSUS runner=server2 open=1 boundOpen=1 landPending=2 boundLandPending=0 scopes=1 elapsedMs=");
+        run.Output.ShouldContain("RECYCLE_CENSUS runner=server2-temp open=1 boundOpen=0 landPending=2 boundLandPending=1 scopes=1 elapsedMs=");
         run.Trace.All(t => t["kind"]?.GetValue<string>() == "http" && t["method"]?.GetValue<string>() == "GET").ShouldBeTrue("no host jq, SSH, verify or POST");
         var root = Regex.Match(run.Output, @"(?m)^Census check complete: (.+)").Groups[1].Value.Trim();
         foreach (var runner in new[] { "server2", "server2-temp" })
@@ -295,10 +319,12 @@ public sealed class RollingVolumeRecycleScriptTests
         ["title"] = "SENTINEL_TITLE", ["goal"] = "SENTINEL_GOAL", ["result"] = "SENTINEL_RESULT"
     };
 
-    private static JsonObject C1087Receipt(JsonObject[] trace)
+    private static JsonObject C1087Receipt(JsonObject[] trace) => C1087Receipt(trace, "census-retire-temp-server2-temp.json");
+
+    private static JsonObject C1087Receipt(JsonObject[] trace, string name)
     {
         var root = trace.First(t => t["kind"]?.GetValue<string>() == "prerequisite")["evidenceRoot"]!.GetValue<string>();
-        var file = Path.Combine(root, "census-retire-temp-server2-temp.json");
+        var file = Path.Combine(root, name);
         File.Exists(file).ShouldBeTrue("partial and successful census receipts must be persisted: " + file);
         return JsonNode.Parse(File.ReadAllText(file))!.AsObject();
     }
@@ -430,19 +456,91 @@ public sealed class RollingVolumeRecycleScriptTests
             refused.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("recycle-work-gates: main proof " + fault);
             refused.Exit.ShouldBe(2);
         }
-        foreach (var state in new[] { "Queued", "Held", "Running", "NeedsResolution", "Unknown", "omitted", "started" })
+        // CARD-1353 D-1/D-5: an off-runner row ("other") with an in-flight land state or a land
+        // timestamp is recorded and counted, not refused; an unknown or omitted land proof still
+        // refuses RecycleLandUnknown; a bound row (server2-temp) with a land timestamp still refuses.
+        foreach (var state in new[] { "Queued", "Held", "Running", "NeedsResolution", "Unknown", "omitted", "started", "bound-started" })
         {
             using var invalid = new C1008WrapperFixture();
-            var row = new JsonObject { ["id"] = "11111111-1111-1111-1111-111111111111", ["status"] = state == "started" ? "Succeeded" : "Blocked", ["runnerId"] = "other",
+            var started = state is "started" or "bound-started";
+            var row = new JsonObject { ["id"] = "11111111-1111-1111-1111-111111111111", ["status"] = started ? "Succeeded" : "Blocked",
+                ["runnerId"] = state == "bound-started" ? "server2-temp" : "other",
                 ["projectId"] = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1", ["scopeSource"] = "Task", ["landRequestedAt"] = null,
-                ["landStartedAt"] = state == "started" ? "2026-10-03T09:00:00Z" : null };
+                ["landStartedAt"] = started ? "2026-10-03T09:00:00Z" : null };
             invalid.State["tasks"]!["items"]!.AsArray().Add(row);
             var detail = new JsonObject { ["summary"] = row.DeepClone() };
-            if (state != "omitted") detail["landRequest"] = state == "started" ? null : new JsonObject { ["state"] = state };
+            if (state != "omitted") detail["landRequest"] = started ? null : new JsonObject { ["state"] = state };
             invalid.State["details"] = new JsonObject { [row["id"]!.GetValue<string>()] = detail };
-            var refused = await invalid.Run("retire-temp");
-            refused.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("recycle-work-gates: open detail or terminal pending land " + state);
-            refused.Exit.ShouldBe(2);
+            var run = await invalid.Run("retire-temp");
+            var accepted = state is "Queued" or "Held" or "Running" or "NeedsResolution" or "started";
+            if (accepted)
+            {
+                run.Exit.ShouldBe(0, "recycle-work-gates: off-runner land " + state + "; " + run.Output);
+                run.Trace.Any(x => x["kind"]?.GetValue<string>() == "case" && x["name"]?.GetValue<string>() == "retire-temp-runner")
+                    .ShouldBeTrue("recycle-work-gates: off-runner land " + state + " reaches the host case; " + run.Output);
+            }
+            else
+            {
+                run.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("recycle-work-gates: open detail or terminal pending land " + state);
+                run.Exit.ShouldBe(2);
+                run.Output.ShouldContain(state == "bound-started" ? "RecycleLandInFlight 11111111-1111-1111-1111-111111111111" : "RecycleLandUnknown");
+            }
+        }
+    }
+
+    // CARD-1353 D-3/D-4. A land bound to the recycled runner makes every census call site wait,
+    // bounded, instead of refusing on the first read. Only RecycleLandInFlight is retried; on expiry
+    // the refusal keeps its first token and reports the polls it waited.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1353_Wrapper_waits_for_a_bound_land_then_proceeds()
+    {
+        const string project = C994TaskVectors.Project;
+        const string id = "11111111-1111-1111-1111-111111111111";
+        var landPath = C1087ListPath(project, "land");
+        foreach (var arm in new[] { "clears", "expires", "zero" })
+        {
+            using var f = new C1008WrapperFixture();
+            f.MainDrained(); f.State["allowClear"] = true;
+            var pending = f.State["tasks"]!.DeepClone();
+            var row = C1087TaskRow(id, project); row["status"] = "Succeeded"; row["runnerId"] = "server2";
+            row["landRequestedAt"] = "2020-01-01T00:00:00Z";
+            pending["items"]!.AsArray().Add(row);
+            var queries = new JsonObject(); f.State["taskQueries"] = queries;
+            // The stub keeps serving the last sequence element: a refusing census consumes one land
+            // read, so [pending, empty] is one refusal and then a clean two-pass census.
+            queries[landPath] = arm == "clears" ? new JsonArray(pending, f.State["tasks"]!.DeepClone()) : pending;
+            if (arm == "clears") f.Environment["C727_TEST_LAND_WAIT_MS"] = "60000";
+            else if (arm == "expires") f.Environment["C727_TEST_LAND_WAIT_MS"] = "1";
+            var run = arm == "zero" ? await f.Run("redeploy-old", "-LandWaitMinutes", "0") : await f.Run("redeploy-old");
+            var landReads = run.Trace.Count(t => t["path"]?.GetValue<string>() == landPath);
+            var waitLines = Regex.Matches(run.Output, "(?m)^RECYCLE_LAND_WAIT runner=server2 id=" + id + " polls=\\d+$").Count;
+            var receipt = C1087Receipt(run.Trace, "census-redeploy-old-server2.json");
+            switch (arm)
+            {
+                case "clears":
+                    run.Exit.ShouldBe(0, arm + ": " + run.Output);
+                    run.Trace.Any(t => t["kind"]?.GetValue<string>() == "case" && t["name"]?.GetValue<string>() == "deploy-parent")
+                        .ShouldBeTrue(arm + ": the recycle proceeds once the bound land has cleared; " + run.Output);
+                    waitLines.ShouldBe(1, arm + ": one wait line; " + run.Output);
+                    landReads.ShouldBeGreaterThanOrEqualTo(3, arm + ": one refusing read then a clean two-pass census");
+                    receipt["landWait"]!["outcome"]!.GetValue<string>().ShouldBe("cleared", arm);
+                    receipt["landWait"]!["polls"]!.GetValue<int>().ShouldBe(1, arm);
+                    break;
+                case "expires":
+                    run.Exit.ShouldBe(2, arm + ": " + run.Output);
+                    run.Output.ShouldContain($"RecycleLandInFlight {id} runner=server2 waited=");
+                    run.Trace.Any(t => t["kind"]?.GetValue<string>() == "case").ShouldBeFalse(arm + ": no host case after an expired wait");
+                    receipt["landWait"]!["outcome"]!.GetValue<string>().ShouldBe("expired", arm);
+                    break;
+                default:
+                    run.Exit.ShouldBe(2, arm + ": " + run.Output);
+                    run.Output.ShouldContain($"RecycleLandInFlight {id} runner=server2 waited=0polls");
+                    landReads.ShouldBe(1, arm + ": -LandWaitMinutes 0 refuses on the first land read");
+                    waitLines.ShouldBe(0, arm);
+                    run.Trace.Any(t => t["kind"]?.GetValue<string>() == "case").ShouldBeFalse(arm);
+                    break;
+            }
         }
     }
 
@@ -1258,15 +1356,19 @@ public sealed class RollingVolumeRecycleScriptTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1326_Census_refuses_a_land_timestamp_or_land_pending_appearance()
     {
+        // CARD-1353 D-2/D-6: the compared land closure keeps bound rows only. An appearing open row
+        // with a land timestamp is still Unstable for every runner; a land-closure appearance is
+        // Unstable only for a row bound to the recycled runner and passes for an off-runner row.
         var report = RemoteScriptContractTests.LinuxShell(C1326HostCensusScript());
         report += await C1326WrapperProbe("appears-with-land-timestamp", "unstable");
-        report += await C1326WrapperProbe("appears-in-land-closure", "unstable");
+        report += await C1326WrapperProbe("appears-in-land-closure-bound", "unstable");
+        report += await C1326WrapperProbe("appears-in-land-closure-other", "pass");
         report.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, report);
         report.IndexOf("HOST_DONE", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
         foreach (var name in new[]
         {
-            "host-appears-with-land-timestamp", "host-appears-in-land-closure",
-            "wrapper-appears-with-land-timestamp", "wrapper-appears-in-land-closure"
+            "host-appears-with-land-timestamp", "host-appears-in-land-closure-bound", "host-appears-in-land-closure-other",
+            "wrapper-appears-with-land-timestamp", "wrapper-appears-in-land-closure-bound", "wrapper-appears-in-land-closure-other"
         })
             report.IndexOf("PASS " + name, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
     }
@@ -1287,6 +1389,8 @@ public sealed class RollingVolumeRecycleScriptTests
         {
             var landRow = C1319Row(appeared, "Succeeded");
             landRow["landRequestedAt"] = "2020-01-01T00:00:00Z";
+            // check-census reports server2 first: a server2 land is bound there, a desktop land is bound nowhere.
+            landRow["runnerId"] = mode == "appears-in-land-closure-bound" ? "server2" : "desktop";
             var land = C1319Envelope(f, landRow);
             queries[C1087ListPath(project, "open")] = new JsonArray(C1319Envelope(f), C1319Envelope(f, openRow));
             queries[C1087ListPath(project, "land")] = new JsonArray(land, land.DeepClone().AsObject());
@@ -1294,11 +1398,20 @@ public sealed class RollingVolumeRecycleScriptTests
         f.State["taskQueries"] = queries;
         f.State["details"] = new JsonObject { [appeared] = C1319Detail(openRow, "Working") };
         var run = await f.Run("check-census");
-        var refused = expect == "unstable" && run.Exit == 2
-            && run.Output.Contains("RecycleTaskCensusUnknown cause=Unstable", StringComparison.Ordinal)
-            && run.Output.Contains("RecycleLandInFlight", StringComparison.Ordinal) == false
-            && run.Output.Contains("Census check complete:", StringComparison.Ordinal) == false;
-        if (refused) return "PASS wrapper-" + mode + "\n";
+        bool passed;
+        if (expect == "unstable")
+            passed = run.Exit == 2
+                && run.Output.Contains("RecycleTaskCensusUnknown cause=Unstable", StringComparison.Ordinal)
+                && run.Output.Contains("RecycleLandInFlight", StringComparison.Ordinal) == false
+                && run.Output.Contains("Census check complete:", StringComparison.Ordinal) == false;
+        else
+            passed = run.Exit == 0
+                && run.Output.Contains("Census check complete:", StringComparison.Ordinal)
+                && run.Output.Contains("RECYCLE_CENSUS runner=server2 ", StringComparison.Ordinal)
+                && run.Output.Contains("RECYCLE_CENSUS runner=server2-temp ", StringComparison.Ordinal)
+                && run.Output.Contains("cause=Unstable", StringComparison.Ordinal) == false
+                && run.Output.Contains("RecycleLandInFlight", StringComparison.Ordinal) == false;
+        if (passed) return "PASS wrapper-" + mode + "\n";
         return "FAIL wrapper-" + mode + " exit=" + run.Exit + "\n" + run.Output + "\n";
     }
 
@@ -1351,8 +1464,8 @@ public sealed class RollingVolumeRecycleScriptTests
             open_reads=0
             land_reads=0
             row_of() {
-                jq -nc --arg id "$1" --arg status "$2" --arg requested "$3" --arg started "$4" \
-                    '{id:$id,status:$status,runnerId:"desktop",projectId:null,scopeSource:"None",landRequestedAt:(if $requested=="" then null else $requested end),landStartedAt:(if $started=="" then null else $started end)}'
+                jq -nc --arg id "$1" --arg status "$2" --arg requested "$3" --arg started "$4" --arg runner "$5" \
+                    '{id:$id,status:$status,runnerId:$runner,projectId:null,scopeSource:"None",landRequestedAt:(if $requested=="" then null else $requested end),landStartedAt:(if $started=="" then null else $started end)}'
             }
             envelope() {
                 local rows='[]' row
@@ -1360,15 +1473,17 @@ public sealed class RollingVolumeRecycleScriptTests
                 jq -nc --argjson items "$rows" '{items:$items,scope:{projectId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1",unscoped:"include"},excluded:{total:0,unscoped:0,byProject:[]}}'
             }
             detail_of() { jq -nc --argjson row "$1" --arg status "$2" '{summary:($row + {status:$status}),landRequest:null}'; }
+            # CARD-1353: row_of takes the runner. C1008_RUNNER stays server2, so a server2 row is
+            # bound and a desktop row is off-runner.
             probe() {
-                local name="$1" mode="$2" expect="$3" status=0
+                local name="$1" mode="$2" expect="$3" runner="$4" status=0 extra=ok
                 local appeared=33333333-3333-3333-3333-333333333333
                 local fresh landed
-                fresh="$(row_of "$appeared" Working "" "")"
-                landed="$(row_of "$appeared" Succeeded "2020-01-01T00:00:00Z" "")"
+                fresh="$(row_of "$appeared" Working "" "" "$runner")"
+                landed="$(row_of "$appeared" Succeeded "2020-01-01T00:00:00Z" "" "$runner")"
                 case "$mode" in
                     appears-with-land-timestamp)
-                        fresh="$(row_of "$appeared" Working "2020-01-01T00:00:00Z" "")"
+                        fresh="$(row_of "$appeared" Working "2020-01-01T00:00:00Z" "" "$runner")"
                         open_first="$(envelope)"
                         open_later="$(envelope "$fresh")"
                         land_first="$empty"
@@ -1387,14 +1502,184 @@ public sealed class RollingVolumeRecycleScriptTests
                 : > "$root/http-trace"
                 C1008_TASK_ERROR=''
                 c1008_tasks > "$root/snapshot.json" || status=$?
-                if [ "$expect" = land-in-flight ] && [ "$status" = 3 ] && [ "$C1008_TASK_ERROR" = "RecycleLandInFlight $appeared" ]; then
+                if [ "$expect" = pass ] && [ "$status" = 0 ]; then
+                    jq -e --arg id "$appeared" '(.open.tasks|has($id)) and (.open.land|has($id)) and (.open.land[$id]==null) and ((.land.tasks|has($id))|not)' "$root/snapshot.json" >/dev/null || extra=snapshot
+                fi
+                if [ "$expect" = pass ] && [ "$status" = 0 ] && [ "$extra" = ok ] && [ -z "$C1008_TASK_ERROR" ]; then
+                    printf 'PASS host-%s\n' "$name"
+                elif [ "$expect" = unstable ] && [ "$status" = 2 ] && [ "$C1008_TASK_ERROR" = 'RecycleTaskCensusUnknown cause=Unstable' ]; then
+                    printf 'PASS host-%s\n' "$name"
+                elif [ "$expect" = land-in-flight ] && [ "$status" = 3 ] && [ "$C1008_TASK_ERROR" = "RecycleLandInFlight $appeared" ]; then
                     printf 'PASS host-%s\n' "$name"
                 else
-                    printf 'FAIL host-%s status=%s error=%s\n' "$name" "$status" "$C1008_TASK_ERROR"
+                    printf 'FAIL host-%s status=%s extra=%s error=%s\n' "$name" "$status" "$extra" "$C1008_TASK_ERROR"
                 fi
             }
-            probe appears-with-land-timestamp appears-with-land-timestamp land-in-flight
-            probe appears-in-land-closure appears-in-land-closure land-in-flight
+            probe appears-with-land-timestamp appears-with-land-timestamp unstable desktop
+            probe appears-in-land-closure-bound appears-in-land-closure land-in-flight server2
+            probe appears-in-land-closure-other appears-in-land-closure pass desktop
+            printf 'HOST_DONE\n'
+            """;
+    }
+
+    // CARD-1353 D-1 to D-5 on the host census: off-runner lands pass and are recorded, bound lands
+    // refuse, an off-runner in-flight proof is recorded as {state, terminalEventId}, the match-record
+    // compare ignores an off-runner land, and c1008_tasks_wait clears, expires with the waited suffix
+    // or refuses an invalid bound before any read. sleep is stubbed; the polls are counted.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1353_Host_census_passes_off_runner_lands_and_waits_for_bound_lands()
+    {
+        var report = RemoteScriptContractTests.LinuxShell(C1353HostCensusScript());
+        report.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, report);
+        report.IndexOf("HOST_DONE", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
+        foreach (var name in new[]
+        {
+            "off-runner-pending", "bound-pending-refuses", "off-runner-in-flight-detail", "match-record-ignores-off-runner-land",
+            "wait-clears", "wait-expires", "wait-invalid-env"
+        })
+            report.IndexOf("PASS host-" + name, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
+    }
+
+    private static string C1353HostCensusScript()
+    {
+        var remote = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c590-remote.sh"));
+        return """
+            c1008_http() {
+                printf '%s\n' "$1" >> "$root/http-trace"
+                local body id index
+                case "$1" in
+                    *'&status='*) body="$open_body" ;;
+                    *landPending=true*)
+                        # Per-read sequence; the last element keeps being served once consumed.
+                        index="$land_reads"
+                        land_reads=$((land_reads + 1))
+                        if [ "$index" -ge "${#land_seq[@]}" ]; then index=$((${#land_seq[@]} - 1)); fi
+                        body="${land_seq[$index]}"
+                        ;;
+                    /api/agent-tasks/*)
+                        id="${1##*/}"
+                        body="$(printf '%s' "$details" | jq -ec --arg id "$id" '.[$id]')" || {
+                            C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Transport path=$1"
+                            return 2
+                        }
+                        ;;
+                    *)
+                        C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Transport path=$1"
+                        return 2
+                        ;;
+                esac
+                C1008_HTTP_BODY="$body"
+            }
+            """ + "\n" + C1317ShellFunction(remote, "c1008_tasks_collect") + "\n"
+            + C1317ShellFunction(remote, "c1008_tasks") + "\n"
+            + C1317ShellFunction(remote, "c1008_tasks_wait") + "\n"
+            + C1317ShellFunction(remote, "c1008_tasks_match_record") + "\n" + """
+            set -u
+            sleep() { sleep_calls=$((sleep_calls + 1)); }
+            sleep_calls=0
+            root="$(mktemp -d)"
+            trap 'rm -rf -- "$root"' EXIT
+            CASE_DIR="$root/case"
+            mkdir -p "$CASE_DIR"
+            CASE=deploy-parent
+            C1008_RUNNER=server2
+            C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1
+            empty='{"items":[],"scope":{"projectId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","unscoped":"include"},"excluded":{"total":0,"unscoped":0,"byProject":[]}}'
+            receipt="$CASE_DIR/census-deploy-parent-server2.json"
+            id=22222222-2222-2222-2222-222222222222
+            row_of() {
+                jq -nc --arg id "$1" --arg status "$2" --arg runner "$3" --arg requested "$4" \
+                    '{id:$id,status:$status,runnerId:$runner,projectId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1",scopeSource:"Task",landRequestedAt:(if $requested=="" then null else $requested end),landStartedAt:null}'
+            }
+            envelope() {
+                local rows='[]' row
+                for row in "$@"; do rows="$(printf '%s' "$rows" | jq -c --argjson row "$row" '. + [$row]')"; done
+                jq -nc --argjson items "$rows" '{items:$items,scope:{projectId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1",unscoped:"include"},excluded:{total:0,unscoped:0,byProject:[]}}'
+            }
+            reset() {
+                open_body="$empty"; land_seq=("$empty"); details='{}'; land_reads=0; sleep_calls=0
+                : > "$root/http-trace"; rm -f -- "$receipt"
+                C1008_TASK_ERROR=''; C1008_LAND_WAIT_SECONDS=''; C1008_LAND_POLL_SECONDS=''
+            }
+            verdict() {
+                local name="$1" ok="$2" status="$3"
+                if [ "$ok" = ok ]; then printf 'PASS host-%s\n' "$name"
+                else printf 'FAIL host-%s status=%s detail=%s error=%s\n' "$name" "$status" "$ok" "$C1008_TASK_ERROR"; fi
+            }
+            off_runner="$(row_of "$id" Succeeded server2-temp 2020-01-01T00:00:00Z)"
+            bound="$(row_of "$id" Succeeded server2 2020-01-01T00:00:00Z)"
+
+            # off-runner-pending: a Succeeded server2-temp land passes the server2 census, is kept out of
+            # the compared land snapshot and is still recorded in the receipt.
+            reset; land_seq=("$(envelope "$off_runner")"); status=0; ok=ok
+            c1008_tasks > "$root/snapshot.json" || status=$?
+            [ "$status" = 0 ] || ok=status
+            [ "$ok" != ok ] || jq -e '.land.tasks == {}' "$root/snapshot.json" >/dev/null || ok=snapshot-land
+            [ "$ok" != ok ] || jq -e --arg id "$id" '.tasks|has($id)' "$receipt" >/dev/null || ok=receipt-tasks
+            [ "$ok" != ok ] || jq -e '.landWaitPolls == 0' "$receipt" >/dev/null || ok=receipt-polls
+            verdict off-runner-pending "$ok" "$status"
+            live="$(cat "$root/snapshot.json")"
+
+            # bound-pending-refuses: the same land bound to server2 refuses RecycleLandInFlight.
+            reset; land_seq=("$(envelope "$bound")"); status=0; ok=ok
+            c1008_tasks > /dev/null || status=$?
+            [ "$status" = 3 ] && [ "$C1008_TASK_ERROR" = "RecycleLandInFlight $id" ] || ok=refusal
+            verdict bound-pending-refuses "$ok" "$status"
+
+            # off-runner-in-flight-detail: a Blocked other-runner row whose detail land is Running is
+            # recorded as {state, terminalEventId:null}, not refused.
+            reset; status=0; ok=ok
+            blocked="$(row_of "$id" Blocked other "")"
+            open_body="$(envelope "$blocked")"
+            details="$(jq -nc --arg id "$id" --argjson row "$blocked" '{($id):{summary:$row,landRequest:{state:"Running",terminalEventId:null}}}')"
+            c1008_tasks > "$root/snapshot.json" || status=$?
+            [ "$status" = 0 ] || ok=status
+            [ "$ok" != ok ] || jq -e --arg id "$id" '.open.land[$id] == {state:"Running",terminalEventId:null}' "$root/snapshot.json" >/dev/null || ok=proof
+            verdict off-runner-in-flight-detail "$ok" "$status"
+
+            # match-record-ignores-off-runner-land: a containersRemoved record with no lands matches a
+            # live census that saw an off-runner land; a bound land in the live land snapshot does not.
+            status=0; ok=ok
+            C1008_RECORD='{"phase":"containersRemoved","tasks":{"open":{"scopes":{},"tasks":{},"land":{}},"land":{"tasks":{}}}}'
+            c1008_tasks_match_record "$live" || ok=off-runner-mismatch
+            live_bound="$(printf '%s' "$live" | jq -c --arg id "$id" --argjson row "$bound" '.land.tasks[$id]=$row')"
+            if c1008_tasks_match_record "$live_bound"; then ok=bound-matched; fi
+            verdict match-record-ignores-off-runner-land "$ok" "$status"
+
+            # wait-clears: pending, pending, empty, empty. Two refusing censuses consume one land read
+            # each, the third census reads twice and passes; the receipt records the polls.
+            reset; status=0; ok=ok
+            C1008_LAND_WAIT_SECONDS=3; C1008_LAND_POLL_SECONDS=1
+            land_seq=("$(envelope "$bound")" "$(envelope "$bound")" "$empty" "$empty")
+            c1008_tasks_wait > "$root/wait.out" || status=$?
+            [ "$status" = 0 ] || ok=status
+            [ "$ok" != ok ] || [ "$(grep -c '^C1008_LAND_WAIT runner=server2 reason=RecycleLandInFlight '"$id"' polls=' "$root/wait.out")" = 2 ] || ok=wait-lines
+            [ "$ok" != ok ] || jq -e '.landWaitPolls == 2' "$receipt" >/dev/null || ok=receipt-polls
+            [ "$ok" != ok ] || [ "$sleep_calls" = 2 ] || ok=sleeps
+            [ "$ok" != ok ] || [ "$land_reads" = 4 ] || ok=land-reads
+            verdict wait-clears "$ok" "$status"
+
+            # wait-expires: always pending; ceil(3/1)=3 polls, then the refusal keeps its first token.
+            reset; status=0; ok=ok
+            C1008_LAND_WAIT_SECONDS=3; C1008_LAND_POLL_SECONDS=1
+            land_seq=("$(envelope "$bound")")
+            c1008_tasks_wait > "$root/wait.out" || status=$?
+            [ "$status" = 3 ] || ok=status
+            [ "$ok" != ok ] || [ "$C1008_TASK_ERROR" = "RecycleLandInFlight $id runner=server2 waited=3polls" ] || ok=error
+            [ "$ok" != ok ] || [ "$(grep -c '^C1008_LAND_WAIT ' "$root/wait.out")" = 3 ] || ok=wait-lines
+            [ "$ok" != ok ] || [ "$sleep_calls" = 3 ] || ok=sleeps
+            verdict wait-expires "$ok" "$status"
+
+            # wait-invalid-env: a zero bound refuses RecycleContextInvalid before any read.
+            reset; status=0; ok=ok
+            C1008_LAND_WAIT_SECONDS=0
+            land_seq=("$(envelope "$bound")")
+            c1008_tasks_wait > "$root/wait.out" || status=$?
+            [ "$status" = 2 ] || ok=status
+            [ "$ok" != ok ] || [ "$C1008_TASK_ERROR" = RecycleContextInvalid ] || ok=error
+            [ "$ok" != ok ] || [ ! -s "$root/http-trace" ] || ok=reads
+            verdict wait-invalid-env "$ok" "$status"
             printf 'HOST_DONE\n'
             """;
     }
@@ -1438,6 +1723,8 @@ internal sealed class C1008WrapperFixture : IDisposable
     internal string StatePath => Path.Combine(Root, "state.json");
     internal string TracePath => Path.Combine(Root, "trace.jsonl");
     internal JsonObject State { get; }
+    // Extra child environment (CARD-1353: C727_TEST_LAND_WAIT_MS). Merged into Run's process after the defaults.
+    internal Dictionary<string, string> Environment { get; } = new();
 
     internal C1008WrapperFixture()
     {
@@ -1484,6 +1771,10 @@ internal sealed class C1008WrapperFixture : IDisposable
         psi.Environment["C727_TEST_TRACE"] = TracePath;
         psi.Environment["C727_TEST_WAIT_MS"] = "100";
         psi.Environment["C727_TEST_POLL_MS"] = "5";
+        // CARD-1353: a land bound to the recycled runner is waited for (default 30 min). The fixture
+        // bounds that wait so a bound-land vector still refuses inside the 30 s run deadline.
+        psi.Environment["C727_TEST_LAND_WAIT_MS"] = "100";
+        foreach (var (key, value) in Environment) psi.Environment[key] = value;
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("fixture child did not start");
         var stdout = proc.StandardOutput.ReadToEndAsync();
         var stderr = proc.StandardError.ReadToEndAsync();
@@ -1723,6 +2014,7 @@ internal sealed class C1008HostFixture : IDisposable
             c849_status_body() { jq -ec --arg runner "$1" '.[$runner]' '{{Root}}/statuses.json'; }
             C1087_REAL_HTTP={{(ExerciseHttpClassifier ? "1" : "0")}}
             source '{{DelegateScriptRunner.RepoRoot}}/scripts/fixtures/c1087-host-http.sh'
+            C1008_LAND_WAIT_SECONDS=1; C1008_LAND_POLL_SECONDS=1
             sudo() { [ "$1" = -n ] && shift; if [ "$1" = install ]; then mkdir -p "${@: -1}"; elif [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 99999999 1 25000000 1%% /fixture\n'; else "$@"; fi; }
             {{extra}}
             """;

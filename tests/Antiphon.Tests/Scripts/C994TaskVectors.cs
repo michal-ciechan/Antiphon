@@ -29,12 +29,18 @@ internal static class C994TaskVectors
         Add("empty", true, Input()); Add("published-terminal", true, WithTask("Succeeded", "server2-temp"));
         foreach (var status in new[] { "Queued", "Dispatched", "Working", "Blocked", "Failed", "Canceled" })
             Add("bound-" + status, status is "Failed" or "Canceled", WithTask(status, "server2-temp"));
-        Add("requested", false, WithTask(requested: "2026-10-04T00:00:00Z"));
-        Add("started", false, WithTask(started: "2026-10-04T00:00:00Z"));
-        Add("land-pending-succeeded", false, WithTask("Succeeded", requested: "2020-01-01T00:00:00Z"));
+        // CARD-1353 D-1: a pending land is bound work only on the recycled runner (server2-temp here).
+        // An off-runner ("other") land is read, counted and recorded, never refused.
+        Add("requested", true, WithTask(requested: "2026-10-04T00:00:00Z"));
+        Add("started", true, WithTask(started: "2026-10-04T00:00:00Z"));
+        Add("land-pending-succeeded", true, WithTask("Succeeded", requested: "2020-01-01T00:00:00Z"));
+        Add("bound-requested", false, WithTask("Succeeded", "server2-temp", requested: "2026-10-04T00:00:00Z"));
+        Add("bound-started", false, WithTask("Succeeded", "server2-temp", started: "2026-10-04T00:00:00Z"));
+        Add("bound-land-pending-succeeded", false, WithTask("Succeeded", "server2-temp", requested: "2020-01-01T00:00:00Z"));
         Add("unfiltered-row", false, WithTask("Succeeded", unfiltered: true));
+        // An in-flight state on an off-runner open row is recorded {state, terminalEventId}, not refused.
         foreach (var land in new[] { "Queued", "Held", "Running", "NeedsResolution", "Unknown", "Completed", "Superseded", "Canceled" })
-            Add("land-" + land, land is "Completed" or "Superseded" or "Canceled", WithTask(land: land));
+            Add("land-" + land, land != "Unknown", WithTask(land: land));
         foreach (var fault in new[] { "wrong-count", "withheld", "unscoped", "malformed", "incomplete", "detail", "api" })
         {
             var input = Input(); var envelope = input["scopes"]![Project]!["open"]!;

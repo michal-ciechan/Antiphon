@@ -20,6 +20,37 @@ public sealed class DockerStackDocumentationTests
             text.ShouldContain(pin);
     }
 
+    // CARD-1353 D-8/D-10. Lands are desktop work; the docs drop the rollout land freeze, state the
+    // runner-bound census rule with its bounded wait, keep the AppHost pull wait, and the CARD-1008
+    // plan rows that pinned the old rule carry an in-place superseded note.
+    [Test]
+    public void Lands_proceed_during_rollout_is_documented()
+    {
+        var text = Read("docs/docker-stack.md");
+        foreach (var pin in new[] { "boundLandPending", "bound to the runner being recycled", "-LandWaitMinutes",
+                     "C1008_LAND_WAIT_SECONDS", "C1008_LAND_POLL_SECONDS", "RECYCLE_LAND_WAIT", "C1008_LAND_WAIT", "CARD-1353" })
+            text.ShouldContain(pin, Case.Sensitive, "c1353-docs: " + pin);
+        var census = text.IndexOf("The wrapper and host census each walk two server-filtered closures", StringComparison.Ordinal);
+        census.ShouldBeGreaterThanOrEqualTo(0, "c1353-docs: census paragraph");
+        var end = text.IndexOf("Always retire `server2-temp`", census, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(census, "c1353-docs: census paragraph end");
+        var paragraph = text[census..end];
+        paragraph.ShouldContain("cannot end", Case.Sensitive, "c1353-docs: off-runner lands are outside the compared snapshot");
+        paragraph.ShouldContain("cause=Unstable", Case.Sensitive, "c1353-docs: the Unstable cause stays named");
+        paragraph.ShouldContain("RECYCLE_LAND_WAIT", Case.Sensitive, "c1353-docs: the wait line is named in the census paragraph");
+        foreach (var gone in new[] { "verify no land is pending", "Keep the no-new-land interval",
+                     "host census refuse `RecycleLandInFlight` on the row itself" })
+            text.ShouldNotContain(gone, Case.Sensitive, "c1353-docs: the freeze sentence must be gone: " + gone);
+
+        var loop = Read("docs/orchestration-loop.md");
+        loop.ShouldContain("need no land freeze", Case.Sensitive, "c1353-docs: the rolling phases need no land freeze");
+        loop.ShouldContain("never pull while a land runs", Case.Sensitive, "c1353-docs: the AppHost pull wait stays");
+
+        var plan = Read("docs/superpowers/plans/2026-10-03-card-1008-rolling-volume-recycle-and-retire-temp-plan.md");
+        System.Text.RegularExpressions.Regex.Matches(plan, "Superseded 2026-10-19 by CARD-1353 D-1").Count
+            .ShouldBe(3, "c1353-docs: PC-9, PC-49 and PC-51 carry the in-place note");
+    }
+
     [Test]
     public void Retired_temp_cleanup_and_retirement_gates_match()
     {
