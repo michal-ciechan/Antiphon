@@ -47,7 +47,7 @@ public class DispatchSiblingInspectionTests
         selected.Decision.ShouldBe(CardWorktreeBaseDecision.Target, scenario);
         selected.Incomplete.ShouldBeFalse();
         trace.Commands.Count(c => c[0] == "for-each-ref").ShouldBe(2);
-        trace.Commands.ShouldNotContain(c => c[0] is "cherry" or "log");
+        trace.Commands.ShouldNotContain(c => c[0] == "cherry" || c[0] == "log");
         selected.GitCommands.ShouldBeLessThanOrEqualTo(4);
     }
 
