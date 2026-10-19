@@ -1176,13 +1176,17 @@ function Test-C599_Continuation {
 
 function Test-C599_ReportLane {
     # R-4: an RC incident identity can never be the master nightly incident.
+    # CARD-1340: private roots. The production Windows defaults stay in the producer scripts.
     $rcGreen = New-C599State -Profile 'rc' -Trigger 'rc' -Ref $CandidateRef -Sha $ShaB -ExpectedSha $ShaB -Candidate $CandidateId
     $masterGreen = New-C599State
-    $rcPaths = Get-ReleaseGateStatePaths -CreditKind 'rc-release' -StateRoot 'C:\Antiphon\nightly' -ReleaseRoot 'C:\Antiphon\releases' -CandidateId $CandidateId
-    $masterPaths = Get-ReleaseGateStatePaths -CreditKind 'master-scheduled' -StateRoot 'C:\Antiphon\nightly'
+    $root = New-C599Root
+    $state = Join-Path $root 'state'
+    $release = Join-Path $root 'releases'
+    $rcPaths = Get-ReleaseGateStatePaths -CreditKind 'rc-release' -StateRoot $state -ReleaseRoot $release -CandidateId $CandidateId
+    $masterPaths = Get-ReleaseGateStatePaths -CreditKind 'master-scheduled' -StateRoot $state
     Assert-C487 -Cond ($rcPaths.GreenPath -ne $masterPaths.GreenPath) -Name 'C599 ReportLane the two lanes write different green files' -Detail ($rcPaths.GreenPath + ' vs ' + $masterPaths.GreenPath)
-    Assert-C487 -Cond ($masterPaths.GreenPath -eq 'C:\Antiphon\nightly\last-complete-green.json') -Name 'C599 ReportLane master green path is unchanged' -Detail $masterPaths.GreenPath
-    Assert-C487 -Cond ($rcPaths.GreenPath -like '*releases\candidates\rc-20260923T083000Z\complete-green.json') -Name 'C599 ReportLane rc green lands under its candidate root' -Detail $rcPaths.GreenPath
+    Assert-C487 -Cond ($masterPaths.GreenPath -eq (Join-Path $state 'last-complete-green.json')) -Name 'C599 ReportLane master green path is unchanged' -Detail $masterPaths.GreenPath
+    Assert-C487 -Cond ($rcPaths.GreenPath -eq (Join-Path (Join-Path (Join-Path $release 'candidates') $CandidateId) 'complete-green.json')) -Name 'C599 ReportLane rc green lands under its candidate root' -Detail $rcPaths.GreenPath
     $missing = ''
     try { [void](Get-ReleaseGateStatePaths -CreditKind 'rc-release' -StateRoot 'x' -CandidateId '') } catch { $missing = $_.Exception.Message }
     Assert-C487 -Cond ($missing -match 'candidate id') -Name 'C599 ReportLane rc credit without a candidate id throws' -Detail $missing

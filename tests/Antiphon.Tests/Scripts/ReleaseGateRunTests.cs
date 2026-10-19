@@ -54,11 +54,15 @@ public sealed class ReleaseGateRunTests
         "C599 ParameterHops the tests hop forwards -Profile");
 
     [Test]
-    public Task C599_CloneOwnership() => RunCaseAsync("C599_CloneOwnership", 5,
-        @"C599 CloneOwnership rc refuses C:\src\Antiphon",
-        "C599 CloneOwnership coordinator refuses an unmarked clone",
-        "C599 CloneOwnership coordinator refuses the shared tree",
-        "C599 CloneOwnership control owned clone is accepted");
+    public Task C599_CloneOwnership()
+    {
+        if (!OperatingSystem.IsWindows()) throw new TUnit.Core.Exceptions.SkipTestException("CARD-1340: Windows canonical roots C:\\src\\Antiphon and C:\\Antiphon\\worktrees");
+        return RunCaseAsync("C599_CloneOwnership", 5,
+            @"C599 CloneOwnership rc refuses C:\src\Antiphon",
+            "C599 CloneOwnership coordinator refuses an unmarked clone",
+            "C599 CloneOwnership coordinator refuses the shared tree",
+            "C599 CloneOwnership control owned clone is accepted");
+    }
 
     [Test]
     public Task C599_SharedLock() => RunCaseAsync("C599_SharedLock", 12,
