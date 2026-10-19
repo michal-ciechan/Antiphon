@@ -9,6 +9,8 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -60,8 +62,10 @@ public sealed record SiblingBaseGuard(
 
 /// <summary>Read-only legacy warnings and pending-land guard, using frozen refs and a single budget.</summary>
 public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit git,
-    IOptions<GitSettings> settings, TimeProvider clock, GitProcessGate gate)
+    IOptions<GitSettings> settings, TimeProvider clock, GitProcessGate gate,
+    ILogger<CardSiblingInspectionService>? logger = null)
 {
+    private readonly ILogger<CardSiblingInspectionService> _logger = logger ?? NullLogger<CardSiblingInspectionService>.Instance;
     public WorktreeBaseInspection Begin(string repository, CancellationToken ct) =>
         new(git, repository, settings.Value, clock, gate, ct);
 
@@ -97,6 +101,9 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
     {
         if (task.RepoPath is null || !Directory.Exists(task.RepoPath) || task.CardId is null)
             return SiblingBaseGuard.Proceed;
+        var operationId = Guid.NewGuid();
+        _logger.LogDebug("Sibling inspection {OperationId} started for task {TaskId} card {CardId} attempt {Attempt}",
+            operationId, task.Id, task.CardId, task.Attempt);
         var warnings = new List<UnlandedSibling>();
         var frozen = new Dictionary<string, string>(StringComparer.Ordinal);
         var raw = 0;
@@ -112,9 +119,16 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
         UnlandedSibling Describe(AgentTask row, string? sha, LandRequestState? state = null) =>
             new(row.Id, row.WorktreeBranch!, baseRef, identifier, sha is null ? "unknown" : sha[..8],
                 0, "detail unavailable", row.CreatedAt, sha, state);
-        SiblingBaseGuard Result(UnlandedSibling? hold = null, string? reason = null) =>
-            new(hold, hold is null ? warnings.ToArray() : [], baseRef, reason, raw, expensive,
+        SiblingBaseGuard Result(UnlandedSibling? hold = null, string? reason = null)
+        {
+            _logger.LogDebug("Sibling inspection {OperationId} finished: raw={RawRows} candidates={Candidates} inspected={Inspected} omitted={Omitted} commands={GitCommands} elapsedMs={ElapsedMs} commandKind={CommandKind}",
+                operationId, raw, expensive, inspected, omitted, inspection.Commands, inspection.Elapsed.TotalMilliseconds, inspection.CommandKind);
+            if (reason is "inspection_timeout" or "candidate_limit" or "git_command_limit" or "git_inspection_error")
+                _logger.LogWarning("Sibling inspection {OperationId} task {TaskId} attempt {Attempt} incomplete: {ReasonCode}; raw={RawRows} candidates={Candidates} inspected={Inspected} omitted={Omitted} commands={GitCommands}",
+                    operationId, task.Id, task.Attempt, reason, raw, expensive, inspected, omitted, inspection.Commands);
+            return new(hold, hold is null ? warnings.ToArray() : [], baseRef, reason, raw, expensive,
                 inspected, omitted, inspection.Commands, new Dictionary<string, string>(frozen), metadata, pendingKnown);
+        }
         try
         {
             var inventory = await new CardSiblingInventory(db).ReadAsync(task, true, inspection, ct);

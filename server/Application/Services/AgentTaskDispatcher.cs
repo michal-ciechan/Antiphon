@@ -5523,6 +5523,7 @@ public sealed partial class AgentTaskDispatcher
         {
             await BlockAsync(claimed, interimHold, ct);
             await transaction.CommitAsync(ct);
+            LogCommittedBlock(claimed);
             await _eventBus.PublishToAllAsync(
                 "AgentTaskChanged", new { taskId = claimed.Id, rootId = claimed.RootTaskId }, ct);
             return DispatchOneResult.NotClaimed;
@@ -5564,6 +5565,7 @@ public sealed partial class AgentTaskDispatcher
                 {
                     await BlockAsync(claimed, reuseGate.Detail, ct);
                     await transaction.CommitAsync(ct);
+                    LogCommittedBlock(claimed);
                     return DispatchOneResult.NotClaimed;
                 }
 
@@ -5686,6 +5688,7 @@ public sealed partial class AgentTaskDispatcher
                         + "Resolve histories then retry, or cancel and recreate with -BaseTask <previewed task> "
                         + "/ -StartRef <previewed sha> / -FreshWorktree.", ct);
                     await transaction.CommitAsync(ct);
+                    LogCommittedBlock(claimed, selected.TotalCandidates, selected.InspectedCandidates, selected.GitCommands);
                     await ReleaseTaskConsumersAsync(claimed);
                     return DispatchOneResult.NotClaimed;
                 }
@@ -7350,8 +7353,19 @@ public sealed partial class AgentTaskDispatcher
 
     private async Task BlockAsync(AgentTask task, string reason, CancellationToken ct)
     {
+        if (task.Status == AgentTaskStatus.Blocked && task.FailureReason == reason) return;
         StageBlocked(task, reason);
         await _db.SaveChangesAsync(ct);
+        if (_db.Database.CurrentTransaction is null) LogCommittedBlock(task);
+    }
+
+    private void LogCommittedBlock(AgentTask task, int? candidates = null, int? inspected = null, int? commands = null)
+    {
+        var code = DispatchInspectionDiagnostics.InspectionReason(task.FailureReason)
+            ?? (task.FailureReason?.StartsWith("Run cost ceiling reached", StringComparison.Ordinal) == true
+                ? "cost_ceiling" : "dispatch_blocked");
+        _logger.LogInformation("Task {TaskId} card {CardId} attempt {Attempt} blocked: {ReasonCode}; candidates={Candidates} inspected={Inspected} commands={GitCommands}",
+            task.Id, task.CardId, task.Attempt, code, candidates, inspected, commands);
     }
 
     private void StageBlocked(AgentTask task, string reason)
