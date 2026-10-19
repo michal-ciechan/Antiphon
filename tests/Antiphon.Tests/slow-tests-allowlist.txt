@@ -319,3 +319,5 @@ Antiphon.Tests.Checkpoints.CheckpointVerifierBoundsTests
 
 # CARD-1349: bounded inspection integration uses isolated PostgreSQL and owned real Git graphs.
 Antiphon.Tests.Application.DispatchSiblingInspectionTests
+Antiphon.Tests.Application.DispatcherSiblingInspectionSchedulingTests
+Antiphon.Tests.Application.DispatchBaseInspectionDiagnosticsTests

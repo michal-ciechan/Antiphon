@@ -1759,7 +1759,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         TimeProvider? clock = null,
         int? maxCandidates = null,
         int? maxGitCommands = null,
-        ISessionRunnerDirectory? runners = null, bool? cardBranchNames = null, IVerificationWorkspaceDirectory? verificationWorkspaces = null, Func<IServiceProvider, IWorktreeManager>? worktreeFactory = null)
+        ISessionRunnerDirectory? runners = null, bool? cardBranchNames = null, IVerificationWorkspaceDirectory? verificationWorkspaces = null, Func<IServiceProvider, IWorktreeManager>? worktreeFactory = null,
+        Action<IServiceCollection>? configure = null)
     {
         var services = new ServiceCollection();
         if (worktreeFactory is not null) services.AddScoped<IWorktreeManager>(worktreeFactory);
@@ -1817,7 +1818,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         services.AddScoped<AgentTaskService>();
         services.AddSingleton<AgentTaskReplyService>();
         services.AddScoped<AgentTaskDispatcher>();
-        return services.BuildServiceProvider();
+        configure?.Invoke(services);
+        return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
     }
 
     internal static AppDbContext CreateContext(IsolatedTestSchema schema) =>

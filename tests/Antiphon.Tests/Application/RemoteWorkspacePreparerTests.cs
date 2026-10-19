@@ -1116,15 +1116,15 @@ public sealed class RemoteWorkspacePreparerTests
             Adapter ?? throw new InvalidOperationException("The receipt adapter is not installed yet.");
     }
 
-    private static PhoneHomeFrame MirrorResult(PhoneHomeFrame request, string path) =>
+    internal static PhoneHomeFrame MirrorResult(PhoneHomeFrame request, string path) =>
         new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
             JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceMirrorResponse(path), PhoneHomeFraming.Json));
 
-    private static PhoneHomeFrame BoundResult(PhoneHomeFrame request, CompletedCardWorkspaceBinding binding, string path) =>
+    internal static PhoneHomeFrame BoundResult(PhoneHomeFrame request, CompletedCardWorkspaceBinding binding, string path) =>
         new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
             JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceMirrorResponse(path, binding), PhoneHomeFraming.Json));
 
-    private static CompletedCardWorkspaceBinding ValidBinding(
+    internal static CompletedCardWorkspaceBinding ValidBinding(
         PhoneHomeWorkspaceMirrorRequest sent, Guid bindingId, string path)
     {
         var binding = sent.Binding!;
@@ -1143,11 +1143,12 @@ public sealed class RemoteWorkspacePreparerTests
             sent.Sha);
     }
 
-    private sealed class Rig : IAsyncDisposable
+    internal sealed class Rig : IAsyncDisposable
     {
         private readonly List<IServiceScope> _scopes = [];
         private Action<DelegationSettings>? _tweak;
         private bool _recovered;
+        private Action<IServiceCollection>? _configure;
 
         public IsolatedTestSchema Schema { get; private set; } = null!;
         public PhoneHomeTestHost Host { get; private set; } = null!;
@@ -1168,9 +1169,10 @@ public sealed class RemoteWorkspacePreparerTests
         public RepositoryLeaseWaiters Waiters => Provider.GetRequiredService<RepositoryLeaseWaiters>();
 
         public static async Task<Rig> StartAsync(
-            Action<DelegationSettings>? tweak = null, bool recovered = true, int capacity = 1)
+            Action<DelegationSettings>? tweak = null, bool recovered = true, int capacity = 1,
+            Action<IServiceCollection>? configure = null)
         {
-            var rig = new Rig { _tweak = tweak, _recovered = recovered };
+            var rig = new Rig { _tweak = tweak, _recovered = recovered, _configure = configure };
             rig.Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             rig.Host = await PhoneHomeTestHost.StartAsync(rig.Clock);
             rig.Host.Capacity = capacity;
@@ -1398,7 +1400,8 @@ public sealed class RemoteWorkspacePreparerTests
             services.AddSingleton<IAgentTaskLaunchSink>(Sink);
             services.AddScoped<AgentTaskService>();
             services.AddScoped<AgentTaskDispatcher>();
-            return services.BuildServiceProvider();
+            _configure?.Invoke(services);
+            return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         }
 
         public async ValueTask DisposeAsync()
@@ -1413,7 +1416,7 @@ public sealed class RemoteWorkspacePreparerTests
         }
     }
 
-    private sealed class RecordingLaunchSink : IAgentTaskLaunchSink
+    internal sealed class RecordingLaunchSink : IAgentTaskLaunchSink
     {
         public List<AgentLaunchSpec> Specs { get; } = [];
         public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec) =>

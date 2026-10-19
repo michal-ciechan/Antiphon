@@ -24,6 +24,69 @@ namespace Antiphon.Tests.Application;
 public class DispatchSiblingInspectionTests
 {
     [Test]
+    [Arguments("zero inventory")]
+    [Arguments("inventory below candidates")]
+    [Arguments("valid boundary")]
+    [Arguments("scoped worker")]
+    public async Task C1349_InspectionConfiguration(string scenario)
+    {
+        if (scenario != "scoped worker")
+        {
+            var services = new ServiceCollection();
+            services.AddSingleton<IValidateOptions<GitSettings>, GitInspectionSettingsValidator>();
+            services.AddOptions<GitSettings>().Configure(s =>
+                s.WorktreeBaseMaxInventoryRows = scenario == "zero inventory" ? 0
+                    : scenario == "inventory below candidates" ? 15 : 16);
+            await using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+            if (scenario == "valid boundary")
+                provider.GetRequiredService<IOptions<GitSettings>>().Value.WorktreeBaseMaxInventoryRows.ShouldBe(16);
+            else Should.Throw<OptionsValidationException>(() => provider.GetRequiredService<IOptions<GitSettings>>().Value);
+            return;
+        }
+        var contexts = new System.Collections.Concurrent.ConcurrentBag<AppDbContext>();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var repo = new ScratchGitRepo("c1349-scopes");
+        await repo.CommitFileAsync("seed.txt", "seed");
+        var servicesForWorker = new ServiceCollection();
+        servicesForWorker.AddLogging();
+        servicesForWorker.AddScoped(_ =>
+        {
+            var context = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            contexts.Add(context);
+            return context;
+        });
+        servicesForWorker.AddDelegationWorktreeGraph();
+        await using var workerProvider = servicesForWorker.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+        var queue = workerProvider.GetRequiredService<CardSiblingInspectionQueue>();
+        var host = new Antiphon.Server.Infrastructure.Orchestration.CardSiblingInspectionHostedService(queue);
+        await host.StartAsync(default);
+        var ids = new List<Guid>();
+        await using (var db = Context(schema))
+        {
+            var card = await CardAsync(db);
+            for (var i = 0; i < 2; i++)
+            {
+                var task = NewRequest(repo, card.Id);
+                task.RootTaskId = task.Id; task.Status = AgentTaskStatus.Queued;
+                task.Title = "scoped"; task.Goal = "no worker launch"; task.CreatedAt = DateTime.UtcNow;
+                db.AgentTasks.Add(task); ids.Add(task.Id);
+                await db.SaveChangesAsync();
+                queue.TryEnqueue(CardSiblingInspectionIntent.From(task, "master")).ShouldBeTrue();
+            }
+        }
+        await queue.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(15));
+        contexts.Count.ShouldBe(2);
+        contexts.Select(c => c.ContextId.InstanceId).Distinct().Count().ShouldBe(2);
+        foreach (var context in contexts)
+            await Should.ThrowAsync<ObjectDisposedException>(() => context.AgentTasks.CountAsync());
+        await using var observer = Context(schema);
+        (await observer.AgentTasks.Where(t => ids.Contains(t.Id)).ToListAsync())
+            .ShouldAllBe(t => t.Status == AgentTaskStatus.Queued && t.AgentSessionId == null && t.WorktreePath == null);
+        await host.StopAsync(default);
+        queue.Active.ShouldBe(0); queue.Outstanding.ShouldBe(0);
+    }
+
+    [Test]
     [Arguments("64 ancestors")]
     [Arguments("duplicate refs/tips")]
     [Arguments("moved merged SHA")]
@@ -455,7 +518,7 @@ public class DispatchSiblingInspectionTests
     private static AppDbContext Context(IsolatedTestSchema schema) =>
         new(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
 
-    private static async Task<Card> CardAsync(AppDbContext db)
+    internal static async Task<Card> CardAsync(AppDbContext db)
     {
         var now = DateTime.UtcNow;
         var project = new Project
@@ -484,7 +547,7 @@ public class DispatchSiblingInspectionTests
         return card;
     }
 
-    private static async Task<AgentTask> SourceAsync(AppDbContext db, ScratchGitRepo repo,
+    internal static async Task<AgentTask> SourceAsync(AppDbContext db, ScratchGitRepo repo,
         Guid cardId, string label, string startRef, bool commit = true)
     {
         var id = Guid.NewGuid();
