@@ -22,6 +22,12 @@ function Write-Fx($Root, $Relative, $Text) {
 function Git-Fx($Root, $Arguments) { return (Invoke-TestSelectionGit $Root $Arguments).Stdout.Trim() }
 function Same-Set($Actual, $Expected) { return ((@($Actual | Sort-Object -CaseSensitive) -join "`n") -ceq (@($Expected | Sort-Object -CaseSensitive) -join "`n")) }
 function Assert-Fx($Condition, $Label, $Detail = '') { Assert-C487 ([bool]$Condition) ('C1313 ' + $Label) $Detail }
+function Get-FxTreeDigest($Root) {
+    $files = @{}; foreach ($file in Get-ChildItem -LiteralPath $Root -Recurse -File -Force) {
+        $files[$file.FullName.Substring($Root.Length)] = Get-NightlyFileSha256 $file.FullName
+    }
+    return Get-NightlySha256Text (ConvertTo-NightlyCanonicalJson $files)
+}
 
 function New-Fx {
     $root = Join-Path $ResultsDirectory ('space ' + [guid]::NewGuid().ToString('N'))
@@ -43,7 +49,7 @@ function New-Fx {
     foreach ($path in @($catalog.sets.sourceInputs + $catalog.sets.members.source | Sort-Object -Unique)) {
         if ($path -and -not (Test-Path (Join-Path $seed $path))) { Write-Fx $seed $path 'fixture source' }
     }
-    foreach ($path in (Git-Fx $repoRoot @('ls-files','tests/*.csproj')).Split("`n")) {
+    foreach ($path in (Git-Fx $repoRoot @('ls-files','tests/*.csproj','scripts/fixtures/nightly/c487-probe/Probe.csproj')).Split("`n")) {
         Write-Fx $seed $path ([IO.File]::ReadAllText((Join-Path $repoRoot $path)))
     }
     # Committed differing wrapper bytes force the real self-reexec edge. These tiny
@@ -54,7 +60,7 @@ function New-Fx {
     Write-Fx $seed 'client/src/App.tsx' 'baseline client'
     [void](Git-Fx $seed @('add','--all')); [void](Git-Fx $seed @('commit','-qm','baseline'))
     $b = Git-Fx $seed @('rev-parse','HEAD')
-    Write-Fx $seed 'client/src/App.tsx' 'candidate client'
+    Write-Fx $seed 'tests/Antiphon.Tests/Agents/CodexResponseAnalyzerTests.cs' 'candidate provider'
     [void](Git-Fx $seed @('add','--all')); [void](Git-Fx $seed @('commit','-qm','candidate'))
     $a = Git-Fx $seed @('rev-parse','HEAD')
     $origin = Join-Path $root 'origin.git'; [void](Git-Fx $root @('clone','--bare',$seed,$origin))
@@ -126,7 +132,8 @@ function Test-C1313_ModeCredit {
     Assert-Fx $rejected 'unqualified-no-credit'
     $fx = New-Fx; $discovery = Get-FxDiscovery
     $qualification = Join-Path $fx.Release 'qualification/active.json'; Write-Fx $fx.Release 'qualification/active.json' '{"status":"active","diagnostic":true}'
-    $before = Get-NightlyFileSha256 $qualification
+    $qualificationRoot = Split-Path -Parent $qualification
+    $before = Get-FxTreeDigest $qualificationRoot
     foreach ($mode in @('omitted','Full','Shadow','ChangeAware')) {
         $request = New-Request $fx $(if ($mode -ceq 'omitted') {'Full'} else {$mode})
         $request.QualificationPath=$qualification
@@ -149,10 +156,10 @@ function Test-C1313_ModeCredit {
         $label = @{omitted='default-full';Full='explicit-full';Shadow='shadow-full';ChangeAware='unqualified-full'}[$mode]
         Assert-Fx ($record.requestedMode -ceq $request.SelectionMode -and $record.effectiveMode -ceq 'Full' -and
             $record.coverageScope -ceq 'Full' -and $observedAll -and $native -and
-            ($mode -cne 'Shadow' -or ($selection.proposal.mode -ceq 'narrow' -and (Same-Set $selection.proposal.selectedSets.id @('core','client'))))) $label
+            ($mode -cne 'Shadow' -or ($selection.proposal.mode -ceq 'narrow' -and (Same-Set $selection.proposal.selectedSets.id @('core','provider.codex.offline'))))) $label
         Remove-Item -LiteralPath $fx.Trace
     }
-    Assert-Fx ((Get-NightlyFileSha256 $qualification) -ceq $before) 'qualification-root-unchanged'
+    Assert-Fx ((Get-FxTreeDigest $qualificationRoot) -ceq $before) 'qualification-root-unchanged'
     $fallback = $true
     foreach ($path in @('notes/unmapped.txt','scripts/lib/release-authority.ps1','Directory.Build.props')) {
         $blob = Git-Fx $fx.Seed @('rev-parse',"$($fx.A):client/src/App.tsx")
@@ -166,10 +173,10 @@ function Test-C1313_ModeCredit {
     Assert-Fx $fallback 'selector-fallback-full'
 }
 
-function Write-BaselineArchive($Fx) {
+function Write-BaselineArchive($Fx, $ArchiveId = 'full-b') {
     # F-V diagnostic archive, with real pinned Git bytes and synthetic historical
     # TRX. This proves the reader only; it is not a production supplier fixture.
-    $root = Join-Path $Fx.Release 'archive/full-b'; $dir=Join-Path $root 'authority'
+    $root = Join-Path $Fx.Release ('archive/' + $ArchiveId); $dir=Join-Path $root 'authority'
     $contract = Get-ReleaseSelectionContract $Fx.Clone $Fx.B 'rc'
     $blob = Read-ReleaseAuthorityPinnedBlob $Fx.Clone $Fx.B
     $policy = ConvertFrom-ReleaseAuthorityPolicyBytes $blob.Bytes
@@ -200,8 +207,8 @@ function Write-BaselineArchive($Fx) {
         $files[$name]=Get-NightlyFileSha256 (Join-Path $root $name)
     }
     $receipt=@{format='antiphon-full-release-baseline-v1';coverageScope='Full';profile='rc';repository=$Fx.Repository;sha=$Fx.B;platform=$contract.platform;contract=$contract
-        candidateRoot='archive/full-b';files=$files}
-    $path=Join-Path $Fx.Release 'baselines/full.json';Write-NightlyAtomicJson $path $receipt
+        candidateRoot=('archive/' + $ArchiveId);files=$files}
+    $path=Join-Path $Fx.Release ('baselines/' + $ArchiveId + '.json');Write-NightlyAtomicJson $path $receipt
     return @{Path=$path;Receipt=$receipt;Root=$root}
 }
 function Expect-Refusal($Request, $Reason) {
@@ -215,15 +222,23 @@ function Test-C1313_BaselineAuthority {
     Assert-Fx ($r.Selection.effectiveMode -ceq 'Full' -and $r.Selection.fallbackReasons -ccontains 'baseline-absent') 'baseline-absent-full'
     $archive=Write-BaselineArchive $fx
     $request=New-Request $fx 'ChangeAware';$request.BaselineReceiptPath=$archive.Path;$r=Bind-Request $request
-    Assert-Fx ($r.BaselineSha -ceq $fx.B -and $r.Selection.baselineDigest -ceq (Get-NightlyFileSha256 $archive.Path)) 'baseline-full-bound'
+    $otherFx=@{};foreach($key in $fx.Keys){$otherFx[$key]=$fx[$key]};$otherFx.B=$fx.A
+    $otherArchive=Write-BaselineArchive $otherFx 'full-a'
+    $explicit=New-Request $fx;$auto=$null
+    try{$auto=Bind-Request $explicit}catch{}
+    Remove-Item -LiteralPath $otherArchive.Path
+    $omitted=New-Request $fx;$omitted.BaselineSha='';$resolved=Bind-Request $omitted
+    Assert-Fx ($r.BaselineSha -ceq $fx.B -and $r.Selection.baselineDigest -ceq (Get-NightlyFileSha256 $archive.Path) -and
+        $auto -and $auto.BaselineSha -ceq $fx.B -and $resolved.BaselineSha -ceq $fx.B) 'baseline-full-bound'
     # Advance an unrelated current card snapshot and the origin tip: historical proof
     # uses the archived publication and its typed receipt, with no live HTTP.
     Write-Fx $fx.Root 'current-card.json' '{"revisionCount":99}'
     $tree=Git-Fx $fx.Seed @('rev-parse',"$($fx.A)^{tree}")
     $advanced=Git-Fx $fx.Seed @('commit-tree',$tree,'-p',$fx.A,'-m','advanced')
     [void](Git-Fx $fx.Seed @('push',$fx.Origin,($advanced+':refs/heads/'+$fx.Ref)))
-    $request=New-Request $fx;$request.BaselineReceiptPath=$archive.Path;$r=Bind-Request $request
-    Assert-Fx ($r.BaselineSha -ceq $fx.B -and $r.Selection.fallbackReasons -cnotcontains 'baseline-absent') 'historical-baseline-accepted'
+    $request=New-Request $fx;$request.BaselineReceiptPath=$archive.Path;$r=$null
+    try{$r=Bind-Request $request}catch{}
+    Assert-Fx ($r -and $r.BaselineSha -ceq $fx.B -and $r.Selection.fallbackReasons -cnotcontains 'baseline-absent') 'historical-baseline-accepted'
     foreach($variant in @('selected','readiness','legacy','foreign','platform','digest','selector')) {
         $copy=($archive.Receipt|ConvertTo-Json -Depth 30)|ConvertFrom-Json -AsHashtable
         $reason='';switch($variant){
@@ -292,8 +307,9 @@ function Test-C1313_ParameterHops {
     $original=Get-NightlyFileSha256 $bound.SelectionAttemptPath
     $changed=@{};foreach($key in $q.Keys){$changed[$key]=$q[$key]};$changed.SelectionMode='ChangeAware'
     Assert-Fx ((Expect-Refusal $changed 'selection-attempt-conflict') -and (Get-NightlyFileSha256 $bound.SelectionAttemptPath) -ceq $original) 'attempt-conflict-refused'
-    $retry=New-Request $fx 'Shadow' 'retry-run';$retry.Attempt=2;$next=Bind-Request $retry
-    Assert-Fx ($next.SelectionAttemptPath -cne $bound.SelectionAttemptPath -and (Get-NightlyFileSha256 $bound.SelectionAttemptPath) -ceq $original) 'prior-attempt-kept'
+    $retry=New-Request $fx 'Shadow' 'retry-run';$retry.Attempt=2;$next=$null
+    try{$next=Bind-Request $retry}catch{}
+    Assert-Fx ($next -and $next.SelectionAttemptPath -cne $bound.SelectionAttemptPath -and (Get-NightlyFileSha256 $bound.SelectionAttemptPath) -ceq $original) 'prior-attempt-kept'
     $saved=[IO.File]::ReadAllText($bound.SelectionPath);[IO.File]::AppendAllText($bound.SelectionPath,' ')
     Remove-Item $fx.Trace -ErrorAction SilentlyContinue
     $r=Invoke-Workload $fx $q
