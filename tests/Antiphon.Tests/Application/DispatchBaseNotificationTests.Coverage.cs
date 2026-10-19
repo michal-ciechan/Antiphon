@@ -17,6 +17,8 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using Shouldly;
 using TUnit.Core;
@@ -59,8 +61,14 @@ public partial class DispatchBaseNotificationTests
 
         await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, "master");
         await using var scope = provider.CreateAsyncScope();
+        // Pin only this data observation's clock; the dispatcher below keeps its production clock.
+        using var inspection = new WorktreeBaseInspection(
+            scope.ServiceProvider.GetRequiredService<ILandingGit>(), repo.Path,
+            scope.ServiceProvider.GetRequiredService<IOptions<GitSettings>>().Value,
+            new FakeTimeProvider(DateTimeOffset.UtcNow),
+            scope.ServiceProvider.GetRequiredService<GitProcessGate>(), ct);
         var observation = await scope.ServiceProvider.GetRequiredService<CardSiblingInspectionService>()
-            .InspectAsync(task, ct);
+            .InspectAsync(task, inspection, ct);
         observation.Reason.ShouldBe("candidate_limit");
         observation.RawRows.ShouldBe(inventoryCount);
         observation.PendingKnown.ShouldBeTrue();
