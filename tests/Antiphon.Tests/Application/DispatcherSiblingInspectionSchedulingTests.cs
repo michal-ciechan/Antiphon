@@ -140,9 +140,9 @@ public partial class DispatcherSiblingInspectionSchedulingTests
             // independently inspectable and cannot retrieve the old worker's observation.
             if (field == "runner")
             {
-                await using var read = f.Read();
-                var current = await read.AgentTasks.SingleAsync(t => t.Id == f.Task.Id);
-                f.Queue.TryEnqueue(CardSiblingInspectionIntent.From(current, "master")).ShouldBeTrue();
+                await using var reassignmentRead = f.Read();
+                var reassigned = await reassignmentRead.AgentTasks.SingleAsync(t => t.Id == f.Task.Id);
+                f.Queue.TryEnqueue(CardSiblingInspectionIntent.From(reassigned, "master")).ShouldBeTrue();
                 await f.Queue.WhenIdleAsync();
             }
             else await f.ObserveAsync();
