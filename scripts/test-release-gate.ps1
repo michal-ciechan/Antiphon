@@ -3688,6 +3688,20 @@ function Test-C1311_PreReleaseTag {
         -Detail ('stamp=' + $stampPublished + '/' + $stampCreates + '/' + $stampPre + ' long=' + $longPublished + '/' + $longTagOk + '/' + $longCreates + '/' + $longPre + ' peel=' + $longPeeled + ' quiet=' + $promoteQuiet)
 }
 
+function Test-C599_E2EWatchdog {
+    # CARD-1345: the shipped policy resolves the rc e2e suite to 120 minutes.
+    # antiphon, session-runner, and the shared missing-key fallback stay put.
+    $ship = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
+    $e2e = Get-NightlyWatchdogMs -PolicyObject $ship.Object -Key 'e2e' -Fallback 3600000
+    $antiphon = Get-NightlyWatchdogMs -PolicyObject $ship.Object -Key 'antiphon' -Fallback 3600000
+    $session = Get-NightlyWatchdogMs -PolicyObject $ship.Object -Key 'session-runner' -Fallback 3600000
+    $missing = Get-NightlyWatchdogMs -PolicyObject $ship.Object -Key 'not-a-suite' -Fallback 3600000
+    Assert-C487 -Cond ($e2e -eq 7200000) -Name 'C599 resolved e2e watchdog is 7200000' -Detail ([string]$e2e)
+    Assert-C487 -Cond ($antiphon -eq 3600000) -Name 'C599 antiphon watchdog stays 3600000' -Detail ([string]$antiphon)
+    Assert-C487 -Cond ($session -eq 1200000) -Name 'C599 session-runner watchdog stays 1200000' -Detail ([string]$session)
+    Assert-C487 -Cond ($missing -eq 3600000) -Name 'C599 missing watchdog key keeps the 3600000 fallback' -Detail ([string]$missing)
+}
+
 # ====================================================================== run ===
 
 function Clear-C599FixtureReadOnly {
