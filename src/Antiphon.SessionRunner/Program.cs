@@ -289,8 +289,10 @@ app.MapPost("/sessions/attach", async (
 app.MapGet("/sessions/{id:guid}/buffer", (Guid id, SessionRunnerRuntime runtime) =>
     Results.Ok(runtime.GetBuffer(id)));
 
-app.MapGet("/sessions/{id:guid}/snapshot", (Guid id, SessionRunnerRuntime runtime) =>
-    Results.Ok(runtime.GetSnapshot(id)))
+// CARD-1365: async with the request token; a herdr pane.read past its deadline is the same
+// 503 herdr_unreachable the filter already answers, never a 200 with the unfed mirror.
+app.MapGet("/sessions/{id:guid}/snapshot", async (Guid id, SessionRunnerRuntime runtime, CancellationToken cancellationToken) =>
+    Results.Ok(await runtime.GetSnapshotAsync(id, cancellationToken)))
     .AddEndpointFilter(HerdrUnreachableFilter);
 
 app.MapSessionTranscriptRoute();

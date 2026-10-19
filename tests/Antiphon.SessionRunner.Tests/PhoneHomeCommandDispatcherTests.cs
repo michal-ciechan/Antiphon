@@ -1359,7 +1359,7 @@ public class PhoneHomeCommandDispatcherTests
                 : new RunnerSessionDto(sessionId, null, DateTime.UtcNow, "Exited", null, "Released", 0));
         }
         public RunnerBufferDto GetBuffer(Guid sessionId) => new(sessionId, "", 0);
-        public RunnerSnapshotDto GetSnapshot(Guid sessionId) => new(sessionId, "", "", 0, DateTime.UtcNow);
+        public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) => Task.FromResult(new RunnerSnapshotDto(sessionId, "", "", 0, DateTime.UtcNow));
         public RunnerTranscriptDto GetTranscript(Guid sessionId) => new(sessionId, [], 0);
         public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
         {

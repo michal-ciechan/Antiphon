@@ -47,6 +47,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private readonly PtyHostLauncher _launcher;
     private readonly HerdrClient? _herdrClient;
     private readonly TimeProvider _labelClock;
+    // CARD-1365 D-2: bound on one herdr pane.read served by a snapshot, resolved once from
+    // SessionRunner:Herdr:PaneReadTimeoutMs (floor 250 ms) on the injected clock.
+    private readonly TimeSpan _herdrPaneReadTimeout;
     private readonly IProcessLivenessProbe _processLiveness;
     private readonly ILogger<SessionRunnerRuntime> _logger;
     private readonly RunnerStartupDiagnostics _startup;
@@ -195,6 +198,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         _startup = startupDiagnostics ?? new RunnerStartupDiagnostics(logger);
         _herdrClient = herdrClient;
         _labelClock = timeProvider ?? TimeProvider.System;
+        _herdrPaneReadTimeout = TimeSpan.FromMilliseconds(
+            Math.Max(250, _herdrClient?.Settings.PaneReadTimeoutMs ?? new HerdrSettings().PaneReadTimeoutMs));
         _processLiveness = processLiveness ?? new SystemProcessLivenessProbe();
         _shadowStore = new ShadowCopyStore(_settings.PtyHostBinDir);
         _launcher = new PtyHostLauncher(_shadowStore, _settings.ResolvedPtyHostSourceDir);
@@ -1042,7 +1047,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     public RunnerBufferDto GetBuffer(Guid sessionId) => GetSession(sessionId).GetBuffer();
 
-    public RunnerSnapshotDto GetSnapshot(Guid sessionId) => GetSession(sessionId).GetSnapshot();
+    /// <summary>
+    /// CARD-1365: the herdr snapshot read is async on every hop and bounded by
+    /// <see cref="HerdrSettings.PaneReadTimeoutMs"/>; a pty-host snapshot stays the same in-memory read.
+    /// </summary>
+    public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
+        GetSession(sessionId).GetSnapshotAsync(_labelClock, _herdrPaneReadTimeout, ct);
 
     public RunnerTranscriptDto GetTranscript(Guid sessionId) => GetSession(sessionId).GetTranscript();
 
@@ -3816,7 +3826,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             return new RunnerBufferDto(_sessionId, ReadAnsiLog(), lastSequence);
         }
 
-        public RunnerSnapshotDto GetSnapshot()
+        /// <summary>
+        /// CARD-1365 D-1..D-3: a herdr snapshot serves one on-demand <c>pane.read</c> asynchronously
+        /// under <paramref name="paneReadTimeout"/> on <paramref name="clock"/>. A read that exceeds
+        /// the bound is the herdr-unreachable class (never the mirror, which a herdr session never
+        /// feeds); a cancelled caller token rethrows unchanged. The pty-host branch never awaits.
+        /// </summary>
+        public async Task<RunnerSnapshotDto> GetSnapshotAsync(
+            TimeProvider clock, TimeSpan paneReadTimeout, CancellationToken ct)
         {
             if (_pendingReason is not null)
                 throw new HerdrBackendUnavailableException(
@@ -3825,10 +3842,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             // Herdr has no push stream in S2 — serve an on-demand pane.read when asked.
             if (_herdrChild is { } herdr)
             {
+                using var deadline = new CancellationTokenSource(paneReadTimeout, clock);
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
                 try
                 {
-                    var screen = herdr.ReadScreenAsync(CancellationToken.None)
-                        .GetAwaiter().GetResult();
+                    var screen = await herdr.ReadScreenAsync(linked.Token);
                     if (screen is not null)
                     {
                         lock (_gate)
@@ -3849,6 +3867,15 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 catch (HerdrBackendUnavailableException)
                 {
                     throw;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+                {
+                    throw new HerdrBackendUnavailableException(
+                        $"Herdr pane.read for session {_sessionId:D} exceeded {paneReadTimeout.TotalMilliseconds:N0} ms.");
                 }
                 catch (Exception ex)
                 {

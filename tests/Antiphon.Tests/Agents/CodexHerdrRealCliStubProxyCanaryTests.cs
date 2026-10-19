@@ -145,7 +145,7 @@ public class CodexHerdrRealCliStubProxyCanaryTests
             await WaitUntilCodexComposerLooksIdleAsync(runtime, sessionId, trustAnswered, TimeSpan.FromSeconds(30), cancellationToken);
 
             var prompt = $"Reply with exactly this token and nothing else is needed: {nonce}";
-            DumpScreen(runtime, sessionId, "before-typing");
+            await DumpScreenAsync(runtime, sessionId, "before-typing", cancellationToken);
             await HerdrRealCliCanarySupport.SendWrappedBodyAsync(runtime, sessionId, prompt, cancellationToken);
 
             var chatHit = await stub.Requests.WaitForAsync(
@@ -155,7 +155,7 @@ public class CodexHerdrRealCliStubProxyCanaryTests
                 TimeSpan.FromSeconds(60));
             if (chatHit is null)
             {
-                DumpScreen(runtime, sessionId, "nonce-miss");
+                await DumpScreenAsync(runtime, sessionId, "nonce-miss", cancellationToken);
                 throw HerdrRealCliCanarySupport.BootStallSkip(
                     "codex",
                     "stub never saw the nonce on POST /v1/responses. Measured 2026-08-30 (CARD-0133 S0, codex-cli "
@@ -340,11 +340,11 @@ public class CodexHerdrRealCliStubProxyCanaryTests
     /// CARD-0133 S0: a herdr pane leaves no ANSI log and the temp root is deleted on exit, so the
     /// only evidence of what Codex showed is the runtime snapshot. Printed, never asserted.
     /// </summary>
-    private static void DumpScreen(SessionRunnerRuntime runtime, Guid sessionId, string label)
+    private static async Task DumpScreenAsync(SessionRunnerRuntime runtime, Guid sessionId, string label, CancellationToken ct)
     {
         try
         {
-            var snap = runtime.GetSnapshot(sessionId);
+            var snap = await runtime.GetSnapshotAsync(sessionId, ct);
             var raw = snap.RawOutput ?? "";
             var tail = raw.Length > 3000 ? raw[^3000..] : raw;
             Console.WriteLine(
@@ -362,7 +362,7 @@ public class CodexHerdrRealCliStubProxyCanaryTests
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
-            var snap = runtime.GetSnapshot(sessionId);
+            var snap = await runtime.GetSnapshotAsync(sessionId, ct);
             var text = $"{snap.RawOutput}{snap.RenderedScreen}";
             var mcp = text.Contains("Starting MCP servers", StringComparison.OrdinalIgnoreCase);
             // The trust detector reads cumulative RawOutput, so it stays true after the dialog is

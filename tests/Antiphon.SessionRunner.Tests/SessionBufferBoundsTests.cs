@@ -58,7 +58,7 @@ public class SessionBufferBoundsTests
             await runtime.SendInputAsync(sessionId, "echo NEWEST-MARKER\r", CancellationToken.None);
             await WaitForSnapshotAsync(runtime, sessionId, text => text.Contains("NEWEST-MARKER"));
 
-            var raw = runtime.GetSnapshot(sessionId).RawOutput;
+            var raw = (await runtime.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput;
 
             // Bounded: trimming happens at 2x the cap, so that is the ceiling.
             raw.Length.ShouldBeLessThanOrEqualTo(Cap * 2);
@@ -173,7 +173,7 @@ public class SessionBufferBoundsTests
 
         while (DateTime.UtcNow < hardDeadline)
         {
-            var raw = runtime.GetSnapshot(sessionId).RawOutput;
+            var raw = (await runtime.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput;
             if (predicate(raw))
                 return;
 
@@ -192,7 +192,7 @@ public class SessionBufferBoundsTests
         }
 
         // Say WHAT the mirror held, and which of the two failures this was.
-        var final = runtime.GetSnapshot(sessionId).RawOutput;
+        var final = (await runtime.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput;
         var tail = final.Length <= 400 ? final : final[^400..];
         throw new System.TimeoutException(
             (stalled

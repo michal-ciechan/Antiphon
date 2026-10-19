@@ -309,7 +309,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>(recipient.List().Select(Map).ToArray());
         public async Task<SessionRunnerSessionDto> GetAsync(Guid id,CancellationToken ct) => Map(await recipient.GetAsync(id,ct));
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid id,CancellationToken ct) { var s=recipient.GetBuffer(id);return Task.FromResult(new SessionRunnerBufferDto(id,s.Buffer,s.LastSequence)); }
-        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid id,CancellationToken ct) { var s=recipient.GetSnapshot(id);return Task.FromResult(new SessionRunnerSnapshotDto(id,s.RawOutput,s.RenderedScreen,s.LastSequence,s.StartedAt,s.AcceptedStartedAt)); }
+        public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid id,CancellationToken ct) { var s=await recipient.GetSnapshotAsync(id,ct);return new SessionRunnerSnapshotDto(id,s.RawOutput,s.RenderedScreen,s.LastSequence,s.StartedAt,s.AcceptedStartedAt); }
         public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid id,CancellationToken ct)
         {
             var s=recipient.GetTranscript(id);

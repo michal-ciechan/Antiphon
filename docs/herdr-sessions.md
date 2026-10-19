@@ -110,6 +110,7 @@ this deployment's runner appsettings turns it on. Other settings:
 | `Session` | null | explicit named herdr session; same precedence as herdr's own `--session`, ahead of `HERDR_SOCKET_PATH` and `HERDR_SESSION` |
 | `SocketPath` | null | instance-scoped native endpoint override; takes precedence over `Session` and environment discovery |
 | `ConnectTimeoutMs` | 5 000 | bound on opening the native local connection |
+| `PaneReadTimeoutMs` | 3 000 | bound on one snapshot `pane.read` (`GET /sessions/{id}/snapshot` and the phone-home `Snapshot` operation); floor 250; a deadline answers 503 `herdr_unreachable` (CARD-1365) |
 | `ExpectedProtocol` | 20 | the wire protocol this client was compiled and tested against |
 | `EventsReconnectMinSeconds` / `MaxSeconds` | 1 / 30 | event-pump reconnect backoff, doubling |
 
@@ -454,7 +455,9 @@ runner owns a **content-delta counter**: it bumps whenever the stripped visible 
 differs from the last observation, and folds that into `LastSequence` alongside the revision
 (`Math.Max`). Nothing may *require* `revision` to move. The single-session `GET /sessions/{id}`
 refreshes both via `pane.get` + `pane.read`; without that refresh a screen-only fallback fails
-`NoSubmitOutput` deterministically.
+`NoSubmitOutput` deterministically. The snapshot route serves its `pane.read` asynchronously on
+both lanes under `PaneReadTimeoutMs` and never substitutes the mirror for a late read: a deadline
+is 503 `herdr_unreachable`, which the server defers on (CARD-1365).
 
 ## 6. Restarts — the constraint that shapes everything
 

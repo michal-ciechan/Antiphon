@@ -890,6 +890,12 @@ the transcript mutation gate. Activation requires both server and runner support
   they never carry prompt or composer text, and incident pruning keeps the current episode's
   receipts (`StandingBootAttentionTests.C1156_Prune_preserves_active_dedup_and_releases_resolved_history`). The operator decides: inspect the session or its transcript, then keep waiting, reply
   through the session, or explicitly Stop and Start/resume the agent.
+- **The runner's herdr snapshot read is async on both lanes and bounded** (CARD-1365): `GET /sessions/{id}/snapshot`
+  and the phone-home `Snapshot` operation await one `pane.read` under `SessionRunner:Herdr:PaneReadTimeoutMs`
+  (default 3 000 ms, floor 250) on the runtime's injected clock, so a stalled herdr never pins a serving
+  thread. A deadline is the unreachable class, 503 `herdr_unreachable`, which the server defers on; it is
+  never an empty screen from the unfed mirror. A cancelled caller token rethrows unchanged; the pty-host
+  snapshot stays the same in-memory read. Pinned by `HerdrSnapshotBoundedReadTests` and `HerdrRunnerSessionTests`.
 
 
 <!-- CARD-0254 preserved source begins -->

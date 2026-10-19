@@ -21,6 +21,13 @@ public sealed class HerdrSettings
     /// <summary>Bound on opening a local connection to Herdr.</summary>
     public int ConnectTimeoutMs { get; set; } = 5_000;
 
+    /// <summary>
+    /// CARD-1365: bound on one pane.read served by GET /sessions/{id}/snapshot and the phone-home
+    /// Snapshot operation. A read that exceeds it answers 503 herdr_unreachable; the mirror is never
+    /// substituted. Floor 250 ms. Keep it inside the server's AgentSession:RunnerLiveReadTimeoutMs.
+    /// </summary>
+    public int PaneReadTimeoutMs { get; set; } = 3_000;
+
     /// <summary>The wire protocol this client was compiled and tested against.</summary>
     public int ExpectedProtocol { get; set; } = 20;
 

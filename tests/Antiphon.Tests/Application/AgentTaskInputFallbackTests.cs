@@ -524,7 +524,7 @@ public sealed class AgentTaskInputFallbackTests
         public Task<RunnerSessionDto> GetAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
         public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct) => throw new NotSupportedException();
         public RunnerBufferDto GetBuffer(Guid id) => throw new NotSupportedException();
-        public RunnerSnapshotDto GetSnapshot(Guid id) => throw new NotSupportedException();
+        public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
         public RunnerTranscriptDto GetTranscript(Guid id) => throw new NotSupportedException();
         public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid id, RunnerConditionalInputRequest request, CancellationToken ct) => throw new NotSupportedException();
         public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
