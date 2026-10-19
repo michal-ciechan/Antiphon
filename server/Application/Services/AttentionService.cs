@@ -394,6 +394,8 @@ public sealed partial class AttentionService
             // the reason keeps a conflict readable. For a question, extract the trailing question
             // so a long report does not bury it past the 400-char evidence head (CARD-0033).
             var primary = BlockedContextBuilder.AttentionPrimary(task);
+            var inspectionReason = task.AgentSessionId is null && task.DispatchedAt is null
+                ? DispatchInspectionDiagnostics.InspectionReason(task.FailureReason) : null;
             var headline = kind switch
             {
                 BlockedKind.MergeConflict when mergeByParent.TryGetValue(task.Id, out var mergeId) =>
@@ -403,6 +405,11 @@ public sealed partial class AttentionService
                 BlockedKind.SubscriptionQuota => "Blocked — provider usage quota exceeded.",
                 _ => "Blocked — waiting on a human answer.",
             };
+            if (inspectionReason is not null)
+            {
+                headline = "Blocked — base inspection needs attention.";
+                primary = DispatchInspectionDiagnostics.Recovery(inspectionReason);
+            }
             var canContinue = kind == BlockedKind.Question
                 && task.AgentSessionId is not null
                 && !string.IsNullOrWhiteSpace(task.StandingAuthority);
@@ -411,6 +418,7 @@ public sealed partial class AttentionService
                 : canContinue
                     ? new[] { AttentionAction.Continue, AttentionAction.Reply, AttentionAction.Cancel, AttentionAction.Escalate }
                     : new[] { AttentionAction.Reply, AttentionAction.Cancel, AttentionAction.Escalate };
+            if (inspectionReason is not null) actions = [AttentionAction.OpenDrawer, AttentionAction.Cancel];
 
             items.Add(new AttentionItemDto(
                 AttentionKind.BlockedQuestion,
