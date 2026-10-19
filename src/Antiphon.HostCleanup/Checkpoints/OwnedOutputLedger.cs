@@ -7,6 +7,8 @@ public static class OwnedOutputLedger
 {
     public static string? Seal(string root, DateTimeOffset? buildExited = null) =>
         new CheckpointOutputLedger(CheckpointCleanupDefaults.Context).Seal(root, buildExited);
+    public static int Adopt(string root, DateTimeOffset? hostExited) =>
+        new CheckpointOutputLedger(CheckpointCleanupDefaults.Context).Adopt(root, hostExited);
     public static string? Check(string root) =>
         new CheckpointOutputLedger(CheckpointCleanupDefaults.Context).Check(root);
     public static string? Remove(string root, bool dryRun = false) =>
@@ -36,6 +38,29 @@ public sealed class CheckpointOutputLedger(CheckpointCleanupContext context)
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         { return "output-inventory-failed"; }
+    }
+
+    // CARD-1368: adopt new host-written entries only inside the fresh root's custody window.
+    // Existing records win; no observed exit, a foreign root or a linked tree grants no authority.
+    // The disk ledger remains the diagnostic build-time inventory.
+    public int Adopt(string root, DateTimeOffset? hostExited)
+    {
+        try
+        {
+            if (!Io.DirectoryExists(root) || !Io.FileExists(Path.Combine(root, Ledger))) return 0;
+            var window = SafeWrite.WasCreated(root) ? OutputCustody.For(context, root, hostExited) : null;
+            if (window is null) return 0;
+            var adopted = 0;
+            foreach (var relative in Inventory(root).Keys)
+            {
+                var full = Path.Combine(root, relative);
+                if (SafeWrite.CreationRecord(full) is not null) continue;
+                SafeWrite.AdoptCreated(full, window);
+                if (SafeWrite.CreationRecord(full) is not null) adopted++;
+            }
+            return adopted;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return 0; }
     }
 
     public string? Check(string root)
