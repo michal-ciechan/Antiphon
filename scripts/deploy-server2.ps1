@@ -609,11 +609,49 @@ function Remove-RecycleOpenIds {
     }
 }
 
+# A status change is safe only with complete, identical off-runner facts and explicit no-pending-land proof.
+# This predicate is shared by list/detail admission and comparison-copy reconciliation.
+function Test-RecycleOpenStatusMove {
+    param($Before, $After, $Detail, [string]$RunnerId)
+    foreach ($key in @('id','status','runnerId','projectId','scopeSource','landRequestedAt','landStartedAt')) {
+        if (@($Before.PSObject.Properties.Name) -cnotcontains $key -or
+            @($After.PSObject.Properties.Name) -cnotcontains $key) { return $false }
+        if ($key -cne 'status' -and
+            ($Before.$key | ConvertTo-Json -Compress) -cne ($After.$key | ConvertTo-Json -Compress)) { return $false }
+    }
+    if ($Before.status -cnotin @('Queued','Dispatched','Working','Blocked') -or
+        $After.status -cnotin @('Queued','Dispatched','Working','Blocked') -or
+        [string]$Before.runnerId -eq $RunnerId -or [string]$After.runnerId -eq $RunnerId -or
+        @($Detail.PSObject.Properties.Name) -cnotcontains 'landRequest') { return $false }
+    $proof = $Detail.landRequest
+    return ($null -eq $proof -or ($proof.state -cin @('Completed','Superseded','Canceled') -and
+        $proof.terminalEventId -is [string] -and
+        $proof.terminalEventId -cmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'))
+}
+
+function Sync-RecycleOpenStatuses {
+    param($Prior, $Live, [string]$RunnerId)
+    $changed = 0
+    foreach ($id in @($Prior.open.tasks.PSObject.Properties.Name)) {
+        if (@($Live.open.tasks.PSObject.Properties.Name) -cnotcontains $id -or
+            @($Prior.open.land.PSObject.Properties.Name) -cnotcontains $id -or
+            @($Live.open.land.PSObject.Properties.Name) -cnotcontains $id) { continue }
+        if (-not (Test-RecycleJsonEqual -Left $Prior.open.land.$id -Right $Live.open.land.$id)) { continue }
+        $detail = [pscustomobject]@{ landRequest=$Live.open.land.$id }
+        if ($Prior.open.tasks.$id.status -cne $Live.open.tasks.$id.status -and
+            (Test-RecycleOpenStatusMove -Before $Prior.open.tasks.$id -After $Live.open.tasks.$id -Detail $detail -RunnerId $RunnerId)) {
+            $Prior.open.tasks.$id.status = $Live.open.tasks.$id.status
+            $changed++
+        }
+    }
+    return $changed
+}
+
 # Pass-0 tasks proven settled without a land may leave the pass-1 list.
 # Pass-1 tasks proven to carry no land (null landRequest, outside landPending,
 # neither land timestamp set) may appear. Returns true only when that drift is the sole difference.
 function Test-RecycleForgivenDrift {
-    param([string]$Previous, [string]$Current, $SettledIds)
+    param([string]$Previous, [string]$Current, $SettledIds, [string]$RunnerId)
     $prior = $Previous | ConvertFrom-Json
     $live = $Current | ConvertFrom-Json
     $priorNames = @($prior.open.tasks.PSObject.Properties.Name)
@@ -635,12 +673,17 @@ function Test-RecycleForgivenDrift {
         $fresh.Add($id)
     }
     if ($fresh.Count -gt 0) { Remove-RecycleOpenIds -Closure $live.open -Ids @($fresh) }
-    if ($gone.Count -eq 0 -and $fresh.Count -eq 0) { return $false }
+    $changed = Sync-RecycleOpenStatuses -Prior $prior -Live $live -RunnerId $RunnerId
+    if ($gone.Count -eq 0 -and $fresh.Count -eq 0 -and $changed -eq 0) { return $false }
     return Test-RecycleJsonEqual -Left $prior -Right $live
 }
 
 function Assert-RecycleTaskCensus {
     param([string]$RunnerId, [string]$ProjectId, [switch]$Report)
+    # CARD-1371: restart the whole two-pass census on cross-read count drift only.
+    # Never accept partial closures or send Drift into the separate bound-land wait.
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+    try {
     # Open work and pending lands each form a complete, server-filtered closure.
     # No time window: an old terminal task can still have a pending land.
     # Compare both closures twice; filtered excluded counts must reconcile independently.
@@ -662,6 +705,7 @@ function Assert-RecycleTaskCensus {
         $rows = @{}
         $observations = @{}
         $scopeCounts = @{}
+        $countDrifts = @{}
         $landEvidence = @{}
         while ($pending.Count -gt 0) {
             $scope = $pending.Dequeue()
@@ -691,8 +735,11 @@ function Assert-RecycleTaskCensus {
                     -not $excludedScopes.Add($excludedId)) { Stop-RecycleMalformed 'excluded.byProject.projectId' $path }
                 if (($excluded.count -isnot [int] -and $excluded.count -isnot [long]) -or $excluded.count -le 0) { Stop-RecycleMalformed 'excluded.byProject.count' $path }
                 $withheldCount += $excluded.count
-                if ($scopeCounts.ContainsKey($excludedId) -and $scopeCounts[$excludedId] -ne $excluded.count) { Stop-RecycleMalformed 'excluded.byProject.count' $path }
-                $scopeCounts[$excludedId] = $excluded.count
+                if ($scopeCounts.ContainsKey($excludedId)) {
+                    if ($scopeCounts[$excludedId] -ne $excluded.count -and -not $countDrifts.ContainsKey($excludedId)) {
+                        $countDrifts[$excludedId] = "expected=$($scopeCounts[$excludedId]) observed=$($excluded.count) path=$path"
+                    }
+                } else { $scopeCounts[$excludedId] = $excluded.count }
                 $pending.Enqueue([string]$excluded.projectId)
                 $observations[$scope] += '|' + [string]$excluded.projectId + ':' + [string]$excluded.count
             }
@@ -743,9 +790,10 @@ function Assert-RecycleTaskCensus {
                 # Terminal status plus a null landRequest is proven no-land, so status may move.
                 # Any other summary disagreement, a missing landRequest, or an unproven landRequest still refuses.
                 $settledWithoutLand = $null -eq $detail.landRequest -and [string]$detail.summary.status -cin @('Succeeded','Failed','Canceled')
+                $openStatusMove = Test-RecycleOpenStatusMove -Before $task -After $detail.summary -Detail $detail -RunnerId $RunnerId
                 foreach ($key in @('id','status','runnerId','projectId','scopeSource','landRequestedAt','landStartedAt')) {
                     if ($detail.summary.PSObject.Properties.Name -notcontains $key) { throw 'RecycleLandUnknown' }
-                    if ($settledWithoutLand -and $key -ceq 'status') { continue }
+                    if (($settledWithoutLand -or $openStatusMove) -and $key -ceq 'status') { continue }
                     if (($detail.summary.$key | ConvertTo-Json -Compress) -cne ($task.$key | ConvertTo-Json -Compress)) { throw 'RecycleLandUnknown' }
                 }
                 if ($settledWithoutLand) { [void]$settledThisPass.Add($id) }
@@ -765,9 +813,16 @@ function Assert-RecycleTaskCensus {
                 if ($null -ne $script:recycleReceipt) { $reduced['landRequest'] = $proof | ConvertFrom-Json }
             }
         }
-        foreach ($scopeId in $scopeCounts.Keys) {
+        foreach ($scopeId in @($scopeCounts.Keys | Sort-Object)) {
             $actual = @($rows.Values | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object projectId -eq $scopeId).Count
-            if ($actual -ne $scopeCounts[$scopeId]) { Stop-RecycleMalformed 'excluded.byProject.count' $path }
+            if ($actual -ne $scopeCounts[$scopeId] -and -not $countDrifts.ContainsKey($scopeId)) {
+                $countDrifts[$scopeId] = "expected=$($scopeCounts[$scopeId]) observed=$actual path=$path"
+            }
+        }
+        # All local shapes and binding/land guards have run before classifying cross-read drift.
+        if ($countDrifts.Count -gt 0) {
+            $scopeId = @($countDrifts.Keys | Sort-Object)[0]
+            throw "RecycleTaskCensusUnknown cause=Drift field=excluded.byProject.count project=$scopeId $($countDrifts[$scopeId])"
         }
         $scopeSnapshot = [ordered]@{}; $taskSnapshot = [ordered]@{}; $landSnapshot = [ordered]@{}
         foreach ($key in @($observations.Keys | Sort-Object)) { $scopeSnapshot[$key] = $observations[$key] }
@@ -789,8 +844,8 @@ function Assert-RecycleTaskCensus {
         if ($null -ne $script:recycleReceipt) { $script:recycleReceipt['snapshot'] = $closures }
         if ($pass -eq 0) { $pass0Settled = $settledThisPass }
         # A pass-0 task recorded as settled without a land may leave the pass-1 list.
-        # A pass-1 task proven to carry no land may appear. Any other drift remains Unstable.
-        if ($pass -eq 1 -and $snapshot -cne $previous -and -not (Test-RecycleForgivenDrift -Previous $previous -Current $snapshot -SettledIds $pass0Settled)) {
+        # Safe off-runner open-status changes align comparison copies only. All residual drift refuses.
+        if ($pass -eq 1 -and $snapshot -cne $previous -and -not (Test-RecycleForgivenDrift -Previous $previous -Current $snapshot -SettledIds $pass0Settled -RunnerId $RunnerId)) {
             throw 'RecycleTaskCensusUnknown cause=Unstable'
         }
         $previous = $snapshot
@@ -801,6 +856,13 @@ function Assert-RecycleTaskCensus {
     }
     return $previous
     } finally { Write-RecycleReceipt }
+    } catch {
+        if ($attempt -ge 3 -or $_.Exception.Message -cnotmatch '^RecycleTaskCensusUnknown cause=Drift ') { throw }
+        # Use the existing offline clock seam only with the fake HTTP transport.
+        if ($env:C727_TEST_HTTP_STUB -and $env:C727_TEST_POLL_MS) { Start-Sleep -Milliseconds ([int]$env:C727_TEST_POLL_MS) }
+        else { Start-Sleep -Seconds 30 }
+    }
+    }
 }
 
 # CARD-1353 D-3/D-4. A land bound to the recycled runner makes the census wait, bounded, instead

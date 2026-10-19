@@ -5902,13 +5902,17 @@ c1008_tasks_wait() {
 }
 
 c1008_tasks_collect() {
+    # CARD-1371: bounded retries restart both passes; only cross-read Drift is retryable.
+    # Keep the attempt inside this function so extracted offline census probes use the real policy.
+    local attempt code
+    c1008_tasks_collect_attempt() {
     local pass kind path scope envelope excluded id row detail previous='' snapshot scopes rows pending counts land closures status field
-    local settled_pass0='' settled_now='' forgiven=''
+    local settled_pass0='' settled_now='' forgiven='' drifts drift
     for pass in 1 2; do
         settled_now=''
         closures='{}'
         for kind in open land; do
-        scopes='[]'; rows='{}'; pending="$C1008_PROJECT_ID"; snapshot='{}'; counts='{}'; land='{}'
+        scopes='[]'; rows='{}'; pending="$C1008_PROJECT_ID"; snapshot='{}'; counts='{}'; land='{}'; drifts='{}'
         while [ -n "$pending" ]; do
             scope="${pending%%$'\n'*}"; pending="${pending#"$scope"}"; pending="${pending#$'\n'}"
             printf '%s' "$scopes" | jq -e --arg scope "$scope" 'index($scope)!=null' >/dev/null && continue
@@ -5948,9 +5952,10 @@ c1008_tasks_collect() {
             [ -z "$field" ] || return 2
             while IFS= read -r row; do
                 id="$(printf '%s' "$row" | jq -r .projectId)"
-                C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Malformed field=excluded.byProject.count path=$path"
-                printf '%s' "$counts" | jq -e --arg id "$id" --argjson row "$row" 'has($id) and .[$id]!=$row.count' >/dev/null && return 2
-                counts="$(printf '%s' "$counts" | jq -c --arg id "$id" --argjson row "$row" '.[$id]=$row.count')" || return 2
+                drifts="$(printf '%s' "$drifts" | jq -c --arg id "$id" --arg path "$path" --argjson counts "$counts" --argjson row "$row" '
+                    if ($counts|has($id)) and $counts[$id]!=$row.count and (has($id)|not)
+                    then .[$id]={expected:$counts[$id],observed:$row.count,path:$path} else . end')" || return 2
+                counts="$(printf '%s' "$counts" | jq -c --arg id "$id" --argjson row "$row" 'if has($id) then . else .[$id]=$row.count end')" || return 2
             done < <(printf '%s' "$envelope" | jq -c '.excluded.byProject[]')
             snapshot="$(printf '%s' "$snapshot" | jq -c --arg scope "$scope" --argjson envelope "$envelope" \
                 '.[$scope]={ids:($envelope.items|map(.id)|sort),excluded:($envelope.excluded|{total,unscoped,byProject:(.byProject|map({projectId,count}))})}')"
@@ -6003,12 +6008,27 @@ c1008_tasks_collect() {
                 detail="$C1008_HTTP_BODY"
                 C1008_TASK_ERROR=RecycleLandUnknown
                 # Terminal detail with landRequest null settled after the open list. Status may move.
-                printf '%s' "$detail" | jq -e --argjson row "$row" '
+                printf '%s' "$detail" | jq -e --argjson row "$row" --arg runner "$C1008_RUNNER" '
+# C1361 predicate begin
+def open_status_move($before;$after;$detail;$runner):
+    def open: . as $s | ["Queued","Dispatched","Working","Blocked"] | index($s)!=null;
+    def complete: . as $r | ["id","status","runnerId","projectId","scopeSource","landRequestedAt","landStartedAt"] | all(.[]; . as $k | $r|has($k));
+    def facts: {id,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt};
+    ($before|complete) and ($after|complete) and
+    ($before.status|open) and ($after.status|open) and
+    $before.runnerId!=$runner and $after.runnerId!=$runner and
+    ($before|facts)==($after|facts) and ($detail|has("landRequest")) and
+    ($detail.landRequest==null or
+        (($detail.landRequest.state as $s | ["Completed","Superseded","Canceled"] | index($s)!=null) and
+        ($detail.landRequest.terminalEventId|type)=="string" and
+        ($detail.landRequest.terminalEventId|test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))));
+# C1361 predicate end
                   has("landRequest") and
                   (.summary|has("id") and has("status") and has("runnerId") and has("projectId") and
                     has("scopeSource") and has("landRequestedAt") and has("landStartedAt")) and
                   (
                     ((.summary|{id,status,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt})==$row)
+                    or open_status_move($row;.summary;.;$runner)
                     or (
                       .landRequest==null and
                       ((.summary.status=="Succeeded") or (.summary.status=="Failed") or (.summary.status=="Canceled")) and
@@ -6040,8 +6060,14 @@ c1008_tasks_collect() {
                 C1008_CENSUS_TASKS="$(printf '%s' "$C1008_CENSUS_TASKS" | jq -c --arg id "$id" --argjson detail "$detail" '.[$id].landRequest=$detail')" || return 2
             done < <(printf '%s' "$envelope" | jq -c '.items[]')
         done
-        C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Malformed field=excluded.byProject.count path=$path"
-        printf '%s' "$counts" | jq -e --argjson rows "$rows" 'to_entries|all(.[]; .key as $id | .value==([$rows[]|select(.projectId==$id)]|length))' >/dev/null || return 2
+        # Local shapes and every binding/land guard take precedence over cross-read drift.
+        drifts="$(printf '%s' "$drifts" | jq -c --argjson counts "$counts" --argjson rows "$rows" --arg path "$path" '
+            reduce ($counts|keys[]) as $id (.;
+                ([$rows[]|select(.projectId==$id)]|length) as $actual |
+                if $counts[$id]!=$actual and (has($id)|not)
+                then .[$id]={expected:$counts[$id],observed:$actual,path:$path} else . end)')" || return 2
+        drift="$(printf '%s' "$drifts" | jq -r 'to_entries|sort_by(.key)|first // empty | "project=\(.key) expected=\(.value.expected) observed=\(.value.observed) path=\(.value.path)"')" || return 2
+        if [ -n "$drift" ]; then C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Drift field=excluded.byProject.count $drift"; return 2; fi
         # CARD-1353 D-2: the compared land closure keeps bound rows only and no scopes entry, so an
         # off-runner land requested between the passes or between the proofs cannot end Unstable.
         # C1008_CENSUS_TASKS (the receipt) and the per-scope count reconciliation above stay complete.
@@ -6054,7 +6080,7 @@ c1008_tasks_collect() {
         if [ "$pass" = 1 ]; then settled_pass0="$settled_now"; fi
         # A pass-0 settled-without-land task may be absent from the pass-1 open list.
         # A pass-1 task with landRequest null, outside landPending, and no land timestamp may appear.
-        # Any other disappearance, appearance, or changed row still fails the byte compare below.
+        # Status-only changes are reconciled below; every residual difference still refuses.
         if [ "$pass" = 2 ] && [ "$snapshot" != "$previous" ] && [ -n "$settled_pass0" ]; then
             if forgiven="$(printf '%s' "$previous" | jq -Sc --argjson current "$snapshot" --arg ids "$settled_pass0" '
                 . as $prev
@@ -6098,10 +6124,41 @@ c1008_tasks_collect() {
                 previous="$forgiven"
             fi
         fi
+        if [ "$pass" = 2 ] && [ "$snapshot" != "$previous" ]; then
+            previous="$(printf '%s' "$previous" | jq -Sc --argjson current "$snapshot" --arg runner "$C1008_RUNNER" '
+# C1361 predicate begin
+def open_status_move($before;$after;$detail;$runner):
+    def open: . as $s | ["Queued","Dispatched","Working","Blocked"] | index($s)!=null;
+    def complete: . as $r | ["id","status","runnerId","projectId","scopeSource","landRequestedAt","landStartedAt"] | all(.[]; . as $k | $r|has($k));
+    def facts: {id,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt};
+    ($before|complete) and ($after|complete) and
+    ($before.status|open) and ($after.status|open) and
+    $before.runnerId!=$runner and $after.runnerId!=$runner and
+    ($before|facts)==($after|facts) and ($detail|has("landRequest")) and
+    ($detail.landRequest==null or
+        (($detail.landRequest.state as $s | ["Completed","Superseded","Canceled"] | index($s)!=null) and
+        ($detail.landRequest.terminalEventId|type)=="string" and
+        ($detail.landRequest.terminalEventId|test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))));
+# C1361 predicate end
+# C1361 reconciliation begin
+                reduce (.open.tasks|keys[]) as $id (.;
+                    if ($current.open.tasks|has($id)) and (.open.land|has($id)) and ($current.open.land|has($id)) and
+                        .open.land[$id]==$current.open.land[$id] and
+                        open_status_move(.open.tasks[$id];$current.open.tasks[$id];{landRequest:$current.open.land[$id]};$runner)
+                    then .open.tasks[$id].status=$current.open.tasks[$id].status else . end)
+# C1361 reconciliation end
+            ')" || { C1008_TASK_ERROR=RecycleLandUnknown; return 2; }
+        fi
         if [ "$pass" = 2 ] && [ "$snapshot" != "$previous" ]; then C1008_TASK_ERROR='RecycleTaskCensusUnknown cause=Unstable'; return 2; fi
         previous="$snapshot"
     done
     C1008_TASK_ERROR=''
+    }
+    for attempt in 1 2 3; do
+        code=0; c1008_tasks_collect_attempt || code=$?
+        if [ "$code" = 0 ] || [[ "$C1008_TASK_ERROR" != 'RecycleTaskCensusUnknown cause=Drift '* ]] || [ "$attempt" = 3 ]; then return "$code"; fi
+        sleep 30 || return 2
+    done
 }
 
 # CARD-1105 / CARD-1197. Once removal has been journaled, other runners may finish or open
