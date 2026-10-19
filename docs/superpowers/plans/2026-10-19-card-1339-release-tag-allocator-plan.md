@@ -362,7 +362,7 @@ actual distinct commits A/B/C, pinned eight-suite authority/13 chunks/19 UIDs fr
 receipt/readback, complete-green and a published reservation where applicable.
 Build valid authority using production helpers, including the current script
 hashes. Parameterize existing fixture helpers for `fixture/release` rather than
-weakening origin validation. Seed tags only in the owned fixture. Record the valid
+weakening origin validation. Seed tags only in the owned fixture.
 Pass `-Repository fixture/release` and the owned loopback `-AntiphonApiUrl`
 explicitly on every publisher/promoter fixture invocation; the publisher's actual
 Repository default is `michal-ciechan/Antiphon`, not origin-derived. Record the valid
