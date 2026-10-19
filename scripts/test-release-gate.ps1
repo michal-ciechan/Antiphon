@@ -4292,6 +4292,22 @@ function Test-C1339_ExactRemoteRefs {
     Assert-C599AMatrix 'C1339 G-65 fixture-transport-allowlist' $checks
 }
 
+function New-C1339AllocationFixture {
+    $fx = New-C1339Fixture
+    Add-Content -LiteralPath $fx.Gh.Path -Encoding ASCII -Value "`n`$ReleaseGateSeams.UtcNow = { return [datetime]'2026-10-15T12:00:00Z' }"
+    return $fx
+}
+
+function Test-C1339_RemoteTagAllocation {
+    $fx = New-C1339AllocationFixture
+    Add-C1339Tag $fx 'v2026.10.15.1' $fx.Head
+    Add-C1339Tag $fx 'v2026.10.15.2' $fx.B
+    $r = Invoke-C1339Publish $fx -WhatIf
+    Assert-C487 -Cond ($r.ExitCode -eq 0 -and $r.Tag -ceq 'v2026.10.15.3-rc.1' -and
+        -not (Test-Path -LiteralPath (Join-Path $fx.ReleaseRoot 'publications.json')) -and (Test-C1339NoWrites $fx)) `
+        -Name 'C1339 G-18 remote-finals' -Detail ('tag=' + $r.Tag + ' refusal=' + $r.Refusal)
+}
+
 # ====================================================================== run ===
 
 function Clear-C599FixtureReadOnly {

@@ -29,4 +29,9 @@ public sealed class ReleaseTagAllocatorTests
             "C1339 G-17 promotion-verify-read",
             "C1339 G-64 fixture-path-contained",
             "C1339 G-65 fixture-transport-allowlist");
+
+    [Test]
+    public Task C1339_RemoteTagAllocation() =>
+        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1339", "C1339_RemoteTagAllocation", 1,
+            "C1339 G-18 remote-finals");
 }
