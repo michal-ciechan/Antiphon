@@ -140,6 +140,68 @@ public sealed partial class LandDeliveryFixture
     public Task WaitForBoundaryAsync(string boundary) => UntilProtocolAsync(() =>
         Task.FromResult(File.Exists(Path.Combine(Root, boundary + ".barrier.json"))), boundary);
 
+    /// <summary>
+    /// CARD-1359 D-2: dispatch-side progress markers for the owned task. Each is a step of the
+    /// dispatch chain and non-decreasing, so the sum changes exactly when one of them does.
+    /// </summary>
+    public sealed record DispatchProgress(long Events, long Intents, long Materialized, long Notifications, long Queued, long Launched)
+    {
+        public long Total => Events + Intents + Materialized + Notifications + Queued + Launched;
+    }
+
+    public async Task<DispatchProgress> DispatchProgressAsync()
+    {
+        await using var db = CreateContext();
+        var events = await db.AgentTaskEvents.AsNoTracking().LongCountAsync(e => e.AgentTaskId == TaskId);
+        var intents = await db.AgentTaskDispatchWarningIntents.AsNoTracking().LongCountAsync(i => i.TaskId == TaskId);
+        var materialized = await db.AgentTaskDispatchWarningIntents.AsNoTracking().LongCountAsync(i => i.TaskId == TaskId && i.MaterializedAt != null);
+        var notifications = await db.AgentTaskLandNotifications.AsNoTracking().LongCountAsync(n => n.TaskId == TaskId);
+        var queued = await db.SessionQueuedMessages.AsNoTracking().LongCountAsync(m => m.SourceTaskId == TaskId);
+        var sessionId = await db.AgentTasks.AsNoTracking().Where(t => t.Id == TaskId).Select(t => t.AgentSessionId).SingleOrDefaultAsync();
+        var launched = sessionId is Guid session
+            && await db.AgentSessions.AsNoTracking().AnyAsync(s => s.Id == session && s.InteractiveLaunchCompletedAt != null) ? 1 : 0;
+        return new(events, intents, materialized, notifications, queued, launched);
+    }
+
+    /// <summary>
+    /// CARD-1359: the dispatch-aware twin of <see cref="UntilProtocolAsync"/>. The quiet window (60 s)
+    /// and the cap (600 s) are unchanged; the probe is the protocol-git count plus the dispatch-side
+    /// markers, refreshed by the predicate wrapper on every poll. The wait record names both so a
+    /// future quiet timeout says which source moved last.
+    /// </summary>
+    public async Task UntilDispatchAsync(Func<Task<bool>> predicate, string evidence, int quietSeconds = 60)
+    {
+        var started = DateTime.UtcNow;
+        var protocolBefore = ProtocolProgress();
+        var dispatchBefore = await DispatchProgressAsync();
+        var last = dispatchBefore;
+        var dispatch = dispatchBefore.Total;
+        var outcome = "satisfied";
+        try
+        {
+            await UntilAsync(async () =>
+            {
+                last = await DispatchProgressAsync();
+                dispatch = last.Total;
+                return await predicate();
+            }, evidence, quietSeconds, () => ProtocolProgress() + dispatch);
+        }
+        catch (TimeoutException) { outcome = "timeout"; throw; }
+        finally
+        {
+            var elapsed = (DateTime.UtcNow - started).TotalSeconds;
+            DispatchProgress dispatchAfter;
+            try { dispatchAfter = await DispatchProgressAsync(); } catch { dispatchAfter = last; }
+            await File.WriteAllTextAsync(Path.Combine(Root, $"wait-{Guid.NewGuid():N}.json"), JsonSerializer.Serialize(new {
+                evidence, outcome, kind = "dispatch", quietSeconds, elapsedSeconds = elapsed, protocolGitBefore = protocolBefore,
+                protocolGitAfter = ProtocolProgress(), dispatchBefore, dispatchAfter, renewed = elapsed > quietSeconds },
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        }
+    }
+
+    public Task WaitForDispatchBoundaryAsync(string boundary) => UntilDispatchAsync(() =>
+        Task.FromResult(File.Exists(Path.Combine(Root, boundary + ".barrier.json"))), boundary);
+
     // CARD-1359: the slow-launch seam (FileBoundary.ReachedAsync) holds the owned task's reach of a
     // named boundary for the mapped seconds. Written before the dispatch starts; cleared before the
     // restarted child so recovery never sees it.
