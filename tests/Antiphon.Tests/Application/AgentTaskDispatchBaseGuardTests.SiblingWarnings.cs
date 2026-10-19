@@ -93,7 +93,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         await w.Db.SaveChangesAsync();
         await using (var provider = CreateProvider(w.Connection, w.Repo.WorktreeRoot))
         await using (var scope = provider.CreateAsyncScope())
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
         var held = await w.Db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == w.Task.Id);
         held.Status.ShouldBe(AgentTaskStatus.Queued); held.WorktreePath.ShouldBeNull();
         (await w.Db.AgentTaskDispatchWarningIntents.CountAsync(i => i.TaskId == w.Task.Id)).ShouldBe(0);
@@ -207,7 +207,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         await using var scope = provider.CreateAsyncScope();
         using var canceled = new CancellationTokenSource();
         if (cancellation) interceptor.Cancel = boundary.Cancel = canceled;
-        try { await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(canceled.Token); }
+        try { await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(canceled.Token); }
         catch (OperationCanceledException) when (cancellation) { }
         catch (DbUpdateException) when (!cancellation) { /* Inspect persisted custody after the failed claim. */ }
         (afterSave ? interceptor.Fired : boundary.Fired).ShouldBeTrue();
@@ -236,7 +236,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         await using var provider = CreateProvider(w.Connection, w.Repo.WorktreeRoot,
             interceptor: afterSave ? interceptor : null, boundary: afterSave ? null : boundary);
         await using var scope = provider.CreateAsyncScope();
-        var tick = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+        var tick = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
         (afterSave ? interceptor.FiredFor : boundary.FiredFor).ShouldBe(new[] { w.Task.Id, second.Id }, ignoreOrder: true);
         tick.Failures.ShouldBe(2); tick.Dispatched.ShouldBe(0);
         await using var check = w.Fresh();
@@ -264,7 +264,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             await edit.AgentTasks.Where(t => t.Id == w.Task.Id).ExecuteUpdateAsync(s => s.SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()));
         });
         await using var scope = provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
         await using var db = w.Fresh();
         var task = await db.AgentTasks.SingleAsync(t => t.Id == w.Task.Id);
         task.Status.ShouldBe(AgentTaskStatus.Queued); task.WorktreePath.ShouldBeNull(); task.AgentSessionId.ShouldBeNull();
@@ -282,7 +282,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         var git = new MovingSiblingGit(before.Keys.ToHashSet());
         await using var provider = CreateProvider(w.Connection, w.Repo.WorktreeRoot, git: git);
         await using var scope = provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
         await using var db = w.Fresh();
         var intent = (await db.AgentTaskDispatchWarningIntents.Where(i => i.TaskId == w.Task.Id).ToListAsync()).ShouldHaveSingleItem();
         intent.WarningKey.ShouldBe(DispatchBaseNotificationPayload.SiblingKey(b.Id));
@@ -308,7 +308,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         await using var provider = CreateProvider(w.Connection, w.Repo.WorktreeRoot, git: git);
         await using var scope = provider.CreateAsyncScope();
 
-        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
 
         git.Commands.ShouldContain(args => args[0] == "for-each-ref"
             && args.Contains($"refs/heads/{sibling.WorktreeBranch}"));
@@ -500,7 +500,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             }
             await using var provider = CreateProvider(Connection, Repo.WorktreeRoot, onLeaseAcquired: onLease, git: git);
             await using var scope = provider.CreateAsyncScope();
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
             await using var check = Fresh();
             var dispatched = await check.AgentTasks.SingleAsync(t => t.Id == Task.Id);
             dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);

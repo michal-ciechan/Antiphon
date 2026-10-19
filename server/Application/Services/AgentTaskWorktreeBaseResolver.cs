@@ -46,12 +46,18 @@ public sealed class AgentTaskWorktreeBaseResolver(
     private static readonly StringComparison PathComparison = OperatingSystem.IsWindows()
         ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
-    public async Task<CardWorktreeBaseSelection> ResolveAsync(AgentTask task, CancellationToken ct)
+    public Task<CardWorktreeBaseSelection> ResolveAsync(AgentTask task, CancellationToken ct) =>
+        ResolveAsync(task, null, ct);
+
+    public async Task<CardWorktreeBaseSelection> ResolveAsync(AgentTask task,
+        WorktreeBaseInspection? sharedInspection, CancellationToken ct)
     {
         var fallback = task.MergeTargetRef ?? _settings.DefaultBranch;
         CardWorktreeBaseSelection Target() => new(CardWorktreeBaseDecision.Target, fallback,
             LandingTarget: task.MergeTargetRef ?? "master", ObservedAt: _clock.GetUtcNow().UtcDateTime);
-        using var inspection = new WorktreeBaseInspection(git, task.RepoPath ?? "", _settings, _clock, _processGate, ct);
+        using var ownedInspection = sharedInspection is null
+            ? new WorktreeBaseInspection(git, task.RepoPath ?? "", _settings, _clock, _processGate, ct) : null;
+        var inspection = sharedInspection ?? ownedInspection!;
         var warnings = new List<string>();
         var totalCandidates = 0;
         var inspected = 0;

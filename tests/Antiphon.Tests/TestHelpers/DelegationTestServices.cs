@@ -104,6 +104,7 @@ internal static class DelegationTestServices
         services.TryAddSingleton<GitProcessGate>();
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddScoped<CardSiblingInspectionService>();
+        services.TryAddSingleton<CardSiblingInspectionQueue>();
         services.TryAddScoped<DispatchBaseWarningIntentService>();
         services.TryAddScoped<IWorkspaceReservationJournal, Antiphon.Server.Infrastructure.Data.WorkspaceReservationJournal>();
         services.TryAddScoped<IRetirementCommandJournal, Antiphon.Server.Infrastructure.Data.RetirementCommandJournal>();

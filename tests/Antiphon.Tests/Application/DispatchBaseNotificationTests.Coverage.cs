@@ -268,7 +268,7 @@ public partial class DispatchBaseNotificationTests
         await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, "master",
             interceptor: interceptor);
         await using var scope = provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
         interceptor.Fired.ShouldBeFalse();
 
         var siblingTip = (await repo.GitReadAsync("rev-parse", sibling.WorktreeBranch!)).Trim();
@@ -315,7 +315,7 @@ public partial class DispatchBaseNotificationTests
                     .ExecuteUpdateAsync(s => s.SetProperty(t => t.ParentSessionId, destinationB), ct);
             });
         await using var scope = provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
 
         var siblingTip = (await repo.GitReadAsync("rev-parse", sibling.WorktreeBranch!)).Trim();
         await using var verify = CreateContext(schema);
@@ -362,7 +362,7 @@ public partial class DispatchBaseNotificationTests
                     .ExecuteUpdateAsync(s => s.SetProperty(t => t.ParentSessionId, destinationB), ct);
             });
         await using var scope = provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
 
         await using var verify = CreateContext(schema);
         var dispatched = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
@@ -437,7 +437,7 @@ public partial class DispatchBaseNotificationTests
             },
             interceptor: interceptor);
         await using var scope = provider.CreateAsyncScope();
-        try { await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct); }
+        try { await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct); }
         catch (DbUpdateException) { }
         catch (IOException) { }
         interceptor.Fired.ShouldBeTrue();
@@ -694,7 +694,7 @@ public partial class DispatchBaseNotificationTests
             await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, "master",
                 onLeaseAcquired: onLease, progressGit: progress);
             await using var scope = provider.CreateAsyncScope();
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
         }
         finally
         {

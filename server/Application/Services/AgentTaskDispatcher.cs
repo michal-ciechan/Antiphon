@@ -112,11 +112,13 @@ public sealed partial class AgentTaskDispatcher
     private readonly ILandingGit? _landingGit;
     private readonly AgentTaskWorktreeBaseResolver? _baseResolver;
     private readonly CardSiblingInspectionService? _siblingInspection;
+    private readonly CardSiblingInspectionQueue? _siblingInspections;
     private readonly HostBudgetService? _hostBudgets;
     private IReadOnlyDictionary<string, HostLimit> _hostLimits = new Dictionary<string, HostLimit>();
 
     /// <summary>This instance's context, so a test can tell an owned-scope sweep's context apart.</summary>
     internal AppDbContext Db => _db;
+    internal CardSiblingInspectionQueue? SiblingInspections => _siblingInspections;
 
     /// <summary>CARD-1128: reports the dependencies received by this dispatcher; tests only.</summary>
     internal (bool BlockedTaskSync, bool SettlementSync) SyncDebtSweepsWired =>
@@ -217,10 +219,12 @@ public sealed partial class AgentTaskDispatcher
         BlockedTaskSyncRecoveryService? blockedTaskSync = null,
         SettlementSyncRecoveryService? settlementSync = null,
         DispatchConcurrencySettingsService? dispatchConcurrency = null,
-        CardSiblingInspectionService? siblingInspection = null)
+        CardSiblingInspectionService? siblingInspection = null,
+        CardSiblingInspectionQueue? siblingInspections = null)
     {
         _dispatchConcurrency = dispatchConcurrency;
         _siblingInspection = siblingInspection;
+        _siblingInspections = siblingInspections;
         _terminalSeatRelease = terminalSeatRelease;
         _blockedTaskSync = blockedTaskSync;
         _settlementSync = settlementSync;
@@ -604,7 +608,8 @@ public sealed partial class AgentTaskDispatcher
         // CARD-0672 D-2: the waiter key per repository, resolved once per tick.
         var waiterKeys = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        foreach (var task in queued)
+        _siblingInspections?.Reconcile(queued.Select(t => t.Id).ToHashSet());
+        foreach (var task in queued.OrderBy(t => _siblingInspections?.Attempted(t.Id) == true))
         {
             ct.ThrowIfCancellationRequested();
 
@@ -808,12 +813,29 @@ public sealed partial class AgentTaskDispatcher
             }
 
             SiblingBaseGuard? siblingObservation = null;
+            CardSiblingInspectionIntent? siblingIntent = null;
             if (task.Workspace == WorkspaceMode.Worktree
                 && task.CardId is not null
                 && task.WorktreePath is null
-                && task.RepairSourceTaskId is null)
+                && task.RepairSourceTaskId is null
+                && task.SourceLandingOperationId is null)
             {
-                var siblingGuard = await EvaluateCardSiblingBaseAsync(task, ct);
+                if (_siblingInspection is null || _siblingInspections is null)
+                    throw new InvalidOperationException("Sibling inspection worker is not registered.");
+                // No Git runs here. Durable Held precedes advisory enqueue, so restart re-arms safely.
+                using var intentBudget = _siblingInspection.Begin(task.RepoPath ?? "", ct);
+                var fallback = await _siblingInspection.ConfiguredDefaultAsync(task, intentBudget, ct);
+                if (task.RepoPath is null) continue;
+                siblingIntent = CardSiblingInspectionIntent.From(task, fallback);
+                var siblingGuard = _siblingInspections.Take(siblingIntent);
+                if (siblingGuard is null)
+                {
+                    heldThisTick.Add((task.Id, HoldKind.SiblingLanding));
+                    await TraceHeldAsync(task, "Held: same-card base inspection is pending.", lastHeld, ct);
+                    if (!_siblingInspections.TryEnqueue(siblingIntent))
+                        await TraceHeldAsync(task, "Held: same-card base inspection capacity is occupied.", lastHeld, ct);
+                    continue;
+                }
                 if (siblingGuard.Hold is { } heldSibling)
                 {
                     heldThisTick.Add((task.Id, HoldKind.SiblingLanding));
@@ -893,7 +915,7 @@ public sealed partial class AgentTaskDispatcher
                     continue;
                 }
 
-                var outcome = await DispatchOneAsync(task, ct, siblingObservation);
+                var outcome = await DispatchOneAsync(task, ct, siblingObservation, siblingIntent);
                 if (outcome == DispatchOneResult.HeldOnLease)
                 {
                     var leaseDetail = await DescribeLeaseHoldAsync(task, ct);
@@ -5112,10 +5134,6 @@ public sealed partial class AgentTaskDispatcher
             ct);
     }
 
-    private Task<SiblingBaseGuard> EvaluateCardSiblingBaseAsync(AgentTask task, CancellationToken ct) =>
-        (_siblingInspection ?? throw new InvalidOperationException("Sibling inspection is not registered."))
-            .InspectAsync(task, ct);
-
     private async Task<bool> ExpireClaimedOptionalWorkAsync(AgentTask task, CancellationToken ct)
     {
         using var observation = new RuntimePhase(_logger, _timeProvider, task.AgentSessionId ?? Guid.Empty,
@@ -5324,7 +5342,8 @@ public sealed partial class AgentTaskDispatcher
         DispatchOneAsync(task, ct, siblingObservation: null);
 
     private async Task<DispatchOneResult> DispatchOneAsync(
-        AgentTask task, CancellationToken ct, SiblingBaseGuard? siblingObservation)
+        AgentTask task, CancellationToken ct, SiblingBaseGuard? siblingObservation,
+        CardSiblingInspectionIntent? siblingIntent = null)
     {
         // CARD-0507 D-2: before the claim, so a task queued before the configuration changed
         // launches nothing; the tick's catch fails it with the code, role and key
@@ -5362,6 +5381,9 @@ public sealed partial class AgentTaskDispatcher
             return DispatchOneResult.NotClaimed;
         }
 
+        using var claimInspection = siblingIntent is not null && _siblingInspection is not null
+            ? _siblingInspection.Begin(siblingIntent.Repository, ct) : null;
+
         // Released-seat continuations claim under the source recipient's gate, in the same
         // order as answer/release (gate, then task row). New-session input uses a different gate.
         using var answerClaim = await AcquireReleasedAnswerClaimAsync(task, ct);
@@ -5398,6 +5420,37 @@ public sealed partial class AgentTaskDispatcher
         // FOR UPDATE reuses the tick's tracked instance; reload so Capture sees the locked row
         // (a pre-claim route edit) rather than the outer snapshot. PC-71.
         await _db.Entry(claimed).ReloadAsync(ct);
+        if (siblingIntent is not null && siblingObservation is not null && claimInspection is not null)
+        {
+            var valid = false;
+            try
+            {
+                var fallback = await _siblingInspection!.ConfiguredDefaultAsync(claimed, claimInspection, ct);
+                valid = claimed.Status == AgentTaskStatus.Queued && claimed.RepoPath is not null
+                    && claimed.WorktreePath is null && claimed.RepairSourceTaskId is null
+                    && claimed.SourceLandingOperationId is null
+                    && CardSiblingInspectionIntent.From(claimed, fallback) == siblingIntent;
+                if (valid)
+                {
+                    var inventory = await new CardSiblingInventory(_db).ReadAsync(claimed, true, claimInspection, ct);
+                    valid = CardSiblingInspectionService.MetadataOf(inventory) == siblingObservation.Metadata;
+                }
+                if (valid && siblingObservation.FrozenRefs is { } refs)
+                    foreach (var reference in refs)
+                    {
+                        if (await claimInspection.CommitAsync(reference.Key) != reference.Value)
+                        { valid = false; break; }
+                    }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            { valid = false; }
+            if (!valid)
+            {
+                await transaction.RollbackAsync(ct);
+                return DispatchOneResult.NotClaimed;
+            }
+        }
+
         if (claimed.ReleasedSeatAnswerId is not null
             && (claimed.ReleasedSeatAnswerTargetAttempt != claimed.Attempt
                 || !await _db.RunnerSeatReleases.AnyAsync(r => r.Id == claimed.ReleasedSeatAnswerReleaseId
@@ -5600,7 +5653,7 @@ public sealed partial class AgentTaskDispatcher
                 && (claimed.RequestedWorktreeBaseMode != RequestedWorktreeBaseMode.Target
                     || claimed.WorktreeBasePreviewJson is not null))
             {
-                selected = await _baseResolver.ResolveAsync(claimed, ct);
+                selected = await _baseResolver.ResolveAsync(claimed, claimInspection, ct);
                 if (selected.Decision == CardWorktreeBaseDecision.WaitForLand)
                 {
                     await transaction.RollbackAsync(ct);
