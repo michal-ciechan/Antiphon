@@ -1548,8 +1548,9 @@ trap 'rm -rf "$root"' EXIT
 mkdir -p "$root/home/.nuget" "$root/packages" "$root/scratch"
 export HOME="$root/home" DOTNET_CLI_HOME="$root/home" NUGET_PACKAGES="$root/packages" NUGET_SCRATCH="$root/scratch"
 export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_CLI_TELEMETRY_OPTOUT=1
+# CARD-0913: match NET9_PACK_VERSION in docker/session-runner-grok/Dockerfile; the runtime pin does not select reference packs.
 cat > "$root/Smoke.csproj" <<'EOF'
-<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><UseAppHost>true</UseAppHost><RuntimeIdentifier>linux-x64</RuntimeIdentifier><RuntimeFrameworkVersion>9.0.20</RuntimeFrameworkVersion><TargetLatestRuntimePatch>false</TargetLatestRuntimePatch><SelfContained>false</SelfContained><NuGetAudit>false</NuGetAudit></PropertyGroup><ItemGroup><FrameworkReference Include="Microsoft.AspNetCore.App" /></ItemGroup></Project>
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><UseAppHost>true</UseAppHost><RuntimeIdentifier>linux-x64</RuntimeIdentifier><RuntimeFrameworkVersion>9.0.20</RuntimeFrameworkVersion><TargetLatestRuntimePatch>false</TargetLatestRuntimePatch><SelfContained>false</SelfContained><NuGetAudit>false</NuGetAudit></PropertyGroup><ItemGroup><FrameworkReference Include="Microsoft.AspNetCore.App" /><FrameworkReference Update="Microsoft.NETCore.App" TargetingPackVersion="9.0.20" /><FrameworkReference Update="Microsoft.AspNetCore.App" TargetingPackVersion="9.0.20" /></ItemGroup></Project>
 EOF
 printf 'var context = new Microsoft.AspNetCore.Http.DefaultHttpContext(); System.Console.WriteLine(context.Response.StatusCode == 200 ? "CARD0849_APPHOST_OK" : "bad-context");\n' > "$root/Program.cs"
 printf '%s\n' '<configuration><packageSources><clear/></packageSources><fallbackPackageFolders><clear/></fallbackPackageFolders></configuration>' > "$root/NuGet.Config"
