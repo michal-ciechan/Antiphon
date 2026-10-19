@@ -400,6 +400,8 @@ try
     builder.Services.AddScoped<DelegationWorktreeService>();
     builder.Services.AddScoped<AgentTaskWorktreeBaseResolver>();
     builder.Services.AddScoped<CardSiblingInspectionService>();
+    builder.Services.AddSingleton<CardSiblingInspectionQueue>();
+    builder.Services.AddHostedService<CardSiblingInspectionHostedService>();
     builder.Services.AddScoped<DispatchBaseWarningIntentService>();
     builder.Services.AddScoped<DelegationOpenGate>();
     builder.Services.AddScoped<WorktreeHealthService>();

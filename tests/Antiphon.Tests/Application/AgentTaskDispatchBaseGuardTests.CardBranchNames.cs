@@ -142,7 +142,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             await repo.GitAsync("worktree", "add", "-b", branch, path, source.WorktreeBranch!);
             await repo.GitAsync("branch", "-D", source.WorktreeBranch!);
             await using (var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, cardBranchNames: true))
-            await using (var scope = provider.CreateAsyncScope()) await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            await using (var scope = provider.CreateAsyncScope()) await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
             db.ChangeTracker.Clear(); var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
             task.Status.ShouldBe(AgentTaskStatus.Dispatched, "kept-adopted: " + task.FailureReason);
             task.WorktreeBranch.ShouldBe(branch); task.WorktreePath.ShouldBe(path);

@@ -77,7 +77,7 @@ public partial class AgentTaskDispatchBaseGuardTests
 
         await using (var launchProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
         await using (var launchScope = launchProvider.CreateAsyncScope())
-            await launchScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            await launchScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
 
         db.ChangeTracker.Clear();
         var launched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
@@ -148,8 +148,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         created.WorktreeBase!.Decision.ShouldBe(CardWorktreeBaseDecision.WaitForLand);
         created.WorktreeBase.SourceTaskId.ShouldBe(pending.Id);
         var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
-        await dispatcher.TickAsync(ct);
-        await dispatcher.TickAsync(ct);
+        await dispatcher.TickInspectedAsync(ct);
+        await dispatcher.TickInspectedAsync(ct);
 
         db.ChangeTracker.Clear();
         var held = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
@@ -252,7 +252,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         }
         await using (var launchProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
         await using (var launchScope = launchProvider.CreateAsyncScope())
-            await launchScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            await launchScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
         db.ChangeTracker.Clear();
         var result = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
         if (scenario == "still_divergent")
@@ -269,7 +269,7 @@ public partial class AgentTaskDispatchBaseGuardTests
                     .RetryAsync(created.Id, ct);
             await using (var resumedProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
             await using (var resumedScope = resumedProvider.CreateAsyncScope())
-                await resumedScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+                await resumedScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
             db.ChangeTracker.Clear();
             result = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
         }
@@ -339,7 +339,7 @@ public partial class AgentTaskDispatchBaseGuardTests
 
         await using (var launchProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
         await using (var launchScope = launchProvider.CreateAsyncScope())
-            await launchScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            await launchScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
         db.ChangeTracker.Clear();
         var blocked = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
         blocked.Status.ShouldBe(AgentTaskStatus.Blocked);
@@ -404,7 +404,7 @@ public partial class AgentTaskDispatchBaseGuardTests
 
         await using (var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
         await using (var scope = provider.CreateAsyncScope())
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
 
         db.ChangeTracker.Clear();
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
@@ -443,7 +443,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         await db.SaveChangesAsync(ct);
         await using (var launchProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
         await using (var scope = launchProvider.CreateAsyncScope())
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
         db.ChangeTracker.Clear();
         (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct))
             .Status.ShouldBe(AgentTaskStatus.Blocked);
@@ -509,7 +509,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             maxCandidates: scenario is "candidate_cap" or "pending_land_budget" ? 1 : null,
             maxGitCommands: scenario == "git_command_limit" ? 2 : null))
         await using (var scope = launchProvider.CreateAsyncScope())
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
         db.ChangeTracker.Clear();
         var result = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
         if (scenario == "pending_land_budget")
@@ -528,7 +528,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             await using (var resumeProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot,
                 maxCandidates: 1))
             await using (var scope = resumeProvider.CreateAsyncScope())
-                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
             db.ChangeTracker.Clear();
             result = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
             result.Status.ShouldBe(AgentTaskStatus.Dispatched);
@@ -631,7 +631,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             maxCandidates: scenario == "candidate_cap" ? 1 : null,
             maxGitCommands: scenario == "git_command_limit" ? 2 : null))
         await using (var scope = provider.CreateAsyncScope())
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
         db.ChangeTracker.Clear();
         var result = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
         if (blocked)
@@ -689,7 +689,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             git: new CandidateDeadlineGit(clock, sibling.WorktreeBranch!), clock: clock,
             maxCandidates: shape == "fresh" ? 1 : null))
         await using (var scope = provider.CreateAsyncScope())
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
         db.ChangeTracker.Clear();
         var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
         task.Status.ShouldBe(AgentTaskStatus.Dispatched);
@@ -727,7 +727,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             var git = new TargetMissingTwiceGit();
             await using (var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, git: git))
             await using (var scope = provider.CreateAsyncScope())
-                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
             git.Hits.ShouldBe(2);
             db.ChangeTracker.Clear();
             var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
@@ -813,7 +813,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         }
         await using (var launchProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot))
         await using (var launchScope = launchProvider.CreateAsyncScope())
-            await launchScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            await launchScope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
         db.ChangeTracker.Clear();
         var launched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
         launched.Status.ShouldBe(AgentTaskStatus.Dispatched);
@@ -942,7 +942,7 @@ public partial class AgentTaskDispatchBaseGuardTests
                 Workspace: WorkspaceMode.Worktree, Card: card.Id.ToString("D")),
             new AgentTaskService.Caller(null, null, repo.Path), ct);
         created.CardId.ShouldBe(card.Id);
-        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
 
         db.ChangeTracker.Clear();
         var next = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
@@ -976,7 +976,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         await using var scope = provider.CreateAsyncScope();
         var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
 
-        await dispatcher.TickAsync(ct);
+        await dispatcher.TickInspectedAsync(ct);
 
         var held = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
         held.Status.ShouldBe(AgentTaskStatus.Queued);
@@ -997,7 +997,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         await db.SaveChangesAsync(ct);
         await repo.GitAsync("merge", "--ff-only", sibling.WorktreeBranch!);
 
-        await dispatcher.TickAsync(ct);
+        await dispatcher.TickInspectedAsync(ct);
 
         db.ChangeTracker.Clear();
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
@@ -1034,7 +1034,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         await using var scope = provider.CreateAsyncScope();
         var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
 
-        await dispatcher.TickAsync(ct);
+        await dispatcher.TickInspectedAsync(ct);
 
         var held = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
         held.Status.ShouldBe(AgentTaskStatus.Queued);
@@ -1066,7 +1066,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
         await using var scope = provider.CreateAsyncScope();
         var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
-        await dispatcher.TickAsync(ct);
+        await dispatcher.TickInspectedAsync(ct);
 
         db.ChangeTracker.Clear();
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
@@ -1116,7 +1116,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
         await using var scope = provider.CreateAsyncScope();
         var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
-        await dispatcher.TickAsync(ct);
+        await dispatcher.TickInspectedAsync(ct);
 
         var held = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == repair.Id, ct);
         held.Status.ShouldBe(AgentTaskStatus.Queued);
@@ -1132,7 +1132,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         liveOwner.LandRequestedAt = null;
         await db.SaveChangesAsync(ct);
         await repo.GitAsync("checkout", owner.WorktreeBranch!);
-        await dispatcher.TickAsync(ct);
+        await dispatcher.TickInspectedAsync(ct);
         db.ChangeTracker.Clear();
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == repair.Id, ct);
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
@@ -1157,7 +1157,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
         await using var scope = provider.CreateAsyncScope();
         var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
-        await dispatcher.TickAsync(ct);
+        await dispatcher.TickInspectedAsync(ct);
 
         db.ChangeTracker.Clear();
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
@@ -1194,7 +1194,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
         await using var scope = provider.CreateAsyncScope();
         var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
-        await dispatcher.TickAsync(ct);
+        await dispatcher.TickInspectedAsync(ct);
 
         db.ChangeTracker.Clear();
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
@@ -1256,7 +1256,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         services.AddScoped<AgentTaskDispatcher>();
         await using var provider = services.BuildServiceProvider();
         await using var scope = provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
 
         db.ChangeTracker.Clear();
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
@@ -1299,7 +1299,7 @@ public partial class AgentTaskDispatchBaseGuardTests
 
         await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
         await using var scope = provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
         db.ChangeTracker.Clear();
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == repair.Id, ct);
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
@@ -1379,7 +1379,7 @@ public partial class AgentTaskDispatchBaseGuardTests
                 }
             : null);
         await using var scope = provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
 
         db.ChangeTracker.Clear();
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
@@ -1468,7 +1468,7 @@ public partial class AgentTaskDispatchBaseGuardTests
 
         await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
         await using var scope = provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
 
         db.ChangeTracker.Clear();
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
@@ -1523,7 +1523,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         var missing = "missing-" + Guid.NewGuid().ToString("N")[..8];
         await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, defaultBranch: missing);
         await using var scope = provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
 
         db.ChangeTracker.Clear();
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
