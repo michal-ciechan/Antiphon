@@ -79,7 +79,7 @@ public partial class AttentionServiceTests
             row.TaskId.ShouldBeNull();
             row.Actions.ShouldBe([AttentionAction.OpenDrawer]);
             row.ConditionKey.ShouldBe($"session-unowned:{a.Id:N}");
-            row.EntityLabel.ShouldBe($"Unowned session {a.Id.ToString("N")[..8]}");
+            row.Title.ShouldBe($"Unowned session {a.Id.ToString("N")[..8]}");
             row.ModelKind.ShouldBe("Codex");
             row.Headline.ShouldBe("Live session has no agent pointer, card or open task.");
             row.Evidence.ShouldContain($"historicalStandingAgentId={w.Agent.Id:D}");
