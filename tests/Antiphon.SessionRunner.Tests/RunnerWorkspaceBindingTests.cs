@@ -753,7 +753,7 @@ public sealed class RunnerWorkspaceBindingTests
         public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
         public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct) => throw new NotSupportedException();
         public RunnerBufferDto GetBuffer(Guid sessionId) => throw new NotSupportedException();
-        public RunnerSnapshotDto GetSnapshot(Guid sessionId) => throw new NotSupportedException();
+        public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
         public RunnerTranscriptDto GetTranscript(Guid sessionId) => throw new NotSupportedException();
         public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) => throw new NotSupportedException();
         public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) => throw new NotSupportedException();

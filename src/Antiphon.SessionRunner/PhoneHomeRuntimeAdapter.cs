@@ -101,7 +101,7 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
     public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct) =>
         _runtime.StartAsync(request, ct);
     public RunnerBufferDto GetBuffer(Guid sessionId) => _runtime.GetBuffer(sessionId);
-    public RunnerSnapshotDto GetSnapshot(Guid sessionId) => _runtime.GetSnapshot(sessionId);
+    public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) => _runtime.GetSnapshotAsync(sessionId, ct);
     public RunnerTranscriptDto GetTranscript(Guid sessionId) => _runtime.GetTranscript(sessionId);
     public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
         _runtime.SendInputAsync(sessionId, input, ct);

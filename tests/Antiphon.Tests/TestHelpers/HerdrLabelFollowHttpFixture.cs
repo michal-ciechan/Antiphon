@@ -124,7 +124,7 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
         _app.MapGet("/capabilities", () => new RunnerCapabilitiesDto("ModernConPty", "test", "test", false,
             SessionRunnerRuntime.SupportedTranscriptFormats, SessionBackends: [SessionBackends.Herdr],
             Features: [RunnerCapabilityFeatures.HerdrNamedTabPlacement, RunnerCapabilityFeatures.SessionGenerationV1]));
-        _app.MapGet("/sessions/{id:guid}/snapshot", (Guid id) => Runtime.GetSnapshot(id));
+        _app.MapGet("/sessions/{id:guid}/snapshot", (Guid id, CancellationToken ct) => Runtime.GetSnapshotAsync(id, ct));
         _app.MapGet("/sessions/{id:guid}/buffer", (Guid id) => Runtime.GetBuffer(id));
         _app.MapGet("/sessions/{id:guid}/transcript", (Guid id) => Runtime.GetTranscript(id));
         _app.MapPost("/sessions/{id:guid}/input", async (Guid id, RunnerInputRequest r, CancellationToken ct) => await Runtime.SendInputAsync(id, r.Input, ct));

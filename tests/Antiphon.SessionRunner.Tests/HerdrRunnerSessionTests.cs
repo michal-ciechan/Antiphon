@@ -33,7 +33,7 @@ public class HerdrRunnerSessionTests
         var paneId = fake.RequireAgentPaneId();
 
         // Establish baseline (first read — no content bump yet).
-        var baselineSnap = runtime.GetSnapshot(sessionId).LastSequence;
+        var baselineSnap = (await runtime.GetSnapshotAsync(sessionId, CancellationToken.None)).LastSequence;
         var baselineGet = (await runtime.GetAsync(sessionId, CancellationToken.None)).LastSequence;
         baselineGet.ShouldBe(baselineSnap);
 
@@ -41,7 +41,7 @@ public class HerdrRunnerSessionTests
         fake.SetPaneRevision(paneId, 0);
         fake.SetPaneScreenText(paneId, "composer shows typed body CARD0164");
 
-        var afterSnap = runtime.GetSnapshot(sessionId).LastSequence;
+        var afterSnap = (await runtime.GetSnapshotAsync(sessionId, CancellationToken.None)).LastSequence;
         afterSnap.ShouldBeGreaterThan(baselineSnap);
 
         // Reset text to a NEW value so GetAsync's pane.read also sees a delta.
@@ -71,11 +71,11 @@ public class HerdrRunnerSessionTests
         var paneId = fake.RequireAgentPaneId();
 
         fake.SetPaneScreenText(paneId, "stable idle screen");
-        var first = runtime.GetSnapshot(sessionId).LastSequence;
+        var first = (await runtime.GetSnapshotAsync(sessionId, CancellationToken.None)).LastSequence;
 
         for (var i = 0; i < 6; i++)
         {
-            runtime.GetSnapshot(sessionId).LastSequence.ShouldBe(first);
+            (await runtime.GetSnapshotAsync(sessionId, CancellationToken.None)).LastSequence.ShouldBe(first);
             (await runtime.GetAsync(sessionId, CancellationToken.None)).LastSequence.ShouldBe(first);
         }
 
@@ -105,7 +105,7 @@ public class HerdrRunnerSessionTests
         for (var i = 0; i < 8; i++)
         {
             seen.Add(i % 2 == 0
-                ? runtime.GetSnapshot(sessionId).LastSequence
+                ? (await runtime.GetSnapshotAsync(sessionId, CancellationToken.None)).LastSequence
                 : (await runtime.GetAsync(sessionId, CancellationToken.None)).LastSequence);
         }
 
@@ -113,13 +113,13 @@ public class HerdrRunnerSessionTests
         seen.Distinct().Count().ShouldBe(1);
 
         fake.SetPaneScreenText(paneId, "now the screen changed once");
-        var afterChange = runtime.GetSnapshot(sessionId).LastSequence;
+        var afterChange = (await runtime.GetSnapshotAsync(sessionId, CancellationToken.None)).LastSequence;
         afterChange.ShouldBeGreaterThan(seen[0]);
 
         // Further identical reads stay flat; counter never goes backwards.
         for (var i = 0; i < 4; i++)
         {
-            var snap = runtime.GetSnapshot(sessionId).LastSequence;
+            var snap = (await runtime.GetSnapshotAsync(sessionId, CancellationToken.None)).LastSequence;
             var get = (await runtime.GetAsync(sessionId, CancellationToken.None)).LastSequence;
             snap.ShouldBe(afterChange);
             get.ShouldBe(afterChange);
@@ -187,8 +187,8 @@ public class HerdrRunnerSessionTests
         long after = before;
         while (DateTime.UtcNow < deadline)
         {
-            after = runtime.GetSnapshot(sessionId).LastSequence;
-            if (after > before && runtime.GetSnapshot(sessionId).RawOutput.Contains("pty-card0164-marker"))
+            after = (await runtime.GetSnapshotAsync(sessionId, CancellationToken.None)).LastSequence;
+            if (after > before && (await runtime.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput.Contains("pty-card0164-marker"))
                 break;
             await Task.Delay(50);
         }

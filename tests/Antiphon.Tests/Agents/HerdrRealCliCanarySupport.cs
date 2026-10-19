@@ -147,7 +147,7 @@ internal static class HerdrRealCliCanarySupport
     {
         for (var i = 0; i < 20; i++)
         {
-            var snap = runtime.GetSnapshot(sessionId);
+            var snap = await runtime.GetSnapshotAsync(sessionId, ct);
             if (CodexTrustPromptDetector.IsVisible(snap.RawOutput, snap.RenderedScreen))
             {
                 await runtime.SendInputAsync(sessionId, "\r", ct);

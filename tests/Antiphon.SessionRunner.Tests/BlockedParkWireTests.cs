@@ -873,7 +873,7 @@ public sealed class BlockedParkWireTests
         public Task<RunnerSessionDto> GetAsync(Guid id, CancellationToken ct) => Adapter.GetAsync(id, ct);
         public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct) => throw new InvalidOperationException("No provider launch permitted");
         public RunnerBufferDto GetBuffer(Guid id) => Adapter.GetBuffer(id);
-        public RunnerSnapshotDto GetSnapshot(Guid id) => Adapter.GetSnapshot(id);
+        public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct) => Adapter.GetSnapshotAsync(id, ct);
         public RunnerTranscriptDto GetTranscript(Guid id) => Adapter.GetTranscript(id);
         public Task SendInputAsync(Guid id, string input, CancellationToken ct) => Adapter.SendInputAsync(id, input, ct);
         public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid id, RunnerConditionalInputRequest request, CancellationToken ct) => Adapter.SendConditionalInputAsync(id, request, ct);

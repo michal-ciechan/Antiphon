@@ -335,7 +335,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
             return Session(request.SessionId);
         }
         public RunnerBufferDto GetBuffer(Guid id) => new(id, Terminals[id].SnapshotRawOutput(), _transcripts[id].Count);
-        public RunnerSnapshotDto GetSnapshot(Guid id)
+        public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct)
         {
             var terminal = Terminals[id];
             SnapshotReads++;
@@ -346,8 +346,8 @@ internal static partial class CodexCliRemoteDeliveryFixture
                 _ => CodexStartupFixtures.P3,
             };
             var screen = terminal.Inputs.Count == 0 ? startup : terminal.SnapshotRenderedScreen();
-            return new(id, terminal.SnapshotRawOutput(), screen,
-                _transcripts[id].Count + terminal.Inputs.Count, terminal.StartedAcceptedGeneration!.Value, terminal.StartedAcceptedGeneration);
+            return Task.FromResult(new RunnerSnapshotDto(id, terminal.SnapshotRawOutput(), screen,
+                _transcripts[id].Count + terminal.Inputs.Count, terminal.StartedAcceptedGeneration!.Value, terminal.StartedAcceptedGeneration));
         }
         private static string GrokStartingScreen()
         {

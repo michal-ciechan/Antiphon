@@ -347,17 +347,17 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
         return Task.FromResult(new SessionRunnerBufferDto(buffer.SessionId, buffer.Buffer, buffer.LastSequence));
     }
 
-    public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
+    public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        var snapshot = _runtime.GetSnapshot(sessionId);
-        return Task.FromResult(new SessionRunnerSnapshotDto(
+        var snapshot = await _runtime.GetSnapshotAsync(sessionId, ct);
+        return new SessionRunnerSnapshotDto(
             snapshot.SessionId,
             snapshot.RawOutput,
             snapshot.RenderedScreen,
             snapshot.LastSequence,
             snapshot.StartedAt,
-            snapshot.AcceptedStartedAt));
+            snapshot.AcceptedStartedAt);
     }
 
     public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)

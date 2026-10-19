@@ -938,7 +938,7 @@ public class PhoneHomeConnectionTests
         public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct) =>
             Task.FromResult(new RunnerSessionDto(request.SessionId, 1, DateTime.UtcNow, "Running", null, "", 0));
         public RunnerBufferDto GetBuffer(Guid sessionId) => new(sessionId, "", 0);
-        public RunnerSnapshotDto GetSnapshot(Guid sessionId) => new(sessionId, "", "", 0, DateTime.UtcNow);
+        public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) => Task.FromResult(new RunnerSnapshotDto(sessionId, "", "", 0, DateTime.UtcNow));
         public RunnerTranscriptDto GetTranscript(Guid sessionId) => new(sessionId, [], 0);
         public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) => Task.CompletedTask;
         public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) =>

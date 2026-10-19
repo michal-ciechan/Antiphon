@@ -149,7 +149,7 @@ internal sealed class TaskParkProofWire : IAsyncDisposable
         public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) => inner.GetAsync(sessionId, ct);
         public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct) => throw new NotSupportedException();
         public RunnerBufferDto GetBuffer(Guid sessionId) => inner.GetBuffer(sessionId);
-        public RunnerSnapshotDto GetSnapshot(Guid sessionId) => inner.GetSnapshot(sessionId);
+        public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) => inner.GetSnapshotAsync(sessionId, ct);
         public RunnerTranscriptDto GetTranscript(Guid sessionId) => inner.GetTranscript(sessionId);
         public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) => throw new NotSupportedException();
         public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) => throw new NotSupportedException();

@@ -56,7 +56,7 @@ public class PtyHostAdoptionTests
             dtoB.StartedAt.ShouldNotBe(acceptedA.Value);
 
             // Interpretation rebuilt: pre-restart output is still in the snapshot.
-            runtimeB.GetSnapshot(sessionId).RawOutput.ShouldContain("before-restart-marker");
+            (await runtimeB.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput.ShouldContain("before-restart-marker");
 
             // Still fully interactive after adoption.
             await runtimeB.SendInputAsync(sessionId, "echo after-adopt-marker\r", CancellationToken.None);
@@ -304,13 +304,13 @@ public class PtyHostAdoptionTests
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
         while (DateTime.UtcNow < deadline)
         {
-            if (predicate(runtime.GetSnapshot(sessionId).RawOutput))
+            if (predicate((await runtime.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput))
                 return;
             await Task.Delay(100);
         }
 
         throw new System.TimeoutException(
-            $"Snapshot predicate not satisfied. Snapshot: {runtime.GetSnapshot(sessionId).RawOutput}");
+            $"Snapshot predicate not satisfied. Snapshot: {(await runtime.GetSnapshotAsync(sessionId, CancellationToken.None)).RawOutput}");
     }
 
     private static async Task<bool> IsQuietAsync(

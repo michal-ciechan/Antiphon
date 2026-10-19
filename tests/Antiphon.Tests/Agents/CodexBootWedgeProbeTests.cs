@@ -152,7 +152,7 @@ public sealed class CodexBootWedgeProbeTests
             await runtime.SendInputAsync(sessionId, PtyInputEncoding.WrapIfMultiline(PtyInputEncoding.NormalizeBody(body)), ct);
             if (!await WaitForComposerEvidenceAsync(runtime, sessionId, marker, ct))
                 return Persist(new ProbeOutcome(iteration, false, false, "no-composer-evidence: marker never rendered; Enter not sent"));
-            var beforeEnter = runtime.GetSnapshot(sessionId).LastSequence;
+            var beforeEnter = (await runtime.GetSnapshotAsync(sessionId, ct)).LastSequence;
             await Task.Delay(20, ct);
             await runtime.SendInputAsync(sessionId, "\r", ct);
             var submit = await ObserveSubmitAsync(runtime, sessionId, marker, beforeEnter, ct);
@@ -192,7 +192,7 @@ public sealed class CodexBootWedgeProbeTests
         var trustAnswered = false;
         while (DateTime.UtcNow < deadline)
         {
-            var snapshot = runtime.GetSnapshot(sessionId);
+            var snapshot = await runtime.GetSnapshotAsync(sessionId, ct);
             // Answer the trust prompt ONCE, as RunnerCodexAdapter does. RawOutput is cumulative, so
             // the detector stays true after the dialog is gone; re-sending Enter on every poll walked
             // the Windows sandbox NUX prompt onto its elevated-setup default (CARD-0133 S0).
@@ -223,7 +223,7 @@ public sealed class CodexBootWedgeProbeTests
         await Task.Delay(500, ct); // body's own trailing frames must not count as the submit.
         while (DateTime.UtcNow < deadline)
         {
-            var snapshot = runtime.GetSnapshot(sessionId);
+            var snapshot = await runtime.GetSnapshotAsync(sessionId, ct);
             var transcript = runtime.GetTranscript(sessionId);
             var userRow = transcript.Entries.Any(e => e.Kind == TranscriptKinds.UserPrompt
                 && e.Text?.Contains(marker, StringComparison.Ordinal) == true);
@@ -233,7 +233,7 @@ public sealed class CodexBootWedgeProbeTests
                 return (true, $"submitted userRow={userRow} working={working} markerVisible={markerVisible} seq={snapshot.LastSequence}");
             await Task.Delay(250, ct);
         }
-        return (false, $"no-positive-submit marker-still-visible={runtime.GetSnapshot(sessionId).RenderedScreen.Contains(marker, StringComparison.Ordinal)}");
+        return (false, $"no-positive-submit marker-still-visible={(await runtime.GetSnapshotAsync(sessionId, ct)).RenderedScreen.Contains(marker, StringComparison.Ordinal)}");
     }
 
     private static async Task<bool> WaitForComposerEvidenceAsync(
@@ -242,7 +242,7 @@ public sealed class CodexBootWedgeProbeTests
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
         while (DateTime.UtcNow < deadline)
         {
-            if (runtime.GetSnapshot(sessionId).RenderedScreen.Contains(marker, StringComparison.Ordinal))
+            if ((await runtime.GetSnapshotAsync(sessionId, ct)).RenderedScreen.Contains(marker, StringComparison.Ordinal))
                 return true;
             await Task.Delay(250, ct);
         }
@@ -253,14 +253,14 @@ public sealed class CodexBootWedgeProbeTests
         SessionRunnerRuntime runtime, Guid sessionId, string codexHome, string logs, CancellationToken ct)
     {
         var lines = new List<string>();
-        var before = runtime.GetSnapshot(sessionId).LastSequence;
+        var before = (await runtime.GetSnapshotAsync(sessionId, ct)).LastSequence;
         await runtime.SendInputAsync(sessionId, "x", ct);
         await Task.Delay(TimeSpan.FromSeconds(10), ct);
-        var afterChar = runtime.GetSnapshot(sessionId);
+        var afterChar = await runtime.GetSnapshotAsync(sessionId, ct);
         lines.Add($"P2 char-renders={afterChar.RenderedScreen.Contains("x", StringComparison.Ordinal)} seq={before}->{afterChar.LastSequence}");
         await runtime.ResizeAsync(sessionId, 121, 30, ct);
         await Task.Delay(TimeSpan.FromSeconds(10), ct);
-        var afterResize = runtime.GetSnapshot(sessionId);
+        var afterResize = await runtime.GetSnapshotAsync(sessionId, ct);
         lines.Add($"P2 resize-sequence={afterChar.LastSequence}->{afterResize.LastSequence}");
         if (runtime.Get(sessionId).Pid is { } pid)
         {
@@ -288,14 +288,14 @@ public sealed class CodexBootWedgeProbeTests
             var token = "zz" + Guid.NewGuid().ToString("N")[..8];
             await runtime.SendInputAsync(sessionId, token, ct);
             await Task.Delay(750, ct);
-            var typed = runtime.GetSnapshot(sessionId).RenderedScreen.Contains(token, StringComparison.Ordinal);
+            var typed = (await runtime.GetSnapshotAsync(sessionId, ct)).RenderedScreen.Contains(token, StringComparison.Ordinal);
             await runtime.SendInputAsync(sessionId, clear(token.Length), ct);
             await Task.Delay(750, ct);
-            var cleared = !runtime.GetSnapshot(sessionId).RenderedScreen.Contains(token, StringComparison.Ordinal);
+            var cleared = !(await runtime.GetSnapshotAsync(sessionId, ct)).RenderedScreen.Contains(token, StringComparison.Ordinal);
             var follow = "zz" + Guid.NewGuid().ToString("N")[..8];
             await runtime.SendInputAsync(sessionId, follow, ct);
             await Task.Delay(750, ct);
-            var followUp = runtime.GetSnapshot(sessionId).RenderedScreen.Contains(follow, StringComparison.Ordinal);
+            var followUp = (await runtime.GetSnapshotAsync(sessionId, ct)).RenderedScreen.Contains(follow, StringComparison.Ordinal);
             return $"CARD-0133 P4 clear={name} typed={typed} cleared={cleared} followUp={followUp}";
         }, ct);
         return result;
@@ -308,7 +308,7 @@ public sealed class CodexBootWedgeProbeTests
             var bootSeen = false;
             while (DateTime.UtcNow < deadline)
             {
-                var screen = runtime.GetSnapshot(sessionId).RenderedScreen;
+                var screen = (await runtime.GetSnapshotAsync(sessionId, ct)).RenderedScreen;
                 if (screen.Contains("Booting MCP server", StringComparison.Ordinal)
                     || screen.Contains("Starting MCP servers", StringComparison.Ordinal))
                 {
@@ -316,7 +316,7 @@ public sealed class CodexBootWedgeProbeTests
                     var body = "MCPPASTE-" + Guid.NewGuid().ToString("N");
                     await runtime.SendInputAsync(sessionId, PtyInputEncoding.WrapIfMultiline(body + "\nline"), ct);
                     await Task.Delay(1500, ct);
-                    var interrupted = runtime.GetSnapshot(sessionId).RenderedScreen.Contains("MCP startup interrupted", StringComparison.OrdinalIgnoreCase);
+                    var interrupted = (await runtime.GetSnapshotAsync(sessionId, ct)).RenderedScreen.Contains("MCP startup interrupted", StringComparison.OrdinalIgnoreCase);
                     return $"CARD-0133 P4 mcp-boot-seen=true interrupted={interrupted}";
                 }
                 await Task.Delay(100, ct);

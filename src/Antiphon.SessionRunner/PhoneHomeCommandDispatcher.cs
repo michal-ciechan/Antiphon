@@ -30,7 +30,7 @@ public interface IPhoneHomeRuntimeSurface
     Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct);
     Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct);
     RunnerBufferDto GetBuffer(Guid sessionId);
-    RunnerSnapshotDto GetSnapshot(Guid sessionId);
+    Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct);
     RunnerTranscriptDto GetTranscript(Guid sessionId);
     Task SendInputAsync(Guid sessionId, string input, CancellationToken ct);
     Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct);
@@ -335,7 +335,7 @@ public sealed class PhoneHomeCommandDispatcher
                 PhoneHomeOperation.Retire => await RetireAsync(request, ct),
                 PhoneHomeOperation.ProviderAuth => Result(request, await ProviderAuthAsync(request, ct)),
                 PhoneHomeOperation.Buffer => Result(request, _runtime.GetBuffer(ReadSessionId(request))),
-                PhoneHomeOperation.Snapshot => Result(request, _runtime.GetSnapshot(ReadSessionId(request))),
+                PhoneHomeOperation.Snapshot => Result(request, await _runtime.GetSnapshotAsync(ReadSessionId(request), ct)),
                 PhoneHomeOperation.Transcript => Result(request, _runtime.GetTranscript(ReadSessionId(request))),
                 PhoneHomeOperation.Input => await MutateAsync(request, async () =>
                 {
@@ -553,6 +553,12 @@ public sealed class PhoneHomeCommandDispatcher
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
             return Error(request, PhoneHomeProblemTypes.UnsupportedTarget, ex.Message, 400);
+        }
+        catch (HerdrBackendUnavailableException ex)
+        {
+            // CARD-1365 D-3: the phone-home lane answers the same 503 herdr_unreachable as HTTP, so
+            // the server's deferral class is reached instead of an Internal frame read as a conflict.
+            return Error(request, HerdrProblemTypes.Unreachable, ex.Message, 503);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
