@@ -1,10 +1,12 @@
 import { Terminal, type ITerminalOptions } from '@xterm/xterm'
+import { configureLocalTerminalMouse } from './terminalMouse'
 
 /**
  * Browser terminal is a *mirror* of a pty whose real terminal is OpenConsole.exe.
  * The child's queries are answered by that host; every byte this emulator would
  * generate on its own is spurious typing into the live TUI (CARD-0142). The
- * mirror never speaks.
+ * mirror suppresses those replies and browser pointer reports; explicit keyboard
+ * input and paste remain available. Pointer selection and scrolling stay local.
  *
  * Query sequences are consumed (`return true`) so xterm.js never emits a report.
  * Real commands (a colour SET, CSI 1 t, multi-param DECSET) fall through
@@ -25,8 +27,14 @@ export const MIRROR_TERMINAL_OPTIONS: ITerminalOptions = {
 
 export function createMirrorTerminal(overrides?: ITerminalOptions): Terminal {
   const terminal = new Terminal({ ...MIRROR_TERMINAL_OPTIONS, ...overrides })
-  suppressMirrorReports(terminal)
-  return terminal
+  try {
+    suppressMirrorReports(terminal)
+    configureLocalTerminalMouse(terminal)
+    return terminal
+  } catch (error) {
+    terminal.dispose()
+    throw error
+  }
 }
 
 function isOscQuery(data: string): boolean {
@@ -66,7 +74,8 @@ function suppressMirrorReports(terminal: Terminal): void {
   // XTWINOPS reports only (CSI 14/16/18 t). CSI 1 t and friends still behave.
   parser.registerCsiHandler({ final: 't' }, isXtwinopsReport)
   // Focus reporting (CSI ? 1004 h/l). Lone 1004 is consumed; multi-param DECSETs
-  // such as Grok's ?1003;1006h still reach the built-in (CARD-0142 W4).
+  // such as Grok's ?1003;1006h still parse normally (CARD-0142 W4). CARD-0148's
+  // instance mouse policy prevents emission without consuming these sequences.
   parser.registerCsiHandler({ prefix: '?', final: 'h' }, isLoneFocusReportMode)
   parser.registerCsiHandler({ prefix: '?', final: 'l' }, isLoneFocusReportMode)
 }

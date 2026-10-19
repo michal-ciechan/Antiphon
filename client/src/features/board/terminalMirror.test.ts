@@ -120,7 +120,7 @@ describe('createMirrorTerminal', () => {
     expect(emitted).toEqual(['x'])
   })
 
-  it('a lone CSI ? 1004 h/l is suppressed but multi-param DECSET still reaches the built-in', async () => {
+  it('a lone CSI ? 1004 h/l is suppressed but mixed mouse modes still parse without an emission claim', async () => {
     const terminal = mirror({ disableStdin: false })
     hosts.push(openOnBody(terminal))
     const emitted = collectOnData(terminal)
