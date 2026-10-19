@@ -42,5 +42,6 @@ public class GitSettings
     /// <summary>Shared monotonic inspection budget for one card-bound worktree base decision.</summary>
     public int WorktreeBaseInspectionTimeoutSeconds { get; set; } = 5;
     public int WorktreeBaseMaxCandidates { get; set; } = 16;
+    public int WorktreeBaseMaxInventoryRows { get; set; } = 256;
     public int WorktreeBaseMaxGitCommands { get; set; } = 128;
 }

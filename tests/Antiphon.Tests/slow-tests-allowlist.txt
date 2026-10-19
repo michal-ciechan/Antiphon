@@ -310,3 +310,6 @@ Antiphon.Tests.Application.SessionRuntimeActionRecoveryTests
 Antiphon.Tests.Application.SessionRuntimeActionRoutingTests
 # CARD-1259: isolated schemas, real queue deferral/backoff and transcript retention leases.
 Antiphon.Tests.Application.SessionRuntimeActionDeferralTests
+
+# CARD-1349: bounded inspection integration uses isolated PostgreSQL and owned real Git graphs.
+Antiphon.Tests.Application.DispatchSiblingInspectionTests
