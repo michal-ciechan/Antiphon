@@ -17,6 +17,12 @@ public static class CodexStartupFixtures
     public static string N1 => File.ReadAllText(Path.Combine(DirectoryPath, "n1.txt"));
     public static string N2 => File.ReadAllText(Path.Combine(DirectoryPath, "n2.txt"));
 
+    // CARD-0907: independently frozen production TerminalScreen grids, Linux 120x30.
+    // Provenance is separate from these parser payloads; no header stripping or trim.
+    public static string V0160Idle => File.ReadAllText(Path.Combine(DirectoryPath, "v0160-idle.txt"));
+    public static string V0160Running => File.ReadAllText(Path.Combine(DirectoryPath, "v0160-running.txt"));
+    public static string V0160Done => File.ReadAllText(Path.Combine(DirectoryPath, "v0160-done.txt"));
+
     // CARD-0662: codex-cli 0.156.1 captures from CARD-0660 (docs/investigations/evidence/card-0660/,
     // ANSI-stripped `script` output, header/footer lines removed, body verbatim).
     public static string V0156TrustPrompt => File.ReadAllText(Path.Combine(DirectoryPath, "v0156-trust-prompt.txt"));

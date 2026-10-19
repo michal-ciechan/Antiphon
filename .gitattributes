@@ -1,6 +1,10 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 
+# CARD-0907: consumed PTY bytes and frozen grids must survive Windows checkout unchanged.
+tests/Antiphon.Agents.Pty.Tests/Fixtures/CodexStartup/v0160-*.txt text eol=lf
+tests/Antiphon.Agents.Pty.Tests/Fixtures/CodexStartup/v0160-*.ansi -text
+
 *.sh text eol=lf
 
 # Bundle byte budgets and hashes must not depend on checkout line endings.
