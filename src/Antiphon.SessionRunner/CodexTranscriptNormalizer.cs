@@ -11,18 +11,18 @@ namespace Antiphon.SessionRunner;
 /// normalizers produce, so everything downstream — working/idle, the turn-end queue flush, report
 /// extraction, CARD-0055 transcript-confirmed delivery — runs unchanged (CARD-0099 S1).
 ///
-/// <para><b>Codex writes TWO dialects for the same content, and which one you get depends on the
-/// launch mode, not the version</b> (measured 2026-08-20 against codex-cli 0.147.0 on this
-/// machine — the plan's section 2 assumed one surface and the TUI disproved it):</para>
+/// <para><b>Codex writes two content dialects; select by record shape, not launch mode or
+/// originator.</b> The 2026-08-20 codex-cli 0.147.0 captures established both shapes.
+/// Later 0.160.0 exec rollouts also use thread items with originator <c>codex_exec</c>:</para>
 /// <list type="bullet">
 /// <item><b>Flat</b> — <c>event_msg/user_message</c> and <c>event_msg/agent_message</c>. Produced by
-/// <c>codex exec</c> (originator <c>codex_exec</c>) and by the Desktop app (originator
+/// historical <c>codex exec</c> 0.147.0 (originator <c>codex_exec</c>) and by the Desktop app (originator
 /// <c>Codex Desktop</c>, cli 0.148.0-alpha.9).</item>
 /// <item><b>Thread items</b> — <c>event_msg/item_completed</c> carrying <c>item.type</c>
 /// <c>UserMessage</c>/<c>AgentMessage</c>/<c>Reasoning</c>/…. Produced by the interactive TUI
-/// (originator <c>codex-tui</c>) — <b>which is the mode Antiphon launches</b>. A TUI rollout
-/// contains ZERO <c>user_message</c>/<c>agent_message</c> rows, so a normalizer that reads only
-/// the flat dialect ingests nothing at all from a real Antiphon Codex session.</item>
+/// (originator <c>codex-tui</c>) and by <c>codex exec</c> 0.160.0 (originator
+/// <c>codex_exec</c>). The captured TUI rollout has no flat content rows, so reading only
+/// the flat dialect would lose its prompts and replies.</item>
 /// </list>
 /// Both are handled. No measured rollout carries both dialects for the same message, but rather
 /// than bet on that, each of the two content kinds latches onto the FIRST dialect it sees in a
