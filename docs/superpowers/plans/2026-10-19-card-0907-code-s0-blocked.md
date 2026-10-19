@@ -4,6 +4,14 @@ Date: 2026-10-19. Outcome: **Blocked; return to Plan.** No parser, test, or
 fixture was changed, and no model turn was submitted. This is a preparation
 record, not completed S0 or ordinary verification evidence.
 
+**Historical outcome, superseded by the caller's resume input.** The caller
+authorized direct uid-1654 execution in this container with the real CODEX_HOME
+and no credential copy. The subsequent one-turn capture succeeded; its observed
+working grammar contradicts the planned fix and supplies no independent queue
+footer. See [the S0 capture record](2026-10-19-card-0907-s0-capture-binding.md).
+The original access and credential-home questions below are resolved, not current
+blockers. Their earlier outcomes are retained.
+
 Original Code task / landing owner: `e840b26d-1add-46e4-8174-7f24e458d551`.
 Assigned branch: `feat/card-task-e840b26d`.
 Worktree: `/work/worktrees/task-e840b26d`.
