@@ -120,6 +120,8 @@ function New-C599GitSeams {
     if ([string]::IsNullOrWhiteSpace($HeadSha)) { $HeadSha = ('b' * 40) }
     if ([string]::IsNullOrWhiteSpace($TracePath)) { $TracePath = Join-Path $Root 'git-trace.log' }
     $remote = Join-Path $Root 'remote.json'
+    $fullRefs = Join-Path $Root 'remote-full-refs.json'
+    Write-NightlyAtomicJson -Path $fullRefs -Object @{}
     $state = [ordered]@{}
     foreach ($k in $Refs.Keys) { $state[$k] = $Refs[$k] }
     Write-NightlyAtomicJson -Path $remote -Object $state
@@ -147,6 +149,12 @@ function New-C599GitSeams {
             }
             return `$spec
         }
+        function Save-FullRef([string]`$ref, [string]`$sha) {
+            if (-not `$ref.StartsWith('refs/')) { return }
+            `$refs = Get-Content -LiteralPath '$fullRefs' -Raw | ConvertFrom-Json
+            `$refs | Add-Member -NotePropertyName `$ref -NotePropertyValue `$sha -Force
+            `$refs | ConvertTo-Json | Set-Content -LiteralPath '$fullRefs'
+        }
         if (`$fail.PSObject.Properties.Name -contains `$sub -and [bool]`$fail.`$sub) {
             if (`$fail.PSObject.Properties.Name -contains (`$sub + '_commits') -and [bool]`$fail.(`$sub + '_commits')) {
                 # commit-then-lose-response: the remote accepted the write, the caller did not hear.
@@ -157,6 +165,7 @@ function New-C599GitSeams {
                     `$val = `$parts[0]
                     if (`$val -like 'refs/tags/*') { `$val = '$HeadSha' }
                     `$state | Add-Member -NotePropertyName `$key -NotePropertyValue `$val -Force
+                    Save-FullRef `$parts[`$parts.Count - 1] `$val
                     `$state | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath `$remote -Encoding UTF8
                 }
             }
@@ -171,6 +180,11 @@ function New-C599GitSeams {
         }
         if (`$sub -eq 'log') { return @{ ExitCode = 0; Output = 'abc1234 feat: something' } }
         if (`$sub -eq 'ls-remote') {
+            if (`$Arguments -contains '--refs') {
+                `$refs = Get-Content -LiteralPath '$fullRefs' -Raw | ConvertFrom-Json
+                `$lines = @(`$refs.PSObject.Properties | Where-Object { `$_.Name.StartsWith('refs/tags/') } | ForEach-Object { [string]`$_.Value + "``t" + `$_.Name })
+                return @{ ExitCode = 0; Output = (`$lines -join "``n") }
+            }
             `$ref = [string]`$Arguments[`$Arguments.Count - 1]
             `$key = Get-RefKey `$ref
             `$val = ''
@@ -185,6 +199,7 @@ function New-C599GitSeams {
             `$val = `$parts[0]
             if (`$val -like 'refs/tags/*') { `$val = '$HeadSha' }
             `$state | Add-Member -NotePropertyName `$key -NotePropertyValue `$val -Force
+            Save-FullRef `$parts[`$parts.Count - 1] `$val
             `$state | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath `$remote -Encoding UTF8
             return @{ ExitCode = 0; Output = '' }
         }
@@ -1666,7 +1681,7 @@ function Test-C599_StatusIdentity {
     $unknown = & (Join-Path $here 'release-status.ps1') -ReleaseRoot $releaseRoot -Sha $ShaB -PassThru
     Assert-C487 -Cond ([string]$unknown.state -eq 'unknown') -Name 'C599 StatusIdentity no publication journal is unknown, not latest' -Detail ([string]$unknown.state)
 
-    [void](New-ReleaseGateTagReservation -JournalPath $journal -CandidateId $CandidateId -Sha $ShaB -CutUtc ([datetime]'2026-09-23T08:30:00Z'))
+    [void](New-ReleaseGateTagReservation -RemoteTags @() -JournalPath $journal -CandidateId $CandidateId -Sha $ShaB -CutUtc ([datetime]'2026-09-23T08:30:00Z'))
     $pending = & (Join-Path $here 'release-status.ps1') -ReleaseRoot $releaseRoot -Sha $ShaB -PassThru
     Assert-C487 -Cond ([string]$pending.state -eq 'unreleased integration build') -Name 'C599 StatusIdentity a reserved but unpublished tag is not released' -Detail ([string]$pending.state)
 
@@ -3615,7 +3630,7 @@ function Invoke-C1311Promote {
     if ($Reserve) {
         $creditForReserve = $CreditSha
         if ([string]::IsNullOrWhiteSpace($creditForReserve)) { $creditForReserve = $HeadSha }
-        $reserved = New-ReleaseGateTagReservation -JournalPath (Join-Path $release 'publications.json') -CandidateId $CandidateId -Sha $creditForReserve -CutUtc (Get-C1311Utc '2026-10-15T00:00:00Z')
+        $reserved = New-ReleaseGateTagReservation -RemoteTags @() -JournalPath (Join-Path $release 'publications.json') -CandidateId $CandidateId -Sha $creditForReserve -CutUtc (Get-C1311Utc '2026-10-15T00:00:00Z')
         $reservedTag = [string]$reserved.Tag
         if ([string]::IsNullOrWhiteSpace($PreTag)) { $PreTag = $reservedTag }
     }
@@ -3687,23 +3702,23 @@ function Test-C1311_PreReleaseTag {
     $shaE = ('e' * 40)
     $id3 = 'rc-2026-10-15-' + $shaD.Substring(0, 12)
     $id4 = 'rc-2026-10-16-' + $shaE.Substring(0, 12)
-    $p1 = Get-ReleaseGateTagProposal -JournalPath $proposalJournal -CandidateId $id1 -Sha $ShaB -CutUtc $cut
-    [void](New-ReleaseGateTagReservation -JournalPath $proposalJournal -CandidateId $id1 -Sha $ShaB -CutUtc $cut)
-    $p2 = Get-ReleaseGateTagProposal -JournalPath $proposalJournal -CandidateId $id2 -Sha $ShaC -CutUtc $cut
-    [void](New-ReleaseGateTagReservation -JournalPath $proposalJournal -CandidateId $id2 -Sha $ShaC -CutUtc $cut)
+    $p1 = Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $proposalJournal -CandidateId $id1 -Sha $ShaB -CutUtc $cut
+    [void](New-ReleaseGateTagReservation -RemoteTags @() -JournalPath $proposalJournal -CandidateId $id1 -Sha $ShaB -CutUtc $cut)
+    $p2 = Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $proposalJournal -CandidateId $id2 -Sha $ShaC -CutUtc $cut
+    [void](New-ReleaseGateTagReservation -RemoteTags @() -JournalPath $proposalJournal -CandidateId $id2 -Sha $ShaC -CutUtc $cut)
     $closed = $false
     if (Get-Command -Name Set-ReleaseGateReservationFinalTag -ErrorAction SilentlyContinue) {
         $closed = [bool](Set-ReleaseGateReservationFinalTag -JournalPath $proposalJournal -CandidateId $id1 -FinalTag 'v2026.10.15.1')
     }
-    $p3 = Get-ReleaseGateTagProposal -JournalPath $proposalJournal -CandidateId $id3 -Sha $shaD -CutUtc $cut
-    $p4 = Get-ReleaseGateTagProposal -JournalPath $proposalJournal -CandidateId $id4 -Sha $shaE -CutUtc (Get-C1311Utc '2026-10-16T00:00:00Z')
+    $p3 = Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $proposalJournal -CandidateId $id3 -Sha $shaD -CutUtc $cut
+    $p4 = Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $proposalJournal -CandidateId $id4 -Sha $shaE -CutUtc (Get-C1311Utc '2026-10-16T00:00:00Z')
     $stampJournal = Join-Path $proposalRoot 'stamp.json'
     $stampCut = Get-C1311Utc '2026-09-23T08:30:00Z'
-    $stampProposal = Get-ReleaseGateTagProposal -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaB -CutUtc $stampCut
-    [void](New-ReleaseGateTagReservation -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaB -CutUtc $stampCut)
-    $reused = Get-ReleaseGateTagProposal -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaB -CutUtc $stampCut
+    $stampProposal = Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaB -CutUtc $stampCut
+    [void](New-ReleaseGateTagReservation -RemoteTags @() -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaB -CutUtc $stampCut)
+    $reused = Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaB -CutUtc $stampCut
     $threw = ''
-    try { [void](Get-ReleaseGateTagProposal -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaC -CutUtc $stampCut) } catch { $threw = $_.Exception.Message }
+    try { [void](Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $stampJournal -CandidateId $script:CandidateId -Sha $ShaC -CutUtc $stampCut) } catch { $threw = $_.Exception.Message }
     Assert-C487 -Cond (
         [string]$p1.Tag -eq 'v2026.10.15.1-rc.1' -and
         [string]$p2.Tag -eq 'v2026.10.15.1-rc.2' -and
@@ -4087,7 +4102,10 @@ function Test-C1339NoWrites {
 
 function Get-C1339Peel {
     param($Fx, [string]$Tag)
-    Invoke-C1339LocalGit $Fx @('rev-parse', '--verify', ('refs/tags/' + $Tag + '^{}')) -Remote -AllowAbsent
+    # show-ref --verify is exact; rev-parse of a ref alone also performs DWIM.
+    $object = Invoke-C1339LocalGit $Fx @('show-ref', '--verify', '--hash', ('refs/tags/' + $Tag)) -Remote -AllowAbsent
+    if (-not (Test-ReleaseGateFullSha $object)) { return '' }
+    Invoke-C1339LocalGit $Fx @('rev-parse', '--verify', ($object + '^{}')) -Remote -AllowAbsent
 }
 
 function New-C1339Check {
@@ -4299,13 +4317,167 @@ function New-C1339AllocationFixture {
 }
 
 function Test-C1339_RemoteTagAllocation {
+    $checks = @()
+    foreach ($lightweight in @($false, $true)) {
+        $fx = New-C1339AllocationFixture
+        foreach ($n in @(1, 2)) {
+            $tag = 'v2026.10.15.' + $n
+            if ($lightweight) { [void](Invoke-C1339LocalGit $fx @('tag', $tag, $fx.Head) -Remote) }
+            else { Add-C1339Tag $fx $tag $fx.Head }
+        }
+        $r = Invoke-C1339Publish $fx -WhatIf
+        $checks += New-C1339Check ($r.ExitCode -eq 0 -and $r.Tag -ceq 'v2026.10.15.3-rc.1' -and
+            -not (Test-Path -LiteralPath (Join-Path $fx.ReleaseRoot 'publications.json')) -and (Test-C1339NoWrites $fx)) ('lightweight=' + $lightweight + ' tag=' + $r.Tag + ':' + $r.Refusal)
+    }
+    Assert-C599AMatrix 'C1339 G-18 remote-finals' $checks
+    Add-C1339Tag $fx 'v2026.10.15.3-rc.4' $fx.Head
+    $r = Invoke-C1339Publish $fx -WhatIf
+    Assert-C487 -Cond ($r.ExitCode -eq 0 -and $r.Tag -ceq 'v2026.10.15.3-rc.5') -Name 'C1339 G-19 remote-prerelease' -Detail $r.Tag
+    Add-C1339Tag $fx 'v2026.10.15.3' $fx.Head
+    $r = Invoke-C1339Publish $fx -WhatIf
+    Assert-C487 -Cond ($r.ExitCode -eq 0 -and $r.Tag -ceq 'v2026.10.15.4-rc.1') -Name 'C1339 G-20 remote-final-closes' -Detail $r.Tag
+
+    $fx = New-C1339AllocationFixture
+    Add-C1339Tag $fx 'refs/tags/v2026.10.15.1' $fx.B
+    Add-C1339Tag $fx 'irrelevant' $fx.B
+    Add-C1339Tag $fx 'v2026.10.15.3' $fx.Head
+    $r = Invoke-C1339Publish $fx -WhatIf
+    Import-ReleaseGateSeams -SeamsPath $fx.Gh.Path
+    $inventory = Get-ReleaseGateRemoteTagInventory -WorkingDirectory $fx.Checkout
+    $output = Invoke-C1339LocalGit $fx @('ls-remote', '--tags', $fx.Bare)
+    Set-C1339Read $fx 'origin' $output -Mode replace
+    Import-ReleaseGateSeams -SeamsPath $fx.Gh.Path
+    $withPeels = Get-ReleaseGateRemoteTagInventory -WorkingDirectory $fx.Checkout
+    Assert-C487 -Cond ($r.ExitCode -eq 0 -and $r.Tag -ceq 'v2026.10.15.1-rc.1' -and $inventory.Ok -and
+        @($inventory.Tags).Count -eq 1 -and $withPeels.Ok -and @($withPeels.Tags).Count -eq 1 -and $withPeels.Tags[0] -ceq 'v2026.10.15.3') -Name 'C1339 G-21 canonical-inventory' -Detail $r.Tag
+
+    $day = Get-C1311Utc '2026-10-15T12:00:00Z'
+    $journal = Join-Path (New-C599Root) 'publications.json'
+    $row = New-ReleaseGateReservationEntry -CandidateId 'journal-candidate' -Sha $fx.B -Tag 'v2026.10.15.2-rc.7' -Sequence 2 -Rc 7 -Published $false
+    Write-NightlyAtomicJson -Path $journal -Object @{ schemaVersion = 1; reservations = @($row) }
+    $proposalArgs = @{ JournalPath = $journal; CandidateId = $fx.CandidateId; Sha = $fx.Head; CutUtc = $day }
+    $r = Get-ReleaseGateTagProposal @proposalArgs -RemoteTags @('v2026.10.15.1')
+    Assert-C487 -Cond ($r.Tag -ceq 'v2026.10.15.2-rc.8' -and @($r.Journal.reservations).Count -eq 1) -Name 'C1339 G-22 journal-union' -Detail $r.Tag
+    $r = Get-ReleaseGateTagProposal @proposalArgs -RemoteTags @('v2026.10.15.1', 'v2026.10.15.2', 'v2026.10.15.3')
+    # This extra final closes a journal-only open sequence too.
+    $closedJournal = $r.Tag -ceq 'v2026.10.15.4-rc.1'
+    $emptyJournal = Join-Path (New-C599Root) 'publications.json'
+    $proposalArgs.JournalPath = $emptyJournal
+    $r = Get-ReleaseGateTagProposal @proposalArgs -RemoteTags @('v2026.10.15.1', 'v2026.10.15.3')
+    Assert-C487 -Cond ($r.Tag -ceq 'v2026.10.15.2-rc.1' -and $closedJournal) -Name 'C1339 G-23 smallest-free' -Detail $r.Tag
+    $proposalArgs.CandidateId = $script:CandidateId
+    $r = Get-ReleaseGateTagProposal @proposalArgs -RemoteTags @('v2026.10.15.1', 'v2026.10.15.2-rc.4')
+    $proposalArgs.JournalPath = $journal
+    $r2 = Get-ReleaseGateTagProposal @proposalArgs -RemoteTags @('v2026.10.15.1')
+    Assert-C487 -Cond ($r.Tag -ceq 'v2026.10.15.3' -and $r2.Tag -ceq 'v2026.10.15.3') -Name 'C1339 G-24 legacy-occupancy' -Detail ($r.Tag + '/' + $r2.Tag)
+
+    $fx = New-C1339AllocationFixture
+    $control = Invoke-C1339Publish $fx -WhatIf
+    $checks = @(New-C1339Check ($control.ExitCode -eq 0 -and $control.Tag -ceq 'v2026.10.15.1-rc.1') 'valid inventory admission')
+    foreach ($preview in @($true, $false)) {
+        Set-C1339Read $fx 'origin' -Mode replace -Exit 1
+        $r = Invoke-C1339Publish $fx -WhatIf:$preview
+        $checks += New-C1339Check ($r.Refusal -eq 'remote-tag-inventory-failed' -and $r.Tag -eq '' -and (Test-C1339NoWrites $fx) -and
+            -not (Test-Path -LiteralPath (Join-Path $fx.ReleaseRoot 'publications.json'))) ('preview=' + $preview + ':' + $r.Refusal)
+    }
+    foreach ($bad in @("short`trefs/tags/v2026.10.15.1", ($fx.Head + "`trefs/tags/v2026.10.15.1`n" + $fx.B + "`trefs/tags/v2026.10.15.1"), 'malformed')) {
+        Set-C1339Read $fx 'origin' $bad -Mode replace
+        $r = Invoke-C1339Publish $fx -WhatIf
+        $checks += New-C1339Check ($r.Refusal -eq 'remote-tag-inventory-failed' -and $r.Tag -eq '' -and (Test-C1339NoWrites $fx)) ('invalid inventory:' + $r.Refusal)
+    }
+    Assert-C599AMatrix 'C1339 G-25 inventory-required' $checks
+
+    $fx = New-C1339AllocationFixture
+    Write-NightlyAtomicJson -Path $fx.FaultPath -Object @{ push = 'before' }
+    $first = Invoke-C1339Publish $fx
+    Add-C1339Tag $fx 'v2026.10.15.2-rc.4' $fx.B
+    Write-NightlyAtomicJson -Path $fx.FaultPath -Object @{}
+    $second = Invoke-C1339Publish $fx
+    $journal = Join-Path $fx.ReleaseRoot 'publications.json'
+    $stored = Get-Content -LiteralPath $journal -Raw | ConvertFrom-Json
+    Assert-C487 -Cond ($first.Refusal -eq 'tag-push-failed' -and $second.ExitCode -eq 0 -and $second.Published -and $second.Resumed -and
+        $first.Tag -ceq 'v2026.10.15.1-rc.1' -and $second.Tag -ceq $first.Tag -and @($stored.reservations).Count -eq 1 -and
+        (Get-C1339Peel $fx $second.Tag) -ceq $fx.Head) -Name 'C1339 G-26 reservation-reuse' -Detail $second.Refusal
+    $before = [IO.File]::ReadAllText($journal)
+    $argsForProposal = @{ JournalPath = $journal; CandidateId = $fx.CandidateId; Sha = $fx.C; CutUtc = $day; RemoteTags = @() }
+    $errorText = ''
+    try { [void](Get-ReleaseGateTagProposal @argsForProposal) } catch { $errorText = $_.Exception.Message }
+    Assert-C487 -Cond ($errorText -match 'already reserved for sha' -and [IO.File]::ReadAllText($journal) -ceq $before) -Name 'C1339 G-27 candidate-sha-conflict' -Detail $errorText
+    $argsForProposal.Sha = $fx.Head; $argsForProposal.CandidateId = 'rc-2026-10-15-' + $fx.B.Substring(0, 12)
+    $errorText = ''
+    try { [void](Get-ReleaseGateTagProposal @argsForProposal) } catch { $errorText = $_.Exception.Message }
+    Assert-C487 -Cond ($errorText -match 'already reserved under candidate' -and [IO.File]::ReadAllText($journal) -ceq $before) -Name 'C1339 G-28 sha-candidate-conflict' -Detail $errorText
+
+    foreach ($final in @($false, $true)) {
+        $fx = New-C1339AllocationFixture
+        $tag = $fx.PreTag; $reason = 'tag-conflict'; $label = 'C1339 G-29 selected-tag-recheck'
+        if ($final) { $tag = $fx.FinalTag; $reason = 'final-tag-conflict'; $label = 'C1339 G-30 selected-final-recheck' }
+        Write-NightlyAtomicJson -Path $fx.FaultPath -Object @{ inventoryRace = @{ tag = $tag; sha = $fx.C } }
+        $r = Invoke-C1339Publish $fx
+        $journal = Join-Path $fx.ReleaseRoot 'publications.json'
+        $stored = Get-Content -LiteralPath $journal -Raw | ConvertFrom-Json
+        $localTag = Invoke-C1339LocalGit $fx @('show-ref', '--verify', '--hash', ('refs/tags/' + $fx.PreTag)) -AllowAbsent
+        $checks = @(New-C1339Check ($r.Refusal -eq $reason -and $r.Tag -ceq $fx.PreTag -and @($stored.reservations).Count -eq 1 -and
+            $stored.reservations[0].tag -ceq $fx.PreTag -and (Test-C1339NoWrites $fx) -and $localTag -eq '' -and (Get-C1339Peel $fx $tag) -ceq $fx.C) ('race:' + $r.Refusal))
+        # Restart from that persisted reservation against the now conflicting ref.
+        $before = [IO.File]::ReadAllText($journal)
+        $again = Invoke-C1339Publish $fx
+        $checks += New-C1339Check ($again.Refusal -eq $reason -and $again.Tag -ceq $fx.PreTag -and [IO.File]::ReadAllText($journal) -ceq $before -and (Test-C1339NoWrites $fx)) ('reserved conflict:' + $again.Refusal)
+        Assert-C599AMatrix $label $checks
+    }
+
+    $fx = New-C1339AllocationFixture
+    Add-C1339Tag $fx 'v2026.10.15.1' $fx.B
+    $journal = Join-Path $fx.ReleaseRoot 'publications.json'
+    $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $fx.CandidateId
+    $pubAuthority = Join-Path (Get-ReleaseAuthorityDir -CandidateRoot $root) 'publication-authority.json'
+    $preview = Invoke-C1339Publish $fx -WhatIf
+    $emptyPreview = $preview.ExitCode -eq 0 -and $preview.Tag -ceq 'v2026.10.15.2-rc.1' -and -not (Test-Path -LiteralPath $journal)
+    $emptyAuthority = -not (Test-Path -LiteralPath $pubAuthority)
+    [void](New-ReleaseGateTagReservation -JournalPath $journal -CandidateId $fx.CandidateId -Sha $fx.Head -CutUtc $day -RemoteTags @('v2026.10.15.1'))
+    $before = [IO.File]::ReadAllText($journal)
+    $preview = Invoke-C1339Publish $fx -WhatIf
+    Assert-C487 -Cond ($emptyPreview -and $preview.ExitCode -eq 0 -and $preview.Resumed -and [IO.File]::ReadAllText($journal) -ceq $before -and (Test-C1339NoWrites $fx)) -Name 'C1339 G-31 preview-reservation' -Detail $preview.Refusal
+    Assert-C487 -Cond ($emptyAuthority -and -not (Test-Path -LiteralPath $pubAuthority)) -Name 'C1339 G-32 preview-authority'
+
+    $fx = New-C1339AllocationFixture
+    foreach ($tag in @('v2026.10.15.2-rc.9', 'v2026.10.15.3-rc.2', 'v2026.10.15.3-rc.4')) { Add-C1339Tag $fx $tag $fx.Head }
+    Import-ReleaseGateSeams -SeamsPath $fx.Gh.Path
+    $inventory = Get-ReleaseGateRemoteTagInventory -WorkingDirectory $fx.Checkout
+    $ordered = @($inventory.Tags | Sort-Object)
+    $nChecks = @(); $kChecks = @()
+    foreach ($reverse in @($false, $true)) {
+        if ($reverse) { [array]::Reverse($ordered) }
+        $r = Get-ReleaseGateTagProposal -JournalPath (Join-Path $fx.ReleaseRoot 'publications.json') -CandidateId $fx.CandidateId -Sha $fx.Head -CutUtc $day -RemoteTags $ordered
+        $nChecks += New-C1339Check ($r.Sequence -eq 3) $r.Tag
+        $kChecks += New-C1339Check ($r.Rc -eq 5) $r.Tag
+    }
+    Assert-C599AMatrix 'C1339 G-67 greatest-open-n' $nChecks
+    Assert-C599AMatrix 'C1339 G-68 greatest-k' $kChecks
+
     $fx = New-C1339AllocationFixture
     Add-C1339Tag $fx 'v2026.10.15.1' $fx.Head
-    Add-C1339Tag $fx 'v2026.10.15.2' $fx.B
-    $r = Invoke-C1339Publish $fx -WhatIf
-    Assert-C487 -Cond ($r.ExitCode -eq 0 -and $r.Tag -ceq 'v2026.10.15.3-rc.1' -and
-        -not (Test-Path -LiteralPath (Join-Path $fx.ReleaseRoot 'publications.json')) -and (Test-C1339NoWrites $fx)) `
-        -Name 'C1339 G-18 remote-finals' -Detail ('tag=' + $r.Tag + ' refusal=' + $r.Refusal)
+    Add-C1339Tag $fx 'v2026.10.15.2' $fx.Head
+    Write-NightlyAtomicJson -Path $fx.FaultPath -Object @{ push = 'before' }
+    $r = Invoke-C1339Publish $fx
+    $journal = Join-Path $fx.ReleaseRoot 'publications.json'
+    $stored = Get-Content -LiteralPath $journal -Raw | ConvertFrom-Json
+    Assert-C487 -Cond ($r.Refusal -eq 'tag-push-failed' -and @($stored.reservations).Count -eq 1 -and $stored.reservations[0].tag -ceq 'v2026.10.15.3-rc.1' -and
+        $stored.reservations[0].candidateId -ceq $fx.CandidateId -and -not $stored.reservations[0].published) -Name 'C1339 G-69 no-invented-publications' -Detail $r.Refusal
+
+    $checks = @()
+    foreach ($function in @('Get-ReleaseGateTagProposal', 'New-ReleaseGateTagReservation')) {
+        $path = Join-Path (New-C599Root) 'publications.json'
+        $parameters = @{ JournalPath = $path; CandidateId = $fx.CandidateId; Sha = $fx.Head; CutUtc = $day }
+        $result = $null; $refused = ''
+        # ScriptHarness is a bounded -NonInteractive child; missing mandatory input
+        # cannot pause it for a prompt. All other arguments are valid.
+        try { $result = & $function @parameters -ErrorAction Stop } catch { $refused = $_.Exception.Message }
+        $checks += New-C1339Check ($null -eq $result -and $refused -match 'RemoteTags|mandatory|NonInteractive' -and -not (Test-Path -LiteralPath $path)) ($function + ':' + $refused)
+        $explicit = & $function @parameters -RemoteTags @()
+        $checks += New-C1339Check ($explicit.Tag -ceq 'v2026.10.15.1-rc.1') ($function + ': explicit empty')
+    }
+    Assert-C599AMatrix 'C1339 G-70 no-implicit-inventory' $checks
 }
 
 # ====================================================================== run ===

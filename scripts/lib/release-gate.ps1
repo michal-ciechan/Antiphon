@@ -561,17 +561,43 @@ function New-ReleaseGateReservationEntry {
     return $entry
 }
 
+function Get-ReleaseGateRemoteTagInventory {
+    param([string]$WorkingDirectory)
+    $read = Invoke-ReleaseGateGit -WorkingDirectory $WorkingDirectory -Arguments @('ls-remote', '--tags', '--refs', 'origin')
+    $failed = [pscustomobject]@{ Ok = $false; Tags = @() }
+    if ($null -eq $read -or [int]$read.ExitCode -ne 0) { return $failed }
+    $names = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    foreach ($line in ([string]$read.Output -split "`n")) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $fields = @($line.Trim() -split '\s+')
+        if ($fields.Count -ne 2) { return $failed }
+        $ref = $fields[1]
+        if (-not $ref.StartsWith('refs/tags/', [StringComparison]::Ordinal)) { continue }
+        $tag = $ref.Substring('refs/tags/'.Length)
+        $parsed = Test-ReleaseGateTag -Tag $tag
+        if (-not $parsed.Ok) { continue }
+        $canonical = New-ReleaseGateTag -CutUtc $parsed.Date -Sequence $parsed.Sequence
+        if ($parsed.Prerelease) { $canonical += '-rc.' + [string]$parsed.Rc }
+        if ($tag -cne $canonical) { continue }
+        if (-not (Test-ReleaseGateFullSha $fields[0])) { return $failed }
+        if ($names.ContainsKey($tag) -and $names[$tag] -cne $fields[0]) { return $failed }
+        $names[$tag] = $fields[0]
+    }
+    return [pscustomobject]@{ Ok = $true; Tags = @($names.Keys) }
+}
+
 function Get-ReleaseGatePreReleaseAllocation {
     # D-4: one open N per UTC day. The next new SHA on that day takes the next K.
     # A final tag, or a reservation whose finalTag names that N, closes N.
     # The next pre-release then takes the next free N at K=1. A new UTC day starts at N=1.
-    param($Journal, [datetime]$CutUtc)
+    param($Journal, [datetime]$CutUtc, [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$RemoteTags)
     $day = $CutUtc.ToUniversalTime().ToString('yyyy.MM.dd')
     $closed = @()
     $used = @()
     $openN = @()
     $openK = @()
-    foreach ($row in @($Journal.reservations)) {
+    $occupancy = @($Journal.reservations) + @($RemoteTags | ForEach-Object { [pscustomobject]@{ tag = $_ } })
+    foreach ($row in $occupancy) {
         if ($null -eq $row) { continue }
         $parsed = Test-ReleaseGateTag -Tag ([string]$row.tag)
         if ($parsed.Ok -and $parsed.Date.ToUniversalTime().ToString('yyyy.MM.dd') -eq $day) {
@@ -646,7 +672,8 @@ function Get-ReleaseGateTagProposal {
         [Parameter(Mandatory = $true)][string]$JournalPath,
         [Parameter(Mandatory = $true)][string]$CandidateId,
         [Parameter(Mandatory = $true)][string]$Sha,
-        [datetime]$CutUtc
+        [datetime]$CutUtc,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$RemoteTags
     )
     if (-not (Test-ReleaseGateFullSha -Sha $Sha)) { throw ('reservation requires a full sha, got {0}' -f $Sha) }
     if ($null -eq $CutUtc -or $CutUtc -eq [datetime]::MinValue) { $CutUtc = Get-NightlyUtcNow }
@@ -669,13 +696,14 @@ function Get-ReleaseGateTagProposal {
         }
     }
     if (Test-ReleaseGateLongLivedCandidateId -CandidateId $CandidateId) {
-        $alloc = Get-ReleaseGatePreReleaseAllocation -Journal $journal -CutUtc $CutUtc
+        $alloc = Get-ReleaseGatePreReleaseAllocation -Journal $journal -CutUtc $CutUtc -RemoteTags $RemoteTags
         $pre = New-ReleaseGatePreReleaseTag -CutUtc $CutUtc -Sequence $alloc.Sequence -Rc $alloc.Rc
         return [pscustomobject]@{ Tag = $pre; Sequence = $alloc.Sequence; Rc = $alloc.Rc; Reused = $false; Row = $null; Journal = $journal }
     }
     $day = $CutUtc.ToUniversalTime().ToString('yyyy.MM.dd')
     $used = @()
-    foreach ($row in @($journal.reservations)) {
+    $occupancy = @($journal.reservations) + @($RemoteTags | ForEach-Object { [pscustomobject]@{ tag = $_ } })
+    foreach ($row in $occupancy) {
         if ($null -eq $row) { continue }
         $parsed = Test-ReleaseGateTag -Tag ([string]$row.tag)
         if ($parsed.Ok -and $parsed.Date.ToString('yyyy.MM.dd') -eq $day) { $used += [int]$parsed.Sequence }
@@ -695,9 +723,10 @@ function New-ReleaseGateTagReservation {
         [Parameter(Mandatory = $true)][string]$JournalPath,
         [Parameter(Mandatory = $true)][string]$CandidateId,
         [Parameter(Mandatory = $true)][string]$Sha,
-        [datetime]$CutUtc
+        [datetime]$CutUtc,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$RemoteTags
     )
-    $proposal = Get-ReleaseGateTagProposal -JournalPath $JournalPath -CandidateId $CandidateId -Sha $Sha -CutUtc $CutUtc
+    $proposal = Get-ReleaseGateTagProposal -JournalPath $JournalPath -CandidateId $CandidateId -Sha $Sha -CutUtc $CutUtc -RemoteTags $RemoteTags
     if ($proposal.Reused) {
         return [pscustomobject]@{ Tag = $proposal.Tag; Sequence = $proposal.Sequence; Reused = $true; Row = $proposal.Row }
     }

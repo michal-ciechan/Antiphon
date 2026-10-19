@@ -637,6 +637,7 @@ Code S1 additions (all pending, payload binding still required):
 | PC-71 | S1 / M1 | G-8 failed stamp precheck returns `remote-candidate-unresolved` with zero tag/push attempts even when failed output contains the expected SHA. | Remove the stamp precheck's `Status -eq 'Failed'` refusal. |
 | PC-72 | S1 / M1 | Two independent variants: G-12 publisher and G-15 promoter create the exact absent tag despite a remote-only nested tag. Inspect the bare recipient's exact peel and unchanged nested tag. | In each caller separately replace `Push-ReleaseGateExactTag` with the former `push origin refs/tags/T`. |
 | PC-73 | S1 / M1 | G-12 and G-15 independently observe no private push refs after completion. | Omit the compare-and-delete of the owned private ref in `Push-ReleaseGateExactTag`. |
+| PC-74 | S2 / M2 | Three independent G-25 inventory variants: malformed record, short SHA at a canonical tag, conflicting duplicate canonical records. Each returns `remote-tag-inventory-failed`, no proposal and zero tag/push attempts. | Separately remove each corresponding shape, full-SHA, or duplicate-SHA admission check in `Get-ReleaseGateRemoteTagInventory`. |
 
 The S1 real-Git run exposed Git's implicit push-destination ambiguity beside a
 nested remote tag. An explicit source/destination alone also uses Git DWIM and
@@ -755,3 +756,12 @@ amended inventory is **73 PC IDs, at least 74 cycles, all pending and binding
 required**. Mutation's amended floor is **685.5 minutes**, and the combined
 ordinary-plus-Mutation estimate is **730.5 minutes**, before authoring, slot waits
 and failure-driven repair. No deliberate mutant has run in Code.
+
+Code S2 adds PC-74's three inventory-admission variants, still pending. The
+cumulative floor becomes **74 PC IDs, at least 77 cycles**: **713.25 minutes**
+for Mutation including setup, **758.25 minutes** combined with ordinary V/R.
+The fixture adapter lives in `scripts/fixtures/c1339-release-git.ps1`; its inert
+launcher guards and real transports stay distinct. Full-ref fake inventory is
+recorded from actual fixture push refspecs, never reconstructed from collapsed
+keys. S1-S2 leave UTC allocation-day and promotion authority/reservation work to
+S3-S5. Restart target is none; no live tag or release operation is authorized.
