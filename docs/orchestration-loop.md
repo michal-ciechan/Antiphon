@@ -415,7 +415,9 @@ bundle and the block is optional for them (§2).
 
 Landing (fetch, rebase, verify, fast-forward, push, worktree removal, branch deletion) is the
 `-Land` operation's job, not a manual step — see §5. The rc-to-master merge commit is not this
-operation; it is manual ([release gates](release-gates.md)). The fleet's stage glance — one line per card,
+operation; it is manual ([release gates](release-gates.md)): a `Merge`-role task started at the
+target tip that pushes its merge as a fast-forward, see
+[Merging the rc line into master](release-gates.md#merging-the-rc-line-into-master-merge-role). The fleet's stage glance — one line per card,
 in-flight / queued / ready per stage, generalised across all six stage roles (CARD-0146 S4) — is
 `/orchestrator?tab=pipeline`.
 
@@ -445,6 +447,19 @@ line carrying `unlanded-sibling=` means a same-card branch is still stranded; la
 cases (the CARD-0002 design doc and the CARD-0001 fix) sat unmerged for 9 hours before anyone
 noticed. An inspection-unknown Warning names a branch whose containment could not be established.
 Inspect that history and decide whether it needs integration; the warning alone does not prove omission.
+
+**Dispatch hazard: a card with many kept sibling branches (CARD-1349).** The desktop dispatch
+tick is one serial loop, and before it cuts a Worktree it walks every kept sibling branch of the
+card (`EvaluateCardSiblingBaseAsync`: `merge-base`, `rev-list` and `cherry` per sibling, each
+under the 5-minute `LandingGit` budget). On 2026-10-19 CARD-1311 had 64 such siblings and that
+walk took 13–18 minutes per task; every later task in the tick stayed Queued meanwhile, including
+rows whose runner mirror was already recorded, because the deduped "remote workspace preparation
+is in flight" hold is not rewritten until the tick ends. Nothing was stuck on server2, the preps
+themselves took 14–26 seconds, and a restart only restarts the walk. Until the walk is budgeted
+or batched, bind release and rollout work to a fresh card rather than a long-lived card with many
+landed-and-kept branches, and read a long `Queued` as "whose sibling walk is the tick inside"
+before touching a runner ([remote-prep stall](investigations/2026-10-19-server2-remoteprep-stall.md)
+on `feat/card-task-3f531f98`).
 
 ### Picking
 

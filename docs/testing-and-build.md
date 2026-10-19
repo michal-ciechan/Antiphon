@@ -1079,6 +1079,47 @@ a cost marker, never Skip. Offline harnesses: `scripts/test-nightly-run.ps1`,
 harness case and, in-process on `C545World`, the watchdog's carried CARD-0544 notification controls;
 `NightlyWatchdogCoreTests` covers the watchdog core (clock, evaluator, ledger, body, snapshot, transport, reader).
 
+### Windows rc watchdogs and gate lanes (2026-10-18/19)
+
+**Windows rc profile watchdogs.** `tests/test-execution-policy.json` `watchdogs` are `antiphon`
+3600000 ms, `session-runner` 1800000 ms and `e2e` 7200000 ms. Each suite is one chunk and one
+watchdog, and the kill deletes the process before TUnit writes its TRX, so a timed-out suite is
+`missing-trx` / `coverageComplete=false` whatever its tests did. The numbers come from the
+2026-10-18/19 gate logs. Session-runner went from 20 to 30 minutes because the expanded suite
+(about 1,550 UIDs) was still admitting its last test at the 20-minute kill while its longest
+returned test is under three minutes, so 30 minutes writes the TRX. `e2e` got its own key at 120
+minutes because the suite had been using the shared 60-minute fallback and the serial
+`AgentTaskLandDeliveryE2ETests` class alone needs about 90 minutes. `antiphon` stays at 60
+minutes because raising it is not the remedy: the one-slot `ProcessSpawnLimit` lane admits about
+46 UIDs a minute and neither 90 nor 120 minutes reaches the end of the census. Do not read a
+silent `InProgress` in the `--no-progress` diagnostics as a hang: keep the last state per UID and
+treat a `Duration` as returned. Records: [watchdog sizing](investigations/2026-10-19-rc-watchdog-sizing.md)
+on `feat/card-task-210e914f`, [hangs](investigations/2026-10-19-rc-windows-hangs.md) on
+`feat/card-task-5b8ad483`, [live reds](investigations/2026-10-19-rc-windows-live-reds.md) on
+`feat/card-task-93971d09`.
+
+**Gate lanes run beside other work on server2.** The Linux rc roster shares the host with Code,
+Review and other gate tasks, and must tolerate that: run it in its own detached worktree and
+output path, and read slot wait and memory from the broker rather than assuming an idle host. The
+`rc/2026-10-18` re-gates flipped between green and red with no source change, and neither flip was
+a neighbour's build. The five `CheckpointConfinementLedgerTests` reds came from the gate driver
+unsetting `ANTIPHON_TASK_TOKEN` while leaving `ANTIPHON_TASK_ID` set, so `TaskOwnerGuard`
+answered `owner-unverified` (exit 7) before the scheduler ran; unset the task id and token
+together, as the final gate did, or pass `EnvironmentLookup = _ => null`
+([ledger nondeterminism](investigations/2026-10-19-confinement-ledger-nondeterminism.md) on
+`feat/card-task-5151af90`). The one load-sensitive red is the `/proc/<pid>/stat` registration
+race: a short-lived `git init` can be reaped between `Process.GetProcessById` and the stat read,
+and the resulting `DirectoryNotFoundException` is treated as "process gone" by neither
+`CheckpointTestScope.Register` nor `ProcessIdentityProbe.Observe`; it is a flake (40 of 40
+isolated passes) whose fix is those two catch sites
+([/proc flake](investigations/2026-10-19-rc-proc-stat-flake.md) on `feat/card-task-75ae5020`).
+What still couples a gate to its neighbours is the build-slot lease held for the whole roster,
+the 16 GB memory floor, the shared git object directory and one roster test that deletes
+`/tmp/grok-download` ([gate lanes beside other tasks](investigations/2026-10-19-test-concurrency-isolation.md)
+on `feat/card-task-047e36c5`). The final green roster ran with zero competing leases and a
+one-minute load average up to 25 ([Linux final](investigations/2026-10-19-rc-linux-final.md) on
+`feat/card-task-aaee7f74`).
+
 ## Asynchronous outcome delivery verification (CARD-0467)
 
 StageTestDesign requires a producer/destination/persistence/recovery/receipt inventory,
