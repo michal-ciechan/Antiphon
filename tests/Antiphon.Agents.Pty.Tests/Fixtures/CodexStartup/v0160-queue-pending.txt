@@ -1,0 +1,29 @@
+
+  >_ OpenAI Codex (v0.160.0)
+     /tmp/c907-ddd05d7e-HGTnYt
+  permissions: YOLO mode
+
+  The code must flow.
+
+  To get started, describe a task or try one of these commands:
+
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+
+
+› Reply with the single word pong. Do not call tools. Do not read or write files.
+
+
+• Working (0s • esc to interrupt)
+
+• Messages to be submitted after next tool call (press esc to interrupt and send immediately)
+  ↳ Reply with the single word ping. Do not call tools. Do not read or write files.
+
+› Ask Codex to do anything
+
+  GPT-6.1-Sol low · /tmp/c907-ddd05d7e-HGTnYt                                                  ⚠ 1 warning · f2 to view
+
+

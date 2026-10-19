@@ -9,6 +9,20 @@ public class SubmitEvidenceTests
     private const string Body = "the unique head fragment proves this composer held our body";
 
     [Test]
+    public void C907_current_working_is_positive_without_an_emptied_composer()
+    {
+        var before = "› " + Body;
+        // Labelled ghost echo keeps the emptied-composer OR arm false.
+        var held = CodexStartupFixtures.ReplaceComposer(CodexStartupFixtures.V0160Running, before);
+        held.Contains(Body, StringComparison.Ordinal).ShouldBeTrue("C907 held-body precondition");
+        SubmitEvidence.IsPositive(SubmitEvidenceKind.Codex, before, held, Body)
+            .ShouldBeTrue("C907 captured working despite still-visible body");
+        var idleHeld = CodexStartupFixtures.ReplaceComposer(CodexStartupFixtures.V0160Idle, before);
+        SubmitEvidence.IsPositive(SubmitEvidenceKind.Codex, before, idleHeld, Body)
+            .ShouldBeFalse("C907 body retained without working is insufficient");
+    }
+
+    [Test]
     public void Codex_working_indicator_is_positive_submit_evidence()
     {
         SubmitEvidence.IsPositive(

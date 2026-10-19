@@ -1,4 +1,5 @@
 using Antiphon.Agents.Pty;
+using Antiphon.Agents.Pty.Tests;
 using Shouldly;
 using TUnit.Core;
 
@@ -12,6 +13,68 @@ namespace Antiphon.Tests.Agents;
 [Category("Unit")]
 public class CodexWorkingIndicatorTests
 {
+    [Test]
+    public void C907_submitted_frame_is_working()
+    {
+        CodexWorkingIndicator.IsVisible(CodexStartupFixtures.V0160Running)
+            .ShouldBeTrue("C907 captured 0.160 Working row");
+    }
+
+    [Test]
+    public void C907_status_words_outside_the_status_row_are_not_working()
+    {
+        // Derived incomplete/prose inputs, not new observed status grammar. The existing
+        // predicate requires both exact substrings on one row; it does not parse row location.
+        foreach (var (label, screen) in new[]
+        {
+            ("idle", CodexStartupFixtures.V0160Idle),
+            ("done", CodexStartupFixtures.V0160Done),
+            ("answer prose", "Working on a reply. Press escape to interrupt it."),
+            ("draft", "› Working (on a draft)"),
+            ("help", "Press esc to interrupt) a running task"),
+            ("partial", "◦ Working (1s • esc to inter"),
+            ("split", "◦ Working (1s\n• esc to interrupt)"),
+            ("MCP spinner", "⠧ Starting MCP servers (1/3): test")
+        })
+            CodexWorkingIndicator.IsVisible(screen).ShouldBeFalse("C907 " + label);
+
+        var terminal = new TerminalScreen(120, 30);
+        terminal.Feed("\x1b]0;Working (1s • esc to interrupt)\a");
+        CodexWorkingIndicator.IsVisible(terminal.GetScreenText())
+            .ShouldBeFalse("C907 OSC title is not a rendered status row");
+    }
+
+    [Test]
+    public void C907_captured_lifecycle_requires_seen_gone_and_settle()
+    {
+        var t0 = new DateTime(2026, 10, 19, 15, 0, 0, DateTimeKind.Utc);
+        var working = CodexStartupFixtures.V0160Running;
+        var done = CodexStartupFixtures.V0160Done;
+        var never = new CodexTurnScreenTracker(TimeSpan.FromSeconds(1));
+        never.Observe(done, done, 1, t0).ShouldBeFalse("C907 never seen initial");
+        never.Observe(done, done, 1, t0.AddMinutes(1)).ShouldBeFalse("C907 never seen quiet");
+
+        var tracker = new CodexTurnScreenTracker(TimeSpan.FromSeconds(1));
+        tracker.Observe(working, working, 1, t0).ShouldBeFalse("C907 seen");
+        tracker.Observe(working, working, 1, t0.AddSeconds(2)).ShouldBeFalse("C907 still visible");
+        tracker.Observe(done, done, 2, t0.AddSeconds(3)).ShouldBeFalse("C907 gone repaint");
+        tracker.Observe(done, done, 2, t0.AddMilliseconds(3999)).ShouldBeFalse("C907 settle minus one");
+        tracker.Observe(done, done, 2, t0.AddSeconds(4)).ShouldBeTrue("C907 whole quiet interval");
+
+        var repaint = new CodexTurnScreenTracker(TimeSpan.FromSeconds(1));
+        repaint.Observe(working, working, 1, t0).ShouldBeFalse();
+        repaint.Observe(done, done, 2, t0.AddSeconds(1)).ShouldBeFalse();
+        repaint.Observe(done, done, 3, t0.AddMilliseconds(1999)).ShouldBeFalse("C907 late repaint");
+        repaint.Observe(done, done, 3, t0.AddSeconds(2)).ShouldBeFalse("C907 old deadline invalid");
+        repaint.Observe(done, done, 3, t0.AddMilliseconds(2999)).ShouldBeTrue("C907 new deadline");
+        foreach (var raw in new[] { "", "\x1b[0m" })
+        {
+            var empty = new CodexTurnScreenTracker(TimeSpan.FromSeconds(1));
+            empty.Observe(working, raw, 1, t0).ShouldBeFalse();
+            empty.Observe(done, raw, 1, t0.AddSeconds(2)).ShouldBeFalse("C907 no visible raw output");
+        }
+    }
+
     [Test]
     public void The_measured_working_line_is_visible()
     {

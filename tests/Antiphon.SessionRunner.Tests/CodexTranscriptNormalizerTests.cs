@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
@@ -29,6 +30,45 @@ namespace Antiphon.SessionRunner.Tests;
 /// </summary>
 public class CodexTranscriptNormalizerTests
 {
+    [Test]
+    public void C907_thread_item_dialect_is_not_selected_by_originator()
+    {
+        // Derived from the historical 0.147 TUI fixture. This is a grammar/originator
+        // control, not a recovered 0.160 native exec rollout or usage measurement.
+        foreach (var originator in new[] { "codex-tui", "codex_exec" })
+        {
+            var normalizer = new CodexTranscriptNormalizer();
+            var parts = new List<TranscriptPart>();
+            var metadataRows = 0;
+            foreach (var line in ReadFixtureLines("codex-tui-turn.jsonl"))
+            {
+                var row = JsonNode.Parse(line)!;
+                if (row["type"]!.GetValue<string>() == "session_meta")
+                {
+                    row["payload"]!["originator"] = originator;
+                    metadataRows++;
+                    parts.AddRange(normalizer.Normalize(row.ToJsonString()));
+                }
+                else parts.AddRange(normalizer.Normalize(line));
+            }
+            metadataRows.ShouldBe(1, "C907 originator control reached");
+            parts.Select(p => p.Kind).ShouldBe(new[]
+                { TranscriptKinds.UserPrompt, TranscriptKinds.AssistantText, TranscriptKinds.TurnEnd },
+                "C907 " + originator + " thread items accepted");
+            parts[0].Text.ShouldBe("b2526831 and nothing else.");
+            parts[0].Uuid.ShouldBe("01a01fbe-c3da-7a12-9dc1-7bfd06fa928f");
+            parts[1].Text.ShouldBe("b2526831");
+            parts[1].Uuid.ShouldBe("msg_0c20db1efa54bf9e016a871a51e6d087d0845621d814a9ca6f");
+            parts[1].ApiCallId.ShouldBe("01a01fbe-be6d-74f3-b1a1-a99e5e82ed3b");
+            parts[2].ApiCallId.ShouldBe("01a01fbe-be6d-74f3-b1a1-a99e5e82ed3b");
+            parts[2].StopReason.ShouldBe("end_turn");
+            parts[2].InputTokens.ShouldBe(12565);
+            parts[2].OutputTokens.ShouldBe(44);
+            parts[2].CacheReadTokens.ShouldBe(0);
+            parts[2].CacheCreationTokens.ShouldBe(0);
+        }
+    }
+
     /// <summary>
     /// The shape an Antiphon-launched Codex session actually produces. The plan's section 2 said
     /// <c>event_msg/user_message</c> and <c>event_msg/agent_message</c>; the TUI writes NEITHER —

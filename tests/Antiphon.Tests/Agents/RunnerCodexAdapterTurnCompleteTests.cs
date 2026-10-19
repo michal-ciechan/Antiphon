@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Agents.Pty.Tests;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
@@ -25,6 +26,25 @@ namespace Antiphon.Tests.Agents;
 [Category("Unit")]
 public class RunnerCodexAdapterTurnCompleteTests
 {
+    [Test]
+    public async Task C907_captured_lifecycle_completes_screen_fallback()
+    {
+        var client = new ScriptedCodexRunnerClient
+        {
+            ThrowOnTranscript = true,
+            IndicatorScreenReads = 6,
+            ActiveScreen = CodexStartupFixtures.V0160Running,
+            QuietScreen = CodexStartupFixtures.V0160Done,
+            RawOutput = CodexStartupFixtures.V0160Done,
+        };
+        var adapter = NewAdapter(client, doneQuietMs: 300, doneMaxWaitMs: 15_000, submitConfirmMs: 100);
+        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+        await adapter.SendPromptAsync("captured fixture fallback probe", CancellationToken.None);
+        var turn = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        turn.TurnCompleted.ShouldBeTrue("C907 captured seen/gone/quiet screen fallback");
+        turn.RawSnapshot.ShouldNotBeNullOrWhiteSpace();
+    }
+
     [Test]
     public async Task A_TurnEnd_row_past_the_prompt_baseline_completes_the_turn_with_transcript_reply_text()
     {

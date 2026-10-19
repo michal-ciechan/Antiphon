@@ -100,6 +100,9 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
     /// <summary>Snapshot reads that render the Working indicator before it disappears.</summary>
     public int IndicatorScreenReads { get; set; }
 
+    /// <summary>Captured active frame override; legacy callers retain their measured default.</summary>
+    public string ActiveScreen { get; set; } = WorkingScreen;
+
     /// <summary>Makes GetTranscriptAsync throw, i.e. a session whose transcript is not observable at all.</summary>
     public bool ThrowOnTranscript { get; set; }
 
@@ -184,7 +187,7 @@ internal sealed class ScriptedCodexRunnerClient : ISessionRunnerClient
             var working = (_screenReads - 1) < IndicatorScreenReads;
             if (working)
                 _sequence++;
-            screen = working ? WorkingScreen : QuietScreen;
+            screen = working ? ActiveScreen : QuietScreen;
         }
 
         Interlocked.Increment(ref _snapshotCompletions);
