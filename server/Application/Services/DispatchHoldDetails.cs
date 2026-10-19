@@ -12,6 +12,10 @@ public static class DispatchHoldDetails
     public const string ErrorPrefix = "Error:";
     public const string RoutingPinPrefix = "routing pin not before";
 
+    public const string SiblingInspectionPending = "Held: same-card base inspection is pending.";
+    public const string SiblingInspectionCapacity = "Held: same-card base inspection capacity is occupied.";
+    public const string SiblingIntegrationUnknown = "Held: same-card pending integration could not be inspected.";
+
     public const string LeaseOccupiedUnknown =
         "Held: repository mutation lease is occupied by another process (no running land on this repository; a worktree creation, gated commit, verification cleanup or another server instance holds landing.lock).";
 
