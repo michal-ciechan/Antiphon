@@ -145,7 +145,11 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
             }
             var rows = inventory.Rows.Where(row => SameRepo(task, row)).ToArray();
             candidateRows = rows;
-            if (rows.Length == 0) return Result();
+            // No same-repo sibling rows: nothing was evaluated against any base, so the result carries
+            // no observed base ref. Reporting the global default here drafted a spurious
+            // base-observation-stale intent for every no-sibling task in a project whose configured
+            // default differs from GitSettings.DefaultBranch (CARD-1349 repair round 2).
+            if (rows.Length == 0) return Result() with { ObservedBaseRef = null };
             var configured = await ConfiguredDefaultAsync(task, inspection, ct);
             var defaultSha = await inspection.CommitAsync(configured);
             var landingRef = task.MergeTargetRef ?? (defaultSha is not null ? configured : "HEAD");
