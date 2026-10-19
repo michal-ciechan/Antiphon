@@ -22,6 +22,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
     {
         var source = Observe(Sha, 0);
         var repo = TempDir();
+        CheckpointFixtureProcess.Git(repo, "init", "-b", "card1368");
         Directory.CreateDirectory(Path.Combine(repo, "sample"));
         File.WriteAllText(Path.Combine(repo, "sample", "sample.csproj"),
             "<Project Sdk=\"Microsoft.NET.Sdk\" />");
