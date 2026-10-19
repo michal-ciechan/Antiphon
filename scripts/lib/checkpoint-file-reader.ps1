@@ -41,10 +41,15 @@ public static class ConfinedFileReader
         return reader.ReadToEnd();
     }
 
-    public static byte[] ReadBytes(string root, string path, int limit, Action? afterVerification = null, CancellationToken cancellationToken = default)
+    public static byte[] ReadBytes(string root, string path, int limit, Action? afterVerification = null, CancellationToken cancellationToken = default) =>
+        ReadBytes(root, path, limit, afterVerification, cancellationToken, null, null);
+
+    // CARD-1363: the clock and the handle stream are deterministic test seams at the read boundary; production passes neither.
+    public static byte[] ReadBytes(string root, string path, int limit, Action? afterVerification, CancellationToken cancellationToken,
+        TimeProvider? time, Func<SafeFileHandle, Stream>? openStream)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(TimeSpan.FromSeconds(3));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3), time ?? TimeProvider.System);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         deadline.Token.ThrowIfCancellationRequested();
         using var handle = OperatingSystem.IsLinux() ? OpenLinux(path) : OperatingSystem.IsWindows() ? OpenWindows(path)
             : throw new InvalidDataException("opened-handle verification unsupported on this platform");
@@ -53,7 +58,7 @@ public static class ConfinedFileReader
         if (refusal is not null) throw new InvalidDataException(refusal);
         if (metadata.Size > (ulong)limit) throw new InvalidDataException("selected file exceeds size limit");
         afterVerification?.Invoke();
-        using var stream = new FileStream(handle, FileAccess.Read);
+        using var stream = openStream is null ? new FileStream(handle, FileAccess.Read) : openStream(handle);
         using var content = new MemoryStream();
         var buffer = new byte[8192];
         int count;
