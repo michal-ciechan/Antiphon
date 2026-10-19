@@ -8,6 +8,8 @@ public static class CheckpointFileReader
 {
     public const int DocumentLimit = 4 * 1024 * 1024;
     public const int SourceLimit = 1024 * 1024;
+    // CARD-1318 stalled-receipt contract: a read that delivers nothing for this long is refused.
+    public static readonly TimeSpan StallDeadline = TimeSpan.FromSeconds(3);
 
     public static string? Refusal(bool isRegularFile, ulong linkCount, string resolvedPath, string root) =>
         Refusal(CheckpointCleanupDefaults.Context, isRegularFile, linkCount, resolvedPath, root);
@@ -37,7 +39,7 @@ public static class CheckpointFileReader
     public static byte[] ReadBytes(CheckpointCleanupContext context, string root, string path, int limit,
         Action? afterVerification = null, CancellationToken cancellationToken = default)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3), context.Time);
+        using var timeout = new CancellationTokenSource(StallDeadline, context.Time);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         deadline.Token.ThrowIfCancellationRequested();
         CheckpointReadOpen request;

@@ -30,7 +30,8 @@ public static class BuildConfinement
     // CARD-1241: tracked, untracked and ignored files outside the row's write roots, stamped before
     // the build slot is taken, re-checked by AdmitLedger once it is granted and verified by VerifyLedger
     // after it is released. Stats holds each entry's LedgerStat, read before its hash; RacyFrom is the
-    // capture start minus RacyWindow, in LedgerStat.Now() units. Stat reads the stamps at capture and at admission.
+    // capture start minus RacyWindow, in LedgerStat.Now() units. Stat reads the stamps at capture and at admission;
+    // Stamp reads an entry's content stamp at capture, admission and verification (CARD-1358 seam).
     public sealed record Ledger(
         string Repository,
         string Head,
@@ -39,7 +40,8 @@ public static class BuildConfinement
         Dictionary<string, string> Files,
         Dictionary<string, LedgerStat> Stats,
         long RacyFrom,
-        Func<string, LedgerStat> Stat);
+        Func<string, LedgerStat> Stat,
+        Func<string, string> Stamp);
 
     public sealed record Admission(Settlement Settlement, int Hashed);
 
@@ -86,9 +88,11 @@ public static class BuildConfinement
         return new OutputLayout(owned, owned.TrimEnd('/') + "/artifacts");
     }
 
-    public static LedgerCapture CaptureLedger(string workingDirectory, IReadOnlyList<string> arguments, Func<string, LedgerStat>? stat = null)
+    public static LedgerCapture CaptureLedger(string workingDirectory, IReadOnlyList<string> arguments, Func<string, LedgerStat>? stat = null,
+        Func<string, string>? stamp = null)
     {
         stat ??= LedgerStat.Of;
+        stamp ??= Stamp;
         if (!TryFindOutput(arguments, out var outputValue) || !TryFindProject(arguments, out var project))
             return LedgerCapture.None;
         var repo = Git(workingDirectory, ["rev-parse", "--show-toplevel"]);
@@ -116,19 +120,19 @@ public static class BuildConfinement
         {
             if (UnderRoots(path, roots)) continue;
             stats[path] = stat(Combine(repository, path));
-            var stamp = Stamp(Combine(repository, path));
-            if (stamp == "unreadable") return RefuseLedger("tracked-unreadable");
-            files[path] = stamp;
+            var value = stamp(Combine(repository, path));
+            if (IsUnreadable(value)) return RefuseLedger("tracked-unreadable");
+            files[path] = value;
         }
 
         foreach (var path in untracked.Value)
         {
             if (UnderRoots(path, roots)) continue;
             stats[path] = stat(Combine(repository, path));
-            files[path] = Stamp(Combine(repository, path));
+            files[path] = stamp(Combine(repository, path));
         }
         var tracked = new HashSet<string>(entries.Value.Keys, StringComparer.Ordinal);
-        return new LedgerCapture(new Ledger(repository, head.Stdout.Trim(), roots, tracked, files, stats, racyFrom, stat), null, "");
+        return new LedgerCapture(new Ledger(repository, head.Stdout.Trim(), roots, tracked, files, stats, racyFrom, stat, stamp), null, "");
     }
 
     // Review 06ff09f8 D1: the scheduler calls this once the build slot is granted, before the build starts.
@@ -159,7 +163,7 @@ public static class BuildConfinement
                 && recorded.Matches(ledger.Stat(full)))
                 continue;
             hashed++;
-            if (pair.Value == "unreadable" || Stamp(full) != pair.Value)
+            if (IsUnreadable(pair.Value) || ledger.Stamp(full) != pair.Value)
                 paths.Add(pair.Key);
         }
         var settlement = paths.Count == 0
@@ -172,7 +176,7 @@ public static class BuildConfinement
     {
         var paths = new List<string>();
         foreach (var pair in ledger.Files)
-            if (pair.Value == "unreadable" || Stamp(Combine(ledger.Repository, pair.Key)) != pair.Value)
+            if (IsUnreadable(pair.Value) || ledger.Stamp(Combine(ledger.Repository, pair.Key)) != pair.Value)
                 paths.Add(pair.Key);
         if (paths.Count == 0)
             return new Settlement(null, "", []);
@@ -270,15 +274,17 @@ public static class BuildConfinement
         return new Prepared(null, "", rewritten, baseline);
     }
 
-    public static Settlement Settle(Baseline baseline)
+    // stamp reads each baseline entry's content stamp at settlement; Prepare's own callers keep the real reader (CARD-1358 seam).
+    public static Settlement Settle(Baseline baseline, Func<string, string>? stamp = null)
     {
+        stamp ??= Stamp;
         var status = ReadStatus(baseline.Repository);
         if (status.Error is not null)
             return new Settlement("tracked-snapshot", "refused: tracked-snapshot\n" + status.Error + "\nBuild-result bytes and index entries were left in place; no source recovery was attempted.\n", []);
         var paths = new HashSet<string>(status.Paths, StringComparer.Ordinal);
         var staged = new HashSet<string>(StringComparer.Ordinal);
         foreach (var pair in baseline.Content.Concat(baseline.Untracked))
-            if (pair.Value == "unreadable" || Stamp(Combine(baseline.Repository, pair.Key)) != pair.Value)
+            if (IsUnreadable(pair.Value) || stamp(Combine(baseline.Repository, pair.Key)) != pair.Value)
                 paths.Add(pair.Key);
         if (!IndexMatches(baseline, out var error))
         {
@@ -355,7 +361,9 @@ public static class BuildConfinement
         return new ManifestResult(files, null);
     }
 
-    private static string Stamp(string full)
+    internal static bool IsUnreadable(string stamp) => stamp.StartsWith("unreadable", StringComparison.Ordinal);
+
+    internal static string Stamp(string full)
     {
         try
         {
@@ -658,7 +666,7 @@ public static class BuildConfinement
             return new CaptureResult(null, untracked.Error ?? "git-ls-files");
         var content = entries.Value.Keys.Where(path => covered?.ContainsKey(path) != true)
             .ToDictionary(path => path, path => Stamp(Combine(repository, path)), StringComparer.Ordinal);
-        if (content.Values.Any(value => value == "unreadable")) return new CaptureResult(null, "tracked-unreadable");
+        if (content.Values.Any(IsUnreadable)) return new CaptureResult(null, "tracked-unreadable");
         return new CaptureResult(new Baseline(head.Stdout.Trim(), repository, entries.Value, untracked.Value, content, covered), null);
     }
 
