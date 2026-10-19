@@ -129,8 +129,9 @@ public sealed partial class AttentionService
         DateTime now, HashSet<Guid> remoteLive, HashSet<Guid> remoteUnknown, CancellationToken ct)
     {
         var cutoff = now.AddMinutes(-10);
+        // StandingAgentId is historical; only a current agent pointer establishes agent ownership.
         var candidates = await _db.AgentSessions.AsNoTracking()
-            .Where(s => s.CardId == null && s.StandingAgentId == null && s.EndedAt == null
+            .Where(s => s.CardId == null && s.EndedAt == null
                 && s.StartedAt < cutoff
                 && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running
                     || s.Status == SessionStatus.Stopping)
@@ -147,9 +148,11 @@ public sealed partial class AttentionService
             .Select(s => new AttentionItemDto(
                 AttentionKind.SessionUnowned, AlertSeverity.Warning, null, s.Id, null, null,
                 $"Unowned session {s.Id.ToString("N")[..8]}",
-                "Live session has no agent, card, standing owner or open task.",
+                "Live session has no agent pointer, card or open task.",
                 $"Session {s.Id}; AgentKind={s.AgentKind}; runner={s.RunnerId ?? "local"}; "
-                    + $"started={s.StartedAt:O}; age={(now - s.StartedAt).TotalMinutes:F1} minutes.",
+                    + $"started={s.StartedAt:O}; age={(now - s.StartedAt).TotalMinutes:F1} minutes."
+                    + (s.StandingAgentId is Guid historicalId
+                        ? $" historicalStandingAgentId={historicalId:D} (historical, not a current pointer)." : ""),
                 s.StartedAt, null, [AttentionAction.OpenDrawer], ModelKind: s.AgentKind.ToString(),
                 ConditionKey: $"session-unowned:{s.Id:N}")).ToList();
     }

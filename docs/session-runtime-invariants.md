@@ -941,7 +941,10 @@ the transcript mutation gate. Activation requires both server and runner support
   Agent deletion stops first and refuses with 409 `agent_delete_session_live` when exit cannot
   be confirmed. The attention feed reports `PoolDelegateUnreleased` past twice the grace,
   `SessionStopStuck` for stops or pending deferred kills older than five minutes, and
-  `SessionUnowned` after ten minutes without an owner. Remote leak rows need confirmed live
+  `SessionUnowned` for a session older than ten minutes with no current agent pointer, card
+  or open task. The threshold is session age, not time since ownership was lost; a historical
+  `StandingAgentId` supplies evidence, not current ownership. This projection never kills,
+  stops or mutates a session or agent. Remote leak rows need confirmed live
   inventory; CARD-0679 unknown/pending inventory is not leak evidence. A pending stop intent
   remains visible as unresolved intent, explicitly naming unknown liveness.
 

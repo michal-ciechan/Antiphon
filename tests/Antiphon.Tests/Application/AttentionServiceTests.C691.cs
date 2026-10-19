@@ -91,7 +91,7 @@ public partial class AttentionServiceTests
         var other = new Agent
         {
             Id = Guid.NewGuid(), Name = "other owner", Slug = "c0188-other", Kind = AgentKind.ClaudeCode,
-            WorkingDirectory = Path.GetTempPath(), Status = AgentStatus.Running,
+            WorkingDirectory = Path.GetTempPath(), Status = AgentStatus.Running, AlwaysOn = true,
             PersistentSessionId = b.Id.ToString(), CreatedAt = w.Now, UpdatedAt = w.Now,
         };
         w.Db.Agents.Add(other);
@@ -99,6 +99,7 @@ public partial class AttentionServiceTests
         await AssertUnownedAsync(false);
         w.Agent.PersistentSessionId = b.Id.ToString();
         other.PersistentSessionId = null;
+        other.AlwaysOn = false;
         await w.Db.SaveChangesAsync();
         await AssertUnownedAsync(true);
         other.PersistentSessionId = a.Id.ToString();
@@ -384,9 +385,22 @@ public partial class AttentionServiceTests
         item.ModelKind.ShouldBe("Codex");
         item.SessionId.ShouldBe(w.Session.Id);
         item.Actions.ShouldBe([AttentionAction.OpenDrawer]);
-        w.Session.StartedAt = w.Now.AddMinutes(-10);
-        await w.Db.SaveChangesAsync();
-        (await w.RowsAsync(AttentionKind.SessionUnowned)).ShouldBeEmpty();
+        foreach (var stamp in new Guid?[] { null, w.Agent.Id })
+        {
+            w.Session.StandingAgentId = stamp;
+            foreach (var age in new[] { TimeSpan.FromMinutes(9), TimeSpan.FromMinutes(10),
+                TimeSpan.FromMinutes(10) + TimeSpan.FromMilliseconds(1) })
+            {
+                w.Session.StartedAt = w.Now - age;
+                await w.Db.SaveChangesAsync();
+                var rows = await w.RowsAsync(AttentionKind.SessionUnowned);
+                if (age > TimeSpan.FromMinutes(10)) rows.ShouldHaveSingleItem();
+                else rows.ShouldBeEmpty();
+                w.Session.StartedAt = w.Now.AddHours(-1);
+                await w.Db.SaveChangesAsync();
+                (await w.RowsAsync(AttentionKind.SessionUnowned)).ShouldHaveSingleItem();
+            }
+        }
     }
 
     [Test]
@@ -404,8 +418,34 @@ public partial class AttentionServiceTests
         switch (owner)
         {
             case "agent": w.Agent.PersistentSessionId = w.Session.Id.ToString("N").ToUpperInvariant(); break;
-            case "standing": w.Session.StandingAgentId = w.Agent.Id; break;
-            case "task": w.Task.Status = AgentTaskStatus.Queued; break;
+            case "standing":
+                w.Session.StandingAgentId = w.Agent.Id;
+                w.Agent.PersistentSessionId = w.Session.Id.ToString();
+                break;
+            case "task":
+                foreach (var status in new[] { AgentTaskStatus.Queued, AgentTaskStatus.Dispatched,
+                    AgentTaskStatus.Working, AgentTaskStatus.Blocked })
+                {
+                    w.Task.Status = status;
+                    await w.Db.SaveChangesAsync();
+                    (await w.RowsAsync(AttentionKind.SessionUnowned)).ShouldBeEmpty();
+                    w.Task.Status = AgentTaskStatus.Failed;
+                    await w.Db.SaveChangesAsync();
+                    (await w.RowsAsync(AttentionKind.SessionUnowned)).ShouldHaveSingleItem();
+                }
+                var unrelated = new AgentSession
+                {
+                    Id = Guid.NewGuid(), DefinitionName = "unrelated task", AgentKind = AgentKind.Codex,
+                    Cwd = Path.GetTempPath(), Status = SessionStatus.Running,
+                    CreatedAt = w.Now, StartedAt = w.Now, LastSeenAt = w.Now,
+                };
+                w.Db.AgentSessions.Add(unrelated);
+                w.Task.AgentSessionId = unrelated.Id;
+                w.Task.Status = AgentTaskStatus.Queued;
+                await w.Db.SaveChangesAsync();
+                (await w.RowsAsync(AttentionKind.SessionUnowned)).ShouldHaveSingleItem().SessionId.ShouldBe(w.Session.Id);
+                w.Task.AgentSessionId = w.Session.Id;
+                break;
             case "ended": w.Session.EndedAt = w.Now.AddMinutes(-2); break;
         }
         await w.Db.SaveChangesAsync();
@@ -425,10 +465,17 @@ public partial class AttentionServiceTests
         w.Directory.Pending = state == "pending";
         w.Directory.Live = state != "gone";
         (await w.RowsAsync(AttentionKind.PoolDelegateUnreleased)).ShouldBeEmpty();
+        w.Session.StandingAgentId = w.Agent.Id;
+        await w.Db.SaveChangesAsync();
         await w.RemoveOwnerAsync();
         (await w.RowsAsync(AttentionKind.SessionUnowned)).ShouldBeEmpty();
         w.Directory.Unknown = w.Directory.Pending = false;
         w.Directory.Live = true;
+        var confirmed = (await w.RowsAsync(AttentionKind.SessionUnowned)).ShouldHaveSingleItem();
+        confirmed.SessionId.ShouldBe(w.Session.Id);
+        confirmed.Evidence.ShouldContain($"historicalStandingAgentId={w.Agent.Id:D}");
+        (await w.FeedAsync(includeDirectory: false)).Items
+            .Where(i => i.Kind == AttentionKind.SessionUnowned && i.SessionId == w.Session.Id).ShouldBeEmpty();
         (await w.RowsAsync(AttentionKind.SessionUnowned)).ShouldHaveSingleItem();
     }
 

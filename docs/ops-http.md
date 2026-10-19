@@ -554,9 +554,10 @@ transcript-confirmed `UserPrompt` evidence — not a screen redraw — as the de
 - `SessionStopStuck` (45, Error): Stopping unchanged for five minutes, or an unresolved
   generation-conditional deferred kill older than five minutes, even for a terminal session row.
   Evidence names the kill intent and distinguishes confirmed live, confirmed absent and unknown.
-- `SessionUnowned` (46, Warning): a live session older than ten minutes with no card, standing
-  owner, agent pointer or open task. Remote sessions require confirmed live inventory; an
-  unknown CARD-0679 remote session is never inferred to be a leak.
+- `SessionUnowned` (46, Warning): a live session older than ten minutes with no card,
+  current agent pointer or open task. A historical `StandingAgentId` is evidence only,
+  not current ownership. Remote sessions require confirmed live inventory; an unknown
+  CARD-0679 remote session is never inferred to be a leak.
 - `ZombieCensusReport` (47, Warning): one row per candidate class (PoolExpired, EndedButAlive,
   Unclaimed) in the last successful local OS census, with count, up to five pid/agent/session
   examples and generation time. Absent before the first successful run; a failed run retains
