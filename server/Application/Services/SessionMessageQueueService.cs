@@ -70,6 +70,7 @@ public sealed partial class SessionMessageQueueService
     private readonly CapacityRecoveryService? _capacityRecovery;
     private readonly CompletionNoteFlushQueue? _completionNotes;
     private readonly SessionStateStore? _states;
+    private readonly LandDeliveryBoundary? _boundary;
 
     /// <summary>
     /// Test seam. Runs after the unlocked open-question read and before the
@@ -95,8 +96,10 @@ public sealed partial class SessionMessageQueueService
         // types the whole body instead, which is the safe direction.
         RemoteSpillCourier? remoteSpills = null,
         CompletionNoteFlushQueue? completionNotes = null,
-        SessionStateStore? states = null)
+        SessionStateStore? states = null,
+        LandDeliveryBoundary? boundary = null)
     {
+        _boundary = boundary;
         _states = states;
         _remoteSpills = remoteSpills;
         _ptyProfile = ptyProfile;
@@ -887,7 +890,11 @@ public sealed partial class SessionMessageQueueService
             if (origin == QueuedMessageOrigin.Delegation && sourceTaskId is Guid publishedTask && contentDigest is not null)
             {
                 _completionNotes?.Recovery.Check(publishedTask);
-                _completionNotes?.Recovery.ScheduleFlush(sessionId, holdUntil ?? DateTime.MinValue);
+                // CARD-1360 test seam. The queue-side scheduled flush is a hint, never delivery evidence.
+                // Production registers the no-op boundary, so nothing is dropped there; a row whose hints
+                // are lost is recovered by the fifteen-minute durable sweep in CompletionNoteWorkHostedService.
+                if (_boundary?.DropWakeup("completion-schedule", row.Id) != true)
+                    _completionNotes?.Recovery.ScheduleFlush(sessionId, holdUntil ?? DateTime.MinValue);
             }
 
             onCreated?.Invoke(row.Id);

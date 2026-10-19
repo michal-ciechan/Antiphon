@@ -329,6 +329,10 @@ the transcript mutation gate. Activation requires both server and runner support
   deadline or distillation release, including after startup; caller turn-end remains the normal
   busy-session delivery trigger. Wakeup overflow requests a sweep, and repeated failures back
   off to sixty seconds. These wakeups are hints, never transcript-confirmed delivery receipts.
+  The direct completion wakeup (`completion`) and the queue-side scheduled flush
+  (`completion-schedule`) are both droppable through `LandDeliveryBoundary.DropWakeup` for tests;
+  the boundary production registers drops nothing, and the fifteen-minute sweep is what recovers a
+  row whose hints were lost (CARD-1360).
 
 - **Runner and child-journal alarms use two clocks (CARD-0726).** A runner outage raises only
   after `Alarms:RunnerGraceSeconds`; a startup pass, event wakes and the
