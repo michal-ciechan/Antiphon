@@ -268,3 +268,440 @@ Acceptance is:
 
 Next stage: **test-design**. After its committed manifest exists, Code can
 execute S1 and S2, followed by ordinary Review and master-only landing.
+
+## Verification design
+
+TestDesign appended at `abbcb6651d63d04d219c4dd4f81f52a79df921a4`.
+The fix design above is unchanged. Execution context: **offline scripts**;
+master only, sequential S1/S2, 60 minutes each. This is the complete ordinary
+selection, not an Interim or a product lane. No test/build was run by TestDesign;
+the two plan-time observations remain historical, not acceptance evidence.
+
+### Inspection
+
+- Read `NightlyExecutionDiagnosticTests.cs` (all four methods),
+  `NightlyDiscoveryParserTests.cs` (all three methods), `ScriptHarness.cs`
+  (including exact row-count/name validation), and `ScriptHarnessProcess.cs`
+  launch/deadline/cleanup path | V-1/V-2, R-1 through R-6. Retain the wrappers'
+  `ParallelLimiter<ProcessSpawnLimit>`; their internal rows are not TUnit cases.
+- Read `test-nightly-tests.ps1`: imports, `Get-C487ProbeRoot`,
+  `New-C487FreshProbeEvidence`, all C1044 and D13 function bodies;
+  `c487-harness.ps1` assertion, fixture-writing and count helpers | V-1/V-2,
+  R-1 through R-6. New functions must be selectable by the existing `-Case`
+  dispatch and must emit the existing `D13` row prefix.
+- Read nearest new-fixture source `fixtures/nightly/d13-error-pair.ps1`
+  (complete captured record and matching TRX), the C487 probe project/source,
+  its empty Directory.Build props/targets, and discovery/execution/TRX fixture
+  shapes | E/S recipes below and P-1. Keep the captured pair byte-for-byte.
+- Read `nightly-coverage.ps1` version gate, record splitter, state/message
+  readers, record conversion, diagnostic-log reader, normalization, expanded-UID
+  and TRX cross-checks, native-suite/coverage verdicts | G-1 through G-31.
+- Read checkpoint schema/importer, CARD-0403 filters, build-slot rules, Nightly,
+  mutation rules, nightly watchdog owner, release-gates owner, orchestration
+  stage order and D-2 policy; inspected `ReleaseAuthorityScripts` and its digest
+  comparison | CP manifest, Cost, exclusions. Read `Invoke-NightlyOwnedProcess`
+  and its native owner: that launcher is Windows-only, so it is **not** a
+  portable producer-probe recipe or permission to pin dispatch to Windows.
+
+### Delivery inventory
+
+No new or changed asynchronous recipient-delivery path exists. The changed
+path is local diagnostic bytes -> framed record -> selected state/message ->
+terminal node -> native-suite verdict, joined by UID and class/method identity.
+The matching TRX testId resolves to that class/method; discovery supplies the
+required UID. Fixture files are local parser inputs, not a durable message
+queue, recovery journal, or recipient receipt.
+
+Thus producer/destination/persistence/recovery/observable receipt for a changed
+queue path are **none**. Busy-recipient, already-eligible-recipient and
+crash/enqueue-failure handoff tests are excluded because this card changes no
+such handoff. P-1 observes real TUnit output locally; C1044's StartProcess seam
+substitutes diagnostic text for a child and proves publication refusal only.
+Neither proves Windmill execution, notification delivery, process-custody
+qualification, or session input. No request, queue insert, event, Sent flag or
+ack earns recipient credit; any later session-delivery change requires a new
+inventory and matching complete UserPrompt transcript before acceptance.
+
+### Proves it works now
+
+- V-1: D-2 exact explanation boundary | offline parser through real PowerShell
+  harness and C# wrapper | `D13_ExplanationBoundary`, CP-1/CP-2/CP-4 | supported
+  E rows retain literal message bytes, UID/identity and Failed; E09/E11 omit
+  Message conservatively. CP-1 is the single intended pre-S1 red witness.
+- V-2: D-3/D-4 state selection | same layer plus native-suite composition |
+  `D13_StatePropertyBoundary`, CP-3/CP-4 | quoted headers never select state or
+  message; ambiguous framing retains Failed/UID; matching Failed TRX stays red
+  at process exit 0 with complete coverage and exact diagnostic Message.
+  CP-3 is the single intended pre-S2 red witness.
+- V-3: D-5/D-6 provenance | bounded local producer observation P-1 below |
+  inspect raw diagnostic/TRX state, version headers, trigger and cleanup record;
+  distinguish captured/derived/reflected. An unavailable real Timeout/Cancelled
+  is an explicit evidence limitation, never an invented integration pass.
+
+**Shared fixture recipe and independent oracle.** Add the planned
+`c1325-diagnostic-records.ps1`, consumed by the two new cases, with record ID,
+provenance, source capture, raw record, literal expected UID/class/method,
+expected outcome, expected Message (or explicit absence), and newline variant.
+For capture derivatives replace all three original message occurrences (earlier
+TRX text, explanation, exception echo), preserving the original stack and
+property surroundings. Assert the fixture has all three replacements and one
+intended outer state; do not obtain expected values with a production parser or
+split helper. Literal expected messages include `[Test Failure] ` exactly once.
+Keep spaces, tabs, braces, empty lines and physical newlines; equality is ordinal.
+Fixture construction checks are setup failures, not extra `PASS D13` rows or
+mutation kills. All variants call `ConvertFrom-NightlyDiagnosticLog -Kind
+execution` via real temporary files, not a hand-built terminal-node substitute.
+
+**S1 case inventory.** `D13_ExplanationBoundary`: 11 records, two assertions
+per record, **22 named harness rows / one TUnit execution**. Names are exactly
+`D13 EB <ID> identity` and `D13 EB <ID> message` for E01-E11. Identity asserts
+one node, no parser error, literal UID/class/method and Failed; message asserts
+exact literal equality for supported records, and absence of the `Message`
+property for E09/E11. Absence must not mean merely empty-string coercion.
+
+| Case | Recipe / variant | Oracle / reachability / classification |
+|---|---|---|
+| E01 | Captured D13 derivative; LF; replace message with `ShouldAssertException: boom, Exception = INNER still explanation` everywhere. | Exact prefixed explanation; real echoed delimiter reaches the current LastIndexOf defect. Derived, supported. Required CP-1 decisive red. |
+| E02 | Same, LF; two embedded delimiters: `boom, Exception = alpha, Exception = beta`. | Both embedded delimiters retained; actual exception excluded. Derived, supported. |
+| E03 | E02 with every physical LF changed to CRLF, including the literal oracle. | Exact CRLF, no appended stack. Derived, supported. |
+| E04 | Echoed message includes `, Exception = TUnit.Engine.Exceptions.TestFailedException: decoy` and braces. | Entire decoy stays in explanation; defeats a type-name-only split. Derived, supported. |
+| E05 | Unmodified D13 captured failure, LF, independently written existing literal explanation. | Ordinary no-delimiter capture still exact. Captured, supported. |
+| E06 | Short identifier-to-Error shape, explanation `null exception body`, actual `Exception = <null>`. | Exact explanation, no null/suffix text. Reflected shape, supported. |
+| E07 | Short Timeout shape, explanation `timed out, Exception = detail`, exception `System.TimeoutException: timed out`, trailing `Timeout = 00:00:00.0250000`. | Exact explanation and Failed; Timeout suffix excluded. Reflected shape, supported. |
+| E08 | Short Cancelled shape, explanation `cancelled by the run`, `System.OperationCanceledException: cancelled`; no Timeout field. | Exact explanation and Failed. Reflected shape, supported. |
+| E09 | E01 with only the actual TestFailedException echo changed to different text. | Failed with same identity, Message absent; reaches failed echo validation. Derived malformed split, conservative fallback. |
+| E10 | Echoed LF and CRLF content in one literal message, leading/trailing spaces and a blank line (`  boom\t`, empty line, `tail  `; materialize the tab/newline bytes). | Byte-exact explanation, no trim or normalization. Derived, supported. |
+| E11 | Derive an echoed message `boom, Exception = TUnit.Engine.Exceptions.TestFailedException: boom` followed by physical LF and `   at Fixture.Frame()`. The outer exception repeats that whole message before the original stack/suffix. Candidate explanations are `[Test Failure] boom` and the whole enlarged prefixed message; record the two delimiter offsets and why both exception tails satisfy the pinned shape. | Known Failed state, Message absent because no unique valid split. Adversarial ambiguity; **binding required** until Code records raw payload and both candidate offsets/interpretations. |
+
+E11 is not permission to invent a parse ambiguity: Code must show both distinct
+interpretations against the supported D-2 shapes before accepting its oracle.
+If no concrete reachable payload can be bound, retain the obligation and return
+`next: plan` for that seam; do not silently replace E11 with E09 or mark PC-11
+covered. An unbound payload remains **binding required after Code**, including
+when its wrapper is green.
+
+Keep `D13_StateClassification` at six rows. Correct state-specific shapes
+(Passed has no Exception; Timeout has its trailing field), change the delimiter
+row to the actual echo shape, and rename only its assertion to
+`D13 explanation keeps embedded exception delimiters exactly`; update the
+wrapper's required name. Preserve the other five existing row names verbatim.
+
+**S2 case inventory.** `D13_StatePropertyBoundary` has **27 named harness rows /
+one TUnit execution**. There are 12 supported records S01-S12, two rows each:
+`D13 SB <ID> identity` and `D13 SB <ID> message`, with the E identity/message
+oracles above. Add the three separately named rows following the table.
+
+| Case | Recipe / variant | Oracle / reachability / classification |
+|---|---|---|
+| S01 | D13 Error derivative echoing `saw PassedTestNodeStateProperty { Explanation = decoy }` in all message copies, LF. | Failed and exact entire outer explanation. Reaches global-last classifier; CP-3 decisive red. Derived, supported. |
+| S02-S04 | S01 with respectively `Skipped`, `Discovered`, `InProgress` quoted headers. | Failed node retained, not skipped or filtered; exact message. Derived, supported. |
+| S05 | S01 with `FailedTestNodeStateProperty { Explanation = inner` inside the message. | Exact outer explanation, never extraction from inner failure header. Derived, supported. |
+| S06 | Ordinary Error explanation; quoted Passed header only in actual exception stack text after the unchanged echo. | Exception-only token cannot relabel node; exact ordinary message. Derived, supported. |
+| S07 | Quoted Passed header only in earlier TrxExceptionProperty message/stack, before identifier/location. | Earlier free text cannot supply state. Derived, supported. |
+| S08 | Quoted Failed header only in TestNode display name, preceding Properties. | Actual state and outer message selected. Derived, supported. |
+| S09 | S01 in CRLF. | Failed plus exact CRLF outer explanation. Derived, supported. |
+| S10 | Short identifier-immediately-followed-by-Error record with quoted Passed header and a valid exception echo. | No mandatory file-location assumption; exact message. Reflected envelope with derived text, supported. |
+| S11 | Actual uniquely framed Error with balanced and unmatched ordinary braces in explanation; no fake identifier envelope. | Braces are message bytes, not nesting instructions. Derived, supported. |
+| S12 | S01 with the existing supported timestamp/logger prefix on the physical first line. | Framing accepts prefix without consuming explanation. Derived, supported. |
+
+The additional rows are:
+
+- `D13 SB ambiguous envelope stays failed`: place a complete second apparent
+  identifier/location-to-Passed property transition inside failure free text;
+  retain both candidate spans in the fixture notes. Expect one node with the
+  original UID/identity, Failed, and absent Message. **Binding required** until
+  Code supplies the exact payload and candidate offsets. Do not accept an
+  ordinary quoted header as this ambiguity control.
+- `D13 SB missing UID refuses`: remove the outer UID value from an otherwise
+  valid S01. Expect `truncated diagnostic record: missing uid`; do not allow a
+  quoted inner value to repair it. This adds the previously unbound missing-UID
+  refusal input without adding another wrapper method.
+- `D13 SB failed TRX owns verdict`: use S01, the original matching Failed TRX,
+  and a freshly written discovery document naming the original UID; call
+  `ConvertTo-NightlyNativeSuiteVerdict` with matching SHA/ref/policy and
+  **ProcessExit 0**. Expect `coverageComplete=true`, `testsPassed=false`,
+  `failed-row`, one matching terminal node with exact S01 Message, and no
+  missing-expanded-row or trx-diagnostic-mismatch reason. This is composed
+  offline evidence, not an actual E2E run of the test named by the old capture.
+
+**P-1 bounded producer recipe (diagnostic exception to ordinary CP scope).**
+Spend at most ten S1 minutes, including preparation/build/three single-method
+observations. This is the only authorized extra producer build/test work.
+Create an ignored scratch copy under `.antiphon/c1325-probe/` containing the
+four inspected project/source/Directory.Build files; never edit the original
+probe or execution policy. Replace scratch tests with `C1325Producer` methods:
+`ErrorEcho` throws `Exception("boom, Exception = INNER still explanation")`;
+`TimeoutProbe` uses `[Timeout(25)]` and a bounded 5-second delay accepting the
+TUnit cancellation token; `CancellationProbe` throws
+`OperationCanceledException` with an already-cancelled local token. The last
+trigger may emit Error; that is an observation, not a real Cancelled capture.
+Keep package pins unchanged and record resolved TUnit/MTP versions.
+
+Code writes ignored `.antiphon/c1325-probe/run-probes.ps1` as the local bounded
+supervisor before execution. It starts only its own direct `dotnet` child via
+literal `ProcessStartInfo.ArgumentList`, captures both streams, gives each
+probe 30 seconds including EOF, kills its owned tree on expiry and explicitly
+joins the root and observed descendants under a further five-second cleanup
+bound. No process-name kills, pre-existing executors or live runner sessions.
+Use the existing platform-appropriate ownership primitives if needed; the
+Windows-only nightly native launcher must not be invoked on Linux. A kill
+request/root exit alone is not cleanup proof; failed join/drain stops probes
+and is reported. Bind supervisor contents/hash and scratch source in ignored
+P-1 evidence; **binding required**, never assert completion from an unwritten
+helper. This scratch supervisor is observation tooling, not a new shipped seam.
+
+Run build and supervisor sequentially through one slot-owning layer each:
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1325-probe-build -SlotWaitMinutes 1 -- dotnet build .antiphon/c1325-probe/Probe.csproj --property:OutputPath=bin-c1325-probe/ --property:UseAppHost=false --nologo
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1325-probe-observe -SlotWaitMinutes 1 -- pwsh -NoProfile -File .antiphon/c1325-probe/run-probes.ps1
+```
+
+The supervisor invokes the built `bin-c1325-probe/net9.0/Probe.dll` using
+`dotnet exec`, separately with these exact filters:
+`/*/*/C1325Producer/ErrorEcho`, `/*/*/C1325Producer/TimeoutProbe`,
+`/*/*/C1325Producer/CancellationProbe`. Each invocation adds
+`--report-trx --results-directory <fresh-method-directory> --diagnostic
+--diagnostic-output-directory <fresh-method-directory>/diag` through literal
+argument entries. Inspect native executed names/counts and raw state properties.
+Expected when each finishes normally: one executed intentional failure, zero
+passing/skipped; native nonzero exit (normally 2). Timeout/abort without a
+complete result is unavailable capture, not an executed failure. Keep the
+ordinary Error observation even when timeout/cancellation produce Error.
+Budget exhaustion, build failure or missing state must be reported, not retried
+past the cap. Retain attempted trigger, actual state or absence, exit, duration,
+cleanup, version headers and raw paths. Curate a real capture only if observed;
+never count P-1's intentional failures as CP-1/CP-3 red witnesses.
+
+### Guards the regression
+
+- R-1: captured Error explanation/identity and native verdict | existing
+  `D13_ErrorTerminal`, 10 rows (5 each LF/CRLF), including exact Message,
+  Failed TRX identity, complete failed verdict and exit-zero direct verdict.
+- R-2: terminal classification retained | `D13_ExecutionCompatibility`, 3 rows:
+  eight Passed/eight Skipped identities, legacy Failed retained, nonterminal
+  updates omitted; `D13_StateClassification`, the six rows specified above.
+- R-3: strict execution evidence | `D13_ExecutionGuards`, 4 rows: duplicate
+  Error/version refused, parsed wrong UID cannot satisfy required UID, extra
+  parsed failed identity cannot match empty TRX; S2 missing-UID row adds the
+  separate malformed-identity boundary.
+- R-4: discovery framing | `C1044_MultilineDiscovery`, 8 rows; independent
+  nine-UID inventory (8 required/1 excluded), exact metadata, dispositions and
+  digest in LF/CRLF. `C1044_DiscoveryReconciliation`, 8 rows: prefix/suffix
+  orphans, partial state/identity, duplicate, producer absent/sentinel
+  preservation, complete multiline publication. StartProcess is a declared
+  substitute, not native execution/delivery evidence.
+- R-5: pinned parser compatibility | `C1044_ParserCompatibility`, 17 rows:
+  golden discovery/terminal identity sets, nonterminal omission, prefixed and
+  multiline framing, JSON round-trip, three disposition checks, independent
+  TUnit/MTP drift, duplicate, missing type/method, garbage and header-only
+  refusals. Preserve every existing named row; no test renames/count reductions.
+- R-6: the two reproduced defects remain killed | new EB/SB inventories and
+  their exact-message/Failed assertions, including joined Failed TRX at exit 0.
+  Supported records passing with absent Message fail this regression gate.
+
+### Guard inventory
+
+Scope includes changed parsing guards and the explicit strictness invariants
+preserved by D-4/S2. Independently bypassable guards have separate controls.
+No safety-critical guard in that scope is exempt or mapped to another guard's
+PC. Untested/unbound cases below remain obligations, not claimed coverage.
+
+| Guard | Plan reference and invariant | Positive control |
+|---|---|---|
+| G-1 | D-2 embedded delimiters never determine the exception cut alone | PC-1 |
+| G-2 | D-2 known TestFailedException echo must agree | PC-2 |
+| G-3 | D-2 exact explanation bytes, including physical newlines | PC-3 |
+| G-4 | D-2 Timeout suffix is outside the explanation | PC-4 |
+| G-5 | D-2 valid null exception retains its explanation | PC-5 |
+| G-6 | D-3 earlier TRX/display text cannot supply state | PC-6 |
+| G-7 | D-3 quoted explanation headers cannot relabel the node | PC-7 |
+| G-8 | D-3 quoted exception headers cannot relabel the node | PC-8 |
+| G-9 | D-3 classification and extraction share the selected state | PC-9 |
+| G-10 | D-4 ambiguous state envelope retains Failed and original UID | PC-10 |
+| G-11 | D-4 multiple valid explanation splits omit Message | PC-11 |
+| G-12 | D-4 framed unknown execution state retains a failed node | PC-12 |
+| G-13 | S1/S2 existing Timeout maps to Failed and stays present | PC-13 |
+| G-14 | S1/S2 existing Cancelled maps to Failed and stays present | PC-14 |
+| G-15 | S2 genuine Passed remains Passed | PC-15 |
+| G-16 | S2 genuine Skipped remains Skipped | PC-16 |
+| G-17 | S2 Discovered cannot count as terminal execution | PC-17 |
+| G-18 | D-4 duplicate diagnostic UID is refused | PC-18 |
+| G-19 | D-1/D-4 unsupported TUnit header is refused | PC-19 |
+| G-20 | D-1/D-4 unsupported MTP header is refused independently | PC-20 |
+| G-21 | D-4 missing UID is refused | PC-21 |
+| G-22 | D-4 missing type is refused | PC-22 |
+| G-23 | D-4 missing method is refused independently | PC-23 |
+| G-24 | S2 required expanded UID must actually be present | PC-24 |
+| G-25 | S2 diagnostic identity counts must reconcile with TRX | PC-25 |
+| G-26 | D-4 discovery raw-marker/parsed-count discrepancy refuses | PC-26 |
+| G-27 | D-4 discovery record without state refuses | PC-27 |
+| G-28 | S2 genuine Failed TRX cannot become green at process exit 0 | PC-28 |
+| G-29 | S2 adjacent records cannot borrow each other's state/identity | PC-29 |
+| G-30 | D-4 unrecognized diagnostic input refuses | PC-30 |
+| G-31 | S2 InProgress cannot count as terminal execution independently | PC-31 |
+
+### Positive controls
+
+All controls are mandatory **after land**, in SourceLanding Mutation, with an
+unmutated method baseline, compiling defect, intended assertion red, exact
+restoration, fresh build and method green. Code runs ordinary V/R; Review
+judges this inventory before land. No PC runs in the 60-minute Code slices.
+TestDesign executed **0/31 PCs**; this is a design handoff, not PC-clean.
+Mutation closure requires **all 31 PCs run**,
+and restoration evidence. Syntax/fixture errors, wrong roster, zero execution
+or a different red assertion do not qualify.
+
+Each method below means the exact filter `/*/*/<Class>/<Method>` (no wildcard
+class/suite PC run). Class is `NightlyExecutionDiagnosticTests` unless prefixed
+`NightlyDiscoveryParserTests.`. Mutate production in `nightly-coverage.ps1`,
+never the fixture oracle or assertion; choose the smallest compiling equivalent
+edit at landed source. New selector sites and E11/ambiguous-envelope payloads
+remain **binding required**: Code must name actual function/site, exact raw
+input and oracle reachability. Review preserves unresolved status; a green
+method alone does not bind a planned mutant.
+
+| PC | Break mapped guard with compiling defect | Exact method red at decisive assertion |
+|---|---|---|
+| PC-1 | Restore last-delimiter cut for supported Error. | `D13_ExplanationBoundary`: `D13 EB E01 message` differs by leaked exception. |
+| PC-2 | Accept mismatched TestFailedException echo as a valid split. | `D13_ExplanationBoundary`: `D13 EB E09 message` must be absent. |
+| PC-3 | Normalize extracted CRLF to LF. | `D13_ExplanationBoundary`: `D13 EB E03 message` fails ordinal equality. |
+| PC-4 | Include Timeout field text in extracted explanation. | `D13_ExplanationBoundary`: `D13 EB E07 message` fails equality. |
+| PC-5 | Return no Message for a valid null exception. | `D13_ExplanationBoundary`: `D13 EB E06 message` fails equality. |
+| PC-6 | Classify using first global state header, ignoring property transition. | `D13_StatePropertyBoundary`: `D13 SB S07 identity` requires Failed. |
+| PC-7 | Classify using last global state header. | `D13_StatePropertyBoundary`: `D13 SB S01 identity` requires Failed. |
+| PC-8 | Override selected state from a Passed header found only in the exception. | `D13_StatePropertyBoundary`: `D13 SB S06 identity` requires Failed. |
+| PC-9 | Keep correct classification but choose last failure header for extraction. | `D13_StatePropertyBoundary`: `D13 SB S05 message` requires outer explanation. |
+| PC-10 | Accept the apparent Passed candidate when selector has multiple valid state candidates. | `D13_StatePropertyBoundary`: `D13 SB ambiguous envelope stays failed`. Binding required. |
+| PC-11 | Return first candidate Message when split validation finds multiple candidates. | `D13_ExplanationBoundary`: `D13 EB E11 message` requires absence. Binding required. |
+| PC-12 | Omit a framed unknown state rather than retain Failed. | `D13_StateClassification`: `D13 unknown state is failed`, count/UID/outcome. |
+| PC-13 | Drop only Timeout terminal nodes. | `D13_StateClassification`: `D13 timeout-only is failed`, count/UID/outcome. |
+| PC-14 | Drop only Cancelled terminal nodes. | `D13_StateClassification`: `D13 cancelled-only is failed`, count/UID/outcome. |
+| PC-15 | Map actual Passed to Failed. | `D13_ExecutionCompatibility`: `D13 pass and skip unchanged`, Passed outcomes. |
+| PC-16 | Map actual Skipped to Passed. | `D13_ExecutionCompatibility`: `D13 pass and skip unchanged`, Skipped outcomes. |
+| PC-17 | At the Discovered execution filter, prematurely return a Nodes array containing that parsed Discovered record instead of omitting it. This avoids duplicate-UID refusal masking the intended detection. | `D13_ExecutionCompatibility`: `D13 nonterminal updates omitted`, terminal count/outcome. |
+| PC-18 | Disable diagnostic-log duplicate-UID throw. | `D13_ExecutionGuards`: `D13 duplicate Error refuses`. |
+| PC-19 | Treat TUnit header check as true; retain MTP check. | `NightlyDiscoveryParserTests.C1044_ParserCompatibility`: `C1044 unsupported TUnit refuses`. |
+| PC-20 | Treat MTP header check as true; retain TUnit check. | `D13_ExecutionGuards`: `D13 unsupported version refuses`. |
+| PC-21 | Substitute a nonempty placeholder for absent/empty UID instead of refusing. | `D13_StatePropertyBoundary`: `D13 SB missing UID refuses`. |
+| PC-22 | Remove only missing-type refusal in record conversion. | `NightlyDiscoveryParserTests.C1044_ParserCompatibility`: `C1044 missing type refuses`. |
+| PC-23 | Remove only missing-method refusal in record conversion. | `NightlyDiscoveryParserTests.C1044_ParserCompatibility`: `C1044 missing method refuses`. |
+| PC-24 | Make expanded-row result Ok=true despite missing required UID. | `D13_ExecutionGuards`: `D13 missing failed UID refuses`, with parsed replacement UID still present. |
+| PC-25 | Make diagnostic/TRX cross-check Ok=true despite nonempty mismatch. | `D13_ExecutionGuards`: `D13 extra failed identity refuses`. |
+| PC-26 | Bypass raw discovery marker count check. | `NightlyDiscoveryParserTests.C1044_DiscoveryReconciliation`: `C1044 prefix orphan refuses`. |
+| PC-27 | Continue instead of throwing on missing discovery state. | `NightlyDiscoveryParserTests.C1044_DiscoveryReconciliation`: `C1044 partial cannot borrow state`. |
+| PC-28 | Bypass Failed terminal-row verdict branch, keeping process-exit checks. | `D13_StatePropertyBoundary`: `D13 SB failed TRX owns verdict`, false testsPassed and failed-row at exit 0. |
+| PC-29 | Stop flushing buffered record at next node start (keep logger boundaries). | `NightlyDiscoveryParserTests.C1044_DiscoveryReconciliation`: `C1044 partial cannot borrow state` must retain the specific malformed-record refusal. |
+| PC-30 | Remove final unrecognized-format refusal and return empty Nodes. | `NightlyDiscoveryParserTests.C1044_ParserCompatibility`: `C1044 garbage refuses`. |
+| PC-31 | At the InProgress execution filter, prematurely return a Nodes array containing that parsed InProgress record instead of omitting it. | `D13_ExecutionCompatibility`: `D13 pass and skip unchanged`, exact terminal inventory/outcome. |
+
+The wrapper reports red through `ScriptHarness.Validate`'s exit-code assertion;
+its captured output must identify the precise `FAIL D13 ...` / `FAIL C1044 ...`
+row above. A wrapper count-only failure is not the intended control.
+Mutation uses the unchanged local `run-checkpoint.ps1` copied with its build-slot
+library to the assigned external evidence root before edits. Each phase gets
+fresh `bin-c1325-pc<N>-<variant>-<phase>/`, external results, exact method filter,
+`-MinExecuted 1`, and matching `-Expect Class.Method`; no new commit/push from
+the snapshot. Baseline/restored green exit 0, intended red exit 1, exactly one
+TUnit method per phase, zero skipped. Await children before editing/restoring.
+Record landed SHA, mutant diff, failing row, fresh build/TRX and restoration.
+
+Inventory audit: **guards=31, mapped=31, missing=0, duplicate PC maps=0**;
+31 required mutation variants. Binding-required controls are visible above,
+not exempted. These counts describe the design, not completed executions.
+
+### Out of scope
+
+- Live Windmill, watchdog/Telegram delivery, nightly/RC/Unit/full-assembly/E2E
+  lanes, deployment, release publication and input-wait/session lifecycle:
+  explicitly excluded by D-7/brief, with no changed delivery path.
+- Release-authority mutations and live authority refresh: no validator/hash-list
+  changes. Inspection establishes the existing script-digest consequence;
+  this parser selection makes no new release-authority qualification claim.
+- Package upgrades, arbitrary unescaped-string parsing, and acceptance of
+  ambiguous text as exact explanation: excluded by D-1/D-4. Real Timeout and
+  Cancelled remain conditional observations; reflected rows prove parsing only.
+- Requalifying untouched checkpoint/process-owner infrastructure, JSON format,
+  disposition policy and all coverage-policy branches: existing compatibility
+  rows may exercise them, but this card does not claim a complete mutation
+  audit of those separate owners. No new process-owner production change is
+  authorized by P-1. Need for one returns to Plan.
+
+### Checkpoints
+
+Each row is one isolated build plus one exact filter. Run rows by explicit
+`--rows CP-n` at the committed slice boundary, never all four at one tip.
+CP-1 and CP-3 are expected-red checkpoints: native tool exit 1 and the specified
+assertion failure are success of the witness, **not green acceptance**. Do not
+loosen the checkpoint tool or receipt validator to certify these as green.
+Commit/push new tests before each red; commit/push implementation before its
+green. S1-green and S2-green must be source-clean at their respective SHAs.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c1325-s1-red/` | explanation-red | `/*/*/NightlyExecutionDiagnosticTests/D13_ExplanationBoundary` | V-1, R-6 | exactly 1 executed, 1 failed, 0 skipped; E01 exact-message assertion red on pre-S1 parser | 1 | 4 |
+| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c1325-s1/` | explanation-green | `/*/*/NightlyExecutionDiagnosticTests/*` | V-1, R-1, R-2, R-3, R-6 | all 5 listed methods, 0 failed/skipped; 45 named harness rows | 5 | 5 |
+| CP-3 | S2-red | `tests/Antiphon.Tests -> bin-c1325-s2-red/` | state-red | `/*/*/NightlyExecutionDiagnosticTests/D13_StatePropertyBoundary` | V-2, R-6 | exactly 1 executed, 1 failed, 0 skipped; S01 Failed/exact-message assertion red on S1 parser | 1 | 4 |
+| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1325-s2/` | state-green | `/*/*/(NightlyExecutionDiagnosticTests*)\|(NightlyDiscoveryParserTests*)/*` | V-1, V-2, R-1, R-2, R-3, R-4, R-5, R-6 | all 9 listed methods, 0 failed/skipped; 105 named harness rows | 9 | 5 |
+
+The escaped pipe is Markdown only; importer passes the literal CARD-0403 OR.
+Roster arithmetic: existing diagnostic 10+3+4+6=23 rows, S1 adds 22=45;
+S2 adds 27=72 diagnostic rows; discovery 8+8+17=33, total 105.
+There are no parameterized wrapper methods: Min is 1/5/1/9, **16 ordinary
+TUnit executions total, 14 intended green and two intended red**, not 16 unique
+methods. The closed ordinary V/R union excludes only explicitly observational
+V-3/P-1 and review-only provenance/authority inspection.
+
+Use the checkpoint tool from a gated, isolated tool build (one setup build),
+then its `run --plan` entry point; the tool owns row slots itself, so do not wrap
+that invocation in another build-slot lease. Example setup and CP-1:
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1325-checkpoint-tool -- dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-c1325-tool/ --nologo
+# Resolve this built tool DLL; use dotnet exec so launch cannot rebuild unleased.
+dotnet exec tools/Antiphon.Checkpoints/bin-c1325-tool/net9.0/Antiphon.Checkpoints.dll run --plan docs/superpowers/plans/2026-10-19-card-1325-nightly-diagnostic-follow-ups-plan.md --rows CP-1 --expected-source-sha <full-committed-red-SHA>
+```
+
+The inspected tool project targets net9.0 and names its assembly
+`Antiphon.Checkpoints`; require that exact setup output to exist. Equivalently
+use an already-built, source-bound checkpoint tool. For
+CP-2/3/4 substitute only row and exact committed SHA. Wait on the emitted run ID
+until exit is not 75 (use at most 60 seconds per wait to retain status updates),
+never settle with a live executor. Inspect fresh executed class/method roster,
+counts, expected failures, slot fields and build/source binding. Validate green
+receipts with `validate-checkpoint-receipt.ps1`; carry CP-4 as final ordinary
+qualification of the S2 tip and CP-2 as historical S1 evidence. Preserve unedited
+CHECKPOINT lines. Code/Review run `check-evidence-diff.ps1` over task base..HEAD.
+Remove only task-owned alternate-output directories after their runs complete;
+keep generated evidence ignored. No baseline full-lane rerun is authorized.
+
+### Cost
+
+All amounts below are **estimated wall-clock minutes**, not measured results.
+Ordinary Code V/R floor = CP-1 4 + CP-2 5 + CP-3 4 + CP-4 5 = **18 minutes**,
+including four isolated test-project builds. Exact filters are in the table.
+One checkpoint-tool setup build = **3 minutes**. P-1 scratch preparation/build
+and the three named producer filters = **10 minutes maximum**, reported
+separately; no lane or extra red search. Total planned Code verification/setup
+allowance = **31 minutes** (18+3+10), leaving 89 minutes within the two 60-minute
+slices for authoring, fixture binding, review of results and commits. Allocate
+S1 up to 22 verification minutes (3+4+5+10) and S2 9 (4+5). Slot delays are
+reported separately and may stop a slice; they do not authorize a wider run.
+
+Post-land Mutation floor = **279 minutes**: 31 variants, each with method-only
+baseline **3**, compiling-defect/red **3**, restoration/fresh-build/green **3**.
+The exact method filters are the PC table expanded as specified above. Every
+phase includes its isolated build; per-PC restoration is in the final 3.
+Allow **6 minutes** external evidence/driver setup and **15 minutes** binding,
+discovery and reporting, for a Mutation commissioning estimate of **300 minutes**.
+Combined planned verification/setup/reporting cost = **331 minutes**
+(31 Code + 300 Mutation); authoring remains separately capped by the slices.
+No PC discount for same-method reuse: all mutations touch the same library and
+must run sequentially with per-control restoration evidence.
+
+Savings: ordinary green acceptance uses **two builds/two filtered invocations**
+for 5 then 9 executions. Running every method in a separate rebuilt checkpoint
+would use 14 green builds; this avoids **12 builds**, an estimated **24 minutes**
+at 2 minutes/build. Red proofs remain one per slice. No full-lane comparison or
+claimed live-delivery saving is counted. Revise estimates from actual receipts,
+without changing historical outcomes or silently shrinking the inventories.
