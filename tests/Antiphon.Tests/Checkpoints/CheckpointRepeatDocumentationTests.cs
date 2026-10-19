@@ -35,7 +35,9 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // CARD-1213 points -StartRef children at their reported WorktreeBranch.
         // CARD-1213 S2 adds the git-common sentence: delegates carry it, briefs do not restate it.
         // CARD-1330 removes 197 unpinned characters so the 500-char argv reserve holds. The keep-six line stays.
+        // CARD-1332 moves five procedures to owner anchors in docs/orchestration-loop.md; the bundle keeps
+        // rules and pointers (normalised body 10,822 of its 11,500 allocation). The keep-six line stays.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("7b34e63a29128753e2da3667af497d19c687aebe7a13943fe130a83394f6fd41", "orchestrator-approved-bytes");
+            .ShouldBe("63ad6bac3e238e5a4d02298bbfc59fa859e35da442b15dbab2856b554824993d", "orchestrator-approved-bytes");
     }
 }

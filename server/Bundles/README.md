@@ -69,6 +69,46 @@ govern (C1213_ReviewOverrideFollowsFragment).
 Brief rules for git-common live in [Writing a brief](../../docs/orchestration-loop.md#3-writing-a-brief);
 the two branch forms are in [Delegate branch names](../../docs/orchestration-loop.md#delegate-branch-names-card-1213).
 
+## The orchestrator bundle's argv headroom (CARD-1332)
+
+The composed append is one `CreateProcessW` argument, so the budget is counted in UTF-16 units
+and the shipped worst case is the Orchestrator composition: `orchestrator` + `delegate-basics`
+(with git-common expanded) + `board-api` + `style-explanatory` + the CRLF Telegram preset, beside
+the launch's other arguments. Two measurements guard it, both in `Antiphon.Tests`:
+
+| Measurement | Where | Fixed limit |
+|---|---|---|
+| The orchestrator **body**: `orchestrator.md` after the catalog's LF + Trim normalisation, LF and CRLF checkouts alike | `OrchestratorBundleOwnershipTests.C1332_OrchestratorBodyFitsItsAllocation` | at most **11,500** units |
+| The whole **composition** as an argv estimate (each argument plus three, the append plus 28), for every non-specialist role and both task kinds | `InstructionBundleTests.the_worst_case_composition_measured_sits_far_under_the_budget` | at most **28,000**; the real guard is also called at the **29,500** reserve boundary, and the default budget must be the literal **30,000** |
+
+The 28,000 early threshold is a fixed allowance, not today's size plus a margin: growth anywhere
+in the composition (another bundle, a fragment, the preset) consumes it and fails the test before
+the 500-character reserve is touched. The body allocation says *where* the growth happened when
+it is the orchestrator. Neither test lowers or duplicates the reserve, and
+`Delegation:CommandLineBudgetChars` stays the runner's 30,000 transport ceiling.
+
+Editing `orchestrator.md`:
+
+- Keep it **rules and pointers**. A procedure's full recipe, flags, refusal codes and examples live
+  in its owner (`docs/orchestration-loop.md`); the bundle states the mandatory rule and links the
+  owner anchor (`docs/orchestration-loop.md#delegate-start-ref`,
+  `#repairsource-failed-owner-recovery`, `#standing-pipeline-policy`, `#verification-rounds`,
+  `#runner-placement`). `C1332_BundleKeepsRulesAndOwnerPointers` requires each exact fragment and
+  resolves it to exactly one `<a id>` anchor in the owner, and
+  `C1332_OwnersContainRelocatedProcedures` pins the detail at the owner. Add a new pointer only
+  with its anchor, and never restate the owner's detail in the bundle.
+- The composition test prints its matrix on every run, pass or fail: one line per kind/role with
+  the composed and estimated argv sizes, the signed headroom against 30,000 / 29,500 / 28,000, and
+  an additive ledger (rendered bundle templates, separators, each fragment's replacement delta, the
+  append), plus a maximum row. Read those lines from the console or the TRX output before trimming;
+  the ledger total is asserted equal to the composed length.
+- Every change to this file also changes its raw SHA-256 pin in
+  `CheckpointRepeatDocumentationTests.repeat_budget_reaches_code_briefs_without_bundle_growth`:
+  recompute it from the final LF bytes (`sha256sum server/Bundles/orchestrator.md` on an LF
+  checkout) and rebuild `Antiphon.Server` before running `InstructionBundleTests`, which compares
+  the embedded resource against the disk source. The content-derived `v<hash8>` version needs no
+  hand edit.
+
 ## Which agent carries which bundle
 
 Delegates get theirs from the role map in `InstructionBundles.ForDelegate` (Orchestrator tasks:

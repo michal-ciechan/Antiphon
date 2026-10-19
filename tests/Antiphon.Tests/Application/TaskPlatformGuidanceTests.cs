@@ -34,19 +34,19 @@ public sealed class TaskPlatformGuidanceTests
                 text.ShouldContain("Do not embed a fleet location.");
         }
 
+        // CARD-1332: the orchestrator bundle states the compact dispatch rules and points at the
+        // owner section; Orchestration_guidance_keeps_inheritance_and_task_scoped_unpinning below
+        // pins the inheritance and OS-scope detail at that owner.
         var orchestrator = File.ReadAllText(Path.Combine(RepoRoot(), "server", "Bundles", "orchestrator.md"));
-        orchestrator.ShouldContain("inherits its predecessor's platform");
-        orchestrator.ShouldContain("inherits the card's platform");
-        orchestrator.ShouldContain("unpinned (Any)");
-        orchestrator.ShouldContain("runtime default places it");
-        orchestrator.ShouldContain("pass -Platform Any explicitly");
-        orchestrator.ShouldContain("only when that piece of work requires it");
-        orchestrator.ShouldContain("scope a platform-pinned task to just the OS-specific part");
-        orchestrator.ShouldContain("habit, a stage name");
-        orchestrator.ShouldContain("Normally omit -Runner; the runtime default places the task.");
-        orchestrator.ShouldContain("To unpin a stage on a pinned card");
-        orchestrator.ShouldContain("with its own filter and budget; leave the rest unpinned");
+        orchestrator.ShouldContain("GET /api/runner-defaults");
+        orchestrator.ShouldContain("GET /api/session-runners");
         orchestrator.ShouldContain("Do not embed a fleet location.");
+        orchestrator.ShouldContain("Normally omit -Runner and -Platform");
+        orchestrator.ShouldContain("Use -Platform Any to unpin.");
+        orchestrator.ShouldContain("Pin only an OS-required piece with its own filter and budget");
+        orchestrator.ShouldContain("leave the rest unpinned");
+        orchestrator.ShouldContain("Never write defaults on a pipeline tick.");
+        orchestrator.ShouldContain("docs/orchestration-loop.md#runner-placement");
     }
 
     [Test]
@@ -176,10 +176,17 @@ public sealed class RunnerDefaultGuidanceTests
             text.Contains("CP-13", StringComparison.Ordinal).ShouldBeFalse(name + " names CP-13");
             text.Contains("server2", StringComparison.Ordinal).ShouldBeFalse(name + " names server2");
         }
+        // CARD-1332: the bundle keeps the compact placement rules and defers inheritance and
+        // OS-scope detail to the owner section it points at.
         var orchestrator = File.ReadAllText(Path.Combine(Root(), "server", "Bundles", "orchestrator.md"));
-        orchestrator.ShouldContain("inherits its predecessor's platform");
-        orchestrator.ShouldContain("pass -Platform Any explicitly");
-        orchestrator.ShouldContain("OS-only probe");
+        orchestrator.ShouldContain("the inherited platform place the task on an eligible runner");
+        orchestrator.ShouldContain("Use -Platform Any to unpin.");
+        orchestrator.ShouldContain("Pin only an OS-required piece");
+        orchestrator.ShouldContain("docs/orchestration-loop.md#runner-placement");
+        var owner = File.ReadAllText(Path.Combine(Root(), "docs", "orchestration-loop.md"));
+        owner.ShouldContain("inherits its predecessor's platform");
+        owner.ShouldContain("pass `-Platform Any` explicitly");
+        owner.ShouldContain("an OS-only test or probe");
     }
 
     [Test]

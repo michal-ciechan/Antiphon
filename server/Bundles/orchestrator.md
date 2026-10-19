@@ -58,51 +58,28 @@ a child working directory: that mints identity (and a project/board outside a re
 Such children prompted via session messages never report done/check or move cards.
 Message a child's session directly only to steer already-dispatched work.
 
-To start a child at another base, pass `-Worktree -StartRef <full-sha>`;
-never put `git checkout -B <branch> <sha>` in its goal. The child gets its own
-task branch at that commit; use its reported `WorktreeBranch`. The source branch stays.
-`-StartRef` requires `-Worktree`; it refuses `-Shared`/`-ReadOnly`, `-OnAgent`/`-Agent`,
-`-RepairSource` and `-SourceLanding`. It selects only a BASE: no merge target or land
-authority. `-RepairSource` instead attributes commits on another task's branch.
-Confirm support via `GET /api/version`; older builds silently ignore the property.
-To land a `-StartRef` repair, Review its pushed tip with the repair as subject, then
-`-Land <owner> -FromTask <repair> -ExpectedSourceSha <sha> -ReviewEvidenceId <id>`.
+To change a child's base, use -Worktree -StartRef <full-sha>; never git checkout -B.
+Use its reported WorktreeBranch. A base grants no land authority.
+Read docs/orchestration-loop.md#delegate-start-ref for exclusions and -FromTask adoption.
+For a failed -RepairSource owner, require owner-bound Clean Final/Full Review and
+-RecoverReviewedSource; follow docs/orchestration-loop.md#repairsource-failed-owner-recovery.
+A -RepairSource task cannot be used with -FromTask.
 
-**RepairSource succeeded; owner Failed.** Read the original owner's exact current pushed
-full SHA. Commission or reuse a current unsuperseded Clean Final/Full Review with
-`subjectTaskId` equal to the original Code/Worktree owner, bound to its ref, repository
-and full SHA. Run
-`pwsh -NoProfile -File scripts/delegate.ps1 -Land <owner-guid> -ExpectedSourceSha <full-sha> -ReviewEvidenceId <review-evidence-id> -RecoverReviewedSource`,
-then `-Status <owner-guid>` and confirm publication. The original owner's Failed
-status and failure fields remain historical. The separate `-StartRef` route above
-uses `-FromTask` and a Review of that separate source; an actual `-RepairSource`
-task cannot be used with `-FromTask`.
-
-When you are working a board through its pipeline, this is the standing policy unless the user
-says otherwise this session. Before dispatch read the effective-settings route (CARD-0881),
-GET /api/agent-tasks/pipeline?projectId=<id> (or ?unscoped=true): concurrencyScopes (absolute and
-per-stage limits with sources, open/queued counts, remaining slots), hosts (effective limit,
-source, in-flight, remaining), runners (seats, eligibility), runnerDefaults (placement). Use its
-limits. Operator defaults where Antiphon sets none: every stage at up to four; at most six tasks
-on server2 across stages; use the lower effective stage cap. Antiphon's limits are the ceiling.
-Host budget writes need an operator request. Run stages in parallel, each in its own -Worktree,
-never more tasks in one stage than its cap. Prefer server2 (-Runner server2); use desktop/Windows
-only when work absolutely requires it, scoped to that piece.
-Land a stage's work as soon as
-it is confirmed. Keep Code at its depth cap (four unless Antiphon enforces less), counting
-in flight, queued and ready in that snapshot. Below cap, pull the lowest-rank
-unstarted Backlog card through Plan toward Code; at cap, start no new Plan toward Code.
+When you are working a board through its pipeline, read the effective-settings route (CARD-0881):
+GET /api/agent-tasks/pipeline?projectId=<id> (or ?unscoped=true). Use its limits and
+docs/orchestration-loop.md#standing-pipeline-policy; never exceed the lower effective cap.
+Host budget writes need an operator request. Run stages in parallel, each in its own -Worktree.
+Land confirmed work promptly. Keep Code at its depth cap, counting in-flight, queued and ready.
+Below cap, pull the lowest-rank unstarted Backlog card; at cap, start no new Plan toward Code.
 A keep-six reminder names the server setting's shortfall. Dispatch up to that shortfall under the same pipeline rules. Declare a hold with scripts/keep-six.ps1. The server does not dispatch.
 Defer Code touching an in-flight Code task's same source area until it lands, even with a free slot.
 File a Backlog card the moment
 Investigate or Review finds a structural defect; never batch them. A defect a Clean Review approved that is found only in the running system after land
 gets the post-land retrospective companion (`Post-land retrospective: <identifier>`,
 label `post-land-retrospective`) with its Investigate task and Low-tier Docs pass from
-docs/orchestration-loop.md section 1; a Review or Mutation catch before land is not a retrospective. A 409 `concurrency_limit`
-carries `axis`, `population`, `canOverride` and the occupants: re-send with `-IgnoreConcurrencyLimit`
-only when `population` is `open`, `canOverride` is true, the axis is `absolute`, and no occupant is in the stage you are dispatching; when it is
-`role`, `population` is `queued`, `canOverride` is false, or a same-stage occupant is listed, defer. Other projects' work never counts against
-yours.
+docs/orchestration-loop.md section 1; a Review or Mutation catch before land is not a retrospective. A 409 `concurrency_limit` permits -IgnoreConcurrencyLimit only for population=open,
+canOverride=true, axis=absolute and no same-stage occupant; otherwise defer.
+Other projects' work never counts against yours.
 
 Live operating settings (caps, runners, holds, pins, levels, standing lines) are generated into
 ANTIPHON_ORCHESTRATOR_INSTRUCTIONS, also GET /api/orchestrator-instructions. Read it at session
@@ -161,11 +138,12 @@ Read parsed next= elsewhere. Mutation next=decide is caller triage of the full f
 not automatically a human question. Preserve the original Done verdict and keep the companion
 open until its explicit disposition; no automatic card creation, tick spend or alert message. binding-only mechanical-execution; one open Mutation per O.
 
-Verification rounds (CARD-0544): omitted -VerificationRound is Final, the full ordinary sweep, and
-is what the first Code and first Review always run. Interim is explicit only: the card's role
-policy must allow it, it names -VerificationSubject (original owner), -VerificationBaselineOutcome
-(a full-scope Review outcome) and -VerificationSelectionFile, and a refusal is never resubmitted
-silently as a different round. A clean Interim Review routes to a fresh Final Review of the
-unchanged candidate, never to land; a latched owner lands only with a Clean Final/Full Review.
+Verification: first Code/Review is Final/Full. Interim requires explicit admission; never
+silently change rounds. A clean Interim goes to Final Review, never land.
+Follow docs/orchestration-loop.md#verification-rounds for prerequisites and flags.
 
-Platform: the pipeline read's runnerDefaults and runners equal GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location. Normally omit -Runner; the runtime default places the task. Pin -Runner server2 when eligible. Omit -Platform: a follow-up inherits its predecessor's platform and a stage inherits the card's platform, else the task is unpinned (Any) and the runtime default places it. To unpin a stage on a pinned card pass -Platform Any explicitly. Pass a specific platform only when that piece of work requires it, including an OS-only probe. Habit, a stage name, or host preference are not requirements. If one part is OS-specific, scope a platform-pinned task to just the OS-specific part with its own filter and budget; leave the rest unpinned. A pipeline tick does not write defaults. A user-requested settings change is GET then PUT /api/runner-defaults with a reason and Human provenance.
+Platform: read GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location.
+Normally omit -Runner and -Platform; runtime defaults and the inherited platform place the task on an eligible runner.
+Use -Platform Any to unpin. Pin only an OS-required piece with its own filter and budget;
+leave the rest unpinned. Never write defaults on a pipeline tick.
+Follow docs/orchestration-loop.md#runner-placement for inheritance, pinning and authorized settings changes.
