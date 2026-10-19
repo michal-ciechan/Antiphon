@@ -24,6 +24,61 @@ namespace Antiphon.Tests.Application;
 
 public partial class DispatchBaseNotificationTests
 {
+    [Test]
+    [Timeout(120_000)]
+    public async Task C1349_InventoryOverflowKeepsProjectDefaultObservation(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c1349-overflow-default");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("branch", "trunk", "master");
+        var targetSha = (await repo.GitReadAsync("rev-parse", "trunk")).Trim();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-1349");
+        var project = await db.Projects.SingleAsync(ct);
+        project.BaseBranch = "trunk";
+        var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, null);
+        task.ProjectId = project.Id;
+        task.RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Target;
+        var inventoryCount = new GitSettings().WorktreeBaseMaxInventoryRows + 1;
+        for (var i = 0; i < inventoryCount; i++)
+        {
+            var id = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = id, RootTaskId = id, Title = "kept sibling", Goal = "completed work",
+                Role = AgentTaskRole.Plan, Workspace = WorkspaceMode.Worktree,
+                WorkingDirectory = repo.Path, RepoPath = repo.Path, CardId = card.Id,
+                WorktreeBranch = $"feat/overflow-{i}", Status = AgentTaskStatus.Succeeded,
+                ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow.AddHours(-1),
+                CompletedAt = DateTime.UtcNow.AddMinutes(-30),
+            });
+        }
+        await db.SaveChangesAsync(ct);
+
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, "master");
+        await using var scope = provider.CreateAsyncScope();
+        var observation = await scope.ServiceProvider.GetRequiredService<CardSiblingInspectionService>()
+            .InspectAsync(task, ct);
+        observation.Reason.ShouldBe("candidate_limit");
+        observation.RawRows.ShouldBe(inventoryCount);
+        observation.PendingKnown.ShouldBeTrue();
+        observation.FrozenRefs.ShouldNotBeNull().ShouldBeEmpty();
+        observation.GitCommands.ShouldBe(0);
+
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
+        await using var verify = CreateContext(schema);
+        var dispatched = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched, dispatched.FailureReason);
+        dispatched.WorktreeBaseRef.ShouldBe("trunk");
+        dispatched.WorktreeBaseSha.ShouldBe(targetSha);
+        var intents = await verify.AgentTaskDispatchWarningIntents.AsNoTracking()
+            .Where(i => i.TaskId == task.Id).ToListAsync(ct);
+        intents.ShouldContain(i => i.WarningKey == "sibling-inspection-incomplete");
+        intents.ShouldNotContain(i => i.WarningKey == DispatchBaseNotificationPayload.MismatchKey);
+        observation.ObservedBaseRef.ShouldBe("trunk");
+    }
+
     /// <summary>
     /// V-17 / G-40: a successful projection writes the Warning and the matching DispatchBase note
     /// together. PC-40 removes the note insert and this count goes 1 → 0.
