@@ -54,9 +54,11 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
             });
         });
 
-        (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(driver, _ => source)))
-            .ShouldBe(0, "host-output-cleanup");
+        var exit = await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(driver, _ => source));
         var report = Read(run);
+        // Preserve the nested receipt in the outer TRX before the fixture removes its scratch root.
+        Console.WriteLine("W-1 nested receipt: " + ReportWriter.JsonText(report));
+        exit.ShouldBe(0, "host-output-cleanup");
         report.Verdict.ShouldBe("GREEN");
         report.ExitCode.ShouldBe(0);
         report.CleanedOutputs.ShouldBeTrue();
