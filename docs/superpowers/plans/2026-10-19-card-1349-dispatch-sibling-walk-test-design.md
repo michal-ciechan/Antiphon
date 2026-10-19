@@ -465,7 +465,7 @@ Every `Min` is a TUnit execution count; internal matrices do not inflate it.
 | CP-8 | S1-S4 | CP-1 | v7-staleinspectioncannotdispatch | `/*/*/DispatcherSiblingInspectionSchedulingTests/C1349_StaleInspectionCannotDispatch*` | V-7, R-7 | all listed, 0 failed/skipped | 15 | 2 |
 | CP-9 | S1-S4 | CP-1 | v8-inspectionqueuerecovers | `/*/*/DispatcherSiblingInspectionSchedulingTests/C1349_InspectionQueueRecovers*` | V-8, R-8 | all listed, 0 failed/skipped | 10 | 2 |
 | CP-10 | S1-S4 | CP-1 | v19-leasedreferencefence | `/*/*/DispatcherSiblingInspectionSchedulingTests/C1349_LeasedReferenceFence*` | V-19, R-19 | all listed, 0 failed/skipped | 7 | 2 |
-| CP-11 | S1-S4 | CP-1 | v21-briefhandoffrecovers | `/*/*/DispatcherSiblingInspectionSchedulingTests/C1349_BriefHandoffRecovers*` | V-21, R-21 | all listed, 0 failed/skipped | 3 | 3 |
+| CP-11 | S1-S4 | CP-1 | v21-briefhandoffrecovers | `/*/*/DispatcherSiblingInspectionSchedulingTests/C1349_BriefHandoffRecovers*` | V-21, R-21 | all listed, 0 failed/skipped | 8 | 5 |
 | CP-12 | S1-S4 | CP-1 | v9-capturerefreshesreadyhold | `/*/*/RemoteWorkspaceReadinessTests/C1349_CaptureRefreshesReadyHold*` | V-9, R-9 | all listed, 0 failed/skipped | 3 | 2 |
 | CP-13 | S1-S4 | CP-1 | v10-latecapturecannotreplacecurrenthold | `/*/*/RemoteWorkspaceReadinessTests/C1349_LateCaptureCannotReplaceCurrentHold*` | V-10, R-10 | all listed, 0 failed/skipped | 10 | 2 |
 | CP-14 | S1-S4 | CP-1 | v11-readyprojectionsurviveslostnotification | `/*/*/RemoteWorkspaceReadinessTests/C1349_ReadyProjectionSurvivesLostNotification*` | V-11, R-11 | all listed, 0 failed/skipped | 6 | 2 |
@@ -567,3 +567,20 @@ TRX roster, build provenance or Mutation's red/restore/green results.
 ## Code Final profile scope amendment
 
 The assigned brief’s explicit Final profile requires the whole Unit lane and every full affected integration class, in addition to the ordinary V/R selections. It supersedes the earlier method-only scope for this task. CP-33 and CP-34 implement that requirement through the same checkpoint tool and isolated build. These are bounded selections, not a full-assembly exception. The shared invariant is safe dispatch admission, immutable warning delivery, mirror readiness, and correct attention after asynchronous inspection. The ten full classes are named in CP-34; no unbounded class set is requested. Additional estimated cost is 24 minutes, to be replaced with actual measured cost in the implementation report. Existing CP-1–CP-32 identities, filters, argument floors and historical outcomes are retained. No positive control is discharged by these ordinary runs.
+
+## Code recovery amendment
+
+The ordinary CP-11 run at c41a5eb1568cdaa1cb255bbb4d7c84c6ef3ec490 exposed a new interaction: the required pre-dispatch inspection Held event made the existing absent-launch evidence reader classify the task as previously active, so a certified absent, unattempted launch became Failed instead of retaining Blocked custody. The fix admits only the three exact inspection Held details at or before the committed dispatch time. Different details, later events and different event types remain counterevidence. This changes no launch/retry policy.
+
+CP-11 keeps its exact method filter and original three cuts. Five additional cases are after-claim-before-launch-capacity, after-claim-before-launch-integration, after-claim-before-launch-late, after-claim-before-launch-unrelated and after-claim-before-launch-event-type. The first two retain the original Blocked/input/no-start/caller-receipt oracle; the last three require Failed, zero Blocked events and zero starts. The two live recovery cases verify full queued-body UserPrompt delivery plus the original goal in the actual production brief file when the body is a pointer. They do not require file-backed input to appear inline.
+
+The original 114-PC audit above is historical TestDesign output. Add these independently mutable controls; every PC-1–PC-118 and every original/new variant remains pending for SourceLanding Mutation. Code has executed no deliberate mutant.
+
+| Guard | Invariant | PC | Method and decisive variant | Deliberate mutation owned by Mutation |
+|---|---|---|---|---|
+| G-115 | Only pre-dispatch inspection holds are exempt from activity history | PC-115 | DispatcherSiblingInspectionSchedulingTests.C1349_BriefHandoffRecovers; after-claim-before-launch-late remains Failed | Remove the event/dispatch timestamp comparison |
+| G-116 | Unknown hold details remain activity counterevidence | PC-116 | Same method; after-claim-before-launch-unrelated remains Failed | Remove the exact three-detail restriction |
+| G-117 | Only Held events receive this exception | PC-117 | Same method; after-claim-before-launch-event-type remains Failed | Remove the Held event-type comparison |
+| G-118 | Advisory pre-launch inspection history preserves absent-launch custody | PC-118 | Same method; after-claim-before-launch plus capacity/integration retain Blocked custody and full caller receipt | Remove the entire inspection-history exception |
+
+Revised ordinary CP-1–CP-32 floor: 77 minutes / 218 executions; Final CP-33/CP-34 add 24 minutes (101 minutes ordinary total). Infrastructure bootstrap remains 3 minutes. Mutation adds four controls at the existing 8-minute estimate: 118 × 8 = 944 minutes. Revised combined floor including Final additions: 3 + 101 + 944 = 1048 minutes, excluding authoring, Review, landing, waiting and failures. Historical runs and costs remain in the implementation report.
