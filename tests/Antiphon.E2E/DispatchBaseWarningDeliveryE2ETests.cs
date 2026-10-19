@@ -126,7 +126,8 @@ public class DispatchBaseWarningDeliveryE2ETests
         {
             // A missing key also disables the production keyed-insert callback. Observe the
             // stored key independently so PC-21 reaches an assertion instead of losing its cut.
-            await f.UntilProtocolAsync(async () =>
+            // CARD-1359: dispatch-aware wait (protocol-git plus dispatch-side markers), same window.
+            await f.UntilDispatchAsync(async () =>
             {
                 await using var db = f.CreateContext();
                 (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == f.TaskId
@@ -135,7 +136,7 @@ public class DispatchBaseWarningDeliveryE2ETests
                 return File.Exists(Path.Combine(f.Root, boundary + ".barrier.json"));
             }, boundary);
         }
-        else await f.WaitForBoundaryAsync(boundary);
+        else await f.WaitForDispatchBoundaryAsync(boundary); // CARD-1359: renews on dispatch-side markers too
         if (slowMaterializeSeconds > 0) f.ClearSlowLaunch(); // the restarted "none" child must never see the seam
         var intents = await f.WaitForDispatchIntentsAsync();
         if (slowMaterializeSeconds > 0) await f.AssertSlowMaterializationPremiseAsync(boundary, intents, slowMaterializeSeconds);
