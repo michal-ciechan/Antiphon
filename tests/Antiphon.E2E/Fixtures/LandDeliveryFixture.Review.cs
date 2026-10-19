@@ -138,6 +138,7 @@ public sealed partial class LandDeliveryFixture
         outcome.OrdinaryScopeCompleted.ShouldBe(VerificationScope.Full);
         outcome.CommissionedRound.ShouldBe(VerificationRound.Final);
         outcome.ReviewedSourceSha.ShouldBe(SourceSha);
+        outcome.ReviewedSourceClean.ShouldBe(true, "CARD-0835: evidence-backed land admission requires the clean-source assertion");
         outcome.SubjectTaskId.ShouldBe(TaskId);
         var snapshot = TaskCompletionNotification.TryReadSnapshot(stored.CompletionSnapshotJson);
         snapshot.ShouldNotBeNull();

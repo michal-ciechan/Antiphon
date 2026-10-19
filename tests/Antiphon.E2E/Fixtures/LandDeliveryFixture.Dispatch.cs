@@ -98,7 +98,16 @@ public sealed partial class LandDeliveryFixture
 
     public async Task<List<AgentTaskDispatchWarningIntent>> WaitForDispatchIntentsAsync()
     {
-        await UntilProtocolAsync(async () => (await DispatchIntentsAsync()).Count == 2, "two committed reduced dispatch intents");
+        await UntilProtocolAsync(async () =>
+        {
+            // CARD-1305: a dispatch refusal (CARD-0442 blocks the task instead of selecting a base)
+            // must fail the wait at the first poll with its reason, not spend the quiet deadline.
+            await using var db = CreateContext();
+            var owned = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == TaskId);
+            owned.Status.ShouldNotBe(AgentTaskStatus.Blocked,
+                $"the owned dispatch was refused before any warning intent: {owned.FailureReason}");
+            return (await DispatchIntentsAsync()).Count == 2;
+        }, "two committed reduced dispatch intents");
         var intents = await DispatchIntentsAsync();
         foreach (var expected in ExpectedDispatchSiblings)
         {

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.E2E.Fixtures;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -151,7 +152,14 @@ public class AgentTaskLandDeliveryE2ETests
         await using var f = new LandDeliveryFixture(); await f.InitializeAsync(cut: "lost-flush");
         await f.RequestAsync(); await f.ReleaseExecutionAsync();
         var note = await f.ReceiptAsync(); await f.AssertRemoteAsync(); await f.AssertOnePromptAsync(note);
-        Directory.GetFiles(f.Root, "completion-scan-*.observation.json").ShouldNotBeEmpty();
+        // CARD-1305: the lost-flush cut drops the direct enqueue-time and scan-time completion
+        // wakeups. Delivery proves the remaining recovery sources (the queue-side scheduled flush
+        // and the stranded-queue sweep) keep an idle caller's outcome live; the 15-minute durable
+        // sweep is not exercised here (F-1). The cut itself is witnessed by its drop record.
+        var dropped = Directory.GetFiles(f.Root, "wakeup-dropped-completion-*.observation.json");
+        dropped.ShouldNotBeEmpty("the lost-flush cut must record the dropped completion wakeup");
+        dropped.Select(path => JsonDocument.Parse(File.ReadAllText(path)).RootElement.GetProperty("identity").GetGuid())
+            .ShouldContain(note.Id, "a dropped completion wakeup must carry the delivered note's identity");
     }
 
     [Test]
