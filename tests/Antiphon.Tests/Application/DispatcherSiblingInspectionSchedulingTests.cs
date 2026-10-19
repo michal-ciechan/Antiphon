@@ -147,9 +147,13 @@ public partial class DispatcherSiblingInspectionSchedulingTests
             }
             else await f.ObserveAsync();
             f.Queue.Outstanding.ShouldBe(1);
-            if (field != "card") f.Git.Calls.Count.ShouldBeGreaterThan(probes);
+            if (field is not ("card" or "repository")) f.Git.Calls.Count.ShouldBeGreaterThan(probes);
             await using var read = f.Read();
-            (await read.AgentTasks.SingleAsync(t => t.Id == f.Task.Id)).AgentSessionId.ShouldBeNull();
+            var current = await read.AgentTasks.SingleAsync(t => t.Id == f.Task.Id);
+            current.AgentSessionId.ShouldBeNull();
+            var fallback = field == "effective fallback" ? "other-target" : "master";
+            f.Queue.Take(CardSiblingInspectionIntent.From(current, fallback)).ShouldNotBeNull()
+                .Metadata.ShouldNotBeNull("replacement observation came from its own database scope");
         }
     }
 
