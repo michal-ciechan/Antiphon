@@ -6,6 +6,8 @@ import { getSessionBuffer, resizeSession, sendSessionInput } from '../../api/ses
 import { renderWithProviders, waitFor } from '../../test/utils'
 import { SessionTerminal } from './SessionTerminal'
 import * as mirrorFactory from './terminalMirror'
+import * as mousePolicy from './terminalMouse'
+import { createTerminalCopyKeyHandler } from './terminalCopy'
 import { GROK_STARTUP } from './__fixtures__/grok-startup'
 
 vi.mock('../../api/sessions', () => ({
@@ -48,6 +50,7 @@ const layout: ITerminalOptions = {
   smoothScrollDuration: 0, allowProposedApi: true,
 }
 const realFactory = mirrorFactory.createMirrorTerminal
+const realMousePolicy = mousePolicy.configureLocalTerminalMouse
 const owned: Terminal[] = []
 const hosts: HTMLElement[] = []
 const restoreProperties: Array<() => void> = []
@@ -132,6 +135,77 @@ async function panelParsed(text: string) {
   assertGeometry(panel)
 }
 
+function mouse(target: EventTarget, type: string, clientX: number, clientY: number,
+  options: MouseEventInit = {}) {
+  target.dispatchEvent(new MouseEvent(type, {
+    bubbles: true, cancelable: true, clientX, clientY,
+    button: 0, buttons: type === 'mouseup' ? 0 : 1, detail: 1, ...options,
+  }))
+}
+function press(terminal: Terminal, modifiers: MouseEventInit = {}) {
+  mouse(screen(terminal), 'mousedown', 45, 50, modifiers)
+}
+function release(modifiers: MouseEventInit = {}) {
+  mouse(document, 'mouseup', 55, 50, modifiers)
+}
+function dragHello(terminal: Terminal) {
+  mouse(screen(terminal), 'mousedown', 1, 10)
+  mouse(document, 'mousemove', 51, 10)
+  mouse(document, 'mouseup', 51, 10)
+}
+function wheel(terminal: Terminal, deltaY: number) {
+  screen(terminal).dispatchEvent(new WheelEvent('wheel', {
+    bubbles: true, cancelable: true, clientX: 45, clientY: 50, deltaMode: 1, deltaY,
+  }))
+}
+function gestures(terminal: Terminal) {
+  for (const modifiers of [{}, { ctrlKey: true }, { altKey: true }]) {
+    press(terminal, modifiers)
+    mouse(document, 'mousemove', 55, 50, modifiers)
+    release(modifiers)
+  }
+  hover(terminal)
+  wheel(terminal, -1)
+  wheel(terminal, 1)
+}
+async function framesUntil(terminal: Terminal, condition: () => boolean, label: string) {
+  terminal.refresh(0, terminal.rows - 1)
+  for (let frame = 0; frame < 10; frame++) {
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    if (condition()) return
+  }
+  expect(condition(), `harness frame bound: ${label}`).toBe(true)
+}
+const protocols = [
+  { name: 'X10', mode: 9 }, { name: 'VT200', mode: 1000 },
+  { name: 'DRAG', mode: 1002 }, { name: 'ANY', mode: 1003 },
+]
+const encodings = [
+  { name: 'DEFAULT', mode: '', data: [] as string[], binary: ['\x1b[M \x25\x23'] },
+  { name: 'SGR', mode: ';1006', data: ['\x1b[<0;5;3M'], binary: [] as string[] },
+  { name: 'SGR_PIXELS', mode: ';1016', data: ['\x1b[<0;45;50M'], binary: [] as string[] },
+]
+type DirectMouseEvent = {
+  col: number; row: number; x: number; y: number; button: number; action: number
+  ctrl: boolean; alt: boolean; shift: boolean
+}
+type MouseInternals = { _core: { coreMouseService: {
+  addProtocol: (name: string, protocol: unknown) => void
+  triggerMouseEvent: (event: DirectMouseEvent) => boolean
+} } }
+function directPress(terminal: Terminal) {
+  // A separate defensive-restriction oracle. DOM reachability is proved above it.
+  return (terminal as unknown as MouseInternals)._core.coreMouseService.triggerMouseEvent({
+    col: 4, row: 2, x: 45, y: 50, button: 0, action: 1, ctrl: false, alt: false, shift: false,
+  })
+}
+function inputControl(terminal: Terminal) {
+  const emitted = collect(terminal)
+  terminal.input('x')
+  expect(emitted.data).toEqual(['x'])
+  expect(emitted.binary).toEqual([])
+}
+
 describe.sequential('CARD-0148 mouse policy', () => {
   beforeEach(() => {
     installGeometry()
@@ -176,5 +250,308 @@ describe.sequential('CARD-0148 mouse policy', () => {
     expect(sendSessionInput, 'panel transport silence').not.toHaveBeenCalled()
     panel.input('x')
     expect(sendSessionInput).toHaveBeenCalledExactlyOnceWith('session-1', 'x')
+  })
+
+  it('panel rejects hover from live and reconnect', async () => {
+    let releaseBuffer!: (value: Awaited<ReturnType<typeof getSessionBuffer>>) => void
+    vi.mocked(getSessionBuffer).mockReturnValueOnce(new Promise(resolve => { releaseBuffer = resolve }))
+    renderWithProviders(<SessionTerminal session={runningSession} />)
+    await waitFor(() => expect(getSessionBuffer).toHaveBeenCalledTimes(1))
+    connection.handlers.get('AgentTextDelta')!({ sessionId: 'session-1', sequence: 2, text: GROK_STARTUP })
+    releaseBuffer({ sessionId: 'session-1', buffer: '', lastSequence: 1 })
+    for (const phase of ['queued', 'live', 'reconnect']) {
+      if (phase !== 'queued') {
+        await write(panel, '\x1b[?1003l')
+        panelWrite.mockClear()
+        if (phase === 'live') {
+          connection.handlers.get('AgentTextDelta')!({ sessionId: 'session-1', sequence: 3, text: GROK_STARTUP })
+        } else {
+          vi.mocked(getSessionBuffer).mockResolvedValueOnce({
+            sessionId: 'session-1', buffer: GROK_STARTUP, lastSequence: 4,
+          })
+          connection.reconnected!()
+        }
+      }
+      await panelParsed(GROK_STARTUP)
+      vi.mocked(sendSessionInput).mockClear()
+      hover(panel)
+      expect(sendSessionInput, phase).not.toHaveBeenCalled()
+      panel.input('x')
+      expect(sendSessionInput, phase).toHaveBeenCalledExactlyOnceWith('session-1', 'x')
+    }
+  })
+
+  it.each(protocols)('protocol $name stays local', async ({ name, mode }) => {
+    for (const encoding of encodings) {
+      const label = `${name}/${encoding.name}`
+      const setup = `\x1b[?${mode}${encoding.mode}h\x1b[HHELLO WORLD`
+      const bare = openTerminal(false)
+      const bareEvents = collect(bare)
+      await write(bare, setup)
+      press(bare)
+      expect(bareEvents.data, `${label} DOM reachability`).toEqual(encoding.data)
+      expect(bareEvents.binary, `${label} DOM reachability`).toEqual(encoding.binary)
+      release()
+      bareEvents.clear()
+      expect(directPress(bare), `${label} direct reachability`).toBe(true)
+      expect(bareEvents.data, label).toEqual(encoding.data)
+      expect(bareEvents.binary, label).toEqual(encoding.binary)
+
+      const terminal = openTerminal(true)
+      const emitted = collect(terminal)
+      await write(terminal, setup)
+      gestures(terminal)
+      expect.soft(emitted.data, `${label} DOM data`).toEqual([])
+      expect.soft(emitted.binary, `${label} DOM binary`).toEqual([])
+      dragHello(terminal)
+      expect.soft(terminal.getSelection(), `${label} ordinary selection`).toBe('HELLO')
+      expect.soft(emitted.data, `${label} selection data`).toEqual([])
+      expect.soft(emitted.binary, `${label} selection binary`).toEqual([])
+      emitted.clear()
+      expect.soft(directPress(terminal), `${label} direct restriction`).toBe(false)
+      expect.soft(emitted.data, `${label} direct data`).toEqual([])
+      expect.soft(emitted.binary, `${label} direct binary`).toEqual([])
+    }
+  })
+
+  it('normal drag copies selection', async () => {
+    const bare = openTerminal(false)
+    await write(bare, 'HELLO WORLD')
+    dragHello(bare)
+    expect(bare.getSelection(), 'bare ordinary drag').toBe('HELLO')
+    const terminal = openTerminal(true)
+    const emitted = collect(terminal)
+    await write(terminal, GROK_STARTUP + '\x1b[HHELLO WORLD')
+    dragHello(terminal)
+    expect(terminal.getSelection()).toBe('HELLO')
+    expect(emitted.data).toEqual([])
+    expect(emitted.binary).toEqual([])
+    const writeText = vi.fn(async () => undefined)
+    replaceProperty(navigator, 'clipboard', { value: { writeText } })
+    const result = createTerminalCopyKeyHandler(terminal)(new KeyboardEvent('keydown', {
+      key: 'c', code: 'KeyC', ctrlKey: true,
+    }))
+    expect(result).toBe(true)
+    expect(writeText).toHaveBeenCalledExactlyOnceWith('HELLO')
+  })
+
+  it('wheel scrolls local history', async () => {
+    for (const mirror of [false, true]) {
+      const label = mirror ? 'mirror' : 'bare wheel reachability'
+      const terminal = openTerminal(mirror, { scrollback: 100 })
+      const emitted = collect(terminal)
+      await write(terminal, (mirror ? GROK_STARTUP : '') +
+        Array.from({ length: 30 }, (_, index) => `line ${index}`).join('\r\n'))
+      await framesUntil(terminal, () => terminal.buffer.active.baseY > 10, `${label} history`)
+      terminal.scrollToLine(10)
+      await framesUntil(terminal, () => terminal.buffer.active.viewportY === 10, `${label} start`)
+      const middle = terminal.buffer.active.viewportY
+      wheel(terminal, -1)
+      await framesUntil(terminal, () => terminal.buffer.active.viewportY < middle, `${label} wheel up`)
+      const above = terminal.buffer.active.viewportY
+      expect(above, label).toBeLessThan(middle)
+      wheel(terminal, 1)
+      await framesUntil(terminal, () => terminal.buffer.active.viewportY > above, `${label} wheel down`)
+      expect(terminal.buffer.active.viewportY, label).toBeGreaterThan(above)
+      for (const boundary of ['top', 'bottom']) {
+        const line = boundary === 'top' ? 0 : terminal.buffer.active.baseY
+        terminal.scrollToLine(line)
+        await framesUntil(terminal, () => terminal.buffer.active.viewportY === line, `${label} ${boundary}`)
+        wheel(terminal, boundary === 'top' ? -1 : 1)
+        await framesUntil(terminal, () => terminal.buffer.active.viewportY === line, `${label} clamped`)
+        expect(terminal.buffer.active.viewportY, `${label} ${boundary}`).toBe(line)
+      }
+      expect(emitted.data, label).toEqual([])
+      expect(emitted.binary, label).toEqual([])
+    }
+  })
+
+  it('wheel without history stays local', async () => {
+    for (const buffer of ['alternate', 'normal']) {
+      const options = buffer === 'normal' ? { scrollback: 0 } : {}
+      const setup = buffer === 'alternate' ? '\x1b[?1049h' : ''
+      const bare = openTerminal(false, options)
+      const bareEvents = collect(bare)
+      await write(bare, setup)
+      wheel(bare, -1)
+      wheel(bare, 1)
+      expect(bareEvents.data, `${buffer} fallback reachability`).toEqual(['\x1b[A', '\x1b[B'])
+      expect(bareEvents.binary).toEqual([])
+      const terminal = openTerminal(true, options)
+      const emitted = collect(terminal)
+      await write(terminal, setup)
+      for (const tracking of [false, true]) {
+        if (tracking) await write(terminal, GROK_STARTUP)
+        wheel(terminal, -1)
+        wheel(terminal, 1)
+        const label = `${buffer}/tracking=${tracking}`
+        expect(emitted.data, label).toEqual([])
+        expect(emitted.binary, label).toEqual([])
+        expect(terminal.buffer.active.baseY, label).toBe(0)
+        expect(terminal.buffer.active.viewportY, label).toBe(0)
+      }
+    }
+  })
+
+  it('mixed split modes retain order and input', async () => {
+    const originalMatchMedia = window.matchMedia
+    vi.spyOn(window, 'matchMedia').mockImplementation(query => ({
+      ...originalMatchMedia(query), matches: query.includes('pointer: coarse'),
+    }))
+    vi.mocked(getSessionBuffer).mockResolvedValueOnce({ sessionId: 'session-1', buffer: 'READY', lastSequence: 1 })
+    const view = renderWithProviders(<SessionTerminal session={runningSession} />)
+    await panelParsed('READY')
+    const emitted = collect(panel)
+    const first = write(panel, '\x1b[?1003;1006;20')
+    const second = write(panel, '04;1049hALT')
+    await Promise.all([first, second])
+    expect(panel.buffer.active.type).toBe('alternate')
+    expect(panel.buffer.active.getLine(0)!.translateToString(true)).toBe('ALT')
+    vi.mocked(sendSessionInput).mockClear()
+    panel.textarea!.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true, cancelable: true, key: 'ArrowUp', code: 'ArrowUp', keyCode: 38,
+    }))
+    panel.input('x')
+    panel.paste('literal \x1b[<35;5;3M')
+    view.getByRole('button', { name: 'Arrow up' }).click()
+    expect(vi.mocked(sendSessionInput).mock.calls).toEqual([
+      ['session-1', '\x1b[A'], ['session-1', 'x'],
+      ['session-1', '\x1b[200~literal \x1b[<35;5;3M\x1b[201~'], ['session-1', '\x1b[A'],
+    ])
+    vi.mocked(sendSessionInput).mockClear()
+    emitted.clear()
+    hover(panel)
+    expect(sendSessionInput).not.toHaveBeenCalled()
+    expect(emitted.data).toEqual([])
+    expect(emitted.binary).toEqual([])
+    await write(panel, '\x1b[?1003;1006;2004;1049lNORMAL')
+    expect(panel.buffer.active.type).toBe('normal')
+    expect(panel.buffer.active.getLine(0)!.translateToString(true)).toContain('NORMAL')
+    panel.paste('literal \x1b[<35;5;3M')
+    expect(sendSessionInput).toHaveBeenCalledExactlyOnceWith('session-1', 'literal \x1b[<35;5;3M')
+  })
+
+  it('reset and instances remain independent', async () => {
+    const before = openTerminal(false)
+    const terminal = openTerminal(true)
+    const emitted = collect(terminal)
+    for (const { name, mode } of protocols) {
+      terminal.reset()
+      await write(terminal, `\x1b[?${mode};1006hHELLO WORLD`)
+      emitted.clear()
+      gestures(terminal)
+      expect(emitted.data, `${name} rearm`).toEqual([])
+      expect(emitted.binary, `${name} rearm`).toEqual([])
+      dragHello(terminal)
+      expect(terminal.getSelection(), `${name} reset selection`).toBe('HELLO')
+      expect(emitted.data, `${name} selection`).toEqual([])
+      expect(emitted.binary, `${name} selection`).toEqual([])
+    }
+    const fresh = openTerminal(true)
+    const freshEvents = collect(fresh)
+    await write(fresh, GROK_STARTUP + 'HELLO WORLD')
+    gestures(fresh)
+    dragHello(fresh)
+    expect(fresh.getSelection()).toBe('HELLO')
+    expect(freshEvents.data).toEqual([])
+    expect(freshEvents.binary).toEqual([])
+    for (const [label, bare] of [['before', before], ['after', openTerminal(false)]] as const) {
+      const bareEvents = collect(bare)
+      await write(bare, '\x1b[?1003;1006h')
+      press(bare)
+      expect(bareEvents.data, `${label} bare press`).toEqual(['\x1b[<0;5;3M'])
+      release()
+      bareEvents.clear()
+      hover(bare)
+      expect(bareEvents.data, `${label} bare hover`).toEqual(['\x1b[<35;5;3M', '\x1b[<35;6;3M'])
+      expect(bareEvents.binary, label).toEqual([])
+    }
+  })
+
+  it('alt click stays local', async () => {
+    function altClick(terminal: Terminal) {
+      mouse(screen(terminal), 'mousedown', 25, 10, { altKey: true })
+      mouse(document, 'mouseup', 25, 10, { altKey: true })
+    }
+    const bare = openTerminal(false, { altClickMovesCursor: true })
+    const bareEvents = collect(bare)
+    await write(bare, 'HELLO WORLD\x1b[1;11H')
+    altClick(bare)
+    expect(bareEvents.data.join(''), 'bare alt-click reachability').not.toBe('')
+    expect(bareEvents.data.join('')).toMatch(/^(\x1b\[D)+$/)
+    const terminal = openTerminal(true, { altClickMovesCursor: true })
+    const emitted = collect(terminal)
+    for (const tracking of [false, true]) {
+      await write(terminal, (tracking ? GROK_STARTUP : '') + '\x1b[HHELLO WORLD\x1b[1;11H')
+      altClick(terminal)
+      expect(emitted.data, `tracking=${tracking}`).toEqual([])
+      expect(emitted.binary, `tracking=${tracking}`).toEqual([])
+    }
+    terminal.input('x')
+    expect(emitted.data).toEqual(['x'])
+  })
+
+  it('factory rejects incompatible mouse seam', () => {
+    for (const fault of ['core', 'service', 'missing method', 'noncallable method']) {
+      let allocated: Terminal | undefined
+      let disposed = false
+      const hook = vi.spyOn(mousePolicy, 'configureLocalTerminalMouse').mockImplementation(terminal => {
+        allocated = terminal
+        const internals = terminal as unknown as MouseInternals
+        const core = internals._core
+        const service = core.coreMouseService
+        const addProtocol = service.addProtocol
+        const dispose = terminal.dispose.bind(terminal)
+        vi.spyOn(terminal, 'dispose').mockImplementation(() => {
+          internals._core = core
+          core.coreMouseService = service
+          service.addProtocol = addProtocol
+          disposed = true
+          dispose()
+        })
+        if (fault === 'core') Reflect.set(internals, '_core', undefined)
+        else if (fault === 'service') Reflect.set(core, 'coreMouseService', undefined)
+        else Reflect.set(service, 'addProtocol', fault === 'missing method' ? undefined : 42)
+        realMousePolicy(terminal)
+      })
+      try {
+        expect(() => realFactory(layout), fault).toThrow(/mouse policy.*xterm.*addProtocol/)
+      } finally {
+        if (!disposed) allocated?.dispose()
+        hook.mockRestore()
+      }
+    }
+    inputControl(openTerminal(true))
+  })
+
+  it('factory disposes on setup failure', () => {
+    const sentinel = new Error('second protocol registration failed')
+    let allocated: Terminal | undefined
+    let disposeSpy: ReturnType<typeof vi.spyOn<Terminal, 'dispose'>> | undefined
+    const hook = vi.spyOn(mousePolicy, 'configureLocalTerminalMouse').mockImplementation(terminal => {
+      allocated = terminal
+      const service = (terminal as unknown as MouseInternals)._core.coreMouseService
+      const original = service.addProtocol
+      let registrations = 0
+      service.addProtocol = function (name, protocol) {
+        if (++registrations === 2) throw sentinel
+        original.call(this, name, protocol)
+      }
+      const dispose = terminal.dispose.bind(terminal)
+      disposeSpy = vi.spyOn(terminal, 'dispose').mockImplementation(() => {
+        service.addProtocol = original
+        dispose()
+      })
+      realMousePolicy(terminal)
+    })
+    try {
+      expect(() => realFactory(layout)).toThrow(sentinel)
+      expect(allocated).toBeInstanceOf(Terminal)
+      expect(disposeSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      if (disposeSpy?.mock.calls.length === 0) allocated?.dispose()
+      hook.mockRestore()
+    }
+    inputControl(openTerminal(true))
   })
 })
