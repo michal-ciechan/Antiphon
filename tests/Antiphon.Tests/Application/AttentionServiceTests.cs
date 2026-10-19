@@ -3539,14 +3539,20 @@ public partial class AttentionServiceTests
     {
         public IReadOnlyList<SessionRunnerSessionDto> Sessions { get; init; } = [];
         public Exception? ListError { get; init; }
+        public int KillCalls { get; private set; }
+        public int InputCalls { get; private set; }
+        public int StartCalls { get; private set; }
 
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
             ListError is not null
                 ? Task.FromException<IReadOnlyList<SessionRunnerSessionDto>>(ListError)
                 : Task.FromResult(Sessions);
 
-        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) =>
+        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
+        {
+            StartCalls++;
             throw new NotSupportedException();
+        }
 
         public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotSupportedException();
@@ -3560,8 +3566,11 @@ public partial class AttentionServiceTests
         public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotSupportedException();
 
-        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
+        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
+        {
+            InputCalls++;
             throw new NotSupportedException();
+        }
 
         public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotSupportedException();
@@ -3569,8 +3578,11 @@ public partial class AttentionServiceTests
         public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) =>
             throw new NotSupportedException();
 
-        public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct) =>
+        public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct)
+        {
+            KillCalls++;
             throw new NotSupportedException();
+        }
 
         public IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) =>
             throw new NotSupportedException();
