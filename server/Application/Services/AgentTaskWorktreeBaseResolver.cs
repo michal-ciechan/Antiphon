@@ -48,86 +48,59 @@ public sealed class AgentTaskWorktreeBaseResolver(
 
     public async Task<CardWorktreeBaseSelection> ResolveAsync(AgentTask task, CancellationToken ct)
     {
-        var fallback = task.MergeTargetRef;
-        if (string.IsNullOrWhiteSpace(fallback))
-        {
-            var projectDefault = task.ProjectId is Guid projectId
-                ? await db.Projects.AsNoTracking().Where(p => p.Id == projectId)
-                    .Select(p => p.BaseBranch).FirstOrDefaultAsync(ct)
-                : null;
-            fallback = WorktreeBaseResolver.ChooseConfiguredDefault(projectDefault, _settings.DefaultBranch);
-        }
+        var fallback = task.MergeTargetRef ?? _settings.DefaultBranch;
         CardWorktreeBaseSelection Target() => new(CardWorktreeBaseDecision.Target, fallback,
-            LandingTarget: task.MergeTargetRef ?? "master", ObservedAt: DateTime.UtcNow);
-
-        if (task.Workspace != WorkspaceMode.Worktree || task.CardId is null || task.RepoPath is null
-            || task.RepairSourceTaskId is not null || task.SourceLandingOperationId is not null
-            || task.WorktreeBaseRequestedRef is not null)
-            return Target();
-
-        // Completion evidence is read before any candidate-specific Git observation. A retained
-        // branch of an already-landed task is not an automatic source, even after a rebase.
-        var rows = await db.AgentTasks.AsNoTracking()
-            .Where(t => t.Id != task.Id && t.CardId == task.CardId
-                && t.Workspace == WorkspaceMode.Worktree && t.WorktreeBranch != null)
-            .OrderBy(t => t.Id).ToListAsync(ct);
-        if (rows.Count == 0) return Target();
-        var rowIds = rows.Select(t => t.Id).ToArray();
-        var landed = (await db.AgentTaskEvents.AsNoTracking()
-            .Where(e => rowIds.Contains(e.AgentTaskId)
-                && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.LandedWithResidue))
-            .Select(e => e.AgentTaskId).Distinct().ToListAsync(ct)).ToHashSet();
-        var currentRequestIds = rows.Select(t => t.CurrentLandRequestId).OfType<Guid>().ToArray();
-        var pendingLand = (await db.AgentTaskLandRequests.AsNoTracking()
-            .Where(r => currentRequestIds.Contains(r.Id) && r.IsPending
-                && (r.State == LandRequestState.Queued || r.State == LandRequestState.Held
-                    || r.State == LandRequestState.Running))
-            .Select(r => r.TaskId).ToListAsync(ct)).ToHashSet();
-        var kept = rows.Where(t => !landed.Contains(t.Id)
-                || task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task
-                    && task.RequestedWorktreeBaseTaskId == t.Id)
-            .GroupBy(t => t.WorktreeBranch!, StringComparer.Ordinal)
-            .Select(g => g.OrderByDescending(t => t.Id == task.RequestedWorktreeBaseTaskId)
-                .ThenByDescending(t => t.Status == AgentTaskStatus.Succeeded)
-                .ThenByDescending(t => t.CompletedAt)
-                .ThenBy(t => t.Id.ToString("D"), StringComparer.Ordinal).First())
-            .OrderBy(t => t.Id).ToArray();
-        if (kept.Length == 0) return Target();
-        var inspectable = kept.Where(t => t.Status == AgentTaskStatus.Succeeded
-            || pendingLand.Contains(t.Id)
-            || task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task
-                && task.RequestedWorktreeBaseTaskId == t.Id).ToArray();
-        var totalCandidates = inspectable.Length;
-
-        using var inspection = new Inspection(git, task.RepoPath, _settings, _clock, _processGate, ct);
+            LandingTarget: task.MergeTargetRef ?? "master", ObservedAt: _clock.GetUtcNow().UtcDateTime);
+        using var inspection = new WorktreeBaseInspection(git, task.RepoPath ?? "", _settings, _clock, _processGate, ct);
         var warnings = new List<string>();
-        foreach (var row in kept.Except(inspectable))
-            warnings.Add($"Task {Short(row.Id)} branch {row.WorktreeBranch} is {row.Status}; it is not an automatic source.");
+        var totalCandidates = 0;
         var inspected = 0;
+        var pendingKnown = false;
+        var pendingLand = new HashSet<Guid>();
+        var landed = new HashSet<Guid>();
+        AgentTask[] kept = [];
         CardWorktreeBaseSelection Result(CardWorktreeBaseDecision decision,
             Guid? id = null, string? branch = null, string? sha = null, string? reason = null) =>
             new(decision, fallback, id, branch, sha, warnings.Take(inspection.MaxCandidates).ToArray(),
-                reason, totalCandidates, inspected, inspection.Commands, task.MergeTargetRef ?? "master", DateTime.UtcNow);
-
+                reason, totalCandidates, inspected, inspection.Commands, task.MergeTargetRef ?? "master", _clock.GetUtcNow().UtcDateTime);
+        bool HasPending() => !pendingKnown || pendingLand.Count > 0;
         try
         {
-            // A pending integration takes precedence over both inventory truncation and a
-            // divergent-tip refusal. When evidence cannot rule it out, leave the task queued.
-            if (inspectable.Length > inspection.MaxCandidates)
+            if (string.IsNullOrWhiteSpace(task.MergeTargetRef))
             {
-                if (kept.Any(t => pendingLand.Contains(t.Id)
-                    && SameDestination(t.MergeTargetRef, task.MergeTargetRef)))
-                    return Result(CardWorktreeBaseDecision.WaitForLand, reason: "pending_land_uninspected");
-                warnings.Add($"Same-card branch inspection incomplete: candidate_limit ({inspectable.Length} total, "
-                    + $"0 inspected, {inspectable.Length} omitted). Retry or select a base explicitly.");
-                if (task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task)
-                    inspectable = inspectable.Where(t => t.Id == task.RequestedWorktreeBaseTaskId).ToArray();
-                else
-                    return Result(task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Target
-                        ? CardWorktreeBaseDecision.Target : CardWorktreeBaseDecision.Unknown,
-                        reason: "candidate_limit");
+                var projectDefault = task.ProjectId is Guid projectId
+                    ? await inspection.ReadAsync(token => db.Projects.AsNoTracking().Where(p => p.Id == projectId)
+                        .Select(p => p.BaseBranch).FirstOrDefaultAsync(token)) : null;
+                fallback = WorktreeBaseResolver.ChooseConfiguredDefault(projectDefault, _settings.DefaultBranch);
             }
-
+            if (task.Workspace != WorkspaceMode.Worktree || task.CardId is null || task.RepoPath is null
+                || task.RepairSourceTaskId is not null || task.SourceLandingOperationId is not null
+                || task.WorktreeBaseRequestedRef is not null)
+                return Target();
+            var inventory = await new CardSiblingInventory(db).ReadAsync(task, false, inspection, ct);
+            pendingKnown = true;
+            landed = inventory.Landed.ToHashSet();
+            pendingLand = inventory.PendingLands.Where(p => SameDestination(p.Task.MergeTargetRef, task.MergeTargetRef)
+                    && !landed.Contains(p.Task.Id)).Select(p => p.Task.Id).ToHashSet();
+            totalCandidates = inventory.Rows.Count;
+            if (inventory.Overflow || inventory.PendingOverflow)
+                throw new WorktreeBaseInspectionLimitException("candidate_limit");
+            kept = inventory.Rows.Where(t => !landed.Contains(t.Id)
+                    || task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task
+                        && task.RequestedWorktreeBaseTaskId == t.Id)
+                .GroupBy(t => t.WorktreeBranch!, StringComparer.Ordinal)
+                .Select(g => g.OrderByDescending(t => t.Id == task.RequestedWorktreeBaseTaskId)
+                    .ThenByDescending(t => t.Status == AgentTaskStatus.Succeeded)
+                    .ThenByDescending(t => t.CompletedAt).ThenBy(t => t.Id).First())
+                .OrderBy(t => t.Id).ToArray();
+            var inspectable = kept.Where(t => t.Status == AgentTaskStatus.Succeeded
+                || pendingLand.Contains(t.Id)
+                || task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task
+                    && task.RequestedWorktreeBaseTaskId == t.Id).ToArray();
+            foreach (var row in kept.Except(inspectable))
+                warnings.Add($"Task {Short(row.Id)} branch {row.WorktreeBranch} is {row.Status}; it is not an automatic source.");
+            totalCandidates = inspectable.Length;
+            if (inspectable.Length == 0 && !HasPending()) return Target();
             var common = await inspection.CommonAsync(task.RepoPath);
             var target = await inspection.CommitAsync(fallback);
             if (target is null && task.MergeTargetRef is null)
@@ -141,16 +114,40 @@ public sealed class AgentTaskWorktreeBaseResolver(
                 return Result(CardWorktreeBaseDecision.Unknown, reason: "target_missing");
             }
 
-            var writers = await db.AgentTasks.AsNoTracking()
-                .Where(t => t.Id != task.Id
-                    && (t.Status == AgentTaskStatus.Queued || t.Status == AgentTaskStatus.Dispatched
-                        || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked))
-                .Select(t => new { t.Id, t.WorktreePath, t.WorkingDirectory }).ToListAsync(ct);
             var eligible = new List<(AgentTask Task, string Sha)>();
             (AgentTask Task, string Sha)? explicitSource = null;
-            var branches = inspectable.Select(t => t.WorktreeBranch!).ToArray();
+            var branches = inspectable.Select(t => t.WorktreeBranch!)
+                .Concat(inventory.PendingLands.Where(p => pendingLand.Contains(p.Task.Id))
+                    .Select(p => p.Task.WorktreeBranch!)).Distinct(StringComparer.Ordinal).ToArray();
             var commits = await inspection.BranchCommitsAsync(branches);
             var merged = await inspection.MergedBranchesAsync(target, branches);
+            bool IsMerged(string branch) => commits.TryGetValue(branch, out var tip)
+                && merged.TryGetValue(branch, out var mergedTip) && tip == mergedTip;
+            // Check every pending identity before branch deduplication and the expensive cap.
+            foreach (var pending in inventory.PendingLands.Where(p => pendingLand.Contains(p.Task.Id)))
+            {
+                var row = pending.Task;
+                var repo = row.RepoPath is { } original && Directory.Exists(original) ? original : row.WorktreePath;
+                if (repo is null || !Directory.Exists(repo))
+                    return Result(CardWorktreeBaseDecision.WaitForLand, reason: "pending_land_unknown");
+                if (!string.Equals(common, await inspection.CommonAsync(repo), PathComparison))
+                {
+                    pendingLand.Remove(row.Id);
+                    continue;
+                }
+                if (!commits.TryGetValue(row.WorktreeBranch!, out var pendingSha))
+                    return Result(CardWorktreeBaseDecision.WaitForLand, row.Id, row.WorktreeBranch, reason: "pending_land_unknown");
+                if (!IsMerged(row.WorktreeBranch!)
+                    && await inspection.ContainsAsync(pendingSha, target) != DelegationWorktreeService.CommitContainment.Contained)
+                    return Result(CardWorktreeBaseDecision.WaitForLand, row.Id, row.WorktreeBranch, pendingSha, "pending_land");
+                pendingLand.Remove(row.Id);
+            }
+            inspectable = inspectable.Where(t =>
+                task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task && t.Id == task.RequestedWorktreeBaseTaskId
+                || commits.ContainsKey(t.WorktreeBranch!) && !IsMerged(t.WorktreeBranch!)).ToArray();
+            totalCandidates = inspectable.Length;
+            if (totalCandidates > inspection.MaxCandidates)
+                throw new WorktreeBaseInspectionLimitException("candidate_limit");
             var containment = new Dictionary<string, DelegationWorktreeService.CommitContainment>(StringComparer.OrdinalIgnoreCase);
             foreach (var row in inspectable)
             {
@@ -176,7 +173,7 @@ public sealed class AgentTaskWorktreeBaseResolver(
                 }
                 string candidateCommon;
                 try { candidateCommon = await inspection.CommonAsync(repo); }
-                catch (Exception ex) when (ex is not OperationCanceledException and not InspectionLimitException)
+                catch (Exception ex) when (ex is not OperationCanceledException and not WorktreeBaseInspectionLimitException)
                 {
                     warnings.Add($"Task {Short(row.Id)} branch {branch} repository identity is unknown ({ex.GetType().Name}).");
                     if (pendingLand.Contains(row.Id))
@@ -201,7 +198,7 @@ public sealed class AgentTaskWorktreeBaseResolver(
                 // automatic inheritance, not whether the caller may choose a safe source.
                 var contained = requested && (!pendingLand.Contains(row.Id) || landed.Contains(row.Id))
                     ? DelegationWorktreeService.CommitContainment.NotContained
-                    : merged.Contains(branch)
+                    : IsMerged(branch)
                         ? DelegationWorktreeService.CommitContainment.Contained
                         : containment.TryGetValue(sha, out var cachedContainment) ? cachedContainment
                         : containment[sha] = await inspection.ContainsUnmergedAsync(sha, target);
@@ -224,9 +221,11 @@ public sealed class AgentTaskWorktreeBaseResolver(
                 }
                 // A Blocked source owns its checkout but is quiescent. Another task using
                 // that checkout, including a Shared follow-up, is still an open writer.
-                if (row.WorktreePath is not null && writers.Any(w => w.Id != row.Id
-                    && (string.Equals(w.WorktreePath, row.WorktreePath, PathComparison)
-                        || string.Equals(w.WorkingDirectory, row.WorktreePath, PathComparison))))
+                if (row.WorktreePath is not null && await inspection.ReadAsync(token => db.AgentTasks.AsNoTracking()
+                    .AnyAsync(w => w.Id != task.Id && w.Id != row.Id
+                        && (w.Status == AgentTaskStatus.Queued || w.Status == AgentTaskStatus.Dispatched
+                            || w.Status == AgentTaskStatus.Working || w.Status == AgentTaskStatus.Blocked)
+                        && (w.WorktreePath == row.WorktreePath || w.WorkingDirectory == row.WorktreePath), token)))
                 {
                     warnings.Add($"Task {Short(row.Id)} branch {branch} has an open writer.");
                     continue;
@@ -241,7 +240,7 @@ public sealed class AgentTaskWorktreeBaseResolver(
                     }
                     bool safe;
                     try { safe = await inspection.CheckoutSafeAsync(branch); }
-                    catch (Exception ex) when (ex is not OperationCanceledException and not InspectionLimitException)
+                    catch (Exception ex) when (ex is not OperationCanceledException and not WorktreeBaseInspectionLimitException)
                     {
                         warnings.Add($"Task {Short(row.Id)} branch {branch} inspection is unknown ({ex.GetType().Name}).");
                         continue;
@@ -292,7 +291,7 @@ public sealed class AgentTaskWorktreeBaseResolver(
                     bool safe;
                     var unknown = false;
                     try { safe = await inspection.CheckoutSafeAsync(tip.Task.WorktreeBranch!); }
-                    catch (Exception ex) when (ex is not OperationCanceledException and not InspectionLimitException)
+                    catch (Exception ex) when (ex is not OperationCanceledException and not WorktreeBaseInspectionLimitException)
                     {
                         warnings.Add($"Task {Short(tip.Task.Id)} branch {tip.Task.WorktreeBranch} inspection is unknown ({ex.GetType().Name}).");
                         safe = false;
@@ -320,13 +319,12 @@ public sealed class AgentTaskWorktreeBaseResolver(
             }
             return Result(CardWorktreeBaseDecision.Target);
         }
-        catch (InspectionLimitException ex)
+        catch (WorktreeBaseInspectionLimitException ex)
         {
             warnings.Add($"Same-card branch inspection incomplete: {ex.Reason} ({totalCandidates} total, "
                 + $"{inspected} inspected, {Math.Max(0, totalCandidates - inspected)} omitted). Retry or select a base explicitly.");
-            if (kept.Any(t => pendingLand.Contains(t.Id)
-                && SameDestination(t.MergeTargetRef, task.MergeTargetRef)))
-                return Result(CardWorktreeBaseDecision.WaitForLand, reason: "pending_land_unknown");
+            if (HasPending())
+                return Result(CardWorktreeBaseDecision.WaitForLand, reason: ex.Reason);
             return Result(task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Target
                 ? CardWorktreeBaseDecision.Target : CardWorktreeBaseDecision.Unknown,
                 reason: ex.Reason);
@@ -334,8 +332,7 @@ public sealed class AgentTaskWorktreeBaseResolver(
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             warnings.Add($"Same-card branch inspection unknown ({ex.GetType().Name}); retry or select a base explicitly.");
-            if (kept.Any(t => pendingLand.Contains(t.Id)
-                && SameDestination(t.MergeTargetRef, task.MergeTargetRef)))
+            if (HasPending())
                 return Result(CardWorktreeBaseDecision.WaitForLand, reason: "pending_land_unknown");
             return Result(task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Target
                 ? CardWorktreeBaseDecision.Target : CardWorktreeBaseDecision.Unknown,
@@ -348,192 +345,4 @@ public sealed class AgentTaskWorktreeBaseResolver(
 
     private static string Short(Guid id) => id.ToString("N")[..8];
 
-    private sealed class InspectionLimitException(string reason) : Exception(reason)
-    {
-        public string Reason { get; } = reason;
-    }
-
-    private sealed class Inspection : IDisposable
-    {
-        private readonly ILandingGit git;
-        private readonly string repository;
-        private readonly CancellationToken caller;
-        private readonly TimeProvider _clock;
-        private readonly GitProcessGate _gate;
-        private readonly long _started;
-        private readonly TimeSpan _limit;
-        private readonly CancellationTokenSource _deadline;
-        private readonly CancellationTokenSource _budget;
-        private readonly int _maxCommands;
-        private readonly Dictionary<string, string> _commons = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, string?> _commits = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, string?> _checkouts = new(StringComparer.Ordinal);
-        private bool _worktreesListed;
-        public int Commands { get; private set; }
-        public int MaxCandidates { get; }
-
-        public Inspection(ILandingGit git, string repository, GitSettings settings,
-            TimeProvider clock, GitProcessGate gate, CancellationToken caller)
-        {
-            this.git = git;
-            this.repository = repository;
-            this.caller = caller;
-            _clock = clock;
-            _gate = gate;
-            _started = clock.GetTimestamp();
-            _limit = TimeSpan.FromSeconds(Math.Max(1, settings.WorktreeBaseInspectionTimeoutSeconds));
-            _deadline = new CancellationTokenSource(_limit, clock);
-            _budget = CancellationTokenSource.CreateLinkedTokenSource(caller, _deadline.Token);
-            _maxCommands = Math.Max(1, settings.WorktreeBaseMaxGitCommands);
-            MaxCandidates = Math.Max(1, settings.WorktreeBaseMaxCandidates);
-        }
-
-        private void CheckDeadline()
-        {
-            caller.ThrowIfCancellationRequested();
-            if (_clock.GetElapsedTime(_started) >= _limit || _deadline.IsCancellationRequested)
-                throw new InspectionLimitException("inspection_timeout");
-        }
-
-        private async Task<LandingGitResult> RunAsync(string repo, params string[] args)
-        {
-            CheckDeadline();
-            if (Commands >= _maxCommands) throw new InspectionLimitException("git_command_limit");
-            try
-            {
-                using var admission = await _gate.EnterAsync(_budget.Token);
-                CheckDeadline();
-                Commands++;
-                var result = await git.RunAsync(repo, args, _budget.Token);
-                CheckDeadline();
-                return result;
-            }
-            catch (OperationCanceledException) when (!caller.IsCancellationRequested)
-            { throw new InspectionLimitException("inspection_timeout"); }
-        }
-
-        public async Task<string> CommonAsync(string repo)
-        {
-            if (_commons.TryGetValue(repo, out var cached)) return cached;
-            var result = await RunAsync(repo, "rev-parse", "--path-format=absolute", "--git-common-dir");
-            if (!result.Succeeded) throw new IOException("git_common_directory_unavailable");
-            string canonical;
-            try
-            {
-                canonical = await git.CanonicalDirectoryAsync(result.Output.Trim(), _budget.Token);
-                CheckDeadline();
-            }
-            catch (OperationCanceledException) when (!caller.IsCancellationRequested)
-            { throw new InspectionLimitException("inspection_timeout"); }
-            return _commons[repo] = canonical;
-        }
-
-        public async Task<string?> CommitAsync(string reference)
-        {
-            if (_commits.TryGetValue(reference, out var cached)) return cached;
-            var result = await RunAsync(repository, "rev-parse", "--verify", "--quiet", $"{reference}^{{commit}}");
-            if (!result.Succeeded && result.ExitCode != 1)
-                throw new IOException("git_commit_probe_failed");
-            var sha = result.Succeeded ? result.Output.Trim() : null;
-            return _commits[reference] = sha is { Length: 40 or 64 }
-                && sha.All(Uri.IsHexDigit) ? sha.ToLowerInvariant() : null;
-        }
-
-        public async Task<Dictionary<string, string>> BranchCommitsAsync(string[] branches)
-        {
-            var result = await RunAsync(repository,
-                ["for-each-ref", "--format=%(objectname) %(refname)",
-                    .. branches.Select(b => "refs/heads/" + b)]);
-            if (!result.Succeeded) throw new IOException("git_branch_tips_unavailable");
-            var commits = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var line in result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            {
-                var parts = line.Trim().Split(' ', 2);
-                if (parts.Length != 2 || !parts[1].StartsWith("refs/heads/", StringComparison.Ordinal)
-                    || !GitObjectId.IsFull(parts[0])) continue;
-                commits[parts[1][11..]] = parts[0].ToLowerInvariant();
-            }
-            return commits;
-        }
-
-        public async Task<HashSet<string>> MergedBranchesAsync(string target, string[] branches)
-        {
-            var result = await RunAsync(repository,
-                ["for-each-ref", "--format=%(refname)", $"--merged={target}",
-                    .. branches.Select(b => "refs/heads/" + b)]);
-            if (!result.Succeeded) throw new IOException("git_merged_branches_unavailable");
-            return result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .Select(line => line.Trim())
-                .Where(line => line.StartsWith("refs/heads/", StringComparison.Ordinal))
-                .Select(line => line[11..]).ToHashSet(StringComparer.Ordinal);
-        }
-
-        public async Task<bool> AncestorAsync(string ancestor, string descendant)
-        {
-            var result = await RunAsync(repository, "merge-base", "--is-ancestor", ancestor, descendant);
-            if (result.ExitCode is not (0 or 1)) throw new InspectionLimitException("git_command_error");
-            return result.Succeeded;
-        }
-
-        public async Task<DelegationWorktreeService.CommitContainment> ContainsAsync(string source, string target)
-        {
-            var ancestor = await RunAsync(repository, "merge-base", "--is-ancestor", source, target);
-            if (ancestor.Succeeded) return DelegationWorktreeService.CommitContainment.Contained;
-            if (ancestor.ExitCode != 1) return DelegationWorktreeService.CommitContainment.Unknown;
-            return await ContainsUnmergedAsync(source, target);
-        }
-
-        public async Task<DelegationWorktreeService.CommitContainment> ContainsUnmergedAsync(string source, string target)
-        {
-            var merges = await RunAsync(repository, "rev-list", "--max-count=1", "--min-parents=2", $"{target}..{source}");
-            if (!merges.Succeeded || !string.IsNullOrWhiteSpace(merges.Output))
-                return DelegationWorktreeService.CommitContainment.Unknown;
-            var cherry = await RunAsync(repository, "cherry", target, source);
-            if (!cherry.Succeeded) return DelegationWorktreeService.CommitContainment.Unknown;
-            var lines = cherry.Output.Replace("\r\n", "\n", StringComparison.Ordinal)
-                .Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            if (lines.Any(static line => !line.StartsWith('+') && !line.StartsWith('-')))
-                return DelegationWorktreeService.CommitContainment.Unknown;
-            return lines.Any(static line => line.StartsWith('+'))
-                ? DelegationWorktreeService.CommitContainment.NotContained
-                : DelegationWorktreeService.CommitContainment.Contained;
-        }
-
-        public async Task<bool> CheckoutSafeAsync(string branch)
-        {
-            if (!_worktreesListed)
-            {
-                var listing = await RunAsync(repository, "worktree", "list", "--porcelain");
-                if (!listing.Succeeded) throw new IOException("git_worktree_listing_failed");
-                string? current = null;
-                foreach (var line in listing.Output.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'))
-                {
-                    if (line.StartsWith("worktree ", StringComparison.Ordinal)) current = line[9..];
-                    if (line.StartsWith("branch refs/heads/", StringComparison.Ordinal))
-                        _checkouts[line[18..]] = current;
-                }
-                _worktreesListed = true;
-            }
-            var path = _checkouts.GetValueOrDefault(branch);
-            if (path is null) return true;
-            if (!Directory.Exists(path)) return false;
-            var status = await RunAsync(path, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none");
-            if (!status.Succeeded) throw new IOException("git_checkout_status_failed");
-            if (status.Output.Length != 0) return false;
-            foreach (var state in new[] { "MERGE_HEAD", "rebase-merge", "rebase-apply" })
-            {
-                var location = await RunAsync(path, "rev-parse", "--git-path", state);
-                if (!location.Succeeded) throw new IOException("git_checkout_operation_probe_failed");
-                var gitPath = location.Output.Trim();
-                if (File.Exists(gitPath) || Directory.Exists(gitPath)) return false;
-            }
-            return true;
-        }
-
-        public void Dispose()
-        {
-            _budget.Dispose();
-            _deadline.Dispose();
-        }
-    }
 }

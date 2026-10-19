@@ -287,12 +287,15 @@ public partial class AgentTaskDispatchBaseGuardTests
         var intent = (await db.AgentTaskDispatchWarningIntents.Where(i => i.TaskId == w.Task.Id).ToListAsync()).ShouldHaveSingleItem();
         intent.WarningKey.ShouldBe(DispatchBaseNotificationPayload.SiblingKey(b.Id));
         intent.Detail.ShouldContain(before[b.WorktreeBranch!]); intent.Detail.ShouldContain("also covers 1");
+        var targetSha = (await w.Repo.GitReadAsync("rev-parse", "master")).Trim();
+        git.MovedBranches.ShouldBe(before.Count);
         foreach (var tip in before.Values)
         {
-            git.Commands.ShouldContain(args => args.SequenceEqual(new[] { "cherry", "master", tip }));
-            git.Commands.ShouldContain(args => args.SequenceEqual(new[] { "log", "-1", "--format=%s", tip }));
+            git.Commands.ShouldContain(args => args.SequenceEqual(new[] { "cherry", targetSha, tip }));
+
         }
         git.Commands.ShouldContain(args => args.SequenceEqual(new[] { "merge-base", "--is-ancestor", before[a.WorktreeBranch!], before[b.WorktreeBranch!] }));
+        git.Commands.Where(args => args[0] == "log").ShouldAllBe(args => before.Values.Contains(args[args.Length - 1]));
     }
 
     [Test]
@@ -307,13 +310,15 @@ public partial class AgentTaskDispatchBaseGuardTests
 
         await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
 
-        git.Commands.ShouldContain(args => args.SequenceEqual(new[]
-            { "show-ref", "--verify", "--quiet", $"refs/heads/{sibling.WorktreeBranch}" }));
+        git.Commands.ShouldContain(args => args[0] == "for-each-ref"
+            && args.Contains($"refs/heads/{sibling.WorktreeBranch}"));
         git.FailedTipProbes.ShouldBe(1);
         await using var check = w.Fresh();
         (await check.AgentTasks.SingleAsync(t => t.Id == w.Task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
         var intent = (await check.AgentTaskDispatchWarningIntents
-            .Where(i => i.TaskId == w.Task.Id).ToListAsync()).ShouldHaveSingleItem();
+            .Where(i => i.TaskId == w.Task.Id && i.WarningKey == DispatchBaseNotificationPayload.SiblingKey(sibling.Id)).ToListAsync()).ShouldHaveSingleItem();
+        (await check.AgentTaskDispatchWarningIntents.SingleAsync(i => i.TaskId == w.Task.Id
+            && i.WarningKey == "sibling-inspection-incomplete")).Detail.ShouldContain("git_inspection_error");
         intent.WarningKey.ShouldBe(DispatchBaseNotificationPayload.SiblingKey(sibling.Id));
         intent.Detail.ShouldContain(sibling.WorktreeBranch!);
         intent.Detail.ShouldContain("unknown");
@@ -333,7 +338,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         public override Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         {
             Commands.Add(arguments.ToArray());
-            if (arguments.SequenceEqual(new[] { "rev-parse", "--verify", "--quiet", $"refs/heads/{branch}^{{commit}}" }))
+            if (arguments[0] == "for-each-ref" && arguments.Contains("refs/heads/" + branch)
+                && !arguments.Any(arg => arg.StartsWith("--merged=", StringComparison.Ordinal)))
             {
                 FailedTipProbes++;
                 return Task.FromResult(new LandingGitResult(128, "", "injected sibling tip failure"));
@@ -344,14 +350,19 @@ public partial class AgentTaskDispatchBaseGuardTests
 
     private sealed class MovingSiblingGit(HashSet<string> branches) : LandingGit
     {
+        public int MovedBranches { get; private set; }
         public List<string[]> Commands { get; } = [];
         public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         {
             Commands.Add(arguments.ToArray());
             var result = await base.RunAsync(repository, arguments, ct);
             foreach (var branch in branches)
-                if (arguments.SequenceEqual(new[] { "rev-parse", "--verify", "--quiet", $"refs/heads/{branch}^{{commit}}" }))
+                if (arguments[0] == "for-each-ref" && arguments.Contains("refs/heads/" + branch)
+                    && !arguments.Any(arg => arg.StartsWith("--merged=", StringComparison.Ordinal)))
+                {
                     (await base.RunAsync(repository, new[] { "update-ref", "refs/heads/" + branch, "master" }, ct)).Succeeded.ShouldBeTrue();
+                    MovedBranches++;
+                }
             return result;
         }
     }
@@ -373,12 +384,18 @@ public partial class AgentTaskDispatchBaseGuardTests
         }
         var git = new AncestryCensus();
         var watch = Stopwatch.StartNew();
-        await w.RunAsync(expected.ToArray(), git: git);
-        // CARD-0442's shared containment probe adds one ancestry observation per kept
-        // row before the existing strict-maxima comparisons (including the alias row).
-        var containmentProbes = uniqueTips + (uniqueTips == 1 ? 1 : 0);
-        git.Pairs.Count.ShouldBe(uniqueTips * (uniqueTips - 1) + containmentProbes);
-        git.Pairs.Distinct().Count().ShouldBeGreaterThanOrEqualTo(uniqueTips * (uniqueTips - 1));
+        var bounded = expected.OrderBy(x => x.Item1.Id).Take(16).ToArray();
+        await w.RunAsync(bounded, git: git,
+            diagnostics: uniqueTips > 16 ? ["sibling-inspection-incomplete"] : []);
+        git.Pairs.Count.ShouldBeLessThanOrEqualTo(128);
+        if (uniqueTips > 16)
+        {
+            await using var check = w.Fresh();
+            var summary = await check.AgentTaskDispatchWarningIntents.SingleAsync(i => i.TaskId == w.Task.Id
+                && i.WarningKey == "sibling-inspection-incomplete");
+            summary.Detail.ShouldContain("candidate_limit");
+            summary.Detail.ShouldContain("4 omitted");
+        }
         Console.WriteLine($"C540 probe census: tips={uniqueTips}; strict calls={git.Pairs.Count}; guard elapsed={git.GuardElapsed.TotalMilliseconds:F1}ms; dispatch plus projection={watch.Elapsed.TotalMilliseconds:F1}ms");
     }
 

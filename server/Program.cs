@@ -123,11 +123,9 @@ try
 
     // Typed settings — IOptions<T> pattern (never inject IConfiguration into services)
     builder.Services.Configure<GitSettings>(builder.Configuration.GetSection("Git"));
+    builder.Services.AddSingleton<IValidateOptions<GitSettings>, GitInspectionSettingsValidator>();
     builder.Services.AddOptions<GitSettings>()
         .Validate(s => s.IndexLockStaleAfterSeconds >= 30, "Git:IndexLockStaleAfterSeconds must be at least 30.")
-        .Validate(s => s.WorktreeBaseInspectionTimeoutSeconds > 0
-            && s.WorktreeBaseMaxCandidates > 0 && s.WorktreeBaseMaxGitCommands > 0,
-            "Git worktree-base inspection limits must be positive.")
         .ValidateOnStart();
     builder.Services.Configure<ProjectsSettings>(builder.Configuration.GetSection("Projects"));
     builder.Services.Configure<LlmSettings>(builder.Configuration.GetSection("Llm"));
@@ -401,6 +399,7 @@ try
     builder.Services.AddSingleton<AreaMapLoader>();
     builder.Services.AddScoped<DelegationWorktreeService>();
     builder.Services.AddScoped<AgentTaskWorktreeBaseResolver>();
+    builder.Services.AddScoped<CardSiblingInspectionService>();
     builder.Services.AddScoped<DispatchBaseWarningIntentService>();
     builder.Services.AddScoped<DelegationOpenGate>();
     builder.Services.AddScoped<WorktreeHealthService>();

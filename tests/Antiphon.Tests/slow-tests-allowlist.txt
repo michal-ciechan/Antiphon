@@ -316,3 +316,6 @@ Antiphon.Tests.Checkpoints.CheckpointInheritedFileTests
 Antiphon.Tests.Checkpoints.CheckpointSourceGitBoundsTests
 # CARD-1233 S4: both real verifier Git entry points exercise the 30 s inherited-pipe deadline.
 Antiphon.Tests.Checkpoints.CheckpointVerifierBoundsTests
+
+# CARD-1349: bounded inspection integration uses isolated PostgreSQL and owned real Git graphs.
+Antiphon.Tests.Application.DispatchSiblingInspectionTests
