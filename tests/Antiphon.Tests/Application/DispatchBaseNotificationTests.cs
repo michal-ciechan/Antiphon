@@ -63,7 +63,7 @@ public partial class DispatchBaseNotificationTests
                 await Task.CompletedTask;
             });
         await using var scope = provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
 
         var siblingTip = (await repo.GitReadAsync("rev-parse", sibling.WorktreeBranch!)).Trim();
         db.ChangeTracker.Clear();

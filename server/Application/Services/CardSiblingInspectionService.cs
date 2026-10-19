@@ -89,9 +89,14 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
 
     public async Task<SiblingBaseGuard> InspectAsync(AgentTask task, CancellationToken ct)
     {
+        using var inspection = Begin(task.RepoPath ?? "", ct);
+        return await InspectAsync(task, inspection, ct);
+    }
+
+    public async Task<SiblingBaseGuard> InspectAsync(AgentTask task, WorktreeBaseInspection inspection, CancellationToken ct)
+    {
         if (task.RepoPath is null || !Directory.Exists(task.RepoPath) || task.CardId is null)
             return SiblingBaseGuard.Proceed;
-        using var inspection = Begin(task.RepoPath, ct);
         var warnings = new List<UnlandedSibling>();
         var frozen = new Dictionary<string, string>(StringComparer.Ordinal);
         var raw = 0;
@@ -129,6 +134,10 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
             if (rows.Length == 0) return Result();
             var configured = await ConfiguredDefaultAsync(task, inspection, ct);
             var defaultSha = await inspection.CommitAsync(configured);
+            var landingRef = task.MergeTargetRef ?? (defaultSha is not null ? configured : "HEAD");
+            var landingSha = await inspection.CommitAsync(landingRef);
+            if (landingSha is null) throw new IOException("git_target_missing");
+            frozen[landingRef] = landingSha;
             var resolved = WorktreeBaseResolver.Resolve(null, task.WorktreeBaseRequestedRef,
                 task.MergeTargetRef, new DefaultBranchProbe(configured, defaultSha is not null));
             baseRef = resolved.Ref;

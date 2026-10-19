@@ -327,7 +327,7 @@ public class DispatchSiblingInspectionTests
                 maxCandidates: scenario == "candidate cap" ? 1 : 16,
                 maxGitCommands: scenario == "command cap" ? 1 : 128);
             await using var scope = provider.CreateAsyncScope();
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
             await using var fresh = Context(schema);
             var held = await fresh.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == request.Id);
             held.Status.ShouldBe(AgentTaskStatus.Queued, scenario + " " + mode);
