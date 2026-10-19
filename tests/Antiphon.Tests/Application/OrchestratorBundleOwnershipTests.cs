@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Services;
 using System.Text.RegularExpressions;
 using Shouldly;
 using TUnit.Core;
@@ -162,6 +163,162 @@ public sealed class OrchestratorBundleOwnershipTests
         settings.ShouldContain("the current revision", Case.Sensitive, "c1332-owner-settings-revision");
         settings.ShouldContain("a reason", Case.Sensitive, "c1332-owner-settings-reason");
         settings.ShouldContain("Human provenance", Case.Sensitive, "c1332-owner-settings-provenance");
+    }
+
+    // ---- V-2: the embedded bundle keeps the operative rules and real owner pointers -----------
+
+    [Test]
+    [Arguments("child")]
+    [Arguments("pipeline")]
+    [Arguments("verification")]
+    [Arguments("placement")]
+    public void C1332_BundleKeepsRulesAndOwnerPointers(string family)
+    {
+        // The EMBEDDED resource, not the disk file: this is what a launch composes.
+        var bundle = Collapse(InstructionBundles.TextOf(InstructionBundles.Orchestrator));
+        var owner = Owner();
+        switch (family)
+        {
+            case "child":
+                AssertChildBundle(Slice(bundle,
+                    "Message a child's session directly only to steer already-dispatched work.",
+                    "When you are working a board", "c1332-bundle-child"), owner);
+                break;
+            case "pipeline":
+                AssertPipelineBundle(Slice(bundle, "When you are working a board", "Live operating settings", "c1332-bundle-pipeline"), owner);
+                break;
+            case "verification":
+                AssertVerificationBundle(Slice(bundle, "Verification", "Platform:", "c1332-bundle-verification"), owner);
+                break;
+            case "placement":
+                AssertPlacementBundle(bundle[Index(bundle, "Platform:", 0, "c1332-bundle-placement")..], owner);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(family), family, "unknown relocation family");
+        }
+    }
+
+    private static void AssertChildBundle(string child, string owner)
+    {
+        AssertPointers(child, owner, "delegate-start-ref", "repairsource-failed-owner-recovery");
+        child.ShouldContain("use -Worktree -StartRef <full-sha>", Case.Sensitive, "c1332-bundle-startref-worktree");
+        child.ShouldContain("never git checkout -B", Case.Sensitive, "c1332-bundle-no-checkout");
+        child.ShouldContain("Use its reported WorktreeBranch.", Case.Sensitive, "c1332-bundle-recorded-branch");
+        child.ShouldContain("A base grants no land authority.", Case.Sensitive, "c1332-bundle-base-only");
+        child.ShouldContain("for exclusions and -FromTask adoption", Case.Sensitive, "c1332-bundle-adoption-pointer");
+        child.ShouldContain("require owner-bound Clean Final/Full Review", Case.Sensitive, "c1332-bundle-owner-review");
+        child.ShouldContain("-RecoverReviewedSource", Case.Sensitive, "c1332-bundle-recovery");
+        child.ShouldContain("A -RepairSource task cannot be used with -FromTask.", Case.Sensitive, "c1332-bundle-no-repairsource-adoption");
+    }
+
+    private static void AssertPipelineBundle(string pipeline, string owner)
+    {
+        AssertPointers(pipeline, owner, "standing-pipeline-policy");
+        pipeline.ShouldContain(
+            "read the effective-settings route (CARD-0881): GET /api/agent-tasks/pipeline?projectId=<id> (or ?unscoped=true)",
+            Case.Sensitive, "c1332-bundle-effective-route");
+        pipeline.ShouldContain("never exceed the lower effective cap", Case.Sensitive, "c1332-bundle-lower-cap");
+        pipeline.ShouldContain("Run stages in parallel, each in its own -Worktree.", Case.Sensitive, "c1332-bundle-stage-worktrees");
+        pipeline.ShouldContain("Host budget writes need an operator request.", Case.Sensitive, "c1332-bundle-host-authority");
+        var depth = Sentence(pipeline, "Keep Code at its depth cap", "c1332-bundle-code-depth");
+        foreach (var state in new[] { "in-flight", "queued", "ready" })
+            depth.ShouldContain(state, Case.Sensitive, $"c1332-bundle-code-depth-{state}");
+        pipeline.ShouldContain("Below cap, pull the lowest-rank unstarted Backlog card", Case.Sensitive, "c1332-bundle-backlog-pull");
+        pipeline.ShouldContain("at cap, start no new Plan toward Code", Case.Sensitive, "c1332-bundle-no-plan-at-cap");
+        pipeline.ShouldContain(
+            "Defer Code touching an in-flight Code task's same source area until it lands, even with a free slot.",
+            Case.Sensitive, "c1332-bundle-overlap");
+        var @override = Sentence(pipeline, "permits -IgnoreConcurrencyLimit", "c1332-bundle-override");
+        @override.ShouldContain("population=open", Case.Sensitive, "c1332-bundle-override-population");
+        @override.ShouldContain("canOverride=true", Case.Sensitive, "c1332-bundle-override-allowed");
+        @override.ShouldContain("axis=absolute", Case.Sensitive, "c1332-bundle-override-axis");
+        @override.ShouldContain("and no same-stage occupant", Case.Sensitive, "c1332-bundle-override-stage");
+        @override.ShouldContain("otherwise defer", Case.Sensitive, "c1332-bundle-override-defer");
+        pipeline.ShouldContain("Other projects' work never counts against yours.", Case.Sensitive, "c1332-bundle-project-isolation");
+    }
+
+    private static void AssertVerificationBundle(string verification, string owner)
+    {
+        AssertPointers(verification, owner, "verification-rounds");
+        verification.ShouldContain("first Code/Review is Final/Full", Case.Sensitive, "c1332-bundle-first-final");
+        verification.ShouldContain("Interim requires explicit admission", Case.Sensitive, "c1332-bundle-interim-admission");
+        verification.ShouldContain("never silently change rounds", Case.Sensitive, "c1332-bundle-no-fallback");
+        verification.ShouldContain("A clean Interim goes to Final Review, never land.", Case.Sensitive, "c1332-bundle-final-before-land");
+    }
+
+    private static void AssertPlacementBundle(string placement, string owner)
+    {
+        AssertPointers(placement, owner, "runner-placement");
+        placement.ShouldContain("read GET /api/runner-defaults and GET /api/session-runners", Case.Sensitive, "c1332-bundle-placement-routes");
+        placement.ShouldContain("Do not embed a fleet location.", Case.Sensitive, "c1332-bundle-no-fleet-location");
+        placement.ShouldContain("Normally omit -Runner and -Platform", Case.Sensitive, "c1332-bundle-runtime-placement");
+        placement.ShouldContain("Use -Platform Any to unpin.", Case.Sensitive, "c1332-bundle-any-unpins");
+        placement.ShouldContain(
+            "Pin only an OS-required piece with its own filter and budget; leave the rest unpinned.",
+            Case.Sensitive, "c1332-bundle-os-scope");
+        placement.ShouldContain("Never write defaults on a pipeline tick.", Case.Sensitive, "c1332-bundle-no-tick-write");
+    }
+
+    /// <summary>
+    /// The paragraph carries each canonical owner URI as an exact fragment (a fragment with a suffix
+    /// is a different, unresolvable pointer), and every pointer it carries resolves to exactly one
+    /// <c>&lt;a id&gt;</c> anchor in the real owner file.
+    /// </summary>
+    private static void AssertPointers(string paragraph, string owner, params string[] fragments)
+    {
+        var carried = Regex.Matches(paragraph, @"docs/orchestration-loop\.md#([A-Za-z0-9-]+)")
+            .Select(match => match.Groups[1].Value)
+            .ToArray();
+        foreach (var fragment in fragments)
+        {
+            carried.ShouldContain(fragment, $"c1332-pointer-{fragment}");
+            Count(owner, $"<a id=\"{fragment}\"></a>").ShouldBe(1, $"c1332-pointer-{fragment}-target");
+        }
+        foreach (var fragment in carried)
+            Count(owner, $"<a id=\"{fragment}\"></a>").ShouldBe(1, $"c1332-pointer-resolves-{fragment}");
+    }
+
+    // ---- V-3: one fixed allocation for the normalised orchestrator body, LF or CRLF checkout ---
+
+    /// <summary>The orchestrator body's allocation in UTF-16 units after the catalog's LF + Trim normalisation (CARD-1332 D-3).</summary>
+    private const int OrchestratorBodyAllocation = 11_500;
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public void C1332_OrchestratorBodyFitsItsAllocation(bool crlfCheckout)
+    {
+        // Boundary probe first, so a measurement defect reaches its own assertion even when the real
+        // bundle's headroom is small: 11,497 ASCII x, one internal LF and one supplementary scalar (two
+        // UTF-16 units, four UTF-8 bytes) is exactly the allocation. Trim-only whitespace surrounds it;
+        // the CRLF case renders the internal LF as CRLF, the way a Windows checkout would.
+        var expectedProbe = new string('x', 6_000) + "\n" + new string('x', 5_497) + "\U0001F600";
+        var probeSource = "\n\n  " + expectedProbe + "  \n\n";
+        if (crlfCheckout)
+            probeSource = probeSource.ReplaceLineEndings("\r\n");
+        var (probeText, probeUnits) = Measure(probeSource);
+        probeText.ShouldBe(expectedProbe, "c1332-body-normalized");
+        probeUnits.ShouldBe(OrchestratorBodyAllocation, "c1332-body-utf16");
+
+        // The actual source, as checked out here and as a CRLF checkout would hold it.
+        var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "server", "Bundles", "orchestrator.md"));
+        if (crlfCheckout)
+            source = source.ReplaceLineEndings("\r\n");
+        var (_, units) = Measure(source);
+        Console.WriteLine(
+            $"C1332 orchestrator body crlf={crlfCheckout} measured={units} limit={OrchestratorBodyAllocation} headroom={OrchestratorBodyAllocation - units}");
+        units.ShouldBeLessThanOrEqualTo(OrchestratorBodyAllocation,
+            $"c1332-body-allocation: actual {units} > {OrchestratorBodyAllocation}");
+    }
+
+    /// <summary>
+    /// The catalog's normalisation (InstructionBundles.ReadNormalised): line endings to LF, outer blank
+    /// space trimmed, and the size counted in UTF-16 units because the argv ceiling is CreateProcessW's.
+    /// </summary>
+    private static (string Normalised, int Units) Measure(string source)
+    {
+        var normalised = source.ReplaceLineEndings("\n").Trim();
+        return (normalised, normalised.Length);
     }
 
     // ---- helpers ------------------------------------------------------------------------------
