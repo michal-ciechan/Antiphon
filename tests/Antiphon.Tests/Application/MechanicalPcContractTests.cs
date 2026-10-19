@@ -8,7 +8,8 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// CARD-0479. Instruction and owner-doc contract for mechanical PC eligibility.
-/// Prose is not server-enforced eligibility.
+/// Prose is not server-enforced eligibility. CARD-1355 anchors V-7 to the routing sentence
+/// itself, paragraph-scoped, instead of free words that other lines of the same file also use.
 /// </summary>
 [Category("Unit")]
 public sealed class MechanicalPcContractTests
@@ -111,6 +112,23 @@ public sealed class MechanicalPcContractTests
             section.ShouldContain(phrase);
     }
 
+    /// <summary>
+    /// The CARD-0479 routing sentence each active recipe carries verbatim: binding at explicit
+    /// Frontier, eligible mechanical execution at Low, one open Mutation per O.
+    /// </summary>
+    private const string RoutingRule =
+        "Commission binding-only at explicit Frontier, then eligible mechanical-execution at Low; one open Mutation per O.";
+
+    /// <summary>
+    /// The orchestrator bundle's shortened form of that rule since CARD-1332 (6ec71d427), which
+    /// dropped the tier words and kept the scope names and the one-open constraint. CARD-1355 pins
+    /// this exact fragment beside its owner pointer; the bundle's other use of "eligible" (runner
+    /// placement) is not a routing anchor and is not consulted.
+    /// </summary>
+    private const string BundleRoutingRule = "binding-only mechanical-execution; one open Mutation per O.";
+
+    private const string BundleOwnerPointer = "Follow the full CARD-0478 recipe in docs/orchestration-loop.md.";
+
     [Test]
     [Arguments("docs/orchestration-loop.md")]
     [Arguments(".claude/skills/antiphon-delegate/SKILL.md")]
@@ -120,33 +138,51 @@ public sealed class MechanicalPcContractTests
     public void C479_V07_ActiveRecipesRouteBindingHighAndExecutionLow(string relative)
     {
         var text = Read(relative);
-        if (relative.EndsWith("delegate-basics.md", StringComparison.Ordinal))
+        switch (relative)
         {
-            var start = text.IndexOf("MUTATION RUNNER ONLY", StringComparison.Ordinal);
-            var end = text.IndexOf("UNSOURCED MUTATION ONLY", start, StringComparison.Ordinal);
-            start.ShouldBeGreaterThanOrEqualTo(0);
-            end.ShouldBeGreaterThan(start);
-            var paragraph = text[start..end];
-            paragraph.ShouldContain("bound pack");
-            paragraph.ShouldContain("method-scoped");
-            return;
-        }
-
-        foreach (var phrase in new[] { "binding-only", "eligible", "mechanical-execution", "one open Mutation per O" })
-            text.ShouldContain(phrase);
-
-        if (relative.EndsWith("orchestration-loop.md", StringComparison.Ordinal)
-            || relative.EndsWith("SKILL.md", StringComparison.Ordinal))
-        {
-            var row = text.Split('\n').Single(line => line.Contains("| `Mutation` |", StringComparison.Ordinal));
-            row.ShouldContain("| Low |");
-            Regex.IsMatch(row, @"\|\s*`Mutation`[^\n]*\|\s*Frontier\s*\|").ShouldBeFalse();
-        }
-
-        if (relative.EndsWith("orchestration-loop.md", StringComparison.Ordinal))
-        {
-            text.ShouldContain("docs/mechanical-pc-contract.md");
-            Read("docs/testing-and-build.md").ShouldContain("docs/mechanical-pc-contract.md");
+            case "server/Bundles/delegate-basics.md":
+            {
+                var paragraph = Slice(text, "MUTATION RUNNER ONLY", "UNSOURCED MUTATION ONLY", "c1355-basics");
+                paragraph.ShouldContain("bound pack", Case.Sensitive, "c1355-basics-bound-pack");
+                paragraph.ShouldContain("method-scoped", Case.Sensitive, "c1355-basics-method-scoped");
+                return;
+            }
+            case "docs/orchestration-loop.md":
+            {
+                // The Tiers section's role paragraph: Code, post-land Mutation, the contract link, then the rule.
+                var paragraph = Paragraph(text, "Code owns implementation and ordinary V/R;", "c1355-owner");
+                paragraph.ShouldContain("See docs/mechanical-pc-contract.md.", Case.Sensitive, "c1355-owner-contract-link");
+                paragraph.ShouldContain(RoutingRule, Case.Sensitive, "c1355-owner-routing-rule");
+                AssertMutationTierRowIsLow(text, "c1355-owner");
+                Read("docs/testing-and-build.md")
+                    .ShouldContain("docs/mechanical-pc-contract.md", Case.Sensitive, "c1355-testing-contract-link");
+                return;
+            }
+            case ".claude/skills/antiphon-delegate/SKILL.md":
+            {
+                // The sentence stands alone directly under the role table.
+                Count(text, RoutingRule).ShouldBe(1, "c1355-skill-routing-rule");
+                AssertMutationTierRowIsLow(text, "c1355-skill");
+                return;
+            }
+            case "server/Bundles/README.md":
+            {
+                var paragraph = Paragraph(text, "Default workflow: Code -> ordinary Review", "c1355-readme");
+                paragraph.ShouldContain(RoutingRule, Case.Sensitive, "c1355-readme-routing-rule");
+                return;
+            }
+            case "server/Bundles/orchestrator.md":
+            {
+                var paragraph = Paragraph(text, "Default workflow: Code -> ordinary Review", "c1355-bundle");
+                paragraph.ShouldContain(BundleOwnerPointer, Case.Sensitive, "c1355-bundle-owner-pointer");
+                paragraph.ShouldContain(BundleRoutingRule, Case.Sensitive, "c1355-bundle-routing-rule");
+                // The pointer resolves to the complete rule in the owner it names.
+                Read("docs/orchestration-loop.md")
+                    .ShouldContain(RoutingRule, Case.Sensitive, "c1355-bundle-owner-routing-rule");
+                return;
+            }
+            default:
+                throw new ArgumentOutOfRangeException(nameof(relative), relative, "unknown active recipe");
         }
     }
 
@@ -168,5 +204,48 @@ public sealed class MechanicalPcContractTests
             tiers.Split('\n').Single(line => line.Contains("| `Mutation` |", StringComparison.Ordinal))
                 .ShouldContain("Low");
         }
+    }
+
+    // ---- helpers (CARD-1355) ------------------------------------------------------------------
+
+    /// <summary>The one Tiers-table Mutation row names Low and does not end at Frontier.</summary>
+    private static void AssertMutationTierRowIsLow(string text, string label)
+    {
+        var row = text.ReplaceLineEndings("\n").Split('\n')
+            .Single(line => line.Contains("| `Mutation` |", StringComparison.Ordinal));
+        row.ShouldContain("| Low |", Case.Sensitive, label + "-mutation-row-low");
+        Regex.IsMatch(row, @"\|\s*`Mutation`[^\n]*\|\s*Frontier\s*\|").ShouldBeFalse(label + "-mutation-row-not-frontier");
+    }
+
+    /// <summary>
+    /// The whitespace-collapsed paragraph that opens with the unique <paramref name="marker"/>, up to
+    /// the next blank line, so a sentence is pinned where the rule lives rather than anywhere in the file.
+    /// </summary>
+    private static string Paragraph(string text, string marker, string label)
+    {
+        var normalised = text.ReplaceLineEndings("\n");
+        Count(normalised, marker).ShouldBe(1, label + "-marker");
+        var start = normalised.IndexOf(marker, StringComparison.Ordinal);
+        var end = normalised.IndexOf("\n\n", start, StringComparison.Ordinal);
+        return Regex.Replace(normalised[start..(end < 0 ? normalised.Length : end)], @"\s+", " ").Trim();
+    }
+
+    /// <summary>Text between two markers that must both exist, in order.</summary>
+    private static string Slice(string text, string startMarker, string endMarker, string label)
+    {
+        var start = text.IndexOf(startMarker, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, label + "-start");
+        var end = text.IndexOf(endMarker, start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start, label + "-end");
+        return text[start..end];
+    }
+
+    private static int Count(string haystack, string needle)
+    {
+        var count = 0;
+        for (var i = haystack.IndexOf(needle, StringComparison.Ordinal); i >= 0;
+             i = haystack.IndexOf(needle, i + needle.Length, StringComparison.Ordinal))
+            count++;
+        return count;
     }
 }
