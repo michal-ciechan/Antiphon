@@ -32,6 +32,12 @@ The CP-1 filter below corrects the selector to the documented method-segment OR
 with trailing wildcards. Require all three intended TRX identities, not just a
 successful process exit. Historical evidence remains unchanged.
 
+The next attempt at `8a5b86251cfb459dac4cb51681dab70c9126012d` was refused
+before building because the previous output retained its old build-source stamp.
+Automatic approval review rejected both guarded and exact-path cleanup of that
+owned directory. CP-1 therefore uses a fresh output below. The old output is
+retained and disclosed; the five-minute cap and three-method roster are unchanged.
+
 ## Verification design
 
 S1 records the already-present implementation and the bounded verification selection.
@@ -60,7 +66,7 @@ merge-tree against freshly fetched origin/master. No activation is required.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c0870-34eae1e5/` | narrow-existing-repair | `/*/*/*/(a_provider_that_never_answers_boot_is_detected_until_explicit_retry*)\|(a_ClaudeCode_worker_still_launches_claude_types_its_brief_inline_and_prices_on_the_claude_ladder*)\|(C1162_Grok_conpty_witness_name_states_detection_until_explicit_retry*)` | V-1, R-1, R-2 | all 3 methods, 0 failed/skipped | 3 | 5 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c0870-34eae1e5-r2/` | narrow-existing-repair | `/*/*/*/(a_provider_that_never_answers_boot_is_detected_until_explicit_retry*)\|(a_ClaudeCode_worker_still_launches_claude_types_its_brief_inline_and_prices_on_the_claude_ladder*)\|(C1162_Grok_conpty_witness_name_states_detection_until_explicit_retry*)` | V-1, R-1, R-2 | all 3 methods, 0 failed/skipped | 3 | 5 | true |
 | CP-2 | S1 | CP-1 | final-unit | `/*/*/*/*[Category=Unit]` | R-3 | all discovered Unit cases, 0 failed/skipped | 1 | 5 | true |
 | CP-3 | S1 | CP-1 | final-grok-class | `/*/*/GrokDelegateEndToEndTests/*` | R-4 | all 6 methods, 0 failed/skipped | 6 | 5 | true |
 
