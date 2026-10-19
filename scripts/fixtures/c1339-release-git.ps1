@@ -93,6 +93,15 @@ function Invoke-C1339FixtureGit {
     if ($FaultPath -and (Test-Path -LiteralPath $FaultPath)) { $fault = Get-Content -LiteralPath $FaultPath -Raw | ConvertFrom-Json }
     if ($sub -eq 'push' -and $fault.push -eq 'before') { return @{ ExitCode = 1; Output = '' } }
     $r = & $Launcher -Root $Root -WorkingDirectory $WorkingDirectory -Arguments $forward
+    if ($sub -eq 'ls-remote' -and $Arguments -contains '--refs' -and $fault.inventoryRace) {
+        $marker = Join-Path $Root 'inventory-race-fired'
+        if (-not (Test-Path -LiteralPath $marker)) {
+            # Independent writer accepts a tag after the inventory snapshot.
+            $race = Invoke-C1339GitProcess -Root $Root -WorkingDirectory $Bare -Arguments @('tag', '-a', [string]$fault.inventoryRace.tag, [string]$fault.inventoryRace.sha, '-m', 'fixture-race')
+            if ($race.ExitCode -ne 0) { throw ('fixture-race: ' + $race.Error) }
+            Set-Content -LiteralPath $marker -Value 'fired'
+        }
+    }
     if ($sub -eq 'push' -and $fault.push -eq 'after') { return @{ ExitCode = 1; Output = '' } }
     if ($sub -eq 'ls-remote' -and $fault) {
         $ref = [string]$Arguments[-1]

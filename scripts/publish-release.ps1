@@ -184,6 +184,11 @@ function Invoke-AntiphonPublishRelease {
         Write-PublishLine ('REFUSED: publication gate ({0}).' -f ($gate.Reasons -join ','))
         $result.Refusal = ($gate.Reasons -join ','); $result.ExitCode = 3; return [pscustomobject]$result
     }
+    $inventory = Get-ReleaseGateRemoteTagInventory -WorkingDirectory $CheckoutRoot
+    if (-not $inventory.Ok) {
+        Write-PublishLine 'REFUSED: remote tag inventory could not be read.'
+        $result.Refusal = 'remote-tag-inventory-failed'; $result.ExitCode = 3; return [pscustomobject]$result
+    }
     $pinned = $authority.Pinned.Authority
     $ledgerDoc = Read-ReleaseAuthorityJson -Path (Join-Path (Get-ReleaseAuthorityDir -CandidateRoot $paths.Root) 'ledger.json')
     $sanitizedSuites = @($authority.Suites)
@@ -202,13 +207,30 @@ function Invoke-AntiphonPublishRelease {
     if ($WhatIf) {
         # Read-only: -WhatIf reports the proposed tag and never reserves it, so
         # publications.json is untouched (not created, not rewritten).
-        $reservation = Get-ReleaseGateTagProposal -JournalPath $publicationJournal -CandidateId $CandidateId -Sha $sha -CutUtc $cutUtc
+        $reservation = Get-ReleaseGateTagProposal -JournalPath $publicationJournal -CandidateId $CandidateId -Sha $sha -CutUtc $cutUtc -RemoteTags $inventory.Tags
     } else {
-        $reservation = New-ReleaseGateTagReservation -JournalPath $publicationJournal -CandidateId $CandidateId -Sha $sha -CutUtc $cutUtc
+        $reservation = New-ReleaseGateTagReservation -JournalPath $publicationJournal -CandidateId $CandidateId -Sha $sha -CutUtc $cutUtc -RemoteTags $inventory.Tags
     }
     $tag = $reservation.Tag
     $result.Tag = $tag
     $result.Resumed = [bool]$reservation.Reused
+
+    if (-not $WhatIf) {
+        # A reservation's identity never changes after an external race. Refuse
+        # before creating even a local tag, and leave the reservation for recovery.
+        $selected = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $tag
+        if ($selected.Status -ne 'Absent' -and ($selected.Status -ne 'Found' -or $selected.Sha -cne $sha)) {
+            $result.Refusal = 'tag-conflict'; $result.ExitCode = 3; return [pscustomobject]$result
+        }
+        $parsedTag = Test-ReleaseGateTag -Tag $tag
+        if ($parsedTag.Prerelease) {
+            $finalTag = New-ReleaseGateTag -CutUtc $parsedTag.Date -Sequence $parsedTag.Sequence
+            $final = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $finalTag
+            if ($final.Status -ne 'Absent' -and ($final.Status -ne 'Found' -or $final.Sha -cne $sha)) {
+                $result.Refusal = 'final-tag-conflict'; $result.ExitCode = 3; return [pscustomobject]$result
+            }
+        }
+    }
 
     $manifest = New-ReleaseGateManifest -Fields @{
         repository = $Repository
