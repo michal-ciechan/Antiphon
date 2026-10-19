@@ -41,7 +41,7 @@ public sealed partial class SessionMessageQueueService
         var trimmed = (body ?? string.Empty).Trim();
         if (trimmed.Length == 0)
             return ExpectationSendResult.Refuse("empty_body");
-        if (!_runtime.ListLiveSessions().Contains(sessionId))
+        if (!(await _runtime.ListLiveSessionsAsync(ct)).Contains(sessionId))
             return ExpectationSendResult.Refuse("destination_not_live");
 
         var sessionLock = GetLock(sessionId);
@@ -74,7 +74,7 @@ public sealed partial class SessionMessageQueueService
                     return ExpectationSendResult.Refuse("forbidden_body");
 
                 ceilings = await CeilingsForSessionAsync(db, sessionId, ct);
-                if (_runtime.TryGetLiveMetadata(sessionId, out var meta))
+                if (await _runtime.TryGetLiveMetadataAsync(sessionId, ct) is { } meta)
                 {
                     if (ceilings.Backend == DeliveryBackend.HerdrPane
                         && string.Equals(meta.AgentStatus, "blocked", StringComparison.OrdinalIgnoreCase))
@@ -98,7 +98,7 @@ public sealed partial class SessionMessageQueueService
                 var pending = await db.SessionQueuedMessages.AsNoTracking()
                     .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending)
                     .ToListAsync(ct);
-                if (HeldBackTypingBlocksTheComposer(sessionId, pending, [], generation))
+                if (await HeldBackTypingBlocksTheComposerAsync(sessionId, pending, [], generation, ct))
                     return ExpectationSendResult.Refuse("held_back_body_in_composer");
                 if (await ExpectationBodyBlocksComposerAsync(db, sessionId, generation, ct))
                     return ExpectationSendResult.Refuse("unconfirmed_expectation_body");
@@ -234,7 +234,7 @@ public sealed partial class SessionMessageQueueService
         if (unrecorded.Count == 0)
             return false;
 
-        if (!_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
+        if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } snapshot)
         {
             _logger.LogInformation(
                 "Holding input to session {SessionId}: {Count} unconfirmed expectation prompt(s) of this "
@@ -300,7 +300,7 @@ public sealed partial class SessionMessageQueueService
         var settle = TimeSpan.FromMilliseconds(Math.Clamp(_verification.PostEvidenceSettleMs, 0, 3_000));
         if (settle > TimeSpan.Zero)
             await Task.Delay(settle, _timeProvider, ct);
-        return _runtime.TryGetLiveSnapshot(sessionId, out var later)
+        return await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is { } later
             && TryReadComposerRegion(kind, later.RenderedScreen, out var composer)
             && ClaudeScreen.ComposerContentIsEmpty(composer);
     }
