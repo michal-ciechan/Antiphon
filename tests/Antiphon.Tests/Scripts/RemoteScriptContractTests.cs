@@ -1820,6 +1820,8 @@ public sealed class RemoteScriptContractTests
             vectors.Last()!["input"]!["scopes"]![project]!["open"]!["excluded"]!["byProject"]![0]!["name"] = "SENTINEL_EXCLUDED_NAME";
             File.WriteAllText(Path.Combine(batch.Root, "task-vectors.json"), vectors.ToJsonString());
             var run = await batch.Run(extra: """
+                # Census drift now has a bounded 30-second retry; substitute time only in this offline matrix.
+                sleep() { :; }
                 C1008_RUNNER=server2-temp
                 while IFS= read -r vector; do
                     printf '%s' "$vector" | jq '.input' > "$C1008_FIXTURE_ROOT/tasks.json"

@@ -1363,14 +1363,17 @@ public sealed class RollingVolumeRecycleScriptTests
         // Unstable only for a row bound to the recycled runner and passes for an off-runner row.
         var report = RemoteScriptContractTests.LinuxShell(C1326HostCensusScript());
         report += await C1326WrapperProbe("appears-with-land-timestamp", "unstable");
+        report += await C1326WrapperProbe("appears-with-land-started", "unstable");
         report += await C1326WrapperProbe("appears-in-land-closure-bound", "unstable");
         report += await C1326WrapperProbe("appears-in-land-closure-other", "pass");
+        await C1361CensusProbes.AppearanceBoundary();
         report.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, report);
         report.IndexOf("HOST_DONE", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
         foreach (var name in new[]
         {
             "host-appears-with-land-timestamp", "host-appears-in-land-closure-bound", "host-appears-in-land-closure-other",
             "wrapper-appears-with-land-timestamp", "wrapper-appears-in-land-closure-bound", "wrapper-appears-in-land-closure-other"
+            , "host-appears-with-land-started", "wrapper-appears-with-land-started"
         })
             report.IndexOf("PASS " + name, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, report);
     }
@@ -1382,9 +1385,9 @@ public sealed class RollingVolumeRecycleScriptTests
         using var f = new C1008WrapperFixture();
         var openRow = C1319Row(appeared, "Working");
         var queries = new JsonObject();
-        if (mode == "appears-with-land-timestamp")
+        if (mode is "appears-with-land-timestamp" or "appears-with-land-started")
         {
-            openRow["landRequestedAt"] = "2020-01-01T00:00:00Z";
+            openRow[mode == "appears-with-land-started" ? "landStartedAt" : "landRequestedAt"] = "2020-01-01T00:00:00Z";
             queries[C1087ListPath(project, "open")] = new JsonArray(C1319Envelope(f), C1319Envelope(f, openRow));
         }
         else
@@ -1484,8 +1487,9 @@ public sealed class RollingVolumeRecycleScriptTests
                 fresh="$(row_of "$appeared" Working "" "" "$runner")"
                 landed="$(row_of "$appeared" Succeeded "2020-01-01T00:00:00Z" "" "$runner")"
                 case "$mode" in
-                    appears-with-land-timestamp)
+                    appears-with-land-timestamp|appears-with-land-started)
                         fresh="$(row_of "$appeared" Working "2020-01-01T00:00:00Z" "" "$runner")"
+                        if [ "$mode" = appears-with-land-started ]; then fresh="$(row_of "$appeared" Working "" "2020-01-01T00:00:00Z" "$runner")"; fi
                         open_first="$(envelope)"
                         open_later="$(envelope "$fresh")"
                         land_first="$empty"
@@ -1518,6 +1522,7 @@ public sealed class RollingVolumeRecycleScriptTests
                 fi
             }
             probe appears-with-land-timestamp appears-with-land-timestamp unstable desktop
+            probe appears-with-land-started appears-with-land-started unstable desktop
             probe appears-in-land-closure-bound appears-in-land-closure land-in-flight server2
             probe appears-in-land-closure-other appears-in-land-closure pass desktop
             printf 'HOST_DONE\n'

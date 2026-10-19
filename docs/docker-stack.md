@@ -253,7 +253,7 @@ pending land are not bound work; their worktrees remain protected by the publica
 below. No time window hides an older pending land. Both closures must agree across two passes.
 
 Every read has a 60-second budget. `RecycleTaskCensusUnknown` keeps its stable first
-token and appends `cause=Timeout|Http|Transport|Empty|Malformed|UnfilteredRow|Unstable|ScopeLimit`,
+token and appends `cause=Timeout|Http|Transport|Empty|Malformed|UnfilteredRow|Unstable|ScopeLimit|Drift`,
 with safe `path=`, `status=`, `field=` or `scopes=` details where applicable. Detail/summary
 disagreement or invalid land proof remains `RecycleLandUnknown`, except a terminal detail
 (`Succeeded`, `Failed` or `Canceled`) with `landRequest` null, which is proven no-land and may
@@ -261,7 +261,27 @@ be absent from the next pass's list without `Unstable`, and except a task that f
 on that pass with `landRequest` null, outside the `landPending` closure, and with neither land
 timestamp set. An open row on another runner whose `landRequest` is `Queued`, `Held`,
 `Running` or `NeedsResolution` is recorded as `{state, terminalEventId}` and counted, not
-refused. A land request on a bound row, an unknown land state, or a changed row still refuses.
+refused. CARD-1361 also permits changes among `Queued`, `Dispatched`, `Working` and
+`Blocked` between list/detail reads and between the two census passes. Both observations
+must describe the same off-runner task, with unchanged runner, project, scope source and
+land timestamps, and explicit null or terminal-proven land evidence. Terminal proof means
+`Completed`, `Superseded` or `Canceled` with a valid terminal event ID; across passes that
+proof must be identical. Only comparison copies are aligned: snapshots and receipts retain
+the actual list status, and the returned snapshot is the second pass. Stable off-runner
+pending lands still follow CARD-1353; pending evidence cannot qualify a status change.
+Bound work, unknown or missing land proof, changed non-status facts and any residual
+closure difference still refuse.
+
+CARD-1371 distinguishes malformed counts within one response from count drift between
+individually valid reads. A cross-read `excluded.byProject` disagreement restarts the
+complete two-pass census, at most three attempts with 30 seconds between attempts.
+Persistent disagreement refuses as `cause=Drift field=excluded.byProject.count
+project=<guid> expected=<integer> observed=<integer>`, choosing the first mismatching
+project in sorted order. An advertisement conflict reports the first advertised count
+and the later count; final reconciliation reports advertised versus collected rows.
+Malformed counts still refuse immediately as `Malformed`, and binding and land guards
+take precedence. Drift never enters the separate bound-land wait or permits a partial closure.
+
 CARD-1326 keeps two edges of that exception. A task that appears under a nested excluded
 scope still ends `RecycleTaskCensusUnknown cause=Unstable`: forgiveness rewrites the open
 task, its null land proof and the scope id list only, and leaves `excluded.byProject` counts

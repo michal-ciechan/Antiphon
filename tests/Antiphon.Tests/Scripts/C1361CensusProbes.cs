@@ -41,7 +41,7 @@ internal static class C1361CensusProbes
         return envelope;
     }
     private sealed record Vector(string Name, JsonObject Requests, string Error = "", JsonObject? Expected = null,
-        JsonNode? Proof = null, int Sleeps = 0, bool Report = false);
+        JsonNode? Proof = null, int Sleeps = 0, bool Report = false, bool Wait = false);
 
     private static Vector StatusVector(string name, bool passes, JsonObject before, JsonObject after,
         JsonNode? proof = null, string error = "", JsonObject? detailOverride = null, JsonNode? laterProof = null,
@@ -68,12 +68,14 @@ internal static class C1361CensusProbes
         // First independent red witness: no helper-extraction or fixture failure can masquerade as red.
         var primary = StatusVector("primary", passes, Row(), Row("Dispatched"));
         await Check(host, primary);
+        if (!host) await FullWrapper(passes);
         var vectors = new List<Vector>();
         foreach (var from in new[] { "Queued", "Dispatched", "Working", "Blocked" })
         foreach (var to in new[] { "Queued", "Dispatched", "Working", "Blocked" })
             vectors.Add(StatusVector($"open-pair/{from}/{to}", passes, Row(from), Row(to)));
         foreach (var state in new[] { "Completed", "Superseded", "Canceled" })
             vectors.Add(StatusVector("terminal/" + state, passes, Row(), Row("Dispatched"), Proof(state)));
+        vectors.Add(StatusVector("same/Blocked-pending", passes, Row("Blocked"), Row("Blocked"), Proof("Running", null)));
         foreach (var key in new[] { "landRequestedAt", "landStartedAt" })
         {
             var a = Row(); var b = Row("Dispatched");
@@ -110,7 +112,7 @@ internal static class C1361CensusProbes
         }
         var bound = Row(); bound["runnerId"] = "server2";
         var boundAfter = bound.DeepClone().AsObject(); boundAfter["status"] = "Dispatched";
-        vectors.Add(StatusVector("bound/ordinary", passes, bound, boundAfter, error: "RecycleBoundTasks"));
+        vectors.Add(StatusVector("bound/ordinary", passes, bound, bound, error: "RecycleBoundTasks"));
         if (!host)
         {
             vectors.Add(StatusVector("bound/report-drift", passes, bound, boundAfter, error: unsafeError, report: true));
@@ -124,10 +126,10 @@ internal static class C1361CensusProbes
                 laterProof: Proof(), changeProof: true));
             vectors.Add(StatusVector("proof-change/terminal-null", true, Row(), Row("Dispatched"), Proof(), unsafeError,
                 changeProof: true));
-            foreach (var variant in new[] { "settled", "appeared", "runner", "scope", "land" })
+            foreach (var variant in new[] { "settled", "appeared", "runner", "scope", "land", "off-runner-land" })
             {
                 var v = StatusVector("companion/" + variant, true, Row(), Row("Dispatched"),
-                    error: variant is "settled" or "appeared" ? "" : unsafeError, report: variant == "land");
+                    error: variant is "settled" or "appeared" or "off-runner-land" ? "" : unsafeError, report: variant == "land");
                 var other = Row(); other["id"] = Event;
                 var lists = v.Requests[PathFor(Project)]!.AsArray();
                 if (variant != "appeared") lists[0]!["items"]!.AsArray().Add(other.DeepClone());
@@ -145,12 +147,13 @@ internal static class C1361CensusProbes
                     v.Requests[PathFor(OtherProject)] = new JsonArray(Envelope(OtherProject, scoped));
                     v.Requests["/api/agent-tasks/" + scoped["id"]] = new JsonArray(Detail(scoped));
                 }
-                if (variant == "land")
+                if (variant is "land" or "off-runner-land")
                 {
-                    var landRow = Row("Succeeded"); landRow["id"] = Event; landRow["runnerId"] = "server2";
+                    var landRow = Row("Succeeded"); landRow["id"] = Event;
+                    landRow["runnerId"] = variant == "land" ? "server2" : "desktop";
                     landRow["landRequestedAt"] = "2020-01-01T00:00:00Z";
                     v.Requests[PathFor(Project, "land")] = new JsonArray(Envelope(Project), Envelope(Project, landRow));
-                    if (host) v = v with { Error = "RecycleLandInFlight" };
+                    if (host && variant == "land") v = v with { Error = "RecycleLandInFlight" };
                 }
                 vectors.Add(v);
             }
@@ -198,7 +201,18 @@ internal static class C1361CensusProbes
                     var expected = site == "collected" ? 6 + delta : 2;
                     var observed = site == "collected" ? 6 : 2 + delta;
                     var error = recover ? "" : $"RecycleTaskCensusUnknown cause=Drift field=excluded.byProject.count project={(site == "collected" ? Project : ThirdProject)} expected={expected} observed={observed}";
-                    await Check(host, new Vector($"{site}/{kind}/{delta}/{recover}", requests, error, Sleeps: recover ? 1 : 2));
+                    await Check(host, new Vector($"{site}/{kind}/{delta}/{recover}", requests, error, Sleeps: recover ? 1 : 2, Wait: !recover));
+                    if (recover)
+                    {
+                        requests[PathFor(OtherProject, kind)] = new JsonArray(stable.DeepClone());
+                        await Check(host, new Vector($"stable-nonzero/{site}/{kind}/{delta}", requests));
+                    }
+                    else if (delta == -1)
+                    {
+                        requests[PathFor(Project, kind)]![0]!["items"]![0]!["runnerId"] = "server2";
+                        await Check(host, new Vector($"drift-bound-companion/{site}/{kind}", requests,
+                            kind == "open" ? "RecycleBoundTasks" : "RecycleLandInFlight"));
+                    }
                 }
                 foreach (var type in new[] { "count", "total", "project" })
                 foreach (var variant in type == "project" ? new[] { "self", "duplicate", "invalid" } :
@@ -217,11 +231,13 @@ internal static class C1361CensusProbes
                         var owner = type == "count" ? envelope["excluded"]!["byProject"]![0]!.AsObject() : envelope["excluded"]!.AsObject();
                         owner[type] = value;
                         if (variant == "missing") owner.Remove(type);
+                        if (type == "count" && variant == "zero") envelope["excluded"]!["total"] = 0;
                     }
                     var requests = new JsonObject { [PathFor(Project)] = new JsonArray(envelope) };
                     await Check(host, new Vector($"malformed-{type}/{variant}", requests,
                         "RecycleTaskCensusUnknown cause=Malformed field=excluded." + (type == "total" ? "total" : "byProject." + (type == "project" ? "projectId" : "count"))));
                 }
+                await TotalBoundary(host);
             }
             catch (Exception e) { failures.Add((host ? "host: " : "wrapper: ") + e.Message); }
         }
@@ -232,29 +248,50 @@ internal static class C1361CensusProbes
     {
         using var scratch = new Scratch();
         File.WriteAllText(Path.Combine(scratch.Root, "requests.json"), vector.Requests.ToJsonString());
-        var body = host ? HostProgram(scratch.Root) : WrapperProgram(scratch.Root, vector.Report);
+        var body = host ? HostProgram(scratch.Root, vector.Wait) : WrapperProgram(scratch.Root, vector.Report, vector.Wait);
         var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
         run.Exit.ShouldBe(0, vector.Name + " fixture: " + run.Output);
         var result = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "result.json")))!;
         var error = result["error"]!.GetValue<string>();
+        if (host)
+        {
+            var receipt = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "census-probe-server2.json")))!;
+            receipt["refusal"]!.GetValue<string>().ShouldBe(error, vector.Name + " receipt refusal");
+            JsonNode.DeepEquals(receipt["snapshot"], result["snapshot"]).ShouldBeTrue(vector.Name + " receipt snapshot");
+            if (error.Length == 0 && !vector.Wait)
+                JsonNode.DeepEquals(JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "snapshot.json"))), result["snapshot"])
+                    .ShouldBeTrue(vector.Name + " returned original second snapshot");
+        }
         if (vector.Error.Length == 0)
         {
             error.ShouldBe("", vector.Name + ": " + run.Output);
+            result["code"]!.GetValue<int>().ShouldBe(0, vector.Name);
             if (vector.Expected is not null)
             {
                 var snapshot = result["snapshot"]!;
                 JsonNode.DeepEquals(snapshot["open"]!["tasks"]![Id], vector.Expected).ShouldBeTrue(vector.Name + " exact observed facts: " + snapshot);
                 snapshot["open"]!["land"]!.AsObject().ContainsKey(Id).ShouldBeTrue(vector.Name + " explicit proof");
                 JsonNode.DeepEquals(snapshot["open"]!["land"]![Id], vector.Proof).ShouldBeTrue(vector.Name + " proof identity");
+                if (!host && !vector.Report)
+                    JsonNode.DeepEquals(result["returned"], snapshot).ShouldBeTrue(vector.Name + " returned original second snapshot");
                 result["reads"]!.AsArray().Any(x => x!.GetValue<string>() == "/api/agent-tasks/" + Id).ShouldBeTrue(vector.Name + " detail read");
             }
         }
-        else error.ShouldStartWith(vector.Error, customMessage: vector.Name + ": " + run.Output);
+        else
+        {
+            error.ShouldStartWith(vector.Error, customMessage: vector.Name + ": " + run.Output);
+            result["code"]!.GetValue<int>().ShouldBe(host && vector.Error == "RecycleBoundTasks" ? 4 :
+                host && vector.Error == "RecycleLandInFlight" ? 3 : 2, vector.Name);
+            if (vector.Error == "RecycleBoundTasks")
+                result["reads"]!.AsArray().Any(x => x!.GetValue<string>() == "/api/agent-tasks/" + Id).ShouldBeFalse(vector.Name + " before detail");
+        }
         result["sleeps"]!.GetValue<int>().ShouldBe(vector.Sleeps, vector.Name + " bounded retry count");
+        if (vector.Sleeps > 0)
+            result["reads"]!.AsArray().Count(x => x!.GetValue<string>() == PathFor(Project)).ShouldBe(3, vector.Name + " complete census restarts");
         Console.WriteLine($"CASE {(host ? "host" : "wrapper")}/{vector.Name} PASS sleeps={vector.Sleeps}");
     }
 
-    private static string WrapperProgram(string root, bool report) => $$"""
+    private static string WrapperProgram(string root, bool report, bool wait) => $$"""
         $ErrorActionPreference='Stop'
         $root='{{root}}'
         $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/scripts/deploy-server2.ps1',[ref]$null,[ref]$null)
@@ -271,13 +308,16 @@ internal static class C1361CensusProbes
             $index=[int]$script:positions[$Path]; $script:positions[$Path]=$index+1
             return ($values[[Math]::Min($index,$values.Count-1)] | ConvertTo-Json -Depth 30 -Compress | ConvertFrom-Json)
         }
-        $errorText=''; $snapshot=$null
-        try { $value=Assert-RecycleTaskCensus -RunnerId server2 -ProjectId '{{Project}}' {{(report ? "-Report" : "")}}; $snapshot=$script:recycleReceipt.snapshot }
-        catch { $errorText=$_.Exception.Message }
-        @{error=$errorText;snapshot=$snapshot;reads=@($script:reads);sleeps=$script:sleeps} | ConvertTo-Json -Depth 40 | Set-Content "$root/result.json"
+        $errorText=''; $snapshot=$null; $code=0
+        $LandWaitMinutes=30
+        try { $value={{(wait ? "Wait-RecycleTaskCensus" : "Assert-RecycleTaskCensus")}} -RunnerId server2 -ProjectId '{{Project}}' {{(report ? "-Report" : "")}}; $snapshot=$script:recycleReceipt.snapshot }
+        catch { $errorText=$_.Exception.Message; $code=2 }
+        $returned=$null
+        if ($code -eq 0 -and '{{report}}' -eq 'False') { $returned=$value|ConvertFrom-Json }
+        @{error=$errorText;code=$code;snapshot=$snapshot;returned=$returned;reads=@($script:reads);sleeps=$script:sleeps} | ConvertTo-Json -Depth 40 | Set-Content "$root/result.json"
         """;
 
-    private static string HostProgram(string root)
+    private static string HostProgram(string root, bool wait)
     {
         var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
         var functions = Regex.Matches(source, @"(?ms)^c1008_tasks(?:_\w+)?\(\) \{\n.*?^\}").Select(m => m.Value);
@@ -296,9 +336,9 @@ internal static class C1361CensusProbes
                     C1008_TASK_ERROR="fixture missing $path"; return 2;
                 }
             }
-            code=0; c1008_tasks > "$root/snapshot.json" || code=$?
-            jq -n --arg error "$C1008_TASK_ERROR" --argjson snapshot "$C1008_TASKS" --argjson reads "$reads" --argjson sleeps "$sleeps" \
-                '{error:$error,snapshot:$snapshot,reads:$reads,sleeps:$sleeps}' > "$root/result.json"
+            code=0; {{(wait ? "c1008_tasks_wait" : "c1008_tasks")}} > "$root/snapshot.json" || code=$?
+            jq -n --arg error "$C1008_TASK_ERROR" --argjson code "$code" --argjson snapshot "$C1008_TASKS" --argjson reads "$reads" --argjson sleeps "$sleeps" \
+                '{error:$error,code:$code,snapshot:$snapshot,reads:$reads,sleeps:$sleeps}' > "$root/result.json"
             exit 0
             """;
     }
@@ -313,6 +353,9 @@ internal static class C1361CensusProbes
             => data.Add(new JsonObject { ["name"] = name, ["before"] = before, ["after"] = after,
                 ["detail"] = detail, ["expected"] = expected });
         Add("safe", Row(), Row("Dispatched"), Detail(Row("Dispatched")), true);
+        var boundBefore = Row(); var boundAfter = Row("Dispatched");
+        boundBefore["runnerId"] = "server2"; boundAfter["runnerId"] = "server2";
+        Add("both-bound", boundBefore, boundAfter, Detail(boundAfter), false);
         foreach (var side in new[] { "before", "after" })
         foreach (var fault in new[] { "terminal", "bound", "missing" })
         {
@@ -350,6 +393,8 @@ internal static class C1361CensusProbes
                 $ErrorActionPreference='Stop'
                 $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/scripts/deploy-server2.ps1',[ref]$null,[ref]$null)
                 foreach ($f in $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst]},$false)) { Invoke-Expression $f.Extent.Text }
+                $calls=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Test-RecycleOpenStatusMove'},$true))
+                if ($calls.Count -ne 2) { throw 'both real status-qualification call sites required' }
                 $cases=Get-Content -Raw '{{scratch.Root}}/boundary.json' | ConvertFrom-Json
                 foreach ($c in $cases) {
                     $before=$c|ConvertTo-Json -Depth 30 -Compress
@@ -372,6 +417,222 @@ internal static class C1361CensusProbes
         var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
         run.Exit.ShouldBe(0, run.Output); run.Output.ShouldContain("BOUNDARIES_DONE");
         Console.WriteLine($"BOUNDARY {(host ? "host" : "wrapper")}/{passes}: {data.Count} cases PASS");
+        if (passes) await ReconciliationBoundaries(host, data);
+        if (passes) await LandProjection(host);
+    }
+
+    private static async Task FullWrapper(bool passes)
+    {
+        foreach (var variant in new[] { "primary", "pending", "runner", "bound-report" })
+        {
+            var before = Row(); var after = Row("Dispatched");
+            if (variant == "runner") after["runnerId"] = "other";
+            if (variant == "bound-report") { before["runnerId"] = "server2"; after["runnerId"] = "server2"; }
+            var v = StatusVector(variant, passes, before, after, variant == "pending" ? Proof("Running", null) : null);
+            using var fixture = new C1008WrapperFixture();
+            var queries = new JsonObject(); var details = new JsonObject();
+            foreach (var (key, value) in v.Requests)
+            {
+                if (key.Contains('?')) queries[key] = value!.DeepClone();
+                else details[key[(key.LastIndexOf('/') + 1)..]] = value!.DeepClone();
+            }
+            fixture.State["taskQueries"] = queries; fixture.State["details"] = details;
+            var run = await fixture.Run("check-census");
+            run.Trace.All(x => x["kind"]?.GetValue<string>() != "case").ShouldBeTrue(variant + " offline wrapper has no host action");
+            run.Trace.Any(x => x["path"]?.GetValue<string>() == "/api/agent-tasks/" + Id).ShouldBeTrue(variant + " actual detail read");
+            if (variant == "primary")
+            {
+                run.Exit.ShouldBe(0, run.Output);
+                var root = Regex.Match(run.Output, @"(?m)^Census check complete: (.+)$").Groups[1].Value.Trim();
+                var receipt = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "census-check-census-server2.json")))!;
+                JsonNode.DeepEquals(receipt["snapshot"]!["open"]!["tasks"]![Id], v.Expected).ShouldBeTrue("wrapper actual second list facts");
+                var recorded = receipt["tasks"]!.AsArray().Single()!;
+                recorded["status"]!.GetValue<string>().ShouldBe(passes ? "Dispatched" : "Queued");
+                recorded.AsObject().ContainsKey("landRequest").ShouldBeTrue(); recorded["landRequest"].ShouldBeNull();
+            }
+            else
+            {
+                run.Exit.ShouldBe(2, run.Output);
+                run.Output.ShouldContain(passes ? "RecycleTaskCensusUnknown cause=Unstable" : "RecycleLandUnknown");
+            }
+            Console.WriteLine("FULL_WRAPPER " + variant + " PASS");
+        }
+    }
+
+    private static async Task ReconciliationBoundaries(bool host, JsonArray predicateCases)
+    {
+        using var scratch = new Scratch();
+        var cases = new JsonArray();
+        JsonObject Snapshot(JsonNode row, JsonNode? proof) => new()
+        {
+            ["open"] = new JsonObject { ["tasks"] = new JsonObject { [Id] = row.DeepClone() },
+                ["land"] = new JsonObject { [Id] = proof?.DeepClone() }, ["scopes"] = new JsonObject() },
+            ["land"] = new JsonObject { ["tasks"] = new JsonObject() }
+        };
+        void Add(string name, JsonObject prior, JsonObject current, bool align)
+        {
+            var expected = prior.DeepClone();
+            if (align) expected["open"]!["tasks"]![Id]!["status"] = current["open"]!["tasks"]![Id]!["status"]?.DeepClone();
+            cases.Add(new JsonObject { ["name"] = name, ["prior"] = prior, ["current"] = current, ["expected"] = expected });
+        }
+        foreach (var c in predicateCases)
+        {
+            var prior = Snapshot(c!["before"]!, c["detail"]!["landRequest"]);
+            var current = Snapshot(c["after"]!, c["detail"]!["landRequest"]);
+            if (!c["detail"]!.AsObject().ContainsKey("landRequest")) current["open"]!["land"]!.AsObject().Remove(Id);
+            Add(c["name"]!.GetValue<string>(), prior, current, c["expected"]!.GetValue<bool>());
+        }
+        foreach (var variant in new[] { "missing-prior", "missing-current", "event", "null-terminal", "terminal-null" })
+        {
+            var prior = Snapshot(Row(), variant is "event" or "terminal-null" ? Proof() : null);
+            var current = Snapshot(Row("Dispatched"), variant == "event" ? Proof(terminal: "55555555-5555-5555-5555-555555555555") :
+                variant == "null-terminal" ? Proof() : null);
+            if (variant == "missing-prior") prior["open"]!["land"]!.AsObject().Remove(Id);
+            if (variant == "missing-current") current["open"]!["land"]!.AsObject().Remove(Id);
+            Add(variant, prior, current, false);
+        }
+        var input = cases.ToJsonString(); File.WriteAllText(Path.Combine(scratch.Root, "maps.json"), input);
+        string body;
+        if (!host)
+        {
+            body = $$"""
+                $ErrorActionPreference='Stop'
+                $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/scripts/deploy-server2.ps1',[ref]$null,[ref]$null)
+                foreach ($name in @('Test-RecycleJsonEqual','Test-RecycleOpenStatusMove','Sync-RecycleOpenStatuses')) {
+                    $functions=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true))
+                    if ($functions.Count -ne 1) { throw "extraction count: $name" }; Invoke-Expression $functions[0].Extent.Text
+                }
+                foreach ($c in (Get-Content -Raw '{{scratch.Root}}/maps.json'|ConvertFrom-Json)) {
+                    $liveBefore=$c.current|ConvertTo-Json -Depth 30 -Compress
+                    $copy=$c.prior|ConvertTo-Json -Depth 30 -Compress|ConvertFrom-Json
+                    $null=Sync-RecycleOpenStatuses -Prior $copy -Live $c.current -RunnerId server2
+                    if (-not (Test-RecycleJsonEqual $copy $c.expected)) { throw "reconciliation/$($c.name) changed ineligible facts" }
+                    if (($c.current|ConvertTo-Json -Depth 30 -Compress) -cne $liveBefore) { throw 'live input changed' }
+                }
+                'RECONCILIATION_DONE'
+                """;
+        }
+        else
+        {
+            var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
+            var predicate = Regex.Matches(source, @"(?s)# C1361 predicate begin\n(.*?)# C1361 predicate end");
+            var block = Regex.Matches(source, @"(?s)# C1361 reconciliation begin\n(.*?)# C1361 reconciliation end");
+            predicate.Count.ShouldBe(2); block.Count.ShouldBe(1);
+            body = "jq -e '" + predicate[1].Groups[1].Value +
+                " all(.[]; . as $case | .current as $current | \"server2\" as $runner | .prior | (" + block[0].Groups[1].Value +
+                ")==$case.expected)' '" + scratch.Root + "/maps.json' || exit 1\necho RECONCILIATION_DONE\n";
+        }
+        var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
+        run.Exit.ShouldBe(0, run.Output); run.Output.ShouldContain("RECONCILIATION_DONE");
+        File.ReadAllText(Path.Combine(scratch.Root, "maps.json")).ShouldBe(input, "input JSON bytes unchanged");
+        Console.WriteLine($"RECONCILIATION {(host ? "host" : "wrapper")}: {cases.Count} cases PASS");
+    }
+
+    private static async Task LandProjection(bool host)
+    {
+        using var scratch = new Scratch();
+        var bound = Row("Succeeded"); bound["runnerId"] = "server2"; bound["landStartedAt"] = "2020-01-01T00:00:00Z";
+        var other = bound.DeepClone().AsObject(); other["id"] = Event; other["runnerId"] = "desktop";
+        var rows = new JsonObject { [Id] = bound, [Event] = other };
+        File.WriteAllText(Path.Combine(scratch.Root, "rows.json"), rows.ToJsonString());
+        string body;
+        if (host)
+        {
+            var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
+            var expressions = Regex.Matches(source, @"'(?<body>if \$kind==""open"" then \{scopes:\.,tasks:\$rows,land:\$land\} else .*?)'");
+            expressions.Count.ShouldBe(1, "real land projection");
+            body = "jq -n --arg kind land --arg runner server2 --argjson land '{}' --slurpfile input '" + scratch.Root +
+                "/rows.json' '$input[0] as $rows | {} | " + expressions[0].Groups["body"].Value +
+                "' > '" + scratch.Root + "/projection.json'\n";
+        }
+        else
+        {
+            body = $$"""
+                $ErrorActionPreference='Stop'
+                $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/scripts/deploy-server2.ps1',[ref]$null,[ref]$null)
+                $blocks=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.ForEachStatementAst] -and $n.Extent.Text.StartsWith('foreach ($key in @($rows.Keys | Sort-Object))')},$true))
+                if ($blocks.Count -ne 1) { throw 'real land projection count' }
+                $rows=@{}; $source=Get-Content -Raw '{{scratch.Root}}/rows.json'|ConvertFrom-Json
+                foreach ($p in $source.PSObject.Properties) { $rows[$p.Name]=$p.Value|ConvertTo-Json -Compress }
+                $kind='land'; $RunnerId='server2'; $taskSnapshot=[ordered]@{}
+                Invoke-Expression $blocks[0].Extent.Text
+                @{tasks=$taskSnapshot}|ConvertTo-Json -Depth 20|Set-Content '{{scratch.Root}}/projection.json'
+                """;
+        }
+        var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
+        run.Exit.ShouldBe(0, run.Output);
+        var actual = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "projection.json")))!["tasks"]!.AsObject();
+        actual.Count.ShouldBe(1, "bound-only land projection");
+        JsonNode.DeepEquals(actual[Id], bound).ShouldBeTrue("all bound land facts retained");
+        Console.WriteLine("LAND_PROJECTION bound-only PASS");
+    }
+
+    private static async Task TotalBoundary(bool host)
+    {
+        using var scratch = new Scratch();
+        string body;
+        if (host)
+        {
+            var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
+            source = source[source.IndexOf("c1008_tasks_collect() {", StringComparison.Ordinal)..source.IndexOf("c1008_tasks_match_record() {", StringComparison.Ordinal)];
+            var predicates = Regex.Matches(source, @"def count:.*?;");
+            predicates.Count.ShouldBe(1, "actual shared count type/range validator");
+            body = "jq -ne '" + predicates[0].Value +
+                " [null, -1, 1.5, \"1\", true, {}, []] | all(.[]; count|not)' || exit 1\n" +
+                "jq -ne '" + predicates[0].Value + " [0,1,2] | all(.[]; count)' || exit 1\necho TOTAL_BOUNDARY_DONE\n";
+        }
+        else
+        {
+            body = $$"""
+                $ErrorActionPreference='Stop'
+                $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/scripts/deploy-server2.ps1',[ref]$null,[ref]$null)
+                $blocks=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if (($envelope.excluded.$key -isnot [int]')},$true))
+                if ($blocks.Count -ne 1) { throw 'actual total validation block count' }
+                $key='total'; $path='fixture'; $script:recycleReceipt=$null
+                $fn=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Stop-RecycleMalformed'},$true)
+                Invoke-Expression $fn.Extent.Text
+                foreach ($v in @($null,-1,1.5,'1',$true,@{},@(),0,1,2)) {
+                    $envelope=[pscustomobject]@{excluded=[pscustomobject]@{total=$v}}
+                    $errorText=''; try { Invoke-Expression $blocks[0].Extent.Text } catch { $errorText=$_.Exception.Message }
+                    $valid=($v -is [int] -and $v -ge 0)
+                    if ($valid -and $errorText) { throw "valid total refused: $errorText" }
+                    if (-not $valid -and $errorText -cnotlike 'RecycleTaskCensusUnknown cause=Malformed field=excluded.total *') { throw "invalid total accepted: $v" }
+                }
+                'TOTAL_BOUNDARY_DONE'
+                """;
+        }
+        var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
+        run.Exit.ShouldBe(0, run.Output); run.Output.ShouldContain("TOTAL_BOUNDARY_DONE");
+        Console.WriteLine($"TOTAL_BOUNDARY {(host ? "host" : "wrapper")} PASS");
+    }
+
+    internal static async Task AppearanceBoundary()
+    {
+        // Public host calls reject the bound land earlier; execute the actual appearance program
+        // to make its independent land-map guard observable before final snapshot equality.
+        using var scratch = new Scratch();
+        var fresh = Row("Working"); var bound = Row("Succeeded"); bound["runnerId"] = "server2";
+        bound["landRequestedAt"] = "2020-01-01T00:00:00Z";
+        JsonObject Snapshot(bool current) => new()
+        {
+            ["open"] = new JsonObject { ["tasks"] = current ? new JsonObject { [Id] = fresh.DeepClone() } : new JsonObject(),
+                ["land"] = current ? new JsonObject { [Id] = null } : new JsonObject(),
+                ["scopes"] = new JsonObject { [Project] = new JsonObject { ["ids"] = current ? new JsonArray(Id) : new JsonArray() } } },
+            ["land"] = new JsonObject { ["tasks"] = new JsonObject { [Id] = bound.DeepClone() } }
+        };
+        var prior = Snapshot(false); var current = Snapshot(true);
+        File.WriteAllText(Path.Combine(scratch.Root, "prior.json"), prior.ToJsonString());
+        File.WriteAllText(Path.Combine(scratch.Root, "current.json"), current.ToJsonString());
+        var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
+        var programs = Regex.Matches(source, @"(?s)if forgiven=""\$\(printf '%s' ""\$previous"" \| jq -Sc --argjson current ""\$snapshot"" '\n(.*?)\n            '\)");
+        programs.Count.ShouldBe(1, "unique real appearance program");
+        var body = "jq --slurpfile live '" + scratch.Root + "/current.json' '$live[0] as $current | " + programs[0].Groups[1].Value +
+            "' '" + scratch.Root + "/prior.json' > '" + scratch.Root + "/result.json'\n";
+        var run = await Run("bash", body, scratch.Root);
+        run.Exit.ShouldBe(0, run.Output);
+        JsonNode.DeepEquals(JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "result.json"))), prior)
+            .ShouldBeTrue("bound land membership prevents appearance reconciliation");
+        Console.WriteLine("APPEARANCE_BOUNDARY bound-land PASS");
     }
 
     private static async Task<(int Exit, string Output)> Run(string program, string body, string root)
