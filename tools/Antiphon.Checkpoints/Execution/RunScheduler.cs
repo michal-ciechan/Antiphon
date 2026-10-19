@@ -296,6 +296,19 @@ public sealed class RunScheduler
         }
     }
 
+    // A row's deadline: its explicit timeout, else the estimate-derived one, else the manifest default;
+    // --row-timeout replaces whichever applies.
+    internal static int RowDeadlineMinutes(CheckpointSpec spec, CheckpointManifest manifest, TimeSpan? rowTimeoutOverride)
+    {
+        if (rowTimeoutOverride is TimeSpan over)
+            return Math.Max(1, (int)Math.Ceiling(over.TotalMinutes));
+        return spec.TimeoutMinutes ?? RowTimeout.DeriveRowMinutes(spec.EstimatedMinutes, null, manifest.Timeouts.RowMinutes);
+    }
+
+    // CARD-1356: the deadline a scheduled build runs under.
+    internal static int BuildDeadlineMinutes(CheckpointManifest manifest, IEnumerable<CheckpointSpec> rows, string buildId, TimeSpan? rowTimeoutOverride) =>
+        Math.Max(15, manifest.Timeouts.RowMinutes);
+
     internal static bool IsPtyProject(string? project)
     {
         if (string.IsNullOrWhiteSpace(project))
@@ -519,9 +532,7 @@ public sealed class RunScheduler
             }
             return ok;
         }
-        var minutes = spec.TimeoutMinutes ?? RowTimeout.DeriveRowMinutes(spec.EstimatedMinutes, null, request.Manifest.Timeouts.RowMinutes);
-        if (request.RowTimeoutOverride is TimeSpan over)
-            minutes = Math.Max(1, (int)Math.Ceiling(over.TotalMinutes));
+        var minutes = RowDeadlineMinutes(spec, request.Manifest, request.RowTimeoutOverride);
         var result = await _rows.RunAsync(new RowRequest
         {
             Name = spec.Id,

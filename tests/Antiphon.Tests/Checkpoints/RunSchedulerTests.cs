@@ -345,6 +345,49 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         result.Rows.Count(row => row.State == "green").ShouldBe(2);
     }
 
+    [Test]
+    public void build_deadline_is_the_largest_dependent_row_timeout_and_the_row_override_replaces_it()
+    {
+        // red (CARD-1356): the build deadline is max(15, timeouts.rowMinutes) whatever its rows need, and
+        // --row-timeout never reaches it.
+        var manifest = TwoBuildRows();
+        manifest.Checkpoints[0].TimeoutMinutes = 40;            // CP-1 on bin-a: explicit 40
+        manifest.Checkpoints[1].Build = "bin-a";                // CP-2 on bin-a: estimate 10, derived 30
+        manifest.Checkpoints[1].TimeoutMinutes = null;
+        manifest.Checkpoints[1].EstimatedMinutes = 10;
+        var third = CheckpointFixtures.Row("CP-3", "bin-b");    // CP-3 on bin-b: estimate 1, derived floor 15
+        third.TimeoutMinutes = null;
+        third.EstimatedMinutes = 1;
+        manifest.Checkpoints.Add(third);
+
+        RunScheduler.BuildDeadlineMinutes(manifest, manifest.Checkpoints, "bin-a", null).ShouldBe(40);
+        RunScheduler.BuildDeadlineMinutes(manifest, manifest.Checkpoints, "bin-b", null).ShouldBe(15);
+        RunScheduler.BuildDeadlineMinutes(manifest, manifest.Checkpoints, "bin-a", TimeSpan.FromMinutes(7)).ShouldBe(7);
+        RunScheduler.BuildDeadlineMinutes(manifest, manifest.Checkpoints, "bin-b", TimeSpan.FromMinutes(7)).ShouldBe(7);
+        manifest.Timeouts.RowMinutes = 20;
+        RunScheduler.BuildDeadlineMinutes(manifest, manifest.Checkpoints, "bin-b", null).ShouldBe(20);
+        RunScheduler.BuildDeadlineMinutes(manifest, manifest.Checkpoints, "bin-a", null).ShouldBe(40);
+    }
+
+    [Test]
+    public async Task scheduler_passes_the_derived_build_deadline_and_records_it()
+    {
+        // red (CARD-1356): BuildProgress.DeadlineMinutes stays 0 and report.json records 0; the build ran under
+        // the 15-minute floor whatever CP-1 needs.
+        var driver = InstantDriver();
+        var manifest = TwoBuildRows();
+        manifest.Checkpoints[0].TimeoutMinutes = 40;
+        var result = await Schedule(driver, manifest, manifest.Checkpoints, 2);
+        result.Rows.Count(row => row.State == "green").ShouldBe(2);
+        result.State.Builds.Single(build => build.Id == "bin-a").DeadlineMinutes.ShouldBe(40);
+        result.State.Builds.Single(build => build.Id == "bin-b").DeadlineMinutes.ShouldBe(15);
+
+        var run = TempDir();
+        var report = CheckpointApp.BuildReport(run, run, new RunRequest { Commit = new string('a', 40), Branch = "fixture" }, manifest, result.State, result);
+        report.Builds.Single(build => build.Id == "bin-a").DeadlineMinutes.ShouldBe(40);
+        report.Builds.Single(build => build.Id == "bin-b").DeadlineMinutes.ShouldBe(15);
+    }
+
     private static CheckpointManifest OneBuildTwoRows()
     {
         var manifest = new CheckpointManifest();

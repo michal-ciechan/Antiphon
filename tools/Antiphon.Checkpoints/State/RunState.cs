@@ -79,6 +79,8 @@ public sealed class BuildProgress
     public int WaitedSeconds { get; set; }
     public int AdmissionExitCode { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
+    // CARD-1356: the deadline the build ran under, derived from the rows that need it.
+    public int DeadlineMinutes { get; set; }
 }
 
 public sealed class RowProgress

@@ -49,6 +49,8 @@ public sealed class ReportBuild
     public string Slot { get; set; } = "";
     public string? SlotReason { get; set; }
     public int WaitedSeconds { get; set; }
+    // CARD-1356: the deadline the build ran under, in minutes.
+    public int DeadlineMinutes { get; set; }
 }
 
 public sealed class ReportRow

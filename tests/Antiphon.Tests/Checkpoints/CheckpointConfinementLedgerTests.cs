@@ -372,6 +372,93 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     [Test]
+    [Timeout(120_000)]
+    public Task ledger_entry_unreadable_after_release_is_refused_unreadable_not_tampered()
+    {
+        // red (CARD-1358): an entry whose after-release read is refused is printed TAMPERED with a restore command,
+        // although no content difference was observed.
+        var root = BeginRepo();
+        var unreadable = false;
+        var ledger = Capture(root, stamp: StalledStamp("node_modules/pkg/f0005.js", () => unreadable));
+        unreadable = true;
+
+        var verified = BuildConfinement.VerifyLedger(ledger);
+        verified.Kind.ShouldBe("unreadable", verified.Detail);
+        verified.Paths.ToArray().ShouldBe(new[] { "node_modules/pkg/f0005.js" }, verified.Detail);
+        verified.Detail.ShouldStartWith("refused: unreadable");
+        verified.Detail.ShouldContain("UNREADABLE node_modules/pkg/f0005.js: ", Case.Sensitive);
+        verified.Detail.ShouldContain("read-stalled", Case.Sensitive);
+        verified.Detail.ShouldNotContain("TAMPERED");
+        verified.Detail.ShouldNotContain("restore --source");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public Task tampered_entry_beside_an_unreadable_entry_is_still_refused_tampered()
+    {
+        // red (CARD-1358): the unreadable entry is printed TAMPERED with a restore command beside the real change.
+        var root = BeginRepo();
+        var unreadable = false;
+        var ledger = Capture(root, stamp: StalledStamp("node_modules/pkg/f0005.js", () => unreadable));
+        unreadable = true;
+        File.WriteAllText(Path.Combine(root, "node_modules", "pkg", "f0006.js"), "changed while waiting\n");
+
+        var settlement = BuildConfinement.AdmitLedger(ledger, strict: true).Settlement;
+        settlement.Kind.ShouldBe("tampered", settlement.Detail);
+        settlement.Paths.ToArray().ShouldBe(new[] { "node_modules/pkg/f0005.js", "node_modules/pkg/f0006.js" }, settlement.Detail);
+        settlement.Detail.ShouldStartWith("refused: tampered");
+        settlement.Detail.ShouldContain("TAMPERED node_modules/pkg/f0006.js\nmanual command: git -C ", Case.Sensitive);
+        settlement.Detail.ShouldContain("status --short -- 'node_modules/pkg/f0006.js'", Case.Sensitive);
+        settlement.Detail.ShouldContain("UNREADABLE node_modules/pkg/f0005.js: ", Case.Sensitive);
+        settlement.Detail.ShouldNotContain("TAMPERED node_modules/pkg/f0005.js");
+        settlement.Detail.ShouldNotContain("'node_modules/pkg/f0005.js'");
+        settlement.Detail.ShouldContain("manual restore required", Case.Sensitive);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    [Timeout(300_000)]
+    public Task in_slot_baseline_entry_unreadable_at_settlement_is_refused_unreadable(CancellationToken cancellationToken)
+    {
+        // red (CARD-1358): the in-slot baseline reports an entry it could not re-read as TAMPERED.
+        var root = BeginRepo();
+        var ledger = Capture(root);
+        var baseline = Prepare(root, ledger, cancellationToken);
+
+        var settled = BuildConfinement.Settle(baseline, StalledStamp("App/obj/stale.txt", () => true));
+        settled.Kind.ShouldBe("unreadable", settled.Detail);
+        settled.Paths.ToArray().ShouldBe(new[] { "App/obj/stale.txt" }, settled.Detail);
+        settled.Detail.ShouldContain("UNREADABLE App/obj/stale.txt: ", Case.Sensitive);
+        settled.Detail.ShouldNotContain("TAMPERED");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    [Timeout(300_000)]
+    public async Task scheduler_reports_an_unreadable_ledger_entry_as_unreadable(CancellationToken cancellationToken)
+    {
+        // red (CARD-1358): report.json says refused: tampered and build.log prints TAMPERED for an entry the
+        // after-release read could not stamp. The entry is readable at capture and admission; the build makes it stall.
+        var root = BeginRepo();
+        var unreadable = false;
+        var slots = new RecordingSlotClient(onAcquire: () => { }, onRelease: () => { });
+        var driver = new LedgerDriver(slots, () => unreadable = true, stamp: StalledStamp("node_modules/pkg/f0005.js", () => unreadable));
+        var (run, exit) = await RunScheduledAsync(root, driver, slots, cancellationToken);
+
+        driver.BuildLedgers.ToArray().ShouldBe(new[] { true }, "the entry was readable at capture and at admission, so the build launched");
+        exit.ShouldNotBe(0);
+        var report = JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(run, "report.json")), ReportWriter.Json)!;
+        var build = report.Builds.Single();
+        build.State.ShouldBe("failed");
+        build.SlotReason.ShouldBe("refused: unreadable");
+        var log = File.ReadAllText(Path.Combine(run, "builds", "bin-c1241", "build.log"));
+        log.ShouldContain("UNREADABLE node_modules/pkg/f0005.js", Case.Sensitive);
+        log.ShouldNotContain("TAMPERED");
+        report.Rows.Single().State.ShouldNotBe("green");
+    }
+
+    [Test]
     public void admission_hash_other_than_stat_or_strict_is_rejected()
     {
         // red: an unknown build.admissionHash value loads and runs with the default stat admission.
@@ -491,11 +578,21 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         File.SetLastWriteTimeUtc(path, modified);
     }
 
-    private static BuildConfinement.Ledger Capture(string root, Func<string, LedgerStat>? stat = null)
+    private static BuildConfinement.Ledger Capture(string root, Func<string, LedgerStat>? stat = null, Func<string, string>? stamp = null)
     {
-        var captured = BuildConfinement.CaptureLedger(root, Arguments, stat);
+        var captured = BuildConfinement.CaptureLedger(root, Arguments, stat, stamp);
         captured.Refusal.ShouldBeNull(captured.Detail);
         return captured.Value.ShouldNotBeNull();
+    }
+
+    // The real content stamp, except the named entry, which answers as a read the reader refused as stalled once
+    // the flag is set (CARD-1358): the ledger never sees a hash, only the refusal reason.
+    private static Func<string, string> StalledStamp(string relative, Func<bool> unreadable)
+    {
+        var suffix = Path.DirectorySeparatorChar + relative.Replace('/', Path.DirectorySeparatorChar);
+        return path => unreadable() && path.EndsWith(suffix, StringComparison.Ordinal)
+            ? "unreadable|receipt-read-refused: read-stalled: 0 of 7864320 bytes; no progress within 3s"
+            : BuildConfinement.Stamp(path);
     }
 
     private static BuildConfinement.Baseline Prepare(string root, BuildConfinement.Ledger? ledger, CancellationToken cancellationToken)
@@ -540,7 +637,8 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     // Uses the real ledger capture around a fake build; the build runs no Prepare/Settle, so changes reach the report through the scheduler's ledger checks.
-    private sealed class LedgerDriver(RecordingSlotClient slots, Action onBuild, Func<string, LedgerStat>? stat = null) : IConfinedDriver
+    private sealed class LedgerDriver(RecordingSlotClient slots, Action onBuild, Func<string, LedgerStat>? stat = null,
+        Func<string, string>? stamp = null) : IConfinedDriver
     {
         private readonly FakeDriver _inner = new();
         public List<bool> LedgerCaptures { get; } = [];
@@ -550,7 +648,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         public BuildConfinement.LedgerCapture CaptureLedger(DriverRequest request)
         {
             LedgerCaptures.Add(slots.Held);
-            var captured = BuildConfinement.CaptureLedger(request.WorkingDirectory, request.Arguments, stat);
+            var captured = BuildConfinement.CaptureLedger(request.WorkingDirectory, request.Arguments, stat, stamp);
             Captured = captured.Value;
             return captured;
         }
