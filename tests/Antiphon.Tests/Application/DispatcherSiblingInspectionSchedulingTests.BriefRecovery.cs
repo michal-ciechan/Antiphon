@@ -187,7 +187,7 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                     await SessionReconciliationServiceTests.BuildService(read, runner, h.EventBus, time: clock).ScanAsync(default);
                 }
                 var sweepClock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-                await using (var sweep = AbsentSweep(schema.ConnectionString, runner, sweepClock))
+                await using (var sweep = AbsentSweep(schema.ConnectionString, runner, sweepClock, h.Queue))
                 {
                     async Task SweepAsync()
                     {
@@ -231,7 +231,8 @@ public partial class DispatcherSiblingInspectionSchedulingTests
         }
     }
 
-    private static ServiceProvider AbsentSweep(string connection, InspectionRecoveryRunner runner, TimeProvider clock)
+    private static ServiceProvider AbsentSweep(string connection, InspectionRecoveryRunner runner, TimeProvider clock,
+        SessionMessageQueueService queue)
     {
         var services = new ServiceCollection(); services.AddLogging();
         services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connection));
@@ -240,7 +241,10 @@ public partial class DispatcherSiblingInspectionSchedulingTests
         services.AddSingleton(Options.Create(new DelegationSettings { DeadSessionFailGraceMinutes = 3 }));
         services.AddOptions<AgentRegistrySettings>(); services.AddSingleton<AgentRegistry>();
         services.AddSingleton<AgentSessionLaunchQueue>(); services.AddSingleton<AgentSessionRuntime>();
-        services.AddSingleton<SessionMessageQueueService>(); services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
+        // The sweep shares the harness queue (system clock, live caller adapter). A queue built on the
+        // sweep's fake clock would attempt the caller note's delivery when the sweep fails the task
+        // and then wait on a transcript-confirm deadline that never arrives.
+        services.AddSingleton(queue); services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
         services.AddSingleton<DelegationWorkspaceResolver>(); services.AddDelegationWorktreeGraph();
         services.AddScoped<AgentTaskService>(); services.AddSingleton<ISessionRunnerClient>(runner);
         services.AddSingleton(new DeadSessionFirstSeenState()); services.AddSingleton(new BootWedgeRelaunchState());
