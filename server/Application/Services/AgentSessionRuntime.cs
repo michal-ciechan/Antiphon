@@ -1666,13 +1666,36 @@ public sealed class AgentSessionRuntime
         return GetDeltaSequenceOrDefault(sessionId) > sequence;
     }
 
-    public AgentSessionRuntimeBufferSnapshot GetBufferSnapshot(Guid sessionId)
+    /// <summary>
+    /// CARD-1362 D-2: one deadline per live runner read, on the injected clock so a test advances
+    /// a FakeTimeProvider instead of sleeping. A linked source cannot take a TimeProvider, hence
+    /// two disposables. Every bounded read is awaited through <c>WaitAsync(linked.Token)</c> as
+    /// well, so the deadline holds against a client that ignores the token it is handed.
+    /// </summary>
+    private (CancellationTokenSource Deadline, CancellationTokenSource Linked) LiveReadDeadline(CancellationToken ct)
+    {
+        var deadline = new CancellationTokenSource(
+            TimeSpan.FromMilliseconds(Math.Max(250, _settings.RunnerLiveReadTimeoutMs)), _timeProvider);
+        return (deadline, CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token));
+    }
+
+    /// <summary>S1 compatibility wrapper; S2-S5 move every caller onto <see cref="GetBufferSnapshotAsync"/>.</summary>
+    public AgentSessionRuntimeBufferSnapshot GetBufferSnapshot(Guid sessionId) =>
+        GetBufferSnapshotAsync(sessionId, CancellationToken.None).GetAwaiter().GetResult();
+
+    /// <summary>CARD-1362 D-1: the buffer read, bounded by <see cref="LiveReadDeadline"/>; a failure propagates.</summary>
+    public async Task<AgentSessionRuntimeBufferSnapshot> GetBufferSnapshotAsync(Guid sessionId, CancellationToken ct)
     {
         if (_testBuffers.TryGetValue(sessionId, out var testBuffer))
             return new AgentSessionRuntimeBufferSnapshot(testBuffer.ToString(), GetDeltaSequenceOrDefault(sessionId));
 
-        var buffer = _runnerClient.GetBufferAsync(sessionId, CancellationToken.None).GetAwaiter().GetResult();
-        return new AgentSessionRuntimeBufferSnapshot(buffer.Buffer, buffer.LastSequence);
+        var (deadline, linked) = LiveReadDeadline(ct);
+        using (deadline)
+        using (linked)
+        {
+            var buffer = await _runnerClient.GetBufferAsync(sessionId, linked.Token).WaitAsync(linked.Token);
+            return new AgentSessionRuntimeBufferSnapshot(buffer.Buffer, buffer.LastSequence);
+        }
     }
 
     /// <summary>
@@ -1680,21 +1703,39 @@ public sealed class AgentSessionRuntime
     /// CARD-0679 D-10, the connected phone-home runner's cached inventory (no RPC). Every caller
     /// used to read a live phone-home session as dead: its stranded brief was never swept, a
     /// WhenIdle reply stayed Pending and send-now answered 409.
+    /// S1 compatibility wrapper; S2-S5 move every caller onto <see cref="ListLiveSessionsAsync"/>.
     /// </summary>
     public IReadOnlyList<Guid> ListLiveSessions() =>
-        ListLocalLiveSessions()
+        ListLiveSessionsAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+    /// <summary>
+    /// CARD-1362 D-1/D-3: the List read, bounded by <see cref="LiveReadDeadline"/>. Any failure,
+    /// the deadline included, propagates as it does from the client's own 3 s list cap; nothing
+    /// substitutes an empty live set (CARD-0679: that reads every session as dead).
+    /// </summary>
+    public async Task<IReadOnlyList<Guid>> ListLiveSessionsAsync(CancellationToken ct) =>
+        (await ListLocalLiveSessionsAsync(ct))
             .Concat(_directory?.LiveRemoteSessionIds() ?? [])
             .Distinct()
             .ToList();
 
     internal IReadOnlySet<Guid> ListLocalLiveSessions() =>
-        _runnerClient.ListAsync(CancellationToken.None)
-            .GetAwaiter()
-            .GetResult()
-            .Where(session => session.Status is "Running" or "Starting")
-            .Select(session => session.SessionId)
-            .Concat(_testAdapters.Keys)
-            .ToHashSet();
+        ListLocalLiveSessionsAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+    internal async Task<IReadOnlySet<Guid>> ListLocalLiveSessionsAsync(CancellationToken ct)
+    {
+        var (deadline, linked) = LiveReadDeadline(ct);
+        using (deadline)
+        using (linked)
+        {
+            var sessions = await _runnerClient.ListAsync(linked.Token).WaitAsync(linked.Token);
+            return sessions
+                .Where(session => session.Status is "Running" or "Starting")
+                .Select(session => session.SessionId)
+                .Concat(_testAdapters.Keys)
+                .ToHashSet();
+        }
+    }
 
     internal IReadOnlyList<string> PendingRunnerIds() =>
         _directory?.KnownRunnerIds.Where(RemoteInventoryPending).ToArray() ?? [];
@@ -1707,12 +1748,15 @@ public sealed class AgentSessionRuntime
     /// Optional probes that act only on a confirmed live session (usage polls, compaction,
     /// watchdog answers, policy relaunch) skip it until the runner confirms it again.
     /// </summary>
-    public IReadOnlyList<Guid> ListUnknownSessions()
+    public IReadOnlyList<Guid> ListUnknownSessions() =>
+        ListUnknownSessionsAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+    public async Task<IReadOnlyList<Guid>> ListUnknownSessionsAsync(CancellationToken ct)
     {
         var unknown = _directory?.UnknownRemoteSessionIds() ?? [];
         if (unknown.Count == 0)
             return [];
-        var live = ListLiveSessions();
+        var live = await ListLiveSessionsAsync(ct);
         return unknown.Where(id => !live.Contains(id)).Distinct().ToList();
     }
 
@@ -1721,7 +1765,10 @@ public sealed class AgentSessionRuntime
     /// destructive "not live" decision (fail, cancel, clear a claim) and queued delivery read.
     /// </summary>
     public IReadOnlyList<Guid> ListLiveOrUnknownSessions() =>
-        ListLiveSessions()
+        ListLiveOrUnknownSessionsAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+    public async Task<IReadOnlyList<Guid>> ListLiveOrUnknownSessionsAsync(CancellationToken ct) =>
+        (await ListLiveSessionsAsync(ct))
             .Concat(_directory?.UnknownRemoteSessionIds() ?? [])
             .Distinct()
             .ToList();
@@ -1732,8 +1779,15 @@ public sealed class AgentSessionRuntime
     /// directory has no inventory to name it in.
     /// </summary>
     public bool IsLiveOrUnknown(Guid sessionId, string? runnerId) =>
+        IsLiveOrUnknownAsync(sessionId, runnerId, CancellationToken.None).GetAwaiter().GetResult();
+
+    /// <summary>
+    /// CARD-1362 D-3: a List failure, the deadline included, propagates; a destructive caller must
+    /// never read a timeout as "gone".
+    /// </summary>
+    public async Task<bool> IsLiveOrUnknownAsync(Guid sessionId, string? runnerId, CancellationToken ct) =>
         RemoteInventoryPending(runnerId)
-        || ListLiveOrUnknownSessions().Contains(sessionId);
+        || (await ListLiveOrUnknownSessionsAsync(ct)).Contains(sessionId);
 
     /// <summary>
     /// CARD-0679 (review f87b49a7): true while <paramref name="runnerId"/> is a remote runner no
@@ -1744,11 +1798,17 @@ public sealed class AgentSessionRuntime
 
     /// <summary>A known terminal row never gains liveness from a stale membership snapshot.</summary>
     internal bool IsLiveOrUnknown(AgentSession session) =>
-        session.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping
-        && IsAcceptedRunnerBinding(session.RunnerId)
-        && (string.IsNullOrWhiteSpace(session.RunnerId) || session.RunnerId == PhoneHomeProtocol.LocalRunnerId
-            ? ListLocalLiveSessions().Contains(session.Id)
-            : IsLiveOrUnknown(session.Id, session.RunnerId));
+        IsLiveOrUnknownAsync(session, CancellationToken.None).GetAwaiter().GetResult();
+
+    internal async Task<bool> IsLiveOrUnknownAsync(AgentSession session, CancellationToken ct)
+    {
+        if (session.Status is not (SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping)
+            || !IsAcceptedRunnerBinding(session.RunnerId))
+            return false;
+        return string.IsNullOrWhiteSpace(session.RunnerId) || session.RunnerId == PhoneHomeProtocol.LocalRunnerId
+            ? (await ListLocalLiveSessionsAsync(ct)).Contains(session.Id)
+            : await IsLiveOrUnknownAsync(session.Id, session.RunnerId, ct);
+    }
 
     internal bool IsAcceptedRunnerBinding(string? runnerId) =>
         string.IsNullOrWhiteSpace(runnerId) || runnerId == PhoneHomeProtocol.LocalRunnerId
@@ -1775,70 +1835,108 @@ public sealed class AgentSessionRuntime
                 ? new SessionRunnerBinding.Remote(new SessionRunnerOwner(session.RunnerId, store, session.RunnerCwd))
                 : SessionRunnerBinding.Local.Instance, ct);
 
+    /// <summary>S1 compatibility wrapper; S2-S5 move every caller onto <see cref="TryGetLiveSnapshotAsync"/>.</summary>
     public bool TryGetLiveSnapshot(Guid sessionId, out AgentSessionLiveSnapshot snapshot)
+    {
+        var result = TryGetLiveSnapshotAsync(sessionId, CancellationToken.None).GetAwaiter().GetResult();
+        snapshot = result!;
+        return result is not null;
+    }
+
+    /// <summary>
+    /// CARD-1362 D-3: null is "unavailable" (any failure, the live-read deadline included), never
+    /// "gone": a probe that acts only on a confirmed live session skips it. A cancelled caller token
+    /// rethrows instead, so a cancelled sweep records no decision. Snapshot and buffer share one
+    /// deadline (D-2).
+    /// </summary>
+    public async Task<AgentSessionLiveSnapshot?> TryGetLiveSnapshotAsync(Guid sessionId, CancellationToken ct)
     {
         try
         {
             if (_testAdapters.TryGetValue(sessionId, out var adapter))
             {
-                snapshot = new AgentSessionLiveSnapshot(
+                return new AgentSessionLiveSnapshot(
                     sessionId,
                     adapter.SnapshotRawOutput(),
                     adapter.SnapshotRenderedScreen(),
                     _testBuffers.GetValueOrDefault(sessionId)?.ToString() ?? string.Empty,
                     GetDeltaSequenceOrDefault(sessionId));
-                return true;
             }
 
-            var runnerSnapshot = _runnerClient.GetSnapshotAsync(sessionId, CancellationToken.None).GetAwaiter().GetResult();
-            var buffer = _runnerClient.GetBufferAsync(sessionId, CancellationToken.None).GetAwaiter().GetResult();
-            snapshot = new AgentSessionLiveSnapshot(
-                sessionId,
-                runnerSnapshot.RawOutput,
-                runnerSnapshot.RenderedScreen,
-                buffer.Buffer,
-                runnerSnapshot.LastSequence);
-            return true;
+            var (deadline, linked) = LiveReadDeadline(ct);
+            using (deadline)
+            using (linked)
+            {
+                var runnerSnapshot = await _runnerClient.GetSnapshotAsync(sessionId, linked.Token).WaitAsync(linked.Token);
+                var buffer = await _runnerClient.GetBufferAsync(sessionId, linked.Token).WaitAsync(linked.Token);
+                return new AgentSessionLiveSnapshot(
+                    sessionId,
+                    runnerSnapshot.RawOutput,
+                    runnerSnapshot.RenderedScreen,
+                    buffer.Buffer,
+                    runnerSnapshot.LastSequence);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Live snapshot unavailable for agent session {SessionId}", sessionId);
-            snapshot = default!;
-            return false;
+            return null;
         }
     }
 
+    /// <summary>S1 compatibility wrapper; S2-S5 move every caller onto <see cref="TryGetLiveMetadataAsync"/>.</summary>
     public bool TryGetLiveMetadata(Guid sessionId, out AgentSessionLiveMetadata metadata)
+    {
+        var result = TryGetLiveMetadataAsync(sessionId, CancellationToken.None).GetAwaiter().GetResult();
+        metadata = result!;
+        return result is not null;
+    }
+
+    /// <summary>
+    /// CARD-1362 D-3: null is "unavailable" (any failure, the live-read deadline included) or a
+    /// runner status other than Running/Starting; a cancelled caller token rethrows.
+    /// </summary>
+    public async Task<AgentSessionLiveMetadata?> TryGetLiveMetadataAsync(Guid sessionId, CancellationToken ct)
     {
         if (_testAdapters.ContainsKey(sessionId))
         {
             _testAgentStatuses.TryGetValue(sessionId, out var status);
             _testPending.TryGetValue(sessionId, out var pending);
             _testTranscriptBound.TryGetValue(sessionId, out var bound);
-            metadata = new AgentSessionLiveMetadata(
+            return new AgentSessionLiveMetadata(
                 sessionId, GetDeltaSequenceOrDefault(sessionId), status,
                 TranscriptBound: bound, Pending: pending);
-            return true;
         }
 
         try
         {
-            var session = _runnerClient.GetAsync(sessionId, CancellationToken.None).GetAwaiter().GetResult();
-            if (session.Status is not ("Running" or "Starting"))
+            SessionRunnerSessionDto session;
+            var (deadline, linked) = LiveReadDeadline(ct);
+            using (deadline)
+            using (linked)
             {
-                metadata = default!;
-                return false;
+                session = await _runnerClient.GetAsync(sessionId, linked.Token).WaitAsync(linked.Token);
             }
 
-            metadata = new AgentSessionLiveMetadata(
+            if (session.Status is not ("Running" or "Starting"))
+                return null;
+
+            return new AgentSessionLiveMetadata(
                 sessionId, session.LastSequence, session.AgentStatus,
                 session.TranscriptBound, session.TranscriptBindHow, session.Pending);
-            return true;
         }
-        catch
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            metadata = default!;
-            return false;
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Live metadata unavailable for agent session {SessionId}", sessionId);
+            return null;
         }
     }
 
@@ -1858,7 +1956,7 @@ public sealed class AgentSessionRuntime
             return;
         }
 
-        var sequenceBeforeInput = GetRunnerSequenceOrDefault(sessionId, ct);
+        var sequenceBeforeInput = await GetRunnerSequenceOrDefaultAsync(sessionId, ct);
         var submittedCommand = RecordTerminalInput(sessionId, input);
         await _runnerClient.SendInputAsync(sessionId, input, ct);
         if (submittedCommand && trackManualTurn)
@@ -1989,15 +2087,20 @@ public sealed class AgentSessionRuntime
             await adapter.DisposeAsync();
     }
 
-    private long GetRunnerSequenceOrDefault(Guid sessionId, CancellationToken ct)
+    private async Task<long> GetRunnerSequenceOrDefaultAsync(Guid sessionId, CancellationToken ct)
     {
         if (_testBuffers.ContainsKey(sessionId))
             return GetDeltaSequenceOrDefault(sessionId);
 
         try
         {
-            var buffer = _runnerClient.GetBufferAsync(sessionId, ct).GetAwaiter().GetResult();
-            return buffer.LastSequence;
+            var (deadline, linked) = LiveReadDeadline(ct);
+            using (deadline)
+            using (linked)
+            {
+                var buffer = await _runnerClient.GetBufferAsync(sessionId, linked.Token).WaitAsync(linked.Token);
+                return buffer.LastSequence;
+            }
         }
         catch
         {
@@ -2177,10 +2280,10 @@ public sealed class AgentSessionRuntime
         var sawDelta = false;
         while (UtcNow() < firstDeltaDeadline)
         {
-            if (!IsLiveOrUnknown(sessionId, runnerId))
+            if (!await IsLiveOrUnknownAsync(sessionId, runnerId, CancellationToken.None))
                 return ManualTurnWaitResult.RuntimeMissing;
 
-            if (GetRunnerSequenceOrDefault(sessionId, CancellationToken.None) > sequenceAtSubmit)
+            if (await GetRunnerSequenceOrDefaultAsync(sessionId, CancellationToken.None) > sequenceAtSubmit)
             {
                 sawDelta = true;
                 break;
@@ -2196,16 +2299,16 @@ public sealed class AgentSessionRuntime
         var quietPeriod = TimeSpan.FromMilliseconds(quietPeriodMs);
         var maxWait = TimeSpan.FromMilliseconds(Math.Max(_settings.StallTimeoutMs, quietPeriodMs * 2));
         var deadline = UtcNow() + maxWait;
-        var lastSequence = GetRunnerSequenceOrDefault(sessionId, CancellationToken.None);
+        var lastSequence = await GetRunnerSequenceOrDefaultAsync(sessionId, CancellationToken.None);
         var lastChange = UtcNow();
 
         while (UtcNow() < deadline)
         {
             await Task.Delay(ManualTurnPollInterval);
-            if (!IsLiveOrUnknown(sessionId, runnerId))
+            if (!await IsLiveOrUnknownAsync(sessionId, runnerId, CancellationToken.None))
                 return ManualTurnWaitResult.RuntimeMissing;
 
-            var currentSequence = GetRunnerSequenceOrDefault(sessionId, CancellationToken.None);
+            var currentSequence = await GetRunnerSequenceOrDefaultAsync(sessionId, CancellationToken.None);
             if (currentSequence != lastSequence)
             {
                 lastSequence = currentSequence;
