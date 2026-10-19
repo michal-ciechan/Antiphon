@@ -305,9 +305,18 @@ public sealed class RunScheduler
         return spec.TimeoutMinutes ?? RowTimeout.DeriveRowMinutes(spec.EstimatedMinutes, null, manifest.Timeouts.RowMinutes);
     }
 
-    // CARD-1356: the deadline a scheduled build runs under.
-    internal static int BuildDeadlineMinutes(CheckpointManifest manifest, IEnumerable<CheckpointSpec> rows, string buildId, TimeSpan? rowTimeoutOverride) =>
-        Math.Max(15, manifest.Timeouts.RowMinutes);
+    // CARD-1356 D-6: a scheduled build runs under the largest deadline of the rows that need it, at least 15 minutes
+    // and at least the manifest row default; --row-timeout replaces it exactly as it replaces a row's deadline.
+    internal static int BuildDeadlineMinutes(CheckpointManifest manifest, IEnumerable<CheckpointSpec> rows, string buildId, TimeSpan? rowTimeoutOverride)
+    {
+        if (rowTimeoutOverride is TimeSpan over)
+            return Math.Max(1, (int)Math.Ceiling(over.TotalMinutes));
+        var minutes = Math.Max(15, manifest.Timeouts.RowMinutes);
+        foreach (var row in rows)
+            if (!row.IsCommand && string.Equals(row.Build, buildId, StringComparison.Ordinal))
+                minutes = Math.Max(minutes, RowDeadlineMinutes(row, manifest, null));
+        return minutes;
+    }
 
     internal static bool IsPtyProject(string? project)
     {
@@ -338,6 +347,8 @@ public sealed class RunScheduler
 
         progress.State = "building";
         progress.StartedAt = DateTimeOffset.UtcNow;
+        var deadlineMinutes = BuildDeadlineMinutes(request.Manifest, request.Rows, build.Id, request.RowTimeoutOverride);
+        progress.DeadlineMinutes = deadlineMinutes;
         request.State.MaxConcurrentBuilds = Math.Max(
             request.State.MaxConcurrentBuilds,
             request.State.Builds.Count(item => item.State == "building"));
@@ -434,7 +445,7 @@ public sealed class RunScheduler
             result = await RowTimeout.RunWithDeadlineAsync(
                 _driver,
                 new DriverRequest("dotnet", args, request.WorkingDirectory, log) { Ledger = ledger },
-                TimeSpan.FromMinutes(Math.Max(15, request.Manifest.Timeouts.RowMinutes)),
+                TimeSpan.FromMinutes(deadlineMinutes),
                 cancellationToken).ConfigureAwait(false);
             sourceOk = request.SourceGuard?.Observe() != false;
         }
