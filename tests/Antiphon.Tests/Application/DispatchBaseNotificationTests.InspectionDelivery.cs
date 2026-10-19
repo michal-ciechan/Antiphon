@@ -191,7 +191,7 @@ public partial class DispatchBaseNotificationTests
                 received.Count(p => PromptSubmissionMatch.IsCompleteIn(original.Body, p.Text ?? "")).ShouldBe(1);
                 var prompt = received.Single(p => PromptSubmissionMatch.IsCompleteIn(original.Body, p.Text ?? ""));
                 if (row.LastDeliveryBaselineSequence is long floor) prompt.Sequence.ShouldBeGreaterThan(floor);
-                else prompt.Timestamp.ShouldBeGreaterThanOrEqualTo(row.LastDeliveryStartedAt!.Value);
+                else prompt.Timestamp.ShouldNotBeNull().ShouldBeGreaterThanOrEqualTo(row.LastDeliveryStartedAt.ShouldNotBeNull());
             }
             received.Count.ShouldBe(2);
             (await final.TranscriptEntries.CountAsync(p => p.AgentSessionId == replacement.SessionId && p.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
