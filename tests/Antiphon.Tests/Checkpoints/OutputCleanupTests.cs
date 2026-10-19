@@ -14,6 +14,33 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class OutputCleanupTests : CheckpointTestBase
 {
     [Test]
+    public void build_entry_over_the_receipt_limit_is_adopted_at_seal_and_removed_on_green()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+            Skip.Test("Output custody requires Linux or Windows");
+        var root = InitGitRepo();
+        var output = Path.Combine(root, "bin-c1368");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
+        var app = Path.Combine(output, "app.dll");
+        File.WriteAllText(app, "COMPILER");
+        var big = Path.Combine(output, "big.bin");
+        using (var file = File.Create(big))
+            file.SetLength(64L * 1024 * 1024 + 1);
+        var exited = CheckpointFixtures.AfterFileClock(app, big);
+
+        Should.Throw<IOException>(() => ReceiptFile.ReadBytes(big)).Message
+            .ShouldContain("selected file exceeds size limit");
+        SafeWrite.Require(OwnedOutputLedger.Seal(output, exited));
+        SafeWrite.MatchesCreation(big).ShouldBeTrue();
+
+        var clean = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1368"], 0, false, false,
+            createdPaths: [output]);
+        clean.Refusals.ShouldBeEmpty();
+        clean.Deleted.ShouldBe([output]);
+        Directory.Exists(output).ShouldBeFalse();
+    }
+
+    [Test]
     public void deletes_only_this_runs_bin_names()
     {
         var root = Tree();
@@ -1227,7 +1254,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         var map = Path.Combine(output, ".msCoverageExtensionSourceRootsMapping_App");
         File.WriteAllText(map, "EARLY");
         File.WriteAllText(map, "FINAL");
-        var exited = AfterFileClock(map);
+        var exited = CheckpointFixtures.AfterFileClock(map);
         SafeWrite.Require(OwnedOutputLedger.Seal(output, exited));
 
         SafeWrite.MatchesCreation(map).ShouldBeTrue();
@@ -1241,7 +1268,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(lateOutput, SafeWrite.Under(lateRoot)));
         var built = Path.Combine(lateOutput, "app.dll");
         File.WriteAllText(built, "COMPILER");
-        var lateExit = AfterFileClock(built);
+        var lateExit = CheckpointFixtures.AfterFileClock(built);
         SafeWrite.Require(OwnedOutputLedger.Seal(lateOutput, lateExit));
         var late = Path.Combine(lateOutput, "late.txt");
         File.WriteAllText(late, "USER");
@@ -1260,7 +1287,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         CreateHardLink(linked, outside, IntPtr.Zero).ShouldBeTrue(Marshal.GetLastWin32Error().ToString());
         var sibling = Path.Combine(linkOutput, "app.dll");
         File.WriteAllText(sibling, "COMPILER");
-        var linkExit = AfterFileClock(sibling, linked);
+        var linkExit = CheckpointFixtures.AfterFileClock(sibling, linked);
         SafeWrite.Require(OwnedOutputLedger.Seal(linkOutput, linkExit));
         SafeWrite.MatchesCreation(linked).ShouldBeFalse();
         SafeWrite.MatchesCreation(sibling).ShouldBeTrue();
@@ -1305,7 +1332,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
         var built = Path.Combine(output, "app.dll");
         File.WriteAllText(built, "COMPILER");
-        var exited = AfterFileClock(built);
+        var exited = CheckpointFixtures.AfterFileClock(built);
         SafeWrite.Require(OwnedOutputLedger.Seal(output, exited));
         SafeWrite.MatchesCreation(built).ShouldBeTrue();
         var cleaned = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1318"], 0, false, false, createdPaths: [output]);
@@ -1319,7 +1346,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         var stamped = Path.Combine(clockOutput, "app.dll");
         File.WriteAllText(stamped, "COMPILER");
         var created = SafeWrite.FreshRootCreated(clockOutput)!.Value;
-        var clockExit = AfterFileClock(stamped);
+        var clockExit = CheckpointFixtures.AfterFileClock(stamped);
         File.WriteAllText(stamped, "TAMPERED");
         var inside = created + (clockExit - created) / 2;
         File.SetCreationTimeUtc(stamped, inside.UtcDateTime);
@@ -1367,7 +1394,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         (copiedStat.Changed < rootCreated).ShouldBeTrue("copy kept a change time from before the root");
         var copyCreated = new DateTimeOffset(DateTime.SpecifyKind(File.GetCreationTimeUtc(copied), DateTimeKind.Utc));
         (copyCreated >= rootCreated).ShouldBeTrue("copy creation is not before the root");
-        var exited = AfterFileClock(copied);
+        var exited = CheckpointFixtures.AfterFileClock(copied);
         (copyCreated <= exited).ShouldBeTrue("copy creation is not after the observed exit");
         SafeWrite.Require(OwnedOutputLedger.Seal(output, exited));
         SafeWrite.MatchesCreation(copied).ShouldBeTrue();
@@ -1392,7 +1419,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
         var payload = Path.Combine(output, "app.dll");
         File.WriteAllText(payload, "COMPILER");
-        var exited = AfterFileClock(payload);
+        var exited = CheckpointFixtures.AfterFileClock(payload);
         var boundMs = (CheckpointNativeIo.CustodySharingViolationAttempts - 1)
             * CheckpointNativeIo.CustodySharingViolationDelayMilliseconds;
         const int releaseMs = 400;
@@ -1422,7 +1449,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(heldOutput, SafeWrite.Under(heldRoot)));
         var heldPayload = Path.Combine(heldOutput, "app.dll");
         File.WriteAllText(heldPayload, "COMPILER");
-        var heldExit = AfterFileClock(heldPayload);
+        var heldExit = CheckpointFixtures.AfterFileClock(heldPayload);
         using (new FileStream(heldPayload, FileMode.Open, FileAccess.Read, FileShare.None))
             SafeWrite.Require(OwnedOutputLedger.Seal(heldOutput, heldExit));
         SafeWrite.MatchesCreation(heldPayload).ShouldBeFalse();
@@ -1443,28 +1470,6 @@ public sealed class OutputCleanupTests : CheckpointTestBase
             PropagationFlags.None,
             AccessControlType.Allow));
         info.SetAccessControl(security);
-    }
-
-    private static DateTimeOffset AfterFileClock(params string[] paths)
-    {
-        for (var i = 0; i < 50; i++)
-        {
-            var now = DateTimeOffset.UtcNow;
-            var pending = false;
-            foreach (var path in paths)
-            {
-                var info = new FileInfo(path);
-                info.Refresh();
-                if (new DateTimeOffset(DateTime.SpecifyKind(info.LastWriteTimeUtc, DateTimeKind.Utc)) > now
-                    || new DateTimeOffset(DateTime.SpecifyKind(info.CreationTimeUtc, DateTimeKind.Utc)) > now)
-                    pending = true;
-            }
-            if (!pending)
-                return now;
-            Thread.Sleep(20);
-        }
-
-        throw new TimeoutException("file clock stayed ahead of UtcNow");
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateHardLinkW")]

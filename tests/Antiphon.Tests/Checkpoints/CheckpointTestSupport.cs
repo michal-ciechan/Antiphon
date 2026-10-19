@@ -157,6 +157,28 @@ internal sealed class ScriptedHttpHandler : HttpMessageHandler
 
 internal static class CheckpointFixtures
 {
+    public static DateTimeOffset AfterFileClock(params string[] paths)
+    {
+        for (var i = 0; i < 50; i++)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var pending = false;
+            foreach (var path in paths)
+            {
+                var info = new FileInfo(path);
+                info.Refresh();
+                if (new DateTimeOffset(DateTime.SpecifyKind(info.LastWriteTimeUtc, DateTimeKind.Utc)) > now
+                    || new DateTimeOffset(DateTime.SpecifyKind(info.CreationTimeUtc, DateTimeKind.Utc)) > now)
+                    pending = true;
+            }
+            if (!pending)
+                return now;
+            Thread.Sleep(20);
+        }
+
+        throw new TimeoutException("file clock stayed ahead of UtcNow");
+    }
+
     public static string RepoRoot => DockerStackDocuments.RepoRoot;
 
     public static SourceObservation CleanSource() => new(new string('a', 40), 0, new string('1', 64),
