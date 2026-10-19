@@ -439,6 +439,9 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         var exit = await CheckpointApp.ExecuteAsync(run, cancellationToken, new CheckpointApp.Runtime
         {
             Driver = driver, Slots = slots, SourceCapture = _ => source,
+            // The fixture is not an owned executor. An ambient task id with no token
+            // returns owner-unverified before the scheduler runs.
+            EnvironmentLookup = _ => null,
         });
         return (run, exit);
     }

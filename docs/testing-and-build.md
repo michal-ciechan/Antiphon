@@ -1197,14 +1197,20 @@ supplied inputs. CP-13 uses a separate owner-death sandbox and preserves protect
 live, uncertain and unmarked fixtures until its bounded sweep checks finish. These
 reports do not replace the method-scoped SourceLanding Mutation PCs.
 
-`Get-NamespaceCensus` deliberately keeps an independent literal count of compiled,
-non-explicit `Antiphon.Tests.Checkpoints` cases with argument rows expanded. Both
-Namespace admission and the Full checkpoint execution floor use it; do not derive
-it from the selected roster being checked. When adding or removing a checkpoint
-case, update this count and run
-`CheckpointNamespaceCensusUsageTests.namespace_census_matches_compiled_checkpoint_cases`.
-That separate class carries `Category=Unit`, so the ordinary Unit lane catches
-census drift while `CheckpointTempUsageTests` remains in Integration.
+`Get-NamespaceCensus` derives `selected` by a comment- and string-aware scan of
+`tests/Antiphon.Tests/Checkpoints` (CARD-1342). The scan counts the same cases as
+`CheckpointRoster.CompiledCases`: non-abstract classes in the exact namespace
+`Antiphon.Tests.Checkpoints`, instance `[Test]` or `[TestAttribute]` methods that
+are not `[Explicit]`, one row per `[Arguments]` or `[ArgumentsAttribute]`, and one
+row when a method has none. `[Test]` text inside comments or string literals is
+not a case. Namespace admission and the Full checkpoint execution floor compare
+the supplied roster with that count. Do not derive the count from the roster
+being checked, and do not replace the scan with a hand-maintained literal. OS
+skip names stay explicit lists matched against the roster.
+`CheckpointNamespaceCensusUsageTests.namespace_census_matches_compiled_checkpoint_cases`
+checks the scan against reflection. That class carries `Category=Unit`, so the
+ordinary Unit lane catches scanner drift while `CheckpointTempUsageTests` remains
+in Integration.
 
 CARD-1199 receipt readers inspect file types without following links before opening required state,
 report and build evidence, then recheck the retained handle. Linux uses nonblocking opens so a

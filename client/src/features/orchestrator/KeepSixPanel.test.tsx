@@ -95,33 +95,40 @@ const under = row({
   shortfall: 5,
   revision: 4,
   holdReason: 'model quota',
-  holdUntil: '2099-01-01T00:00:00.000Z',
+  holdUntil: '2026-10-18T12:00:00.000Z',
   lastReminderEnqueuedAt: '2026-10-17T09:20:00.000Z',
   lastDispatchAt: '2026-10-17T08:20:00.000Z',
 })
 
 describe('KeepSixPanel', () => {
   it('renders off, healthy, and under-target badges with the counts and an active hold', async () => {
-    server.use(http.get('/api/orchestrators/keep-six', () => HttpResponse.json([off, healthy, under])))
+    // holdUntil is 2026-10-18T12:00:00.000Z. The panel clocks expiry from query dataUpdatedAt
+    // (Date.now()). Only Date is faked so findBy keeps real timers.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-17T12:00:00.000Z') })
+    try {
+      server.use(http.get('/api/orchestrators/keep-six', () => HttpResponse.json([off, healthy, under])))
 
-    renderWithProviders(<KeepSixPanel />)
+      renderWithProviders(<KeepSixPanel />)
 
-    const badges = await screen.findAllByTestId('keep-six-badge')
-    expect(badges.map((badge) => badge.textContent)).toEqual(['off', 'healthy', 'under-target'])
+      const badges = await screen.findAllByTestId('keep-six-badge')
+      expect(badges.map((badge) => badge.textContent)).toEqual(['off', 'healthy', 'under-target'])
 
-    const short = screen.getByTestId('keep-six-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3')
-    expect(within(screen.getByTestId('keep-six-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1')).getByTestId('keep-six-count')).toHaveTextContent('2 of 6')
-    expect(within(screen.getByTestId('keep-six-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2')).getByTestId('keep-six-count')).toHaveTextContent('6 of 6')
-    expect(within(short).getByTestId('keep-six-count')).toHaveTextContent('1 of 6')
-    expect(within(screen.getByTestId('keep-six-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1')).getByTestId('keep-six-dispatchable')).toHaveTextContent('4')
-    expect(within(screen.getByTestId('keep-six-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2')).getByTestId('keep-six-dispatchable')).toHaveTextContent('1')
-    expect(within(short).getByTestId('keep-six-dispatchable')).toHaveTextContent('9')
-    expect(within(short).getByTestId('keep-six-hold')).toHaveTextContent('model quota')
-    expect(within(short).getByTestId('keep-six-hold')).toHaveTextContent('2099-01-01T00:00:00.000Z')
-    expect(within(short).getByTestId('keep-six-reminder')).toHaveTextContent('2026-10-17T09:20:00.000Z')
-    expect(within(short).getByTestId('keep-six-dispatch')).toHaveTextContent('2026-10-17T08:20:00.000Z')
-    expect(screen.getByRole('switch', { name: 'Auto-processing Off seat' })).not.toBeChecked()
-    expect(screen.getByRole('switch', { name: 'Auto-processing Healthy seat' })).toBeChecked()
+      const short = screen.getByTestId('keep-six-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3')
+      expect(within(screen.getByTestId('keep-six-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1')).getByTestId('keep-six-count')).toHaveTextContent('2 of 6')
+      expect(within(screen.getByTestId('keep-six-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2')).getByTestId('keep-six-count')).toHaveTextContent('6 of 6')
+      expect(within(short).getByTestId('keep-six-count')).toHaveTextContent('1 of 6')
+      expect(within(screen.getByTestId('keep-six-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1')).getByTestId('keep-six-dispatchable')).toHaveTextContent('4')
+      expect(within(screen.getByTestId('keep-six-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2')).getByTestId('keep-six-dispatchable')).toHaveTextContent('1')
+      expect(within(short).getByTestId('keep-six-dispatchable')).toHaveTextContent('9')
+      expect(within(short).getByTestId('keep-six-hold')).toHaveTextContent('model quota')
+      expect(within(short).getByTestId('keep-six-hold')).toHaveTextContent('2026-10-18T12:00:00.000Z')
+      expect(within(short).getByTestId('keep-six-reminder')).toHaveTextContent('2026-10-17T09:20:00.000Z')
+      expect(within(short).getByTestId('keep-six-dispatch')).toHaveTextContent('2026-10-17T08:20:00.000Z')
+      expect(screen.getByRole('switch', { name: 'Auto-processing Off seat' })).not.toBeChecked()
+      expect(screen.getByRole('switch', { name: 'Auto-processing Healthy seat' })).toBeChecked()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('the switch puts Human provenance and does not call tick', async () => {

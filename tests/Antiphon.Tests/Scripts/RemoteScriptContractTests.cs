@@ -710,8 +710,9 @@ public sealed class RemoteScriptContractTests
         }
     }
 
-    // CARD-1191. Seed success published accepted:true from a subshell, and the fixture trap
-    // replaced the global UnhandledExit trap, so an F-4 death left an empty diagnosis.
+    // CARD-1191. An F-4 death records UnhandledExit after finalization. Seed and
+    // seed-rerun go through c849_fixture_inner, whose write_result prints the diagnosis
+    // and exits "$3". An inner exit with inner_recorded still 0 is UnhandledExit.
     [Test]
     public void C1191_Fixture_failure_records_unhandled_exit_without_seed_receipt()
     {
@@ -722,18 +723,25 @@ public sealed class RemoteScriptContractTests
         exit.ShouldContain("write_result false \"UnhandledExit $ec\" \"$ec\"");
         Order(exit, "c849_fixture_finalize", "UnhandledExit").ShouldBeTrue("failure receipt follows finalization");
 
+        var inner = Block(Remote(), "c849_fixture_inner");
+        Order(inner, "if [ \"$inner_recorded\" = 0 ]", "diagnosis=UnhandledExit").ShouldBeTrue(
+            "an unrecorded inner exit is UnhandledExit");
+        Order(inner, "printf '%s\\n' \"$inner_diagnosis\"", "exit \"$3\"").ShouldBeTrue(
+            "the inner verdict prints its diagnosis and exits the subshell");
+
         var seed = Block(Remote(), "c849_fixture_seed");
-        const string guard = "write_result() { printf '%s\\n' \"$2\"; exit \"$3\"; }";
         foreach (var diagnosis in new[] { "FixtureSeedFailed", "FixtureSeedRerunFailed" })
         {
+            var phase = diagnosis == "FixtureSeedFailed" ? "seed" : "seed-rerun";
             var close = "c849_seed ) || write_result false " + diagnosis;
             var at = seed.IndexOf(close, StringComparison.Ordinal);
             at.ShouldBeGreaterThanOrEqualTo(0, diagnosis);
             var open = seed.LastIndexOf("\n    (", at, StringComparison.Ordinal);
             open.ShouldBeGreaterThanOrEqualTo(0, diagnosis);
             var subshell = seed[open..(at + "c849_seed".Length)];
-            subshell.ShouldContain(guard, customMessage: diagnosis);
-            Order(subshell, guard, "c849_seed").ShouldBeTrue(diagnosis);
+            var call = "c849_fixture_inner " + phase + " c849_seed";
+            subshell.ShouldContain(call, customMessage: diagnosis);
+            Order(subshell, "c849_fixture_inner " + phase, "c849_seed").ShouldBeTrue(diagnosis);
         }
     }
 
@@ -1079,6 +1087,18 @@ public sealed class RemoteScriptContractTests
         Fact(output, "missing-sentinel-refused").ShouldBe("1", "missing-sentinel-refused");
         Fact(output, "wrong-sentinel-refused").ShouldBe("1", "wrong-sentinel-refused");
         Fact(output, "offline-miss-refused").ShouldBe("1", "offline-miss-refused");
+    }
+
+    // CARD-1333. A non-zero `docker network create` is FixtureNpmNetworkFailed at exit 2.
+    // Refill does not run. The success create still prints the CARD-1328 id.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1333_Npm_network_create_failure_reports_FixtureNpmNetworkFailed()
+    {
+        var output = C1192Run("npm-network-create");
+        Fact(output, "npm-diagnosis").ShouldBe("FixtureNpmNetworkFailed", output);
+        Fact(output, "npm-code").ShouldBe("2", output);
+        Fact(output, "refill-volume-source").ShouldBe("0", output);
     }
 
     // CARD-1192 S4. real-cases-host-backend: Seed, saved copy, cold seed, Preview and Prune
@@ -2996,6 +3016,39 @@ public sealed class RemoteScriptContractTests
             apply.Output.ShouldContain("RunnerBusy");
             f.Removed.ShouldBeEmpty();
         }
+    }
+
+    // CARD-1338. The fixture exports RUNNER_GROK_STORE_DIR. Production dry-run does not:
+    // the intercept calls c1008_recycle before case_retire_temp_runner reads stack.temp.env.
+    // compose_temp then exports the empty value over that file, and the temp overlay rejects
+    // the missing /state/grok source. The preview must name the four temp volumes and remove nothing.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1338_Retire_temp_dry_run_lists_exactly_the_temp_volumes()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var f = new C1008HostFixture(main: false);
+        var run = await f.Run("retire-temp-runner", dryRun: true, extra: "unset RUNNER_GROK_STORE_DIR");
+        run.Exit.ShouldBe(0, "c1338-preview: " + run.Output);
+        run.Output.ShouldNotContain("RecycleComposeMismatch");
+        run.Output.ShouldNotContain("MUTATION", Case.Sensitive, "c1338-preview: preview precedes generic setup");
+        var removes = run.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.TrimEnd('\r'))
+            .Where(line => line.StartsWith("C1008_PREVIEW remove=", StringComparison.Ordinal))
+            .ToArray();
+        removes.ShouldBe(new[]
+        {
+            "C1008_PREVIEW remove=antiphon-runner-temp_work",
+            "C1008_PREVIEW remove=antiphon-runner-temp_runner-tmp",
+            "C1008_PREVIEW remove=antiphon-runner-temp_dind-data",
+            "C1008_PREVIEW remove=antiphon-runner-temp_runner-state"
+        });
+        run.Output.ShouldContain(
+            "C1008_PREVIEW preserve=antiphon-runner_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=true");
+        f.Removed.ShouldBeEmpty("c1338-preview: dry-run removes nothing");
+        f.Trace.Any(a => new[] { "stop", "rm", "create", "start", "run" }.Contains(a[0])
+            || a.Take(2).SequenceEqual(new[] { "volume", "rm" })).ShouldBeFalse();
+        File.Exists(C1105Journal(f)).ShouldBeFalse("c1338-preview: dry-run writes no journal");
     }
 
     // CARD-1105 V-2. The running roster is the previous generation; the replacement must carry the new bind.

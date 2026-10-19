@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "policyHash": "de492ab11aa3a325af46b5447e7f5e2c66d81bb1b84f626bb6f3fea3d3d4b279",
+  "policyHash": "bb29ed119865febf791fc1b1d91aeb30d40dfa2d1a4e9b46108c1a2d722d1734",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -739,12 +739,13 @@
     "npm-build": 600000,
     "dotnet-build": 1200000,
     "antiphon": 3600000,
-    "session-runner": 1200000,
+    "session-runner": 1800000,
     "pty-host": 1200000,
     "agents-pty": 1200000,
     "messaging": 1200000,
     "client": 1200000,
     "scripts": 1200000,
+    "e2e": 7200000,
     "markdown-pdf": 1200000
   },
   "reducedDispatchPolicy": "inactive",

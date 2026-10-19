@@ -37,12 +37,12 @@ public sealed class AgentTaskLandBareRepositoryCleanupTests
         }
         else if (shape == "head-only")
         {
-            Directory.Delete(Path.Combine(nested, "objects"), true);
-            Directory.Delete(Path.Combine(nested, "refs"), true);
+            ReadOnlyDirectory.Delete(Path.Combine(nested, "objects"));
+            ReadOnlyDirectory.Delete(Path.Combine(nested, "refs"));
             foreach (var entry in Directory.EnumerateFileSystemEntries(nested).ToArray())
                 if (Path.GetFileName(entry) != "HEAD")
                 {
-                    if (Directory.Exists(entry)) Directory.Delete(entry, true);
+                    if (Directory.Exists(entry)) ReadOnlyDirectory.Delete(entry);
                     else File.Delete(entry);
                 }
         }

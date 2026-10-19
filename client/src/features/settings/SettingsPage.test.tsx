@@ -2,10 +2,89 @@ import { HttpResponse, http } from 'msw'
 import { Link } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { ROLE_POLICY_FIXTURE } from '../../test/mocks/handlers'
 import { server } from '../../test/mocks/server'
 import { SettingsPage } from './SettingsPage'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
+
+interface RoutingFetches {
+  templates: number
+  chainList: number
+  effectiveRoles: string[]
+  pins: number
+  usage: number
+  runnerDefaults: number
+  rolePolicy: number
+}
+
+/** The routing tab's chain handler matches the matrix list and each role-policy effective read. */
+function trackRoutingFetches(): RoutingFetches {
+  const fetches: RoutingFetches = {
+    templates: 0,
+    chainList: 0,
+    effectiveRoles: [],
+    pins: 0,
+    usage: 0,
+    runnerDefaults: 0,
+    rolePolicy: 0,
+  }
+  server.use(
+    http.get('/api/settings/templates', () => {
+      fetches.templates += 1
+      return HttpResponse.json([])
+    }),
+    http.get('/api/settings/providers', () => HttpResponse.json([])),
+    http.get('/api/settings/template-groups', () => HttpResponse.json([])),
+    http.get('/api/role-policy', () => {
+      fetches.rolePolicy += 1
+      return HttpResponse.json(ROLE_POLICY_FIXTURE)
+    }),
+    http.get('/api/complexity-chains', ({ request }) => {
+      const role = new URL(request.url).searchParams.get('role')
+      if (role) fetches.effectiveRoles.push(role)
+      else fetches.chainList += 1
+      return HttpResponse.json({ chains: [], roles: [], complexities: ['Hard', 'Medium', 'Easy'] })
+    }),
+    http.get('/api/routing-pins', () => {
+      fetches.pins += 1
+      return HttpResponse.json({ pins: [] })
+    }),
+    http.get('/api/subscription-usage', () => {
+      fetches.usage += 1
+      return HttpResponse.json([])
+    }),
+    http.get('/api/runner-defaults', ({ request }) => {
+      if (new URL(request.url).pathname !== '/api/runner-defaults') return undefined
+      fetches.runnerDefaults += 1
+      return HttpResponse.json({
+        revision: 1, globalRunnerId: null, kindDefaults: [], updatedAt: '2026-09-25T00:00:00Z',
+        lastReason: null, lastProvenance: null, lastCallerTaskId: null,
+        supportedKinds: ['Grok', 'ClaudeCode', 'Codex'], unresolvedReferences: [],
+      })
+    }),
+  )
+  return fetches
+}
+
+function expectRoutingIdle(fetches: RoutingFetches) {
+  expect(fetches.chainList).toBe(0)
+  expect(fetches.effectiveRoles).toEqual([])
+  expect(fetches.pins).toBe(0)
+  expect(fetches.usage).toBe(0)
+  expect(fetches.runnerDefaults).toBe(0)
+  expect(fetches.rolePolicy).toBe(0)
+}
+
+function expectRoutingMountedOnce(fetches: RoutingFetches) {
+  const roles = ROLE_POLICY_FIXTURE.roles.map((row) => row.role).sort()
+  expect(fetches.chainList).toBe(1)
+  expect([...fetches.effectiveRoles].sort()).toEqual(roles)
+  expect(fetches.pins).toBe(1)
+  expect(fetches.usage).toBe(1)
+  expect(fetches.runnerDefaults).toBe(1)
+  expect(fetches.rolePolicy).toBe(1)
+}
 
 describe('SettingsPage', () => {
   afterEach(() => {
@@ -58,86 +137,21 @@ describe('SettingsPage', () => {
   })
 
   it('does not fetch routing queries until the Routing tab is opened', async () => {
-    let templateRequests = 0
-    let chainRequests = 0
-    let pinRequests = 0
-    let usageRequests = 0
-    let runnerDefaultRequests = 0
-
-    server.use(
-      http.get('/api/settings/templates', () => {
-        templateRequests += 1
-        return HttpResponse.json([])
-      }),
-      http.get('/api/settings/providers', () => HttpResponse.json([])),
-      http.get('/api/settings/template-groups', () => HttpResponse.json([])),
-      http.get('/api/complexity-chains', () => {
-        chainRequests += 1
-        return HttpResponse.json({ chains: [], roles: [], complexities: ['Hard', 'Medium', 'Easy'] })
-      }),
-      http.get('/api/routing-pins', () => {
-        pinRequests += 1
-        return HttpResponse.json({ pins: [] })
-      }),
-      http.get('/api/subscription-usage', () => {
-        usageRequests += 1
-        return HttpResponse.json([])
-      }),
-      http.get('/api/runner-defaults', () => {
-        runnerDefaultRequests += 1
-        return HttpResponse.json({
-          revision: 1, globalRunnerId: null, kindDefaults: [], updatedAt: '2026-09-25T00:00:00Z',
-          lastReason: null, lastProvenance: null, lastCallerTaskId: null,
-          supportedKinds: ['Grok', 'ClaudeCode', 'Codex'], unresolvedReferences: [],
-        })
-      }),
-    )
+    const fetches = trackRoutingFetches()
 
     window.history.pushState({}, '', '/settings')
     renderWithProviders(<SettingsPage />)
 
-    await waitFor(() => expect(templateRequests).toBe(1))
-    expect(chainRequests).toBe(0)
-    expect(pinRequests).toBe(0)
-    expect(usageRequests).toBe(0)
-    expect(runnerDefaultRequests).toBe(0)
+    await waitFor(() => expect(fetches.templates).toBe(1))
+    expectRoutingIdle(fetches)
 
     await userEvent.click(screen.getByRole('tab', { name: /routing/i }))
     await waitFor(() => expect(screen.getByTestId('routing-settings-tab')).toBeInTheDocument())
-    await waitFor(() => {
-      expect(chainRequests).toBe(1)
-      expect(pinRequests).toBe(1)
-      expect(usageRequests).toBe(1)
-      expect(runnerDefaultRequests).toBe(1)
-    })
+    await waitFor(() => expectRoutingMountedOnce(fetches))
   })
 
   it('?tab=routing selects the tab and mounts routing queries without fetching templates', async () => {
-    let templateRequests = 0
-    let chainRequests = 0
-    let pinRequests = 0
-    let usageRequests = 0
-
-    server.use(
-      http.get('/api/settings/templates', () => {
-        templateRequests += 1
-        return HttpResponse.json([])
-      }),
-      http.get('/api/settings/providers', () => HttpResponse.json([])),
-      http.get('/api/settings/template-groups', () => HttpResponse.json([])),
-      http.get('/api/complexity-chains', () => {
-        chainRequests += 1
-        return HttpResponse.json({ chains: [], roles: [], complexities: ['Hard', 'Medium', 'Easy'] })
-      }),
-      http.get('/api/routing-pins', () => {
-        pinRequests += 1
-        return HttpResponse.json({ pins: [] })
-      }),
-      http.get('/api/subscription-usage', () => {
-        usageRequests += 1
-        return HttpResponse.json([])
-      }),
-    )
+    const fetches = trackRoutingFetches()
 
     window.history.pushState({}, '', '/settings?tab=routing')
     renderWithProviders(<SettingsPage />)
@@ -145,12 +159,8 @@ describe('SettingsPage', () => {
     const routingTab = await screen.findByRole('tab', { name: /routing/i })
     expect(routingTab).toHaveAttribute('aria-selected', 'true')
     expect(await screen.findByTestId('routing-settings-tab')).toBeInTheDocument()
-    await waitFor(() => {
-      expect(chainRequests).toBe(1)
-      expect(pinRequests).toBe(1)
-      expect(usageRequests).toBe(1)
-    })
-    expect(templateRequests).toBe(0)
+    await waitFor(() => expectRoutingMountedOnce(fetches))
+    expect(fetches.templates).toBe(0)
     expect(screen.getByRole('tab', { name: /templates/i })).toHaveAttribute('aria-selected', 'false')
   })
 

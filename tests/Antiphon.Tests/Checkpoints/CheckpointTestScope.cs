@@ -95,7 +95,15 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
     public void Register(Process process)
     {
         if (_sealed) throw new InvalidOperationException("checkpoint test scope is sealed");
-        _children.Add(_probe.Capture(process.Id));
+        try
+        {
+            _children.Add(_probe.Capture(process.Id));
+        }
+        catch (Exception ex) when (ex is DirectoryNotFoundException or FileNotFoundException or ArgumentException)
+        {
+            // The child exited before its start token could be read. Nothing remains to kill.
+            // A non-positive token would fail dispose as identity-missing, so the child is not recorded.
+        }
     }
 
     public void Register(ProcessIdentity child)

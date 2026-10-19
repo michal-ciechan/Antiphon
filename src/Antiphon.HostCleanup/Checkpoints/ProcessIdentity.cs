@@ -45,9 +45,10 @@ public class ProcessIdentityProbe
         {
             return new(ProcessVerdict.Dead, "identity-dead");
         }
-        catch (FileNotFoundException)
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
         {
             // The process may exit after GetProcessById and before /proc is read.
+            // On Linux a missing /proc/<pid> directory throws DirectoryNotFoundException.
             return new(ProcessVerdict.Dead, "identity-dead");
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException

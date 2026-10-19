@@ -126,8 +126,9 @@ public class CodexAuthProbeTests
             toDirectory.LoggedIn.ShouldBe(false, "a link to a directory is signed out");
 
             // The positive control: a regular auth.json in the same home, reached directly or
-            // through a linked home, is presence.
-            File.Delete(authPath);
+            // through a linked home, is presence. authPath is a directory symlink here.
+            // File.Delete throws UnauthorizedAccessException on Windows; remove the link only.
+            Directory.Delete(authPath, recursive: false);
             await File.WriteAllTextAsync(authPath, "{}");
             var regular = await probe.ProbeAsync("codex", CancellationToken.None);
             regular.LoggedIn.ShouldBe(true, "a regular auth.json is presence");

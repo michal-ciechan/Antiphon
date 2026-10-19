@@ -925,6 +925,135 @@ function Test-D13_StateClassification {
         -Detail ('error=' + $unknown.Error + ' outcome=' + [string]$unknown.Nodes[0].Outcome + ' message=' + [string]$unknown.Nodes[0].Message)
 }
 
+function New-C1341NpmFixture {
+    $root = Join-Path $ResultsDirectory ('c1341-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+    $clone = New-C487OwnedClone -Root $root
+    $testsDir = Join-Path $clone 'tests'
+    if (-not (Test-Path -LiteralPath $testsDir)) {
+        New-Item -ItemType Directory -Path $testsDir -Force | Out-Null
+    }
+    Copy-Item -LiteralPath $policyPath -Destination (Join-Path $testsDir 'test-execution-policy.json') -Force
+    $policy = Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json
+    $stub = '<Project><PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup></Project>'
+    foreach ($row in @($policy.projectDispositions)) {
+        $rel = ([string]$row.project) -replace '/', [System.IO.Path]::DirectorySeparatorChar
+        $dest = Join-Path $clone $rel
+        $parent = Split-Path -Parent $dest
+        if (-not (Test-Path -LiteralPath $parent)) {
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        }
+        Set-Content -LiteralPath $dest -Value $stub -Encoding ASCII
+    }
+    $client = Join-Path $clone 'client'
+    New-Item -ItemType Directory -Path $client -Force | Out-Null
+    $launcherDir = Join-Path (Join-Path $root 'Program Files') 'nodejs'
+    New-Item -ItemType Directory -Path $launcherDir -Force | Out-Null
+    $launcher = Join-Path $launcherDir 'npm.cmd'
+    Set-Content -LiteralPath $launcher -Value "@echo off`r`nexit /b 0`r`n" -Encoding ASCII
+    return [pscustomobject]@{
+        Root = $root
+        Clone = $clone
+        Client = $client
+        Launcher = $launcher
+        LauncherDir = $launcherDir
+        Trace = (Join-Path $root 'trace.log')
+        Record = (Join-Path $root 'npm-launches.jsonl')
+        Seams = (Join-Path $root 'seams.ps1')
+        Logs = (Join-Path $root 'logs')
+    }
+}
+
+function Write-C1341NpmSeams {
+    param([string]$Path, [string]$TracePath, [string]$RecordPath)
+    # Record argv only. This witness must not launch npm, cmd, or a Windows build.
+    $template = @'
+$NightlySeams = @{
+    TracePath = '__TRACE__'
+    Git = {
+        param($WorkingDirectory, $Arguments)
+        return @{ ExitCode = 0; Output = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }
+    }
+    StartProcess = {
+        param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+        $encoded = @()
+        foreach ($item in @($ArgumentList)) {
+            $encoded += (ConvertTo-Json -InputObject ([string]$item) -Compress)
+        }
+        $line = '{"file":' + (ConvertTo-Json -InputObject ([string]$FilePath) -Compress) + ',"cwd":' + (ConvertTo-Json -InputObject ([string]$WorkingDirectory) -Compress) + ',"args":[' + ($encoded -join ',') + ']}'
+        Add-Content -LiteralPath '__RECORD__' -Value $line -Encoding ASCII
+        return @{ ExitCode = 0; TimedOut = $false; Pid = 2; ChildrenExited = $true; LogText = '' }
+    }
+    DockerInfo = { return @{ exitCode = 0; version = 'fake'; detail = 'ok' } }
+    DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
+}
+'@
+    $text = $template.Replace('__TRACE__', $TracePath).Replace('__RECORD__', $RecordPath)
+    Set-Content -LiteralPath $Path -Value $text -Encoding ASCII
+}
+
+function Test-C487_G1341 {
+    # CARD-1341: quoted bare npm.cmd makes cmd %~dp0 the client directory. The launch
+    # argument must be the absolute launcher, and that directory must not be the client cwd.
+    $fx = New-C1341NpmFixture
+    Write-C1341NpmSeams -Path $fx.Seams -TracePath $fx.Trace -RecordPath $fx.Record
+    $savedPath = $env:PATH
+    $env:PATH = $fx.LauncherDir + [System.IO.Path]::PathSeparator + $savedPath
+    try {
+        $null = Invoke-E -Fx $fx -Extra @{ Suites = @('client'); Profile = 'rc' }
+    } finally {
+        $env:PATH = $savedPath
+    }
+    $expectedLauncher = [System.IO.Path]::GetFullPath($fx.Launcher)
+    $expectedClient = ConvertTo-NightlyCanonicalPath -Path $fx.Client
+    $launches = @()
+    if (Test-Path -LiteralPath $fx.Record) {
+        foreach ($line in @(Get-Content -LiteralPath $fx.Record)) {
+            if (-not [string]::IsNullOrWhiteSpace($line)) { $launches += ($line | ConvertFrom-Json) }
+        }
+    }
+    $specs = @(
+        @{ Name = 'ci'; Tail = 'ci' },
+        @{ Name = 'build'; Tail = 'run build' },
+        @{ Name = 'lint'; Tail = 'run lint' }
+    )
+    $ok = $true
+    $details = @()
+    foreach ($spec in $specs) {
+        $match = $null
+        foreach ($row in $launches) {
+            $argv = @($row.args)
+            if ($argv.Count -lt 2) { continue }
+            if ([string]$argv[0] -ne '/c') { continue }
+            $tail = @()
+            for ($i = 2; $i -lt $argv.Count; $i++) { $tail += [string]$argv[$i] }
+            if (($tail -join ' ') -eq [string]$spec.Tail) { $match = $row; break }
+        }
+        if ($null -eq $match) {
+            $ok = $false
+            $details += ([string]$spec.Name + ' missing')
+            continue
+        }
+        $argv = @($match.args)
+        $launcherArg = [string]$argv[1]
+        $cwd = ConvertTo-NightlyCanonicalPath -Path ([string]$match.cwd)
+        $bare = $false
+        foreach ($item in $argv) {
+            if ([string]$item -eq 'npm.cmd') { $bare = $true }
+        }
+        $rooted = [System.IO.Path]::IsPathRooted($launcherArg)
+        $same = [string]::Equals($launcherArg, $expectedLauncher, [StringComparison]::Ordinal)
+        $cwdOk = [string]::Equals($cwd, $expectedClient, [StringComparison]::Ordinal)
+        $dir = ''
+        if ($rooted) { $dir = [System.IO.Path]::GetDirectoryName($launcherArg) }
+        $dirOk = -not [string]::Equals($dir, $expectedClient, [StringComparison]::Ordinal)
+        $space = $launcherArg.Contains(' ')
+        if (-not ($rooted -and $same -and $cwdOk -and $dirOk -and $space -and (-not $bare))) { $ok = $false }
+        $details += ([string]$spec.Name + ' arg=' + $launcherArg + ' cwd=' + $cwd + ' bare=' + $bare)
+    }
+    Assert-C487 -Cond $ok -Name 'G1341 npm launch argv is the absolute launcher outside the client cwd' -Detail ($details -join ' | ')
+}
+
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
@@ -934,6 +1063,7 @@ if ($Case) {
         if ($fn.Name -match 'C487_G0(2[6-9]|3[0-9]|4[0-9]|5[0-8])$') { & $fn }
     }
     Test-C487_G144
+    Test-C487_G1341
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'tests-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 80 })

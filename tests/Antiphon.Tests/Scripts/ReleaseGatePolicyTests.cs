@@ -29,6 +29,13 @@ public sealed class ReleaseGatePolicyTests
         "C599 ProfileSchema shipped policy defines rc");
 
     [Test]
+    public Task C599_E2EWatchdog() => RunCaseAsync("C599_E2EWatchdog", 4,
+        "C599 resolved e2e watchdog is 7200000",
+        "C599 antiphon watchdog stays 3600000",
+        "C599 resolved session-runner watchdog is 1800000",
+        "C599 missing watchdog key keeps the 3600000 fallback");
+
+    [Test]
     public Task C599_ProfileSuites() => RunCaseAsync("C599_ProfileSuites", 9,
         "C599 ProfileSuites nightly excludes e2e",
         "C599 ProfileSuites rc requires e2e",
