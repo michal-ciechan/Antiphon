@@ -148,10 +148,15 @@ public sealed class AgentTaskWorktreeBaseResolver(
                     return Result(CardWorktreeBaseDecision.WaitForLand, row.Id, row.WorktreeBranch, pendingSha, "pending_land");
                 pendingLand.Remove(row.Id);
             }
+            foreach (var row in inspectable.Where(t => !commits.ContainsKey(t.WorktreeBranch!)
+                && !(task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task
+                    && t.Id == task.RequestedWorktreeBaseTaskId)))
+                warnings.Add($"Task {Short(row.Id)} branch {row.WorktreeBranch} has no local commit.");
             inspectable = inspectable.Where(t =>
                 task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task && t.Id == task.RequestedWorktreeBaseTaskId
                 || commits.ContainsKey(t.WorktreeBranch!) && !IsMerged(t.WorktreeBranch!)).ToArray();
-            totalCandidates = inspectable.Length;
+            totalCandidates = inspectable.Select(t => commits.GetValueOrDefault(t.WorktreeBranch!))
+                .Where(sha => sha is not null).Distinct(StringComparer.Ordinal).Count();
             if (totalCandidates > inspection.MaxCandidates)
                 throw new WorktreeBaseInspectionLimitException("candidate_limit");
             var containment = new Dictionary<string, DelegationWorktreeService.CommitContainment>(StringComparer.OrdinalIgnoreCase);

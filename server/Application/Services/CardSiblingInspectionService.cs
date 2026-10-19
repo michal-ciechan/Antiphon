@@ -164,6 +164,7 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
             bool IsMerged(string branch) => commits.TryGetValue(branch, out var sha)
                 && merged.TryGetValue(branch, out var mergedSha) && sha == mergedSha;
             var common = await inspection.CommonAsync(task.RepoPath);
+            var reviewedExemptions = new HashSet<Guid>();
             // Every request identity is visited before grouping refs or reducing warnings.
             foreach (var pending in unresolvedPending.ToArray())
             {
@@ -174,6 +175,7 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
                 {
                     // The reviewed immutable source, rather than a later rewritten branch, grants this exception.
                     frozen[reviewed] = reviewed;
+                    reviewedExemptions.Add(row.Id);
                     unresolvedPending.Remove(pending);
                     continue;
                 }
@@ -188,7 +190,8 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
                 }
                 return Result(Describe(row, sha, pending.Request.State), "pending_land");
             }
-            var candidates = rows.Where(row => commits.ContainsKey(row.WorktreeBranch!)
+            var candidates = rows.Where(row => !reviewedExemptions.Contains(row.Id)
+                && commits.ContainsKey(row.WorktreeBranch!)
                 && !IsMerged(row.WorktreeBranch!)).ToArray();
             expensive = candidates.Select(t => commits[t.WorktreeBranch!]).Distinct(StringComparer.Ordinal).Count();
             // Warning output can be incomplete; it cannot silently confer a source-selection verdict.
