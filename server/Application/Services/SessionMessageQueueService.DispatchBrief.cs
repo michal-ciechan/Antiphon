@@ -165,7 +165,7 @@ public sealed partial class SessionMessageQueueService
         // as in EnqueueAsync, so a failed probe cannot roll back the only brief (CARD-1150 F1).
         if (staged is not null)
             _remoteSpills?.Ack(request.SessionId, staged);
-        if (probe is not null && _runtime.IsLiveOrUnknown(probe) && !await ReadWorkingAsync(db, probe.Id, ct))
+        if (probe is not null && await _runtime.IsLiveOrUnknownAsync(probe, ct) && !await ReadWorkingAsync(db, probe.Id, ct))
         {
             var delivery = await DeliverNextLockedAsync(db, request.SessionId, ct);
             result = result with { InputDelivered = CompletedInput(delivery) };

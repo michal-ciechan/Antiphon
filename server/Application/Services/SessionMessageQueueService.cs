@@ -548,14 +548,14 @@ public sealed partial class SessionMessageQueueService
                 var preDb = preScope.ServiceProvider.GetRequiredService<AppDbContext>();
                 var nowCeilings = await CeilingsForSessionAsync(preDb, sessionId, ct);
                 if (nowCeilings.Backend == DeliveryBackend.HerdrPane
-                    && _runtime.TryGetLiveMetadata(sessionId, out var nowMeta)
+                    && await _runtime.TryGetLiveMetadataAsync(sessionId, ct) is { } nowMeta
                     && string.Equals(nowMeta.AgentStatus, "blocked", StringComparison.OrdinalIgnoreCase))
                 {
                     throw new ConflictException(
                         $"Agent session '{sessionId}' is blocked in herdr (permission/approval UI); try again when idle.");
                 }
 
-                if (_runtime.TryGetLiveMetadata(sessionId, out var pendingMeta)
+                if (await _runtime.TryGetLiveMetadataAsync(sessionId, ct) is { } pendingMeta
                     && string.Equals(pendingMeta.Pending, HerdrPendingReasons.Unreachable, StringComparison.Ordinal))
                 {
                     throw new ConflictException(
@@ -901,7 +901,7 @@ public sealed partial class SessionMessageQueueService
             // (FlushSessionAsync).
             var working = await ReadWorkingAsync(db, sessionId, ct);
             if (deliverIfIdle
-                && _runtime.IsLiveOrUnknown(session)
+                && await _runtime.IsLiveOrUnknownAsync(session, ct)
                 && !working)
             {
                 await DeliverNextLockedAsync(db, sessionId, ct);
@@ -966,14 +966,14 @@ public sealed partial class SessionMessageQueueService
             var preDb = preScope.ServiceProvider.GetRequiredService<AppDbContext>();
             var nowCeilings = await CeilingsForSessionAsync(preDb, sessionId, ct);
             if (nowCeilings.Backend == DeliveryBackend.HerdrPane
-                && _runtime.TryGetLiveMetadata(sessionId, out var nowMeta)
+                && await _runtime.TryGetLiveMetadataAsync(sessionId, ct) is { } nowMeta
                 && string.Equals(nowMeta.AgentStatus, "blocked", StringComparison.OrdinalIgnoreCase))
             {
                 throw new ConflictException(
                     $"Agent session '{sessionId}' is blocked in herdr (permission/approval UI); try again when idle.");
             }
 
-            if (_runtime.TryGetLiveMetadata(sessionId, out var pendingMeta)
+            if (await _runtime.TryGetLiveMetadataAsync(sessionId, ct) is { } pendingMeta
                 && string.Equals(pendingMeta.Pending, HerdrPendingReasons.Unreachable, StringComparison.Ordinal))
             {
                 throw new ConflictException(
@@ -1745,7 +1745,7 @@ public sealed partial class SessionMessageQueueService
 
         // CARD-0679 (review 87af1bf6): an unknown phone-home session keeps its queued work moving;
         // a runner that is really unreachable leaves the row Pending (BackendUnreachable).
-        var live = _runtime.ListLiveOrUnknownSessions().ToHashSet();
+        var live = (await _runtime.ListLiveOrUnknownSessionsAsync(ct)).ToHashSet();
         await using (var candidateScope = _scopeFactory.CreateAsyncScope())
         {
             var candidateDb = candidateScope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -2037,11 +2037,12 @@ public sealed partial class SessionMessageQueueService
     // An unreadable snapshot holds too: "the composer cannot be shown empty" is the same answer
     // RecoverDeliveryRunLockedAsync gives, and guessing empty is the direction that corrupts a
     // delivery rather than delaying one.
-    private bool HeldBackTypingBlocksTheComposer(
+    private async Task<bool> HeldBackTypingBlocksTheComposerAsync(
         Guid sessionId,
         IReadOnlyList<SessionQueuedMessage> pending,
         IReadOnlyList<SessionQueuedMessage> deliverable,
-        DateTime sessionGeneration)
+        DateTime sessionGeneration,
+        CancellationToken ct)
     {
         var deliverableIds = deliverable.Select(m => m.Id).ToHashSet();
         var heldBack = pending
@@ -2051,7 +2052,7 @@ public sealed partial class SessionMessageQueueService
         if (heldBack.Count == 0)
             return false;
 
-        if (!_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
+        if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } snapshot)
         {
             _logger.LogInformation(
                 "Holding delivery to session {SessionId}: {Count} held-back message(s) were typed in "
@@ -2198,7 +2199,7 @@ public sealed partial class SessionMessageQueueService
         var rulesSession = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
         if (rulesSession is null || rulesSession.Status != SessionStatus.Running
             || rulesSession.GrokRulesState == GrokRulesState.Failed
-            || !_runtime.IsLiveOrUnknown(rulesSession)) return FlushResult.Nothing;
+            || !await _runtime.IsLiveOrUnknownAsync(rulesSession, ct)) return FlushResult.Nothing;
         try { await _runtime.EnsureInputTransportAvailableAsync(rulesSession, ct); }
         catch (ServiceUnavailableException ex) when (ex.Code == PhoneHomeProblemTypes.Unavailable)
         {
@@ -2226,7 +2227,7 @@ public sealed partial class SessionMessageQueueService
 
         // CARD-0161 B4: herdr agent_blocked → defer (Nothing). Never park/fail/kill.
         if (ceilings.Backend == DeliveryBackend.HerdrPane
-            && _runtime.TryGetLiveMetadata(sessionId, out var blockedMeta)
+            && await _runtime.TryGetLiveMetadataAsync(sessionId, ct) is { } blockedMeta
             && string.Equals(blockedMeta.AgentStatus, "blocked", StringComparison.OrdinalIgnoreCase))
         {
             _logger.LogDebug(
@@ -2236,7 +2237,7 @@ public sealed partial class SessionMessageQueueService
 
         // CARD-0186 S3: herdr unreachable (pending adoption, or 503 herdr_unreachable) → defer.
         // No attempt charged, nothing parked, never killed.
-        if (_runtime.TryGetLiveMetadata(sessionId, out var pendingMeta)
+        if (await _runtime.TryGetLiveMetadataAsync(sessionId, ct) is { } pendingMeta
             && string.Equals(pendingMeta.Pending, HerdrPendingReasons.Unreachable, StringComparison.Ordinal))
         {
             _logger.LogDebug(
@@ -2341,8 +2342,8 @@ public sealed partial class SessionMessageQueueService
         // The ordinary exit is the late-confirm that already ran: a held body that really did land
         // becomes Sent and stops being a held-back row at all. CancelDeadBriefsAsync and a relaunch
         // are the other two.
-        if (HeldBackTypingBlocksTheComposer(
-                sessionId, pending, deliverable, sessionGeneration))
+        if (await HeldBackTypingBlocksTheComposerAsync(
+                sessionId, pending, deliverable, sessionGeneration, ct))
             return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
 
         // CARD-0650 D-7: the same hold for an unconfirmed watchdog prompt of this generation.
@@ -2566,7 +2567,7 @@ public sealed partial class SessionMessageQueueService
             && run.Where(m => m.DeliveryAttempts > 0)
                 .All(m => !DeliveryGenerationChanged(m, sessionGeneration)))
         {
-            if (!_runtime.TryGetLiveSnapshot(sessionId, out var retrySnap))
+            if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } retrySnap)
             {
                 _logger.LogInformation(
                     "Deferring redelivery to session {SessionId}: rendered snapshot is unavailable, "
@@ -3187,7 +3188,7 @@ public sealed partial class SessionMessageQueueService
         if (!generationChanged && !atCap)
         {
             var body = ReconstructRunBody(remaining);
-            if (!_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
+            if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } snapshot)
             {
                 _logger.LogInformation(
                     "Leaving interrupted delivery on session {SessionId} untouched: rendered snapshot "
@@ -3244,7 +3245,7 @@ public sealed partial class SessionMessageQueueService
                 Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds));
         }
 
-        if (!_runtime.TryGetLiveSnapshot(sessionId, out var before))
+        if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } before)
             return FlushResult.Nothing;
 
         var submitBaseline = await SettlePostEvidenceAsync(sessionId, ct);
@@ -3778,14 +3779,19 @@ public sealed partial class SessionMessageQueueService
 
         var verify = _verification.Enabled && await IsVerifiedDeliverySessionAsync(sessionId, ct);
         AgentSessionLiveSnapshot before = default!;
-        if (verify && !_runtime.TryGetLiveSnapshot(sessionId, out before))
+        if (verify)
         {
-            // The screen is unobservable (snapshot endpoint down, adopted-but-resyncing, …).
-            // That is an observability failure, not a terminal failure — deliver blind rather
-            // than wrongly declare the session wedged (the echo-probe lesson).
-            _logger.LogDebug(
-                "Delivery to session {SessionId} is unverifiable (no live snapshot); sending blind", sessionId);
-            verify = false;
+            if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is { } snapshot)
+                before = snapshot;
+            else
+            {
+                // The screen is unobservable (snapshot endpoint down, adopted-but-resyncing, …).
+                // That is an observability failure, not a terminal failure — deliver blind rather
+                // than wrongly declare the session wedged (the echo-probe lesson).
+                _logger.LogDebug(
+                    "Delivery to session {SessionId} is unverifiable (no live snapshot); sending blind", sessionId);
+                verify = false;
+            }
         }
 
         // The confirmation floor, captured BEFORE a byte is written: everything ingested from here
@@ -3824,7 +3830,7 @@ public sealed partial class SessionMessageQueueService
         {
             // CARD-0650 D-7: no Esc arm, so a detected overlay is a modal refusal before any byte.
             var guardScreen = verify ? before.RenderedScreen
-                : _runtime.TryGetLiveSnapshot(sessionId, out var guardSnap) ? guardSnap.RenderedScreen : null;
+                : await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is { } guardSnap ? guardSnap.RenderedScreen : null;
             if (guardScreen is not null && ShowsTerminalOverlay(guardKind, guardScreen))
             {
                 _logger.LogWarning(
@@ -3862,7 +3868,7 @@ public sealed partial class SessionMessageQueueService
                         return new DeliveryOutcome(DeliveryVerdict.BackendUnreachable,
                             UnavailabilityCode: PhoneHomeProblemTypes.Unavailable);
                     }
-                    if (overlayDismissed && _runtime.TryGetLiveSnapshot(sessionId, out var afterDismiss))
+                    if (overlayDismissed && await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is { } afterDismiss)
                         before = afterDismiss;
                 }
             }
@@ -3907,7 +3913,7 @@ public sealed partial class SessionMessageQueueService
                     && kind is { } recoverKind
                     && await TryDismissOverlayAsync(sessionId, recoverKind, ct))
                 {
-                    if (_runtime.TryGetLiveSnapshot(sessionId, out var recoveredSnap))
+                    if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is { } recoveredSnap)
                         before = recoveredSnap;
                     try
                     {
@@ -4056,7 +4062,7 @@ public sealed partial class SessionMessageQueueService
             // Delivered, exactly today's claim, made no sooner).
             if (!sawSequenceAdvance
                 && sequenceBeforeSubmit is { } from
-                && _runtime.TryGetLiveMetadata(sessionId, out var meta)
+                && await _runtime.TryGetLiveMetadataAsync(sessionId, ct) is { } meta
                 && meta.LastSequence > from)
             {
                 sawSequenceAdvance = true;
@@ -4064,7 +4070,7 @@ public sealed partial class SessionMessageQueueService
 
             if (kind is AgentKind.Codex or AgentKind.Grok)
             {
-                if (_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
+                if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is { } snapshot)
                 {
                     var screenNow = snapshot.RenderedScreen;
                     if (kind == AgentKind.Codex && CodexWorkingIndicator.IsVisible(screenNow))
@@ -4111,7 +4117,7 @@ public sealed partial class SessionMessageQueueService
                     // positive — do not unlatch it when the body is also still echoed.
                     if (kind is AgentKind.Codex or AgentKind.Grok
                         && !workingLatched
-                        && _runtime.TryGetLiveSnapshot(sessionId, out var deadlineSnap)
+                        && await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is { } deadlineSnap
                         && ComposerDeliveryEvidence.HeadFragmentIsVisible(
                             deadlineSnap.RenderedScreen, body))
                     {
@@ -4177,7 +4183,7 @@ public sealed partial class SessionMessageQueueService
                 // hazard — a keystroke into a permission picker). entersSent not incremented.
                 // Shared by the unobservable loop by construction (CARD-0164 decision 11).
                 if (ceilings?.Backend == DeliveryBackend.HerdrPane
-                    && _runtime.TryGetLiveMetadata(sessionId, out var live)
+                    && await _runtime.TryGetLiveMetadataAsync(sessionId, ct) is { } live
                     && (string.Equals(live.AgentStatus, "blocked", StringComparison.OrdinalIgnoreCase)
                         || string.Equals(live.Pending, HerdrPendingReasons.Unreachable, StringComparison.Ordinal)))
                 {
@@ -4459,7 +4465,7 @@ public sealed partial class SessionMessageQueueService
         var deadline = UtcNow() + TimeSpan.FromSeconds(_verification.EvidenceTimeoutSeconds);
         while (true)
         {
-            if (_runtime.TryGetLiveSnapshot(sessionId, out var after)
+            if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is { } after
                 && ComposerDeliveryEvidence.IsVisible(screenBefore, after.RenderedScreen, body))
             {
                 return true;
@@ -4479,7 +4485,7 @@ public sealed partial class SessionMessageQueueService
         var deadline = UtcNow() + TimeSpan.FromSeconds(Math.Max(1, seconds));
         while (true)
         {
-            if (_runtime.TryGetLiveMetadata(sessionId, out var meta) && meta.LastSequence > baseline)
+            if (await _runtime.TryGetLiveMetadataAsync(sessionId, ct) is { } meta && meta.LastSequence > baseline)
                 return true;
 
             if (UtcNow() >= deadline)
@@ -4507,10 +4513,10 @@ public sealed partial class SessionMessageQueueService
 
         while (true)
         {
-            if (_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
+            if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is { } snapshot)
                 screen = snapshot.RenderedScreen;
 
-            if (!_runtime.TryGetLiveMetadata(sessionId, out var metadata))
+            if (await _runtime.TryGetLiveMetadataAsync(sessionId, ct) is not { } metadata)
                 return new SubmitBaseline(null, screen);
 
             if (lastSequence != metadata.LastSequence)
@@ -5221,7 +5227,7 @@ public sealed partial class SessionMessageQueueService
             message.CanceledAt = now;
         }
 
-        var screen = _runtime.TryGetLiveSnapshot(sessionId, out var snap) ? snap.RenderedScreen : "";
+        var screen = await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is { } snap ? snap.RenderedScreen : "";
         var mcpVisible = session.AgentKind == AgentKind.Codex && CodexMcpBoot.IsVisible(screen);
         var already = await db.AgentIncidents.AnyAsync(
             i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.BootWedged, ct);
@@ -5485,7 +5491,7 @@ public sealed partial class SessionMessageQueueService
 
     private async Task RequireImmediateAdmissionAsync(AgentSession session, CancellationToken ct)
     {
-        if (!_runtime.IsLiveOrUnknown(session))
+        if (!await _runtime.IsLiveOrUnknownAsync(session, ct))
             throw new ConflictException($"Agent session '{session.Id}' is not live; cannot send now.");
         // An active remote Starting row still gets the transport refusal before terminal readiness.
         await _runtime.EnsureInputTransportAvailableAsync(session, ct);
@@ -5549,7 +5555,7 @@ public sealed partial class SessionMessageQueueService
         }
 
         await _runtime.CatchUpTranscriptAsync(sessionId, ct);
-        if (_runtime.TryGetLiveSnapshot(sessionId, out var popupSnap)
+        if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is { } popupSnap
             && GrokQuestionPopup.IsPresent(popupSnap.RenderedScreen))
         {
             _logger.LogInformation(
@@ -5660,7 +5666,7 @@ public sealed partial class SessionMessageQueueService
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-            if (!_runtime.ListLiveSessions().Contains(sessionId))
+            if (!(await _runtime.ListLiveSessionsAsync(ct)).Contains(sessionId))
                 return new LocalCommandPollResult.Skipped("not live");
             if (!await IsAcceptingInputAsync(sessionId, ct))
                 return new LocalCommandPollResult.Skipped("not Running");
@@ -5713,7 +5719,7 @@ public sealed partial class SessionMessageQueueService
                     await Task.Delay(settle, _timeProvider, ct);
             }
 
-            var snapshot = _runtime.GetBufferSnapshot(sessionId);
+            var snapshot = await _runtime.GetBufferSnapshotAsync(sessionId, ct);
 
             if (poll.OpensOverlay)
                 await _runtime.SendInputAsync(sessionId, "\u001b", ct, trackManualTurn: false);
@@ -5738,7 +5744,7 @@ public sealed partial class SessionMessageQueueService
         if (await IsModalBlockedAsync(sessionId, ct))
             return LocalCommandTypeResult.NotAccepted;
 
-        if (!_runtime.TryGetLiveSnapshot(sessionId, out var before))
+        if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } before)
             return LocalCommandTypeResult.NotAccepted;
 
         await _runtime.SendInputAsync(sessionId, command, ct, trackManualTurn: false);
@@ -5747,7 +5753,7 @@ public sealed partial class SessionMessageQueueService
             return LocalCommandTypeResult.NotAccepted;
 
         long sequenceBefore = 0;
-        if (_runtime.TryGetLiveMetadata(sessionId, out var metaBefore))
+        if (await _runtime.TryGetLiveMetadataAsync(sessionId, ct) is { } metaBefore)
             sequenceBefore = metaBefore.LastSequence;
 
         await Task.Delay(TimeSpan.FromMilliseconds(20), _timeProvider, ct);
