@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "policyHash": "de492ab11aa3a325af46b5447e7f5e2c66d81bb1b84f626bb6f3fea3d3d4b279",
+  "policyHash": "37593bf0ff6e6da787079234d9c55aa37abd7a08b2737c30746e6b0a2e175744",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -745,6 +745,7 @@
     "messaging": 1200000,
     "client": 1200000,
     "scripts": 1200000,
+    "e2e": 7200000,
     "markdown-pdf": 1200000
   },
   "reducedDispatchPolicy": "inactive",
