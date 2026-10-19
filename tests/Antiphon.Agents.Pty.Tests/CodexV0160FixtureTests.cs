@@ -67,8 +67,10 @@ public class CodexV0160FixtureTests
                      CodexStartupFixtures.V0160Done })
         {
             frame.Split('\n').Length.ShouldBe(30, "C907 full grid includes trailing blank rows");
-            frame.ShouldNotContain("--- payload ---", "C907 metadata is outside parser input");
-            frame.ShouldNotContain("SHA-256", "C907 provenance is outside parser input");
+            frame.Contains("--- payload ---", StringComparison.Ordinal)
+                .ShouldBeFalse("C907 metadata is outside parser input");
+            frame.Contains("SHA-256", StringComparison.Ordinal)
+                .ShouldBeFalse("C907 provenance is outside parser input");
         }
     }
 
