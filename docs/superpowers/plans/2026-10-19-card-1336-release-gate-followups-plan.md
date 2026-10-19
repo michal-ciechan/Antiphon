@@ -254,3 +254,407 @@ assigned branch/base, read runner defaults/catalogue, and compared the named
 remote branch tips without querying or changing tags. No tests, builds,
 publication entrypoints, live Windmill operations or release operations ran.
 The task report records the plan commit, pushed remote SHA and merge-tree result.
+
+## Verification design
+
+TestDesign at `9b8c00af81e5faa2d8c22ec3d1ac0d6ecc85d210`, task `6386e779`.
+This appendix binds the preceding design; it does not change D-1 through D-7,
+master-only targeting, CARD-1339 S1 ownership/dependency, or the conditional rc
+backport table. No implementation or execution evidence is claimed here.
+
+### Inspection
+
+- Read `ReleaseGateRegistrationTests.cs`, `ReleaseGateRunTests.cs`, and their exact
+  `Test-C599_ScheduleProvenance` / `Test-C599_CreditVerdicts` bodies in
+  `scripts/test-release-gate.ps1`, including `New-C599State`, registration fixture
+  construction and invocation | V-1/R-1, V-4/R-4. These are non-parameterized
+  methods: 1 execution each, respectively 16 and 24 named PowerShell rows.
+- Read `ScriptHarness.cs`, `ScriptHarnessOptions` and ownership/validation flow in
+  `ScriptHarnessProcess.cs`, `ProcessSpawnLimit`, `scripts/lib/c487-harness.ps1`,
+  and the adjacent `Scripts/Fixtures/script-harness-process.ps1` | recipes A/B.
+  The nearest relevant functional fixture for the new file is
+  `scripts/test-change-aware-release.ps1:New-Fx`; read its committed Git setup,
+  `New-Request`, `Bind-Request`, `Invoke-Workload`, and parameter-hop test.
+  `tests/fixtures/` currently contains unrelated CARD-0490 native assets; its
+  README was read and that guest lane is excluded.
+- Read decoded RC wrapper/schedule, master wrapper pins, wrapper README, nightly
+  wrapper, core admission/sync/NoSync/selection/hop/state/completion bodies,
+  `release-selection.ps1` commit/contract/save/read/worker/hop bodies, ref parser,
+  credit/state helpers, and nightly-tests SHA refusal | V-1 through V-4/R-1
+  through R-4. The selection hop precedes the ordinary StartProcess seam.
+- Read release-gates credit/ownership/hop owner sections, nightly-watchdog receipt
+  tiers, testing/build checkpoint schema, CARD-0403 filters, slot and Mutation
+  rules, and orchestration stage order/D-2 | delivery exclusions and checkpoints.
+  Registration profile/token/pre-enabled guards were read for the collateral PCs.
+
+**Binding convention.** W = `ReleaseGateFollowupTests.C1336_WrapperRef`,
+N = `ReleaseGateFollowupTests.C1336_NightlyCandidateIdentity`,
+S = `ReleaseGateRegistrationTests.C599_ScheduleProvenance`, and
+C = `ReleaseGateRunTests.C599_CreditVerdicts`, all in `Antiphon.Tests.Scripts`.
+W/N use the new `tests/fixtures/card1336-release-gate-followups.ps1` through
+`ScriptHarnessOptions.Default with { ScriptPath = <absolute fixture path> }`,
+`Category("Integration")`, and `ParallelLimiter<ProcessSpawnLimit>`.
+Keep the default 300-second invocation / 10-second cleanup budgets, fail missing
+Bash/pwsh/Git prerequisites, and await children. No skipped green or increased timeout.
+
+**Recipe A (W).** Decode the actual JSON content to an owned UTF-8/LF file without
+rewriting it. Invoke Bash by resolved absolute executable with `--noprofile
+--norc`; an owned launcher installs a readonly `ssh` function before sourcing the
+body. The function writes every argument with a NUL delimiter to a private file
+using Bash builtins and returns a fixture-selected status. Supply no real SSH
+executable in the child PATH; launch fails closed if the function cannot be
+installed. Read the last captured argument as the remote command, count exact
+`-Ref` tokens, and compare its value and ScheduleSlot/JobId arguments. Job fixture
+is `c1336-job`, without shell metacharacters. Set/clear both WM variables explicitly.
+No remote shell, release-cut or registration is executed by W.
+
+W's final roster is **9 named C487 rows**, all required by the C# harness:
+
+| Case / variant | Oracle (row label is prefixed `C1336 W `) | Reachability / classification |
+|---|---|---|
+| `own-0`, `own-23` | One ssh invocation; one `-Ref rc/2026-10-18`; ScheduleSlot `u/lndcobra/antiphon_release_candidates`; JobId `c1336-job`; exit respectively 0/23. | Real Bash evaluates unchanged wrapper bytes; offline behavioral contract. |
+| `missing-0`, `missing-23` | Same ref/job/count; ScheduleSlot `manual`; exact status. | WM_SCHEDULE_PATH absent; offline negative provenance. |
+| `foreign-0`, `foreign-23` | Same ref/job/count; ScheduleSlot `manual`; exact status. | WM_SCHEDULE_PATH is the master schedule path; offline negative provenance. |
+| `schedule` | Boolean enabled=false, cron `0 30 8,16 * * *`, timezone `Europe/London`, empty args and empty input properties/required. | Parse production definition/schedule; configuration contract. |
+| `master-unchanged` | Master script/schedule Git blob IDs remain `4073816bbfb057c4dcf12e051862d32441d68dc4` / `781f8559ea2598750eb130da49bb979f09e079c0`. | Independent frozen baseline; byte preservation. |
+| `documentation` | RC description and README name literal pin/rollover and retain inert/unqualified status, without control characters. | Static documentation contract, no registration proof. |
+
+CP-1's test-only commit contains just `own-0` (expectedRows=1). Its decisive
+failure is the captured command's missing Ref. S1 fix expands W to all 9 rows;
+CP-2 therefore expects 9 + 16 = 25 internal C487 rows across **2 TUnit executions**.
+Do not count Bash variants or C487 lines as TUnit results.
+
+**Recipe B (N).** Adapt New-Fx without dot-sourcing its test script: create a
+private seed, local bare origin and independent owned clone, two real commits A/B,
+production scripts/lib, nightly wrappers, selector, actual execution/selection
+policy and global.json blobs, project-universe files and catalog source inputs.
+Validate policy/catalog hashes and commit availability before the red assertion.
+Use local Git transport only. Pin `rc/2026-10-18` to A; B has a different first
+12 hex prefix (assert this prerequisite). A benign committed wrapper comment
+forces the production self-reexec edge. Copy source under test into each fresh
+seed, including during Mutation; never use a previously built fixture copy.
+Keep StateRoot, LogRoot, ReleaseRoot and CoordinationRoot independent, explicit
+and below the invocation scratch root. Put four master sentinels in a fifth
+private root. The fixture SeamsPath installs a script-scope override of
+`Get-NightlyDefaultStateRoot` returning that private root (using
+`Set-Item Function:script:Get-NightlyDefaultStateRoot`); it changes no identity,
+selection or credit function. Reinstall it in each real child via SeamsPath. Never
+create or write `C:\Antiphon\nightly` on the host.
+
+Run the real nightly wrapper/core and real selection worker/validator. Synthetic
+native workload I/O may emit deterministic summary/coverage data; report I/O is
+an inert local seam only. Use the real selection-bound self-hop. If child argument
+observation is needed, append a recorder after the copied wrapper's param block,
+before its production body; it records bound parameters to an owned file and then
+continues the unmodified body. Do the same for the workload wrapper. This observer
+must not construct identity or bypass selection/admission. A report command, if
+seen, is handled by the inert seam and records only local receipt data. Every
+unexpected process target fails the fixture. No publish/promote/release-cut call.
+
+The internal data contract is joined by `(candidateId, full SHA, runId, attempt)`:
+selection-attempt.json + its digest, selection.json + its digest, child-bound
+parameters, final last-run.json and the terminal JSON result must agree. Inspect
+child-produced summary/attempt state after child exit, not just launcher arguments.
+The terminal completion record intentionally empties identity on a refusal; the
+red identity witness therefore reads the returned PassThru object's CandidateId,
+**before** downstream success assertions, not the refusal completion JSON.
+
+N's final roster is **25 named C487 rows**, all required in C#; labels are prefixed
+`C1336 N `. Each row emits once even when it checks several fields:
+
+| Case / variant | Oracle | Reachability / classification |
+|---|---|---|
+| `omitted` | Returned CandidateId = literal `rc-2026-10-18-` + A.Substring(0,12). | Valid committed fixture, absent argument; behavioral red witness. Expected value is not computed by calling the parser. |
+| `whitespace` | Same canonical id for whitespace input. | Admission branch; positive canonicalization. |
+| `full-ref` | Same id for `refs/heads/rc/2026-10-18`. | Real parser; supported shape. |
+| `repeat` | Fresh runId/state at A retains candidate id. | Repeat invocation; deterministic identity. |
+| `different-pin` | Ref at B produces B's prefix and differs from A. | Second committed local pin; identity separation. |
+| `explicit` | Matching explicit id survives unchanged, successful admission. | Supplied-id branch; compatibility. |
+| `foreign` | exit 3, phase profile, refusal rc-candidate-id-mismatch; no lock/attempt, Git sync, selection files or workload receipt. | Valid ref/SHA, foreign id; early refusal. |
+| `missing-sha`, `short-sha`, `invalid-sha` | exit 3/profile/rc-expected-sha, no admission side effects. Also supply foreign id so SHA precedence is observable. | Empty, 7-hex, and 40 non-hex ExpectedSha; negative admission. |
+| `bad-ref` | exit 3/profile/rc-ref and no admission side effects with invalid calendar ref, missing SHA and foreign id. | Competing refusals; ref precedence. |
+| `legacy` | `release/rc-20260923T083000Z` -> `rc-20260923T083000Z`, both omitted and matching explicit. | Legacy local branch at A; compatibility. |
+| `sync-selection` | Real saved selection request/attempt and digest bind canonical id/A/runId; no foreign directory. | Normal sync path reaches real selection worker; persisted identity. |
+| `nosync-selection` | Same binding with NoSync and a fresh runId; no fetch/reset. | Separate NoSync selection branch; persisted identity. |
+| `hop-child` | Copied nightly wrapper records canonical CandidateId, ExpectedSha=A, Ref, Profile=rc, ContinueRunId, roots; child completes with the same selection binding. | Forced real self-hop, not StartProcess stub; child consumption. |
+| `workload-child` | Workload wrapper records canonical CandidateId, ExpectedSha=A and matching selection digests, then produces matching summary. | Real selection hop with inert workload; child consumption. |
+| `completion` | Successful terminal JSON and final attempt both carry canonical id/A/runId, agreeing with child summary. | Parse last completion JSON only after joined child exit; state/result consistency. |
+| `rc-green` | Successful synthetic run writes only `<ReleaseRoot>/candidates/<id>/complete-green.json` with matching tuple and rc-release credit. All configured roots stay as supplied. | Production credit writer, synthetic workload/report inputs; state transition only. |
+| `master-unchanged` | All four master sentinel hashes unchanged after success and refusal variants. | Private master default seam; isolation. |
+| `master-root` | StateRoot equal to private default-master root refuses rc-master-state-root at profile, before any writes. | Valid identity prevents earlier masking; negative isolation. |
+| `noreport` | Even a synthetic summary claiming reportDelivered=true gives result/state reportDelivered=false, no credit/green and no report invocation. | NoReport branch; fail-closed credit. |
+| `moved-sync` | Origin at B with ExpectedSha=A refuses candidate-moved; no workload and no green. | Production sync SHA guard before selection; pin protection. |
+| `moved-nosync` | Clone HEAD=B with ExpectedSha=A reaches nightly-tests expected-sha-mismatch, no native workload and no green. | Fresh selection for B avoids a stale-selection mask; separate workload guard. |
+| `help` | Ref/Trigger/ExpectedSha/CandidateId help covers both id shapes, Trigger=rc, full pin and example's private roots. | Static contract; no gate run. |
+| `no-authority` | Derivation creates no candidate.json/publication journal/authority; fixture green grants no external qualification. | Inventory private release tree; scope boundary. |
+
+CP-3 starts with only `omitted` (expectedRows=1). CP-4 expands N to 25; together
+with C's 24 this is 49 internal rows, **2 TUnit executions**. Fixture prerequisite
+failures, selection-policy errors, child exceptions and timeouts are not the
+expected red witness. The test-only commit must be fixed as a fixture before
+proceeding if any of those masks the missing CandidateId assertion.
+
+### Delivery inventory
+
+**Changed asynchronous delivery paths: zero.** Neither slice adds/changes a queue,
+message recipient, reporter, retry worker or session input. Existing reporting and
+Windmill registration remain external operating acceptance, excluded here.
+
+| Path | Producer -> destination | Persistence / recovery / observable receipt | Evidence limit |
+|---|---|---|---|
+| RC definition invocation | Bash wrapper -> inert ssh capture | Private argv file, one invocation, exact exit; no durable delivery/retry identity exists here. | W proves command construction, never SSH arrival, release-cut execution or live job registration. |
+| Local selection and self/workload hop | Core -> real local worker / child wrapper | `(candidateId,SHA,runId,attempt)` in selection files/digests, child-bound receipt, child summary, final attempt/result; NoSync uses the same immutable selection. Existing synchronous owner awaits children. | N proves local identity consumption; no external queue or crash-recovery delivery claim. |
+| Synthetic report outcome | Core -> inert report I/O seam | Local receipt and summary correlated to the run; NoReport remains non-delivered. | Deliberately substitutes report transport. Exit zero/reportDelivered/green never proves a recipient received anything. |
+
+Consequently real-queue busy-recipient/already-eligible/crash/enqueue-failure tests
+are not applicable to these two slices; no delivery/recovery guard is newly
+introduced. Do not convert these substitutes into delivery evidence. If Code
+changes an asynchronous handoff, return to Plan/TestDesign for every producer,
+durable boundary and recovery cut through real-queue recipient evidence. Session
+input would require the matching **complete UserPrompt transcript**. A send, insert,
+event, ack or Sent flag is insufficient.
+
+### Proves it works now
+
+- V-1: explicit named ref and preserved context/status | offline Bash contract |
+  CP-1 witness then CP-2 W+S | old own-0 fails for missing Ref; fixed 2/2 pass.
+- V-2: canonical admission identity and early refusals | production PowerShell |
+  CP-3 witness then CP-4 N | old omitted fails on returned CandidateId; fixed all
+  identity, precedence and compatibility rows pass.
+- V-3: same identity at actual local child/selection/state boundaries | local
+  integration | CP-4 N sync-selection through completion | tuple/digests agree.
+- V-4: isolated candidate state and fail-closed credit | script contract |
+  CP-4 N+C | candidate green only, master sentinels unchanged, NoReport/moved pins
+  cannot earn green; existing 24 credit rows pass.
+
+### Guards the regression
+
+- R-1: omitted/wrong/duplicated wrapper Ref, borrowed schedule provenance or masked
+  ssh status | W's six captured-command rows, schedule and master-unchanged;
+  CP-2 also runs S's existing 16-row roster.
+- R-2: empty/foreign candidate identity or reordered admission | N omitted,
+  whitespace, full-ref, repeat, different-pin, explicit, foreign, SHA/ref rows and
+  legacy; exact reason/phase/exit and absence of early side effects are decisive.
+- R-3: identity lost at either selection branch, self-hop, workload, persisted
+  attempt or completion record | N sync-selection/nosync-selection/hop-child/
+  workload-child/completion; read artifacts emitted by each consumer.
+- R-4: master contamination, false NoReport credit or moved-pin success | N
+  rc-green/master-unchanged/master-root/noreport/moved-sync/moved-nosync and C;
+  inspect actual files plus refusal/credit verdicts, not return code alone.
+
+### Guard inventory
+
+Safety scope includes the changed entrypoints and the independently bypassable
+credit/registration guards exercised by the two mandated collateral methods.
+Unchanged lock custody, general selector integrity, publication authority and
+transport guards are excluded, not silently claimed tested by these cases.
+Each row maps to exactly one distinct PC. No guard is justified as needing none.
+
+| Guard | Plan reference / invariant | Positive control |
+|---|---|---|
+| G-1 | S1/D-1: exactly one explicit pinned Ref | PC-1 |
+| G-2 | S1: only own schedule context receives the scheduled slot | PC-2 |
+| G-3 | S1: ssh failure remains wrapper failure | PC-3 |
+| G-4 | S1: inert checked-in schedule | PC-4 |
+| G-5 | S2/D-2: local id derives from ref and pin | PC-5 |
+| G-6 | S2/D-2: returned id is populated at admission | PC-6 |
+| G-7 | S2: invalid candidate ref refuses | PC-7 |
+| G-8 | S2: a full valid ExpectedSha is required | PC-8 |
+| G-9 | S2/D-3: explicit foreign id refuses | PC-9 |
+| G-10 | S2: ref refusal precedes SHA refusal | PC-10 |
+| G-11 | S2: SHA refusal precedes explicit-id mismatch | PC-11 |
+| G-12 | S2/D-4: RC cannot use default master state | PC-12 |
+| G-13 | S2: synchronized checkout must match pinned SHA | PC-13 |
+| G-14 | S2: NoSync workload must match pinned SHA | PC-14 |
+| G-15 | S2: sync selection receives derived id | PC-15 |
+| G-16 | S2: NoSync selection receives derived id | PC-16 |
+| G-17 | S2: self-hop preserves supplied canonical identity | PC-17 |
+| G-18 | S2: workload hop preserves canonical identity | PC-18 |
+| G-19 | S2: persisted run state names the canonical candidate | PC-19 |
+| G-20 | S2: terminal JSON agrees with persisted candidate | PC-20 |
+| G-21 | S2/D-4: green goes to the supplied candidate root | PC-21 |
+| G-22 | S2: NoReport never borrows summary delivery | PC-22 |
+| G-23 | S2/D-4: master attempt state stays untouched | PC-23 |
+| G-24 | R-4 collateral: coverageComplete required | PC-24 |
+| G-25 | R-4 collateral: testsPassed required | PC-25 |
+| G-26 | R-4 collateral: reportDelivered required | PC-26 |
+| G-27 | R-4 collateral: true must be a Boolean | PC-27 |
+| G-28 | R-4 collateral: exitCode cannot be missing | PC-28 |
+| G-29 | R-4 collateral: nonzero exit cannot earn credit | PC-29 |
+| G-30 | R-4 collateral: run identity required | PC-30 |
+| G-31 | R-4 collateral: policy identity required | PC-31 |
+| G-32 | R-4 collateral: tested SHA must be full | PC-32 |
+| G-33 | R-4 collateral: expected SHA cannot be absent | PC-33 |
+| G-34 | R-4 collateral: tested and expected SHA equal | PC-34 |
+| G-35 | R-4 collateral: candidate identity required for credit | PC-35 |
+| G-36 | R-4 collateral: unknown requested credit kind refuses | PC-36 |
+| G-37 | R-4 collateral: null state cannot earn credit | PC-37 |
+| G-38 | R-4 collateral: master and RC credit cannot substitute | PC-38 |
+| G-39 | R-1 collateral: registrar refuses pre-enabled RC payload | PC-39 |
+| G-40 | R-1 collateral: registration workspace is constrained | PC-40 |
+| G-41 | R-1 collateral: profile cannot contain inline token | PC-41 |
+| G-42 | R-1 collateral: apply requires token-file availability | PC-42 |
+
+### Positive controls
+
+All controls are **post-land obligations, not executed at TestDesign**. Code runs
+ordinary V/R; separate Review judges this design and ordinary evidence before
+land. Mutation runs every PC against the confirmed landed source, baseline green,
+compiling defect/red at the specified assertion, exact restoration, fresh build,
+green. A fixture/setup/build failure or zero tests is not red. Do not change an
+assertion to manufacture detection. Reuse no mutation-phase build output.
+
+Method bindings below expand W/N/S/C exactly as defined above. W/N row labels get
+the `C1336 W ` / `C1336 N ` prefix; collateral labels are already complete.
+Every control uses `/*/*/<Class>/<ExactMethod>`, MinExecuted=1. No class-wide PC
+runs. Where several guards use the same method, each control still gets its own
+red/restore/green receipt. SourceLanding mutations may temporarily touch shared
+files for detection only; no production repair/commit/push is authorized there.
+
+| PC | Break by this compiling defect | Exact method binding / expected failing assertion |
+|---|---|---|
+| PC-1 | Remove the added `-Ref rc/2026-10-18` from JSON content, preserving valid JSON/Bash. | W: `own-0` |
+| PC-2 | Replace the Bash foreign/missing-context assignment `SLOT=manual` with the own schedule literal. | W: `foreign-0` |
+| PC-3 | Replace final `exit $?` with `exit 0`. | W: `own-23` |
+| PC-4 | Set schedule JSON `enabled` to boolean true. | W: `schedule` |
+| PC-5 | Remove `-Sha $ExpectedSha` at the admission parser call. | N: `omitted` |
+| PC-6 | Remove only `$result.CandidateId = $CandidateId` from the derived-id branch. | N: `omitted` |
+| PC-7 | Make the admission `if (-not $candidate.Ok)` condition false. | N: `bad-ref` |
+| PC-8 | Make only the admission full-SHA refusal condition false. | N: `short-sha` |
+| PC-9 | Make the new explicit-id mismatch condition false; preserve derivation. | N: `foreign` |
+| PC-10 | Move the unchanged ExpectedSha refusal block before the candidate-ref refusal. | N: `bad-ref` |
+| PC-11 | Move the new supplied-id mismatch refusal before the ExpectedSha refusal. | N: `missing-sha` |
+| PC-12 | Make only the masterRoot/wantRoot equality refusal false; fixture default remains private. | N: `master-root` |
+| PC-13 | Make only the sync `$sha` versus `$ExpectedSha` refusal condition false. | N: `moved-sync` |
+| PC-14 | In nightly-tests-impl.ps1 make only expected-sha-mismatch refusal false; preserve real selector. | N: `moved-nosync` |
+| PC-15 | Set CandidateId in the sync selectionRequest to literal `foreign`. | N: `sync-selection` |
+| PC-16 | Set CandidateId in the NoSync selectionRequest to literal `foreign`. | N: `nosync-selection` |
+| PC-17 | Replace the self-hop CandidateId argument value with literal `foreign`, leaving the option present. | N: `hop-child` |
+| PC-18 | Replace the testArgs CandidateId value with literal `foreign`. | N: `workload-child` |
+| PC-19 | Change stateObj initialization `candidateId = $CandidateId` to `candidateId = "foreign"`. | N: `completion` |
+| PC-20 | In ConvertTo-NightlyResultRecord change the matched-state candidateId assignment to literal `foreign`. | N: `completion` |
+| PC-21 | In the core RC green branch pass literal `foreign` to Get-ReleaseGateStatePaths CandidateId. | N: `rc-green` |
+| PC-22 | Allow summary.reportDelivered to override NoReport by removing only `-not $NoReport -and` from that final summary override condition. | N: `noreport` |
+| PC-23 | For RC, change paths.LastAttempt to Join-Path of Get-NightlyDefaultStateRoot and last-run.json; the fixture default is the private sentinel root. | N: `master-unchanged` |
+| PC-24 | Remove coverageComplete from Test-ReleaseGateGreenFlags field list. | C: `C599 CreditVerdicts coverageComplete false earns nothing` |
+| PC-25 | Remove testsPassed from the same field list. | C: `C599 CreditVerdicts testsPassed false earns nothing` |
+| PC-26 | Remove reportDelivered from the same field list. | C: `C599 CreditVerdicts reportDelivered false earns nothing` |
+| PC-27 | In Test-ReleaseGateRealBoolean accept string value "true" before the type check. | C: `C599 CreditVerdicts coverageComplete as the STRING "true" earns nothing` |
+| PC-28 | Remove only the missing-exitCode reason addition; retain the elseif chain. | C: `C599 CreditVerdicts missing exitCode earns nothing` |
+| PC-29 | Remove only the nonzero exit reason addition. | C: `C599 CreditVerdicts non-zero exit earns nothing` |
+| PC-30 | Remove only the missing-runId reason addition. | C: `C599 CreditVerdicts missing runId earns nothing` |
+| PC-31 | Remove only the missing-policyHash reason addition. | C: `C599 CreditVerdicts missing policyHash earns nothing` |
+| PC-32 | Make Test-ReleaseGateFullSha accept exactly seven lowercase hex characters as well as forty, so the short equal pair reaches credit. | C: `C599 CreditVerdicts rc short sha earns nothing` |
+| PC-33 | Replace the expected-SHA validation/equality block with one guarded by nonempty expected; empty expected bypasses that block only. | C: `C599 CreditVerdicts rc without a pinned expectedSha earns nothing` |
+| PC-34 | Remove only rc-sha-mismatch reason addition. | C: `C599 CreditVerdicts rc sha mismatch earns nothing` |
+| PC-35 | Remove only rc-candidate-missing reason addition. | C: `C599 CreditVerdicts rc without a candidate id earns nothing` |
+| PC-36 | Change the unknown-kind early return in Test-NightlyCompleteGreenPredicate to true. | C: `C599 CreditVerdicts an invented credit kind earns nothing` |
+| PC-37 | Change the null-state early return in Test-NightlyCompleteGreenPredicate to true. | C: `C599 CreditVerdicts a null state earns nothing` |
+| PC-38 | After a successful verdict, replace the requested-kind equality return with true. | C: `C599 CreditVerdicts rc green never earns master credit` |
+| PC-39 | Make the rc-schedule-preenabled condition false in register-release-gates.ps1. | S: `C599 ScheduleProvenance a pre-enabled rc payload refuses` |
+| PC-40 | Make the workspace != mc refusal false in Read-ReleaseGateRegistrationProfile. | S: `C599 ScheduleProvenance a non-mc workspace refuses` |
+| PC-41 | Remove only token from the forbidden profile-field list. | S: `C599 ScheduleProvenance an inline token in the profile refuses` |
+| PC-42 | Replace only the token-load catch refusal/return with assignment of a fixed fixture token; offline Windmill seam remains installed. | S: `C599 ScheduleProvenance a missing token file refuses the apply` |
+
+**Binding required after Code.** The mutations above bind behavior, function and
+statement, not an invented line number in future source. Code records fixed-source
+file/statement anchors and exact implemented W/N labels; Mutation binds concrete
+patch payloads and verifies each reaches its named assertion. Any payload not yet
+bound stays **binding required**, including after Code, until independently bound;
+a plan row is not a mutation receipt. Missing/unreachable assertions return for a
+separate test/fixture repair, never get reclassified as a passed control.
+
+Inventory at design handoff: **guards=42, mapped=42, missing=0, duplicate PC maps=0**.
+Required execution roster is all PC-1 through PC-42, without sampling. Executed
+here: **0/42**; all 42 remain pending post-land. Mutation completion requires
+**all PCs run**, intended assertion reds, restoration and greens; ordinary Code
+completion does not assert PC-clean.
+
+### Out of scope
+
+- No tag operation, publish/promote entrypoint (direct or indirect), live Windmill,
+  registration/enablement, external report delivery, actual nightly/RC suite,
+  provider/broker, deployment or rc mutation. Synthetic summaries are not native
+  qualification, release authority or recipient receipt.
+- CARD-1339 S1 owns exact remote-ref behavior. Closure of item (c) requires its
+  actual landed SHA and ordinary exact-ref receipt, not this design or a plan tip.
+  Allocation/publication/promotion guards stay with CARD-1339. Do not run
+  C1311_PreReleaseTag or the whole release harness.
+- General shared-lock crash/custody, selector tamper/recovery and watchdog delivery
+  are unchanged and not claimed requalified. Real local child consumption in N
+  is required; it does not prove native suite correctness or external delivery.
+- Master landing does not update an rc-hosted core or registered definition. The
+  preceding conditional backport table remains authoritative; separately commission
+  the relevant reviewed backport when the next executing entrypoint requires it.
+
+### Checkpoints
+
+Exactly four rows, each one fresh isolated build and one filter. Run CP-1 and CP-3
+at their separate committed/pushed test-only SHAs, and CP-2/CP-4 after their fixes.
+The two red rows deliberately return failed-test exit 1; retain their raw red
+receipts. The checkpoint tool does not convert Expect prose to an expected-failure
+success code. Never mark those receipts green, flaky, or rerun them as historical
+red at fixed source. Final ordinary Review executes only CP-2 and CP-4 at its fixed
+reviewed SHA and inspects the historical red witnesses. Union = V-1..V-4/R-1..R-4.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c1336-cp1/` | wrapper-red | `/*/*/ReleaseGateFollowupTests/C1336_WrapperRef` | V-1, R-1 | exactly 1 executed, 1 failed at C1336 W own-0 missing Ref, 0 skipped | 1 | 4 |
+| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c1336-cp2/` | wrapper-green | `/*/Antiphon.Tests.Scripts/(ReleaseGateFollowupTests*)\|(ReleaseGateRegistrationTests*)/(C1336_WrapperRef*)\|(C599_ScheduleProvenance*)` | V-1, R-1 | exactly W and S, 2 executed, 0 failed/skipped | 2 | 5 |
+| CP-3 | S2-red | `tests/Antiphon.Tests -> bin-c1336-cp3/` | identity-red | `/*/*/ReleaseGateFollowupTests/C1336_NightlyCandidateIdentity` | V-2, R-2 | exactly 1 executed, 1 failed at C1336 N omitted CandidateId, 0 skipped | 1 | 6 |
+| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1336-cp4/` | identity-green | `/*/Antiphon.Tests.Scripts/(ReleaseGateFollowupTests*)\|(ReleaseGateRunTests*)/(C1336_NightlyCandidateIdentity*)\|(C599_CreditVerdicts*)` | V-2, V-3, V-4, R-2, R-3, R-4 | exactly N and C, 2 executed, 0 failed/skipped | 2 | 7 |
+
+Parenthesized operands and suffix wildcards are CARD-0403 syntax. Escaped pipes
+are Markdown syntax; the importer supplies literal pipes to the runner. The
+class/method intersections select only the two listed methods. Check actual TRX
+class/method names and counts, not discovery output. Adding a third matching
+method requires reconciliation, not silently increasing the floor.
+
+For each committed group invoke through the build-slot gate:
+
+```powershell
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1336-checkpoint -- dotnet run --project tools/Antiphon.Checkpoints -- run --plan docs/superpowers/plans/2026-10-19-card-1336-release-gate-followups-plan.md --rows CP-1 --expected-source-sha <full-committed-sha>
+```
+
+Replace only row and exact SHA for the other three groups. If run returns 75,
+continue `wait <run-id>` until terminal; never end a turn with children in flight.
+The tool takes row slots itself. Retain unedited CHECKPOINT lines, fresh TRX,
+source/build receipts and tool status. Do not retry unleased. Validate green
+receipts for the tested SHA and run check-evidence-diff.ps1 over base..fixed-tip.
+Remove only owned alternate outputs after child completion; keep ignored receipts.
+No Unit-wide, assembly-wide, native-profile or extra warm-up test is authorized.
+An inherited collateral failure needs only its exact failing method at base,
+reported as an additional diagnostic with reason/cost; never hide it with retries.
+
+### Cost
+
+All numbers are **estimated minutes**, not measured execution. TestDesign ran no
+build/test, including no optional S1 proof. Its 20-minute dispatch budget is design
+authoring, not the later Code/Mutation execution allowance.
+
+- Ordinary V/R floor (Code) = CP-1 4 + CP-2 5 + CP-3 6 + CP-4 7 = **22**.
+  Each includes 1 minute isolated build/setup; test/fixture portions are 3, 4, 5,
+  6 minutes respectively (includes process launch and fixture construction).
+  Checkpoint-tool first bootstrap/setup = **2** additional. Code verification
+  total **24**; the original 105-minute envelope therefore leaves **81** for
+  authoring/repair. Slot wait and unexpected fixture repairs are additional.
+- PC floor (Mutation): exact W filter for PC-1..4, exact N for PC-5..23,
+  exact C for PC-24..38, exact S for PC-39..42. Each of the 23 W/C/S controls
+  budgets 3 phases x (1 build + 1 method/fixture) = **6**, total **138**.
+  Each of 19 N controls budgets 3 x (1 build + 2 method/fixture) = **9**, total
+  **171**. Thus all baseline/red/restored-green cycles = **309**, plus **2**
+  snapshot/driver setup = **311**. Bind/discover/report time and slot waits are
+  additional; do not commission Mutation inside the Code authoring envelope.
+- Combined Code + Mutation verification floor = setup **4** + ordinary **22**
+  + PC cycles **309** = **335**. Separate ordinary Review at the fixed SHA uses
+  CP-2 + CP-4 = **12** (+ **2** cold setup if needed), giving **349** inclusive
+  of that cold Review. No measurement or historical outcome is overwritten.
+- No claimed wall-clock savings: **0 measured minutes**. Four isolated builds
+  are required by the two red-first slices; post-land controls intentionally use
+  fresh builds. Method-scoped selections avoid unrelated suites, but their saving
+  is not quantified from an unmeasured broad-run baseline.
+
+Design handoff is `next: code`: recipes, exact cases/oracles/reachability,
+classification, guard mappings, four checkpoint rows and numeric floors are
+bound. Concrete mutation patch payloads remain binding required after Code;
+execution remains a separate post-land obligation.
