@@ -5,6 +5,30 @@ Branch: `feat/card-task-6af5a239`.
 Source inspected: CARD-1353 reviewed tip `cd5e2c5fb1c94307f5b226a52cb0eb86cca9f515`.
 Card: `3579a748-f6a3-4d8f-8cef-4446e1ba803f`, Antiphon board, revision 0.
 
+## Code brief override (CARD-1371, task 38f082ad)
+
+The caller supersedes D-11's original diagnostic-only/no-retry choice below.
+Cross-read count drift restarts the complete two-pass census, at most three
+attempts with 30 seconds between attempts. Only persistent drift refuses with
+`cause=Drift`, project, expected and observed counts. Single-envelope malformation
+still refuses immediately. Binding/land guards take precedence; no partial closure
+is accepted. The separate bound-land wait still retries only bound lands.
+
+V-5's two comparison sites now cover recovery on the second attempt, refusal
+after three attempts, stable nonzero counts, malformed counts/totals/projects and
+bound companions, independently in both languages. Its persistent case also calls
+the actual land-wait wrapper to prove that exhausted Drift receives no further
+land-wait retry. PC-77/a and PC-78/a retain that outer-wait guard, with three census
+attempts/two internal sleeps replacing the superseded one-read/no-sleep oracle.
+All PC-1/a through PC-81/a remain pending SourceLanding Mutation; the binder must
+also discover controls for the newly authorized bounded-recovery policy.
+
+The five named red methods were committed before production changes. The exact
+14-method CP-1 roster remains the ordinary scope; invoke it once with
+`--row-timeout 40m --expected-source-sha <committed-HEAD>`. Native Linux, no host
+pin, master-only, no live rollout actions. Historical no-retry statements and
+estimates below describe the prior design, not this override.
+
 ## Outcome and scope
 
 Permit an existing off-runner task to move among `Queued`, `Dispatched`, `Working`
