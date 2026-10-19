@@ -46,7 +46,13 @@ public sealed class CompletionNoteDurableSweepTests
 
             var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
             await using var db = new AppDbContext(options);
-            var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
+            // Keep the complete outcome inside the inbox-conhost envelope: this test observes
+            // the submitted body itself, while the default receipt seed exercises spill transport.
+            var note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId,
+                detail: "durable sweep beginning\n" +
+                    "publication is complete and the committed outcome remains owed to this idle caller\n" +
+                    "both in-memory flush hints are lost; the durable scan must deliver this entire note\n" +
+                    "durable sweep distinct final tail");
             // SeedAsync uses wall time. Make the note due at the frozen worker clock without
             // advancing that clock or changing the empty startup sweep's deadline.
             note.NextAttemptAt = clock.GetUtcNow().UtcDateTime;
