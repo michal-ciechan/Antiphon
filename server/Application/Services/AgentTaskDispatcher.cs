@@ -1271,9 +1271,19 @@ public sealed partial class AgentTaskDispatcher
         _leaseWaiters.Register(common, task.Id, RepositoryLeasePurposes.Dispatch, _timeProvider.GetUtcNow());
     }
 
-    private async Task<bool> TraceHeldAsync(
+    internal async Task<bool> TraceHeldAsync(
         AgentTask task, string detail, Dictionary<Guid, string> lastHeld, CancellationToken ct)
     {
+        await using var readinessLock = RemoteWorkspaceReadiness.IsInFlight(detail) && _db.Database.CurrentTransaction is null
+            ? await _db.Database.BeginTransactionAsync(ct) : null;
+        if (RemoteWorkspaceReadiness.IsInFlight(detail))
+        {
+            var current = await _db.AgentTasks.FromSqlInterpolated(
+                $"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {task.Id} FOR UPDATE")
+                .AsNoTracking().SingleOrDefaultAsync(ct);
+            if (current is null || current.Status != AgentTaskStatus.Queued
+                || !string.IsNullOrWhiteSpace(current.RemoteWorktreePath)) return false;
+        }
         if (lastHeld.TryGetValue(task.Id, out var previous) && previous == detail)
             return false;
         _db.AgentTaskEvents.Add(new AgentTaskEvent
@@ -1282,6 +1292,7 @@ public sealed partial class AgentTaskDispatcher
             Detail = detail, At = UtcNow(),
         });
         await _db.SaveChangesAsync(ct);
+        if (readinessLock is not null) await readinessLock.CommitAsync(ct);
         lastHeld[task.Id] = detail;
         return true;
     }

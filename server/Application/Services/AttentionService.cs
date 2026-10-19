@@ -1431,7 +1431,7 @@ public sealed partial class AttentionService
                 task.AgentId,
                 null,
                 task.Title,
-                $"Queued and held for {(int)age}s; {lastHeld.Detail}",
+                $"Queued and held for {(int)age}s; {RemoteWorkspaceReadiness.CurrentDetail(task.Status, task.RemoteWorktreePath, lastHeld.Detail)}",
                 $"task={task.Id:N}; created={task.CreatedAt:O}; heldSince={heldSince:O}; escalations={agedCount}; {ledger.Describe()}",
                 heldSince,
                 null,
