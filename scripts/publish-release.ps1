@@ -280,7 +280,7 @@ function Invoke-AntiphonPublishRelease {
         [void](Write-ReleaseGateJournalStep -Path $publishJournal -Step 'tag-local')
     }
     if (-not (Test-ReleaseGateJournalStep -Path $publishJournal -Step 'tag-pushed')) {
-        $push = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('push', 'origin', ('refs/tags/{0}' -f $tag))
+        $push = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('push', 'origin', ('refs/tags/{0}:refs/tags/{0}' -f $tag))
         if ([int]$push.ExitCode -ne 0) {
             # Re-read remote state after an ambiguous response before any further write.
             $peek = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $tag

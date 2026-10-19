@@ -4037,7 +4037,11 @@ function Test-C1339_ExactRemoteRefs {
     Set-C1339Read $fx ('refs/heads/' + $fx.CandidateRef) ($fx.Head + "`trefs/heads/archive/" + $fx.CandidateRef)
     $r = Invoke-C599Candidate -ReleaseRoot $fx.ReleaseRoot -Checkout $fx.Checkout -Seams $fx.Gh -Ref $fx.CandidateRef
     $tip = Invoke-C1339LocalGit $fx @('rev-parse', ('refs/heads/' + $fx.CandidateRef)) -Remote
-    Assert-C487 -Cond ($r.Refusal -eq 'remote-candidate-conflict' -and $tip -ceq $fx.B -and (Test-C1339NoWrites $fx)) -Name 'C1339 G-8 candidate-stamp-read' -Detail $r.Refusal
+    $checks = @(New-C1339Check ($r.Refusal -eq 'remote-candidate-conflict' -and $tip -ceq $fx.B -and (Test-C1339NoWrites $fx)) $r.Refusal)
+    Set-C1339Read $fx ('refs/heads/' + $fx.CandidateRef) ($fx.Head + "`trefs/heads/" + $fx.CandidateRef) -Mode replace -Exit 1
+    $r = Invoke-C599Candidate -ReleaseRoot $fx.ReleaseRoot -Checkout $fx.Checkout -Seams $fx.Gh -Ref $fx.CandidateRef
+    $checks += New-C1339Check ($r.Refusal -eq 'remote-candidate-unresolved' -and (Test-C1339NoWrites $fx)) $r.Refusal
+    Assert-C599AMatrix 'C1339 G-8 candidate-stamp-read' $checks
 
     $checks = @()
     foreach ($push in @('before', 'after')) {
@@ -4073,7 +4077,8 @@ function Test-C1339_ExactRemoteRefs {
     Assert-C599AMatrix 'C1339 G-11 publisher-recovery-read' $checks
 
     $fx = New-C1339Fixture
-    Set-C1339Read $fx ('refs/tags/' + $fx.PreTag + '^{}') ($fx.B + "`trefs/tags/refs/tags/" + $fx.PreTag + '^{}')
+    Add-C1339Tag $fx ('refs/tags/' + $fx.PreTag) $fx.B
+    Set-C1339Read $fx ('refs/tags/' + $fx.PreTag + '^{}') ($fx.B + "`trefs/tags/unrelated/" + $fx.PreTag + '^{}')
     $r = Invoke-C1339Publish $fx
     $gh = Get-Content -LiteralPath $fx.Gh.StorePath -Raw | ConvertFrom-Json
     Assert-C487 -Cond ($r.ExitCode -eq 0 -and $r.Published -and (Get-C1339Peel $fx $fx.PreTag) -ceq $fx.Head -and @($gh.releases).Count -eq 1 -and -not $gh.releases[0].isDraft) -Name 'C1339 G-12 publisher-verify-read' -Detail $r.Refusal
