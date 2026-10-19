@@ -80,6 +80,9 @@ function Read-ReleaseSelectionBaseline {
             foreach ($file in @(Get-ChildItem -LiteralPath $archive -File -Filter '*.json' | Sort-Object Name)) {
                 $copy = @{}; foreach ($key in $Request.Keys) { $copy[$key] = $Request[$key] }
                 $copy.BaselineReceiptPath = $file.FullName
+                # The directory may contain several valid releases. Validate each
+                # on its own identity, then apply the caller's explicit B filter.
+                $copy.BaselineSha = ''
                 $candidate = Read-ReleaseSelectionBaseline $copy $CandidateContract
                 if ($candidate.compatible -and (-not $Request.BaselineSha -or $candidate.sha -ceq $Request.BaselineSha)) { $valid += $candidate }
             }
@@ -285,13 +288,24 @@ namespace Antiphon {
     public static class ReleaseSelectionBridge {
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern IntPtr CreateJobObject(IntPtr a, string n);
         [DllImport("kernel32.dll")] static extern bool AssignProcessToJobObject(IntPtr j, IntPtr p);
+        [DllImport("kernel32.dll")] static extern bool SetInformationJobObject(IntPtr j, int c, ref ExtendedLimits v, uint s);
         [DllImport("kernel32.dll")] static extern bool TerminateJobObject(IntPtr j, uint c);
         [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+        [StructLayout(LayoutKind.Sequential)] struct BasicLimits {
+            public long ProcessTime, JobTime; public uint Flags;
+            public UIntPtr Minimum, Maximum; public uint Active; public UIntPtr Affinity; public uint Priority, Scheduling;
+        }
+        [StructLayout(LayoutKind.Sequential)] struct IoCounters { public ulong ReadOps, WriteOps, OtherOps, ReadBytes, WriteBytes, OtherBytes; }
+        [StructLayout(LayoutKind.Sequential)] struct ExtendedLimits {
+            public BasicLimits Basic; public IoCounters Io; public UIntPtr ProcessMemory, JobMemory, PeakProcess, PeakJob;
+        }
         public static void Run(string exe, string encoded) {
             IntPtr job = CreateJobObject(IntPtr.Zero, null);
             if (job == IntPtr.Zero) throw new InvalidOperationException("selection-worker-custody");
             Process process = null;
             try {
+                var limits = new ExtendedLimits(); limits.Basic.Flags = 0x2000;
+                if (!SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(typeof(ExtendedLimits)))) throw new InvalidOperationException("selection-worker-custody");
                 process = Process.Start(new ProcessStartInfo(exe, "-NoProfile -NonInteractive -EncodedCommand " + encoded) { UseShellExecute=false, CreateNoWindow=true });
                 if (!AssignProcessToJobObject(job, process.Handle)) throw new InvalidOperationException("selection-worker-custody");
                 if (!process.WaitForExit(60000)) throw new TimeoutException("selection-worker-timeout");
@@ -359,12 +373,17 @@ function Invoke-ReleaseSelectionHop {
     for ($i = $fileIndex + 2; $i -lt $ArgumentList.Count; $i++) {
         $key = $ArgumentList[$i].TrimStart('-')
         if ($key -in @('NoSync', 'NoReport', 'WhatIf')) { $parameters[$key] = $true }
-        else { $i++; $parameters[$key] = $ArgumentList[$i] }
+        else {
+            $i++
+            # ConvertFrom-Json on newer pwsh converts ISO strings to DateTime.
+            # Encode string values so even lock timestamps retain their exact bytes.
+            $parameters[$key] = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($ArgumentList[$i]))
+        }
     }
     $request = [IO.Path]::GetTempFileName()
     try {
         [IO.File]::WriteAllText($request, (ConvertTo-Json @{script=$ArgumentList[$fileIndex + 1];parameters=$parameters} -Depth 8), [Text.Encoding]::UTF8)
-        $command = '$ErrorActionPreference="Stop";$r=Get-Content -LiteralPath ''' + $request.Replace("'", "''") + ''' -Raw -Encoding UTF8|ConvertFrom-Json;$p=@{};foreach($v in $r.parameters.PSObject.Properties){$p[$v.Name]=$v.Value};& $r.script @p'
+        $command = '$ErrorActionPreference="Stop";$r=Get-Content -LiteralPath ''' + $request.Replace("'", "''") + ''' -Raw -Encoding UTF8|ConvertFrom-Json;$p=@{};foreach($v in $r.parameters.PSObject.Properties){if($v.Value -is [bool]){$p[$v.Name]=$v.Value}else{$p[$v.Name]=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($v.Value))}};& $r.script @p'
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
         $pwsh = Assert-ReleaseSelectionCapability 'Shadow'
         $proc = Start-NightlyProcess -StartParams @{FilePath=$pwsh.Source;ArgumentList=@('-NoProfile','-NonInteractive','-EncodedCommand',$encoded)
