@@ -19,9 +19,12 @@ During a staged server2 rolling rollout, keep dispatching new work to `server2-t
 
 That paragraph is the rule. The orchestrator copy is [operational autonomy](orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout). `redeploy-old` clears the standing runner's drain before gate 7's separate smoke and Both. Readiness for moving new work is that exit 0 together with smoke/Both passed, so pin new work to `server2-temp` until both have passed. Start `drain-temp` at that moment; tasks already running on temp settle under `-WaitIdleMinutes 240`.
 
-Before starting, verify no land is pending, the checkout has no half-reset worktree, and the
-running server's `/health` and `GET /api/version` SHA match that `rc/YYYY-MM-DD` tip
-(see [the autonomy policy](orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout)).
+Before starting, verify the checkout has no half-reset worktree and the running server's
+`/health` and `GET /api/version` SHA match that `rc/YYYY-MM-DD` tip (see
+[the autonomy policy](orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout)).
+Lands keep running throughout the rollout (CARD-1353): a land is desktop git work that never
+runs on, binds to or reads a session runner, and the only land a phase waits for is one bound
+to the runner being recycled.
 Before host qualification or gate 1, check project identity and both filtered task
 closures without changing runner state:
 
@@ -30,7 +33,7 @@ pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase chec
 ```
 
 Expect `RECYCLE_PROJECT id=<guid> name=<name> resolvedBy=url|path|both|explicit` and
-two `RECYCLE_CENSUS runner=<id> open=<n> boundOpen=<n> landPending=<n> scopes=<n> elapsedMs=<n>`
+two `RECYCLE_CENSUS runner=<id> open=<n> boundOpen=<n> landPending=<n> boundLandPending=<n> scopes=<n> elapsedMs=<n>`
 lines, for `server2` and `server2-temp`. This phase uses GET only, performs no SSH or
 host jq check, and reports bound work and pending lands as counts. It authorizes no
 recycling. Resolution, read, malformed-data or unstable-census failures still refuse;
@@ -233,10 +236,21 @@ The wrapper and host census each walk two server-filtered closures, following
 `excluded.byProject` with the same filter and reconciling counts. Open work is
 `Queued/Dispatched/Working/Blocked`; a parked task is still Blocked. Any such row
 bound to the target refuses `RecycleBoundTasks <id> status=<status> runner=<runner>`.
-The independent `landPending=true` closure refuses `RecycleLandInFlight <id>` even
-for an old Succeeded task. Failed/Canceled/Succeeded rows without a pending land
-are not bound work; their worktrees remain protected by the publication audit below.
-No time window hides an older pending land. Both closures must agree across two passes.
+The independent `landPending=true` closure refuses `RecycleLandInFlight <id>` only for a row
+bound to the runner being recycled (`runnerId` equal to the target, the same predicate as
+`RecycleBoundTasks`), even for an old Succeeded task, and only after a bounded wait: the
+wrapper re-reads the census every 30 s for `-LandWaitMinutes` (default 30; 0 refuses on the
+first read) and the host for `C1008_LAND_WAIT_SECONDS` (default 1800) every
+`C1008_LAND_POLL_SECONDS` (default 30), printing `RECYCLE_LAND_WAIT runner=<id> id=<task> polls=<n>`
+and `C1008_LAND_WAIT runner=<id> reason=<refusal> polls=<n>` while it waits. An expired wait
+refuses `RecycleLandInFlight <id> runner=<runner> waited=<n>polls`; an invalid host bound
+refuses `RecycleContextInvalid` before any read; the census receipt records the polls
+(`landWait`, `landWaitPolls`). A pending land for a task on the other runner or the desktop is
+read, counted and recorded in the receipt but is not part of the compared snapshot: the land
+closure snapshot holds bound rows only, so a land requested for an off-runner task during
+the audits cannot end `cause=Unstable` (CARD-1353). Failed/Canceled/Succeeded rows without a
+pending land are not bound work; their worktrees remain protected by the publication audit
+below. No time window hides an older pending land. Both closures must agree across two passes.
 
 Every read has a 60-second budget. `RecycleTaskCensusUnknown` keeps its stable first
 token and appends `cause=Timeout|Http|Transport|Empty|Malformed|UnfilteredRow|Unstable|ScopeLimit`,
@@ -245,16 +259,21 @@ disagreement or invalid land proof remains `RecycleLandUnknown`, except a termin
 (`Succeeded`, `Failed` or `Canceled`) with `landRequest` null, which is proven no-land and may
 be absent from the next pass's list without `Unstable`, and except a task that first appears
 on that pass with `landRequest` null, outside the `landPending` closure, and with neither land
-timestamp set. A land request, an unknown land state, or a changed row still refuses.
+timestamp set. An open row on another runner whose `landRequest` is `Queued`, `Held`,
+`Running` or `NeedsResolution` is recorded as `{state, terminalEventId}` and counted, not
+refused. A land request on a bound row, an unknown land state, or a changed row still refuses.
 CARD-1326 keeps two edges of that exception. A task that appears under a nested excluded
 scope still ends `RecycleTaskCensusUnknown cause=Unstable`: forgiveness rewrites the open
 task, its null land proof and the scope id list only, and leaves `excluded.byProject` counts
 and any scope pass 0 did not contain untouched. Each pass already reconciles those counts
 with the rows it walked, so a nested appearance is a different closure. `check-census` stays
 the read-only count report, so a row with `landRequestedAt` or `landStartedAt` increments
-`landPending`. When that row, or a row whose id is in the `landPending` closure, is the
-pass-1 appearance, the two-pass compare refuses `cause=Unstable`. Mutating phases and the
-host census refuse `RecycleLandInFlight` on the row itself. Project resolution
+`landPending`, and `boundLandPending` when that row is bound to the reported runner. When
+that row is the pass-1 appearance, or a row bound to the recycled runner appears in the
+`landPending` closure, the two-pass compare refuses `cause=Unstable`; an off-runner land
+appearing there is outside the compared snapshot. Mutating phases and the host census
+refuse `RecycleLandInFlight` on a row bound to the recycled runner, after the bounded wait
+above. Project resolution
 uses `RecycleProjectUnresolved` and its cause. Each census retains approved read
 timings/counts and reduced task/land facts; no task prose, credentials or response body
 is retained. A refusal stops the phase before destructive work, including on resume.
@@ -310,7 +329,7 @@ empty caches are not a passing cache gate. State/cache opt-in does not authorize
 prune, deletion of deployment markers or the donor tar, or bypass of admission guards.
 
 Before **any** volume removal, require completed drain, zero sessions and queued
-tasks, no routing or pins to that runner, no land in flight, a stopped container,
+tasks, no routing or pins to that runner, no land in flight for a task bound to that runner, a stopped container,
 and no container reference to each volume (including exited state-init containers).
 A fresh non-null zero `runnerSessions` is required while a runner container exists.
 For an already-retired, offline, absent temp only, null is expected: prove absence
@@ -337,13 +356,13 @@ A blobless promisor checkout, including the deploy seed `git clone --filter=blob
 
 A no-index checkout is accepted only with no content outside its top-level .git, no stash, and status containing at most HEAD deletions. This matches the deploy seed; an emptied used checkout is equivalent because there are no worktree/index bytes left to lose, while all retained Git tips still require publication. In that no-index shape any file, including ignored content, refuses `RecycleWorktreeDirty`. In a checkout with an index, ignored files are not protected work and are not inspected, so a finished task worktree full of build output (`bin-*`, `obj`), caches or local configuration passes. The ignore rules are the audited repository's own (`.gitignore`, `info/exclude` and a `core.excludesFile` in its own configuration; system and global configuration are disabled): a file hidden by an ignore rule is accepted by design. Tracked files, even under an ignore pattern, staged entries and untracked files that are not ignored stay protected. Symlinks are never followed: a tracked symlink compares by its link text, an untracked one that is not ignored refuses as untracked content and an ignored one is ignored, wherever it points or if it dangles. A symlink inside a Git directory or outside every checkout must still resolve inside the work volume. A file named `HEAD` counts as a repository only in a directory shaped like a Git directory, so ignored output can neither refuse nor change the receipt; a Git-shaped directory that Git does not open, and a `.git` directory that is not that checkout's Git directory (Git never shows its contents), refuse unknown. Existing indexes are checked for hidden-entry flags and every file/symlink is hashed against its index object ID without trusting timestamps. Sparse/assume-unchanged/skip-worktree states refuse; raw-byte normalization differences also conservatively refuse. Unpublished recoverable commits refuse `RecycleUnpublishedWork`.
 
-The receipt records `repositories` and `partial` on success. On refusal `auditFailure` names the check, exit status and redacted repository path relative to the work volume; a first refusal also initializes `audit`. A saved successful `audit` is never overwritten by failure diagnostics, so unchanged publication proof can resume after connectivity recovers. The audit lines carry only local Git facts (one line per repository entry and per retained tip of each common directory), so ignored content and a moving origin leave the before/after comparison equal. `GithubTokenAbsent` stays a warning: this audit does not read the token. The token is used only for secondary receive-pack probes.
+The receipt records `repositories` and `partial` on success. On refusal `auditFailure` names the check, exit status and redacted repository path relative to the work volume; a first refusal also initializes `audit`. A saved successful `audit` is never overwritten by failure diagnostics, so unchanged publication proof can resume after connectivity recovers. The audit lines carry only local Git facts (one line per repository entry and per retained tip of each common directory), so ignored content and a moving origin leave the before/after comparison equal. An ordinary land never moves the task's source branch (schema 3 pushes the rebased target only), so a land finishing between the two audits leaves them equal as well; the one land shape that can refuse is an adoption land, which rewinds origin's task branch to the reviewed SHA so that commits past it on a runner mirror become unpublished work and the audit refuses `RecycleUnpublishedWork` (CARD-1353). `GithubTokenAbsent` stays a warning: this audit does not read the token. The token is used only for secondary receive-pack probes.
 
 Preview each destructive phase with `-DryRun`; `all` is not a preview phase. The
 preview reads inventories and prints the exact targets, preserved names and
 `auditPending=true` when an offline audit would need a helper. It grants no apply
-authority. Keep the no-new-land interval throughout reclaim. Apply obtains fresh
-proofs, stops/removes only inspected owned container IDs, and never prunes.
+authority. Apply obtains fresh proofs, stops/removes only inspected owned container IDs,
+and never prunes.
 
 Every attempt retains a schema-1 host journal under the deployment evidence root
 outside the recycled volumes and a copied receipt under
