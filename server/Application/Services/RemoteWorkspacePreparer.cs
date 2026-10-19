@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -279,6 +280,8 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
                         }
                         else
                         {
+                            await RemoteWorkspaceReadiness.PublishAsync(db, taskId, originatingAttempt, originatingRunner,
+                                scope.ServiceProvider.GetRequiredService<IEventBus>(), _logger, CancellationToken.None);
                             _logger.LogInformation(
                                 "Remote workspace binding for task {ShortId} was saved",
                                 DelegationReportFormatter.Short(taskId));
@@ -290,13 +293,9 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
                         // Path-only success, including a legacy runner that ignored a binding extension.
                         // Runner and attempt both have to match: a drain or a new attempt must not
                         // take this path, and a cancel of the same attempt still records it.
-                        var recorded = await db.AgentTasks
-                            .Where(t => t.Id == taskId && t.RunnerId == originatingRunner && t.Attempt == originatingAttempt)
-                            .ExecuteUpdateAsync(s => s
-                                .SetProperty(t => t.RemoteWorktreePath, mirrored.Path)
-                                .SetProperty(t => t.RemotePrepFailures, 0)
-                                .SetProperty(t => t.DispatchNotBeforeAt, (DateTime?)null), CancellationToken.None);
-                        if (recorded == 0)
+                        var recorded = await RemoteWorkspaceReadiness.RecordPathAsync(db, taskId, originatingAttempt,
+                            originatingRunner, mirrored.Path, CancellationToken.None);
+                        if (!recorded)
                         {
                             _logger.LogWarning(
                                 "Remote workspace for task {ShortId} was mirrored on runner {RunnerId} after the task left that runner; the path was not recorded",
@@ -304,6 +303,8 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
                             return;
                         }
 
+                        await RemoteWorkspaceReadiness.PublishAsync(db, taskId, originatingAttempt, originatingRunner,
+                            scope.ServiceProvider.GetRequiredService<IEventBus>(), _logger, CancellationToken.None);
                         _logger.LogInformation(
                             "Remote workspace for task {ShortId} is ready at {Path}",
                             DelegationReportFormatter.Short(taskId), mirrored.Path);

@@ -110,7 +110,7 @@ public sealed class AgentTaskPipelineStatusService
                 t.CreatedAt, t.DispatchedAt, t.CompletedAt, t.AgentSessionId, t.WorkingDirectory,
                 t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch, t.DeliverablePath,
                 t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff, t.RoutingPinId,
-                t.RunnerId, t.CapacityWaitRetained, t.ProjectId))
+                t.RunnerId, t.CapacityWaitRetained, t.ProjectId, t.RemoteWorktreePath))
             .ToListAsync(ct);
 
         var boundStages = await _db.AgentTasks.AsNoTracking()
@@ -121,7 +121,7 @@ public sealed class AgentTaskPipelineStatusService
                 t.CreatedAt, t.DispatchedAt, t.CompletedAt, t.AgentSessionId, t.WorkingDirectory,
                 t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch, t.DeliverablePath,
                 t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff, t.RoutingPinId,
-                t.RunnerId, t.CapacityWaitRetained, t.ProjectId))
+                t.RunnerId, t.CapacityWaitRetained, t.ProjectId, t.RemoteWorktreePath))
             .ToListAsync(ct);
 
         var cardIds = open.Select(t => t.CardId)
@@ -622,7 +622,7 @@ public sealed class AgentTaskPipelineStatusService
         if (queueReason == QueueReasonAwaitingDispatch
             && dispatchHolds.CurrentStintHeld.TryGetValue(task.Id, out var heldDetail))
         {
-            switch (DispatchHoldDetails.ClassOf(heldDetail))
+            switch (DispatchHoldDetails.ClassOf(RemoteWorkspaceReadiness.CurrentDetail(task.Status, task.RemoteWorktreePath, heldDetail)))
             {
                 case DispatchHoldClass.Lease:
                     queueReason = QueueReasonRepositoryLease;
@@ -944,7 +944,8 @@ public sealed class AgentTaskPipelineStatusService
         Guid? RoutingPinId = null,
         string? RunnerId = null,
         bool CapacityWaitRetained = false,
-        Guid? ProjectId = null);
+        Guid? ProjectId = null,
+        string? RemoteWorktreePath = null);
 
     private sealed record SiblingLandRow(Guid Id, string Title, Guid CardId, DateTime LandRequestedAt);
 
