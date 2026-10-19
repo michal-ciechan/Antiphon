@@ -285,7 +285,7 @@ function New-C599PolicyCheckout {
       The owned release clone as a REAL git repository: the policy is committed and
       its commit SHA is the candidate SHA. PolicyBytes defaults to the live policy.
     #>
-    param([string]$Root, [byte[]]$PolicyBytes = $null)
+    param([string]$Root, [byte[]]$PolicyBytes = $null, [string]$Repository = 'michal-ciechan/Antiphon')
     $clone = Join-Path $Root 'checkout'
     New-Item -ItemType Directory -Path (Join-Path $clone 'tests') -Force | Out-Null
     $script:C599PolicyClones.Add($clone)
@@ -293,7 +293,7 @@ function New-C599PolicyCheckout {
     [System.IO.File]::WriteAllBytes((Join-Path $clone (Join-Path 'tests' 'test-execution-policy.json')), $PolicyBytes)
     [void](Invoke-C599RealGit -Repo $clone -Arguments @('init', '-q'))
     [void](Invoke-C599RealGit -Repo $clone -Arguments @('config', 'core.autocrlf', 'false'))
-    [void](Invoke-C599RealGit -Repo $clone -Arguments @('remote', 'add', 'origin', 'https://github.com/michal-ciechan/Antiphon'))
+    [void](Invoke-C599RealGit -Repo $clone -Arguments @('remote', 'add', 'origin', ('https://github.com/' + $Repository)))
     [void](Invoke-C599RealGit -Repo $clone -Arguments @('add', '--', 'tests/test-execution-policy.json'))
     [void](Invoke-C599RealGit -Repo $clone -Arguments @('-c', 'user.name=c599', '-c', 'user.email=c599@example.invalid', 'commit', '-q', '-m', 'policy'))
     $sha = Invoke-C599RealGit -Repo $clone -Arguments @('rev-parse', 'HEAD')
@@ -376,9 +376,9 @@ function New-C599Authority {
       Freeze a complete valid authority + plan + ledger for the candidate through
       the production functions, then lay down one real TRX per frozen chunk.
     #>
-    param([string]$ReleaseRoot, [string]$Checkout, [string]$Sha)
+    param([string]$ReleaseRoot, [string]$Checkout, [string]$Sha, [string]$Repository = 'michal-ciechan/Antiphon')
     $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId
-    $auth = New-ReleaseGateAuthority -RepositoryRoot $Checkout -CandidateRoot $root -Sha $Sha -Repository 'michal-ciechan/Antiphon' `
+    $auth = New-ReleaseGateAuthority -RepositoryRoot $Checkout -CandidateRoot $root -Sha $Sha -Repository $Repository `
         -CandidateId $CandidateId -CandidateRef $CandidateRef -IntentId $script:C599IntentId -ReleaseCardId $script:C599ReleaseCardId `
         -CreatedUtc ([datetime]'2026-09-23T08:30:30Z')
     $discovery = Get-C599Discovery
@@ -1201,9 +1201,9 @@ function New-C599PublishFx {
       the policy, so the candidate SHA is real and the publisher re-reads the pinned
       blob itself. The remote/GitHub stay file-backed recipients behind the seams.
     #>
-    param([byte[]]$PolicyBytes = $null, [switch]$NoAuthority, [switch]$LongLivedCandidate)
+    param([byte[]]$PolicyBytes = $null, [switch]$NoAuthority, [switch]$LongLivedCandidate, [string]$Repository = 'michal-ciechan/Antiphon')
     $root = New-C599Root
-    $co = New-C599PolicyCheckout -Root $root -PolicyBytes $PolicyBytes
+    $co = New-C599PolicyCheckout -Root $root -PolicyBytes $PolicyBytes -Repository $Repository
     $Head = $co.Sha
     # Any assignment makes these locals for the whole function. Start from the
     # script stamp identity, then override for a long-lived fixture.
@@ -1223,7 +1223,7 @@ function New-C599PublishFx {
     $checkout = $co.Path
     $policyHash = ''
     if (-not $NoAuthority) {
-        $auth = New-C599Authority -ReleaseRoot $releaseRoot -Checkout $checkout -Sha $Head
+        $auth = New-C599Authority -ReleaseRoot $releaseRoot -Checkout $checkout -Sha $Head -Repository $Repository
         $policyHash = [string]$auth.policyHash
     }
     if ($NoAuthority) { $policyHash = 'policy-1' }
@@ -3861,6 +3861,92 @@ function Test-C599_E2EWatchdog {
     Assert-C487 -Cond ($antiphon -eq 3600000) -Name 'C599 antiphon watchdog stays 3600000' -Detail ([string]$antiphon)
     Assert-C487 -Cond ($session -eq 1800000) -Name 'C599 resolved session-runner watchdog is 1800000' -Detail ([string]$session)
     Assert-C487 -Cond ($missing -eq 3600000) -Name 'C599 missing watchdog key keeps the 3600000 fallback' -Detail ([string]$missing)
+}
+
+# CARD-1339: real local recipients, with a confined transport adapter.
+. (Join-Path $here 'fixtures/c1339-release-git.ps1')
+
+function Invoke-C1339LocalGit {
+    param($Fx, [string[]]$Arguments, [switch]$Remote, [switch]$AllowAbsent)
+    $wd = $Fx.Checkout
+    if ($Remote) { $wd = $Fx.Bare }
+    $r = Invoke-C1339GitProcess -Root $Fx.Root -WorkingDirectory $wd -Arguments $Arguments
+    if ($r.ExitCode -ne 0 -and -not $AllowAbsent) { throw ('C1339 fixture git: ' + $r.Error) }
+    return [string]$r.Output
+}
+
+function New-C1339Fixture {
+    param([switch]$Stamp)
+    # All fixture setup children inherit no task/API/provider credentials, hooks,
+    # signing configuration or network protocols. Restore the harness environment.
+    $saved = @{}
+    foreach ($item in @(Get-ChildItem Env:)) {
+        if ($item.Name -match '(?i)TOKEN|SECRET|PASSWORD|CREDENTIAL|ANTIPHON_API|CODEX|CLAUDE|OPENAI|GH_|GITHUB|GIT_|ASKPASS') {
+            $saved[$item.Name] = $item.Value
+            [Environment]::SetEnvironmentVariable($item.Name, $null)
+        }
+    }
+    $env:GIT_CONFIG_NOSYSTEM = '1'; $env:GIT_ALLOW_PROTOCOL = 'file'
+    $env:GIT_CONFIG_GLOBAL = Join-Path $ResultsDirectory 'empty-git-config'
+    try { $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes) -LongLivedCandidate:(-not $Stamp) -Repository 'fixture/release' }
+    finally {
+        foreach ($name in @('GIT_CONFIG_NOSYSTEM', 'GIT_ALLOW_PROTOCOL', 'GIT_CONFIG_GLOBAL')) { [Environment]::SetEnvironmentVariable($name, $null) }
+        foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+    }
+    $bare = Join-Path $fx.Root 'remote.git'
+    New-Item -ItemType Directory -Path $bare | Out-Null
+    $fx | Add-Member Bare $bare
+    $fx | Add-Member FaultPath (Join-Path $fx.Root 'real-git-fault.json')
+    $fx | Add-Member PreTag 'v2026.10.15.1-rc.1'
+    $fx | Add-Member FinalTag 'v2026.10.15.1'
+    [void](Invoke-C1339LocalGit $fx @('init', '--bare', '-q') -Remote)
+    [void](Invoke-C1339LocalGit $fx @('push', $bare, ($fx.Head + ':refs/heads/' + $fx.CandidateRef)))
+    [void](Invoke-C1339LocalGit $fx @('commit', '--allow-empty', '-q', '-m', 'distinct B'))
+    $fx | Add-Member B (Invoke-C1339LocalGit $fx @('rev-parse', 'HEAD'))
+    [void](Invoke-C1339LocalGit $fx @('commit', '--allow-empty', '-q', '-m', 'distinct C'))
+    $fx | Add-Member C (Invoke-C1339LocalGit $fx @('rev-parse', 'HEAD'))
+    # Keep checkout at A for publication; other commits remain real and addressable.
+    [void](Invoke-C1339LocalGit $fx @('checkout', '--detach', '-q', $fx.Head))
+    $adapter = Join-Path $here 'fixtures/c1339-release-git.ps1'
+    Add-Content -LiteralPath $fx.Gh.Path -Encoding ASCII -Value @"
+. '$adapter'
+`$ReleaseGateSeams.Git = {
+    param(`$WorkingDirectory, `$Arguments)
+    Invoke-C1339FixtureGit -Root '$($fx.Root)' -Checkout '$($fx.Checkout)' -Bare '$bare' -WorkingDirectory `$WorkingDirectory -Arguments `$Arguments -FaultPath '$($fx.FaultPath)'
+}
+"@
+    return $fx
+}
+
+function Add-C1339Tag {
+    param($Fx, [string]$Tag, [string]$Sha)
+    [void](Invoke-C1339LocalGit $Fx @('tag', '-a', $Tag, $Sha, '-m', 'fixture'))
+    [void](Invoke-C1339LocalGit $Fx @('push', $Fx.Bare, ('refs/tags/' + $Tag)))
+}
+
+function Invoke-C1339Promote {
+    param($Fx)
+    & (Join-Path $here 'promote-release.ps1') -ReleaseRoot $Fx.ReleaseRoot -Tag $Fx.PreTag -CandidateId $Fx.CandidateId `
+        -CheckoutRoot $Fx.Checkout -SeamsPath $Fx.Gh.Path -PassThru
+}
+
+function Test-C1339_ExactRemoteRefs {
+    $results = @()
+    foreach ($nested in @($false, $true)) {
+        $fx = New-C1339Fixture
+        Add-C1339Tag $fx $fx.PreTag $fx.Head
+        if ($nested) {
+            Add-C1339Tag $fx ('refs/tags/' + $fx.PreTag) $fx.B
+            $output = Invoke-C1339LocalGit $fx @('ls-remote', '--tags', $fx.Bare, ('refs/tags/' + $fx.PreTag + '^{}'))
+            # Real records, reordered so the nested record arrives first.
+            $lines = @($output -split "`n" | Sort-Object { ($_ -split "`t")[1] })
+            Write-NightlyAtomicJson -Path $fx.FaultPath -Object @{ reads = @(@{ ref = 'refs/tags/' + $fx.PreTag + '^{}'; mode = 'replace'; exit = 0; output = ($lines -join "`n") }) }
+        }
+        $r = Invoke-C1339Promote $fx
+        $peel = Invoke-C1339LocalGit $fx @('rev-parse', '--verify', ('refs/tags/' + $fx.FinalTag + '^{}')) -Remote -AllowAbsent
+        $results += [pscustomobject]@{ Pass = ($r.ExitCode -eq 0 -and $r.Promoted -and $peel -ceq $fx.Head); Detail = ('nested=' + $nested + ' refusal=' + $r.Refusal + ' peel=' + $peel) }
+    }
+    Assert-C599AMatrix -Name 'C1339 G-13 promotion-pre-read' -Results $results
 }
 
 # ====================================================================== run ===
