@@ -106,7 +106,8 @@ public sealed class AgentTaskWorktreeBaseResolver(
             foreach (var row in kept.Except(inspectable))
                 warnings.Add($"Task {Short(row.Id)} branch {row.WorktreeBranch} is {row.Status}; it is not an automatic source.");
             totalCandidates = inspectable.Length;
-            if (inspectable.Length == 0 && !HasPending()) return Target();
+            // Nothing to inspect and no pending land: keep the excluded-source warnings on the result.
+            if (inspectable.Length == 0 && !HasPending()) return Result(CardWorktreeBaseDecision.Target);
             var common = await inspection.CommonAsync(task.RepoPath);
             var target = await inspection.CommitAsync(fallback);
             if (target is null && task.MergeTargetRef is null)

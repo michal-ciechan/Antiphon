@@ -59,10 +59,15 @@ public partial class DispatchBaseNotificationTests
         await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, "trunk",
             onLeaseAcquired: async () =>
             {
-                (await ScratchGitRepo.GitInAsync(repo.Path, "branch", "-D", "trunk")).Ok.ShouldBeTrue();
-                await Task.CompletedTask;
+                // The claim lease is taken again after the refused first claim; delete trunk once.
+                if ((await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet", "refs/heads/trunk")).Ok)
+                    (await ScratchGitRepo.GitInAsync(repo.Path, "branch", "-D", "trunk")).Ok.ShouldBeTrue();
             });
         await using var scope = provider.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
+        // CARD-1349 S2: the frozen trunk ref vanished under the lease, so that claim is refused; the
+        // next inspected tick observes the missing default and still selects the kept sibling.
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct)).Status.ShouldBe(AgentTaskStatus.Queued);
         await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
 
         var siblingTip = (await repo.GitReadAsync("rev-parse", sibling.WorktreeBranch!)).Trim();
