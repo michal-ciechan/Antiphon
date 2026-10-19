@@ -8,8 +8,12 @@ public static class CheckpointFileReader
 {
     public const int DocumentLimit = 4 * 1024 * 1024;
     public const int SourceLimit = 1024 * 1024;
-    // CARD-1318 stalled-receipt contract: a read that delivers nothing for this long is refused.
+    // CARD-1318 stalled-receipt contract: a read that delivers nothing for this long is refused. CARD-1358: the
+    // window bounds the open, the inspection and each chunk, and every delivered chunk re-arms it, so the total is
+    // bounded by the chunk count and not by a throughput assumption.
     public static readonly TimeSpan StallDeadline = TimeSpan.FromSeconds(3);
+    // The handle stream is synchronous, so each read is one thread-pool hop; 256 KiB keeps a 7.5 MiB file at 30 hops.
+    public const int ReadChunk = 256 * 1024;
 
     public static string? Refusal(bool isRegularFile, ulong linkCount, string resolvedPath, string root) =>
         Refusal(CheckpointCleanupDefaults.Context, isRegularFile, linkCount, resolvedPath, root);
@@ -39,8 +43,8 @@ public static class CheckpointFileReader
     public static byte[] ReadBytes(CheckpointCleanupContext context, string root, string path, int limit,
         Action? afterVerification = null, CancellationToken cancellationToken = default)
     {
-        using var timeout = new CancellationTokenSource(StallDeadline, context.Time);
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        using var stall = new CancellationTokenSource(StallDeadline, context.Time);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, stall.Token);
         deadline.Token.ThrowIfCancellationRequested();
         CheckpointReadOpen request;
         if (context.Io.Platform == CheckpointPlatform.Linux)
@@ -65,12 +69,24 @@ public static class CheckpointFileReader
         afterVerification?.Invoke();
         using var stream = handle.OpenStream();
         using var content = new MemoryStream();
-        var buffer = new byte[8192];
-        int count;
-        while ((count = stream.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, limit - (int)content.Length + 1)), deadline.Token).AsTask().WaitAsync(deadline.Token).GetAwaiter().GetResult()) != 0)
+        var buffer = new byte[ReadChunk];
+        try
         {
-            if (content.Length + count > limit) throw new InvalidDataException("selected file exceeds size limit");
-            content.Write(buffer, 0, count);
+            int count;
+            // One byte past the limit is requested so a file that grows during the read is still refused.
+            while ((count = stream.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, limit - (int)content.Length + 1)), deadline.Token).AsTask().WaitAsync(deadline.Token).GetAwaiter().GetResult()) != 0)
+            {
+                if (content.Length + count > limit) throw new InvalidDataException("selected file exceeds size limit");
+                content.Write(buffer, 0, count);
+                stall.CancelAfter(StallDeadline); // progress re-arms the window
+            }
+        }
+        catch (OperationCanceledException) when (stall.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            // A stall on the end-of-file read after every inspected byte arrived does not fail a complete read.
+            if (content.Length == (long)metadata.Size)
+                return content.ToArray();
+            throw new IOException($"read-stalled: {content.Length} of {metadata.Size} bytes; no progress within {StallDeadline.TotalSeconds:0}s");
         }
         return content.ToArray();
     }
