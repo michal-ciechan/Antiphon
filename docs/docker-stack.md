@@ -516,8 +516,8 @@ not take that refusal. Accepting temp remains the live rollback.
 
 The `session-testing` image now carries the .NET 9.0.20 `Microsoft.NETCore.App.Ref`,
 `Microsoft.AspNetCore.App.Ref`, and `Microsoft.NETCore.App.Host.linux-x64` packs in
-`/usr/share/dotnet/packs`. Its SDK remains 10.0.401, selected by `global.json`. The
-packs come from Microsoft's SDK 9.0.318 Linux x64 archive, pinned to the SHA-512 in
+`/usr/share/dotnet/packs`. The packs come from Microsoft's SDK 9.0.318 Linux x64
+archive, pinned to the SHA-512 in
 the [official .NET 9 release record](https://builds.dotnet.microsoft.com/dotnet/release-metadata/9.0/releases.json)
 and checked before extraction. Archive ownership is discarded and the native apphost
 template is set to 0755 so uid 1654 can execute it. Only those three packs are copied into the final image;
@@ -534,7 +534,7 @@ shared cache. Qualify the image independently of volumes-only cold Seed, then de
 to the temporary runner within the approved rolling window.
 
 **The Fixture gate needs the 9.0.20 targeting-pack pin (2026-10-19).** The image builds from the
-floating `sdk:10.0` tag and has moved past the 10.0.401 above to 10.0.402, whose bundled
+floating `sdk:10.0` tag and has moved past 10.0.401 to 10.0.402, whose bundled
 defaults select the net9 reference packs at 9.0.21, while the image deliberately ships only the
 9.0.20 packs; `RuntimeFrameworkVersion=9.0.20` pins the runtime, not the reference packs. The
 rolling rollout's Fixture seed smoke therefore failed its offline restore (`NU1100` on both

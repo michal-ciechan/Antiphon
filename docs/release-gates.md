@@ -47,8 +47,8 @@ the **target's** current tip (the master tip for an rc-to-master merge; the rc t
 branch is merged into the rc line), have it `git merge` the source on its own assigned task
 branch, and have it publish with `git push origin HEAD:refs/heads/<target>`. That push is a
 fast-forward because the task branch began at the target tip and the merge commit descends from
-it. Starting the task branch at the Code branch's tip instead is refused by the launch git
-contract, so a Merge task never starts from the source side. The 2026-10-19 cycle's worked
+it. The flow starts at the target tip, not at the Code branch's tip, so that the result
+fast-forwards the target; a Merge task never starts from the source side. The 2026-10-19 cycle's worked
 examples: `feat/card-task-5d75d6f6` started at master, merged `df6b422c71b0` and master
 fast-forwarded to `d5dec9555bd726ad11bb30073c1733d6b3e7bb0e`; `feat/card-task-a7accc73` started
 at the rc tip `df6b422c71b0`, merged the reviewed smoke-pin branch `feat/card-task-c8c9f3c5`, and
