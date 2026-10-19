@@ -134,8 +134,8 @@ Lane: `Antiphon.Tests`, Unit category, portable; ledger rows spawn git under `Pa
 | CP-2 | S1 | CP-1 | portable-unit-custody | `/*/*/HostCleanupCheckpointCustodyTests/*` | R-1 | 13 executed, 0 failed/skipped | 13 | 1 |
 | CP-3 | S1 | CP-1 | portable-unit-receipt | `/*/*/HostCleanupCheckpointReceiptTests/*` | R-1 | 8 executed, 0 failed/skipped | 8 | 1 |
 | CP-4 | S2 | CP-1 | process-unit-ledger-new | `/*/*/CheckpointConfinementLedgerTests/(ledger_entry_unreadable_after_release_is_refused_unreadable_not_tampered*)\|(tampered_entry_beside_an_unreadable_entry_is_still_refused_tampered*)\|(in_slot_baseline_entry_unreadable_at_settlement_is_refused_unreadable*)\|(scheduler_reports_an_unreadable_ledger_entry_as_unreadable*)` | W-3 to W-6 | 4 executed, 0 failed/skipped | 4 | 3 |
-| CP-5 | S2 | CP-1 | process-unit-ledger | `/*/*/CheckpointConfinementLedgerTests/*` | R-2 | 20 executed, 0 failed/skipped | 20 | 10 |
-| CP-6 | S2 | CP-1 | process-unit-baseline | `/*/*/CheckpointTrackedBaselineTests/*` | R-2 | 13 executed, 0 failed/skipped | 13 | 3 |
+| CP-5 | S2 | CP-1 | process-unit-ledger | `/*/*/CheckpointConfinementLedgerTests/*` | R-2 | 20 listed; on Linux 20 executed, on Windows 19 executed and `unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted` skipped; 0 failed | 19 | 10 |
+| CP-6 | S2 | CP-1 | process-unit-baseline | `/*/*/CheckpointTrackedBaselineTests/*` | R-2 | 13 listed; on Linux 13 executed, on Windows 12 executed and the CARD-1199 tracked-baseline proof skipped; 0 failed | 12 | 3 |
 | CP-7 | S3 | CP-1 | portable-unit-deadline | `/*/*/RunSchedulerTests/(build_deadline_is_the_largest_dependent_row_timeout_and_the_row_override_replaces_it*)\|(scheduler_passes_the_derived_build_deadline_and_records_it*)` | W-7, W-8 | 2 executed, 0 failed/skipped | 2 | 1 |
 | CP-8 | S3 | CP-1 | portable-unit-scheduler | `/*/*/RunSchedulerTests/*` | R-3 | 17 executed, 0 failed/skipped | 17 | 2 |
 | CP-9 | S3 | CP-1 | portable-unit-timeouts | `/*/*/TimeoutTests/*` | R-3 | 8 listed; off Windows 7 executed and `windows_quick_row_finishes_beside_a_slow_row` skipped; 0 failed | 7 | 2 |
