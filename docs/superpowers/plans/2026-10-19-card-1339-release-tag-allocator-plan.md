@@ -635,11 +635,17 @@ Code S1 additions (all pending, payload binding still required):
 | PC | S / exact case | Variant and decisive oracle | Compiling defect |
 |---|---|---|---|
 | PC-71 | S1 / M1 | G-8 failed stamp precheck returns `remote-candidate-unresolved` with zero tag/push attempts even when failed output contains the expected SHA. | Remove the stamp precheck's `Status -eq 'Failed'` refusal. |
-| PC-72 | S1 / M1 | Two independent variants: G-12 publisher and G-15 promoter create the exact absent tag despite a remote-only nested tag. Inspect the bare recipient's exact peel. | In each caller separately replace the explicit `refs/tags/T:refs/tags/T` push destination with implicit `refs/tags/T`. |
+| PC-72 | S1 / M1 | Two independent variants: G-12 publisher and G-15 promoter create the exact absent tag despite a remote-only nested tag. Inspect the bare recipient's exact peel and unchanged nested tag. | In each caller separately replace `Push-ReleaseGateExactTag` with the former `push origin refs/tags/T`. |
+| PC-73 | S1 / M1 | G-12 and G-15 independently observe no private push refs after completion. | Omit the compare-and-delete of the owned private ref in `Push-ReleaseGateExactTag`. |
 
 The S1 real-Git run exposed Git's implicit push-destination ambiguity beside a
-nested remote tag. Both tag writers now supply an explicit, identical source and
-destination refspec, still without force. This extends exact identity to the
+nested remote tag. An explicit source/destination alone also uses Git DWIM and
+failed the real recipient assertions. Both tag writers now use
+`Push-ReleaseGateExactTag`: strict `show-ref --verify --hash`, create-only private
+ref under a fresh UUID namespace, pattern mapping to literal `refs/tags/*`, and
+compare-and-delete of the owned private ref in `finally`. No force or tag deletion
+is added. A process death can leave its private ref; later attempts use a fresh
+namespace, never sweep another attempt's refs. This extends exact identity to the
 write boundary and does not change the 19-row ordinary assertion roster.
 
 Run **every** listed PC after land: baseline green, break, exact-assertion red,
