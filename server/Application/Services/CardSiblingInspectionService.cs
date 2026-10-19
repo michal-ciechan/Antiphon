@@ -114,10 +114,10 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
         AgentTask[] candidateRows = [];
         var unresolvedPending = new List<CardSiblingInventory.Pending>();
         string? metadata = null;
-        var baseRef = task.WorktreeBaseRequestedRef ?? task.MergeTargetRef ?? settings.Value.DefaultBranch;
+        var baseRef = task.WorktreeBaseRequestedRef ?? task.MergeTargetRef;
         var identifier = "the card";
         UnlandedSibling Describe(AgentTask row, string? sha, LandRequestState? state = null) =>
-            new(row.Id, row.WorktreeBranch!, baseRef, identifier, sha is null ? "unknown" : sha[..8],
+            new(row.Id, row.WorktreeBranch!, baseRef!, identifier, sha is null ? "unknown" : sha[..8],
                 0, "detail unavailable", row.CreatedAt, sha, state);
         SiblingBaseGuard Result(UnlandedSibling? hold = null, string? reason = null)
         {
@@ -131,6 +131,8 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
         }
         try
         {
+            var configured = await ConfiguredDefaultAsync(task, inspection, ct);
+            baseRef ??= configured;
             var inventory = await new CardSiblingInventory(db).ReadAsync(task, true, inspection, ct);
             metadata = MetadataOf(inventory);
             raw = inventory.Rows.Count;
@@ -145,12 +147,9 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
             }
             var rows = inventory.Rows.Where(row => SameRepo(task, row)).ToArray();
             candidateRows = rows;
-            // No same-repo sibling rows: nothing was evaluated against any base, so the result carries
-            // no observed base ref. Reporting the global default here drafted a spurious
-            // base-observation-stale intent for every no-sibling task in a project whose configured
-            // default differs from GitSettings.DefaultBranch (CARD-1349 repair round 2).
-            if (rows.Length == 0) return Result() with { ObservedBaseRef = null };
-            var configured = await ConfiguredDefaultAsync(task, inspection, ct);
+            // Keep the configured name for claim-time warnings without freezing any refs when
+            // there are no siblings. A default that vanishes before the claim still owes a warning.
+            if (rows.Length == 0) return Result();
             var defaultSha = await inspection.CommitAsync(configured);
             var landingRef = task.MergeTargetRef ?? (defaultSha is not null ? configured : "HEAD");
             var landingSha = await inspection.CommitAsync(landingRef);
