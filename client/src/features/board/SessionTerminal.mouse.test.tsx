@@ -1,6 +1,6 @@
 import { Terminal, type ITerminalOptions } from '@xterm/xterm'
 import { cleanup } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { AgentSessionSummaryDto } from '../../api/boards'
 import { getSessionBuffer, resizeSession, sendSessionInput } from '../../api/sessions'
 import { renderWithProviders, waitFor } from '../../test/utils'
@@ -55,7 +55,7 @@ const owned: Terminal[] = []
 const hosts: HTMLElement[] = []
 const restoreProperties: Array<() => void> = []
 let panel: Terminal
-let panelWrite: ReturnType<typeof vi.spyOn<Terminal, 'write'>>
+let panelWrite: MockInstance<Terminal['write']>
 
 function replaceProperty(target: object, name: string, descriptor: PropertyDescriptor) {
   const original = Object.getOwnPropertyDescriptor(target, name)
@@ -527,7 +527,7 @@ describe.sequential('CARD-0148 mouse policy', () => {
   it('factory disposes on setup failure', () => {
     const sentinel = new Error('second protocol registration failed')
     let allocated: Terminal | undefined
-    let disposeSpy: ReturnType<typeof vi.spyOn<Terminal, 'dispose'>> | undefined
+    let disposeSpy: MockInstance<Terminal['dispose']> | undefined
     const hook = vi.spyOn(mousePolicy, 'configureLocalTerminalMouse').mockImplementation(terminal => {
       allocated = terminal
       const service = (terminal as unknown as MouseInternals)._core.coreMouseService
