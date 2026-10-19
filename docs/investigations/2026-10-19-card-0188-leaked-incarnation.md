@@ -1,5 +1,20 @@
 # CARD-0188: leaked prior always-on incarnation
 
+**Desktop follow-up, task `4d2ddeb2`: no live leaked standing incarnation found;
+the original replacement trigger remains unconfirmed.** The original agent and
+both session rows are absent from the desktop database, as is their retained
+launch/stop evidence. Automatic Fresh versus manual replacement cannot be
+distinguished, and A's former `StandingAgentId` cannot be recovered. All current
+desktop Running sessions have a current agent pointer. Do not close this as
+**proven superseded**: the conditional retention/visibility mechanism below is
+still present in the running build. The bounded live-history investigation is
+complete; the remaining question is whether to commission the narrow visibility
+candidate under **Not done, noted**, or retire an unreconstructable historical
+incident without claiming a proven fix. Next: **decide**.
+
+The first-pass findings and test costs below are retained as historical evidence.
+The desktop follow-up section supersedes its proposed next investigation.
+
 Date: 2026-10-19. Task: `05080662`. Investigated source:
 `6ec71d427574f3a1b74bfbe2042e0ea9a819d191`, the assigned master baseline,
 on `feat/card-task-05080662`.
@@ -224,9 +239,200 @@ claim that later commits completely fixed the original incident.
 
 ## Not done, noted
 
-If the reporter evidence confirms an unwanted superseded standing process, the smallest candidate is an operator-visible ownership-mismatch warning with a deterministic A-running/B-current fixture, preserving the no-unclaimed-kill rule; design and implementation are deferred.
+Recommended candidate if the residual visibility gap is retained as scope: an operator-visible warning for a stamped prior A still runner-Running while G points to B, with a deterministic A-running/B-current fixture (and pointed/Exited controls) asserting the warning and zero stop calls; no design, implementation or new test was performed.
+
+## Desktop live-history follow-up (2026-10-19, task 4d2ddeb2)
+
+### Provenance and boundaries
+
+Assigned branch: `feat/card-task-4d2ddeb2`; starting commit:
+`f81d5ce129ceede924a17b3d5021a60a171ea672`. Read the full external brief before
+inspection. The investigation made HTTP GETs and PostgreSQL SELECTs only against
+the running system. No session was messaged, started, stopped, killed or patched;
+no board state changed. **No tests or builds ran in this follow-up.**
+
+At 22:07:21Z, `GET http://localhost:17202/api/version` reported
+`81cfb267a0af5c0ddb65e8b238af355067bee9cc` with `land-v2`. The canonical
+`C:\src\Antiphon` checkout had that same HEAD. The desktop runner's
+`GET http://localhost:17204/capabilities` also reported that commit, process start
+`2026-10-19T15:56:41.3474292Z`, store
+`6c459598-54af-4cb9-84f7-380c578fedc1`. Comparing the first pass's source
+`6ec71d427574f3a1b74bfbe2042e0ea9a819d191` to the live commit produced **no diff**
+in AgentControlService, AgentSupervisorService, SessionReconciliationService,
+AttentionService.Leaks, or AgentSession. Thus the relevant source reconstruction
+above also describes the observed running version; it is not inferred from health.
+
+### August history is unavailable on the desktop too
+
+At 22:07:21.670–22:07:21.814Z these documented reads all returned **404**:
+
+- Server `/api/agents/0c83e820-0bd5-464a-97c9-72967ce0ffa5`, its
+  `/sessions?take=25`, and its `/incidents`.
+- Server `/api/sessions/912eb415-daa3-4ec7-a1df-9f740da7195e/transcript?since=0`
+  and `/api/sessions/eaf64b4c-dcc6-4777-8508-f4fd858dabee/transcript?since=0`.
+- Runner `/sessions/912eb415-daa3-4ec7-a1df-9f740da7195e` and
+  `/sessions/eaf64b4c-dcc6-4777-8508-f4fd858dabee`.
+
+Direct read-only queries of `antiphon-postgres`, database `antiphon`, at
+22:07:45.970084Z and 22:08:40.366253Z disambiguated absence from HTTP routing:
+
+| Stored evidence selection | Rows |
+|---|---:|
+| Agents: G by exact ID or any name containing `Prediction` | 0 |
+| AgentSessions: A/B by ID or any session stamped with G | 0 |
+| AgentIncidents: G or A/B | 0 |
+| AgentTasks: G as execution agent or A/B as execution session | 0 |
+| AgentTasks: A/B as parent session | 0 |
+| AgentTaskEvents: A/B session ID, or any Detail containing G/A/B's distinctive eight-character IDs | 0 |
+| TranscriptEntries: A/B | 0 |
+
+The DB retained 18,508 task rows and 94,545 task-event rows, with the oldest of
+both dated 2026-08-09; the absence search was not restricted to a capped API
+page. No matching task ID survived to retrieve through the individual task
+GET/event projection. All 6,591 retained incidents were dated September 19 or
+later. Incident pruning is explicitly implemented at
+`server/Application/Services/AgentSupervisorService.cs:611`; its default is
+30 days (`server/Application/Settings/SupervisionSettings.cs:35`).
+
+The documented log roots contained six server Serilog files dated October 15–19
+and eight runner Serilog files dated October 12–19. The 251 pty-host logs had
+oldest last-write October 5. No file named for either historical session survived
+under `C:\logs\antiphon\session-runner` (searched dashed and compact IDs).
+Root `C:\src\Antiphon\logs` has one `antiphon-20260818.log`, predating the
+replacement; its other August logs are named test logs. Searching all `.log`
+files in those four roots for G/A/B found only today's GET/404 observations,
+not launch, replacement or stop evidence. Rotation/retention owners:
+`docs/logs.md:11`, `:13`, `:14`, `:76`.
+
+Two exact retained runner lines independently record the missing sessions:
+
+```text
+2026-10-19 23:07:21.782 +01:00 [INF] 404: Session '912eb415-daa3-4ec7-a1df-9f740da7195e' was not found.
+2026-10-19 23:07:21.814 +01:00 [INF] 404: Session 'eaf64b4c-dcc6-4777-8508-f4fd858dabee' was not found.
+```
+
+Source: `%TEMP%\antiphon-logs\session-runner-20261019.log:205150` and `:205151`.
+The first pass's 21:47Z agent lookup also appears in the **desktop** server log,
+`C:\src\Antiphon\server\logs\antiphon-20261019.log:377967`, at
+`2026-10-19 22:47:26.031 +01:00`, followed by HTTP 404 at `:377970`.
+Therefore the earlier 404s are not evidence of isolation behind a different
+server2 mirror; at least that earlier lookup reached this desktop server.
+
+**What this does and does not establish:** August incident/log/transcript history
+is outside the retained windows. The exact deletion mechanism for G/A/B is
+unknown. In particular, the current default session retention is 90 days
+(`server/Application/Settings/RetentionSettings.cs:18`), whereas August 21 is
+only 59 days before this read; do not label the missing session rows ordinary
+90-day pruning. Session deletion also requires terminal/unreferenced state
+(`server/Application/Services/DataRetentionService.cs:175`, `:187`). No surviving
+audit proves when or why these rows disappeared or when their processes stopped.
+There is **no current A row whose StandingAgentId can be inspected**, which is
+different from finding a row with a null stamp. Automatic Fresh and manual
+replacement remain alternative historical explanations, neither confirmed.
+
+### Current live-incarnation check
+
+First snapshot, 22:07:24Z: 2,654 agents, 21 desktop runner sessions, **12 Running,
+9 Exited; zero Running sessions without an agent pointer**. The comparison used
+the actual `persistentSessionId` field, not the DTO's optional `liveSession`.
+
+A second snapshot at **22:10:07.2414713–22:10:09.301958Z** bracketed a full
+`/api/agents` GET with two `/sessions` GETs and parsed pointer strings as GUIDs.
+Both runner reads contained 22 sessions. All **13 Running** sessions retained
+the same status/start timestamp across those reads and each had **exactly one**
+current agent pointer. The extra live row was a newly launched pool task, not an
+older standing incarnation. The remaining nine entries were Exited.
+
+| Current owner | Runner-Running session ID |
+|---|---|
+| Torquay Leander | `8c1d3da6-7fad-4c7b-8897-e2c7c18914d6` |
+| ClaudeBot-Antiphon | `e1626153-65bd-46eb-8257-6b67d44f6e32` |
+| antiphon-check-interpreter | `cea73d57-3072-4cc2-8cb0-ab859e7d3415` |
+| Antiphon-Orchestrator | `daec6a72-771d-4a66-9634-fbe474d87464` |
+| school-revision | `d1880154-dd37-45d7-a705-a0ccbf4d8b03` |
+| slides Orchestrator | `b788e4ec-1635-4451-8784-3067c5b17064` |
+| markdown-package Orchestrator | `384d59ee-45b7-4ae4-9bc3-a271a8bee8d4` |
+| Gym Stat Orchestrator | `4f71db42-71fd-4f64-b278-64a17b29b960` |
+| antiphon-diagnose | `b0faf006-ad13-43ff-9ea7-843b22c32359` |
+| antiphon-output-distiller | `7723afb0-2768-442b-9237-97b0dc51d2af` |
+| AZ Care | `b8aad212-ca2a-4f4e-9c7e-604a0ba1f8c7` |
+| task-4d2ddeb2 | `81dac530-d3af-4b77-adf9-fc226706e5d9` |
+| task-adcd99e7 | `4adbe110-1bb8-4949-bfa4-ebc17bff1b2b` |
+
+Database cross-check, 22:08:40Z, over **all rows**, with no LIMIT:
+
+| Population | Result |
+|---|---|
+| Non-pool agents, including AlwaysOn-off standing agents | 23; all desktop; eight AlwaysOn |
+| Stamped sessions lacking every current agent pointer | 66; all desktop |
+| Their DB statuses | 21 Stopped, 45 Failed; zero Starting/Running/Stopping |
+| Their stamped owner still exists | 65; one historical owner deleted |
+| Their owner is currently AlwaysOn | 43: 17 Stopped, 26 Failed |
+| Stamped sessions on any remote runner | 0 |
+
+Status numbers are defined in `server/Domain/Enums/SessionStatus.cs:5` (Running 2,
+Stopped 4, Failed 5). For a concrete persisted historical stamp, session
+`c83e3c62-c0ec-4a12-b40d-8f083dbd8885` still names standing owner
+`a392cbc4-0fc0-4603-b4d0-5198d1929718`, although that agent points at
+`daec6a72-771d-4a66-9634-fbe474d87464`; the prior row is Failed, ended
+`2026-10-15T07:35:54.191025Z`. This proves stamps outlive pointer replacement in
+stored production rows, **not** that this prior process is live.
+
+Remote boundary, 22:10:09Z: `server2-temp` slots returned five Running sessions,
+each with an open task and `orphan:false`. `server2` status returned unavailable,
+zero DB-live bound sessions and unknown runner inventory; its slots GET returned
+503. All known non-pool agents and stamped histories are desktop-bound, so this
+does not obstruct the observed standing-agent check. It does prevent claiming a
+fleet-wide OS/process absence proof for the unavailable host. No remote restart,
+deployment or process inspection was attempted.
+
+### Remaining mechanism, recommendation and evidence custody
+
+The live version still refuses automatic Fresh
+(`server/Application/Services/AgentControlService.cs:160`) and the supervisor
+still requests `Fresh: false` (`server/Application/Services/AgentSupervisorService.cs:284`).
+However, the Running mirror arm still does nothing
+(`server/Application/Services/SessionReconciliationService.cs:500`), and
+`StandingAgentId != null` still excludes a row before the SessionUnowned pointer
+comparison (`server/Application/Services/AttentionService.Leaks.cs:133`, `:144`).
+The field is expressly historical (`server/Domain/Entities/AgentSession.cs:7`).
+The earlier four-case test receipt remains evidence for that predicate only;
+this follow-up did not execute it again or reproduce an unwanted replacement.
+
+Recommendation: **do not close as proven superseded and do not commission an
+automatic reclamation fix on this evidence**. If preserving scope beyond the
+unreconstructable August incident, use the visibility candidate recorded above.
+The next stage is **decide**, because the historical actor/intent remains unknown
+and any ensuing design must respect that uncertainty. Another identical live
+lookup will not restore the missing evidence. A retained August DB backup plus
+launch/stop audit, or a newly captured A-to-B transition with DB/runner generation
+and actor evidence, would resolve the original cause. No such backup was supplied
+or restored during this task.
+
+Local generated evidence is gitignored at
+`C:\Antiphon\worktrees\card-task-4d2ddeb2\.antiphon\card0188-4d2ddeb2`.
+The essential results are preserved verbatim or tabulated in this committed
+report. Reproducible local commands (read-only; results are point-in-time):
+
+```powershell
+pwsh -NoProfile -File .antiphon/card0188-4d2ddeb2/probe.ps1
+pwsh -NoProfile -File .antiphon/card0188-4d2ddeb2/final-snapshot.ps1
+Get-Content -Raw .antiphon/card0188-4d2ddeb2/history.sql | docker exec -i -e 'PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=15000' antiphon-postgres psql -X -v ON_ERROR_STOP=1 -U antiphon -d antiphon -f -
+Get-Content -Raw .antiphon/card0188-4d2ddeb2/current.sql | docker exec -i -e 'PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=15000' antiphon-postgres psql -X -v ON_ERROR_STOP=1 -U antiphon -d antiphon -f -
+```
+
+SHA-256 receipts for this capture (rerunning scripts replaces local JSON):
+
+| File | SHA-256 |
+|---|---|
+| historical-http.json | `565225ffcb0304223724b21b0bca75ea98837a1311904fbc66bd3d89a0bd9755` |
+| history-db.txt | `db01d20117bd699bcadbec1591b62377032d615647d242347757d233292a1afc` |
+| current-db.txt | `57f6211c8303cd0796af062b6ce2ffa90a52738919a9430906843b8898688f06` |
+| final-snapshot.json | `5ea884a337677fc4dee096c5a1bb6aede3aa97136e3ec03d1704458daa20fff0` |
+| remote.json | `0b4a8cb9fc3114ab7b8142ecfdd61f8ddcdc4fdcd84deb406b1395a7e628cf11` |
+| runner-build.json | `1ffd5c4d3bcb672552705a137e1e8d36e923ba7ca02f97c74ea2216736dbd8de` |
 
 --- next stage ---
-next: investigate
-handoff: Retrieve reporter-side A/B AgentSessions state and G's pointer/launch/stop evidence around 2026-08-21T08:58Z; distinguish automatic Fresh from manual replacement and determine whether A now carries StandingAgentId. Current retention and warning exclusion are documented; historical replacement cause is unconfirmed.
+next: decide
+handoff: Desktop history has no G/A/B rows or launch audit; automatic Fresh versus manual replacement remains unknown. No live standing leak was found. Decide whether to retire the unconfirmed historical incident or commission a detection-only Plan for the confirmed historical-stamp visibility gap; no automatic reclamation is justified.
 artifact: docs/investigations/2026-10-19-card-0188-leaked-incarnation.md
