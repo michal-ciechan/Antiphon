@@ -249,7 +249,7 @@ internal static class C1361CensusProbes
                 result["reads"]!.AsArray().Any(x => x!.GetValue<string>() == "/api/agent-tasks/" + Id).ShouldBeTrue(vector.Name + " detail read");
             }
         }
-        else error.ShouldStartWith(vector.Error, vector.Name + ": " + run.Output);
+        else error.ShouldStartWith(vector.Error, customMessage: vector.Name + ": " + run.Output);
         result["sleeps"]!.GetValue<int>().ShouldBe(vector.Sleeps, vector.Name + " bounded retry count");
         Console.WriteLine($"CASE {(host ? "host" : "wrapper")}/{vector.Name} PASS sleeps={vector.Sleeps}");
     }
