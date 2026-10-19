@@ -24,6 +24,21 @@ public static class ReceiptFile
         { throw new IOException("receipt-read-refused: " + path + ": " + ex.Message, ex); }
     }
 
+    public static (long Length, string Sha256) Digest(CheckpointCleanupContext context, string path,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            if (context.Io.Platform == CheckpointPlatform.Windows &&
+                (context.Io.Attributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                throw new IOException("receipt-nonregular: " + path);
+            return CheckpointFileReader.Digest(context, Path.GetDirectoryName(Path.GetFullPath(path))!, path,
+                CheckpointFileReader.ContentLimit, cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or OperationCanceledException)
+        { throw new IOException("receipt-read-refused: " + path + ": " + ex.Message, ex); }
+    }
+
     public static string ReadText(string path) => ReadText(CheckpointCleanupDefaults.Context, path);
 
     public static string ReadText(CheckpointCleanupContext context, string path, CancellationToken cancellationToken = default)
