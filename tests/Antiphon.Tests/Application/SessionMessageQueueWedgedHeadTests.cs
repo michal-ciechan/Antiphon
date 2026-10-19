@@ -377,7 +377,17 @@ public class SessionMessageQueueWedgedHeadTests
         var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1, baselineSequence: baseline);
         h.Adapter.PrimeComposer(Body);
         // Delivery starts idle, then activity arrives without an ingested UserPrompt.
-        h.Adapter.OnSubmitted = _ => h.MarkWorkingAsync();
+        // Ingest through the runtime so the activity updates the already-loaded session state,
+        // just as a runner transcript event does; a direct SQL insert leaves its idle snapshot stale.
+        h.Adapter.OnSubmitted = async _ =>
+        {
+            await h.Runtime.ObserveTranscriptAsync(new SessionRunnerTranscriptEvent(
+                h.SessionId, baseline + 1, TranscriptKinds.AssistantText,
+                Guid.NewGuid().ToString(), null, h.Clock.GetUtcNow(), "assistant",
+                "working on it", null, null, null, null, null), CancellationToken.None);
+            (await h.Provider.GetRequiredService<SessionStateStore>()
+                .IsWorkingAsync(h.SessionId, CancellationToken.None)).ShouldBeTrue();
+        };
 
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
 
