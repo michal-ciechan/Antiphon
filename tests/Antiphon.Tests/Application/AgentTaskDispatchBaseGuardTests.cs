@@ -158,8 +158,13 @@ public partial class AgentTaskDispatchBaseGuardTests
         held.WorktreeBranch.ShouldBeNull();
         held.AgentSessionId.ShouldBeNull();
         (await db.AgentSessions.AsNoTracking().CountAsync(s => s.Id == held.AgentSessionId, ct)).ShouldBe(0);
-        (await db.AgentTaskEvents.AsNoTracking().CountAsync(e =>
-            e.AgentTaskId == held.Id && e.Type == AgentTaskEventType.Held, ct)).ShouldBe(1);
+        var holds = await db.AgentTaskEvents.AsNoTracking().Where(e =>
+            e.AgentTaskId == held.Id && e.Type == AgentTaskEventType.Held).ToListAsync(ct);
+        holds.Count(e => e.Detail == "Held: same-card base inspection is pending.").ShouldBe(2);
+        var landHolds = holds.Where(e => e.Detail.Contains("is landing", StringComparison.Ordinal)).ToList();
+        landHolds.Count.ShouldBe(2, "each completed observation restores the semantic land hold");
+        landHolds.Select(e => e.Detail).Distinct().ShouldHaveSingleItem()
+            .ShouldContain(DelegationReportFormatter.Short(pending.Id));
         (await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet",
             $"refs/heads/feat/card-task-{DelegationReportFormatter.Short(created.Id)}")).Ok.ShouldBeFalse();
     }
@@ -278,7 +283,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         result.WorktreeBaseTaskId.ShouldBe(scenario == "landed_residue_merge" ? other!.Id : null);
         if (scenario is "landed_merge" or "landed_residue_merge")
             (await db.AgentTaskEvents.AsNoTracking().CountAsync(e =>
-                e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Held, ct)).ShouldBe(0);
+                e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Held
+                    && e.Detail != "Held: same-card base inspection is pending.", ct)).ShouldBe(0);
     }
 
     [Test]
