@@ -747,3 +747,11 @@ pending=70, payload binding required=70. No pending PC is claimed green.
 Verification design is complete; next is Code for the five fixture-only slices,
 then ordinary Review, land, and all bound PCs. An unbindable behavioral seam goes
 back to Plan; a changed human scope choice goes to Decide.
+
+Code S1 cost amendment: retain the 70-control estimate above as TestDesign
+history. PC-71, PC-72 (publisher and promoter variants), and PC-73 add four
+method-scoped cycles: **37 minutes** at the same 9.25-minute assumption. The
+amended inventory is **73 PC IDs, at least 74 cycles, all pending and binding
+required**. Mutation's amended floor is **685.5 minutes**, and the combined
+ordinary-plus-Mutation estimate is **730.5 minutes**, before authoring, slot waits
+and failure-driven repair. No deliberate mutant has run in Code.
