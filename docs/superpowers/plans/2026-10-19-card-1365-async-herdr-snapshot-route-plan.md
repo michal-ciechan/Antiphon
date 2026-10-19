@@ -1,8 +1,11 @@
 # CARD-1365: async herdr snapshot route with a bounded pane.read deadline
 
-Date: 2026-10-19. Stage: Plan. Target: **master only** (see "rc line" below).
-Next: **test-design**. The brief does not fold TestDesign into this dispatch, so the
-`### Checkpoints` proposal at the end is input to that stage, not a closed list.
+Date: 2026-10-19. Stage: Plan, then TestDesign (task `a2d0cdb7`, branch `feat/card-task-a2d0cdb7`).
+Target: **master only** (see "rc line" below). Next: **code**. The closed `### Checkpoints`
+table is under `## Verification design` below; the Plan stage's proposal is kept above it as
+superseded history. The witness and pump named in the test contract are committed at
+`6ddd77c05fc850fce6e8ed642bbd0dcf0987f407` (red at base, proof line in the design), so Code
+starts at the green commit.
 
 Card: CARD-1365 (`c4558b97-bad1-4440-898a-1e6eb2886b3e`, Antiphon board), filed as an
 out-of-scope finding of the CARD-1362 plan
@@ -276,7 +279,7 @@ Narrow green: CP-1 rerun (reruns=1), CP-2, CP-3.
   schedules on the fake clock; `Advance` fires it synchronously, the continuation is posted to the
   pump, the test awaits with a bound. No wall-clock dependency.
 
-## Verification design (proposal for TestDesign)
+## Verification proposal (Plan stage, superseded by the TestDesign section below)
 
 V-1 a stalled herdr `pane.read` does not hold the serving thread: a `List` request posted
 behind it on the pump answers while the read is pending (witness step 5). V-2 the read ends at
@@ -294,7 +297,7 @@ then 1 ms advance is cheap, red by build, and TestDesign's call. A caller-cancel
 (`cts.Cancel()` before advancing; `slow` faults with `OperationCanceledException`, the reply is
 no error frame) is the same cost. Neither is required by the brief's one-witness rule.
 
-### Checkpoints
+### Proposed checkpoint rows (superseded)
 
 Portable rows; the orchestrator reads `GET /api/runner-defaults` and `GET /api/session-runners`
 at dispatch and names the lane in the brief. No `-Runner`, no `-Platform`. CP-3 needs the
@@ -310,10 +313,215 @@ CP-1 runs once at the red commit (expected 1 failed) and again at the green comm
 carries both lines with `reruns=1`. `Expect` tokens are TestDesign's to confirm against the
 current roster.
 
-### Cost
+### Proposed cost (superseded)
 
 Ordinary floor: 29 minutes of checkpoint time plus the one red CP-1 run (about 3 minutes
 without a rebuild), in one Code dispatch of 30 to 45 minutes of authoring.
+
+## Verification design
+
+TestDesign for CARD-1365, task `a2d0cdb7`, start ref `88dad6242bfe5f93fa28abddb1e6aecc9f954d4c`.
+Operator minimal-testing policy from the brief: one red witness plus one narrow green; the
+optional default-pin and caller-cancellation methods are not written (Out of scope).
+
+### Inspection
+
+- Bodies read (production): `src/Antiphon.SessionRunner/SessionRunnerRuntime.cs` constructor
+  `:174-203`, `List()` `:974`, `GetSnapshot(Guid)` `:1045`, `Track` `:1699`, `DisposeAsync`
+  `:2382`, `GetSession` `:2392`, `RunnerSession` constructor `:2589`, `ToDto()`,
+  `BindChildForTest` `:3755`, `RunnerSession.GetSnapshot()` `:3819-3868`, `RunnerSession.DisposeAsync`
+  `:4089`; `PhoneHomeCommandDispatcher.cs` surface `:33`, constructor `:99`, `DispatchAsync` `:243`,
+  `DispatchCoreAsync` preamble, `Snapshot` arm `:338`, catch chain `:540-562`, `ReadSessionId`
+  `:930`; `PhoneHomeRuntimeAdapter.cs:104`; `PhoneHomeErrorFrames.Internal` (answers
+  `PhoneHomeProblemTypes.RunnerInternalError`, status 500); `Program.cs:156-170` (filter) and
+  `:292-294` (route, filter attached at base); `ISessionChild.cs`; `HerdrClient.cs:35`
+  (`internal HerdrSettings Settings` exists, so D-2's constructor resolution compiles as written);
+  `HerdrSettings.cs`; `PhoneHomeSettings.cs`; `CodexCliVersionProbe.cs:110` (the
+  `CancellationTokenSource(TimeSpan, TimeProvider)` precedent).
+- Bodies read (tests and fixtures): `TerminalSeatReleaseTests.cs` `SeatChild` `:1720`, `SeatWorld`
+  runtime and `Bind` `:1559-1567`, adapter construction `:737`; `PhoneHomeCommandDispatcherTests.cs`
+  constructor and frame shapes `:15-35`, `:1287-1292` (`[Category("Unit")]`);
+  `tests/Antiphon.Tests/TestHelpers/TurnEndGapDeliveryHarness.cs` `ContinuationQueue` `:685-729`;
+  `HerdrRunnerSessionTests.cs` (7 `[Test]`, 0 `[Arguments]`, `[NotInParallel("HerdrRunnerSession")]`,
+  real `FakeHerdrServer`, `HerdrClient` and `PowershellProcessProbe`);
+  `tests/Antiphon.Tests/Application/PhoneHomeSpillTransportTests.cs` (3 `[Test]`, 0 `[Arguments]`,
+  `[Category("Integration")]`); `tests/Shared/TestClassificationMetadata.cs` (the lane-xor rule
+  binds `Antiphon.Tests` only; the runner project carries `[Category]` by convention);
+  `tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj` (TUnit 1.44, Shouldly,
+  `Microsoft.Extensions.TimeProvider.Testing` 9.10.0, linked `FakeHerdrServer`-style compiles).
+- Boundaries: serving thread freed -> V-1; deadline on the injected clock and its outcome class on
+  the phone-home lane -> V-2; herdr snapshot semantics through the real client after the signature
+  change -> R-1; converted fakes and callers compile and one converted fake serves its lane -> R-2;
+  HTTP lane filter, default/floor pin, caller cancellation, real-pipe stall, `RefreshStatusAsync`,
+  server deferral class -> excluded (Out of scope).
+- Witness written against base symbols only and proven red by behaviour at base through the
+  checkpoint driver (build slot granted, `UseAppHost=false` default on Linux), at the committed
+  red test `6ddd77c05fc850fce6e8ed642bbd0dcf0987f407`:
+
+  ```
+  CHECKPOINT CP-1-red commit=6ddd77c05fc850fce6e8ed642bbd0dcf0987f407 build=ok filter=/*/*/HerdrSnapshotBoundedReadTests/* executed=1 passed=0 failed=1 skipped=0 trx=<scratch>/c1365-td-cp1-red/CP-1-red-20261019-195942-2665/run.trx slot=granted waited=0s dirty=0 source=6ddd77c05fc850fce6e8ed642bbd0dcf0987f407 sourceState=clean buildSource=verified
+  FAILED Antiphon.SessionRunner.Tests.HerdrSnapshotBoundedReadTests.C1365_Stalled_pane_read_frees_the_pump_for_a_list_and_answers_herdr_unreachable_at_the_deadline
+  ```
+
+  The TRX names `TimeoutException: The operation has timed out.` at
+  `HerdrSnapshotBoundedReadTests.cs:line 57` (`await probe.WaitAsync(TimeSpan.FromSeconds(2))`,
+  witness step 5), test duration 2.23 s, so the pump thread was pinned inside `GetResult()` and
+  released by `child.Release()` in `finally`; the pump drained and the runtime disposed. Compile
+  31.9 s, slot held 73 s (measured on the server2 lane). The trx path is in this task's scratchpad,
+  not the repository.
+- Witness recipe: single-thread `SynchronizationContext` pump (`SingleThreadContinuationPump`, a
+  `BlockingCollection` drained by one background thread, `Send` refused) plus `FakeTimeProvider`.
+  Variant: phone-home lane through the real `PhoneHomeCommandDispatcher`, `PhoneHomeRuntimeAdapter`
+  and `SessionRunnerRuntime`, one tracked `RunnerSession` bound to `StallingChild` (its
+  `ReadScreenAsync` records the token, counts reads and returns `tcs.Task.WaitAsync(ct)`). Case: one
+  method. Oracle: frame kind, error code and status plus the two tokens' states. Reachability:
+  in-process, no process, socket or pipe, Linux and Windows alike, so no `ParallelLimiter`.
+  Classification: `[Category("Unit")]`. One deviation from the Plan's contract text: the pump's
+  `DisposeAsync` is bounded at 1 s and never throws (a throwing dispose inside `await using` would
+  replace the witness's own assertion as the failure); it exposes `Drained` instead.
+
+### Delivery inventory
+
+No new or changed async delivery path: the change is a read lane. For completeness, the snapshot
+request's producer is the server (`SessionRunnerHttpClient.GetSnapshotAsync` on HTTP,
+`PhoneHomeRunnerClient` on phone-home); the destination is `RunnerSession.GetSnapshotAsync` ->
+`ISessionChild.ReadScreenAsync` (herdr `pane.read`); there is no persistence boundary (no queue
+row, event or file; the request is answered or fails inside the same call); recovery is the
+deadline mapped to 503 `herdr_unreachable`, which the server's unchanged `IsHerdrUnreachable`
+defers on and the resilience pipeline retries; the observable receipt is the reply frame or HTTP
+body, joined by `sessionId` and the frame `RequestId`. No session input is produced, so no
+UserPrompt transcript applies. Substitutes: `StallingChild` stands in for a herdr that accepted
+and never answered; it cannot prove that `HerdrTransport.ReadResponseAsync` honours the token at
+the pipe read under a real stall (the token is passed through at base, `HerdrClient.cs:87-104`,
+read not executed). R-1 drives the real client against `FakeHerdrServer`, which answers promptly,
+so it proves the green path through `GetSnapshotAsync`, not the deadline on the real pipe.
+
+### Proves it works now
+
+- V-1: a stalled herdr `pane.read` does not hold the serving thread: a `List` posted behind a
+  `Snapshot` on the pump answers while the read is pending | in-process, real dispatcher, adapter
+  and runtime, fake child, single-thread pump |
+  `HerdrSnapshotBoundedReadTests.C1365_Stalled_pane_read_frees_the_pump_for_a_list_and_answers_herdr_unreachable_at_the_deadline`
+  steps 5-6 (`/*/*/HerdrSnapshotBoundedReadTests/*`) | `list.Kind == Result`, `child.Reads == 1`,
+  `slow.IsCompleted == false`, `child.ReadToken.CanBeCanceled == true`. Red at base as recorded.
+- V-2: the read ends at the deadline on the injected clock as the unreachable class, the child's
+  token cancelled and the caller token not | same | same method, step 7 after
+  `clock.Advance(10 s)` | `reply.Kind == Error`, `reply.ErrorCode == herdr_unreachable`,
+  `reply.StatusCode == 503`, `child.ReadToken.IsCancellationRequested == true`,
+  `cts.IsCancellationRequested == false`.
+
+### Guards the regression
+
+- R-1: the herdr snapshot path keeps its semantics through the real `HerdrPaneChild`, `HerdrClient`
+  and `FakeHerdrServer` once served by `GetSnapshotAsync`: content-delta fold, sticky revision,
+  interleaving with `GetAsync`, pty-host untouched | `HerdrRunnerSessionTests` (7 methods);
+  decisive assertions: `LastSequence` advances in
+  `Sticky_revision_plus_changed_read_text_advances_LastSequence_via_GetSnapshot_and_GetAsync` and
+  `Revision_moving_without_text_change_still_advances_LastSequence`, does not advance in
+  `Sticky_revision_plus_identical_text_across_reads_does_not_advance`, stays monotonic in
+  `Interleaved_GetSnapshot_and_GetAsync_never_fabricate_a_delta_and_counter_is_monotonic`, and the
+  pty counter is untouched in `Pty_sessions_are_untouched_LastSequence_still_the_output_event_counter`.
+- R-2: the 12 converted surface fakes, 19 runner-test sites and 4 `Antiphon.Tests` sites compile,
+  and a converted fake still serves its lane | the CP-1 build (7 runner fakes, 19 sites) and the
+  CP-3 build (5 `Antiphon.Tests` fakes, 4 sites) are the compile evidence; `PhoneHomeSpillTransportTests`
+  (3 methods, Integration): `Staged_body_reaches_the_runner_and_lands_on_disk`,
+  `A_failed_input_frame_leaves_the_body_recoverable`,
+  `A_body_staged_during_the_send_survives_the_acknowledgement`, each asserting the spilled body's
+  presence on disk through a converted `IPhoneHomeRuntimeSurface` fake.
+
+### Guard inventory
+
+- G-1: D-1, the herdr snapshot read never blocks the serving thread (no `GetResult()`; async on
+  every hop so the pump yields at the first incomplete await) | PC-1
+- G-2: D-2, the linked deadline token is the one handed to `ReadScreenAsync`, so the deadline
+  cancels the in-flight read | PC-2
+- G-3: D-3 (session), a deadline cancellation becomes `HerdrBackendUnavailableException`, never the
+  Debug-log-and-mirror fallback that would answer 200 with an empty screen | PC-3
+- G-4: D-3 (dispatcher), `HerdrBackendUnavailableException` answers an Error frame 503
+  `herdr_unreachable`, not `RunnerInternalError` 500 through the generic catch | PC-4
+
+G-1 and G-2 are independently bypassable (a blocking read can still carry the linked token; a
+yielding read can carry the caller token). G-3 and G-4 are independently bypassable (session
+versus dispatcher). guards=4, mapped=4, missing=0, duplicate PC maps=0.
+
+### Positive controls
+
+All four run the one witness method, method-scoped:
+`--treenode-filter "/*/*/HerdrSnapshotBoundedReadTests/C1365_Stalled_pane_read_frees_the_pump_for_a_list_and_answers_herdr_unreachable_at_the_deadline"`,
+each PC in its own fresh `tests/Antiphon.SessionRunner.Tests -> bin-c1365-pc<n>/` build. They all
+target the same test method, so no batching: each is its own break, red, restore, green.
+
+- PC-1: break G-1 by replacing `await herdr.ReadScreenAsync(linked.Token)` in
+  `RunnerSession.GetSnapshotAsync` with `herdr.ReadScreenAsync(linked.Token).GetAwaiter().GetResult()`
+  (compiles inside the async method); expect the witness red at
+  `probe.WaitAsync(TimeSpan.FromSeconds(2))` with `TimeoutException`, the same failure as the
+  recorded base run.
+- PC-2: break G-2 by passing `ct` instead of `linked.Token` to `herdr.ReadScreenAsync` (keep the
+  `linked` source constructed so it compiles); expect the witness red at
+  `slow.WaitAsync(TimeSpan.FromSeconds(2))` with `TimeoutException`: the clock advance cancels the
+  deadline but not the read. The same assertion also catches a deadline source built on
+  `TimeProvider.System` instead of the injected clock.
+- PC-3: break G-3 by deleting the `catch (OperationCanceledException) when (deadline.IsCancellationRequested)`
+  arm, so the cancellation falls into the generic `catch (Exception ex)` and the mirror is answered;
+  expect the witness red at `reply.Kind.ShouldBe(PhoneHomeFrameKind.Error)` with actual `Result`.
+- PC-4: break G-4 by deleting the dispatcher's `catch (HerdrBackendUnavailableException ex)` arm, so
+  the generic catch answers `PhoneHomeErrorFrames.Internal`; expect the witness red at
+  `reply.ErrorCode.ShouldBe(HerdrProblemTypes.Unreachable)` with actual
+  `PhoneHomeProblemTypes.RunnerInternalError`.
+
+Mutation runs break/red/restore/green after land; Code runs V/R; Review judges before land. No PC
+is executable before the fix exists.
+
+### Out of scope
+
+- HTTP lane 503 on a deadline through `HerdrUnreachableFilter`: the filter and its attachment to
+  the route are unchanged (`Program.cs:292-294` at base) and no runner test boots Program's route
+  table with a stalled child; under the brief's minimal policy no host test is added. Exposure: a
+  Code rewrite that drops `.AddEndpointFilter(HerdrUnreachableFilter)` from the async route would
+  answer 500; Review checks that statement by eye. A later test can use the `BuildSlotTestHost`
+  shape if the orchestrator wants it.
+- The default 3000 ms and floor 250 ms pin, and the caller-cancellation case: skipped per the brief
+  (operator minimal-testing policy). Exposure: a wrong default or floor is reviewable in
+  `HerdrSettings.cs` and the runtime constructor; a swapped `when` filter order would report an
+  abandoned request as unreachable, which nothing reads.
+- The deadline on the real herdr pipe under a stall: not executed (Delivery inventory).
+- `GET /sessions/{id}` `RefreshStatusAsync` and adoption `pane.read`: D-7.
+- `PhoneHomeCommandDispatcherTests` (43 methods, none on `Snapshot`): D-6.
+- The server deferral class: unchanged by this card and pinned at base by
+  `SessionMessageQueueDeliveryVerificationTests.Herdr_unreachable_defers_with_zero_attempts_and_does_not_kill_always_on`
+  and its siblings; not rerun.
+- Docs edits (`docs/herdr-sessions.md`, `docs/session-runtime-invariants.md`): Review reads them.
+
+### Checkpoints
+
+Portable rows; the orchestrator names the lane in the Code brief. No `-Runner`, no `-Platform`.
+CP-3 needs the shared test Postgres (`Antiphon.Tests` Integration lane). The red CP-1 line above
+was produced at the committed red test and is not a row here; Code runs CP-1 once at the green
+commit. If Code edits the witness, Code reruns CP-1 red at its own red commit before the fix and
+reports both lines with `reruns=1`.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1365-runner/` | witness | `/*/*/HerdrSnapshotBoundedReadTests/*` | V-1, V-2 | all listed (1 method), 0 failed, 0 skipped | 1 | 3 |
+| CP-2 | S1 | CP-1 | herdr-snapshot | `/*/*/HerdrRunnerSessionTests/*` | R-1 | all listed (7 methods), 0 failed, 0 skipped | 7 | 4 |
+| CP-3 | S1 | `tests/Antiphon.Tests -> bin-c1365-server/` | surface-fakes | `/*/*/PhoneHomeSpillTransportTests/*` | R-2 | all listed (3 methods), 0 failed, 0 skipped | 3 | 18 |
+
+Rosters counted from the files at `88dad6242`: `HerdrRunnerSessionTests` 7 `[Test]`, no
+`[Arguments]`; `PhoneHomeSpillTransportTests` 3 `[Test]`, no `[Arguments]`;
+`HerdrSnapshotBoundedReadTests` 1 `[Test]`. Single-class filters, so no CARD-0403 OR form is
+needed; each row is one class in the `/*/*/Class/*` shape.
+
+### Cost
+
+- Ordinary V/R floor (Code): CP-1 3 + CP-2 4 + CP-3 18 = **25 minutes** (CP-1 measured at 2 min
+  on the server2 lane, rounded up; CP-2 and CP-3 estimated, CP-3 carries the `Antiphon.Tests` build).
+  Authoring: 15 to 30 minutes, D-8's 30 to 45 less the pump and witness already committed.
+- PC floor (Mutation): 4 PCs x (fresh build about 1 min + red run + restore + green build + green
+  run) at about 2.5 min each = **10 minutes**, plus 2 minutes setup/baseline build = **12 minutes**
+  (estimated; per-PC build measured at 32 s compile, witness 2.2 s red and expected under 1 s green).
+- Total: setup/build 2 + V/R 25 + PC 12 = **39 minutes** of execution (estimated, CP-1 measured),
+  excluding authoring. Savings: the red CP-1 run (2 min measured) and the pump/witness authoring
+  (about 15 min of D-8) are already paid at `6ddd77c05`; the Plan's proposal floor was 29 + 3.
 
 ## rc line
 
@@ -325,6 +533,6 @@ the line; the change lands on master and reaches the hosts with the next line.
 Not applicable: no slice adds or changes a session that waits for input.
 
 --- next stage ---
-next: test-design
-handoff: Design the verification for CARD-1365 from docs/superpowers/plans/2026-10-19-card-1365-async-herdr-snapshot-route-plan.md: confirm the single-thread pump witness through PhoneHomeCommandDispatcher (red by behaviour at base, deadline on FakeTimeProvider), decide the optional default-pin and caller-cancellation methods, and close CP-1..CP-3 with real roster counts.
+next: code
+handoff: Implement CARD-1365 S1 from docs/superpowers/plans/2026-10-19-card-1365-async-herdr-snapshot-route-plan.md on feat/card-task-a2d0cdb7: the red witness and pump are committed at 6ddd77c05 (red at base, proof line in the design), so start at the green commit (D-1..D-4 production edits plus the 35 one-line conversions), then run the closed CP-1..CP-3 table.
 artifact: docs/superpowers/plans/2026-10-19-card-1365-async-herdr-snapshot-route-plan.md
