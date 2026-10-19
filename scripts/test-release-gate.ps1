@@ -4046,8 +4046,9 @@ function New-C1339Fixture {
 
 function Add-C1339Tag {
     param($Fx, [string]$Tag, [string]$Sha)
-    [void](Invoke-C1339LocalGit $Fx @('tag', '-a', $Tag, $Sha, '-m', 'fixture'))
-    [void](Invoke-C1339LocalGit $Fx @('push', $Fx.Bare, ('refs/tags/' + $Tag)))
+    # Seed the recipient independently. A nested local tag also makes Git's push
+    # source DWIM ambiguous, which is unrelated to remote-read resolution.
+    [void](Invoke-C1339LocalGit $Fx @('tag', '-a', $Tag, $Sha, '-m', 'fixture') -Remote)
 }
 
 function Invoke-C1339Promote {
