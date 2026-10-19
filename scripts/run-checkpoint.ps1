@@ -26,6 +26,8 @@
     A clean tracked baseline is captured before each real build. Changes are detected
     after success, failure, timeout and cancellation. The tool reports tampered paths,
     exits 2 with invalid evidence, and never changes worktree bytes or index entries.
+    An entry the reader could not prove (CARD-1363: a hard link, an access refusal, a
+    stalled read) is reported `refused: unreadable` apart from `tampered`, still exit 2.
     Build outputs and stamps require an exclusively created directory. Existing
     stamps and compiler-output directories are refused before the build.
     A relative -OutputPath is still
@@ -889,8 +891,26 @@ function Get-CheckpointContentStamp {
         $bytes = Read-CheckpointBytes $Full
         return 'file|' + $bytes.Length + '|' + (Get-CheckpointSha256 $bytes)
     } catch {
-        return 'unreadable'
+        # CARD-1363 (the CARD-1358 D-4 design): a refused read stamps 'unreadable|<reason>', the innermost
+        # message on one line, at most 200 characters, so settlement can say why an entry is unprovable.
+        $inner = $_.Exception
+        while ($null -ne $inner.InnerException) { $inner = $inner.InnerException }
+        $reason = ([string]$inner.Message).Replace("`r", ' ').Replace("`n", ' ').Trim()
+        if ($reason.Length -eq 0) { $reason = $inner.GetType().Name }
+        if ($reason.Length -gt 200) { $reason = $reason.Substring(0, 200) }
+        return 'unreadable|' + $reason
     }
+}
+
+function Test-CheckpointUnreadableStamp {
+    param([string]$Stamp)
+    return $Stamp.StartsWith('unreadable', [System.StringComparison]::Ordinal)
+}
+
+function Get-CheckpointUnreadableReason {
+    param([string]$Stamp)
+    if ($Stamp.Length -gt 11 -and $Stamp.StartsWith('unreadable|', [System.StringComparison]::Ordinal)) { return $Stamp.Substring(11) }
+    return 'read refused'
 }
 
 function Get-CheckpointUntrackedManifest {
@@ -918,9 +938,15 @@ function Complete-CheckpointBaseline {
     if ($null -ne $status.Error) { return @{ Kind = 'tracked-snapshot'; Detail = 'refused: tracked-snapshot ' + $status.Error } }
     $paths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($path in @($status.Paths)) { [void]$paths.Add([string]$path) }
+    # CARD-1363 (the CARD-1358 D-3 design): an entry whose recorded or current stamp the reader refused is
+    # unprovable, not a change; a readable stamp that differs is a change.
+    $unreadable = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
     foreach ($key in @($Baseline.Content.Keys) + @($Baseline.Untracked.Keys)) {
         $expected = if ($Baseline.Content.ContainsKey($key)) { $Baseline.Content[$key] } else { $Baseline.Untracked[$key] }
-        if ((Get-CheckpointContentStamp (Join-CheckpointRepoPath $Baseline.Repository $key)) -cne $expected) { [void]$paths.Add([string]$key) }
+        if (Test-CheckpointUnreadableStamp $expected) { $unreadable[$key] = Get-CheckpointUnreadableReason $expected; continue }
+        $current = Get-CheckpointContentStamp (Join-CheckpointRepoPath $Baseline.Repository $key)
+        if (Test-CheckpointUnreadableStamp $current) { $unreadable[$key] = Get-CheckpointUnreadableReason $current }
+        elseif ($current -cne $expected) { [void]$paths.Add([string]$key) }
     }
     $again = Get-CheckpointTrackedSnapshot -Projects @() -IndexOnly
     if ($null -ne $again.Error) { return @{ Kind = 'tracked-snapshot'; Detail = 'refused: tracked-snapshot ' + $again.Error } }
@@ -932,18 +958,35 @@ function Complete-CheckpointBaseline {
     foreach ($path in ([string]$ordinary.Stdout).Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries)) {
         if (-not $path.StartsWith('.antiphon/', [StringComparison]::Ordinal) -and -not $Baseline.Untracked.ContainsKey($path)) { [void]$paths.Add($path) }
     }
-    if ($paths.Count -eq 0) { return @{ Kind = $null; Detail = '' } }
+    return Format-CheckpointSettlement $Baseline $again $paths $unreadable
+}
+
+# CARD-1363 (the CARD-1358 D-3 design): any changed path makes the kind tampered, with the unprovable entries listed
+# beside it before the restore line; only unprovable entries make the kind unreadable, which names no restore because
+# no content difference was observed. Exit stays 2 either way.
+function Format-CheckpointSettlement {
+    param($Baseline, $Again, $Changed, $Unreadable)
+    $changed = @($Changed | Sort-Object -CaseSensitive)
+    $unprovable = @($Unreadable.Keys | Where-Object { -not $Changed.Contains($_) } | Sort-Object -CaseSensitive)
+    if ($changed.Count -eq 0 -and $unprovable.Count -eq 0) { return @{ Kind = $null; Detail = '' } }
     $lines = [System.Collections.Generic.List[string]]::new()
-    [void]$lines.Add('refused: tampered')
-    foreach ($path in ($paths | Sort-Object -CaseSensitive)) {
-        [void]$lines.Add('TAMPERED ' + $path)
-        $quoted = "'" + $path.Replace("'", "'\''") + "'"
-        if ($Baseline.Hashes.ContainsKey($path)) { [void]$lines.Add('manual command: git restore --source=' + $Baseline.Head + ' --staged --worktree -- ' + $quoted) }
-        elseif ($again.Hashes.ContainsKey($path)) { [void]$lines.Add('manual command: git restore --staged -- ' + $quoted) }
-        else { [void]$lines.Add('manual command: git status --short -- ' + $quoted + '; inspect and recover user bytes from your backup') }
+    if ($changed.Count -gt 0) {
+        [void]$lines.Add('refused: tampered')
+        foreach ($path in $changed) {
+            [void]$lines.Add('TAMPERED ' + $path)
+            $quoted = "'" + $path.Replace("'", "'\''") + "'"
+            if ($Baseline.Hashes.ContainsKey($path)) { [void]$lines.Add('manual command: git restore --source=' + $Baseline.Head + ' --staged --worktree -- ' + $quoted) }
+            elseif ($Again.Hashes.ContainsKey($path)) { [void]$lines.Add('manual command: git restore --staged -- ' + $quoted) }
+            else { [void]$lines.Add('manual command: git status --short -- ' + $quoted + '; inspect and recover user bytes from your backup') }
+        }
+        foreach ($path in $unprovable) { [void]$lines.Add('UNREADABLE ' + $path + ': ' + $Unreadable[$path]) }
+        [void]$lines.Add('manual restore required; Build-result bytes and index entries were left in place; no source recovery was attempted.')
+        return @{ Kind = 'tampered'; Detail = ($lines -join "`n") }
     }
-    [void]$lines.Add('manual restore required; Build-result bytes and index entries were left in place; no source recovery was attempted.')
-    return @{ Kind = 'tampered'; Detail = ($lines -join "`n") }
+    [void]$lines.Add('refused: unreadable')
+    foreach ($path in $unprovable) { [void]$lines.Add('UNREADABLE ' + $path + ': ' + $Unreadable[$path]) }
+    [void]$lines.Add('no content difference was observed; nothing in the worktree or index was changed; no restore is needed; repeat the run.')
+    return @{ Kind = 'unreadable'; Detail = ($lines -join "`n") }
 }
 
 function Publish-CheckpointSettlement {

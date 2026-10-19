@@ -44,7 +44,7 @@ switch ($Shape) {
 if ($Entry -eq 'script') {
     $result = Get-CheckpointContentStamp $path
     if ($Shape -eq 'regular') { if ($result -cne $contents['user.txt']) { throw "regular stamp: $result" } }
-    elseif ($Shape -eq 'fifo') { if ($result -ne 'unreadable') { throw "FIFO must be unprovable: $result" } }
+    elseif ($Shape -eq 'fifo') { if (-not $result.StartsWith('unreadable|')) { throw "FIFO must be unprovable with its reason: $result" } }
     elseif ($result -eq $contents['user.txt']) { throw "special shape certified: $result" }
 } else {
     $result = [Antiphon.Checkpoints.BuildConfinement]::Settle($baseline)
