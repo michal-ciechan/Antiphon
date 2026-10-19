@@ -8,6 +8,15 @@ namespace Antiphon.Tests.Scripts;
 public sealed class ReleaseTagAllocatorTests
 {
     [Test]
+    public Task C1339_AllocationUtcDay() =>
+        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1339", "C1339_AllocationUtcDay", 5,
+            "C1339 G-33 utc-day",
+            "C1339 G-34 one-clock-sample",
+            "C1339 G-35 midnight-reuse",
+            "C1339 G-36 stamp-day",
+            "C1339 G-37 candidate-date-preserved");
+
+    [Test]
     public Task C1339_ExactRemoteRefs() =>
         ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1339", "C1339_ExactRemoteRefs", 19,
             "C1339 G-1 exact-tag",
