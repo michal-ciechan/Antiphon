@@ -3876,7 +3876,7 @@ function Invoke-C1339LocalGit {
 }
 
 function New-C1339Fixture {
-    param([switch]$Stamp)
+    param([switch]$Stamp, [switch]$NoCandidateRemote)
     # All fixture setup children inherit no task/API/provider credentials, hooks,
     # signing configuration or network protocols. Restore the harness environment.
     $saved = @{}
@@ -3900,13 +3900,17 @@ function New-C1339Fixture {
     $fx | Add-Member PreTag 'v2026.10.15.1-rc.1'
     $fx | Add-Member FinalTag 'v2026.10.15.1'
     [void](Invoke-C1339LocalGit $fx @('init', '--bare', '-q') -Remote)
-    [void](Invoke-C1339LocalGit $fx @('push', $bare, ($fx.Head + ':refs/heads/' + $fx.CandidateRef)))
+    if (-not $NoCandidateRemote) { [void](Invoke-C1339LocalGit $fx @('push', $bare, ($fx.Head + ':refs/heads/' + $fx.CandidateRef))) }
     [void](Invoke-C1339LocalGit $fx @('commit', '--allow-empty', '-q', '-m', 'distinct B'))
     $fx | Add-Member B (Invoke-C1339LocalGit $fx @('rev-parse', 'HEAD'))
     [void](Invoke-C1339LocalGit $fx @('commit', '--allow-empty', '-q', '-m', 'distinct C'))
     $fx | Add-Member C (Invoke-C1339LocalGit $fx @('rev-parse', 'HEAD'))
+    [void](Invoke-C1339LocalGit $fx @('push', $bare, ($fx.C + ':refs/heads/fixture-objects')))
     # Keep checkout at A for publication; other commits remain real and addressable.
     [void](Invoke-C1339LocalGit $fx @('checkout', '--detach', '-q', $fx.Head))
+    if (-not $Stamp) {
+        Update-C599Json -Path (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $fx.CandidateId) 'candidate.json') -Mutate { param($c) $c.cutUtc = '2026-10-15T00:00:00Z' }
+    }
     $adapter = Join-Path $here 'fixtures/c1339-release-git.ps1'
     Add-Content -LiteralPath $fx.Gh.Path -Encoding ASCII -Value @"
 . '$adapter'
@@ -3930,23 +3934,220 @@ function Invoke-C1339Promote {
         -CheckoutRoot $Fx.Checkout -SeamsPath $Fx.Gh.Path -PassThru
 }
 
+function Invoke-C1339Publish {
+    param($Fx, [switch]$WhatIf)
+    Invoke-C599Publish -Fx $Fx -CandidateId $Fx.CandidateId -Extra @{ Repository = 'fixture/release'; WhatIf = [bool]$WhatIf }
+}
+
+function Set-C1339Read {
+    param($Fx, [string]$Ref, [string]$Output = '', [string]$Mode = 'prepend', [int]$Ordinal = 0, [int]$Exit = 0, [string]$Push = '')
+    Write-NightlyAtomicJson -Path $Fx.FaultPath -Object @{ push = $Push; reads = @(@{ ref = $Ref; output = $Output; mode = $Mode; ordinal = $Ordinal; exit = $Exit }) }
+}
+
+function Test-C1339NoWrites {
+    param($Fx)
+    $trace = Join-Path $Fx.Root 'real-git-trace.log'
+    return (-not (Test-Path -LiteralPath $trace) -or (Get-Content -LiteralPath $trace -Raw) -notmatch '(?m)^(tag|push) ')
+}
+
+function Get-C1339Peel {
+    param($Fx, [string]$Tag)
+    Invoke-C1339LocalGit $Fx @('rev-parse', '--verify', ('refs/tags/' + $Tag + '^{}')) -Remote -AllowAbsent
+}
+
+function New-C1339Check {
+    param([bool]$Pass, [string]$Detail)
+    [pscustomobject]@{ Pass = $Pass; Detail = $Detail }
+}
+
 function Test-C1339_ExactRemoteRefs {
     $results = @()
-    foreach ($nested in @($false, $true)) {
+    foreach ($order in @('control', 'nested-first', 'exact-first')) {
         $fx = New-C1339Fixture
         Add-C1339Tag $fx $fx.PreTag $fx.Head
-        if ($nested) {
+        if ($order -ne 'control') {
             Add-C1339Tag $fx ('refs/tags/' + $fx.PreTag) $fx.B
             $output = Invoke-C1339LocalGit $fx @('ls-remote', '--tags', $fx.Bare, ('refs/tags/' + $fx.PreTag + '^{}'))
             # Real records, reordered so the nested record arrives first.
             $lines = @($output -split "`n" | Sort-Object { ($_ -split "`t")[1] })
+            if ($order -eq 'exact-first') { [array]::Reverse($lines) }
             Write-NightlyAtomicJson -Path $fx.FaultPath -Object @{ reads = @(@{ ref = 'refs/tags/' + $fx.PreTag + '^{}'; mode = 'replace'; exit = 0; output = ($lines -join "`n") }) }
         }
         $r = Invoke-C1339Promote $fx
         $peel = Invoke-C1339LocalGit $fx @('rev-parse', '--verify', ('refs/tags/' + $fx.FinalTag + '^{}')) -Remote -AllowAbsent
-        $results += [pscustomobject]@{ Pass = ($r.ExitCode -eq 0 -and $r.Promoted -and $peel -ceq $fx.Head); Detail = ('nested=' + $nested + ' refusal=' + $r.Refusal + ' peel=' + $peel) }
+        $results += New-C1339Check ($r.ExitCode -eq 0 -and $r.Promoted -and $peel -ceq $fx.Head) ($order + ' refusal=' + $r.Refusal + ' peel=' + $peel)
     }
     Assert-C599AMatrix -Name 'C1339 G-13 promotion-pre-read' -Results $results
+
+    # Parser cases use complete real records; impossible output is introduced only
+    # for malformed/duplicate/query-failure boundaries.
+    $ref = 'refs/tags/' + $fx.PreTag + '^{}'
+    $nestedLine = $fx.B + "`trefs/tags/refs/tags/" + $fx.PreTag + '^{}'
+    $exactLine = $fx.Head + "`t" + $ref
+    $checks = @()
+    foreach ($output in @(($nestedLine + "`n" + $exactLine), ($exactLine + "`n" + $nestedLine))) {
+        $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = $output } $ref
+        $checks += New-C1339Check ($r.Status -eq 'Found' -and $r.Sha -ceq $fx.Head) 'exact tag order'
+    }
+    $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = $nestedLine } $ref
+    $checks += New-C1339Check ($r.Status -eq 'Absent') 'nested only tag'
+    Assert-C599AMatrix 'C1339 G-1 exact-tag' $checks
+
+    [void](Invoke-C1339LocalGit $fx @('push', $fx.Bare, ($fx.B + ':refs/heads/archive/' + $fx.CandidateRef)))
+    $headRef = 'refs/heads/' + $fx.CandidateRef
+    $headOutput = Invoke-C1339LocalGit $fx @('ls-remote', '--heads', $fx.Bare)
+    $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = $headOutput } $headRef
+    $suffix = $fx.B + "`trefs/heads/archive/" + $fx.CandidateRef
+    $absent = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = $suffix } $headRef
+    Assert-C487 -Cond ($r.Status -eq 'Found' -and $r.Sha -ceq $fx.Head -and $absent.Status -eq 'Absent') -Name 'C1339 G-2 exact-head'
+    $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = ($fx.Head + "`t" + $ref.ToUpperInvariant()) } $ref
+    Assert-C487 -Cond ($r.Status -eq 'Absent') -Name 'C1339 G-3 ordinal-case'
+    $checks = @()
+    foreach ($sha in @('abcd', ('z' * 40))) {
+        $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = ($sha + "`t" + $ref) } $ref
+        $checks += New-C1339Check ($r.Status -eq 'Failed') $sha
+    }
+    Assert-C599AMatrix 'C1339 G-4 full-sha' $checks
+    $checks = @()
+    foreach ($output in @(($exactLine + "`n" + $fx.B + "`t" + $ref), ($fx.B + "`t" + $ref + "`n" + $exactLine))) {
+        $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = $output } $ref
+        $checks += New-C1339Check ($r.Status -eq 'Failed') 'conflicting duplicates'
+    }
+    $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = ("bad unrelated`n" + $exactLine) } $ref
+    $checks += New-C1339Check ($r.Status -eq 'Found' -and $r.Sha -ceq $fx.Head) 'unrelated malformed record'
+    Assert-C599AMatrix 'C1339 G-5 ambiguous-record' $checks
+    $checks = @()
+    foreach ($output in @('', $exactLine)) {
+        $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 1; Output = $output } $ref
+        $checks += New-C1339Check ($r.Status -eq 'Failed') 'failed query'
+    }
+    $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = '' } $ref
+    $checks += New-C1339Check ($r.Status -eq 'Absent') 'successful empty query'
+    Assert-C599AMatrix 'C1339 G-6 query-failure' $checks
+
+    $fx = New-C1339Fixture
+    Set-C1339Read $fx ('refs/heads/' + $fx.CandidateRef) ($fx.B + "`trefs/heads/archive/" + $fx.CandidateRef)
+    $r = Invoke-C599Candidate -ReleaseRoot $fx.ReleaseRoot -Checkout $fx.Checkout -Seams $fx.Gh -Ref $fx.CandidateRef
+    $journal = Get-Content -LiteralPath $r.JournalPath -Raw | ConvertFrom-Json
+    Assert-C487 -Cond ($r.ExitCode -eq 0 -and $journal.sha -ceq $fx.Head -and $journal.candidateId -ceq $fx.CandidateId -and (Test-C1339NoWrites $fx)) -Name 'C1339 G-7 candidate-long-read' -Detail $r.Refusal
+
+    $fx = New-C1339Fixture -Stamp
+    [void](Invoke-C1339LocalGit $fx @('push', $fx.Bare, ($fx.B + ':refs/heads/' + $fx.CandidateRef)))
+    Set-C1339Read $fx ('refs/heads/' + $fx.CandidateRef) ($fx.Head + "`trefs/heads/archive/" + $fx.CandidateRef)
+    $r = Invoke-C599Candidate -ReleaseRoot $fx.ReleaseRoot -Checkout $fx.Checkout -Seams $fx.Gh -Ref $fx.CandidateRef
+    $tip = Invoke-C1339LocalGit $fx @('rev-parse', ('refs/heads/' + $fx.CandidateRef)) -Remote
+    Assert-C487 -Cond ($r.Refusal -eq 'remote-candidate-conflict' -and $tip -ceq $fx.B -and (Test-C1339NoWrites $fx)) -Name 'C1339 G-8 candidate-stamp-read' -Detail $r.Refusal
+
+    $checks = @()
+    foreach ($push in @('before', 'after')) {
+        $fx = New-C1339Fixture -Stamp -NoCandidateRemote
+        Set-C1339Read $fx ('refs/heads/' + $fx.CandidateRef) ($fx.Head + "`trefs/heads/archive/" + $fx.CandidateRef) -Ordinal 2 -Push $push
+        $r = Invoke-C599Candidate -ReleaseRoot $fx.ReleaseRoot -Checkout $fx.Checkout -Seams $fx.Gh -Ref $fx.CandidateRef
+        $tip = Invoke-C1339LocalGit $fx @('rev-parse', '--verify', ('refs/heads/' + $fx.CandidateRef)) -Remote -AllowAbsent
+        $ok = $r.Refusal -eq 'push-failed' -and $tip -eq ''
+        if ($push -eq 'after') { $ok = $r.ExitCode -eq 0 -and $r.Pushed -and $tip -ceq $fx.Head }
+        $checks += New-C1339Check $ok ($push + ':' + $r.Refusal)
+    }
+    Assert-C599AMatrix 'C1339 G-9 candidate-recovery-read' $checks
+
+    $fx = New-C1339Fixture
+    [void](Invoke-C1339LocalGit $fx @('push', $fx.Bare, ($fx.B + ':refs/heads/' + $fx.CandidateRef)))
+    Set-C1339Read $fx ('refs/heads/' + $fx.CandidateRef) ($fx.Head + "`trefs/heads/archive/" + $fx.CandidateRef)
+    $r = Invoke-C1339Publish $fx
+    Assert-C487 -Cond ($r.Refusal -eq 'remote-candidate-moved' -and (Test-C1339NoWrites $fx) -and (Get-C1339Peel $fx $fx.PreTag) -eq '') -Name 'C1339 G-10 publisher-head-read' -Detail $r.Refusal
+
+    $checks = @()
+    foreach ($push in @('after', 'before')) {
+        $fx = New-C1339Fixture
+        $nestedSha = $fx.B
+        if ($push -eq 'before') { $nestedSha = $fx.Head }
+        Set-C1339Read $fx ('refs/tags/' + $fx.PreTag + '^{}') ($nestedSha + "`trefs/tags/refs/tags/" + $fx.PreTag + '^{}') -Push $push
+        $r = Invoke-C1339Publish $fx
+        $peel = Get-C1339Peel $fx $fx.PreTag
+        $journal = Get-Content -LiteralPath (Join-Path $fx.ReleaseRoot 'publications.json') -Raw | ConvertFrom-Json
+        $ok = $r.Refusal -eq 'tag-push-failed' -and $peel -eq ''
+        if ($push -eq 'after') { $ok = $r.ExitCode -eq 0 -and $r.Published -and $peel -ceq $fx.Head }
+        $checks += New-C1339Check ($ok -and @($journal.reservations).Count -eq 1) ($push + ':' + $r.Refusal)
+    }
+    Assert-C599AMatrix 'C1339 G-11 publisher-recovery-read' $checks
+
+    $fx = New-C1339Fixture
+    Set-C1339Read $fx ('refs/tags/' + $fx.PreTag + '^{}') ($fx.B + "`trefs/tags/refs/tags/" + $fx.PreTag + '^{}')
+    $r = Invoke-C1339Publish $fx
+    $gh = Get-Content -LiteralPath $fx.Gh.StorePath -Raw | ConvertFrom-Json
+    Assert-C487 -Cond ($r.ExitCode -eq 0 -and $r.Published -and (Get-C1339Peel $fx $fx.PreTag) -ceq $fx.Head -and @($gh.releases).Count -eq 1 -and -not $gh.releases[0].isDraft) -Name 'C1339 G-12 publisher-verify-read' -Detail $r.Refusal
+
+    $fx = New-C1339Fixture
+    Add-C1339Tag $fx $fx.PreTag $fx.Head
+    [void](Invoke-C1339LocalGit $fx @('push', $fx.Bare, ($fx.B + ':refs/heads/' + $fx.CandidateRef)))
+    Set-C1339Read $fx ('refs/heads/' + $fx.CandidateRef) ($fx.Head + "`trefs/heads/archive/" + $fx.CandidateRef)
+    $r = Invoke-C1339Promote $fx
+    Assert-C487 -Cond ($r.Refusal -eq 'remote-candidate-moved' -and (Test-C1339NoWrites $fx) -and (Get-C1339Peel $fx $fx.FinalTag) -eq '') -Name 'C1339 G-14 promotion-head-read' -Detail $r.Refusal
+
+    $checks = @()
+    foreach ($conflict in @($false, $true)) {
+        $fx = New-C1339Fixture
+        Add-C1339Tag $fx $fx.PreTag $fx.Head
+        Add-C1339Tag $fx ('refs/tags/' + $fx.FinalTag) $fx.Head
+        if ($conflict) { Add-C1339Tag $fx $fx.FinalTag $fx.C }
+        $r = Invoke-C1339Promote $fx
+        $peel = Get-C1339Peel $fx $fx.FinalTag
+        $ok = $r.ExitCode -eq 0 -and $r.Promoted -and -not $r.Resumed -and $peel -ceq $fx.Head
+        if ($conflict) { $ok = $r.Refusal -eq 'final-tag-conflict' -and $peel -ceq $fx.C -and (Test-C1339NoWrites $fx) }
+        $checks += New-C1339Check $ok ('conflict=' + $conflict + ':' + $r.Refusal)
+    }
+    Assert-C599AMatrix 'C1339 G-15 promotion-existing-read' $checks
+
+    $checks = @()
+    foreach ($push in @('after', 'before')) {
+        $fx = New-C1339Fixture
+        Add-C1339Tag $fx $fx.PreTag $fx.Head
+        $nestedSha = $fx.B
+        if ($push -eq 'before') { $nestedSha = $fx.Head }
+        Set-C1339Read $fx ('refs/tags/' + $fx.FinalTag + '^{}') ($nestedSha + "`trefs/tags/refs/tags/" + $fx.FinalTag + '^{}') -Ordinal 2 -Push $push
+        $r = Invoke-C1339Promote $fx
+        $peel = Get-C1339Peel $fx $fx.FinalTag
+        $ok = $r.Refusal -eq 'tag-push-failed' -and $peel -eq ''
+        if ($push -eq 'after') { $ok = $r.ExitCode -eq 0 -and $r.Promoted -and $peel -ceq $fx.Head }
+        $checks += New-C1339Check $ok ($push + ':' + $r.Refusal)
+    }
+    Assert-C599AMatrix 'C1339 G-16 promotion-recovery-read' $checks
+
+    $checks = @()
+    foreach ($failure in @($false, $true)) {
+        $fx = New-C1339Fixture
+        Add-C1339Tag $fx $fx.PreTag $fx.Head
+        if ($failure) { Set-C1339Read $fx ('refs/tags/' + $fx.FinalTag + '^{}') -Mode replace -Ordinal 2 -Exit 1 }
+        else { Set-C1339Read $fx ('refs/tags/' + $fx.FinalTag + '^{}') ($fx.B + "`trefs/tags/refs/tags/" + $fx.FinalTag + '^{}') -Ordinal 2 }
+        $r = Invoke-C1339Promote $fx
+        $ok = $r.ExitCode -eq 0 -and $r.Promoted
+        if ($failure) { $ok = $r.Refusal -eq 'tag-peel' -and -not $r.Promoted -and -not $r.Resumed }
+        $checks += New-C1339Check ($ok -and (Get-C1339Peel $fx $fx.FinalTag) -ceq $fx.Head) ('failed-query=' + $failure + ':' + $r.Refusal)
+    }
+    Assert-C599AMatrix 'C1339 G-17 promotion-verify-read' $checks
+
+    # These controls can never execute Git, including under deliberate mutation.
+    $launches = [Collections.Generic.List[string]]::new()
+    $inert = { param($Root, $WorkingDirectory, $Arguments) $launches.Add(($Arguments -join ' ')); return @{ ExitCode = 0; Output = '' } }
+    $outside = New-C599Root
+    $link = Join-Path $fx.Root 'escape'
+    New-Item -ItemType SymbolicLink -Path $link -Target $outside | Out-Null
+    $checks = @()
+    foreach ($bad in @($outside, $link)) {
+        $refused = $false
+        try { [void](Invoke-C1339FixtureGit -Root $fx.Root -Checkout $fx.Checkout -Bare $bad -WorkingDirectory $fx.Checkout -Arguments @('ls-remote', '--tags', 'origin') -Launcher $inert) }
+        catch { $refused = $_.Exception.Message -match '^fixture-(path-outside-root|linked-path)' }
+        $checks += New-C1339Check ($refused -and $launches.Count -eq 0) $bad
+    }
+    Assert-C599AMatrix 'C1339 G-64 fixture-path-contained' $checks
+    $checks = @()
+    foreach ($requestArgs in @(@('ls-remote', '--tags', 'https://example.invalid/repo'), @('unknown'), @('push', '--mirror', 'origin'))) {
+        $refused = $false
+        try { [void](Invoke-C1339FixtureGit -Root $fx.Root -Checkout $fx.Checkout -Bare $fx.Bare -WorkingDirectory $fx.Checkout -Arguments $requestArgs -Launcher $inert) }
+        catch { $refused = $_.Exception.Message -match '^fixture-(transport-refused|command-refused|push-form)' }
+        $checks += New-C1339Check ($refused -and $launches.Count -eq 0) ($requestArgs -join ' ')
+    }
+    Assert-C599AMatrix 'C1339 G-65 fixture-transport-allowlist' $checks
 }
 
 # ====================================================================== run ===

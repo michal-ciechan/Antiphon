@@ -146,14 +146,12 @@ function Invoke-AntiphonReleaseCandidate {
 
     # A long-lived ref is already on the remote. Journal that tip. Do not push.
     if ($candidate.Kind -eq 'long-lived') {
-        $remote = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('ls-remote', '--heads', 'origin', $candidate.Ref)
-        if ([int]$remote.ExitCode -ne 0) {
+        $remote = Get-ReleaseGateRemoteHead -WorkingDirectory $CheckoutRoot -Ref $candidate.Ref
+        if ($remote.Status -eq 'Failed') {
             Write-CandidateLine 'REFUSED: could not read the long-lived rc ref.'
             $result.Refusal = 'rc-ref-unresolved'; $result.ExitCode = 3; return [pscustomobject]$result
         }
-        $remoteSha = ''
-        $line = ([string]$remote.Output).Trim()
-        if (-not [string]::IsNullOrWhiteSpace($line)) { $remoteSha = ($line -split '\s+')[0].Trim() }
+        $remoteSha = $remote.Sha
         if ([string]::IsNullOrWhiteSpace($remoteSha)) {
             Write-CandidateLine ('REFUSED: remote {0} does not exist.' -f $candidate.Ref)
             $result.Refusal = 'rc-ref-missing'; $result.ExitCode = 3; return [pscustomobject]$result
@@ -243,14 +241,12 @@ function Invoke-AntiphonReleaseCandidate {
     # D-3: an existing remote candidate ref at a different SHA is a hard refusal.
     # Resolve it BEFORE the push so an ambiguous earlier response cannot be
     # papered over with a second write.
-    $remote = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('ls-remote', '--heads', 'origin', $candidate.Ref)
-    $remoteSha = ''
-    if ([int]$remote.ExitCode -eq 0) {
-        $line = ([string]$remote.Output).Trim()
-        if (-not [string]::IsNullOrWhiteSpace($line)) {
-            $remoteSha = ($line -split '\s+')[0].Trim()
-        }
+    $remote = Get-ReleaseGateRemoteHead -WorkingDirectory $CheckoutRoot -Ref $candidate.Ref
+    if ($remote.Status -eq 'Failed') {
+        Write-CandidateLine 'REFUSED: remote candidate could not be resolved.'
+        $result.Refusal = 'remote-candidate-unresolved'; $result.ExitCode = 3; return [pscustomobject]$result
     }
+    $remoteSha = $remote.Sha
     if (-not [string]::IsNullOrWhiteSpace($remoteSha) -and
         -not [string]::Equals($remoteSha, $sha, [StringComparison]::OrdinalIgnoreCase)) {
         Write-CandidateLine ('REFUSED: remote {0} already points at {1}.' -f $candidate.Ref, $remoteSha)
@@ -292,13 +288,8 @@ function Invoke-AntiphonReleaseCandidate {
     if ([int]$push.ExitCode -ne 0) {
         # An ambiguous or failed push is resolved by re-reading the remote, never
         # by pushing again under a new identity.
-        $recheck = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('ls-remote', '--heads', 'origin', $candidate.Ref)
-        $afterSha = ''
-        if ([int]$recheck.ExitCode -eq 0) {
-            $line = ([string]$recheck.Output).Trim()
-            if (-not [string]::IsNullOrWhiteSpace($line)) { $afterSha = ($line -split '\s+')[0].Trim() }
-        }
-        if ([string]::Equals($afterSha, $sha, [StringComparison]::OrdinalIgnoreCase)) {
+        $recheck = Get-ReleaseGateRemoteHead -WorkingDirectory $CheckoutRoot -Ref $candidate.Ref
+        if ($recheck.Status -eq 'Found' -and [string]::Equals($recheck.Sha, $sha, [StringComparison]::OrdinalIgnoreCase)) {
             Write-CandidateLine 'push response lost but the remote holds the pinned sha.'
             $journal.pushed = $true
             Write-NightlyAtomicJson -Path $journalPath -Object $journal
