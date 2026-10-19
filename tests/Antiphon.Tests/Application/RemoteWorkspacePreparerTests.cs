@@ -1062,7 +1062,7 @@ public sealed class RemoteWorkspacePreparerTests
         }));
         services.AddSingleton<PhoneHomeLaunchPolicy>();
         services.AddSingleton<ISessionRunnerDirectory>(host.Directory);
-        services.AddSingleton<RemoteWorkspaceService>();
+        services.AddScoped<RemoteWorkspaceService>();
         services.AddSingleton<RemoteWorkspacePreparer>();
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
@@ -1395,7 +1395,7 @@ public sealed class RemoteWorkspacePreparerTests
             services.AddSingleton<PhoneHomeLaunchPolicy>();
             services.AddSingleton<ISessionRunnerDirectory>(Host.Directory);
             services.AddSingleton<ILandingGit, PushOnlyGit>();
-            services.AddSingleton<RemoteWorkspaceService>();
+            services.AddScoped<RemoteWorkspaceService>();
             services.AddSingleton<RemoteWorkspacePreparer>();
             services.AddSingleton<IAgentTaskLaunchSink>(Sink);
             services.AddScoped<AgentTaskService>();
