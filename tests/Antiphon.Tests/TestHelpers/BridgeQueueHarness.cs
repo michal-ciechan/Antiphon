@@ -60,6 +60,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         public bool AlwaysOn { get; init; } = true;
         public bool PreserveDatabaseOnDispose { get; init; }
         public bool StartRuntimeActions { get; init; }
+        public bool ValidateScopes { get; init; }
         public TimeProvider? TimeProvider { get; init; }
 
         /// <summary>
@@ -258,7 +259,7 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
                 new System.IO.Abstractions.FileSystem()));
         services.AddLogging();
         options.ConfigureServices?.Invoke(services);
-        var provider = services.BuildServiceProvider();
+        var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = options.ValidateScopes });
         var scope = provider.CreateScope();
         var actionWorker = options.StartRuntimeActions
             ? new SessionRuntimeActionHostedService(provider.GetRequiredService<SessionRuntimeActionCoordinator>()) : null;
