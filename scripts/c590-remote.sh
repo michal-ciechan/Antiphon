@@ -5866,10 +5866,38 @@ c1008_tasks() {
     receipt="${CASE_DIR:?}/census-${CASE:?}-${C1008_RUNNER}.json"
     if ! jq -n --arg runner "$C1008_RUNNER" --arg phase "$CASE" --arg refusal "$C1008_TASK_ERROR" \
         --argjson reads "$C1008_CENSUS_READS" --argjson tasks "$C1008_CENSUS_TASKS" --argjson snapshot "$C1008_TASKS" \
-        '{schema:1,phase:$phase,runnerId:$runner,reads:$reads,tasks:$tasks,snapshot:$snapshot,refusal:$refusal}' > "$receipt"; then
+        --argjson polls "${C1008_LAND_WAIT_POLLS:-0}" \
+        '{schema:1,phase:$phase,runnerId:$runner,reads:$reads,tasks:$tasks,snapshot:$snapshot,refusal:$refusal,landWaitPolls:$polls}' > "$receipt"; then
         C1008_TASK_ERROR='RecycleTaskCensusUnknown cause=Transport field=receipt'; return 2
     fi
     [ "$code" != 0 ] || printf '%s' "$C1008_TASKS"
+    return "$code"
+}
+
+# CARD-1353 D-3/D-4. A land bound to the recycled runner makes the census wait, bounded, instead
+# of refusing on the first read: only RecycleLandInFlight (3) is retried, every other refusal is
+# immediate. C1008_LAND_WAIT_SECONDS (default 1800) and C1008_LAND_POLL_SECONDS (default 30) take
+# the audit-cap digit pattern; anything else refuses RecycleContextInvalid before any read.
+# Polls = ceil(wait / poll); the loop counts polls and sleeps poll seconds between them. On expiry
+# the refusal keeps its first token: RecycleLandInFlight <id> runner=<runner> waited=<n>polls.
+c1008_tasks_wait() {
+    local code=0 polls=0 max wait="${C1008_LAND_WAIT_SECONDS:-1800}" poll="${C1008_LAND_POLL_SECONDS:-30}"
+    C1008_TASK_ERROR=''
+    if ! [[ "$wait" =~ ^[1-9][0-9]{0,6}$ ]] || ! [[ "$poll" =~ ^[1-9][0-9]{0,6}$ ]]; then
+        C1008_TASK_ERROR=RecycleContextInvalid; return 2
+    fi
+    max=$(( (wait + poll - 1) / poll ))
+    while :; do
+        C1008_LAND_WAIT_POLLS="$polls"
+        code=0; c1008_tasks >/dev/null || code=$?
+        [ "$code" = 3 ] || break
+        if [ "$polls" -ge "$max" ]; then
+            C1008_TASK_ERROR="$C1008_TASK_ERROR runner=$C1008_RUNNER waited=${polls}polls"; break
+        fi
+        printf 'C1008_LAND_WAIT runner=%s reason=%s polls=%s\n' "$C1008_RUNNER" "$C1008_TASK_ERROR" "$polls"
+        sleep "$poll"; polls=$((polls + 1))
+    done
+    C1008_LAND_WAIT_POLLS=''
     return "$code"
 }
 
@@ -5960,7 +5988,10 @@ c1008_tasks_collect() {
                     else .landRequestedAt!=null or .landStartedAt!=null end' >/dev/null; then
                     C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=UnfilteredRow id=$id status=$status path=$path"; return 2
                 fi
-                if printf '%s' "$row" | jq -e '.landRequestedAt!=null or .landStartedAt!=null' >/dev/null; then
+                # CARD-1353 D-1: a pending land is bound work only for a row on the recycled runner, the
+                # RecycleBoundTasks predicate. An off-runner land is read and recorded, never refused.
+                if printf '%s' "$row" | jq -e --arg runner "$C1008_RUNNER" \
+                    '(.landRequestedAt!=null or .landStartedAt!=null) and .runnerId==$runner' >/dev/null; then
                     C1008_TASK_ERROR="RecycleLandInFlight $id"; return 3
                 fi
                 if printf '%s' "$row" | jq -e --arg runner "$C1008_RUNNER" \
@@ -5992,10 +6023,14 @@ c1008_tasks_collect() {
                   ' >/dev/null; then
                     settled_now="${settled_now:+$settled_now$'\n'}$id"
                 fi
-                if printf '%s' "$detail" | jq -e '.landRequest!=null and (.landRequest.state as $s | ["Queued","Held","Running","NeedsResolution"] | index($s)!=null)' >/dev/null; then
+                if printf '%s' "$detail" | jq -e --argjson row "$row" --arg runner "$C1008_RUNNER" '.landRequest!=null and $row.runnerId==$runner and
+                    (.landRequest.state as $s | ["Queued","Held","Running","NeedsResolution"] | index($s)!=null)' >/dev/null; then
                     C1008_TASK_ERROR="RecycleLandInFlight $id"; return 3
                 fi
+                # D-5: an off-runner in-flight state is a valid proof {state, terminalEventId} (the event may be
+                # null); a terminal state still needs its GUID event; anything else stays RecycleLandUnknown.
                 printf '%s' "$detail" | jq -e '.landRequest==null or
+                  (.landRequest.state as $s | ["Queued","Held","Running","NeedsResolution"]|index($s)!=null) or
                   ((.landRequest.state as $s | ["Completed","Superseded","Canceled"]|index($s)!=null) and
                     (.landRequest.terminalEventId|type)=="string" and
                     (.landRequest.terminalEventId|test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")))' >/dev/null || return 2
@@ -6007,8 +6042,11 @@ c1008_tasks_collect() {
         done
         C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Malformed field=excluded.byProject.count path=$path"
         printf '%s' "$counts" | jq -e --argjson rows "$rows" 'to_entries|all(.[]; .key as $id | .value==([$rows[]|select(.projectId==$id)]|length))' >/dev/null || return 2
-        snapshot="$(printf '%s' "$snapshot" | jq -Sc --arg kind "$kind" --argjson rows "$rows" --argjson land "$land" \
-            '{scopes:.,tasks:$rows} + (if $kind=="open" then {land:$land} else {} end)')" || return 2
+        # CARD-1353 D-2: the compared land closure keeps bound rows only and no scopes entry, so an
+        # off-runner land requested between the passes or between the proofs cannot end Unstable.
+        # C1008_CENSUS_TASKS (the receipt) and the per-scope count reconciliation above stay complete.
+        snapshot="$(printf '%s' "$snapshot" | jq -Sc --arg kind "$kind" --arg runner "$C1008_RUNNER" --argjson rows "$rows" --argjson land "$land" \
+            'if $kind=="open" then {scopes:.,tasks:$rows,land:$land} else {tasks:($rows | with_entries(select(.value.runnerId==$runner)))} end')" || return 2
         closures="$(printf '%s' "$closures" | jq -Sc --arg kind "$kind" --argjson snapshot "$snapshot" '.[$kind]=$snapshot')" || return 2
         C1008_TASKS="$closures"
         done
@@ -6168,7 +6206,7 @@ c1008_status_proof() {
     fi
     printf '%s' "$counterpart" | jq -e '.acceptingNewWork==true and .available==true and .dispatchEligible==true and .draining==false and .retiredAt==null' >/dev/null \
         || c1008_refuse RecycleRoutingActive
-    code=0; c1008_tasks >/dev/null || code=$?
+    code=0; c1008_tasks_wait || code=$?
     [ "$code" = 0 ] || c1008_refuse "$C1008_TASK_ERROR"
     tasks="$C1008_TASKS"
     if [ "${C1008_ACTIVE:-0}" = 1 ] || [ "${C1008_RESUME:-0}" = 1 ]; then
@@ -8220,7 +8258,7 @@ c994_status_proof() {
     printf '%s' "$main" | jq -e '.available==true and .dispatchEligible==true and .acceptingNewWork==true and
       .draining==false and has("retiredAt") and .retiredAt==null' >/dev/null || c994_refuse OldRunnerNotAcceptingNewWork
     C1008_PROJECT_ID="$C994_PROJECT_ID"; C1008_RUNNER=server2-temp
-    c1008_tasks >/dev/null || code=$?
+    c1008_tasks_wait || code=$?
     [ "$code" = 0 ] || c994_refuse "$C1008_TASK_ERROR"
     tasks="$C1008_TASKS"
     if [ "${C994_ACTIVE:-0}" = 1 ]; then
