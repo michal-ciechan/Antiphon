@@ -39,25 +39,6 @@ $lib = Join-Path $PSScriptRoot 'lib'
 
 function Write-PromoteLine { param([string]$Message) Write-Host ('[promote-release] {0}' -f $Message) }
 
-function Get-PromoteRemoteTagSha {
-    param([string]$Checkout, [string]$TagName)
-    $verify = Invoke-ReleaseGateGit -WorkingDirectory $Checkout -Arguments @('ls-remote', '--tags', 'origin', ('refs/tags/{0}^{{}}' -f $TagName))
-    if ($null -eq $verify -or [int]$verify.ExitCode -ne 0) { return '' }
-    $line = ([string]$verify.Output).Trim()
-    if ([string]::IsNullOrWhiteSpace($line)) { return '' }
-    return (($line -split '\s+')[0].Trim())
-}
-
-function Get-PromoteRemoteHeadSha {
-    param([string]$Checkout, [string]$RefName)
-    if ([string]::IsNullOrWhiteSpace($RefName)) { return '' }
-    $remote = Invoke-ReleaseGateGit -WorkingDirectory $Checkout -Arguments @('ls-remote', '--heads', 'origin', $RefName)
-    if ($null -eq $remote -or [int]$remote.ExitCode -ne 0) { return '' }
-    $line = ([string]$remote.Output).Trim()
-    if ([string]::IsNullOrWhiteSpace($line)) { return '' }
-    return (($line -split '\s+')[0].Trim())
-}
-
 function Update-PromoteFinalTag {
     param([string]$Root, [string]$Id, [string]$FinalName)
     $journalPath = Join-Path $Root 'publications.json'
@@ -106,12 +87,13 @@ function Invoke-AntiphonPromoteRelease {
     $finalName = New-ReleaseGateTag -CutUtc $parsed.Date -Sequence ([int]$parsed.Sequence)
     $result.Tag = $finalName
 
-    $peeled = Get-PromoteRemoteTagSha -Checkout $CheckoutRoot -TagName $Tag
-    if ([string]::IsNullOrWhiteSpace($peeled)) {
+    $pre = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $Tag
+    if ($pre.Status -eq 'Absent') {
         Write-PromoteLine ('REFUSED: pre-release tag {0} is not on the remote.' -f $Tag)
         $result.Refusal = 'prerelease-missing'; $result.ExitCode = 3; return [pscustomobject]$result
     }
-    if (-not (Test-ReleaseGateFullSha -Sha $peeled)) {
+    $peeled = $pre.Sha
+    if ($pre.Status -ne 'Found') {
         Write-PromoteLine ('REFUSED: pre-release tag {0} peeled to {1}.' -f $Tag, $peeled)
         $result.Refusal = 'tag-peel'; $result.ExitCode = 3; return [pscustomobject]$result
     }
@@ -144,8 +126,9 @@ function Invoke-AntiphonPromoteRelease {
 
     # The tested SHA is what is promoted. A live tip that has moved is a
     # different candidate. Refuse before any tag or GitHub write.
-    $liveSha = Get-PromoteRemoteHeadSha -Checkout $CheckoutRoot -RefName ([string]$candidate.ref)
-    if ([string]::IsNullOrWhiteSpace($liveSha)) {
+    $live = Get-ReleaseGateRemoteHead -WorkingDirectory $CheckoutRoot -Ref ([string]$candidate.ref)
+    $liveSha = $live.Sha
+    if ($live.Status -ne 'Found') {
         Write-PromoteLine ('REFUSED: live ref {0} did not resolve.' -f [string]$candidate.ref)
         $result.Refusal = 'remote-candidate-unresolved'; $result.ExitCode = 3; return [pscustomobject]$result
     }
@@ -154,12 +137,13 @@ function Invoke-AntiphonPromoteRelease {
         $result.Refusal = 'remote-candidate-moved'; $result.ExitCode = 3; return [pscustomobject]$result
     }
 
-    $finalPeeled = Get-PromoteRemoteTagSha -Checkout $CheckoutRoot -TagName $finalName
-    if (-not [string]::IsNullOrWhiteSpace($finalPeeled)) {
-        if (-not (Test-ReleaseGateFullSha -Sha $finalPeeled)) {
-            Write-PromoteLine ('REFUSED: final tag {0} peeled to {1}.' -f $finalName, $finalPeeled)
-            $result.Refusal = 'tag-peel'; $result.ExitCode = 3; return [pscustomobject]$result
-        }
+    $final = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $finalName
+    $finalPeeled = $final.Sha
+    if ($final.Status -eq 'Failed') {
+        Write-PromoteLine ('REFUSED: final tag {0} could not be verified.' -f $finalName)
+        $result.Refusal = 'tag-peel'; $result.ExitCode = 3; return [pscustomobject]$result
+    }
+    if ($final.Status -eq 'Found') {
         if (-not [string]::Equals($finalPeeled, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
             Write-PromoteLine ('REFUSED: final tag {0} already points at {1}.' -f $finalName, $finalPeeled)
             $result.Refusal = 'final-tag-conflict'; $result.ExitCode = 3; return [pscustomobject]$result
@@ -190,15 +174,15 @@ function Invoke-AntiphonPromoteRelease {
     }
     $push = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('push', 'origin', ('refs/tags/{0}' -f $finalName))
     if ($null -eq $push -or [int]$push.ExitCode -ne 0) {
-        $again = Get-PromoteRemoteTagSha -Checkout $CheckoutRoot -TagName $finalName
-        if (-not [string]::Equals($again, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
+        $again = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $finalName
+        if ($again.Status -ne 'Found' -or -not [string]::Equals($again.Sha, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
             Write-PromoteLine 'REFUSED: tag push failed and the remote tag does not hold the peeled sha.'
             $result.Refusal = 'tag-push-failed'; $result.ExitCode = 1; return [pscustomobject]$result
         }
     }
-    $verified = Get-PromoteRemoteTagSha -Checkout $CheckoutRoot -TagName $finalName
-    if (-not [string]::Equals($verified, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
-        Write-PromoteLine ('REFUSED: final tag peels to {0}, expected {1}.' -f $verified, $peeled)
+    $verified = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $finalName
+    if ($verified.Status -ne 'Found' -or -not [string]::Equals($verified.Sha, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-PromoteLine ('REFUSED: final tag peels to {0}, expected {1}.' -f $verified.Sha, $peeled)
         $result.Refusal = 'tag-peel'; $result.ExitCode = 3; return [pscustomobject]$result
     }
     Update-PromoteFinalTag -Root $ReleaseRoot -Id $CandidateId -FinalName $finalName

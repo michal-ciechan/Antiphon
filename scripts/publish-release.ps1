@@ -168,12 +168,8 @@ function Invoke-AntiphonPublishRelease {
 
     # Resolve the remote candidate before any gate decision: a moved ref must
     # fail, and an unresolved remote is not treated as agreement.
-    $remoteSha = ''
-    $remote = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('ls-remote', '--heads', 'origin', [string]$candidate.ref)
-    if ([int]$remote.ExitCode -eq 0) {
-        $line = ([string]$remote.Output).Trim()
-        if (-not [string]::IsNullOrWhiteSpace($line)) { $remoteSha = ($line -split '\s+')[0].Trim() }
-    }
+    $remote = Get-ReleaseGateRemoteHead -WorkingDirectory $CheckoutRoot -Ref ([string]$candidate.ref)
+    $remoteSha = $remote.Sha
 
     # D-15: the authority is re-verified on every attempt, recovery included. It
     # never reads summary.json; the pinned blob and the ledger are the only inputs.
@@ -287,13 +283,8 @@ function Invoke-AntiphonPublishRelease {
         $push = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('push', 'origin', ('refs/tags/{0}' -f $tag))
         if ([int]$push.ExitCode -ne 0) {
             # Re-read remote state after an ambiguous response before any further write.
-            $peek = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('ls-remote', '--tags', 'origin', ('refs/tags/{0}^{{}}' -f $tag))
-            $peeled = ''
-            if ([int]$peek.ExitCode -eq 0) {
-                $line = ([string]$peek.Output).Trim()
-                if (-not [string]::IsNullOrWhiteSpace($line)) { $peeled = ($line -split '\s+')[0].Trim() }
-            }
-            if (-not [string]::Equals($peeled, $sha, [StringComparison]::OrdinalIgnoreCase)) {
+            $peek = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $tag
+            if ($peek.Status -ne 'Found' -or -not [string]::Equals($peek.Sha, $sha, [StringComparison]::OrdinalIgnoreCase)) {
                 Write-PublishLine 'REFUSED: tag push failed and the remote tag does not hold the tested sha.'
                 $result.Refusal = 'tag-push-failed'; $result.ExitCode = 1; return [pscustomobject]$result
             }
@@ -302,13 +293,9 @@ function Invoke-AntiphonPublishRelease {
     }
 
     # 4. verify the peeled remote target agrees with the tested sha.
-    $verify = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('ls-remote', '--tags', 'origin', ('refs/tags/{0}^{{}}' -f $tag))
-    $peeledSha = ''
-    if ([int]$verify.ExitCode -eq 0) {
-        $line = ([string]$verify.Output).Trim()
-        if (-not [string]::IsNullOrWhiteSpace($line)) { $peeledSha = ($line -split '\s+')[0].Trim() }
-    }
-    if (-not [string]::Equals($peeledSha, $sha, [StringComparison]::OrdinalIgnoreCase)) {
+    $verify = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $tag
+    $peeledSha = $verify.Sha
+    if ($verify.Status -ne 'Found' -or -not [string]::Equals($peeledSha, $sha, [StringComparison]::OrdinalIgnoreCase)) {
         Write-PublishLine ('REFUSED: remote tag peels to {0}, expected {1}.' -f $peeledSha, $sha)
         $result.Refusal = 'tag-peel-mismatch'; $result.ExitCode = 3; return [pscustomobject]$result
     }

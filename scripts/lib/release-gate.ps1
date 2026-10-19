@@ -39,6 +39,57 @@ function Test-ReleaseGateFullSha {
     return ($Sha -cmatch '^[0-9a-f]{40}$')
 }
 
+function ConvertFrom-ReleaseGateRemoteRef {
+    # ls-remote patterns can match suffixes. Only the complete second field is
+    # identity; failed queries and unusable matching records are never absence.
+    param($Result, [string]$Ref)
+    $failed = [pscustomobject]@{ Status = 'Failed'; Sha = '' }
+    if ($null -eq $Result -or [int]$Result.ExitCode -ne 0) { return $failed }
+    $matches = @()
+    foreach ($line in ([string]$Result.Output -split "`n")) {
+        $fields = @($line.Trim() -split '\s+')
+        if ($fields.Count -lt 2) {
+            if ([string]::Equals($line.Trim(), $Ref, [StringComparison]::Ordinal)) { return $failed }
+            continue
+        }
+        if (-not [string]::Equals($fields[1], $Ref, [StringComparison]::Ordinal)) { continue }
+        if ($fields.Count -ne 2 -or -not (Test-ReleaseGateFullSha -Sha $fields[0])) { return $failed }
+        $matches += $fields[0]
+    }
+    if ($matches.Count -gt 1) { return $failed }
+    if ($matches.Count -eq 0) { return [pscustomobject]@{ Status = 'Absent'; Sha = '' } }
+    return [pscustomobject]@{ Status = 'Found'; Sha = [string]$matches[0] }
+}
+
+function Get-ReleaseGateRemoteRef {
+    param([string]$WorkingDirectory, [string]$Ref)
+    if ($Ref.StartsWith('refs/heads/', [StringComparison]::Ordinal)) { $kind = '--heads' }
+    elseif ($Ref.StartsWith('refs/tags/', [StringComparison]::Ordinal)) { $kind = '--tags' }
+    else { throw 'remote ref must be fully qualified' }
+    $read = Invoke-ReleaseGateGit -WorkingDirectory $WorkingDirectory -Arguments @('ls-remote', $kind, 'origin', $Ref)
+    return (ConvertFrom-ReleaseGateRemoteRef -Result $read -Ref $Ref)
+}
+
+function Get-ReleaseGateRemoteHead {
+    param([string]$WorkingDirectory, [string]$Ref)
+    if (-not $Ref.StartsWith('refs/heads/', [StringComparison]::Ordinal)) { $Ref = 'refs/heads/' + $Ref }
+    return (Get-ReleaseGateRemoteRef -WorkingDirectory $WorkingDirectory -Ref $Ref)
+}
+
+function Get-ReleaseGateRemoteTag {
+    param([string]$WorkingDirectory, [string]$Tag)
+    $ref = 'refs/tags/' + $Tag
+    $peel = Get-ReleaseGateRemoteRef -WorkingDirectory $WorkingDirectory -Ref ($ref + '^{}')
+    $direct = Get-ReleaseGateRemoteRef -WorkingDirectory $WorkingDirectory -Ref $ref
+    if ($peel.Status -eq 'Absent' -and $direct.Status -eq 'Absent') {
+        return [pscustomobject]@{ Status = 'Absent'; Sha = ''; ObjectSha = '' }
+    }
+    if ($peel.Status -ne 'Found' -or $direct.Status -ne 'Found') {
+        return [pscustomobject]@{ Status = 'Failed'; Sha = ''; ObjectSha = $direct.Sha }
+    }
+    return [pscustomobject]@{ Status = 'Found'; Sha = $peel.Sha; ObjectSha = $direct.Sha }
+}
+
 function Test-ReleaseGateCandidateRef {
     # D-3: a legacy stamp, or a long-lived rc/YYYY-MM-DD. Anything else is not a candidate.
     # The long-lived candidate id is rc-YYYY-MM-DD- plus the first 12 hex digits of -Sha.
