@@ -1,3 +1,5 @@
+using System.Data.Common;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Application.Interfaces;
@@ -9,17 +11,26 @@ using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public class DispatchSiblingInspectionTests
 {
     [Test]
     [Arguments("64 ancestors")]
+    [Arguments("duplicate refs/tips")]
+    [Arguments("moved merged SHA")]
+    [Arguments("prefix-neighbor ref")]
+    [Arguments("invalid OID")]
+    [Arguments("absent local ref")]
+    [Arguments("batch error")]
     public async Task C1349_ContainedInventory(string scenario)
     {
         using var repo = new ScratchGitRepo("c1349-contained");
@@ -27,37 +38,417 @@ public class DispatchSiblingInspectionTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = Context(schema);
         var card = await CardAsync(db);
-        for (var i = 0; i < 64; i++)
+        AgentTask? source = null;
+        if (scenario is "64 ancestors" or "duplicate refs/tips")
         {
-            var id = Guid.NewGuid();
-            var branch = "feat/card-task-" + id.ToString("N")[..8];
-            await repo.GitAsync("branch", branch, "master");
-            db.AgentTasks.Add(new AgentTask
+            for (var i = 0; i < 64; i++)
             {
-                Id = id, RootTaskId = id, Title = "contained", Goal = "contained",
-                Workspace = WorkspaceMode.Worktree, CardId = card.Id,
-                RepoPath = repo.Path, WorkingDirectory = repo.Path, WorktreeBranch = branch,
-                Status = AgentTaskStatus.Succeeded, CreatedAt = DateTime.UtcNow,
-                CompletedAt = DateTime.UtcNow,
-            });
+                var id = Guid.NewGuid();
+                var branch = "feat/card-task-" + id.ToString("N")[..8];
+                if (scenario == "duplicate refs/tips" && source is not null) branch = source.WorktreeBranch!;
+                else await repo.GitAsync("branch", branch, "master");
+                source = new AgentTask
+                {
+                    Id = id, RootTaskId = id, Title = "contained", Goal = "contained",
+                    Workspace = WorkspaceMode.Worktree, CardId = card.Id,
+                    RepoPath = repo.Path, WorkingDirectory = repo.Path, WorktreeBranch = branch,
+                    Status = AgentTaskStatus.Succeeded, CreatedAt = DateTime.UtcNow,
+                    CompletedAt = DateTime.UtcNow,
+                };
+                db.AgentTasks.Add(source);
+            }
+        }
+        else source = await SourceAsync(db, repo, card.Id, "source", "master");
+        await db.SaveChangesAsync();
+        if (scenario is "absent local ref" or "prefix-neighbor ref")
+            await repo.GitAsync("branch", "-D", source!.WorktreeBranch!);
+        var target = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        var trace = new RecordingGit
+        {
+            Rewrite = (args, result) =>
+            {
+                if (args[0] != "for-each-ref") return result;
+                if (scenario == "batch error") return new LandingGitResult(2, "", "fixture batch failure");
+                if (scenario == "invalid OID") return new LandingGitResult(0, "invalid refs/heads/" + source!.WorktreeBranch + "\n", "");
+                if (scenario == "prefix-neighbor ref") return new LandingGitResult(0, target + " refs/heads/" + source!.WorktreeBranch + "/neighbor\n", "");
+                if (scenario == "moved merged SHA" && args.Any(arg => arg.StartsWith("--merged=")))
+                    return new LandingGitResult(0, target + " refs/heads/" + source!.WorktreeBranch + "\n", "");
+                return result;
+            },
+        };
+        var request = NewRequest(repo, card.Id);
+        var selected = await ResolveAsync(db, request, trace);
+        if (scenario is "invalid OID" or "batch error")
+        {
+            trace.Rewritten.ShouldBeGreaterThan(0);
+            selected.Reason.ShouldBe("git_inspection_error");
+            selected.SourceTaskId.ShouldBeNull();
+        }
+        else if (scenario == "moved merged SHA")
+        {
+            trace.Rewritten.ShouldBeGreaterThan(0);
+            selected.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
+            selected.SourceTaskId.ShouldBe(source!.Id);
+            trace.Commands.ShouldContain(c => c[0] == "cherry");
+        }
+        else
+        {
+            selected.Decision.ShouldBe(CardWorktreeBaseDecision.Target, scenario);
+            selected.Incomplete.ShouldBeFalse();
+            trace.Commands.Count(c => c[0] == "for-each-ref").ShouldBe(2);
+            trace.Commands.ShouldNotContain(c => c[0] == "cherry" || c[0] == "log");
+            selected.GitCommands.ShouldBeLessThanOrEqualTo(4);
+        }
+        trace.Commands.Clear();
+        var guard = await new CardSiblingInspectionService(db, trace, Options.Create(new GitSettings()),
+            TimeProvider.System, new GitProcessGate()).InspectAsync(request, default);
+        guard.Hold.ShouldBeNull();
+        if (scenario is "invalid OID" or "batch error") guard.Reason.ShouldBe("git_inspection_error");
+        else if (scenario == "moved merged SHA") guard.Warnings.ShouldHaveSingleItem().TaskId.ShouldBe(source!.Id);
+        else
+        {
+            guard.Reason.ShouldBeNull();
+            guard.Warnings.ShouldBeEmpty();
+            trace.Commands.ShouldNotContain(c => c[0] == "cherry" || c[0] == "log");
+            guard.GitCommands.ShouldBeLessThanOrEqualTo(5);
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C1349_DocumentationSourceIsPreserved(bool pending)
+    {
+        using var repo = new ScratchGitRepo("c1349-docs");
+        await repo.CommitFileAsync("seed.txt", "seed");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var card = await CardAsync(db);
+        var source = await SourceAsync(db, repo, card.Id, "plan", "master", false);
+        source.Role = AgentTaskRole.Plan;
+        await repo.GitAsync("checkout", source.WorktreeBranch!);
+        await repo.CommitFileAsync("plan.md", "# Unlanded implementation instructions\n");
+        var sha = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await repo.GitAsync("checkout", "master");
+        if (pending)
+        {
+            var land = new AgentTaskLandRequest { Id = Guid.NewGuid(), TaskId = source.Id,
+                IsPending = true, State = LandRequestState.Queued, ExpectedSourceSha = sha, RequestedAt = DateTime.UtcNow };
+            source.CurrentLandRequestId = land.Id;
+            db.AgentTaskLandRequests.Add(land);
         }
         await db.SaveChangesAsync();
+        var request = NewRequest(repo, card.Id);
+        var result = await ResolveAsync(db, request);
+        result.Decision.ShouldBe(pending ? CardWorktreeBaseDecision.WaitForLand : CardWorktreeBaseDecision.Continue);
+        if (!pending) result.SourceSha.ShouldBe(sha);
         var trace = new RecordingGit();
-        var selected = await ResolveAsync(db, NewRequest(repo, card.Id), trace);
-        selected.Decision.ShouldBe(CardWorktreeBaseDecision.Target, scenario);
-        selected.Incomplete.ShouldBeFalse();
-        trace.Commands.Count(c => c[0] == "for-each-ref").ShouldBe(2);
-        trace.Commands.ShouldNotContain(c => c[0] == "cherry" || c[0] == "log");
-        selected.GitCommands.ShouldBeLessThanOrEqualTo(4);
+        var guard = await new CardSiblingInspectionService(db, trace, Options.Create(new GitSettings()),
+            TimeProvider.System, new GitProcessGate()).InspectAsync(request, default);
+        if (pending) guard.Hold.ShouldNotBeNull().TaskId.ShouldBe(source.Id);
+        else guard.Warnings.ShouldHaveSingleItem().FullTipSha.ShouldBe(sha);
+        guard.GitCommands.ShouldBeLessThanOrEqualTo(12);
+        request.AgentSessionId.ShouldBeNull();
+        request.WorktreePath.ShouldBeNull();
+    }
+
+    [Test]
+    [Arguments("DB deadline")]
+    [Arguments("Git-gate deadline")]
+    [Arguments("in-command deadline")]
+    [Arguments("cumulative phases")]
+    [Arguments("command cap")]
+    [Arguments("expensive-candidate cap")]
+    [Arguments("inventory cap")]
+    [Arguments("caller cancellation")]
+    public async Task C1349_InspectionLimits(string scenario)
+    {
+        using var repo = new ScratchGitRepo("c1349-limits");
+        await repo.CommitFileAsync("seed.txt", "seed");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var seed = Context(schema);
+        var card = await CardAsync(seed);
+        var count = scenario == "inventory cap" ? 257 : scenario == "expensive-candidate cap" ? 17 : 1;
+        var first = await SourceAsync(seed, repo, card.Id, "first", "master");
+        for (var i = 1; i < count; i++)
+        {
+            if (scenario == "expensive-candidate cap") await SourceAsync(seed, repo, card.Id, "source" + i, "master");
+            else
+            {
+                var id = Guid.NewGuid();
+                seed.AgentTasks.Add(new AgentTask { Id = id, RootTaskId = id, CardId = card.Id,
+                    Title = "alias", Goal = "alias", Workspace = WorkspaceMode.Worktree,
+                    Status = AgentTaskStatus.Succeeded, WorktreeBranch = first.WorktreeBranch,
+                    WorkingDirectory = repo.Path, RepoPath = repo.Path, CreatedAt = DateTime.UtcNow });
+            }
+        }
+        await seed.SaveChangesAsync();
+        foreach (var legacy in new[] { false, true })
+        {
+            var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+            var audit = new InventoryAudit(clock, scenario == "DB deadline");
+            var options = new DbContextOptionsBuilder<AppDbContext>(TestDbFixture.CreateDbContextOptions(schema.ConnectionString))
+                .AddInterceptors(audit).Options;
+            await using var db = new AppDbContext(options);
+            var gate = new GitProcessGate(1);
+            var git = new BudgetGit(clock, scenario);
+            var config = new GitSettings { WorktreeBaseMaxGitCommands = scenario == "command cap" ? 2 : 128 };
+            var request = NewRequest(repo, card.Id);
+            using var caller = new CancellationTokenSource();
+            async Task<(string? Reason, bool Incomplete)> ReadAsync()
+            {
+                if (legacy)
+                {
+                    var r = await new CardSiblingInspectionService(db, git, Options.Create(config), clock, gate)
+                        .InspectAsync(request, caller.Token);
+                    return (r.Reason, r.Reason is not null);
+                }
+                var result = await new AgentTaskWorktreeBaseResolver(db, git, Options.Create(config), clock, gate)
+                    .ResolveAsync(request, caller.Token);
+                return (result.Reason, result.Incomplete);
+            }
+            if (scenario == "caller cancellation")
+            {
+                caller.Cancel();
+                await Should.ThrowAsync<OperationCanceledException>(() => ReadAsync());
+                git.Calls.ShouldBe(0);
+                continue;
+            }
+            (string? Reason, bool Incomplete) result;
+            if (scenario == "Git-gate deadline")
+            {
+                using var held = await gate.EnterAsync(default);
+                var pending = ReadAsync();
+                using var escape = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                while (gate.Waiting == 0)
+                {
+                    pending.IsCompleted.ShouldBeFalse();
+                    escape.Token.ThrowIfCancellationRequested();
+                    await Task.Yield();
+                }
+                clock.Advance(TimeSpan.FromSeconds(5));
+                result = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+                gate.Waiting.ShouldBe(0, "deadline must cancel the waiter while the fixture still owns its lease");
+                gate.Started.ShouldBe(1);
+            }
+            else result = await ReadAsync();
+            result.Incomplete.ShouldBeTrue();
+            result.Reason.ShouldBe(scenario switch
+            {
+                "command cap" => "git_command_limit",
+                "expensive-candidate cap" or "inventory cap" => "candidate_limit",
+                _ => "inspection_timeout",
+            });
+            git.Calls.ShouldBeLessThanOrEqualTo(config.WorktreeBaseMaxGitCommands);
+            if (scenario == "command cap") git.Calls.ShouldBe(2);
+            if (scenario == "in-command deadline") git.CanceledInCommand.ShouldBeTrue();
+            if (scenario == "cumulative phases") git.Calls.ShouldBe(3);
+            if (scenario == "DB deadline")
+            {
+                audit.DeadlineReached.ShouldBeTrue();
+                audit.CanceledInQuery.ShouldBeTrue();
+                git.Calls.ShouldBe(0);
+            }
+            if (scenario == "inventory cap")
+            {
+                audit.InventoryQuery.ShouldNotBeNull();
+                audit.InventoryQuery.ShouldContain("LIMIT");
+                audit.InventoryLimit.ShouldBe(257);
+                git.Calls.ShouldBe(0);
+            }
+        }
+    }
+
+    [Test]
+    [Arguments("pending beyond raw cap")]
+    [Arguments("candidate cap")]
+    [Arguments("command cap")]
+    [Arguments("deadline")]
+    [Arguments("Git error")]
+    [Arguments("dedup alias")]
+    [Arguments("unrelated StartRef")]
+    [Arguments("unresolved StartRef")]
+    public async Task C1349_PendingLandSurvivesLimits(string scenario)
+    {
+        using var repo = new ScratchGitRepo("c1349-pending");
+        await repo.CommitFileAsync("seed.txt", "seed");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var card = await CardAsync(db);
+        var source = await SourceAsync(db, repo, card.Id, "pending-plan", "master");
+        source.Role = AgentTaskRole.Plan;
+        var sha = (await repo.GitReadAsync("rev-parse", source.WorktreeBranch!)).Trim();
+        var land = new AgentTaskLandRequest { Id = Guid.NewGuid(), TaskId = source.Id,
+            IsPending = true, State = LandRequestState.Running, ExpectedSourceSha = sha, RequestedAt = DateTime.UtcNow };
+        source.CurrentLandRequestId = land.Id;
+        db.AgentTaskLandRequests.Add(land);
+        if (scenario == "candidate cap")
+            await SourceAsync(db, repo, card.Id, "other", "master");
+        if (scenario is "pending beyond raw cap" or "dedup alias")
+        {
+            for (var i = 1; i <= (scenario == "dedup alias" ? 1 : 256); i++)
+            {
+                var id = Guid.Parse("00000000-0000-0000-0000-" + i.ToString("D12"));
+                db.AgentTasks.Add(new AgentTask { Id = id, RootTaskId = id,
+                    CardId = card.Id, Title = "alias", Goal = "alias", RepoPath = repo.Path,
+                    WorkingDirectory = repo.Path, Workspace = WorkspaceMode.Worktree,
+                    WorktreeBranch = source.WorktreeBranch, Status = AgentTaskStatus.Succeeded,
+                    CreatedAt = DateTime.UtcNow, CompletedAt = DateTime.UtcNow });
+            }
+        }
+        await db.SaveChangesAsync();
+        foreach (var mode in new[] { RequestedWorktreeBaseMode.Auto, RequestedWorktreeBaseMode.Task, RequestedWorktreeBaseMode.Target })
+        {
+            var request = NewRequest(repo, card.Id);
+            request.RootTaskId = request.Id;
+            request.Title = "pending boundary";
+            request.Goal = "must remain held";
+            request.WorkingDirectory = repo.Path;
+            request.Role = AgentTaskRole.Code;
+            request.CreatedAt = DateTime.UtcNow;
+            request.RequestedWorktreeBaseMode = mode;
+            request.RequestedWorktreeBaseTaskId = mode == RequestedWorktreeBaseMode.Task ? source.Id : null;
+            request.WorktreeBaseRequestedRef = scenario switch
+            {
+                "unrelated StartRef" => "master",
+                "unresolved StartRef" => "missing-ref",
+                _ => null,
+            };
+            db.AgentTasks.Add(request);
+            await db.SaveChangesAsync();
+            var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+            ILandingGit git = scenario == "deadline" ? new BudgetGit(clock, "in-command deadline") : new RecordingGit
+            {
+                Rewrite = (args, result) => scenario == "Git error" && args[0] == "for-each-ref"
+                    ? new LandingGitResult(2, "", "injected batch failure") : result,
+            };
+            await using var provider = AgentTaskDispatchBaseGuardTests.CreateProvider(schema.ConnectionString,
+                repo.WorktreeRoot, git: git, clock: clock,
+                maxCandidates: scenario == "candidate cap" ? 1 : 16,
+                maxGitCommands: scenario == "command cap" ? 1 : 128);
+            await using var scope = provider.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+            await using var fresh = Context(schema);
+            var held = await fresh.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == request.Id);
+            held.Status.ShouldBe(AgentTaskStatus.Queued, scenario + " " + mode);
+            held.WorktreePath.ShouldBeNull();
+            held.AgentSessionId.ShouldBeNull();
+            (await fresh.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == request.Id && e.Type == AgentTaskEventType.Held)).ShouldBeTrue();
+            await fresh.AgentTasks.Where(t => t.Id == request.Id).ExecuteUpdateAsync(update => update.SetProperty(t => t.Status, AgentTaskStatus.Canceled));
+        }
+    }
+
+    [Test]
+    [Arguments("identical/chain")]
+    [Arguments("64 divergent")]
+    [Arguments("enrichment deadline")]
+    public async Task C1349_ReductionRemainsBounded(string scenario)
+    {
+        using var repo = new ScratchGitRepo("c1349-reduction");
+        await repo.CommitFileAsync("seed.txt", "seed");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var card = await CardAsync(db);
+        var rows = new List<AgentTask>();
+        var count = scenario == "64 divergent" ? 64 : scenario == "identical/chain" ? 4 : 2;
+        for (var i = 0; i < count; i++)
+        {
+            var parent = scenario == "identical/chain" && i > 0 ? rows[i - 1].WorktreeBranch! : "master";
+            rows.Add(await SourceAsync(db, repo, card.Id, "source" + i, parent,
+                commit: scenario != "identical/chain" || i != 2));
+        }
+        await db.SaveChangesAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var fired = false;
+        var git = new RecordingGit
+        {
+            Rewrite = (args, result) =>
+            {
+                if (scenario == "enrichment deadline" && args[0] == "merge-base")
+                {
+                    fired = true;
+                    clock.Advance(TimeSpan.FromSeconds(5));
+                }
+                return result;
+            },
+        };
+        var result = await new CardSiblingInspectionService(db, git, Options.Create(new GitSettings()),
+            clock, new GitProcessGate()).InspectAsync(NewRequest(repo, card.Id), default);
+        result.GitCommands.ShouldBeLessThanOrEqualTo(128);
+        if (scenario == "identical/chain")
+        {
+            var warning = result.Warnings.ShouldHaveSingleItem();
+            warning.TaskId.ShouldBe(rows[3].Id);
+            warning.CoveredCount.ShouldBe(3);
+        }
+        else
+        {
+            result.Warnings.Count.ShouldBe(scenario == "64 divergent" ? 16 : 2);
+            result.Warnings.ShouldAllBe(w => w.CoveredCount == 0);
+            (result.Warnings.Count + result.OmittedCandidates).ShouldBe(count);
+            result.Reason.ShouldBe(scenario == "64 divergent" ? "candidate_limit" : "inspection_timeout");
+            if (scenario == "enrichment deadline") fired.ShouldBeTrue();
+        }
+    }
+
+    private sealed class BudgetGit(FakeTimeProvider clock, string scenario) : LandingGit
+    {
+        public int Calls { get; private set; }
+        public bool CanceledInCommand { get; private set; }
+        public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> args, CancellationToken ct)
+        {
+            Calls++;
+            if (scenario == "in-command deadline")
+            {
+                clock.Advance(TimeSpan.FromSeconds(5));
+                CanceledInCommand = ct.IsCancellationRequested;
+                ct.ThrowIfCancellationRequested();
+            }
+            if (scenario == "cumulative phases") clock.Advance(TimeSpan.FromSeconds(2));
+            return await base.RunAsync(repository, args, ct);
+        }
+    }
+
+    private sealed class InventoryAudit(FakeTimeProvider clock, bool expire) : DbCommandInterceptor
+    {
+        public bool DeadlineReached { get; private set; }
+        public bool CanceledInQuery { get; private set; }
+        public string? InventoryQuery { get; private set; }
+        public int? InventoryLimit { get; private set; }
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken ct = default)
+        {
+            if (command.CommandText.Contains("FROM \"AgentTasks\"", StringComparison.Ordinal))
+            {
+                if (expire && !DeadlineReached)
+                {
+                    DeadlineReached = true;
+                    clock.Advance(TimeSpan.FromSeconds(5));
+                    CanceledInQuery = ct.IsCancellationRequested;
+                }
+                if (!command.CommandText.Contains("JOIN", StringComparison.Ordinal))
+                {
+                    InventoryQuery = command.CommandText;
+                    var parameter = command.Parameters.Cast<DbParameter>().FirstOrDefault(p => p.Value is int i && i == 257);
+                    InventoryLimit = parameter?.Value as int?;
+                }
+            }
+            return base.ReaderExecutingAsync(command, eventData, result, ct);
+        }
     }
 
     private sealed class RecordingGit : LandingGit
     {
         public List<string[]> Commands { get; } = [];
-        public override Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> args, CancellationToken ct)
+        public Func<IReadOnlyList<string>, LandingGitResult, LandingGitResult>? Rewrite { get; init; }
+        public int Rewritten { get; private set; }
+        public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> args, CancellationToken ct)
         {
             Commands.Add(args.ToArray());
-            return base.RunAsync(repository, args, ct);
+            var original = await base.RunAsync(repository, args, ct);
+            var result = Rewrite?.Invoke(args, original) ?? original;
+            if (result != original) Rewritten++;
+            return result;
         }
     }
 

@@ -718,7 +718,7 @@ public class AgentTaskWorktreeBaseResolverTests
         for (var i = 0; i < count; i++)
         {
             newest = await SourceAsync(db, repo, card.Id, "A" + i, parent,
-                commit: scenario != "candidate_cap");
+                commit: true);
             if (scenario == "six_kept") parent = newest.WorktreeBranch!;
         }
         await db.SaveChangesAsync();
@@ -796,7 +796,7 @@ public class AgentTaskWorktreeBaseResolverTests
             {
                 selection.TotalCandidates.ShouldBe(17);
                 selection.InspectedCandidates.ShouldBe(0);
-                gate.Started.ShouldBe(0);
+                gate.Started.ShouldBe(4); // common, target, frozen tips and merged refs precede the cap.
             }
             else if (scenario == "git_call_cap")
                 gate.Started.ShouldBe(2);

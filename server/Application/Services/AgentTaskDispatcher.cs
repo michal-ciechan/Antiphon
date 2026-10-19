@@ -111,6 +111,7 @@ public sealed partial class AgentTaskDispatcher
     private readonly RepositoryLeaseWaiters? _leaseWaiters;
     private readonly ILandingGit? _landingGit;
     private readonly AgentTaskWorktreeBaseResolver? _baseResolver;
+    private readonly CardSiblingInspectionService? _siblingInspection;
     private readonly HostBudgetService? _hostBudgets;
     private IReadOnlyDictionary<string, HostLimit> _hostLimits = new Dictionary<string, HostLimit>();
 
@@ -215,9 +216,11 @@ public sealed partial class AgentTaskDispatcher
         TerminalRunnerSeatReleaseService? terminalSeatRelease = null,
         BlockedTaskSyncRecoveryService? blockedTaskSync = null,
         SettlementSyncRecoveryService? settlementSync = null,
-        DispatchConcurrencySettingsService? dispatchConcurrency = null)
+        DispatchConcurrencySettingsService? dispatchConcurrency = null,
+        CardSiblingInspectionService? siblingInspection = null)
     {
         _dispatchConcurrency = dispatchConcurrency;
+        _siblingInspection = siblingInspection;
         _terminalSeatRelease = terminalSeatRelease;
         _blockedTaskSync = blockedTaskSync;
         _settlementSync = settlementSync;
@@ -824,6 +827,12 @@ public sealed partial class AgentTaskDispatcher
                     continue;
                 }
 
+                if (!siblingGuard.PendingKnown)
+                {
+                    heldThisTick.Add((task.Id, HoldKind.SiblingLanding));
+                    await TraceHeldAsync(task, "Held: same-card pending integration could not be inspected.", lastHeld, ct);
+                    continue;
+                }
                 siblingObservation = siblingGuard;
             }
 
@@ -5103,152 +5112,9 @@ public sealed partial class AgentTaskDispatcher
             ct);
     }
 
-    private sealed record UnlandedSibling(
-        Guid TaskId,
-        string Branch,
-        string BaseRef,
-        string CardIdentifier,
-        string Tip,
-        int CommitsAbove,
-        string Subject,
-        DateTime CreatedAt,
-        string? FullTipSha,
-        LandRequestState? RequestState = null,
-        int CoveredCount = 0)
-    {
-        public string ShortId => DelegationReportFormatter.Short(TaskId);
-
-        public string HoldDetail =>
-            $"held: {CardIdentifier}'s kept branch {Branch} (task {ShortId}) is landing and is not yet in {BaseRef}";
-
-        public string WarningDetail(Guid newTaskId)
-        {
-            var commits = CommitsAbove == 1
-                ? $"1 commit: '{Subject}'"
-                : $"{CommitsAbove} commits: '{Subject}'";
-            return $"task {DelegationReportFormatter.Short(newTaskId)} branched from {BaseRef} without "
-                + $"{CardIdentifier}'s kept branch {Branch} ({FullTipSha ?? Tip}, {commits}). "
-                + $"Land {ShortId} first, or expect its commits to be absent from this branch."
-                + (RequestState == LandRequestState.NeedsResolution
-                    ? $" Land request {ShortId} needs conflict resolution."
-                    : "")
-                + (CoveredCount == 0 ? "" : $" At the observed tips, this warning also covers {CoveredCount} other kept sibling branches.");
-        }
-    }
-
-    private sealed record SiblingBaseGuard(
-        UnlandedSibling? Hold,
-        IReadOnlyList<UnlandedSibling> Warnings,
-        string? ObservedBaseRef)
-    {
-        public static SiblingBaseGuard Proceed { get; } = new(null, [], null);
-    }
-
-    /// <summary>
-    /// CARD-0215 / CARD-0146 S4: same-card kept Worktree branches whose tip is not an ancestor
-    /// of this task's dispatch base. Succeeded and Blocked both count — a conflicted land
-    /// leaves the branch kept, which is the one most likely to be forgotten. Not Code-only:
-    /// any card-bound Worktree is held, which includes every IsStage pair.
-    /// </summary>
-    private async Task<SiblingBaseGuard> EvaluateCardSiblingBaseAsync(AgentTask task, CancellationToken ct)
-    {
-        if (task.RepoPath is null || !Directory.Exists(task.RepoPath) || task.CardId is null)
-            return SiblingBaseGuard.Proceed;
-
-        var probe = await _worktrees.ProbeConfiguredDefaultAsync(task, ct);
-        var resolved = WorktreeBaseResolver.Resolve(
-            repairStartSha: null,
-            task.WorktreeBaseRequestedRef,
-            task.MergeTargetRef,
-            probe);
-        var baseRef = resolved.Ref;
-        var requestedSha = task.WorktreeBaseRequestedRef is null ? null
-            : await _worktrees.ResolveCommitAsync(task.RepoPath, task.WorktreeBaseRequestedRef, ct);
-
-        var siblings = await _db.AgentTasks.AsNoTracking()
-            .Where(t => t.Id != task.Id
-                && t.CardId == task.CardId
-                && t.Workspace == WorkspaceMode.Worktree
-                && (t.Status == AgentTaskStatus.Succeeded || t.Status == AgentTaskStatus.Blocked)
-                && t.WorktreeBranch != null)
-            .Select(t => new { t.Id, t.WorktreeBranch, t.RepoPath, t.WorktreePath, t.CurrentLandRequestId, t.CreatedAt })
-            .ToListAsync(ct);
-
-        var sameRepo = siblings
-            .Where(s => DelegationWorktreeService.SharesRepo(task.RepoPath, s.RepoPath)
-                || DelegationWorktreeService.SharesRepo(task.RepoPath, s.WorktreePath))
-            .ToList();
-        var requestIds = sameRepo.Select(s => s.CurrentLandRequestId).OfType<Guid>().ToList();
-        var requests = await _db.AgentTaskLandRequests.AsNoTracking()
-            .Where(r => requestIds.Contains(r.Id))
-            .ToDictionaryAsync(r => r.Id, ct);
-        var operationIds = requests.Values.Select(r => r.LandingOperationId).OfType<Guid>().ToList();
-        var originalSources = await _db.AgentTaskLandings.AsNoTracking()
-            .Where(o => operationIds.Contains(o.Id))
-            .ToDictionaryAsync(o => o.Id, o => o.OriginalSourceSha, ct);
-
-        var cardIdentifier = await _db.Cards.AsNoTracking()
-            .Where(c => c.Id == task.CardId)
-            .Select(c => c.Identifier)
-            .FirstOrDefaultAsync(ct) ?? "the card";
-        UnlandedSibling? hold = null;
-        var warnings = new List<UnlandedSibling>();
-
-        foreach (var sibling in sameRepo)
-        {
-            var request = sibling.CurrentLandRequestId is Guid id && requests.TryGetValue(id, out var current)
-                ? current : null;
-            var reviewedSource = request?.ExpectedSourceSha ??
-                (request?.LandingOperationId is Guid operationId
-                    ? originalSources.GetValueOrDefault(operationId) : null);
-            if (requestedSha is not null && reviewedSource is not null
-                && (string.Equals(requestedSha, reviewedSource, StringComparison.OrdinalIgnoreCase)
-                    || await _worktrees.IsCommitAncestorAsync(task.RepoPath, reviewedSource, requestedSha, ct)))
-                continue;
-            var branch = sibling.WorktreeBranch!;
-            if (!await _worktrees.KeptBranchExistsAsync(task.RepoPath, branch, ct))
-                continue;
-            var fullTip = await _worktrees.ResolveKeptBranchTipAsync(task.RepoPath, branch, ct);
-            if (fullTip is not null && await _worktrees.ContainsPatchesAsync(task.RepoPath, fullTip, baseRef, ct))
-                continue;
-
-            var described = fullTip is null ? null
-                : await _worktrees.DescribeKeptBranchAsync(task.RepoPath, fullTip, baseRef, ct);
-            var unlanded = new UnlandedSibling(
-                sibling.Id,
-                branch,
-                baseRef,
-                cardIdentifier,
-                described?.Tip ?? "unknown",
-                described?.CommitsAbove ?? 0,
-                described?.Subject ?? "",
-                sibling.CreatedAt,
-                fullTip,
-                request?.State);
-
-            if (request is { IsPending: true, State: LandRequestState.Queued or LandRequestState.Held or LandRequestState.Running })
-            {
-                hold ??= unlanded;
-                continue;
-            }
-
-            warnings.Add(unlanded);
-        }
-
-        // Check every original landing hold before collapse. Containment is no landing authority.
-        if (hold is not null) return new SiblingBaseGuard(hold, [], baseRef);
-        var tips = warnings.Select(w => w.FullTipSha).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
-        var edges = new List<(string Ancestor, string Descendant)>();
-        foreach (var ancestor in tips)
-            foreach (var descendant in tips)
-                if (ancestor != descendant && await _worktrees.IsCommitAncestorAsync(task.RepoPath, ancestor, descendant, ct))
-                    edges.Add((ancestor, descendant));
-        var byTask = warnings.ToDictionary(w => w.TaskId);
-        var reduced = SiblingWarningReducer.Reduce(
-            warnings.Select(w => new SiblingWarningReducer.Candidate(w.TaskId, w.Branch, w.CreatedAt, w.FullTipSha)), edges);
-        return new SiblingBaseGuard(null, reduced.Select(g => byTask[g.Representative.TaskId]
-            with { CoveredCount = g.Members.Count - 1 }).ToList(), baseRef);
-    }
+    private Task<SiblingBaseGuard> EvaluateCardSiblingBaseAsync(AgentTask task, CancellationToken ct) =>
+        (_siblingInspection ?? throw new InvalidOperationException("Sibling inspection is not registered."))
+            .InspectAsync(task, ct);
 
     private async Task<bool> ExpireClaimedOptionalWorkAsync(AgentTask task, CancellationToken ct)
     {
@@ -6243,6 +6109,9 @@ public sealed partial class AgentTaskDispatcher
                 drafts.Add(new DispatchWarningDraft($"worktree-base-inspection-{i}", baseSelectionWarnings[i]));
         if (observation is not null)
         {
+            if (observation.Reason is not null || observation.OmittedCandidates > 0)
+                drafts.Add(new DispatchWarningDraft("sibling-inspection-incomplete",
+                    $"Same-card warning inspection incomplete: {observation.Reason}; {observation.RawRows} raw, {observation.ExpensiveCandidates} candidates, {observation.InspectedCandidates} inspected, {observation.OmittedCandidates} omitted, {observation.GitCommands} commands."));
             foreach (var sibling in observation.Warnings)
             {
                 drafts.Add(new DispatchWarningDraft(
