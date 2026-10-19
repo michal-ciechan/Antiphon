@@ -754,6 +754,7 @@ public static class CheckpointApp
                 Slot = build.Slot,
                 SlotReason = build.SlotReason,
                 WaitedSeconds = build.WaitedSeconds,
+                DeadlineMinutes = build.DeadlineMinutes,
                 Source = build.Source,
             }).ToList(),
             Rows = rows,
