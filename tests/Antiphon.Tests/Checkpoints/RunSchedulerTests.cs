@@ -383,6 +383,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         result.State.Builds.Single(build => build.Id == "bin-b").DeadlineMinutes.ShouldBe(15);
 
         var run = TempDir();
+        File.WriteAllText(Path.Combine(run, "manifest.resolved.yaml"), ManifestLoader.ToYaml(manifest)); // the report hashes the resolved manifest
         var report = CheckpointApp.BuildReport(run, run, new RunRequest { Commit = new string('a', 40), Branch = "fixture" }, manifest, result.State, result);
         report.Builds.Single(build => build.Id == "bin-a").DeadlineMinutes.ShouldBe(40);
         report.Builds.Single(build => build.Id == "bin-b").DeadlineMinutes.ShouldBe(15);
