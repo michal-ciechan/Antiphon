@@ -5681,7 +5681,8 @@ public sealed partial class AgentTaskDispatcher
                                 && (claimed.Role == AgentTaskRole.Review || previewedSource is not null)))
                 {
                     await BlockAsync(claimed,
-                        $"{selected.Reason}: {string.Join(" ", selected.CandidateWarnings)} "
+                        $"{selected.Reason}: candidates={selected.TotalCandidates} inspected={selected.InspectedCandidates} commands={selected.GitCommands}; "
+                        + $"{string.Join(" ", selected.CandidateWarnings)} "
                         + (previewedSource is { } source
                             ? $"Previewed source {DelegationReportFormatter.Short(source.Id)} @ {source.Sha}. "
                             : "")
