@@ -31,20 +31,20 @@ defects, restoration and evidence in its assigned external root.
 | PC | Source anchor and proposed defect | Intended assertion and variant | Status |
 |---|---|---|---|
 | PC-1 | Line 134: add `s.StandingAgentId == null &&` to the candidate predicate | H:48 initial `ShouldHaveSingleItem`, zero A rows | Pending |
-| PC-2 | Replace the `owned` query (144-146) with raw non-null pointer strings; at 147 use `!owned.Contains(s.Id.ToString())` | O:452 final absence, `agent` uppercase compact GUID | Pending |
+| PC-2 | Replace the `owned` query (144-146) with raw non-null pointer strings; at 147 use `!owned.Contains(s.Id.ToString())` | O:453 final absence, `agent` uppercase compact GUID; non-pool owner prevents warning precedence from masking the defect | Pending |
 | PC-3 | Line 144: add `a.AlwaysOn &&` to the pointer query | H:70 absence at the other-agent-to-A phase (call at 107) | Pending |
 | PC-4 | Line 134: remove only `s.CardId == null &&` | H:70 absence in the card-bound phase (call at 145) | Pending |
 | PC-5 | Line 135: replace `< cutoff` with `<= cutoff` | U:398 absence at exactly ten minutes, local/remote, unstamped/stamped | Pending |
-| PC-6 | Line 134: remove only `&& s.EndedAt == null` | O:452 final absence, `ended` Running row | Pending |
+| PC-6 | Line 134: remove only `&& s.EndedAt == null` | O:453 final absence, `ended` Running row | Pending |
 | PC-7 | Line 137: append `|| s.Status == SessionStatus.Stopped` inside the status disjunction | H:70 absence in Stopped/unended phase (call at 117) | Pending |
-| PC-8 | Lines 139-140: remove only `t.Status == AgentTaskStatus.Queued ||` | O:431 absence, Queued phase of `task` | Pending |
-| PC-9 | Lines 139-140: remove only `t.Status == AgentTaskStatus.Dispatched ||` | O:431 absence, Dispatched phase of `task` | Pending |
-| PC-10 | Lines 139-140: remove only `t.Status == AgentTaskStatus.Working ||` | O:431 absence, Working phase of `task` | Pending |
-| PC-11 | Lines 139-140: remove only `|| t.Status == AgentTaskStatus.Blocked` | O:431 absence, Blocked phase of `task` | Pending |
-| PC-12 | Line 147: use the remote expression below, then admit `_runnerDirectory is null` with a short-circuit OR | L:478 null-directory A absence | Pending |
-| PC-13 | Line 147: remote expression below, remove only `!_runnerDirectory.RemoteInventoryPending(s.RunnerId) &&` | L:471 stamped A absence, `pending` | Pending |
-| PC-14 | Line 147: remote expression below, remove only `!remoteUnknown.Contains(s.Id) &&` | L:471 stamped A absence, `unknown` | Pending |
-| PC-15 | Line 147: remote expression below, remove only `&& remoteLive.Contains(s.Id)` | L:471 stamped A absence, `gone` | Pending |
+| PC-8 | Lines 139-140: remove only `t.Status == AgentTaskStatus.Queued ||` | O:432 absence, Queued phase of `task` | Pending |
+| PC-9 | Lines 139-140: remove only `t.Status == AgentTaskStatus.Dispatched ||` | O:432 absence, Dispatched phase of `task` | Pending |
+| PC-10 | Lines 139-140: remove only `t.Status == AgentTaskStatus.Working ||` | O:432 absence, Working phase of `task` | Pending |
+| PC-11 | Lines 139-140: remove only `|| t.Status == AgentTaskStatus.Blocked` | O:432 absence, Blocked phase of `task` | Pending |
+| PC-12 | Line 147: use the remote expression below, then admit `_runnerDirectory is null` with a short-circuit OR | L:479 null-directory A absence | Pending |
+| PC-13 | Line 147: remote expression below, remove only `!_runnerDirectory.RemoteInventoryPending(s.RunnerId) &&` | L:472 stamped A absence, `pending` | Pending |
+| PC-14 | Line 147: remote expression below, remove only `!remoteUnknown.Contains(s.Id) &&` | L:472 stamped A absence, `unknown` | Pending |
+| PC-15 | Line 147: remote expression below, remove only `&& remoteLive.Contains(s.Id)` | L:472 stamped A absence, `gone` | Pending |
 | PC-16 | After line 142: injection wrapper below with Kill payload | H:56 `KillCalls.ShouldBe(0)` | Pending |
 | PC-17 | After line 142: wrapper with session-write payload | H:50 persisted session scalar equality | Pending |
 | PC-18 | After line 142: wrapper with agent-write payload | H:51 persisted agent scalar equality | Pending |

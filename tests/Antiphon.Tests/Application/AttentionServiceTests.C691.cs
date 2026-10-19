@@ -412,6 +412,7 @@ public partial class AttentionServiceTests
     public async Task a_live_session_an_agent_names_is_not_unowned(string owner)
     {
         await using var w = await CensusWorld.CreateAsync();
+        w.Agent.IsPoolDelegate = false; // Pool-warning precedence must not mask pointer assertions.
         w.Agent.PersistentSessionId = null;
         await w.Db.SaveChangesAsync();
         (await w.RowsAsync(AttentionKind.SessionUnowned)).ShouldHaveSingleItem();
