@@ -78,6 +78,12 @@ public partial class DispatcherSiblingInspectionSchedulingTests
             task.ParentSessionId = h.SessionId; task.ReplyTo = AgentTaskReplyTo.Session;
             seed.AgentTasks.Add(task); await seed.SaveChangesAsync();
             await seed.AgentTasks.Where(t => t.Id == taskId).ExecuteUpdateAsync(s => s.SetProperty(t => t.AgentKind, AgentKind.Raw));
+            // The caller session is a live local session for the whole test. Without it in the runner
+            // inventory, the reconciliation scan below would close the caller too (unknown to the
+            // runner) and the queue would then refuse to type the retained note into a Failed session.
+            var caller = await seed.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == h.SessionId);
+            runner.Caller = new SessionRunnerSessionDto(h.SessionId, 4141, caller.StartedAt, "Running", null,
+                AgentExitReason.Unknown, 0, AcceptedStartedAt: caller.StartedAt);
         }
         var worker = h.Provider.GetRequiredService<CardSiblingInspectionQueue>(); worker.Start();
         var launches = h.Provider.GetRequiredService<AgentSessionLaunchQueue>();
@@ -209,8 +215,9 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                 (await check.TranscriptEntries.CountAsync(p => p.AgentSessionId == session.Id && p.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
                 var note = await check.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceTaskId == taskId && m.ExecutionTaskId == null);
                 note.AgentSessionId.ShouldBe(h.SessionId);
-                // The sweep clock ran 181 s ahead of the queue wall clock, so the note is not yet
-                // stranded by age; the idle flush delivers the caller's next pending message directly.
+                // The caller session stayed Running through the scan (the runner inventory lists it),
+                // so the idle flush types the retained note directly; the note carries no hold and
+                // the queue does not gate delivery on the sweep clock.
                 await h.Queue.FlushIfIdleAsync(h.SessionId, default);
                 var prompts = await check.TranscriptEntries.AsNoTracking().Where(p => p.AgentSessionId == h.SessionId && p.Kind == TranscriptKinds.UserPrompt).ToListAsync();
                 PromptSubmissionMatch.IsCompleteIn(note.Body, prompts.ShouldHaveSingleItem().Text!).ShouldBeTrue();
@@ -276,12 +283,18 @@ public partial class DispatcherSiblingInspectionSchedulingTests
     private sealed class InspectionRecoveryRunner : ISessionRunnerClient
     {
         public SessionRunnerSessionDto? Live { get; set; }
+        /// <summary>The caller session as the runner serves it: alive for the whole test, so a
+        /// reconciliation scan fails only the absent worker session and never the note recipient.</summary>
+        public SessionRunnerSessionDto? Caller { get; set; }
         public int Starts { get; private set; }
         public int Kills { get; private set; }
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>(Live is null ? [] : [Live]);
+            Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>(
+                new[] { Caller, Live }.Where(s => s is not null).Select(s => s!).ToList());
         public Task<SessionRunnerSessionDto> GetAsync(Guid id, CancellationToken ct) =>
-            Live is not null && Live.SessionId == id ? Task.FromResult(Live) : throw new KeyNotFoundException("fixture session absent");
+            Caller is not null && Caller.SessionId == id ? Task.FromResult(Caller)
+                : Live is not null && Live.SessionId == id ? Task.FromResult(Live)
+                : throw new KeyNotFoundException("fixture session absent");
         public Task<SessionRunnerSessionDto> StartAsync(Guid id, AgentLaunchSpec spec, CancellationToken ct)
         { Starts++; throw new NotSupportedException(); }
         public Task<SessionRunnerSessionDto> KillAsync(Guid id, CancellationToken ct)
