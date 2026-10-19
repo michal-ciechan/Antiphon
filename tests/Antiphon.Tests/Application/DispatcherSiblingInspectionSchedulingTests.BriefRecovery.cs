@@ -25,8 +25,16 @@ public partial class DispatcherSiblingInspectionSchedulingTests
     [Arguments("claim-rollback")]
     [Arguments("before-brief-insert")]
     [Arguments("after-claim-before-launch")]
+    [Arguments("after-claim-before-launch-capacity")]
+    [Arguments("after-claim-before-launch-integration")]
+    [Arguments("after-claim-before-launch-late")]
+    [Arguments("after-claim-before-launch-unrelated")]
+    [Arguments("after-claim-before-launch-event-type")]
     public async Task C1349_BriefHandoffRecovers(string scenario)
     {
+        var absent = scenario.StartsWith("after-claim-before-launch", StringComparison.Ordinal);
+        var rejectAbsence = scenario.EndsWith("-late", StringComparison.Ordinal)
+            || scenario.EndsWith("-unrelated", StringComparison.Ordinal) || scenario.EndsWith("-event-type", StringComparison.Ordinal);
         using var repo = new ScratchGitRepo("c1349-brief-recovery");
         await repo.CommitFileAsync("seed.txt", "seed");
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -47,13 +55,13 @@ public partial class DispatcherSiblingInspectionSchedulingTests
             {
                 ConfigureInspectionDelivery(services, repo, git, new FakeTimeProvider(DateTimeOffset.UtcNow), slot);
                 services.AddSingleton<ISessionRunnerClient>(runner);
-                if (scenario == "after-claim-before-launch") services.AddSingleton<IAgentTaskLaunchSink>(sink);
+                if (absent) services.AddSingleton<IAgentTaskLaunchSink>(sink);
             },
         });
         slot.Adapter = h.Adapter; h.Adapter.RegisterOnStart = h.Runtime; h.Adapter.ReadyHold = ready;
         h.Adapter.OnSubmitted = async body =>
         {
-            var recipient = scenario == "after-claim-before-launch" ? h.SessionId : h.Adapter.StartedSessionId.ShouldNotBeNull();
+            var recipient = absent ? h.SessionId : h.Adapter.StartedSessionId.ShouldNotBeNull();
             await BridgeQueueHarness.InsertEntryAsync(recipient, TranscriptKinds.UserPrompt, body,
                 timestamp: DateTime.UtcNow, connectionString: schema.ConnectionString);
             await BridgeQueueHarness.InsertEntryAsync(recipient, TranscriptKinds.TurnEnd, stopReason: "end_turn",
@@ -83,7 +91,7 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                     await Should.ThrowAsync<OperationCanceledException>(() => dispatcher.TickAsync(cancel.Token));
                 else await dispatcher.TickAsync(cancel.Token);
             }
-            fault.Fired.ShouldBe(scenario != "after-claim-before-launch");
+            fault.Fired.ShouldBe(!absent);
             await using (var check = h.CreateObserverContext())
             {
                 var task = await check.AgentTasks.SingleAsync(t => t.Id == taskId);
@@ -109,7 +117,7 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                 await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
             }
             ready.TrySetResult(true);
-            if (scenario != "after-claim-before-launch")
+            if (!absent)
             {
                 await launches.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
                 await using var read = h.CreateObserverContext();
@@ -136,7 +144,10 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                 await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(schema.ConnectionString, h, brief, sid, false);
                 var prompts = await read.TranscriptEntries.AsNoTracking().Where(p => p.AgentSessionId == sid && p.Kind == TranscriptKinds.UserPrompt).ToListAsync();
                 var prompt = prompts.ShouldHaveSingleItem();
-                prompt.Text.ShouldContain(DelegationReportFormatter.TaskMarker(taskId)); prompt.Text.ShouldContain(goal);
+                prompt.Text.ShouldContain(DelegationReportFormatter.TaskMarker(taskId));
+                var spill = DispatchBriefEvidence.AbsoluteSpillPath(brief.Body);
+                var payload = brief.RemoteSpillBody ?? (spill is null ? brief.Body : await File.ReadAllTextAsync(spill));
+                payload.ShouldContain(goal, "the delivered brief pointer must retain the entire owned input");
                 PromptSubmissionMatch.IsCompleteIn(brief.Body, prompt.Text!).ShouldBeTrue();
                 runner.Starts.ShouldBe(0); runner.Kills.ShouldBe(0);
             }
@@ -149,6 +160,22 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                     original = await read.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
                     brief = await read.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.ExecutionTaskId == taskId);
                     session = await read.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == original.AgentSessionId);
+                    if (scenario != "after-claim-before-launch")
+                    {
+                        read.AgentTaskEvents.Add(new AgentTaskEvent
+                        {
+                            Id = Guid.NewGuid(), AgentTaskId = taskId,
+                            Type = scenario.EndsWith("-event-type", StringComparison.Ordinal) ? AgentTaskEventType.Refined : AgentTaskEventType.Held,
+                            Detail = scenario.EndsWith("-capacity", StringComparison.Ordinal)
+                                ? "Held: same-card base inspection capacity is occupied."
+                                : scenario.EndsWith("-integration", StringComparison.Ordinal)
+                                    ? "Held: same-card pending integration could not be inspected."
+                                    : scenario.EndsWith("-unrelated", StringComparison.Ordinal) ? "Held: unknown prior activity."
+                                        : "Held: same-card base inspection is pending.",
+                            At = original.DispatchedAt!.Value.AddSeconds(scenario.EndsWith("-late", StringComparison.Ordinal) ? 1 : -1),
+                        });
+                        await read.SaveChangesAsync();
+                    }
                     var clock = new FakeTimeProvider(new DateTimeOffset(session.StartedAt).AddSeconds(91));
                     await SessionReconciliationServiceTests.BuildService(read, runner, h.EventBus, time: clock).ScanAsync(default);
                 }
@@ -164,11 +191,20 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                 }
                 await using var check = h.CreateObserverContext();
                 var held = await check.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+                if (rejectAbsence)
+                {
+                    held.Status.ShouldBe(AgentTaskStatus.Failed);
+                    held.FailureReason.ShouldContain(SessionReconciliationService.RunnerUnknownSessionReason);
+                    held.Attempt.ShouldBe(original.Attempt); held.AgentSessionId.ShouldBe(original.AgentSessionId); held.Goal.ShouldBe(goal);
+                    (await check.AgentTaskEvents.CountAsync(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Blocked)).ShouldBe(0);
+                    sink.Calls.ShouldBe(1); runner.Starts.ShouldBe(0); runner.Kills.ShouldBe(0); h.Adapter.Started.ShouldBeFalse();
+                    return;
+                }
                 held.Status.ShouldBe(AgentTaskStatus.Blocked); held.FailureReason.ShouldBe(AgentTaskDispatcher.DispatchLaunchAbsentReason);
                 held.Attempt.ShouldBe(original.Attempt); held.AgentSessionId.ShouldBe(original.AgentSessionId); held.Goal.ShouldBe(goal);
                 var retained = await check.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.ExecutionTaskId == taskId);
                 retained.Id.ShouldBe(brief.Id); retained.Body.ShouldBe(brief.Body); retained.Sequence.ShouldBe(brief.Sequence);
-                retained.DeliveryAttempts.ShouldBe(0);
+                retained.Status.ShouldBe(QueuedMessageStatus.Pending); retained.DeliveryAttempts.ShouldBe(0);
                 (await check.TranscriptEntries.CountAsync(p => p.AgentSessionId == session.Id && p.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
                 var note = await check.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceTaskId == taskId && m.ExecutionTaskId == null);
                 note.AgentSessionId.ShouldBe(h.SessionId);
