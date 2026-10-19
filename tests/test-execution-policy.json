@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "policyHash": "37593bf0ff6e6da787079234d9c55aa37abd7a08b2737c30746e6b0a2e175744",
+  "policyHash": "bb29ed119865febf791fc1b1d91aeb30d40dfa2d1a4e9b46108c1a2d722d1734",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -739,7 +739,7 @@
     "npm-build": 600000,
     "dotnet-build": 1200000,
     "antiphon": 3600000,
-    "session-runner": 1200000,
+    "session-runner": 1800000,
     "pty-host": 1200000,
     "agents-pty": 1200000,
     "messaging": 1200000,
