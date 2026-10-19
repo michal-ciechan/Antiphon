@@ -49,7 +49,7 @@ public sealed class WatchdogService
         if (!_settings.Enabled)
             return 0;
 
-        var liveSessionIds = _runtime.ListLiveSessions();
+        var liveSessionIds = await _runtime.ListLiveSessionsAsync(ct);
         if (liveSessionIds.Count == 0)
             return 0;
 
@@ -65,7 +65,7 @@ public sealed class WatchdogService
         foreach (var session in activeSessions)
         {
             var sessionId = session.Id;
-            if (!_runtime.TryGetLiveSnapshot(sessionId, out var snapshot))
+            if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } snapshot)
                 continue;
 
             if (string.IsNullOrWhiteSpace(snapshot.RenderedScreen)

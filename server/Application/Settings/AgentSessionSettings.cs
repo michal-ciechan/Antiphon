@@ -86,4 +86,12 @@ public sealed class AgentSessionSettings
     /// stall and idle rule measures in seconds or minutes. <c>0</c> writes on every chunk.
     /// </summary>
     public int ActivityWriteMinIntervalMs { get; set; } = 1_000;
+
+    /// <summary>
+    /// CARD-1362 D-2: the deadline for one live runner read from the runtime (list, get, buffer,
+    /// snapshot), on the runtime's clock and linked to the caller's token; floor 250 ms in code.
+    /// The client's own budgets still apply (the shorter wins). A deadline keeps the read's
+    /// outcome class: the list family throws, <c>TryGet*</c> reads as unavailable, never as gone.
+    /// </summary>
+    public int RunnerLiveReadTimeoutMs { get; set; } = 5_000;
 }
