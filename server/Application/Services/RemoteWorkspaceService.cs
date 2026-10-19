@@ -252,6 +252,10 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     public static async Task<bool> CaptureMirrorBindingAsync(
         AppDbContext db, CompletedCardWorkspaceBinding binding, CancellationToken ct)
     {
+        await using var owned = db.Database.CurrentTransaction is null
+            ? await db.Database.BeginTransactionAsync(ct) : null;
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT \"Id\" FROM \"AgentTasks\" WHERE \"Id\" = {binding.TaskId} FOR UPDATE", ct);
         var row = await db.TaskWorktreeMirrorBindings
             .FirstOrDefaultAsync(candidate => candidate.PreparationId == binding.PreparationId, ct);
         if (row is null)
@@ -287,12 +291,9 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
 
         ApplyBinding(row, binding);
         await db.SaveChangesAsync(ct);
-        await db.AgentTasks
-            .Where(task => task.Id == binding.TaskId && task.RunnerId == binding.RunnerId && task.Attempt == binding.Attempt)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(task => task.RemoteWorktreePath, binding.WorktreePath)
-                .SetProperty(task => task.RemotePrepFailures, 0)
-                .SetProperty(task => task.DispatchNotBeforeAt, (DateTime?)null), ct);
+        await RemoteWorkspaceReadiness.RecordPathAsync(db, binding.TaskId, binding.Attempt,
+            binding.RunnerId, binding.WorktreePath, ct);
+        if (owned is not null) await owned.CommitAsync(ct);
         return true;
     }
 
