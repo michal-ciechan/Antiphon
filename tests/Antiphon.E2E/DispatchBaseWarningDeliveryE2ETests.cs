@@ -82,6 +82,12 @@ public class DispatchBaseWarningDeliveryE2ETests
     [Test]
     public Task C540_PreEnqueueCrashRecoversWarnings() => CrashAsync("pre-enqueue", "before-enqueue");
 
+    // CARD-1359: dispatch-side progress (claim rows, each materialization) keeps flowing while
+    // protocol-git is silent for longer than the 60 s quiet window. The pre-enqueue wait must renew
+    // on that progress instead of timing out behind a slow launch path.
+    [Test]
+    public Task C540_PreEnqueueWaitSurvivesSlowMaterialization() => CrashAsync("pre-enqueue", "before-enqueue", slowMaterializeSeconds: 40);
+
     [Test]
     public async Task C540_EnqueueFailureRetriesWarnings()
     {
@@ -109,10 +115,13 @@ public class DispatchBaseWarningDeliveryE2ETests
     [Test]
     public Task C540_ReceiptCrashDoesNotRetype() => CrashAsync("receipt", "receipt-before-save");
 
-    private static async Task CrashAsync(string cut, string boundary, bool busy = false)
+    private static async Task CrashAsync(string cut, string boundary, bool busy = false, int slowMaterializeSeconds = 0)
     {
         await using var f = new LandDeliveryFixture();
-        await f.InitializeAsync(busy: busy, dispatch: true); await f.UseChildAsync(cut); await f.StartDispatchAsync();
+        await f.InitializeAsync(busy: busy, dispatch: true); await f.UseChildAsync(cut);
+        if (slowMaterializeSeconds > 0)
+            await f.WriteSlowLaunchAsync(new Dictionary<string, int> { ["dispatch-warning-before-materialize"] = slowMaterializeSeconds });
+        await f.StartDispatchAsync();
         if (cut == "queue")
         {
             // A missing key also disables the production keyed-insert callback. Observe the
@@ -127,7 +136,9 @@ public class DispatchBaseWarningDeliveryE2ETests
             }, boundary);
         }
         else await f.WaitForBoundaryAsync(boundary);
+        if (slowMaterializeSeconds > 0) f.ClearSlowLaunch(); // the restarted "none" child must never see the seam
         var intents = await f.WaitForDispatchIntentsAsync();
+        if (slowMaterializeSeconds > 0) await f.AssertSlowMaterializationPremiseAsync(boundary, intents, slowMaterializeSeconds);
         var originalQueue = new Dictionary<Guid, Guid>();
         var interruptedAttempts = new Dictionary<Guid, int>();
         await using (var db = f.CreateContext())

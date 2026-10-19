@@ -140,6 +140,51 @@ public sealed partial class LandDeliveryFixture
     public Task WaitForBoundaryAsync(string boundary) => UntilProtocolAsync(() =>
         Task.FromResult(File.Exists(Path.Combine(Root, boundary + ".barrier.json"))), boundary);
 
+    // CARD-1359: the slow-launch seam (FileBoundary.ReachedAsync) holds the owned task's reach of a
+    // named boundary for the mapped seconds. Written before the dispatch starts; cleared before the
+    // restarted child so recovery never sees it.
+    public Task WriteSlowLaunchAsync(IReadOnlyDictionary<string, int> delays) =>
+        File.WriteAllTextAsync(Path.Combine(Root, "slow-launch.json"), JsonSerializer.Serialize(delays));
+
+    public void ClearSlowLaunch() => File.Delete(Path.Combine(Root, "slow-launch.json"));
+
+    /// <summary>
+    /// CARD-1359 V-1 premise: the seam fired for exactly the owned intents, and the barrier arrived
+    /// more than the quiet window after the last protocol-git observation that preceded it, so a
+    /// wait renewed only on protocol-git would have timed out. Measured on the child host's clock.
+    /// </summary>
+    public async Task AssertSlowMaterializationPremiseAsync(string boundary, IReadOnlyList<AgentTaskDispatchWarningIntent> intents, int seconds)
+    {
+        const string seam = "dispatch-warning-before-materialize";
+        var records = Directory.GetFiles(Root, $"slow-launch-{seam}-*.observation.json").Select(path =>
+        {
+            using var record = JsonDocument.Parse(File.ReadAllText(path));
+            return (identity: record.RootElement.GetProperty("identity").GetGuid(),
+                seconds: record.RootElement.GetProperty("seconds").GetInt32(),
+                at: record.RootElement.GetProperty("at").GetDateTime());
+        }).ToList();
+        var barrierAt = File.GetLastWriteTimeUtc(Path.Combine(Root, boundary + ".barrier.json"));
+        var protocolGit = Directory.GetFiles(Root, "protocol-git-*.json").Select(path =>
+        {
+            using var record = JsonDocument.Parse(File.ReadAllText(path));
+            return record.RootElement.GetProperty("at").GetDateTime();
+        }).ToList();
+        var lastBeforeBarrier = protocolGit.Where(at => at <= barrierAt).DefaultIfEmpty(DateTime.MinValue).Max();
+        var silence = barrierAt - lastBeforeBarrier;
+        await File.WriteAllTextAsync(Path.Combine(Root, "slow-launch-premise.json"), JsonSerializer.Serialize(new
+        {
+            boundary, seam, seconds, barrierAt, lastProtocolGitBeforeBarrier = lastBeforeBarrier, silenceSeconds = silence.TotalSeconds,
+            protocolGitCount = protocolGit.Count, protocolGitAfterBarrier = protocolGit.Count(at => at > barrierAt),
+            records = records.Count, identities = records.Select(r => r.identity).Distinct().Order().ToArray(),
+            intents = intents.Select(i => i.Id).Order().ToArray(),
+        }));
+        records.Select(r => r.identity).Distinct().Order().ShouldBe(intents.Select(i => i.Id).Order(),
+            "the seam must fire for exactly the owned dispatch intents");
+        records.ShouldAllBe(r => r.seconds == seconds);
+        silence.TotalSeconds.ShouldBeGreaterThan(60d,
+            $"the {boundary} barrier must arrive more than the quiet window after the last protocol-git observation");
+    }
+
     public Task TwoNotificationScansAsync()
     {
         var scans = Directory.GetFiles(Root, "notification-scan-*.observation.json").Length;

@@ -147,6 +147,21 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
                 }
                 if (taskId != owned) return;
             }
+            // CARD-1359: opt-in slow-launch seam. slow-launch.json maps a boundary name to seconds; the
+            // owned task's reach of that boundary is recorded and then held that long, so a test can
+            // stretch the dispatch path between the claim commit and a later barrier while real
+            // dispatch-side markers keep moving. An absent or non-matching file changes nothing.
+            var slowLaunch = Path.Combine(options.Root, "slow-launch.json");
+            if (File.Exists(slowLaunch))
+            {
+                var delays = JsonSerializer.Deserialize<Dictionary<string, int>>(await File.ReadAllTextAsync(slowLaunch, ct)) ?? new();
+                if (delays.TryGetValue(boundary, out var seconds) && seconds > 0)
+                {
+                    await File.WriteAllTextAsync(Path.Combine(options.Root, $"slow-launch-{boundary}-{Guid.NewGuid():N}.observation.json"),
+                        JsonSerializer.Serialize(new { boundary, taskId, identity, seconds, at = DateTime.UtcNow, pid = Environment.ProcessId }), ct);
+                    await Task.Delay(TimeSpan.FromSeconds(seconds), ct);
+                }
+            }
             if (options.Cut == "enqueue-errors" && boundary == "before-enqueue" && Interlocked.Increment(ref _enqueueCalls) <= 2)
             {
                 await File.WriteAllTextAsync(Path.Combine(options.Root, $"enqueue-failure-{Guid.NewGuid():N}.json"),
