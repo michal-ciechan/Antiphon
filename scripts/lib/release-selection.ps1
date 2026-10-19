@@ -225,6 +225,16 @@ function New-ReleaseSelectionAttemptCore {
     return Save-ReleaseSelectionAttempt $Request $selection $contract $baseline.digest $qualificationDigest
 }
 
+function Get-ReleaseSelectionTrainDigest {
+    # S6-A binds opaque input bytes only. Membership validation belongs to S6-D.
+    param($Request)
+    if (-not $Request.TrainManifestPath) { return '' }
+    $path = Assert-ReleaseSelectionPath $Request.TrainManifestPath $Request.ReleaseRoot $Request.RepositoryRoot
+    if (-not (Test-Path -LiteralPath $path)) { return '' }
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'selection-train-input' }
+    return Get-NightlyFileSha256 $path
+}
+
 function Save-ReleaseSelectionAttempt {
     param($Request, $Selection, $Contract, [string]$BaselineDigest, [string]$QualificationDigest)
     if ($Request.RunId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$' -or $Request.Attempt -lt 1) { throw 'selection-run-identity' }
@@ -239,7 +249,8 @@ function Save-ReleaseSelectionAttempt {
         candidateRef=$Request.CandidateRef; candidateSha=$Request.CandidateSha; baselineSha=$Selection.baselineSha
         requestedMode=$Request.SelectionMode; effectiveMode='Full'; coverageScope='Full'; profile=$Request.Profile
         runId=$Request.RunId; attempt=[int]$Request.Attempt; selectionDigest=$selectionDigest; contract=$Contract
-        baselineDigest=$BaselineDigest; qualificationDigest=$QualificationDigest; fallbackReasons=$Selection.fallbackReasons
+        baselineDigest=$BaselineDigest; qualificationDigest=$QualificationDigest; trainDigest=(Get-ReleaseSelectionTrainDigest $Request)
+        fallbackReasons=$Selection.fallbackReasons
         baselineReceiptPath=$Request.BaselineReceiptPath; qualificationPath=$Request.QualificationPath
         timingRoot=$Request.TimingRoot; releaseIntentPath=$Request.ReleaseIntentPath; trainManifestPath=$Request.TrainManifestPath
     }
@@ -346,6 +357,7 @@ function Read-ReleaseSelectionAttempt {
         if ([string]$attempt.($pair[0]) -cne [string]$Expected[$pair[1]]) { throw ('selection-hop-' + $pair[0]) }
     }
     if ($selection.candidateSha -cne $Expected.CandidateSha -or $selection.baselineSha -cne $Expected.BaselineSha) { throw 'selection-hop-candidateSha' }
+    if ([string]$attempt.trainDigest -cne (Get-ReleaseSelectionTrainDigest $Expected)) { throw 'selection-hop-trainDigest' }
     if ($attempt.repository -cne $Expected.Repository -or $attempt.candidateId -cne $Expected.CandidateId -or
         $attempt.candidateRef -cne ($Expected.CandidateRef -replace '^origin/', '')) { throw 'selection-hop-candidate' }
     $root = Join-Path (Join-Path (Join-Path (Join-Path $Expected.ReleaseRoot 'candidates') $Expected.CandidateId) 'attempts') $Expected.RunId

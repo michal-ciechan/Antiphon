@@ -442,7 +442,7 @@ function Invoke-AntiphonNightlyRunCore {
                         '-RunId', $RunId,
                         '-ContinueRunId', $RunId,
                         '-ContinueParentPid', ([string]$PID),
-                        '-ContinueParentStartedAt', (Get-NightlyProcessStartUtc -ProcessId $PID).ToString('o')
+                        '-ContinueParentStartedAt', (ConvertTo-ReleaseGateUtc $shared.Record.processStartedAt).ToString('o')
                     )
                     if ($SelectionAttemptPath) {
                         $pwshArgs += '-Repository'; $pwshArgs += [string]$Repository

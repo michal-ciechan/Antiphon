@@ -585,7 +585,12 @@ function Enter-NightlyExclusiveLock {
         $pidOk = ([int]$existing.pid -eq $ContinueParentPid) -or ([int]$existing.parentPid -eq $ContinueParentPid)
         $startOk = $true
         if (-not [string]::IsNullOrWhiteSpace($ContinueParentStartedAt)) {
+            # Bind the owner timestamp captured at acquisition across the hop.
+            # JSON can deserialize the stored ISO value into DateTime.
+            $recordStart = [string]$existing.processStartedAt
+            if ($existing.processStartedAt -is [datetime]) { $recordStart = $existing.processStartedAt.ToUniversalTime().ToString('o') }
             $startOk = [string]::Equals($startText, $ContinueParentStartedAt, [StringComparison]::OrdinalIgnoreCase) -or
+                       (-not [string]::IsNullOrWhiteSpace($recordStart) -and [string]::Equals($recordStart, $ContinueParentStartedAt, [StringComparison]::OrdinalIgnoreCase)) -or
                        [string]::Equals([string]$existing.startedAt, $ContinueParentStartedAt, [StringComparison]::OrdinalIgnoreCase) -or
                        [string]::Equals([string]$existing.parentStartedAt, $ContinueParentStartedAt, [StringComparison]::OrdinalIgnoreCase)
         }
@@ -598,6 +603,7 @@ function Enter-NightlyExclusiveLock {
 
     $record = [ordered]@{
         pid = $PID
+        processStartedAt = $( $processStart = Get-NightlyProcessStartUtc -ProcessId $PID; if ($processStart) { ([datetime]$processStart).ToUniversalTime().ToString('o') } else { '' } )
         startedAt = (Get-NightlyUtcNow).ToString('o')
         runId = $RunId
         parentPid = [int]$parent.Id
