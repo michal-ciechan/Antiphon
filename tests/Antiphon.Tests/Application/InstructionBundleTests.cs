@@ -665,6 +665,19 @@ public class InstructionBundleTests
 
     // ---- the command-line budget ---------------------------------------------------------------
 
+    // CARD-1332: three fixed limits. The transport/default budget and the 500-character reserve are
+    // unchanged; the early threshold fails growth 1,500 characters before the reserve boundary. None
+    // of them is derived from today's measurement, so growth consumes a fixed allowance.
+    private const int C1332TransportLimit = 30_000;
+    private const int C1332ReserveChars = 500;
+    private const int C1332EarlyThreshold = 28_000;
+
+    /// <summary>A fixed D-format session id (same 36-character width as a real one) so the printed matrix is reproducible.</summary>
+    private const string C1332SessionId = "11111111-2222-3333-4444-555555555555";
+
+    private static readonly string[] C1332OtherArgs =
+        ["--name", "task-1a2b3c4d", "--model", "opus", "--session-id", C1332SessionId];
+
     [Test]
     public void the_worst_case_composition_measured_sits_far_under_the_budget()
     {
@@ -673,22 +686,119 @@ public class InstructionBundleTests
         // Attaching every stage and specialist together is an intentionally oversized request,
         // not a default delegate launch. The separate overflow test still requires refusal.
         var budget = new DelegationSettings().CommandLineBudgetChars;
+        // ChannelPreamble uses AppendLine: Windows adds CRLF even on an LF checkout.
+        // Exercise that larger append on every host so Linux cannot hide argv overflow.
+        var preset = ChannelPreamble.TelegramPresetTemplate.ReplaceLineEndings("\r\n");
         // Stage bundles are mutually exclusive at launch. Exercise every actual role composition
         // with the board API and a reply style, reserving CARD-0884's 500-char headroom
         // in the whole argv estimate, including the append flag and other arguments.
+        var rows = new List<(string Label, ComposedInstructions Composed, int Estimate, string Ledger)>();
         foreach (var role in Enum.GetValues<AgentTaskRole>().Where(r => !AgentTaskRoles.IsSpecialist(r)))
         foreach (var kind in Enum.GetValues<AgentTaskKind>())
         {
             var keys = InstructionBundles.ForDelegate(kind, role, [InstructionBundles.BoardApi, "style-explanatory"]);
-            // ChannelPreamble uses AppendLine: Windows adds CRLF even on an LF checkout.
-            // Exercise that larger append on every host so Linux cannot hide argv overflow.
-            var composed = InstructionBundleComposer.Compose(keys,
-                systemPromptAppend: ChannelPreamble.TelegramPresetTemplate.ReplaceLineEndings("\r\n"));
-            composed.Text.Length.ShouldBeLessThan(budget, $"{kind}/{role}");
-            Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(composed,
-                ["--name", "task-1a2b3c4d", "--model", "opus", "--session-id", Guid.NewGuid().ToString("D")],
-                budget - 500, $"{kind}/{role} with 500-char headroom"));
+            var composed = InstructionBundleComposer.Compose(keys, systemPromptAppend: preset);
+            rows.Add(($"{kind}/{role}", composed, C1332EstimateArgv(C1332OtherArgs, composed), C1332Ledger(composed, preset)));
         }
+
+        // CARD-1332 V-5: print every measurement BEFORE enforcing any limit, so a passing run and a
+        // failing run both say where the characters went. Headrooms are signed (limit minus estimate).
+        var orchestratorBody = InstructionBundles.TextOf(InstructionBundles.Orchestrator).Length;
+        var reserveBoundary = C1332TransportLimit - C1332ReserveChars;
+        Console.WriteLine(
+            $"C1332 limits transport={C1332TransportLimit} reserve-boundary={reserveBoundary} early={C1332EarlyThreshold} "
+            + $"orchestrator-body={orchestratorBody} rows={rows.Count}");
+        foreach (var row in rows)
+            Console.WriteLine(
+                $"C1332 {row.Label} composed={row.Composed.Text.Length} argv={row.Estimate} "
+                + $"headroom transport={C1332TransportLimit - row.Estimate} reserve={reserveBoundary - row.Estimate} "
+                + $"early={C1332EarlyThreshold - row.Estimate} | {row.Ledger}");
+        // Ties keep the first row in kind/role enumeration order (every Orchestrator-kind row composes
+        // the same text, so the maximum is normally a many-way tie); the tie count is printed.
+        var max = rows.MaxBy(row => row.Estimate);
+        var tied = rows.Count(row => row.Estimate == max.Estimate);
+        Console.WriteLine(
+            $"C1332 maximum {max.Label} composed={max.Composed.Text.Length} argv={max.Estimate} tied-rows={tied} "
+            + $"headroom transport={C1332TransportLimit - max.Estimate} reserve={reserveBoundary - max.Estimate} "
+            + $"early={C1332EarlyThreshold - max.Estimate}");
+
+        // The default budget IS the transport ceiling; the early cap is never derived from the size.
+        budget.ShouldBe(C1332TransportLimit, "c1332-default-budget");
+
+        // The diagnostic estimator must agree with the REAL guard in both directions on every row:
+        // the exact estimate is admitted and one less is refused. Includes the estimator's empty branch.
+        foreach (var (label, composed, estimate, _) in rows)
+        {
+            Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
+                composed, C1332OtherArgs, estimate, label), $"c1332-estimate-exact {label}");
+            Should.Throw<InvalidOperationException>(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
+                composed, C1332OtherArgs, estimate - 1, label), $"c1332-estimate-one-less {label}");
+        }
+        var emptyEstimate = C1332EstimateArgv(C1332OtherArgs, ComposedInstructions.Empty);
+        Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
+            ComposedInstructions.Empty, C1332OtherArgs, emptyEstimate, "empty"), "c1332-estimate-exact empty");
+        Should.Throw<InvalidOperationException>(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
+            ComposedInstructions.Empty, C1332OtherArgs, emptyEstimate - 1, "empty"), "c1332-estimate-one-less empty");
+
+        // The additive ledger accounts for every composed character exactly once.
+        foreach (var (label, composed, _, _) in rows)
+            C1332LedgerTotal(composed, preset).ShouldBe(composed.Text.Length, $"c1332-contribution-total {label}");
+
+        // Existing bounds in this order: raw composition, the real guard at the reserve boundary, then
+        // the fixed early threshold on the maximum row. A reserve control reaches the reserve first.
+        foreach (var (label, composed, _, _) in rows)
+            composed.Text.Length.ShouldBeLessThan(budget, label);
+        foreach (var (label, composed, _, _) in rows)
+            Should.NotThrow(() => InstructionBundleComposer.EnsureWithinCommandLineBudget(
+                composed, C1332OtherArgs, budget - C1332ReserveChars, $"{label} with 500-char headroom"), $"c1332-argv-reserve {label}");
+        max.Estimate.ShouldBeLessThanOrEqualTo(C1332EarlyThreshold,
+            $"c1332-argv-early: maximum {max.Label} {max.Estimate} > {C1332EarlyThreshold}");
+    }
+
+    /// <summary>
+    /// The guard's documented arithmetic (<see cref="InstructionBundleComposer.EnsureWithinCommandLineBudget"/>):
+    /// each argument plus three for its space and quotes; an empty append adds nothing, otherwise the
+    /// composed text plus 28 (the 22-character flag and two quoted arguments' overhead). Test-only, and
+    /// cross-checked against the real guard above so it cannot silently diverge from production.
+    /// </summary>
+    private static int C1332EstimateArgv(IReadOnlyCollection<string> otherArgs, ComposedInstructions composed) =>
+        otherArgs.Sum(argument => argument.Length + 3) + (composed.IsEmpty ? 0 : composed.Text.Length + 28);
+
+    /// <summary>
+    /// The additive contribution ledger behind a diagnostic row: each rendered bundle template
+    /// (placeholders unexpanded), the block separators, each fragment's replacement delta at its first
+    /// use and at later uses, and the literal append. Raw fragment sizes are annotations, never a
+    /// second summand, so expansion is counted once.
+    /// </summary>
+    private static int C1332LedgerTotal(ComposedInstructions composed, string append)
+    {
+        var total = composed.Bundles.Sum(bundle => bundle.Render().Length);
+        total += (composed.Bundles.Count - 1) * InstructionBundleComposer.BlockSeparator.Length;
+        foreach (var fragment in composed.Fragments)
+        {
+            var uses = composed.Bundles.Sum(bundle => CountOccurrences(bundle.Render(), fragment.Placeholder));
+            total += fragment.Render().Length - fragment.Placeholder.Length;
+            total += (uses - 1) * (fragment.SeeAbove.Length - fragment.Placeholder.Length);
+        }
+        if (!string.IsNullOrWhiteSpace(append))
+            total += InstructionBundleComposer.BlockSeparator.Length + append.Length;
+        return total;
+    }
+
+    private static string C1332Ledger(ComposedInstructions composed, string append)
+    {
+        var parts = composed.Bundles.Select(bundle => $"{bundle.Stamp} template={bundle.Render().Length}").ToList();
+        var separators = composed.Bundles.Count - 1 + (string.IsNullOrWhiteSpace(append) ? 0 : 1);
+        parts.Add($"separators={separators * InstructionBundleComposer.BlockSeparator.Length}");
+        foreach (var fragment in composed.Fragments)
+        {
+            var uses = composed.Bundles.Sum(bundle => CountOccurrences(bundle.Render(), fragment.Placeholder));
+            parts.Add($"fragment {fragment.Stamp} uses={uses} first-use-delta={fragment.Render().Length - fragment.Placeholder.Length} "
+                + $"later-use-delta={fragment.SeeAbove.Length - fragment.Placeholder.Length} raw={fragment.Text.Length}");
+        }
+        parts.Add($"append={append.Length}");
+        parts.Add($"ledger-total={C1332LedgerTotal(composed, append)}");
+        return string.Join("; ", parts);
     }
 
     [Test]
