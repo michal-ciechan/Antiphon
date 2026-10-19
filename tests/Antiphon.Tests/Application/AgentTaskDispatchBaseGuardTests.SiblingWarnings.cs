@@ -187,7 +187,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             await using var db = w.Fresh();
             await db.Projects.Where(p => p.Id == w.Project.Id)
                 .ExecuteUpdateAsync(s => s.SetProperty(p => p.BaseBranch, "missing-c540"));
-        }, diagnostics: [DispatchBaseNotificationPayload.MismatchKey, DispatchBaseNotificationPayload.DefaultUnresolvedKey]);
+        }, diagnostics: [DispatchBaseNotificationPayload.DefaultUnresolvedKey], reobserve: true);
     }
 
     [Test]
@@ -483,7 +483,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             _siblings.Add(sibling); return sibling;
         }
         public async Task RunAsync((AgentTask Task, int Covered)[] expected, Func<Task>? onLease = null,
-            string[]? diagnostics = null, LandingGit? git = null)
+            string[]? diagnostics = null, LandingGit? git = null, bool reobserve = false)
         {
             diagnostics ??= [];
             await Db.SaveChangesAsync();
@@ -501,6 +501,14 @@ public partial class AgentTaskDispatchBaseGuardTests
             await using var provider = CreateProvider(Connection, Repo.WorktreeRoot, onLeaseAcquired: onLease, git: git);
             await using var scope = provider.CreateAsyncScope();
             await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
+            if (reobserve)
+            {
+                // CARD-1349 S2: a default edited under the lease refuses the frozen claim; the next
+                // inspected tick observes the edit and dispatches from what it observed.
+                await using (var refused = Fresh())
+                    (await refused.AgentTasks.SingleAsync(t => t.Id == Task.Id)).Status.ShouldBe(AgentTaskStatus.Queued);
+                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
+            }
             await using var check = Fresh();
             var dispatched = await check.AgentTasks.SingleAsync(t => t.Id == Task.Id);
             dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);

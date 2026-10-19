@@ -988,7 +988,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         held.Status.ShouldBe(AgentTaskStatus.Queued);
         held.WorktreePath.ShouldBeNull();
         var heldEvents = await db.AgentTaskEvents.AsNoTracking()
-            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held)
+            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held
+                && e.Detail != DispatchHoldDetails.SiblingInspectionPending)
             .ToListAsync(ct);
         heldEvents.ShouldHaveSingleItem();
         heldEvents[0].Detail.ShouldContain(sibling.WorktreeBranch!);
@@ -1011,7 +1012,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         dispatched.WorktreePath.ShouldNotBeNull();
         Directory.Exists(dispatched.WorktreePath).ShouldBeTrue();
         (await db.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held, ct)).ShouldBe(1);
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held
+                && e.Detail != DispatchHoldDetails.SiblingInspectionPending, ct)).ShouldBe(1);
         (await ScratchGitRepo.GitInAsync(
             dispatched.WorktreePath!, "merge-base", "--is-ancestor", sibling.WorktreeBranch!, "HEAD"))
             .Ok.ShouldBeTrue();
@@ -1046,7 +1048,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         held.Status.ShouldBe(AgentTaskStatus.Queued);
         held.WorktreePath.ShouldBeNull();
         var heldEvents = await db.AgentTaskEvents.AsNoTracking()
-            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held)
+            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held
+                && e.Detail != DispatchHoldDetails.SiblingInspectionPending)
             .ToListAsync(ct);
         heldEvents.ShouldHaveSingleItem();
         heldEvents[0].Detail.ShouldContain(sibling.WorktreeBranch!);
@@ -1169,7 +1172,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
         (await db.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held, ct)).ShouldBe(0);
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held
+                && e.Detail != DispatchHoldDetails.SiblingInspectionPending, ct)).ShouldBe(0);
         (await db.AgentTaskEvents.CountAsync(
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning, ct)).ShouldBe(0);
     }
@@ -1206,7 +1210,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
         (await db.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held, ct)).ShouldBe(0);
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held
+                && e.Detail != DispatchHoldDetails.SiblingInspectionPending, ct)).ShouldBe(0);
         await MaterializeAndDeliverAsync(scope.ServiceProvider, task.Id, ct);
         db.ChangeTracker.Clear();
         var warning = await db.AgentTaskEvents.AsNoTracking()
@@ -1337,9 +1342,11 @@ public partial class AgentTaskDispatchBaseGuardTests
     }
 
     /// <summary>
-    /// V-16 / G-48, G-49, G-65, G-116: one <c>base-observation-stale</c> intent per successful
-    /// claim whose observed base differs from the base the worktree was actually cut from, with
-    /// zero, one and two divergent siblings, and none at all when the two refs agree.
+    /// V-16 / G-48, G-49, G-65, G-116, amended by CARD-1349 S2: a default edited under the claim
+    /// lease invalidates the frozen observation, so that claim is refused instead of cutting from
+    /// a base the caller never saw; the next inspected tick observes the new default, dispatches
+    /// from it and owes no <c>base-observation-stale</c> intent, with zero, one and two divergent
+    /// siblings still warned exactly once each.
     /// </summary>
     [Test]
     [Timeout(120_000)]
@@ -1386,6 +1393,13 @@ public partial class AgentTaskDispatchBaseGuardTests
             : null);
         await using var scope = provider.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
+        if (moveTheDefault)
+        {
+            // The frozen observation named the old default; the locked claim refuses it and the
+            // task stays queued until a fresh inspection has observed the edited default.
+            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct)).Status.ShouldBe(AgentTaskStatus.Queued);
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
+        }
 
         db.ChangeTracker.Clear();
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
@@ -1399,22 +1413,8 @@ public partial class AgentTaskDispatchBaseGuardTests
             .Where(i => i.TaskId == task.Id).ToListAsync(ct);
         var mismatches = intents
             .Where(i => i.WarningKey == DispatchBaseNotificationPayload.MismatchKey).ToList();
-        if (moveTheDefault)
-        {
-            mismatches.ShouldHaveSingleItem();
-            mismatches[0].Detail.ShouldContain(observedRef);
-            mismatches[0].Detail.ShouldContain(expectedRef);
-            // The pair exists once, under the intent's own preallocated identity.
-            var note = await db.AgentTaskLandNotifications.AsNoTracking()
-                .SingleAsync(n => n.Id == mismatches[0].NotificationId, ct);
-            note.SourceEventId.ShouldBe(mismatches[0].Id);
-            note.Kind.ShouldBe(LandNotificationKind.DispatchBase);
-            (await db.AgentTaskEvents.CountAsync(e => e.Id == mismatches[0].Id, ct)).ShouldBe(1);
-        }
-        else
-        {
-            mismatches.ShouldBeEmpty();
-        }
+        // A refreshed observation always cuts from the ref it observed, so no stale-base intent exists.
+        mismatches.ShouldBeEmpty(observedRef + " was re-observed as " + expectedRef + " before the claim");
 
         var siblingIntents = intents
             .Where(i => i.WarningKey.StartsWith(
@@ -1427,7 +1427,7 @@ public partial class AgentTaskDispatchBaseGuardTests
                 i => i.WarningKey == DispatchBaseNotificationPayload.SiblingKey(sibling.Id));
         }
 
-        intents.Count.ShouldBe(divergentSiblings + (moveTheDefault ? 1 : 0));
+        intents.Count.ShouldBe(divergentSiblings);
     }
 
     /// <summary>

@@ -313,5 +313,7 @@ Antiphon.Tests.Application.SessionRuntimeActionDeferralTests
 
 # CARD-1349: bounded inspection integration uses isolated PostgreSQL and owned real Git graphs.
 Antiphon.Tests.Application.DispatchSiblingInspectionTests
+# CARD-1349: off-tick inspection queue, claim fences and brief recovery on isolated PostgreSQL with real Git.
 Antiphon.Tests.Application.DispatcherSiblingInspectionSchedulingTests
+# CARD-1349: committed block logs and inspection attention on isolated PostgreSQL with real Git.
 Antiphon.Tests.Application.DispatchBaseInspectionDiagnosticsTests
