@@ -254,10 +254,15 @@ policy is never reused.
 **Publish.** Only on RC complete-green, and only after the gate re-validates the candidate
 journal, profile/policy hash, every required suite result, report delivery and the remote
 candidate SHA. Diagnostic, `-NoReport` and seam-driven runs are refused outright. For a
-long-lived candidate id the reserved name is `vYYYY.MM.DD.N-rc.K`. While the UTC day
+long-lived candidate id the reserved name is `vYYYY.MM.DD.N-rc.K`, dated by the
+publisher's UTC clock sampled once per attempt. The branch-derived candidate id
+and `cutUtc` remain unchanged. Fresh remote tag inventory and journal reservations
+jointly occupy numbers; a remote final closes its `N`, including hand-published
+and lightweight finals. While the UTC day
 matches, the next new SHA on that day uses the same `N` and the next `K`. After a final
 tag exists for that `N`, or the UTC day changes, the next pre-release starts the next free
-`N` at `K=1`. The same SHA reuses its reservation. A legacy stamp id still reserves a
+`N` at `K=1`. The same candidate/SHA reuses its reservation across midnight and
+refuses conflicts without renumbering. A legacy stamp id still uses its stamp date for a
 final `vYYYY.MM.DD.N` and publishes it directly, without `--prerelease`.
 
 The pre-release sequence, each transition journalled **before** the next begins:

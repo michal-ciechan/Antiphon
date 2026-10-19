@@ -176,8 +176,9 @@ function Invoke-AntiphonPublishRelease {
     # Repository is the publication destination (it must equal the frozen value and
     # the checkout's origin); evidence may not post-date the publisher's clock; the
     # receipt must match the release card as the Antiphon API serves it now.
+    $attemptUtc = (Get-ReleaseGateUtcNow).ToUniversalTime()
     $authority = Test-ReleaseGateAuthority -CandidateRoot $paths.Root -RepositoryRoot $CheckoutRoot -Green $green -Candidate $candidate `
-        -Repository $Repository -NowUtc (Get-ReleaseGateUtcNow) -CardApiBaseUrl $AntiphonApiUrl
+        -Repository $Repository -NowUtc $attemptUtc -CardApiBaseUrl $AntiphonApiUrl
     $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $remoteSha `
         -Authority $authority -ExpectedPolicyHash $ExpectedPolicyHash -RequiredSuites $RequiredSuites
     if (-not $gate.Ok) {
@@ -204,6 +205,7 @@ function Invoke-AntiphonPublishRelease {
 
     $publicationJournal = Join-Path $ReleaseRoot 'publications.json'
     $cutUtc = ConvertTo-ReleaseGateUtc -Value $candidate.cutUtc -AllowEmpty
+    if (Test-ReleaseGateLongLivedCandidateId -CandidateId $CandidateId) { $cutUtc = $attemptUtc }
     if ($WhatIf) {
         # Read-only: -WhatIf reports the proposed tag and never reserves it, so
         # publications.json is untouched (not created, not rewritten).
