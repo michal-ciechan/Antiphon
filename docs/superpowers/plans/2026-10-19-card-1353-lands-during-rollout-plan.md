@@ -330,19 +330,19 @@ the table after S2-S4).
 
 | ID | Behaviour | Witness (method) | Red at S1 because |
 |---|---|---|---|
-| V-1 | Wrapper: an off-runner pending land passes; a bound one refuses | `C1087_Census_filters_open_work_and_pending_lands` (`pending-requested`, `pending-started`, `bound-*`) | base refuses `pending-requested` with `RecycleLandInFlight` |
-| V-2 | Wrapper: `check-census` reports `boundLandPending` and keeps `landPending` | `C1087_Check_census_phase_is_read_only` | base output lacks `boundLandPending=` |
-| V-3 | Wrapper: an off-runner in-flight detail state is recorded, not refused | `C1008_Busy_routed_and_land_in_flight_refuse` (states loop) | base exits 2 for `Running` on `runnerId=other` |
-| V-4 | Wrapper: an off-runner land appearing in the land closure is not `Unstable`; a bound one is | `C1326_Census_refuses_a_land_timestamp_or_land_pending_appearance` (`appears-in-land-closure-other`) | base ends `cause=Unstable` |
-| V-5 | Wrapper: a bound land is waited for, bounded, before host work; expiry keeps the first token | `C1353_Wrapper_waits_for_a_bound_land_then_proceeds` | base refuses at the first land read (one read, no `RECYCLE_LAND_WAIT`) |
-| V-6 | Host: off-runner lands pass `c1008_tasks`, bound lands refuse, in-flight off-runner proof shape | `C1353_Host_census_passes_off_runner_lands_and_waits_for_bound_lands` (`off-runner-pending`, `bound-pending-refuses`, `off-runner-in-flight-detail`) | base returns 3 for `off-runner-pending` |
-| V-7 | Host: `c1008_tasks_match_record` ignores an off-runner land absent from the record | same method (`match-record-ignores-off-runner-land`) | base returns 1 (live land key missing from saved) |
-| V-8 | Host: `c1008_tasks_wait` clears, expires with `waited=`, refuses invalid env | same method (`wait-clears`, `wait-expires`, `wait-invalid-env`) | `c1008_tasks_wait` is missing; `C1317ShellFunction` fails |
-| V-9 | Host: C1326 edges by runner | `C1326_Census_refuses_a_land_timestamp_or_land_pending_appearance` (host probes) | `appears-in-land-closure-other` returns 3 on base |
-| V-10 | Host matrix: off-runner land vectors accepted, bound variants refused | `RetiredTempContainerHostTests.C994_Host_task_and_land_census_is_complete` | `requested` vector is refused on base while the matrix says accepted |
+| V-1 | Wrapper: an off-runner pending land passes; a bound one refuses | `C1087_Census_filters_open_work_and_pending_lands` (vectors pending-requested, pending-started, bound-pending-requested, bound-pending-started) | base refuses the pending-requested vector with RecycleLandInFlight |
+| V-2 | Wrapper: check-census reports the bound land count beside the total | `C1087_Check_census_phase_is_read_only` | base output has no boundLandPending token |
+| V-3 | Wrapper: an off-runner in-flight detail state is recorded, not refused | `C1008_Busy_routed_and_land_in_flight_refuse` (states loop) | base exits 2 for the Running state on an off-runner row |
+| V-4 | Wrapper: an off-runner land appearing in the land closure is not Unstable; a bound one is | `C1326_Census_refuses_a_land_timestamp_or_land_pending_appearance` (wrapper probe appears-in-land-closure-other) | base ends cause=Unstable |
+| V-5 | Wrapper: a bound land is waited for, bounded, before host work; expiry keeps the first token | `C1353_Wrapper_waits_for_a_bound_land_then_proceeds` | base refuses at the first land read (one read, no wait line) |
+| V-6 | Host: off-runner lands pass the census, bound lands refuse, in-flight off-runner proof shape | `C1353_Host_census_passes_off_runner_lands_and_waits_for_bound_lands` (probes off-runner-pending, bound-pending-refuses, off-runner-in-flight-detail) | base returns 3 for off-runner-pending |
+| V-7 | Host: the match-record compare ignores an off-runner land absent from the record | `C1353_Host_census_passes_off_runner_lands_and_waits_for_bound_lands` (probe match-record-ignores-off-runner-land) | base returns 1 (live land key missing from saved) |
+| V-8 | Host: the land wait clears, expires with a waited suffix, refuses invalid env | `C1353_Host_census_passes_off_runner_lands_and_waits_for_bound_lands` (probes wait-clears, wait-expires, wait-invalid-env) | the wait function is missing, so the function extract fails |
+| V-9 | Host: C1326 edges by runner | `C1326_Census_refuses_a_land_timestamp_or_land_pending_appearance` (host probes) | the appears-in-land-closure-other probe returns 3 on base |
+| V-10 | Host matrix: off-runner land vectors accepted, bound variants refused | `RetiredTempContainerHostTests.C994_Host_task_and_land_census_is_complete` | the requested vector is refused on base while the matrix says accepted |
 | V-11 | Docs drop the freeze and state the runner-bound rule | `DockerStackDocumentationTests.Lands_proceed_during_rollout_is_documented` | pins absent on base |
-| R-1 | Bound open work still refuses `RecycleBoundTasks`; nested closures still walked | `C1087_Census_filters_open_work_and_pending_lands` (status loop, `closure`), `C1008_Busy_routed_and_land_in_flight_refuse` (`active-excluded`, `unscoped`, `withheld`) | regression guard |
-| R-2 | Existing doc pins | `DockerStackDocumentationTests.Recycle_census_preflight_is_documented`, `Main_volume_recycling_is_scripted_only` | regression guard |
+| R-1 | Bound open work still refuses RecycleBoundTasks; nested closures still walked | `C1087_Census_filters_open_work_and_pending_lands` (status loop, closure vector) and `C1008_Busy_routed_and_land_in_flight_refuse` (active-excluded, unscoped, withheld vectors) | regression guard |
+| R-2 | Existing doc pins | `DockerStackDocumentationTests.Recycle_census_preflight_is_documented` and `DockerStackDocumentationTests.Main_volume_recycling_is_scripted_only` | regression guard |
 
 Red witness (D-11): at the S1 commit, one build `tests/Antiphon.Tests -> bin-c1353-red/` and the five
 checkpoint filters below against it, through `scripts/build-slot.ps1` or `run-checkpoint.ps1` with a
