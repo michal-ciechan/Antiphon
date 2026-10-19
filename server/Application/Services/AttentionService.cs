@@ -408,7 +408,7 @@ public sealed partial class AttentionService
             if (inspectionReason is not null)
             {
                 headline = "Blocked — base inspection needs attention.";
-                primary = DispatchInspectionDiagnostics.Recovery(inspectionReason);
+                primary = DispatchInspectionDiagnostics.Recovery(inspectionReason, task.FailureReason);
             }
             var canContinue = kind == BlockedKind.Question
                 && task.AgentSessionId is not null
@@ -435,7 +435,8 @@ public sealed partial class AttentionService
                 actions,
                 ModelKind: kind == BlockedKind.SubscriptionQuota ? task.AgentKind.ToString() : null,
                 ModelAlias: quotaAlias,
-                ConditionKey: kind == BlockedKind.SubscriptionQuota
+                ConditionKey: inspectionReason is not null ? $"dispatch-base-inspection:{task.Id:N}"
+                    : kind == BlockedKind.SubscriptionQuota
                     ? $"quota-blocked:{task.Id:N}" : null));
         }
 
