@@ -212,6 +212,7 @@ Failed status, failure code, reason and completion time remain historical. A sep
 and a Review whose `subjectTaskId` is that separate source. An actual `-RepairSource`
 task is ineligible for `-FromTask` adoption.
 
+<a id="delegate-start-ref"></a>
 **Continuing a sibling's work (CARD-0613).** To start a delegate from a commit other than the
 default base - continuing an interrupted stage, or picking up where another task's branch got to -
 pass the base as a DISPATCH PARAMETER, never as `git checkout -B ...` prose in the goal:
@@ -451,6 +452,7 @@ Inspect that history and decide whether it needs integration; the warning alone 
 Lowest `rank` first — the formula already prefers a card that **changes how everything else gets done** over one more feature.
 Prefer a card whose plan already exists — but check properly, see below.
 
+<a id="standing-pipeline-policy"></a>
 ### Standing pipeline policy: four per stage, six on server2, read limits first (CARD-0533)
 
 **This is the orchestrator's default for working the Antiphon board.** It was the operator's
@@ -889,6 +891,7 @@ flaky test.
 
 Say this in the brief explicitly; do not assume the role name carries it.
 
+<a id="runner-placement"></a>
 **Runner defaults are not model pins.** Read `GET /api/runner-defaults` and `GET /api/session-runners`
 when a fresh task needs a host. Normally omit `-Runner`; the runtime default places the task.
 Omit `-Platform`: a follow-up inherits its predecessor's platform and
@@ -898,8 +901,9 @@ when that piece of work requires it: a test, tool, behaviour or OS-specific API;
 handling; file locking; process or terminal behaviour; an OS-only test or probe; or evidence meaningful
 only on that OS. Habit, a stage name, "Review always on X", or preferring the current host are not
 requirements. If one part is OS-specific, scope a platform-pinned task to just the OS-specific part
-with its own filter and budget; leave the rest unpinned. A settings change is GET then PUT with the
-current revision, a reason, and Human provenance.
+with its own filter and budget; leave the rest unpinned. A pipeline tick never writes defaults.
+A user-requested settings change is `GET` then `PUT /api/runner-defaults` with the current
+revision, a reason, and Human provenance.
 `Delegation:DefaultRunnerId` is import-only after the first runtime revision.
 
 **The matrix governs an ordinary Worker dispatch; a pin is the exception.** For role-wide routing,
@@ -2264,6 +2268,7 @@ D-2 next-stage classification: advisory-only follow-ups are recorded separately 
 
 ADVISORY (D-2): No Review rerun solely for advisory docs/evidence corrections; initial ordinary Review still applies. Keep behavior, verification completeness, advisory corrections and introduced/inherited/unresolved attribution separate. Missing acceptance, failed tests or untrustworthy required verification cannot become Clean/Full by relabeling. Run an exact missing selection once; attach existing same-source receipts only through deterministic validation and append-only audit when available, otherwise retain the incomplete gate. Preserve historical outcomes/costs. Freeze reviewed source: publish its valid tip first, then use a separate Docs helper's exact SHA, delta digest and unlatched caller approval for inspected narrative-only corrections. Never copy the old Review/source-clean assertion, use an Interim latch escape, or classify instructions, policy, executable/generated/configuration content or unproved comments as narrative.
 
+<a id="verification-rounds"></a>
 ## Interim and Final verification rounds (CARD-0544, dormant)
 
 Every new Code/Review task carries verification profile v1. `Final` is the default and the only
@@ -2278,6 +2283,14 @@ feature ships disabled with every card `FullOnly` and no enablement path; do not
 Completion notes of profile-v1 tasks are durable obligations (see
 [session-runtime-invariants.md](session-runtime-invariants.md)); dispatch from the header's
 `next=`, never re-read the body.
+
+The first Code and the first Review of a card always run `Final`, the full ordinary sweep; an
+omitted `-VerificationRound` is `Final`. `Interim` is explicit only: the card's role policy must
+allow it, and the request names `-VerificationSubject` (the original landing owner),
+`-VerificationBaselineOutcome` (a full-scope Review outcome) and `-VerificationSelectionFile`
+(the committed selection as JSON). A refused Interim request is never resubmitted silently as a
+different round. A clean Interim Review routes to a fresh Final Review of the unchanged
+candidate, never to land; a latched owner lands only with a Clean Final/Full Review.
 
 CARD-0835 adds an explicit `reviewedSourceClean: true|false` line to the bare Review evidence
 block. Review may report true only after its complete required checkpoint selection passes
