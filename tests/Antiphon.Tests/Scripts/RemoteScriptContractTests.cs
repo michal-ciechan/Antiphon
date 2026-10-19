@@ -3458,7 +3458,10 @@ public sealed class RemoteScriptContractTests
     [Arguments("missing-phase", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-missing-phase"])]
     [Arguments("bad-tasks", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-bad-tasks"])]
     [Arguments("verified", 0, "", Categories = ["c1105-verified"])]
+    // CARD-1353 D-1: a pending land refuses the post-removal proof only when its row is bound to the
+    // recycled runner (server2 here). A server2-temp land finishing during the recycle passes.
     [Arguments("land", 2, "RecycleLandInFlight 44444444-4444-4444-4444-444444444444", Categories = ["c1105-land"])]
+    [Arguments("land-other", 0, "", Categories = ["c1105-land-other"])]
     [Arguments("unstable", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-unstable"])]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Resume_post_removal_census_tracks_open_work(string flip, int expect, string token)
@@ -3487,8 +3490,8 @@ public sealed class RemoteScriptContractTests
             C1105AddOpenTask(fixture, added, "server2", "Blocked");
         else if (flip == "rebound")
             C1105SetRunner(fixture, kept, "desktop");
-        else if (flip == "land")
-            C1105AddOpenTask(fixture, added, "server2-temp", "Succeeded", requested: "2020-01-01T00:00:00Z");
+        else if (flip is "land" or "land-other")
+            C1105AddOpenTask(fixture, added, flip == "land" ? "server2" : "server2-temp", "Succeeded", requested: "2020-01-01T00:00:00Z");
         if (flip == "preflight") record["phase"] = "preflight";
         else if (flip == "verified") record["phase"] = "verified";
         else if (flip == "missing-phase") record.Remove("phase");
