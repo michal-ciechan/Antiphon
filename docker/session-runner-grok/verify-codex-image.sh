@@ -244,6 +244,7 @@ case "$row" in
     [ "$sdk" = 10.0.401 ] || result fail "default SDK is not 10.0.401"
     dotnet --list-sdks | grep -q '^10\.0\.401 ' || result fail "SDK 10.0.401 missing"
     dotnet --list-runtimes || result fail "runtime query failed"
+    # CARD-0913: match NET9_PACK_VERSION in this directory's Dockerfile; the runtime pin does not select reference packs.
     cat > "$root/project/Offline.csproj" <<'PROJECT'
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
@@ -256,7 +257,11 @@ case "$row" in
     <SelfContained>false</SelfContained>
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
-  <ItemGroup><FrameworkReference Include="Microsoft.AspNetCore.App" /></ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <FrameworkReference Update="Microsoft.NETCore.App" TargetingPackVersion="9.0.20" />
+    <FrameworkReference Update="Microsoft.AspNetCore.App" TargetingPackVersion="9.0.20" />
+  </ItemGroup>
 </Project>
 PROJECT
     printf '%s\n' 'var context = new Microsoft.AspNetCore.Http.DefaultHttpContext(); System.Console.WriteLine(context.Response.StatusCode == 200 ? "net9-offline-ok" : "bad-context");' > "$root/project/Program.cs"
