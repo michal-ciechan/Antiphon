@@ -362,3 +362,53 @@ outputs: refused/kept bin-c1349-base/
 evidence: /tmp/c1349-f4fd378a-base/.antiphon/checkpoints/20261019-162924-b55a/report.md
 verdict: RED exit=1
 
+
+## Repair round 2 (Code task c7760867, branch feat/card-task-c7760867)
+
+Start ref 160925ac62c9bcd034128075a6e8669a3ed5c4d6 (repair round 1 tip). Operator policy for this round: rerun only CP-11, CP-29 and the failing CP-34 method with narrow filters, `--row-timeout 40m`, no whole-Unit or whole-CP-34 rerun.
+
+Slices:
+
+```text
+6689a941ae0bd3b4d4b4bb7bea7f0ce83fb8d2a2 fix: report no observed base ref when a task has no same-repo siblings
+a6aaf141fdb7f17132889b14f46de53191222b45 test: keep the caller session in the fake runner inventory during absent-launch recovery
+146102e55e234bc55ce6f6d75e6a05bfc0393c02 test: share the harness queue with the absent-launch sweep provider
+```
+
+Product defect (CP-34 `C508_GuardRefMismatchWarnedOnce(0, True)`): the zero-sibling early return in `CardSiblingInspectionService.InspectAsync` reported `ObservedBaseRef = GitSettings.DefaultBranch` before the configured project default was read, so the dispatcher drafted a `base-observation-stale` intent for every no-sibling task whose project default differs from the global default. The early return now carries no observed base ref; nothing was evaluated against any base in that shape. The second inspected tick of the (0, True) argument is exactly the production shape (project default differs from the global default, zero siblings, no lease-time edit).
+
+Fixture defect (CP-11 absent cases): the reconciliation scan the test runs selects every live session with no runner id and the fake runner listed none, so the scan closed the caller session (runner-unknown) beside the absent worker and the queue refused to type the retained note into a Failed recipient. The sweep clock was not the cause: a parent note carries no `HoldUntil` and the idle flush does not gate on `CreatedAt`. The runner inventory now serves the caller session as Running for the whole test. Keeping the caller alive exposed a second fixture hole: the sweep provider's own `SessionMessageQueueService`, built on the sweep's `FakeTimeProvider`, attempted the reject-absence failure note's WhenIdle delivery and waited on a transcript-confirm deadline that never arrived, hanging the whole row behind the class limiter (run 20261019-190833-76d5, CP-11 `timeout=total`). The sweep now shares the harness queue.
+
+CP-29 (`queue-inserted, False`) was green on its single rerun; the round-1 red is recorded as a flake candidate under two concurrent rows, not a regression.
+
+Manifest: `import --plan` of the test-design table plus `timeouts.rowMinutes: 40` and one narrow row CP-34a (`/*/*/AgentTaskDispatchBaseGuardTests/C508_GuardRefMismatchWarnedOnce*`, minExecuted 4) reusing the CP-1 build. The second run renamed the build id to `bin-c1349-r2` because the red first run retained `bin-c1349-all/`.
+
+### 20261019-190833-76d5 (a6aaf141f; CP-11 cut by the 30-minute total deadline while hung)
+
+```text
+CHECKPOINT CP-29 commit=a6aaf141fdb7f17132889b14f46de53191222b45 build=reused filter=/*/*/RemoteWorkspacePreparerTests/C672_prepared_runner_brief_reaches_its_session_while_a_land_holds_the_lease* executed=4 passed=4 failed=0 skipped=0 trx=/work/worktrees/task-c7760867/.antiphon/checkpoints/20261019-190833-76d5/rows/CP-29/run.trx slot=granted waited=0s dirty=0 source=a6aaf141fdb7f17132889b14f46de53191222b45 sourceState=clean buildSource=verified
+CHECKPOINT CP-34a commit=a6aaf141fdb7f17132889b14f46de53191222b45 build=reused filter=/*/*/AgentTaskDispatchBaseGuardTests/C508_GuardRefMismatchWarnedOnce* executed=4 passed=4 failed=0 skipped=0 trx=/work/worktrees/task-c7760867/.antiphon/checkpoints/20261019-190833-76d5/rows/CP-34a/run.trx slot=granted waited=0s dirty=0 source=a6aaf141fdb7f17132889b14f46de53191222b45 sourceState=clean buildSource=verified
+CHECKPOINT CP-11 commit=a6aaf141fdb7f17132889b14f46de53191222b45 build=n/a filter=/*/*/DispatcherSiblingInspectionSchedulingTests/C1349_BriefHandoffRecovers* executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a timeout=total slot=skipped waited=0s dirty=unknown source=unknown sourceState=unknown buildSource=unknown
+wall: 30m01s  sequential-equivalent: 2m15s  builds: 1  max-concurrent-builds: 1  rows: 2 green 1 red 0 skipped
+outputs: refused/kept bin-c1349-all/
+verdict: RED exit=5
+```
+
+Build bin-c1349-all: slot=granted waited=0s, 19:08:41 to 19:16:08 UTC (about 7.5 minutes at host load 7 to 15). One `owner read failed: http 502` at 19:15:18 and one at 19:22:44; the run was not owner-unverified.
+
+### 20261019-194939-e829 (146102e55)
+
+```text
+CHECKPOINT CP-11 commit=146102e55e234bc55ce6f6d75e6a05bfc0393c02 build=ok filter=/*/*/DispatcherSiblingInspectionSchedulingTests/C1349_BriefHandoffRecovers* executed=8 passed=8 failed=0 skipped=0 trx=/work/worktrees/task-c7760867/.antiphon/checkpoints/20261019-194939-e829/rows/CP-11/run.trx slot=granted waited=0s dirty=0 source=146102e55e234bc55ce6f6d75e6a05bfc0393c02 sourceState=clean buildSource=verified
+PHASES CP-11 slotWait=0s build=240.6022705s startup=58.9862599s testsWall=29.3434699s teardown=3.35895s hostWall=91.6887056s
+unlisted: none (the tool ran no other build or test command)
+wall: 6m24s  sequential-equivalent: 1m32s  builds: 1  max-concurrent-builds: 1  rows: 1 green 0 red 0 skipped
+outputs: deleted bin-c1349-r2/
+verdict: GREEN exit=0
+```
+
+CP-29 and CP-34a were not rerun at 146102e55; the only commit after a6aaf141f touches `DispatcherSiblingInspectionSchedulingTests.BriefRecovery.cs`, which neither row's class references.
+
+Unlisted runs this round, all leased through the host build-slot gate: the checkpoint-tool bootstrap (`dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-c1349-tool/ --property:UseAppHost=false`, 0 errors / 4 warnings, 12 s, slot=granted waited=0s held=12s); four diagnostic-only test-host invocations against the retained `bin-c1349-all` output while CP-11 was hung (CP-11 filter bounded to 210 s and 240 s, both killed with every case still waiting in TUnit's scheduling semaphore; the CP-34a filter as a control, 4 passed in 68 s; and two bounded CP-11 runs under `dotnet-stack`, which could not attach: `ServerNotAvailableException`). None is a qualification receipt. `dotnet-stack` was installed as a user-global tool and left in place.
+
+Rows not rerun this round keep their historical outcomes above and in the round-1 report. PC-1 through PC-118 and every variant remain pending for method-scoped SourceLanding Mutation; 0 deliberate mutants executed.
