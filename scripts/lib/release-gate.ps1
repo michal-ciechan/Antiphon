@@ -90,6 +90,30 @@ function Get-ReleaseGateRemoteTag {
     return [pscustomobject]@{ Status = 'Found'; Sha = $peel.Sha; ObjectSha = $direct.Sha }
 }
 
+function Push-ReleaseGateExactTag {
+    # Git applies DWIM even to explicit push destinations. Pattern refspecs map
+    # complete refs literally. Give one such mapping its own private namespace,
+    # containing only our annotated tag object, and remove that ref with a CAS.
+    param([string]$WorkingDirectory, [string]$Tag)
+    $failed = @{ ExitCode = 1; Output = '' }
+    $object = Invoke-ReleaseGateGit -WorkingDirectory $WorkingDirectory -Arguments @('show-ref', '--verify', '--hash', ('refs/tags/' + $Tag))
+    $sha = ([string]$object.Output).Trim()
+    if ($null -eq $object -or [int]$object.ExitCode -ne 0 -or -not (Test-ReleaseGateFullSha $sha)) { return $failed }
+    $prefix = 'refs/antiphon-release-push/' + [guid]::NewGuid().ToString('N') + '/'
+    $privateRef = $prefix + $Tag
+    $create = Invoke-ReleaseGateGit -WorkingDirectory $WorkingDirectory -Arguments @('update-ref', $privateRef, $sha, ('0' * 40))
+    if ($null -eq $create -or [int]$create.ExitCode -ne 0) { return $failed }
+    $push = $failed
+    $cleanup = $null
+    try {
+        $push = Invoke-ReleaseGateGit -WorkingDirectory $WorkingDirectory -Arguments @('push', 'origin', ($prefix + '*:refs/tags/*'))
+    } finally {
+        $cleanup = Invoke-ReleaseGateGit -WorkingDirectory $WorkingDirectory -Arguments @('update-ref', '-d', $privateRef, $sha)
+    }
+    if ($null -eq $cleanup -or [int]$cleanup.ExitCode -ne 0) { return $failed }
+    return $push
+}
+
 function Test-ReleaseGateCandidateRef {
     # D-3: a legacy stamp, or a long-lived rc/YYYY-MM-DD. Anything else is not a candidate.
     # The long-lived candidate id is rc-YYYY-MM-DD- plus the first 12 hex digits of -Sha.

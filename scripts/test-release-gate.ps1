@@ -140,11 +140,18 @@ function New-C599GitSeams {
         `$state = Get-Content -LiteralPath `$remote -Raw | ConvertFrom-Json
         `$sub = [string]`$Arguments[0]
         function Get-RefKey([string]`$r) { return ((`$r -replace '^refs/heads/', '') -replace '\^\{\}$', '' -replace '[^A-Za-z0-9]', '_') }
+        function Get-PushSpec([string]`$spec) {
+            if (`$spec -like 'refs/antiphon-release-push/*') {
+                `$private = Get-Content -LiteralPath '$Root/private-ref.json' -Raw | ConvertFrom-Json
+                return ([string]`$private.ref -replace '^refs/antiphon-release-push/[^/]+/', 'refs/tags/')
+            }
+            return `$spec
+        }
         if (`$fail.PSObject.Properties.Name -contains `$sub -and [bool]`$fail.`$sub) {
             if (`$fail.PSObject.Properties.Name -contains (`$sub + '_commits') -and [bool]`$fail.(`$sub + '_commits')) {
                 # commit-then-lose-response: the remote accepted the write, the caller did not hear.
                 if (`$sub -eq 'push') {
-                    `$spec = [string]`$Arguments[2]
+                    `$spec = Get-PushSpec ([string]`$Arguments[2])
                     `$parts = `$spec -split ':'
                     `$key = Get-RefKey `$parts[`$parts.Count - 1]
                     `$val = `$parts[0]
@@ -156,7 +163,12 @@ function New-C599GitSeams {
             return @{ ExitCode = 1; Output = 'injected failure' }
         }
         if (`$sub -eq 'fetch' -or `$sub -eq 'clone' -or `$sub -eq 'tag') { return @{ ExitCode = 0; Output = '' } }
-        if (`$sub -eq 'rev-parse' -or `$sub -eq 'rev-list') { return @{ ExitCode = 0; Output = '$HeadSha' } }
+        if (`$sub -eq 'rev-parse' -or `$sub -eq 'rev-list' -or `$sub -eq 'show-ref') { return @{ ExitCode = 0; Output = '$HeadSha' } }
+        if (`$sub -eq 'update-ref') {
+            if (`$Arguments[1] -eq '-d') { Remove-Item -LiteralPath '$Root/private-ref.json' -ErrorAction SilentlyContinue }
+            else { @{ ref = [string]`$Arguments[1] } | ConvertTo-Json | Set-Content -LiteralPath '$Root/private-ref.json' }
+            return @{ ExitCode = 0; Output = '' }
+        }
         if (`$sub -eq 'log') { return @{ ExitCode = 0; Output = 'abc1234 feat: something' } }
         if (`$sub -eq 'ls-remote') {
             `$ref = [string]`$Arguments[`$Arguments.Count - 1]
@@ -167,7 +179,7 @@ function New-C599GitSeams {
             return @{ ExitCode = 0; Output = (`$val + "``t" + `$ref) }
         }
         if (`$sub -eq 'push') {
-            `$spec = [string]`$Arguments[2]
+            `$spec = Get-PushSpec ([string]`$Arguments[2])
             `$parts = `$spec -split ':'
             `$key = Get-RefKey `$parts[`$parts.Count - 1]
             `$val = `$parts[0]
@@ -4203,7 +4215,8 @@ function Test-C1339_ExactRemoteRefs {
     Set-C1339Read $fx ('refs/tags/' + $fx.PreTag + '^{}') ($fx.B + "`trefs/tags/unrelated/" + $fx.PreTag + '^{}')
     $r = Invoke-C1339Publish $fx
     $gh = Get-Content -LiteralPath $fx.Gh.StorePath -Raw | ConvertFrom-Json
-    Assert-C487 -Cond ($r.ExitCode -eq 0 -and $r.Published -and (Get-C1339Peel $fx $fx.PreTag) -ceq $fx.Head -and @($gh.releases).Count -eq 1 -and -not $gh.releases[0].isDraft) -Name 'C1339 G-12 publisher-verify-read' -Detail $r.Refusal
+    $privateRefs = Invoke-C1339LocalGit $fx @('for-each-ref', '--format=%(refname)', 'refs/antiphon-release-push/')
+    Assert-C487 -Cond ($r.ExitCode -eq 0 -and $r.Published -and (Get-C1339Peel $fx $fx.PreTag) -ceq $fx.Head -and @($gh.releases).Count -eq 1 -and -not $gh.releases[0].isDraft -and $privateRefs -eq '') -Name 'C1339 G-12 publisher-verify-read' -Detail $r.Refusal
 
     $fx = New-C1339Fixture
     Add-C1339Tag $fx $fx.PreTag $fx.Head
@@ -4220,9 +4233,10 @@ function Test-C1339_ExactRemoteRefs {
         if ($conflict) { Add-C1339Tag $fx $fx.FinalTag $fx.C }
         $r = Invoke-C1339Promote $fx
         $peel = Get-C1339Peel $fx $fx.FinalTag
+        $privateRefs = Invoke-C1339LocalGit $fx @('for-each-ref', '--format=%(refname)', 'refs/antiphon-release-push/')
         $ok = $r.ExitCode -eq 0 -and $r.Promoted -and -not $r.Resumed -and $peel -ceq $fx.Head
         if ($conflict) { $ok = $r.Refusal -eq 'final-tag-conflict' -and $peel -ceq $fx.C -and (Test-C1339NoWrites $fx) }
-        $checks += New-C1339Check $ok ('conflict=' + $conflict + ':' + $r.Refusal)
+        $checks += New-C1339Check ($ok -and $privateRefs -eq '' -and (Get-C1339Peel $fx ('refs/tags/' + $fx.FinalTag)) -ceq $fx.Head) ('conflict=' + $conflict + ':' + $r.Refusal)
     }
     Assert-C599AMatrix 'C1339 G-15 promotion-existing-read' $checks
 

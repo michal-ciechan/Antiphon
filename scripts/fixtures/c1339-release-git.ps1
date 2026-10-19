@@ -66,7 +66,7 @@ function Invoke-C1339FixtureGit {
         }
         'push' {
             $spec = [string]$Arguments[2]
-            $tagSpec = $spec -cmatch '^(refs/tags/[A-Za-z0-9./-]+):\1$'
+            $tagSpec = $spec -cmatch '^refs/antiphon-release-push/[a-f0-9]{32}/\*:refs/tags/\*$'
             if ($Arguments.Count -ne 3 -or $Arguments[1] -cne 'origin' -or
                 (-not $tagSpec -and $spec -notmatch '^(refs/tags/[A-Za-z0-9./-]+|[a-f0-9]{40}:refs/heads/[A-Za-z0-9./-]+)$')) { throw 'fixture-push-form' }
             $forward[1] = $Bare
@@ -78,6 +78,13 @@ function Invoke-C1339FixtureGit {
         'tag' { if ($Arguments.Count -ne 6 -or $Arguments[1] -cne '-a' -or $Arguments[4] -cne '-m' -or $Arguments[3] -notmatch '^[a-f0-9]{40}$') { throw 'fixture-tag-form' } }
         'rev-parse' { if ($Arguments.Count -ne 2 -or $Arguments[1] -ne 'HEAD') { throw 'fixture-read-form' } }
         'rev-list' { if ($Arguments.Count -ne 4 -or $Arguments[1] -ne '-n' -or $Arguments[2] -ne '1') { throw 'fixture-read-form' } }
+        'show-ref' { if ($Arguments.Count -ne 4 -or $Arguments[1] -ne '--verify' -or $Arguments[2] -ne '--hash' -or $Arguments[3] -notmatch '^refs/tags/[A-Za-z0-9.-]+$') { throw 'fixture-read-form' } }
+        'update-ref' {
+            $refIndex = 1
+            if ($Arguments[1] -ceq '-d') { $refIndex = 2 }
+            if ($Arguments.Count -ne 4 -or $Arguments[$refIndex] -cnotmatch '^refs/antiphon-release-push/[a-f0-9]{32}/v[0-9.rc-]+$' -or
+                $Arguments[3] -cnotmatch '^[a-f0-9]{40}$') { throw 'fixture-private-ref-form' }
+        }
         'log' { if ($Arguments.Count -ne 4 -or $Arguments[1] -ne '--no-merges' -or $Arguments[2] -ne '--format=%h %s') { throw 'fixture-read-form' } }
         default { throw 'fixture-command-refused' }
     }
