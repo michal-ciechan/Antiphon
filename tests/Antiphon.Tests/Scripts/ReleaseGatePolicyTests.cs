@@ -32,7 +32,7 @@ public sealed class ReleaseGatePolicyTests
     public Task C599_E2EWatchdog() => RunCaseAsync("C599_E2EWatchdog", 4,
         "C599 resolved e2e watchdog is 7200000",
         "C599 antiphon watchdog stays 3600000",
-        "C599 session-runner watchdog stays 1200000",
+        "C599 resolved session-runner watchdog is 1800000",
         "C599 missing watchdog key keeps the 3600000 fallback");
 
     [Test]
