@@ -4361,10 +4361,14 @@ function Test-C1339_RemoteTagAllocation {
 # ====================================================================== run ===
 
 function Set-C1339Clock {
-    param($Fx, [string]$Utc)
+    param($Fx, [string]$Utc, [string]$NextUtc = '')
+    if (-not $NextUtc) { $NextUtc = $Utc }
     Add-Content -LiteralPath $Fx.Gh.Path -Encoding ASCII -Value @"
+`$script:C1339ClockCalls = 0
 `$ReleaseGateSeams.UtcNow = {
     Add-Content -LiteralPath '$($Fx.Root)/clock.log' -Value 'clock' -Encoding ASCII
+    `$script:C1339ClockCalls++
+    if (`$script:C1339ClockCalls -gt 1) { return [datetime]'$NextUtc' }
     return [datetime]'$Utc'
 }
 "@
@@ -4385,7 +4389,7 @@ function Set-C1339Candidate {
 
 function Test-C1339_AllocationUtcDay {
     $fx = New-C1339Fixture
-    Set-C1339Clock $fx '2026-10-19T23:59:59Z'
+    Set-C1339Clock $fx '2026-10-20T01:59:59+02:00' '2026-10-20T00:00:01Z'
     $candidatePath = Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $fx.CandidateId) 'candidate.json'
     $candidateBefore = [IO.File]::ReadAllText($candidatePath)
     $preview = Invoke-C1339Publish $fx -WhatIf
@@ -4396,12 +4400,22 @@ function Test-C1339_AllocationUtcDay {
         (Get-C1339Peel $fx $first.Tag) -ceq $fx.Head) -Name 'C1339 G-33 utc-day' -Detail ($first.Tag + ':' + $first.Refusal)
     $calls = @(Get-Content (Join-Path $fx.Root 'clock.log')).Count
     Assert-C487 -Cond ($calls -eq 2) -Name 'C1339 G-34 one-clock-sample' -Detail ([string]$calls)
+    $identityPreserved = [IO.File]::ReadAllText($candidatePath) -ceq $candidateBefore
+    $fx = New-C1339Fixture
+    Set-C1339Clock $fx '2026-10-19T23:59:59Z'
+    Write-NightlyAtomicJson -Path $fx.FaultPath -Object @{ push = 'before' }
+    $failed = Invoke-C1339Publish $fx
     $journal = Join-Path $fx.ReleaseRoot 'publications.json'
-    $before = [IO.File]::ReadAllText($journal)
+    $reserved = (Get-Content $journal -Raw | ConvertFrom-Json).reservations[0]
+    $reservedBeforeMidnight = $failed.Refusal -eq 'tag-push-failed' -and $failed.Tag -ceq 'v2026.10.19.1-rc.1' -and
+        (Get-C1339Peel $fx $failed.Tag) -eq '' -and -not $reserved.published
+    Remove-Item -LiteralPath $fx.FaultPath
     Set-C1339Clock $fx '2026-10-20T00:00:01Z'
     $again = Invoke-C1339Publish $fx
-    $same = $again.ExitCode -eq 0 -and $again.Resumed -and $again.Tag -ceq 'v2026.10.19.1-rc.1' -and [IO.File]::ReadAllText($journal) -ceq $before
-    $identityPreserved = [IO.File]::ReadAllText($candidatePath) -ceq $candidateBefore
+    $stored = (Get-Content $journal -Raw | ConvertFrom-Json).reservations
+    $same = $reservedBeforeMidnight -and $again.ExitCode -eq 0 -and $again.Published -and $again.Resumed -and
+        $again.Tag -ceq 'v2026.10.19.1-rc.1' -and @($stored).Count -eq 1 -and $stored[0].tag -ceq $reserved.tag -and
+        $stored[0].sha -ceq $reserved.sha -and $stored[0].candidateId -ceq $reserved.candidateId -and $stored[0].reservedAt -ceq $reserved.reservedAt
     Set-C1339Candidate $fx $fx.B
     $next = Invoke-C1339Publish $fx
     Assert-C487 -Cond ($same -and $next.ExitCode -eq 0 -and $next.Published -and $next.Tag -ceq 'v2026.10.20.1-rc.1' -and
