@@ -592,7 +592,7 @@ internal static class C1361CensusProbes
                 $fn=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Stop-RecycleMalformed'},$true)
                 Invoke-Expression $fn.Extent.Text
                 foreach ($v in @($null,-1,1.5,'1',$true,@{},@(),0,1,2)) {
-                    $envelope=[pscustomobject]@{excluded=[pscustomobject]@{total=$v}}
+                    $envelope=[pscustomobject]@{excluded=[pscustomobject]@{total=$v} }
                     $errorText=''; try { Invoke-Expression $blocks[0].Extent.Text } catch { $errorText=$_.Exception.Message }
                     $valid=($v -is [int] -and $v -ge 0)
                     if ($valid -and $errorText) { throw "valid total refused: $errorText" }
