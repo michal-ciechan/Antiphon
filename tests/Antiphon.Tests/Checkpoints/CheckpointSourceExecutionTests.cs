@@ -18,6 +18,58 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
     private static readonly string Fingerprint = new('1', 64);
 
     [Test]
+    public async Task host_written_entries_under_the_row_output_are_adopted_and_cleaned_on_green()
+    {
+        var source = Observe(Sha, 0);
+        var repo = TempDir();
+        Directory.CreateDirectory(Path.Combine(repo, "sample"));
+        File.WriteAllText(Path.Combine(repo, "sample", "sample.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        var output = Path.Combine(repo, "sample", "bin-c1368");
+        var html = Path.Combine(output, "TestResults", "sample_report.html");
+        var manifest = new CheckpointManifest
+        {
+            Builds = [new BuildSpec { Id = "bin-c1368", Project = "sample", OutputPath = "bin-c1368/" }],
+            Checkpoints = [new CheckpointSpec
+            {
+                Id = "CP-1", After = ["all"], Build = "bin-c1368",
+                Filter = "/*/*/ExampleSurfaceTests/*", MinExecuted = 1,
+                Expect = ["ExampleSurfaceTests"], EstimatedMinutes = 1,
+            }],
+        };
+        var run = CheckpointApp.CreateRun(manifest, new RunRequest
+        {
+            Commit = Sha, Branch = "fixture", KeepOutputs = false, Slots = "off",
+        }, repo, new CheckpointApp.Runtime { SourceCapture = _ => source });
+        var driver = new FakeDriver();
+        driver.When(CheckpointFixtures.IsRun, (request, _) =>
+        {
+            CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request),
+                ("Antiphon.Tests.ExampleSurfaceTests.case", "Passed"));
+            Directory.CreateDirectory(Path.GetDirectoryName(html)!);
+            File.WriteAllText(html, "<html>host</html>");
+            return Task.FromResult(new DriverResult(0, "", "")
+            {
+                Exited = CheckpointFixtures.AfterFileClock(html),
+            });
+        });
+
+        (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(driver, _ => source)))
+            .ShouldBe(0, "host-output-cleanup");
+        var report = Read(run);
+        report.Verdict.ShouldBe("GREEN");
+        report.ExitCode.ShouldBe(0);
+        report.CleanedOutputs.ShouldBeTrue();
+        report.CleanupRefusals.ShouldBeEmpty();
+        Directory.Exists(output).ShouldBeFalse();
+        var evidence = Path.Combine(run, "report.json");
+        (await Antiphon.Checkpoints.Program.RunAsync(["validate", "--repo-root", repo,
+            "--evidence", evidence, "--expected-source-sha", Sha])).ShouldBe(0);
+        var script = await ValidateFileWithScriptAsync(evidence);
+        script.Exit.ShouldBe(0, script.Output);
+    }
+
+    [Test]
     public async Task clean_and_dirty_runs_publish_bound_source()
     {
         foreach (var dirty in new[] { false, true })
