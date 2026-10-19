@@ -1191,6 +1191,7 @@ public sealed class RollingVolumeRecycleScriptTests
             case "changed-row":
                 var before = C1319Row(changed, "Queued");
                 var after = C1319Row(changed, "Working");
+                after["runnerId"] = "other";
                 first = C1319Envelope(f, before);
                 second = C1319Envelope(f, after);
                 details[changed] = new JsonArray(C1319Detail(before, "Queued"), C1319Detail(after, "Working"));
@@ -1320,6 +1321,7 @@ public sealed class RollingVolumeRecycleScriptTests
                         detail_mode=omit
                         ;;
                     changed-row)
+                        after="$(printf '%s' "$after" | jq -c '.runnerId="other"')"
                         open_first="$(envelope "$before")"
                         open_later="$(envelope "$after")"
                         detail_mode=sequence
@@ -1683,6 +1685,21 @@ public sealed class RollingVolumeRecycleScriptTests
             printf 'HOST_DONE\n'
             """;
     }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1361_Wrapper_census_tolerates_open_status_changes_between_list_and_detail()
+        => await C1361CensusProbes.Status(host: false, passes: false);
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1361_Wrapper_census_tolerates_open_status_changes_between_passes()
+        => await C1361CensusProbes.Status(host: false, passes: true);
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1371_Census_distinguishes_cross_read_count_drift_from_malformed_counts()
+        => await C1361CensusProbes.Counts();
 
     private static string C1317ShellFunction(string text, string name)
     {

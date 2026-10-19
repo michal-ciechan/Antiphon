@@ -22,6 +22,16 @@ namespace Antiphon.Tests.Scripts;
 public sealed class RemoteScriptContractTests
 {
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1361_Host_census_tolerates_open_status_changes_between_list_and_detail()
+        => await C1361CensusProbes.Status(host: true, passes: false);
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1361_Host_census_tolerates_open_status_changes_between_passes()
+        => await C1361CensusProbes.Status(host: true, passes: true);
+
+    [Test]
     [Arguments("host", "CacheDonorPackagesEmpty")]
     [Arguments("metadata", "CacheDonorPackagesEmpty")]
     [Arguments("reference", "CacheDonorPackagesEmpty")]
