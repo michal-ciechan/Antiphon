@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using Antiphon.HostCleanup.Checkpoints;
 
@@ -8,6 +9,7 @@ public static class CheckpointFileReader
 {
     public const int DocumentLimit = 4 * 1024 * 1024;
     public const int SourceLimit = 1024 * 1024;
+    public const long ContentLimit = 1L << 30; // Content stamps stream; receipt reads keep their 64 MiB bound.
     // CARD-1318 stalled-receipt contract: a read that delivers nothing for this long is refused. CARD-1358: the
     // window bounds the open, the inspection and each chunk, and every delivered chunk re-arms it, so the total is
     // bounded by the chunk count and not by a throughput assumption.
@@ -43,6 +45,29 @@ public static class CheckpointFileReader
     public static byte[] ReadBytes(CheckpointCleanupContext context, string root, string path, int limit,
         Action? afterVerification = null, CancellationToken cancellationToken = default)
     {
+        using var content = new MemoryStream();
+        Consume(context, root, path, limit, afterVerification, cancellationToken, span => content.Write(span));
+        return content.ToArray();
+    }
+
+    public static (long Length, string Sha256) Digest(CheckpointCleanupContext context, string root, string path,
+        long limit, CancellationToken cancellationToken = default)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        long total = 0;
+        Consume(context, root, path, limit, null, cancellationToken, span =>
+        {
+            hash.AppendData(span);
+            total += span.Length;
+        });
+        return (total, Convert.ToHexString(hash.GetHashAndReset()));
+    }
+
+    private delegate void ContentSink(ReadOnlySpan<byte> bytes);
+
+    private static void Consume(CheckpointCleanupContext context, string root, string path, long limit,
+        Action? afterVerification, CancellationToken cancellationToken, ContentSink sink)
+    {
         using var stall = new CancellationTokenSource(StallDeadline, context.Time);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, stall.Token);
         deadline.Token.ThrowIfCancellationRequested();
@@ -68,26 +93,26 @@ public static class CheckpointFileReader
         if (metadata.Size > (ulong)limit) throw new InvalidDataException("selected file exceeds size limit");
         afterVerification?.Invoke();
         using var stream = handle.OpenStream();
-        using var content = new MemoryStream();
+        long total = 0;
         var buffer = new byte[ReadChunk];
         try
         {
             int count;
             // One byte past the limit is requested so a file that grows during the read is still refused.
-            while ((count = stream.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, limit - (int)content.Length + 1)), deadline.Token).AsTask().WaitAsync(deadline.Token).GetAwaiter().GetResult()) != 0)
+            while ((count = stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, limit - total + 1)), deadline.Token).AsTask().WaitAsync(deadline.Token).GetAwaiter().GetResult()) != 0)
             {
-                if (content.Length + count > limit) throw new InvalidDataException("selected file exceeds size limit");
-                content.Write(buffer, 0, count);
+                if (total + count > limit) throw new InvalidDataException("selected file exceeds size limit");
+                sink(buffer.AsSpan(0, count));
+                total += count;
                 stall.CancelAfter(StallDeadline); // progress re-arms the window
             }
         }
         catch (OperationCanceledException) when (stall.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             // A stall on the end-of-file read after every inspected byte arrived does not fail a complete read.
-            if (content.Length == (long)metadata.Size)
-                return content.ToArray();
-            throw new IOException($"read-stalled: {content.Length} of {metadata.Size} bytes; no progress within {StallDeadline.TotalSeconds:0}s");
+            if (total == (long)metadata.Size)
+                return;
+            throw new IOException($"read-stalled: {total} of {metadata.Size} bytes; no progress within {StallDeadline.TotalSeconds:0}s");
         }
-        return content.ToArray();
     }
 }

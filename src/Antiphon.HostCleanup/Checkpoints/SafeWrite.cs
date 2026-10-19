@@ -89,8 +89,8 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
     private string Describe(string path)
     {
         if (Io.DirectoryExists(path)) return "directory";
-        var bytes = ReceiptFile.ReadBytes(context, path);
-        return bytes.LongLength + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+        var digest = ReceiptFile.Digest(context, path);
+        return digest.Length + ":" + digest.Sha256;
     }
     // Seal-time custody for entries a child process wrote under a root this process created
     // (OwnedOutputLedger.Seal). An existing record wins; an entry outside the custody window,
@@ -122,8 +122,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
     {
         if (context.Registry.Content(path) is not { } recorded) return false;
         if (Io.DirectoryExists(path)) return recorded == "directory";
-        var bytes = ReceiptFile.ReadBytes(context, path);
-        return recorded == bytes.LongLength + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+        return recorded == Describe(path);
     }
 
     internal string? CreationRecord(string path) =>
