@@ -280,7 +280,7 @@ slice; S4 alone satisfies the card.
 - **Herdr snapshot on the runner is still sync-over-async** (`SessionRunnerRuntime.cs:3819`).
   Out of scope; file a card when S4's log shows it mattering.
 
-## Verification design (proposal for TestDesign)
+## Plan verification proposal (superseded by the TestDesign section below)
 
 V-1 a runner that never answers does not hold the pump while a watchdog scan awaits it
 (W1). V-2 list and snapshot deadlines on the injected clock keep their outcome classes
@@ -291,7 +291,7 @@ delivery, late-confirm and expectation paths are unchanged. R-3 the converted sw
 their decisions. R-4 the runtime's existing behaviour on the adapter and static-client
 paths. R-5 no production file calls a retired sync name or blocks on a runner read.
 
-### Checkpoints
+### Proposed checkpoints (superseded; not the closed list)
 
 Portable rows; the orchestrator reads `GET /api/runner-defaults` and
 `GET /api/session-runners` at dispatch and names the lane in the brief. No `-Runner`, no
@@ -318,7 +318,7 @@ pinned TUnit version refuses four alternatives. Argument-expanded methods (CP-7,
 report more results than methods; TestDesign sets `Min` from the roster. The `Expect`
 tokens are TestDesign's to confirm against the current roster.
 
-### Cost
+### Proposed cost (superseded)
 
 Ordinary floor: 106 minutes of checkpoint time across five Code dispatches (S1 19, S2 25,
 S3 25, S4 9, S5 28), plus 45 to 60 minutes of authoring per slice. S6 adds one row of about
@@ -336,7 +336,368 @@ and is the only slice safe to cherry-pick.
 
 Not applicable: no slice adds or changes a session that waits for input.
 
+
+## Verification design
+
+Stage: TestDesign (task 72243597, Frontier, 2026-10-19) at start ref
+`dc223795763f34ee3f67d3b069ae6a060b615532`. Operator policy applied: per slice one red-first
+witness plus one narrow green row, whole-class runs only where the slice migrates call sites
+in that class, no Unit-lane rows. The table below is the closed list; the Plan's proposal
+above is superseded. No source changed in this stage; the W1 proof below ran from
+uncommitted test files that were deleted before the design commit.
+
+### Inspection
+
+- `AgentSessionRuntime.cs` `:59-100` (constructors: `TimeProvider` is injected, so a
+  `FakeTimeProvider` reaches `LiveReadDeadline` without a new parameter), `:1668-1760`
+  (`GetBufferSnapshot`, `ListLiveSessions`, `ListLocalLiveSessions`, `ListUnknownSessions`,
+  `ListLiveOrUnknownSessions`, both `IsLiveOrUnknown`), `:1777-1838` (`TryGetLiveSnapshot`,
+  `TryGetLiveMetadata`), `:1991-2005` (`GetRunnerSequenceOrDefault`). Five `GetResult()` sites
+  on `_runnerClient` at `:1673`, `:1792`, `:1793`, `:1825`, `:1998`; the Plan's `:1749` etc.
+  are the wrappers' internal callers. Boundary: the `_testAdapters`/`_testBuffers` branch
+  precedes every runner call -> R-1, R-4. The test-adapter branch is the reason the existing
+  classes stay green and is not safety-critical (a test seam).
+- `WatchdogService.ScanAsync` `:47-160`: two runtime reads (`:52` list, `:68` snapshot), then
+  `SendModalKeyAsync`/`SendInputAsync`; an empty live list returns 0 before the first
+  `_db` query, so W1 needs a constructed, never-opened `AppDbContext` and no shared store
+  (`SharedStoreWarmup` starts Postgres only for IL that references `TestDbFixture`) -> V-1.
+- `SessionRunnerHttpClient.cs` `:557-596`: `ListAsync` links a 3 s `CancelAfter` and a
+  `RunnerList` budget; `GetAsync`/`GetBufferAsync`/`GetSnapshotAsync` pass the caller's token
+  into the resilience read. The real client honours its token; the fake below does not, so
+  the runtime must await each read through `.WaitAsync(linked.Token)` for D-2 to hold against
+  any client. **Contract refinement for S1:** every bounded read is
+  `await _runnerClient.XAsync(..., linked.Token).WaitAsync(linked.Token)`; W1b/W1c and PC-4
+  depend on it. Boundary: the client's own budgets -> out of scope (existing client tests).
+- `ISessionRunnerClient` abstract members (from the compiling `StaticSessionRunnerClient`
+  in `AgentSessionRuntimeTests.cs:809`): `StartAsync`, `ListAsync`, `GetAsync`,
+  `GetBufferAsync`, `GetSnapshotAsync`, `GetTranscriptAsync`, `SendInputAsync`,
+  `ClearLiveBufferAsync`, `ResizeAsync`, `KillAsync`, `StreamEventsAsync`; everything else has
+  a default body. The fake implements exactly that set.
+- `TurnEndGapDeliveryHarness.ContinuationQueue` `:685-731`: a `SynchronizationContext` over a
+  channel drained by `Task.Run`. The new pump uses a dedicated thread instead, so the thread
+  pool is not part of the witness at all (D-6).
+- `WatchdogServiceTests.cs`: `[Category("Integration")] [NotInParallel("Watchdog")]`, 10
+  methods, no argument rows; builds the runtime on the adapter path with `TimeProvider.System`
+  and reads `runtime.GetBufferSnapshot(...)` inside `WaitUntilAsync(Func<bool>)` at `:415`,
+  `:571` (S5 migrates these two lambdas) -> R-1.
+- Rosters (counted from `[Test]` and `[Arguments]` rows at the start ref; an argument row is
+  one executed result): `SessionMessageQueueWedgedHeadTests` 34 methods / 51 results (Slow,
+  `NotInParallel("MessageQueue")`, drives `FlushSessionAsync` 31x and
+  `FlushStrandedQueuesAsync` 9x, the loops that hold most of the 32 S2 sites);
+  `ExpectationSchedulingTests` 5/5; `BootReplyWatchdogTests` 12/12 (`[NotInParallel]`);
+  `RemoteControlRecoveryTests` 17/17; `PolicyRefreshServiceTests` 21/24;
+  `AgentChannelServiceIntegrationTests` 6/6; `SubscriptionUsageMonitorTests` 14/14;
+  `AgentSessionRuntimeTests` 23/29 (Slow, `NotInParallel("Pty")`, 3 methods on a real
+  `StaticSessionRunnerClient`); `WatchdogServiceTests` 10/10; `BuildSlotEndpointTests` 6/6;
+  `ContextCompactionSweepTests` 18/18; `ScheduleSweepTests` 18/18. No other class shares any
+  of these names as a prefix, so the CARD-0403 `(Name*)` operands select one class each.
+- Production call sites at the start ref: 62 wrapper calls in 16 files outside the runtime
+  plus the direct `_runner.GetAsync(...).GetResult()` at `RemoteControlRecoveryService.cs:769`
+  (the Plan's `:767`); the S2 list-family lines `:904`, `:1748`, `:2201`, `:5488`, `:5663`
+  and the buffer site `:5716` are as stated. Test call sites: **81 in 13 files**, not 36 in 9:
+  `PhoneHomeStrandedQueueTests` 33 (+1 comment), `PhoneHomePendingInventoryTests` 24,
+  `AgentSessionRuntimeTests` 8, `AgentSessionServiceIntegrationTests` 3 (+3 `service.GetBuffer`),
+  `WatchdogServiceTests` 2, `SessionMessageQueueDeliveredSpillRecoveryTests` 2,
+  `AgentTaskPoolTests` 2, and one each in `QueuedReceiptAssertions`, `PhoneHomeOutageHarness`,
+  `PhoneHomeSchedulePreviewTests`, `PhoneHomeImmediateSendTests`,
+  `AgentChannelServiceIntegrationTests`, `RealCliStubBServerHarness`. S5's 55-minute estimate
+  is low; the orchestrator should budget 75 or split the test migration from the deletion.
+- S3 enclosing methods, all async: `ContextCompactionService.ProcessSessionAsync`,
+  `ScheduleService.FireCoreAsync`/`BuildPreviewAsync`, `OrchestratorService.GetStateAsync`/
+  `HasLiveRuntimeSessionAsync`, `ApiErrorRecoveryService.FireOneAsync`,
+  `PoolDelegateRelease.IsSessionTerminalAsync`, `AgentSessionService.ResumeAsync`/
+  `GetBufferAsync`, `SubscriptionUsageMonitorService.SweepAsync`,
+  `AgentChannelService.LoadLiveTargetSessionAsync`/`FindMentionTargetsAsync`. The three
+  services whose private sync helpers change signature (`TryPid`, `ComposerHead`,
+  `IsTranscriptBound`) are the S3 green row; the one-line `await` conversions elsewhere are
+  held by the compiler (a `Task` is not a `bool`/collection) and the S3 pin -> R-3.
+- Runner: `Program.cs:142-151` builds the app and calls `app.UseRunnerExceptionMapping()`
+  first; `appsettings.json` keeps `Microsoft.AspNetCore` at Warning under an Information
+  default, so a `Antiphon.SessionRunner.RunnerRequestTiming` source logs at Information.
+  `tests/Antiphon.SessionRunner.Tests` has `BuildSlotTestHost` (loopback Kestrel on
+  `127.0.0.1:0`, port guard), `ListLoggerProvider`/`ListLogger<T>` (`[Level] message` sink,
+  all levels enabled) and `Microsoft.Extensions.TimeProvider.Testing` 9.10.0. No test boots
+  the real `Program`, so `BuildSlotEndpointTests` proves nothing about the S4 wiring; a
+  source pin replaces that row -> V-3.
+- `TestLaneCategoryGuardTests`: every class is `Unit` xor `Integration`. The new witness
+  class is `Unit` (no store, no process); the pin class is `Unit`; the runner timing class
+  follows `BuildSlotEndpointTests` (`Integration`, loopback Kestrel).
+
+### Delivery inventory
+
+No slice adds or changes an async delivery path. The converted reads are observations that
+feed existing decisions (deliver, verify, answer, sweep); their producer, destination,
+persistence and receipt are unchanged and already owned by the queue and watchdog tests.
+What changes is the thread on which the observation waits and the deadline it carries.
+
+- Substitute for the runner HTTP path: `BlockingSessionRunnerClient` (reads return
+  `TaskCompletionSource` tasks; ignores the token; records the token it received). It proves
+  the runtime gives up on the injected clock and keeps the outcome class; it cannot prove the
+  real client's retry budget or the 3 s list cap, which existing `SessionRunnerHttpClient`
+  tests own.
+- Substitute for a saturated thread pool: `SingleThreadContinuationPump` (one dedicated
+  thread, a `SynchronizationContext` whose `Post` queues to that thread). It proves a blocked
+  read holds the only thread and an awaited read does not; it cannot prove the pool's
+  injection curve, which D-1 declines to depend on.
+- The adapter path (CP-2, CP-4, CP-6, CP-9) proves the converted callers still make the same
+  decisions when the runtime answers in-process; it cannot prove behaviour under a slow
+  runner, which W1b/W1c prove at the runtime boundary.
+
+No transcript or UserPrompt evidence applies: no session receives input in this card.
+
+### Proves it works now
+
+- V-1: a runner that never answers the List does not hold the pump during a watchdog scan |
+  `WatchdogService.ScanAsync` through `AgentSessionRuntime.ListLiveSessionsAsync` on a
+  `FakeTimeProvider` that is never advanced | `AgentSessionRuntimeBoundedReadTests.
+  C1362_Blocked_runner_list_does_not_hold_the_pump_during_a_watchdog_scan` | the probe
+  continuation completes before the 2 s delay while `runner.ListCalls == 1` and the list is
+  unreleased; after `ReleaseList([])` the scan returns 0. **Red at base by behaviour**
+  (proof below).
+- V-2a: the list deadline faults on the injected clock and never substitutes an empty set |
+  runtime only | `C1362_List_deadline_throws_on_the_injected_clock` | `ListLiveSessionsAsync`
+  is incomplete after `Advance(4999 ms)`, then `Should.ThrowAsync<OperationCanceledException>
+  (() => task.WaitAsync(TimeSpan.FromSeconds(2)))` after `Advance(1 ms)`;
+  `cts.IsCancellationRequested` false; `runner.LastListToken.IsCancellationRequested` true.
+  Red at base by build (new API).
+- V-2b: the snapshot deadline reads as unavailable and caller cancellation rethrows |
+  runtime only | `C1362_Snapshot_deadline_reads_as_unavailable` | part one:
+  `TryGetLiveSnapshotAsync(id, None)` returns null within `WaitAsync(2 s)` after
+  `Advance(5000 ms)` and `runner.LastSnapshotToken.IsCancellationRequested` is true; part two
+  (fresh fake and runtime): cancel the caller `cts` without advancing the clock,
+  `Should.ThrowAsync<OperationCanceledException>(() => t2.WaitAsync(2 s))`. Red at base by
+  build.
+- V-3a..d: runner timing lines | in-process `WebApplication` on `127.0.0.1:0` with
+  `FakeTimeProvider` registered, `ListLoggerProvider` capture, `UseRunnerRequestTiming()` then
+  `UseRunnerExceptionMapping()`, four routes that advance the clock inside the handler |
+  `RunnerRequestTimingTests`: `C1362_Fast_request_leaves_no_line_at_information` (20 ms: a
+  `[Debug] Runner request GET /fast -> 200 in 20 ms` line exists and no `[Information]` or
+  `[Warning]` line starting `Runner request`), `C1362_Slow_request_logs_information_with_route_
+  template_and_session_id` (600 ms on `/sessions/{id:guid}/snapshot`: exactly one line
+  `[Information] Runner request GET /sessions/{id:guid}/snapshot -> 200 in 600 ms session=<id>`
+  with the route template, not the raw path), `C1362_Stalled_request_logs_warning` (6000 ms:
+  `[Warning] ... in 6000 ms`), `C1362_Throwing_route_logs_warning_with_status_500` (handler
+  throws `InvalidOperationException`, which the exception mapping does not map: the client
+  sees 500 and the sink has `[Warning] Runner request GET /throws -> 500 in ...`). Red at base
+  by build.
+- V-3e: Program wiring | source pin | `C1362_Program_registers_timing_before_exception_mapping`
+  reads `src/Antiphon.SessionRunner/Program.cs` from the repo root (`Antiphon.sln` walk) and
+  asserts `app.UseRunnerRequestTiming();` occurs, `Configure<RunnerRequestLogSettings>` occurs,
+  and the timing index is lower than the `app.UseRunnerExceptionMapping();` index. Red at base
+  (names absent).
+
+W1 witness as proved (Code copies it; the helpers' public shape is fixed here):
+
+```csharp
+// tests/Antiphon.Tests/TestHelpers/SingleThreadContinuationPump.cs
+// SynchronizationContext + IAsyncDisposable over a BlockingCollection drained by one
+// dedicated background thread that sets itself as the current context.
+//   Post(d, state)                        -> queue (ObjectDisposedException after dispose)
+//   Send(...)                             -> NotSupportedException
+//   Task<T> InvokeAsync<T>(Func<Task<T>>) -> starts the function on the pump thread
+//   Task PostProbeAsync()                 -> completes when the pump thread has run it
+//   DisposeAsync                          -> CompleteAdding (thread exits when drained)
+// tests/Antiphon.Tests/TestHelpers/BlockingSessionRunnerClient.cs : ISessionRunnerClient
+//   ListAsync/GetAsync/GetBufferAsync/GetSnapshotAsync return TaskCompletionSource tasks
+//   (RunContinuationsAsynchronously), ignore the token, record LastListToken /
+//   LastSnapshotToken, count ListCalls; ReleaseList/ReleaseGet/ReleaseBuffer/
+//   ReleaseSnapshot/FaultAll; GetTranscriptAsync answers empty; StreamEventsAsync yields
+//   nothing; every other abstract member throws NotSupportedException.
+
+[Category("Unit")]
+public sealed class AgentSessionRuntimeBoundedReadTests
+{
+    [Test]
+    public async Task C1362_Blocked_runner_list_does_not_hold_the_pump_during_a_watchdog_scan()
+    {
+        var runner = new BlockingSessionRunnerClient();
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 19, 12, 0, 0, TimeSpan.Zero));
+        var bus = new MockEventBus();
+        await using var provider = new ServiceCollection().BuildServiceProvider();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-c1362-{Guid.NewGuid():N}");
+        var runtime = new AgentSessionRuntime(
+            runner, bus,
+            Options.Create(new AgentSessionSettings { SessionLogPath = Path.Combine(tempRoot, "session-logs") }),
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            time, NullLogger<AgentSessionRuntime>.Instance);
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql("Host=127.0.0.1;Port=1;Database=c1362_never_opened;Username=c1362;Password=c1362").Options);
+        var service = new WatchdogService(
+            db, runtime, new WatchdogMatcher(), new WatchdogCooldownStore(), bus,
+            Options.Create(new WatchdogSettings()), time, NullLogger<WatchdogService>.Instance);
+
+        await using var pump = new SingleThreadContinuationPump();
+        var scan = pump.InvokeAsync(() => service.ScanAsync(CancellationToken.None));
+        try
+        {
+            await WaitUntilAsync(() => Volatile.Read(ref runner.ListCalls) == 1);
+            var probe = pump.PostProbeAsync();
+            var first = await Task.WhenAny(probe, Task.Delay(TimeSpan.FromSeconds(2)));
+            first.ShouldBe(probe, "an unrelated continuation must run on the pump while the runner list is still unanswered");
+        }
+        finally
+        {
+            runner.ReleaseList([]);
+        }
+        (await scan.WaitAsync(TimeSpan.FromSeconds(10))).ShouldBe(0);
+    }
+}
+```
+
+W1 base proof (this stage, uncommitted files, isolated output `bin-c1362-w1/`, slot-gated
+build then `--no-build` run of `/*/*/AgentSessionRuntimeBoundedReadTests/*` at
+`dc2237957`): 
+
+### Guards the regression
+
+- R-1: the watchdog's rules still answer on the adapter path after its two reads convert
+  (S1) and after its `WaitUntilAsync` lambdas become async predicates (S5) |
+  `WatchdogServiceTests` (10): `C566_Unsafe_delete_refusal_requires_the_active_exact_menu`
+  asserts `sent == 1` and `Inputs == ["2"]` per row; a scan that cannot see the adapter's
+  screen answers 0.
+- R-2: the queue service's delivery, wedged-head and expectation decisions are unchanged
+  after 37 sites convert | `SessionMessageQueueWedgedHeadTests` (51 results) and
+  `ExpectationSchedulingTests` (5); decisive: the `FlushSessionAsync` outcome per row (a
+  flipped `is not { }` polarity delivers into a wedged head or holds a clear one).
+- R-3: the three sweeps whose private helpers change signature keep their decisions |
+  `BootReplyWatchdogTests` (12), `RemoteControlRecoveryTests` (17), `PolicyRefreshServiceTests`
+  (24); decisive: the transcript-bound and composer-head branches that `TryPidAsync`,
+  `ComposerHeadAsync`, `IsTranscriptBoundAsync` now feed.
+- R-4: the runtime's own behaviour on the adapter and real-client paths after the wrappers are
+  deleted | `AgentSessionRuntimeTests` (29 results), including the three
+  `StaticSessionRunnerClient` methods that read a buffer through the real client type.
+- R-5: no production file calls a retired sync name or blocks on a runner read |
+  `RunnerReadSourcePinTests` (`[Category("Unit")]`, repo root by the `Antiphon.sln` walk,
+  line-based, skipping lines whose trimmed start is `//` or `*`): `S2_queue_service_awaits_
+  runner_reads` (the three `SessionMessageQueueService*.cs` files), `S3_sweeps_and_endpoints_
+  await_runner_reads` (the 12 S3 files plus the `_runner.GetAsync(...).GetResult()` shape in
+  `RemoteControlRecoveryService.cs`), `S5_runtime_has_no_blocking_runner_reads` (every
+  `server/**/*.cs` outside `bin`/`obj`: no `\b(TryGetLiveSnapshot|TryGetLiveMetadata|
+  IsLiveOrUnknown|GetBufferSnapshot)\(`, no `\b(ListLiveSessions|ListLiveOrUnknownSessions|
+  ListUnknownSessions|ListLocalLiveSessions)\(\)`, and no line that names
+  `_runnerClient.`/`_runner.` with `ListAsync|GetAsync|GetBufferAsync|GetSnapshotAsync` and
+  `.GetAwaiter().GetResult()` or `.Result`). Each slice adds only its own method in its red
+  commit, so master never carries a red pin between slices. Decisive assertion: the list of
+  offending `path:line` strings is empty (the failure message prints them).
+
+### Guard inventory
+
+- G-1: D-3, list family: a deadline propagates as `OperationCanceledException`; nothing
+  substitutes an empty live set (CARD-0679: an empty set reads every session as dead and
+  feeds destructive decisions) | PC-1
+- G-2: D-3, `TryGet*Async`: a deadline returns null ("unavailable"), never throws into the
+  watchdog loop or the queue's delivery decision | PC-2
+- G-3: D-3, `TryGet*Async`: a caller-token cancellation rethrows instead of reading as
+  "unavailable" (a cancelled sweep must not record a decision) | PC-3
+- G-4: D-2, the deadline exists, runs on the injected clock and does not depend on the client
+  honouring its token (`WaitAsync(linked.Token)`) | PC-4
+- G-5: D-1/D-4, the watchdog path awaits the read; no thread is pinned while the runner is
+  silent (the card's hazard) | PC-5
+- G-6: D-5, no production code blocks on a runner read or calls a retired sync name (the pin
+  is the only compiler-independent signal once the wrappers are gone) | PC-6
+- G-7: D-7, the timing middleware rethrows and records a 5xx at Warning; a swallowed exception
+  would turn every runner failure into an empty 200 | PC-7
+- Not safety-critical, no PC (ordinary rows cover them): the Debug/Information/Warning
+  thresholds and the route-template field (diagnostic volume and grouping, V-3a..c); the
+  Program.cs ordering pin (V-3e, diagnostic completeness); the test-adapter-first branch
+  (test seam, R-1/R-4); the S2/S3 pin methods (same guard as G-6 at an earlier slice; PC-6
+  exercises the mechanism once).
+
+guards=7, mapped=7, missing=0, duplicate PC maps=0.
+
+### Positive controls
+
+Method-scoped, break/red/restore/green after land (Mutation); Code runs the V/R rows; Review
+judges the design before land. Filters are `--treenode-filter "/*/*/<Class>/<Method>"`.
+
+- PC-1: break G-1 by wrapping the runner read in `ListLocalLiveSessionsAsync` with
+  `catch (OperationCanceledException) { return _testAdapters.Keys.ToHashSet(); }`; expect
+  `AgentSessionRuntimeBoundedReadTests.C1362_List_deadline_throws_on_the_injected_clock` red
+  at `Should.ThrowAsync<OperationCanceledException>` (the task completes with a list).
+- PC-2: break G-2 by adding `catch (OperationCanceledException) { throw; }` ahead of the
+  general catch in `TryGetLiveSnapshotAsync`; expect
+  `C1362_Snapshot_deadline_reads_as_unavailable` red at `ShouldBeNull()` (part one throws).
+- PC-3: break G-3 by removing the `when (ct.IsCancellationRequested)` rethrow in
+  `TryGetLiveSnapshotAsync` (return null for every exception); expect
+  `C1362_Snapshot_deadline_reads_as_unavailable` red at the part-two
+  `Should.ThrowAsync<OperationCanceledException>` (returns null).
+- PC-4: break G-4 by making `LiveReadDeadline` use `Timeout.InfiniteTimeSpan` (or dropping
+  `.WaitAsync(linked.Token)` from the list read); expect
+  `C1362_List_deadline_throws_on_the_injected_clock` red at the same `Should.ThrowAsync`
+  (a `TimeoutException` from the 2 s `WaitAsync`, not a cancellation).
+- PC-5: break G-5 by replacing `await _runtime.ListLiveSessionsAsync(ct)` in
+  `WatchdogService.ScanAsync` with `_runtime.ListLiveSessionsAsync(ct).GetAwaiter().GetResult()`;
+  expect `C1362_Blocked_runner_list_does_not_hold_the_pump_during_a_watchdog_scan` red at
+  `first.ShouldBe(probe)` (this is the base shape; the proof above is PC-5's red).
+- PC-6: break G-6 by adding to `AgentSessionRuntime` a private unused member
+  `private long C1362Pc6() => _runnerClient.GetBufferAsync(Guid.Empty, CancellationToken.None).GetAwaiter().GetResult().LastSequence;`;
+  expect `RunnerReadSourcePinTests.S5_runtime_has_no_blocking_runner_reads` red at the empty
+  offenders assertion naming `AgentSessionRuntime.cs:<line>`.
+- PC-7: break G-7 by catching the exception in `RunnerRequestTiming` without rethrowing
+  (log nothing, return); expect
+  `RunnerRequestTimingTests.C1362_Throwing_route_logs_warning_with_status_500` red at the
+  status assertion (200, no `[Warning]` line).
+
+### Out of scope
+
+- The runner's own sync-over-async herdr snapshot (`SessionRunnerRuntime.cs:3819`): a
+  follow-up card once S4's log shows it mattering.
+- The thread pool's injection curve and `SetMinThreads`: D-1 rejected; the pump models the
+  hazard without it.
+- The HTTP client's retry budget and 3 s list cap under the new deadline ("shorter wins"):
+  owned by the existing `SessionRunnerHttpClient` tests; the blocking fake bypasses them by
+  design.
+- `AgentChannelServiceIntegrationTests`, `SubscriptionUsageMonitorTests`,
+  `ContextCompactionSweepTests`, `ScheduleSweepTests`, `OrchestratorServiceIntegrationTests`,
+  `ApiErrorRecoveryServiceTests`, `BlockedTaskParkReleaseTests`: their S3 sites are one-line
+  `await` conversions consumed as values, held by the compiler and the S3 pin; Review reads
+  the token passed at each (the one shape that compiles wrong).
+- `BuildSlotEndpointTests`: does not boot `Program.cs`; replaced by V-3e.
+- The Unit lane, the Integration lane and any namespace-wide run (operator policy).
+- S6 (optional per-minute summary): if commissioned, one row
+  `/*/*/RunnerRequestTimingSummaryTests/*` on the CP-7 output, 1 method, 3 minutes.
+
+### Checkpoints
+
+Portable rows (no `-Runner`, no `-Platform`). `tests/Antiphon.Tests` rows CP-2, CP-4, CP-6
+and CP-9 need the shared test Postgres; CP-1, CP-3, CP-5 and CP-8 do not start it. Combined
+filters use the CARD-0403 form with the namespace segment; verify each class in the fresh TRX.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1362-s1/` | bounded-reads | `/*/*/AgentSessionRuntimeBoundedReadTests/*` | V-1, V-2a, V-2b | all 3 methods, 0 failed/skipped | 3 | 8 |
+| CP-2 | S1 | CP-1 | watchdog-adapter | `/*/*/WatchdogServiceTests/*` | R-1 | all 10 methods, 0 failed/skipped | 10 | 4 |
+| CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1362-s2/` | pin-s2 | `/*/*/RunnerReadSourcePinTests/S2_queue_service_awaits_runner_reads` | R-5 | 1 executed, 0 failed | 1 | 6 |
+| CP-4 | S2 | CP-3 | queue-flush | `/*/Antiphon.Tests.Application/(SessionMessageQueueWedgedHeadTests*)\|(ExpectationSchedulingTests*)/*` | R-2 | all listed (34 + 5 methods, 56 results), 0 failed | 56 | 15 |
+| CP-5 | S3 | `tests/Antiphon.Tests -> bin-c1362-s3/` | pin-s3 | `/*/*/RunnerReadSourcePinTests/S3_sweeps_and_endpoints_await_runner_reads` | R-5 | 1 executed, 0 failed | 1 | 6 |
+| CP-6 | S3 | CP-5 | sweeps-helpers | `/*/Antiphon.Tests.Application/(BootReplyWatchdogTests*)\|(RemoteControlRecoveryTests*)\|(PolicyRefreshServiceTests*)/*` | R-3 | all listed (12 + 17 + 21 methods, 53 results), 0 failed | 53 | 10 |
+| CP-7 | S4 | `tests/Antiphon.SessionRunner.Tests -> bin-c1362-s4/` | runner-timing | `/*/*/RunnerRequestTimingTests/*` | V-3a, V-3b, V-3c, V-3d, V-3e | all 5 methods, 0 failed/skipped | 5 | 5 |
+| CP-8 | S5 | `tests/Antiphon.Tests -> bin-c1362-s5/` | pin-all | `/*/*/RunnerReadSourcePinTests/*` | R-5 | all 3 methods, 0 failed/skipped | 3 | 6 |
+| CP-9 | S5 | CP-8 | runtime-and-watchdog | `/*/Antiphon.Tests.Application/(AgentSessionRuntimeTests*)\|(WatchdogServiceTests*)/*` | R-4, R-1 | all listed (23 + 10 methods, 39 results), 0 failed | 39 | 10 |
+
+Union of `Covers`: V-1, V-2a, V-2b, V-3a..e, R-1..R-5, the whole ordinary scope. A red row
+is fixed and rerun as the same row. The S2 carry-over clause in the Plan (list-family sites
+moving to S3) changes CP-3's method body, not the table.
+
+### Cost
+
+- Ordinary V/R floor (Code) = sum of `EstimatedMinutes` = 8 + 4 + 6 + 15 + 6 + 10 + 5 + 6 +
+  10 = **70 minutes** across five Code dispatches (S1 12, S2 21, S3 16, S4 5, S5 16),
+  estimated; builds are 4 to 6 minutes each on the server2 mirror (measured 224 to 373 s for
+  `tests/Antiphon.Tests` on 2026-10-19) and the single-method pin rows are seconds after
+  their build.
+- PC floor (Mutation) = two baseline builds (`tests/Antiphon.Tests` 6, `Antiphon.SessionRunner
+  .Tests` 3) + 7 PCs x (incremental red build 2 + red run 1 + restore build 2 + green run 1) =
+  9 + 42 = **51 minutes**, estimated, filters as listed under Positive controls.
+- Total = 70 (V/R, includes each slice's setup build) + 51 (PC) = **121 minutes**, estimated.
+  The W1 proof in this stage is additional and measured below.
+- Savings against the Plan's 106-minute proposal: 36 minutes, from dropping
+  `BuildSlotEndpointTests` (no Program boot), `AgentChannelServiceIntegrationTests` and
+  `SubscriptionUsageMonitorTests` (compiler-held one-line sites), the second
+  `WatchdogServiceTests` run as its own row (folded into CP-9's combined filter), and the
+  separate `ExpectationSchedulingTests` row (folded into CP-4).
+
 --- next stage ---
-next: test-design
-handoff: Design the verification for CARD-1362 from docs/superpowers/plans/2026-10-19-card-1362-bounded-async-runner-reads-plan.md: confirm W1/W1b/W1c on the single-thread pump and FakeTimeProvider, the per-slice source pins, the runner timing test host, and close the CP-1..CP-13 table with real roster counts and the CARD-0403 filter syntax.
+next: code
+handoff: Implement CARD-1362 S1 from docs/superpowers/plans/2026-10-19-card-1362-bounded-async-runner-reads-plan.md: bounded async reads awaited through WaitAsync(linked.Token), watchdog on them, W1/W1b/W1c in AgentSessionRuntimeBoundedReadTests with the pump and blocking fake as specified; run CP-1 and CP-2 as the closed list.
 artifact: docs/superpowers/plans/2026-10-19-card-1362-bounded-async-runner-reads-plan.md
