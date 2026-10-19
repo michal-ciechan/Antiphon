@@ -121,7 +121,7 @@ public static class BuildConfinement
             if (UnderRoots(path, roots)) continue;
             stats[path] = stat(Combine(repository, path));
             var value = stamp(Combine(repository, path));
-            if (IsUnreadable(value)) return RefuseLedger("tracked-unreadable");
+            if (IsUnreadable(value)) return RefuseLedger("tracked-unreadable\n" + UnreadableLine(path, ReasonOf(value)));
             files[path] = value;
         }
 
@@ -151,36 +151,52 @@ public static class BuildConfinement
     // present after release. Strict mode hashes each entry whatever its stat, the in-slot cost the stat rule avoids
     // (shared_mapping_style_change_with_an_unchanged_stat_is_refused_at_admission_only_in_strict_mode,
     // strict_admission_hash_in_the_manifest_refuses_the_build_before_launch).
+    // CARD-1358 D-3: an entry whose recorded stamp is unreadable is unprovable whatever its stat says, so it is
+    // reported without a hash; the others compare as before.
     public static Admission AdmitLedger(Ledger ledger, bool strict = false)
     {
-        var paths = new List<string>();
+        var changed = new List<string>();
+        var unreadable = new Dictionary<string, string>(StringComparer.Ordinal);
         var hashed = 0;
         foreach (var pair in ledger.Files)
         {
+            if (IsUnreadable(pair.Value))
+            {
+                unreadable[pair.Key] = ReasonOf(pair.Value);
+                continue;
+            }
             var full = Combine(ledger.Repository, pair.Key);
             if (!strict && ledger.Stats.TryGetValue(pair.Key, out var recorded) && recorded.HasIdentityAndChangeTime
                 && recorded.Modified < ledger.RacyFrom && recorded.Changed < ledger.RacyFrom
                 && recorded.Matches(ledger.Stat(full)))
                 continue;
             hashed++;
-            if (IsUnreadable(pair.Value) || ledger.Stamp(full) != pair.Value)
-                paths.Add(pair.Key);
+            Compare(pair.Key, pair.Value, ledger.Stamp(full), changed, unreadable);
         }
-        var settlement = paths.Count == 0
-            ? new Settlement(null, "", [])
-            : Tampered(ledger.Repository, ledger.Head, paths, ledger.Tracked.Contains, _ => false);
-        return new Admission(settlement, hashed);
+        return new Admission(Classify(ledger.Repository, ledger.Head, changed, unreadable, ledger.Tracked.Contains, _ => false), hashed);
     }
 
     public static Settlement VerifyLedger(Ledger ledger)
     {
-        var paths = new List<string>();
+        var changed = new List<string>();
+        var unreadable = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var pair in ledger.Files)
-            if (IsUnreadable(pair.Value) || ledger.Stamp(Combine(ledger.Repository, pair.Key)) != pair.Value)
-                paths.Add(pair.Key);
-        if (paths.Count == 0)
-            return new Settlement(null, "", []);
-        return Tampered(ledger.Repository, ledger.Head, paths, ledger.Tracked.Contains, _ => false);
+        {
+            if (IsUnreadable(pair.Value))
+                unreadable[pair.Key] = ReasonOf(pair.Value);
+            else
+                Compare(pair.Key, pair.Value, ledger.Stamp(Combine(ledger.Repository, pair.Key)), changed, unreadable);
+        }
+        return Classify(ledger.Repository, ledger.Head, changed, unreadable, ledger.Tracked.Contains, _ => false);
+    }
+
+    // CARD-1358 D-3: a current stamp the reader refused is unprovable, not a change; a readable stamp that differs is a change.
+    private static void Compare(string path, string recorded, string current, ICollection<string> changed, Dictionary<string, string> unreadable)
+    {
+        if (IsUnreadable(current))
+            unreadable[path] = ReasonOf(current);
+        else if (!string.Equals(current, recorded, StringComparison.Ordinal))
+            changed.Add(path);
     }
 
     private static LedgerCapture RefuseLedger(string detail) =>
@@ -282,10 +298,15 @@ public static class BuildConfinement
         if (status.Error is not null)
             return new Settlement("tracked-snapshot", "refused: tracked-snapshot\n" + status.Error + "\nBuild-result bytes and index entries were left in place; no source recovery was attempted.\n", []);
         var paths = new HashSet<string>(status.Paths, StringComparer.Ordinal);
+        var unreadable = new Dictionary<string, string>(StringComparer.Ordinal);
         var staged = new HashSet<string>(StringComparer.Ordinal);
         foreach (var pair in baseline.Content.Concat(baseline.Untracked))
-            if (IsUnreadable(pair.Value) || stamp(Combine(baseline.Repository, pair.Key)) != pair.Value)
-                paths.Add(pair.Key);
+        {
+            if (IsUnreadable(pair.Value))
+                unreadable[pair.Key] = ReasonOf(pair.Value);
+            else
+                Compare(pair.Key, pair.Value, stamp(Combine(baseline.Repository, pair.Key)), paths, unreadable);
+        }
         if (!IndexMatches(baseline, out var error))
         {
             if (error is not null)
@@ -304,27 +325,48 @@ public static class BuildConfinement
         foreach (var path in ordinary.Stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries))
             if (!path.StartsWith(".antiphon/", StringComparison.Ordinal) && !baseline.Untracked.ContainsKey(path)
                 && baseline.Covered?.ContainsKey(path) != true) paths.Add(path);
-        if (paths.Count == 0) return new Settlement(null, "", []);
-        return Tampered(baseline.Repository, baseline.Head, paths, baseline.Entries.ContainsKey, staged.Contains);
+        return Classify(baseline.Repository, baseline.Head, paths, unreadable, baseline.Entries.ContainsKey, staged.Contains);
     }
 
-    private static Settlement Tampered(string repository, string head, IEnumerable<string> found, Func<string, bool> tracked, Func<string, bool> staged)
+    // CARD-1358 D-3: any changed path makes the kind tampered, with the unreadable entries listed beside it before the
+    // restore line; only unreadable entries make the kind unreadable, which names no restore because no content
+    // difference was observed. Paths lists every refusing path either way.
+    private static Settlement Classify(string repository, string head, IEnumerable<string> found,
+        IReadOnlyDictionary<string, string> unreadable, Func<string, bool> tracked, Func<string, bool> staged)
     {
-        var paths = found.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
-        var text = new StringBuilder("refused: tampered\n");
-        foreach (var path in paths)
+        var changed = found.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        var unprovable = unreadable.Keys.Where(path => !changed.Contains(path)).Order(StringComparer.Ordinal).ToList();
+        if (changed.Count == 0 && unprovable.Count == 0)
+            return new Settlement(null, "", []);
+        var paths = changed.Concat(unprovable).Order(StringComparer.Ordinal).ToList();
+        var text = new StringBuilder();
+        if (changed.Count > 0)
         {
-            text.Append("TAMPERED ").Append(path).Append('\n');
-            if (tracked(path))
-                text.Append("manual command: git -C ").Append(Quote(repository)).Append(" restore --source=").Append(head).Append(" --staged --worktree -- ").Append(Quote(path)).Append('\n');
-            else if (staged(path))
-                text.Append("manual command: git -C ").Append(Quote(repository)).Append(" restore --staged -- ").Append(Quote(path)).Append('\n');
-            else
-                text.Append("manual command: git -C ").Append(Quote(repository)).Append(" status --short -- ").Append(Quote(path)).Append("; inspect and recover user bytes from your backup\n");
+            text.Append("refused: tampered\n");
+            foreach (var path in changed)
+            {
+                text.Append("TAMPERED ").Append(path).Append('\n');
+                if (tracked(path))
+                    text.Append("manual command: git -C ").Append(Quote(repository)).Append(" restore --source=").Append(head).Append(" --staged --worktree -- ").Append(Quote(path)).Append('\n');
+                else if (staged(path))
+                    text.Append("manual command: git -C ").Append(Quote(repository)).Append(" restore --staged -- ").Append(Quote(path)).Append('\n');
+                else
+                    text.Append("manual command: git -C ").Append(Quote(repository)).Append(" status --short -- ").Append(Quote(path)).Append("; inspect and recover user bytes from your backup\n");
+            }
+            foreach (var path in unprovable)
+                text.Append(UnreadableLine(path, unreadable[path])).Append('\n');
+            text.Append("manual restore required; Build-result bytes and index entries were left in place; no source recovery was attempted.\n");
+            return new Settlement("tampered", text.ToString(), paths);
         }
-        text.Append("manual restore required; Build-result bytes and index entries were left in place; no source recovery was attempted.\n");
-        return new Settlement("tampered", text.ToString(), paths);
+
+        text.Append("refused: unreadable\n");
+        foreach (var path in unprovable)
+            text.Append(UnreadableLine(path, unreadable[path])).Append('\n');
+        text.Append("no content difference was observed; nothing in the worktree or index was changed; no restore is needed; repeat the run.\n");
+        return new Settlement("unreadable", text.ToString(), paths);
     }
+
+    private static string UnreadableLine(string path, string reason) => "UNREADABLE " + path + ": " + reason;
 
     private static string Combine(string repository, string relative) => Path.Combine(repository, relative.Replace('/', Path.DirectorySeparatorChar));
 
@@ -361,7 +403,26 @@ public static class BuildConfinement
         return new ManifestResult(files, null);
     }
 
+    // CARD-1358 D-4: a refused read stamps "unreadable|<reason>", the innermost message on one line, at most 200 characters.
+    private const string UnreadablePrefix = "unreadable|";
+
     internal static bool IsUnreadable(string stamp) => stamp.StartsWith("unreadable", StringComparison.Ordinal);
+
+    internal static string ReasonOf(string stamp) =>
+        stamp.Length > UnreadablePrefix.Length && stamp.StartsWith(UnreadablePrefix, StringComparison.Ordinal)
+            ? stamp[UnreadablePrefix.Length..]
+            : "read refused";
+
+    private static string Reason(Exception ex)
+    {
+        var inner = ex;
+        while (inner.InnerException is not null)
+            inner = inner.InnerException;
+        var text = inner.Message.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (text.Length == 0)
+            text = inner.GetType().Name;
+        return text.Length > 200 ? text[..200] : text;
+    }
 
     internal static string Stamp(string full)
     {
@@ -382,7 +443,7 @@ public static class BuildConfinement
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
-            return "unreadable";
+            return UnreadablePrefix + Reason(ex);
         }
     }
 
@@ -666,7 +727,9 @@ public static class BuildConfinement
             return new CaptureResult(null, untracked.Error ?? "git-ls-files");
         var content = entries.Value.Keys.Where(path => covered?.ContainsKey(path) != true)
             .ToDictionary(path => path, path => Stamp(Combine(repository, path)), StringComparer.Ordinal);
-        if (content.Values.Any(IsUnreadable)) return new CaptureResult(null, "tracked-unreadable");
+        var unreadable = content.Where(pair => IsUnreadable(pair.Value)).OrderBy(pair => pair.Key, StringComparer.Ordinal).ToList();
+        if (unreadable.Count > 0)
+            return new CaptureResult(null, "tracked-unreadable\n" + string.Join("\n", unreadable.Select(pair => UnreadableLine(pair.Key, ReasonOf(pair.Value)))));
         return new CaptureResult(new Baseline(head.Stdout.Trim(), repository, entries.Value, untracked.Value, content, covered), null);
     }
 
