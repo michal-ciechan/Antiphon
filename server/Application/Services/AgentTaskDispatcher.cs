@@ -831,9 +831,9 @@ public sealed partial class AgentTaskDispatcher
                 if (siblingGuard is null)
                 {
                     heldThisTick.Add((task.Id, HoldKind.SiblingLanding));
-                    await TraceHeldAsync(task, "Held: same-card base inspection is pending.", lastHeld, ct);
+                    await TraceHeldAsync(task, DispatchHoldDetails.SiblingInspectionPending, lastHeld, ct);
                     if (!_siblingInspections.TryEnqueue(siblingIntent))
-                        await TraceHeldAsync(task, "Held: same-card base inspection capacity is occupied.", lastHeld, ct);
+                        await TraceHeldAsync(task, DispatchHoldDetails.SiblingInspectionCapacity, lastHeld, ct);
                     continue;
                 }
                 if (siblingGuard.Hold is { } heldSibling)
@@ -852,7 +852,7 @@ public sealed partial class AgentTaskDispatcher
                 if (!siblingGuard.PendingKnown)
                 {
                     heldThisTick.Add((task.Id, HoldKind.SiblingLanding));
-                    await TraceHeldAsync(task, "Held: same-card pending integration could not be inspected.", lastHeld, ct);
+                    await TraceHeldAsync(task, DispatchHoldDetails.SiblingIntegrationUnknown, lastHeld, ct);
                     continue;
                 }
                 siblingObservation = siblingGuard;
@@ -3399,10 +3399,17 @@ public sealed partial class AgentTaskDispatcher
                 .Take(2).ToListAsync(ct);
             var emptyTranscript = !await _db.TranscriptEntries.AsNoTracking()
                 .AnyAsync(t => t.AgentSessionId == sessionId, ct);
+            // Inspection writes advisory Held events before claiming any session. Those exact
+            // pre-dispatch events are not evidence of a turn; later or unknown history still is.
             var neverWorking = task.RepliedAt is null && task.RepliedAtSequence is null
                 && !await _db.AgentTaskEvents.AsNoTracking().AnyAsync(e => e.AgentTaskId == task.Id
                     && e.Type != AgentTaskEventType.Created && e.Type != AgentTaskEventType.Dispatched
-                    && e.Type != AgentTaskEventType.Warning, ct);
+                    && e.Type != AgentTaskEventType.Warning
+                    && !(e.Type == AgentTaskEventType.Held && task.DispatchedAt != null
+                        && e.At <= task.DispatchedAt.Value
+                        && (e.Detail == DispatchHoldDetails.SiblingInspectionPending
+                            || e.Detail == DispatchHoldDetails.SiblingInspectionCapacity
+                            || e.Detail == DispatchHoldDetails.SiblingIntegrationUnknown)), ct);
             var knownColumns = _db.Model.FindEntityType(typeof(SessionQueuedMessage))?.GetProperties()
                 .Select(p => p.Name).ToHashSet(StringComparer.Ordinal)
                 .SetEquals(AbsentLaunchPolicy.MessageColumns.Split(' '));
