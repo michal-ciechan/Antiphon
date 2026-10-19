@@ -209,7 +209,9 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                 (await check.TranscriptEntries.CountAsync(p => p.AgentSessionId == session.Id && p.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
                 var note = await check.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceTaskId == taskId && m.ExecutionTaskId == null);
                 note.AgentSessionId.ShouldBe(h.SessionId);
-                await h.Queue.FlushStrandedQueuesAsync(default);
+                // The sweep clock ran 181 s ahead of the queue wall clock, so the note is not yet
+                // stranded by age; the idle flush delivers the caller's next pending message directly.
+                await h.Queue.FlushIfIdleAsync(h.SessionId, default);
                 var prompts = await check.TranscriptEntries.AsNoTracking().Where(p => p.AgentSessionId == h.SessionId && p.Kind == TranscriptKinds.UserPrompt).ToListAsync();
                 PromptSubmissionMatch.IsCompleteIn(note.Body, prompts.ShouldHaveSingleItem().Text!).ShouldBeTrue();
                 sink.Calls.ShouldBe(1); runner.Starts.ShouldBe(0); runner.Kills.ShouldBe(0); h.Adapter.Started.ShouldBeFalse();

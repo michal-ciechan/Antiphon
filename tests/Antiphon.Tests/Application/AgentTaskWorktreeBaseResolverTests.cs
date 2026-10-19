@@ -200,8 +200,13 @@ public class AgentTaskWorktreeBaseResolverTests
             Options.Create(new GitSettings { DefaultBranch = "master", WorktreeBaseMaxCandidates = 1 }))
             .ResolveAsync(NewRequest(repo, card.Id), CancellationToken.None);
         selected.Decision.ShouldBe(CardWorktreeBaseDecision.WaitForLand);
-        selected.Reason.ShouldBe("pending_land_uninspected");
-        selected.GitCommands.ShouldBe(0);
+        // CARD-1349 S1: pending-land evidence is read independently of the candidate cap, so the
+        // hold names the exact pending identity instead of a blind uninspected reason.
+        selected.Reason.ShouldBe("pending_land");
+        selected.SourceTaskId.ShouldBe(pending.Id);
+        selected.SourceBranch.ShouldBe(pending.WorktreeBranch);
+        selected.SourceSha.ShouldBe(request.ExpectedSourceSha);
+        selected.GitCommands.ShouldBeLessThanOrEqualTo(new GitSettings().WorktreeBaseMaxGitCommands);
     }
 
     [Test]

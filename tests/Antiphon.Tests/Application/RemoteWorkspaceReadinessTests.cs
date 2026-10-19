@@ -209,11 +209,10 @@ public sealed class RemoteWorkspaceReadinessTests
     private static async Task<PendingMirror> BeginAsync(Rig rig)
     {
         rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
-        var id = await rig.SeedAsync(t =>
-        {
-            t.Role = AgentTaskRole.Code;
-            t.WorktreeBranch = "feat/card-task-" + t.Id.ToString("N")[..8];
-        });
+        // The rig workspace is not a Git checkout, and a Code task fails its claim-time progress
+        // baseline capture before any mirror request; the rig's Custom worker role mirrors as
+        // production does and is listed by the pipeline read model like every helper role.
+        var id = await rig.SeedAsync();
         await rig.TickAsync().WaitAsync(TimeSpan.FromSeconds(15));
         var frame = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
         var sent = frame.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
@@ -234,7 +233,7 @@ public sealed class RemoteWorkspaceReadinessTests
         var pipeline = await new AgentTaskPipelineStatusService(db, settings,
             new AreaMapLoader(settings, NullLogger<AreaMapLoader>.Instance), TimeProvider.System)
             .GetAsync(CancellationToken.None);
-        var queued = pipeline.Stages.Single(s => s.Role == AgentTaskRole.Code).Queued.Single(t => t.TaskId == id);
+        var queued = pipeline.Stages.Single(s => s.Role == AgentTaskRole.Custom).Queued.Single(t => t.TaskId == id);
         queued.QueueReason.ShouldBe(ready ? AgentTaskPipelineStatusService.QueueReasonAwaitingDispatch
             : AgentTaskPipelineStatusService.QueueReasonRemotePrep);
         var item = (await AttentionAsync(rig)).Single(i => i.TaskId == id);
