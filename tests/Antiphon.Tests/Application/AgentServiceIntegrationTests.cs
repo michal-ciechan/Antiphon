@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -1814,6 +1815,43 @@ public class AgentServiceIntegrationTests
         }
     }
 
+    // CARD-0223: the local runner's own list rides the same SessionRunner:ListTimeoutSeconds
+    // deadline. A local runner that never answers leaves the local session's runner state unknown
+    // (TranscriptBinding null) and the agent list still returns on the deadline. The fake honours
+    // the token the way HttpClient would and records that the deadline token reached it, so an
+    // overlay that skipped the local read or passed the caller's un-deadlined token cannot pass.
+    [Test]
+    [Timeout(20_000)]
+    public async Task C0223_hung_local_runner_list_returns_within_the_list_deadline_with_runner_state_unknown()
+    {
+        var (agentId, sessionId) = await SeedStartedAgentAsync(SessionStatus.Running);
+        try
+        {
+            var hung = new HungRunnerClient();
+            await using var db = CreateContext();
+            var service = CreateService(
+                db,
+                new MockEventBus(),
+                runnerClient: hung,
+                runnerSettings: new SessionRunnerSettings { ListTimeoutSeconds = 1 });
+
+            var sw = Stopwatch.StartNew();
+            var agents = await service.GetAllAsync(CancellationToken.None);
+            sw.Stop();
+
+            hung.Calls.ShouldBe(1, "the local runner list is read once for all local live sessions");
+            hung.SawCancellation.ShouldBeTrue("the list deadline never reached the local runner client");
+            sw.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(10), $"GetAllAsync took {sw.Elapsed} with ListTimeoutSeconds = 1");
+            var agent = agents.Single(a => a.Id == agentId);
+            agent.LiveSession.ShouldNotBeNull();
+            agent.LiveSession!.TranscriptBinding.ShouldBeNull();
+        }
+        finally
+        {
+            await CleanupSessionsAsync(sessionId);
+        }
+    }
+
     // Binds the session to a unique remote runner the way a phone-home launch records it
     // (PhoneHomeRunnerDirectory.GetBindingAsync reads the same three columns).
     private static async Task<string> BindToRemoteRunnerAsync(Guid sessionId)
@@ -1913,6 +1951,69 @@ public class AgentServiceIntegrationTests
     {
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>(sessions);
+
+        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+    }
+
+    /// <summary>
+    /// CARD-0223. A local runner whose list never answers. It honours the token the way a real
+    /// transport does (HttpClient cancels through it) and records that cancellation reached it.
+    /// </summary>
+    private sealed class HungRunnerClient : ISessionRunnerClient
+    {
+        private int _calls;
+        private volatile bool _sawCancellation;
+
+        public int Calls => Volatile.Read(ref _calls);
+
+        public bool SawCancellation => _sawCancellation;
+
+        public async Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct)
+        {
+            Interlocked.Increment(ref _calls);
+            try
+            {
+                await Task.Delay(Timeout.Infinite, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                _sawCancellation = true;
+                throw;
+            }
+            throw new InvalidOperationException("unreachable");
+        }
 
         public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
             => throw new NotSupportedException();
