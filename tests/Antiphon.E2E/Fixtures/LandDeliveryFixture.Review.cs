@@ -45,6 +45,10 @@ public sealed partial class LandDeliveryFixture
             + "subjectTaskId: " + TaskId.ToString("D") + "\n"
             + "reviewedSourceSha: " + SourceSha + "\n"
             + "ordinaryScopeCompleted: Full\n"
+            // CARD-1305 / CARD-0835: the reviewed source is the committed, pushed c467-source tip at
+            // SourceSha, so this synthetic Review truthfully declares a clean source; LandApproval
+            // refuses evidence without it before the subject and SHA checks.
+            + "reviewedSourceClean: true\n"
             + "--- next stage ---\n"
             + "next: land\n"
             + "handoff: land the reviewed source\n"
