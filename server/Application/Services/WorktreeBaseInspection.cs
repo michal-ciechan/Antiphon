@@ -33,6 +33,7 @@ public sealed class WorktreeBaseInspection : IDisposable
     public CancellationToken Token => _budget.Token;
     public TimeSpan Elapsed => _clock.GetElapsedTime(_started);
     public TimeSpan Remaining => _limit - Elapsed;
+    public string CommandKind { get; private set; } = "inventory";
 
     public async Task<T> ReadAsync<T>(Func<CancellationToken, Task<T>> read)
     {
@@ -80,6 +81,12 @@ public sealed class WorktreeBaseInspection : IDisposable
             using var admission = await _gate.EnterAsync(_budget.Token);
             CheckDeadline();
             Commands++;
+            CommandKind = args[0] switch
+            {
+                "for-each-ref" => "branch-inventory", "rev-parse" => "identity", "merge-base" => "ancestry",
+                "rev-list" => "history-shape", "cherry" => "patch-containment", "log" => "description",
+                "worktree" => "checkout-inventory", "status" => "checkout-state", _ => "other",
+            };
             var result = await git.RunAsync(repo, args, _budget.Token);
             CheckDeadline();
             return result;
