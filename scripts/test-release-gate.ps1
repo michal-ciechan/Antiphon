@@ -4360,6 +4360,60 @@ function Test-C1339_RemoteTagAllocation {
 
 # ====================================================================== run ===
 
+function Set-C1339Clock {
+    param($Fx, [string]$Utc)
+    Add-Content -LiteralPath $Fx.Gh.Path -Encoding ASCII -Value @"
+`$ReleaseGateSeams.UtcNow = {
+    Add-Content -LiteralPath '$($Fx.Root)/clock.log' -Value 'clock' -Encoding ASCII
+    return [datetime]'$Utc'
+}
+"@
+}
+
+function Set-C1339Candidate {
+    param($Fx, [string]$Sha)
+    $CandidateId = 'rc-2026-10-15-' + $Sha.Substring(0, 12)
+    $CandidateRef = $Fx.CandidateRef
+    $auth = New-C599Authority -ReleaseRoot $Fx.ReleaseRoot -Checkout $Fx.Checkout -Sha $Sha -Repository 'fixture/release'
+    [void](New-C599RcGreen -ReleaseRoot $Fx.ReleaseRoot -Sha $Sha -CandidateId $CandidateId -Ref $CandidateRef -PolicyHash $auth.policyHash)
+    $Fx.CandidateId = $CandidateId
+    $Fx.Head = $Sha
+    $Fx.CardApi = New-C599CardApi -Root $Fx.Root -Sha $Sha -Candidate $CandidateId
+    [void](Invoke-C1339LocalGit $Fx @('push', $Fx.Bare, ($Sha + ':refs/heads/' + $CandidateRef)))
+    [void](Invoke-C1339LocalGit $Fx @('checkout', '--detach', '-q', $Sha))
+}
+
+function Test-C1339_AllocationUtcDay {
+    $fx = New-C1339Fixture
+    Set-C1339Clock $fx '2026-10-19T23:59:59Z'
+    $candidatePath = Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $fx.CandidateId) 'candidate.json'
+    $candidateBefore = [IO.File]::ReadAllText($candidatePath)
+    $preview = Invoke-C1339Publish $fx -WhatIf
+    $previewClean = -not (Test-Path (Join-Path $fx.ReleaseRoot 'publications.json'))
+    $first = Invoke-C1339Publish $fx
+    Assert-C487 -Cond ($preview.ExitCode -eq 0 -and $preview.Tag -ceq 'v2026.10.19.1-rc.1' -and $previewClean -and
+        $first.ExitCode -eq 0 -and $first.Published -and $first.Tag -ceq 'v2026.10.19.1-rc.1' -and
+        (Get-C1339Peel $fx $first.Tag) -ceq $fx.Head) -Name 'C1339 G-33 utc-day' -Detail ($first.Tag + ':' + $first.Refusal)
+    $calls = @(Get-Content (Join-Path $fx.Root 'clock.log')).Count
+    Assert-C487 -Cond ($calls -eq 2) -Name 'C1339 G-34 one-clock-sample' -Detail ([string]$calls)
+    $journal = Join-Path $fx.ReleaseRoot 'publications.json'
+    $before = [IO.File]::ReadAllText($journal)
+    Set-C1339Clock $fx '2026-10-20T00:00:01Z'
+    $again = Invoke-C1339Publish $fx
+    $same = $again.ExitCode -eq 0 -and $again.Resumed -and $again.Tag -ceq 'v2026.10.19.1-rc.1' -and [IO.File]::ReadAllText($journal) -ceq $before
+    $identityPreserved = [IO.File]::ReadAllText($candidatePath) -ceq $candidateBefore
+    Set-C1339Candidate $fx $fx.B
+    $next = Invoke-C1339Publish $fx
+    Assert-C487 -Cond ($same -and $next.ExitCode -eq 0 -and $next.Published -and $next.Tag -ceq 'v2026.10.20.1-rc.1' -and
+        (Get-C1339Peel $fx $next.Tag) -ceq $fx.B) -Name 'C1339 G-35 midnight-reuse' -Detail ($again.Tag + '/' + $next.Tag + ':' + $next.Refusal)
+    $stamp = New-C1339Fixture -Stamp
+    Set-C1339Clock $stamp '2026-10-20T00:00:01Z'
+    $legacy = Invoke-C1339Publish $stamp
+    Assert-C487 -Cond ($legacy.ExitCode -eq 0 -and $legacy.Published -and $legacy.Tag -ceq 'v2026.09.23.1' -and
+        (Get-C1339Peel $stamp $legacy.Tag) -ceq $stamp.Head) -Name 'C1339 G-36 stamp-day' -Detail ($legacy.Tag + ':' + $legacy.Refusal)
+    Assert-C487 -Cond $identityPreserved -Name 'C1339 G-37 candidate-date-preserved'
+}
+
 function Clear-C599FixtureReadOnly {
     # Only our disposable clones: Git marks loose objects read-only on Windows.
     # Leave deletion and failure retention to the owning ScriptHarness process.
