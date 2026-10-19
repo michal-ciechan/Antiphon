@@ -21,6 +21,159 @@ public partial class AttentionServiceTests
 {
     [Test]
     [NotInParallel("C691Census")]
+    public async Task a_historical_standing_incarnation_without_a_current_pointer_is_unowned()
+    {
+        await using var w = await CensusWorld.CreateAsync();
+        var a = w.Session;
+        var b = new AgentSession
+        {
+            Id = Guid.NewGuid(), DefinitionName = "current incarnation", AgentKind = AgentKind.Codex,
+            Cwd = Path.GetTempPath(), Status = SessionStatus.Running, StandingAgentId = w.Agent.Id,
+            CreatedAt = w.Now.AddHours(-1), StartedAt = w.Now.AddHours(-1), LastSeenAt = w.Now,
+        };
+        w.Agent.IsPoolDelegate = false;
+        w.Agent.AlwaysOn = true;
+        w.Agent.PersistentSessionId = b.Id.ToString();
+        a.StandingAgentId = w.Agent.Id;
+        w.Db.AgentSessions.Add(b);
+        w.RunnerSessions.Add(Running(b.Id));
+        await w.Db.SaveChangesAsync();
+
+        // Each read gets its own persisted baseline, including after test-owned control writes.
+        async Task<AttentionDto> ReadAsync(bool first = false)
+        {
+            var before = await w.SnapshotAsync();
+            var feed = await w.FeedAsync();
+            if (first)
+                Unowned(feed, a.Id).ShouldHaveSingleItem(); // CP-1: the historical stamp hides A.
+            var after = await w.SnapshotAsync();
+            after.Sessions.ShouldBe(before.Sessions);
+            after.Agents.ShouldBe(before.Agents);
+            after.Tasks.ShouldBe(before.Tasks);
+            after.Incidents.ShouldBe(before.Incidents);
+            w.Db.ChangeTracker.Entries().Where(e => e.State is EntityState.Added
+                or EntityState.Modified or EntityState.Deleted).ShouldBeEmpty();
+            w.Runner.KillCalls.ShouldBe(0);
+            w.Runner.InputCalls.ShouldBe(0);
+            w.Runner.StartCalls.ShouldBe(0);
+            Unowned(feed, b.Id).ShouldBeEmpty();
+            return feed;
+        }
+
+        static IEnumerable<AttentionItemDto> Unowned(AttentionDto feed, Guid id) =>
+            feed.Items.Where(i => i.Kind == AttentionKind.SessionUnowned && i.SessionId == id);
+
+        async Task AssertUnownedAsync(bool expected)
+        {
+            var rows = Unowned(await ReadAsync(), a.Id);
+            if (expected) rows.ShouldHaveSingleItem();
+            else rows.ShouldBeEmpty();
+        }
+
+        for (var poll = 0; poll < 2; poll++)
+        {
+            var row = Unowned(await ReadAsync(first: poll == 0), a.Id).ShouldHaveSingleItem();
+            row.Severity.ShouldBe(AlertSeverity.Warning);
+            row.SessionId.ShouldBe(a.Id);
+            row.AgentId.ShouldBeNull();
+            row.TaskId.ShouldBeNull();
+            row.Actions.ShouldBe([AttentionAction.OpenDrawer]);
+            row.ConditionKey.ShouldBe($"session-unowned:{a.Id:N}");
+            row.EntityLabel.ShouldBe($"Unowned session {a.Id.ToString("N")[..8]}");
+            row.ModelKind.ShouldBe("Codex");
+            row.Headline.ShouldBe("Live session has no agent pointer, card or open task.");
+            row.Evidence.ShouldContain($"historicalStandingAgentId={w.Agent.Id:D}");
+            row.Evidence.ShouldContain("historical, not a current pointer");
+        }
+
+        w.Agent.PersistentSessionId = a.Id.ToString();
+        // B must stay owned while testing the G -> A control.
+        var other = new Agent
+        {
+            Id = Guid.NewGuid(), Name = "other owner", Slug = "c0188-other", Kind = AgentKind.ClaudeCode,
+            WorkingDirectory = Path.GetTempPath(), Status = AgentStatus.Running,
+            PersistentSessionId = b.Id.ToString(), CreatedAt = w.Now, UpdatedAt = w.Now,
+        };
+        w.Db.Agents.Add(other);
+        await w.Db.SaveChangesAsync();
+        await AssertUnownedAsync(false);
+        w.Agent.PersistentSessionId = b.Id.ToString();
+        other.PersistentSessionId = null;
+        await w.Db.SaveChangesAsync();
+        await AssertUnownedAsync(true);
+        other.PersistentSessionId = a.Id.ToString();
+        await w.Db.SaveChangesAsync();
+        await AssertUnownedAsync(false);
+        other.PersistentSessionId = null;
+        await w.Db.SaveChangesAsync();
+        await AssertUnownedAsync(true);
+
+        foreach (var status in new[] { SessionStatus.Starting, SessionStatus.Running, SessionStatus.Stopping,
+            SessionStatus.Created, SessionStatus.Stopped, SessionStatus.Failed })
+        {
+            a.Status = status;
+            await w.Db.SaveChangesAsync();
+            await AssertUnownedAsync(status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping);
+            a.Status = SessionStatus.Running;
+            await w.Db.SaveChangesAsync();
+            await AssertUnownedAsync(true);
+        }
+
+        var project = new Project
+        {
+            Id = Guid.NewGuid(), Name = "c0188", GitRepositoryUrl = "https://example.test/c0188.git",
+            LocalRepositoryPath = Path.GetTempPath(), BaseBranch = "main", CreatedAt = w.Now, UpdatedAt = w.Now,
+        };
+        var board = new Board
+        {
+            Id = Guid.NewGuid(), ProjectId = project.Id, Name = "c0188", CreatedAt = w.Now, UpdatedAt = w.Now,
+        };
+        var column = new BoardColumn
+        {
+            Id = Guid.NewGuid(), BoardId = board.Id, StateKey = "backlog", Name = "Backlog",
+            CardStatus = CardStatus.Backlog, CreatedAt = w.Now, UpdatedAt = w.Now,
+        };
+        var card = new Card
+        {
+            Id = Guid.NewGuid(), BoardId = board.Id, BoardColumnId = column.Id, Identifier = "C0188-1",
+            Title = "ownership control", Status = CardStatus.Backlog, CreatedAt = w.Now, UpdatedAt = w.Now,
+        };
+        w.Db.AddRange(project, board, column, card);
+        a.CardId = card.Id;
+        await w.Db.SaveChangesAsync();
+        await AssertUnownedAsync(false);
+        a.CardId = null;
+        await w.Db.SaveChangesAsync();
+        await AssertUnownedAsync(true);
+
+        a.Status = SessionStatus.Stopping;
+        a.LastSeenAt = w.Now.AddMinutes(-6);
+        await w.Db.SaveChangesAsync();
+        var overlap = (await ReadAsync()).Items.Where(i => i.SessionId == a.Id && i.Kind is
+            AttentionKind.SessionStopStuck or AttentionKind.PoolDelegateUnreleased or AttentionKind.SessionUnowned)
+            .ShouldHaveSingleItem();
+        overlap.Kind.ShouldBe(AttentionKind.SessionStopStuck);
+        overlap.ConditionKey.ShouldBe($"session-stop-stuck:{a.Id:N}");
+        overlap.Evidence.ShouldContain("Also SessionUnowned");
+        overlap.Evidence.ShouldContain($"historicalStandingAgentId={w.Agent.Id:D}");
+        a.Status = SessionStatus.Running;
+        a.LastSeenAt = w.Now;
+        await w.Db.SaveChangesAsync();
+        await AssertUnownedAsync(true);
+
+        a.Status = SessionStatus.Stopped;
+        a.EndedAt = w.Now;
+        w.RunnerSessions[0] = Running(a.Id) with { Status = "Exited", ExitCode = 0 };
+        await w.Db.SaveChangesAsync();
+        await AssertUnownedAsync(false);
+        await AssertUnownedAsync(false);
+        w.Agent.PersistentSessionId.ShouldBe(b.Id.ToString());
+        b.Status.ShouldBe(SessionStatus.Running);
+        b.EndedAt.ShouldBeNull();
+    }
+
+    [Test]
+    [NotInParallel("C691Census")]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]
@@ -323,7 +476,17 @@ public partial class AttentionServiceTests
         public CensusDirectory Directory { get; }
         public ZombieCensusState Census { get; set; } = new();
         public int GraceSeconds { get; set; } = 120;
-        public bool RunnerLive { get; set; } = true;
+        public List<SessionRunnerSessionDto> RunnerSessions { get; } = [];
+        public FakeRunnerClient Runner { get; }
+        public bool RunnerLive
+        {
+            get => RunnerSessions.Any(s => s.SessionId == Session.Id && s.Status == "Running");
+            set
+            {
+                RunnerSessions.RemoveAll(s => s.SessionId == Session.Id);
+                if (value) RunnerSessions.Add(Running(Session.Id));
+            }
+        }
 
         private CensusWorld(IsolatedTestSchema schema, bool remote)
         {
@@ -353,6 +516,8 @@ public partial class AttentionServiceTests
                 CreatedAt = Now.AddHours(-1), CompletedAt = Now.AddMinutes(-6),
             };
             Directory = new CensusDirectory(Session.Id);
+            RunnerSessions.Add(Running(Session.Id));
+            Runner = new FakeRunnerClient { Sessions = RunnerSessions };
         }
 
         public static async Task<CensusWorld> CreateAsync(bool remote = false)
@@ -366,13 +531,27 @@ public partial class AttentionServiceTests
         public async Task<List<AttentionItemDto>> RowsAsync(AttentionKind kind) =>
             (await FeedAsync()).Items.Where(i => i.Kind == kind).ToList();
 
-        public async Task<AttentionDto> FeedAsync()
+        public async Task<AttentionDto> FeedAsync(bool includeDirectory = true)
         {
-            var runner = new FakeRunnerClient { Sessions = RunnerLive ? [Running(Session.Id)] : [] };
-            var service = new AttentionService(Db, runner, Options.Create(new SupervisionSettings()),
+            var service = new AttentionService(Db, Runner, Options.Create(new SupervisionSettings()),
                 Options.Create(new DelegationSettings { PoolReleaseGraceSeconds = GraceSeconds }), Clock,
-                NullLogger<AttentionService>.Instance, censusState: Census, runnerDirectory: Directory);
+                NullLogger<AttentionService>.Instance, censusState: Census,
+                runnerDirectory: includeDirectory ? Directory : null);
             return await service.GetAsync(CancellationToken.None);
+        }
+
+        public async Task<(string Sessions, string Agents, string Tasks, string Incidents)> SnapshotAsync()
+        {
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
+            return (await ScalarsAsync<AgentSession>(db), await ScalarsAsync<Agent>(db),
+                await ScalarsAsync<AgentTask>(db), await ScalarsAsync<AgentIncident>(db));
+        }
+
+        private static async Task<string> ScalarsAsync<TEntity>(AppDbContext db) where TEntity : class
+        {
+            var rows = await db.Set<TEntity>().AsNoTracking().OrderBy(e => EF.Property<Guid>(e, "Id")).ToListAsync();
+            return System.Text.Json.JsonSerializer.Serialize(rows.Select(row => db.Entry(row).Properties
+                .OrderBy(p => p.Metadata.Name).Select(p => new { Name = p.Metadata.Name, Value = p.CurrentValue })));
         }
 
         public async Task RemoveOwnerAsync()
