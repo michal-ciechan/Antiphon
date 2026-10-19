@@ -13,6 +13,7 @@ using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
@@ -1010,6 +1011,13 @@ public sealed class RemoteWorkspacePreparerTests
         if (cut != "lost-wakeup")
         {
             await launchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), CancellationToken.None);
+            // Check launch before the receipt helper can attach an adapter or mark the session live.
+            harness.Adapter.StartedSessionId.ShouldBe(sessionId);
+            var started = await read.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId);
+            started.Status.ShouldBe(SessionStatus.Running, started.FailureReason);
+            started.InteractiveLaunchCompletedAt.ShouldNotBeNull();
+            if (cut == "queue-inserted")
+                (await PromptCountAsync()).ShouldBe(1, "this incarnation's boot flush must deliver the committed brief");
             await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
                 schema.ConnectionString, harness, queued, sessionId, busy, busyBeforeDelivery: busy);
         }
@@ -1077,7 +1085,7 @@ public sealed class RemoteWorkspacePreparerTests
     /// </summary>
     private sealed class BriefEnqueueFault(Guid taskId) : SaveChangesInterceptor, IDbTransactionInterceptor
     {
-        private int _armed;
+        private DbTransaction? _briefTransaction;
         private int _faulted;
 
         public int Faulted => Volatile.Read(ref _faulted);
@@ -1088,19 +1096,20 @@ public sealed class RemoteWorkspacePreparerTests
             if (Faulted == 0 && eventData.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
                 .Any(e => e.State == EntityState.Added && e.Entity.ExecutionTaskId == taskId
                     && e.Entity.Origin == QueuedMessageOrigin.Delegation))
-                Volatile.Write(ref _armed, 1);
+                Volatile.Write(ref _briefTransaction,
+                    eventData.Context.Database.CurrentTransaction?.GetDbTransaction()
+                    ?? throw new InvalidOperationException("The brief insert must own an explicit transaction."));
             return ValueTask.FromResult(result);
         }
 
         public Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData eventData,
             CancellationToken cancellationToken = default)
         {
-            var tracked = eventData.Context?.ChangeTracker.Entries<SessionQueuedMessage>()
-                .Any(e => e.Entity.ExecutionTaskId == taskId && e.Entity.Origin == QueuedMessageOrigin.Delegation) == true;
-            if ((Volatile.Read(ref _armed) == 1 || tracked)
+            // This interceptor is shared by every DbContext in the harness. A concurrent launch
+            // admission commit must not consume the brief fault before the adapter starts.
+            if (ReferenceEquals(transaction, Volatile.Read(ref _briefTransaction))
                 && Interlocked.CompareExchange(ref _faulted, 1, 0) == 0)
             {
-                Volatile.Write(ref _armed, 0);
                 throw new IOException("injected enqueue-boundary fault: the brief row committed, the enqueue call failed");
             }
             return Task.CompletedTask;
