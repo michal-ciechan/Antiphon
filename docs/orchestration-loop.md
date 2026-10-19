@@ -26,9 +26,12 @@ For a desktop runner restart, use `pwsh -NoProfile -File scripts/restart-session
 use `-Hard` only for a planned supervisor refresh under the AppHost runbook.
 `-KillSessions` kills detached sessions and is human-only, never part of this autonomy grant.
 
-Before and after the operation, verify that queued lands have finished, no worktree is half-reset,
-the canonical source-root `HEAD` matches `GET /api/version` SHA, and `/health` succeeds. Wait for
-any land in progress before pulling; never pull while a land runs. After a restart, inspect the
+Before and after an AppHost pull or restart, verify that queued lands have finished, no worktree is
+half-reset, the canonical source-root `HEAD` matches `GET /api/version` SHA, and `/health` succeeds.
+Wait for any land in progress before pulling; never pull while a land runs: the pull fast-forwards
+the canonical checkout a land writes to. The server2 rolling phases need no land freeze: lands are
+desktop work and the census waits only for a land bound to the runner being recycled (CARD-1353).
+After a restart, inspect the
 registered child journal. Never use `-AllowWorktree` or touch the user's untracked files in the
 canonical checkout. If an intended upgrade makes the before-version differ from the new `HEAD`,
 record the old matching SHA before pulling and require the new matching SHA after restarting.
