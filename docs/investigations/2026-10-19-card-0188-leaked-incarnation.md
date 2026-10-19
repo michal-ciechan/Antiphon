@@ -230,4 +230,3 @@ If the reporter evidence confirms an unwanted superseded standing process, the s
 next: investigate
 handoff: Retrieve reporter-side A/B AgentSessions state and G's pointer/launch/stop evidence around 2026-08-21T08:58Z; distinguish automatic Fresh from manual replacement and determine whether A now carries StandingAgentId. Current retention and warning exclusion are documented; historical replacement cause is unconfirmed.
 artifact: docs/investigations/2026-10-19-card-0188-leaked-incarnation.md
-
