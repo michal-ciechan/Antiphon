@@ -32,6 +32,24 @@ public sealed class OrchestratorInstructionsGuidanceTests
         "axis",
     ];
 
+    /// <summary>
+    /// CARD-1332: the delivered bundle states the compact rules and points at the owner section;
+    /// the other three copies keep every phrase above.
+    /// </summary>
+    private static readonly string[] BundlePhrases =
+    [
+        "effective-settings route",
+        "CARD-0881",
+        "/api/agent-tasks/pipeline?projectId=",
+        "docs/orchestration-loop.md#standing-pipeline-policy",
+        "never exceed the lower effective cap",
+        "each in its own -Worktree",
+        "Host budget writes need an operator request",
+        "depth cap",
+        "-IgnoreConcurrencyLimit",
+        "axis",
+    ];
+
     private const string WorkspaceRule =
         "Live operating settings: read the file at $env:ANTIPHON_ORCHESTRATOR_INSTRUCTIONS (or GET /api/orchestrator-instructions) at session start, after compaction and when a settings-changed note arrives; it outranks the numbers in AGENTS.md.";
 
@@ -78,7 +96,8 @@ public sealed class OrchestratorInstructionsGuidanceTests
         {
             var text = Collapse(PolicyCopy(relative));
             text.ShouldContain(LiveSettingsSentence, Case.Insensitive, relative);
-            foreach (var phrase in Phrases)
+            var expected = relative == "server/Bundles/orchestrator.md" ? BundlePhrases : Phrases;
+            foreach (var phrase in expected)
                 text.ShouldContain(phrase, Case.Insensitive, relative);
             foreach (var stale in new[] { "three-route", "GET /api/session-runners", "GET /api/runner-defaults" })
                 text.ShouldNotContain(stale, Case.Insensitive, relative);

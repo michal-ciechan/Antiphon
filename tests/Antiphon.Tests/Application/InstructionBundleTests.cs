@@ -641,7 +641,8 @@ public class InstructionBundleTests
         bundle = bundle.Replace("\r\n", "\n");
         bundle.ShouldNotContain('\r');
         bundle.ShouldContain("Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.");
-        bundle.Length.ShouldBeLessThanOrEqualTo(14_310, "CARD-0940 restored policy with minimal bundle growth");
+        // CARD-1332: the one authoritative size allocation for this body is
+        // OrchestratorBundleOwnershipTests.C1332_OrchestratorBodyFitsItsAllocation (11,500 normalised units).
     }
 
     [Test]

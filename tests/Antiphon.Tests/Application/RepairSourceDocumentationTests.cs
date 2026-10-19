@@ -27,14 +27,20 @@ public class RepairSourceDocumentationTests
         ops.ShouldContain("orchestration-loop.md#repairsource-failed-owner-recovery");
         ops.ShouldContain("owner-bound Clean");
 
+        // CARD-1332: the bundle carries the mandatory rule (owner-bound Review plus the explicit
+        // recovery flag), the recovery-versus-adoption distinction and the two owner pointers; the
+        // complete recipe above stays at the owner.
         var bundle = File.ReadAllText(Path.Combine(root, "server", "Bundles", "orchestrator.md"));
-        var bundleAt = bundle.IndexOf(title, StringComparison.Ordinal);
+        var bundleAt = bundle.IndexOf("For a failed -RepairSource owner", StringComparison.Ordinal);
         bundleAt.ShouldBeGreaterThanOrEqualTo(0);
         var bundleEnd = bundle.IndexOf("\nWhen you are working a board", bundleAt, StringComparison.Ordinal);
         bundleEnd.ShouldBeGreaterThan(bundleAt);
-        var bundledRecipe = string.Join(" ", bundle[bundleAt..bundleEnd].Split((char[]?)null,
+        var bundledRule = string.Join(" ", bundle[bundleAt..bundleEnd].Split((char[]?)null,
             StringSplitOptions.RemoveEmptyEntries));
-        AssertRecipe(bundledRecipe);
+        bundledRule.ShouldContain("require owner-bound Clean Final/Full Review and -RecoverReviewedSource");
+        bundledRule.ShouldContain("docs/orchestration-loop.md#repairsource-failed-owner-recovery");
+        bundledRule.ShouldContain("A -RepairSource task cannot be used with -FromTask.");
+        bundle.ShouldContain("docs/orchestration-loop.md#delegate-start-ref for exclusions and -FromTask adoption");
     }
 
     private static void AssertRecipe(string recipe)

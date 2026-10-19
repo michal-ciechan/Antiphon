@@ -24,6 +24,25 @@ public sealed class StandingPipelinePolicyDocumentationTests
         "axis",
     ];
 
+    /// <summary>
+    /// CARD-1332: the delivered bundle states the compact rules and points at the owner section;
+    /// AGENTS, the owner and the skill keep the complete policy phrases above. The relocated
+    /// detail itself is pinned by OrchestratorBundleOwnershipTests.
+    /// </summary>
+    private static readonly string[] BundlePhrases =
+    [
+        "effective-settings route",
+        "CARD-0881",
+        "/api/agent-tasks/pipeline?projectId=",
+        "docs/orchestration-loop.md#standing-pipeline-policy",
+        "never exceed the lower effective cap",
+        "each in its own -Worktree",
+        "Host budget writes need an operator request",
+        "depth cap",
+        "-IgnoreConcurrencyLimit",
+        "axis",
+    ];
+
     private static string Collapse(string text) => Regex.Replace(text, @"\s+", " ");
 
     private static string ReadRepoFile(params string[] relative) =>
@@ -55,7 +74,8 @@ public sealed class StandingPipelinePolicyDocumentationTests
     public void the_policy_phrases_are_pinned_in_every_copy(string relative)
     {
         var text = Collapse(PolicyCopy(relative));
-        foreach (var phrase in Phrases)
+        var expected = relative == "server/Bundles/orchestrator.md" ? BundlePhrases : Phrases;
+        foreach (var phrase in expected)
             text.ShouldContain(phrase, Case.Insensitive, relative);
         foreach (var stale in new[] { "three-route", "GET /api/session-runners", "GET /api/runner-defaults" })
             text.ShouldNotContain(stale, Case.Insensitive, relative);
