@@ -412,3 +412,57 @@ CP-29 and CP-34a were not rerun at 146102e55; the only commit after a6aaf141f to
 Unlisted runs this round, all leased through the host build-slot gate: the checkpoint-tool bootstrap (`dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-c1349-tool/ --property:UseAppHost=false`, 0 errors / 4 warnings, 12 s, slot=granted waited=0s held=12s); four diagnostic-only test-host invocations against the retained `bin-c1349-all` output while CP-11 was hung (CP-11 filter bounded to 210 s and 240 s, both killed with every case still waiting in TUnit's scheduling semaphore; the CP-34a filter as a control, 4 passed in 68 s; and two bounded CP-11 runs under `dotnet-stack`, which could not attach: `ServerNotAvailableException`). None is a qualification receipt. `dotnet-stack` was installed as a user-global tool and left in place.
 
 Rows not rerun this round keep their historical outcomes above and in the round-1 report. PC-1 through PC-118 and every variant remain pending for method-scoped SourceLanding Mutation; 0 deliberate mutants executed.
+
+## Repair round 3 (Code task c92632b2, branch feat/card-task-c92632b2)
+
+Start ref: 8e2ef0d487b4b9580f5f3f2beadcb8d1aeccc842. Original landing owner remains
+f4fd378a-75cf-4e60-b57a-db7bdf0ee62e. Review 8f22dedb found D1 (lost vanished-default
+warning), D2 (false project-default mismatch on early exits), and F2 (the C672
+queue-inserted recipient case fails under whole-class concurrency).
+
+The configured default is now read before inventory or reference inspection, and the
+observed ref starts from requested ref, merge target, then that configured default.
+The zero-sibling path retains the name without freezing any refs. If the configured
+default read itself fails, no global-default observation is invented. D1's existing
+test retains both warning intents; the new D2 witness overflows the inventory with a
+project base of trunk and a global default of master, checks the safe dispatched SHA,
+and forbids a persisted base-observation-stale intent.
+
+F2's fixture shared one BriefEnqueueFault across its DbContexts. Its armed flag let
+any concurrent transaction commit consume the injected fault, including workspace
+admission before adapter startup. The fault now binds the exact DbTransaction that
+inserts the brief. The receipt helper can register an adapter and mark its recipient
+Running, so a UserPrompt with a null StartedSessionId did not establish that another
+adapter had launched. The test now checks actual launch completion before that helper;
+queue-inserted must already have its one prompt from this incarnation's boot flush.
+Class concurrency, test deadlines, and production inspection deadlines are unchanged.
+
+Red-first evidence:
+
+- 20261019-214918-baec at 35fea1446b07452820f2222a8a68e28787d6127b: D1 failed on
+  intents.Count = 1 instead of 2. D2 failed earlier on inspection_timeout instead of
+  candidate_limit; that result is not a D2 defect witness. Build 658.94 seconds,
+  total 13m13s; build slot waited 0s, row slot waited 15s.
+- 20261019-220410-e2c6 at b9f5e9033016a9e77f1d76092cf13a930341fef3: D2 failed on
+  the forbidden base-observation-stale intent after the target SHA and overflow
+  assertions passed. Only the preliminary inventory observation uses a controllable
+  clock; dispatch still uses the production clock. Build 352.62 seconds, total 7m32s;
+  both slots waited 0s. One transient owner HTTP 502 did not invalidate the run.
+
+The brief authorizes these exact red-first selections and then one whole CP-34 run,
+with --row-timeout 40m and --total-timeout 120m. It explicitly excludes CP-33 (Unit).
+CP-34 covers all ten named affected classes and all ordinary V/R-1 through V/R-21;
+fresh TRX must establish every method and argument count. No unbounded class set or
+full assembly is selected. The invariant is bounded, current dispatch authority,
+immutable warning delivery, prepared-mirror admission, and truthful readiness and
+attention. Estimated final cost: 20 minutes plus slot wait. Later outcomes, the exact
+tested source SHA, unedited receipts and roster audit belong in the stored report
+at /work/worktrees/task-c92632b2/.antiphon/task-c92632b2.md; this pre-run record makes
+no final green claim. No separate manual fleet operation is required by this repair.
+
+Checkpoint-tool bootstrap was the only infrastructure build outside the selections:
+build-slot.ps1, bin-c1349-r3-tool/, 0 errors and 4 warnings, held 12s, waited 0s.
+Red runs retained their output roots with cleanup reason still-present; receipt
+files are preserved unchanged. All PC-1 through PC-118 and every variant remain
+pending for SourceLanding Mutation, including its missing-control discovery duty.
+No deliberate mutant, deployment or restart was performed. Activation target: server.
