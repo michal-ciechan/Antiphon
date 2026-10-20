@@ -881,6 +881,58 @@ share one underlying filesystem.
 
 The same compose file sets the server2 **host build budget** (CARD-0589): `SessionRunner__BuildSlots__MaxConcurrent: "4"`, `SessionRunner__BuildSlots__MaxCpuCount: "6"`, `SessionRunner__BuildSlots__MinAvailableMemoryMb: "16384"`. Ten seats share four concurrent build/test driver leases at `-maxcpucount:6` each, and no lease is granted below 16 GB available (24 cores, no cgroup memory cap, other services on the host). Seats are counted first, then slots, then the memory floor: a free seat can still queue its builds, and a free slot never admits a session. To change the budget, edit those values and redeploy the runner; `SessionRunner__BuildSlots__Enabled: "false"` makes every acquire answer unlimited. Check it after a deploy with `docker exec antiphon-runner-session-runner-1 curl -fsS http://127.0.0.1:8080/build-slots` (200, `budget` equal to the configured value). Delegates in the container reach it at that address, the default of `scripts/lib/build-slot.ps1` on Linux (`ANTIPHON_BUILD_SLOTS_URL` overrides it). Contract, wait lines and exit codes: [testing-and-build.md](testing-and-build.md), Build slots (CARD-0589).
 
+### Chromium runtime witness (CARD-1323)
+
+`session-testing` installs the Debian 12 x64 Chromium libraries and shared tools/fonts
+listed by the **Microsoft.Playwright 1.63.0** driver pinned in
+`tests/Antiphon.E2E/Antiphon.E2E.csproj`. The package provenance is that NuGet package's
+`.playwright/package/lib/coreBundle.js`, bundled `nativeDeps` entries
+`deps["debian12-x64"].chromium` and `.tools`. Its SHA-256 is
+`549070af3acabb3efcc4f55bfe6210f9f7c2fcf633cf7eaa59bfe60719969171`.
+When changing the driver pin or base distribution, derive the package set again from
+that matching driver's manifest. The package install belongs only to `session-testing`.
+
+The browser download is a separate matching-version prerequisite. Use the pinned
+package's `.playwright/package/cli.js install chromium --only-shell`, with
+`PLAYWRIGHT_BROWSERS_PATH` pointing at an owned directory readable by the test user.
+For 1.63.0 this downloads Chromium headless shell revision **1243**
+(153.0.8010.12) and FFmpeg revision 1011. Do not use an unpinned `npx latest` or
+replace this prerequisite with a system Chromium. The image supplies OS packages;
+it does not bake the downloaded browser or credentials.
+
+The narrow acceptance witness is
+`ChromiumRuntimeSmokeTests.Chromium_launches_and_renders_local_content`.
+It launches headless Chromium with a unique temporary profile, renders local HTML,
+asserts text written by JavaScript, closes the context within a bounded wait and
+disposes Playwright before deleting the profile. It uses the E2E process-spawn limiter
+and no application, server, Postgres, provider or broker fixture.
+
+Use CP-7/CP-8 in the
+[CARD-1323 plan](superpowers/plans/2026-10-20-card-1323-rc-lane-landdelivery-placement-plan.md#checkpoints),
+through the checkpoint tool with `--row-timeout 40m` and the full committed
+`--expected-source-sha`. Build the `session-testing` target through
+`scripts/build-slot.ps1` under a task-owned image identity. Run the unchanged method
+as uid 1654 in disposable baseline/candidate containers with copied clean source and
+the matching browser, without live mounts or secrets. Preserve the image IDs,
+source SHAs, unedited CHECKPOINT lines, fresh TRX and build provenance. If the
+checkpoint tool runs inside the container, sharing the runner's PID/network namespaces
+lets the host build-slot broker verify its lease holders; it needs no Docker socket
+or fleet-state mount. Copy the checkout as a directory owned by uid 1654: Docker's
+auto-created working directory can be root-owned and cause Git source admission to refuse.
+
+CP-7 must execute one test and fail on a browser loader/dependency error with the
+browser present. A missing browser, build failure or slot refusal is an incomplete
+prerequisite. CP-8 must execute the identical method once with one pass and no skips.
+This qualifies the dependency repair only; it confers no RC or lane credit and does
+not prove fleet activation or the historical 35-case browser lane.
+
+After ordinary source review and approved inclusion on the current RC line, the
+operator owns a separate [staged rollout](#staged-server2-rolling-rollout-card-0934):
+deploy beside the old runner, smoke/canary, drain old, upgrade it, smoke, return
+scheduling, drain temporary and retire it. Retain the deployed image/source identities
+and browser result with that rollout receipt. A master-only land leaves live activation
+outstanding and does not authorize deploying master.
+
 ### server2 runner startup identity files (CARD-0631)
 
 Everything the persistent runner boots with that is *who it is*, rather than *what it runs*, lives on server2 under `/home/mc/antiphon-server2/secrets/`, never in the image: files owned by `mc`, plus the Codex home and GitHub token directories owned by the runner uid 1654 (CARD-0660, CARD-0817). `deploy-parent` (`scripts/c590-remote.sh`, host lane) creates missing boot paths and records only presence or non-secret values as evidence; the GitHub token file is operator-provisioned. `docker/stack.env.example` lists the compose variables.

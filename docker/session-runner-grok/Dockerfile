@@ -193,8 +193,16 @@ FROM receipt-probe AS session-testing
 # to the legacy backend because server2 is kernel 4.15 with iptables 1.6.1 and mixing backends
 # across the two layers is the classic DinD failure.
 USER root
+# CARD-1323: Microsoft.Playwright 1.63.0's bundled .playwright/package/lib/coreBundle.js,
+# nativeDeps deps["debian12-x64"].chromium plus .tools. Keep this package set aligned with
+# tests/Antiphon.E2E's driver pin; download the matching browser separately as the test user.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates tar gzip iptables iproute2 openssh-client sudo \
+      libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 libdbus-1-3 \
+      libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 \
+      libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 \
+      xvfb fonts-noto-color-emoji fonts-unifont libfontconfig1 libfreetype6 xfonts-scalable \
+      fonts-liberation fonts-ipafont-gothic fonts-wqy-zenhei fonts-tlwg-loma-otf fonts-freefont-ttf \
  && mkdir -p /usr/local/lib/docker/cli-plugins /opt/powershell \
  && curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz \
     | tar -xz -C /usr/local/bin --strip-components=1 \
