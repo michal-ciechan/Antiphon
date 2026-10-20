@@ -3,6 +3,9 @@
 Plan task `b36894e8-06ec-43d9-a5ac-240dabd3851e`. Target: **master only**.
 Inspected HEAD and freshly fetched `origin/master`:
 `f17dfb7b030206a4ae168e6c260b1603934f1c9a` on 2026-10-20.
+Final fetch observed `cfbc89f1d8f60599b65d6d532a6b4753178c3ab2`;
+the intervening CARD-1383 registry changes leave both fake implementations,
+all selected test bodies and the Pty-project census unchanged.
 
 **Work remains, but the two-project premise is too broad.** Five classes in
 `Antiphon.Tests` contain Linux-capable fake CLI process tests. The fake CLI PTY
