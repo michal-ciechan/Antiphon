@@ -1,6 +1,8 @@
 # CARD-1322 I1: Codex turn_aborted ordering
 
-**Incomplete measurement; replacement ordering remains unconfirmed.** One native
+**Closed with partial findings at the caller's direction; no defect witness was
+found.** Replacement ordering, post-abort usage, and turn-ID reuse across
+abort/completion remain open. One native
 `interrupted` trace and one successful native control were inspected. Neither
 contains an abort followed by completion. The requested server2-temp native store
 was inaccessible from this checkout. There is no observed counterexample to S1-S4
@@ -214,6 +216,9 @@ ordering, and no new bug-card text is supplied.
 - **Turn-ID reuse across abort/completion:** find an abort followed by completion
   in the same native file, retaining intervening starts, messages and counts.
   The two UserMessages with ID A do not resolve this question.
+- **Post-abort usage:** retain token-count events after an abort and through the
+  next boundary. File A ends at its abort, so neither late usage nor its
+  attribution to a later boundary was measured.
 - **Rollup correctness for that order:** retain the cumulative baseline preceding
   each boundary and the task's dispatch/settlement window, then compare the
   reconstructed boundary deltas with the per-ID maxima. Positive later deltas
@@ -223,16 +228,19 @@ ordering, and no new bug-card text is supplied.
   stored cancelled boundary. No ingest latency, overlap interval, or replacement
   working-state interval can presently be quantified.
 
-The caller was asked for an approved route to the temp store. Without that
-access or a content-redacted export made there, I1 remains incomplete. The
-missing evidence does not invalidate already reviewed bounded S1-S4 behavior,
-nor does this report certify the broader ordering assumptions.
+The caller confirmed that no approved route exists from inside the runner
+container and directed this task to finish with these partial findings, marked
+done with `next: none`. SSH host-key verification was neither bypassed nor
+altered. The measurements above remain open; no further investigation is
+dispatched by this report. The missing evidence does not invalidate already
+reviewed bounded S1-S4 behavior, nor does this report certify the broader
+ordering assumptions.
 
 ## Not done, noted
 
 No fix was designed or implemented; no tests/builds or live interruption experiments were run.
 
 --- next stage ---
-next: investigate
-handoff: Continue I1 from a host with trusted server2 SSH; inspect server2-temp native rollouts as uid 1654 and bind abort/replacement sequences to stored API rows. Resolve post-abort token/completion ordering and repeated-ID usage before claiming rollup correctness.
+next: none
+handoff: Closed with partial findings at caller direction. Replacement ordering, post-abort usage, and turn-ID reuse remain open; no defect witness was found. No approved route exists from inside the runner container, and SSH host-key verification was not altered.
 artifact: docs/investigations/2026-10-20-card-1322-i1-turn-aborted-ordering.md
