@@ -191,6 +191,16 @@ public sealed class C1364BoundLandWaitProofTests
         using var fixture = new C1008HostFixture(main);
         var hostCase = main ? "deploy-parent" : "retire-temp-runner";
         var runner = main ? "server2" : "server2-temp";
+        if (!main && resumePhase is not null)
+        {
+            // This fixture starts with no temp containers, so its saved generation is null.
+            // A valid resume then requires stack.env at the requested SHA (there is no saved
+            // previous SHA to authorize the fixture's default older stack).
+            var targetSha = new string('a', 40);
+            fixture.Statuses["server2-temp"]!["buildVersion"] = targetSha;
+            File.WriteAllText(Path.Combine(fixture.Root, "temp.env"),
+                "RUNNER_GROK_STORE_DIR=" + fixture.Root + "/grok\nSOURCE_REVISION=" + targetSha + "\n");
+        }
         if (resumePhase is not null) await SeedResume(fixture, hostCase, resumePhase);
         if (lateLand) fixture.Docker["fault"] = "late-land";
         var removedBefore = fixture.Docker["removed"]!.AsArray().Select(x => x!.GetValue<string>()).ToArray();
@@ -202,7 +212,7 @@ public sealed class C1364BoundLandWaitProofTests
         // cannot masquerade as a useful red when the fixture or earlier proof refuses.
         var boundary = HostBoundaries(fixture).Last();
         boundary["record"]!["phase"]!.GetValue<string>().ShouldBe(proof >= 4 ? "removing" :
-            proof == 3 ? "containersRemoved" : resumePhase ?? "preflight", label);
+            proof == 3 ? "containersRemoved" : resumePhase ?? "preflight", label + ": " + run.Output);
         var selected = boundary["record"]!;
         if (proof >= 3)
         {
@@ -279,7 +289,7 @@ public sealed class C1364BoundLandWaitProofTests
     {
         run.Exit.ShouldBe(2, label + ": " + run.Output);
         var boundaries = HostBoundaries(fixture);
-        boundaries.Select(x => x["n"]!.GetValue<int>()).ShouldBe(Enumerable.Range(1, proof), label);
+        boundaries.Select(x => x["n"]!.GetValue<int>()).ShouldBe(Enumerable.Range(1, proof), label + ": " + run.Output);
         var reads = File.ReadAllLines(Path.Combine(fixture.Root, "land-reads.jsonl"))
             .Select(x => JsonNode.Parse(x)!["items"]!.AsArray()).ToArray();
         reads.Length.ShouldBe((proof - 1) * 2 + 2, label + ": clean earlier proofs plus two refusing reads");
