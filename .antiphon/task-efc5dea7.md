@@ -1,4 +1,6 @@
-S2 is implemented and pushed; all 42 non-code cases pass, but the ordinary verification gate remains incomplete on C688_RealLandProfile. Stop at this slice boundary within the 60-minute brief; a Code continuation is needed before ordinary Review.
+S2 is implemented and the authorized continuation is complete: all 42 non-code cases pass, and the full 153-case rerun has 152 passes with only C688_RealLandProfile failing. A fresh one-case run at the exact supplied base proves the same seven-listing failure is pre-existing. The bound of four is unchanged. Next: ordinary Review, retaining the red overall checkpoint and the separately assigned landing conflicts.
+
+The initial-round record below is historical. Its unresolved attribution and next-Code status are superseded by the continuation evidence appended at the end; its outcomes and costs are preserved.
 
 Original Code / landing owner: `efc5dea7-0623-43b6-b660-5851fe4cf6ef`.
 Branch: `feat/card-task-efc5dea7`.
@@ -84,3 +86,61 @@ PC-1 and PC-2, all variants, remain pending for method-scoped SourceLanding Muta
 Manual acceptance remains pending the later operator RC go and real production workload: no under-two-minute docs-land or under-three-minute warm-code-land claim is made from fake verifier tests. Both required runner-default/catalogue routes were refreshed; the eligible Linux lane was used without embedding a host or OS pin.
 
 Deferred/remaining work is explicit: qualify and resolve the R-2 profile gate, obtain a clean landing preflight through the caller's authorized process, then ordinary Review. Only after that may the caller land the original Code task and commission SourceLanding Mutation. S3-S9 remain separate future slices. Restart: none.
+
+Continuation evidence (2026-10-20, additional 40-minute authorization)
+
+The caller authorized one exact baseline run, then one S2 selection plus the profile case. If the base also showed seven listings, the instruction was to record a pre-existing failure, keep the limit of four and file nothing. The caller assigned the three landing conflicts to a later cherry-pick repair task and requested next: review.
+
+Committed and pushed `df54d27aa93c8377425abcef2949c77d7867cd50` adds CP-4B and CP-4F to the plan's closed checkpoint list. It changes only the manifest/documentation. No production or test repair was needed, and no assertion, timeout or retry was changed. The final report commit follows this tested SHA; its full published SHA is supplied in the final response.
+
+| Checkpoint | Exact tested source | Executed | Passed | Failed | Skipped | Result |
+|---|---|---:|---:|---:|---:|---|
+| CP-4B | `480407504eae586e18281665f2808c3f77281dd6` | 1 | 0 | 1 | 0 | Baseline C688_RealLandProfile: WorktreeList expected <=4, actual 7. |
+| CP-4F | `df54d27aa93c8377425abcef2949c77d7867cd50` | 153 | 152 | 1 | 0 | Same C688 failure; every other selected case passed. |
+
+Both fresh TRX files were inspected for counters, every intended class/method and nonzero execution. CP-4F contains all four full affected classes at the same committed source:
+
+| Class | Executed | Passed | Failed |
+|---|---:|---:|---:|
+| LandNonCodeSkipTests | 42 | 42 | 0 |
+| AgentTaskLandingStateTests | 82 | 82 | 0 |
+| AgentTaskLandStageOutcomeTests | 14 | 14 | 0 |
+| AgentTaskLandRefusedRetryTests | 15 | 14 | 1 |
+
+The 13 LandNonCodeSkipTests methods and their executed data-case counts are: C1380_AlreadyPresentDoesNotPromiseANewBuildEvenWhenForced (1), C1380_CSharpChangeBuilds (1), C1380_DocsOnlyRebasedLandRecordsNonCodeSkip (1), C1380_FailedBuildRefusesPublication (1), C1380_NonAllowlistedInputsBuild (16), C1380_OverridesAndReleaseTargetsBuild (3), C1380_RegularDocumentationChangesSkip (6), C1380_RenameBothNamesAndFileModesAreChecked (4), C1380_TargetContainedCodeIsExcludedFromTheActualRebasedDiff (1), C1380_TargetGraphDriftAndNewProjectsBuild (2), C1380_UnchangedBaseStillBuildsCode (1), C1380_UnknownRepositoryBuilds (1), C1380_UnreadableOrMalformedGitCannotSkip (4). The generated inspected-roster.json retains the full result mapping.
+
+Attribution is now established: C688_RealLandProfile fails with seven listings at the exact S1 base and with seven at S2. Baseline profile metrics are processes=233, worktreeList=7, inspections=2, remote=19; final metrics are processes=234, worktreeList=7, inspections=2, remote=19. S2 did not increase the listing count. No listing-cache change was made, no limit was weakened and no card was filed. The old automatic baseline's missing-TRX/NEW record remains untouched as historical invalid attribution evidence; the new explicit baseline is the proof.
+
+V-2: PASS, 42/42. R-2: all required classes executed; 110/111 passed, with one proven pre-existing profile failure. The aggregate checkpoint remains RED, not Clean/Full. V-1/R-1 remain supplied S1 history, not rerun. V-3 through V-9 and R-3 through R-9 remain uncommissioned future-slice work, not passed. Whole Unit remains explicitly excluded by the brief. PC-1 and PC-2, every variant, remain pending method-scoped SourceLanding Mutation, including Mutation's missing-control discovery. No deliberate mutation ran.
+
+Commands used the already-built checkpoint CLI and its internal slot gate, so there was no unlisted bootstrap build:
+
+```text
+dotnet tools/Antiphon.Checkpoints/bin/Debug/net9.0/Antiphon.Checkpoints.dll run --repo-root /tmp/antiphon-c1380-efc5dea7-baseline --plan /work/worktrees/task-efc5dea7/docs/superpowers/plans/2026-10-20-card-1380-faster-lands-plan.md --rows CP-4B --expected-source-sha 480407504eae586e18281665f2808c3f77281dd6 --row-timeout 40m --max-wait 45s --serial
+dotnet tools/Antiphon.Checkpoints/bin/Debug/net9.0/Antiphon.Checkpoints.dll run --plan docs/superpowers/plans/2026-10-20-card-1380-faster-lands-plan.md --rows CP-4F --expected-source-sha df54d27aa93c8377425abcef2949c77d7867cd50 --row-timeout 40m --max-wait 45s --serial
+```
+
+Each run was followed with `wait --run <explicit-run-id> --expected-source-sha <same-sha> --max-wait 45s` until terminal exit 1. No run was abandoned. CP-4B and CP-4F each performed exactly one isolated build and one selected test execution; no automatic baseline comparator or flaky rerun was requested. The report's builds=22 is an imported manifest-definition count, not 22 executed builds. The inherited red did not trigger another rerun.
+
+Unedited checkpoint/provenance lines:
+
+```text
+source: 480407504eae586e18281665f2808c3f77281dd6 state=clean buildSource=verified
+CHECKPOINT CP-4B commit=480407504eae586e18281665f2808c3f77281dd6 build=ok filter=/*/*/AgentTaskLandRefusedRetryTests/C688_RealLandProfile* executed=1 passed=0 failed=1 skipped=0 trx=/tmp/antiphon-c1380-efc5dea7-baseline/.antiphon/checkpoints/20261020-132102-f3b6/rows/CP-4B/run.trx slot=granted waited=0s dirty=0 source=480407504eae586e18281665f2808c3f77281dd6 sourceState=clean buildSource=verified
+PHASES CP-4B slotWait=0s build=329.3145743s startup=72.4803019s testsWall=10.6839036s teardown=1.1565481s hostWall=84.3207532s
+source: df54d27aa93c8377425abcef2949c77d7867cd50 state=clean buildSource=verified
+CHECKPOINT CP-4F commit=df54d27aa93c8377425abcef2949c77d7867cd50 build=ok filter=/*/*/(LandNonCodeSkipTests*)|(AgentTaskLandStageOutcomeTests*)|(AgentTaskLandRefusedRetryTests*)|(AgentTaskLandingStateTests*)/* executed=153 passed=152 failed=1 skipped=0 trx=/work/worktrees/task-efc5dea7/.antiphon/checkpoints/20261020-132908-b9c0/rows/CP-4F/run.trx slot=granted waited=0s dirty=0 source=df54d27aa93c8377425abcef2949c77d7867cd50 sourceState=clean buildSource=verified
+PHASES CP-4F slotWait=0s build=301.6497947s startup=42.7495381s testsWall=248.801657s teardown=2.5853262s hostWall=294.1365212s
+```
+
+Costs: CP-4B wall 7m12s; CP-4F wall 10m13s. Every build and test lease was slot=granted waited=0s, maxcpucount=6. Source remained clean and frozen during both runs, with verified build provenance. Both terminal reports are red and retain their original still-present output-cleanup refusal; no green receipt validation is claimed.
+
+Baseline evidence was copied byte-for-byte into `/work/worktrees/task-efc5dea7/.antiphon/checkpoints/20261020-132102-f3b6-baseline/` before removing its owned detached checkout. All 23 copied files were SHA-256 compared to the originals. The original absolute paths in the report were not edited. Baseline TRX SHA-256: `90460C75BBBE0340E316CF4EACC79E5F408C25B4208F09E9BC0BFDA7B6ECB477`. Its archived TRX is `rows/CP-4B/run.trx`.
+
+Final evidence remains at `/work/worktrees/task-efc5dea7/.antiphon/checkpoints/20261020-132908-b9c0/`; TRX SHA-256: `D7DAB860AA2F869F1A63AC3EDC97B91A02684385B0DFDD033B1C89FA4534FF89`. Both evidence roots are gitignored. The current owned output's 2,247 files were removed individually after terminal completion, after checking for tracked paths and links; directories were removed nonrecursively. The baseline checkout was verified clean, detached at the expected SHA, then removed with its generated output after the evidence copy was verified.
+
+The continuation refreshed GET /api/runner-defaults and GET /api/session-runners and used the available default Linux lane without a host or OS pin. No AppHost restart, deployment, RC adoption, publication or card filing occurred. Production timing acceptance remains deferred to the operator-authorized activation/workload; these recording-verifier tests do not prove the under-two-minute live docs-land target.
+
+Publication preflight refreshed origin/master to `cff9b9bdadab0285d748be3d725bd76a406450d0`. `git merge-tree --write-tree origin/master HEAD` at tested source returned exit 1, tree `de591cfb60688d0b068163dc99eeac4a3e595fbc`, with the same conflicts in docs/orchestration-loop.md, the faster-lands plan and LandingSettings.cs. They are explicitly assigned to the caller's later cherry-pick repair task. No merge/rebase/reset/branch switch or force-push was performed.
+
+Next: ordinary Review of completed S2 and this inherited-failure evidence, as explicitly requested. Keep the overall red outcome and landing conflicts visible; neither is silently marked passed. The original Code/landing owner remains efc5dea7-0623-43b6-b660-5851fe4cf6ef. The final response supplies the report-only published tip, fresh full-range evidence-history guard result and final clean status. Restart: none.
