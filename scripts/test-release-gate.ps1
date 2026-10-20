@@ -4079,9 +4079,13 @@ function Add-C1339Tag {
 }
 
 function Invoke-C1339Promote {
-    param($Fx)
+    param($Fx, [hashtable]$Extra = @{})
+    $parameters = @{ Repository = 'fixture/release'; AntiphonApiUrl = $Fx.CardApi.Url }
+    foreach ($key in $Extra.Keys) {
+        if ($null -eq $Extra[$key]) { $parameters.Remove($key) } else { $parameters[$key] = $Extra[$key] }
+    }
     & (Join-Path $here 'promote-release.ps1') -ReleaseRoot $Fx.ReleaseRoot -Tag $Fx.PreTag -CandidateId $Fx.CandidateId `
-        -CheckoutRoot $Fx.Checkout -SeamsPath $Fx.Gh.Path -PassThru
+        -CheckoutRoot $Fx.Checkout -SeamsPath $Fx.Gh.Path -PassThru @parameters
 }
 
 function Invoke-C1339Publish {
@@ -4548,6 +4552,108 @@ function Test-C1339_AllocationUtcDay {
     Assert-C487 -Cond ($legacy.ExitCode -eq 0 -and $legacy.Published -and $legacy.Tag -ceq 'v2026.09.23.1' -and
         (Get-C1339Peel $stamp $legacy.Tag) -ceq $stamp.Head) -Name 'C1339 G-36 stamp-day' -Detail ($legacy.Tag + ':' + $legacy.Refusal)
     Assert-C487 -Cond $identityPreserved -Name 'C1339 G-37 candidate-date-preserved'
+}
+
+function Initialize-C1339PromotionReservation {
+    param($Fx)
+    $path = Join-Path $Fx.ReleaseRoot 'publications.json'
+    [void](New-ReleaseGateTagReservation -JournalPath $path -CandidateId $Fx.CandidateId -Sha $Fx.Head -CutUtc ([datetime]'2026-10-15T00:00:00Z') -RemoteTags @())
+    [void](Set-ReleaseGateReservationPublished -JournalPath $path -CandidateId $Fx.CandidateId -ReleaseId 'fixture-pre' -ReleaseUrl 'https://example.invalid/fixture/pre')
+}
+
+function New-C1339PromotionFixture {
+    $fx = New-C1339Fixture
+    Initialize-C1339PromotionReservation $fx
+    Add-C1339Tag $fx $fx.PreTag $fx.Head
+    Write-NightlyAtomicJson -Path $fx.Gh.StorePath -Object @{ releases = @(@{ id = 'fixture-pre'; tagName = $fx.PreTag; isDraft = $false }) }
+    [void](Invoke-C1339LocalGit $fx @('checkout', '--detach', '-q', $fx.B))
+    return $fx
+}
+
+function Get-C1339RecipientState {
+    param($Fx)
+    # Independent readers, including local tag attempts and the GitHub recipient.
+    return @(
+        (Invoke-C1339LocalGit $Fx @('for-each-ref', '--format=%(refname):%(objectname)', 'refs/tags') -Remote),
+        (Invoke-C1339LocalGit $Fx @('for-each-ref', '--format=%(refname):%(objectname)', 'refs/tags')),
+        $(if (Test-Path $Fx.Gh.StorePath) { [IO.File]::ReadAllText($Fx.Gh.StorePath) } else { '<absent>' })
+    ) -join "`n"
+}
+
+function Invoke-C1339AuthorityVariant {
+    param($Fx, $Snap, [scriptblock]$Mutate, [string]$Reason, [hashtable]$Extra = @{})
+    $CandidateId = $Fx.CandidateId
+    Restore-C599ASnapshot $Snap
+    & $Mutate
+    $journalPath = Join-Path $Fx.ReleaseRoot 'publications.json'
+    $journal = [IO.File]::ReadAllText($journalPath)
+    $before = Get-C1339RecipientState $Fx
+    $r = Invoke-C1339Promote $Fx $Extra
+    $check = New-C1339Check ($r.ExitCode -ne 0 -and -not $r.Promoted -and -not $r.Resumed -and
+        @($r.Refusal -split ',') -contains $Reason -and (Test-C1339NoWrites $Fx) -and
+        (Get-C1339RecipientState $Fx) -ceq $before -and [IO.File]::ReadAllText($journalPath) -ceq $journal) ($Reason + ': ' + $r.Refusal)
+    Restore-C599ASnapshot $Snap
+    return $check
+}
+
+function Test-C1339_PromoteAuthorityHash {
+    $fx = New-C1339PromotionFixture
+    $CandidateId = $fx.CandidateId
+    $control = Invoke-C1339Promote $fx @{ WhatIf = $true }
+    $snap = Save-C599ASnapshot $fx
+    $hashChecks = @(New-C1339Check ($control.ExitCode -eq 0 -and (Test-C1339NoWrites $fx)) ('valid:' + $control.Refusal))
+    foreach ($missing in @($false, $true)) {
+        $hashChecks += Invoke-C1339AuthorityVariant $fx $snap {
+            Update-C599AAuthority $fx { param($a)
+                if ($missing) { $a.scriptHashes.PSObject.Properties.Remove('promote-release.ps1') }
+                else { Set-C599AField $a.scriptHashes 'promote-release.ps1' ('0' * 64) }
+            }
+        } 'script-digest-mismatch:promote-release.ps1'
+    }
+    Assert-C599AMatrix 'C1339 G-38 promotion-hash-required' $hashChecks
+    foreach ($resume in @($false, $true)) {
+        $fx = New-C1339PromotionFixture
+        $CandidateId = $fx.CandidateId
+        if ($resume) { Add-C1339Tag $fx $fx.FinalTag $fx.Head }
+        $control = Invoke-C1339Promote $fx @{ WhatIf = $true }
+        $snap = Save-C599ASnapshot $fx
+        $checks = @(New-C1339Check ($control.ExitCode -eq 0 -and (Test-C1339NoWrites $fx)) ('valid:' + $control.Refusal))
+        foreach ($variant in @(
+            @{ reason = 'script-digest-mismatch:promote-release.ps1'; edit = { Update-C599AAuthority $fx { param($a) Set-C599AField $a.scriptHashes 'promote-release.ps1' ('0' * 64) } } },
+            @{ reason = 'missing-authority'; edit = { Remove-Item (Join-Path (Get-C599AuthorityDir $fx) 'authority.json') } },
+            @{ reason = 'ledger-selection'; edit = { Update-C599Ledger $fx -Ledger { param($l) $l.selection = 'targeted' } } },
+            @{ reason = 'ledger-diagnostic'; edit = { Update-C599Ledger $fx -Ledger { param($l) $l.diagnostic = $true } } },
+            @{ reason = 'uid-not-passed:antiphon-u1'; edit = { Set-C599TrxOutcome $fx -Chunk 'antiphon-001' -Uid 'antiphon-u1' -Outcome 'Failed' } },
+            @{ reason = 'policy-raw-digest-mismatch'; edit = { Update-C599AAuthority $fx { param($a) $a.policyRawSha256 = ('0' * 64) } } },
+            @{ reason = 'release-card-readback-unavailable'; edit = { Update-C599Card $fx -Store { param($s) $s.status = 503 } } }
+        )) { $checks += Invoke-C1339AuthorityVariant $fx $snap $variant.edit $variant.reason }
+        $restored = Invoke-C1339Promote $fx
+        $checks += New-C1339Check ($restored.ExitCode -eq 0 -and (Get-C1339Peel $fx $fx.FinalTag) -ceq $fx.Head -and
+            ($restored.Promoted -or $restored.Resumed)) ('restored admission:' + $restored.Refusal)
+        $label = 'C1339 G-39 promotion-fresh-authority'
+        if ($resume) { $label = 'C1339 G-40 promotion-resume-authority' }
+        Assert-C599AMatrix $label $checks
+    }
+    $fx = New-C1339PromotionFixture
+    $CandidateId = $fx.CandidateId
+    $snap = Save-C599ASnapshot $fx
+    $checks = @(Invoke-C1339AuthorityVariant $fx $snap {} 'authority-repository' @{ Repository = 'fixture/foreign' })
+    $checks += Invoke-C1339AuthorityVariant $fx $snap {} 'authority-repository' @{ Repository = $null }
+    $control = Invoke-C1339Promote $fx @{ WhatIf = $true }
+    $checks += New-C1339Check ($control.ExitCode -eq 0) $control.Refusal
+    Assert-C599AMatrix 'C1339 G-41 promotion-repository' $checks
+
+    $fallback = New-C1339PromotionFixture
+    Update-C599Card $fallback -Card { param($c) $c.revisionCount = 5 }
+    $savedApi = $env:ANTIPHON_API
+    try {
+        $env:ANTIPHON_API = $fallback.CardApi.Url
+        $control = Invoke-C1339Promote $fx @{ WhatIf = $true }
+        $checks = @(New-C1339Check ($control.ExitCode -eq 0) ('explicit override:' + $control.Refusal))
+        $checks += Invoke-C1339AuthorityVariant $fx $snap { Update-C599Card $fx -Store { param($s) $s.status = 503 } } 'release-card-readback-unavailable'
+        $checks += Invoke-C1339AuthorityVariant $fx $snap { Update-C599Card $fx -Card { param($c) $c.revisionCount = 5 } } 'release-card-readback-revision'
+        Assert-C599AMatrix 'C1339 G-42 promotion-card-readback' $checks
+    } finally { $env:ANTIPHON_API = $savedApi }
 }
 
 function Clear-C599FixtureReadOnly {
