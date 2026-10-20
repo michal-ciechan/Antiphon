@@ -98,6 +98,8 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
         if (site is "R1" or "R2")
         {
             Copy("verify-checkpoint-temp-usage.ps1");
+            Copy("lib/checkpoint-process-runner.ps1");
+            Copy("lib/CheckpointProcessRunner.cs");
             var output = Path.Combine(root, "tests/Antiphon.Tests/bin-probe");
             Directory.CreateDirectory(output);
             var dll = Path.Combine(output, "Antiphon.Tests.dll");
