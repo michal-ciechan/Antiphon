@@ -316,3 +316,5 @@ Antiphon.Tests.Checkpoints.CheckpointInheritedFileTests
 Antiphon.Tests.Checkpoints.CheckpointSourceGitBoundsTests
 # CARD-1233 S4: both real verifier Git entry points exercise the 30 s inherited-pipe deadline.
 Antiphon.Tests.Checkpoints.CheckpointVerifierBoundsTests
+# CARD-1233 S8: four actual fixture callers exercise cancellation and inherited-pipe custody.
+Antiphon.Tests.Checkpoints.CheckpointFixtureRoutingTests
