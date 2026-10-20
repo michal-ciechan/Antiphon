@@ -1335,12 +1335,14 @@ public sealed class ChannelOutboundRecoveryTests
     {
         await using var provider = BuildNativeRecoveryProvider(connectionString, runner);
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
+        var actions = provider.GetRequiredService<SessionRuntimeActionCoordinator>();
         using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         try
         {
             while (true)
             {
                 await runtime.SyncTranscriptAsync(sessionId, watchdog.Token);
+                await actions.DrainPageAsync(sessionId, watchdog.Token);
                 await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
                 var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, watchdog.Token);
                 if (task.Status == AgentTaskStatus.Succeeded)
@@ -1444,6 +1446,11 @@ public sealed class ChannelOutboundRecoveryTests
         services.AddSingleton(Options.Create(new GrokRulesSettings()));
         services.AddSingleton(Options.Create(new DeliverablesSettings()));
         services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton(Options.Create(new SessionStateSettings()));
+        services.AddSingleton<SessionStateCommandMetrics>();
+        services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+        services.AddSingleton<SessionStateStore>();
+        services.AddSingleton<SessionRuntimeActionCoordinator>();
         services.AddSingleton<SessionMessageQueueService>();
         services.AddSingleton<GrokRulesRefreshService>();
         services.AddSingleton<AgentTaskReplyService>();
