@@ -6,7 +6,7 @@ namespace Antiphon.Server.Application.Interfaces;
 public sealed record LandingGitRunOptions(TimeSpan? Budget = null, RepositoryChildTag? Child = null);
 
 /// <summary>Task and purpose stored on a mutating git child's journal record.</summary>
-public sealed record RepositoryChildTag(Guid? TaskId, string Purpose);
+public sealed record RepositoryChildTag(Guid? TaskId, string Purpose, Guid? WindowId = null);
 
 /// <summary>Purpose strings a child journal may carry. The reader, not the writer, decides which stay off the lease fence.</summary>
 public static class RepositoryChildPurposes

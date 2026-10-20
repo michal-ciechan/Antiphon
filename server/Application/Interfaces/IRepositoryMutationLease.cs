@@ -2,6 +2,13 @@ namespace Antiphon.Server.Application.Interfaces;
 
 public interface IRepositoryMutationLease
 {
+    Task<RepositoryLease?> TryAcquirePreflightAsync(string repository, RepositoryPreflight preflight,
+        RepositoryLeaseOwnerTag owner, CancellationToken ct) => TryAcquireAsync(repository, owner, ct);
+
+    Task<RepositoryVerificationWindow?> OpenVerificationWindowAsync(RepositoryLease lease,
+        IAsyncDisposable executionLease, RepositoryVerificationIdentity identity, CancellationToken ct)
+        => Task.FromResult<RepositoryVerificationWindow?>(null);
+
     Task<RepositoryLease?> TryAcquireAsync(string repository, CancellationToken ct);
 
     /// <summary>

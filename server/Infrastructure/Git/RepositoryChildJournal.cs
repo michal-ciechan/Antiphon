@@ -25,7 +25,7 @@ internal sealed class RepositoryChildJournal
         var directory = Path.Combine(common, "antiphon", "children");
         Directory.CreateDirectory(directory);
         var journal = new RepositoryChildJournal(Path.Combine(directory, Guid.NewGuid().ToString("N") + ".json"),
-            new ChildRecord(1, common, null, null, Purpose: tag?.Purpose, TaskId: tag?.TaskId));
+            new ChildRecord(1, common, null, null, Purpose: tag?.Purpose, TaskId: tag?.TaskId, WindowId: tag?.WindowId));
         await journal.SaveAsync(ct); // Unknown/start intent is durable before Process.Start.
         return journal;
     }
@@ -161,5 +161,5 @@ internal sealed class RepositoryChildJournal
     }
 
     internal sealed record ChildRecord(int SchemaVersion, string CommonDirectory, int? ProcessId, long? StartTicks,
-        bool Completed = false, string? Purpose = null, Guid? TaskId = null);
+        bool Completed = false, string? Purpose = null, Guid? TaskId = null, Guid? WindowId = null);
 }
