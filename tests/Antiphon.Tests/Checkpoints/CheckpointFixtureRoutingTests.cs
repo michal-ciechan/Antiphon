@@ -5,6 +5,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
+[Category("Integration")]
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointFixtureRoutingTests : CheckpointTestBase

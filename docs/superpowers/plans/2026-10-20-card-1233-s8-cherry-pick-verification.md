@@ -11,11 +11,23 @@ The assigned branch was advanced without rewriting history from
 `eac767e32fe4b25b63f177e217363f738edac705` were then cherry-picked.
 The original S4 history was not replayed.
 
-The five changed C# files are byte-identical to the source reviewed by
-Review `ff19e691` at `eac767e32fe4b25b63f177e217363f738edac705`.
+Immediately after cherry-pick, the five changed C# files were byte-identical to
+the source reviewed by Review `ff19e691` at
+`eac767e32fe4b25b63f177e217363f738edac705`.
 Master's landed `CheckpointVerifierBoundsTests`, CP-4 trailing wildcard,
 and slow-test allowlist entries and reason comments remain intact. S8's
 CP-8 trailing wildcard and separate allowlist reason are retained.
+
+The first repair run, `20261020-113545-5530`, verified
+`087d17358dabd91abf426552dbd1da42dba6f517`: CP-8 passed 4/4, but CP-REG
+failed 1/1 with `lane-xor Antiphon.Tests.Checkpoints.CheckpointFixtureRoutingTests`.
+That class had only `Slow`, while the registry requires exactly one of `Unit`
+or `Integration`. The repair adds `[Category("Integration")]`, matching the
+adjacent process tests. This is the only C# difference from the reviewed S8
+source; test bodies, assertions, timeouts, fixture routing and shared runner
+behavior are unchanged. Both required rows are rerun on the repaired commit
+so the final evidence binds to one tip. The initial red is retained as the
+guard's defect witness; it is not reclassified as a receipt refusal.
 
 ## Verification design
 
