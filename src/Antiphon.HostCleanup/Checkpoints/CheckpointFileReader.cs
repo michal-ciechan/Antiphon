@@ -109,8 +109,8 @@ public static class CheckpointFileReader
         }
         catch (OperationCanceledException) when (stall.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
-            // A stall on the end-of-file read after every inspected byte arrived does not fail a complete read.
-            if (total == (long)metadata.Size)
+            // A stall at the old EOF is complete only if the retained handle still has the inspected size.
+            if (total == (long)metadata.Size && handle.Inspect().Size == metadata.Size)
                 return;
             throw new IOException($"read-stalled: {total} of {metadata.Size} bytes; no progress within {StallDeadline.TotalSeconds:0}s");
         }
