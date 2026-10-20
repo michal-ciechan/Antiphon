@@ -98,7 +98,7 @@ public class SessionRuntimeActionDeferralTests
             source.ReviewThreadId.ShouldBe(thread.Id);
             var action = await db.SessionRuntimeActions.SingleAsync();
             originalId = action.Id;
-            action.TriggerKind.ShouldBe($"review:{source.Id}");
+            action.TriggerKind.ShouldBe($"review:{source.Id:N}");
             action.Attempts = 5; // Exercise the existing capped retry without waiting thirty seconds.
             await db.SaveChangesAsync();
         }
@@ -106,7 +106,7 @@ public class SessionRuntimeActionDeferralTests
         await h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, default);
         await using var verify = h.CreateObserverContext();
         var retained = await verify.SessionRuntimeActions.AsNoTracking().SingleAsync(a => a.Id == originalId);
-        retained.TriggerKind.ShouldBe($"review:{source.Id}");
+        retained.TriggerKind.ShouldBe($"review:{source.Id:N}");
         retained.Phase.ShouldBe(SessionRuntimeActionCoordinator.QueuePhase);
         retained.FailureReason.ShouldBe("Deferred");
         retained.Attempts.ShouldBe(6);
