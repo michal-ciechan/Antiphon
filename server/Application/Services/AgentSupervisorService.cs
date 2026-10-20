@@ -217,7 +217,16 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 return await CompleteAsync(false);
             await CompleteAsync(false);
             await transaction.DisposeAsync();
-            return await TryHandleCapacityWaitAsync(agent, state, ct) ?? false;
+            try
+            {
+                return await TryHandleCapacityWaitAsync(agent, state, ct) ?? false;
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                return await RecordStartFailureInFreshScopeAsync(agent.Id, ex, now,
+                    Math.Min(state.RestartBackoffFailures, int.MaxValue - 1) + 1,
+                    current?.Id, current?.StartedAt, ct);
+            }
         }
 
         // Not running. Schedule a restart if none is pending.
@@ -317,16 +326,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            // A failed Start may leave its context/transaction unusable. Bookkeeping uses a
-            // fresh scope; if storage also refuses this write, the hosted tick logs and retries.
-            if (_scopeFactory is not null)
-            {
-                await using var failureScope = _scopeFactory.CreateAsyncScope();
-                return await failureScope.ServiceProvider.GetRequiredService<AgentSupervisorService>()
-                    .RecordStartFailureAsync(agent.Id, ex, now, attemptNumber, beforeId, beforeStartedAt, ct);
-            }
-            _db.ChangeTracker.Clear();
-            return await RecordStartFailureAsync(agent.Id, ex, now, attemptNumber, beforeId, beforeStartedAt, ct);
+            return await RecordStartFailureInFreshScopeAsync(agent.Id, ex, now,
+                attemptNumber, beforeId, beforeStartedAt, ct);
         }
 
         async Task<bool> CompleteAsync(bool result)
@@ -339,12 +340,31 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         }
     }
 
+    private async Task<bool> RecordStartFailureInFreshScopeAsync(Guid agentId, Exception ex, DateTime now,
+        int attemptNumber, Guid? beforeId, DateTime? beforeStartedAt, CancellationToken ct)
+    {
+        // A failed Start may leave its context/transaction unusable. Both handoffs use
+        // persisted state; if storage also refuses bookkeeping, the hosted tick retries.
+        if (_scopeFactory is not null)
+        {
+            await using var failureScope = _scopeFactory.CreateAsyncScope();
+            return await failureScope.ServiceProvider.GetRequiredService<AgentSupervisorService>()
+                .RecordStartFailureAsync(agentId, ex, now, attemptNumber, beforeId, beforeStartedAt, ct);
+        }
+        _db.ChangeTracker.Clear();
+        return await RecordStartFailureAsync(agentId, ex, now, attemptNumber, beforeId, beforeStartedAt, ct);
+    }
+
     private async Task<bool> RecordStartFailureAsync(Guid agentId, Exception ex, DateTime now, int attemptNumber,
         Guid? beforeId, DateTime? beforeStartedAt, CancellationToken ct)
     {
         var agent = await _db.Agents.SingleAsync(a => a.Id == agentId, ct);
         var refreshed = await GetOrCreateStateAsync(agent.Id, ct);
-        if (refreshed.ContinuityHeldAt is not null || refreshed.Suspended) return false;
+        var current = await FindPersistentSessionAsync(agent, statuses: null, ct);
+        if (refreshed.Suspended || refreshed.ContinuityHeldAt is not null
+            && !new StandingRestartEscalationPolicy(_settings, _delegation)
+                .CanReserve(agent, refreshed, current, current?.AgentKind ?? agent.Kind))
+            return false;
         if (Guid.TryParse(agent.PersistentSessionId, out var owned) && _launchQueue.Owns(owned)) return true;
         if (ex is ModelDisabledException held)
         {
@@ -362,6 +382,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                     HoldRevision = held.Hold.Revision,
                     BlockedAt = UtcNow(),
                 }, ct);
+                refreshed.NextRestartAt = UtcNow() + Backoff(refreshed.RestartBackoffFailures);
+                refreshed.LastAttemptAt = now;
                 refreshed.UpdatedAt = UtcNow();
                 await _db.SaveChangesAsync(ct);
                 return true;
@@ -430,6 +452,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
     {
         if (_capacityRecovery is null || !_capacityRecovery.IsEnabled)
             return null;
+        if (state.NextRestartAt is { } retryAt && UtcNow() < retryAt)
+            return false;
 
         var wait = await _db.CapacityRecoveryWaits.FirstOrDefaultAsync(
             w => w.AgentId == agent.Id
@@ -504,9 +528,14 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             await _control.StartSupervisedFreshAsync(agent.Id, current!.Id, current.StartedAt, capacityActionKey, ct);
             return true;
         }
-        catch (Exception ex) when (!ct.IsCancellationRequested)
+        catch (ConflictException ex) when (!ct.IsCancellationRequested && ex.Code is
+            "standing_resume_delivery_pending" or "standing_resume_work_in_flight"
+            or "standing_resume_card_work_pending" or "standing_resume_not_owned"
+            or "standing_resume_owner_unproven" or "standing_resume_ineligible"
+            or "standing_resume_unsupported" or "standing_resume_incompatible")
         {
-            // Both ordinary and capacity handoffs must stop after a pre-commit refusal.
+            // Only durable refusals stop both handoffs. Infrastructure/model failures
+            // propagate to retry/capacity bookkeeping, even under a repeated-resume hold.
             // Read persisted state in a fresh scope: reservation rollback can leave tracked
             // allowance/pointer changes behind, and a concurrent human Start may have won.
             bool held;
