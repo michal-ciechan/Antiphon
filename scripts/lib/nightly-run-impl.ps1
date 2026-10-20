@@ -195,7 +195,7 @@ function Invoke-AntiphonNightlyRunCore {
         if ($Profile -eq 'rc') {
             # D-2: an RC must never be pointed at the master state root; its attempt,
             # green, monitor and receipt files all live under its own candidate root.
-            $candidate = Test-ReleaseGateCandidateRef -Ref $Ref
+            $candidate = Test-ReleaseGateCandidateRef -Ref $Ref -Sha $ExpectedSha
             if (-not $candidate.Ok) {
                 Write-Host ('REFUSED: rc profile needs an rc/YYYY-MM-DD ref or a legacy release/rc-<stamp> ({0}).' -f $candidate.Reason)
                 $result.Refusal = 'rc-ref'
@@ -203,10 +203,19 @@ function Invoke-AntiphonNightlyRunCore {
                 $result.ExitCode = 3
                 return [pscustomobject]$result
             }
-            if ([string]::IsNullOrWhiteSpace($CandidateId)) { $CandidateId = $candidate.CandidateId; $result.CandidateId = $CandidateId }
             if (-not (Test-ReleaseGateFullSha -Sha $ExpectedSha)) {
                 Write-Host 'REFUSED: rc profile needs -ExpectedSha pinned to the candidate full sha.'
                 $result.Refusal = 'rc-expected-sha'
+                $result.Phase = 'profile'
+                $result.ExitCode = 3
+                return [pscustomobject]$result
+            }
+            if ([string]::IsNullOrWhiteSpace($CandidateId)) {
+                $CandidateId = $candidate.CandidateId
+                $result.CandidateId = $CandidateId
+            } elseif (-not [string]::Equals($CandidateId, $candidate.CandidateId, [StringComparison]::Ordinal)) {
+                Write-Host 'REFUSED: CandidateId must match the candidate ref and pinned full sha.'
+                $result.Refusal = 'rc-candidate-id-mismatch'
                 $result.Phase = 'profile'
                 $result.ExitCode = 3
                 return [pscustomobject]$result
