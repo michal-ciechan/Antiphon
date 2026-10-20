@@ -2002,7 +2002,8 @@ internal sealed class C1008HostFixture : IDisposable
         return JsonNode.Parse(text)!.AsObject();
     }
 
-    internal async Task<(int Exit, string Output)> Run(string hostCase = "deploy-parent", string extra = "", bool dryRun = false)
+    internal async Task<(int Exit, string Output)> Run(string hostCase = "deploy-parent", string extra = "", bool dryRun = false,
+        Func<string, string>? sourceTransform = null)
     {
         File.WriteAllText(StatePath, Docker.ToJsonString());
         File.WriteAllText(Path.Combine(Root, "statuses.json"), Statuses.ToJsonString());
@@ -2011,6 +2012,8 @@ internal sealed class C1008HostFixture : IDisposable
         var runnerCompose = Path.Combine(DelegateScriptRunner.RepoRoot, "docker-compose.server2-runner.yml");
         var tempCompose = Path.Combine(DelegateScriptRunner.RepoRoot, "docker-compose.server2-runner.temp.yml");
         var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
+        // A caller-local defect witness may transform only this fixture's disposable copy.
+        if (sourceTransform is not null) source = sourceTransform(source);
         var injection = $$"""
             C1008_FIXTURE_ROOT='{{Root}}'; export C1008_FIXTURE_ROOT
             SERVER2_ROOT='{{Root}}/server'; ROOT='{{Root}}'; EVIDENCE_ROOT='{{Root}}/evidence'; CASE_DIR="$EVIDENCE_ROOT/$CASE"
