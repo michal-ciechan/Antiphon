@@ -496,9 +496,15 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         await InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn", sessionId: sessionId);
     }
 
-    /// <summary>Activity after the last TurnEnd — makes IsWorkingAsync read true.</summary>
-    public Task MarkWorkingAsync(Guid? sessionId = null) =>
-        InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "working on it", sessionId: sessionId);
+    /// <summary>Awaits activity after the last TurnEnd and makes it visible to the loaded working-state store.</summary>
+    public async Task MarkWorkingAsync(Guid? sessionId = null)
+    {
+        var id = sessionId ?? SessionId;
+        using var lease = await Provider.GetRequiredService<SessionStateStore>()
+            .BeginWriteAsync(id, CancellationToken.None);
+        await InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "working on it", sessionId: id);
+        await lease.ReconcileAsync(reset: false, CancellationToken.None);
+    }
 
     /// <summary>
     /// A Pending message already in the queue. <paramref name="deliveryAttempts"/> and
