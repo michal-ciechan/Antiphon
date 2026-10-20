@@ -184,28 +184,17 @@ public sealed class SourceSnapshot
 
     private static byte[] RunGit(string repository, IReadOnlyList<string> args)
     {
-        using var process = new Process();
-        process.StartInfo = new ProcessStartInfo("git")
+        var start = new ProcessStartInfo("git")
         {
             WorkingDirectory = repository,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
         };
-        foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
-        if (!process.Start()) throw new SourceCaptureException("git_start");
-        using var output = new MemoryStream();
-        var copy = process.StandardOutput.BaseStream.CopyToAsync(output);
-        var error = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(30_000))
-        {
-            process.Kill(true);
-            throw new SourceCaptureException("git_timeout");
-        }
-        copy.GetAwaiter().GetResult();
-        error.GetAwaiter().GetResult();
-        if (process.ExitCode != 0) throw new SourceCaptureException("git_exit");
-        return output.ToArray();
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        CheckpointProcessRunner.BytesResult result;
+        try { result = CheckpointProcessRunner.RunBytes(start, 30_000, git: true); }
+        catch (System.ComponentModel.Win32Exception) { throw new SourceCaptureException("git_start"); }
+        if (result.TimedOut) throw new SourceCaptureException("git_timeout");
+        if (result.Exit != 0) throw new SourceCaptureException("git_exit");
+        return result.Stdout;
     }
 
     private sealed class SourceCaptureException(string code) : Exception
