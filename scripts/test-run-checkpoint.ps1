@@ -314,14 +314,15 @@ function Test-C585_BuildFailed {
 
 function Test-C585_FreshResultsDir {
     $fx = New-C585Case -Name 'freshdir'
+    $outputPath = 'bin-c585h-freshdir-' + [guid]::NewGuid().ToString('N') + '/'
     $stamp = '20260920-101010-abcd'
     $occupied = Join-Path $fx.ResultsRoot ('CP-1-' + $stamp)
     New-Item -ItemType Directory -Path $occupied -Force | Out-Null
-    $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Stamp $stamp
+    $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Stamp $stamp -OutputPath $outputPath
     Assert-C487 -Cond ($r.Exit -eq 2) -Name 'C585 FreshResultsDir exit code 2' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
     Assert-C487 -Cond ($r.Text -match 'results directory exists') -Name 'C585 FreshResultsDir refuses a pre-existing results directory' -Detail $r.Text
     Assert-C487 -Cond ($r.Calls.Count -eq 0) -Name 'C585 FreshResultsDir invokes no dotnet' -Detail ($r.Calls -join ' | ')
-    $second = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Stamp '20260920-101011-abce'
+    $second = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Stamp '20260920-101011-abce' -OutputPath $outputPath
     Assert-C487 -Cond ($second.Exit -eq 0) -Name 'C585 FreshResultsDir a different stamp succeeds' -Detail ('exit={0} {1}' -f $second.Exit, $second.Text)
 }
 
@@ -467,12 +468,16 @@ function Get-C589Order {
 
 function Test-C589_SlotGranted {
     $fx = New-C585Case -Name 'slot-granted'
-    $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Platform 'windows' -Slot -SlotScript 'granted'
+    $outputPath = 'bin-c585h-slot-granted-' + [guid]::NewGuid().ToString('N') + '/'
+    $absoluteOutput = [System.IO.Path]::GetFullPath((Join-Path $script:RepoRoot ('tests/Antiphon.Tests/' + $outputPath))).Replace('\', '/').TrimEnd('/')
+    $expectedBuild = 'build tests/Antiphon.Tests --property OutputPath=' + $outputPath +
+        ' --property ArtifactsPath=' + $absoluteOutput + '/artifacts --property UseArtifactsOutput=true -maxcpucount 3 --nologo'
+    $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Platform 'windows' -Slot -SlotScript 'granted' -OutputPath $outputPath
     $build = Get-C671Call (Get-C585BuildCalls -Result $r)
     $run = Get-C671Call (Get-C585RunCalls -Result $r)
     $line = [string]($r.Checkpoint | Select-Object -First 1)
     Assert-C487 -Cond ($r.Exit -eq 0) -Name 'C589 SlotGranted exit code 0' -Detail ('exit={0} {1}' -f $r.Exit, $r.Text)
-    Assert-C487 -Cond ($build -ceq ($script:C671Build + ' -maxcpucount 3 --nologo')) `
+    Assert-C487 -Cond ($build -ceq $expectedBuild) `
         -Name 'C589 SlotGranted build carries the grant -maxcpucount' -Detail $build
     Assert-C487 -Cond ($run -cnotmatch 'maxcpucount') -Name 'C589 SlotGranted the --no-build run carries no -maxcpucount' -Detail $run
     Assert-C487 -Cond (@($r.Lines | Where-Object { $_ -cmatch ('^BUILD SLOT granted lease=' + $script:C589Lease + ' waited=\d+s maxcpucount=3$') }).Count -eq 1) `
