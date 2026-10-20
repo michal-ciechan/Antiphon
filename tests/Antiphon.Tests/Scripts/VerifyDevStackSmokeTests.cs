@@ -11,6 +11,7 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// CARD-1305 D-2. The dev-stack listener probe must list a real loopback port
 /// on a host where Get-NetTCPConnection is not a command.
+/// CARD-1323 S3. Full Aspire smoke refuses non-Windows hosts before external commands.
 /// </summary>
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
