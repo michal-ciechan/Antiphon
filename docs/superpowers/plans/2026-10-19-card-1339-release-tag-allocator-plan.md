@@ -718,6 +718,9 @@ methods** (V-2 is deliberately run again for S3).
 | CP-11 | Final | `tests/Antiphon.Tests -> bin-c1339-final-unit/` | final-unit | `/*/*/*/*[Category=Unit]` | Final Unit regression lane | All selected Unit cases, nonzero execution, 0 failed/skipped; retain full TRX roster | 1 | 10 |
 | CP-12 | Final | `tests/Antiphon.Tests -> bin-c1339-final-integration/` | final-integration | `/*/*/(ReleaseTagAllocatorTests*)\|(ReleaseGatePublicationTests*)\|(ReleaseGatePublicationAuthorityTests*)\|(ReleaseBranchModelGateTests*)/*` | V-1..V-5, R-1..R-5, full affected classes | Exactly 31 methods executed, 0 failed/skipped | 31 | 12 |
 
+| CP-13 | S5-root-red | `tests/Antiphon.Tests -> bin-c1339-root-red/` | root-witness | `/*/*/ReleaseTagAllocatorTests/C1339_PromoteReservationAndTarget` | V-5, R-5 root-shape repair witness | M5: exactly 1 executed, 1 failed at G-45 reservation-typed, 0 skipped | 1 | 4 |
+| CP-14 | S5-repair | `tests/Antiphon.Tests -> bin-c1339-repair-green/` | repair-green | `/*/*/(ReleaseTagAllocatorTests*)\|(ReleaseBranchModelGateTests*)/(C1339_PromoteReservationAndTarget*)\|(C1311_PreReleaseTag*)` | V-5, R-5, CP-10 repair | Exactly 2 executed, 0 failed/skipped; 30 harness rows | 2 | 5 |
+
 ### Cost
 
 All estimates are wall-clock minutes, not measured execution. Design performed

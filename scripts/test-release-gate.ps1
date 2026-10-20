@@ -3685,7 +3685,7 @@ function Invoke-C1311Promote {
 
 function Test-C1311TraceClean([string]$Trace) {
     if ([string]::IsNullOrWhiteSpace($Trace)) { return $false }
-    $bad = @($Trace -split "`n" | Where-Object { $_ -match '--force' -or $_ -match '\+refs/' -or $_ -match 'tag -d' -or $_ -match 'push.*--delete' -or $_ -match ':refs/tags' })
+    $bad = @($Trace -split "`n" | Where-Object { $_ -match '--force' -or $_ -match '\+refs/' -or $_ -match 'tag -d' -or $_ -match 'push.*--delete' -or $_ -match '\s:refs/tags' })
     return ($bad.Count -eq 0)
 }
 
@@ -3851,7 +3851,11 @@ function Test-C1311_PreReleaseTag {
         $stampPublished -and $stampCreates -ge 1 -and $stampPre -eq 0 -and (Test-C1311TraceClean $stampTrace) -and ($stampTrace -match 'GIT push') -and
         $longPublished -and $longTagOk -and $longCreates -ge 1 -and $longPre -eq $longCreates -and (Test-C1311TraceClean $longTrace) -and ($longTrace -match 'GIT push') -and
         (Test-C1311TraceClean $promoteTrace) -and ($promoteTrace -match 'GIT push') -and
-        $promoteQuiet -and (Test-Path -LiteralPath $promoteScript)) `
+        $promoteQuiet -and (Test-Path -LiteralPath $promoteScript) -and
+        -not (Test-C1311TraceClean 'GIT push origin :refs/tags/v2026.10.15.1') -and
+        -not (Test-C1311TraceClean 'GIT push origin --delete refs/tags/v2026.10.15.1') -and
+        -not (Test-C1311TraceClean 'GIT push origin --force refs/tags/v2026.10.15.1') -and
+        -not (Test-C1311TraceClean 'GIT push origin +refs/tags/v2026.10.15.1:refs/tags/v2026.10.15.1')) `
         -Name 'C1311 PreReleaseTag no tag delete and no force push' `
         -Detail ('stamp=' + $stampPublished + '/' + $stampCreates + '/' + $stampPre + ' long=' + $longPublished + '/' + $longTagOk + '/' + $longCreates + '/' + $longPre + ' peel=' + $longPeeled + ' quiet=' + $promoteQuiet)
 }
@@ -4741,6 +4745,7 @@ function Test-C1339_PromoteReservationAndTarget {
         @{ label = 'C1339 G-45 reservation-typed'; reason = 'invalid'; edits = @(
             { Set-Content -LiteralPath $path -Value '{broken' },
             { Set-Content -LiteralPath $path -Value '[]' },
+            { $raw = [IO.File]::ReadAllText($path); [IO.File]::WriteAllText($path, '[' + $raw + ']') },
             { Update-C599Json $path { param($j) $j.schemaVersion = '1' } },
             { Update-C599Json $path { param($j) $j.schemaVersion = 2 } },
             { Update-C599Json $path { param($j) $j.reservations = $j.reservations[0] } },
@@ -4834,7 +4839,7 @@ function Test-C1339_PromoteReservationAndTarget {
         $unrelated = ''
         if ($fault -eq 'silent') {
             [void](New-ReleaseGateTagReservation -JournalPath $path -CandidateId ('rc-2026-10-15-' + $fx.C.Substring(0,12)) -Sha $fx.C -CutUtc ([datetime]'2026-10-15T00:00:00Z') -RemoteTags @($fx.PreTag))
-            $unrelated = ConvertTo-NightlyCanonicalJson -Object (Get-Content $path -Raw | ConvertFrom-Json).reservations[1]
+            $unrelated = (Get-Content $path -Raw | ConvertFrom-Json).reservations[1] | ConvertTo-Json -Depth 12 -Compress
         }
         $expectedCount = if ($unrelated) { 2 } else { 1 }
         $before = [IO.File]::ReadAllText($path)
@@ -4866,7 +4871,7 @@ function Test-C1339_PromoteReservationAndTarget {
         Clear-Content -LiteralPath (Join-Path $fx.Root 'real-git-trace.log')
         $again = Invoke-C1339Promote $fx
         $rows = (Get-Content $path -Raw | ConvertFrom-Json).reservations
-        $unrelatedOk = -not $unrelated -or (ConvertTo-NightlyCanonicalJson -Object $rows[1]) -ceq $unrelated
+        $unrelatedOk = -not $unrelated -or ($rows[1] | ConvertTo-Json -Depth 12 -Compress) -ceq $unrelated
         $recoveryChecks += New-C1339Check ($again.ExitCode -eq 0 -and $again.Resumed -and (Test-C1339NoWrites $fx) -and
             @($rows).Count -eq $expectedCount -and $unrelatedOk -and $rows[0].sha -ceq $fx.Head -and $rows[0].tag -ceq $fx.PreTag -and $rows[0].finalTag -ceq $fx.FinalTag -and
             (Invoke-C1339LocalGit $fx @('show-ref', '--verify', '--hash', ('refs/tags/' + $fx.FinalTag)) -Remote) -ceq $finalObject) ('journal recovery:' + $fault + ':' + $again.Refusal)
