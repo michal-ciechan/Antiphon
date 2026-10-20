@@ -120,12 +120,17 @@ public sealed class MechanicalPcContractTests
         "Commission binding-only at explicit Frontier, then eligible mechanical-execution at Low; one open Mutation per O.";
 
     /// <summary>
-    /// The orchestrator bundle's shortened form of that rule since CARD-1332 (6ec71d427), which
-    /// dropped the tier words and kept the scope names and the one-open constraint. CARD-1355 pins
-    /// this exact fragment beside its owner pointer; the bundle's other use of "eligible" (runner
-    /// placement) is not a routing anchor and is not consulted.
+    /// CARD-0479 (68be4213412614fd6fa3a62429ce3513308a4707) shortened this sentence for argv
+    /// headroom. CARD-1366 restores the explicit rule and its matrix/pin and Low qualifications.
+    /// The bundle's unrelated runner-placement "eligible" is not a routing anchor.
     /// </summary>
-    private const string BundleRoutingRule = "binding-only mechanical-execution; one open Mutation per O.";
+    private const string BundleRoutingRule = RoutingRule;
+
+    private const string MatrixAndPinRule =
+        "Ordinary dispatch follows the live Role × complexity matrix; these scoped tier requests still respect routing pins.";
+
+    private const string LowEligibilityRule =
+        "Low requires a bound mechanically-eligible pack; see docs/mechanical-pc-contract.md.";
 
     private const string BundleOwnerPointer = "Follow the full CARD-0478 recipe in docs/orchestration-loop.md.";
 
@@ -176,6 +181,19 @@ public sealed class MechanicalPcContractTests
                 var paragraph = Paragraph(text, "Default workflow: Code -> ordinary Review", "c1355-bundle");
                 paragraph.ShouldContain(BundleOwnerPointer, Case.Sensitive, "c1355-bundle-owner-pointer");
                 paragraph.ShouldContain(BundleRoutingRule, Case.Sensitive, "c1355-bundle-routing-rule");
+                paragraph.ShouldContain(MatrixAndPinRule, Case.Sensitive, "c1366-bundle-matrix-and-pins");
+                paragraph.ShouldContain(LowEligibilityRule, Case.Sensitive, "c1366-bundle-low-eligibility");
+
+                var composed = InstructionBundleComposer.Compose(
+                    InstructionBundles.ForDelegate(AgentTaskKind.Orchestrator, AgentTaskRole.Custom)).Text;
+                var composedParagraph = Paragraph(composed, "Default workflow: Code -> ordinary Review", "c1366-composed");
+                composedParagraph.ShouldContain(BundleOwnerPointer, Case.Sensitive, "c1366-composed-owner-pointer");
+                composedParagraph.ShouldContain(BundleRoutingRule, Case.Sensitive, "c1366-composed-routing-rule");
+                composedParagraph.ShouldContain(MatrixAndPinRule, Case.Sensitive, "c1366-composed-matrix-and-pins");
+                composedParagraph.ShouldContain(LowEligibilityRule, Case.Sensitive, "c1366-composed-low-eligibility");
+                composedParagraph.ShouldBe(paragraph, "c1366-source-composed-workflow-parity");
+                Paragraph(Read("server/Bundles/README.md"), "Default workflow: Code -> ordinary Review", "c1366-readme")
+                    .ShouldBe(paragraph, "c1366-source-readme-workflow-parity");
                 // The pointer resolves to the complete rule in the owner it names.
                 Read("docs/orchestration-loop.md")
                     .ShouldContain(RoutingRule, Case.Sensitive, "c1355-bundle-owner-routing-rule");
