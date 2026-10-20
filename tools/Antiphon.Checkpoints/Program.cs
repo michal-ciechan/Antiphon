@@ -6,11 +6,26 @@ namespace Antiphon.Checkpoints;
 
 public static class Program
 {
-    public static async Task<int> Main(string[] args)
+    public static Task<int> Main(string[] args) => MainAsync(args);
+
+    public static async Task<int> MainAsync(string[] args,
+        Func<ConsoleCancelEventHandler, IDisposable>? subscribe = null,
+        Func<CancellationToken, CheckpointApp.Runtime>? runtimeFactory = null)
     {
+        using var cancellation = new CancellationTokenSource();
+        var work = args.Length > 0 && args[0] is "run" or "start" or "wait" or "status"
+            or "stop" or "report" or "validate" or "import" or "coverage" or "row" or "clean" or "execute";
+        ConsoleCancelEventHandler handler = (_, signal) =>
+        {
+            signal.Cancel = true;
+            cancellation.Cancel();
+        };
+        using var subscription = work ? (subscribe ?? ConsoleCancellation.Subscribe)(handler) : null;
         try
         {
-            return await RunAsync(args).ConfigureAwait(false);
+            var token = work ? cancellation.Token : CancellationToken.None;
+            var runtime = runtimeFactory?.Invoke(token) ?? new CheckpointApp.Runtime { CancellationToken = token };
+            return await RunAsync(args, runtime).ConfigureAwait(false);
         }
         catch (ManifestValidationException ex)
         {
@@ -505,15 +520,15 @@ public static class Program
             foreach (var item in element.EnumerateArray()) AssertUniqueJson(item);
     }
 
-    private static async Task<int> Row(ArgSet options, string repo, CheckpointApp.Runtime? runtime)
+    private static async Task<int> Row(ArgSet options, string repo, CheckpointApp.Runtime runtime)
     {
-        var output = runtime?.Output ?? Console.Out;
-        var platform = runtime?.Platform ?? new RuntimePlatform();
+        var output = runtime.Output ?? Console.Out;
+        var platform = runtime.Platform ?? new RuntimePlatform();
         var repeat = options.Get("repeat") is string directRepeat ? RepeatRequest.Parse(directRepeat) : 1;
         if (repeat > 1)
             _ = RepeatRequest.CanonicalProject(repo, Required(options, "project"));
         var expectedSha = options.Get("expected-source-sha");
-        var start = (runtime?.SourceCapture ?? new SourceSnapshot().Capture)(repo);
+        var start = (runtime.SourceCapture ?? new SourceSnapshot().Capture)(repo);
         var source = new SourceEvidence { Start = start };
         if (expectedSha is not null && (!System.Text.RegularExpressions.Regex.IsMatch(expectedSha, "^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
             || start.CaptureStatus != "known" || start.DirtyFiles != 0 || start.Commit != expectedSha))
@@ -521,22 +536,22 @@ public static class Program
             output.WriteLine("CHECKPOINT source_mismatch or source_dirty");
             return ExitCodes.Invalid;
         }
-        var guard = new SourceRunGuard(repo, source, runtime?.SourceCapture);
+        var guard = new SourceRunGuard(repo, source, runtime.SourceCapture);
         if (!guard.Observe()) { output.WriteLine("CHECKPOINT " + guard.Reason); return ExitCodes.Invalid; }
-        var slots = new BuildSlotClient(
-            runtime?.SlotHandler ?? new HttpClientHandler(),
+        var slots = runtime.Slots ?? new BuildSlotClient(
+            runtime.SlotHandler ?? new HttpClientHandler(),
             BuildSlotClient.DefaultEndpoint(platform.IsWindows),
-            clock: runtime?.SlotClock,
-            delay: runtime?.SlotDelay,
-            holders: new ProcessLeaseHolderSource(runtime?.SlotStartTimeReader),
-            sensitiveToken: runtime?.EnvironmentLookup("ANTIPHON_TASK_TOKEN"));
+            clock: runtime.SlotClock,
+            delay: runtime.SlotDelay,
+            holders: new ProcessLeaseHolderSource(runtime.SlotStartTimeReader),
+            sensitiveToken: runtime.EnvironmentLookup("ANTIPHON_TASK_TOKEN"));
         var session = options.Get("slots") == "off"
             ? new SlotSession("off", 4)
-            : await slots.ProbeAsync(CancellationToken.None).ConfigureAwait(false);
+            : await slots.ProbeAsync(runtime.CancellationToken).ConfigureAwait(false);
         var name = Required(options, "name");
         if (string.IsNullOrWhiteSpace(name))
         { output.WriteLine("refused: manifest-identity: row name is empty"); return ExitCodes.Invalid; }
-        await using var lease = await slots.AcquireAsync(session, name, CancellationToken.None).ConfigureAwait(false);
+        await using var lease = await slots.AcquireAsync(session, name, runtime.CancellationToken).ConfigureAwait(false);
         if (lease.ExitCode != 0)
         {
             output.WriteLine(CheckpointLine.Format(new CheckpointLineModel
@@ -569,7 +584,7 @@ public static class Program
             })
             .ToList();
         var commit = start.Commit ?? "unknown";
-        var runner = new RowRunner(runtime?.Driver ?? new ProcessDriver { DotnetShim = options.Get("dotnet") }, platform);
+        var runner = new RowRunner(runtime.Driver ?? new ProcessDriver { DotnetShim = options.Get("dotnet") }, platform);
         var result = await runner.RunAsync(new RowRequest
         {
             Name = name,
@@ -594,7 +609,7 @@ public static class Program
             TimingRoot = Environment.GetEnvironmentVariable("ANTIPHON_TEST_TIMING_ROOT"),
             TimingRunId = name,
             ProducingBuildId = options.Get("output-path"),
-        }, output, CancellationToken.None).ConfigureAwait(false);
+        }, output, runtime.CancellationToken).ConfigureAwait(false);
         result.Source = source;
         ReportWriter.WriteFiles(results, new ReportModel
         {
