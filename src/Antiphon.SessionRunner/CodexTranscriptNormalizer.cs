@@ -52,8 +52,11 @@ namespace Antiphon.SessionRunner;
 /// <c>cancelled</c> (CARD-0242). <c>ApiCallId</c> is <c>turn_id</c> when the row carries one.
 /// That is the existing idle-not-report boundary: the queue flushes and the task stays
 /// Working. <c>IsApiError</c> stays unset; an API failure remains <c>task_complete.error</c>.</item>
-/// <item><c>token_count</c> → per-turn usage, stamped on that turn's <c>TurnEnd</c> (see
-/// <see cref="TurnUsage"/> for why it is a delta and not the row's own numbers).</item>
+/// <item><c>token_count</c> → per-turn usage, consumed once at either <c>task_complete</c> or
+/// <c>turn_aborted</c> and stamped on that boundary's <c>TurnEnd</c>. Without new counts since
+/// the previous boundary the usage fields stay null (see <see cref="TurnUsage"/> for why usage
+/// is a delta and not the row's own numbers). Late counts and overlapping replacement-turn row
+/// ordering remain unmeasured; accounting follows the most recent observed snapshot.</item>
 /// </list>
 ///
 /// <para>Skipped, lossy by design like the other two normalizers: <c>session_meta</c>,
@@ -316,12 +319,8 @@ public sealed class CodexTranscriptNormalizer
         return [];
     }
 
-    private List<TranscriptPart> FromTaskComplete(JsonElement payload, string? uuid, DateTimeOffset? ts)
+    private (int? Input, int? Output, int? CacheRead, int? CacheWrite) ConsumeTurnUsage()
     {
-        // turn_id is the natural API-call attribution key: DelegationUsageRollup groups by
-        // ApiCallId and counts each group once, and one Codex turn is one billed unit here.
-        var turnId = Fit(GetString(payload, "turn_id"));
-
         int? inTok = null, outTok = null, cacheRead = null, cacheWrite = null;
         if (_sawUsageThisTurn && _cumulative is { } now)
         {
@@ -336,7 +335,15 @@ public sealed class CodexTranscriptNormalizer
         }
 
         _sawUsageThisTurn = false;
+        return (inTok, outTok, cacheRead, cacheWrite);
+    }
 
+    private List<TranscriptPart> FromTaskComplete(JsonElement payload, string? uuid, DateTimeOffset? ts)
+    {
+        // turn_id is the natural API-call attribution key: DelegationUsageRollup groups by
+        // ApiCallId and counts each group once, and one Codex turn is one billed unit here.
+        var turnId = Fit(GetString(payload, "turn_id"));
+        var (inTok, outTok, cacheRead, cacheWrite) = ConsumeTurnUsage();
         var (isError, errorClass, errorStatus, diagnostic) = ReadError(payload);
 
         return
@@ -361,18 +368,22 @@ public sealed class CodexTranscriptNormalizer
     /// <see cref="TranscriptKinds.IsReportBoundary"/> excludes, so the queue flushes and
     /// the task stays Working. <c>turn_id</c> is optional. <c>reason</c> is not required.
     /// <c>error</c> on this row is ignored; an API failure remains <c>task_complete.error</c>.
-    /// The usage baseline stays with <c>task_complete</c>.
+    /// Observed usage is consumed here just as at <c>task_complete</c>, so aborted spend
+    /// cannot roll into the next completed turn; no new counts means null usage fields.
     /// </summary>
-    private static List<TranscriptPart> FromTurnAborted(JsonElement payload, string? uuid, DateTimeOffset? ts)
+    private List<TranscriptPart> FromTurnAborted(JsonElement payload, string? uuid, DateTimeOffset? ts)
     {
         var turnId = Fit(GetString(payload, "turn_id"));
+        var (inTok, outTok, cacheRead, cacheWrite) = ConsumeTurnUsage();
         return
         [
             new TranscriptPart(
                 TranscriptKinds.TurnEnd, uuid ?? turnId, null, ts, "assistant",
                 null, null, null, null, null,
                 StopReason: TranscriptKinds.StopReasons.Cancelled,
-                ApiCallId: turnId),
+                ApiCallId: turnId,
+                InputTokens: inTok, OutputTokens: outTok,
+                CacheReadTokens: cacheRead, CacheCreationTokens: cacheWrite),
         ];
     }
 
