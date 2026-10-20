@@ -43,11 +43,13 @@ public sealed class AgentSessionCancelledTurnTests
     {
         await CheckStartAsync(completed: false, TranscriptKinds.StopReasons.Cancelled,
             RunPhase.AwaitingInput, resumeAfterInterruption: true);
+        await CheckStartAsync(completed: false, TranscriptKinds.StopReasons.Cancelled,
+            RunPhase.AwaitingInput, resumeAfterInterruption: true, olderCommandWrapperOnly: true);
     }
 
     private static async Task CheckStartAsync(
         bool completed, string? stopReason, RunPhase expectedPhase, bool scanAfterInterruption = false,
-        bool resumeAfterInterruption = false)
+        bool resumeAfterInterruption = false, bool olderCommandWrapperOnly = false)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
@@ -247,54 +249,73 @@ public sealed class AgentSessionCancelledTurnTests
                     attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
                 }
 
-                // Phase 2 runs after the transcript batch commits. Claude stores both
-                // the raw slash-command echo and its wrapper, even when the echo is first.
-                var commandEcho = new TranscriptEntry
+                if (olderCommandWrapperOnly)
                 {
-                    Id = Guid.NewGuid(), AgentSessionId = result.SessionId, Sequence = 11,
-                    Kind = TranscriptKinds.UserPrompt, Text = "/status",
-                    Timestamp = clock.GetUtcNow().UtcDateTime, CreatedAt = clock.GetUtcNow().UtcDateTime
-                };
-                await using (var seed = new AppDbContext(options))
-                {
-                    seed.TranscriptEntries.AddRange(commandEcho, new TranscriptEntry
+                    // An earlier turn's command wrapper must not classify a new real
+                    // slash-prefixed follow-up as a local-command echo.
+                    await using var seed = new AppDbContext(options);
+                    seed.TranscriptEntries.Add(new TranscriptEntry
                     {
-                        Id = Guid.NewGuid(), AgentSessionId = result.SessionId, Sequence = 12,
+                        Id = Guid.NewGuid(), AgentSessionId = result.SessionId, Sequence = 1,
                         Kind = TranscriptKinds.UserPrompt, Text = "<command-name>/status</command-name>",
-                        Timestamp = clock.GetUtcNow().UtcDateTime, CreatedAt = clock.GetUtcNow().UtcDateTime
+                        Timestamp = attempt.PhaseStartedAt.AddSeconds(-1),
+                        CreatedAt = attempt.PhaseStartedAt.AddSeconds(-1)
                     });
                     await seed.SaveChangesAsync();
                 }
-                var interruptedLastEventAt = attempt.LastEventAt;
-                await runtime.ExecuteActionPhaseAsync(new SessionRuntimeAction
+                else
                 {
-                    AgentSessionId = result.SessionId, Sequence = commandEcho.Sequence, Phase = 2
-                }, commandEcho, CancellationToken.None);
-                clock.Advance(TimeSpan.FromMinutes(10));
-                await using (var commandScanDb = new AppDbContext(options))
-                {
-                    var commandScan = new RunAttemptStallDetector(
-                        commandScanDb, runtime, events, settings, clock,
-                        NullLogger<RunAttemptStallDetector>.Instance);
-                    var stalled = await commandScan.ScanAsync(CancellationToken.None);
-                    adapter.KillCount.ShouldBe(0,
-                        "a raw command echo beside its persisted wrapper must not arm an automatic stall kill");
-                    stalled.ShouldBe(0);
+                    // Phase 2 runs after the transcript batch commits. Claude stores both
+                    // the raw slash-command echo and its wrapper, even when the echo is first.
+                    var commandEcho = new TranscriptEntry
+                    {
+                        Id = Guid.NewGuid(), AgentSessionId = result.SessionId, Sequence = 11,
+                        Kind = TranscriptKinds.UserPrompt, Text = "/status",
+                        Timestamp = clock.GetUtcNow().UtcDateTime, CreatedAt = clock.GetUtcNow().UtcDateTime
+                    };
+                    await using (var seed = new AppDbContext(options))
+                    {
+                        seed.TranscriptEntries.AddRange(commandEcho, new TranscriptEntry
+                        {
+                            Id = Guid.NewGuid(), AgentSessionId = result.SessionId, Sequence = 12,
+                            Kind = TranscriptKinds.UserPrompt, Text = "<command-name>/status</command-name>",
+                            Timestamp = clock.GetUtcNow().UtcDateTime, CreatedAt = clock.GetUtcNow().UtcDateTime
+                        });
+                        await seed.SaveChangesAsync();
+                    }
+                    var interruptedLastEventAt = attempt.LastEventAt;
+                    await runtime.ExecuteActionPhaseAsync(new SessionRuntimeAction
+                    {
+                        AgentSessionId = result.SessionId, Sequence = commandEcho.Sequence, Phase = 2
+                    }, commandEcho, CancellationToken.None);
+                    clock.Advance(TimeSpan.FromMinutes(10));
+                    await using (var commandScanDb = new AppDbContext(options))
+                    {
+                        var commandScan = new RunAttemptStallDetector(
+                            commandScanDb, runtime, events, settings, clock,
+                            NullLogger<RunAttemptStallDetector>.Instance);
+                        var stalled = await commandScan.ScanAsync(CancellationToken.None);
+                        adapter.KillCount.ShouldBe(0,
+                            "a raw command echo beside its persisted wrapper must not arm an automatic stall kill");
+                        stalled.ShouldBe(0);
+                    }
+                    await reloaded.Entry(attempt).ReloadAsync();
+                    attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+                    attempt.LastEventAt.ShouldBe(interruptedLastEventAt);
+                    attempt.CompletedAt.ShouldBeNull();
+                    await reloaded.Entry(session).ReloadAsync();
+                    session.Status.ShouldBe(SessionStatus.Running);
+                    session.EndedAt.ShouldBeNull();
+                    adapter.Disposed.ShouldBeFalse();
                 }
-                await reloaded.Entry(attempt).ReloadAsync();
-                attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
-                attempt.LastEventAt.ShouldBe(interruptedLastEventAt);
-                attempt.CompletedAt.ShouldBeNull();
-                await reloaded.Entry(session).ReloadAsync();
-                session.Status.ShouldBe(SessionStatus.Running);
-                session.EndedAt.ShouldBeNull();
-                adapter.Disposed.ShouldBeFalse();
 
                 prompt.Sequence = 13;
                 action.Sequence = prompt.Sequence;
                 prompt.Timestamp = clock.GetUtcNow().UtcDateTime;
                 prompt.CreatedAt = clock.GetUtcNow().UtcDateTime;
-                prompt.Text = "Continue after interruption";
+                prompt.Text = olderCommandWrapperOnly
+                    ? "/status explain the remaining work"
+                    : "Continue after interruption";
                 await runtime.ExecuteActionPhaseAsync(action, prompt, CancellationToken.None);
                 await reloaded.Entry(attempt).ReloadAsync();
                 attempt.Phase.ShouldBe(RunPhase.StreamingTurn,
