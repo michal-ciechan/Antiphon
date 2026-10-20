@@ -103,6 +103,15 @@ CP-4 qualification belongs to the committed implementation tip and its generated
 receipt, recorded in `.antiphon/task-2029a2bb.md`; this pre-run candidate does
 not claim its outcome.
 
+The first CP-4 run, `20261020-020332-7991`, tested
+`2c0dfd011d72d4292ca92f189cc8efd96bd42655`: 8 methods passed, 1 failed.
+The introduced regression was the existing `C1044 partial cannot borrow identity`
+row: the new selector reported missing state instead of the specific truncated
+identity refusal. The repair validates identity solely to refine that discovery
+refusal, then still refuses; it cannot select/admit a state from free text.
+No assertion or timeout changed. The final CP-4 run repeats the full two-class
+selection at the repaired committed SHA; retain the failed run and its costs.
+
 Each variant below is **pending**, with zero deliberate mutants run by Code.
 Use the exact method and decisive assertion in the plan's PC table; SourceLanding
 Mutation owns baseline/red/restore/fresh-green and missing-control discovery.
