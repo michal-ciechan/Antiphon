@@ -392,6 +392,8 @@ public sealed class AgentSessionRuntime
                         sessionId, kind, row.IsApiError == true, ct, row.Sequence, row.StopReason);
                 break;
             case 2 when kind == TranscriptKinds.UserPrompt || action.TriggerKind == "catchup":
+                if (row?.Kind == TranscriptKinds.UserPrompt)
+                    await ResumeInterruptedAttemptAsync(services.GetRequiredService<AppDbContext>(), row, ct);
                 if (services.GetService<SessionMessageQueueService>() is { } refinementQueue)
                     await refinementQueue.ConfirmSentRefinementsAsync(sessionId, ct);
                 break;
@@ -2140,6 +2142,32 @@ public sealed class AgentSessionRuntime
         {
             _logger.LogWarning(ex, "Failed to record activity for agent session {SessionId}", sessionId);
         }
+    }
+
+    private async Task ResumeInterruptedAttemptAsync(AppDbContext db, TranscriptEntry prompt, CancellationToken ct)
+    {
+        if (TranscriptKinds.IsInterruptPrompt(prompt.Kind, prompt.Text)
+            || TranscriptPromptSpan.IsHousekeepingPrompt(prompt.Text, []))
+            return;
+
+        var attempt = await db.RunAttempts
+            .Include(a => a.Card)
+            .Where(a => a.AgentSessionId == prompt.AgentSessionId
+                && a.AgentSession!.Status == SessionStatus.Running
+                && a.CompletedAt == null)
+            .OrderByDescending(a => a.AttemptNumber)
+            .FirstOrDefaultAsync(ct);
+        // A deferred action for the old prompt must not re-arm the interrupted turn.
+        // CreatedAt is our persisted admission clock, independent of provider timestamp precision.
+        if (attempt is null || attempt.Phase != RunPhase.AwaitingInput
+            || prompt.CreatedAt <= attempt.PhaseStartedAt)
+            return;
+
+        RunAttemptStateMachine.Transition(attempt, RunPhase.StreamingTurn, UtcNow());
+        await db.SaveChangesAsync(ct);
+        await PublishRunAttemptChangedAsync(
+            new ManualTurnStart(prompt.AgentSessionId, attempt.Id, attempt.CardId, attempt.Card.BoardId, null),
+            RunPhase.StreamingTurn);
     }
 
     /// <summary>

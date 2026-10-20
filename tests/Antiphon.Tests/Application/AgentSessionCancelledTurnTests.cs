@@ -19,6 +19,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
 public sealed class AgentSessionCancelledTurnTests
 {
     [Test]
@@ -230,11 +231,23 @@ public sealed class AgentSessionCancelledTurnTests
                 await runtime.ExecuteActionPhaseAsync(action, prompt, CancellationToken.None);
                 prompt.Kind = TranscriptKinds.UserPrompt;
                 prompt.Timestamp = attempt.PhaseStartedAt.AddSeconds(-1);
+                prompt.CreatedAt = prompt.Timestamp.Value;
                 await runtime.ExecuteActionPhaseAsync(action, prompt, CancellationToken.None);
                 await reloaded.Entry(attempt).ReloadAsync();
                 attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
 
                 prompt.Timestamp = clock.GetUtcNow().UtcDateTime;
+                prompt.CreatedAt = clock.GetUtcNow().UtcDateTime;
+                foreach (var housekeeping in new[]
+                         { "[Request interrupted by user]", "<command-name>/status</command-name>" })
+                {
+                    prompt.Text = housekeeping;
+                    await runtime.ExecuteActionPhaseAsync(action, prompt, CancellationToken.None);
+                    await reloaded.Entry(attempt).ReloadAsync();
+                    attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+                }
+
+                prompt.Text = "Continue after interruption";
                 await runtime.ExecuteActionPhaseAsync(action, prompt, CancellationToken.None);
                 await reloaded.Entry(attempt).ReloadAsync();
                 attempt.Phase.ShouldBe(RunPhase.StreamingTurn,

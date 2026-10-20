@@ -184,6 +184,10 @@ It runs no after-run hook and records no completion, failure, kill or disposal.
 turn this interrupted input wait into an automatic release. A one-time refresh of
 LastEventAt would only defer that kill. Card/worktree ownership stays attached;
 the phase does not enable parking or add an input-wait deadline.
+An accepted follow-up `UserPrompt`, admitted after that input wait began, returns
+the same unfinished attempt to `StreamingTurn` and refreshes `LastEventAt`.
+Queued input, deferred old prompts, interruption markers and local housekeeping
+do not re-arm it. Replaying the accepted prompt does not extend the stall deadline.
 
 OccupiesCapacity is true for any non-empty runner status other than Exited or Failed.
 OpenTaskId is the owner task: the latest Queued, Dispatched, Working or Blocked task bound to the session, so a live Blocked or Queued owner reads orphan=false (CARD-1124).
