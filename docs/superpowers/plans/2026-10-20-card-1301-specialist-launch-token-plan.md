@@ -161,3 +161,53 @@ build, product test or positive control; source inspection establishes the
 coverage gap, not executed acceptance. Plan publication is to the assigned
 branch only. The caller first disposes D-1 through D-4, then dispatches
 TestDesign with this artifact.
+
+## Code commission and verification design
+
+Code task `74f231ef-4fc4-4458-8736-2a7225fa20b8` starts at
+`72abb9205c6936dcb168f789265659e73842c2f9`. The caller accepted D-1 through D-3
+and selected master only for D-4; TestDesign is folded into this commission.
+Production behavior remains unchanged. The original Plan-stage conclusions above
+are historical; this section supplies the executable selection.
+
+The Code-stage Final contract requires the Unit lane and full affected integration
+class in addition to the two narrow selections, superseding the brief's no-Unit
+request. No full assembly is needed: the affected persistence/launch invariant is
+bounded to `TaskLaunchTokenBoundaryTests`. No shared fixture or product source changes.
+Estimated ordinary cost is 10 minutes plus slot wait, including one shared build.
+
+| ID | Invariant / observation | Execution |
+|---|---|---|
+| V-1 | Each tokenless Check/Distill/Diagnose Worker/Shared task pinned to a stopped, non-AlwaysOn standing agent fresh-spawns with a durable matching token at enqueue. Fresh-scope authentication identifies the task/session with no delegation authority; argv omits the token. | CP-1, CP-4 |
+| V-2 | A task-specific EF save fault fires once at the replacement hash write in initial dispatch and boot-wedge relaunch. Independent reads see the prior hash and committed Starting generation at the fault; that generation never reaches the sink. | CP-2, CP-4 |
+| R-1 | Existing Unit-lane invariants and test category admission remain intact. | CP-3 |
+| R-2 | Both new methods work together as the complete affected integration class. | CP-4 |
+| V-3 | Manual inspection: credential policy matches the common helper and authenticator; no production changes, no claim-cleanup assertion, no RC publication. | Source/diff inspection |
+
+The interceptor is registered on every dispatcher context, not the independent
+observation/fixture contexts. It matches the seeded task's changed TokenHash and
+throws only once, allowing fixture/claim writes and subsequent bookkeeping.
+The relaunch variant first dispatches successfully, then uses a fresh dispatcher
+scope for the faulted replacement. Each test removes only its own raw-cache entry.
+
+The Code-stage contract reserves deliberate mutants and red/restore/green for
+SourceLanding Mutation. The brief's request to run mutants during Code is therefore
+not executed. These obligations remain pending, with no claim of PC-clean:
+
+| PC | Variants | Exact method and guarded defect |
+|---|---|---|
+| PC-1 | Check, Distill, Diagnose | `C1301_tokenless_specialist_fresh_spawn_has_worker_token`: skip recovery when TokenHash is null; all three must fail the durable-token assertion. |
+| PC-2 | Initial dispatch, relaunch | `C1301_token_hash_save_failure_blocks_launch`: catch and ignore replacement-hash save failure; both must fail zero-launch after the fault fires. |
+
+Mutation must use exact method selectors with trailing wildcards, restore product
+source, and run the same method green. No mutation is part of ordinary checkpoints.
+Both methods assert observable outcomes through independent persistence reads.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1301/` | specialist-token | `/*/*/TaskLaunchTokenBoundaryTests/C1301_tokenless_specialist_fresh_spawn_has_worker_token*` | V-1 | >= 3 executed, 0 failed | 3 | 6 |
+| CP-2 | S1-S3 | CP-1 | hash-save-failure | `/*/*/TaskLaunchTokenBoundaryTests/C1301_token_hash_save_failure_blocks_launch*` | V-2 | >= 2 executed, 0 failed | 2 | 1 |
+| CP-3 | S1-S3 | CP-1 | unit | `/*/*/*/*[Category=Unit]` | R-1 | >= 1 executed, 0 failed | 1 | 2 |
+| CP-4 | S1-S3 | CP-1 | affected-class | `/*/*/TaskLaunchTokenBoundaryTests/*` | V-1, V-2, R-2 | >= 5 executed, 0 failed | 5 | 1 |

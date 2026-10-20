@@ -59,6 +59,14 @@ purpose; the registry `grok` definition does not.
 
 ## 2. Merge order
 
+A fresh specialist process receives an attributable Worker task credential, including
+when its Check, Distill or Diagnose task initially has no token hash. The common launch
+boundary persists the matching hash before passing `ANTIPHON_TASK_TOKEN` in the launch
+environment; a failed hash save prevents launch. Authentication binds it to that task
+and its fresh session and grants no delegation permission. Attaching to or reusing a
+live session does not rotate credentials. This ordering does not guarantee cleanup of
+an already committed claim or Starting session after a save failure (CARD-1301).
+
 `AgentTuiLaunchResolver` builds one dictionary, in this order. **Later wins.**
 
 | # | Layer | Where it is set |
