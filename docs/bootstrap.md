@@ -313,6 +313,16 @@ Read-only. Exit code is the number of FAILs. This is the last automated
 step; do not skip it. (The script is slice 2 of CARD-0088; it wraps
 `verify-dev-stack.ps1 -SkipBrowser` for the live half.)
 
+Full/default `verify-dev-stack.ps1` smoke is for the **Windows Aspire desktop**,
+including its named `antiphon-postgres` container. On non-Windows hosts it refuses
+with `desktop-platform-required` before importing the AppHost helpers or starting
+jobs, Docker/network operations or HTTP requests; `-SkipBrowser` does not change
+that placement. For a portable listener-only observation, use
+`pwsh -NoProfile -File verify-dev-stack.ps1 -ProbeListeningPorts`; it checks neither
+HTTP health nor Postgres. Explicit `-SimpleMode` retains the compose-stack checks
+and avoids the desktop Postgres-container check. A Linux runner does not need a
+fake desktop database to satisfy this smoke.
+
 ### 9. Create the first agent
 
 The seeder did not do this. In the UI at http://localhost:17203 create an

@@ -117,10 +117,10 @@ limiters are per test project and are **not** cross-process locks; this file is.
 dispositions and selection catalog, and keeps `defaultSuites` as the compatible
 nightly default alongside `profiles`:
 
-- `profiles.nightly.requiredSuites` - eight suites, including `markdown-pdf`. E2E stays out, and
+- `profiles.nightly.requiredSuites` - seven suites. E2E and `markdown-pdf` stay out, and
   `OptIn` / `Explicit` still excludes exactly as before. **The default nightly lane is
   unchanged.**
-- `profiles.rc.requiredSuites` - those eight **plus `e2e`**: `antiphon`,
+- `profiles.rc.requiredSuites` - those seven **plus `e2e` and `markdown-pdf`**: `antiphon`,
   `session-runner`, `pty-host`, `agents-pty`, `messaging`, `client`, `scripts`,
   `e2e`, and `markdown-pdf`.
 
@@ -155,6 +155,14 @@ All **69** LandDelivery cases remain required on Windows: 52 in
 Linux because their fixture requires Windows ConPTY/native FakeGrok. These counts
 describe the required roster, not an execution receipt. Linux results do not discharge
 any Windows obligation; there is no cross-host receipt merger or new profile.
+
+The default/full `verify-dev-stack.ps1` smoke belongs on the Windows Aspire desktop:
+its `antiphon-postgres` check concerns that desktop stack, not an isolated runner
+database. Non-Windows full invocations, including `-SkipBrowser`, refuse with
+`desktop-platform-required` before AppHost imports, jobs, Docker/network operations
+or HTTP. `-ProbeListeningPorts` remains a separate portable listener-only probe;
+explicit `-SimpleMode` retains its compose-stack behavior. Neither probe earns RC
+coverage or substitutes for the Windows obligations above.
 
 ### OptIn is not exclusion in a profile lane
 
