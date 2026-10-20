@@ -19,9 +19,6 @@ public sealed class VerifyDevStackSmokeTests
     [Test]
     public async Task Linux_full_smoke_refuses_before_desktop_side_effects()
     {
-        if (!OperatingSystem.IsLinux())
-            throw new TUnit.Core.Exceptions.SkipTestException("The desktop-platform refusal witness requires Linux.");
-
         var root = Directory.CreateTempSubdirectory("c1323-desktop-smoke-").FullName;
         try
         {
@@ -84,9 +81,18 @@ public sealed class VerifyDevStackSmokeTests
 
             var output = await stdout + await stderr;
             process.ExitCode.ShouldNotBe(0, output);
-            output.ShouldContain("desktop-platform-required", output);
-            (await File.ReadAllTextAsync(sentinelLog)).ShouldBeEmpty(
-                "Full Aspire smoke must refuse before jobs, Docker, HTTP, listener or build commands.");
+            var sentinelCalls = await File.ReadAllTextAsync(sentinelLog);
+            if (OperatingSystem.IsWindows())
+            {
+                output.ShouldContain("external-command-sentinel:Start-Job");
+                sentinelCalls.ShouldBe("Start-Job\n", "Windows must retain full Aspire smoke admission.");
+            }
+            else
+            {
+                output.ShouldContain("desktop-platform-required");
+                sentinelCalls.ShouldBeEmpty(
+                    "Full Aspire smoke must refuse before jobs, Docker, HTTP, listener or build commands.");
+            }
         }
         finally
         {
