@@ -114,8 +114,10 @@ The expected outcome is one assertion failure, not a build or fixture failure.
 its summary to promise an awaited, store-visible write. In
 `tests/Antiphon.Tests/Application/SessionMessageQueueWedgedHeadTests.cs:373`, replace
 the runtime-event callback with `h.Adapter.OnSubmitted = _ => h.MarkWorkingAsync();`.
-Remove its obsolete workaround comments/direct-store assertion and the now-unused
-`Antiphon.SessionRunner.Contracts` using. Preserve the assertions for attempts = 2,
+Remove its obsolete workaround comments/direct-store assertion. Retain the
+`Antiphon.SessionRunner.Contracts` using: the class still needs `TranscriptKinds`,
+`SessionGeneration` and `HerdrProblemTypes` (the first S2 build exposed the plan's
+incorrect unused-import assumption). Preserve the assertions for attempts = 2,
 NoTranscriptRecord, three Enters, Killed = false, and no generation kills.
 Commit and push before CP-2. Production files and other callers need no edits.
 
