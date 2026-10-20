@@ -30,8 +30,10 @@ $identity = [ordered]@{
 }
 $path = Join-Path $Directory "$Mode.json"
 [IO.File]::WriteAllText("$path.tmp", ($identity | ConvertTo-Json -Compress))
-[IO.File]::Move("$path.tmp", $path)
 [Console]::Out.WriteLine("C1375 $Mode stdout $Nonce")
 [Console]::Error.WriteLine("C1375 $Mode stderr $Nonce")
+# Publication certifies both markers are already written, even if this process
+# is descheduled immediately after the harness observes its readiness record.
+[IO.File]::Move("$path.tmp", $path)
 if ($null -ne $child) { $child.WaitForExit() }
 while ($true) { [Threading.Thread]::Sleep(1000) }
