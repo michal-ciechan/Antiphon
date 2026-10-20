@@ -83,11 +83,13 @@ public sealed class C1307CliCancellationTests : CheckpointTestBase
     {
         var console = new ConsoleSignals();
         var barrier = new CancelBarrier();
+        var releaseDriver = Signal();
         var slots = new ObservedSlots();
         var driver = new FakeDriver();
         driver.When(_ => true, async (_, token) =>
         {
-            await barrier.Hold(token);
+            try { await barrier.Hold(token); }
+            finally { await releaseDriver.Task; }
             return new DriverResult(0, "", "");
         });
         var repo = TempDir();
@@ -109,6 +111,8 @@ public sealed class C1307CliCancellationTests : CheckpointTestBase
             console.Raise().Cancel.ShouldBeTrue();
             console.Raise().Cancel.ShouldBeTrue();
             caller.IsCancellationRequested.ShouldBeTrue();
+            main.IsCompleted.ShouldBeFalse();
+            releaseDriver.TrySetResult();
             (await main.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBe(130);
             output.ToString().ShouldContain("canceled: caller-requested");
             slots.Releases.ShouldBe(1);
@@ -118,6 +122,7 @@ public sealed class C1307CliCancellationTests : CheckpointTestBase
         }
         finally
         {
+            releaseDriver.TrySetResult();
             barrier.Release.TrySetResult();
             await main.WaitAsync(TimeSpan.FromSeconds(5));
         }
