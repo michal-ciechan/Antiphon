@@ -209,12 +209,48 @@ function Get-NightlyDiagnosticFailureMessage {
     if ($hits.Count -eq 0) { return $null }
     $hit = $hits[$hits.Count - 1]
     $tail = $Record.Substring($hit.Index + $hit.Length)
+    # The pinned property is the last item in TestNode.Properties. Remove only
+    # its structural suffix, never whitespace belonging to the explanation.
+    $suffix = ' \} \] \} \}\s*\z'
+    if ($hit.Value.StartsWith('Timeout', [StringComparison]::Ordinal)) {
+        $suffix = ', Timeout = (?:\d+\.)?\d{2}:\d{2}:\d{2}(?:\.\d+)?' + $suffix
+    }
+    $close = [regex]::Match($tail, $suffix)
+    if (-not $close.Success) { return $null }
+    $body = $tail.Substring(0, $close.Index)
     $marker = ', Exception = '
-    $idx = $tail.LastIndexOf($marker)
-    if ($idx -ge 0) { return $tail.Substring(0, $idx) }
-    $close = [regex]::Match($tail, '(?s)^(?<message>.*?)(?: \} \] \} \}\s*$)')
-    if ($close.Success) { return $close.Groups['message'].Value }
-    return $tail
+    $candidates = @()
+    $offset = 0
+    while (($offset = $body.IndexOf($marker, $offset, [StringComparison]::Ordinal)) -ge 0) {
+        $message = $body.Substring(0, $offset)
+        $exception = $body.Substring($offset + $marker.Length)
+        if (Test-NightlyDiagnosticExceptionTail -Message $message -ExceptionText $exception) {
+            $candidates += $message
+        }
+        $offset += $marker.Length
+    }
+    # ToString() does not escape messages or stacks. More than one valid split
+    # is real ambiguity, not permission to publish the first or last candidate.
+    if ($candidates.Count -eq 1) { return $candidates[0] }
+    return $null
+}
+
+function Test-NightlyDiagnosticExceptionTail {
+    param([string]$Message, [string]$ExceptionText)
+    if ($ExceptionText -ceq '<null>') { return $true }
+    $echoType = 'TUnit.Engine.Exceptions.TestFailedException: '
+    if ($ExceptionText.StartsWith($echoType, [StringComparison]::Ordinal)) {
+        $prefix = '[Test Failure] '
+        if (-not $Message.StartsWith($prefix, [StringComparison]::Ordinal)) { return $false }
+        $echo = $echoType + $Message.Substring($prefix.Length)
+        if (-not $ExceptionText.StartsWith($echo, [StringComparison]::Ordinal)) { return $false }
+        $stack = $ExceptionText.Substring($echo.Length)
+        return ($stack.Length -eq 0 -or $stack -cmatch '^\r?\n   at ')
+    }
+    # Reflected Error/Timeout/Cancelled shapes may carry a regular exception
+    # rather than TUnit's echo, or <null>. Its first line must be a type/message;
+    # any remaining text must start with a stack frame.
+    return ($ExceptionText -cmatch '\A[A-Za-z_][A-Za-z0-9_.+`]*Exception: [^\r\n]*(?:\r?\n   at [\s\S]*)?\z')
 }
 
 function ConvertFrom-NightlyDiagnosticRecord {
@@ -258,8 +294,8 @@ function ConvertFrom-NightlyDiagnosticRecord {
         Categories = $categories
     }
     # Native MTP failure explanations include the multiline failure message.
-    # Timeout and Cancelled are failed states. The separator is the last
-    # ", Exception = " field, so an explanation that quotes that text is kept.
+    # Timeout and Cancelled are failed states. Only a unique validated field
+    # boundary supplies Message; ambiguous or malformed text keeps Failed.
     if ($State -eq 'Failed') {
         $message = Get-NightlyDiagnosticFailureMessage -Record $Record
         if ($null -ne $message) {
