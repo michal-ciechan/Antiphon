@@ -30,7 +30,15 @@ public sealed class AgentSessionCancelledTurnTests
         await CheckStartAsync(completed: false, TranscriptKinds.StopReasons.Cancelled, RunPhase.StreamingTurn);
     }
 
-    private static async Task CheckStartAsync(bool completed, string? stopReason, RunPhase expectedPhase)
+    [Test]
+    public async Task C1322_Interrupted_result_survives_stall_scans()
+    {
+        await CheckStartAsync(completed: false, TranscriptKinds.StopReasons.Cancelled,
+            RunPhase.StreamingTurn, scanAfterInterruption: true);
+    }
+
+    private static async Task CheckStartAsync(
+        bool completed, string? stopReason, RunPhase expectedPhase, bool scanAfterInterruption = false)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
@@ -47,6 +55,7 @@ public sealed class AgentSessionCancelledTurnTests
             await using var provider = services.BuildServiceProvider();
             var scopes = provider.GetRequiredService<IServiceScopeFactory>();
             var events = new MockEventBus();
+            var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
             var settings = Options.Create(new AgentSessionSettings
             {
                 FirstDeltaTimeoutMs = 1_000,
@@ -54,7 +63,7 @@ public sealed class AgentSessionCancelledTurnTests
                 SessionLogPath = Path.Combine(scratch.FullName, "logs")
             });
             var runtime = new AgentSessionRuntime(
-                events, settings, scopes, TimeProvider.System, NullLogger<AgentSessionRuntime>.Instance);
+                events, settings, scopes, clock, NullLogger<AgentSessionRuntime>.Instance);
             var adapter = new FakeAgentProtocolAdapter
             {
                 RegisterOnStart = runtime,
@@ -71,11 +80,11 @@ public sealed class AgentSessionCancelledTurnTests
                 runtime,
                 events,
                 new SessionMessageQueueService(
-                    scopes, runtime, events, TimeProvider.System, NullLogger<SessionMessageQueueService>.Instance),
+                    scopes, runtime, events, clock, NullLogger<SessionMessageQueueService>.Instance),
                 scopes,
                 settings,
                 Options.Create(new SupervisionSettings()),
-                TimeProvider.System,
+                clock,
                 NullLogger<AgentSessionService>.Instance);
 
             var result = await service.StartAsync(
@@ -83,6 +92,60 @@ public sealed class AgentSessionCancelledTurnTests
                 new AgentLaunchSpec("fake-codex", AgentKind.Codex, "fake-only", [],
                     new Dictionary<string, string>(), scratch.FullName, 120, 30),
                 CancellationToken.None);
+
+            if (scanAfterInterruption)
+            {
+                // Exercise the exact scanner called by RunAttemptStallHostedService, with
+                // fresh DB contexts. A stale streaming control proves the scanner is active.
+                var controlSessionId = Guid.NewGuid();
+                var control = new FakeAgentProtocolAdapter();
+                runtime.Register(controlSessionId, control);
+                await using (var seed = new AppDbContext(options))
+                {
+                    var now = clock.GetUtcNow().UtcDateTime;
+                    seed.AgentSessions.Add(new AgentSession
+                    {
+                        Id = controlSessionId, CardId = card.Id, DefinitionName = "stall-control",
+                        AgentKind = AgentKind.Raw, Status = SessionStatus.Running, Cwd = scratch.FullName,
+                        CreatedAt = now, StartedAt = now, LastSeenAt = now
+                    });
+                    seed.RunAttempts.Add(new RunAttempt
+                    {
+                        Id = Guid.NewGuid(), CardId = card.Id, AgentSessionId = controlSessionId,
+                        AttemptNumber = 2, Phase = RunPhase.StreamingTurn, CreatedAt = now,
+                        StartedAt = now, LastEventAt = now, PhaseStartedAt = now, Prompt = "stall control"
+                    });
+                    await seed.SaveChangesAsync();
+                }
+
+                clock.Advance(TimeSpan.FromMinutes(10));
+                await using (var scanDb = new AppDbContext(options))
+                {
+                    var scan = new RunAttemptStallDetector(
+                        scanDb, runtime, events, settings, clock,
+                        NullLogger<RunAttemptStallDetector>.Instance);
+                    var stalled = await scan.ScanAsync(CancellationToken.None);
+                    adapter.KillCount.ShouldBe(0,
+                        "a cancelled boundary must not become an automatic stall kill after five minutes");
+                    adapter.Disposed.ShouldBeFalse();
+                    stalled.ShouldBe(1, "only the genuinely streaming control is eligible");
+                    control.KillCount.ShouldBe(1);
+                    control.Disposed.ShouldBeTrue();
+                }
+
+                // Refreshing LastEventAt once would merely defer the same kill. Retention must
+                // survive another independent scan well beyond every refreshed timestamp.
+                clock.Advance(TimeSpan.FromDays(1));
+                await using (var scanDb = new AppDbContext(options))
+                {
+                    var scan = new RunAttemptStallDetector(
+                        scanDb, runtime, events, settings, clock,
+                        NullLogger<RunAttemptStallDetector>.Instance);
+                    (await scan.ScanAsync(CancellationToken.None)).ShouldBe(0);
+                    adapter.KillCount.ShouldBe(0);
+                    adapter.Disposed.ShouldBeFalse();
+                }
+            }
 
             // Read through a new context: tracked in-memory values are not persistence evidence.
             await using var reloaded = new AppDbContext(options);
@@ -128,7 +191,7 @@ public sealed class AgentSessionCancelledTurnTests
                 adapter.Disposed.ShouldBeFalse();
                 adapter.Lifecycle.ShouldBeEmpty();
                 adapter.Exited.IsCompleted.ShouldBeFalse();
-                if (expectedPhase == RunPhase.StreamingTurn)
+                if (stopReason == TranscriptKinds.StopReasons.Cancelled)
                 {
                     attempt.CompletedAt.ShouldBeNull();
                     hooks.Calls.ShouldNotContain("after_run");
@@ -144,6 +207,13 @@ public sealed class AgentSessionCancelledTurnTests
         {
             Directory.Delete(scratch.FullName, recursive: true);
         }
+    }
+
+    private sealed class MutableTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        private DateTimeOffset _now = now;
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan elapsed) => _now += elapsed;
     }
 
     private static Card CreateCard(string repoPath)

@@ -73,6 +73,18 @@ Operator scope overrides the normal Unit recipe: **one intended assertion-red pl
 
 ### Execution and cost
 
+S4 caller refinement (S3 Review `205e3fc7`, task input `1037b91d-8cb7-45be-8ab9-3f7e60d6fc9f`):
+retaining `StreamingTurn` leaves the attempt eligible for the five-minute
+`RunAttemptStallDetector` kill. The refined D-4 outcome is a nonterminal `AwaitingInput`
+attempt with a Running session; cancellation must survive subsequent stall scans,
+not merely refresh their timestamp. This supersedes S3/V-3's exact phase expectation.
+**R-4:** `AgentSessionCancelledTurnTests.C1322_Interrupted_result_survives_stall_scans`
+drives real StartAsync, then fresh-context production scans after ten minutes and a day.
+Assert no interrupted-session kill/dispose/failure or ownership release; a separate stale
+StreamingTurn control must still be detected. Intended red is an automatic kill of the
+interrupted adapter. CP-10 runs the two-method caller class for this refinement, red then
+green, without repeating already-green CP-4. Its estimate is eight minutes per run.
+
 For each assigned S-n, commit/push its compiling witness first and run **only CP-n** against that SHA; require the named behavioral assertion to fail. Build/fixture errors, skips and zero tests are not red. Commit/push the fix, rebuild and run the same CP-n once green. This planned red/green pair is the complete ordinary scope, not a request for extra preflight or broad regression runs. Keep both receipts and actual counts; never relabel red as green. If a separate unexpected failure needs attribution, run only that exact selection at the recorded base and report the added run/reason.
 
 Use the checkpoint tool's `run --plan <this-path> --rows CP-n --expected-source-sha <full-sha>` for each committed slice version, per `docs/testing-and-build.md`. Bootstrap any required tool build through `scripts/build-slot.ps1`; checkpoint rows acquire their own slots. Await the run and continue `wait` on exit 75 until terminal; do not end the task with its executor active. Do not edit source during execution. Preserve unedited CHECKPOINT lines and ignored receipts; validate the green source/build binding. Remove only owned alternate outputs when finished. Code also runs `scripts/check-evidence-diff.ps1` over base..HEAD.
@@ -94,3 +106,4 @@ The table budgets 46 minutes for the nine green rows; red repetitions budget ano
 | CP-7 | S7 | `tests/Antiphon.Tests -> bin-c1322-s7/` | integration-machine | `/*/*/ChannelReplyCancelledTests/C1322_Cancelled_machine_turn_keeps_its_source` | V-7 | all listed, 0 failed/skipped | 1 | 5 |
 | CP-8 | S8 | `tests/Antiphon.Tests -> bin-c1322-s8/` | integration-tail | `/*/*/ChannelReplyCancelledTests/C1322_Cancelled_tail_cannot_publish_another_suffix` | V-8 | all listed, 0 failed/skipped | 1 | 6 |
 | CP-9 | S9 | `tests/Antiphon.Tests -> bin-c1322-s9/` | integration-attention | `/*/*/InterruptedIdleAttentionTests/C1322_Idle_interruption_is_explained_without_release` | V-9 | all listed, 0 failed/skipped | 1 | 4 |
+| CP-10 | S4-refinement | `tests/Antiphon.Tests -> bin-c1322-s4-stall/` | integration-interrupted-stall | `/*/*/AgentSessionCancelledTurnTests/*` | V-3, R-4 | all listed, 0 failed/skipped | 2 | 8 |
