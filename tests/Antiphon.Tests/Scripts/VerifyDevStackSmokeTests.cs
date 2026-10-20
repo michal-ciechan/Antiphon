@@ -17,6 +17,84 @@ namespace Antiphon.Tests.Scripts;
 public sealed class VerifyDevStackSmokeTests
 {
     [Test]
+    public async Task Linux_full_smoke_refuses_before_desktop_side_effects()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new TUnit.Core.Exceptions.SkipTestException("The desktop-platform refusal witness requires Linux.");
+
+        var root = Directory.CreateTempSubdirectory("c1323-desktop-smoke-").FullName;
+        try
+        {
+            var wrapper = Path.Combine(root, "probe.ps1");
+            var sentinelLog = Path.Combine(root, "sentinels.txt");
+            await File.WriteAllTextAsync(sentinelLog, "");
+            await File.WriteAllTextAsync(wrapper, """
+                param([string]$TargetScript, [string]$SentinelLog)
+                $ErrorActionPreference = 'Stop'
+                function Stop-ExternalCommand([string]$Name) {
+                    [System.IO.File]::AppendAllText($SentinelLog, "$Name`n")
+                    throw "external-command-sentinel:$Name"
+                }
+                function Start-Job { Stop-ExternalCommand 'Start-Job' }
+                function docker { Stop-ExternalCommand 'docker' }
+                function Invoke-WebRequest { Stop-ExternalCommand 'Invoke-WebRequest' }
+                function Invoke-RestMethod { Stop-ExternalCommand 'Invoke-RestMethod' }
+                function ss { Stop-ExternalCommand 'ss' }
+                function dotnet { Stop-ExternalCommand 'dotnet' }
+                try {
+                    & $TargetScript
+                } catch {
+                    [Console]::Error.WriteLine($_.Exception.Message)
+                    exit 23
+                }
+                exit 0
+                """);
+
+            var start = new ProcessStartInfo("pwsh")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = root,
+            };
+            foreach (var arg in new[]
+                     {
+                         "-NoProfile", "-NonInteractive", "-File", wrapper,
+                         "-TargetScript", Path.Combine(DelegateScriptRunner.RepoRoot, "verify-dev-stack.ps1"),
+                         "-SentinelLog", sentinelLog,
+                     })
+                start.ArgumentList.Add(arg);
+
+            using var process = Process.Start(start)!;
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var stdout = process.StandardOutput.ReadToEndAsync(deadline.Token);
+            var stderr = process.StandardError.ReadToEndAsync(deadline.Token);
+            try
+            {
+                await Task.WhenAll(process.WaitForExitAsync(deadline.Token), stdout, stderr);
+            }
+            catch
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                using var cleanupDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await process.WaitForExitAsync(cleanupDeadline.Token);
+                throw;
+            }
+
+            var output = await stdout + await stderr;
+            process.ExitCode.ShouldNotBe(0, output);
+            output.ShouldContain("desktop-platform-required", output);
+            (await File.ReadAllTextAsync(sentinelLog)).ShouldBeEmpty(
+                "Full Aspire smoke must refuse before jobs, Docker, HTTP, listener or build commands.");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Linux_listener_probe_lists_ports_without_GetNetTCPConnection()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
