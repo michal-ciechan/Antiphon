@@ -92,7 +92,22 @@ function Invoke-C1339FixtureGit {
     $fault = $null
     if ($FaultPath -and (Test-Path -LiteralPath $FaultPath)) { $fault = Get-Content -LiteralPath $FaultPath -Raw | ConvertFrom-Json }
     if ($sub -eq 'push' -and $fault.push -eq 'before') { return @{ ExitCode = 1; Output = '' } }
+    if ($sub -eq 'push' -and $fault.pushRace) {
+        $race = Invoke-C1339GitProcess -Root $Root -WorkingDirectory $Bare -Arguments @('tag', '-a', [string]$fault.pushRace.tag, [string]$fault.pushRace.sha, '-m', 'fixture-race')
+        if ($race.ExitCode -ne 0) { throw ('fixture-push-race: ' + $race.Error) }
+    }
     $r = & $Launcher -Root $Root -WorkingDirectory $WorkingDirectory -Arguments $forward
+    if ($sub -eq 'ls-remote' -and $fault.journalCut -and $Arguments[-1] -ceq [string]$fault.journalCut.ref -and $r.Output) {
+        # A nonempty final direct ref is observed after the push. Change only the
+        # persisted row at the final verification callback; never replace a gate.
+        $path = [string]$fault.journalCut.path
+        Assert-C1339ContainedPath -Root $Root -Path $path
+        $journal = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        if ($fault.journalCut.mode -eq 'remove') { $journal.reservations = @() }
+        elseif ($fault.journalCut.mode -eq 'replace') { $journal.reservations[0].sha = [string]$fault.journalCut.sha }
+        else { throw 'fixture-journal-cut-mode' }
+        Write-NightlyAtomicJson -Path $path -Object $journal
+    }
     if ($sub -eq 'ls-remote' -and $Arguments -contains '--refs' -and $fault.inventoryRace) {
         $marker = Join-Path $Root 'inventory-race-fired'
         if (-not (Test-Path -LiteralPath $marker)) {

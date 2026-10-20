@@ -4554,6 +4554,213 @@ function Test-C1339_PromoteAuthorityHash {
     } finally { $env:ANTIPHON_API = $savedApi }
 }
 
+function Invoke-C1339ReservationVariant {
+    param($Fx, $Snap, [scriptblock]$Mutate, [string]$Reason)
+    Restore-C599ASnapshot $Snap
+    $path = Join-Path $Fx.ReleaseRoot 'publications.json'
+    & $Mutate
+    $journal = if (Test-Path $path) { [IO.File]::ReadAllText($path) } else { '<absent>' }
+    $before = Get-C1339RecipientState $Fx
+    try { $r = Invoke-C1339Promote $Fx } catch { $r = [pscustomobject]@{ ExitCode = 1; Refusal = ('threw:' + $_.Exception.Message); Promoted = $false; Resumed = $false } }
+    $after = if (Test-Path $path) { [IO.File]::ReadAllText($path) } else { '<absent>' }
+    $check = New-C1339Check ($r.ExitCode -ne 0 -and -not $r.Promoted -and -not $r.Resumed -and
+        $r.Refusal -ceq $Reason -and (Test-C1339NoWrites $Fx) -and
+        (Get-C1339RecipientState $Fx) -ceq $before -and $after -ceq $journal) ($Reason + ': ' + $r.Refusal)
+    Restore-C599ASnapshot $Snap
+    return $check
+}
+
+function Install-C1339WriterFault {
+    param($Fx)
+    # Only this invocation's script scope, installed after the real imports by the
+    # existing admitted fixture. All other paths delegate to the production writer.
+    Add-Content -LiteralPath $Fx.Gh.Path -Encoding ASCII -Value @"
+`$script:C1339Writer = (Get-Command Write-NightlyAtomicJson).ScriptBlock
+function script:Write-NightlyAtomicJson {
+    param([string]`$Path, `$Object)
+    if (`$Path -ceq '$($Fx.ReleaseRoot)/publications.json' -and (Test-Path '$($Fx.FaultPath)')) {
+        `$fault = Get-Content '$($Fx.FaultPath)' -Raw | ConvertFrom-Json
+        if (`$fault.writer -eq 'throw') { throw 'fixture-atomic-write-failure' }
+        if (`$fault.writer -eq 'silent') { return }
+    }
+    & `$script:C1339Writer -Path `$Path -Object `$Object
+}
+"@
+}
+
+function Get-C1339PreReleaseState {
+    param($Fx)
+    (Invoke-C1339LocalGit $Fx @('show-ref', '--verify', '--hash', ('refs/tags/' + $Fx.PreTag)) -Remote) + '/' +
+        (Get-C1339Peel $Fx $Fx.PreTag) + '/' + [IO.File]::ReadAllText($Fx.Gh.StorePath)
+}
+
+function Test-C1339_PromoteReservationAndTarget {
+    $happy = New-C1339PromotionFixture
+    $preBefore = Get-C1339PreReleaseState $happy
+    $result = Invoke-C1339Promote $happy
+    $object = Invoke-C1339LocalGit $happy @('show-ref', '--verify', '--hash', ('refs/tags/' + $happy.FinalTag)) -Remote -AllowAbsent
+    $peel = Get-C1339Peel $happy $happy.FinalTag
+    $type = if ($object) { Invoke-C1339LocalGit $happy @('cat-file', '-t', $object) -Remote } else { '' }
+    $preChecks = @(New-C1339Check ((Get-C1339PreReleaseState $happy) -ceq $preBefore) 'fresh success')
+    $recoveryChecks = @()
+
+    $variants = @(
+        @{ label = 'C1339 G-43 reservation-journal'; reason = 'missing'; edits = @(
+            { Remove-Item -LiteralPath $path },
+            { Update-C599Json $path { param($j) $j.reservations = @() } }) },
+        @{ label = 'C1339 G-44 reservation-unique'; reason = 'ambiguous'; edits = @(
+            { Update-C599Json $path { param($j) $j.reservations = @($j.reservations[0], $j.reservations[0]) } }) },
+        @{ label = 'C1339 G-45 reservation-typed'; reason = 'invalid'; edits = @(
+            { Set-Content -LiteralPath $path -Value '{broken' },
+            { Update-C599Json $path { param($j) $j.schemaVersion = '1' } },
+            { Update-C599Json $path { param($j) $j.schemaVersion = 2 } },
+            { Update-C599Json $path { param($j) $j.reservations = $j.reservations[0] } },
+            { Update-C599Json $path { param($j) $j.reservations = @('row') } },
+            { Update-C599Json $path { param($j) $j.reservations[0].candidateId = @($j.reservations[0].candidateId) } },
+            { Update-C599Json $path { param($j) $j.reservations[0].sha = @($j.reservations[0].sha) } },
+            { Update-C599Json $path { param($j) $j.reservations[0].tag = @($j.reservations[0].tag) } },
+            { Update-C599Json $path { param($j) $j.reservations[0].published = 'true' } }) },
+        @{ label = 'C1339 G-46 reservation-candidate'; reason = 'candidate-mismatch'; edits = @(
+            { Update-C599Json $path { param($j) $j.reservations[0].candidateId = 'foreign-candidate' } }) },
+        @{ label = 'C1339 G-47 reservation-sha'; reason = 'sha-mismatch'; edits = @(
+            { Update-C599Json $path { param($j) $j.reservations[0].sha = $fx.B } },
+            { Update-C599Json $path { param($j) $j.reservations[0].sha = $fx.Head.Substring(0,12) } }) },
+        @{ label = 'C1339 G-48 reservation-tag'; reason = 'tag-mismatch'; edits = @(
+            { Update-C599Json $path { param($j) $j.reservations[0].tag = 'v2026.10.15.2-rc.1' } },
+            { Update-C599Json $path { param($j) $j.reservations[0].tag = $fx.PreTag.ToUpperInvariant() } }) },
+        @{ label = 'C1339 G-49 reservation-published'; reason = 'unpublished'; edits = @(
+            { Update-C599Json $path { param($j) $j.reservations[0].published = $false } }) },
+        @{ label = 'C1339 G-50 reservation-release-id'; reason = 'release-identity'; edits = @(
+            { Update-C599Json $path { param($j) $j.reservations[0].releaseId = '' } }) },
+        @{ label = 'C1339 G-51 reservation-release-url'; reason = 'release-identity'; edits = @(
+            { Update-C599Json $path { param($j) $j.reservations[0].releaseUrl = '' } }) },
+        @{ label = 'C1339 G-52 reservation-final-consistent'; reason = 'final-conflict'; edits = @(
+            { Update-C599Json $path { param($j) $j.reservations[0].finalTag = 'v2026.10.15.2' } },
+            { Update-C599Json $path { param($j) $j.reservations[0].finalTag = $fx.PreTag } }) }
+    )
+    foreach ($resume in @($false, $true)) {
+        $fx = New-C1339PromotionFixture
+        if ($resume) { Add-C1339Tag $fx $fx.FinalTag $fx.Head }
+        $valid = Invoke-C1339Promote $fx @{ WhatIf = $true }
+        $snap = Save-C599ASnapshot $fx
+        $resumedChecks = @(New-C1339Check ($valid.ExitCode -eq 0) ('valid control:' + $valid.Refusal))
+        foreach ($variant in $variants) {
+            $checks = @(New-C1339Check ($valid.ExitCode -eq 0 -and $result.ExitCode -eq 0) 'valid controls')
+            foreach ($edit in $variant.edits) {
+                $checks += Invoke-C1339ReservationVariant $fx $snap $edit ('promotion-reservation-' + $variant.reason)
+            }
+            if (-not $resume) { Assert-C599AMatrix $variant.label $checks }
+            else { $resumedChecks += $checks }
+        }
+        if ($resume) { Assert-C599AMatrix 'C1339 G-53 reservation-resume' $resumedChecks }
+    }
+
+    $head = Invoke-C1339LocalGit $happy @('rev-parse', 'HEAD')
+    $live = Invoke-C1339LocalGit $happy @('rev-parse', ('refs/heads/' + $happy.CandidateRef)) -Remote
+    Assert-C487 -Cond ($result.ExitCode -eq 0 -and $result.Promoted -and $happy.Head -cne $happy.B -and
+        $head -ceq $happy.B -and $live -ceq $happy.Head -and $peel -ceq $happy.Head -and $peel -cne $head) -Name 'C1339 G-54 target-peel' -Detail ($result.Refusal + ':' + $peel + '/' + $head)
+    Assert-C487 -Cond ($type -ceq 'tag' -and $peel -ceq $happy.Head) -Name 'C1339 G-55 annotated-final' -Detail $type
+    Clear-Content -LiteralPath (Join-Path $happy.Root 'real-git-trace.log')
+    $again = Invoke-C1339Promote $happy
+    $stored = (Get-Content (Join-Path $happy.ReleaseRoot 'publications.json') -Raw | ConvertFrom-Json).reservations
+    $recoveryChecks += New-C1339Check ($again.ExitCode -eq 0 -and $again.Resumed -and -not $again.Promoted -and
+        (Test-C1339NoWrites $happy) -and @($stored).Count -eq 1 -and $stored[0].finalTag -ceq $happy.FinalTag -and
+        (Invoke-C1339LocalGit $happy @('show-ref', '--verify', '--hash', ('refs/tags/' + $happy.FinalTag)) -Remote) -ceq $object) 'ordinary same-final retry'
+    $preChecks += New-C1339Check ((Get-C1339PreReleaseState $happy) -ceq $preBefore) 'same-final retry'
+
+    $fx = New-C1339PromotionFixture
+    Add-C1339Tag $fx $fx.FinalTag $fx.C
+    $before = Get-C1339RecipientState $fx
+    $preBefore = Get-C1339PreReleaseState $fx
+    $r = Invoke-C1339Promote $fx
+    Assert-C487 -Cond ($r.Refusal -ceq 'final-tag-conflict' -and -not $r.Promoted -and -not $r.Resumed -and
+        (Test-C1339NoWrites $fx) -and (Get-C1339RecipientState $fx) -ceq $before) -Name 'C1339 G-56 final-conflict' -Detail $r.Refusal
+    $preChecks += New-C1339Check ((Get-C1339PreReleaseState $fx) -ceq $preBefore) 'conflicting final'
+
+    $checks = @()
+    foreach ($final in @($false, $true)) {
+        $fx = New-C1339PromotionFixture
+        $tag = $fx.PreTag
+        if ($final) { $tag = $fx.FinalTag; Add-C1339Tag $fx $tag $fx.Head }
+        Set-C1339Read $fx ('refs/tags/' + $tag + '^{}') '' -Mode replace
+        $before = Get-C1339RecipientState $fx
+        $r = Invoke-C1339Promote $fx
+        $checks += New-C1339Check ($r.Refusal -ceq 'tag-peel' -and (Test-C1339NoWrites $fx) -and
+            (Get-C1339RecipientState $fx) -ceq $before) ($tag + ':' + $r.Refusal)
+    }
+    Assert-C599AMatrix 'C1339 G-57 direct-without-peel' $checks
+
+    foreach ($fault in @('remove', 'throw', 'silent', 'replace')) {
+        $fx = New-C1339PromotionFixture
+        $path = Join-Path $fx.ReleaseRoot 'publications.json'
+        $unrelated = ''
+        if ($fault -eq 'silent') {
+            [void](New-ReleaseGateTagReservation -JournalPath $path -CandidateId ('rc-2026-10-15-' + $fx.C.Substring(0,12)) -Sha $fx.C -CutUtc ([datetime]'2026-10-15T00:00:00Z') -RemoteTags @($fx.PreTag))
+            $unrelated = ConvertTo-NightlyCanonicalJson -Object (Get-Content $path -Raw | ConvertFrom-Json).reservations[1]
+        }
+        $expectedCount = if ($unrelated) { 2 } else { 1 }
+        $before = [IO.File]::ReadAllText($path)
+        $preBefore = Get-C1339PreReleaseState $fx
+        Install-C1339WriterFault $fx
+        if ($fault -in @('throw', 'silent')) { Write-NightlyAtomicJson -Path $fx.FaultPath -Object @{ writer = $fault } }
+        else { Write-NightlyAtomicJson -Path $fx.FaultPath -Object @{ journalCut = @{ ref = 'refs/tags/' + $fx.FinalTag; path = $path; mode = $fault; sha = $fx.B } } }
+        try { $r = Invoke-C1339Promote $fx } catch { $r = [pscustomobject]@{ ExitCode = 1; Refusal = ('threw:' + $_.Exception.Message); Promoted = $false; Resumed = $false } }
+        $after = [IO.File]::ReadAllText($path)
+        $rows = (Get-Content $path -Raw | ConvertFrom-Json).reservations
+        $shape = switch ($fault) {
+            'remove' { @($rows).Count -eq 0 }
+            'replace' { @($rows).Count -eq 1 -and $rows[0].sha -ceq $fx.B -and [string]$rows[0].finalTag -eq '' }
+            default { $after -ceq $before }
+        }
+        $label = switch ($fault) {
+            'remove' { 'C1339 G-58 journal-result' }
+            'throw' { 'C1339 G-59 journal-exception' }
+            'silent' { 'C1339 G-60 journal-readback' }
+            'replace' { 'C1339 G-66 recording-identity' }
+        }
+        Assert-C487 -Cond ($r.ExitCode -ne 0 -and $r.Refusal -ceq 'promotion-journal-write-failed' -and
+            -not $r.Promoted -and -not $r.Resumed -and $shape -and
+            (Get-C1339Peel $fx $fx.FinalTag) -ceq $fx.Head) -Name $label -Detail ($fault + ':' + $r.Refusal)
+        $preChecks += New-C1339Check ((Get-C1339PreReleaseState $fx) -ceq $preBefore) ('journal fault:' + $fault)
+        $finalObject = Invoke-C1339LocalGit $fx @('show-ref', '--verify', '--hash', ('refs/tags/' + $fx.FinalTag)) -Remote
+        Remove-Item -LiteralPath $fx.FaultPath
+        [IO.File]::WriteAllText($path, $before)
+        Clear-Content -LiteralPath (Join-Path $fx.Root 'real-git-trace.log')
+        $again = Invoke-C1339Promote $fx
+        $rows = (Get-Content $path -Raw | ConvertFrom-Json).reservations
+        $unrelatedOk = -not $unrelated -or (ConvertTo-NightlyCanonicalJson -Object $rows[1]) -ceq $unrelated
+        $recoveryChecks += New-C1339Check ($again.ExitCode -eq 0 -and $again.Resumed -and (Test-C1339NoWrites $fx) -and
+            @($rows).Count -eq $expectedCount -and $unrelatedOk -and $rows[0].sha -ceq $fx.Head -and $rows[0].tag -ceq $fx.PreTag -and $rows[0].finalTag -ceq $fx.FinalTag -and
+            (Invoke-C1339LocalGit $fx @('show-ref', '--verify', '--hash', ('refs/tags/' + $fx.FinalTag)) -Remote) -ceq $finalObject) ('journal recovery:' + $fault + ':' + $again.Refusal)
+    }
+
+    $checks = @()
+    foreach ($fault in @('race', 'before', 'after')) {
+        $fx = New-C1339PromotionFixture
+        $preBefore = Get-C1339PreReleaseState $fx
+        if ($fault -eq 'race') { Write-NightlyAtomicJson -Path $fx.FaultPath -Object @{ pushRace = @{ tag = $fx.FinalTag; sha = $fx.C } } }
+        else { Write-NightlyAtomicJson -Path $fx.FaultPath -Object @{ push = $fault } }
+        $r = Invoke-C1339Promote $fx
+        $trace = Get-Content (Join-Path $fx.Root 'real-git-trace.log') -Raw
+        $safe = $trace -notmatch '--force|push[^\r\n]* \+|tag -d|push[^\r\n]*--delete'
+        if ($fault -eq 'race') {
+            $checks += New-C1339Check ($r.Refusal -ceq 'tag-push-failed' -and -not $r.Promoted -and -not $r.Resumed -and
+                (Get-C1339Peel $fx $fx.FinalTag) -ceq $fx.C -and $safe) ('race:' + $r.Refusal)
+        } else {
+            $expected = ($fault -eq 'before' -and $r.Refusal -ceq 'tag-push-failed' -and (Get-C1339Peel $fx $fx.FinalTag) -eq '') -or
+                ($fault -eq 'after' -and $r.ExitCode -eq 0 -and (Get-C1339Peel $fx $fx.FinalTag) -ceq $fx.Head)
+            Remove-Item -LiteralPath $fx.FaultPath
+            $retry = Invoke-C1339Promote $fx
+            $checks += New-C1339Check ($expected -and $safe -and $retry.ExitCode -eq 0 -and
+                (Get-C1339Peel $fx $fx.FinalTag) -ceq $fx.Head) ($fault + ':' + $r.Refusal + '/' + $retry.Refusal)
+        }
+        $preChecks += New-C1339Check ((Get-C1339PreReleaseState $fx) -ceq $preBefore) ('push:' + $fault)
+    }
+    Assert-C599AMatrix 'C1339 G-63 create-only-race' $checks
+    Assert-C599AMatrix 'C1339 G-61 same-tag-recovery' $recoveryChecks
+    Assert-C599AMatrix 'C1339 G-62 prerelease-preserved' $preChecks
+}
+
 function Clear-C599FixtureReadOnly {
     # Only our disposable clones: Git marks loose objects read-only on Windows.
     # Leave deletion and failure retention to the owning ScriptHarness process.

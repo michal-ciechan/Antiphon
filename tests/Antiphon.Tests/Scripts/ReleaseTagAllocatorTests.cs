@@ -8,6 +8,32 @@ namespace Antiphon.Tests.Scripts;
 public sealed class ReleaseTagAllocatorTests
 {
     [Test]
+    public Task C1339_PromoteReservationAndTarget() =>
+        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1339", "C1339_PromoteReservationAndTarget", 22,
+            "C1339 G-43 reservation-journal",
+            "C1339 G-44 reservation-unique",
+            "C1339 G-45 reservation-typed",
+            "C1339 G-46 reservation-candidate",
+            "C1339 G-47 reservation-sha",
+            "C1339 G-48 reservation-tag",
+            "C1339 G-49 reservation-published",
+            "C1339 G-50 reservation-release-id",
+            "C1339 G-51 reservation-release-url",
+            "C1339 G-52 reservation-final-consistent",
+            "C1339 G-53 reservation-resume",
+            "C1339 G-54 target-peel",
+            "C1339 G-55 annotated-final",
+            "C1339 G-56 final-conflict",
+            "C1339 G-57 direct-without-peel",
+            "C1339 G-58 journal-result",
+            "C1339 G-59 journal-exception",
+            "C1339 G-60 journal-readback",
+            "C1339 G-61 same-tag-recovery",
+            "C1339 G-62 prerelease-preserved",
+            "C1339 G-63 create-only-race",
+            "C1339 G-66 recording-identity");
+
+    [Test]
     public Task C1339_PromoteAuthorityHash() =>
         ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1339", "C1339_PromoteAuthorityHash", 5,
             "C1339 G-38 promotion-hash-required",
