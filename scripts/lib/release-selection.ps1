@@ -395,7 +395,7 @@ function Invoke-ReleaseSelectionHop {
     $request = [IO.Path]::GetTempFileName()
     try {
         [IO.File]::WriteAllText($request, (ConvertTo-Json @{script=$ArgumentList[$fileIndex + 1];parameters=$parameters} -Depth 8), [Text.Encoding]::UTF8)
-        $command = '$ErrorActionPreference="Stop";$r=Get-Content -LiteralPath ''' + $request.Replace("'", "''") + ''' -Raw -Encoding UTF8|ConvertFrom-Json;$p=@{};foreach($v in $r.parameters.PSObject.Properties){if($v.Value -is [bool]){$p[$v.Name]=$v.Value}else{$p[$v.Name]=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($v.Value))}};& $r.script @p'
+        $command = '$ErrorActionPreference="Stop";$r=Get-Content -LiteralPath ''' + $request.Replace("'", "''") + ''' -Raw -Encoding UTF8|ConvertFrom-Json;$p=@{};foreach($v in $r.parameters.PSObject.Properties){if($v.Value -is [bool]){$p[$v.Name]=$v.Value}else{$p[$v.Name]=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($v.Value))}};& $r.script @p; exit $LASTEXITCODE'
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
         $pwsh = Assert-ReleaseSelectionCapability 'Shadow'
         $proc = Start-NightlyProcess -StartParams @{FilePath=$pwsh.Source;ArgumentList=@('-NoProfile','-NonInteractive','-EncodedCommand',$encoded)

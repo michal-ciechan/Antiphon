@@ -1021,13 +1021,68 @@ function New-C599RunFx {
     $root = New-C599Root
     $state = Join-Path $root 'state'
     New-Item -ItemType Directory -Path $state -Force | Out-Null
-    $clone = New-C487OwnedClone -Root $root
     $trace = Join-Path $root 'trace.log'
     $seams = Join-Path $root 'seams.ps1'
-    Write-C487Seams -Path $seams -TracePath $trace
+    $sha = $ShaA
+    $origin = ''
+    if ($Rc) {
+        # Selection binds real committed policy/runtime blobs before either hop.
+        # Keep the synthetic checkout for cases that only exercise refusals/locks.
+        $seed = Join-Path $root 'seed'
+        $script:C599PolicyClones.Add($root)
+        New-Item -ItemType Directory -Path (Join-Path $seed 'scripts') -Force | Out-Null
+        [void](Invoke-C599RealGit $seed @('init', '-q', '-b', $CandidateRef))
+        [void](Invoke-C599RealGit $seed @('config', 'core.autocrlf', 'false'))
+        Copy-Item -LiteralPath $lib -Destination (Join-Path $seed 'scripts/lib') -Recurse
+        foreach ($file in @('nightly-run.ps1', 'nightly-tests.ps1', 'nightly-report.ps1', 'select-test-rosters.ps1')) {
+            Copy-Item -LiteralPath (Join-Path $here $file) -Destination (Join-Path $seed ('scripts/' + $file))
+        }
+        foreach ($file in @('tests/test-execution-policy.json', 'tests/test-selection-policy.json', 'global.json')) {
+            $target = Join-Path $seed $file
+            New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+            Copy-Item -LiteralPath (Join-Path $repoRoot $file) -Destination $target
+        }
+        $catalog = Get-Content -LiteralPath (Join-Path $seed 'tests/test-selection-policy.json') -Raw | ConvertFrom-Json
+        foreach ($path in @($catalog.sets.sourceInputs + $catalog.sets.members.source | Sort-Object -Unique)) {
+            if ($path -and -not (Test-Path -LiteralPath (Join-Path $seed $path))) {
+                $target = Join-Path $seed $path
+                New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+                Set-Content -LiteralPath $target -Value 'fixture source' -Encoding ASCII
+            }
+        }
+        $projects = Invoke-C599RealGit $repoRoot @('ls-files', 'tests/*.csproj', 'scripts/fixtures/nightly/c487-probe/Probe.csproj')
+        foreach ($path in $projects.Split("`n")) {
+            $target = Join-Path $seed $path
+            New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+            Copy-Item -LiteralPath (Join-Path $repoRoot $path) -Destination $target
+        }
+        # Commit the differing wrapper and ownership markers so fetch/reset/clean
+        # preserves them, forcing the production self-reexec path.
+        Add-Content -LiteralPath (Join-Path $seed 'scripts/nightly-run.ps1') -Value '# C1357 owned clone wrapper' -Encoding ASCII
+        Write-NightlyAtomicJson -Path (Join-Path $seed '.antiphon-nightly-owned') -Object @{kind='nightly-clone'}
+        Write-NightlyAtomicJson -Path (Join-Path $seed '.antiphon-release-owned') -Object @{kind='release-clone'}
+        [void](Invoke-C599RealGit $seed @('add', '--all'))
+        [void](Invoke-C599RealGit $seed @('-c', 'user.name=c599', '-c', 'user.email=c599@example.invalid', 'commit', '-qm', 'RC fixture candidate'))
+        $origin = Join-Path $root 'origin.git'
+        [void](Invoke-C599RealGit $root @('clone', '--bare', $seed, $origin))
+        $clone = Join-Path $root 'checkout'
+        [void](Invoke-C599RealGit $root @('clone', $origin, $clone))
+        $sha = Invoke-C599RealGit $clone @('rev-parse', 'HEAD')
+        $rows = @(@{Id='fixture-one';ClassName='Fixture.Fixture';MethodName='One';Outcome='Passed'})
+        $nodes = @(@{uid='fixture-one';type='Fixture';method='One';namespace='Fixture'})
+        Write-C487NativePassSeams $seams $trace $rows $nodes
+        Add-Content -LiteralPath $seams -Encoding ASCII -Value @'
+$NightlySeams.Git = $null
+$NightlySeams.E2EPrerequisites = { return @{Ok=$true;Rows=@()} }
+'@
+    } else {
+        $clone = New-C487OwnedClone -Root $root
+        Write-C487Seams -Path $seams -TracePath $trace
+    }
     return [pscustomobject]@{
         Root = $root; State = $state; Clone = $clone; Trace = $trace; Seams = $seams
         ReleaseRoot = (Join-Path $root 'releases'); Coordination = (Join-Path $root 'coord')
+        Sha = $sha; Origin = $origin; RunId = ('c599-' + [guid]::NewGuid().ToString('N'))
     }
 }
 
@@ -1046,13 +1101,52 @@ function Invoke-C599Run {
         CoordinationRoot = $Fx.Coordination
         PassThru = $true
     }
+    if ($Fx.Origin) {
+        $splat.RemoteUrl = $Fx.Origin
+        $splat.Repository = 'fixture/repository'
+        $splat.RunId = $Fx.RunId
+    }
     if ($Extra) { foreach ($k in $Extra.Keys) { $splat[$k] = $Extra[$k] } }
     return Invoke-AntiphonNightlyRun @splat
 }
 
+function Assert-C599RcChild {
+    param($Fx, $Result, [string]$LogRoot, [string]$Label)
+    Assert-C487 -Cond ($Result.Phase -ceq 'hop' -and -not $Result.Refusal -and $Result.Sha -ceq $Fx.Sha) `
+        -Name ('C599 {0} outer run reaches self-reexec without refusal' -f $Label) `
+        -Detail ('phase={0} refusal={1} exit={2}' -f $Result.Phase, $Result.Refusal, $Result.ExitCode)
+    $summaries = @(Get-ChildItem -LiteralPath $LogRoot -Filter summary.json -Recurse -ErrorAction SilentlyContinue)
+    $summary = $null
+    if ($summaries.Count -eq 1) { $summary = Get-Content -LiteralPath $summaries[0].FullName -Raw | ConvertFrom-Json }
+    Assert-C487 -Cond ($summaries.Count -eq 1 -and $null -ne $summary -and $summary.runId -ceq $Fx.RunId) `
+        -Name ('C599 {0} exactly one fresh child summary names this run' -f $Label) -Detail ('summaries={0}' -f $summaries.Count)
+    Assert-C487 -Cond ($summary.profile -ceq 'rc' -and $summary.trigger -ceq 'rc' -and
+        $summary.sha -ceq $Fx.Sha -and $summary.expectedSha -ceq $Fx.Sha -and
+        $summary.gitRef -ceq ('origin/' + $CandidateRef) -and $summary.runId -ceq $Fx.RunId) `
+        -Name ('C599 {0} child consumed the pinned RC identity' -f $Label)
+    $selection = $summary.selection
+    Assert-C487 -Cond ($selection.candidateSha -ceq $Fx.Sha -and $selection.candidateRef -ceq $CandidateRef -and
+        $selection.candidateId -ceq $CandidateId -and $selection.runId -ceq $Fx.RunId -and $selection.profile -ceq 'rc' -and
+        $selection.requestedMode -ceq 'Full' -and $selection.effectiveMode -ceq 'Full' -and $selection.coverageScope -ceq 'Full' -and
+        $selection.baselineSha -ceq '' -and $summary.coverageScope -ceq 'Full') `
+        -Name ('C599 {0} child consumed the bound Full selection' -f $Label)
+    $attemptRoot = Join-Path (Join-Path (Join-Path (Join-Path $Fx.ReleaseRoot 'candidates') $CandidateId) 'attempts') $Fx.RunId
+    $attemptPath = Join-Path $attemptRoot 'selection-attempt.json'
+    $selectionPath = Join-Path $attemptRoot 'selection.json'
+    $bound = $null; $artifact = $null
+    if (Test-Path -LiteralPath $attemptPath) { $bound = Get-Content -LiteralPath $attemptPath -Raw | ConvertFrom-Json }
+    if (Test-Path -LiteralPath $selectionPath) { $artifact = Get-Content -LiteralPath $selectionPath -Raw | ConvertFrom-Json }
+    Assert-C487 -Cond ($null -ne $bound -and $null -ne $artifact -and
+        $artifact.candidateSha -ceq $Fx.Sha -and $artifact.requestedMode -ceq 'Full' -and
+        $artifact.effectiveMode -ceq 'Full' -and $artifact.coverageScope -ceq 'Full' -and
+        $bound.selectionDigest -ceq (Get-NightlyFileSha256 $selectionPath) -and
+        (ConvertTo-NightlyCanonicalJson $selection) -ceq (ConvertTo-NightlyCanonicalJson $bound)) `
+        -Name ('C599 {0} child selection matches the immutable bound artifacts' -f $Label)
+}
+
 function Test-C599_MasterStateIsolation {
     # An RC run must leave every master state file byte-identical.
-    $fx = New-C599RunFx
+    $fx = New-C599RunFx -Rc
     $masterFiles = Get-ReleaseGateMasterStateFiles -StateRoot $fx.State
     foreach ($f in $masterFiles) { Set-Content -LiteralPath $f -Value ('{"sentinel":"' + [System.IO.Path]::GetFileName($f) + '"}') -Encoding ASCII }
     $before = @{}
@@ -1060,18 +1154,20 @@ function Test-C599_MasterStateIsolation {
 
     $rcState = Join-Path $fx.Root 'rc-state'
     New-Item -ItemType Directory -Path $rcState -Force | Out-Null
+    Assert-C487 -Cond (@(Get-ChildItem -LiteralPath $fx.Root -Filter summary.json -Recurse).Count -eq 0) `
+        -Name 'C599 MasterStateIsolation run starts without child summaries'
     $r = Invoke-C599Run -Fx $fx -Extra @{
-        Profile = 'rc'; Trigger = 'rc'; Ref = $CandidateRef; ExpectedSha = $ShaA
+        Profile = 'rc'; Trigger = 'rc'; Ref = $CandidateRef; ExpectedSha = $fx.Sha
         CandidateId = $CandidateId; StateRoot = $rcState; LogRoot = (Join-Path $rcState 'logs')
     }
-    Assert-C487 -Cond ($null -ne $r) -Name 'C599 MasterStateIsolation rc run returned a result' -Detail ([string]$r.ExitCode)
+    Assert-C599RcChild -Fx $fx -Result $r -LogRoot (Join-Path $rcState 'logs') -Label 'MasterStateIsolation'
     foreach ($f in $masterFiles) {
         $after = (Get-NightlyFileSha256 -Path $f)
         Assert-C487 -Cond ($after -eq $before[$f]) -Name ('C599 MasterStateIsolation {0} is byte-identical after an rc run' -f [System.IO.Path]::GetFileName($f)) -Detail ($before[$f] + ' vs ' + $after)
     }
     # And an RC pointed at the master state root refuses outright.
     $refuse = Invoke-C599Run -Fx $fx -Extra @{
-        Profile = 'rc'; Trigger = 'rc'; Ref = $CandidateRef; ExpectedSha = $ShaA
+        Profile = 'rc'; Trigger = 'rc'; Ref = $CandidateRef; ExpectedSha = $fx.Sha
         CandidateId = $CandidateId; StateRoot = (Get-NightlyDefaultStateRoot)
     }
     Assert-C487 -Cond ([int]$refuse.ExitCode -eq 3 -and [string]$refuse.Refusal -eq 'rc-master-state-root') -Name 'C599 MasterStateIsolation rc into the master state root refuses' -Detail ([string]$refuse.Refusal)
@@ -1096,8 +1192,12 @@ function Test-C599_ParameterHops {
     Assert-C487 -Cond ([string]$rcTrigger.Refusal -eq 'trigger-profile-mismatch') -Name 'C599 ParameterHops trigger rc without the rc profile refuses' -Detail ([string]$rcTrigger.Refusal)
 
     # The candidate id is derived from the ref when omitted.
-    $derived = Invoke-C599Run -Fx $fx -Extra @{ Profile = 'rc'; Trigger = 'rc'; Ref = $CandidateRef; ExpectedSha = $ShaA; StateRoot = (Join-Path $fx.Root 's5'); LogRoot = (Join-Path $fx.Root 's5-logs') }
+    $fx = New-C599RunFx -Rc
+    Assert-C487 -Cond (@(Get-ChildItem -LiteralPath $fx.Root -Filter summary.json -Recurse).Count -eq 0) `
+        -Name 'C599 ParameterHops run starts without child summaries'
+    $derived = Invoke-C599Run -Fx $fx -Extra @{ Profile = 'rc'; Trigger = 'rc'; Ref = $CandidateRef; ExpectedSha = $fx.Sha; StateRoot = (Join-Path $fx.Root 's5'); LogRoot = (Join-Path $fx.Root 's5-logs') }
     Assert-C487 -Cond ([string]$derived.CandidateId -eq $CandidateId) -Name 'C599 ParameterHops candidate id is derived from the ref' -Detail ([string]$derived.CandidateId)
+    Assert-C599RcChild -Fx $fx -Result $derived -LogRoot (Join-Path $fx.Root 's5-logs') -Label 'ParameterHops'
 
     # The wrapper script itself must declare and forward every new parameter.
     $wrapper = Get-Content -LiteralPath (Join-Path $here 'nightly-run.ps1') -Raw
