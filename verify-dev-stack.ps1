@@ -4,7 +4,7 @@
     manually probing ports / reading logs every time you want to know if the
     stack is up.
 
-    Defaults to Aspire AppHost mode (dev-aspire.ps1 — ports 1720x).
+    Defaults to Windows Aspire AppHost mode (dev-aspire.ps1 — ports 1720x).
     Use -SimpleMode for the docker-compose stack (dev-start.ps1 — API 17281 / client 17282;
     session-runner is the always-on daemon on 17204).
 
@@ -53,6 +53,10 @@ function Get-DevStackListeningPorts {
 if ($ProbeListeningPorts) {
     foreach ($port in @(Get-DevStackListeningPorts)) { Write-Output $port }
     return
+}
+
+if (-not $SimpleMode -and -not $IsWindows) {
+    throw 'desktop-platform-required: Full Aspire dev-stack smoke requires Windows. Use -ProbeListeningPorts for a portable listener-only probe, or explicit -SimpleMode for the compose stack.'
 }
 
 $RepoRoot = $PSScriptRoot
