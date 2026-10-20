@@ -17,7 +17,9 @@ internal static class CheckpointBoundedProbe
         var clock = Stopwatch.StartNew();
         using var process = Process.Start(start)!;
         register(process);
-        var identity = $"{process.Id}:{process.StartTime.ToUniversalTime().Ticks}:{nonce}";
+        var stat = File.ReadAllText($"/proc/{process.Id}/stat");
+        var startToken = stat[(stat.LastIndexOf(')') + 2)..].Split(' ')[19];
+        var identity = $"{process.Id}:{startToken}:{nonce}";
         var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
         var completion = Task.WhenAll(process.WaitForExitAsync(cancellationToken), stdout, stderr);
@@ -39,7 +41,7 @@ internal static class CheckpointBoundedProbe
             }
             var output = await stdout;
             output.Contains("C1233_READY " + identity, StringComparison.Ordinal)
-                .ShouldBeTrue("the actual script invocation must be reached");
+                .ShouldBeTrue($"the actual script invocation must be reached: expected {identity}; stdout={output}; stderr={await stderr}");
             return new Result(process.ExitCode, output, await stderr, elapsed, watchdog);
         }
         finally
