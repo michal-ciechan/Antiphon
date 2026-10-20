@@ -2,7 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import cp from 'node:child_process';
-const [repo,dll,mode,shape]=process.argv.slice(2);
+const [repo,dll,mode,shape,delayArgument]=process.argv.slice(2);
+const preReadDelayMs=delayArgument===undefined?0:Number(delayArgument);
+if(!Number.isInteger(preReadDelayMs)||preReadDelayMs<0||preReadDelayMs>10000||(delayArgument!==undefined&&mode!=='project'))
+ throw new Error('pre-read delay requires project mode and an integer from 0 to 10000 ms');
 const held=shape==='held';
 const fixture=fs.mkdtempSync(path.join(os.tmpdir(),'antiphon-c1199-reader-'));
 fs.mkdirSync(path.join(fixture,'bin'));
@@ -21,6 +24,7 @@ if(mode==='project') {
 }
 const args=['-NoProfile','-File',path.join(repo,'scripts/test-checkpoint-bounded-reader.ps1'),'-Repository',repo,'-ToolDll',dll,'-Mode',mode,'-Fixture',fixture];
 if(held) args.push('-Held');
+if(delayArgument!==undefined) args.push('-PreReadDelayMs',String(preReadDelayMs));
 const child=cp.spawn('pwsh',args,{detached:true,stdio:['ignore','pipe','pipe']});
 let stdout='',stderr='',expired=false;
 child.stdout.on('data',d=>stdout+=d); child.stderr.on('data',d=>stderr+=d);

@@ -1,5 +1,7 @@
-param([string]$Repository,[string]$ToolDll,[string]$Mode,[string]$Fixture,[switch]$Held)
+param([string]$Repository,[string]$ToolDll,[string]$Mode,[string]$Fixture,[switch]$Held,
+    [ValidateRange(0,10000)][int]$PreReadDelayMs=0)
 $ErrorActionPreference='Stop'
+if($PSBoundParameters.ContainsKey('PreReadDelayMs') -and $Mode -cne 'project'){throw 'pre-read delay requires project mode'}
 if ($ToolDll) { [void][Reflection.Assembly]::LoadFrom($ToolDll) }
 . "$Repository/scripts/lib/checkpoint-file-reader.ps1"
 if (Test-Path "$Repository/scripts/lib/checkpoint-process-runner.ps1") { . "$Repository/scripts/lib/checkpoint-process-runner.ps1" }
@@ -16,6 +18,15 @@ $root=$Fixture
 switch($Mode) {
  'project' {
     . (Import-Function 'Read-CheckpointProjectReferences')
+    $script:C1381ReadCheckpointBytes=${function:Read-CheckpointBytes}
+    $script:C1381ProjectPath=[IO.Path]::GetFullPath("$Fixture/fixture.csproj")
+    function Read-CheckpointBytes {
+        param([string]$Path)
+        if([IO.Path]::GetFullPath($Path) -ceq $script:C1381ProjectPath) {
+            Start-Sleep -Milliseconds $PreReadDelayMs
+        }
+        & $script:C1381ReadCheckpointBytes $Path
+    }
     try { $v=Read-CheckpointProjectReferences "$Fixture/fixture.csproj"; if($Held){throw 'unexpected admission'}; if($v.Count -ne 1 -or $v[0] -cne 'child.csproj'){throw 'value mismatch'} }
     catch { if(-not $Held -or $_.Exception.Message -notmatch 'not regular'){throw} }
  }
