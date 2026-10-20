@@ -395,9 +395,11 @@ describe.sequential('CARD-0148 mouse policy', () => {
 
   it('mixed split modes retain order and input', async () => {
     const originalMatchMedia = window.matchMedia
-    vi.spyOn(window, 'matchMedia').mockImplementation(query => ({
+    // setup.ts already supplies a vi.fn; spying on that same function would
+    // replace the captured implementation too. Replace the property instead.
+    replaceProperty(window, 'matchMedia', { value: (query: string) => ({
       ...originalMatchMedia(query), matches: query.includes('pointer: coarse'),
-    }))
+    }) })
     vi.mocked(getSessionBuffer).mockResolvedValueOnce({ sessionId: 'session-1', buffer: 'READY', lastSequence: 1 })
     const view = renderWithProviders(<SessionTerminal session={runningSession} />)
     await panelParsed('READY')
