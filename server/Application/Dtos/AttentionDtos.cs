@@ -323,7 +323,7 @@ public enum AttentionKind
     /// <summary>A stop or deferred remote kill has remained unresolved for five minutes. Error.</summary>
     SessionStopStuck = 45,
 
-    /// <summary>A live session older than ten minutes has no agent, card, standing owner or open task. Warning.</summary>
+    /// <summary>A live session older than ten minutes has no agent pointer, card or open task. Warning.</summary>
     SessionUnowned = 46,
 
     /// <summary>Grouped candidates from the last successful local OS census. Warning; absent before a run.</summary>
