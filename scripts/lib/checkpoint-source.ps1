@@ -1,33 +1,20 @@
 #requires -Version 7.0
 # CARD-0835 source identity. Keep this file ASCII-only.
-. (Join-Path $PSScriptRoot 'checkpoint-file-reader.ps1')
+. (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')
 
 function Get-CheckpointGitBytes {
     param([string]$Repository, [string[]]$Arguments)
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = 'git'
     $psi.WorkingDirectory = $Repository
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
     foreach ($argument in $Arguments) { [void]$psi.ArgumentList.Add($argument) }
-    $process = [System.Diagnostics.Process]::Start($psi)
-    if ($null -eq $process) { throw 'git_start' }
     try {
-        $stream = [System.IO.MemoryStream]::new()
-        try {
-            $copy = $process.StandardOutput.BaseStream.CopyToAsync($stream)
-            $errorRead = $process.StandardError.ReadToEndAsync()
-            if (-not $process.WaitForExit(30000)) {
-                $process.Kill($true)
-                throw 'git_timeout'
-            }
-            $null = $copy.GetAwaiter().GetResult()
-            $null = $errorRead.GetAwaiter().GetResult()
-            if ($process.ExitCode -ne 0) { throw 'git_exit' }
-            return ,($stream.ToArray())
-        } finally { $stream.Dispose() }
-    } finally { $process.Dispose() }
+        $result = [Antiphon.Checkpoints.CheckpointProcessRunner]::RunBytes(
+            $psi, 30000, $true, [System.Threading.CancellationToken]::None)
+    } catch [System.ComponentModel.Win32Exception] { throw 'git_start' }
+    if ($result.TimedOut) { throw 'git_timeout' }
+    if ($result.Exit -ne 0) { throw 'git_exit' }
+    return ,($result.Stdout)
 }
 
 function Add-CheckpointSourceBytes {
