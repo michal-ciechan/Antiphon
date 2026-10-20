@@ -20,7 +20,8 @@ and discovery of any remaining missing controls.
 
 All variants remain pending, including PC-72 publisher and promoter, PC-74
 malformed record/short SHA/conflicting duplicate, PC-75 root-object/version-type/
-supported-version, PC-76 scalar reservations, and PC-77 mismatched requested final.
+supported-version (root-object includes the one-element wrapped journal), PC-76
+scalar reservations, and PC-77 mismatched requested final.
 PC-45 includes non-object row, wrapped candidate/SHA/tag, nonboolean published,
 and the added releaseId/releaseUrl/finalTag type variants. PC-33 includes offset
 UTC conversion; PC-34 uses a changing clock. PC-39/40 cover each independent
