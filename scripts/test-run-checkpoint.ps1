@@ -192,6 +192,19 @@ function Invoke-C585Runner {
 function Get-C585BuildCalls { param($Result) return @($Result.Calls | Where-Object { $_ -match '^build ' }) }
 function Get-C585RunCalls { param($Result) return @($Result.Calls | Where-Object { $_ -match '^run ' }) }
 
+function Initialize-C585NoBuildOutput {
+    param($Fx, [string]$Platform = '', [string[]]$MsBuildProperty = @())
+    # NoBuild used to inherit another case's receipt from bin-c585h. Seed this case's
+    # private output through the runner, with separate logs/results for the setup.
+    $seed = New-C585Case -Name 'nobuild-seed'
+    $result = Invoke-C585Runner -Fx $seed -OutputPath $Fx.OutputPath -Trx $script:GreenTrx `
+        -Platform $Platform -MsBuildProperty $MsBuildProperty
+    if ($result.Exit -ne 0 -or (Get-C585BuildCalls -Result $result).Count -ne 1 -or
+        (Get-C585RunCalls -Result $result).Count -ne 1) {
+        throw ('NoBuild fixture seed failed: {0}' -f $result.Text)
+    }
+}
+
 function Test-C585_Green {
     $fx = New-C585Case -Name 'green'
     $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx
@@ -331,6 +344,7 @@ function Test-C585_FreshResultsDir {
 
 function Test-C585_NoBuild {
     $fx = New-C585Case -Name 'nobuild'
+    Initialize-C585NoBuildOutput -Fx $fx
     $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -NoBuild
     Assert-C487 -Cond ((Get-C585BuildCalls -Result $r).Count -eq 0) -Name 'C585 NoBuild never builds' -Detail ($r.Calls -join ' | ')
     $line = [string]($r.Checkpoint | Select-Object -First 1)
@@ -415,6 +429,7 @@ function Test-C585_MsBuildForwarding {
 
     $nb = New-C585Case -Name 'msbuild-nobuild'
     $nbExpected = Get-C671ExpectedCommands -OutputPath $nb.OutputPath -Properties @('UseAppHost=false')
+    Initialize-C585NoBuildOutput -Fx $nb -Platform 'windows' -MsBuildProperty @('UseAppHost=false')
     $n = Invoke-C585Runner -Fx $nb -Trx $script:GreenTrx -Platform 'windows' -NoBuild -MsBuildProperty @('UseAppHost=false')
     $nRun = Get-C671Call (Get-C585RunCalls -Result $n)
     Assert-C487 -Cond ($n.Exit -eq 0 -and (Get-C585BuildCalls -Result $n).Count -eq 0 -and $nRun.StartsWith($nbExpected.Run + ' -- ', [StringComparison]::Ordinal)) `
@@ -577,6 +592,7 @@ function Test-C589_SlotUnreachable {
 
 function Test-C589_NoBuildStillLeases {
     $fx = New-C585Case -Name 'slot-nobuild'
+    Initialize-C585NoBuildOutput -Fx $fx -Platform 'windows'
     $r = Invoke-C585Runner -Fx $fx -Trx $script:GreenTrx -Platform 'windows' -Slot -SlotScript 'granted' -NoBuild
     $line = [string]($r.Checkpoint | Select-Object -First 1)
     Assert-C487 -Cond ((Get-C589Order -Result $r) -ceq 'POST,run,DELETE') `
