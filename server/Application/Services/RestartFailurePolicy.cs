@@ -58,7 +58,11 @@ public sealed class RestartFailurePolicy
         if (state.LastAutomaticResumeSessionId == session.Id
             && state.LastAutomaticResumeStartedAt == session.StartedAt
             && kind is RestartFailureKind.Unknown or RestartFailureKind.LaunchOrProcessFailure
-            && session.TerminationSource is SessionTerminationSource.Unknown or SessionTerminationSource.ProcessExit)
+            && session.TerminationSource != SessionTerminationSource.OperatorRequest
+            // Failed boot cleanup also writes SystemRequest. Its typed failure remains evidence;
+            // an unclassified system stop does not prove a failed resume.
+            && (session.RestartFailureKind is not null
+                || session.TerminationSource is SessionTerminationSource.Unknown or SessionTerminationSource.ProcessExit))
             state.AutomaticResumeFailures = Math.Min(state.AutomaticResumeFailures, int.MaxValue - 1) + 1;
         state.LastObservedRestartSessionId = session.Id;
         state.LastObservedRestartStartedAt = session.StartedAt;
