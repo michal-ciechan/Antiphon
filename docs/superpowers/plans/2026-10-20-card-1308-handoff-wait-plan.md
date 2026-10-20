@@ -175,15 +175,23 @@ not a completed verification design or authority to skip that stage. Estimated
 total is 12 minutes, including two fresh builds; build-slot waits are additional.
 No whole Unit, namespace, assembly or unrelated CARD-1259 checkpoint selection.
 
+## Verification design — Code brief override
+
+The Code brief explicitly skips TestDesign and authorizes one ordinary red witness
+and one combined narrow green run, with no Unit lane or whole-class selection.
+CP-2 absorbs original CP-3/CP-4/CP-5: the same integration build and one filtered
+run prove delivery, bounded retry, existing current-state guards and coalescing.
+The original five-row scope is retained (17 green argument-expanded cases).
+Use `--row-timeout 40m` and trailing method wildcards. This supersedes the
+proposed separate TestDesign checkpoint binding above; no PC payload is bound or
+executed here. Barrier controls remain pending for Mutation.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | S1 | tests/Antiphon.Tests -> bin-c1308-red/ | integration-handoff-red | `/*/Antiphon.Tests.Application/SessionRuntimeActionDeferralTests/C1308_new_wakeup_rechecks_review_handoff_before_due` | A-1 witness | 3 executed, expected early-progress assertion failures | 3 | 4 |
-| CP-2 | S2-S3 | tests/Antiphon.Tests -> bin-c1308-green/ | integration-handoff-green | `/*/Antiphon.Tests.Application/SessionRuntimeActionDeferralTests/(C1308_new_wakeup_rechecks_review_handoff_before_due)\|(C1308_still_blocked_handoff_recheck_yields_and_preserves_debt)` | A-1, bounded recheck | 4 passed, 0 failed/skipped | 4 | 4 |
-| CP-3 | S2-S3 | CP-2 | integration-temporary-green | `/*/Antiphon.Tests.Application/SessionRuntimeActionTemporaryBlockTests/C1308_temporary_block_retains_action_then_delivers` | A-3 missing paths | 4 passed, 0 failed/skipped | 4 | 2 |
-| CP-4 | S2-S3 | CP-2 | integration-existing-delivery | `/*/Antiphon.Tests.Application/SessionRuntimeActionRoutingTests/C1259_new_working_or_blocked_state_defers_old_idle_action` | existing Herdr/rules delivery and current-state guards | 6 passed, 0 failed/skipped | 6 | 1 |
-| CP-5 | S2-S3 | CP-2 | integration-coalescing-backoff | `/*/Antiphon.Tests.Application/SessionRuntimeActionDeferralTests/(C1259_new_requests_replace_backed_off_queue_work)\|(C1259_transient_deferrals_back_off_without_charging_input)` | A-2, existing replacement/backoff | 3 passed, 0 failed/skipped | 3 | 1 |
+| CP-1 | S1 | tests/Antiphon.Tests -> bin-c1308-red/ | integration-handoff-red | `/*/Antiphon.Tests.Application/SessionRuntimeActionDeferralTests/C1308_new_wakeup_rechecks_review_handoff_before_due*` | A-1 witness | 3 executed, expected early-progress assertion failures | 3 | 4 |
+| CP-2 | S2-S3 | tests/Antiphon.Tests -> bin-c1308-green/ | integration-handoff-green | `/*/Antiphon.Tests.Application/(SessionRuntimeActionDeferralTests)\|(SessionRuntimeActionTemporaryBlockTests)\|(SessionRuntimeActionRoutingTests)/(C1308_*)\|(C1259_new_working_or_blocked_state_defers_old_idle_action*)\|(C1259_new_requests_replace_backed_off_queue_work*)\|(C1259_transient_deferrals_back_off_without_charging_input*)` | A-1, A-2, A-3; original CP-2 through CP-5 | 17 passed, 0 failed/skipped | 17 | 8 |
 
 Batch S2/S3 edits and commits before the single green build. Run through the
 checkpoint tool per `docs/testing-and-build.md`, once per committed source group,
