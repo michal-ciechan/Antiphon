@@ -1,5 +1,5 @@
 param([string]$Repository,[string]$ToolDll,[string]$Mode,[string]$Fixture,[switch]$Held,
-    [ValidateRange(0,10000)][int]$PreReadDelayMs=0)
+    [ValidateRange(0,10000)][int]$PreReadDelayMs=0,[string]$TimingNonce)
 $ErrorActionPreference='Stop'
 if($PSBoundParameters.ContainsKey('PreReadDelayMs') -and $Mode -cne 'project'){throw 'pre-read delay requires project mode'}
 if ($ToolDll) { [void][Reflection.Assembly]::LoadFrom($ToolDll) }
@@ -18,14 +18,26 @@ $root=$Fixture
 switch($Mode) {
  'project' {
     . (Import-Function 'Read-CheckpointProjectReferences')
+    if($TimingNonce -cnotmatch '^[0-9a-f]{32}$'){throw 'project timing nonce required'}
     $script:C1381ReadCheckpointBytes=${function:Read-CheckpointBytes}
     $script:C1381ProjectPath=[IO.Path]::GetFullPath("$Fixture/fixture.csproj")
+    $script:C1381Shape=if($Held){'held'}else{'ordinary'}
     function Read-CheckpointBytes {
         param([string]$Path)
-        if([IO.Path]::GetFullPath($Path) -ceq $script:C1381ProjectPath) {
-            Start-Sleep -Milliseconds $PreReadDelayMs
+        if([IO.Path]::GetFullPath($Path) -cne $script:C1381ProjectPath) {
+            & $script:C1381ReadCheckpointBytes $Path
+            return
         }
-        & $script:C1381ReadCheckpointBytes $Path
+        $delayClock=[Diagnostics.Stopwatch]::StartNew()
+        if($PreReadDelayMs -gt 0){Start-Sleep -Milliseconds $PreReadDelayMs}
+        $delayClock.Stop()
+        $readClock=[Diagnostics.Stopwatch]::StartNew()
+        try {
+            & $script:C1381ReadCheckpointBytes $Path
+        } finally {
+            $readClock.Stop()
+            [Console]::Error.WriteLine("C1381_READ $TimingNonce project $script:C1381Shape $($readClock.ElapsedMilliseconds) $($delayClock.ElapsedMilliseconds)")
+        }
     }
     try { $v=Read-CheckpointProjectReferences "$Fixture/fixture.csproj"; if($Held){throw 'unexpected admission'}; if($v.Count -ne 1 -or $v[0] -cne 'child.csproj'){throw 'value mismatch'} }
     catch { if(-not $Held -or $_.Exception.Message -notmatch 'not regular'){throw} }
