@@ -12,6 +12,8 @@ public static class ExitCodes
     public const int OwnerEnded = 7;
     public const int RestoreFailed = 8;
     public const int StillRunning = 75;
+    // Caller cancellation is a command/executor outcome, not a row precedence.
+    public const int Canceled = 130;
 
     // Highest precedence first. PC-10 swaps the 1 and 2 entries; leave that pair alone.
     private static readonly int[] Precedence = [8, 2, 6, 4, 5, 1, 3, 0];

@@ -21,17 +21,34 @@ public static class Program
 
     public static async Task<int> RunAsync(string[] args, CheckpointApp.Runtime? runtime = null)
     {
-        try { return await RunCoreAsync(args, runtime).ConfigureAwait(false); }
+        runtime ??= new CheckpointApp.Runtime();
+        try
+        {
+            runtime.CancellationToken.ThrowIfCancellationRequested();
+            var result = await RunCoreAsync(args, runtime).ConfigureAwait(false);
+            // Receipt readers may turn cancellation into an I/O refusal or a
+            // returned failure. The caller token, not exception text, decides.
+            return runtime.CancellationToken.IsCancellationRequested ? Canceled(runtime) : result;
+        }
+        catch (Exception) when (runtime.CancellationToken.IsCancellationRequested)
+        {
+            return Canceled(runtime);
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
-            (runtime?.Output ?? Console.Error).WriteLine("refused: receipt-or-I/O-failure: " + ex.Message);
+            (runtime.Output ?? Console.Error).WriteLine("refused: receipt-or-I/O-failure: " + ex.Message);
             return ExitCodes.Invalid;
         }
     }
 
-    private static async Task<int> RunCoreAsync(string[] args, CheckpointApp.Runtime? runtime)
+    private static int Canceled(CheckpointApp.Runtime runtime)
     {
-        runtime ??= new CheckpointApp.Runtime();
+        (runtime.Output ?? Console.Error).WriteLine("canceled: caller-requested");
+        return ExitCodes.Canceled;
+    }
+
+    private static async Task<int> RunCoreAsync(string[] args, CheckpointApp.Runtime runtime)
+    {
         var context = runtime.CleanupContext;
         if (args.Length == 0 || args[0] is "-h" or "--help")
         {
