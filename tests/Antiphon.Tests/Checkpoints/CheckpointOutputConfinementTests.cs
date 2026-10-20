@@ -215,6 +215,11 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
             "-MinExecuted", "1", "-NoSlot",
         })
             start.ArgumentList.Add(arg);
+        return await RunScriptAsync(start, cancellationToken);
+    }
+
+    internal async Task<string> RunScriptAsync(ProcessStartInfo start, CancellationToken cancellationToken)
+    {
         using var process = Process.Start(start);
         process.ShouldNotBeNull();
         RegisterCheckpointChild(process);
@@ -292,6 +297,11 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         var path = Environment.GetEnvironmentVariable("Path") ?? Environment.GetEnvironmentVariable("PATH") ?? "";
         start.Environment["Path"] = shimBin + Path.PathSeparator + path;
         start.Environment["C1310_DOTNET_LOG"] = log;
+        return await RunConfinedScriptAsync(start, cancellationToken);
+    }
+
+    internal async Task<string> RunConfinedScriptAsync(ProcessStartInfo start, CancellationToken cancellationToken)
+    {
         using var process = Process.Start(start);
         process.ShouldNotBeNull();
         RegisterCheckpointChild(process);

@@ -479,7 +479,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         return await WaitAsync(start, cancellationToken);
     }
 
-    private async Task<RunResult> WaitAsync(ProcessStartInfo start, CancellationToken cancellationToken)
+    internal async Task<RunResult> WaitAsync(ProcessStartInfo start, CancellationToken cancellationToken)
     {
         using var process = Process.Start(start);
         process.ShouldNotBeNull();
@@ -507,5 +507,5 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             Skip.Test("CARD-1199 shape-conflict proof runs on Linux; Windows junctions remain an R2 disclosure.");
     }
 
-    private sealed record RunResult(int Exit, string Output);
+    internal sealed record RunResult(int Exit, string Output);
 }
