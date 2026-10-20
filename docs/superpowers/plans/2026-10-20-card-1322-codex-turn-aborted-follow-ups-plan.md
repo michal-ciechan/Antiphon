@@ -122,6 +122,13 @@ the stop, and keep S5 deferred. Do not rerun the whole Unit lane.
 **R-5:** a real StartAsync interruption followed by ExecuteActionPhaseAsync UserPrompt
 must persist StreamingTurn and fresh LastEventAt; queued/stale prompts and replay cannot
 re-arm or extend the deadline. The existing stall scan then detects a stalled follow-up.
+Round-2 F1 repair (Review `04046b8b`, Code `fa71b544`) limits command-wrapper names
+to prompt rows with `CreatedAt >= attempt.PhaseStartedAt` in the database query.
+The R-5 method keeps the same-window wrapper/echo control and adds an independent
+fixture where `/status explain the remaining work` has only an older persisted wrapper.
+That follow-up must persist StreamingTurn, resist deadline extension on replay, and
+reach exactly one later stall kill. Run CP-11 once red, then CP-11 and CP-14 once
+green through the checkpoint tool with `--row-timeout 40m`; whole Unit remains excluded.
 **R-6:** the slow-test registry matches compiled metadata.
 **R-7 (canceled by operator):** the full Unit lane was selected to guard shared runtime
 contracts (estimated six minutes, no unfiltered assembly run). It produced no completed
