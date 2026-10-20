@@ -268,7 +268,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     // Another repository land may have reset the shared land worktree since this op prepared.
                     var land = await VerifiedLandWorktreeAsync(op, op.RebasedSourceSha!, ct);
                     var verification = await verifier.VerifyAsync(land, op.VerificationFilter,
-                        new(op.TaskId, op.Id, request?.Id), ct);
+                        new(op.TaskId, op.Id, request?.Id, CommonDirectory: common), ct);
                     Require(verification.Passed, "verification_failed");
                     op.VerificationPassed = true;
                 }

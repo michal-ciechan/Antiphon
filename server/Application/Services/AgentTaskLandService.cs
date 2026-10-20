@@ -22,6 +22,7 @@ public sealed class AgentTaskLandService
 {
     private readonly AgentTaskLandingProtocol? _protocol;
     private readonly IRepositoryMutationLease? _leases;
+    private readonly ILandExecutionLease? _executionLeases;
     private readonly ILandingGit? _landingGit;
     private readonly AppDbContext _db;
     private readonly DelegationWorktreeService _worktrees;
@@ -54,8 +55,10 @@ public sealed class AgentTaskLandService
         AgentTaskLandingProtocol? protocol = null, IRepositoryMutationLease? leases = null, ILandingGit? landingGit = null,
         LandDeliveryBoundary? boundary = null, IOptions<GitSettings>? gitSettings = null,
         WorkspaceUseAdmission? workspaceUse = null,
-        RepositoryLeaseWaiters? leaseWaiters = null)
+        RepositoryLeaseWaiters? leaseWaiters = null, ILandExecutionLease? executionLeases = null)
     {
+        _executionLeases = executionLeases ?? (landingGit is null ? null
+            : new Infrastructure.Git.LandExecutionLease(landingGit));
         _leaseWaiters = leaseWaiters;
         _workspaceUse = workspaceUse;
         _protocol = protocol;
@@ -472,6 +475,13 @@ public sealed class AgentTaskLandService
         // land stands aside before it acquires, for at most LandYieldToDispatchMaxSeconds.
         if (await YieldToDispatchAsync(task, request, ct) is { } yielded)
             return yielded;
+        await using var executionLease = await _executionLeases!.TryAcquireAsync(task.RepoPath, ct);
+        if (executionLease is null)
+        {
+            await HoldAsync(task, request, "land_execution_busy", null,
+                "Another land owns this repository's land worktree and verification artifacts.", ct);
+            return LandRunResult.Held;
+        }
         await using var lease = await _leases.TryAcquireAsync(
             task.RepoPath, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.Land), ct);
         if (lease is null)
@@ -1755,23 +1765,27 @@ public sealed class AgentTaskLandService
     {
         // SDK artifacts isolate both bin and obj by project, outside the source checkout.
         // Unique owned outputs are retained; never recursively erase pre-existing bin-* paths.
-        // CARD-0688 D-9: a caller-supplied path is plumbing for R3; R1 always passes null.
         var output = artifactsPath ?? Path.Combine(Path.GetTempPath(), "antiphon-land-verify-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(output);
         string[] buildArgs = slot is { MaxCpuCount: > 0 }
-            ? ["build", "--artifacts-path", output, "-maxcpucount:" + slot.MaxCpuCount]
-            : ["build", "--artifacts-path", output];
+            ? ["build", "--artifacts-path", output, "--configuration", "Debug", "-maxcpucount:" + slot.MaxCpuCount]
+            : ["build", "--artifacts-path", output, "--configuration", "Debug"];
         var build = await runProcess(worktree, observer, ct, "dotnet", buildArgs);
         if (!build.Ok) return LandVerification.Failure("build", Tail(build));
         if (string.IsNullOrWhiteSpace(filter)) return LandVerification.Success("build OK");
+        var results = Infrastructure.Git.LandVerificationArtifacts.CreateResultsDirectory(output);
         // Reuse the capped build's artifacts; dotnet run's implicit build would run uncapped.
         var tests = await runProcess(worktree, observer, ct, "dotnet", ["run", "--project", "tests/Antiphon.Tests",
-            "--no-build", "--artifacts-path", output, "--", "--treenode-filter", filter, "--report-trx",
-            "--report-trx-filename", "landing-verification.trx"]);
+            "--no-build", "--artifacts-path", output, "--configuration", "Debug", "--", "--treenode-filter", filter, "--report-trx",
+            "--results-directory", results, "--report-trx-filename", "landing-verification.trx"]);
         if (!tests.Ok) return LandVerification.Failure("tests", Tail(tests));
-        var reports = Directory.GetFiles(output, "landing-verification.trx", SearchOption.AllDirectories);
-        if (reports.Length != 1) return LandVerification.Failure("tests", "fresh_test_report_missing_or_ambiguous");
-        var report = System.Xml.Linq.XDocument.Load(reports[0]);
+        var reportPath = Path.Combine(results, "landing-verification.trx");
+        if (!File.Exists(reportPath)) return LandVerification.Failure("tests", "fresh_test_report_missing_or_ambiguous");
+        Infrastructure.Git.LandVerificationArtifacts.RequireNoLinks(reportPath);
+        System.Xml.Linq.XDocument report;
+        try { report = System.Xml.Linq.XDocument.Load(reportPath); }
+        catch (Exception ex) when (ex is System.Xml.XmlException or IOException)
+        { return LandVerification.Failure("tests", "invalid_test_report"); }
         var counters = report.Descendants().SingleOrDefault(e => e.Name.LocalName == "Counters");
         if (!HasPassingTestCounters(counters, out var executed))
             return LandVerification.Failure("tests", "no_confirmed_passing_tests");

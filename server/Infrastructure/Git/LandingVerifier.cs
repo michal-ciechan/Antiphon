@@ -1,6 +1,8 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Git;
 
@@ -8,7 +10,8 @@ namespace Antiphon.Server.Infrastructure.Git;
 /// The desktop land verifier. With a build-slot gate (the DI registration, CARD-0589 S4) the build
 /// and test run hold one host build slot; constructed bare (tests) it builds unbudgeted as before.
 /// </summary>
-public sealed class LandingVerifier(ILogger<LandingVerifier>? logger = null, IBuildSlotGate? buildSlots = null) : ILandingVerifier
+public sealed class LandingVerifier(ILogger<LandingVerifier>? logger = null, IBuildSlotGate? buildSlots = null,
+    LandVerificationArtifacts? artifacts = null, IOptions<LandingSettings>? settings = null) : ILandingVerifier
 {
     internal AgentTaskLandService.LandProcessRunner? RunProcess { get; init; }
     public async Task<LandingVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
@@ -20,7 +23,14 @@ public sealed class LandingVerifier(ILogger<LandingVerifier>? logger = null, IBu
     public async Task<LandingVerification> VerifyAsync(string worktree, string? filter,
         LandingVerificationCorrelation correlation, CancellationToken ct)
     {
-        var result = await AgentTaskLandService.VerifyWithObserverAsync(worktree, filter, new Observer(worktree, logger, correlation), ct, buildSlots, RunProcess, artifactsPath: correlation.ArtifactsPath);
+        var observer = new Observer(worktree, logger, correlation);
+        var generation = correlation.CommonDirectory is { } common
+            ? await (artifacts ?? new LandVerificationArtifacts()).PrepareAsync(common, worktree,
+                settings?.Value.ReuseVerificationArtifacts ?? true, observer.Line, ct)
+            : null;
+        var result = await AgentTaskLandService.VerifyWithObserverAsync(worktree, filter, observer, ct,
+            buildSlots, RunProcess, artifactsPath: generation?.Path ?? correlation.ArtifactsPath);
+        if (result.Ok) generation?.Complete();
         return new(result.Ok, result.Ok ? result.Description : result.Step + " failed");
     }
 

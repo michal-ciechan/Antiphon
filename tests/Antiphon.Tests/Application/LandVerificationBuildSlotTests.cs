@@ -177,7 +177,7 @@ public sealed class LandVerificationBuildSlotTests
             Timeline.Add(file + " " + string.Join(' ', args));
             if (args[0] == "build")
                 return Task.FromResult(new AgentTaskLandService.ProcessResult(BuildOk, "", BuildOk ? "" : "error CS0001"));
-            var output = args[Array.IndexOf(args, "--artifacts-path") + 1];
+            var output = args[Array.IndexOf(args, "--results-directory") + 1];
             File.WriteAllText(Path.Combine(output, "landing-verification.trx"),
                 """<TestRun><ResultSummary><Counters total="4" executed="4" passed="4" failed="0" /></ResultSummary></TestRun>""");
             return Task.FromResult(new AgentTaskLandService.ProcessResult(true, "", ""));
