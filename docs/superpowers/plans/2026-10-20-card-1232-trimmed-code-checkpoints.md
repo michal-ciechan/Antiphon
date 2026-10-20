@@ -52,10 +52,16 @@ R-5 therefore has two results, not three. No enum or routing behavior is added.
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1232-red/` | red | `/*/*/PreDispatchFailureDeliveryTests/Pre_dispatch_failed_commit_keeps_the_caller_obligation*` | V-1 | one assertion red: no durable obligation after Failed commit | 1 | 4 |
 | CP-2 | S2-S3 | `tests/Antiphon.Tests -> bin-c1232-green/` | new-behaviors | `/*/*/PreDispatchFailureDeliveryTests/(Pre_dispatch_failed*)\|(Preflight_failure_obligation_commits_with_its_claim*)\|(Pre_dispatch_excluded_routes_create_no_obligation*)\|(Pre_dispatch_snapshot_survives_task_retry*)\|(Pre_dispatch_receipt_requires_complete_user_prompt*)\|(Pre_dispatch_recovery_retains_authoritative_row*)\|(Pre_dispatch_recovery_waits_for_destination*)` | V-1, V-2, V-3, V-5, V-6, V-7, V-8, R-5 | all 13 cases, zero failures/skips | 13 | 5 |
 | CP-3 | S2-S3 | CP-2 | existing-contracts | `/*/*/(RolePolicyToolBundleDispatchTests*)\|(ReceiptFailureDeliveryTests*)\|(AgentTaskDispatchFailureTests*)\|(DelegationDispatchRecoveryBoundaryTests*)\|(TestClassificationGuardTests*)/(the_dispatcher_refusal_reaches_the_caller_as_one_complete_user_prompt*)\|(Caller_failure_obligation_survives_persistence_cuts*)\|(a_dispatch_failure_owns_a_durable_obligation*)\|(a_lost_failure_note_is_re_sent_on_the_ramp*)\|(C1186_Recovered_failure_preserves_obligation_guidance*)\|(Registry_matches_compiled_metadata*)` | R-1, R-2, R-3, R-4, V-4 | all 23 cases, zero failures/skips | 23 | 5 |
+| CP-4 | S3-repair | `tests/Antiphon.Tests -> bin-c1232-repair/` | targeted-repair | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1186_Recovered_failure_preserves_obligation_guidance*` | R-4 | all four cases, zero failures/skips | 4 | 5 |
 
 The added Slow class owns a reason-adjacent allowlist row. CP-3 also runs the
 exact metadata registry guard (one Unit method, not the Unit lane) to validate
 that new classification. This is the reason for its additional 23rd result.
+
+CP-4 is the targeted rerun after CP-3 produced 22 passes and one failure in the
+new immediate-delivery fixture: reusing the already-advanced sweep clock dated
+its second note in the future. The independent scenario now owns a fresh clock.
+CP-2's 13 green cases and CP-3's other green methods are not repeated.
 
 ### Cost
 

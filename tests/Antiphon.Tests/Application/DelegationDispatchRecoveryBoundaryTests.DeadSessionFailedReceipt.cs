@@ -448,8 +448,11 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 var immediateObligation = Guid.NewGuid();
                 await SeedObligationStartAsync(schema.ConnectionString, immediate.TaskId,
                     immediateObligation, DigestOne, newerAt);
+                // DueAsync advances three minutes. This independent scenario needs its own
+                // clock so the queued note remains older than the caller's real-time flush.
+                var immediateClock = new FakeTimeProvider(DateTimeOffset.UtcNow.AddMinutes(-5));
                 await using (var host = OpenSweep(
-                    schema.ConnectionString, runner, stopper, sweepClock, new DeadSessionFirstSeenState()))
+                    schema.ConnectionString, runner, stopper, immediateClock, new DeadSessionFirstSeenState()))
                     await host.DueAsync();
                 await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
                 var direct = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceTaskId == immediate.TaskId);
