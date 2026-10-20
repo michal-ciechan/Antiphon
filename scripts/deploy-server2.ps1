@@ -733,7 +733,8 @@ function Assert-RecycleTaskCensus {
                 $excludedId = [string]$excluded.projectId
                 if (-not (Test-RecycleGuid $excluded.projectId) -or $excludedId -eq $scope -or
                     -not $excludedScopes.Add($excludedId)) { Stop-RecycleMalformed 'excluded.byProject.projectId' $path }
-                if (($excluded.count -isnot [int] -and $excluded.count -isnot [long]) -or $excluded.count -le 0) { Stop-RecycleMalformed 'excluded.byProject.count' $path }
+                if ($excluded.PSObject.Properties.Name -cnotcontains 'count' -or
+                    ($excluded.count -isnot [int] -and $excluded.count -isnot [long]) -or $excluded.count -le 0) { Stop-RecycleMalformed 'excluded.byProject.count' $path }
                 $withheldCount += $excluded.count
                 if ($scopeCounts.ContainsKey($excludedId)) {
                     if ($scopeCounts[$excludedId] -ne $excluded.count -and -not $countDrifts.ContainsKey($excludedId)) {
