@@ -22,12 +22,35 @@ Failed destinations) are skipped by this commissioning override, not passed.
 The shared queue and reconciliation implementation remains unchanged. Every PC-1–35 and variant
 stays pending for Mutation. No mutation payload is bound or executed here.
 
+## Verification design
+
+| ID | Executed method | Narrow oracle |
+|---|---|---|
+| V-1 | `PreDispatchFailureDeliveryTests.Pre_dispatch_failed_commit_keeps_the_caller_obligation` | Committed Failed/event/outbox, fresh producer recovery, complete prompt, no duplicate. |
+| V-2 | `PreDispatchFailureDeliveryTests.Pre_dispatch_failed_insert_recovers_with_checks_disabled` | Eligible/busy; immediate and recovery insert faults; persisted 5-second due guard; checks disabled and zero budget. |
+| V-3 | `PreDispatchFailureDeliveryTests.Preflight_failure_obligation_commits_with_its_claim` | Existing-agent Worktree claim rollback and commit, then recovery after commit. |
+| V-4 | `RolePolicyToolBundleDispatchTests.the_dispatcher_refusal_reaches_the_caller_as_one_complete_user_prompt` | Committed queue row reused after pre-type interruption. R-2 supplies the other existing handoff cuts. |
+| V-5 | `PreDispatchFailureDeliveryTests.Pre_dispatch_snapshot_survives_task_retry` | Two real failures preserve distinct event identities and immutable payloads, with a different root ID. |
+| V-6 | `PreDispatchFailureDeliveryTests.Pre_dispatch_receipt_requires_complete_user_prompt` | Header-only decoy cannot confirm; the actual full submitted prompt confirms. |
+| V-7 | `PreDispatchFailureDeliveryTests.Pre_dispatch_recovery_retains_authoritative_row` | Canceled/missing/exhausted row is not replaced; same-row fixture restoration delivers once. |
+| V-8 | `PreDispatchFailureDeliveryTests.Pre_dispatch_recovery_waits_for_destination` | Stopped parent remains owed for five minutes, then recovery delivers. |
+| R-1 | `RolePolicyToolBundleDispatchTests.the_dispatcher_refusal_reaches_the_caller_as_one_complete_user_prompt` | Four existing paths preserve full recipient delivery and keyed ownership. |
+| R-2 | `ReceiptFailureDeliveryTests.Caller_failure_obligation_survives_persistence_cuts` | Twelve existing watchdog cuts retain explicit notification IDs and complete receipt. |
+| R-3 | `AgentTaskDispatchFailureTests.a_dispatch_failure_owns_a_durable_obligation` | New failure owns an outbox row and no legacy reminder. |
+| R-3 | `AgentTaskDispatchFailureTests.a_lost_failure_note_is_re_sent_on_the_ramp` | Historical no-outbox row retains its reminder. |
+| R-4 | `DelegationDispatchRecoveryBoundaryTests.C1186_Recovered_failure_preserves_obligation_guidance` | Post-dispatch guidance survives direct and recovered delivery, with no new outbox row. |
+| R-5 | `PreDispatchFailureDeliveryTests.Pre_dispatch_excluded_routes_create_no_obligation` | None with a parent and Session without a parent create no caller obligation. |
+
+Plan correction: AgentTaskReplyTo has only None and Session. None means board-only.
+The original design's separate Board variant is not an available product route;
+R-5 therefore has two results, not three. No enum or routing behavior is added.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1232-red/` | red | `/*/*/PreDispatchFailureDeliveryTests/Pre_dispatch_failed_commit_keeps_the_caller_obligation*` | V-1 | one assertion red: no durable obligation after Failed commit | 1 | 4 |
-| CP-2 | S2-S3 | `tests/Antiphon.Tests -> bin-c1232-green/` | new-behaviors | `/*/*/PreDispatchFailureDeliveryTests/(Pre_dispatch_failed*)\|(Preflight_failure_obligation_commits_with_its_claim*)\|(Pre_dispatch_excluded_routes_create_no_obligation*)\|(Pre_dispatch_snapshot_survives_task_retry*)\|(Pre_dispatch_receipt_requires_complete_user_prompt*)\|(Pre_dispatch_recovery_retains_authoritative_row*)\|(Pre_dispatch_recovery_waits_for_destination*)` | V-1, V-2, V-3, V-5, V-6, V-7, V-8, R-5 | all 14 cases, zero failures/skips | 14 | 5 |
+| CP-2 | S2-S3 | `tests/Antiphon.Tests -> bin-c1232-green/` | new-behaviors | `/*/*/PreDispatchFailureDeliveryTests/(Pre_dispatch_failed*)\|(Preflight_failure_obligation_commits_with_its_claim*)\|(Pre_dispatch_excluded_routes_create_no_obligation*)\|(Pre_dispatch_snapshot_survives_task_retry*)\|(Pre_dispatch_receipt_requires_complete_user_prompt*)\|(Pre_dispatch_recovery_retains_authoritative_row*)\|(Pre_dispatch_recovery_waits_for_destination*)` | V-1, V-2, V-3, V-5, V-6, V-7, V-8, R-5 | all 13 cases, zero failures/skips | 13 | 5 |
 | CP-3 | S2-S3 | CP-2 | existing-contracts | `/*/*/(RolePolicyToolBundleDispatchTests)\|(ReceiptFailureDeliveryTests)\|(AgentTaskDispatchFailureTests)\|(DelegationDispatchRecoveryBoundaryTests)/(the_dispatcher_refusal_reaches_the_caller_as_one_complete_user_prompt*)\|(Caller_failure_obligation_survives_persistence_cuts*)\|(a_dispatch_failure_owns_a_durable_obligation*)\|(a_lost_failure_note_is_re_sent_on_the_ramp*)\|(C1186_Recovered_failure_preserves_obligation_guidance*)` | R-1, R-2, R-3, R-4, V-4 | all 22 cases, zero failures/skips | 22 | 5 |
 
 ### Cost
