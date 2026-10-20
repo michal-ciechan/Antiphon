@@ -65,7 +65,9 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
         var wrapper = Path.Combine(root, "invoke.ps1");
         var ready = """
             $ErrorActionPreference = 'Stop'
-            $identity = "$PID`:$([Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().Ticks):$env:C1233_NONCE"
+            $stat = [IO.File]::ReadAllText("/proc/$PID/stat")
+            $startToken = $stat.Substring($stat.LastIndexOf(')') + 2).Split(' ')[19]
+            $identity = "$PID`:$startToken`:$env:C1233_NONCE"
             Write-Output "C1233_READY $identity"
             """;
         string? binding = null;
