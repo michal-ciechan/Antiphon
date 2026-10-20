@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -19,6 +20,102 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class SessionRuntimeActionDeferralTests
 {
+    [Test]
+    [Arguments("boundary-delivery")]
+    [Arguments("status-delivery")]
+    [Arguments("boundary-finished")]
+    public async Task C1308_new_wakeup_rechecks_review_handoff_before_due(string variant)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, AlwaysOn = false,
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<ReviewReplyDispatcher>();
+                services.AddScoped<ReviewThreadService>();
+                services.AddScoped<AgentFilesService>();
+            }
+        });
+        var (source, original) = await DeferReviewAsync(h);
+        var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
+        var finishedOnly = variant == "boundary-finished";
+        if (finishedOnly)
+        {
+            var cap = h.Provider.GetRequiredService<IOptions<SupervisionSettings>>().Value.DeliveryVerification.MaxDeliveryAttempts;
+            await using var db = h.CreateObserverContext();
+            await db.SessionQueuedMessages.Where(m => m.Id == source.Id)
+                .ExecuteUpdateAsync(u => u.SetProperty(m => m.DeliveryAttempts, cap));
+        }
+        h.Runtime.SetTestPending(h.SessionId, null);
+        if (variant == "status-delivery") await actions.RequestAsync(h.SessionId, "status", default);
+        else await h.Runtime.ObserveTranscriptAsync(Entry(h, 3, TranscriptKinds.TurnEnd), default);
+        var receipt = Entry(h, 4, TranscriptKinds.UserPrompt, source.Body);
+        h.Adapter.OnSubmitted = body =>
+        {
+            body.ShouldBe(source.Body);
+            return h.Runtime.ObserveTranscriptAsync(receipt, default);
+        };
+        await actions.DrainPageAsync(h.SessionId, default);
+        h.Now.ShouldBeLessThan(original.DueAt, "the newer wake must make progress before the capped retry");
+        if (finishedOnly) Finished(h).ShouldBe(1, "the later boundary must finish before the handoff retry is due");
+        else h.Adapter.SubmittedBodies.ShouldBe([source.Body], "the original typed handoff must execute before its retry is due");
+        await using (var db = h.CreateObserverContext())
+        {
+            (await db.SessionRuntimeActions.AnyAsync(a => a.Id == original.Id)).ShouldBeFalse("acknowledge the original handoff");
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == source.Id);
+            row.ReviewThreadId.ShouldBe(source.ReviewThreadId);
+            row.ConversationKey.ShouldBe(source.ConversationKey);
+            if (!finishedOnly)
+            {
+                row.Status.ShouldBe(QueuedMessageStatus.Sent);
+                row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+                row.DeliveryAttempts.ShouldBe(1);
+                (await db.TranscriptEntries.SingleAsync(t => t.Uuid == receipt.Uuid)).Text.ShouldBe(source.Body);
+            }
+        }
+        if (variant == "status-delivery") Finished(h).ShouldBe(0, "typed handoffs and status requests are not turn boundaries");
+        await actions.DrainPageAsync(h.SessionId, default);
+        h.Adapter.SubmittedBodies.Count.ShouldBe(finishedOnly ? 0 : 1);
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    private static async Task<(SessionQueuedMessage Source, SessionRuntimeAction Action)> DeferReviewAsync(BridgeQueueHarness h)
+    {
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "earlier completed work");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        using var scope = h.Provider.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<ReviewThreadService>();
+        var thread = await service.CreateAsync(h.AgentId,
+            new CreateReviewThreadRequest("notes/report.md", 12, "quoted line", "Check the complete figure.", false), default);
+        thread.ShouldNotBeNull();
+        (await service.DispatchAsync(thread.Id, default)).ShouldBeTrue();
+        SessionQueuedMessage source;
+        Guid originalId;
+        await using (var db = h.CreateObserverContext())
+        {
+            source = await db.SessionQueuedMessages.AsNoTracking().SingleAsync();
+            source.ReviewThreadId.ShouldBe(thread.Id);
+            var action = await db.SessionRuntimeActions.SingleAsync();
+            originalId = action.Id;
+            action.TriggerKind.ShouldBe($"review:{source.Id}");
+            action.Attempts = 5; // Exercise the existing capped retry without waiting thirty seconds.
+            await db.SaveChangesAsync();
+        }
+        h.Runtime.SetTestPending(h.SessionId, HerdrPendingReasons.Unreachable);
+        await h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, default);
+        await using var verify = h.CreateObserverContext();
+        var retained = await verify.SessionRuntimeActions.AsNoTracking().SingleAsync(a => a.Id == originalId);
+        retained.TriggerKind.ShouldBe($"review:{source.Id}");
+        retained.Phase.ShouldBe(SessionRuntimeActionCoordinator.QueuePhase);
+        retained.FailureReason.ShouldBe("Deferred");
+        retained.Attempts.ShouldBe(6);
+        retained.DueAt.ShouldBeGreaterThan(h.Now.AddSeconds(20));
+        h.Adapter.Inputs.ShouldBeEmpty();
+        Finished(h).ShouldBe(0);
+        return (source, retained);
+    }
+
     [Test]
     [Arguments("parked")]
     [Arguments("stopped")]
