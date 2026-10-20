@@ -257,7 +257,7 @@ export interface AgentSupervisionDto {
   restartBackoffFailures?: number
   continuityHeldAt?: string | null
   continuitySessionId?: string | null
-  continuityReason?: 'NativeSessionMissing' | 'TargetMissing' | 'TargetIncompatible' | 'OwnershipUnproven' | 'RepeatedResumeFailure' | null
+  continuityReason?: 'NativeSessionMissing' | 'TargetMissing' | 'TargetIncompatible' | 'OwnershipUnproven' | 'RepeatedResumeFailure' | 'AutomaticFreshRefused' | null
   continuityResumeFailures?: number
   continuityEvidence?: string | null
   herdrConsecutiveFailures?: number
