@@ -301,7 +301,7 @@ public sealed class C1364BoundLandWaitProofTests
         receipt["landWaitPolls"]!.GetValue<int>().ShouldBe(1, label);
         var result = ReadJson(fixture, $"evidence/{hostCase}/c590-result.json");
         var diagnosis = result["diagnosis"]!.GetValue<string>();
-        run.Output.ShouldContain(diagnosis, label + ": public host diagnosis");
+        run.Output.ShouldContain(diagnosis, customMessage: label + ": public host diagnosis");
         AssertWaitDiagnostic(diagnosis, runner, 1, label);
     }
 
