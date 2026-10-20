@@ -56,10 +56,16 @@ Run only the commissioned row through the checkpoint tool (`run --plan docs/supe
 
 ### Checkpoints
 
+Code S1 correction: CP-2's first execution at `0203d4bec4d0b8411204b2041991ab94bf0987bc`
+produced a fresh TRX with zero tests. Its combined class/method operands now use the
+trailing wildcards required by the pinned TUnit 1.44 discovery hint extractor
+(`docs/testing-and-build.md`, CARD-0403). The four intended methods and exact count
+remain unchanged; that zero-count run is incomplete evidence, not a pass.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c1323-s1r/` | portable-policy-red | `/*/*/ReleaseGatePlatformTests/C1323_PlatformPolicy` | V-1 red | 1 executed, 1 expected behavioral failure, 0 skipped | 1 | 8 |
-| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c1323-s1g/` | portable-policy-green | `/*/*/(ReleaseGatePlatformTests)\|(ReleaseGatePolicyTests)\|(TestSelectionCatalogTests)\|(TestSelectionTests)/(C1323_PlatformPolicy)\|(C599_ProfileSchema)\|(C1313_ProjectAndCatalogUniverse)\|(C1313_PinnedPolicy)` | V-1 | exactly 4 executed, 0 failed/skipped | 4 | 8 |
+| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c1323-s1g/` | portable-policy-green | `/*/*/(ReleaseGatePlatformTests*)\|(ReleaseGatePolicyTests*)\|(TestSelectionCatalogTests*)\|(TestSelectionTests*)/(C1323_PlatformPolicy*)\|(C599_ProfileSchema*)\|(C1313_ProjectAndCatalogUniverse*)\|(C1313_PinnedPolicy*)` | V-1 | exactly 4 executed, 0 failed/skipped | 4 | 8 |
 | CP-3 | S2-red | `tests/Antiphon.Tests -> bin-c1323-s2r/` | portable-execution-red | `/*/*/ReleaseGatePlatformTests/C1323_PlatformExecution` | V-2 red | 1 executed, 1 expected behavioral failure, 0 skipped | 1 | 8 |
 | CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1323-s2g/` | portable-execution-green | `/*/*/ReleaseGatePlatformTests/C1323_PlatformExecution` | V-2 | exactly 1 executed, 0 failed/skipped | 1 | 8 |
 | CP-5 | S3-red | `tests/Antiphon.Tests -> bin-c1323-s3r/` | linux-desktop-smoke-red | `/*/*/VerifyDevStackSmokeTests/Linux_full_smoke_refuses_before_desktop_side_effects` | V-3 red | 1 executed, 1 expected behavioral failure, 0 skipped | 1 | 6 |
