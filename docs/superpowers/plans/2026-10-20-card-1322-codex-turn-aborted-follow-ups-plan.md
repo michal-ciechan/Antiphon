@@ -109,8 +109,8 @@ The table budgets 46 minutes for the nine green rows; red repetitions budget ano
 | CP-10 | S4-refinement | `tests/Antiphon.Tests -> bin-c1322-s4-stall/` | integration-interrupted-stall | `/*/*/AgentSessionCancelledTurnTests/*` | V-3, R-4 | all listed, 0 failed/skipped | 2 | 8 |
 | CP-11 | F1-F2 | `tests/Antiphon.Tests -> bin-c1322-f1/` | integration-follow-up | `/*/*/AgentSessionCancelledTurnTests/C1322_Follow_up_prompt_rearms_interrupted_attempt*` | R-5 | all listed, 0 failed/skipped | 1 | 5 |
 | CP-12 | F1-F2 | CP-11 | unit-registry | `/*/*/TestClassificationGuardTests/Registry_matches_compiled_metadata*` | R-6 | all listed, 0 failed/skipped | 1 | 1 |
-| CP-13 | F1-F2-Final | `tests/Antiphon.Tests -> bin-c1322-final/` | unit-final | `/*/*/*/*[Category=Unit]` | R-7 | >= 1 executed, 0 failed | 1 | 6 |
-| CP-14 | F1-F2-Final | CP-13 | integration-caller-final | `/*/*/AgentSessionCancelledTurnTests/*` | V-3, R-4, R-5 | all listed, 0 failed/skipped | 3 | 2 |
+| CP-13 | F1-F2 | CP-11 | unit-final | `/*/*/*/*[Category=Unit]` | R-7 | >= 1 executed, 0 failed | 1 | 6 |
+| CP-14 | F1-F2 | CP-11 | integration-caller-final | `/*/*/AgentSessionCancelledTurnTests/*` | V-3, R-4, R-5 | all listed, 0 failed/skipped | 3 | 2 |
 
 Task `7f45965a` Final profile supersedes the narrow-only ordinary scope above for its
 assigned follow-ups: CP-11 is the F-1 red/green witness, CP-12 verifies F-2, and
@@ -121,3 +121,7 @@ re-arm or extend the deadline. The existing stall scan then detects a stalled fo
 **R-6:** the slow-test registry matches compiled metadata.
 **R-7:** the full Unit lane guards shared runtime contracts (estimated six minutes,
 no unfiltered assembly run). S5 remains a separately budgeted item.
+The green F1-F2 group reuses CP-11's single isolated build for all four rows.
+S5/V-5/CP-5 is deferred from task `7f45965a`: its 55-minute estimate does not fit
+the remaining 60-minute task budget after the observed ten-minute F1-F2 red run
+and the required Final coverage. S5 source is unchanged.
