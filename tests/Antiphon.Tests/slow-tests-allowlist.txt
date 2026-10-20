@@ -312,4 +312,7 @@ Antiphon.Tests.Application.SessionRuntimeActionRoutingTests
 Antiphon.Tests.Application.SessionRuntimeActionDeferralTests
 # CARD-1233: four inherited file callers, independent process controls and an 8 s FIFO watchdog.
 Antiphon.Tests.Checkpoints.CheckpointInheritedFileTests
+# CARD-1233 S2: real Git source capture controls and a 30 s inherited-pipe deadline.
 Antiphon.Tests.Checkpoints.CheckpointSourceGitBoundsTests
+# CARD-1233 S4: both real verifier Git entry points exercise the 30 s inherited-pipe deadline.
+Antiphon.Tests.Checkpoints.CheckpointVerifierBoundsTests
