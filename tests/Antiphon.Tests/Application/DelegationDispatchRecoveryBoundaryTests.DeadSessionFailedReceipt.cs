@@ -321,6 +321,9 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 var terminal = await mid.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == seeded.TaskId);
                 terminal.Status.ShouldBe(AgentTaskStatus.Failed, mode);
                 terminal.CompletionNoteQueuedAt.ShouldBeNull(mode);
+                terminal.DispatchedAt.ShouldNotBeNull(mode);
+                (await mid.AgentTaskLandNotifications.CountAsync(n => n.TaskId == seeded.TaskId
+                    && n.Kind == LandNotificationKind.DeliveryFailure)).ShouldBe(0, "ordinary post-dispatch failure keeps its existing path");
                 terminal.FailureReason.ShouldNotBeNull(mode);
                 reason = terminal.FailureReason!;
                 reason.Contains("process vanished", StringComparison.Ordinal).ShouldBeTrue(mode);
@@ -434,6 +437,33 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             (await PromptsAfterAsync(schema.ConnectionString, decoy.SessionId, 0)).ShouldBeEmpty(mode);
             decoy.Adapter.SubmittedBodies.ShouldBeEmpty(mode);
             (await CountNotesAsync(schema.ConnectionString, seeded.TaskId)).ShouldBe(1, mode + "-note");
+            if (mode == "one")
+            {
+                var immediate = await SeedAsync(schema.ConnectionString, new AbsentShape
+                {
+                    SessionReason = "process vanished",
+                    ExistingParentId = parent.SessionId,
+                    Brief = false,
+                });
+                var immediateObligation = Guid.NewGuid();
+                await SeedObligationStartAsync(schema.ConnectionString, immediate.TaskId,
+                    immediateObligation, DigestOne, newerAt);
+                await using (var host = OpenSweep(
+                    schema.ConnectionString, runner, stopper, sweepClock, new DeadSessionFirstSeenState()))
+                    await host.DueAsync();
+                await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+                var direct = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceTaskId == immediate.TaskId);
+                ContainsLiteral(direct.Body, "git=commit-recovery-abandoned:" + immediateObligation.ToString("N")[..8], "immediate-git");
+                ContainsLiteral(direct.Body, immediateObligation.ToString("D"), "immediate-obligation");
+                ContainsLiteral(direct.Body, RecoveryCommand(immediate.TaskId, DigestOne), "immediate-command");
+                ContainsLiteral(direct.Body, "Nothing was pushed.", "immediate-warning");
+                var immediateFloor = await PromptFloorAsync(schema.ConnectionString, parent.SessionId);
+                await parent.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+                var immediateTyped = await TypedReceiptBodyAsync(schema.ConnectionString, direct, "immediate");
+                await AssertOneReceiptAsync(schema.ConnectionString, immediateTyped, parent.SessionId, immediateFloor, "immediate");
+                (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == immediate.TaskId
+                    && n.Kind == LandNotificationKind.DeliveryFailure)).ShouldBe(0);
+            }
             Quiet(runner, stopper, mode);
         }
         finally

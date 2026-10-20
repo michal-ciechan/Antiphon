@@ -1254,6 +1254,27 @@ Immediate and recovered enqueue use the same unique notification key. Only a com
 caller UserPrompt after the queue attempt floor confirms receipt; Sent or task failure
 does not. Pinned by ReceiptFailureDeliveryTests busy/eligible persistence cuts.
 
+### Pre-dispatch caller failures (CARD-1232)
+
+New failures before `DispatchedAt` use the same DeliveryFailure outbox when they
+reply to a Session with a parent. The shared failure writer saves Failed, its
+Failed event and the immutable caller payload together, including direct preflight
+refusals inside a claim transaction. Enqueue occurs only after that transaction
+commits. The wrapper's immediate enqueue and both recovery owners use the same
+notification key; retries replay the saved body and digest, including abandoned
+commit guidance.
+
+These obligations remain due with `CheckEnabled=false` or `CheckMaxCount=0`.
+They clear `NextCheckAt` and do not arm the legacy failure reminder. Historical
+no-outbox failures retain that reminder path; already-lost historical notes are
+not reconstructed. A task retry preserves the earlier obligation, while another
+Failed event owns a distinct notification. Board, None and missing-parent routes
+create no caller obligation. Ordinary post-dispatch failure behavior is unchanged.
+Canceled, missing and attempt-exhausted authoritative queue rows remain unconfirmed
+and are never replaced. Only the complete matching caller UserPrompt above the
+attempt floor confirms delivery. Pinned by PreDispatchFailureDeliveryTests and the
+existing role-policy refusal, failure-reminder and watchdog integration checks.
+
 ### Profile-v1 completion obligation (CARD-0544 D-9)
 
 A Code/Review task created with verification profile v1 that replies to a Session commits a

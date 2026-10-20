@@ -4462,9 +4462,9 @@ public sealed partial class AgentTaskDispatcher
             foreach (var p in ordered)
                 _db.AgentTaskEvents.Add(CommitRecoveryObligations.Abandon(p, sweep, reason, abandonedAt));
         }
-        await FailAsync(task, reason, ct, failureCode);
+        var notification = await FailAsync(task, reason, ct, failureCode, warning: warning, git: git);
         await _tasks.RemoveEphemeralAgentAsync(task, task.AgentId, ct);
-        if (task.DispatchedAt is null)
+        if (task.DispatchedAt is null && notification is null)
             ArmFailureReminder(task, task.CompletedAt ?? UtcNow());
         await _db.SaveChangesAsync(ct);
         // A completion note uses a separate DbContext and stamps this task. Commit the
@@ -4478,14 +4478,22 @@ public sealed partial class AgentTaskDispatcher
 
         if (task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is Guid parentSession)
         {
-            var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason, warning: warning, git: git,
-                land: await LandCompletionFacts.LoadAsync(_db, task, ct));
+            // A pre-dispatch failure already owns its immutable payload. Immediate delivery
+            // and recovery must use that same event identity, including after a lost insert.
+            var note = notification is null
+                ? DelegationReportFormatter.BuildCompletionNote(task, _settings, reason, warning: warning, git: git,
+                    land: await LandCompletionFacts.LoadAsync(_db, task, ct))
+                : null;
+            var body = notification?.Body ?? note!.Body;
             try
             {
                 await _queue.EnqueueAsync(
-                    parentSession, note.Body, MessageSendMode.WhenIdle, ct,
+                    parentSession, body, MessageSendMode.WhenIdle, ct,
                     QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}",
-                    task.Id, DelegationNoteDigest.Compute(reason), note.Header);
+                    task.Id, notification?.ContentDigest ?? DelegationNoteDigest.Compute(reason),
+                    note?.Header ?? body.Split('\n')[0], sourceLandNotificationId: notification?.Id,
+                    afterLandQueueInsert: notification is null ? null : (_, token) =>
+                        CompletionNoteStamp.ApplyAsync(_db, task.Id, notification.ContentDigest, UtcNow(), token));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -7691,9 +7699,9 @@ public sealed partial class AgentTaskDispatcher
         return true;
     }
 
-    private async Task FailAsync(
+    private async Task<AgentTaskLandNotification?> FailAsync(
         AgentTask task, string reason, CancellationToken ct, AgentTaskFailureCode? failureCode = null,
-        Guid? deliveryFailureNotificationId = null)
+        Guid? deliveryFailureNotificationId = null, string? warning = null, string? git = null)
     {
         var now = UtcNow();
         task.Status = AgentTaskStatus.Failed;
@@ -7710,25 +7718,32 @@ public sealed partial class AgentTaskDispatcher
             At = now,
         };
         _db.AgentTaskEvents.Add(failedEvent);
-        if (deliveryFailureNotificationId is Guid notificationId
+        AgentTaskLandNotification? notification = null;
+        if ((deliveryFailureNotificationId is not null || task.DispatchedAt is null)
             && task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null)
         {
-            var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason,
+            var note = DelegationReportFormatter.BuildCompletionNote(task, _settings, reason, warning: warning, git: git,
                 land: await LandCompletionFacts.LoadAsync(_db, task, ct));
-            _db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
+            notification = new AgentTaskLandNotification
             {
-                Id = notificationId, TaskId = task.Id, SourceEventId = failedEvent.Id,
+                Id = deliveryFailureNotificationId ?? Guid.NewGuid(), TaskId = task.Id, SourceEventId = failedEvent.Id,
                 Kind = LandNotificationKind.DeliveryFailure, ReplyTo = task.ReplyTo,
                 ParentSessionId = task.ParentSessionId, Body = note.Body,
                 ContentDigest = DelegationNoteDigest.Compute(reason),
                 CreatedAt = now, NextAttemptAt = now, State = LandNotificationState.Queued,
-            });
+            };
+            _db.AgentTaskLandNotifications.Add(notification);
+            // The outbox owns delivery independently of optional checks and their budget.
+            // Do not leave a legacy reminder armed to submit this same failure again.
+            if (task.DispatchedAt is null)
+                task.NextCheckAt = null;
         }
         await _db.SaveChangesAsync(ct);
         // CARD-0664 D-2: outside a claim transaction the Failed status is committed now; inside
         // one, the claim path calls ReleaseTaskConsumersAsync after its own commit.
         if (_db.Database.CurrentTransaction is null)
             await ReleaseTaskConsumersAsync(task);
+        return notification;
     }
 
     /// <summary>CARD-0664 D-2/D-3: best-effort release of a failed task's Launch rows after its commit.</summary>

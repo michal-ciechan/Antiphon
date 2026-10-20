@@ -122,7 +122,7 @@ public class AgentTaskDispatchFailureTests
     }
 
     [Test]
-    public async Task a_dispatch_failure_arms_a_reminder()
+    public async Task a_dispatch_failure_owns_a_durable_obligation()
     {
         using var notGit = new TempWorkspace();
         var parentSessionId = Guid.NewGuid();
@@ -142,10 +142,13 @@ public class AgentTaskDispatchFailureTests
         stored.Status.ShouldBe(AgentTaskStatus.Failed);
         stored.DispatchedAt.ShouldBeNull();
         stored.CheckCount.ShouldBe(0);
-        stored.NextCheckAt.ShouldNotBeNull();
+        stored.NextCheckAt.ShouldBeNull();
         stored.CompletedAt.ShouldNotBeNull();
-        stored.NextCheckAt!.Value.ShouldBe(
-            stored.CompletedAt!.Value.AddMinutes(5), TimeSpan.FromSeconds(2));
+        var failedEvent = await verify.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Failed);
+        var obligation = await verify.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == task.Id);
+        obligation.SourceEventId.ShouldBe(failedEvent.Id);
+        obligation.Kind.ShouldBe(LandNotificationKind.DeliveryFailure);
+        obligation.Body.ShouldContain("Dispatch failed before a session existed:");
     }
 
     [Test]
@@ -156,6 +159,8 @@ public class AgentTaskDispatchFailureTests
         var task = await SeedFailedNeverDispatchedAsync(parentSessionId);
         await DrainOtherQueuedAsync();
 
+        await using (var beforeDb = CreateContext())
+            (await beforeDb.AgentTaskLandNotifications.CountAsync(n => n.TaskId == task.Id)).ShouldBe(0);
         var before = DateTime.UtcNow;
         var (dispatcher, _) = CreateHarness();
         await dispatcher.TickAsync(CancellationToken.None);
@@ -163,6 +168,7 @@ public class AgentTaskDispatchFailureTests
         await using var verify = CreateContext();
         var stored = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
         stored.CheckCount.ShouldBe(1);
+        (await verify.AgentTaskLandNotifications.CountAsync(n => n.TaskId == task.Id)).ShouldBe(0, "historical no-outbox rows keep the reminder path");
         stored.NextCheckAt.ShouldNotBeNull();
         // After reminder #1 the check sweep's own NextInterval(checkNumber: 1) is 5 minutes.
         // The plan's test list said 10; that would skip a ramp step and miss the ~5.6h budget.
