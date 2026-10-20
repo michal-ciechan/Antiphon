@@ -716,7 +716,8 @@ public sealed class CapacityRecoveryService
     }
 
     public async Task ObserveTranscriptAsync(
-        Guid sessionId, string kind, bool isApiError, CancellationToken ct, long? sequence = null)
+        Guid sessionId, string kind, bool isApiError, CancellationToken ct, long? sequence = null,
+        string? stopReason = null)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -735,7 +736,7 @@ public sealed class CapacityRecoveryService
                 await ConfirmPromptOnAsync(db, wait, seq, ct);
             return;
         }
-        if (kind == TranscriptKinds.TurnEnd && !isApiError)
+        if (TranscriptKinds.IsReportBoundary(kind, stopReason) && !isApiError)
         {
             wait.State = CapacityRecoveryWaitState.Progressed;
             wait.Outcome = nameof(CapacityRecoveryWaitState.Progressed);

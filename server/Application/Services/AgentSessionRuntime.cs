@@ -388,7 +388,8 @@ public sealed class AgentSessionRuntime
             case 1 when row is not null && (kind == TranscriptKinds.UserPrompt
                 || kind == TranscriptKinds.QueuedUserPrompt || kind == TranscriptKinds.TurnEnd):
                 if (services.GetService<CapacityRecoveryService>() is { } capacity)
-                    await capacity.ObserveTranscriptAsync(sessionId, kind, row.IsApiError == true, ct, row.Sequence);
+                    await capacity.ObserveTranscriptAsync(
+                        sessionId, kind, row.IsApiError == true, ct, row.Sequence, row.StopReason);
                 break;
             case 2 when kind == TranscriptKinds.UserPrompt || action.TriggerKind == "catchup":
                 if (services.GetService<SessionMessageQueueService>() is { } refinementQueue)
@@ -573,7 +574,7 @@ public sealed class AgentSessionRuntime
             var recovery = scope.ServiceProvider.GetService<CapacityRecoveryService>();
             if (recovery is not null)
                 await recovery.ObserveTranscriptAsync(
-                    entry.SessionId, entry.Kind, entry.IsApiError == true, ct, sequence);
+                    entry.SessionId, entry.Kind, entry.IsApiError == true, ct, sequence, entry.StopReason);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
