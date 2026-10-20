@@ -1809,8 +1809,9 @@ public sealed class RemoteScriptContractTests
             else if (vector == "pending") run.Output.ShouldContain("RecycleLandInFlight " + id);
             else
             {
-                var cause = vector.StartsWith("unfiltered-") ? "UnfilteredRow" : char.ToUpperInvariant(vector[0]) + vector[1..];
+                var cause = vector.StartsWith("unfiltered-") ? "UnfilteredRow" : vector == "timeout" ? "Http" : char.ToUpperInvariant(vector[0]) + vector[1..];
                 run.Output.ShouldContain("RecycleTaskCensusUnknown cause=" + cause);
+                if (vector == "timeout") { run.Output.ShouldContain("attempts=3"); run.Output.ShouldContain("failure=Timeout"); }
                 run.Output.ShouldContain("path=/api/agent-tasks?");
                 if (vector == "http") run.Output.ShouldContain("status=503");
             }
@@ -1849,7 +1850,7 @@ public sealed class RemoteScriptContractTests
         retired.HttpFaults["/api/agent-tasks?"] = "timeout";
         var cleanup = await retired.Run("retire-temp-containers");
         cleanup.Exit.ShouldBe(2, cleanup.Output);
-        cleanup.Output.ShouldContain("RecycleTaskCensusUnknown cause=Timeout path=/api/agent-tasks?");
+        cleanup.Output.ShouldContain("RecycleTaskCensusUnknown cause=Http attempts=3 failure=Timeout path=/api/agent-tasks?");
         retired.Removed.ShouldBeEmpty();
     }
 

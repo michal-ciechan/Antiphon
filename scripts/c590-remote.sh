@@ -5822,40 +5822,49 @@ c1008_zero() {
 }
 
 c1008_http() {
-    # Keep cause and body in this shell; command substitution would lose the cause.
-    local path="$1" response code curl_code=0 started elapsed outcome=ok status=null items=null excluded=null
-    started="$(date +%s%3N)"
-    response="$(curl -sS --max-time 60 -w '\n%{http_code}' "${C604_SERVER_ORIGIN:?}$path" 2>/dev/null)" || curl_code=$?
-    elapsed=$(( $(date +%s%3N) - started ))
-    C1008_HTTP_BODY=''
-    if [ "$curl_code" != 0 ]; then
-        if [ "$curl_code" = 28 ]; then outcome=Timeout; else outcome=Transport; fi
-    else
-        code="${response##*$'\n'}"
-        if [[ "$code" =~ ^[0-9]{3}$ ]]; then status="$((10#$code))"; else outcome=Transport; fi
-        if [ "$outcome" = ok ]; then
-            if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then outcome=Http
-            else
-                response="${response%$'\n'*}"
-                if [[ "$response" =~ ^[[:space:]]*$ ]]; then outcome=Empty
-                elif ! C1008_HTTP_BODY="$(printf '%s' "$response" | jq -cs 'if length==1 then .[0] else error("body") end' 2>/dev/null)"; then outcome=Malformed
+    # Only task GETs use this reader. Retry that GET, never the census or a phase.
+    local path="$1" attempt response code curl_code started elapsed outcome status items excluded retryable
+    for attempt in 1 2 3; do
+        response=''; code=''; curl_code=0; outcome=ok; status=null; items=null; excluded=null; retryable=0
+        C1008_HTTP_BODY=''; C1008_TASK_ERROR=''
+        started="$(date +%s%3N)"
+        response="$(curl -sS --max-time 60 -w '\n%{http_code}' "${C604_SERVER_ORIGIN:?}$path" 2>/dev/null)" || curl_code=$?
+        elapsed=$(( $(date +%s%3N) - started ))
+        if [ "$curl_code" != 0 ]; then
+            if [ "$curl_code" = 28 ]; then outcome=Timeout; else outcome=Transport; fi
+            case "$curl_code" in 28|55|56) retryable=1 ;; esac
+        else
+            code="${response##*$'\n'}"
+            if [[ "$code" =~ ^[0-9]{3}$ ]]; then status="$((10#$code))"; else outcome=Transport; fi
+            if [ "$outcome" = ok ]; then
+                if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+                    outcome=Http
+                    case "$status" in 502|503|504) retryable=1 ;; esac
                 else
-                    items="$(printf '%s' "$C1008_HTTP_BODY" | jq -c 'if type=="object" and (.items|type)=="array" then .items|length else null end')"
-                    excluded="$(printf '%s' "$C1008_HTTP_BODY" | jq -c 'if type=="object" and (.excluded.total|type)=="number" then .excluded.total else null end')"
+                    response="${response%$'\n'*}"
+                    if [[ "$response" =~ ^[[:space:]]*$ ]]; then outcome=Empty
+                    elif ! C1008_HTTP_BODY="$(printf '%s' "$response" | jq -cs 'if length==1 then .[0] else error("body") end' 2>/dev/null)"; then outcome=Malformed
+                    else
+                        items="$(printf '%s' "$C1008_HTTP_BODY" | jq -c 'if type=="object" and (.items|type)=="array" then .items|length else null end')"
+                        excluded="$(printf '%s' "$C1008_HTTP_BODY" | jq -c 'if type=="object" and (.excluded.total|type)=="number" then .excluded.total else null end')"
+                    fi
                 fi
             fi
         fi
-    fi
-    C1008_CENSUS_READS="$(printf '%s' "$C1008_CENSUS_READS" | jq -c --arg path "$path" --arg outcome "$outcome" \
-        --argjson elapsed "$elapsed" --argjson status "$status" --argjson items "$items" --argjson excluded "$excluded" \
-        '. + [{path:$path,elapsedMs:$elapsed,outcome:$outcome,items:$items,excludedTotal:$excluded} + (if $status==null then {} else {status:$status} end)]')" || return 2
-    if [ "$outcome" != ok ]; then
-        C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=$outcome"
-        [ "$outcome" != Http ] || C1008_TASK_ERROR+=" status=$status"
+        C1008_CENSUS_READS="$(printf '%s' "$C1008_CENSUS_READS" | jq -c --arg path "$path" --arg outcome "$outcome" \
+            --argjson attempt "$attempt" --argjson elapsed "$elapsed" --argjson status "$status" --argjson items "$items" --argjson excluded "$excluded" \
+            '. + [{path:$path,attempt:$attempt,elapsedMs:$elapsed,outcome:$outcome,items:$items,excludedTotal:$excluded} + (if $status==null then {} else {status:$status} end)]')" || return 2
+        [ "$outcome" != ok ] || return 0
+        C1008_HTTP_BODY=''
+        if [ "$retryable" = 1 ] && [ "$attempt" -lt 3 ]; then sleep 1; continue; fi
+        if [ "$retryable" = 1 ]; then
+            C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Http attempts=$attempt failure=$outcome"
+        else C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=$outcome"; fi
+        [ "$status" = null ] || C1008_TASK_ERROR+=" status=$status"
         [ "$outcome" != Malformed ] || C1008_TASK_ERROR+=' field=body'
         C1008_TASK_ERROR+=" path=$path elapsedMs=$elapsed"
         return 2
-    fi
+    done
 }
 
 c1008_tasks() {

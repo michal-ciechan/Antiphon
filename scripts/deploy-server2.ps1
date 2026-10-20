@@ -413,54 +413,72 @@ function Test-RecycleTimestamp {
 }
 
 function Invoke-RecycleRead {
-    param([string]$Path)
-    $timer = [Diagnostics.Stopwatch]::StartNew()
-    $read = [ordered]@{ path=$Path; elapsedMs=0L; outcome='ok'; items=$null; excludedTotal=$null }
-    if ($null -ne $script:recycleReceipt) { $script:recycleReceipt.reads.Add($read) }
-    $cause = $null
-    try {
-        if ($env:C727_TEST_HTTP_STUB) {
-            # Script-scope calls share Console.Error; preserve the subprocess
-            # boundary's stderr suppression for fixtures using WriteLine directly.
-            $stderr = [Console]::Error
-            try {
-                [Console]::SetError([System.IO.TextWriter]::Null)
-                $raw = & $env:C727_TEST_HTTP_STUB -Method GET -Path $Path 2>$null
-            } finally { [Console]::SetError($stderr) }
-            if ($LASTEXITCODE -ne 0) { $cause = 'Transport'; throw 'read' }
-            $raw = [string]$raw
-            if ($raw -ceq '__TIMEOUT__') { $cause = 'Timeout'; throw 'read' }
-            if ($raw -cmatch '^__(\d{3})__$') { $read['status'] = [int]$Matches[1]; $cause = 'Http'; throw 'read' }
-        } else {
-            # Read raw content so an empty success is distinguishable from malformed
-            # JSON; non-success content is never parsed or persisted.
-            $response = Invoke-WebRequest -Method GET -Uri ($api + $Path) -Headers $headers -TimeoutSec 60 -SkipHttpErrorCheck
-            if ([int]$response.StatusCode -lt 200 -or [int]$response.StatusCode -ge 300) {
-                $read['status'] = [int]$response.StatusCode; $cause = 'Http'; throw 'read'
+    param([string]$Path, [switch]$RetryTransient)
+    $maxAttempts = if ($RetryTransient) { 3 } else { 1 }
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        $read = [ordered]@{ path=$Path; attempt=$attempt; elapsedMs=0L; outcome='ok'; items=$null; excludedTotal=$null }
+        if ($null -ne $script:recycleReceipt) { $script:recycleReceipt.reads.Add($read) }
+        $cause = $null; $retryable = $false; $raw = $null
+        try {
+            if ($env:C727_TEST_HTTP_STUB) {
+                # Script-scope calls share Console.Error; suppress fixture stderr as
+                # at the subprocess boundary, while retaining typed exceptions.
+                $stderr = [Console]::Error
+                try {
+                    [Console]::SetError([System.IO.TextWriter]::Null)
+                    $raw = & $env:C727_TEST_HTTP_STUB -Method GET -Path $Path 2>$null
+                } finally { [Console]::SetError($stderr) }
+                if ($LASTEXITCODE -ne 0) { $cause = 'Transport'; throw 'read' }
+                $raw = [string]$raw
+                if ($raw -ceq '__TIMEOUT__') { $cause = 'Timeout'; throw 'read' }
+                if ($raw -cmatch '^__(\d{3})__$') { $read['status'] = [int]$Matches[1]; $cause = 'Http'; throw 'read' }
+            } else {
+                # A failed response body is never parsed or persisted.
+                $response = Invoke-WebRequest -Method GET -Uri ($api + $Path) -Headers $headers -TimeoutSec 60 -SkipHttpErrorCheck
+                if ([int]$response.StatusCode -lt 200 -or [int]$response.StatusCode -ge 300) {
+                    $read['status'] = [int]$response.StatusCode; $cause = 'Http'; throw 'read'
+                }
+                $raw = [string]$response.Content
             }
-            $raw = [string]$response.Content
-        }
-        if ([string]::IsNullOrWhiteSpace($raw)) { $cause = 'Empty'; throw 'read' }
-        try { $value = ConvertFrom-Json -InputObject $raw -NoEnumerate }
-        catch { $cause = 'Malformed'; $read['field'] = 'body'; throw 'read' }
-        if ($value -is [array]) { $read.items = $value.Count }
-        elseif ($value.items -is [array]) { $read.items = $value.items.Count }
-        if ($value.excluded.total -is [int] -or $value.excluded.total -is [long]) { $read.excludedTotal = $value.excluded.total }
-        return ,$value
-    } catch {
-        if ($null -eq $cause) {
-            $cause = 'Transport'
-            for ($errorValue = $_.Exception; $null -ne $errorValue; $errorValue = $errorValue.InnerException) {
-                if ($errorValue -is [OperationCanceledException] -or $errorValue -is [TimeoutException] -or
-                    ($errorValue -is [Net.WebException] -and $errorValue.Status -eq [Net.WebExceptionStatus]::Timeout)) { $cause = 'Timeout'; break }
+            if ([string]::IsNullOrWhiteSpace($raw)) { $cause = 'Empty'; throw 'read' }
+            try { $value = ConvertFrom-Json -InputObject $raw -NoEnumerate }
+            catch { $cause = 'Malformed'; $read['field'] = 'body'; throw 'read' }
+            if ($value -is [array]) { $read.items = $value.Count }
+            elseif ($value.items -is [array]) { $read.items = $value.items.Count }
+            if ($value.excluded.total -is [int] -or $value.excluded.total -is [long]) { $read.excludedTotal = $value.excluded.total }
+            return ,$value
+        } catch {
+            if ($null -eq $cause) {
+                $cause = 'Transport'
+                for ($errorValue = $_.Exception; $null -ne $errorValue; $errorValue = $errorValue.InnerException) {
+                    if ($errorValue -is [OperationCanceledException] -or $errorValue -is [TimeoutException] -or
+                        ($errorValue -is [Net.WebException] -and $errorValue.Status -eq [Net.WebExceptionStatus]::Timeout)) {
+                        $cause = 'Timeout'; break
+                    }
+                    if (($errorValue -is [Net.Sockets.SocketException] -and $errorValue.SocketErrorCode -eq [Net.Sockets.SocketError]::ConnectionReset) -or
+                        ($errorValue -is [Net.WebException] -and $errorValue.Status -in @(
+                            [Net.WebExceptionStatus]::ConnectionClosed, [Net.WebExceptionStatus]::ReceiveFailure, [Net.WebExceptionStatus]::SendFailure))) {
+                        $retryable = $true
+                    }
+                }
             }
+            $retryable = $RetryTransient -and ($retryable -or $cause -eq 'Timeout' -or
+                ($cause -eq 'Http' -and $read.status -in @(502, 503, 504)))
+            $read.outcome = $cause
+        } finally {
+            # Flush every physical observation before either returning or sleeping.
+            $timer.Stop(); $read.elapsedMs = $timer.ElapsedMilliseconds
+            Write-RecycleReceipt
         }
-        $read.outcome = $cause
+        if ($retryable -and $attempt -lt $maxAttempts) {
+            if ($env:C727_TEST_HTTP_STUB -and $env:C727_TEST_POLL_MS) { Start-Sleep -Milliseconds ([int]$env:C727_TEST_POLL_MS) }
+            else { Start-Sleep -Seconds 1 }
+            continue
+        }
         $suffix = if ($cause -eq 'Http') { ' status=' + $read.status } elseif ($cause -eq 'Malformed') { ' field=body' } else { '' }
-        throw "RecycleTaskCensusUnknown cause=$cause$suffix path=$Path elapsedMs=$($timer.ElapsedMilliseconds)"
-    } finally {
-        $timer.Stop(); $read.elapsedMs = $timer.ElapsedMilliseconds
-        Write-RecycleReceipt
+        if ($retryable) { $suffix += " attempts=$attempt failure=$cause"; $cause = 'Http' }
+        throw "RecycleTaskCensusUnknown cause=$cause$suffix path=$Path elapsedMs=$($read.elapsedMs)"
     }
 }
 
@@ -714,7 +732,7 @@ function Assert-RecycleTaskCensus {
             if ($scopes.Count -gt 1000) { throw "RecycleTaskCensusUnknown cause=ScopeLimit scopes=$($scopes.Count)" }
             $filter = if ($kind -eq 'open') { '&status=Queued,Dispatched,Working,Blocked' } else { '&landPending=true' }
             $path = '/api/agent-tasks?projectId=' + $scope + '&unscoped=include&includeChecks=true' + $filter
-            $envelope = Invoke-RecycleRead -Path $path
+            $envelope = Invoke-RecycleRead -Path $path -RetryTransient
             if ($null -eq $envelope -or $envelope -isnot [pscustomobject]) { Stop-RecycleMalformed 'envelope' $path }
             if ($envelope.items -isnot [array]) { Stop-RecycleMalformed 'items' $path }
             if ($null -eq $envelope.excluded -or $envelope.excluded -isnot [pscustomobject]) { Stop-RecycleMalformed 'excluded' $path }
@@ -785,7 +803,7 @@ function Assert-RecycleTaskCensus {
                     if (-not $Report) { throw "RecycleBoundTasks $id status=$($task.status) runner=$RunnerId" }
                 }
                 if ($kind -eq 'land') { continue }
-                $detail = Invoke-RecycleRead -Path ('/api/agent-tasks/' + $id)
+                $detail = Invoke-RecycleRead -Path ('/api/agent-tasks/' + $id) -RetryTransient
                 if ($detail.PSObject.Properties.Name -notcontains 'landRequest' -or [string]$detail.summary.id -ne $id) { throw 'RecycleLandUnknown' }
                 # A short-lived task can settle between the open list and this detail.
                 # Terminal status plus a null landRequest is proven no-land, so status may move.
