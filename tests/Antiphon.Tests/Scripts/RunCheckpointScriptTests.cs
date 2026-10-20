@@ -104,6 +104,13 @@ public sealed class RunCheckpointScriptTests
         "C585 FreshResultsDir a different stamp succeeds");
 
     [Test]
+    public async Task C1312_FreshResultsDirThenSlotGranted()
+    {
+        await C585_FreshResultsDir();
+        await C589_SlotGranted();
+    }
+
+    [Test]
     public Task C585_NoBuild() => RunCaseAsync("C585_NoBuild", 3,
         "C585 NoBuild never builds",
         "C585 NoBuild line reports build=reused",
