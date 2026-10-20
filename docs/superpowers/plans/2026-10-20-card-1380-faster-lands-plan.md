@@ -392,6 +392,7 @@ the card's "one red witness per rule" acceptance.
 | CP-2 | S1 | `tests/Antiphon.Tests -> bin-c1380-1/` | any-warm-green | `/*/*/(LandWarmArtifactsTests*)\|(LandVerificationBuildSlotTests*)/*` | V-1, R-1 | all listed, at least 6 new tests, 0 failed/skipped | 6 | 6 |
 | CP-3 | S2R | `tests/Antiphon.Tests -> bin-c1380-2r/` | any-noncode-red | `/*/*/LandNonCodeSkipTests/C1380_DocsOnlyRebasedLandRecordsNonCodeSkip*` | V-2 red | exactly 1 executed, expected assertion failure | 1 | 5 |
 | CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1380-2/` | any-noncode-green | `/*/*/(LandNonCodeSkipTests*)\|(AgentTaskLandStageOutcomeTests*)\|(AgentTaskLandRefusedRetryTests*)\|(AgentTaskLandingStateTests*)/*` | V-2, R-2 | all listed, at least 7 new tests, 0 failed/skipped | 7 | 7 |
+| CP-4R | S2FixtureRepair | `tests/Antiphon.Tests -> bin-c1380-2fix/` | any-noncode-repair | `/*/*/(LandNonCodeSkipTests*)\|(AgentTaskLandRefusedRetryTests*)/*` | V-2 repair, R-2 rerun and base attribution | all listed, 0 failed/skipped | 59 | 7 |
 | CP-5 | S3R | `tests/Antiphon.Tests -> bin-c1380-3r/` | any-review-tree-red | `/*/*/LandReviewedTreeSkipTests/C1380_EqualTreeReceiptSkipsDifferentCommit*` | V-3 red | exactly 1 executed, expected assertion failure | 1 | 5 |
 | CP-6 | S3 | `tests/Antiphon.Tests -> bin-c1380-3/` | any-review-tree-green | `/*/*/(LandReviewedTreeSkipTests\|InterimVerificationLandGuardTests)/*` | V-3, R-3 | all listed, at least 6 new tests, 0 failed/skipped | 6 | 7 |
 | CP-7 | S4R | `tests/Antiphon.Tests -> bin-c1380-4r/` | any-reservation-red | `/*/*/LandVerificationReservationTests/C1380_LiveReservedVerifierAllowsOnlyPreflight*` | V-4 red | exactly 1 executed, expected assertion failure | 1 | 5 |
@@ -422,6 +423,17 @@ the state validator must recognize the new persisted skip and the retry witness
 must require a build for an unchanged source in an unknown graph. These are
 bounded R-2 additions, not a full-assembly run. CP-4 uses the same qualified TUnit
 OR syntax and trailing class wildcards as S1. PC-1 and PC-2 remain pending.
+
+CP-4R is the exact repair selection after CP-4 executed 153 cases (143 passed,
+10 failed). Eight documentation skips used an incomplete scratch graph because
+the fixture ignored copied historical `.antiphon/` script inputs; the RC fixture
+lacked its required local target ref. These fixture defects are repaired without
+changing the production policy or loosening assertions. Re-run both full affected
+integration classes; retain the earlier passing state/stage classes. Run with
+`--baseline 480407504eae586e18281665f2808c3f77281dd6` to establish attribution for
+`C688_RealLandProfile` (seven worktree listings against its unchanged bound of four).
+The comparator must run only the failing method at the base, never the assembly.
+Any surviving red remains an incomplete gate.
 
 ## Shipment, measurement and rollback
 

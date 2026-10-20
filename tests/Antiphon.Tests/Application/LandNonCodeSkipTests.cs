@@ -171,6 +171,7 @@ public sealed class LandNonCodeSkipTests
         if (variant == "rc")
         {
             target = "refs/heads/rc/fixture";
+            await h.Fixture.RequiredAsync(h.Fixture.Repository, "branch", "rc/fixture", "master");
             await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", "master:" + target);
             await h.SetRoleAsync(AgentTaskRole.Code, target);
         }
@@ -190,7 +191,7 @@ public sealed class LandNonCodeSkipTests
         await h.Fixture.PushIndependentAsync("graph-drift", path,
             "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><EmbeddedResource Include=\"../docs/**/*.md\" /></ItemGroup></Project>");
         await LandAndAssertAsync(h, build: true);
-        (await h.OperationAsync())!.VerificationCommand.ShouldContain("unrecognized-build-graph");
+        (await h.OperationAsync())!.VerificationCommand.ShouldNotBeNull().ShouldContain("unrecognized-build-graph");
     }
 
     [Test]
@@ -200,7 +201,7 @@ public sealed class LandNonCodeSkipTests
         await h.InitializeAsync();
         await h.AddDocsOnlySourceAsync();
         await LandAndAssertAsync(h, build: true);
-        (await h.OperationAsync())!.VerificationCommand.ShouldContain("unrecognized-build-graph");
+        (await h.OperationAsync())!.VerificationCommand.ShouldNotBeNull().ShouldContain("unrecognized-build-graph");
     }
 
     [Test]
@@ -320,6 +321,7 @@ public sealed class LandNonCodeSkipTests
     {
         var root = DelegateScriptRunner.RepoRoot;
         var paths = (await h.Fixture.RequiredAsync(root, "ls-files", "-z")).Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var graphPaths = new List<string>();
         foreach (var path in paths)
         {
             var name = Path.GetFileName(path);
@@ -328,12 +330,15 @@ public sealed class LandNonCodeSkipTests
                 || new[] { ".props", ".targets", ".sln", ".slnx", ".slnf", ".rsp", ".ps1", ".sh", ".cmd", ".bat", ".py" }.Contains(extension.ToLowerInvariant())
                 || name.StartsWith("Directory.Build.", StringComparison.OrdinalIgnoreCase)
                 || new[] { "global.json", "nuget.config", "packages.lock.json", "packages.config", "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", ".gitmodules", ".gitattributes", "dotnet-tools.json" }.Contains(name.ToLowerInvariant()))) continue;
+            graphPaths.Add(path);
             var destination = Path.Combine(h.Fixture.Repository, path);
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.Copy(Path.Combine(root, path), destination);
             if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(destination, File.GetUnixFileMode(Path.Combine(root, path)));
         }
-        await h.Fixture.RequiredAsync(h.Fixture.Repository, "add", ".");
+        // The real tracked inventory includes historical scripts beneath ignored .antiphon/.
+        // Stage only these exact copied inputs, including ones the scratch fixture's ignore rules hide.
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, ["add", "-f", "--", .. graphPaths]);
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "-m", "audited build graph");
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", "master");
         await h.Fixture.RequiredAsync(h.Fixture.Source, "rebase", "master");
