@@ -20,7 +20,8 @@ namespace Antiphon.Server.Application.Services;
 public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     IRepositoryMutationLease leases, IWorktreeManager worktrees, ILandingVerifier verifier, TimeProvider clock,
     IWorktreeCleanupJournal? cleanupJournal = null, ILogger<AgentTaskLandingProtocol>? logger = null,
-    IOptions<GitSettings>? gitSettings = null, ILandWorkspace? landWorkspace = null)
+    IOptions<GitSettings>? gitSettings = null, ILandWorkspace? landWorkspace = null,
+    IOptions<LandingSettings>? landingSettings = null)
 {
     private readonly AgentTaskLandingState _state = new();
 
@@ -253,13 +254,22 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             {
                 await RecheckApprovalAsync(op, request, ct);
                 await RecheckSourceAsync(op, ct);
-                op.VerificationCommand = "dotnet build; dotnet run --project tests/Antiphon.Tests";
                 op.VerificationStartedAt = Now();
+                var decision = await new LandVerificationPolicy(git).DecideAsync(op.RepositoryPath,
+                    op.TargetFullRef, op.TargetBeforeSha, op.RebasedSourceSha, op.VerificationFilter,
+                    landingSettings?.Value.ForceVerificationBuild ?? false, ct);
+                op.VerificationPassed = false;
+                op.VerificationSkipReason = null;
+                op.VerificationCommand = decision.Skip
+                    ? $"Skipped(non-code); target={op.TargetBeforeSha}; candidate={op.RebasedSourceSha}; graph={LandVerificationBuildGraph.Fingerprint}"
+                    : $"dotnet build; dotnet run --project tests/Antiphon.Tests; policy={decision.Reason}";
+                try { logger?.LogInformation(
+                    "Landing verification decision task {TaskId} operation {OperationId} request {RequestId} reason {Reason} target {TargetSha} candidate {CandidateSha}",
+                    op.TaskId, op.Id, request?.Id, decision.Reason, op.TargetBeforeSha, op.RebasedSourceSha); } catch (Exception) { }
                 await SaveAsync(op, ct);
-                if (op.RebasedSourceSha == op.OriginalSourceSha && string.IsNullOrWhiteSpace(op.VerificationFilter)
-                    && (op.PreparationInputSha is null || op.PreparationInputSha == op.OriginalSourceSha))
+                if (decision.Skip)
                 {
-                    op.VerificationSkipReason = "base_unchanged";
+                    op.VerificationSkipReason = decision.Reason;
                     try { logger?.LogInformation("Landing verifier skipped task {TaskId} operation {OperationId} request {RequestId}; no child",
                         op.TaskId, op.Id, request?.Id); } catch (Exception) { }
                 }

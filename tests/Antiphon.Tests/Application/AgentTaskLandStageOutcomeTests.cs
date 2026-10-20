@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -35,7 +36,7 @@ public class AgentTaskLandStageOutcomeTests
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var (land, worktrees) = CreateLand(db, repo);
+        var (land, worktrees) = CreateRecordingLand(db, repo);
         var task = await SeedSucceededWorktreeAsync(db, worktrees, repo);
 
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
@@ -70,7 +71,7 @@ public class AgentTaskLandStageOutcomeTests
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var (land, worktrees) = CreateLand(db, repo);
+        var (land, worktrees) = CreateRecordingLand(db, repo);
         var task = await SeedSucceededWorktreeAsync(db, worktrees, repo);
 
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "shared.md"), "task version\n");
@@ -109,7 +110,7 @@ public class AgentTaskLandStageOutcomeTests
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var (land, worktrees) = CreateLand(db, repo);
+        var (land, worktrees) = CreateRecordingLand(db, repo);
         var task = await SeedSucceededWorktreeAsync(db, worktrees, repo);
 
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
@@ -146,7 +147,7 @@ public class AgentTaskLandStageOutcomeTests
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var (land, worktrees) = CreateLand(db, repo);
+        var (land, worktrees) = CreateRecordingLand(db, repo, passed: false);
         var task = await SeedSucceededWorktreeAsync(db, worktrees, repo);
 
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
@@ -171,7 +172,7 @@ public class AgentTaskLandStageOutcomeTests
     }
 
     [Test]
-    public async Task a_clean_change_lands_and_skips_verify_when_the_base_did_not_move()
+    public async Task an_unknown_graph_builds_even_when_the_base_did_not_move()
     {
         using var repo = new ScratchGitRepo("antiphon-land-so-clean");
         using var remote = new TemporaryDirectory("antiphon-land-so-clremote");
@@ -182,7 +183,7 @@ public class AgentTaskLandStageOutcomeTests
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var (land, worktrees) = CreateLand(db, repo);
+        var (land, worktrees) = CreateRecordingLand(db, repo);
         var task = await SeedSucceededWorktreeAsync(db, worktrees, repo);
 
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "the work\n");
@@ -195,7 +196,7 @@ public class AgentTaskLandStageOutcomeTests
         var rows = await RowsAsync(db, task.Id);
         rows.Select(o => (o.Stage, o.Outcome)).ShouldBe([
             (OrchestrationStage.Rebase, StageOutcomeKind.Clean),
-            (OrchestrationStage.Verify, StageOutcomeKind.Skipped),
+            (OrchestrationStage.Verify, StageOutcomeKind.Clean),
             (OrchestrationStage.Cleanup, StageOutcomeKind.Clean),
         ]);
         Directory.Exists(task.WorktreePath).ShouldBeFalse();
@@ -214,7 +215,7 @@ public class AgentTaskLandStageOutcomeTests
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var (land, worktrees) = CreateLand(db, repo);
+        var (land, worktrees) = CreateRecordingLand(db, repo);
         var task = await SeedSucceededWorktreeAsync(db, worktrees, repo);
 
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "the work\n");
@@ -252,7 +253,7 @@ public class AgentTaskLandStageOutcomeTests
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var (land, worktrees) = CreateLand(db, repo);
+        var (land, worktrees) = CreateRecordingLand(db, repo);
         var task = await SeedSucceededWorktreeAsync(db, worktrees, repo);
 
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "the work\n");
@@ -302,7 +303,7 @@ public class AgentTaskLandStageOutcomeTests
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var (land, worktrees) = CreateLand(db, repo);
+        var (land, worktrees) = CreateRecordingLand(db, repo);
         var card = await SeedCardAsync(db);
         var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
         await File.WriteAllTextAsync(Path.Combine(sibling.WorktreePath!, "plan.md"), "the plan\n");
@@ -339,7 +340,7 @@ public class AgentTaskLandStageOutcomeTests
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var (land, worktrees) = CreateLand(db, repo);
+        var (land, worktrees) = CreateRecordingLand(db, repo);
         var card = await SeedCardAsync(db);
         var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
         await File.WriteAllTextAsync(Path.Combine(sibling.WorktreePath!, "plan.md"), "the plan\n");
@@ -378,7 +379,7 @@ public class AgentTaskLandStageOutcomeTests
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var (land, worktrees) = CreateLand(db, repo);
+        var (land, worktrees) = CreateRecordingLand(db, repo);
         var task = await SeedSucceededWorktreeAsync(db, worktrees, repo);
         await File.WriteAllTextAsync(Path.Combine(task.WorktreePath!, "feature.md"), "land me\n");
         await ScratchGitRepo.GitInAsync(task.WorktreePath!, "add", "feature.md");
@@ -434,7 +435,7 @@ public class AgentTaskLandStageOutcomeTests
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var (land, worktrees) = CreateLand(db, repo);
+        var (land, worktrees) = CreateRecordingLand(db, repo);
         var card = await SeedCardAsync(db);
         var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
         await CommitInAsync(sibling.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215");
@@ -479,7 +480,7 @@ public class AgentTaskLandStageOutcomeTests
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var (land, worktrees) = CreateLand(db, repo);
+        var (land, worktrees) = CreateRecordingLand(db, repo);
         var card = await SeedCardAsync(db);
         var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
         await CommitInAsync(sibling.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215");
@@ -517,7 +518,7 @@ public class AgentTaskLandStageOutcomeTests
 
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var (land, worktrees) = CreateLand(db, repo);
+        var (land, worktrees) = CreateRecordingLand(db, repo);
         var card = await SeedCardAsync(db);
         var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
         await CommitInAsync(sibling.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0215");
@@ -550,7 +551,7 @@ public class AgentTaskLandStageOutcomeTests
         await repo.CommitFileAsync("README.md", "M\n");
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
-        var (land, worktrees) = CreateLand(db, repo);
+        var (land, worktrees) = CreateRecordingLand(db, repo);
         var card = await SeedCardAsync(db);
         var sibling = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
         await CommitInAsync(sibling.WorktreePath!, "left.txt", "L\n", "left");
@@ -622,8 +623,12 @@ public class AgentTaskLandStageOutcomeTests
         return task;
     }
 
+    private static (AgentTaskLandService Land, DelegationWorktreeService Worktrees) CreateRecordingLand(
+        AppDbContext db, ScratchGitRepo repo, bool passed = true) =>
+        CreateLand(db, repo, new LandingSafetyHarness.ControlledVerifier { Passed = passed });
+
     internal static (AgentTaskLandService Land, DelegationWorktreeService Worktrees) CreateLand(
-        AppDbContext db, ScratchGitRepo repo)
+        AppDbContext db, ScratchGitRepo repo, ILandingVerifier? verifier = null)
     {
         var graph = DelegationTestServices.CreateGitGraph(new GitSettings { WorktreeBasePath = repo.WorktreeRoot }, db);
         var worktrees = graph.Worktrees;
@@ -645,7 +650,7 @@ public class AgentTaskLandStageOutcomeTests
             TimeProvider.System,
             Options.Create(new DelegationSettings()),
             NullLogger<AgentTaskLandService>.Instance,
-            new AgentTaskLandingProtocol(db, graph.Git, graph.Leases, graph.Manager, new LandingVerifier(), TimeProvider.System, graph.Journal,
+            new AgentTaskLandingProtocol(db, graph.Git, graph.Leases, graph.Manager, verifier ?? new LandingVerifier(), TimeProvider.System, graph.Journal,
                 gitSettings: Options.Create(new GitSettings { WorktreeBasePath = repo.WorktreeRoot })),
             graph.Leases, graph.Git);
         return (land, worktrees);

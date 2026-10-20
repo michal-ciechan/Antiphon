@@ -11,6 +11,36 @@ namespace Antiphon.Tests.Application;
 public sealed class AgentTaskLandingStateTests
 {
     [Test]
+    [Arguments("valid", true)]
+    [Arguments("rc", false)]
+    [Arguments("filter", false)]
+    [Arguments("schema2", false)]
+    [Arguments("unpinned", false)]
+    [Arguments("wrong-sha", false)]
+    public void C1380_NonCodePublicationStillRequiresPinnedMasterEvidence(string variant, bool accepted)
+    {
+        var op = ValidV2();
+        op.SchemaVersion = 3;
+        op.SourceLocalSha = op.OriginalSourceSha;
+        op.LocalTargetBeforeSha = op.TargetBeforeSha;
+        op.LandWorktreePath = "land";
+        op.RebasedSourceSha = op.VerifiedSourceSha = new string('d', 40);
+        op.VerificationSkipReason = "non-code";
+        switch (variant)
+        {
+            case "rc": op.TargetFullRef = op.DestinationFullRef = "refs/heads/rc/fixture"; break;
+            case "filter": op.VerificationFilter = "/*/*/Selected/*"; break;
+            case "schema2": op.SchemaVersion = 2; break;
+            case "unpinned": op.PreparedPinned = false; break;
+            case "wrong-sha": op.VerifiedSourceSha = op.OriginalSourceSha; break;
+        }
+        var state = new AgentTaskLandingState();
+        state.HasPublication(op).ShouldBe(accepted);
+        if (accepted) state.Transition(op, LandPhase.Verified, DateTime.UtcNow);
+        else Should.Throw<InvalidOperationException>(() => state.Transition(op, LandPhase.Verified, DateTime.UtcNow));
+    }
+
+    [Test]
     [Arguments("valid-base-unchanged", true)]
     [Arguments("valid-exact-containment", true)]
     [Arguments("valid-verified-rebase", true)]
