@@ -2,6 +2,8 @@ namespace Antiphon.Server.Application.Interfaces;
 
 public interface IRepositoryMutationLease
 {
+    bool SupportsVerificationWindows => false;
+    bool AllowsWorktree(RepositoryLease lease, string path, string branch) => true;
     Task<RepositoryLease?> TryAcquirePreflightAsync(string repository, RepositoryPreflight preflight,
         RepositoryLeaseOwnerTag owner, CancellationToken ct) => TryAcquireAsync(repository, owner, ct);
 

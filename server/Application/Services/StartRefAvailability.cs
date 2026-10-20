@@ -21,7 +21,8 @@ namespace Antiphon.Server.Application.Services;
 /// Every refusal names the ref, the repository and which of these it was, each with its own code.
 /// </summary>
 public sealed class StartRefAvailability(
-    ILandingGit git, IRepositoryMutationLease leases, ILogger<StartRefAvailability> logger, TimeSpan? fetchTimeout = null)
+    ILandingGit git, IRepositoryMutationLease leases, ILogger<StartRefAvailability> logger, TimeSpan? fetchTimeout = null,
+    RepositoryLeaseWaiters? waiters = null)
 {
     public const string NotFullShaCode = "worktree_start_ref_not_full_sha";
     public const string NotCommitCode = "worktree_start_ref_not_commit";
@@ -111,15 +112,23 @@ public sealed class StartRefAvailability(
         string repoPath, string startRef, System.Diagnostics.Stopwatch network, CancellationToken ct)
     {
         var owner = new RepositoryLeaseOwnerTag(null, RepositoryLeasePurposes.StartRefFetch); // No task row exists yet.
+        var preflight = RepositoryPreflight.Fetch(Guid.NewGuid(), startRef);
+        var common = await git.CommonDirectoryAsync(repoPath, ct);
+        try
+        {
         while (true)
         {
-            if (await leases.TryAcquireAsync(repoPath, owner, ct) is { } lease)
+            if (await leases.TryAcquirePreflightAsync(repoPath, preflight, owner, ct) is { } lease)
                 return lease;
+            waiters?.Register(common, preflight.Identity, RepositoryLeasePurposes.StartRefFetch,
+                DateTimeOffset.UtcNow, verificationCompatible: true);
             var left = _fetchTimeout - network.Elapsed;
             if (left <= TimeSpan.Zero)
                 break;
             await Task.Delay(left < LeasePollInterval ? left : LeasePollInterval, ct);
         }
+        }
+        finally { waiters?.Clear(preflight.Identity); }
 
         var fence = await leases.DescribeUnavailableAsync(repoPath, ct);
         throw new ServiceUnavailableException(

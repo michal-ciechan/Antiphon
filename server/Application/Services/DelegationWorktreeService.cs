@@ -330,14 +330,33 @@ public sealed class DelegationWorktreeService
     public sealed record KeptBranchInfo(string Tip, int CommitsAbove, string Subject);
 
     /// <summary>Create or reuse the task's managed checkout; never infer publication here.</summary>
+    internal async Task<RepositoryPreflight?> PreflightAsync(AgentTask task, CancellationToken ct)
+    {
+        if (_gitSettings is null || !IsOrdinaryPreflightTask(task)
+            || _db is not null && await _db.AgentTaskParks.AnyAsync(p => p.TaskId == task.Id, ct))
+            return null;
+        var root = Infrastructure.Git.WorktreeRoots.Resolve(_gitSettings);
+        return RepositoryPreflight.Worktree(task.Id,
+            Path.Combine(root, "card-task-" + DelegationReportFormatter.Short(task.Id)), await MintBranchAsync(task, ct));
+    }
+
+    internal static bool IsOrdinaryPreflightTask(AgentTask task) =>
+        task.Workspace == WorkspaceMode.Worktree && task.Status == AgentTaskStatus.Queued
+        && task.WorktreePath is null && task.WorktreeBranch is null
+        && task.RepairSourceTaskId is null && task.SourceLandingOperationId is null
+        && task.VerificationRound != VerificationRound.Interim;
+
     public async Task<WorktreeBaseDecision?> CreateForTaskAsync(AgentTask task, CancellationToken ct,
         string? startAtSha = null, ResolvedBase? cardBase = null, Guid? cardBaseTaskId = null,
         string? cardBaseBranch = null)
     {
         if (_leases is null || task.RepoPath is null)
             throw new ConflictException("repository_lease_required");
-        await using var lease = await _leases.TryAcquireAsync(
-            task.RepoPath, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.WorktreeProvision), ct);
+        var preflight = await PreflightAsync(task, ct);
+        var owner = new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.WorktreeProvision);
+        await using var lease = preflight is null
+            ? await _leases.TryAcquireAsync(task.RepoPath, owner, ct)
+            : await _leases.TryAcquirePreflightAsync(task.RepoPath, preflight, owner, ct);
         if (lease is null) throw new ConflictException("repository_busy");
         return await CreateForTaskAsync(task, lease, ct, startAtSha, cardBase, cardBaseTaskId, cardBaseBranch);
     }
@@ -396,6 +415,8 @@ public sealed class DelegationWorktreeService
             .FirstOrDefault(w => w.CardId == identifier && Directory.Exists(w.Path));
         if (adopted is not null)
         {
+            if (!_leases.AllowsWorktree(lease, adopted.Path, adopted.Branch))
+                throw new ConflictException("verification_window_worktree_mismatch");
             task.WorktreePath = adopted.Path;
             task.WorktreeBranch = adopted.Branch;
             // A crash before coordinates were persisted gives no trustworthy historic

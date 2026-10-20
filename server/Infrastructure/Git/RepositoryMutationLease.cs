@@ -1,33 +1,40 @@
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 
 namespace Antiphon.Server.Infrastructure.Git;
 
-public sealed class RepositoryMutationLease(ILandingGit git, IRepositoryFenceObserver? fences = null)
+public sealed class RepositoryMutationLease(ILandingGit git, IRepositoryFenceObserver? fences = null,
+    RepositoryLeaseWaiters? leaseWaiters = null)
     : IRepositoryMutationLease
 {
     private readonly IRepositoryFenceObserver? _fences = fences;
 
     private void NotifyFenced(string common) => _fences?.Fenced(common);
+    private void NotifyReleased() => leaseWaiters?.SignalReady();
     private static readonly StringComparer PathKeyComparer = OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
 
     private readonly object _ownersGate = new();
     private readonly Dictionary<string, OwnerSlot> _owners = new(PathKeyComparer);
+    private readonly RepositoryVerificationWindows _windows = new(git);
+    public bool SupportsVerificationWindows => true;
 
     public Task<RepositoryLease?> TryAcquirePreflightAsync(string repository, RepositoryPreflight preflight,
-        RepositoryLeaseOwnerTag owner, CancellationToken ct) => AcquireAsync(repository, owner, ct);
+        RepositoryLeaseOwnerTag owner, CancellationToken ct) => AcquireAsync(repository, owner, ct, preflight);
 
-    public Task<RepositoryVerificationWindow?> OpenVerificationWindowAsync(RepositoryLease lease,
+    public async Task<RepositoryVerificationWindow?> OpenVerificationWindowAsync(RepositoryLease lease,
         IAsyncDisposable executionLease, RepositoryVerificationIdentity identity, CancellationToken ct)
-        => Task.FromResult<RepositoryVerificationWindow?>(new PendingWindow());
-
-    // Compiling continuation plumbing for the committed red witness. Admission remains unchanged.
-    private sealed class PendingWindow : RepositoryVerificationWindow
     {
-        public override Guid Id { get; } = Guid.NewGuid();
-        public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        if (!Owns(lease, lease.CommonDirectory))
+            throw new InvalidOperationException("verification_window_repository_lease_required");
+        return await _windows.OpenAsync(lease.CommonDirectory, executionLease, identity, ct);
     }
+
+    public bool AllowsWorktree(RepositoryLease lease, string path, string branch) =>
+        lease is OwnedLease owned && ReferenceEquals(owned.Provider, this) && !owned.Disposed
+        && (owned.Preflight is null || owned.Preflight.WorktreePath is { } expected
+            && LandingGit.PathsEqual(expected, path) && owned.Preflight.Branch == branch);
 
     public Task<RepositoryLease?> TryAcquireAsync(string repository, CancellationToken ct) =>
         AcquireAsync(repository, null, ct);
@@ -35,7 +42,8 @@ public sealed class RepositoryMutationLease(ILandingGit git, IRepositoryFenceObs
     public Task<RepositoryLease?> TryAcquireAsync(string repository, RepositoryLeaseOwnerTag owner, CancellationToken ct) =>
         AcquireAsync(repository, owner, ct);
 
-    private async Task<RepositoryLease?> AcquireAsync(string repository, RepositoryLeaseOwnerTag? tag, CancellationToken ct)
+    private async Task<RepositoryLease?> AcquireAsync(string repository, RepositoryLeaseOwnerTag? tag, CancellationToken ct,
+        RepositoryPreflight? preflight = null)
     {
         var common = await git.CommonDirectoryAsync(repository, ct);
         var directory = Path.Combine(common, "antiphon");
@@ -48,7 +56,12 @@ public sealed class RepositoryMutationLease(ILandingGit git, IRepositoryFenceObs
             OwnerSlot? registered = null;
             try
             {
-                if (await RepositoryChildJournal.HasUnfinishedAsync(common, git, ct))
+                var admission = await _windows.InspectAsync(common, preflight, ct);
+                if (!admission.Allowed
+                    || admission.WindowId is not null && preflight is not null
+                        && leaseWaiters?.AllowsPreflightTurn(common, preflight.Identity) == false
+                    || await RepositoryChildJournal.FirstFencingAsync(common, git, ct,
+                        admission.WindowId, admission.TaskId) is not null)
                 {
                     await stream.DisposeAsync();
                     NotifyFenced(common);
@@ -59,7 +72,8 @@ public sealed class RepositoryMutationLease(ILandingGit git, IRepositoryFenceObs
                 lock (_ownersGate)
                     _owners[PathKey(common)] = slot;
                 registered = slot;
-                return new OwnedLease(this, common, stream, slot.AcquisitionId);
+                return new OwnedLease(this, common, stream, slot.AcquisitionId,
+                    admission.WindowId is null ? null : preflight);
             }
             catch
             {
@@ -91,6 +105,8 @@ public sealed class RepositoryMutationLease(ILandingGit git, IRepositoryFenceObs
     public async Task<string?> DescribeUnavailableAsync(string repository, CancellationToken ct)
     {
         var common = await git.CommonDirectoryAsync(repository, ct);
+        if (!(await _windows.InspectAsync(common, null, ct)).Allowed)
+            return "verification_window_active_or_recovery_required; inspect " + Path.Combine(common, "antiphon", "verification-window.json");
         var fence = await RepositoryChildJournal.FirstFencingAsync(common, git, ct);
         if (fence is null)
             return null;
@@ -123,12 +139,14 @@ public sealed class RepositoryMutationLease(ILandingGit git, IRepositoryFenceObs
                 RepositoryLeaseOwnerState.Known, Tag.TaskId, Tag.Purpose, AcquisitionId, AcquiredAt);
     }
 
-    private sealed class OwnedLease(RepositoryMutationLease provider, string common, FileStream stream, Guid acquisitionId)
+    private sealed class OwnedLease(RepositoryMutationLease provider, string common, FileStream stream, Guid acquisitionId,
+        RepositoryPreflight? preflight)
         : RepositoryLease
     {
         public RepositoryMutationLease Provider { get; } = provider;
         public bool Disposed { get; private set; }
         public override string CommonDirectory { get; } = common;
+        public RepositoryPreflight? Preflight { get; } = preflight;
 
         public override async ValueTask DisposeAsync()
         {
@@ -140,6 +158,7 @@ public sealed class RepositoryMutationLease(ILandingGit git, IRepositoryFenceObs
 
             Provider.ReleaseOwner(CommonDirectory, acquisitionId);
             await stream.DisposeAsync();
+            Provider.NotifyReleased();
         }
     }
 }

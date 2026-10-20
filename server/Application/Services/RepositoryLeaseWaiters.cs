@@ -1,9 +1,12 @@
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>One party refused the repository mutation lease and still waiting for it (CARD-0672 D-2).</summary>
-public sealed record RepositoryLeaseWaiter(Guid TaskId, string Purpose, DateTimeOffset Since);
+public sealed record RepositoryLeaseWaiter(Guid TaskId, string Purpose, DateTimeOffset Since,
+    bool VerificationCompatible = false);
 
 /// <summary>
 /// CARD-0672 D-2: the dispatch-first turnstile at land admission, kept outside the lease primitive.
@@ -16,7 +19,7 @@ public sealed record RepositoryLeaseWaiter(Guid TaskId, string Purpose, DateTime
 /// registry: a restart forgets every waiter and the next dispatcher tick re-registers the ones that
 /// are still refused. A second server process is the lease's existing "unknown owner" case.</para>
 /// </summary>
-public sealed class RepositoryLeaseWaiters
+public sealed class RepositoryLeaseWaiters(IOptions<DelegationSettings>? settings = null, TimeProvider? clock = null)
 {
     // Same rule as RepositoryMutationLease's owner key: full path, trailing separator trimmed,
     // case-insensitive on Windows only.
@@ -32,6 +35,43 @@ public sealed class RepositoryLeaseWaiters
     private readonly object _gate = new();
     private readonly Dictionary<string, Dictionary<Guid, RepositoryLeaseWaiter>> _byCommon = new(KeyComparer);
     private readonly Dictionary<Guid, YieldBudget> _yields = new();
+    private TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public void SignalReady(bool force = false)
+    {
+        lock (_gate)
+            if (force || _byCommon.Count != 0) _ready.TrySetResult();
+    }
+
+    public Task WaitForReadyAsync(CancellationToken ct)
+    {
+        lock (_gate) return _ready.Task.WaitAsync(ct);
+    }
+
+    public bool TryTakeReady(out IReadOnlyList<Guid> tasks)
+    {
+        lock (_gate)
+        {
+            tasks = [];
+            if (!_ready.Task.IsCompleted) return false;
+            _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            tasks = _byCommon.Values.SelectMany(w => w.Values)
+                .Where(w => w.Purpose == RepositoryLeasePurposes.Dispatch && w.VerificationCompatible)
+                .OrderBy(w => w.Since).ThenBy(w => w.TaskId.ToString("N"), StringComparer.Ordinal)
+                .Select(w => w.TaskId).Distinct().Take(8).ToArray();
+            return true;
+        }
+    }
+
+    public bool AllowsPreflightTurn(string common, Guid identity)
+    {
+        var cap = settings?.Value.LandYieldToDispatchMaxSeconds ?? 90;
+        if (cap <= 0) return true;
+        var now = (clock ?? TimeProvider.System).GetUtcNow();
+        var first = Snapshot(common).FirstOrDefault(w => w.VerificationCompatible
+            && now - w.Since < TimeSpan.FromSeconds(w.Purpose == RepositoryLeasePurposes.StartRefFetch ? 30 : cap));
+        return first is null || first.TaskId == identity;
+    }
 
     /// <summary>The registry key for a common directory.</summary>
     public static string KeyFor(string commonDirectory) =>
@@ -41,7 +81,8 @@ public sealed class RepositoryLeaseWaiters
     /// Records that <paramref name="taskId"/> waits for the lease on <paramref name="commonDirectory"/>.
     /// A repeat registration with the same purpose keeps its original <see cref="RepositoryLeaseWaiter.Since"/>.
     /// </summary>
-    public void Register(string commonDirectory, Guid taskId, string purpose, DateTimeOffset now)
+    public void Register(string commonDirectory, Guid taskId, string purpose, DateTimeOffset now,
+        bool verificationCompatible = false)
     {
         var key = KeyFor(commonDirectory);
         lock (_gate)
@@ -56,8 +97,11 @@ public sealed class RepositoryLeaseWaiters
             if (!_byCommon.TryGetValue(key, out var entries))
                 _byCommon[key] = entries = new Dictionary<Guid, RepositoryLeaseWaiter>();
             if (entries.TryGetValue(taskId, out var existing) && existing.Purpose == purpose)
+            {
+                entries[taskId] = existing with { VerificationCompatible = verificationCompatible };
                 return;
-            entries[taskId] = new RepositoryLeaseWaiter(taskId, purpose, now);
+            }
+            entries[taskId] = new RepositoryLeaseWaiter(taskId, purpose, now, verificationCompatible);
         }
     }
 
@@ -77,14 +121,15 @@ public sealed class RepositoryLeaseWaiters
     /// (dispatched, failed, cancelled, held for another reason, or no longer queued) is dropped.
     /// Waiters with any other purpose are left to their owners.
     /// </summary>
-    public void ReconcileDispatch(ISet<Guid> stillHeld)
+    public void ReconcileDispatch(ISet<Guid> stillHeld, IReadOnlyList<Guid>? considered = null)
     {
         lock (_gate)
         {
             foreach (var waiters in _byCommon.Values)
             {
                 var stale = waiters.Values
-                    .Where(w => w.Purpose == RepositoryLeasePurposes.Dispatch && !stillHeld.Contains(w.TaskId))
+                    .Where(w => w.Purpose == RepositoryLeasePurposes.Dispatch && !stillHeld.Contains(w.TaskId)
+                        && (considered is null || considered.Contains(w.TaskId)))
                     .Select(w => w.TaskId)
                     .ToList();
                 foreach (var id in stale)

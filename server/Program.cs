@@ -464,7 +464,8 @@ try
     builder.Services.AddSingleton<GuardedWorktreeRemoval>();
     builder.Services.AddSingleton<IRepositoryMutationLease>(sp => new RepositoryMutationLease(
         sp.GetRequiredService<ILandingGit>(),
-        sp.GetService<IRepositoryFenceObserver>()));
+        sp.GetService<IRepositoryFenceObserver>(),
+        sp.GetRequiredService<RepositoryLeaseWaiters>()));
     // CARD-0672 D-2: the dispatch-first turnstile shared by the dispatcher and the land service.
     builder.Services.AddSingleton<RepositoryLeaseWaiters>();
     builder.Services.AddScoped<AgentTaskLandingState>();

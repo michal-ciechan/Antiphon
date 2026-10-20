@@ -106,6 +106,16 @@ public sealed class LandingGitProfile
     public long Inspections => Interlocked.Read(ref _inspections);
     public long RemoteRoundTrips => Interlocked.Read(ref _remote);
     public double GitSeconds => TimeSpan.FromTicks(Interlocked.Read(ref _gitTicks)).TotalSeconds;
+    public void Add(LandingGitProfile other)
+    {
+        Interlocked.Add(ref _processes, other.Processes);
+        Interlocked.Add(ref _worktreeLists, other.WorktreeLists);
+        Interlocked.Add(ref _registrationHits, other.RegistrationHits);
+        Interlocked.Add(ref _canonicalHits, other.CanonicalHits);
+        Interlocked.Add(ref _inspections, other.Inspections);
+        Interlocked.Add(ref _remote, other.RemoteRoundTrips);
+        Interlocked.Add(ref _gitTicks, Interlocked.Read(ref other._gitTicks));
+    }
 
     public void Record(IReadOnlyList<string> arguments, TimeSpan elapsed)
     {
