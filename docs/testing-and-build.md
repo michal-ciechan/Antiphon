@@ -301,6 +301,22 @@ pwsh -File scripts/test-duration-tripwire.ps1 -Trx path\to\run.trx
 
 The allowlist is `tests/Antiphon.Tests/slow-tests-allowlist.txt` (exact simple or fully-qualified class names, case-insensitive). A class marked `Slow` must be registered there by fully-qualified name when it is added: `TestClassificationGuardTests.Registry_matches_compiled_metadata` fails with a first line `missing classes:` that names every Slow class absent from that file. A row for a class that is not Slow is `unmarked-registered` and fails the same guard. Every test class is tagged `Unit` xor `Integration` (`TestLaneCategoryGuardTests`).
 
+For this Antiphon.Tests registry, `## ` header comments belong only at the top.
+Each fully-qualified class row must immediately follow its own single-`#`,
+nonempty, qualifying reason comment. Blank lines may separate complete pairs;
+they cannot separate a reason from its class. The existing metadata guard rejects
+detached reasons, late headers, missing adjacent reasons and duplicate classes,
+including case variants. It reads layout and entries from one file snapshot.
+The public registry reader and other assemblies retain their existing format.
+
+Only this exact registry path uses Git's built-in `merge=union` attribute
+(CARD-1383). Independent appends can merge without a configured driver, but
+coalesced reason or class lines can produce invalid pairs: run the metadata guard
+on the result. Do not sort or regenerate the registry as a merge step. The rule
+must already be on the landing target; a source commit introducing it cannot be
+assumed to resolve its own first landing conflict. Other registries and Markdown
+files do not use this union rule.
+
 ### Checkpoint manifest (CARD-0585)
 
 **Evidence Git policy (CARD-1015).** Keep generated TRX, JSON receipts, logs,

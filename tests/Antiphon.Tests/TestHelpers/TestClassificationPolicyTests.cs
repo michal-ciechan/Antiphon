@@ -12,6 +12,8 @@ public sealed class TestClassificationPolicyTests
 {
     [Test]
     [Arguments("blank")]
+    [Arguments("overwritten")]
+    [Arguments("eof")]
     public void C1383_Detached_reason_is_rejected(string shape)
     {
         var text = "# CARD-1383 first\n" + (shape switch
@@ -194,11 +196,14 @@ public sealed class TestClassificationPolicyTests
         var text = shape == "duplicate-fqn"
             ? "# CARD-0487 a\nAntiphon.Tests.SmokeTests\n# CARD-0487 b\nAntiphon.Tests.SmokeTests\n"
             : "# CARD-0487 a\nSmokeTests\n";
-        var path = WriteTempRegistry(text);
-        var errors = TestClassificationMetadata.AssertRegistryMatches(
-            typeof(TestClassificationPolicyTests).Assembly, path, repositoryMode: true);
+        var errors = C1383Errors(text);
         if (shape == "duplicate-fqn")
+        {
             errors.ShouldContain("duplicate Antiphon.Tests.SmokeTests");
+            var upper = C1383Smoke.ToUpperInvariant();
+            C1383Errors($"# CARD-0487 first\n{C1383Smoke}\n# CARD-0487 second\n{upper}\n")
+                .ShouldContain("duplicate " + upper);
+        }
         else
             errors.ShouldContain("simple-name-refused SmokeTests");
     }
@@ -218,10 +223,8 @@ public sealed class TestClassificationPolicyTests
     [Test]
     public void C487_G064()
     {
-        var path = WriteTempRegistry("Antiphon.Tests.SmokeTests\n");
-        var errors = TestClassificationMetadata.AssertRegistryMatches(
-            typeof(TestClassificationPolicyTests).Assembly, path, repositoryMode: true);
-        errors.ShouldContain("missing-reason Antiphon.Tests.SmokeTests");
+        foreach (var prefix in new[] { "", "# \n", "# unqualified reason\n" })
+            C1383Errors(prefix + C1383Smoke + "\n").ShouldContain("missing-reason " + C1383Smoke);
     }
 
     [Test]

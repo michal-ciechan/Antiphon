@@ -83,9 +83,11 @@ public static class TestClassificationMetadata
 
     public sealed record RegistryEntry(string Name, string Reason, int Line);
 
-    public static IReadOnlyList<RegistryEntry> ReadRegistry(string path)
+    public static IReadOnlyList<RegistryEntry> ReadRegistry(string path) =>
+        ParseRegistry(File.ReadAllLines(path));
+
+    private static IReadOnlyList<RegistryEntry> ParseRegistry(string[] lines)
     {
-        var lines = File.ReadAllLines(path);
         var entries = new List<RegistryEntry>();
         string? pendingReason = null;
         for (var i = 0; i < lines.Length; i++)
@@ -104,6 +106,42 @@ public static class TestClassificationMetadata
         return entries;
     }
 
+    private static IEnumerable<string> ValidateRegistryLayout(string[] lines)
+    {
+        static bool IsReason(string line) =>
+            line.StartsWith('#') && !line.StartsWith("##", StringComparison.Ordinal);
+
+        var recordsStarted = false;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].Trim();
+            if (line.Length == 0)
+                continue;
+            if (line.StartsWith("## ", StringComparison.Ordinal))
+            {
+                if (recordsStarted)
+                    yield return $"header-after-entry line {i + 1}";
+                continue;
+            }
+
+            recordsStarted = true;
+            if (IsReason(line))
+            {
+                var next = i + 1 < lines.Length ? lines[i + 1].Trim() : "";
+                if (next.Length == 0 || next.StartsWith('#'))
+                    yield return $"orphan-reason line {i + 1}";
+            }
+            else if (line.StartsWith('#'))
+            {
+                yield return $"invalid-header line {i + 1}: use ## followed by a space";
+            }
+            else if (i == 0 || !IsReason(lines[i - 1].Trim()))
+            {
+                yield return $"missing-adjacent-reason line {i + 1} {line}";
+            }
+        }
+    }
+
     public static string AssertRegistryMatches(Assembly assembly, string registryPath, bool repositoryMode)
     {
         var classes = Read(assembly);
@@ -115,7 +153,10 @@ public static class TestClassificationMetadata
                 errors.Add("missing registry " + registryPath);
             return Format(errors);
         }
-        var entries = ReadRegistry(registryPath);
+        var lines = File.ReadAllLines(registryPath);
+        if (repositoryMode && string.Equals(assembly.GetName().Name, "Antiphon.Tests", StringComparison.OrdinalIgnoreCase))
+            errors.AddRange(ValidateRegistryLayout(lines));
+        var entries = ParseRegistry(lines);
         var bySimple = classes.ToLookup(c => c.SimpleName, StringComparer.OrdinalIgnoreCase);
         var byFull = classes.ToDictionary(c => c.FullName, StringComparer.OrdinalIgnoreCase);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

@@ -15,6 +15,7 @@ public sealed class SlowTestRegistryMergeTests
 
     [Test]
     [Arguments("common-base")]
+    [Arguments("target-only")]
     public Task C1383_Rebase_preserves_distinct_appended_pairs(string placement) =>
         RunScenario(placement, "distinct");
 
