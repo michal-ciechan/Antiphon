@@ -15,6 +15,20 @@ public sealed class RepositoryMutationLease(ILandingGit git, IRepositoryFenceObs
     private readonly object _ownersGate = new();
     private readonly Dictionary<string, OwnerSlot> _owners = new(PathKeyComparer);
 
+    public Task<RepositoryLease?> TryAcquirePreflightAsync(string repository, RepositoryPreflight preflight,
+        RepositoryLeaseOwnerTag owner, CancellationToken ct) => AcquireAsync(repository, owner, ct);
+
+    public Task<RepositoryVerificationWindow?> OpenVerificationWindowAsync(RepositoryLease lease,
+        IAsyncDisposable executionLease, RepositoryVerificationIdentity identity, CancellationToken ct)
+        => Task.FromResult<RepositoryVerificationWindow?>(new PendingWindow());
+
+    // Compiling continuation plumbing for the committed red witness. Admission remains unchanged.
+    private sealed class PendingWindow : RepositoryVerificationWindow
+    {
+        public override Guid Id { get; } = Guid.NewGuid();
+        public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     public Task<RepositoryLease?> TryAcquireAsync(string repository, CancellationToken ct) =>
         AcquireAsync(repository, null, ct);
 

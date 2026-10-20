@@ -1814,7 +1814,7 @@ public sealed class AgentTaskLandService
             && counters?.Attribute("passed")?.Value == executed.ToString()
             && counters?.Attribute("failed")?.Value == "0";
 
-    private static async Task<ProcessResult> RunProcessAsync(string cwd, ILandingChildObserver? observer, CancellationToken ct, string file, params string[] args)
+    internal static async Task<ProcessResult> RunProcessAsync(string cwd, ILandingChildObserver? observer, CancellationToken ct, string file, params string[] args)
     {
         var start = new ProcessStartInfo { FileName = file, WorkingDirectory = cwd, UseShellExecute = false,
             CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
