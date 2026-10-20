@@ -317,6 +317,70 @@ function Test-C487_G025 {
     }
 }
 
+function Test-C487_G026 {
+    # Real local Git exercises cleanup, including Windows paths beyond MAX_PATH.
+    # No test/build child or network access is needed for bootstrap-only WhatIf.
+    $root = Join-Path $ResultsDirectory ([guid]::NewGuid().ToString('N'))
+    $seed = Join-Path $root 'seed'
+    New-Item -ItemType Directory -Path $seed -Force | Out-Null
+    function Invoke-BootstrapFixtureGit {
+        param([string]$Directory, [string[]]$GitArgs)
+        $output = & git -C $Directory @GitArgs 2>&1
+        if ($LASTEXITCODE -ne 0) { throw ('fixture git failed: ' + ($output | Out-String)) }
+    }
+    Invoke-BootstrapFixtureGit $seed @('init', '-b', 'master')
+    Set-Content -LiteralPath (Join-Path $seed 'tracked.txt') -Value 'keep' -Encoding ASCII
+    Invoke-BootstrapFixtureGit $seed @('add', 'tracked.txt')
+    Invoke-BootstrapFixtureGit $seed @('-c', 'user.name=Bootstrap Test', '-c', 'user.email=bootstrap@example.invalid',
+        '-c', 'commit.gpgsign=false', 'commit', '-m', 'fixture')
+
+    foreach ($mode in @('existing', 'fresh')) {
+        $clone = Join-Path $root $mode
+        $state = Join-Path $root ($mode + '-state')
+        $nightlyMarker = Join-Path $clone '.antiphon-nightly-owned'
+        $releaseMarker = Join-Path $clone '.antiphon-release-owned'
+        $nightlyBytes = '{"origin":"' + $seed.Replace('\', '\\') + '","kind":"nightly-clone"}'
+        $releaseBytes = '{"origin":"' + $seed.Replace('\', '\\') + '","kind":"release-clone"}'
+        if ($mode -eq 'existing') {
+            Invoke-BootstrapFixtureGit $root @('clone', $seed, $clone)
+            Invoke-BootstrapFixtureGit $clone @('config', '--local', 'core.longpaths', 'false')
+            [IO.File]::WriteAllText($nightlyMarker, $nightlyBytes)
+            [IO.File]::WriteAllText($releaseMarker, $releaseBytes)
+            $longDir = Join-Path $clone 'discard'
+            while ($longDir.Length -lt 300) { $longDir = Join-Path $longDir ('x' * 50) }
+            [void][IO.Directory]::CreateDirectory($longDir)
+            $longFile = Join-Path $longDir 'junk.txt'
+            [IO.File]::WriteAllText($longFile, 'discard')
+            [IO.File]::WriteAllText((Join-Path $clone 'junk.txt'), 'discard')
+            # Exclusions are for root markers only, not identically named fixture files.
+            [IO.File]::WriteAllText((Join-Path $clone 'discard/.antiphon-nightly-owned'), 'discard')
+        }
+        $args = @{
+            CheckoutRoot = $clone; StateRoot = $state; LogRoot = (Join-Path $state 'logs')
+            RemoteUrl = $seed; Ref = 'master'; Trigger = 'manual'; WhatIf = $true
+            CoordinationRoot = (Join-Path $root ($mode + '-coord')); PassThru = $true
+        }
+        $run = Invoke-AntiphonNightlyRun @args
+        Assert-C487 ($run.ExitCode -eq 0 -and $run.Phase -eq 'whatif') ('G026 ' + $mode + ' sync completes') ($run | ConvertTo-Json -Compress)
+        $longpaths = & git -C $clone config --local --get core.longpaths
+        Assert-C487 ($longpaths -eq 'true') ('G026 ' + $mode + ' clone enables long paths') ([string]$longpaths)
+        $ownership = Test-NightlyRunContextOwnership -ClonePath $clone -StateRoot $state -ExpectedOrigin $seed
+        Assert-C487 $ownership.Ok ('G026 ' + $mode + ' ownership survives clean') $ownership.Reason
+        Assert-C487 (([IO.File]::ReadAllText((Join-Path $clone 'tracked.txt'))).Trim() -eq 'keep') ('G026 ' + $mode + ' tracked file retained')
+        if ($mode -eq 'existing') {
+            Assert-C487 ((Test-Path -LiteralPath $nightlyMarker) -and [IO.File]::ReadAllText($nightlyMarker) -ceq $nightlyBytes) 'G026 nightly marker bytes unchanged'
+            Assert-C487 ((Test-Path -LiteralPath $releaseMarker) -and [IO.File]::ReadAllText($releaseMarker) -ceq $releaseBytes) 'G026 release marker bytes unchanged'
+            Assert-C487 (-not [IO.File]::Exists($longFile)) 'G026 long fixture removed'
+            Assert-C487 (-not (Test-Path -LiteralPath (Join-Path $clone 'junk.txt'))) 'G026 short fixture removed'
+            Assert-C487 (-not (Test-Path -LiteralPath (Join-Path $clone 'discard/.antiphon-nightly-owned'))) 'G026 nested marker is not excluded'
+        } else {
+            Assert-C487 (-not (Test-Path -LiteralPath $releaseMarker)) 'G026 nightly clone does not gain release ownership'
+        }
+        $retry = Invoke-AntiphonNightlyRun @args
+        Assert-C487 ($retry.ExitCode -eq 0 -and $retry.Phase -eq 'whatif') ('G026 ' + $mode + ' retry remains admitted') $retry.Refusal
+    }
+}
+
 # ---- CARD-0545 D-10: the wrapper's last stdout line is the JSON completion record ----
 
 function Invoke-C545ResultLineRun {
@@ -423,4 +487,4 @@ if ($Case) {
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C545_')) { & $fn }
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'run-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
-Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 72 })
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 88 })
