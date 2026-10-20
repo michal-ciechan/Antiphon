@@ -280,6 +280,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 {
                     // Persisted below.
                 }
+                else if (turn.StopReason == TranscriptKinds.StopReasons.Cancelled)
+                {
+                    // An interrupted turn retains the Running session and StreamingTurn attempt.
+                    // Return control without finishing hooks or the timeout branch's kill/dispose.
+                    _logger.LogInformation(
+                        "Agent turn interrupted for session {SessionId}; retaining run attempt {RunAttemptId}",
+                        session.Id, attempt.Id);
+                }
                 else if (turn.TurnCompleted)
                 {
                     RunAttemptStateMachine.Transition(attempt, RunPhase.Finishing, UtcNow());
