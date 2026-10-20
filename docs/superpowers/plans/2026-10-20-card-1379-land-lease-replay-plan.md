@@ -771,15 +771,15 @@ wildcards and a 40-minute row timeout. CP-8 therefore selects Q1 only; Q2–Q4
 are deferred, not claimed passed. CP-9 is Windows-gated and not executed here.
 All PC-1–PC-106 variants remain pending and unbound for Mutation.
 The independent replay slice can precede the dependent lease slices.
+CP-3 and CP-5 are merged into CP-1; CP-4 and CP-6 are merged into CP-2.
+Each merged row selects exactly the three named acceptance witnesses, sharing
+one isolated build and one test host. The other W/L/H methods and variants are
+deferred under the explicit trimmed commissioning scope, not reported passed.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1R | `tests/Antiphon.Tests -> bin-c1379-window-red/` | any-window-red | `/*/*/LandVerificationWindowTests/C1379_LiveVerifierAdmitsOnlyScopedPreflight` | V-1 red | exactly 1 executed; expected preflight assertion failure | 1 | 5 |
-| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c1379-window-green/` | any-window-green | `/*/*/LandVerificationWindowTests/C1379_*` | V-1, R-1 | all 4 listed, 0 failed/skipped | 4 | 6 |
-| CP-3 | S2R | `tests/Antiphon.Tests -> bin-c1379-release-red/` | any-release-red | `/*/*/LandVerificationLeaseWindowTests/C1379_StartRefAndWorktreeFinishBeforeVerificationRelease` | V-2 red | exactly 1 executed; expected dispatch-before-release assertion failure | 1 | 5 |
-| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1379-release-green/` | any-release-green | `/*/*/LandVerificationLeaseWindowTests/C1379_*` | V-2, R-2 | all 6 listed, 0 failed/skipped | 6 | 8 |
-| CP-5 | S3R | `tests/Antiphon.Tests -> bin-c1379-handoff-red/` | any-handoff-red | `/*/*/LandDispatchHandoffTests/C1379_ReadyWaiterAcquiresBeforeNextLand` | V-3 red | exactly 1 executed; expected acquisition-order assertion failure | 1 | 5 |
-| CP-6 | S3 | `tests/Antiphon.Tests -> bin-c1379-handoff-green/` | any-handoff-green | `/*/*/LandDispatchHandoffTests/C1379_*` | V-3, R-3 | all 4 listed, 0 failed/skipped | 4 | 6 |
+| CP-1 | S1R-S3R | `tests/Antiphon.Tests -> bin-c1379-boundaries-red/` | any-boundaries-red | `/*/*/(LandVerificationWindowTests*)\|(LandVerificationLeaseWindowTests*)\|(LandDispatchHandoffTests*)/C1379_*` | V-1, V-2, V-3 red | exactly 3 executed; expected admission, release, handoff assertions | 3 | 8 |
+| CP-2 | S1-S3 | `tests/Antiphon.Tests -> bin-c1379-boundaries-green/` | any-boundaries-green | `/*/*/(LandVerificationWindowTests*)\|(LandVerificationLeaseWindowTests*)\|(LandDispatchHandoffTests*)/C1379_*` | V-1, V-2, V-3, R-1, R-2, R-3 trimmed | 3 selected witnesses, 0 failed/skipped | 3 | 8 |
 | CP-7 | S4R | `tests/Antiphon.Tests -> bin-c1379-replay-red/` | any-replay-red | `/*/*/LandRestartReplayTests/C1379_OldHeldReplaysBeforeConcurrentNewRequest*` | V-4 red | exactly 1 executed; expected replay-order assertion failure | 1 | 5 |
 | CP-8 | S4 | `tests/Antiphon.Tests -> bin-c1379-replay-green/` | any-replay-green | `/*/*/LandRestartReplayTests/C1379_OldHeldReplaysBeforeConcurrentNewRequest*` | V-4, R-4 trimmed | 1 selected witness, 0 failed/skipped | 1 | 6 |
 | CP-9 | S2 | `tests/Antiphon.Tests -> bin-c1379-native-windows/` | windows-native-lease | `/*/*/LandVerificationWindowNativeTests/C1379_*` | V-1, V-2, R-1, R-2 native | all 3 listed on Windows, 0 failed/skipped | 3 | 8 |

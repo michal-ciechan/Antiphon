@@ -342,6 +342,8 @@ public sealed partial class AgentTaskDispatcher
         public Dictionary<Guid, DateTime> Floor { get; } = new();
     }
 
+    internal Task<int> DispatchReadyWaitersAsync(CancellationToken ct) => Task.FromResult(0);
+
     public async Task<TickResult> TickAsync(CancellationToken ct)
     {
         using var observation = new RuntimePhase(_logger, _timeProvider, Guid.Empty, "dispatcher.sweep");

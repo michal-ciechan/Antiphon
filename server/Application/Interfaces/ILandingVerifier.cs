@@ -10,4 +10,4 @@ public interface ILandingVerifier
 }
 
 public sealed record LandingVerificationCorrelation(Guid TaskId, Guid OperationId, Guid? RequestId,
-    string? ArtifactsPath = null, string? CommonDirectory = null);
+    string? ArtifactsPath = null, string? CommonDirectory = null, Guid? WindowId = null);

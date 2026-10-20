@@ -39,7 +39,8 @@ public sealed class LandingVerifier(ILogger<LandingVerifier>? logger = null, IBu
         private RepositoryChildJournal? _journal;
         private int? _processId;
         private long? _startTicks;
-        public async Task BeforeStartAsync(CancellationToken ct) => _journal = await RepositoryChildJournal.BeginAsync(repository, ct);
+        public async Task BeforeStartAsync(CancellationToken ct) => _journal = await RepositoryChildJournal.BeginAsync(repository,
+            correlation?.WindowId is Guid window ? new(correlation.TaskId, "land-verifier", window) : null, ct);
         public async Task StartedAsync(int processId, long startTicks, CancellationToken ct)
         {
             await _journal!.StartedAsync(processId, startTicks, ct);
