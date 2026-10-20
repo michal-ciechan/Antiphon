@@ -32,15 +32,16 @@
 
 .PARAMETER Ref
     Git ref to reset the clone to. Default master (origin/master after fetch).
-    The schedule never passes this.
+    The master schedule uses that default. RC callers supply rc/YYYY-MM-DD or
+    legacy release/rc-YYYYMMDDTHHMMSSZ; refs/heads/ prefixes are also accepted.
 
 .PARAMETER StateRoot
     Producer-owned run state. Default C:\Antiphon\nightly. Manual/feature/NoReport
     tests pass a private root.
 
 .PARAMETER Trigger
-    scheduled (default), manual, or feature. Only scheduled master complete-green
-    advances last-complete-green.json.
+    scheduled (default), manual, feature, or rc. Trigger rc requires Profile rc.
+    Only scheduled master complete-green advances last-complete-green.json.
 
 .PARAMETER SeamsPath
     Optional injectable seams script for fixtures. Never used by the schedule.
@@ -52,9 +53,13 @@
 .PARAMETER ExpectedSha
     CARD-0599 D-3: the candidate's pinned full SHA. Required with -Profile rc; a
     checkout HEAD that differs refuses rather than retesting under the old identity.
+    Together with the long-lived Ref, this pin determines the candidate identity.
 
 .PARAMETER CandidateId
-    RC candidate identity (rc-YYYYMMDDTHHMMSSZ). Derived from -Ref when omitted.
+    RC identity: rc-YYYY-MM-DD-<first 12 lowercase SHA hex> for a long-lived Ref,
+    or rc-YYYYMMDDTHHMMSSZ for a legacy stamp Ref. Omitted or whitespace values
+    derive from Ref and ExpectedSha. A supplied value must match that identity.
+    Derivation neither chooses private roots nor creates publication authority.
 
 .PARAMETER ReleaseRoot
     Producer-owned release state. Default C:\Antiphon\releases. RC green is written
@@ -63,6 +68,16 @@
 .PARAMETER CoordinationRoot
     CARD-0599 D-4: root of the shared native-run lock both lanes acquire.
     Default C:\Antiphon\verification. Tests inject a private root.
+
+.EXAMPLE
+    $pin = git -C C:\scratch\rc-checkout rev-parse HEAD
+    .\scripts\nightly-run.ps1 -Profile rc -Trigger rc -Ref rc/2026-10-18 `
+        -ExpectedSha $pin -CheckoutRoot C:\scratch\rc-checkout `
+        -StateRoot C:\scratch\rc-state -LogRoot C:\scratch\rc-logs `
+        -ReleaseRoot C:\scratch\rc-release -CoordinationRoot C:\scratch\rc-coordination `
+        -NoReport
+    Use an owned independent clone. Direct invocation does not create a candidate
+    journal or publication authority, and RC success is not master readiness.
 #>
 param(
     [string[]]$Suites,
