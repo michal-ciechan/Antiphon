@@ -3074,7 +3074,7 @@ function Test-C599A_ExecutionLedgerJoins {
 
     # G-300: the authority, plan, discovery and every executable script digest bind.
     $m = @()
-    foreach ($scriptRel in @('publish-release.ps1', 'lib/release-gate.ps1', 'lib/release-authority.ps1', 'lib/nightly-policy.ps1', 'lib/nightly-coverage.ps1', 'lib/nightly-common.ps1')) {
+    foreach ($scriptRel in @('publish-release.ps1', 'promote-release.ps1', 'lib/release-gate.ps1', 'lib/release-authority.ps1', 'lib/nightly-policy.ps1', 'lib/nightly-coverage.ps1', 'lib/nightly-common.ps1')) {
         $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label ('script ' + $scriptRel) -Expect @('script-digest-mismatch:' + $scriptRel) -Mutate {
             Update-C599AAuthority -Fx $fx -Mutate { param($a) $a.scriptHashes.$scriptRel = ('0' * 64) }
         }
@@ -3627,11 +3627,22 @@ function Invoke-C1311Promote {
     $root = New-C599Root
     $release = Join-Path $root 'releases'
     $reservedTag = ''
+    $checkout = ''
+    $policyHash = 'policy-1'
+    $CandidateRef = 'rc/2026-10-15'
     if ($Reserve) {
+        # The successful promotion now carries real pinned policy/ledger authority.
+        $co = New-C599PolicyCheckout -Root $root -PolicyBytes (Get-C599ABasePolicyBytes)
+        $checkout = $co.Path
+        $HeadSha = $co.Sha; $CreditSha = $co.Sha; $RemotePeel = $co.Sha; $RefTip = $co.Sha
+        $CandidateId = 'rc-2026-10-15-' + $co.Sha.Substring(0, 12)
+        $auth = New-C599Authority -ReleaseRoot $release -Checkout $checkout -Sha $co.Sha
+        $policyHash = $auth.policyHash
         $creditForReserve = $CreditSha
         if ([string]::IsNullOrWhiteSpace($creditForReserve)) { $creditForReserve = $HeadSha }
         $reserved = New-ReleaseGateTagReservation -RemoteTags @() -JournalPath (Join-Path $release 'publications.json') -CandidateId $CandidateId -Sha $creditForReserve -CutUtc (Get-C1311Utc '2026-10-15T00:00:00Z')
         $reservedTag = [string]$reserved.Tag
+        [void](Set-ReleaseGateReservationPublished -JournalPath (Join-Path $release 'publications.json') -CandidateId $CandidateId -ReleaseId 'R-pre' -ReleaseUrl 'https://example/releases/tag/pre')
         if ([string]::IsNullOrWhiteSpace($PreTag)) { $PreTag = $reservedTag }
     }
     $refs = @{}
@@ -3654,18 +3665,21 @@ function Invoke-C1311Promote {
     if ([string]::IsNullOrWhiteSpace($credit)) { $credit = $RemotePeel }
     if ([string]::IsNullOrWhiteSpace($credit)) { $credit = $HeadSha }
     if (-not [string]::IsNullOrWhiteSpace($CandidateId) -and (Test-ReleaseGateFullSha -Sha $credit)) {
-        [void](New-C599RcGreen -ReleaseRoot $release -Sha $credit -CandidateId $CandidateId -Ref 'rc/2026-10-15' -PolicyHash 'policy-1')
+        [void](New-C599RcGreen -ReleaseRoot $release -Sha $credit -CandidateId $CandidateId -Ref 'rc/2026-10-15' -PolicyHash $policyHash)
     }
-    $checkout = New-C599OwnedReleaseClone -Root $root
+    if (-not $checkout) { $checkout = New-C599OwnedReleaseClone -Root $root }
+    $cardApi = New-C599CardApi -Root $root -Sha $credit -Candidate $CandidateId
+    Add-Content -LiteralPath $gh.Path -Encoding ASCII -Value "`n`$ReleaseGateSeams.UtcNow = { return [datetime]'2026-10-15T12:00:00Z' }"
     $scriptPath = Join-Path $here 'promote-release.ps1'
     if (Test-Path -LiteralPath $scriptPath) {
-        $result = & $scriptPath -ReleaseRoot $release -Tag $PreTag -CandidateId $CandidateId -CheckoutRoot $checkout -SeamsPath $gh.Path -PassThru
+        $result = & $scriptPath -ReleaseRoot $release -Tag $PreTag -CandidateId $CandidateId -CheckoutRoot $checkout -SeamsPath $gh.Path -AntiphonApiUrl $cardApi.Url -PassThru
     } else {
         $result = [pscustomobject]@{ ExitCode = 1; Refusal = 'missing-script'; Tag = ''; Sha = ''; Promoted = $false; Resumed = $false; PreReleaseTag = $PreTag }
     }
     return [pscustomobject]@{
         Result = $result; Git = $git; Gh = $gh; Root = $root; ReleaseRoot = $release; Checkout = $checkout
         PreTag = $PreTag; CandidateId = $CandidateId; ReservedTag = $reservedTag; Script = $scriptPath
+        Head = $HeadSha; CardApi = $cardApi
     }
 }
 
@@ -3737,7 +3751,7 @@ function Test-C1311_PreReleaseTag {
     $secondTrace = ''
     if ([int]$happy.Result.ExitCode -eq 0 -and (Test-Path -LiteralPath $happy.Script)) {
         $before = @(Get-Content -LiteralPath $happy.Git.Trace -ErrorAction SilentlyContinue).Count
-        $again = & $happy.Script -ReleaseRoot $happy.ReleaseRoot -Tag $happy.PreTag -CandidateId $happy.CandidateId -CheckoutRoot $happy.Checkout -SeamsPath $happy.Gh.Path -PassThru
+        $again = & $happy.Script -ReleaseRoot $happy.ReleaseRoot -Tag $happy.PreTag -CandidateId $happy.CandidateId -CheckoutRoot $happy.Checkout -SeamsPath $happy.Gh.Path -AntiphonApiUrl $happy.CardApi.Url -PassThru
         $lines = @(Get-Content -LiteralPath $happy.Git.Trace -ErrorAction SilentlyContinue)
         if ($lines.Count -gt $before) { $secondTrace = ($lines | Select-Object -Skip $before) -join "`n" }
     }
@@ -3746,14 +3760,14 @@ function Test-C1311_PreReleaseTag {
     if (Test-Path -LiteralPath $journalPath) {
         $journalDoc = Get-Content -LiteralPath $journalPath -Raw | ConvertFrom-Json
         foreach ($row in @($journalDoc.reservations)) {
-            if ([string]$row.candidateId -eq $id1) { $journalFinal = [string]$row.finalTag }
+            if ([string]$row.candidateId -eq $happy.CandidateId) { $journalFinal = [string]$row.finalTag }
         }
     }
     $expectedFinal = $happy.PreTag -replace '-rc\.[0-9]+$', ''
     Assert-C487 -Cond (
         [int]$happy.Result.ExitCode -eq 0 -and [bool]$happy.Result.Promoted -and
-        [string]$happy.Result.Tag -eq $expectedFinal -and [string]$happy.Result.Sha -eq $ShaB -and
-        $finalSha -eq $ShaB -and (Read-C599Remote -Seams $happy.Git -Ref 'rc/2026-10-15') -eq $ShaB -and
+        [string]$happy.Result.Tag -eq $expectedFinal -and [string]$happy.Result.Sha -eq $happy.Head -and
+        $finalSha -eq $happy.Head -and (Read-C599Remote -Seams $happy.Git -Ref 'rc/2026-10-15') -eq $happy.Head -and
         $null -ne $again -and [int]$again.ExitCode -eq 0 -and [bool]$again.Resumed -and
         $secondTrace -notmatch 'GIT push' -and $secondTrace -notmatch 'GIT tag' -and
         $journalFinal -eq $expectedFinal) `
@@ -3764,8 +3778,8 @@ function Test-C1311_PreReleaseTag {
     $ghLeft = Get-C599Release -Gh $happy.Gh -Tag $happy.PreTag
     Assert-C487 -Cond (
         $happy.PreTag -match '-rc\.[1-9][0-9]*$' -and
-        $preLeft -eq $ShaB -and $null -ne $ghLeft -and [string]$ghLeft.tagName -eq $happy.PreTag -and
-        $finalSha -eq $ShaB) `
+        $preLeft -eq $happy.Head -and $null -ne $ghLeft -and [string]$ghLeft.tagName -eq $happy.PreTag -and
+        $finalSha -eq $happy.Head) `
         -Name 'C1311 PreReleaseTag promote leaves the pre-release tag in place' -Detail ('pre=' + $happy.PreTag + '/' + $preLeft + ' gh=' + [string]$ghLeft.tagName)
 
     $conflict = Invoke-C1311Promote -PreTag 'v2026.10.15.1-rc.1' -RemotePeel $ShaB -HeadSha $ShaB -CandidateId $id1 -CreditSha $ShaB -RefTip $ShaB -ExtraRemote @{ (Get-C1311TagKey 'v2026.10.15.1') = $ShaA }
@@ -3853,7 +3867,7 @@ function Test-C1311_MovingTipAuthority {
     # D-2/D-5/D-6: a second SHA of the same rc ref gets its own candidate root.
     # The first authority and tag stay on the first SHA. Publish and promote of
     # that SHA refuse remote-candidate-moved once the live tip has moved.
-    # scriptHashes stay the six script files.
+    # scriptHashes bind seven executable script files, never the moving tip.
     $fx = New-C599PublishFx -LongLivedCandidate
     $firstSha = [string]$fx.Head
     $secondSha = $ShaC
@@ -3946,7 +3960,7 @@ function Test-C1311_MovingTipAuthority {
     $ghLines = 0
     if (Test-Path -LiteralPath $ghPath) { $ghLines = @(Get-Content -LiteralPath $ghPath -ErrorAction SilentlyContinue).Count }
     $promoteScript = Join-Path $here 'promote-release.ps1'
-    $promoted = & $promoteScript -ReleaseRoot $fx.ReleaseRoot -Tag $firstTag -CandidateId $firstId -CheckoutRoot $fx.Checkout -SeamsPath $fx.Gh.Path -PassThru
+    $promoted = & $promoteScript -ReleaseRoot $fx.ReleaseRoot -Tag $firstTag -CandidateId $firstId -CheckoutRoot $fx.Checkout -SeamsPath $fx.Gh.Path -AntiphonApiUrl $fx.CardApi.Url -PassThru
     $promoteTrace = Get-C1311TraceTail -Path $fx.Git.Trace -Skip $promoteLines
     $ghTail = Get-C1311TraceTail -Path $ghPath -Skip $ghLines
     $finalName = ''
@@ -3983,7 +3997,7 @@ function Test-C1311_MovingTipAuthority {
     $have = @()
     if ($null -ne $authDoc -and $null -ne $authDoc.scriptHashes) { $have = @($authDoc.scriptHashes.PSObject.Properties.Name) }
     $fresh = Get-ReleaseAuthorityScriptHashes
-    $same = ($want.Count -eq 6 -and $have.Count -eq $want.Count)
+    $same = ($want.Count -eq 7 -and $have.Count -eq $want.Count)
     $omitsTip = $true
     foreach ($rel in $want) {
         if ($have -notcontains $rel) { $same = $false; continue }
@@ -4048,6 +4062,7 @@ function New-C1339Fixture {
     $fx | Add-Member FaultPath (Join-Path $fx.Root 'real-git-fault.json')
     $fx | Add-Member PreTag 'v2026.10.15.1-rc.1'
     $fx | Add-Member FinalTag 'v2026.10.15.1'
+    Add-Content -LiteralPath $fx.Gh.Path -Encoding ASCII -Value "`n`$ReleaseGateSeams.UtcNow = { return [datetime]'2026-10-15T12:00:00Z' }"
     [void](Invoke-C1339LocalGit $fx @('init', '--bare', '-q') -Remote)
     if (-not $NoCandidateRemote) { [void](Invoke-C1339LocalGit $fx @('push', $bare, ($fx.Head + ':refs/heads/' + $fx.CandidateRef))) }
     [void](Invoke-C1339LocalGit $fx @('commit', '--allow-empty', '-q', '-m', 'distinct B'))
@@ -4101,7 +4116,9 @@ function Set-C1339Read {
 function Test-C1339NoWrites {
     param($Fx)
     $trace = Join-Path $Fx.Root 'real-git-trace.log'
-    return (-not (Test-Path -LiteralPath $trace) -or (Get-Content -LiteralPath $trace -Raw) -notmatch '(?m)^(tag|push) ')
+    $ghTrace = Join-Path $Fx.Root 'gh-trace.log'
+    return (-not (Test-Path -LiteralPath $trace) -or (Get-Content -LiteralPath $trace -Raw) -notmatch '(?m)^(tag|push) ') -and
+        (-not (Test-Path -LiteralPath $ghTrace) -or (Get-Content -LiteralPath $ghTrace -Raw) -notmatch '(?m)^GH release-(create|upload|publish)')
 }
 
 function Get-C1339Peel {
@@ -4602,6 +4619,9 @@ function Test-C1339_PromoteAuthorityHash {
     $control = Invoke-C1339Promote $fx @{ WhatIf = $true }
     $snap = Save-C599ASnapshot $fx
     $hashChecks = @(New-C1339Check ($control.ExitCode -eq 0 -and (Test-C1339NoWrites $fx)) ('valid:' + $control.Refusal))
+    $auth = Get-Content (Join-Path (Get-C599AuthorityDir $fx) 'authority.json') -Raw | ConvertFrom-Json
+    $hashChecks += New-C1339Check (@($auth.scriptHashes.PSObject.Properties.Name).Count -eq 7 -and
+        $auth.scriptHashes.'promote-release.ps1' -ceq (Get-ReleaseAuthorityScriptHashes)['promote-release.ps1']) 'seven script digests'
     foreach ($missing in @($false, $true)) {
         $hashChecks += Invoke-C1339AuthorityVariant $fx $snap {
             Update-C599AAuthority $fx { param($a)

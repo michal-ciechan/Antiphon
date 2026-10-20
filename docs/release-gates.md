@@ -277,6 +277,12 @@ The pre-release sequence, each transition journalled **before** the next begins:
 8. publish the draft, then persist the release id and URL
 
 `scripts/promote-release.ps1` then writes `vYYYY.MM.DD.N` at that same peeled SHA. It
+revalidates the pinned authority, Full ledger, script hashes and release-card
+readback on every attempt, including an already-matching final. Its explicit
+`Repository` and `AntiphonApiUrl` inputs follow the publisher's defaults.
+The authority now binds seven scripts, including `promote-release.ps1`; existing
+six-script authorities must be recut and requalified through the normal process.
+Do not insert a new digest into old evidence. Promotion
 refuses when the final tag already exists at another SHA, when the pre-release tag is
 missing, or when the peel is not a full 40-hex SHA. It does not delete the pre-release
 tag or its GitHub pre-release, and it does not restart anything.

@@ -23,6 +23,8 @@ param(
     [string]$Tag = '',
     [string]$CandidateId = '',
     [string]$CheckoutRoot = '',
+    [string]$Repository = 'michal-ciechan/Antiphon',
+    [string]$AntiphonApiUrl = '',
     [string]$SeamsPath = '',
     [switch]$WhatIf,
     [switch]$PassThru
@@ -52,6 +54,8 @@ function Invoke-AntiphonPromoteRelease {
         [string]$Tag,
         [string]$CandidateId,
         [string]$CheckoutRoot,
+        [string]$Repository,
+        [string]$AntiphonApiUrl,
         [string]$SeamsPath,
         [switch]$WhatIf
     )
@@ -75,6 +79,8 @@ function Invoke-AntiphonPromoteRelease {
         $result.Refusal = 'missing-candidate'; $result.ExitCode = 3; return [pscustomobject]$result
     }
     if ([string]::IsNullOrWhiteSpace($CheckoutRoot)) { $CheckoutRoot = Join-Path $ReleaseRoot 'checkout' }
+    if ([string]::IsNullOrWhiteSpace($AntiphonApiUrl)) { $AntiphonApiUrl = [string]$env:ANTIPHON_API }
+    if ([string]::IsNullOrWhiteSpace($AntiphonApiUrl)) { $AntiphonApiUrl = 'http://localhost:17202' }
     $parsed = Test-ReleaseGateTag -Tag $Tag
     if (-not $parsed.Ok -or -not [bool]$parsed.Prerelease) {
         $reason = 'tag-shape'
@@ -143,11 +149,19 @@ function Invoke-AntiphonPromoteRelease {
         Write-PromoteLine ('REFUSED: final tag {0} could not be verified.' -f $finalName)
         $result.Refusal = 'tag-peel'; $result.ExitCode = 3; return [pscustomobject]$result
     }
-    if ($final.Status -eq 'Found') {
-        if (-not [string]::Equals($finalPeeled, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
+    if ($final.Status -eq 'Found' -and -not [string]::Equals($finalPeeled, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
             Write-PromoteLine ('REFUSED: final tag {0} already points at {1}.' -f $finalName, $finalPeeled)
             $result.Refusal = 'final-tag-conflict'; $result.ExitCode = 3; return [pscustomobject]$result
-        }
+    }
+    # Requalify every attempt, including read-only previews and same-final recovery.
+    $authority = Test-ReleaseGateAuthority -CandidateRoot $paths.Root -RepositoryRoot $CheckoutRoot -Green $green -Candidate $candidate `
+        -Repository $Repository -NowUtc (Get-ReleaseGateUtcNow) -CardApiBaseUrl $AntiphonApiUrl
+    $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $liveSha -Authority $authority
+    if (-not $gate.Ok) {
+        Write-PromoteLine ('REFUSED: publication gate ({0}).' -f ($gate.Reasons -join ','))
+        $result.Refusal = ($gate.Reasons -join ','); $result.ExitCode = 3; return [pscustomobject]$result
+    }
+    if ($final.Status -eq 'Found') {
         if (-not $WhatIf) { Update-PromoteFinalTag -Root $ReleaseRoot -Id $CandidateId -FinalName $finalName }
         $result.Resumed = $true
         $result.Promoted = $false
@@ -194,7 +208,7 @@ function Invoke-AntiphonPromoteRelease {
 }
 
 $invokeResult = Invoke-AntiphonPromoteRelease -ReleaseRoot $ReleaseRoot -Tag $Tag -CandidateId $CandidateId `
-    -CheckoutRoot $CheckoutRoot -SeamsPath $SeamsPath -WhatIf:$WhatIf
+    -CheckoutRoot $CheckoutRoot -Repository $Repository -AntiphonApiUrl $AntiphonApiUrl -SeamsPath $SeamsPath -WhatIf:$WhatIf
 if ($PassThru) { return $invokeResult }
 Write-Host (ConvertTo-Json -InputObject ([ordered]@{
     candidateId = [string]$invokeResult.CandidateId
