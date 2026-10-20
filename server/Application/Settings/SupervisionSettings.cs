@@ -26,6 +26,12 @@ public sealed class SupervisionSettings
     public int FreshAfterResumeFailures { get; set; } = 2;
 
     /// <summary>
+    /// Admitted automatic resume failures before the bounded fresh-recovery exception.
+    /// Zero disables the exception. Accounting is retained independently of this setting.
+    /// </summary>
+    public int AutomaticFreshAfterResumeFailures { get; set; } = 3;
+
+    /// <summary>
     /// Consecutive non-infrastructure supervised resume failures that trip the CARD-0466 continuity
     /// hold with reason <c>RepeatedResumeFailure</c>. 0 disables the trip and restores the
     /// never-give-up ladder. Default 5.

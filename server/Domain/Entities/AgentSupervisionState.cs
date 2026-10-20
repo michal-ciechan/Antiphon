@@ -24,6 +24,12 @@ public class AgentSupervisionState
     /// at <c>Supervision:ResumeFailureHoldAttempts</c>. Not reset when a supervised resume clears the hold.
     /// </summary>
     public int ContinuityResumeFailures { get; set; }
+    /// <summary>Distinct failed, admitted automatic resumes in the current unhealthy episode.</summary>
+    public int AutomaticResumeFailures { get; set; }
+    public Guid? LastAutomaticResumeSessionId { get; set; }
+    public DateTime? LastAutomaticResumeStartedAt { get; set; }
+    public bool AutomaticFreshConsumed { get; set; }
+    public DateTime? AutomaticFreshAlertedHoldAt { get; set; }
     public Guid? LastObservedRestartSessionId { get; set; }
     public DateTime? LastObservedRestartStartedAt { get; set; }
     public DateTime? ContinuityHeldAt { get; set; }
