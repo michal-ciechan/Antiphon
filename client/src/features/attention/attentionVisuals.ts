@@ -66,7 +66,7 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
   },
   SessionUnowned: {
     label: 'Unowned session', color: 'warning', icon: TbUserOff,
-    hint: 'A live session has no agent, card, standing owner or open task. Inspect its evidence.',
+    hint: 'A live session has no agent pointer, card or open task. Inspect its evidence.',
   },
   ZombieCensusReport: {
     label: 'Census candidates', color: 'warning', icon: TbSearch,
