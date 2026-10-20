@@ -1029,7 +1029,7 @@ function New-C599RunFx {
         # Selection binds real committed policy/runtime blobs before either hop.
         # Keep the synthetic checkout for cases that only exercise refusals/locks.
         $seed = Join-Path $root 'seed'
-        $script:C599PolicyClones.Add($root)
+        $script:C599PolicyClones.Add($seed)
         New-Item -ItemType Directory -Path (Join-Path $seed 'scripts') -Force | Out-Null
         [void](Invoke-C599RealGit $seed @('init', '-q', '-b', $CandidateRef))
         [void](Invoke-C599RealGit $seed @('config', 'core.autocrlf', 'false'))
@@ -1064,8 +1064,10 @@ function New-C599RunFx {
         [void](Invoke-C599RealGit $seed @('add', '--all'))
         [void](Invoke-C599RealGit $seed @('-c', 'user.name=c599', '-c', 'user.email=c599@example.invalid', 'commit', '-qm', 'RC fixture candidate'))
         $origin = Join-Path $root 'origin.git'
+        $script:C599PolicyClones.Add($origin)
         [void](Invoke-C599RealGit $root @('clone', '--bare', $seed, $origin))
         $clone = Join-Path $root 'checkout'
+        $script:C599PolicyClones.Add($clone)
         [void](Invoke-C599RealGit $root @('clone', $origin, $clone))
         $sha = Invoke-C599RealGit $clone @('rev-parse', 'HEAD')
         $rows = @(@{Id='fixture-one';ClassName='Fixture.Fixture';MethodName='One';Outcome='Passed'})
@@ -3990,6 +3992,7 @@ function Clear-C599FixtureReadOnly {
     # Leave deletion and failure retention to the owning ScriptHarness process.
     foreach ($clone in $script:C599PolicyClones) {
         $objects = Join-Path $clone '.git/objects'
+        if (-not (Test-Path -LiteralPath $objects)) { $objects = Join-Path $clone 'objects' }
         if (Test-Path -LiteralPath $objects) {
             Get-ChildItem -LiteralPath $objects -Recurse -Force -File | ForEach-Object { $_.IsReadOnly = $false }
         }
