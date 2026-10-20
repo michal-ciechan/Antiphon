@@ -22,7 +22,7 @@ internal sealed class LandVerificationWindowHarness : IAsyncDisposable
             while (-not (Test-Path -LiteralPath $Release)) { Start-Sleep -Milliseconds 20 }
             if ($Results) {
                 [IO.Directory]::CreateDirectory($Results) | Out-Null
-                [IO.File]::WriteAllText((Join-Path $Results 'run.trx'),
+                [IO.File]::WriteAllText((Join-Path $Results 'landing-verification.trx'),
                     '<TestRun><ResultSummary><Counters executed="1" passed="1" failed="0" /></ResultSummary></TestRun>')
             }
             """);
