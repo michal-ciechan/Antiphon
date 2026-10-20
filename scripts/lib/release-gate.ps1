@@ -779,7 +779,11 @@ function Test-ReleaseGatePromotionReservation {
     $fail = { param($reason) [pscustomobject]@{ Ok = $false; Reason = ('promotion-reservation-' + $reason) } }
     if (-not (Test-Path -LiteralPath $JournalPath)) { return (& $fail 'missing') }
     try {
-        $journal = Get-Content -LiteralPath $JournalPath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        $raw = Get-Content -LiteralPath $JournalPath -Raw -Encoding UTF8 -ErrorAction Stop
+        # ConvertFrom-Json enumerates root arrays, including a one-object array.
+        # Require an object in the source bytes before that boundary is lost.
+        if (-not $raw.TrimStart().StartsWith('{', [StringComparison]::Ordinal)) { return (& $fail 'invalid') }
+        $journal = $raw | ConvertFrom-Json -ErrorAction Stop
     } catch { return (& $fail 'invalid') }
     if ($journal -isnot [pscustomobject] -or
         ($journal.schemaVersion -isnot [int] -and $journal.schemaVersion -isnot [long]) -or
