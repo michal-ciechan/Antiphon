@@ -44,10 +44,43 @@ public sealed class CheckpointSourceGitBoundsTests : CheckpointTestBase
         nonzero.Observation.ErrorCode.ShouldBe("git_exit");
     }
 
+    [Test]
+    [Timeout(120_000)]
+    public async Task C1233_ScriptSource(CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsLinux())
+            Skip.Test("Linux inherited-pipe custody proof");
+
+        foreach (var caller in new[] { "tool", "script" })
+        {
+            var healthy = await CaptureAsync("healthy", cancellationToken, caller);
+            healthy.Watchdog.ShouldBeFalse();
+            healthy.Observation!.CaptureStatus.ShouldBe("known");
+            healthy.Observation.Commit.ShouldBe(new string('a', 40));
+            healthy.Observation.DirtyFiles.ShouldBe(2);
+            healthy.Observation.Fingerprint.ShouldBe("a8772ccdfabb7a27dac404c71c7fb916415e53bf40f4cc64436440be3697773b",
+                $"{caller} must retain the independent v1 raw-byte vector, including invalid UTF-8 diff bytes");
+        }
+
+        var nonzero = await CaptureAsync("nonzero", cancellationToken, "script");
+        nonzero.Watchdog.ShouldBeFalse();
+        nonzero.Observation!.CaptureStatus.ShouldBe("unknown");
+        nonzero.Observation.ErrorCode.ShouldBe("git_exit");
+
+        var blocked = await CaptureAsync("held-pipe", cancellationToken, "script");
+        blocked.Watchdog.ShouldBeFalse("Get-CheckpointSource Git drain required the independent 35 s watchdog");
+        blocked.Milliseconds.ShouldBeLessThan(32_000, "the real 30 s Git budget includes inherited pipe drains");
+        blocked.Observation!.CaptureStatus.ShouldBe("unknown");
+        blocked.Observation.ErrorCode.ShouldBe("git_timeout");
+        blocked.ParentExited.ShouldBeTrue("the selected Git parent must exit before its descendant releases stderr");
+        blocked.DescendantDead.ShouldBeTrue("the pipe holder survived the Git deadline and 2 s death observation");
+    }
+
     private sealed record CaptureResult(SourceObservation? Observation, long Milliseconds,
         bool Watchdog, bool ParentExited, bool DescendantDead);
 
-    private async Task<CaptureResult> CaptureAsync(string mode, CancellationToken cancellationToken)
+    private async Task<CaptureResult> CaptureAsync(string mode, CancellationToken cancellationToken,
+        string caller = "tool")
     {
         var root = TempDir();
         var shims = Directory.CreateDirectory(Path.Combine(root, "shims")).FullName;
@@ -111,14 +144,22 @@ public sealed class CheckpointSourceGitBoundsTests : CheckpointTestBase
         var wrapper = Path.Combine(root, "capture.ps1");
         File.WriteAllText(wrapper, """
             $ErrorActionPreference = 'Stop'
-            $null = [Reflection.Assembly]::LoadFrom($env:C1233_HOST_ASSEMBLY)
-            $null = [Reflection.Assembly]::LoadFrom($env:C1233_TOOL_ASSEMBLY)
-            $reader = [Antiphon.Checkpoints.SourceSnapshot]::new()
+            if ($env:C1233_CALLER -eq 'script') {
+                . $env:C1233_SOURCE_SCRIPT
+            } else {
+                $null = [Reflection.Assembly]::LoadFrom($env:C1233_HOST_ASSEMBLY)
+                $null = [Reflection.Assembly]::LoadFrom($env:C1233_TOOL_ASSEMBLY)
+                $reader = [Antiphon.Checkpoints.SourceSnapshot]::new()
+            }
             $stat = [IO.File]::ReadAllText("/proc/$PID/stat")
             $startToken = $stat.Substring($stat.LastIndexOf(')') + 2).Split(' ')[19]
             [Console]::Out.WriteLine("C1233_READY $PID`:$startToken`:$env:C1233_NONCE")
             $clock = [Diagnostics.Stopwatch]::StartNew()
-            $observation = $reader.Capture($env:C1233_ROOT)
+            $observation = if ($env:C1233_CALLER -eq 'script') {
+                Get-CheckpointSource $env:C1233_ROOT
+            } else {
+                $reader.Capture($env:C1233_ROOT)
+            }
             $clock.Stop()
             [Console]::Out.WriteLine("C1233_RESULT $env:C1233_NONCE " + (@{
                 observation = $observation; milliseconds = $clock.ElapsedMilliseconds
@@ -135,6 +176,9 @@ public sealed class CheckpointSourceGitBoundsTests : CheckpointTestBase
         start.Environment["C1233_ROOT"] = root;
         start.Environment["C1233_NONCE"] = nonce;
         start.Environment["C1233_MODE"] = mode;
+        start.Environment["C1233_CALLER"] = caller;
+        start.Environment["C1233_SOURCE_SCRIPT"] = Path.Combine(CheckpointFixtures.RepoRoot,
+            "scripts", "lib", "checkpoint-source.ps1");
         start.Environment["C1233_HOST_ASSEMBLY"] = typeof(CheckpointProcessRunner).Assembly.Location;
         start.Environment["C1233_TOOL_ASSEMBLY"] = typeof(SourceSnapshot).Assembly.Location;
         using var process = Process.Start(start)!;
@@ -173,9 +217,10 @@ public sealed class CheckpointSourceGitBoundsTests : CheckpointTestBase
             var result = (await output).Trim();
             result.ShouldStartWith(prefix);
             using var json = JsonDocument.Parse(result[prefix.Length..]);
-            var observation = json.RootElement.GetProperty("observation").Deserialize<SourceObservation>();
+            var observation = json.RootElement.GetProperty("observation").Deserialize<SourceObservation>(
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             var milliseconds = json.RootElement.GetProperty("milliseconds").GetInt64();
-            Console.WriteLine($"W2 {mode}: {milliseconds} ms; {observation!.CaptureStatus}/{observation.ErrorCode}; parentExited={parentExited}; descendantDead={descendantDead}");
+            Console.WriteLine($"{caller} {mode}: {milliseconds} ms; {observation!.CaptureStatus}/{observation.ErrorCode}; parentExited={parentExited}; descendantDead={descendantDead}");
             return new CaptureResult(observation, milliseconds, false, parentExited, descendantDead);
         }
         finally
