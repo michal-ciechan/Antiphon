@@ -126,6 +126,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public bool AttachResult { get; set; } = true;
     public AgentLaunchBlock? LaunchBlock { get; set; }
     public bool TurnCompleted { get; set; } = true;
+    public string? TurnStopReason { get; set; }
     public bool ThrowOnRenderedSnapshot { get; set; }
     public string SentInput { get; private set; } = string.Empty;
     private readonly List<string> _inputs = [];
@@ -514,7 +515,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         if (ExitReason != AgentExitReason.Unknown)
             _exit.TrySetResult(ExitCode);
 
-        return Task.FromResult(new AgentTurnResult(TurnCompleted, null, false, SnapshotRawOutput()));
+        return Task.FromResult(new AgentTurnResult(TurnCompleted, null, false, SnapshotRawOutput(), TurnStopReason));
     }
 
     public string SnapshotRawOutput() => _rawOutput.ToString();

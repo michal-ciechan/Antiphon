@@ -87,7 +87,7 @@ The table budgets 46 minutes for the nine green rows; red repetitions budget ano
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1322-s1/` | unit-usage | `/*/*/CodexTranscriptNormalizerTests/C1322_Abort_consumes_usage_once` | V-1 | all listed, 0 failed/skipped | 1 | 4 |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1322-s2/` | integration-capacity | `/*/*/CapacityRecoveryTranscriptTests/C1322_Cancelled_boundary_does_not_progress_recovery` | V-2 | all listed, 0 failed/skipped | 1 | 5 |
-| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1322-s3/` | integration-caller | `/*/*/AgentSessionCancelledTurnTests/C1322_Interrupted_result_preserves_live_session` | V-3 | all listed, 0 failed/skipped | 1 | 6 |
+| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1322-s3/` | integration-caller | `/*/*/AgentSessionCancelledTurnTests/C1322_Interrupted_result_preserves_live_session*` | V-3 | all listed, 0 failed/skipped | 1 | 6 |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1322-s4/` | unit-adapter | `/*/*/RunnerCodexAdapterTurnCompleteTests/C1322_Cancelled_verdict_cannot_become_screen_success` | V-4 | all listed, 0 failed/skipped | 1 | 4 |
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1322-s5/` | integration-boot | `/*/*/BootReplyCancellationTests/C1322_Cancellation_is_not_a_boot_model_reply` | V-5 | all listed, 0 failed/skipped | 1 | 6 |
 | CP-6 | S6 | `tests/Antiphon.Tests -> bin-c1322-s6/` | integration-direct | `/*/*/ChannelReplyCancelledTests/C1322_Cancelled_direct_turn_keeps_its_correlation` | V-6 | all listed, 0 failed/skipped | 1 | 6 |
