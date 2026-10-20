@@ -199,6 +199,8 @@ public sealed class RolePolicyToolBundleDispatchTests
             PreserveDatabaseOnDispose = cut == NoticeCut.SentStamp,
             ConfigureDbContext = cut == NoticeCut.None ? null : o => o.AddInterceptors(fault),
         });
+        await parent.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "caller baseline before delegation");
+        await parent.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
         fault.SessionId = parent.SessionId;
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var sink = new RecordingSink();

@@ -4464,8 +4464,6 @@ public sealed partial class AgentTaskDispatcher
         }
         var notification = await FailAsync(task, reason, ct, failureCode, warning: warning, git: git);
         await _tasks.RemoveEphemeralAgentAsync(task, task.AgentId, ct);
-        if (task.DispatchedAt is null && notification is null)
-            ArmFailureReminder(task, task.CompletedAt ?? UtcNow());
         await _db.SaveChangesAsync(ct);
         // A completion note uses a separate DbContext and stamps this task. Commit the
         // pre-flight claim first or its row lock blocks that stamp until command timeout.
@@ -6558,23 +6556,6 @@ public sealed partial class AgentTaskDispatcher
     /// feeds the stall clock, the delivery watchdog, or any status transition: past its expected
     /// duration a task is not late, it has merely reached the point where someone wanted a look.</para>
     /// </summary>
-    /// <summary>
-    /// CARD-0231: arm the check ramp on a task that Failed before a session existed. The first
-    /// look is the ramp base (5 minutes), not <see cref="AgentTask.ExpectedDurationMinutes"/> —
-    /// that number describes work that never started. Same guards as <see cref="ArmFirstCheck"/>.
-    /// </summary>
-    private void ArmFailureReminder(AgentTask task, DateTime now)
-    {
-        if (!_settings.CheckEnabled || task.ReplyTo != AgentTaskReplyTo.Session)
-            return;
-        if (AgentTaskRoles.IsSpecialist(task.Role))
-            return;
-
-        task.NextCheckAt = now + CheckSchedule.NextInterval(
-            _settings, task.ExpectedDurationMinutes, checkNumber: 1);
-        task.CheckCount = 0;
-    }
-
     private void ArmFirstCheck(AgentTask claimed, DateTime dispatchedAt)
     {
         if (!_settings.CheckEnabled || claimed.ReplyTo != AgentTaskReplyTo.Session)
