@@ -89,6 +89,7 @@ public sealed class WaitCommand
                 output.WriteLine(receipt);
                 if (receipt.Outcome == "Refused")
                     output.WriteLine("refused: " + receipt.Reason);
+                cancellationToken.ThrowIfCancellationRequested();
                 if (_context.Io.FileExists(reportPath))
                     output.Write(ReceiptFile.ReadText(_context, reportPath, cancellationToken));
                 else
@@ -107,6 +108,7 @@ public sealed class WaitCommand
                 output.WriteLine(diedReceipt);
                 if (diedReceipt.Outcome == "Refused")
                     output.WriteLine("refused: " + diedReceipt.Reason);
+                cancellationToken.ThrowIfCancellationRequested();
                 output.WriteLine("executor died without phase=done");
                 output.WriteLine(Tail(logPath, cancellationToken));
                 return ExitCodes.ExecutorCrashed;

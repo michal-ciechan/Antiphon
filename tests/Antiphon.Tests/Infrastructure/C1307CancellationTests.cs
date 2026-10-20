@@ -161,10 +161,11 @@ public sealed class C1307CancellationTests
         var control = new CountingControl();
         var output = new StringWriter();
         var command = Task.Run(() => Command(f, "wait", cancel.Token, output, control));
+        var timer = f.Files.Clock.WaitForTimerAsync(
+            e => e.Action == "create" && e.DueTime == TimeSpan.FromMilliseconds(200), ct: cancel.Token);
         try
         {
-            await f.Files.Clock.WaitForTimerAsync(e => e.Action == "create" && e.DueTime == TimeSpan.FromMilliseconds(200))
-                .WaitAsync(TimeSpan.FromSeconds(5));
+            await timer.WaitAsync(TimeSpan.FromSeconds(5));
             cancel.Cancel();
             (await command.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBe(130);
             control.Calls.ShouldBe(0);
@@ -173,7 +174,12 @@ public sealed class C1307CancellationTests
             foreach (var (path, bytes) in before) f.Io.Nodes[path].Bytes.ShouldBe(bytes, path);
             f.Io.Count("unlink").ShouldBe(0);
         }
-        finally { cancel.Cancel(); await command; }
+        finally
+        {
+            cancel.Cancel();
+            try { await timer; } catch (OperationCanceledException) { }
+            await command;
+        }
     }
 
     private static Task<int> Command(HostCleanupToolFixture f, string verb, CancellationToken token,
