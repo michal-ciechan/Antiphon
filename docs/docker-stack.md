@@ -252,7 +252,17 @@ the audits cannot end `cause=Unstable` (CARD-1353). Failed/Canceled/Succeeded ro
 pending land are not bound work; their worktrees remain protected by the publication audit
 below. No time window hides an older pending land. Both closures must agree across two passes.
 
-Every read has a 60-second budget. `RecycleTaskCensusUnknown` keeps its stable first
+Every physical read attempt has a 60-second budget. Task census GETs retry only
+502/503/504 and recognized timeout/reset/send/receive failures, at most three attempts
+with one second between attempts (at most 182 seconds of configured request/wait
+budgets per logical GET, not a total census deadline; CARD-1374). Exhaustion refuses
+with `RecycleTaskCensusUnknown cause=Http attempts=3`, the last `failure` kind and
+the actual `status` when known. Receipts retain every physical attempt's number,
+raw outcome and timing, including failed attempts before recovery. All 4xx, other
+statuses, unknown transport/DNS/TLS failures, empty bodies and malformed data refuse
+immediately. Project resolution and runner status/commands keep their existing
+single-attempt policy; audit and removal gates are unchanged.
+`RecycleTaskCensusUnknown` keeps its stable first
 token and appends `cause=Timeout|Http|Transport|Empty|Malformed|UnfilteredRow|Unstable|ScopeLimit|Drift`,
 with safe `path=`, `status=`, `field=` or `scopes=` details where applicable. Detail/summary
 disagreement or invalid land proof remains `RecycleLandUnknown`, except a terminal detail

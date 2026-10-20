@@ -33,12 +33,15 @@ public sealed class RollingVolumeRecycleScriptTests
             f.State["readFaults"] = new JsonObject { [path] = fault };
             var run = await f.Run("retire-temp");
             run.Exit.ShouldBe(2, path + " " + fault + "; " + run.Output);
-            run.Output.ShouldContain("RecycleTaskCensusUnknown cause=" + cause);
+            var exhausted = path.StartsWith("/api/agent-tasks", StringComparison.Ordinal) && fault is "timeout" or "503";
+            run.Output.ShouldContain("RecycleTaskCensusUnknown cause=" + (exhausted ? "Http" : cause));
+            if (exhausted) { run.Output.ShouldContain("attempts=3"); run.Output.ShouldContain("failure=" + cause); }
             run.Output.ShouldContain("path=" + path);
             if (cause == "Http") run.Output.ShouldContain("status=" + fault);
             if (cause == "Malformed") run.Output.ShouldContain("field=body");
             run.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse();
             var receipt = C1087Receipt(run.Trace);
+            receipt["reads"]!.AsArray().Count(r => r!["path"]!.GetValue<string>() == path).ShouldBe(exhausted ? 3 : 1);
             var read = receipt["reads"]!.AsArray().Last()!;
             read["path"]!.GetValue<string>().ShouldBe(path);
             read["outcome"]!.GetValue<string>().ShouldBe(cause);
