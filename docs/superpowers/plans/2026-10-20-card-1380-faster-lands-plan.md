@@ -393,6 +393,8 @@ the card's "one red witness per rule" acceptance.
 | CP-3 | S2R | `tests/Antiphon.Tests -> bin-c1380-2r/` | any-noncode-red | `/*/*/LandNonCodeSkipTests/C1380_DocsOnlyRebasedLandRecordsNonCodeSkip*` | V-2 red | exactly 1 executed, expected assertion failure | 1 | 5 |
 | CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1380-2/` | any-noncode-green | `/*/*/(LandNonCodeSkipTests*)\|(AgentTaskLandStageOutcomeTests*)\|(AgentTaskLandRefusedRetryTests*)\|(AgentTaskLandingStateTests*)/*` | V-2, R-2 | all listed, at least 7 new tests, 0 failed/skipped | 7 | 7 |
 | CP-4R | S2FixtureRepair | `tests/Antiphon.Tests -> bin-c1380-2fix/` | any-noncode-repair | `/*/*/(LandNonCodeSkipTests*)\|(AgentTaskLandRefusedRetryTests*)/*` | V-2 repair, R-2 rerun and base attribution | all listed, 0 failed/skipped | 57 | 7 |
+| CP-4B | S2Baseline | `tests/Antiphon.Tests -> bin-c1380-2base/` | any-profile-baseline | `/*/*/AgentTaskLandRefusedRetryTests/C688_RealLandProfile*` | R-2 baseline attribution | exactly 1 executed; retain the observed outcome | 1 | 6 |
+| CP-4F | S2Continuation | `tests/Antiphon.Tests -> bin-c1380-2final/` | any-noncode-final | `/*/*/(LandNonCodeSkipTests*)\|(AgentTaskLandStageOutcomeTests*)\|(AgentTaskLandRefusedRetryTests*)\|(AgentTaskLandingStateTests*)/*` | V-2, R-2 final continuation | all 153 cases, retain any proven inherited profile failure | 153 | 7 |
 | CP-5 | S3R | `tests/Antiphon.Tests -> bin-c1380-3r/` | any-review-tree-red | `/*/*/LandReviewedTreeSkipTests/C1380_EqualTreeReceiptSkipsDifferentCommit*` | V-3 red | exactly 1 executed, expected assertion failure | 1 | 5 |
 | CP-6 | S3 | `tests/Antiphon.Tests -> bin-c1380-3/` | any-review-tree-green | `/*/*/(LandReviewedTreeSkipTests\|InterimVerificationLandGuardTests)/*` | V-3, R-3 | all listed, at least 6 new tests, 0 failed/skipped | 6 | 7 |
 | CP-7 | S4R | `tests/Antiphon.Tests -> bin-c1380-4r/` | any-reservation-red | `/*/*/LandVerificationReservationTests/C1380_LiveReservedVerifierAllowsOnlyPreflight*` | V-4 red | exactly 1 executed, expected assertion failure | 1 | 5 |
@@ -434,6 +436,17 @@ integration classes; retain the earlier passing state/stage classes. Run with
 `C688_RealLandProfile` (seven worktree listings against its unchanged bound of four).
 The comparator must run only the failing method at the base, never the assembly.
 Any surviving red remains an incomplete gate.
+
+S2 continuation (operator authorization, 2026-10-20): run CP-4B once against
+the exact supplied base `480407504eae586e18281665f2808c3f77281dd6` in an isolated
+detached checkout, using this committed manifest and a fresh nonzero TRX. The
+previous automatic baseline invocation omitted the trailing method wildcard and
+produced no TRX, so it did not establish attribution. If the base also reports
+seven worktree listings, record the profile failure as pre-existing and preserve
+the bound of four. Otherwise repair only an S2-introduced count increase. Then
+run CP-4F once on committed HEAD, covering the full S2 selection and the profile
+case. Keep `--row-timeout 40m`; no whole-Unit run or deliberate mutants. The caller
+will resolve landing conflicts in a separate cherry-pick repair task.
 
 ## Shipment, measurement and rollback
 
