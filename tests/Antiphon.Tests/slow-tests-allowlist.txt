@@ -1,4 +1,8 @@
-# CARD-0110 S6 / CARD-0475 S6 / CARD-0487: Slow classes in Antiphon.Tests.
+## CARD-0110 S6 / CARD-0475 S6 / CARD-0487: Slow classes in Antiphon.Tests.
+## Repository entries are fully-qualified class names. Adjacent reason comments are required.
+## Tripwire still accepts caller-supplied simple names. No substring or argument matching.
+## Each single-# reason must immediately precede its class; blank lines separate complete pairs.
+
 # CARD-1322: isolated migrated PostgreSQL, real session start and fresh-context stall scans; measured 6.7-10.6s.
 Antiphon.Tests.Application.AgentSessionCancelledTurnTests
 # CARD-1032: phone-home mirror join starts a real runner and scratch git. Measured 5-12s per method.
@@ -33,10 +37,8 @@ Antiphon.Tests.Scripts.EvidenceDiffGuardTests
 Antiphon.Tests.Scripts.EvidenceDeletionGuardTests
 # CARD-1042: real Git supplemental evidence deletion; review TRX measured one method over 5s.
 Antiphon.Tests.Scripts.EvidenceSupplementalDeletionGuardTests
-# Repository entries are fully-qualified class names. Adjacent reason comments are required.
 # CARD-0701: real pwsh comparison matrices (up to twelve child processes) and isolated SQL classifier.
 Antiphon.Tests.Scripts.MeasureSessionStateCacheScriptTests
-# Tripwire still accepts caller-supplied simple names. No substring or argument matching.
 # CARD-0665: real Git and database removal matrix; server2 measured 18 rows over five seconds.
 Antiphon.Tests.Application.AgentTaskLandRemovalMatrixTests
 # CARD-0487: historical allowance, pty integration cost.

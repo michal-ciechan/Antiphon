@@ -519,9 +519,11 @@ S1 registers only blank and common-base arguments on the two red methods; S2
 adds their remaining argument variants. This yields exactly one red witness
 per changed behavior, followed by one grouped green selection per area.
 CP-2/CP-3 red selections are skipped, with their green cases merged into CP-5.
-Original CP-5 through CP-10 are merged into CP-5 (14 executions). CP-11/CP-12
-existing duplicate/simple-name/reason checks are skipped as explicitly directed;
-V-6/R-5's inherited duplicate checks are not claimed executed. CP-13 is retained.
+Original CP-5 through CP-10 and CP-12 are merged into CP-5 (15 executions).
+CP-11 existing duplicate/simple-name checks are skipped as explicitly directed;
+V-6/R-5's identity checks are not claimed executed. Their planned case-fold
+assertion is implemented for future Mutation, without another ordinary duplicate run.
+CP-12 retains reason-content regression coverage in the grouped row. CP-13 is retained.
 CP-14 through CP-16 are merged into CP-14 (the full new Integration class,
 5 executions). There is no whole-Unit or full assembly run. No PC binding or
 execution is commissioned; all PC-1 through PC-18 remain pending.
@@ -530,7 +532,7 @@ execution is commissioned; all PC-1 through PC-18 remain pending.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1383-red/` | red-detached | `/*/*/TestClassificationPolicyTests/C1383_Detached_reason_is_rejected*` | V-1, R-1 | 1 intended orphan-reason assertion failure | 1 | 4 |
 | CP-4 | S1 | CP-1 | red-real-union | `/*/*/SlowTestRegistryMergeTests/C1383_Rebase_preserves_distinct_appended_pairs*` | V-7, R-7 | 1 intended real rebase-success assertion failure | 1 | 1 |
-| CP-5 | S2 | `tests/Antiphon.Tests -> bin-c1383-green/` | green-layout | `/*/*/TestClassificationPolicyTests/C1383_*` | V-1, V-2, V-3, V-4, V-5, R-1, R-2, R-3, R-4 | all 14 variants, 0 failed/skipped | 14 | 4 |
+| CP-5 | S2 | `tests/Antiphon.Tests -> bin-c1383-green/` | green-layout | `/*/*/TestClassificationPolicyTests/(C1383_*)\|(C487_G064*)` | V-1, V-2, V-3, V-4, V-5, V-6, R-1, R-2, R-3, R-4, R-5 | all 15 variants, 0 failed/skipped | 15 | 4 |
 | CP-13 | S2 | CP-5 | green-repository | `/*/*/TestClassificationGuardTests/Registry_matches_compiled_metadata*` | V-6, R-6 | 1 actual-repository guard, 0 failed/skipped | 1 | 1 |
 | CP-14 | S2 | CP-5 | green-real-git | `/*/*/SlowTestRegistryMergeTests/C1383_*` | V-7, V-8, V-9, R-7, R-8, R-9 | all 5 variants, 0 failed/skipped | 5 | 1 |
 
