@@ -43,19 +43,32 @@ public sealed class ReleaseGateRunTests
         "C599 CreditVerdicts an invented credit kind earns nothing");
 
     [Test]
-    public Task C599_MasterStateIsolation() => RunCaseAsync("C599_MasterStateIsolation", 6,
+    public Task C599_MasterStateIsolation() => RunCaseAsync("C599_MasterStateIsolation", 11,
+        "C599 MasterStateIsolation run starts without child summaries",
+        "C599 MasterStateIsolation outer run reaches self-reexec without refusal",
+        "C599 MasterStateIsolation exactly one fresh child summary names this run",
+        "C599 MasterStateIsolation child consumed the pinned RC identity",
+        "C599 MasterStateIsolation child consumed the bound Full selection",
+        "C599 MasterStateIsolation child selection matches the immutable bound artifacts",
+        "C599 MasterStateIsolation last-run.json is byte-identical after an rc run",
         "C599 MasterStateIsolation last-complete-green.json is byte-identical after an rc run",
         "C599 MasterStateIsolation last-monitor.json is byte-identical after an rc run",
         "C599 MasterStateIsolation interim-qualification-receipt.json is byte-identical after an rc run",
         "C599 MasterStateIsolation rc into the master state root refuses");
 
     [Test]
-    public Task C599_ParameterHops() => RunCaseAsync("C599_ParameterHops", 23,
+    public Task C599_ParameterHops() => RunCaseAsync("C599_ParameterHops", 29,
         "C599 ParameterHops unknown profile refuses at the core",
         "C599 ParameterHops rc with a master ref refuses",
         "C599 ParameterHops rc without ExpectedSha refuses",
         "C599 ParameterHops trigger rc without the rc profile refuses",
         "C599 ParameterHops candidate id is derived from the ref",
+        "C599 ParameterHops run starts without child summaries",
+        "C599 ParameterHops outer run reaches self-reexec without refusal",
+        "C599 ParameterHops exactly one fresh child summary names this run",
+        "C599 ParameterHops child consumed the pinned RC identity",
+        "C599 ParameterHops child consumed the bound Full selection",
+        "C599 ParameterHops child selection matches the immutable bound artifacts",
         "C599 ParameterHops the self-reexec hop forwards -Profile",
         "C599 ParameterHops the tests hop forwards -Profile");
 
