@@ -1,4 +1,4 @@
-#requires -Version 5.1
+#requires -Version 7.0
 # CARD-0585 S6 harness for scripts/run-checkpoint.ps1. Offline: a shim .ps1 stands in for dotnet
 # and copies a fixture TRX into the run's --results-directory, so no build and no test ever runs.
 # ASCII-only.
@@ -14,6 +14,7 @@ $here = $PSScriptRoot
 $lib = Join-Path $here 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
 . (Join-Path $lib 'c487-harness.ps1')
+. (Join-Path $lib 'checkpoint-file-reader.ps1')
 
 # CP-14 passes no -ResultsDirectory. Join-Path rejects a null $env:TEMP, so use the platform temp directory.
 if ([string]::IsNullOrWhiteSpace($ResultsDirectory) -and [string]::IsNullOrWhiteSpace($env:TEMP)) {
@@ -350,11 +351,20 @@ function Test-C585_LineFormat {
 }
 
 function Test-C585_AsciiOnly {
-    $runnerBytes = @([IO.File]::ReadAllBytes($script:Runner) | Where-Object { $_ -gt 127 })
-    Assert-C487 -Cond ($runnerBytes.Count -eq 0) -Name 'C585 AsciiOnly run-checkpoint.ps1 is ASCII-only' -Detail ([string]$runnerBytes.Count)
+    $ErrorActionPreference = 'Stop'
+    try {
+        $runnerBytes = @((Read-CheckpointBytes $script:Runner) | Where-Object { $_ -gt 127 })
+        Assert-C487 -Cond ($runnerBytes.Count -eq 0) -Name 'C585 AsciiOnly run-checkpoint.ps1 is ASCII-only' -Detail ([string]$runnerBytes.Count)
+    } catch {
+        Assert-C487 -Cond $false -Name 'C585 AsciiOnly run-checkpoint.ps1 is ASCII-only' -Detail $_.Exception.Message
+    }
     $harness = Join-Path $here 'test-run-checkpoint.ps1'
-    $harnessBytes = @([IO.File]::ReadAllBytes($harness) | Where-Object { $_ -gt 127 })
-    Assert-C487 -Cond ($harnessBytes.Count -eq 0) -Name 'C585 AsciiOnly the harness is ASCII-only' -Detail ([string]$harnessBytes.Count)
+    try {
+        $harnessBytes = @((Read-CheckpointBytes $harness) | Where-Object { $_ -gt 127 })
+        Assert-C487 -Cond ($harnessBytes.Count -eq 0) -Name 'C585 AsciiOnly the harness is ASCII-only' -Detail ([string]$harnessBytes.Count)
+    } catch {
+        Assert-C487 -Cond $false -Name 'C585 AsciiOnly the harness is ASCII-only' -Detail $_.Exception.Message
+    }
 }
 
 # CARD-0671: -MsBuildProperty reaches the build AND the `dotnet run`, so a UseAppHost=false build
