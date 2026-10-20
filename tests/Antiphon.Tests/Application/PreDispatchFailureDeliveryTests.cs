@@ -336,8 +336,9 @@ public sealed class PreDispatchFailureDeliveryTests
         var debt = await verify.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.TaskId == taskId);
         var prompt = (await NotePromptsAsync(schema.ConnectionString, parent.SessionId)).ShouldHaveSingleItem();
         var original = prompt.Text!;
+        var headerOnly = original.Split('\n')[0];
         await verify.TranscriptEntries.Where(t => t.Id == prompt.Id).ExecuteUpdateAsync(
-            s => s.SetProperty(t => t.Text, original.Split('\n')[0]));
+            s => s.SetProperty(t => t.Text, headerOnly));
         await RecoverAsync(provider, CancellationToken.None);
         (await verify.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == debt.Id))
             .ConfirmedAt.ShouldBeNull("a header and Sent stamp cannot confirm the complete failure");
