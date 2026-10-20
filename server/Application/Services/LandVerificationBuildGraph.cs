@@ -5,11 +5,14 @@ namespace Antiphon.Server.Application.Services;
 /// the ordinal-sorted, NUL-terminated ls-tree records selected below (mode, blob ID and path).
 /// Audited at a935ec8973a074a8b075ed313fffc87ba63b3189: 292 entries. Projects embed bundle
 /// Markdown and docs JSON, but no docs Markdown or root README in the verification build.
+/// Re-audited at fbbb0ee2f1f0c8e5cdddaa5f982b249e886dc34d after the S2 re-pick:
+/// the same 292 entries, with five newer-master PowerShell changes for RC candidate identity,
+/// its fixture, bounded-reader timing and the desktop smoke guard; no new documentation inputs.
 /// Re-audit imports/resources/entrypoints before changing this digest; drift means build.
 /// </summary>
 internal sealed class LandVerificationBuildGraph
 {
-    internal const string Fingerprint = "45F95B3ED7699BC2EA32731BBB58A5B1070B9E90158BC35F94B3E1904DEB1AD1";
+    internal const string Fingerprint = "7CE3DBBB8333B1970B98BFFDFD3A8500763F51FE88ED0D9A7D2DAD3FC88F23A7";
 
     internal bool Includes(string path)
     {
