@@ -563,7 +563,13 @@ test helper and must never write into the user's normal Codex home.
 - Turn completion is an explicit `event_msg/task_complete` row. Codex renders **no "Worked for Ns"
   done-line**, so the screen fallback is the *lifecycle* of the `Working (Ns — esc to interrupt)`
   indicator — appeared, then left. Bare quiet time was the CARD-0108 defect: it certified a
-  non-turn as complete in ~3.2 s and returned the status bar as the answer.
+  non-turn as complete in ~3.2 s and returned the status bar as the answer. The runner adapter
+  uses the first `TurnEnd` past the submitted prompt's transcript baseline and forwards its
+  stop reason. Exact `cancelled` returns `TurnCompleted=false` with diagnostic text/snapshot
+  before screen fallback can report success. The caller handles that interruption before its
+  timeout branch, retaining the Running session and StreamingTurn attempt without after-run
+  hooks, kill or disposal. Null/other reasons retain their completion semantics, including the
+  adapter's existing API-error policy (CARD-1322 S3/S4).
 - `event_msg/turn_aborted` normalizes to a `TurnEnd` with exact `StopReason=cancelled` and
   optional `turn_id` attribution. It is an idle boundary excluded by `IsReportBoundary`;
   abort error metadata does not become an API error. Both abort and completion consume the
