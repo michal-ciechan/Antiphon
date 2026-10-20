@@ -299,7 +299,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 agent.Name, attemptNumber);
             // IgnoreSubscriptionQuota: a supervisor cannot pick another provider, and stopping
             // AlwaysOn restarts on a quota reading is the silent-stop the CARD-0136 gate forbids.
-            await StartSupervisedRestartAsync(agent, state, beforeAttempt, capacityActionKey: null, ct);
+            if (!await StartSupervisedRestartAsync(agent, state, beforeAttempt, capacityActionKey: null, ct))
+                return false;
 
             // Success ⇒ stop scheduling; the failure counter only resets after sustained health.
             // (StartAsync clears supervision state itself for manual semantics; re-load ours.)
@@ -482,20 +483,70 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         await _db.SaveChangesAsync(ct);
         if (await CheckCompactionAdmission.BlocksAutomaticRestartAsync(_db, agent.Id, ct))
             return false;
-        await StartSupervisedRestartAsync(agent, state,
+        return await StartSupervisedRestartAsync(agent, state,
             await FindPersistentSessionAsync(agent, statuses: null, ct), wait.ActionKey, ct);
-        return true;
     }
 
-    private Task<AgentDetailDto> StartSupervisedRestartAsync(
+    private async Task<bool> StartSupervisedRestartAsync(
         Agent agent, AgentSupervisionState state, AgentSession? current, string? capacityActionKey, CancellationToken ct)
     {
         var policy = new StandingRestartEscalationPolicy(_settings, _delegation);
-        return policy.CanReserve(agent, state, current, current?.AgentKind ?? agent.Kind)
-            ? _control.StartSupervisedFreshAsync(agent.Id, current!.Id, current.StartedAt, capacityActionKey, ct)
-            : _control.StartAsync(agent.Id, new StartAgentRequest(Fresh: false,
+        if (!policy.CanReserve(agent, state, current, current?.AgentKind ?? agent.Kind))
+        {
+            await _control.StartAsync(agent.Id, new StartAgentRequest(Fresh: false,
                 IgnoreSubscriptionQuota: !StandingSpecialistSeatPolicy.IsAlternate(agent),
                 CapacityRecovery: capacityActionKey is not null), ct, automatic: true);
+            return true;
+        }
+
+        try
+        {
+            await _control.StartSupervisedFreshAsync(agent.Id, current!.Id, current.StartedAt, capacityActionKey, ct);
+            return true;
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            // Both ordinary and capacity handoffs must stop after a pre-commit refusal.
+            // Read persisted state in a fresh scope: reservation rollback can leave tracked
+            // allowance/pointer changes behind, and a concurrent human Start may have won.
+            bool held;
+            if (_scopeFactory is not null)
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                held = await scope.ServiceProvider.GetRequiredService<AgentSupervisorService>()
+                    .HoldRefusedFreshAsync(agent.Id, current!.Id, current.StartedAt, ct);
+            }
+            else
+            {
+                _db.ChangeTracker.Clear();
+                held = await HoldRefusedFreshAsync(agent.Id, current!.Id, current.StartedAt, ct);
+            }
+            if (!held) throw;
+            _logger.LogWarning(ex, "Agent {AgentName}: automatic fresh reservation refused; continuity held", agent.Name);
+            return false;
+        }
+    }
+
+    private async Task<bool> HoldRefusedFreshAsync(
+        Guid agentId, Guid expectedSessionId, DateTime expectedStartedAt, CancellationToken ct)
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        var state = await _herdrSupervision.ObserveAsync(agentId, false, false, ct);
+        var agent = await _db.Agents.SingleAsync(a => a.Id == agentId, ct);
+        var current = await FindPersistentSessionAsync(agent, statuses: null, ct);
+        if (current?.Id != expectedSessionId || current.StartedAt != expectedStartedAt
+            || !new StandingRestartEscalationPolicy(_settings, _delegation)
+                .CanReserve(agent, state, current, current.AgentKind))
+            return false;
+
+        // Keep the unused allowance, but distinguish refusal from the repeated-resume hold
+        // which permits one reservation. Only committed acceptance clears this decision.
+        await new StandingContinuityState(_db, _timeProvider).HoldAsync(agentId, current.Id,
+            StandingContinuityReason.AutomaticFreshRefused,
+            "Automatic fresh reservation was refused before commit; inspect pending input and work before explicit recovery.", ct);
+        await transaction.CommitAsync(ct);
+        await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
+        return true;
     }
 
     private async Task<bool> TryHoldRepeatedResumeFailureAsync(

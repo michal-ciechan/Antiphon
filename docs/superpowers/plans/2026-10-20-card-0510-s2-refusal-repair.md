@@ -15,6 +15,12 @@ Each scenario counts real runner inventory preflights to distinguish refused Sta
 calls from the supervisor's ordinary probe, then reads persisted state independently.
 No new test class or Slow registry row is needed.
 
+The shared restart helper rechecks the persisted generation and eligibility under
+the agent lock after refusal. `AutomaticFreshRefused` is a continuity reason that
+cannot bypass the hold; it does not consume the allowance or add an alert kind.
+An existing hold timestamp is retained. A committed reservation or concurrent
+accepted human start is not overwritten by refusal bookkeeping.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |

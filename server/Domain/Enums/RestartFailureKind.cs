@@ -15,4 +15,5 @@ public enum StandingContinuityReason
     TargetIncompatible,
     OwnershipUnproven,
     RepeatedResumeFailure,
+    AutomaticFreshRefused,
 }
