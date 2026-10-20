@@ -137,7 +137,8 @@ public sealed class CheckpointSelectedOutputTests : CheckpointTestBase
         CheckpointFixtureProcess.Git(repo, "config", "user.name", "Checkpoint fixture");
         CheckpointFixtureProcess.Git(repo, "config", "user.email", "checkpoint@example.invalid");
         File.WriteAllText(Path.Combine(repo, ".gitignore"),
-            "bin-*/\n.antiphon/\n" + CheckpointTestScope.MarkerName + "\n");
+            "bin-*/\n.antiphon/\n" + TestRootGuard.MarkerName + "\n"
+            + TestRootGuard.LockName + "\n" + TestRootGuard.RunsName + "\n");
         foreach (var project in new[] { "sample", "dependency" })
         {
             Directory.CreateDirectory(Path.Combine(repo, project));
