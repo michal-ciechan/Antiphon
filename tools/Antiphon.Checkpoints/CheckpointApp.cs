@@ -76,25 +76,35 @@ public static class CheckpointApp
 
         try
         {
-            return await ExecuteCoreAsync(runDirectory, cancellationToken, runtime).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = await ExecuteCoreAsync(runDirectory, cancellationToken, runtime).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return result;
         }
         catch (Exception ex)
         {
-            var reason = "executor.log or executor failure: " + ex.GetType().Name + ": " + ex.Message
+            // The scheduler may return a timeout/owner result after joining canceled
+            // drivers. Only the invoking caller token selects the interrupt outcome.
+            var canceled = cancellationToken.IsCancellationRequested;
+            var exit = canceled ? ExitCodes.Canceled : ExitCodes.ExecutorCrashed;
+            var reason = canceled ? "caller-requested"
+                : "executor.log or executor failure: " + ex.GetType().Name + ": " + ex.Message
                 + (ex.InnerException is null ? "" : " <- " + ex.InnerException.ToString().Replace("\n", " | "));
+            var output = runtime.Output ?? Console.Error;
             var statePath = Path.Combine(runDirectory, "state.json");
             var store = new RunStateStore(context);
             var state = store.TryRead(statePath) ?? new RunState { RunId = Path.GetFileName(runDirectory) };
             state.Phase = "done";
-            state.ExitCode = ExitCodes.ExecutorCrashed;
+            state.ExitCode = exit;
             state.Reason = reason;
             state.EndedAt = context.Time.GetUtcNow();
             var model = new ReportModel
             {
                 RunId = state.RunId,
+                Commit = state.Source.Start.Commit ?? "",
                 StartedAt = state.StartedAt,
                 EndedAt = state.EndedAt.Value,
-                ExitCode = ExitCodes.ExecutorCrashed,
+                ExitCode = exit,
                 Reason = reason,
                 Verdict = "RED",
                 Rows = state.Rows.Select(row => new ReportRow { Id = row.Id, State = row.State, ExitCode = row.ExitCode }).ToList(),
@@ -106,14 +116,14 @@ public static class CheckpointApp
                 ReportWriter.WriteFiles(context, runDirectory, model);
                 var persisted = store.Write(statePath, state);
                 if (persisted is not null)
-                    Console.Error.WriteLine("refused: " + persisted);
+                    output.WriteLine("refused: " + persisted);
             }
             catch (Exception persistence)
             {
-                Console.Error.WriteLine("checkpoint terminal persistence failed: " + persistence.Message);
+                output.WriteLine("checkpoint terminal persistence failed: " + persistence.Message);
             }
-            Console.Error.WriteLine("checkpoint executor failed: " + ex.Message);
-            return ExitCodes.ExecutorCrashed;
+            output.WriteLine(canceled ? "canceled: caller-requested" : "checkpoint executor failed: " + ex.Message);
+            return exit;
         }
     }
 
@@ -262,6 +272,7 @@ public static class CheckpointApp
             throw new InvalidOperationException("scheduler crashed", ex);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         if (owner.Ended.IsCancellationRequested)
         {
             state.Reason = owner.Reason;
@@ -323,6 +334,7 @@ public static class CheckpointApp
             SafeWrite.Under(runDirectory));
         if (gitAppend is not null)
             throw new IOException("refused: " + gitAppend);
+        cancellationToken.ThrowIfCancellationRequested();
         ReportWriter.WriteFiles(context, runDirectory, model);
         try
         {
@@ -451,6 +463,7 @@ public static class CheckpointApp
             model.Reason = owner.Reason;
             ReportWriter.WriteFiles(context, runDirectory, model);
         }
+        cancellationToken.ThrowIfCancellationRequested();
         Finish(state, model.ExitCode, Publish, () => { }, _ => { }, context);
         return model.ExitCode;
         }

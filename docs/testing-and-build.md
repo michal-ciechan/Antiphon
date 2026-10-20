@@ -492,6 +492,22 @@ Exit codes: 0 green, 1 failed tests, 2 invalid manifest/build, missing/malformed
 
 CARD-1254 shadow-copy safety boundary: only paths copied and recorded by the starter are sealed; no disk record is imported into SafeWrite's generic creation registry. The cleanup gate, executor-generation check, current-image veto and SafeDelete Git/link/containment checks remain in force. Inventory and bytes are checked before cleanup and again per entry; files are unlinked individually and directories removed nonrecursively. The receipt and ownership journal share the OS-account trust boundary: their hash detects changes to the receipt alone, not an actor able to forge both control records. Cooperating writers use the gate; there is no atomic filesystem transaction against a hostile same-account writer. Linux directories bind device/inode; the portable fallback uses creation time and requires native Windows qualification. A definite native launch refusal now records `not-started`; ambiguous launch or failed custody publication remains retained.
 
+CARD-1307 caller cancellation returns **130**, with `canceled: caller-requested`.
+Work verbs install a `Console.CancelKeyPress` handler for their invocation and
+remove it on exit; repeated interrupts cancel the same token. Internal `hold`,
+`smoke-write` and `smoke-detach` helpers keep their existing signal behavior.
+Canceling `run` or `wait` stops that observer; the detached executor continues.
+Keep the printed run ID for a later `wait --run <run>` or explicit `stop`.
+Direct `row` cancellation reaches slot probing, acquisition and its driver.
+A directly canceled executor joins scheduler/driver and lease cleanup before
+attempting non-green terminal state/report publication with exit 130 and reason
+`caller-requested`. Receipt write refusals remain diagnostic failures; an exit
+code alone does not prove successful terminal persistence. Cooperative cancellation
+may wait for bounded synchronous custody operations. Internal receipt deadlines,
+row/total timeouts, owner settlement, crashes and max-wait retain their existing
+codes unless the caller token itself is canceled. Exit 130 is an invocation
+outcome and is not added to row-result precedence.
+
 CARD-1307 sealed tool removal publishes `<run>/tool-removal-started.json` under the
 cleanup lock after dead-owner and full authority admission, before any tool unlink.
 It records the run, tool path and authority digest through ordinary safe-write
