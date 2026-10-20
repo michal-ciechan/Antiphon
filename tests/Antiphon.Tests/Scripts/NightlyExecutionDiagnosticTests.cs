@@ -8,6 +8,17 @@ namespace Antiphon.Tests.Scripts;
 public sealed class NightlyExecutionDiagnosticTests
 {
     [Test]
+    public Task D13_RealTimeoutCancelled() => RunCaseAsync(nameof(D13_RealTimeoutCancelled), 10,
+        new[] { "Timeout", "Cancelled" }.SelectMany(state => new[]
+        {
+            $"D13 real {state} pinned bytes",
+            $"D13 real {state} native identity",
+            $"D13 real {state} parsed identity",
+            $"D13 real {state} exact message",
+            $"D13 real {state} complete failed verdict"
+        }).ToArray());
+
+    [Test]
     public Task D13_ErrorTerminal() => RunCaseAsync(nameof(D13_ErrorTerminal), 10,
         "D13 LF failure identity", "D13 LF failure message", "D13 LF complete failed verdict",
         "D13 CRLF failure identity", "D13 CRLF failure message", "D13 CRLF complete failed verdict");

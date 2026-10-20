@@ -753,6 +753,74 @@ function Get-D13FailureText {
     return ("Version: '1.44.0.0'`nVersion: 2.2.2`n" + $D13FailureRecord)
 }
 
+function Test-D13_RealTimeoutCancelled {
+    . (Join-Path $here 'fixtures/nightly/c1375-diagnostic-records.ps1')
+    foreach ($fixture in (Get-C1375DiagnosticFixtures)) {
+        $state = $fixture.State
+        $decoded = @{}
+        $bytesOk = $true
+        foreach ($name in @('MtpHeader', 'TunitHeader', 'Record', 'Results', 'Definitions')) {
+            $part = $fixture.$name
+            $bytes = [Convert]::FromBase64String($part.Base64)
+            $hasher = [Security.Cryptography.SHA256]::Create()
+            try { $hash = ([BitConverter]::ToString($hasher.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
+            finally { $hasher.Dispose() }
+            $text = [Text.Encoding]::UTF8.GetString($bytes)
+            $bytesOk = $bytesOk -and $bytes.Length -eq $part.Length -and $hash -ceq $part.Sha256 -and
+                [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($text)) -ceq $part.Base64
+            $decoded[$name] = $text
+        }
+        Assert-C487 -Cond $bytesOk -Name "D13 real $state pinned bytes"
+        # Independent semantic oracle: never derive expectations from the parser
+        # or from the captured record being tested.
+        $class = 'C1375.Probe.C1375Producer'
+        if ($state -ceq 'Timeout') {
+            $uid = 'C1375.Probe.C1375Producer.1.1.TimeoutProbe(System.Threading.CancellationToken).1.1.0'
+            $method = 'TimeoutProbe'
+            $property = 'TimeoutTestNodeStateProperty'
+            $expectedMessage = '[Timeout] Test timed out after 100ms'
+        } else {
+            $uid = 'C1375.Probe.C1375Producer.1.1.CancelledProbe.1.1.0'
+            $method = 'CancelledProbe'
+            $property = 'CancelledTestNodeStateProperty'
+            $expectedMessage = $null
+        }
+        Assert-C487 -Cond ($decoded.Record.Contains("$property {") -and
+            $decoded.Record.Contains("TestNodeUid { Value = $uid }") -and
+            $decoded.Record.Contains('Namespace = C1375.Probe, TypeName = C1375Producer, MethodName = ' + $method + ',')) `
+            -Name "D13 real $state native identity"
+        $path = Write-C1044Diagnostic -Name "c1375-$state" -Text (
+            $decoded.MtpHeader + $decoded.TunitHeader + $decoded.Record)
+        $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution).Nodes)
+        Assert-C487 -Cond ($nodes.Count -eq 1 -and $nodes[0].Uid -ceq $uid -and
+            $nodes[0].ClassName -ceq $class -and $nodes[0].Method -ceq $method -and $nodes[0].Outcome -ceq 'Failed') `
+            -Name "D13 real $state parsed identity"
+        $messageOk = $nodes.Count -eq 1
+        if ($null -eq $expectedMessage) {
+            $messageOk = $messageOk -and $nodes[0].PSObject.Properties.Name -cnotcontains 'Message'
+        } else {
+            $messageOk = $messageOk -and $nodes[0].Message -ceq $expectedMessage
+        }
+        Assert-C487 -Cond $messageOk -Name "D13 real $state exact message"
+        $trx = Join-Path $ResultsDirectory "c1375-$state.trx"
+        [IO.File]::WriteAllText($trx, ('<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">' +
+            $decoded.Results + $decoded.Definitions + '</TestRun>'))
+        $rows = @(Read-NightlyTrxIdentities -TrxPath $trx)
+        $discovery = Join-Path $ResultsDirectory "c1375-$state.json"
+        Write-C487Discovery -Path $discovery -Nodes @(@{ uid = $uid; namespace = 'C1375.Probe';
+            type = 'C1375Producer'; method = $method; state = 'Discovered' })
+        $verdict = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trx -DiscoveryPath $discovery -ExecutionDiagnosticPath $path `
+            -RunDirectory $ResultsDirectory -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-1)) -ProcessExit 2 `
+            -Sha 'c1375' -ExpectedSha 'c1375' -GitRef 'test' -ExpectedRef 'test' -PolicyHash 'test' -ExpectedPolicyHash 'test'
+        Assert-C487 -Cond ($rows.Count -eq 1 -and $rows[0].ClassName -ceq $class -and
+            $rows[0].MethodName -ceq $method -and $rows[0].Outcome -ceq 'Failed' -and
+            $verdict.coverageComplete -and -not $verdict.testsPassed -and $verdict.reasons -contains 'failed-row' -and
+            @($verdict.terminalNodes).Count -eq 1 -and $verdict.terminalNodes[0].Uid -ceq $uid -and
+            $verdict.terminalNodes[0].Outcome -ceq 'Failed') -Name "D13 real $state complete failed verdict" `
+            -Detail ($verdict.reasons -join ',')
+    }
+}
+
 function Test-D13_ErrorTerminal {
     . (Join-Path $here 'fixtures/nightly/d13-error-pair.ps1')
     $uid = 'Antiphon.E2E.AgentTaskLandDeliveryE2ETests.1.1.C488_ApprovalPollingCannotConfirm.1.1.0'
