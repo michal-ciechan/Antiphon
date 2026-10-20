@@ -584,7 +584,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         return await WaitAsync(start, cancellationToken);
     }
 
-    private async Task<RunResult> WaitAsync(ProcessStartInfo start, CancellationToken cancellationToken)
+    internal async Task<RunResult> WaitAsync(ProcessStartInfo start, CancellationToken cancellationToken)
     {
         using var process = Process.Start(start);
         process.ShouldNotBeNull();
@@ -626,5 +626,5 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
 
     private sealed record Victim(string Relative, string FullPath, byte[] Bytes);
 
-    private sealed record RunResult(int Exit, string Output);
+    internal sealed record RunResult(int Exit, string Output);
 }

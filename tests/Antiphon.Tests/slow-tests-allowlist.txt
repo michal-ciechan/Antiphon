@@ -323,3 +323,5 @@ Antiphon.Tests.Application.DispatchSiblingInspectionTests
 Antiphon.Tests.Application.DispatcherSiblingInspectionSchedulingTests
 # CARD-1349: committed block logs and inspection attention on isolated PostgreSQL with real Git.
 Antiphon.Tests.Application.DispatchBaseInspectionDiagnosticsTests
+# CARD-1233 S8: four actual fixture callers exercise cancellation and inherited-pipe custody.
+Antiphon.Tests.Checkpoints.CheckpointFixtureRoutingTests
