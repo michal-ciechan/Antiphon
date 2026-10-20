@@ -111,6 +111,13 @@ function openTerminal(mirror: boolean, options: ITerminalOptions = {}) {
   assertGeometry(terminal)
   return terminal
 }
+function closeTerminal(terminal: Terminal) {
+  const host = terminal.element!.parentElement!
+  terminal.dispose()
+  owned.splice(owned.indexOf(terminal), 1)
+  hosts.splice(hosts.indexOf(host), 1)
+  host.remove()
+}
 function collect(terminal: Terminal) {
   const data: string[] = []
   const binary: string[] = []
@@ -296,6 +303,7 @@ describe.sequential('CARD-0148 mouse policy', () => {
       expect(directPress(bare), `${label} direct reachability`).toBe(true)
       expect(bareEvents.data, label).toEqual(encoding.data)
       expect(bareEvents.binary, label).toEqual(encoding.binary)
+      closeTerminal(bare)
 
       const terminal = openTerminal(true)
       const emitted = collect(terminal)
@@ -311,6 +319,7 @@ describe.sequential('CARD-0148 mouse policy', () => {
       expect.soft(directPress(terminal), `${label} direct restriction`).toBe(false)
       expect.soft(emitted.data, `${label} direct data`).toEqual([])
       expect.soft(emitted.binary, `${label} direct binary`).toEqual([])
+      closeTerminal(terminal)
     }
   })
 
@@ -319,6 +328,7 @@ describe.sequential('CARD-0148 mouse policy', () => {
     await write(bare, 'HELLO WORLD')
     dragHello(bare)
     expect(bare.getSelection(), 'bare ordinary drag').toBe('HELLO')
+    closeTerminal(bare)
     const terminal = openTerminal(true)
     const emitted = collect(terminal)
     await write(terminal, GROK_STARTUP + '\x1b[HHELLO WORLD')
@@ -363,6 +373,7 @@ describe.sequential('CARD-0148 mouse policy', () => {
       }
       expect(emitted.data, label).toEqual([])
       expect(emitted.binary, label).toEqual([])
+      closeTerminal(terminal)
     }
   })
 
@@ -377,6 +388,7 @@ describe.sequential('CARD-0148 mouse policy', () => {
       wheel(bare, 1)
       expect(bareEvents.data, `${buffer} fallback reachability`).toEqual(['\x1b[A', '\x1b[B'])
       expect(bareEvents.binary).toEqual([])
+      closeTerminal(bare)
       const terminal = openTerminal(true, options)
       const emitted = collect(terminal)
       await write(terminal, setup)
@@ -390,6 +402,7 @@ describe.sequential('CARD-0148 mouse policy', () => {
         expect(terminal.buffer.active.baseY, label).toBe(0)
         expect(terminal.buffer.active.viewportY, label).toBe(0)
       }
+      closeTerminal(terminal)
     }
   })
 
@@ -403,6 +416,7 @@ describe.sequential('CARD-0148 mouse policy', () => {
     vi.mocked(getSessionBuffer).mockResolvedValueOnce({ sessionId: 'session-1', buffer: 'READY', lastSequence: 1 })
     const view = renderWithProviders(<SessionTerminal session={runningSession} />)
     await panelParsed('READY')
+    await write(panel, '\x1b[H')
     const emitted = collect(panel)
     const first = write(panel, '\x1b[?1003;1006;20')
     const second = write(panel, '04;1049hALT')
@@ -434,8 +448,21 @@ describe.sequential('CARD-0148 mouse policy', () => {
   })
 
   it('reset and instances remain independent', async () => {
+    async function assertBareReports(bare: Terminal, label: string) {
+      const bareEvents = collect(bare)
+      await write(bare, '\x1b[?1003;1006h')
+      press(bare)
+      expect(bareEvents.data, `${label} bare press`).toEqual(['\x1b[<0;5;3M'])
+      release()
+      bareEvents.clear()
+      hover(bare)
+      expect(bareEvents.data, `${label} bare hover`).toEqual(['\x1b[<35;5;3M', '\x1b[<35;6;3M'])
+      expect(bareEvents.binary, label).toEqual([])
+      closeTerminal(bare)
+    }
     const before = openTerminal(false)
     const terminal = openTerminal(true)
+    await assertBareReports(before, 'created before mirror')
     const emitted = collect(terminal)
     for (const { name, mode } of protocols) {
       terminal.reset()
@@ -449,6 +476,7 @@ describe.sequential('CARD-0148 mouse policy', () => {
       expect(emitted.data, `${name} selection`).toEqual([])
       expect(emitted.binary, `${name} selection`).toEqual([])
     }
+    closeTerminal(terminal)
     const fresh = openTerminal(true)
     const freshEvents = collect(fresh)
     await write(fresh, GROK_STARTUP + 'HELLO WORLD')
@@ -457,23 +485,23 @@ describe.sequential('CARD-0148 mouse policy', () => {
     expect(fresh.getSelection()).toBe('HELLO')
     expect(freshEvents.data).toEqual([])
     expect(freshEvents.binary).toEqual([])
-    for (const [label, bare] of [['before', before], ['after', openTerminal(false)]] as const) {
-      const bareEvents = collect(bare)
-      await write(bare, '\x1b[?1003;1006h')
-      press(bare)
-      expect(bareEvents.data, `${label} bare press`).toEqual(['\x1b[<0;5;3M'])
-      release()
-      bareEvents.clear()
-      hover(bare)
-      expect(bareEvents.data, `${label} bare hover`).toEqual(['\x1b[<35;5;3M', '\x1b[<35;6;3M'])
-      expect(bareEvents.binary, label).toEqual([])
-    }
+    closeTerminal(fresh)
+    await assertBareReports(openTerminal(false), 'created after mirrors')
   })
 
   it('alt click stays local', async () => {
     function altClick(terminal: Terminal) {
-      mouse(screen(terminal), 'mousedown', 25, 10, { altKey: true })
-      mouse(document, 'mouseup', 25, 10, { altKey: true })
+      // Create the physical gesture's event pair together: synchronous layout
+      // during dispatch must not change its timestamp interval on a loaded host.
+      const options: MouseEventInit = {
+        bubbles: true, cancelable: true, clientX: 25, clientY: 10,
+        button: 0, detail: 1, altKey: true,
+      }
+      const down = new MouseEvent('mousedown', { ...options, buttons: 1 })
+      const up = new MouseEvent('mouseup', { ...options, buttons: 0 })
+      expect(up.timeStamp - down.timeStamp, 'Alt-click gesture interval').toBeLessThan(100)
+      screen(terminal).dispatchEvent(down)
+      document.dispatchEvent(up)
     }
     const bare = openTerminal(false, { altClickMovesCursor: true })
     const bareEvents = collect(bare)
@@ -481,6 +509,7 @@ describe.sequential('CARD-0148 mouse policy', () => {
     altClick(bare)
     expect(bareEvents.data.join(''), 'bare alt-click reachability').not.toBe('')
     expect(bareEvents.data.join('')).toMatch(/^(\x1b\[D)+$/)
+    closeTerminal(bare)
     const terminal = openTerminal(true, { altClickMovesCursor: true })
     const emitted = collect(terminal)
     for (const tracking of [false, true]) {
