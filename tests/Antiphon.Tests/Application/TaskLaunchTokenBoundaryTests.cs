@@ -28,12 +28,13 @@ public sealed partial class TaskLaunchTokenBoundaryTests
                 using var db = Open(schema);
                 var task = db.AgentTasks.AsNoTracking().Single(t => t.Id == seeded.TaskId);
                 var session = db.AgentSessions.AsNoTracking().Single(s => s.Id == sessionId);
-                return spec.Env.TryGetValue("ANTIPHON_TASK_TOKEN", out var token)
+                var tokenCommitted = spec.Env.TryGetValue("ANTIPHON_TASK_TOKEN", out var token)
                     && !string.IsNullOrWhiteSpace(token)
-                    && task.TokenHash == AgentTaskService.HashToken(token)
-                    && task.AgentSessionId == sessionId
+                    && task.TokenHash == AgentTaskService.HashToken(token);
+                var generationCommitted = task.AgentSessionId == sessionId
                     && session.Status == SessionStatus.Starting
                     && session.StartedAt == generation;
+                return new BoundaryObservation(tokenCommitted, generationCommitted);
             },
         };
         await using var services = CreateServices(schema, workspace.Path, sink);
@@ -48,7 +49,10 @@ public sealed partial class TaskLaunchTokenBoundaryTests
                 .TickAsync(CancellationToken.None);
 
             var launch = sink.Launches.ShouldHaveSingleItem();
-            launch.DurableAtEnqueue.ShouldBeTrue("the fresh specialist needs an already committed, matching task token");
+            launch.Boundary.ShouldNotBeNull().TokenCommitted.ShouldBeTrue(
+                "the fresh specialist needs an already committed, matching task token");
+            launch.Boundary.GenerationCommitted.ShouldBeTrue(
+                "the exact Starting generation must already be committed at enqueue");
             launch.SessionId.ShouldNotBe(seeded.PreviousSessionId);
             launch.AgentId.ShouldBe(seeded.AgentId);
             var token = launch.Spec.Env["ANTIPHON_TASK_TOKEN"];

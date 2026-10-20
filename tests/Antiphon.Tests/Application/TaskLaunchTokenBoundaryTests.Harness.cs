@@ -10,11 +10,14 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Antiphon.Tests.Application;
 
 public sealed partial class TaskLaunchTokenBoundaryTests
 {
+    private static readonly DateTimeOffset FixtureTime = new(2026, 10, 20, 12, 0, 0, TimeSpan.Zero);
+
     private static AppDbContext Open(IsolatedTestSchema schema) =>
         new(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
 
@@ -30,7 +33,9 @@ public sealed partial class TaskLaunchTokenBoundaryTests
             if (fault is not null) options.AddInterceptors(fault);
         });
         services.AddSingleton<IEventBus, MockEventBus>();
-        services.AddSingleton(TimeProvider.System);
+        // Keep the launch generation exactly representable by PostgreSQL's microsecond
+        // timestamp storage, without weakening the equality asserted at enqueue.
+        services.AddSingleton<TimeProvider>(new FakeTimeProvider(FixtureTime));
         services.AddSingleton(Options.Create(new SupervisionSettings()));
         services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
         services.AddSingleton(Options.Create(new AgentSessionSettings()));
@@ -66,7 +71,7 @@ public sealed partial class TaskLaunchTokenBoundaryTests
     private static async Task<Seeded> SeedAsync(IsolatedTestSchema schema, string directory, AgentTaskRole role)
     {
         var seeded = new Seeded(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
-        var now = DateTime.UtcNow;
+        var now = FixtureTime.UtcDateTime;
         using var db = Open(schema);
         db.AgentSessions.Add(new AgentSession
         {
@@ -97,14 +102,15 @@ public sealed partial class TaskLaunchTokenBoundaryTests
         return seeded;
     }
 
-    private sealed record Launch(Guid SessionId, Guid AgentId, AgentLaunchSpec Spec, bool DurableAtEnqueue);
+    private sealed record BoundaryObservation(bool TokenCommitted, bool GenerationCommitted);
+    private sealed record Launch(Guid SessionId, Guid AgentId, AgentLaunchSpec Spec, BoundaryObservation? Boundary);
 
     private sealed class RecordingLaunchSink : IAgentTaskLaunchSink
     {
         public List<Launch> Launches { get; } = [];
-        public Func<Guid, DateTime, AgentLaunchSpec, bool>? Observe { get; init; }
+        public Func<Guid, DateTime, AgentLaunchSpec, BoundaryObservation>? Observe { get; init; }
         public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec) =>
-            Launches.Add(new Launch(sessionId, agentId, spec, Observe?.Invoke(sessionId, acceptedGeneration, spec) ?? false));
+            Launches.Add(new Launch(sessionId, agentId, spec, Observe?.Invoke(sessionId, acceptedGeneration, spec)));
     }
 
     private sealed class TokenHashSaveFault(IsolatedTestSchema schema, Guid taskId) : SaveChangesInterceptor
