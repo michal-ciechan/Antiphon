@@ -29,7 +29,11 @@ the older boundary's finished notification and preserves its separate late-confi
 publication phase; narrow requests do not publish SessionFinished. Input attempts,
 transcript confirmation and the 30-second delivery window are unchanged.
 Typed review handoff actions retain their original identity through acknowledgement;
-they are not coalescible boundary/status wakeups.
+they are not coalescible boundary/status wakeups. A newer routed queue request can
+execute a deferred typed handoff before its due time through the normal queue
+path, preserving all delivery gates and late-confirm obligations. If the recheck
+still defers, it persists the normal retry and ends the drain page without a
+continuation. Without a newer request, the capped backoff remains unchanged.
 
 Deferred task actions capture the task ID and attempt at admission. The action
 entry point checks that identity and session generation; its database context
