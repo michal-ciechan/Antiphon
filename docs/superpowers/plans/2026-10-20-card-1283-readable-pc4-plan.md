@@ -29,8 +29,41 @@ checkpoint execution.
 CHECKPOINT REPRO-BASE commit=9b05461295644e700f1391d97d4861f78422016b build=ok filter=/*/*/ComplexityChainRaceTests/A_sweep_that_loses_every_attempt_lets_the_concurrency_error_propagate executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-e59797b3/.antiphon/c1283-base/REPRO-BASE-20261020-141203-5cb8/run.trx slot=granted waited=0s dirty=0 source=9b05461295644e700f1391d97d4861f78422016b sourceState=clean buildSource=verified
 ```
 
-A bounded diagnostic reproduction of the removed guard is pending in this
-first plan commit. Its result and restoration will be recorded before handoff.
+The hang mechanism also reproduced on the same implementation. Starting from
+plan-only commit `6ed12c05e5c3d406b86f4c785bb24969c41fe476`,
+a **temporary, uncommitted diagnostic** removed only the final
+attempt guard and passed a five-second `CancellationTokenSource` token to the
+V-4 sweep call. A `finally` printed the fixture's existing save/fire counters.
+The subject made **1,569 saves and 1,569 competing commits** before cancellation:
+
+```text
+CARD1283_DIAGNOSTIC saves=1569 fired=1569 cancelled=True
+```
+
+The one selected test failed because `Should.ThrowAsync` expected
+`DbUpdateConcurrencyException` but received `TaskCanceledException`: 1 executed,
+0 passed, 1 failed, 0 skipped; test-host duration 45.948 seconds including database
+startup/migration. This is bounded evidence of the retry loop, **not an accepted
+readable-red PC-4 result**, and it is not a clean-source qualification.
+The original token is `CancellationToken.None`; the original competitor has
+no practical exhaustion deadline.
+
+Both diagnostic drivers used `scripts/build-slot.ps1` with granted slots:
+`c1283-bounded-repro-build` (build exit 0, 2m38s) and
+`c1283-bounded-repro-test` (TUnit exit 2). The build reused this task's isolated
+`tests/Antiphon.Tests/bin-c1283-base/` output with the same absolute OutputPath,
+ArtifactsPath and UseArtifactsOutput properties; it replaced the baseline
+binaries, without relabeling their earlier receipt. The test used `dotnet run
+--no-build` and the exact REPRO-BASE filter above. These additional diagnostic
+drivers were necessary to check the old card's premise, not additional ordinary
+coverage. Logs, diagnostic patch and TRX remain ignored under
+`.antiphon/c1283-probe/`.
+
+Both commands finished; the test disposed its PostgreSQL container. The two
+temporary source edits were restored byte-for-byte from pre-probe backups and
+`git diff --exit-code` over both files passed. No production or test change is
+part of this Plan deliverable. The checkpoint importer accepted the table below
+as one row. The implementation repair and readable-red witness remain pending.
 
 ## Decisions
 
