@@ -3,6 +3,9 @@ namespace Antiphon.Server.Application.Settings;
 /// <summary>CARD-0589 S4: <c>Landing</c> — how the land verifier waits for a host build slot.</summary>
 public sealed class LandingSettings
 {
+    /// <summary>Disable pre-publication build skips. AlreadyPresent still performs no new publication.</summary>
+    public bool ForceVerificationBuild { get; set; }
+
     /// <summary>Retain owned outputs across lands with the same repository/toolchain.</summary>
     public bool ReuseVerificationArtifacts { get; set; } = true;
 
