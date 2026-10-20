@@ -309,7 +309,7 @@ public static class CheckpointApp
             model.Evidence = Path.Combine(runDirectory, "report.md");
             var output = runtime.Output ?? Console.Error;
             foreach (var line in model.Rows.SelectMany(row => new[] { row.Line }.Concat(row.RerunLines))
-                         .Append(failure.Message))
+                         .OfType<string>().Append(failure.Message))
             {
                 output.WriteLine(line);
                 try { Note(line); }
