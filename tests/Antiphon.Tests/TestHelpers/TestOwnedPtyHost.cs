@@ -283,7 +283,15 @@ internal sealed class TestOwnedPtyHost
         {
             var start = process.StartTime.ToUniversalTime();
             var generation = OperatingSystem.IsLinux() ? Proc(pid).Generation : start.Ticks;
-            return new(pid, generation, start, process.MainModule!.FileName, Handle: process);
+            var image = process.MainModule?.FileName;
+            if (image is null)
+            {
+                // An exited process can retain its PID and start time without a module.
+                if (process.HasExited)
+                    throw new ArgumentException($"Process {pid} has exited.", nameof(pid));
+                throw new InvalidOperationException($"Could not read executable path for process {pid}.");
+            }
+            return new(pid, generation, start, image, Handle: process);
         }
         catch { process.Dispose(); throw; }
     }
