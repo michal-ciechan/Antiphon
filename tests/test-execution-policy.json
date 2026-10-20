@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "78597608619f2a83cae2a9f9b8f8dd2599ec0fef900f32fece7d4c3ef50c3505",
+  "policyHash": "8ae38383737189f6cc6e6fb625225e9fe761297e803971728be739b02382c19f",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -820,6 +820,14 @@
       ],
       "role": "child",
       "project": "scripts/fixtures/nightly/c487-probe/Probe.csproj"
+    },
+    {
+      "reason": "Explicit timeout/cancellation capture probe; captured diagnostics are consumed by Antiphon.Tests, not a normal test lane.",
+      "consumers": [
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ],
+      "role": "child",
+      "project": "scripts/fixtures/nightly/c1375-probe/Probe.csproj"
     },
     {
       "reason": "Explicit child host launched and reconciled by main script/checkpoint tests.",
