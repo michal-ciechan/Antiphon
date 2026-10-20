@@ -624,6 +624,12 @@ after the target queue. Any delivery baseline, timestamp, verdict or settlement 
 refuses the switch (including manual Fresh) with `standing_resume_delivery_pending`.
 Resolve that input using existing queue controls. Transcript and task history stay separate.
 
+CARD-1379: land queue positions reflect the complete reconciled ready snapshot,
+ordered by original request time and ordinal request ID. During startup or a
+failed reconciliation, no provisional waiting position is asserted. Held work
+retains its original age and is eligible for one attempt per periodic sweep;
+eligible later work can proceed.
+
 Land detail also includes `landRequest`: request/hold/progress clocks, holder, attempts,
 reconciliation disagreement, source SHAs, `sourceRefusalReason`, terminal failure
 (`terminalFailureCode`, `failureDiagnosticId`, `failureExceptionType`) and safe source-inspection
