@@ -173,3 +173,4 @@ The landing outcome explicitly starts this continuation; do not synthesize a sta
 Read parsed next= elsewhere. Mutation next=decide is caller triage of the full finding report,
 not automatically a human question. Preserve the original Done verdict and keep the companion
 open until its explicit disposition; no automatic card creation, tick spend or alert message. Commission binding-only at explicit Frontier, then eligible mechanical-execution at Low; one open Mutation per O.
+Ordinary dispatch follows the live Role × complexity matrix; these scoped tier requests still respect routing pins. Low requires a bound mechanically-eligible pack; see docs/mechanical-pc-contract.md.

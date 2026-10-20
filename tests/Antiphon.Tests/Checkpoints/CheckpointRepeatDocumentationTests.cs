@@ -37,7 +37,9 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // CARD-1330 removes 197 unpinned characters so the 500-char argv reserve holds. The keep-six line stays.
         // CARD-1332 moves five procedures to owner anchors in docs/orchestration-loop.md; the bundle keeps
         // rules and pointers (normalised body 10,822 of its 11,500 allocation). The keep-six line stays.
+        // CARD-1366 deliberately restores explicit Mutation tiers with matrix/pin and bound-pack
+        // qualifications: normalised body 11,077 of 11,500; transport and reserve limits stay fixed.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("63ad6bac3e238e5a4d02298bbfc59fa859e35da442b15dbab2856b554824993d", "orchestrator-approved-bytes");
+            .ShouldBe("2ec1bd25f1be78edab6346dd57bcfc691b39edffceaef0a274d7f03ca90c0129", "orchestrator-approved-bytes");
     }
 }
