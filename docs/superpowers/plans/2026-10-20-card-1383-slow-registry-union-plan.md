@@ -269,3 +269,319 @@ Completion requires the exact attribute, passing named guards and real-Git
 fixtures, preserved registry membership, narrow recorded checkpoints, ordinary
 Review and confirmed master publication. No session/input-wait behavior changes,
 so CARD-1083's parking/release checklist is not applicable.
+
+## Verification design
+
+TestDesign, 2026-10-20, inspected at
+`5328fdc15bbde09b6424a2187743f6031195e68b`. This section appends the executable
+verification contract to D-1 through D-6 and S1/S2; it does not replace that fix
+design. Target remains master only. No build, TUnit execution or PC execution is
+claimed by this design stage.
+
+### Inspection
+
+- `tests/Shared/TestClassificationMetadata.cs`: read `Read`, `ReadRegistry`,
+  `AssertRegistryMatches`, `FindRegistryPath`, `Format` and their category/method
+  helpers | layout, duplicate, reason-content, assembly/mode boundaries ->
+  V-1 through V-6, R-1 through R-6.
+- `tests/Antiphon.Tests/TestHelpers/TestClassificationPolicyTests.cs`: read the
+  class, particularly `C487_G062`, `C487_G063`, `C487_G064`, `WriteTempRegistry`,
+  `RunProbeAsync` and `RepoRoot` | reuse existing duplicate/simple-name and
+  missing-reason assertions; new cases go beside them. Exclude the probe-building
+  methods: these cases need no child compilation or whole-class selection.
+- `tests/Shared/TestClassificationGuardTests.cs`: read
+  `Registry_matches_compiled_metadata` | actual repository/compiled-metadata
+  wiring -> V-6, R-6. This shared source is linked into Antiphon.Tests.
+- `.gitattributes` and `tests/Antiphon.Tests/slow-tests-allowlist.txt`: read the
+  actual rule bytes and registry records/instruction comments | exact-path
+  scope, complete-registry fixtures and migration -> V-3, V-6 through V-9.
+- Nearest fixture for the new Integration file:
+  `tests/Antiphon.Tests/TestHelpers/LandingGitFixture.cs`, including initialization,
+  `RequiredAsync`, `DisposeAsync` and `FixtureGit.ConfigureProcess/RunAsync`;
+  read representative fixture consumers in
+  `tests/Antiphon.Tests/Infrastructure/LandingGitTests.cs` | owned real Git,
+  configuration isolation, trace and cleanup -> V-7 through V-9.
+- `server/Infrastructure/Git/LandingGit.cs`: read `RunAsync`, `ExecuteAsync`,
+  `ExecuteProcessAsync`; `server/Application/Services/AgentTaskLandingProtocol.cs`:
+  read the RecoveryPinned/RebaseStarted path and live failure/abort branch |
+  real process and exact rebase vector -> V-7 through V-9. Protocol persistence,
+  publication and caller notification are unchanged and excluded.
+- `docs/testing-and-build.md`: checkpoint schema, combined-method filters,
+  checkpoint runner, mutation and source qualification; `docs/project-context.md`
+  and `docs/orchestration-loop.md`: applicable ownership/stage rules |
+  checkpoint/cost contract below. No runtime settings or deployment change.
+
+### Delivery inventory
+
+New/changed asynchronous delivery paths: **none**. The edits are a Git attribute,
+an in-process metadata validator, registry comments, tests and documentation.
+There is no new producer, queue destination, persistence handoff, recovery worker
+or session input, so no delivery identity or delivery/recovery guard to map.
+
+V-7/V-8 use real Git and inspect the resulting committed registry and index;
+their identity is the fixture's base/target/source/result SHAs and exact registry
+path. This proves merge output, not publication or recipient delivery. The
+fixture substitutes isolated repositories and configuration for the production
+land coordinator; it cannot prove database recovery, remote master publication,
+busy/eligible caller handling or a complete UserPrompt receipt. Those unchanged
+paths require no new queue test here. A later scope expansion into them requires
+a new delivery inventory, real-queue producer-to-recipient cases for busy and
+already eligible recipients, recovery at each handoff, and matching complete
+UserPrompt transcripts; a Git exit, request, queue row, Sent flag or ack will
+not substitute for those receipts.
+
+### Proves it works now
+
+Shared recipes (test names below are binding implementation requirements):
+
+- **M, metadata:** use the actual Antiphon.Tests assembly and an owned temporary
+  registry, deleted in `finally`/disposal even on assertion failure. For a clean
+  fixture, take the complete real registry's parsed entries and emit each
+  existing reason/name pair with an initial explicit header block. This removes
+  only the three instruction comments from the fixture's record stream, so the
+  S1 fixtures can already be structurally valid. Assert selected names resolve
+  to compiled Slow classes. Use SmokeTests and WorktreeDefaultAdmissionTests,
+  both present in the inspected registry, for small damaged fixtures. Partial
+  registries may report unrelated missing classes: require the specified
+  diagnostic code, physical line and class when available; nonempty error text
+  alone is never the oracle. Full fixtures must return exactly the empty string.
+  Retain the source snapshot used for each expected physical line calculation.
+- **G, Git:** in `SlowTestRegistryMergeTests` use fixture-owned repos and
+  `LandingGitFixture.FixtureGit`, with no injected `BeforeCommand` result.
+  Create a common registry from M's complete entries with the two selected
+  complete pairs removed. Construct two divergent commits appending at the
+  same EOF, one pair on each side. Copy the repository's actual `.gitattributes`
+  bytes at the variant's specified point; never synthesize a union line as
+  setup. Start a detached, fixture-owned land worktree at the source SHA and run
+  `["-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", targetSha]`
+  through the production process implementation. Observe the trace, exit,
+  `RebaseHeadSha`, `HEAD`, `ls-files -u` and registry bytes read from that HEAD.
+  All setup commands must succeed before reaching the rebase assertion.
+  Isolate system/global config, disable hooks/signing/credential helpers by the
+  fixture pattern, and assert no configured `merge.union.driver`. Use bounded
+  cancellation, await owned processes, abort an expected conflict in `finally`,
+  then dispose the owned root. No shell-script dependency or OS skip.
+
+| ID | Behaviour / layer | Test, recipe, variants and classification | Reachability and decisive oracle |
+|---|---|---|---|
+| V-1 | Detached reasons are rejected / helper | `TestClassificationPolicyTests.C1383_Detached_reason_is_rejected`, M; 3 Arguments: blank, overwritten, eof; Unit | Place a valid CARD reason at line 1, then respectively blank + FQN, another valid reason + FQN, or EOF. Require `orphan-reason` naming line 1. For blank, also require `missing-adjacent-reason` at the FQN. EOF has no invented class name. Today's parser silently accepts the orphan; the specific diagnostic assertion is the red witness. |
+| V-2 | Every row has its own adjacent reason; headers stay in the initial region / helper | `TestClassificationPolicyTests.C1383_Row_without_adjacent_reason_is_rejected`, M; 2 Arguments: bare-row, second-row. `TestClassificationPolicyTests.C1383_Header_after_records_is_rejected`, M; 2 Arguments: between-pairs, interrupts-first-pair; Unit | Bare FQN at line 1 and a second FQN at line 3 after one complete pair require `missing-adjacent-reason` at that row. Header at line 3 after a pair requires `header-after-entry`. Reason / header / FQN at lines 1/2/3 first asserts `header-after-entry` line 2, then `orphan-reason` line 1 and `missing-adjacent-reason` line 3. A reason starts the record region even before the first row. Existing missing-reason errors cannot satisfy these assertions. |
+| V-3 | Complete valid registry accepts headers and separators / helper | `TestClassificationPolicyTests.C1383_Valid_reason_pairs_are_accepted`, M; 4 Arguments: LF-final, LF-no-final, CRLF-final, CRLF-no-final; Unit | Full compiled Slow membership, multiple initial `## ` headers, blank separators between complete pairs, valid reasons; exact empty error string in all four cases. Assert parsed names/reasons equal the input entry sequence; no sorting or pair loss. Four parameterized executions, not four internal loops. |
+| V-4 | Strict layout is opt-in / helper | `TestClassificationPolicyTests.C1383_Layout_opt_in_is_scoped`, M; 2 Arguments: non-repository, other-assembly; Unit | Non-repository: damage a full registry by inserting a blank in a pair and appending an orphan; repositoryMode=false must still give empty errors. Other-assembly: create an in-memory empty assembly with a name other than Antiphon.Tests (no process/build), give it an orphan-only registry and repositoryMode=true; require empty errors. Each payload would trigger layout validation if its independent gate were removed. |
+| V-5 | Public reader preserves its legacy behavior / helper | `TestClassificationPolicyTests.C1383_ReadRegistry_retains_legacy_layout_behavior`, M; 1 execution, Unit | A single input includes reason / blank / FQN, two reasons / FQN, and an orphan at EOF. Call public `ReadRegistry` directly. Assert both exact RegistryEntry names, surviving reason strings and physical row numbers, and count 2. No layout exception or invented EOF entry. |
+| V-6 | Existing safety checks and migrated actual registry still work / helper + repository | `TestClassificationPolicyTests.C487_G062` (2 Arguments), `TestClassificationPolicyTests.C487_G064` (1), `TestClassificationGuardTests.Registry_matches_compiled_metadata` (1); Unit | Reuse G062's duplicate-fqn and shared-simple rows. Within duplicate-fqn, also repeat with the second spelling case-swapped, asserting its exact duplicate diagnostic; this remains 2 TUnit executions. Within G064, retain row-only and add empty-comment and nonempty unqualified-reason inputs, each requiring the named `missing-reason` error; still 1 execution. Actual repository guard requires zero errors after S2. Review the S2 registry diff against S1: same ordered FQNs and original reason text, with only the three instruction comments moved/marked and format guidance added; 155 is inspected history, not a future hard-coded membership cap. |
+| V-7 | Real landing-shaped rebase preserves both distinct records / Integration | `SlowTestRegistryMergeTests.C1383_Rebase_preserves_distinct_appended_pairs`, G; 2 Arguments: common-base, target-only; Integration, ProcessSpawnLimit | Common-base commits actual attributes before either branch forks. Target-only forks with no rule, then commits actual attributes only on target before the conflicting target append; source demonstrably lacks the rule. Require successful rebase, nonnull result SHA equal to HEAD, no unmerged index or conflict markers, each exact reason/FQN pair once, unchanged remaining pairs, and empty metadata errors. Do not require left/right ordering. Check effective merge=union for the exact registry and merge unspecified for a sibling `tests/Antiphon.SessionRunner.Tests/slow-tests-allowlist.txt` and `docs/example.md`; this catches a widened rule. Assert target/base/source attribute placement from committed trees, not a setup boolean. |
+| V-8 | Successful union does not excuse damaged layout / Integration | `SlowTestRegistryMergeTests.C1383_Union_collapsed_lines_are_rejected`, G; 2 Arguments: same-reason-different-classes, different-reasons-same-class; Integration, ProcessSpawnLimit | Attribute is committed in the common base. In the first case append the same valid reason with different compiled FQNs on the two sides; assert Git success, one shared reason and two rows, then the second row's `missing-adjacent-reason`. In the second remove one full pair from the common base and re-add its FQN with different valid reasons; assert Git success, two reasons and one row, then `orphan-reason` for the first reason. Confirm the collapsed shape before the guard assertion, using actual physical lines. Duplicate checking alone cannot detect a coalesced FQN. |
+| V-9 | First landing is not assumed to benefit from its own replayed rule / Integration | `SlowTestRegistryMergeTests.C1383_Source_only_attribute_does_not_rescue_first_rebase`, G; 1 execution, Integration, ProcessSpawnLimit | Base and target have no attribute; source introduces the actual attribute bytes in the same commit as its conflicting append. Require nonzero rebase and a registry path in the unmerged index; inspect source/target committed attributes before replay and abort the fixture rebase afterward. This is a green characterization of a refusal, not an expected failing TUnit case. Once the rule is on real master, V-7 target-only is the recovery scenario for old branches. |
+
+S1 adds all named new test bodies. Its red checkpoints exercise only newly
+enforced behavior: V-1, both V-2 methods, and V-7. Commit/push runnable tests
+before running them; each listed argument must fail at its intended assertion,
+not setup/build/discovery. V-8 cannot demonstrate a layout red on S1 because
+the absent attribute prevents the rebase first; V-1/V-2 supply those ordinary
+layout witnesses, and post-land PC-3/PC-5 target the corresponding guards.
+V-3/V-4/V-5/V-6/V-9 retain existing behavior and need no manufactured Code red;
+their named post-land PCs establish sensitivity.
+
+**First landing handling:** do not rely on the rule until the confirmed target
+tree contains it. If this card's header migration conflicts before that point,
+retain the normal land refusal and use the existing separately commissioned
+source-repair/review path; no manual target merge, task-branch rebase, force push,
+host driver or automatic conflict suppression is authorized. Publish to master,
+then old source histories use the target-only case. TestDesign does not claim
+that a scratch conflict test performs or confirms that publication.
+
+### Guards the regression
+
+- R-1: permissive pending-reason state silently swallows blank, overwritten or
+  EOF reasons | V-1's exact `orphan-reason`/line assertions; CP-1 red, CP-5 green.
+- R-2: a header or previous row supplies another row's reason | V-2's exact
+  row/header/orphan diagnostics; CP-2/CP-3 red, CP-6/CP-7 green.
+- R-3: valid headers, pair separators or line endings are rejected | V-3's
+  full-registry empty result and exact parsed entries; CP-8.
+- R-4: shared helper strictness leaks into compatibility callers | V-4's
+  independent gate cases and V-5's direct reader entries; CP-9/CP-10.
+- R-5: duplicate, case-folded duplicate, simple-name or missing/empty/unqualified
+  reason becomes accepted | reused G062/G064's specific diagnostics; CP-11/CP-12.
+- R-6: migrating actual registry comments loses a Slow entry or breaks the guard
+  connection | existing repository `Registry_matches_compiled_metadata` empty
+  result plus review of the ordered reason/FQN migration diff; CP-13.
+- R-7: rule removal, broadening, fixture-only rule, or target-only history stops
+  working | V-7's real rebase, committed-tree preconditions, effective attributes
+  and exact merged pairs; CP-4 red, CP-14 green.
+- R-8: successful Git exit is mistaken for a valid registry | V-8's observed
+  collapsed bytes followed by specific guard diagnostics; CP-15.
+- R-9: first-landing conflict is hidden by prematurely installing the attribute
+  on the target | V-9's target/source tree preconditions and real unmerged index;
+  CP-16. Code does not turn this expected refusal into a passing-rebase promise.
+
+### Guard inventory
+
+These are the changed or expressly relied-on safety/compatibility invariants.
+Independent bypasses are separate even when the same method detects them.
+
+| Guard | Plan reference and invariant | Positive control |
+|---|---|---|
+| G-1 | D-1/D-4: repository attribute enables real union merging | PC-1 |
+| G-2 | D-1: union is restricted to the exact registry path | PC-2 |
+| G-3 | D-3: every row has a physically adjacent reason | PC-3 |
+| G-4 | D-3: a blank after a reason is diagnosed as orphaning it | PC-4 |
+| G-5 | D-3: another reason cannot silently overwrite a reason | PC-5 |
+| G-6 | D-3: a final unconsumed reason is rejected | PC-6 |
+| G-7 | D-3: a header after a complete record is rejected | PC-7 |
+| G-8 | D-3: a header interrupting even the first pair is rejected | PC-8 |
+| G-9 | D-2: repositoryMode gates strict layout independently | PC-9 |
+| G-10 | D-2: assembly identity gates strict layout independently | PC-10 |
+| G-11 | D-2: existing duplicate-row rejection remains active | PC-11 |
+| G-12 | D-2: duplicate identity remains case-insensitive | PC-12 |
+| G-13 | D-2: repository names remain fully qualified | PC-13 |
+| G-14 | D-2/D-3: missing/empty reason content is rejected | PC-14 |
+| G-15 | D-2/D-3: nonempty reasons still require qualifying content | PC-15 |
+| G-16 | D-2: public ReadRegistry retains legacy parsing | PC-16 |
+| G-17 | D-3: valid initial headers/pairs remain accepted | PC-17 |
+| G-18 | S2: actual registry is checked against compiled Slow membership | PC-18 |
+
+No new delivery/recovery guards. Other existing metadata rules (unknown class,
+unmarked registration, lane XOR and method-level Slow) remain unmodified and
+are not new assertions here; this is not a census of the helper's historical PCs.
+The no-rule-first-landing boundary is Git behavior, not an independently edited
+production guard; V-9 pins its fixture preconditions, while PC-1 removes the
+product rule and exercises the positive target histories.
+
+### Positive controls
+
+Each row is a distinct mutation, never an assertion deletion, fake Git result or
+build error. For new code, the described mutation is a **binding-required
+payload**: Code must attach the final file/member and concrete replacement
+before Mutation, preserving these IDs. If the implementation combines checks,
+retain targeted bypass conditions so another diagnostic cannot mask the
+specified absent diagnostic. Unbound payloads remain binding required after
+Code; they are not executed or waived by being listed here.
+
+| PC | Compiling defect / mutation | Exact detecting method and required red |
+|---|---|---|
+| PC-1 | Remove only the new exact-path merge=union rule from `.gitattributes` | `SlowTestRegistryMergeTests.C1383_Rebase_preserves_distinct_appended_pairs`: both argument rows reach the rebase-success assertion and fail with real conflicts. Defer effective-attribute assertions until after the rebase-success assertion so this is not merely a text/config check. |
+| PC-2 | Replace that rule's path with `tests/**/slow-tests-allowlist.txt`, retaining merge=union | Same exact method as PC-1: rebase succeeds; effective sibling-registry merge attribute assertion fails (expected unspecified, actual union) in both variants. |
+| PC-3 | Suppress only `missing-adjacent-reason` emission in the new layout validator | `TestClassificationPolicyTests.C1383_Row_without_adjacent_reason_is_rejected`: both rows fail at the expected code plus physical row assertion even if missing-reason is still emitted. |
+| PC-4 | Suppress only the orphan diagnostic when the following physical line is blank | `TestClassificationPolicyTests.C1383_Detached_reason_is_rejected`: blank argument fails at `orphan-reason` for line 1; other argument outcomes recorded. |
+| PC-5 | Suppress only the orphan diagnostic when the following line is another single-# reason | Same exact detached-reason method: overwritten argument fails at `orphan-reason` for line 1. |
+| PC-6 | Suppress only final pending-reason validation at EOF | Same exact detached-reason method: eof argument fails at `orphan-reason` for line 1. |
+| PC-7 | Permit a header after a completed pair when no reason is pending | `TestClassificationPolicyTests.C1383_Header_after_records_is_rejected`: between-pairs argument loses `header-after-entry` at line 3. |
+| PC-8 | Permit a header while a reason is pending before the first FQN | Same exact header method: interrupts-first-pair argument loses `header-after-entry` at line 2. Assert that code before secondary pair diagnostics. |
+| PC-9 | Remove only the repositoryMode condition around strict layout | `TestClassificationPolicyTests.C1383_Layout_opt_in_is_scoped`: non-repository argument's exact empty-errors assertion fails with the layout diagnostic. |
+| PC-10 | Remove only the Antiphon.Tests assembly-name condition around strict layout | Same exact opt-in method: other-assembly argument's empty-errors assertion fails with orphan-reason. |
+| PC-11 | Leave `seen.Add` evaluation but suppress duplicate diagnostic emission | `TestClassificationPolicyTests.C487_G062`: duplicate-fqn argument fails at `duplicate Antiphon.Tests.SmokeTests`. |
+| PC-12 | Change only the `seen` set comparer from OrdinalIgnoreCase to Ordinal | Same exact G062 method: exact-spelling duplicate still passes its assertion, case-swapped duplicate fails its specific duplicate assertion. |
+| PC-13 | Disable the repository simple-name-refused check, leaving name lookup unchanged | Same exact G062 method: shared-simple argument fails at `simple-name-refused SmokeTests`; unknown-class text cannot satisfy it. |
+| PC-14 | Exempt whitespace/empty Reason from the existing entire missing-reason predicate | `TestClassificationPolicyTests.C487_G064`: row-only/empty-comment input fails at `missing-reason Antiphon.Tests.SmokeTests`. Keep nonempty qualification checks active. |
+| PC-15 | Reduce the existing missing-reason predicate to only IsNullOrWhiteSpace | Same exact G064 method: empty cases pass, nonempty unqualified reason fails its specific missing-reason assertion. |
+| PC-16 | Clear pendingReason on blank lines in public ReadRegistry (or its equivalent legacy parse path) | `TestClassificationPolicyTests.C1383_ReadRegistry_retains_legacy_layout_behavior`: first returned entry's exact reason assertion fails. |
+| PC-17 | Treat an initial `## ` header as an orphan single-# reason in strict validation | `TestClassificationPolicyTests.C1383_Valid_reason_pairs_are_accepted`: all four line-ending/final-newline variants fail the empty-errors assertion. |
+| PC-18 | Delete only the actual SmokeTests reason/FQN pair from the real allowlist | `TestClassificationGuardTests.Registry_matches_compiled_metadata`: existing empty-lines assertion fails with `unregistered-marked Antiphon.Tests.SmokeTests`. Restore exact allowlist bytes. |
+
+Mutation runs **all 18 PCs**, including all argument rows of each selected method;
+no sampling or whole-class substitute. For each PC use only
+`/*/*/<Class>/<ExactMethod>*` (parameterized method prefix) or the exact
+nonparameterized method path above: green baseline, compiling defect, intended
+red, exact restore, fresh-build green. Capture build exits, TRX assertion text,
+expanded counts and restoration evidence at the landed SHA. A zero count,
+timeout or build/fixture error is incomplete evidence, never the required red.
+All phases use the host build slot and the owner's SourceLanding driver procedure.
+No production/test repair or commit from a SourceLanding snapshot.
+
+Design handoff audit: **guards=18, mapped=18, missing=0,
+duplicate PC maps=0**. All 18 are mandatory future runs; execution at TestDesign
+is **0/18** by stage order. Code runs the ordinary V/R checkpoints, Review judges
+their results and this pending inventory before land, and Mutation runs every
+PC after confirmed land. Completion of this design does not claim PC-clean.
+
+### Out of scope
+
+- Full Unit/assembly, database-backed landing, queues, PTY, browser, deployment
+  and rc activation: no changed boundary requires them.
+- Semantic truth of arbitrary free-text reasons, swapping two complete pairs'
+  reasons, or sorted registry order: this format supports structural attachment
+  only. V-7 still checks each fixture's known exact reason/FQN association.
+- Other assemblies' new strict format or union merging: expressly excluded by
+  D-1/D-2; V-4 and V-7 prove the negative boundaries.
+- All Git versions, host-specific custom drivers, explicit apply-backend matrix:
+  the test binds the production vector and fixture-isolated default backend.
+  Record Git version/OS in evidence; the earlier apply probe is historical
+  planning evidence, not a new checkpoint or universal backend guarantee.
+- Exact one-file-snapshot implementation is reviewed directly in the helper:
+  do not add a timing-race test or a new public I/O seam solely to count reads.
+
+### Checkpoints
+
+Use the schema in `docs/testing-and-build.md`. All TUnit rows use
+`tests/Antiphon.Tests`. Method-prefix stars include parameterized results only;
+inspect the executed roster for unintended matches. Min counts executions,
+not internal assertions. S1 has 9 intended assertion failures; S2 has 23 passing
+executions. Each row owns one exact filter. Two isolated builds total, reused
+only within the same committed After group; no whole-Unit or whole-class run.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1383-red/` | red-detached | `/*/*/TestClassificationPolicyTests/C1383_Detached_reason_is_rejected*` | V-1, R-1 | 3 executed, 3 intended orphan-reason assertion failures, 0 skipped | 3 | 4 |
+| CP-2 | S1 | CP-1 | red-adjacency | `/*/*/TestClassificationPolicyTests/C1383_Row_without_adjacent_reason_is_rejected*` | V-2, R-2 | 2 executed, 2 intended missing-adjacent-reason assertion failures, 0 skipped | 2 | 1 |
+| CP-3 | S1 | CP-1 | red-headers | `/*/*/TestClassificationPolicyTests/C1383_Header_after_records_is_rejected*` | V-2, R-2 | 2 executed, 2 intended header-after-entry assertion failures, 0 skipped | 2 | 1 |
+| CP-4 | S1 | CP-1 | red-real-union | `/*/*/SlowTestRegistryMergeTests/C1383_Rebase_preserves_distinct_appended_pairs*` | V-7, R-7 | 2 executed, 2 intended rebase-success assertion failures with real registry conflicts, 0 skipped | 2 | 1 |
+| CP-5 | S2 | `tests/Antiphon.Tests -> bin-c1383-green/` | green-detached | `/*/*/TestClassificationPolicyTests/C1383_Detached_reason_is_rejected*` | V-1, R-1 | all 3 listed variants, 0 failed/skipped | 3 | 4 |
+| CP-6 | S2 | CP-5 | green-adjacency | `/*/*/TestClassificationPolicyTests/C1383_Row_without_adjacent_reason_is_rejected*` | V-2, R-2 | all 2 listed variants, 0 failed/skipped | 2 | 1 |
+| CP-7 | S2 | CP-5 | green-headers | `/*/*/TestClassificationPolicyTests/C1383_Header_after_records_is_rejected*` | V-2, R-2 | all 2 listed variants, 0 failed/skipped | 2 | 1 |
+| CP-8 | S2 | CP-5 | green-valid-layout | `/*/*/TestClassificationPolicyTests/C1383_Valid_reason_pairs_are_accepted*` | V-3, R-3 | all 4 listed variants, 0 failed/skipped | 4 | 1 |
+| CP-9 | S2 | CP-5 | green-opt-in | `/*/*/TestClassificationPolicyTests/C1383_Layout_opt_in_is_scoped*` | V-4, R-4 | all 2 listed variants, 0 failed/skipped | 2 | 1 |
+| CP-10 | S2 | CP-5 | green-public-reader | `/*/*/TestClassificationPolicyTests/C1383_ReadRegistry_retains_legacy_layout_behavior` | V-5, R-4 | 1 listed method, 0 failed/skipped | 1 | 1 |
+| CP-11 | S2 | CP-5 | green-existing-identity | `/*/*/TestClassificationPolicyTests/C487_G062*` | V-6, R-5 | both existing argument rows, including internal case-fold duplicate assertion, 0 failed/skipped | 2 | 1 |
+| CP-12 | S2 | CP-5 | green-existing-reason | `/*/*/TestClassificationPolicyTests/C487_G064` | V-6, R-5 | 1 method with all 3 content inputs, 0 failed/skipped | 1 | 1 |
+| CP-13 | S2 | CP-5 | green-repository-guard | `/*/*/TestClassificationGuardTests/Registry_matches_compiled_metadata` | V-6, R-6 | 1 actual-repository guard, 0 failed/skipped | 1 | 1 |
+| CP-14 | S2 | CP-5 | green-real-union | `/*/*/SlowTestRegistryMergeTests/C1383_Rebase_preserves_distinct_appended_pairs*` | V-7, R-7 | both target-history variants, 0 failed/skipped | 2 | 1 |
+| CP-15 | S2 | CP-5 | green-union-collapse | `/*/*/SlowTestRegistryMergeTests/C1383_Union_collapsed_lines_are_rejected*` | V-8, R-8 | both collapse variants reach the guard after successful Git, 0 failed/skipped | 2 | 1 |
+| CP-16 | S2 | CP-5 | green-first-landing | `/*/*/SlowTestRegistryMergeTests/C1383_Source_only_attribute_does_not_rescue_first_rebase` | V-9, R-9 | 1 expected-conflict characterization passes, 0 failed/skipped | 1 | 1 |
+
+Run one checkpoint-tool invocation per committed group with `--serial`, so
+separate Antiphon.Tests hosts do not overlap their assembly-local process
+limiters. Use `run --plan <this-file> --after S1 --expected-source-sha <S1-sha>
+--serial`, then the corresponding `--after S2 --expected-source-sha <S2-sha>`.
+Bootstrap the tool through `scripts/build-slot.ps1`; the tool takes slots for
+its own builds/rows. Await `wait --run <id>` until exit is not 75. Do not end the
+delegate with a running executor.
+
+S1's run is expected to return failed, with all four rows still collected;
+preserve those red receipts as red, never qualify them as clean-green evidence.
+S2 must satisfy every green row and strict SHA/clean-build receipt validation.
+Ordinary Review checks S1's historical witnesses and verifies S2's green scope;
+it does not rerun S1 against the fixed tip expecting red. Code and Review run
+`pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -BaseRef <assigned-base>
+-HeadRef HEAD`, a required read-only history check outside TUnit counts.
+Keep generated evidence ignored, inventory owned outputs and remove them via
+the documented custody-aware cleanup after all processes finish.
+
+### Cost
+
+All numbers below are **estimated**, not measured by TestDesign; slot queue
+waits and environment failures are reported separately.
+
+- Ordinary Code V/R floor = sum of CP EstimatedMinutes = **22 minutes**:
+  S1 CP-1..CP-4 = 7, S2 CP-5..CP-16 = 15. This includes two 3-minute
+  builds (6 total) and 16 minutes of named-filter executions. The importer
+  requires positive integer minute estimates; each filter is budgeted 1 minute. Tool bootstrap
+  plus evidence/history validation and owned-output cleanup adds **2 minutes**;
+  ordinary verification including setup = **24 minutes**, before authoring.
+- Mutation PC floor: each PC uses its exact method filter in the PC table,
+  three fresh builds (baseline/red/restored-green) at 3 minutes each.
+  Every named method filter is budgeted 1 minute per phase, hence
+  **12 minutes each** for PC-1 through PC-18. Mutation execution floor =
+  `18 * (3 * 3 + 3 * 1)` = **216 minutes**. Add **2 minutes** setup/restoration
+  reporting minimum: **218 minutes**, excluding mutation authoring/discovery
+  and slot waits. The 18-PC cost must be commissioned explicitly as the
+  post-land obligation, not hidden in Code's ordinary floor.
+- Combined setup/build/V/R/PC floor =
+  `2 + 22 + 2 + 216` = **242 minutes**. Each PC includes its red and
+  restore/green; none is silently sampled or charged to ordinary Review.
+- Build reuse saves **14 builds, estimated 42 minutes** compared with rebuilding
+  independently for all 16 CP rows. Exact filters select 32 ordinary executions
+  across red and green, avoiding unrelated probe builds and whole-Unit work.
+  No full-suite saving is claimed from the obsolete full-suite timing.
+  Method-scoped PC cycles intentionally save zero fresh builds: independent
+  source states and restoration provenance are required.
