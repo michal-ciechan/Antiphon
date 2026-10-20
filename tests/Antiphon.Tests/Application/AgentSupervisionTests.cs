@@ -584,7 +584,7 @@ public class AgentSupervisionTests
         SupervisionSettings? supervision = null, ISessionRunnerClient? runner = null,
         bool includeModelAvailability = false, string definitionKind = "Raw",
         Action<DbContextOptionsBuilder>? configureDb = null,
-        string? connectionString = null)
+        string? connectionString = null, TimeProvider? supervisorTimeProvider = null)
     {
         var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
         var supervisorLog = new List<string>();
@@ -649,7 +649,10 @@ public class AgentSupervisionTests
         services.AddScoped<HerdrLaunchContextResolver>();
         services.AddScoped<AgentControlService>();
         services.AddSingleton<CapacityRecoveryService>();
-        services.AddScoped<AgentSupervisorService>();
+        if (supervisorTimeProvider is null)
+            services.AddScoped<AgentSupervisorService>();
+        else
+            services.AddScoped(sp => ActivatorUtilities.CreateInstance<AgentSupervisorService>(sp, supervisorTimeProvider));
         services.AddScoped<HerdrSupervisionStateService>();
         if (includeModelAvailability)
             services.AddScoped<ModelAvailability>();
