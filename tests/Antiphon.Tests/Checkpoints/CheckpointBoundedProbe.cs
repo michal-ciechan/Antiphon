@@ -38,7 +38,8 @@ internal static class CheckpointBoundedProbe
                 await completion.WaitAsync(TimeSpan.FromSeconds(2), cancellationToken);
             }
             var output = await stdout;
-            output.ShouldContain("C1233_READY " + identity, "the actual script invocation must be reached");
+            output.Contains("C1233_READY " + identity, StringComparison.Ordinal)
+                .ShouldBeTrue("the actual script invocation must be reached");
             return new Result(process.ExitCode, output, await stderr, elapsed, watchdog);
         }
         finally
