@@ -102,7 +102,7 @@ One build and one exact filter per row per invocation. Group prefixes name the l
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1233-s1/` | linux-process-files | `/*/*/CheckpointInheritedFileTests/C1233_FileCallers*` | W1 | 4 executed, 0 failed/skipped | 4 | 10 | true |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1233-s2/` | linux-process-tool-source | `/*/*/CheckpointSourceGitBoundsTests/C1233_ToolSource` | W2 | 1 executed, 0 failed/skipped | 1 | 11 | true |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1233-s2/` | linux-process-tool-source | `/*/*/CheckpointSourceGitBoundsTests/C1233_ToolSource*` | W2 | 1 executed, 0 failed/skipped | 1 | 11 | true |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1233-s3/` | linux-process-script-source | `/*/*/CheckpointSourceGitBoundsTests/C1233_ScriptSource` | W3 | 1 executed, 0 failed/skipped | 1 | 11 | true |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1233-s4/` | linux-process-verifier-git | `/*/*/CheckpointVerifierBoundsTests/C1233_VerifierGit` | W4 | 2 executed, 0 failed/skipped | 2 | 10 | true |
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1233-s5/` | linux-process-execution | `/*/*/CheckpointExecutionCustodyTests/C1233_ExecutionCustody` | W5 | 5 executed, 0 failed/skipped | 5 | 11 | true |
