@@ -1,7 +1,8 @@
 #requires -Version 7.0
 param(
     [Parameter(Mandatory)][string]$ProbeDirectory,
-    [Parameter(Mandatory)][string]$ResultsDirectory
+    [Parameter(Mandatory)][string]$ResultsDirectory,
+    [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$ProbeBuildSourceSha
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib/nightly-probe-supervisor.ps1')
@@ -29,7 +30,8 @@ foreach ($method in @('TimeoutProbe', 'CancelledProbe')) {
         '--detailed-stacktrace', '--report-trx', '--results-directory', $directory,
         '--diagnostic', '--diagnostic-output-directory', (Join-Path $directory 'diag'))
     $receipt = Invoke-NightlyProbeSupervisor -FilePath 'dotnet' -ArgumentList $argv -WorkingDirectory $probe
-    $receipt | Add-Member sourceSha $source
+    $receipt | Add-Member captureSourceSha $source
+    $receipt | Add-Member buildSourceSha $ProbeBuildSourceSha
     $receipt | Add-Member assemblyVersions $versions
     $receipt | Add-Member dllSha256 (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash
     $receipt | Add-Member packages @('TUnit/1.44.0', 'Microsoft.Testing.Platform/2.2.2')
@@ -43,7 +45,8 @@ foreach ($method in @('TimeoutProbe', 'CancelledProbe')) {
     $rows = @($trx.TestRun.Results.UnitTestResult)
     $counters = $trx.TestRun.ResultSummary.Counters
     if ($rows.Count -ne 1 -or $rows[0].outcome -cne 'Failed' -or
-        $counters.total -ne '1' -or $counters.failed -ne '1' -or $counters.passed -ne '0' -or
+        $counters.total -ne '1' -or
+        ([int]$counters.failed + [int]$counters.timeout + [int]$counters.aborted) -ne 1 -or $counters.passed -ne '0' -or
         $counters.notExecuted -ne '0') { throw "Probe $method native result mismatch." }
     $diagnostics = @(Get-ChildItem -LiteralPath (Join-Path $directory 'diag') -File -Recurse)
     $text = ($diagnostics | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
