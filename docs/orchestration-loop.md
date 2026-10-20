@@ -2054,6 +2054,34 @@ Use the current CARD-0448 cleanup contract below for operations.
 
 ## CARD-0448 landing evidence and conservative cleanup
 
+CARD-1380 S1: a land takes the OS-backed `land-execution.lock` under the canonical
+Git common directory before the repository mutation lease and holds both through
+verification, publication and cleanup. A busy execution lock records
+`land_execution_busy` without consuming an attempt. Unfinished child journals
+still fence the mutation lease after a restart; loss of the execution lock alone
+does not authorize reuse of the land worktree.
+
+`Landing:ReuseVerificationArtifacts` defaults to `true`. The verifier retains
+owned build generations under
+`<git-common>/antiphon/land-verify/v1/<toolchain-key>/`, outside the disposable
+land worktree. The key binds the SDK selected in that worktree, OS, process
+architecture and explicit Debug configuration. `owner.json` binds repository and
+toolchain. A generation is marked building before use and ready only after the
+build and any selected tests succeed. Failure, cancellation or an interrupted
+write leaves it unusable; the next attempt creates a new generation and retains
+the old one. Foreign markers, unmarked existing roots and linked paths are
+retained with a `land_artifacts cold` diagnostic and a fresh owned temporary
+fallback. There is no recursive cache janitor. Setting reuse to `false` selects
+owned cold outputs for diagnosis.
+
+Build and selected tests share the same artifacts and build slot. Each selected
+test invocation writes to a fresh owned results directory; only its exact TRX
+path can authorize success. An older passing TRX cannot satisfy a missing report.
+S1 preserves the existing `base_unchanged` and AlreadyPresent behavior and keeps
+the repository mutation lease throughout verification. Stable paths alone are
+not timing evidence; real cold/warm measurements remain post-activation work.
+This is master-first work; RC adoption and activation require the operator's go.
+
 The task detail's `landing` object records operation identity, phase, source/verified/remote
 SHAs, publication and cleanup separately. AlreadyPresent records independent containment
 without claiming a push. A failed or interrupted publication can follow local target advance.

@@ -3,6 +3,9 @@ namespace Antiphon.Server.Application.Settings;
 /// <summary>CARD-0589 S4: <c>Landing</c> — how the land verifier waits for a host build slot.</summary>
 public sealed class LandingSettings
 {
+    /// <summary>Retain owned outputs across lands with the same repository/toolchain.</summary>
+    public bool ReuseVerificationArtifacts { get; set; } = true;
+
     /// <summary>
     /// The longest the verifier waits for a slot before refusing to build (step <c>build-slot</c>),
     /// inside the land's own time budget. The delegate wrappers wait 45.

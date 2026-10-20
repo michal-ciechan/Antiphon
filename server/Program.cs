@@ -477,6 +477,8 @@ try
     // CARD-0589 S4: the land verifier holds a host build slot from the local session runner.
     builder.Services.Configure<LandingSettings>(builder.Configuration.GetSection("Landing"));
     builder.Services.AddSingleton<IBuildSlotGate, SessionRunnerBuildSlotGate>();
+    builder.Services.AddSingleton<ILandExecutionLease, LandExecutionLease>();
+    builder.Services.AddSingleton<LandVerificationArtifacts>();
     builder.Services.AddSingleton<ILandingVerifier, LandingVerifier>();
     builder.Services.AddScoped<StageOutcomeService>();
     // CARD-0140 S3: AgentTuiLaunchResolver is already AddScoped below; the dispatcher's optional
