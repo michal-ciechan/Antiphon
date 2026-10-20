@@ -155,7 +155,9 @@ internal static class C1374CensusProbes
             result["code"]!.GetValue<int>().ShouldBe(0, v.Name + " expected recovery success: " + error + output);
             error.ShouldBe("", v.Name + " stale failure cleared");
             expectedCounts[v.Path] += v.FailedAttempts;
-            paths.GroupBy(x => x).ToDictionary(g => g.Key, g => g.Count()).ShouldBe(expectedCounts, v.Name + " exactly two passes, retry only failed GET");
+            // Compare the exact path/count map, independently of dictionary insertion order.
+            paths.GroupBy(x => x).ToDictionary(g => g.Key, g => g.Count()).OrderBy(p => p.Key, StringComparer.Ordinal)
+                .ShouldBe(expectedCounts.OrderBy(p => p.Key, StringComparer.Ordinal), v.Name + " exactly two passes, retry only failed GET");
             receipt["snapshot"]!["open"]!["tasks"]![Id]!["status"]!.GetValue<string>().ShouldBe("Blocked", v.Name);
             receipt["snapshot"]!["open"]!["land"]!.AsObject().ContainsKey(Id).ShouldBeTrue(v.Name);
             receipt["snapshot"]!["open"]!["land"]![Id].ShouldBeNull(v.Name);
