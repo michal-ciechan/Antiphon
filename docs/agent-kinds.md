@@ -567,9 +567,11 @@ test helper and must never write into the user's normal Codex home.
   uses the first `TurnEnd` past the submitted prompt's transcript baseline and forwards its
   stop reason. Exact `cancelled` returns `TurnCompleted=false` with diagnostic text/snapshot
   before screen fallback can report success. The caller handles that interruption before its
-  timeout branch, retaining the Running session and StreamingTurn attempt without after-run
-  hooks, kill or disposal. Null/other reasons retain their completion semantics, including the
-  adapter's existing API-error policy (CARD-1322 S3/S4).
+  timeout branch, retaining the Running session and unfinished attempt in nonterminal
+  `AwaitingInput` without after-run hooks, kill or disposal. The streaming-turn stall scan
+  does not select this idle phase, even after its normal timeout; refreshing a timestamp
+  alone would merely defer the kill. Null/other reasons retain their completion semantics,
+  including the adapter's existing API-error policy (CARD-1322 S3/S4).
 - `event_msg/turn_aborted` normalizes to a `TurnEnd` with exact `StopReason=cancelled` and
   optional `turn_id` attribution. It is an idle boundary excluded by `IsReportBoundary`;
   abort error metadata does not become an API error. Both abort and completion consume the

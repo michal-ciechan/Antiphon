@@ -177,6 +177,14 @@ With Enabled and ReclaimExisting set, physical release still requires AutomaticE
 The park bound is this release path (CARD-1083). It is dormant while BlockedTaskParking:Enabled is false, and while it is dormant nothing automatically releases a session that waits for input.
 Do not infer a release deadline from the 120-second idle proof, the 120-second reclaim interval, or the 600-second Held backoff. For a Blocked input wait, parking supplies no automatic release deadline while disabled; with its gates enabled, publication and conditional release evidence still control release.
 
+CARD-1322: a card-launch adapter result with exact `StopReason=cancelled` retains its
+Running session and moves the unfinished run attempt to nonterminal `AwaitingInput`.
+It runs no after-run hook and records no completion, failure, kill or disposal.
+`RunAttemptStallDetector` selects only `StreamingTurn`, so later idle scans cannot
+turn this interrupted input wait into an automatic release. A one-time refresh of
+LastEventAt would only defer that kill. Card/worktree ownership stays attached;
+the phase does not enable parking or add an input-wait deadline.
+
 OccupiesCapacity is true for any non-empty runner status other than Exited or Failed.
 OpenTaskId is the owner task: the latest Queued, Dispatched, Working or Blocked task bound to the session, so a live Blocked or Queued owner reads orphan=false (CARD-1124).
 A warm pool delegate is excluded from that orphan flag.

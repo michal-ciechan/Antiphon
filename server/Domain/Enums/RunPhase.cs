@@ -12,5 +12,6 @@ public enum RunPhase
     Failed = 7,
     TimedOut = 8,
     Stalled = 9,
-    Canceled = 10
+    Canceled = 10,
+    AwaitingInput = 11
 }
