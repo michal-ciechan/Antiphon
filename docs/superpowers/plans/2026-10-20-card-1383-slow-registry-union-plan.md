@@ -1,8 +1,11 @@
 # CARD-1383: union merging for the Slow registry
 
-Date: 2026-10-20  
-Stage: Plan; TestDesign remains a separate dispatch.  
-Target: master only; no deployment or rc activation.  
+Date: 2026-10-20
+
+Stage: Plan; TestDesign remains a separate dispatch.
+
+Target: master only; no deployment or rc activation.
+
 Inspected source: `bf9d96db2449bc35dab3c7d1c168c0ce9e78359c`.
 
 ## Outcome and scope
