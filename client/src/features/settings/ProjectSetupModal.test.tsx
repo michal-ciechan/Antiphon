@@ -443,6 +443,75 @@ describe('C1274 repair setup read boundaries', () => {
     expect(submitted).not.toHaveBeenCalled()
   })
 
+  it('C1282 switches runner profile after a models read fails', async () => {
+    const submitted = seedRepair()
+    const secondProfile = { ...supportedProfile, id: 'tui-backup', displayName: 'Backup', isDefault: false }
+    const models = [{
+      identifier: 'exact-a', displayName: 'Exact A', family: null, source: 'Discovered',
+      availability: 'Verified', discoveredAt: null, runnerVersion: null, isSuggestedDefault: false,
+    }]
+    const secondModels = [{ ...models[0], identifier: 'exact-b', displayName: 'Exact B' }]
+    server.use(
+      http.get('/api/projects/setup-catalog', () => HttpResponse.json({
+        ...repairCatalog,
+        profiles: [...repairCatalog.profiles, {
+          ...repairCatalog.profiles[0], id: secondProfile.id, displayName: secondProfile.displayName, isDefault: false,
+        }],
+      })),
+      http.get('/api/agent-tui/profiles', () => HttpResponse.json([supportedProfile, secondProfile])),
+      http.get('/api/agent-tui/profiles/tui-claude/models', () => HttpResponse.json(models)),
+      http.get('/api/agent-tui/profiles/tui-backup/models', () => HttpResponse.json(secondModels)),
+    )
+    const { queryClient } = renderWithProviders(<ProjectSetupModal opened onClose={() => undefined} />)
+    await firstAgent()
+    await userEvent.click(await screen.findByRole('textbox', { name: /Runner profile/ }))
+    await userEvent.click(await screen.findByRole('option', { name: 'Claude (ClaudeCode) · default' }))
+    const key = ['agent-tui', 'models', 'tui-claude']
+    await waitFor(() => expect(queryClient.getQueryData(key)).toEqual(models))
+    await userEvent.click(await screen.findByRole('textbox', { name: 'Exact model' }))
+    await userEvent.click(await screen.findByRole('option', { name: 'Exact A (exact-a) · verified' }))
+    expect(screen.getByRole('textbox', { name: 'Exact model' })).toHaveValue('Exact A (exact-a) · verified')
+
+    unreadHandler('/api/agent-tui/profiles/tui-claude/models', 'stale failure')
+    await act(async () => { await queryClient.refetchQueries({ queryKey: key, exact: true }) })
+    await expectRead(queryClient, key, 'stale failure')
+    expect(queryClient.getQueryData(key)).toEqual(models)
+    const failedLabel = 'Agent models unknown (read failed: catalog unavailable).'
+    expect(await screen.findByText(failedLabel)).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: /Runner profile/ })).toBeEnabled()
+    expect(screen.queryByRole('textbox', { name: 'Exact model' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByRole('button', { name: 'Create project' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Create project' }))
+    expect(submitted).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }))
+
+    await userEvent.click(screen.getByRole('textbox', { name: /Runner profile/ }))
+    await userEvent.click(await screen.findByRole('option', { name: 'Backup (ClaudeCode)' }))
+    await waitFor(() => expect(queryClient.getQueryState(['agent-tui', 'models', secondProfile.id])).toMatchObject({
+      status: 'success', fetchStatus: 'idle', data: secondModels,
+    }))
+    expect(screen.queryByText(failedLabel)).not.toBeInTheDocument()
+    expect(await screen.findByRole('textbox', { name: 'Exact model' })).toBeEnabled()
+    expect(screen.getByRole('textbox', { name: 'Exact model' })).toHaveValue("Use the agent's tier (no exact model)")
+    await expectRead(queryClient, key, 'stale failure')
+    expect(queryClient.getQueryData(key)).toEqual(models)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByRole('button', { name: 'Create project' })).toBeEnabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Create project' }))
+    await waitFor(() => expect(submitted).toHaveBeenCalledTimes(1))
+    expect(submitted).toHaveBeenCalledWith(expect.objectContaining({
+      directory,
+      name: 'starter',
+      boardName: 'starter',
+      agent: expect.objectContaining({ tuiProfileId: secondProfile.id, modelId: null }),
+    }))
+  })
+
   it('C1274 repair empty presets are explicit and require skipping the first agent', async () => {
     const submitted = seedRepair()
     server.use(http.get('/api/projects/setup-catalog', () => HttpResponse.json({ ...repairCatalog, presets: [], bundles: [] })))
