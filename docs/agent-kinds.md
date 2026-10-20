@@ -564,6 +564,15 @@ test helper and must never write into the user's normal Codex home.
   done-line**, so the screen fallback is the *lifecycle* of the `Working (Ns — esc to interrupt)`
   indicator — appeared, then left. Bare quiet time was the CARD-0108 defect: it certified a
   non-turn as complete in ~3.2 s and returned the status bar as the answer.
+- `event_msg/turn_aborted` normalizes to a `TurnEnd` with exact `StopReason=cancelled` and
+  optional `turn_id` attribution. It is an idle boundary excluded by `IsReportBoundary`;
+  abort error metadata does not become an API error. Both abort and completion consume the
+  latest observed cumulative usage delta once, advancing the baseline with cached input
+  de-overlapped and negative deltas clamped. Without a new `token_count`, all usage fields
+  stay null. An interrupted turn retains its Working task and session; a stall is a decision
+  state, and disabled parking supplies no automatic release deadline. Native replacement-turn
+  ordering and counts arriving after an abort remain unmeasured (CARD-1322 I1); this accounting
+  change does not establish identity-based attribution for overlapping turns.
 - A per-directory **trust prompt fires on first launch into any unseen cwd, even under
   `--dangerously-bypass-approvals-and-sandbox`**, plus a startup update-available modal that
   swallows keystrokes the same way. `AcceptTrustPromptIfVisibleAsync` auto-accepts the trust prompt.
