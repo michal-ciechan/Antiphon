@@ -1,7 +1,7 @@
 #requires -Version 7.0
 # CARD-1336: evaluate the production Bash body with an inert, readonly ssh function.
 param(
-    [Parameter(Mandatory)][ValidateSet('C1336_WrapperRef')][string]$Case,
+    [Parameter(Mandatory)][ValidateSet('C1336_WrapperRef', 'C1336_NightlyCandidateIdentity')][string]$Case,
     [Parameter(Mandatory)][string]$ResultsDirectory
 )
 $ErrorActionPreference = 'Stop'
@@ -9,6 +9,96 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $repoRoot 'scripts/lib/c487-harness.ps1')
 $utf8 = [System.Text.UTF8Encoding]::new($false)
 New-Item -ItemType Directory -Path $ResultsDirectory -Force | Out-Null
+
+function Write-C1336File($Root, $Relative, $Text) {
+    $path = Join-Path $Root $Relative
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $path))
+    [IO.File]::WriteAllText($path, $Text, $utf8)
+}
+
+function Git-C1336($Root, $Arguments) {
+    return (Invoke-TestSelectionGit $Root $Arguments).Stdout.Trim()
+}
+
+function New-C1336Candidate {
+    foreach ($name in @('git', 'pwsh')) { [void](Get-Command $name -CommandType Application -ErrorAction Stop) }
+    $root = Join-Path $ResultsDirectory 'candidate fixture'
+    $seed = Join-Path $root 'seed'
+    [void][IO.Directory]::CreateDirectory($seed)
+    [void](Git-C1336 $seed @('init', '-q', '-b', 'rc/2026-10-18'))
+    [void](Git-C1336 $seed @('config', 'user.name', 'C1336 fixture'))
+    [void](Git-C1336 $seed @('config', 'user.email', 'fixture@example.invalid'))
+    [void](Git-C1336 $seed @('config', 'core.autocrlf', 'false'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $seed 'scripts'))
+    Copy-Item (Join-Path $repoRoot 'scripts/lib') (Join-Path $seed 'scripts/lib') -Recurse
+    foreach ($name in @('nightly-run.ps1', 'nightly-tests.ps1', 'select-test-rosters.ps1')) {
+        Copy-Item (Join-Path $repoRoot "scripts/$name") (Join-Path $seed "scripts/$name")
+    }
+    foreach ($name in @('tests/test-execution-policy.json', 'tests/test-selection-policy.json', 'global.json')) {
+        Write-C1336File $seed $name ([IO.File]::ReadAllText((Join-Path $repoRoot $name)))
+    }
+    $catalog = Get-Content (Join-Path $seed 'tests/test-selection-policy.json') -Raw | ConvertFrom-Json
+    foreach ($path in @($catalog.sets.sourceInputs + $catalog.sets.members.source | Sort-Object -Unique)) {
+        if ($path -and -not (Test-Path (Join-Path $seed $path))) { Write-C1336File $seed $path 'fixture source' }
+    }
+    foreach ($path in (Git-C1336 $repoRoot @('ls-files', 'tests/*.csproj', 'scripts/fixtures/nightly/c487-probe/Probe.csproj')).Split("`n")) {
+        Write-C1336File $seed $path ([IO.File]::ReadAllText((Join-Path $repoRoot $path)))
+    }
+    Add-Content (Join-Path $seed 'scripts/nightly-run.ps1') '# C1336 owned clone self-hop'
+    Write-C1336File $seed '.antiphon-nightly-owned' '{"kind":"nightly-clone"}'
+    Write-C1336File $seed 'fixture.txt' 'A'
+    [void](Git-C1336 $seed @('add', '--all'))
+    [void](Git-C1336 $seed @('commit', '-qm', 'candidate A'))
+    $a = Git-C1336 $seed @('rev-parse', 'HEAD')
+    Write-C1336File $seed 'fixture.txt' 'B'
+    [void](Git-C1336 $seed @('add', '--all'))
+    [void](Git-C1336 $seed @('commit', '-qm', 'candidate B'))
+    $b = Git-C1336 $seed @('rev-parse', 'HEAD')
+    if ($a.Substring(0, 12) -ceq $b.Substring(0, 12)) { throw 'Fixture pins must differ' }
+    [void](Git-C1336 $seed @('branch', 'fixture-b', $b))
+    [void](Git-C1336 $seed @('branch', 'release/rc-20260923T083000Z', $a))
+    [void](Git-C1336 $seed @('reset', '--hard', $a))
+    $origin = Join-Path $root 'origin.git'
+    [void](Git-C1336 $root @('clone', '--bare', $seed, $origin))
+    $clone = Join-Path $root 'checkout'
+    [void](Git-C1336 $root @('clone', $origin, $clone))
+    # Fail fixture prerequisites before the behavioral red witness.
+    Assert-ReleaseSelectionCommit $clone $a
+    $contract = Get-ReleaseSelectionContract $clone $a 'rc'
+    if (-not $contract.policyHash -or -not $contract.catalogHash) { throw 'Fixture contract missing hashes' }
+    $master = Join-Path $root 'private-master'
+    foreach ($name in @('last-run.json', 'last-complete-green.json', 'last-monitor.json', 'interim-qualification-receipt.json')) {
+        Write-C1336File $master $name ('{"sentinel":"' + $name + '"}')
+    }
+    $seams = Join-Path $root 'seams.ps1'
+    $trace = Join-Path $root 'trace.txt'
+    Write-C487NativePassSeams $seams $trace @(@{Id='fixture-one';ClassName='Fixture.Fixture';MethodName='One';Outcome='Passed'}) @(@{uid='fixture-one';type='Fixture';method='One';namespace='Fixture'})
+    Add-Content $seams @"
+`$NightlySeams.Git = `$null
+`$NightlySeams.E2EPrerequisites = { return @{Ok=`$true;Rows=@()} }
+Set-Item Function:script:Get-NightlyDefaultStateRoot { return '$($master.Replace("'", "''"))' }
+"@
+    return @{Root=$root;Seed=$seed;Clone=$clone;Origin=$origin;A=$a;B=$b;Master=$master;Seams=$seams;Trace=$trace}
+}
+
+if ($Case -ceq 'C1336_NightlyCandidateIdentity') {
+    foreach ($name in @('nightly-common', 'nightly-policy', 'nightly-coverage', 'release-gate', 'release-selection', 'test-selection')) {
+        . (Join-Path $repoRoot "scripts/lib/$name.ps1")
+    }
+    $fx = New-C1336Candidate
+    $args = @{
+        Profile='rc';Trigger='rc';Ref='rc/2026-10-18';ExpectedSha=$fx.A
+        CheckoutRoot=$fx.Clone;RemoteUrl=$fx.Origin;Repository='fixture/repository'
+        StateRoot=(Join-Path $fx.Root 'state');LogRoot=(Join-Path $fx.Root 'logs')
+        ReleaseRoot=(Join-Path $fx.Root 'release');CoordinationRoot=(Join-Path $fx.Root 'coord')
+        SeamsPath=$fx.Seams;RunId='omitted';NoSync=$true;WhatIf=$true;PassThru=$true
+    }
+    $result = & (Join-Path $repoRoot 'scripts/nightly-run.ps1') @args
+    $expected = 'rc-2026-10-18-' + $fx.A.Substring(0, 12)
+    Assert-C487 ($result.CandidateId -ceq $expected) 'C1336 N omitted' ("CandidateId expected=$expected actual=$($result.CandidateId); refusal=$($result.Refusal)")
+    Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 1
+    return
+}
 
 function Invoke-C1336Wrapper {
     param([string]$Name, [string]$Schedule, [int]$SshExit)
