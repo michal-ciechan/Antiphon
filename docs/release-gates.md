@@ -287,6 +287,20 @@ refuses when the final tag already exists at another SHA, when the pre-release t
 missing, or when the peel is not a full 40-hex SHA. It does not delete the pre-release
 tag or its GitHub pre-release, and it does not restart anything.
 
+Promotion requires one published reservation with the exact candidate id, full
+SHA and pre-release tag, nonempty release id/URL, and no conflicting recorded
+final. A missing, malformed, duplicate, mismatched or unpublished reservation
+refuses before either tag creation or same-final success. Recording revalidates
+the tuple, atomically writes the final name, and reads the row back. A post-push
+recording failure returns `promotion-journal-write-failed` and reports the
+verified remote tag without claiming completed promotion. A retry validates
+authority and reservation again, then records the same final without another
+tag write. Direct tags without a supported peel refuse `tag-peel`.
+
+These changes are master-only. An rc checkout needs a separately commissioned,
+reviewed backport before its release entrypoints can use them; master landing
+does not update running rc tooling or qualify the release workflow.
+
 A retry resumes the same journal. Same tag/SHA/manifest is success or recovery; any mismatch
 is a hard refusal. A tag with no published release stays **pending**, not released, and so
 does a draft missing its assets. Tags are never deleted or moved, and another release's

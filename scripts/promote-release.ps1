@@ -9,7 +9,8 @@
     that same SHA. A different tip refuses remote-candidate-moved, and an
     unresolved tip refuses remote-candidate-unresolved, before any tag or
     GitHub write. The final tag is created at the peeled SHA.
-    An existing final tag at the same SHA is success and creates nothing. An
+    An existing final tag at the same SHA succeeds only after current authority,
+    published-reservation validation and checked journal recording. An
     existing final tag at another SHA is a refusal. The pre-release tag and its
     GitHub pre-release are left in place. An older tested SHA stays promotable
     only while the live tip still equals its peeled SHA.
@@ -42,10 +43,14 @@ $lib = Join-Path $PSScriptRoot 'lib'
 function Write-PromoteLine { param([string]$Message) Write-Host ('[promote-release] {0}' -f $Message) }
 
 function Update-PromoteFinalTag {
-    param([string]$Root, [string]$Id, [string]$FinalName)
+    param([string]$Root, [string]$Id, [string]$Sha, [string]$PreName, [string]$FinalName)
     $journalPath = Join-Path $Root 'publications.json'
-    if (-not (Test-Path -LiteralPath $journalPath)) { return }
-    [void](Set-ReleaseGateReservationFinalTag -JournalPath $journalPath -CandidateId $Id -FinalTag $FinalName)
+    try {
+        return [bool](Set-ReleaseGateReservationFinalTag -JournalPath $journalPath -CandidateId $Id -Sha $Sha -PreReleaseTag $PreName -FinalTag $FinalName)
+    } catch {
+        Write-PromoteLine ('journal recording failed: {0}' -f $_.Exception.Message)
+        return $false
+    }
 }
 
 function Invoke-AntiphonPromoteRelease {
@@ -161,47 +166,52 @@ function Invoke-AntiphonPromoteRelease {
         Write-PromoteLine ('REFUSED: publication gate ({0}).' -f ($gate.Reasons -join ','))
         $result.Refusal = ($gate.Reasons -join ','); $result.ExitCode = 3; return [pscustomobject]$result
     }
-    if ($final.Status -eq 'Found') {
-        if (-not $WhatIf) { Update-PromoteFinalTag -Root $ReleaseRoot -Id $CandidateId -FinalName $finalName }
-        $result.Resumed = $true
-        $result.Promoted = $false
-        $result.ExitCode = 0
-        Write-PromoteLine ('final tag {0} already points at {1}' -f $finalName, $peeled)
-        return [pscustomobject]$result
+    $reservation = Test-ReleaseGatePromotionReservation -JournalPath (Join-Path $ReleaseRoot 'publications.json') `
+        -CandidateId $CandidateId -Sha $peeled -PreReleaseTag $Tag -FinalTag $finalName
+    if (-not $reservation.Ok) {
+        Write-PromoteLine ('REFUSED: {0}.' -f $reservation.Reason)
+        $result.Refusal = $reservation.Reason; $result.ExitCode = 3; return [pscustomobject]$result
     }
-
+    $resume = $final.Status -eq 'Found'
     if ($WhatIf) {
         Write-PromoteLine ('WhatIf: would promote {0} to {1} at {2}' -f $Tag, $finalName, $peeled)
+        $result.Resumed = $resume
         $result.ExitCode = 0
         return [pscustomobject]$result
     }
 
-    $mk = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('tag', '-a', $finalName, $peeled, '-m', ('Antiphon {0}' -f $finalName))
-    if ($null -eq $mk -or [int]$mk.ExitCode -ne 0) {
-        $show = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('rev-list', '-n', '1', $finalName)
-        $shown = ''
-        if ($null -ne $show -and [int]$show.ExitCode -eq 0) { $shown = ([string]$show.Output).Trim() }
-        if (-not [string]::Equals($shown, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
-            Write-PromoteLine 'REFUSED: local tag creation failed and no matching tag exists.'
-            $result.Refusal = 'tag-local-failed'; $result.ExitCode = 1; return [pscustomobject]$result
+    if (-not $resume) {
+        $mk = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('tag', '-a', $finalName, $peeled, '-m', ('Antiphon {0}' -f $finalName))
+        if ($null -eq $mk -or [int]$mk.ExitCode -ne 0) {
+            $show = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('rev-list', '-n', '1', $finalName)
+            $shown = ''
+            if ($null -ne $show -and [int]$show.ExitCode -eq 0) { $shown = ([string]$show.Output).Trim() }
+            if (-not [string]::Equals($shown, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
+                Write-PromoteLine 'REFUSED: local tag creation failed and no matching tag exists.'
+                $result.Refusal = 'tag-local-failed'; $result.ExitCode = 1; return [pscustomobject]$result
+            }
+        }
+        $push = Push-ReleaseGateExactTag -WorkingDirectory $CheckoutRoot -Tag $finalName
+        if ($null -eq $push -or [int]$push.ExitCode -ne 0) {
+            $again = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $finalName
+            if ($again.Status -ne 'Found' -or -not [string]::Equals($again.Sha, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
+                Write-PromoteLine 'REFUSED: tag push failed and the remote tag does not hold the peeled sha.'
+                $result.Refusal = 'tag-push-failed'; $result.ExitCode = 1; return [pscustomobject]$result
+            }
+        }
+        $verified = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $finalName
+        if ($verified.Status -ne 'Found' -or -not [string]::Equals($verified.Sha, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
+            Write-PromoteLine ('REFUSED: final tag peels to {0}, expected {1}.' -f $verified.Sha, $peeled)
+            $result.Refusal = 'tag-peel'; $result.ExitCode = 3; return [pscustomobject]$result
         }
     }
-    $push = Push-ReleaseGateExactTag -WorkingDirectory $CheckoutRoot -Tag $finalName
-    if ($null -eq $push -or [int]$push.ExitCode -ne 0) {
-        $again = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $finalName
-        if ($again.Status -ne 'Found' -or -not [string]::Equals($again.Sha, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
-            Write-PromoteLine 'REFUSED: tag push failed and the remote tag does not hold the peeled sha.'
-            $result.Refusal = 'tag-push-failed'; $result.ExitCode = 1; return [pscustomobject]$result
-        }
+    # Fresh and resumed finals share the same checked persistence boundary.
+    if (-not (Update-PromoteFinalTag -Root $ReleaseRoot -Id $CandidateId -Sha $peeled -PreName $Tag -FinalName $finalName)) {
+        Write-PromoteLine ('REFUSED: final tag {0} is verified at {1}, but its journal record failed.' -f $finalName, $peeled)
+        $result.Refusal = 'promotion-journal-write-failed'; $result.ExitCode = 1; return [pscustomobject]$result
     }
-    $verified = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $finalName
-    if ($verified.Status -ne 'Found' -or -not [string]::Equals($verified.Sha, $peeled, [StringComparison]::OrdinalIgnoreCase)) {
-        Write-PromoteLine ('REFUSED: final tag peels to {0}, expected {1}.' -f $verified.Sha, $peeled)
-        $result.Refusal = 'tag-peel'; $result.ExitCode = 3; return [pscustomobject]$result
-    }
-    Update-PromoteFinalTag -Root $ReleaseRoot -Id $CandidateId -FinalName $finalName
-    $result.Promoted = $true
-    $result.Resumed = $false
+    $result.Promoted = -not $resume
+    $result.Resumed = $resume
     $result.ExitCode = 0
     Write-PromoteLine ('promoted {0} to {1} at {2}' -f $Tag, $finalName, $peeled)
     return [pscustomobject]$result

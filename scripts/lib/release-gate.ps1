@@ -773,37 +773,57 @@ function Set-ReleaseGateReservationPublished {
     return $true
 }
 
+function Test-ReleaseGatePromotionReservation {
+    # Promotion consumes an existing published reservation; it never creates one.
+    param([string]$JournalPath, [string]$CandidateId, [string]$Sha, [string]$PreReleaseTag, [string]$FinalTag)
+    $fail = { param($reason) [pscustomobject]@{ Ok = $false; Reason = ('promotion-reservation-' + $reason) } }
+    if (-not (Test-Path -LiteralPath $JournalPath)) { return (& $fail 'missing') }
+    try {
+        $journal = Get-Content -LiteralPath $JournalPath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    } catch { return (& $fail 'invalid') }
+    if ($journal -isnot [pscustomobject] -or
+        ($journal.schemaVersion -isnot [int] -and $journal.schemaVersion -isnot [long]) -or
+        $journal.schemaVersion -ne 1 -or $journal.reservations -isnot [array]) { return (& $fail 'invalid') }
+    $matching = @()
+    foreach ($row in @($journal.reservations)) {
+        if ($row -isnot [pscustomobject]) { return (& $fail 'invalid') }
+        foreach ($field in @('candidateId', 'sha', 'tag', 'releaseId', 'releaseUrl')) {
+            if ($row.$field -isnot [string]) { return (& $fail 'invalid') }
+        }
+        if ($row.published -isnot [bool] -or
+            ($row.PSObject.Properties.Name -contains 'finalTag' -and $row.finalTag -isnot [string])) { return (& $fail 'invalid') }
+        if ($row.candidateId -ceq $CandidateId -or $row.sha -ieq $Sha -or $row.tag -ceq $PreReleaseTag) { $matching += $row }
+    }
+    if ($matching.Count -eq 0) { return (& $fail 'missing') }
+    if ($matching.Count -ne 1) { return (& $fail 'ambiguous') }
+    $row = $matching[0]
+    if ($row.candidateId -cne $CandidateId) { return (& $fail 'candidate-mismatch') }
+    if (-not (Test-ReleaseGateFullSha $row.sha) -or $row.sha -ine $Sha) { return (& $fail 'sha-mismatch') }
+    if ($row.tag -cne $PreReleaseTag) { return (& $fail 'tag-mismatch') }
+    if (-not $row.published) { return (& $fail 'unpublished') }
+    if ([string]::IsNullOrWhiteSpace($row.releaseId) -or [string]::IsNullOrWhiteSpace($row.releaseUrl)) { return (& $fail 'release-identity') }
+    $parsed = Test-ReleaseGateTag -Tag $PreReleaseTag
+    if (-not $parsed.Ok -or -not $parsed.Prerelease -or
+        $FinalTag -cne (New-ReleaseGateTag -CutUtc $parsed.Date -Sequence $parsed.Sequence) -or
+        (-not [string]::IsNullOrEmpty([string]$row.finalTag) -and $row.finalTag -cne $FinalTag)) { return (& $fail 'final-conflict') }
+    return [pscustomobject]@{ Ok = $true; Reason = ''; Journal = $journal; Row = $row }
+}
+
 function Set-ReleaseGateReservationFinalTag {
-    # Record the final CalVer beside the pre-release reservation. The reserved tag
-    # stays the pre-release name; a second row for the same candidate would make
-    # reuse return the wrong tag. Returns false when the row or the final name is absent.
     param(
         [Parameter(Mandatory = $true)][string]$JournalPath,
         [Parameter(Mandatory = $true)][string]$CandidateId,
+        [Parameter(Mandatory = $true)][string]$Sha,
+        [Parameter(Mandatory = $true)][string]$PreReleaseTag,
         [Parameter(Mandatory = $true)][string]$FinalTag
     )
-    $parsed = Test-ReleaseGateTag -Tag $FinalTag
-    if (-not $parsed.Ok -or $parsed.Prerelease) { return $false }
-    $journal = Get-ReleaseGatePublicationJournal -Path $JournalPath
-    $rows = @()
-    $found = $false
-    foreach ($row in @($journal.reservations)) {
-        if ($null -eq $row) { continue }
-        if ([string]::Equals([string]$row.candidateId, $CandidateId, [StringComparison]::OrdinalIgnoreCase)) {
-            $found = $true
-            $rows += (New-ReleaseGateReservationEntry -CandidateId ([string]$row.candidateId) -Sha ([string]$row.sha) `
-                -Tag ([string]$row.tag) -Sequence ([int]$row.sequence) -ReservedAt ([string]$row.reservedAt) `
-                -Published ([bool]$row.published) -ReleaseId ([string]$row.releaseId) -ReleaseUrl ([string]$row.releaseUrl) `
-                -PublishedAt (Get-ReleaseGateOptionalText -Row $row -Name 'publishedAt') `
-                -Rc (Get-ReleaseGateOptionalInt -Row $row -Name 'rc') -FinalTag $FinalTag)
-        } else { $rows += $row }
-    }
-    if (-not $found) { return $false }
-    Write-NightlyAtomicJson -Path $JournalPath -Object ([ordered]@{
-        schemaVersion = $script:ReleaseGateManifestSchema
-        reservations = $rows
-    })
-    return $true
+    # Re-read and validate the admitted tuple immediately before atomic replacement.
+    $check = Test-ReleaseGatePromotionReservation @PSBoundParameters
+    if (-not $check.Ok) { return $false }
+    $check.Row | Add-Member -NotePropertyName finalTag -NotePropertyValue $FinalTag -Force
+    Write-NightlyAtomicJson -Path $JournalPath -Object $check.Journal
+    $recorded = Test-ReleaseGatePromotionReservation @PSBoundParameters
+    return ($recorded.Ok -and $recorded.Row.finalTag -ceq $FinalTag)
 }
 
 # ---------------------------------------------------------------- manifest ---

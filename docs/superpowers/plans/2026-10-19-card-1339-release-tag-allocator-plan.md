@@ -715,6 +715,8 @@ methods** (V-2 is deliberately run again for S3).
 | CP-8 | S4 | `tests/Antiphon.Tests -> bin-c1339-s4-green/` | s4-green | `/*/*/(ReleaseTagAllocatorTests*)\|(ReleaseGatePublicationAuthorityTests*)\|(ReleaseBranchModelGateTests*)/(C1339_PromoteAuthorityHash*)\|(C599A_ExecutionLedgerJoins*)\|(C1311_MovingTipAuthority*)` | V-4, R-4 | M4, C599A_ExecutionLedgerJoins, C1311_MovingTipAuthority: exactly 3 executed, 0 failed/skipped; 19 harness rows | 3 | 6 |
 | CP-9 | S5-red | `tests/Antiphon.Tests -> bin-c1339-s5-red/` | s5-witness | `/*/*/ReleaseTagAllocatorTests/C1339_PromoteReservationAndTarget` | V-5, R-5 red witness | M5: exactly 1 executed, 1 failed at C1339 G-43 reservation-journal, 0 skipped | 1 | 4 |
 | CP-10 | S5 | `tests/Antiphon.Tests -> bin-c1339-s5-green/` | s5-green | `/*/*/(ReleaseTagAllocatorTests*)\|(ReleaseBranchModelGateTests*)/(C1339_PromoteReservationAndTarget*)\|(C1311_PreReleaseTag*)` | V-5, R-5 | M5, C1311_PreReleaseTag: exactly 2 executed, 0 failed/skipped; 30 harness rows | 2 | 5 |
+| CP-11 | Final | `tests/Antiphon.Tests -> bin-c1339-final-unit/` | final-unit | `/*/*/*/*[Category=Unit]` | Final Unit regression lane | All selected Unit cases, nonzero execution, 0 failed/skipped; retain full TRX roster | 1 | 10 |
+| CP-12 | Final | `tests/Antiphon.Tests -> bin-c1339-final-integration/` | final-integration | `/*/*/(ReleaseTagAllocatorTests*)\|(ReleaseGatePublicationTests*)\|(ReleaseGatePublicationAuthorityTests*)\|(ReleaseBranchModelGateTests*)/*` | V-1..V-5, R-1..R-5, full affected classes | Exactly 31 methods executed, 0 failed/skipped | 31 | 12 |
 
 ### Cost
 
@@ -765,3 +767,35 @@ launcher guards and real transports stay distinct. Full-ref fake inventory is
 recorded from actual fixture push refspecs, never reconstructed from collapsed
 keys. S1-S2 leave UTC allocation-day and promotion authority/reservation work to
 S3-S5. Restart target is none; no live tag or release operation is authorized.
+
+## Code S3-S5 verification amendment (task b44512b9)
+
+The commissioning brief explicitly selects **Final**, overriding the original
+TestDesign exclusion of Unit-wide and full affected-class execution. CP-11 runs
+the complete Unit lane. CP-12 runs all methods in ReleaseTagAllocatorTests (5),
+ReleaseGatePublicationTests (8), ReleaseGatePublicationAuthorityTests (15), and
+ReleaseBranchModelGateTests (3): **31 integration methods**. These classes bound
+the affected release-script behavior; no full-assembly exception is requested.
+Run CP-11/CP-12 serially through the checkpoint tool after S5, with the committed
+HEAD as expected source and the brief's 40-minute row timeout. The extra Final
+estimate is 22 minutes including two isolated builds, excluding slot waits.
+Historical slice estimates and outcomes above remain unchanged.
+
+Additional implemented guards and pending controls:
+
+| Guard / assertion | PC | Method-scoped pending variant and defect |
+|---|---|---|
+| Publication journal object and schema admission; G-45 reservation-typed | PC-75 | Three variants: admit a non-object root; admit a string schema version; admit an unsupported integer schema version. Each must make C1339_PromoteReservationAndTarget fail at G-45. |
+| Publication reservations array admission; G-45 reservation-typed | PC-76 | Admit a scalar reservations object; the same exact method must fail at G-45. |
+| Recording final name must derive from the admitted pre-release; G-52 reservation-final-consistent | PC-77 | Remove the expected-final comparison in Test-ReleaseGatePromotionReservation; a direct real-setter call with a different final must fail G-52 without writing. |
+
+PC-45 additionally needs distinct releaseId, releaseUrl and finalTag type
+variants, alongside its existing non-object row, wrapped candidate/SHA/tag and
+nonboolean published variants. They all target G-45 in the same exact method.
+No control has run. The inventory is now **77 PC IDs, at least 85 cycles**,
+all pending and exact payload binding required. At the inherited 9.25 minutes
+per cycle, the lower-bound Mutation estimate is 787.25 minutes including setup;
+combined ordinary estimate is 854.25 minutes (45 historic + 22 Final + 787.25).
+These remain estimates, not measured savings or qualification.
+The unbound handoff is
+[the mutation candidate](../mutations/2026-10-20-card-1339-release-tag-allocator-candidate.md).
