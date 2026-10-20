@@ -19,15 +19,24 @@ public static class RowTimeout
         return Math.Max(30, 2 * sum + 10);
     }
 
-    public static async Task<DriverResult> RunWithDeadlineAsync(
+    public static Task<DriverResult> RunWithDeadlineAsync(
         IDriver driver,
         DriverRequest request,
         TimeSpan deadline,
+        CancellationToken cancellationToken) =>
+        RunWithDeadlineAsync(driver, request, deadline, TimeProvider.System, cancellationToken);
+
+    internal static async Task<DriverResult> RunWithDeadlineAsync(
+        IDriver driver,
+        DriverRequest request,
+        TimeSpan deadline,
+        TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        if (deadline > TimeSpan.Zero)
-            timeout.CancelAfter(deadline);
+        using var deadlineCancellation = deadline > TimeSpan.Zero
+            ? new CancellationTokenSource(deadline, timeProvider)
+            : new CancellationTokenSource();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadlineCancellation.Token);
         try
         {
             var result = await driver.RunAsync(request, timeout.Token).ConfigureAwait(false);

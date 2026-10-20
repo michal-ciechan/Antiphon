@@ -37,12 +37,19 @@ public sealed class RunScheduler
     private readonly IDriver _driver;
     private readonly IPlatform _platform;
     private readonly RowRunner _rows;
+    private readonly TimeProvider _buildTimeProvider;
 
     public RunScheduler(IDriver driver, IPlatform platform)
+        : this(driver, platform, TimeProvider.System)
+    {
+    }
+
+    internal RunScheduler(IDriver driver, IPlatform platform, TimeProvider buildTimeProvider)
     {
         _driver = driver;
         _platform = platform;
         _rows = new RowRunner(driver, platform);
+        _buildTimeProvider = buildTimeProvider;
     }
 
     public async Task<SchedulerResult> RunAsync(SchedulerRequest request, CancellationToken cancellationToken)
@@ -446,6 +453,7 @@ public sealed class RunScheduler
                 _driver,
                 new DriverRequest("dotnet", args, request.WorkingDirectory, log) { Ledger = ledger },
                 TimeSpan.FromMinutes(deadlineMinutes),
+                _buildTimeProvider,
                 cancellationToken).ConfigureAwait(false);
             sourceOk = request.SourceGuard?.Observe() != false;
         }
