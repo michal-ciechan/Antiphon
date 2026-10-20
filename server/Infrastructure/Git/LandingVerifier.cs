@@ -10,16 +10,17 @@ namespace Antiphon.Server.Infrastructure.Git;
 /// </summary>
 public sealed class LandingVerifier(ILogger<LandingVerifier>? logger = null, IBuildSlotGate? buildSlots = null) : ILandingVerifier
 {
+    internal AgentTaskLandService.LandProcessRunner? RunProcess { get; init; }
     public async Task<LandingVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
     {
-        var result = await AgentTaskLandService.VerifyWithObserverAsync(worktree, filter, new Observer(worktree, logger, null), ct, buildSlots);
+        var result = await AgentTaskLandService.VerifyWithObserverAsync(worktree, filter, new Observer(worktree, logger, null), ct, buildSlots, RunProcess);
         return new(result.Ok, result.Ok ? result.Description : result.Step + " failed");
     }
 
     public async Task<LandingVerification> VerifyAsync(string worktree, string? filter,
         LandingVerificationCorrelation correlation, CancellationToken ct)
     {
-        var result = await AgentTaskLandService.VerifyWithObserverAsync(worktree, filter, new Observer(worktree, logger, correlation), ct, buildSlots, artifactsPath: correlation.ArtifactsPath);
+        var result = await AgentTaskLandService.VerifyWithObserverAsync(worktree, filter, new Observer(worktree, logger, correlation), ct, buildSlots, RunProcess, artifactsPath: correlation.ArtifactsPath);
         return new(result.Ok, result.Ok ? result.Description : result.Step + " failed");
     }
 
