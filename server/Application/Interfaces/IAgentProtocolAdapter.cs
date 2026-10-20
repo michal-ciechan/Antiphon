@@ -84,10 +84,12 @@ public interface IAgentProtocolAdapter : IAsyncDisposable
 /// <summary>
 /// Outcome of a single prompt → response cycle. Adapters fill what they know;
 /// callers needing more reach for <see cref="RawSnapshot"/>.
-/// Record so future fields (token usage, stop reason) extend without breaking callers.
+/// A cancelled StopReason denotes an interrupted turn, not a completion timeout.
+/// Record so future fields (token usage) extend without breaking callers.
 /// </summary>
 public sealed record AgentTurnResult(
     bool TurnCompleted,
     string? ResponseText,
     bool IsAskingQuestion,
-    string RawSnapshot);
+    string RawSnapshot,
+    string? StopReason = null);
