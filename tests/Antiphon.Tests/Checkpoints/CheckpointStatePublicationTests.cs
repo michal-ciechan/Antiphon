@@ -127,7 +127,11 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
                 Filter = "/*/*/ExampleSurfaceTests/*", MinExecuted = 2, Expect = ["ExampleSurfaceTests"],
             });
         if (!final && !transient)
-            manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-never", After = ["all"], Command = "never", Serial = true });
+            manifest.Checkpoints.Add(new CheckpointSpec
+            {
+                Id = "CP-never", After = ["all"], Build = "bin-c1370-fixture", Serial = true,
+                Filter = "/*/*/ExampleSurfaceTests/*", MinExecuted = 2, Expect = ["ExampleSurfaceTests"],
+            });
         var io = new FaultIo();
         var context = new CheckpointCleanupContext(io, new CheckpointNativeGitRunner(), new ImmediateClock());
         var driver = new FakeDriver();
@@ -180,6 +184,7 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         var exit = await CheckpointApp.ExecuteAsync(run, CancellationToken.None, runtime);
         exit.ShouldBe(transient ? 0 : 2, "publication exit");
         var report = JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(run, "report.json")), CheckpointApp.Json)!;
+        Console.WriteLine($"publication final={final} transient={transient} draining={draining}: " + ReportWriter.JsonText(report));
         report.ExitCode.ShouldBe(exit);
         report.Verdict.ShouldBe(transient ? "GREEN" : "RED");
         if (!transient) report.Reason.ShouldContain("receipt-write-failed");
