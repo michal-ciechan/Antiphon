@@ -123,5 +123,32 @@ TUnit execution counts, including W-1's multiple arms as **one** test.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1356-red/` | portable-unit-deadline-red | `/*/Antiphon.Tests.Checkpoints/RunSchedulerTests/build_timer_uses_selected_row_deadlines_and_override` | W-1 defect-red | 1 executed, 1 intended token assertion failure, 0 skipped | 1 | 8 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1356-red/` | portable-unit-deadline-red | `/*/Antiphon.Tests.Checkpoints/RunSchedulerTests/build_timer_uses_selected_row_deadlines_and_override*` | W-1 ordinary; defect-red deferred to PC-1 | 1 passed, 0 failed/skipped (see Code reconciliation) | 1 | 8 |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1356-green/` | portable-unit-deadline-green | `/*/Antiphon.Tests.Checkpoints/RunSchedulerTests/(build_timer_uses_selected_row_deadlines_and_override*)\|(build_deadline_is_the_largest_dependent_row_timeout_and_the_row_override_replaces_it*)\|(scheduler_passes_the_derived_build_deadline_and_records_it*)` | W-1, R-1, R-2 | All 3 named methods, 0 failed/skipped | 3 | 8 |
+
+## Code reconciliation at landed base (2026-10-20)
+
+Base `0c5c3ec3d03c5d10ba927f856733c5c79b1775c3` already contains the fix:
+`RunScheduler.cs:309–318` resolves the selected rows and override,
+`:351` calculates the build budget, and `:449` supplies that budget to the real
+deadline wrapper. `Program.cs` parses `--row-timeout` and `CheckpointApp.cs`
+forwards it as `RowTimeoutOverride`. No timeout policy repair remains.
+
+The Code stage contract reserves deliberate mutants and red/restore/green for
+Mutation. This supersedes D-4 and the S1/S2 temporary-regression instructions:
+Code adds only the D-3 seam and W-1 witness, in one committed source group.
+CP-1 still selects W-1 alone and CP-2 still selects all three named methods;
+both now run on fixed source and expect green. Run them separately with
+`--row-timeout 40m`, without a whole Unit lane as the explicit brief requires.
+The CP-1 method filter now has TUnit's trailing wildcard. The original red
+expectation is historical and is **not** claimed satisfied by a green run.
+The caller-cancellation arm additionally checks zero and negative deadlines
+(disabled timers). No V-n IDs or integration classes are required by this plan.
+
+| Pending control | Guarded defect | Exact method |
+|---|---|---|
+| PC-1 / old-build-argument | Replace only the build deadline argument with `TimeSpan.FromMinutes(Math.Max(15, request.Manifest.Timeouts.RowMinutes))`, retaining the clock. The first W-1 arm must fail its actual-token assertion at virtual minute 16; restore and rerun green. | `/*/Antiphon.Tests.Checkpoints/RunSchedulerTests/build_timer_uses_selected_row_deadlines_and_override*` |
+
+PC-1 remains pending for method-scoped SourceLanding Mutation. Ordinary green
+never discharges it. Mutation also owns missing-control discovery for the other
+arms. No intentional regression is committed or pushed by Code.
