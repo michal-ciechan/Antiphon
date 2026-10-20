@@ -202,7 +202,7 @@ function ConvertFrom-ReleaseAuthorityPolicyBytes {
     try { $obj = $text | ConvertFrom-Json } catch { throw 'policy-unparseable' }
     if ($null -eq $obj) { throw 'policy-unparseable' }
     $version = $obj.schemaVersion
-    if ($null -eq $version -or ($version -isnot [int] -and $version -isnot [long]) -or [int]$version -notin @(2, 3)) { throw 'policy-schema-unsupported' }
+    if ($null -eq $version -or ($version -isnot [int] -and $version -isnot [long]) -or [int]$version -notin @(2, 3, 4)) { throw 'policy-schema-unsupported' }
     $computed = Get-NightlyPolicyHash -Object $obj
     $stated = [string]$obj.policyHash
     if ([string]::IsNullOrWhiteSpace($stated) -or -not [string]::Equals($stated, $computed, [StringComparison]::OrdinalIgnoreCase)) {
@@ -211,7 +211,7 @@ function ConvertFrom-ReleaseAuthorityPolicyBytes {
     try { $profile = Get-NightlyPolicyProfile -PolicyObject $obj -Profile 'rc' } catch { throw 'policy-rc-profile-missing' }
     $suites = @($profile.RequiredSuites | ForEach-Object { [string]$_ })
     $required = @($script:ReleaseAuthorityRcSuites)
-    if ([int]$version -eq 3) {
+    if ([int]$version -ge 3) {
         $required += 'markdown-pdf'
         Test-NightlyProjectDispositions -PolicyObject $obj
     }
@@ -223,7 +223,9 @@ function ConvertFrom-ReleaseAuthorityPolicyBytes {
     foreach ($id in $suites) { if (-not $map.ContainsKey($id)) { throw ('policy-rc-suite-undefined:' + $id) } }
     $exclusions = @()
     foreach ($id in $suites) {
-        foreach ($row in @(Get-NightlyProfileExclusions -PolicyObject $obj -Profile 'rc' -SuiteId $id)) {
+        # Creation and validation share this reader. The release obligation stays
+        # Windows regardless of the coordinator's operating system.
+        foreach ($row in @(Get-NightlyProfileExclusions -PolicyObject $obj -Profile 'rc' -SuiteId $id -Platform windows)) {
             $exclusions += [ordered]@{ suite = $row.Suite; class = $row.Class; methods = @($row.Methods); reason = $row.Reason; owner = $row.Owner }
         }
     }

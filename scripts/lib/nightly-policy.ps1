@@ -7,8 +7,8 @@ $script:AntiphonNightlyPolicyLoaded = $true
 
 # CARD-0599 D-5: schema v2 adds profiles.nightly / profiles.rc. v1 stays readable so an
 # older checked-out policy still loads; only v2 can name an rc profile.
-$script:NightlyPolicySchemaVersion = 3
-$script:NightlyPolicySupportedSchemaVersions = @(1, 2, 3)
+$script:NightlyPolicySchemaVersion = 4
+$script:NightlyPolicySupportedSchemaVersions = @(1, 2, 3, 4)
 $script:NightlyPolicyProfiles = @('nightly', 'rc')
 
 function Get-NightlyRepoRootFromScript {
@@ -401,19 +401,32 @@ function Get-NightlyProfileExclusions {
     <#
       Returns the profile's declared class/method exclusions for one suite. Each row
       carries its own reason and owner; a row without both is rejected so an
-      exclusion can never be created silently.
+      exclusion can never be created silently. Schema 4 optionally limits a row to
+      one platform. Windows is the compatibility default; executors pass their OS.
     #>
-    param($PolicyObject, [string]$Profile, [string]$SuiteId)
+    param($PolicyObject, [string]$Profile, [string]$SuiteId, [string]$Platform = 'windows')
+    if ($Platform -cnotin @('windows', 'linux')) { throw ('unsupported exclusion platform {0}' -f $Platform) }
     $p = Get-NightlyPolicyProfile -PolicyObject $PolicyObject -Profile $Profile
     $rows = @()
     foreach ($row in @($p.Exclusions)) {
         if ($null -eq $row) { continue }
-        if (-not [string]::IsNullOrWhiteSpace($SuiteId) -and [string]$row.suite -ne $SuiteId) { continue }
         $reason = [string]$row.reason
         $owner = [string]$row.owner
         if ([string]::IsNullOrWhiteSpace($reason) -or [string]::IsNullOrWhiteSpace($owner)) {
             throw ('profile {0} exclusion for {1} needs reason and owner' -f $p.Name, ([string]$row.class))
         }
+        # Validate every row before filtering: another suite or host must not hide
+        # a malformed exclusion. Omission alone means all platforms, never null.
+        $map = ConvertTo-NightlyPolicyMap -Object $row
+        $rowPlatform = $null
+        if ($map.Contains('platform')) {
+            $rowPlatform = $map['platform']
+            if ($rowPlatform -isnot [string] -or $rowPlatform -cnotin @('windows', 'linux')) {
+                throw ('profile {0} exclusion for {1} has invalid platform' -f $p.Name, ([string]$row.class))
+            }
+        }
+        if (-not [string]::IsNullOrWhiteSpace($SuiteId) -and [string]$row.suite -ne $SuiteId) { continue }
+        if ($null -ne $rowPlatform -and $rowPlatform -cne $Platform) { continue }
         $methods = @()
         foreach ($m in @($row.methods)) {
             $s = [string]$m

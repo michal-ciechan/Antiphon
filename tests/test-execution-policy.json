@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 3,
-  "policyHash": "bb29ed119865febf791fc1b1d91aeb30d40dfa2d1a4e9b46108c1a2d722d1734",
+  "schemaVersion": 4,
+  "policyHash": "78597608619f2a83cae2a9f9b8f8dd2599ec0fef900f32fece7d4c3ef50c3505",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -544,6 +544,27 @@
           "suite": "e2e",
           "class": "ChannelOutboundIsolatedTests",
           "owner": "CARD-1305"
+        },
+        {
+          "suite": "e2e",
+          "class": "AgentTaskLandDeliveryE2ETests",
+          "platform": "linux",
+          "reason": "Requires Windows ConPTY and native FakeGrok; retained in the Windows RC roster.",
+          "owner": "CARD-1323"
+        },
+        {
+          "suite": "e2e",
+          "class": "DispatchBaseWarningDeliveryE2ETests",
+          "platform": "linux",
+          "reason": "Requires Windows ConPTY and native FakeGrok; retained in the Windows RC roster.",
+          "owner": "CARD-1323"
+        },
+        {
+          "suite": "e2e",
+          "class": "WorktreeRetirementDeliveryE2ETests",
+          "platform": "linux",
+          "reason": "Requires Windows ConPTY and native FakeGrok; retained in the Windows RC roster.",
+          "owner": "CARD-1323"
         }
       ]
     }
