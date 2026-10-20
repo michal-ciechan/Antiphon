@@ -174,9 +174,9 @@ to base in review. This avoids a roughly 25.5-minute assembly run per slice.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c1307-s1-red/` | portable-removal-red | `/*/*/C1307ToolRemovalTests/Mid_removal_cancellation_leaves_marker` | R-1 | 1 executed, 1 expected assertion failure, 0 skipped | 1 | 4 |
+| CP-1 | S1-red | `tests/Antiphon.Tests -> bin-c1307-s1-red/` | portable-removal-red | `/*/*/C1307ToolRemovalTests/Mid_removal_cancellation_leaves_marker*` | R-1 | 1 executed, 1 expected assertion failure, 0 skipped | 1 | 4 |
 | CP-2 | S1 | `tests/Antiphon.Tests -> bin-c1307-s1-green/` | portable-removal-green | `/*/*/C1307ToolRemovalTests/*` | V-1, R-1 | all 5 listed methods, 0 failed/skipped | 5 | 4 |
-| CP-3 | S2-red | `tests/Antiphon.Tests -> bin-c1307-s2-red/` | portable-result-red | `/*/*/C1307CancellationTests/Canceled_wait_returns_130` | R-2 | 1 executed, 1 expected assertion failure, 0 skipped | 1 | 4 |
+| CP-3 | S2-red | `tests/Antiphon.Tests -> bin-c1307-s2-red/` | portable-result-red | `/*/*/C1307CancellationTests/Canceled_wait_returns_130*` | R-2 | 1 executed, 1 expected assertion failure, 0 skipped | 1 | 4 |
 | CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1307-s2-green/` | portable-result-green | `/*/*/C1307CancellationTests/*` | V-2, R-2 | all 5 listed methods, 0 failed/skipped | 5 | 4 |
-| CP-5 | S3-red | `tests/Antiphon.Tests -> bin-c1307-s3-red/` | portable-activation-red | `/*/*/C1307CliCancellationTests/Executor_cancel_persists_130` | R-3 | 1 executed, 1 expected assertion failure, 0 skipped | 1 | 4 |
+| CP-5 | S3-red | `tests/Antiphon.Tests -> bin-c1307-s3-red/` | portable-activation-red | `/*/*/C1307CliCancellationTests/Executor_cancel_persists_130*` | R-3 | 1 executed, 1 expected assertion failure, 0 skipped | 1 | 4 |
 | CP-6 | S3 | `tests/Antiphon.Tests -> bin-c1307-s3-green/` | portable-activation-green | `/*/*/C1307CliCancellationTests/*` | V-3, R-3 | all 5 listed methods, 0 failed/skipped | 5 | 4 |
