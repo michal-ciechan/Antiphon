@@ -17,14 +17,28 @@ internal static class CheckpointFixtureProcess
 {
     public sealed record Output(int Exit, string Stdout, string Stderr);
 
-    public static Output Run(ProcessStartInfo start, int timeoutMs)
+    public static Output Run(ProcessStartInfo start, int timeoutMs) =>
+        Run(start, timeoutMs, CancellationToken.None);
+
+    public static Output Run(ProcessStartInfo start, int timeoutMs, CancellationToken cancellationToken)
     {
         var name = start.FileName;
-        var result = CheckpointProcessRunner.Run(start, timeoutMs, git: false);
-        if (result.TimedOut)
-            throw new TimeoutException(name + " fixture step exceeded " + timeoutMs + " ms (exit and output drains)");
-        return new Output(result.Exit, result.Stdout, result.Stderr);
+        try
+        {
+            var result = CheckpointProcessRunner.Run(start, timeoutMs, git: false, cancellationToken);
+            if (result.TimedOut)
+                throw new TimeoutException(name + " fixture step exceeded " + timeoutMs + " ms (exit and output drains)");
+            return new Output(result.Exit, result.Stdout, result.Stderr);
+        }
+        catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(ex.Message, ex, cancellationToken);
+        }
     }
+
+    // C1233_TokenCallers: preserve each caller's token deadline across exit, drains and custody.
+    public static Task<Output> RunAsync(ProcessStartInfo start, CancellationToken cancellationToken) =>
+        Task.Run(() => Run(start, Timeout.Infinite, cancellationToken), cancellationToken);
 
     // Installed Git in a scratch repository; exit 0 is required.
     public static string Git(string root, params string[] args)
