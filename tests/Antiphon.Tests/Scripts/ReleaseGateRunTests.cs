@@ -18,6 +18,12 @@ namespace Antiphon.Tests.Scripts;
 public sealed class ReleaseGateRunTests
 {
     [Test]
+    public Task C599_SelectionHopExitCodes() => RunCaseAsync("C599_SelectionHopExitCodes", 3,
+        "C599 SelectionHopExitCodes child exit 0 and spaced argument survive",
+        "C599 SelectionHopExitCodes child exit 4 and spaced argument survive",
+        "C599 SelectionHopExitCodes child exit 7 and spaced argument survive");
+
+    [Test]
     public Task C599_CreditIdentity() => RunCaseAsync("C599_CreditIdentity", 34,
         "C599 CreditIdentity nightly/scheduled/master earns [master-scheduled]",
         "C599 CreditIdentity rc/rc/release/rc-20260923T083000Z earns [rc-release]",

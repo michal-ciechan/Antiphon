@@ -992,6 +992,26 @@ function Test-C599_CreditVerdicts {
     Assert-C487 -Cond (-not (Test-NightlyCompleteGreenPredicate -State $null)) -Name 'C599 CreditVerdicts a null state earns nothing'
 }
 
+function Test-C599_SelectionHopExitCodes {
+    $root = New-C599Root
+    $child = Join-Path $root 'exit child.ps1'
+    Set-Content -LiteralPath $child -Encoding ASCII -Value @'
+param([int]$Code, [string]$Value, [string]$Marker)
+[IO.File]::WriteAllText($Marker, $Value)
+exit $Code
+'@
+    foreach ($code in @(0, 4, 7)) {
+        $marker = Join-Path $root ('received-{0}.txt' -f $code)
+        $value = 'value with spaces'
+        $result = Invoke-ReleaseSelectionHop -WorkingDirectory $root -ArgumentList @(
+            '-File', $child, '-Code', [string]$code, '-Value', $value, '-Marker', $marker)
+        $received = if (Test-Path -LiteralPath $marker) { [IO.File]::ReadAllText($marker) } else { '' }
+        Assert-C487 -Cond ($result.ExitCode -eq $code -and $received -ceq $value) `
+            -Name ('C599 SelectionHopExitCodes child exit {0} and spaced argument survive' -f $code) `
+            -Detail ('expected={0} actual={1} received=[{2}]' -f $code, $result.ExitCode, $received)
+    }
+}
+
 function New-C599RunFx {
     <#
       A run fixture whose clone, state root, release root and coordination root are
