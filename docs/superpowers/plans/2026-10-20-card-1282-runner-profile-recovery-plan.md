@@ -110,12 +110,40 @@ the filtered `test-client.ps1` command without nesting a second slot acquisition
 TestDesign must bind this to the checkpoint tool's client lane and committed source.
 No separate application build is required for these client tests.
 
+## Verification design
+
+Code task `e24e5109-2f8a-4696-9240-19c8f506e389` explicitly skips the separate
+TestDesign stage and commissions the two proposed client selections, with no
+whole-suite or backend run. The source census confirms 27 existing modal cases
+and two selector cases; S1 adds one modal case. No browser/manual acceptance is
+required. This is the complete bounded Final ordinary scope for this brief.
+
+- **V-1:** the new interaction witness establishes cached A models, makes A fail,
+  switches to B through the real selector while A remains failed, checks the
+  exact-model reset and preserved project draft, and submits exactly once with B.
+  CP-1 must fail at the missing Runner profile after the failed read is established;
+  CP-2 must pass the same witness.
+- **R-1:** CP-2 runs every modal case, including all four unread-state variants,
+  disabled Create/no submission, preset recovery, and empty-preset behavior.
+- **R-2:** CP-2 runs both shared-selector tier/capability cases with the new
+  optional prop omitted.
+- **PC inventory:** no PC-n/variants are defined by this plan. Post-land
+  SourceLanding Mutation still owns deliberate controls and missing-control
+  discovery; ordinary red/green does not discharge that obligation.
+
+The checkpoint tool owns the build slot; commands below therefore omit the
+nested `build-slot.ps1`. Its generic command lane records source/exit evidence
+(`buildSource=notApplicable`); fresh Vitest JSON provides the nonzero test counts
+and exact title roster instead of TUnit TRX. Run each row with committed HEAD as
+`--expected-source-sha`. Building the checkpoint tool itself through
+`build-slot.ps1` is infrastructure bootstrap, not an application build.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---:|
-| CP-1 | S1 | n/a | client-vitest-red | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1282-red -- pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/ProjectSetupModal.test.tsx -t "C1282 switches runner profile after a models read fails"` | New recovery witness, red | Exactly 1 selected test fails at missing Runner profile; exit 1; other titles excluded by filter | n/a | 2 |
-| CP-2 | S2 | n/a | client-vitest-green | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1282-green -- pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/ProjectSetupModal.test.tsx src/features/agents/AgentTuiSelection.test.tsx` | Recovery witness, existing setup read/submission guards, selector tier/capability guards | 30 passed, 0 failed/skipped at this base plus S1 | n/a | 3 |
+| CP-1 | S1 | n/a | client-vitest-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/ProjectSetupModal.test.tsx -t "C1282 switches runner profile after a models read fails" -JsonResultPath ../logs/c1282-cp1-vitest.json` | V-1 red | Exactly 1 selected test fails at missing Runner profile; exit 1; other titles excluded by filter | n/a | 2 |
+| CP-2 | S2 | n/a | client-vitest-green | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/ProjectSetupModal.test.tsx src/features/agents/AgentTuiSelection.test.tsx -JsonResultPath ../logs/c1282-cp2-vitest.json` | V-1, R-1, R-2 | 30 passed, 0 failed/skipped at this base plus S1 | n/a | 3 |
 
 The green source census is 27 existing modal cases + 1 new witness + 2 selector
 cases; TestDesign confirms the roster before Code. Estimates total five minutes
