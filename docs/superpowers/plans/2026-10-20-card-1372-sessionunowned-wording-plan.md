@@ -109,21 +109,22 @@ receipt review and cleanup; **30-45 minutes total**.
 
 ### Checkpoints
 
-Code task `5666c650-a89e-45ab-942b-dfd8b3d6c225` is commissioned with the
-**Final** verification profile. Its mandatory whole managed Unit lane and full
-affected integration class extend the original narrow selection with CP-4 and
-CP-5. Run CP-2 through CP-5 together after S2 against the same committed SHA,
-sharing the isolated build. CP-4 checks the existing Unit contract; CP-5 covers
-the full `AttentionServiceTests` attention projection, including R-1. These add
-an estimated seven minutes. No namespace-wide or full-assembly run is needed:
-the runtime impact is bounded to unchanged attention behavior and two
-descriptions. This amendment supersedes only the earlier narrow ordinary scope,
-not the implementation, historical evidence, or Mutation ownership.
+Code task `5666c650-a89e-45ab-942b-dfd8b3d6c225` initially added CP-4 (whole
+managed Unit lane) and CP-5 (full affected attention class) for its Final profile.
+The operator refinement of 2026-10-20 explicitly prohibits whole-Unit runs and
+orders the active Unit lane stopped, its output removed, and its reported reader
+test failure preserved without repair. CP-4 is withdrawn, not passed; its
+interrupted execution and exact failure remain in `.antiphon/task-5666c650.md`.
+After committing this S3 scope amendment, run CP-3 and CP-5 against that SHA
+with a fresh isolated build. CP-1's natural red and CP-2's client green retain
+their original tested SHAs. CP-5 covers the full `AttentionServiceTests` attention
+projection, including R-1, at an estimated three minutes beyond CP-3. No
+namespace-wide or full-assembly run is authorized. Implementation, historical
+evidence, and Mutation ownership are unchanged.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | n/a | c1372-client-unit-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/attention/attentionVisuals.test.ts -t "C1372 describes SessionUnowned using current agent pointer ownership"` | V-1 | exactly 1 selected/executed, 0 passed, 1 expected tooltip equality failure; exit 1 | n/a | 2 | true | n/a |
 | CP-2 | S2 | n/a | c1372-client-unit-green | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/attention/attentionVisuals.test.ts -t "C1372 describes SessionUnowned using current agent pointer ownership"` | V-1 | exactly 1 selected/executed/passed, 0 selected failed/skipped; exit 0 | n/a | 2 | true | n/a |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1372-green/` | c1372-managed-application-green | `/*/Antiphon.Tests.Application/AttentionServiceTests*/a_historical_standing_incarnation_without_a_current_pointer_is_unowned*` | R-1 | exactly 1 executed/passed, 0 failed/skipped; exit 0 | 1 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1372-green/` | c1372-final-unit | `/*/*/*/*[Category=Unit]` | Final Unit lane | all selected tests pass; exit 0 | 1 | 4 | true | n/a |
-| CP-5 | S2 | `tests/Antiphon.Tests -> bin-c1372-green/` | c1372-final-attention | `/*/Antiphon.Tests.Application/AttentionServiceTests*/*` | Final full affected class, R-1 | all selected tests pass; exit 0 | 1 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-5 | S3 | `tests/Antiphon.Tests -> bin-c1372-green/` | c1372-final-attention | `/*/Antiphon.Tests.Application/AttentionServiceTests*/*` | Final full affected class, R-1 | all selected tests pass; exit 0 | 1 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
