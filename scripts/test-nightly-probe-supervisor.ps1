@@ -33,7 +33,11 @@ function Read-OwnedIdentity {
     $handle = [Diagnostics.Process]::GetProcessById($identity.pid)
     $identity | Add-Member Process $handle
     $observed[$Role] = $identity
-    if ($handle.StartTime.ToUniversalTime().Ticks -ne $identity.startTimeUtcTicks) {
+    # /proc start ticks are the shared kernel identity. Process.StartTime converts
+    # boot-relative time to wall time separately in each process and can differ.
+    $stat = [IO.File]::ReadAllText("/proc/$($identity.pid)/stat")
+    $fields = $stat.Substring($stat.LastIndexOf(')') + 2).Split(' ')
+    if ($fields[19] -cne $identity.start -or $handle.HasExited) {
         throw "Fixture $Role start identity mismatch."
     }
 }
