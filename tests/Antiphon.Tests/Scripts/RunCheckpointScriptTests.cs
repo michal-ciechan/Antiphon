@@ -95,7 +95,7 @@ public sealed class RunCheckpointScriptTests
         @"C585 BadOutputPath 'bin-x\' invokes no dotnet",
         "C585 BadOutputPath 'bin-x/ ' exit code 2",
         "C585 BadOutputPath 'x/' exit code 2",
-        "C585 BadOutputPath control bin-c585h/ is accepted");
+        "C585 BadOutputPath control isolated forward-slash path is accepted");
 
     [Test]
     public Task C585_BuildFailed() => RunCaseAsync("C585_BuildFailed", 3,
@@ -151,12 +151,12 @@ public sealed class RunCheckpointScriptTests
         "C585 MsBuildLinuxDefault an explicit UseAppHost wins",
         "C585 MsBuildLinuxDefault other properties keep the default");
 
-    /// <summary>CARD-0671: on Windows with no <c>-MsBuildProperty</c> the dotnet arguments are exactly the pre-change ones.</summary>
+    /// <summary>CARD-0671/1377: Windows forwards mandatory output properties without implicit <c>UseAppHost</c>.</summary>
     [Test]
     public Task C585_MsBuildWindowsUnchanged() => RunCaseAsync("C585_MsBuildWindowsUnchanged", 3,
-        "C585 MsBuildWindowsUnchanged build arguments are the pre-CARD-0671 ones",
-        "C585 MsBuildWindowsUnchanged run arguments are the pre-CARD-0671 ones",
-        "C585 MsBuildWindowsUnchanged prints no property lines");
+        "C585 MsBuildWindowsUnchanged build carries output properties without implicit UseAppHost",
+        "C585 MsBuildWindowsUnchanged run carries output properties without implicit UseAppHost",
+        "C585 MsBuildWindowsUnchanged reports exactly the mandatory output properties in order");
 
     /// <summary>CARD-0671: a malformed property or one that sets the output path is refused before any dotnet call.</summary>
     [Test]
