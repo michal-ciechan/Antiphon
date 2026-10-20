@@ -160,6 +160,7 @@ internal static class C1361CensusProbes
         }
         foreach (var vector in vectors) await Check(host, vector);
         await Boundaries(host, passes);
+        if (!passes) await PendingDetailBoundary(host);
         Console.WriteLine($"C1361 {(host ? "host" : "wrapper")}/{(passes ? "passes" : "detail")}: {vectors.Count + 1} census cases plus boundary cases");
     }
 
@@ -202,6 +203,8 @@ internal static class C1361CensusProbes
                     var observed = site == "collected" ? 6 : 2 + delta;
                     var error = recover ? "" : $"RecycleTaskCensusUnknown cause=Drift field=excluded.byProject.count project={(site == "collected" ? Project : ThirdProject)} expected={expected} observed={observed}";
                     await Check(host, new Vector($"{site}/{kind}/{delta}/{recover}", requests, error, Sleeps: recover ? 1 : 2, Wait: !recover));
+                    if (!host && site == "collected" && kind == "open" && delta == -1 && recover)
+                        await CountRecoveryReceipt(requests);
                     if (recover)
                     {
                         requests[PathFor(OtherProject, kind)] = new JsonArray(stable.DeepClone());
@@ -266,6 +269,7 @@ internal static class C1361CensusProbes
         {
             error.ShouldBe("", vector.Name + ": " + run.Output);
             result["code"]!.GetValue<int>().ShouldBe(0, vector.Name);
+            if (vector.Name == "bound/report-stable") result["report"]!["boundOpen"]!.GetValue<int>().ShouldBe(1);
             if (vector.Expected is not null)
             {
                 var snapshot = result["snapshot"]!;
@@ -312,9 +316,10 @@ internal static class C1361CensusProbes
         $LandWaitMinutes=30
         try { $value={{(wait ? "Wait-RecycleTaskCensus" : "Assert-RecycleTaskCensus")}} -RunnerId server2 -ProjectId '{{Project}}' {{(report ? "-Report" : "")}}; $snapshot=$script:recycleReceipt.snapshot }
         catch { $errorText=$_.Exception.Message; $code=2 }
-        $returned=$null
+        $returned=$null; $reportResult=$null
         if ($code -eq 0 -and '{{report}}' -eq 'False') { $returned=$value|ConvertFrom-Json }
-        @{error=$errorText;code=$code;snapshot=$snapshot;returned=$returned;reads=@($script:reads);sleeps=$script:sleeps} | ConvertTo-Json -Depth 40 | Set-Content "$root/result.json"
+        if ($code -eq 0 -and '{{report}}' -eq 'True') { $reportResult=$value }
+        @{error=$errorText;code=$code;snapshot=$snapshot;returned=$returned;report=$reportResult;reads=@($script:reads);sleeps=$script:sleeps} | ConvertTo-Json -Depth 40 | Set-Content "$root/result.json"
         """;
 
     private static string HostProgram(string root, bool wait)
@@ -604,6 +609,75 @@ internal static class C1361CensusProbes
         var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
         run.Exit.ShouldBe(0, run.Output); run.Output.ShouldContain("TOTAL_BOUNDARY_DONE");
         Console.WriteLine($"TOTAL_BOUNDARY {(host ? "host" : "wrapper")} PASS");
+    }
+
+    private static async Task CountRecoveryReceipt(JsonObject requests)
+    {
+        using var fixture = new C1008WrapperFixture();
+        var queries = new JsonObject(); var details = new JsonObject();
+        foreach (var (path, responses) in requests)
+        {
+            if (path.Contains('?')) queries[path] = responses!.DeepClone();
+            else details[path[(path.LastIndexOf('/') + 1)..]] = responses!.DeepClone();
+        }
+        fixture.State["taskQueries"] = queries; fixture.State["details"] = details;
+        var run = await fixture.Run("check-census");
+        run.Exit.ShouldBe(0, "count recovery reaches the real wrapper receipt: " + run.Output);
+        var root = Regex.Match(run.Output, @"(?m)^Census check complete: (.+)$").Groups[1].Value.Trim();
+        var receipt = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "census-check-census-server2.json")))!;
+        receipt["tasks"]!.AsArray().Count.ShouldBe(7, "all collected scoped rows retained");
+        receipt["reads"]!.AsArray().Any(x => x!["outcome"]?.GetValue<string>() == "Malformed").ShouldBeFalse("valid drift is never marked malformed");
+        receipt["snapshot"]!["open"]!["tasks"]!.AsObject().Count.ShouldBe(7, "complete recovered closure");
+        run.Trace.Count(x => x["path"]?.GetValue<string>() == PathFor(OtherProject)).ShouldBe(5, "retry plus two successful passes for each report target");
+        run.Trace.All(x => x["kind"]?.GetValue<string>() != "case").ShouldBeTrue("no host actions");
+        Console.WriteLine("COUNT_RECOVERY_RECEIPT PASS");
+    }
+
+    private static async Task PendingDetailBoundary(bool host)
+    {
+        using var scratch = new Scratch();
+        string body;
+        if (host)
+        {
+            var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
+            var start = source.IndexOf("if printf '%s' \"$detail\" | jq -e --argjson row \"$row\" --arg runner \"$C1008_RUNNER\" '.landRequest!=null", StringComparison.Ordinal);
+            start.ShouldBeGreaterThanOrEqualTo(0, "real pending-detail guard");
+            var end = source.IndexOf("\n                fi", start, StringComparison.Ordinal);
+            end.ShouldBeGreaterThan(start);
+            body = "probe() {\n" + source[start..(end + "\n                fi".Length)] + "\n}\n" + $$"""
+                C1008_RUNNER=server2; id={{Id}}; detail='{"landRequest":{"state":"Running","terminalEventId":null} }'
+                for runner in server2 desktop; do
+                    row="$(jq -nc --arg runner "$runner" '{runnerId:$runner}')"
+                    C1008_TASK_ERROR=''; code=0; probe || code=$?
+                    if [ "$runner" = server2 ]; then
+                        [ "$code" = 3 ] && [ "$C1008_TASK_ERROR" = 'RecycleLandInFlight {{Id}}' ] || exit 1
+                    else [ "$code" = 0 ] && [ -z "$C1008_TASK_ERROR" ] || exit 1; fi
+                done
+                echo PENDING_DETAIL_DONE
+                """;
+        }
+        else
+        {
+            body = $$"""
+                $ErrorActionPreference='Stop'
+                $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/scripts/deploy-server2.ps1',[ref]$null,[ref]$null)
+                $blocks=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if ($null -ne $detail.landRequest) {')},$true))
+                if ($blocks.Count -ne 1) { throw 'real pending-detail guard count' }
+                $detail='{"landRequest":{"state":"Running","terminalEventId":null} }'|ConvertFrom-Json
+                $id='{{Id}}'; $Report=$false
+                foreach ($bound in @($true,$false)) {
+                    $pendingLands=[Collections.Generic.HashSet[string]]::new(); $boundLands=[Collections.Generic.HashSet[string]]::new()
+                    $errorText=''; try { Invoke-Expression $blocks[0].Extent.Text } catch { $errorText=$_.Exception.Message }
+                    if ($bound -and $errorText -cne 'RecycleLandInFlight {{Id}}') { throw "bound pending detail: $errorText" }
+                    if (-not $bound -and $errorText) { throw "off-runner pending detail: $errorText" }
+                    if ($pendingLands.Count -ne 1 -or $boundLands.Count -ne [int]$bound) { throw 'pending counters' }
+                }
+                'PENDING_DETAIL_DONE'
+                """;
+        }
+        var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
+        run.Exit.ShouldBe(0, run.Output); run.Output.ShouldContain("PENDING_DETAIL_DONE");
+        Console.WriteLine($"PENDING_DETAIL_BOUNDARY {(host ? "host" : "wrapper")} bound/off-runner PASS");
     }
 
     internal static async Task AppearanceBoundary()
