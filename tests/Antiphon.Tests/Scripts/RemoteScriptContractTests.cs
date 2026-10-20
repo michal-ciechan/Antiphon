@@ -23,6 +23,11 @@ public sealed class RemoteScriptContractTests
 {
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1374_Host_census_recovers_transient_reads()
+        => await C1374CensusProbes.Check(host: true);
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1361_Host_census_tolerates_open_status_changes_between_list_and_detail()
         => await C1361CensusProbes.Status(host: true, passes: false);
 
