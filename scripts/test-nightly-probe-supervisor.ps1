@@ -130,6 +130,10 @@ try {
         'C1375 shared cleanup elapsed bound' "supervisor=$($receipt.cleanupElapsedMs)ms observed=$($state.expiry.ElapsedMilliseconds)ms"
 } catch {
     $fixtureError = $_.Exception.Message
+    @{
+        error = $fixtureError; supervisor = $receipt; phase = $state.phase
+        observedRoles = @($observed.Keys); readinessElapsedMs = $state.readiness.ElapsedMilliseconds
+    } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $evidenceDirectory 'fixture-failure.json')
     Write-C487Fail 'C1375 fixture/observation failure' $fixtureError
 } finally {
     # The ScriptHarness owner also has an independent 20-second watchdog and group
