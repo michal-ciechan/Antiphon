@@ -1,4 +1,5 @@
 using Antiphon.HostCleanup.Checkpoints;
+using System.Text.Json;
 namespace Antiphon.Checkpoints;
 
 public sealed record CleanupReceipt(string Outcome, string Reason, string Path)
@@ -87,25 +88,34 @@ public sealed class ToolCopyCleanup
             ToolCopyAuthority? authority = null;
             string? ledger;
             if (record.ToolCopy is not null)
+            {
+                // A prior attempt is diagnostic only: never re-admit its possibly
+                // incomplete inventory or use this marker as deletion authority.
+                var marker = Path.Combine(full, "tool-removal-started.json");
+                if (_context.Io.FileExists(marker) || _context.Io.DirectoryExists(marker))
+                    return PreviousRemoval(full, tool, marker, record, cancellationToken);
                 authority = ToolCopyAuthority.Load(full, record, out ledger, _context, cancellationToken);
+            }
             else
                 ledger = _ledger.Check(tool);
             if (ledger is not null) return new("Refused", ledger + "; left in place: " + tool + "; remove it manually", tool);
+            var deletion = new DeleteOwnership
+            {
+                IsolatedRoot = full,
+                CreatedPaths = [tool],
+                RequireInventory = true,
+                RequireBinName = false,
+                AllowOutsideRepository = true,
+            };
+            if (authority is not null)
+                return RemoveSealed(full, tool, record, authority, deletion);
+
+            // Legacy, unsealed copies retain their current-process ledger behavior.
             for (var attempt = 0; ; attempt++)
             {
                 try
                 {
-                    var deletion = new DeleteOwnership
-                    {
-                        IsolatedRoot = full,
-                        CreatedPaths = [tool],
-                        RequireInventory = true,
-                        RequireBinName = false,
-                        AllowOutsideRepository = true,
-                    };
-                    var removed = authority is null
-                        ? _delete.Apply(tool, deletion, () => _beforeDelete?.Invoke(tool), () => _ledger.Check(tool))
-                        : _delete.ApplyToolCopy(tool, deletion, authority, () => _beforeDelete?.Invoke(tool));
+                    var removed = _delete.Apply(tool, deletion, () => _beforeDelete?.Invoke(tool), () => _ledger.Check(tool));
                     if (removed.Disposition == DeleteDisposition.Refused)
                         return new("Refused", removed.Reason ?? "refused", tool);
                     break;
@@ -120,6 +130,71 @@ public sealed class ToolCopyCleanup
             return new("Failed", ex.GetType().Name, tool);
         }
     }
+
+    private CleanupReceipt PreviousRemoval(string run, string tool, string marker, RunOwnership owner,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var preflight = _write.Preflight(run, [marker]);
+            if (preflight is not null) return new("Refused", preflight, tool);
+            using var json = JsonDocument.Parse(ReceiptFile.ReadBytes(_context, marker, cancellationToken));
+            var value = json.RootElement;
+            if (value.ValueKind != JsonValueKind.Object
+                || !value.TryGetProperty("version", out var version) || version.ValueKind != JsonValueKind.Number
+                || !version.TryGetInt32(out var number) || number != 1
+                || !value.TryGetProperty("runId", out var runId) || runId.ValueKind != JsonValueKind.String || runId.GetString() != owner.RunId
+                || !value.TryGetProperty("toolPath", out var path) || path.ValueKind != JsonValueKind.String || path.GetString() != tool
+                || !value.TryGetProperty("authorityDigest", out var digest) || digest.ValueKind != JsonValueKind.String
+                || digest.GetString() != owner.ToolCopy!.Value.Sha256)
+                return new("Refused", "tool-removal-marker-invalid: " + marker, tool);
+            return Incomplete(tool, marker, "previous-removal-attempt");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return new("Refused", "tool-removal-marker-unreadable: " + marker + "; " + ex.Message, tool);
+        }
+    }
+
+    private CleanupReceipt RemoveSealed(string run, string tool, RunOwnership owner,
+        ToolCopyAuthority authority, DeleteOwnership deletion)
+    {
+        var marker = Path.Combine(run, "tool-removal-started.json");
+        try
+        {
+            // Publish under the cleanup gate after authority/death admission, before
+            // any unlink. Ordinary ownership refuses a foreign existing marker.
+            var reason = _write.Text(marker, JsonSerializer.Serialize(new
+            {
+                version = 1, runId = owner.RunId, toolPath = tool,
+                authorityDigest = owner.ToolCopy!.Value.Sha256,
+            }), _write.Under(run));
+            if (reason is not null)
+                return new("Refused", "tool-removal-marker-write-refused: " + marker + "; " + reason, tool);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return new("Refused", "tool-removal-marker-write-failed: " + marker + "; " + ex.Message, tool);
+        }
+        try
+        {
+            var removed = _delete.ApplyToolCopy(tool, deletion, authority, () => _beforeDelete?.Invoke(tool));
+            return removed.Disposition == DeleteDisposition.Refused
+                ? Incomplete(tool, marker, removed.Reason ?? "refused")
+                : new("Removed", "identity-dead", tool);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OperationCanceledException)
+        {
+            // Sequential unlinks cannot be rolled back. Retain the original reason
+            // and the marker; retrying the original full inventory cannot repair it.
+            return Incomplete(tool, marker, ex.GetType().Name + ": " + ex.Message);
+        }
+    }
+
+    private static CleanupReceipt Incomplete(string tool, string marker, string reason) => new("Refused",
+        "tool-removal-incomplete: " + reason + "; tool may be partially removed: " + tool
+        + "; marker: " + marker + "; manual inspection required: establish executor death and inspect containment, links"
+        + " and remaining files before removing this tool residue; retain run receipts, ownership seal and marker", tool);
 
     public int Sweep(string resultsRoot, TextWriter? output = null, int maxEntries = 512, TimeSpan? budget = null)
     {

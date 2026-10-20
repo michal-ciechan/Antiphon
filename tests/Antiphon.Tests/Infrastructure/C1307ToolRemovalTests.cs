@@ -94,11 +94,12 @@ public sealed class C1307ToolRemovalTests
     [Test]
     public void Marker_failure_prevents_tool_unlink()
     {
-        foreach (var variant in new[] { "write", "foreign", "directory", "linked" })
+        foreach (var variant in new[] { "write", "foreign", "invalid-version", "directory", "linked" })
         {
             var f = Sealed();
             var before = ToolBytes(f);
             if (variant == "foreign") f.Io.Put(Marker(f), "foreign-marker");
+            if (variant == "invalid-version") f.Io.Put(Marker(f), "{\"version\":\"1\"}");
             if (variant == "directory") f.Io.CreateDirectory(Marker(f));
             if (variant == "linked")
             {
