@@ -13,4 +13,11 @@ public sealed class ReleaseGatePlatformTests
             "C1323 windows-retains-69-and-siblings", "C1323 linux-excludes-exactly-69",
             "C1323 schema4-selector-admitted", "C1323 pinned-authority-validates-windows",
             "C1323 complete-synthetic-ledger-validates", "C1323 missing-windows-uid-refuses");
+
+    [Test]
+    public Task C1323_PlatformExecution() =>
+        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1323_PlatformExecution", 12,
+            "C1323 linux-launches-only-portable-cases", "C1323 windows-retains-delivery-cases",
+            "C1323 linux-summary-is-diagnostic", "C1323 linux-state-is-diagnostic",
+            "C1323 linux-leaves-green-files-identical", "C1323 unknown-platform-launches-nothing");
 }

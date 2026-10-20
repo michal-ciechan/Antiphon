@@ -211,9 +211,129 @@ function Test-C1323FrozenLedger($Root, $Sha, $Nodes, $ExpectedWindows) {
     Assert-C1323 (-not $invalid.Ok -and (Same-C1323Set $invalid.Reasons @("plan-uid-missing:$missing", "uid-missing:$missing"))) 'missing-windows-uid-refuses' ($invalid.Reasons -join ',')
 }
 
+function New-C1323ExecutionFixture {
+    $root = Join-Path $ResultsDirectory 'execution'
+    [void][IO.Directory]::CreateDirectory($root)
+    $clone = New-C487OwnedClone $root 'https://github.com/fixture/c1323'
+    $policy = Get-Content "$repoRoot/tests/test-execution-policy.json" -Raw | ConvertFrom-Json
+    # A one-suite offline policy keeps the executor bounded; V-1 pins the real nine.
+    $policy.suites = [pscustomobject]@{ e2e = $policy.suites.e2e }
+    $policy.profiles.rc.requiredSuites = @('e2e')
+    $policy.projects = @('tests/Antiphon.E2E/Antiphon.E2E.csproj')
+    $policy.projectDispositions = @([pscustomobject]@{ project = $policy.projects[0]; role = 'primary'; reason = 'offline fixture' })
+    $policy.profiles.rc.exclusions += [pscustomobject]@{ suite = 'e2e'; class = 'MixedTests'; methods = @('Live'); reason = 'legacy live method'; owner = 'fixture' }
+    Write-C1323File $clone 'tests/Antiphon.E2E/Antiphon.E2E.csproj' '<Project><PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup></Project>'
+    foreach ($file in @('global.json', 'tests/test-selection-policy.json', 'scripts/select-test-rosters.ps1')) {
+        Write-C1323File $clone $file ([IO.File]::ReadAllText((Join-Path $repoRoot $file)))
+    }
+    Write-C1323Policy $policy "$clone/tests/test-execution-policy.json"
+    [void](Invoke-C1323Git $clone @('init', '--quiet'))
+    [void](Invoke-C1323Git $clone @('config', 'user.name', 'C1323 fixture'))
+    [void](Invoke-C1323Git $clone @('config', 'user.email', 'c1323@example.invalid'))
+    [void](Invoke-C1323Git $clone @('config', 'core.autocrlf', 'false'))
+    [void](Invoke-C1323Git $clone @('add', '--all'))
+    [void](Invoke-C1323Git $clone @('commit', '--quiet', '-m', 'offline execution fixture'))
+    $sha = Invoke-C1323Git $clone @('rev-parse', 'HEAD')
+    $nodes = @(New-C1323Nodes | ForEach-Object {
+        @{ uid = $_.uid; type = ($_.class -replace '^Antiphon.E2E.', ''); className = $_.class; namespace = 'Antiphon.E2E'; method = $_.method; categories = $_.categories; state = 'Discovered' }
+    })
+    Write-NightlyAtomicJson "$root/nodes.json" $nodes
+    Write-C1323File $root 'commands/npm.cmd' 'fixture launcher, never executed'
+    return @{ Root = $root; Clone = $clone; Sha = $sha; Nodes = $nodes }
+}
+
+function Write-C1323ExecutionSeams($Fixture, $Platform) {
+    $path = Join-Path $Fixture.Root "$Platform.ps1"
+    $template = @'
+. '__CLONE__/scripts/lib/c487-harness.ps1'
+$env:PATH = '__ROOT__/commands' + [IO.Path]::PathSeparator + $env:PATH
+$NightlySeams = @{
+    HostPlatform = { return '__PLATFORM__' }
+    E2EPrerequisites = { return @{ Ok = $true; Rows = @(@{ name = 'offline-browser'; exitCode = 0 }) } }
+    StartProcess = {
+        param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+        Add-Content -LiteralPath '__ROOT__/__PLATFORM__-commands.log' -Value ($FilePath + ' ' + ($ArgumentList -join ' '))
+        $argv = @($ArgumentList)
+        $nodes = @(Get-Content '__ROOT__/nodes.json' -Raw | ConvertFrom-Json)
+        $diagIndex = [array]::IndexOf($argv, '--diagnostic-output-directory')
+        if ($argv -contains '--list-tests') {
+            Write-C487Discovery (Join-Path $argv[$diagIndex + 1] 'log.diag') $nodes
+        } elseif ($argv -contains '--report-trx-filename') {
+            $filterIndex = [array]::IndexOf($argv, '--treenode-filter')
+            if ($filterIndex -ge 0) {
+                $parts = $argv[$filterIndex + 1].Split('/')
+                $nodes = @($nodes | Where-Object { $_.namespace -like $parts[2] -and $_.type -like $parts[3] -and $_.method -like $parts[4] })
+            }
+            foreach ($node in $nodes) { Add-Content '__ROOT__/__PLATFORM__-launched.txt' $node.uid }
+            $trx = Join-Path $argv[[array]::IndexOf($argv, '--results-directory') + 1] $argv[[array]::IndexOf($argv, '--report-trx-filename') + 1]
+            Write-C487Trx $trx @($nodes | ForEach-Object { @{ Id = $_.uid; ClassName = $_.className; MethodName = $_.method; Outcome = 'Passed' } })
+            Write-C487Execution (Join-Path $argv[$diagIndex + 1] 'log.diag') @($nodes | ForEach-Object { @{ uid = $_.uid; type = $_.type; className = $_.className; method = $_.method; state = 'Passed' } })
+            # This is child discovery output, never a precomputed census or verdict.
+            Write-C487Discovery ([IO.Path]::ChangeExtension($trx, '.discovery.json')) @(Get-Content '__ROOT__/nodes.json' -Raw | ConvertFrom-Json)
+        }
+        return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; LogText = 'offline child completed' }
+    }
+}
+'@
+    $text = $template.Replace('__CLONE__', $Fixture.Clone.Replace("'", "''")).Replace('__ROOT__', $Fixture.Root.Replace("'", "''")).Replace('__PLATFORM__', $Platform)
+    [IO.File]::WriteAllText($path, $text)
+    return $path
+}
+
+function Test-C1323_PlatformExecution {
+    foreach ($name in @('nightly-tests-impl', 'nightly-run-impl')) { . "$PSScriptRoot/lib/$name.ps1" }
+    $fx = New-C1323ExecutionFixture
+    $linuxSeams = Write-C1323ExecutionSeams $fx 'linux'
+    $linux = Invoke-AntiphonNightlyTests -RepoRoot $fx.Clone -LogRoot "$($fx.Root)/linux-direct" -Profile rc -Sha $fx.Sha -SeamsPath $linuxSeams
+    $launched = @(Get-Content "$($fx.Root)/linux-launched.txt")
+    $portable = Same-C1323Set $launched @('unclassified', 'legacy-sibling')
+    Assert-C1323 $portable 'linux-launches-only-portable-cases' ($launched -join ',')
+    if (-not $portable) { return } # red witness: no dependent assertions obscure it
+    $summary = Get-Content $linux.SummaryPath -Raw | ConvertFrom-Json
+    Assert-C1323 ($summary.testsPassed -and -not $summary.coverageComplete -and $summary.coverageScope -ceq 'PlatformDiagnostic' -and $summary.platform -ceq 'linux' -and $summary.reasons -contains 'windows-rc-obligations-outstanding') 'linux-summary-is-diagnostic'
+    $census = @($summary.suites | Where-Object { $_.requiredUidCount -eq 2 -and $_.excludedUidCount -eq 70 })
+    Assert-C1323 ($census.Count -gt 0 -and @($census[0].exclusions | Where-Object owner -eq 'CARD-1323').Count -eq 69) 'linux-census-retains-exclusion-attribution'
+    Assert-C1323 ($launched -contains 'unclassified' -and $launched -contains 'legacy-sibling' -and $launched -notcontains 'legacy-live') 'optin-and-legacy-method-semantics'
+
+    $windowsSeams = Write-C1323ExecutionSeams $fx 'windows'
+    $windows = Invoke-AntiphonNightlyTests -RepoRoot $fx.Clone -LogRoot "$($fx.Root)/windows-direct" -Profile rc -Sha $fx.Sha -SeamsPath $windowsSeams
+    $launched = @(Get-Content "$($fx.Root)/windows-launched.txt")
+    Assert-C1323 (Same-C1323Set $launched @($fx.Nodes.uid | Where-Object { $_ -ne 'legacy-live' })) 'windows-retains-delivery-cases' ($launched -join ',')
+    $summary = Get-Content $windows.SummaryPath -Raw | ConvertFrom-Json
+    Assert-C1323 ($windows.ExitCode -eq 0 -and $summary.testsPassed -and $summary.coverageComplete -and $summary.coverageScope -ceq 'Full' -and $summary.platform -ceq 'windows' -and $summary.reasons.Count -eq 0) 'windows-summary-remains-full' ($summary | ConvertTo-Json -Depth 8 -Compress)
+
+    $releaseRoot = "$($fx.Root)/releases"
+    $green = "$releaseRoot/candidates/fixture/complete-green.json"
+    $masterGreen = "$($fx.Root)/master/last-complete-green.json"
+    Write-C1323File $fx.Root 'releases/candidates/fixture/complete-green.json' 'candidate sentinel'
+    Write-C1323File $fx.Root 'master/last-complete-green.json' 'master sentinel'
+    foreach ($platform in @('linux', 'windows')) {
+        $runId = "offline-$platform"
+        $stateRoot = "$($fx.Root)/state-$platform"
+        $request = @{ RepositoryRoot = $fx.Clone; CandidateSha = $fx.Sha; CandidateRef = 'rc/2026-10-20'; Repository = 'fixture/c1323'; Profile = 'rc'; ReleaseRoot = $releaseRoot; CandidateId = 'fixture'; RunId = $runId; SelectionMode = 'Full'; Attempt = 1 }
+        $bound = New-ReleaseSelectionAttemptCore $request
+        $run = Invoke-AntiphonNightlyRunCore -NoSync -CheckoutRoot $fx.Clone -StateRoot $stateRoot -LogRoot "$($fx.Root)/run-$platform" -RemoteUrl 'https://github.com/fixture/c1323' -Ref 'rc/2026-10-20' -Profile rc -Trigger rc -ExpectedSha $fx.Sha -CandidateId fixture -Repository 'fixture/c1323' -ReleaseRoot $releaseRoot -CoordinationRoot "$($fx.Root)/coordination" -RunId $runId -SeamsPath "$($fx.Root)/$platform.ps1" -SelectionAttemptPath $bound.SelectionAttemptPath -SelectionAttemptDigest $bound.SelectionAttemptDigest -SelectionPath $bound.SelectionPath -SelectionDigest $bound.SelectionDigest
+        $state = Get-Content "$stateRoot/last-run.json" -Raw | ConvertFrom-Json
+        if ($platform -eq 'linux') {
+            Assert-C1323 ($state.testsPassed -and -not $state.coverageComplete -and $state.coverageScope -ceq 'PlatformDiagnostic' -and $state.platform -ceq 'linux' -and $state.reasons -contains 'windows-rc-obligations-outstanding') 'linux-state-is-diagnostic' ($state | ConvertTo-Json -Depth 4 -Compress)
+            Assert-C1323 ($run.CreditKind -eq '' -and (Get-ReleaseGateCreditVerdict $state).Reasons -contains 'not-full-coverage') 'linux-credit-refuses'
+            Assert-C1323 ([IO.File]::ReadAllText($green) -ceq 'candidate sentinel' -and [IO.File]::ReadAllText($masterGreen) -ceq 'master sentinel') 'linux-leaves-green-files-identical'
+        } else {
+            Assert-C1323 ($run.ExitCode -eq 0 -and $state.coverageComplete -and $state.coverageScope -ceq 'Full' -and $state.platform -ceq 'windows' -and $run.CreditKind -ceq 'rc-release' -and [IO.File]::ReadAllText($green) -cne 'candidate sentinel') 'windows-state-preserves-full-behavior' ($state | ConvertTo-Json -Depth 4 -Compress)
+        }
+    }
+    $unknownSeams = Write-C1323ExecutionSeams $fx 'unknown'
+    $unknown = Invoke-AntiphonNightlyTests -RepoRoot $fx.Clone -LogRoot "$($fx.Root)/unknown" -Profile rc -Sha $fx.Sha -SeamsPath $unknownSeams
+    Assert-C1323 ($unknown.ExitCode -ne 0 -and $unknown.Refusal -ceq 'unsupported-host-platform' -and -not (Test-Path "$($fx.Root)/unknown-commands.log")) 'unknown-platform-launches-nothing'
+    Assert-C1323 ($linux.coverageScope -ceq 'PlatformDiagnostic' -and $linux.reasons -contains 'windows-rc-obligations-outstanding') 'diagnostic-return-value'
+}
+
 try {
-    if ($Case -ne 'C1323_PlatformPolicy') { throw "unknown case: $Case" }
-    Test-C1323_PlatformPolicy
+    switch ($Case) {
+        'C1323_PlatformPolicy' { Test-C1323_PlatformPolicy }
+        'C1323_PlatformExecution' { Test-C1323_PlatformExecution }
+        default { throw "unknown case: $Case" }
+    }
 } catch {
     Write-C487Fail "C1323 unexpected exception" $_.ToString()
 }
