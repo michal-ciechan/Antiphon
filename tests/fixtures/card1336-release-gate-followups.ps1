@@ -122,7 +122,13 @@ $NightlySeams.StartProcess = {
     $args = @($ArgumentList)
     $fileIndex = [array]::IndexOf($args, '-File')
     $allowed = $leaf -in @('dotnet', 'npm', 'npm.cmd')
-    if ($leaf -eq 'cmd.exe') { $allowed = (($args -join ' ') -match 'npm\.cmd') }
+    # The native profile packages npm through ComSpec. Linux has no ComSpec;
+    # accept only these three synthetic workload requests, without launching it.
+    if ($FilePath -ceq [string]$env:ComSpec -and $args.Count -ge 3 -and $args[0] -ceq '/c' -and
+        [IO.Path]::IsPathRooted($args[1]) -and [IO.Path]::GetFileName($args[1]) -in @('npm', 'npm.cmd', 'npm.exe')) {
+        $allowed = ($args.Count -eq 3 -and $args[2] -ceq 'ci') -or
+            ($args.Count -eq 4 -and $args[2] -ceq 'run' -and $args[3] -in @('build', 'lint'))
+    }
     if ($leaf -match '^Antiphon\.(Tests|SessionRunner\.Tests|PtyHost\.Tests|Agents\.Pty\.Tests|Messaging\.Tests|E2E|MarkdownPdf\.Tests)\.exe$') { $allowed = $true }
     if ($leaf -in @('pwsh', 'pwsh.exe') -and $fileIndex -ge 0) {
         $target = [IO.Path]::GetFileName(([string]$args[$fileIndex + 1] -replace '\\', '/'))
@@ -242,7 +248,8 @@ if ($Case -ceq 'C1336_NightlyCandidateIdentity') {
     $summary = if ($state.summaryPath) { Read-C1336Json $state.summaryPath } else { $null }
     $hopOk = $hop -and $hop.CandidateId -ceq $expected -and $hop.ExpectedSha -ceq $fx.A -and
         $hop.Ref -ceq 'rc/2026-10-18' -and $hop.Profile -ceq 'rc' -and $hop.ContinueRunId -ceq 'sync' -and
-        $hop.NoSync -and $hop.ContinueParentPid -gt 0 -and $hop.ContinueParentStartedAt -and $selected.Ok -and $summary
+        $hop.NoSync -and $hop.ContinueParentPid -gt 0 -and $hop.ContinueParentStartedAt -and
+        $selected.Ok -and $summary -and $sync.Result.ExitCode -eq 0
     foreach ($key in @('StateRoot', 'LogRoot', 'ReleaseRoot', 'CoordinationRoot', 'CheckoutRoot')) {
         $hopOk = $hopOk -and $hop.$key -ceq $sync.Args[$key]
     }
@@ -254,7 +261,8 @@ if ($Case -ceq 'C1336_NightlyCandidateIdentity') {
         $workload.SelectionAttemptDigest -ceq (Get-NightlyFileSha256 $selected.AttemptPath) -and
         $workload.SelectionDigest -ceq (Get-NightlyFileSha256 $selected.SelectionPath) -and
         $summary.selection.candidateId -ceq $expected -and $summary.selection.runId -ceq 'sync' -and
-        $summary.selection.attempt -eq 1 -and $summary.sha -ceq $fx.A -and $summary.testsPassed
+        $summary.selection.attempt -eq 1 -and $summary.sha -ceq $fx.A -and
+        $summary.testsPassed -and $summary.coverageComplete -and $sync.Result.ExitCode -eq 0
     Assert-C487 ([bool]$workloadOk) 'C1336 N workload-child'
     Assert-C487 ($sync.Result.ExitCode -eq 0 -and $sync.Terminal.exitCode -eq 0 -and
         $sync.Terminal.nativeRunId -ceq 'sync' -and $sync.Terminal.candidateId -ceq $expected -and
