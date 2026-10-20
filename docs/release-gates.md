@@ -254,6 +254,18 @@ checkout HEAD, candidate journal and remote ref are compared to the pinned SHA. 
 ref fails that run (`remote-candidate-moved`) and is never retested under the old candidate
 id. The long-lived line may move after a successful tag; the next SHA is a new candidate id.
 
+The nightly bootstrap sets `core.longpaths=true` in its owned clone before reset and
+cleanup (and during a new clone). Windows' `LongPathsEnabled` alone does not opt Git
+into long fixture paths. Its `git clean -fdx` excludes the root
+`.antiphon-nightly-owned` and `.antiphon-release-owned` files, preserving their bytes
+for the self-reexec and later ownership checks. An unmarked existing clone still
+refuses; do not mark an arbitrary clone to bypass that check. Recovery of a proven
+release checkout must retain the failed run's evidence and verify its origin and
+exact HEAD. The documented `-NoSync` hop can run a separately prepared, cleaned,
+marked checkout at the pinned SHA; recheck the remote and candidate journal before
+commissioning it. A durable bootstrap repair also needs to reach the rc line before
+ordinary syncing runs use that line's script.
+
 **Fix.** A bug or test fix for code already on the rc line lands on that line. A feature
 or refactor stays master-only. The failed run's evidence is kept. The line's new tip is
 tested from scratch under the rc profile. A partial run or a green under a different
