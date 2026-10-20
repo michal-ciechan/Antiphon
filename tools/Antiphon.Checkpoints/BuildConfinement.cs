@@ -424,7 +424,9 @@ public static class BuildConfinement
         return text.Length > 200 ? text[..200] : text;
     }
 
-    internal static string Stamp(string full)
+    internal static string Stamp(string full) => Stamp(full, path => ReceiptFile.ReadBytes(path));
+
+    internal static string Stamp(string full, Func<string, byte[]> readBytes)
     {
         try
         {
@@ -438,7 +440,7 @@ public static class BuildConfinement
                 return "directory|0|";
             if (!file.Exists)
                 return "absent|0|";
-            var bytes = ReceiptFile.ReadBytes(full);
+            var bytes = readBytes(full);
             return "file|" + bytes.Length + "|" + Hash(bytes);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
