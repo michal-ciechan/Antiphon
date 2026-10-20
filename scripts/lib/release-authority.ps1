@@ -48,6 +48,7 @@ $script:ReleaseAuthorityCardReadTimeoutSeconds = 15
 $script:ReleaseAuthorityRepositoryPattern = '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
 $script:ReleaseAuthorityScripts = @(
     'publish-release.ps1',
+    'promote-release.ps1',
     'lib/release-gate.ps1',
     'lib/release-authority.ps1',
     'lib/nightly-policy.ps1',
