@@ -342,24 +342,39 @@ public sealed partial class AgentTaskDispatcher
         public Dictionary<Guid, DateTime> Floor { get; } = new();
     }
 
-    internal Task<int> DispatchReadyWaitersAsync(CancellationToken ct) => Task.FromResult(0);
+    internal async Task<int> DispatchReadyWaitersAsync(CancellationToken ct)
+    {
+        if (_leaseWaiters is null || !_leaseWaiters.TryTakeReady(out var ready)) return 0;
+        if (ready.Count == 0)
+            ready = await _db.AgentTasks.AsNoTracking()
+                .Where(t => t.Status == AgentTaskStatus.Queued && t.Workspace == WorkspaceMode.Worktree)
+                .OrderBy(t => t.CreatedAt).ThenBy(t => t.Id).Select(t => t.Id).Take(8).ToListAsync(ct);
+        if (ready.Count == 0) return 0;
+        if (_scopeFactory is null) return (await TickCoreAsync(ready, ct)).Dispatched;
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        return (await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickCoreAsync(ready, ct)).Dispatched;
+    }
 
-    public async Task<TickResult> TickAsync(CancellationToken ct)
+    public Task<TickResult> TickAsync(CancellationToken ct) => TickCoreAsync(null, ct);
+
+    private async Task<TickResult> TickCoreAsync(IReadOnlyList<Guid>? ready, CancellationToken ct)
     {
         using var observation = new RuntimePhase(_logger, _timeProvider, Guid.Empty, "dispatcher.sweep");
         var sweepFailures = 0;
+        var resumedRoutingBlocked = 0;
+        if (!_settings.Enabled)
+        {
+            _leaseWaiters?.ReconcileDispatch(new HashSet<Guid>(), ready);
+            return new TickResult(0, 0, 0, 0, 0, sweepFailures);
+        }
+        if (ready is null)
+        {
         if (_compaction is not null)
         {
             sweepFailures += await RunSweepAsync(
                 "compaction continuation",
                 (d, ct2) => d._compaction?.SweepAsync(ct2) ?? Task.FromResult(0),
                 ct);
-        }
-
-        if (!_settings.Enabled)
-        {
-            _leaseWaiters?.ReconcileDispatch(new HashSet<Guid>());
-            return new TickResult(0, 0, 0, 0, 0, sweepFailures);
         }
 
         // The clocks below are INDEPENDENT and each runs isolated (see RunSweepAsync). They
@@ -448,11 +463,11 @@ public sealed partial class AgentTaskDispatcher
         // nothing; counting it would let a system at the cap starve every interpretation and
         // silently degrade all checks exactly when the operator most wants eyes on the fleet.
         // Their own backlog is bounded separately, on the interpreter (CARD-0047 §1.3).
-        var resumedRoutingBlocked = 0;
         sweepFailures += await RunSweepAsync(
             "resume routing-blocked",
             async (d, ct2) => resumedRoutingBlocked = await d.ResumeRoutingBlockedAsync(ct2),
             ct);
+        }
 
         // CARD-0653: a runner-bound task occupies that runner's declared seats, not this
         // desktop process cap. An empty RunnerId is the local process-spawning population.
@@ -480,6 +495,9 @@ public sealed partial class AgentTaskDispatcher
             .Where(t => t.Status == AgentTaskStatus.Queued)
             .OrderBy(t => t.CreatedAt)
             .ToListAsync(ct);
+        if (ready is not null)
+            queued = ready.Select(id => queued.FirstOrDefault(t => t.Id == id))
+                .OfType<AgentTask>().Take(8).ToList();
         // The list above is this tick's snapshot. A mirror can commit after it and before the
         // row's hold check; tests finish that mirror here. Production leaves the hook null.
         if (AfterQueuedSnapshotAsync is { } afterQueued)
@@ -488,7 +506,7 @@ public sealed partial class AgentTaskDispatcher
                 t => t.CapacityWaitRetained && t.Status == AgentTaskStatus.Working
                     && t.CapacityWaitId != null, ct)))
         {
-            _leaseWaiters?.ReconcileDispatch(new HashSet<Guid>());
+            _leaseWaiters?.ReconcileDispatch(new HashSet<Guid>(), ready);
             return new TickResult(
                 0, 0, 0, 0, 0, sweepFailures, ResumedRoutingBlocked: resumedRoutingBlocked);
         }
@@ -611,8 +629,11 @@ public sealed partial class AgentTaskDispatcher
         var waiterKeys = new Dictionary<string, string>(StringComparer.Ordinal);
 
         _siblingInspections?.Reconcile(queued.Select(t => t.Id).ToHashSet());
-        foreach (var task in queued.OrderBy(t => _siblingInspections?.Attempted(t.Id) == true))
+        foreach (var task in ready is null
+                     ? queued.OrderBy(t => _siblingInspections?.Attempted(t.Id) == true)
+                     : queued.AsEnumerable())
         {
+            if (ready is null) await DispatchReadyWaitersAsync(ct);
             ct.ThrowIfCancellationRequested();
 
             // Old rows can retain the public desktop aliases. Use the canonical null binding
@@ -1057,7 +1078,7 @@ public sealed partial class AgentTaskDispatcher
 
         // CARD-0672 D-2: only a task refused the lease on THIS tick still waits for it.
         var heldOnLease = heldThisTick.Where(h => h.Kind == HoldKind.Lease).Select(h => h.TaskId).ToHashSet();
-        _leaseWaiters?.ReconcileDispatch(heldOnLease);
+        _leaseWaiters?.ReconcileDispatch(heldOnLease, ready);
 
         var occupantShorts = busyScopes
             .Select(s => DelegationReportFormatter.Short(s.Id))
@@ -1270,7 +1291,9 @@ public sealed partial class AgentTaskDispatcher
             waiterKeys[repository] = common;
         }
 
-        _leaseWaiters.Register(common, task.Id, RepositoryLeasePurposes.Dispatch, _timeProvider.GetUtcNow());
+        var compatible = DelegationWorktreeService.IsOrdinaryPreflightTask(task)
+            && !await _db.AgentTaskParks.AnyAsync(p => p.TaskId == task.Id, ct);
+        _leaseWaiters.Register(common, task.Id, RepositoryLeasePurposes.Dispatch, _timeProvider.GetUtcNow(), compatible);
     }
 
     internal async Task<bool> TraceHeldAsync(
@@ -1866,6 +1889,7 @@ public sealed partial class AgentTaskDispatcher
     internal async Task<int> RunSweepAsync(
         string name, Func<AgentTaskDispatcher, CancellationToken, Task<int>> sweep, CancellationToken ct)
     {
+        await DispatchReadyWaitersAsync(ct);
         var budget = TimeSpan.FromSeconds(_settings.SweepBudgetSeconds);
         if (_scopeFactory is null || _sweepInFlight is null)
             return await RunAwaitedSweepAsync(name, this, sweep, budget, ct);
@@ -5392,9 +5416,13 @@ public sealed partial class AgentTaskDispatcher
         // capture the baseline, still does.
         var needsLease = task.Workspace != WorkspaceMode.ReadOnly && !AgentTaskRoles.IsSpecialist(task.Role)
             && task.RepoPath is not null && !LaunchesPreparedMirror(task) && !RearmsPreparedWorktree(task);
+        var preflight = needsLease ? await _worktrees.PreflightAsync(task, ct) : null;
         await using var repositoryLease = needsLease && _repositoryLeases is not null
-            ? await _repositoryLeases.TryAcquireAsync(
-                task.RepoPath!, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.Dispatch), ct)
+            ? preflight is not null
+                ? await _repositoryLeases.TryAcquirePreflightAsync(task.RepoPath!, preflight,
+                    new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.Dispatch), ct)
+                : await _repositoryLeases.TryAcquireAsync(
+                    task.RepoPath!, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.Dispatch), ct)
             : null;
         if (needsLease && repositoryLease is null)
             return DispatchOneResult.HeldOnLease;
@@ -5446,6 +5474,11 @@ public sealed partial class AgentTaskDispatcher
         // FOR UPDATE reuses the tick's tracked instance; reload so Capture sees the locked row
         // (a pre-claim route edit) rather than the outer snapshot. PC-71.
         await _db.Entry(claimed).ReloadAsync(ct);
+        if (preflight is not null && !DelegationWorktreeService.IsOrdinaryPreflightTask(claimed))
+        {
+            await transaction.RollbackAsync(ct);
+            return DispatchOneResult.HeldOnLease;
+        }
         if (siblingIntent is not null && siblingObservation is not null && claimInspection is not null)
         {
             var valid = false;
@@ -5855,6 +5888,8 @@ public sealed partial class AgentTaskDispatcher
                 claimed.ConcurrencyToken = Guid.NewGuid();
                 await _db.SaveChangesAsync(ct);
                 await transaction.CommitAsync(ct);
+                _leaseWaiters?.Clear(claimed.Id);
+                if (repositoryLease is not null) await repositoryLease.DisposeAsync();
                 _remotePrep.TryBegin(claimed.Id, claimed.RunnerId);
                 return DispatchOneResult.HeldForRemotePrep;
             }
@@ -6026,6 +6061,8 @@ public sealed partial class AgentTaskDispatcher
             throw;
         }
 
+        _leaseWaiters?.Clear(claimed.Id);
+        if (repositoryLease is not null) await repositoryLease.DisposeAsync();
         if (_landBoundary is not null)
             await _landBoundary.ReachedAsync("dispatch-warning-claim-committed", claimed.Id, finalDispatch.Id, ct);
 

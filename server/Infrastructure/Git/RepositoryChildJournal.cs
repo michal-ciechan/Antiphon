@@ -114,8 +114,40 @@ internal sealed class RepositoryChildJournal
     public static async Task<bool> HasUnfinishedAsync(string common, ILandingGit git, CancellationToken ct)
         => await FirstFencingAsync(common, git, ct) is not null;
 
+    internal static async Task<bool> HasUnjoinedVerificationAsync(string common, Guid windowId, CancellationToken ct)
+    {
+        var directory = Path.Combine(common, "antiphon", "children");
+        try
+        {
+            try
+            {
+                if ((File.GetAttributes(directory) & FileAttributes.Directory) == 0) return true;
+            }
+            catch (FileNotFoundException) { return false; }
+            catch (DirectoryNotFoundException) { return false; }
+            foreach (var path in Directory.EnumerateFiles(directory))
+            {
+                if (!path.EndsWith(".json", StringComparison.Ordinal)) return true;
+                try
+                {
+                    await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+                    var record = await JsonSerializer.DeserializeAsync<ChildRecord>(stream, cancellationToken: ct);
+                    if (record is not { SchemaVersion: 1 } || !LandingGit.PathsEqual(record.CommonDirectory, common)
+                        || record.WindowId == windowId || record.Purpose == "land-verifier") return true;
+                }
+                catch (FileNotFoundException) { } // The concurrent owning preflight joined and removed its journal.
+            }
+            // A concurrent preflight keeps its own R and child fence. Closing this window
+            // must not dispose that lease or turn its live child into permanent marker residue.
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        { return true; }
+    }
+
     /// <summary>The first record that still fences, or null when every record is a live non-fencing push.</summary>
-    internal static async Task<FencingRecord?> FirstFencingAsync(string common, ILandingGit git, CancellationToken ct)
+    internal static async Task<FencingRecord?> FirstFencingAsync(string common, ILandingGit git, CancellationToken ct,
+        Guid? windowId = null, Guid? taskId = null)
     {
         var directory = Path.Combine(common, "antiphon", "children");
         try
@@ -135,12 +167,15 @@ internal sealed class RepositoryChildJournal
                 // CARD-1076: a well-formed live remote-prep-push does not fence. Dead, reused,
                 // unknown and unreadable records still do.
                 if (!path.EndsWith(".json", StringComparison.Ordinal)) return FencingRecord.Untagged;
-                using var stream = File.OpenRead(path);
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
                 var record = await JsonSerializer.DeserializeAsync<ChildRecord>(stream, cancellationToken: ct);
                 if (record is { SchemaVersion: 1, ProcessId: int processId, StartTicks: long startTicks }
                     && LandingGit.PathsEqual(record.CommonDirectory, common))
                 {
                     var alive = await git.IsProcessAliveAsync(processId, startTicks, ct);
+                    if (alive == true && !record.Completed && windowId is not null
+                        && record.WindowId == windowId && record.TaskId == taskId && record.Purpose == "land-verifier")
+                        continue;
                     if (alive == true && record.Purpose is string purpose && LiveNonFencingPurposes.Contains(purpose))
                         continue;
                 }

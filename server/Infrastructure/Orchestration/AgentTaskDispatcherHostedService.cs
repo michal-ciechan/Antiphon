@@ -13,15 +13,17 @@ public sealed class AgentTaskDispatcherHostedService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly DelegationSettings _settings;
     private readonly ILogger<AgentTaskDispatcherHostedService> _logger;
+    private readonly RepositoryLeaseWaiters? _waiters;
 
     public AgentTaskDispatcherHostedService(
         IServiceScopeFactory scopeFactory,
         IOptions<DelegationSettings> settings,
-        ILogger<AgentTaskDispatcherHostedService> logger)
+        ILogger<AgentTaskDispatcherHostedService> logger, RepositoryLeaseWaiters? waiters = null)
     {
         _scopeFactory = scopeFactory;
         _settings = settings.Value;
         _logger = logger;
+        _waiters = waiters;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -33,14 +35,22 @@ public sealed class AgentTaskDispatcherHostedService : BackgroundService
         }
 
         var interval = TimeSpan.FromSeconds(Math.Max(1, _settings.PollIntervalSeconds));
-        using var timer = new PeriodicTimer(interval);
-
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
+                using (var wait = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken))
+                {
+                    var timer = Task.Delay(interval, wait.Token);
+                    var ready = _waiters?.WaitForReadyAsync(wait.Token) ?? timer;
+                    await Task.WhenAny(timer, ready);
+                    await wait.CancelAsync();
+                    try { await Task.WhenAll(timer, ready); }
+                    catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) { }
+                }
                 await using var scope = _scopeFactory.CreateAsyncScope();
                 var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+                await dispatcher.DispatchReadyWaitersAsync(stoppingToken);
                 var result = await dispatcher.TickAsync(stoppingToken);
                 if (result.Dispatched > 0 || result.Failures > 0 || result.SkippedCapacityWait > 0
                     || result.HeldOnLease > 0 || result.HeldOnRunner > 0)

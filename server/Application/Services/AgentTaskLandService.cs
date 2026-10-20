@@ -482,20 +482,20 @@ public sealed class AgentTaskLandService
                 "Another land owns this repository's land worktree and verification artifacts.", ct);
             return LandRunResult.Held;
         }
-        await using var lease = await _leases.TryAcquireAsync(
+        var lease = await _leases.TryAcquireAsync(
             task.RepoPath, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.Land), ct);
         if (lease is null)
         {
             await HoldOnBusyLeaseAsync(task, request, ct);
             return LandRunResult.Held;
         }
-        // CARD-0642 D-4/D-7: one read-cache scope per land, disposed before the lease it relies on.
-        using var gitScope = _landingGit.BeginOperationScope();
+        await using var ownership = new LandRepositoryLeaseScope(_leases, _landingGit, task.RepoPath,
+            new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.Land), lease);
         var wall = Stopwatch.StartNew();
         var outcome = "Exception";
         try
         {
-            var run = await RunLeasedAsync(task, request, lease, ct);
+            var run = await RunLeasedAsync(task, request, ownership, executionLease, ct);
             outcome = run.ToString();
             return run;
         }
@@ -504,7 +504,7 @@ public sealed class AgentTaskLandService
             var terminal = _db.ChangeTracker.Entries<AgentTaskEvent>().Select(e => e.Entity)
                 .Where(e => e.AgentTaskId == task.Id && e.LandRequestId == request.Id && e.IsLandTerminal)
                 .OrderBy(e => e.At).LastOrDefault();
-            var profile = gitScope.Profile;
+            var profile = ownership.Profile;
             var phases = PhaseSeconds(task.ActiveLandingId is Guid landed
                 ? _db.ChangeTracker.Entries<AgentTaskLanding>().Select(e => e.Entity).FirstOrDefault(o => o.Id == landed) : null,
                 _protocol?.LastResetSeconds);
@@ -520,15 +520,15 @@ public sealed class AgentTaskLandService
         }
     }
 
-    private async Task<LandRunResult> RunLeasedAsync(AgentTask task, AgentTaskLandRequest request, RepositoryLease lease,
-        CancellationToken ct)
+    private async Task<LandRunResult> RunLeasedAsync(AgentTask task, AgentTaskLandRequest request,
+        LandRepositoryLeaseScope ownership, IAsyncDisposable executionLease, CancellationToken ct)
     {
         await _db.Entry(task).ReloadAsync(ct);
         if (task.LandRequestedAt is null || !LandApproval.RequestStatusEligible(task, request)
             || task.CurrentLandRequestId != request.Id)
             return LandRunResult.Complete;
         await _db.Entry(request).ReloadAsync(ct);
-        var holder = await FindWriterAsync(task, lease.CommonDirectory, ct);
+        var holder = await FindWriterAsync(task, ownership.Lease.CommonDirectory, ct);
         if (holder is not null)
         {
             await HoldAsync(task, request, "repository_or_source_writer", holder,
@@ -631,7 +631,7 @@ public sealed class AgentTaskLandService
             {
                 var resolved = await new AgentTaskLandSourceResolver(_db, _landingGit, _leases, _clock,
                     _gitSettings is null ? null : Options.Create(_gitSettings), _protocol.LandWorkspace, _boundary)
-                    .ResolveAsync(task, request, lease, ct);
+                    .ResolveAsync(task, request, ownership.Lease, ct);
                 if (resolved.StaleRequest) return LandRunResult.Complete;
                 if (resolved.Reason is not null)
                 {
@@ -647,7 +647,46 @@ public sealed class AgentTaskLandService
             await _db.Entry(task).ReloadAsync(ct);
             await _db.Entry(request).ReloadAsync(ct);
         }
-        var result = await _protocol.RunAsync(task, lease, request, ct);
+        var result = _leases!.SupportsVerificationWindows
+            ? await _protocol.PrepareAsync(task, ownership.Lease, request, ct)
+            : await _protocol.RunAsync(task, ownership.Lease, request, ct);
+        if (result.Verification is { } ticket)
+        {
+            await using var window = await _leases!.OpenVerificationWindowAsync(
+                ownership.Lease, executionLease, ticket.Identity, ct);
+            if (window is null)
+            {
+                // Legacy test providers cannot release R without a real coordinator.
+                result = await _protocol.RunAsync(task, ownership.Lease, request, ct);
+            }
+            else
+            {
+                await ownership.ReleaseAsync(); // End the cache scope before closing the real R handle.
+                _leaseWaiters?.SignalReady(force: true);
+                _logger.LogInformation(
+                    "Land verification window released R task={TaskId} request={RequestId} attempt={Attempt} operation={OperationId} window={WindowId}; L retained",
+                    task.Id, request.Id, request.Attempt, ticket.Identity.OperationId, window.Id);
+                LandingVerification verification;
+                try { verification = await _protocol.VerifyPreparedAsync(ticket, window.Id, ct); }
+                finally { await window.DisposeAsync(); }
+                // The verifier has joined its children and released B. No transaction spans
+                // this gap, and reacquisition polls never increment the durable land attempt.
+                await ownership.ReacquireAsync(ct);
+                ownership.BeginReadScope();
+                await _db.Entry(task).ReloadAsync(ct);
+                await _db.Entry(request).ReloadAsync(ct);
+                _logger.LogInformation(
+                    "Land verification window reacquired R task={TaskId} request={RequestId} attempt={Attempt} operation={OperationId} window={WindowId}",
+                    task.Id, request.Id, request.Attempt, ticket.Identity.OperationId, window.Id);
+                if (await FindWriterAsync(task, ownership.Lease.CommonDirectory, ct) is { } writer)
+                {
+                    await HoldAsync(task, request, "repository_or_source_writer", writer,
+                        "A repository/source writer appeared during verification; this result is not publication authority.", ct);
+                    return LandRunResult.Held;
+                }
+                result = await _protocol.ResumeAsync(task, ownership.Lease, request, ticket, verification, ct);
+            }
+        }
         if (result.Conflicts.Count > 0)
         {
             await using var transaction = await _db.Database.BeginTransactionAsync(ct);
@@ -1496,10 +1535,9 @@ public sealed class AgentTaskLandService
     }
 
     /// <summary>
-    /// CARD-0672 D-2. Null means acquire as usual. A land yields only BEFORE it holds the lease: a
-    /// land's phases share one continuous lease (the read cache, the child journal and CARD-0688
-    /// all assume it), so admission is the one place the order can change. The sweep re-picks a
-    /// yielded request every LandSweepSeconds; the dispatcher's tick takes the lease in between.
+    /// CARD-0672 D-2. Null means acquire as usual. This bounded yield applies before admission;
+    /// CARD-1379 separately releases R during verification while L retains the workspace.
+    /// Reacquisition in the same admitted attempt does not start a new yield budget.
     /// </summary>
     private async Task<LandRunResult?> YieldToDispatchAsync(AgentTask task, AgentTaskLandRequest request, CancellationToken ct)
     {
