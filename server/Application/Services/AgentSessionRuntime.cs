@@ -2043,8 +2043,7 @@ public sealed class AgentSessionRuntime
 
     private async Task ResumeInterruptedAttemptAsync(AppDbContext db, TranscriptEntry prompt, CancellationToken ct)
     {
-        if (TranscriptKinds.IsInterruptPrompt(prompt.Kind, prompt.Text)
-            || TranscriptPromptSpan.IsHousekeepingPrompt(prompt.Text, []))
+        if (TranscriptKinds.IsInterruptPrompt(prompt.Kind, prompt.Text))
             return;
 
         var attempt = await db.RunAttempts
@@ -2058,6 +2057,21 @@ public sealed class AgentSessionRuntime
         // CreatedAt is our persisted admission clock, independent of provider timestamp precision.
         if (attempt is null || attempt.Phase != RunPhase.AwaitingInput
             || prompt.CreatedAt <= attempt.PhaseStartedAt)
+            return;
+
+        // Phase 2 follows the persist batch, so a command wrapper is already stored
+        // even when its raw slash-command echo precedes it in the transcript.
+        var prompts = await db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == prompt.AgentSessionId
+                && (t.Kind == TranscriptKinds.UserPrompt
+                    || t.Kind == TranscriptKinds.QueuedUserPrompt))
+            .Select(t => t.Text)
+            .ToListAsync(ct);
+        var invoked = prompts
+            .Select(text => TranscriptKinds.TryReadLocalCommandName(TranscriptKinds.UserPrompt, text))
+            .OfType<string>()
+            .ToHashSet(StringComparer.Ordinal);
+        if (TranscriptPromptSpan.IsHousekeepingPrompt(prompt.Text, invoked))
             return;
 
         RunAttemptStateMachine.Transition(attempt, RunPhase.StreamingTurn, UtcNow());
