@@ -1,4 +1,5 @@
 using Antiphon.Checkpoints;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -387,6 +388,127 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         var report = CheckpointApp.BuildReport(run, run, new RunRequest { Commit = new string('a', 40), Branch = "fixture" }, manifest, result.State, result);
         report.Builds.Single(build => build.Id == "bin-a").DeadlineMinutes.ShouldBe(40);
         report.Builds.Single(build => build.Id == "bin-b").DeadlineMinutes.ShouldBe(15);
+    }
+
+    [Test]
+    public async Task build_timer_uses_selected_row_deadlines_and_override()
+    {
+        // First arm is the behavioral witness for the former fixed 15-minute build deadline.
+        await BuildArm(null, 15, null, 30, 16, 20);
+        await BuildArm(15, 15, null, 40, 35, 35, shared: true);
+        await BuildArm(null, 15, 40, 40, 35, 35);
+        await BuildArm(40, 20, 7, 7, 6, 7, expires: true);
+
+        // Caller cancellation must propagate even when the deadline is disabled.
+        foreach (var minutes in new[] { 40, 0, -1 })
+        {
+            var root = TempDir();
+            var clock = new ControlledTimeProvider();
+            using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var entered = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var driver = new FakeDriver();
+            driver.When(_ => true, async (_, token) =>
+            {
+                entered.TrySetResult(token);
+                await release.Task.WaitAsync(token);
+                return new DriverResult(0, "", "");
+            });
+            var task = RowTimeout.RunWithDeadlineAsync(driver,
+                new DriverRequest("dotnet", ["build"], root, Path.Combine(root, "build.log")),
+                TimeSpan.FromMinutes(minutes), clock, caller.Token);
+            try
+            {
+                var token = await entered.Task.WaitAsync(caller.Token);
+                clock.Advance(TimeSpan.FromMinutes(1));
+                token.IsCancellationRequested.ShouldBeFalse();
+                if (minutes <= 0)
+                    clock.Events.ShouldBeEmpty();
+                caller.Cancel();
+                await Should.ThrowAsync<OperationCanceledException>(async () => await task);
+            }
+            finally
+            {
+                release.TrySetResult();
+                caller.Cancel();
+                try { await task; }
+                catch (OperationCanceledException) when (caller.IsCancellationRequested) { }
+            }
+            driver.InFlight.ShouldBe(0);
+            driver.KillCount.ShouldBe(0);
+        }
+
+        async Task BuildArm(int? rowMinutes, int manifestMinutes, int? overrideMinutes,
+            int expectedMinutes, int aliveAt, int finishAt, bool shared = false, bool expires = false)
+        {
+            var root = TempDir();
+            var clock = new ControlledTimeProvider();
+            using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var entered = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var driver = InstantDriver(driver => driver.When(CheckpointFixtures.IsBuild, async (_, token) =>
+            {
+                entered.TrySetResult(token);
+                await release.Task.WaitAsync(token);
+                return new DriverResult(0, "", "");
+            }));
+            var manifest = OneBuildTwoRows();
+            manifest.Timeouts.RowMinutes = manifestMinutes;
+            manifest.Checkpoints[0].TimeoutMinutes = rowMinutes;
+            manifest.Checkpoints[0].EstimatedMinutes = 10;
+            manifest.Checkpoints[1].TimeoutMinutes = 40;
+            var unselected = CheckpointFixtures.Row("CP-3", "bin-a");
+            unselected.TimeoutMinutes = 90;
+            manifest.Checkpoints.Add(unselected);
+            var selected = manifest.Checkpoints.Take(shared ? 2 : 1).ToList();
+            foreach (var row in selected)
+                row.Expect = [];
+            foreach (var build in manifest.Builds)
+                Directory.CreateDirectory(ProjectWriteRoots.DirectoryOf(Path.GetFullPath(Path.Combine(root, build.Project))));
+            var task = new RunScheduler(driver, new FakePlatform(), clock).RunAsync(new SchedulerRequest
+            {
+                Manifest = manifest,
+                Rows = selected,
+                RunDirectory = root,
+                WorkingDirectory = root,
+                State = new RunState { RunId = "deadline", StartedAt = DateTimeOffset.UtcNow },
+                Slots = new FixedSlotClient("granted"),
+                Commit = new string('a', 40),
+                ExpectedSourceSha = new string('a', 40),
+                RowTimeoutOverride = overrideMinutes is int minutes ? TimeSpan.FromMinutes(minutes) : null,
+                Width = 1,
+            }, watchdog.Token);
+            SchedulerResult result;
+            try
+            {
+                var token = await entered.Task.WaitAsync(watchdog.Token);
+                var timer = await clock.WaitForTimerAsync(e => e.Action == "create", ct: watchdog.Token);
+                clock.Advance(TimeSpan.FromMinutes(aliveAt));
+                token.IsCancellationRequested.ShouldBeFalse("the held build is still within its selected row deadline");
+                timer.DueTime.ShouldBe(TimeSpan.FromMinutes(expectedMinutes));
+                clock.Advance(TimeSpan.FromMinutes(finishAt - aliveAt));
+                token.IsCancellationRequested.ShouldBe(expires);
+                if (!expires)
+                    release.TrySetResult();
+                result = await task;
+            }
+            finally
+            {
+                release.TrySetResult();
+                await task;
+            }
+            driver.Count(CheckpointFixtures.IsBuild).ShouldBe(1);
+            driver.InFlight.ShouldBe(0);
+            driver.KillCount.ShouldBe(0);
+            result.State.Builds.Single().DeadlineMinutes.ShouldBe(expectedMinutes);
+            result.State.Builds.Single().State.ShouldBe(expires ? "failed" : "ok");
+            result.ExitCode.ShouldBe(expires ? ExitCodes.Invalid : ExitCodes.Green);
+            driver.Count(CheckpointFixtures.IsRun).ShouldBe(expires ? 0 : selected.Count);
+            result.Rows.Count.ShouldBe(selected.Count);
+            if (!expires)
+                result.Rows.ShouldAllBe(row => row.State == "green");
+            clock.TimerStates.Values.ShouldAllBe(state => state == "dispose");
+        }
     }
 
     private static CheckpointManifest OneBuildTwoRows()
