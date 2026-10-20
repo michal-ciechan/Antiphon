@@ -58,6 +58,13 @@ public sealed class RunCheckpointScriptTests
         "C585 Failures names the class-qualified method, not the display name");
 
     [Test]
+    public async Task C1377_GreenThenFailures()
+    {
+        await C585_Green();
+        await C585_Failures();
+    }
+
+    [Test]
     public Task C585_ZeroExecuted() => RunCaseAsync("C585_ZeroExecuted", 3,
         "C585 ZeroExecuted exit code 3",
         "C585 ZeroExecuted line reports executed=0",
