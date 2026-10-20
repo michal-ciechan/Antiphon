@@ -43,16 +43,36 @@ public sealed class RestartFailurePolicy
 
     public bool Observe(AgentSupervisionState state, AgentSession session)
     {
-        if (session.Status is not (SessionStatus.Stopped or SessionStatus.Failed)
-            || (state.LastObservedRestartSessionId == session.Id
-                && state.LastObservedRestartStartedAt == session.StartedAt)) return false;
-        state.LastObservedRestartSessionId = session.Id;
-        state.LastObservedRestartStartedAt = session.StartedAt;
+        if (session.Status is not (SessionStatus.Stopped or SessionStatus.Failed)) return false;
         var kind = session.RestartFailureKind ?? (session.InteractiveLaunchCompletedAt is not null
             && session.TerminationSource == SessionTerminationSource.ProcessExit
                 ? RestartFailureKind.LaunchOrProcessFailure : RestartFailureKind.Unknown);
+        return ConsumeGeneration(state, session, kind);
+    }
+
+    /// <summary>Shared by terminal observation and failure after a committed launch reservation.</summary>
+    public bool ConsumeGeneration(AgentSupervisionState state, AgentSession session, RestartFailureKind kind)
+    {
+        if (state.LastObservedRestartSessionId == session.Id
+            && state.LastObservedRestartStartedAt == session.StartedAt) return false;
+        if (state.LastAutomaticResumeSessionId == session.Id
+            && state.LastAutomaticResumeStartedAt == session.StartedAt
+            && kind is RestartFailureKind.Unknown or RestartFailureKind.LaunchOrProcessFailure
+            && session.TerminationSource is SessionTerminationSource.Unknown or SessionTerminationSource.ProcessExit)
+            state.AutomaticResumeFailures = Math.Min(state.AutomaticResumeFailures, int.MaxValue - 1) + 1;
+        state.LastObservedRestartSessionId = session.Id;
+        state.LastObservedRestartStartedAt = session.StartedAt;
         Charge(state, kind);
         return true;
+    }
+
+    public void ResetAutomaticEpisode(AgentSupervisionState state)
+    {
+        state.AutomaticResumeFailures = 0;
+        state.LastAutomaticResumeSessionId = null;
+        state.LastAutomaticResumeStartedAt = null;
+        state.AutomaticFreshConsumed = false;
+        state.AutomaticFreshAlertedHoldAt = null;
     }
 
     public void Charge(AgentSupervisionState state, RestartFailureKind kind)

@@ -747,7 +747,18 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 if (!automatic)
                 {
                     intent.ContinuityResumeFailures = 0;
+                    new RestartFailurePolicy().ResetAutomaticEpisode(intent);
                     await ClearSupervisionLatchAsync(agent, ct);
+                }
+                else if (previous is not null && accepted.Id == sourceId
+                    && accepted.StandingAgentId == agent.Id && agent.AlwaysOn && !agent.IsPoolDelegate
+                    && agent.StandingSpecialistRole is null
+                    && !StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings)
+                    && compactionRecoveryId is null && spec.Kind is AgentKind.ClaudeCode or AgentKind.Grok)
+                {
+                    // The marker commits with the accepted generation, never during preflight.
+                    intent.LastAutomaticResumeSessionId = accepted.Id;
+                    intent.LastAutomaticResumeStartedAt = accepted.StartedAt;
                 }
                 if (compactionRecoveryId is null
                     && (fresh || resumeSessionId is not null || retryContinuity || spec.Kind is not (AgentKind.ClaudeCode or AgentKind.Grok)))

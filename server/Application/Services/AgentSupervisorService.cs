@@ -152,7 +152,10 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         if (liveSession is not null)
         {
             // Healthy long enough? Reset the ladder so the next incident starts from 5s again.
-            if ((state.RestartBackoffFailures > 0 || state.ConsecutiveFailures > 0 || state.ContinuityResumeFailures > 0 || state.NextRestartAt is not null || state.LastEscalationTier > 0)
+            if ((state.RestartBackoffFailures > 0 || state.ConsecutiveFailures > 0 || state.ContinuityResumeFailures > 0
+                    || state.AutomaticResumeFailures > 0 || state.LastAutomaticResumeSessionId is not null
+                    || state.LastAutomaticResumeStartedAt is not null || state.AutomaticFreshConsumed
+                    || state.AutomaticFreshAlertedHoldAt is not null || state.NextRestartAt is not null || state.LastEscalationTier > 0)
                 && liveSession.Status == SessionStatus.Running
                 && liveSession.InteractiveLaunchCompletedAt is { } completedAt
                 && now - completedAt >= TimeSpan.FromMinutes(_settings.HealthyUptimeResetMinutes))
@@ -161,6 +164,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 state.ConsecutiveFailures = 0;
                 state.RestartBackoffFailures = 0;
                 state.ContinuityResumeFailures = 0;
+                new RestartFailurePolicy().ResetAutomaticEpisode(state);
                 state.NextRestartAt = null;
                 state.LastEscalationTier = 0;
                 state.LastHealthyAt = now;
@@ -374,13 +378,11 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         else
         {
             var kind = new RestartFailurePolicy().Classify(ex);
-            new RestartFailurePolicy().Charge(refreshed, kind);
             var incarnation = await FindPersistentSessionAsync(agent, statuses: null, ct);
             if (incarnation is not null && (incarnation.Id != beforeId || incarnation.StartedAt != beforeStartedAt))
-            {
-                refreshed.LastObservedRestartSessionId = incarnation.Id;
-                refreshed.LastObservedRestartStartedAt = incarnation.StartedAt;
-            }
+                new RestartFailurePolicy().ConsumeGeneration(refreshed, incarnation, kind);
+            else
+                new RestartFailurePolicy().Charge(refreshed, kind);
             var delay = Backoff(refreshed.RestartBackoffFailures);
             refreshed.NextRestartAt = UtcNow() + delay;
             refreshed.LastAttemptAt = now;
