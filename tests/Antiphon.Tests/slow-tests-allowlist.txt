@@ -241,6 +241,8 @@ Antiphon.Tests.Application.ReviewEvidenceSettlementTests
 Antiphon.Tests.Application.ReviewEvidenceDeliveryTests
 # CARD-0835: source-bound executor reports with process fixtures.
 Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests
+# CARD-1297: two real scratch Git commits, executor publication and output cleanup measured 5.25s in CP-1.
+Antiphon.Tests.Checkpoints.CheckpointSelectedOutputTests
 # CARD-1370: real Git/process fixtures and receipt publication contention.
 Antiphon.Tests.Checkpoints.CheckpointStatePublicationTests
 # CARD-0835: isolated Review/land migration and resume matrix.
