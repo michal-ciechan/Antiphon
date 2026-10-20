@@ -3,6 +3,9 @@
 ## Tripwire still accepts caller-supplied simple names. No substring or argument matching.
 ## Each single-# reason must immediately precede its class; blank lines separate complete pairs.
 
+# CARD-0110 S6 / CARD-0475 S6 / CARD-0487: Slow classes in Antiphon.Tests.
+# CARD-0510: real PostgreSQL reservations, repeated admitted launches and healthy-clock boundaries.
+Antiphon.Tests.Application.StandingRestartEscalationTests
 # CARD-1322: isolated migrated PostgreSQL, real session start and fresh-context stall scans; measured 6.7-10.6s.
 Antiphon.Tests.Application.AgentSessionCancelledTurnTests
 # CARD-1032: phone-home mirror join starts a real runner and scratch git. Measured 5-12s per method.
