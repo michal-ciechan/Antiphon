@@ -10,6 +10,46 @@ $script:AntiphonNightlyTestsImplLoaded = $true
 # add e2e without a second hard-coded list drifting out of step.
 $script:NightlyNativeGroups = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging')
 
+function Get-NightlyExecutionPlatform {
+    # The seam replaces only OS observation, never policy or coverage decisions.
+    $platform = if ($script:NightlySeams -and $script:NightlySeams.HostPlatform) {
+        [string]$script:NightlySeams.HostPlatform.Invoke()
+    } elseif ([IO.Path]::DirectorySeparatorChar -eq '\') { 'windows' }
+    elseif ($IsLinux) { 'linux' }
+    else { '' }
+    if ($platform -cnotin @('windows', 'linux')) { throw 'unsupported-host-platform' }
+    return $platform
+}
+
+function Get-NightlyProfileExecutionChunks {
+    param([object[]]$DiscoveryNodes, [object[]]$Chunks, [object[]]$Exclusions)
+    $index = 0
+    foreach ($chunk in $Chunks) {
+        $assigned = @($DiscoveryNodes | Where-Object {
+            Test-NightlyClassAssigned -ClassName $_.ClassName -TypeName $_.Type -RequiredClasses @($chunk.classes)
+        })
+        foreach ($group in @($assigned | Group-Object ClassName)) {
+            $required = @($group.Group | Where-Object {
+                -not (Test-NightlyDiscoveryExcluded $_ $Exclusions -ProfileAware)
+            })
+            if ($required.Count -eq 0) { continue }
+            if ($required.Count -eq $group.Count) {
+                [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($group.Name); exactFilter = ''; nodes = @() }
+            } else {
+                # Preserve sibling methods without launching the excluded method.
+                # Exact leaves avoid the combined-filter discovery hint ambiguity.
+                foreach ($method in @($required | Group-Object Method)) {
+                    $node = $method.Group[0]
+                    $dot = $group.Name.LastIndexOf('.')
+                    if ($dot -lt 1) { throw 'profile-discovery-namespace-required' }
+                    $filter = '/*/{0}/{1}/{2}' -f $group.Name.Substring(0, $dot), $group.Name.Substring($dot + 1), $node.Method
+                    [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($group.Name); exactFilter = $filter; nodes = @($method.Group) }
+                }
+            }
+        }
+    }
+}
+
 function Test-NightlySuiteIsNative {
     <#
       A native suite is one that runs a built TUnit assembly: it owns its process tree,
@@ -221,6 +261,8 @@ function Invoke-AntiphonNightlyTests {
     )
 
     Import-NightlySeams -SeamsPath $SeamsPath
+    try { $platform = Get-NightlyExecutionPlatform }
+    catch { return [pscustomobject]@{ ExitCode = 3; Refusal = 'unsupported-host-platform'; coverageComplete = $false; testsPassed = $false; LaunchCount = 0 } }
     if ([string]::IsNullOrWhiteSpace($Profile)) { $Profile = 'nightly' }
     $Profile = $Profile.Trim().ToLowerInvariant()
     if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
@@ -286,7 +328,9 @@ function Invoke-AntiphonNightlyTests {
     try {
         $profileRow = Get-NightlyPolicyProfile -PolicyObject $policy.Object -Profile $Profile
         $requiredSuites = @(Get-NightlyProfileRequiredSuites -PolicyObject $policy.Object -Profile $Profile)
-        $profileExclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile $Profile -SuiteId '')
+        # Validate every exclusion before any child command; each suite resolves
+        # its own rows below so same-named classes in other suites stay required.
+        [void](Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile $Profile -SuiteId '' -Platform $platform)
     } catch {
         Write-Error $_.Exception.Message
         return [pscustomobject]@{
@@ -433,6 +477,7 @@ function Invoke-AntiphonNightlyTests {
             $suiteMap = Get-NightlySuiteMap -PolicyObject $policy.Object
             foreach ($suiteId in $selectedSuites) {
                 $suite = $suiteMap[$suiteId]
+                $profileExclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile $Profile -SuiteId $suiteId -Platform $platform)
                 $label = [string]$suite.name
                 if ([string]::IsNullOrWhiteSpace($label)) { $label = $suiteId }
                 $isNative = Test-NightlySuiteIsNative -Suite $suite -SuiteId $suiteId
@@ -499,8 +544,23 @@ function Invoke-AntiphonNightlyTests {
                     }
                 }
 
-                $chunkIndex = 0
                 $suiteDiscoveryNodes = @()
+                $profileDiscovery = $null
+                $suiteCensus = $null
+                if ($isNative -and $profileAware -and $profileExclusions.Count -gt 0) {
+                    $exe = Join-Path $RepoRoot ('tests\{0}\bin\Debug\net9.0\{0}.exe' -f $suite.assembly)
+                    $profileDiscoveryPath = Join-Path $LogRoot ($suiteId + '-profile.discovery.json')
+                    $profileDiscovery = Invoke-NightlyProduceDiscovery -ExePath $exe -OutputPath $profileDiscoveryPath `
+                        -DiagnosticDirectory (Join-Path $LogRoot ($suiteId + '-profile-discovery')) `
+                        -LogPath (Join-Path $LogRoot ($suiteId + '-profile-discovery.log')) -WorkingDirectory $RepoRoot `
+                        -Environment (Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId $suiteId)
+                    $suiteDiscoveryNodes = @((Read-NightlyDiscoveryDocument $profileDiscoveryPath).Nodes)
+                    $suiteCensus = Get-NightlyDiscoveryCensus $suiteDiscoveryNodes $profileExclusions -ProfileAware
+                    if (-not $suiteCensus.Ok) { throw 'profile-discovery-census-incomplete' }
+                    $chunks = @(Get-NightlyProfileExecutionChunks $suiteDiscoveryNodes $chunks $profileExclusions)
+                    if ($chunks.Count -eq 0) { throw 'zero-required-uid' }
+                }
+                $chunkIndex = 0
                 $suiteTerminalNodes = @()
                 foreach ($chunk in $chunks) {
                     $chunkIndex++
@@ -551,7 +611,7 @@ function Invoke-AntiphonNightlyTests {
                         New-Item -ItemType Directory -Path $execDiagDir -Force | Out-Null
                         $chunkClasses = @()
                         if ($chunk.classes -and @($chunk.classes).Count -gt 0) { $chunkClasses = @($chunk.classes) }
-                        $args = @(Get-NightlyNativeExecutionArguments -TrxPath $trxPath -DiagnosticDirectory $execDiagDir -Classes $chunkClasses)
+                        $args = @(Get-NightlyNativeExecutionArguments -TrxPath $trxPath -DiagnosticDirectory $execDiagDir -Classes $chunkClasses -ExactFilter ([string]$chunk.exactFilter))
                         $run = Invoke-NightlyOwnedProcess -FilePath $exe -ArgumentList $args -WorkingDirectory $RepoRoot `
                             -TimeoutMilliseconds (Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key $suiteId -Fallback 3600000) `
                             -Environment $envMap -LogPath $logPath
@@ -592,6 +652,16 @@ function Invoke-AntiphonNightlyTests {
                     }
                     if ($isNative) {
                         $discPath = Join-Path $LogRoot ('{0}-{1}.discovery.json' -f $suiteId, $chunk.id)
+                        if ($profileDiscovery) {
+                            $discPath = $profileDiscoveryPath
+                            if ($chunk.exactFilter) {
+                                # The full discovery remains the suite union authority;
+                                # the leaf verdict checks just this method's expansion.
+                                $discPath = Join-Path $LogRoot ('{0}-{1}-selection.discovery.json' -f $suiteId, $chunk.id)
+                                $leaf = ConvertTo-NightlyDiscoveryDocument -Nodes $chunk.nodes -AssemblyHash $profileDiscovery.assemblyHash
+                                Write-NightlyDiscoveryDocument -Path $discPath -Document $leaf
+                            }
+                        }
                         if ((Test-Path -LiteralPath $trxPath) -and -not (Test-Path -LiteralPath $discPath)) {
                             try {
                                 $diagDir = Join-Path $LogRoot ('{0}-{1}-discovery' -f $suiteId, $chunk.id)
@@ -620,13 +690,14 @@ function Invoke-AntiphonNightlyTests {
                         }
                         $row.trx = $trxPath
                         $row.evidenceReasons = @($nativeVerdict.reasons)
-                        if ($nativeVerdict.census) {
+                        $census = if ($suiteCensus) { $suiteCensus } else { $nativeVerdict.census }
+                        if ($census) {
                             # D-5: expanded-UID accounting is manifest evidence; record both
                             # counts and the digest, plus every exclusion with its reason.
-                            $row.requiredUidCount = [int]$nativeVerdict.census.RequiredCount
-                            $row.excludedUidCount = [int]$nativeVerdict.census.ExcludedCount
-                            $row.censusDigest = [string]$nativeVerdict.census.Digest
-                            $row.exclusions = @($nativeVerdict.census.Excluded)
+                            $row.requiredUidCount = [int]$census.RequiredCount
+                            $row.excludedUidCount = [int]$census.ExcludedCount
+                            $row.censusDigest = [string]$census.Digest
+                            $row.exclusions = @($census.Excluded)
                         }
                         if (-not [bool]$nativeVerdict.coverageComplete) {
                             $coverageComplete = $false
@@ -694,6 +765,13 @@ function Invoke-AntiphonNightlyTests {
     if (-not $lintOk) { $coverageComplete = $false; $testsPassed = $false }
     if ($nativeActiveMax -gt 1) { $coverageComplete = $false; $reasons += 'native-overlap' }
 
+    $coverageScope = 'Full'
+    if ($Profile -eq 'rc' -and $platform -eq 'linux') {
+        $coverageScope = 'PlatformDiagnostic'
+        $coverageComplete = $false
+        $reasons += 'windows-rc-obligations-outstanding'
+    }
+
     $completedAt = Get-NightlyUtcNow
     $summary = [ordered]@{
         startedAt = $startedAt.ToString('o')
@@ -710,9 +788,10 @@ function Invoke-AntiphonNightlyTests {
         logDir = $LogRoot
         selectedSuites = $selectedSuites
         selection = $selection
-        coverageScope = 'Full'
+        platform = $platform
+        coverageScope = $coverageScope
         outcome = $script:NightlyTestsOutcome
-        succeeded = -not $overallFailed
+        succeeded = (-not $overallFailed -and $coverageComplete)
         coverageComplete = [bool]$coverageComplete
         testsPassed = [bool]$testsPassed
         policyHash = $policyHash
@@ -732,6 +811,9 @@ function Invoke-AntiphonNightlyTests {
         ExitCode = $exit
         coverageComplete = $coverageComplete
         testsPassed = $testsPassed
+        platform = $platform
+        coverageScope = $coverageScope
+        reasons = $reasons
         Profile = $Profile
         RequiredSuites = $requiredSuites
         Selection = $selection

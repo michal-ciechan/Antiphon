@@ -35,9 +35,9 @@ AppHost and server2 run the current rc tip, never master. A feature release from
 master is at most once per UTC day, and only after the current rc line is fully
 fixed and those hosts are running that tip. This card does not implement that gate.
 
-Change-aware heavy TUI selection is CARD-1313 on master, not this tree. The rc
-profile, the credit split, the eight-suite roster, and the rule that RC green is
-not master readiness stay as written below.
+Change-aware heavy TUI selection is CARD-1313 on master. The rc profile, the
+credit split, the nine-suite roster, and the rule that RC green is not master
+readiness stay as written below.
 
 ## Two lanes, two kinds of credit
 
@@ -96,16 +96,19 @@ limiters are per test project and are **not** cross-process locks; this file is.
 
 ## The RC coverage profile
 
-`tests/test-execution-policy.json` is schema **v2**. It keeps `defaultSuites` as the
-compatible nightly default and adds `profiles`:
+`tests/test-execution-policy.json` is schema **v4**. It retains the v3 project
+dispositions and selection catalog, and keeps `defaultSuites` as the compatible
+nightly default alongside `profiles`:
 
-- `profiles.nightly.requiredSuites` - the seven existing suites. E2E stays out, and
+- `profiles.nightly.requiredSuites` - eight suites, including `markdown-pdf`. E2E stays out, and
   `OptIn` / `Explicit` still excludes exactly as before. **The default nightly lane is
   unchanged.**
-- `profiles.rc.requiredSuites` - those seven **plus `e2e`**.
+- `profiles.rc.requiredSuites` - those eight **plus `e2e`**: `antiphon`,
+  `session-runner`, `pty-host`, `agents-pty`, `messaging`, `client`, `scripts`,
+  `e2e`, and `markdown-pdf`.
 
 The selected profile is authoritative for required suites. An unknown profile name, or `rc`
-asked of a schema-v1 policy, is a hard refusal rather than a silent fall back to the seven.
+asked of a schema-v1 policy, is a hard refusal rather than a silent fallback.
 The whole policy, profile dispositions and exclusions included, is covered by `policyHash`;
 a stale hash refuses.
 
@@ -115,6 +118,26 @@ build/lint/Vitest, the script census and automated E2E. It is *not* every test o
 platform. Explicitly outside it, each with a reason and an owner recorded in the policy:
 live provider and headed canaries, separately approved distiller tests, QEMU SourceLanding
 controls (CARD-0490) and Linux-only lanes (CARD-0590).
+
+Schema v4 allows an exclusion's optional scalar `platform` to be `windows` or
+`linux`; omission keeps its all-platform meaning. Values, reasons and owners are
+validated before filtering, and platform participates in the existing policy hash.
+Frozen release authority always resolves exclusions for **Windows**, both when
+created and when validated from its pinned policy blob, regardless of coordinator OS.
+
+The executor resolves its host OS once and applies that host's exclusions before
+native selection and census. Linux `rc` execution is a platform diagnostic:
+`coverageComplete=false`, `coverageScope=PlatformDiagnostic`, and reason
+`windows-rc-obligations-outstanding` persist in summary and run state even if every
+selected case passes. It cannot advance candidate or master green files or earn
+release/readiness credit. Unknown host platforms refuse before build/test commands.
+
+All **69** LandDelivery cases remain required on Windows: 52 in
+`AgentTaskLandDeliveryE2ETests`, 12 in `DispatchBaseWarningDeliveryE2ETests`, and 5 in
+`WorktreeRetirementDeliveryE2ETests`. Their three CARD-1323 exclusions apply only to
+Linux because their fixture requires Windows ConPTY/native FakeGrok. These counts
+describe the required roster, not an execution receipt. Linux results do not discharge
+any Windows obligation; there is no cross-host receipt merger or new profile.
 
 ### OptIn is not exclusion in a profile lane
 

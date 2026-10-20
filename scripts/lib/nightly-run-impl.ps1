@@ -589,6 +589,11 @@ function Invoke-AntiphonNightlyRunCore {
         if ($summary) {
             $coverageComplete = [bool]$summary.coverageComplete
             $testsPassed = [bool]$summary.testsPassed
+            # Selection intent may be Full while host execution is diagnostic.
+            # Preserve the executor's scope and refusal reasons through the hop.
+            $stateObj.coverageScope = if ($summary.coverageScope) { [string]$summary.coverageScope } else { 'Full' }
+            $stateObj.platform = [string]$summary.platform
+            $stateObj.reasons = @($summary.reasons)
             if ($summary.policyHash) { $stateObj.policyHash = [string]$summary.policyHash }
         } else {
             $coverageComplete = $false
@@ -704,6 +709,9 @@ function Invoke-AntiphonNightlyRunCore {
     $result.coverageComplete = $coverageComplete
     $result.testsPassed = $testsPassed
     $result.reportDelivered = $reportDelivered
+    $result.coverageScope = [string]$stateObj.coverageScope
+    $result.platform = [string]$stateObj.platform
+    $result.reasons = @($stateObj.reasons)
     $result.LogDir = $runDir
     if ($stateObj -and $stateObj.policyHash) { $result.PolicyHash = [string]$stateObj.policyHash }
     if ($stateObj -and $stateObj.summaryPath) { $result.SummaryPath = [string]$stateObj.summaryPath }
@@ -730,6 +738,9 @@ function ConvertTo-NightlyResultRecord {
         localDueDate = ''
         policyHash = ''
         coverageComplete = $false
+        coverageScope = ''
+        platform = ''
+        reasons = @()
         testsPassed = $false
         reportDelivered = $false
         exitCode = 1
@@ -756,6 +767,9 @@ function ConvertTo-NightlyResultRecord {
         $record.localDueDate = [string]$state.localDueDate
         $record.policyHash = [string]$state.policyHash
         $record.coverageComplete = [bool]$state.coverageComplete
+        $record.coverageScope = [string]$state.coverageScope
+        $record.platform = [string]$state.platform
+        $record.reasons = @($state.reasons)
         $record.testsPassed = [bool]$state.testsPassed
         $record.reportDelivered = [bool]$state.reportDelivered
         $record.summaryPath = [string]$state.summaryPath
@@ -771,6 +785,9 @@ function ConvertTo-NightlyResultRecord {
     $record.localDueDate = [string]$Result.LocalDueDate
     $record.policyHash = [string]$Result.PolicyHash
     $record.coverageComplete = [bool]$Result.coverageComplete
+    $record.coverageScope = [string]$Result.coverageScope
+    $record.platform = [string]$Result.platform
+    $record.reasons = @($Result.reasons)
     $record.testsPassed = [bool]$Result.testsPassed
     $record.reportDelivered = [bool]$Result.reportDelivered
     $record.summaryPath = [string]$Result.SummaryPath
