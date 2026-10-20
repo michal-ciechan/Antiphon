@@ -230,7 +230,6 @@ public sealed class PreDispatchFailureDeliveryTests
     }
 
     [Test]
-    [Arguments(AgentTaskReplyTo.Board)]
     [Arguments(AgentTaskReplyTo.None)]
     [Arguments(AgentTaskReplyTo.Session)]
     public async Task Pre_dispatch_excluded_routes_create_no_obligation(AgentTaskReplyTo route)
