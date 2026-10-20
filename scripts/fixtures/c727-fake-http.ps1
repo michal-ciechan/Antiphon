@@ -8,10 +8,25 @@ Add-Content -LiteralPath $env:C727_TEST_TRACE -Value ($trace | ConvertTo-Json -C
 
 if ($Path) {
     foreach ($fault in @($state.readFaults.PSObject.Properties)) {
-        if ($Path.Contains($fault.Name, [StringComparison]::Ordinal)) {
-            switch ([string]$fault.Value) {
+        if (($fault.Value -is [array] -and $Path -ceq $fault.Name) -or
+            ($fault.Value -isnot [array] -and $Path.Contains($fault.Name, [StringComparison]::Ordinal))) {
+            $value = $fault.Value
+            if ($value -is [array]) {
+                $value = $fault.Value[0]
+                if ($fault.Value.Count -gt 1) {
+                    $state.readFaults.($fault.Name) = @($fault.Value | Select-Object -Skip 1)
+                    $state | ConvertTo-Json -Compress -Depth 30 | Set-Content -LiteralPath $env:C727_TEST_STATE
+                }
+            }
+            switch ([string]$value) {
+                'ok' { break }
                 'timeout' { Write-Output '__TIMEOUT__'; exit 0 }
-                { $_ -in @('503', '400', '401') } { Write-Output "__$($_)__"; exit 0 }
+                { $_ -match '^\d{3}$' } { Write-Output "__$($_)__"; exit 0 }
+                'reset' { throw [Net.Http.HttpRequestException]::new('SENTINEL_RESET', [Net.Sockets.SocketException]::new([int][Net.Sockets.SocketError]::ConnectionReset)) }
+                { $_ -in @('ConnectionClosed', 'ReceiveFailure', 'SendFailure', 'NameResolutionFailure', 'TrustFailure') } {
+                    throw [Net.WebException]::new('SENTINEL_WEB', [Net.WebExceptionStatus]::$_)
+                }
+                'typed-timeout' { throw [TimeoutException]::new('SENTINEL_TIMEOUT') }
                 'transport' { [Console]::Error.WriteLine('SENTINEL_C1087_TRANSPORT'); exit 2 }
                 'empty' { exit 0 }
                 'malformed' { Write-Output '{SENTINEL_C1087_BODY'; exit 0 }

@@ -36,11 +36,22 @@ curl() {
         shift
     done
     printf '%s\n' "$budget" >> "$C1008_FIXTURE_ROOT/http-budgets"
-    fault="$(jq -r --arg path "$path" '[.faults // {} | to_entries[] | select(.key as $key | $path|contains($key))][0].value // empty' "$C1008_FIXTURE_ROOT/tasks.json")"
+    # Persist sequence positions: curl is called in command substitution. The last
+    # fault is sticky, and sequences match an exact path rather than a substring.
+    fault="$(jq -r --arg path "$path" '[.faults // {} | to_entries[] |
+        select(if (.value|type)=="array" then .key==$path else .key as $key | $path|contains($key) end)][0].value |
+        if type=="array" then .[0] else . // empty end' "$C1008_FIXTURE_ROOT/tasks.json")"
+    jq --arg path "$path" 'if (.faults[$path]|type)=="array" and (.faults[$path]|length)>1
+        then .faults[$path] = .faults[$path][1:] else . end' "$C1008_FIXTURE_ROOT/tasks.json" > "$C1008_FIXTURE_ROOT/tasks.next.json" || return 7
+    mv "$C1008_FIXTURE_ROOT/tasks.next.json" "$C1008_FIXTURE_ROOT/tasks.json"
     case "$fault" in
       timeout) return 28 ;;
+      reset|receive) printf 'SENTINEL_PARTIAL_BODY'; return 56 ;;
+      send) return 55 ;;
       transport) return 7 ;;
+      tls) return 60 ;;
       http) printf 'SENTINEL_HTTP_BODY\n503'; return 0 ;;
+      [0-9][0-9][0-9]) printf 'SENTINEL_HTTP_BODY\n%s' "$fault"; return 0 ;;
       empty) printf '\n200'; return 0 ;;
       malformed) printf '{SENTINEL_BAD_JSON\n200'; return 0 ;;
     esac

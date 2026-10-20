@@ -14,6 +14,11 @@ public sealed class RollingVolumeRecycleScriptTests
 {
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1374_Wrapper_census_recovers_transient_reads()
+        => await C1374CensusProbes.Check(host: false);
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1087_Read_failures_name_their_cause()
     {
         const string project = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1";
