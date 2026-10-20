@@ -19,7 +19,7 @@ if ($LASTEXITCODE -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { throw 'Cannot res
 $output = [IO.Path]::GetFullPath((Join-Path $repo (Join-Path 'tests/Antiphon.Tests' $OutputPath)))
 $dll = Join-Path $output 'Antiphon.Tests.dll'
 if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) { throw "Prebuilt test DLL missing: $dll" }
-$digest = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash.ToLowerInvariant()
+$digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]](Read-CheckpointBytes $dll))).ToLowerInvariant()
 $pairDir = Join-Path $repo ".antiphon/c804-usage/$sha/$($Phase.ToLowerInvariant())"
 New-Item -ItemType Directory -Path $pairDir -Force | Out-Null
 $bindingPath = Join-Path $pairDir 'pair.json'
@@ -106,7 +106,7 @@ $buildFinal = Get-Allocated $output
 
 $errors = [collections.generic.List[string]]::new()
 if ($child.ExitCode -ne 0) { $errors.Add("child exit=$($child.ExitCode)") }
-if ((Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash.ToLowerInvariant() -cne $digest) { $errors.Add('DLL digest changed') }
+if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]](Read-CheckpointBytes $dll))).ToLowerInvariant() -cne $digest) { $errors.Add('DLL digest changed') }
 $evidenceCheck = Test-UsageEvidence -Phase $Phase -RosterPath $roster -TrxPath $trx -EventsPath $events
 foreach ($item in $evidenceCheck.errors) { $errors.Add($item) }
 if ($final.count -ne 0 -or $final.allocatedBytes -ne 0) { $errors.Add("finished-owned residual count=$($final.count) bytes=$($final.allocatedBytes)") }
