@@ -122,6 +122,16 @@ Publication and cleanup have separate durable statuses. `LandRefused` leaves pub
 unconfirmed and can follow local target advancement. A cleanup retry emits `LandingCleanup`
 for the same operation, without another publication. A request survives a server restart.
 
+CARD-1379 durable land selection: the single reader reconciles committed pending
+requests before its first selection and before every subsequent selection.
+Wakeups are hints, including cleanup retries; a failed or incomplete scan admits
+nothing. Ready requests sort by original `RequestedAt`, then ordinal lowercase
+request ID. Legacy pending tasks are normalized without changing their age.
+A Held request is attempted once per sweep generation, so later eligible work
+can proceed; its original ordering key returns at the next periodic sweep.
+Snapshots hide provisional entries until reconciliation completes. Entry identity
+still prevents an old completion from releasing a newer request's claim.
+
 Generated verification evidence stays ignored (CARD-1015); essential receipt lines and
 provenance belong in the stored task report. Ignored output does not dirty tracked source.
 Program currently registers `RefusingEvidenceRetention`, so publication can succeed while

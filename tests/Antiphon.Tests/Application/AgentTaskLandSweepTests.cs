@@ -72,7 +72,7 @@ public class AgentTaskLandSweepTests
     }
 
     [Test]
-    public async Task a_pending_row_that_is_already_active_is_skipped()
+    public async Task a_pending_hint_is_replaced_by_the_durable_request()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
@@ -85,7 +85,8 @@ public class AgentTaskLandSweepTests
 
         queue.PendingCount.ShouldBe(1);
         queue.TryDequeue(out var request).ShouldBeTrue();
-        request.VerifyFilter.ShouldBe("already");
+        request.VerifyFilter.ShouldBe("/*/Antiphon.Tests.Application/*/*");
+        request.RequestId.ShouldNotBeNull();
         (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id)).ShouldBe(0);
     }
 
@@ -150,7 +151,7 @@ public class AgentTaskLandSweepTests
     }
 
     [Test]
-    public async Task drain_releases_the_id_when_the_scoped_service_throws()
+    public async Task drain_keeps_replay_closed_when_the_scoped_service_throws()
     {
         var queue = new AgentTaskLandQueue();
         var id = Guid.NewGuid();
@@ -159,10 +160,9 @@ public class AgentTaskLandSweepTests
             queue, new ThrowingScopeFactory(), NullLogger<AgentTaskLandHostedService>.Instance);
         using var cts = new CancellationTokenSource();
         await hosted.StartAsync(cts.Token);
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (queue.IsActive(id) && DateTime.UtcNow < deadline)
-            await Task.Delay(20);
-        queue.IsActive(id).ShouldBeFalse();
+        queue.IsActive(id).ShouldBeTrue("a failed durable scan cannot consume a volatile hint");
+        queue.TryDequeue(out _).ShouldBeFalse();
+        queue.Capture(DateTime.UtcNow).Waiting.ShouldBeEmpty();
         await hosted.StopAsync(CancellationToken.None);
         cts.Cancel();
     }

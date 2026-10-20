@@ -14,13 +14,17 @@ public sealed class AgentTaskLandHostedService : BackgroundService
     private readonly ILogger<AgentTaskLandHostedService> _logger;
 
     public AgentTaskLandHostedService(AgentTaskLandQueue queue, IServiceScopeFactory scopes,
-        ILogger<AgentTaskLandHostedService> logger) => (_queue, _scopes, _logger) = (queue, scopes, logger);
+        ILogger<AgentTaskLandHostedService> logger)
+    {
+        (_queue, _scopes, _logger) = (queue, scopes, logger);
+        _queue.RequireReconciliation();
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
         {
-            await foreach (var request in _queue.ReadAllAsync(stoppingToken))
+            await foreach (var request in _queue.ReadAllAsync(stoppingToken, ReconcileAsync))
             {
                 try
                 {
@@ -76,5 +80,22 @@ public sealed class AgentTaskLandHostedService : BackgroundService
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+    }
+
+    private async Task<bool> ReconcileAsync(CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopes.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<AgentTaskLandService>()
+                .ReconcileQueueAsync(nextGeneration: false, ct);
+            return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Land replay scan failed; selection remains closed until a complete reconciliation");
+            return false;
+        }
     }
 }

@@ -9,7 +9,7 @@ namespace Antiphon.Server.Infrastructure.Orchestration;
 
 /// <summary>
 /// Boot reconciliation and periodic backstop for durable land requests (CARD-0331). Claims
-/// nothing: a pending row whose id is not in this process's active set is re-enqueued.
+/// nothing: a complete pending snapshot starts the next eligibility generation.
 /// Never waits on git — that is <see cref="AgentTaskLandHostedService"/>.
 /// </summary>
 public sealed class AgentTaskLandSweepHostedService : BackgroundService
