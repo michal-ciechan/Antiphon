@@ -12,11 +12,16 @@ namespace Antiphon.Server.Application.Services;
 /// the same 292 entries; only scripts/validate-checkpoint-receipt.ps1 changed since the prior
 /// audit, adding a failed-report verdict check. Imports/resources/entrypoints still consume
 /// no docs Markdown or root README in the verification build.
+/// Re-audited prospective landing tree 762b21785a3ded2bb5c75aac0b2854b03da60ff3
+/// on master e8bd995b0481e838c0110217dc4f680fe4de8374: the same 292 entries;
+/// only .gitattributes changed since the prior audit (CARD-1383's Slow registry merge rule).
+/// The Slow registry text file and tools/**/*.cs are outside this inventory; the rule adds
+/// no build imports/resources/entrypoints or documentation inputs.
 /// Re-audit imports/resources/entrypoints before changing this digest; drift means build.
 /// </summary>
 internal sealed class LandVerificationBuildGraph
 {
-    internal const string Fingerprint = "D17D2800E1313509226CE7C83FDE19C8ABFD3AD5BA4A1C4CFA4BAA6EC980C789";
+    internal const string Fingerprint = "AE2F82A463CD2527B57BF4EE83BBCA269D7FE4101D779EAE3947A113A3FA74A5";
 
     internal bool Includes(string path)
     {
