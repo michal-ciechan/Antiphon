@@ -312,3 +312,4 @@ Antiphon.Tests.Application.SessionRuntimeActionRoutingTests
 Antiphon.Tests.Application.SessionRuntimeActionDeferralTests
 # CARD-1233: four inherited file callers, independent process controls and an 8 s FIFO watchdog.
 Antiphon.Tests.Checkpoints.CheckpointInheritedFileTests
+Antiphon.Tests.Checkpoints.CheckpointSourceGitBoundsTests
