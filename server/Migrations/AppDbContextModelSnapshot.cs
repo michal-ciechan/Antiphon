@@ -843,6 +843,19 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid?>("ActiveCompactionRecoveryId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateTime?>("AutomaticFreshAlertedHoldAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("AutomaticFreshConsumed")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<int>("AutomaticResumeFailures")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.Property<DateTime?>("CapacityNextDueAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -891,6 +904,12 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTime?>("LastAutomaticCompactionRestartAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("LastAutomaticResumeSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("LastAutomaticResumeStartedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("LastEscalationTier")
