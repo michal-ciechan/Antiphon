@@ -245,13 +245,13 @@ function New-C1323ExecutionFixture {
 function Write-C1323ExecutionSeams($Fixture, $Platform) {
     $path = Join-Path $Fixture.Root "$Platform.ps1"
     $template = @'
-. '__CLONE__/scripts/lib/c487-harness.ps1'
 $env:PATH = '__ROOT__/commands' + [IO.Path]::PathSeparator + $env:PATH
 $NightlySeams = @{
     HostPlatform = { return '__PLATFORM__' }
     E2EPrerequisites = { return @{ Ok = $true; Rows = @(@{ name = 'offline-browser'; exitCode = 0 }) } }
     StartProcess = {
         param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+        __CHILD_WRITERS__
         Add-Content -LiteralPath '__ROOT__/__PLATFORM__-commands.log' -Value ($FilePath + ' ' + ($ArgumentList -join ' '))
         $argv = @($ArgumentList)
         $nodes = @(Get-Content '__ROOT__/nodes.json' -Raw | ConvertFrom-Json)
@@ -275,7 +275,12 @@ $NightlySeams = @{
     }
 }
 '@
-    $text = $template.Replace('__CLONE__', $Fixture.Clone.Replace("'", "''")).Replace('__ROOT__', $Fixture.Root.Replace("'", "''")).Replace('__PLATFORM__', $Platform)
+    # Import-NightlySeams has a local scope. Keep only the child artifact writers
+    # inside the callback so a real process hop can resolve them on every call.
+    $writers = @('Write-C487Trx', 'Write-C487Execution', 'Write-C487Discovery') | ForEach-Object {
+        'function ' + $_ + " {`n" + (Get-Command $_ -CommandType Function).Definition + "`n}"
+    }
+    $text = $template.Replace('__CHILD_WRITERS__', ($writers -join "`n")).Replace('__ROOT__', $Fixture.Root.Replace("'", "''")).Replace('__PLATFORM__', $Platform)
     [IO.File]::WriteAllText($path, $text)
     return $path
 }
@@ -325,7 +330,9 @@ function Test-C1323_PlatformExecution {
     }
     $unknownSeams = Write-C1323ExecutionSeams $fx 'unknown'
     $unknown = Invoke-AntiphonNightlyTests -RepoRoot $fx.Clone -LogRoot "$($fx.Root)/unknown" -Profile rc -Sha $fx.Sha -SeamsPath $unknownSeams
-    Assert-C1323 ($unknown.ExitCode -ne 0 -and $unknown.Refusal -ceq 'unsupported-host-platform' -and -not (Test-Path "$($fx.Root)/unknown-commands.log")) 'unknown-platform-launches-nothing'
+    $refusalRecord = ConvertTo-Json (ConvertTo-NightlyResultRecord $unknown) -Compress
+    $legacyRefusal = '{"nativeRunId":"","sha":"","ref":"","trigger":"","profile":"","candidateId":"","creditKind":"","localDueDate":"","policyHash":"","coverageComplete":false,"testsPassed":false,"reportDelivered":false,"exitCode":3,"summaryPath":""}'
+    Assert-C1323 ($unknown.ExitCode -eq 3 -and $unknown.Refusal -ceq 'unsupported-host-platform' -and -not (Test-Path "$($fx.Root)/unknown-commands.log") -and $refusalRecord -ceq $legacyRefusal) 'unknown-platform-launches-nothing'
     Assert-C1323 ($linux.coverageScope -ceq 'PlatformDiagnostic' -and $linux.reasons -contains 'windows-rc-obligations-outstanding') 'diagnostic-return-value'
 }
 

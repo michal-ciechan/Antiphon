@@ -738,9 +738,6 @@ function ConvertTo-NightlyResultRecord {
         localDueDate = ''
         policyHash = ''
         coverageComplete = $false
-        coverageScope = ''
-        platform = ''
-        reasons = @()
         testsPassed = $false
         reportDelivered = $false
         exitCode = 1
