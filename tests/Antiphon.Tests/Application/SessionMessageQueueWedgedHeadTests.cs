@@ -370,6 +370,16 @@ public class SessionMessageQueueWedgedHeadTests
     }
 
     [Test]
+    public async Task C1373_MarkWorkingAsync_updates_the_loaded_working_snapshot()
+    {
+        await using var h = await CreateAsync();
+
+        (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Working.ShouldBeFalse();
+        await h.MarkWorkingAsync();
+        (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Working.ShouldBeTrue();
+    }
+
+    [Test]
     public async Task Working_session_still_withholds_the_kill_after_a_failed_Enter_only()
     {
         await using var h = await CreateAsync(alwaysOn: true);
