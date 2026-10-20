@@ -24,7 +24,7 @@ public sealed class CheckpointVerifierBoundsTests : CheckpointTestBase
         healthy.Watchdog.ShouldBeFalse();
         var admitted = caller == "temp"
             ? "Prebuilt test DLL missing:" : "Prebuilt lifecycle or checkpoint tool DLL is missing.";
-        healthy.Error.ShouldStartWith(admitted,
+        healthy.Error.ShouldStartWith(admitted, Case.Sensitive,
             "a valid SHA must reach the next production admission check without running a usage suite");
         foreach (var mode in new[] { "invalid", "nonzero" })
         {
@@ -42,7 +42,7 @@ public sealed class CheckpointVerifierBoundsTests : CheckpointTestBase
 
         var hardened = await InvokeAsync(caller, "hardened", cancellationToken);
         hardened.Watchdog.ShouldBeFalse();
-        hardened.Error.ShouldStartWith(admitted,
+        hardened.Error.ShouldStartWith(admitted, Case.Sensitive,
             "read-only Git must suppress ambient config, hooks, filters and textconv before resolving HEAD");
     }
 
