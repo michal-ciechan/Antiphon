@@ -108,7 +108,7 @@ One build and one exact filter per row per invocation. Group prefixes name the l
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1233-s5/` | linux-process-execution | `/*/*/CheckpointExecutionCustodyTests/C1233_ExecutionCustody` | W5 | 5 executed, 0 failed/skipped | 5 | 11 | true |
 | CP-6 | S6 | `tests/Antiphon.Tests -> bin-c1233-s6/` | linux-process-baseline | `/*/*/CheckpointBaselineBoundsTests/C1233_BaselineGit` | W6 | 4 executed, 0 failed/skipped | 4 | 11 | true |
 | CP-7 | S7 | `tests/Antiphon.Tests -> bin-c1233-s7/` | linux-process-orphans | `/*/*/CheckpointVerifierBoundsTests/C1233_OrphanChildren` | W7 | 3 executed, 0 failed/skipped | 3 | 10 | true |
-| CP-8 | S8 | `tests/Antiphon.Tests -> bin-c1233-s8/` | linux-process-token-fixtures | `/*/*/CheckpointFixtureRoutingTests/C1233_TokenCallers` | W8 | 4 executed, 0 failed/skipped | 4 | 10 | true |
+| CP-8 | S8 | `tests/Antiphon.Tests -> bin-c1233-s8/` | linux-process-token-fixtures | `/*/*/CheckpointFixtureRoutingTests/C1233_TokenCallers*` | W8 | 4 executed, 0 failed/skipped | 4 | 10 | true |
 | CP-9 | S9 | `tests/Antiphon.Tests -> bin-c1233-s9/` | linux-process-failure-fixtures | `/*/*/CheckpointFixtureRoutingTests/C1233_FailurePaths` | W9 | 2 executed, 0 failed/skipped | 2 | 10 | true |
 | CP-10 | S10 | `tests/Antiphon.Tests -> bin-c1233-s10/` | linux-process-supervisors | `/*/*/CheckpointFixtureRoutingTests/C1233_SupervisorCallers` | W10 | 5 executed, 0 failed/skipped | 5 | 11 | true |
 | CP-11 | S11 | `tests/Antiphon.Tests -> bin-c1233-s11/` | linux-process-repeat-fixtures | `/*/*/CheckpointFixtureRoutingTests/C1233_RepeatCallers` | W11 | 4 executed, 0 failed/skipped | 4 | 10 | true |
