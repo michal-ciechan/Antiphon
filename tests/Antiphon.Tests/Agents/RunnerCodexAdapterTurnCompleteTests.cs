@@ -27,6 +27,93 @@ namespace Antiphon.Tests.Agents;
 public class RunnerCodexAdapterTurnCompleteTests
 {
     [Test]
+    public async Task C1322_Cancelled_verdict_cannot_become_screen_success()
+    {
+        // Establish that this screen lifecycle can produce a fallback success on its own.
+        var fallbackClient = new ScriptedCodexRunnerClient
+        {
+            ThrowOnTranscript = true,
+            IndicatorScreenReads = 4,
+        };
+        await using (var fallback = NewAdapter(
+            fallbackClient, doneQuietMs: 300, doneMaxWaitMs: 15_000, submitConfirmMs: 100))
+        {
+            await fallback.StartAsync(NewSpec(), CancellationToken.None);
+            await fallback.SendPromptAsync("screen lifecycle control", CancellationToken.None);
+            (await fallback.WaitForTurnCompleteAsync(CancellationToken.None))
+                .TurnCompleted.ShouldBeTrue("the scripted Working/quiet lifecycle permits fallback success");
+        }
+
+        var client = new ScriptedCodexRunnerClient { RawOutput = "diagnostic screen snapshot" };
+        client.Seed(
+            Row(Guid.Empty, 1, TranscriptKinds.UserPrompt, text: "an older interrupted prompt"),
+            Row(Guid.Empty, 2, TranscriptKinds.AssistantText, text: "old partial answer"),
+            Row(Guid.Empty, 3, TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.Cancelled));
+        await using var adapter = NewAdapter(client, doneQuietMs: 300, doneMaxWaitMs: 15_000);
+        await adapter.StartAsync(NewSpec(), CancellationToken.None);
+
+        await adapter.SendPromptAsync("a new completed prompt", CancellationToken.None);
+        client.Append(TranscriptKinds.AssistantText, "answer after the old cancellation");
+        client.Append(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var completed = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        completed.TurnCompleted.ShouldBeTrue("pre-baseline cancellation belongs to the previous prompt");
+        completed.ResponseText.ShouldBe("answer after the old cancellation");
+
+        await adapter.SendPromptAsync("the prompt interrupted while working", CancellationToken.None);
+        client.Append(TranscriptKinds.AssistantText, "partial answer from this turn");
+        client.IndicatorScreenReads = client.SnapshotReads + 4;
+        var cancellationObserved = false;
+        client.BeforeSnapshotAsync = (read, _) =>
+        {
+            // Admit the boundary when the screen has stopped showing Working, after the
+            // wait has seen it active. The next transcript poll must beat screen success.
+            if (read == client.IndicatorScreenReads + 2)
+            {
+                client.Append(TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.Cancelled);
+                cancellationObserved = true;
+            }
+            return Task.CompletedTask;
+        };
+
+        var interrupted = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        cancellationObserved.ShouldBeTrue("the wait reached the scripted indicator disappearance");
+        interrupted.TurnCompleted.ShouldBeFalse("an aborted turn must not become transcript or screen success");
+        interrupted.StopReason.ShouldBe(TranscriptKinds.StopReasons.Cancelled);
+        interrupted.ResponseText.ShouldBe("partial answer from this turn");
+        interrupted.RawSnapshot.ShouldBe("diagnostic screen snapshot");
+        interrupted.IsAskingQuestion.ShouldBeFalse();
+        client.UnconditionalKills.ShouldBe(0);
+        client.KillGenerationCalls.ShouldBeEmpty();
+        client.ReplacementAlive.ShouldBeTrue();
+        client.BeforeSnapshotAsync = null;
+
+        await adapter.SendPromptAsync("an independently submitted later prompt", CancellationToken.None);
+        client.Append(TranscriptKinds.AssistantText, "the later answer");
+        client.Append(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var later = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        later.TurnCompleted.ShouldBeTrue();
+        later.StopReason.ShouldBe("end_turn");
+        later.ResponseText.ShouldBe("the later answer");
+
+        // The no-AssistantText branch still scrapes diagnostic text, but must carry the same
+        // interruption verdict so the caller can distinguish it from a timeout.
+        await adapter.SendPromptAsync("a prompt interrupted before any answer", CancellationToken.None);
+        client.Append(TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.Cancelled);
+        var noText = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        noText.TurnCompleted.ShouldBeFalse();
+        noText.StopReason.ShouldBe(TranscriptKinds.StopReasons.Cancelled);
+        noText.RawSnapshot.ShouldBe("diagnostic screen snapshot");
+
+        await adapter.SendPromptAsync("legacy completion without a reason", CancellationToken.None);
+        client.Append(TranscriptKinds.AssistantText, "legacy answer");
+        client.Append(TranscriptKinds.TurnEnd);
+        var legacy = await adapter.WaitForTurnCompleteAsync(CancellationToken.None);
+        legacy.TurnCompleted.ShouldBeTrue();
+        legacy.StopReason.ShouldBeNull();
+        legacy.ResponseText.ShouldBe("legacy answer");
+    }
+
+    [Test]
     public async Task C907_captured_lifecycle_completes_screen_fallback()
     {
         var client = new ScriptedCodexRunnerClient
