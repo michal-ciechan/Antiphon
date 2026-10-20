@@ -398,7 +398,7 @@ public sealed class RolePolicyToolBundleDispatchTests
             NullLogger<AgentTaskService>.Instance);
     }
 
-    private static async Task<AgentTask> SeedQueuedAsync(
+    internal static async Task<AgentTask> SeedQueuedAsync(
         AppDbContext db, string cwd, AgentTaskRole role, Guid? parentSessionId = null)
     {
         var task = new AgentTask
@@ -430,13 +430,18 @@ public sealed class RolePolicyToolBundleDispatchTests
     // starting a process, and the claude definition names a path that does not exist. With a
     // parent harness the dispatcher shares its runtime and queue; the queue keeps the harness's
     // system clock and the dispatcher's clock only drives the reminder ramp.
-    private static ServiceProvider BuildProvider(
+    internal static ServiceProvider BuildProvider(
         string connectionString, RecordingSink sink, string reviewBundle,
-        BridgeQueueHarness? parent = null, TimeProvider? clock = null)
+        BridgeQueueHarness? parent = null, TimeProvider? clock = null,
+        IInterceptor? fault = null, bool checkEnabled = true)
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionString));
+        services.AddDbContext<AppDbContext>(options =>
+        {
+            options.UseNpgsql(connectionString);
+            if (fault is not null) options.AddInterceptors(fault);
+        });
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(clock ?? TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
@@ -444,6 +449,8 @@ public sealed class RolePolicyToolBundleDispatchTests
         services.AddSingleton(Options.Create(new AgentSessionSettings()));
         services.AddSingleton(Options.Create(new DelegationSettings
         {
+            CheckEnabled = checkEnabled,
+            CheckMaxCount = checkEnabled ? 10 : 0,
             MaxConcurrentTasks = 512,
             PoolIdleRetireMinutes = 525_600,
             PoolMaxIdlePerDirectory = int.MaxValue,
@@ -490,11 +497,13 @@ public sealed class RolePolicyToolBundleDispatchTests
         services.AddSingleton<AgentTuiMetrics>();
         services.AddSingleton<AgentTuiRunnerCatalog>();
         services.AddScoped<AgentTuiLaunchResolver>();
+        services.AddSingleton<CompletionNoteFlushQueue>();
+        services.AddScoped<AgentTaskLandNotificationService>();
         services.AddScoped<AgentTaskDispatcher>();
         return services.BuildServiceProvider();
     }
 
-    private static async Task TickAsync(ServiceProvider provider, CancellationToken ct)
+    internal static async Task TickAsync(ServiceProvider provider, CancellationToken ct)
     {
         await using var scope = provider.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
@@ -506,7 +515,7 @@ public sealed class RolePolicyToolBundleDispatchTests
         clock.Advance(step > TimeSpan.Zero ? step + TimeSpan.FromSeconds(1) : TimeSpan.FromSeconds(1));
     }
 
-    private static async Task AssertDeliveredOnceAsync(
+    internal static async Task AssertDeliveredOnceAsync(
         BridgeQueueHarness recipient, Guid taskId, Guid rowId, string path)
     {
         var row = (await RowsAsync(recipient.ConnectionString, recipient.SessionId)).ShouldHaveSingleItem(path);
@@ -534,7 +543,7 @@ public sealed class RolePolicyToolBundleDispatchTests
             .ShouldBe(1, $"{path}: typed once");
     }
 
-    private static async Task<List<SessionQueuedMessage>> RowsAsync(string store, Guid sessionId)
+    internal static async Task<List<SessionQueuedMessage>> RowsAsync(string store, Guid sessionId)
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(store));
         return await db.SessionQueuedMessages.AsNoTracking()
@@ -543,7 +552,7 @@ public sealed class RolePolicyToolBundleDispatchTests
             .ToListAsync();
     }
 
-    private static async Task<List<TranscriptEntry>> NotePromptsAsync(string store, Guid sessionId)
+    internal static async Task<List<TranscriptEntry>> NotePromptsAsync(string store, Guid sessionId)
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(store));
         var rows = await db.TranscriptEntries.AsNoTracking()
@@ -555,7 +564,7 @@ public sealed class RolePolicyToolBundleDispatchTests
             && t.Text.Contains("stage_tool_bundle_unknown", StringComparison.Ordinal)).ToList();
     }
 
-    private static async Task<AgentTask> ReadTaskAsync(string store, Guid taskId)
+    internal static async Task<AgentTask> ReadTaskAsync(string store, Guid taskId)
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(store));
         return await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
@@ -625,7 +634,7 @@ public sealed class RolePolicyToolBundleDispatchTests
         catch (IOException) { }
     }
 
-    private sealed class RecordingSink : IAgentTaskLaunchSink
+    internal sealed class RecordingSink : IAgentTaskLaunchSink
     {
         public List<(Guid SessionId, Guid AgentId)> Items { get; } = [];
 
