@@ -381,16 +381,21 @@ function Invoke-AntiphonNightlyRunCore {
             New-Item -ItemType Directory -Path (Split-Path -Parent $CheckoutRoot) -Force | Out-Null
             $gitDir = Join-Path $CheckoutRoot '.git'
             if (-not (Test-Path -LiteralPath $gitDir)) {
-                $clone = Invoke-NightlyGit -WorkingDirectory (Split-Path -Parent $CheckoutRoot) -Arguments @('clone', $RemoteUrl, $CheckoutRoot)
+                $clone = Invoke-NightlyGit -WorkingDirectory (Split-Path -Parent $CheckoutRoot) -Arguments @('clone', '-c', 'core.longpaths=true', $RemoteUrl, $CheckoutRoot)
                 if ([int]$clone.ExitCode -ne 0) { throw ('git clone failed with exit {0}' -f $clone.ExitCode) }
                 $marker = Join-Path $CheckoutRoot '.antiphon-nightly-owned'
                 Write-NightlyAtomicJson -Path $marker -Object ([ordered]@{ origin = $RemoteUrl; kind = 'nightly-clone' })
             }
+            # Git for Windows needs its own opt-in even when OS long paths are enabled.
+            # Configure only the owned clone, before checkout/reset or fixture cleanup.
+            $config = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('config', '--local', 'core.longpaths', 'true')
+            if ([int]$config.ExitCode -ne 0) { throw ('git config core.longpaths failed with exit {0}' -f $config.ExitCode) }
             $fetch = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('fetch', 'origin', $Ref)
             if ([int]$fetch.ExitCode -ne 0) { throw ('git fetch origin {0} failed with exit {1}' -f $Ref, $fetch.ExitCode) }
             $reset = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('reset', '--hard', 'FETCH_HEAD')
             if ([int]$reset.ExitCode -ne 0) { throw ('git reset --hard FETCH_HEAD failed with exit {0}' -f $reset.ExitCode) }
-            $clean = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('clean', '-fdx')
+            # These untracked root markers authorize both the self-reexec and later runs.
+            $clean = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('clean', '-fdx', '-e', '/.antiphon-nightly-owned', '-e', '/.antiphon-release-owned')
             if ([int]$clean.ExitCode -ne 0) { throw ('git clean -fdx failed with exit {0}' -f $clean.ExitCode) }
             $rev = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('rev-parse', 'HEAD')
             $sha = ([string]$rev.Output).Trim()
