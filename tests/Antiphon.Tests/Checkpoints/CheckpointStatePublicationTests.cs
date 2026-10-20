@@ -167,15 +167,16 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         };
         var run = CheckpointApp.CreateRun(manifest, new RunRequest
         {
-            Commit = source.Commit!, Branch = "fixture", KeepOutputs = !final, Slots = "off", Serial = !draining,
+            Commit = source.Commit!, Branch = "fixture", KeepOutputs = !corrective, Slots = "off", Serial = !draining,
             Baseline = transient ? null : "must-not-launch",
         }, repo, runtime);
         var attempts = 0;
         string? completedLine = null;
         string? phaseAtCleanup = null;
-        io.BeforeUnlink = path =>
+        io.BeforeFileExists = path =>
         {
-            if (!corrective || !path.Contains("bin-c1370-fixture", StringComparison.Ordinal)) return;
+            if (!corrective || path != Path.Combine(repo, "sample", "bin-c1370-fixture",
+                    ".checkpoint-output-ledger.json")) return;
             phaseAtCleanup = new RunStateStore(context).TryRead(Path.Combine(run, "state.json"))!.Phase;
             throw new IOException("injected output cleanup failure");
         };
@@ -184,7 +185,7 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
             if (destination != Path.Combine(run, "state.json")) return;
             var state = JsonSerializer.Deserialize<RunState>(File.ReadAllText(temporary), RunStateStore.Json)!;
             var completed = state.Rows.FirstOrDefault(row => row.Id == "CP-first" && row.State == "green");
-            if (completed is null || final && state.Phase is not ("finishing" or "done")) return;
+            if (completed is null || final && state.Phase != "done") return;
             completedLine ??= completed.Line;
             // Let the first successful Finish publish on the defective path, then deny
             // every corrective publication after cleanup changes the verdict to red.
@@ -268,7 +269,7 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         private readonly ICheckpointCleanupIo _inner = new CheckpointNativeIo();
         public Action<string, string>? BeforeMove { get; set; }
         public Action? MoveFailed { get; set; }
-        public Action<string>? BeforeUnlink { get; set; }
+        public Action<string>? BeforeFileExists { get; set; }
         public string? ReadOnlyPath { get; set; }
         public void Move(string source, string destination, bool overwrite)
         {
@@ -289,7 +290,11 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         public DateTime CreationTimeUtc(string path) => _inner.CreationTimeUtc(path);
         public DateTime LastWriteTimeUtc(string path) => _inner.LastWriteTimeUtc(path);
         public string StreamPath(Stream stream) => _inner.StreamPath(stream);
-        public bool FileExists(string path) => _inner.FileExists(path);
+        public bool FileExists(string path)
+        {
+            BeforeFileExists?.Invoke(path);
+            return _inner.FileExists(path);
+        }
         public bool DirectoryExists(string path) => _inner.DirectoryExists(path);
         public string? LinkTarget(string path) => _inner.LinkTarget(path);
         public long Length(string path) => _inner.Length(path);
@@ -303,11 +308,7 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         public void WriteBytes(string path, ReadOnlySpan<byte> bytes) => _inner.WriteBytes(path, bytes);
         public void AppendText(string path, string text) => _inner.AppendText(path, text);
         public void Copy(string source, string destination, bool overwrite) => _inner.Copy(source, destination, overwrite);
-        public void Unlink(string path)
-        {
-            BeforeUnlink?.Invoke(path);
-            _inner.Unlink(path);
-        }
+        public void Unlink(string path) => _inner.Unlink(path);
         public void RemoveDirectory(string path, bool recursive) => _inner.RemoveDirectory(path, recursive);
         public string? EnvironmentVariable(string name) => _inner.EnvironmentVariable(name);
     }

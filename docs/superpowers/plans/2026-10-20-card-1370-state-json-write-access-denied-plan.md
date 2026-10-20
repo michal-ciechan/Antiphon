@@ -196,3 +196,12 @@ A denied terminal write retains the nonterminal receipt and the failed report.
 The red witness at `dca441feb3ec46d23911446589092d25f2c78a65` failed on the
 surviving done/0 receipt. Its waiter already returned 2 via receipt mismatch;
 the repaired path must expose the retained receipt-write-failed report instead.
+
+The first repaired CP-2 at `da924f41f337e9d585028a4197f0552aab0c26b5` exposed
+a fixture error: its separate cleanup context refused output ownership before
+the unlink hook, so the cleanup-phase assertion had no observation. The fixture
+now injects at the cleanup ledger probe, preserving the phase assertion. The
+ordinary final-publication arm explicitly keeps its outputs and denies the
+actual `done` write, after settlement. CP-3 passed once at that same SHA; only
+CP-2 is rerun after this fixture-only correction. Registry entries, categories,
+and metadata inputs are unchanged by this correction.
