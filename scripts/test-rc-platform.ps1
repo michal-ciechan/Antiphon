@@ -1,0 +1,226 @@
+#requires -Version 7.0
+# CARD-1323: offline policy and frozen Windows authority witnesses. No publication.
+param([string]$Case, [string]$ResultsDirectory)
+$ErrorActionPreference = 'Stop'
+foreach ($name in @('nightly-common', 'nightly-policy', 'nightly-coverage', 'release-gate', 'release-authority', 'test-selection', 'c487-harness')) {
+    . "$PSScriptRoot/lib/$name.ps1"
+}
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
+
+function Assert-C1323($Condition, $Name, $Detail = '') {
+    Assert-C487 -Cond $Condition -Name "C1323 $Name" -Detail $Detail
+}
+function Copy-C1323Object($Object) { return ($Object | ConvertTo-Json -Depth 40 | ConvertFrom-Json) }
+function Same-C1323Set($Actual, $Expected) {
+    return ((@($Actual | Sort-Object -CaseSensitive) -join "`n") -ceq (@($Expected | Sort-Object -CaseSensitive) -join "`n"))
+}
+function Write-C1323Policy($Object, $Path) {
+    $Object.policyHash = Get-NightlyPolicyHash $Object
+    [IO.File]::WriteAllText($Path, ($Object | ConvertTo-Json -Depth 40))
+}
+function Invoke-C1323Git($Root, $Arguments) { return (Invoke-TestSelectionGit $Root $Arguments).Stdout.Trim() }
+function Write-C1323File($Root, $Path, $Text) {
+    $file = Join-Path $Root $Path
+    [void](New-Item -ItemType Directory (Split-Path $file) -Force)
+    [IO.File]::WriteAllText($file, $Text)
+}
+function New-C1323Nodes {
+    $nodes = @()
+    foreach ($pair in @(@('AgentTaskLandDeliveryE2ETests', 52), @('DispatchBaseWarningDeliveryE2ETests', 12), @('WorktreeRetirementDeliveryE2ETests', 5))) {
+        for ($i = 1; $i -le $pair[1]; $i++) {
+            $nodes += [pscustomobject]@{ uid = "$($pair[0])-$i"; class = "Antiphon.E2E.$($pair[0])"; method = 'Expanded'; categories = @('OptIn') }
+        }
+    }
+    $nodes += [pscustomobject]@{ uid = 'unclassified'; class = 'Antiphon.E2E.NewOptInTests'; method = 'Runs'; categories = @('OptIn') }
+    $nodes += [pscustomobject]@{ uid = 'legacy-live'; class = 'Antiphon.E2E.MixedTests'; method = 'Live'; categories = @() }
+    $nodes += [pscustomobject]@{ uid = 'legacy-sibling'; class = 'Antiphon.E2E.MixedTests'; method = 'Offline'; categories = @() }
+    return $nodes
+}
+function Get-C1323Required($Nodes, $Exclusions) {
+    return @($Nodes | Where-Object {
+        $n = [pscustomobject]@{ ClassName = $_.class; Type = $_.class; Method = $_.method; Categories = $_.categories }
+        (Get-NightlyDiscoveryDisposition $n $Exclusions -ProfileAware).Disposition -eq 'required'
+    } | ForEach-Object uid)
+}
+
+function Test-C1323_PlatformPolicy {
+    $policy = Get-Content "$repoRoot/tests/test-execution-policy.json" -Raw | ConvertFrom-Json
+    # Supply the new contract even at the pre-fix commit: this must expose the
+    # global exclusion defect before the shipped schema is updated.
+    $policy.schemaVersion = 4
+    $policy.profiles.rc.exclusions = @($policy.profiles.rc.exclusions | Where-Object owner -ne 'CARD-1323')
+    foreach ($class in @('AgentTaskLandDeliveryE2ETests', 'DispatchBaseWarningDeliveryE2ETests', 'WorktreeRetirementDeliveryE2ETests')) {
+        $policy.profiles.rc.exclusions += [pscustomobject]@{ suite = 'e2e'; class = $class; platform = 'linux'; reason = 'Requires Windows ConPTY/native FakeGrok'; owner = 'CARD-1323' }
+    }
+    $policy.profiles.rc.exclusions += [pscustomobject]@{ suite = 'e2e'; class = 'MixedTests'; methods = @('Live'); reason = 'legacy live method'; owner = 'fixture' }
+    $nodes = @(New-C1323Nodes)
+    $expectedWindows = @($nodes.uid | Where-Object { $_ -ne 'legacy-live' })
+    $windows = @(Get-NightlyProfileExclusions $policy 'rc' 'e2e' -Platform windows)
+    $actualWindows = @(Get-C1323Required $nodes $windows)
+    $retained = Same-C1323Set $actualWindows $expectedWindows
+    Assert-C1323 $retained 'windows-retains-69-and-siblings' ($actualWindows -join ',')
+    if (-not $retained) { return }
+    $linux = @(Get-NightlyProfileExclusions $policy 'rc' 'e2e' -Platform linux)
+    Assert-C1323 (Same-C1323Set (Get-C1323Required $nodes $linux) @('unclassified', 'legacy-sibling')) 'linux-excludes-exactly-69'
+    $scoped = @($linux | Where-Object Owner -eq 'CARD-1323')
+    Assert-C1323 ($scoped.Count -eq 3 -and @($scoped | Where-Object { -not $_.Reason -or -not $_.Owner }).Count -eq 0) 'exclusion-reasons-and-owners'
+    Assert-C1323 (Same-C1323Set (Get-C1323Required $nodes @(Get-NightlyProfileExclusions $policy 'rc' 'e2e')) $expectedWindows) 'default-is-windows'
+    $path = Join-Path $ResultsDirectory 'policy.json'
+    Write-C1323Policy $policy $path
+    $loaded = Read-NightlyExecutionPolicy -RepoRoot $repoRoot -PolicyPath $path
+    Assert-C1323 ($loaded.SchemaVersion -eq 4) 'schema4-loads'
+    $bytes = [IO.File]::ReadAllBytes($path)
+    $authorityPolicy = ConvertFrom-ReleaseAuthorityPolicyBytes $bytes
+    $expectedSuites = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts', 'e2e', 'markdown-pdf')
+    Assert-C1323 (Same-C1323Set $authorityPolicy.RequiredSuites $expectedSuites) 'nine-suite-authority'
+    Assert-C1323 (Same-C1323Set (Get-ReleaseAuthorityRequiredUids $nodes $authorityPolicy.Exclusions 'e2e') $expectedWindows) 'authority-resolves-windows'
+
+    $invalid = @('macos', '', 'Windows', 1, $true, $null, @('linux'), @{ os = 'linux' })
+    $missed = @()
+    for ($i = 0; $i -lt $invalid.Count; $i++) {
+        $bad = Copy-C1323Object $policy
+        $row = @($bad.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1323')[0]
+        $row.platform = $invalid[$i]
+        Write-C1323Policy $bad $path
+        $read = Read-NightlyExecutionPolicy -RepoRoot $repoRoot -PolicyPath $path
+        $message = ''
+        try { [void](Get-NightlyProfileExclusions $read.Object 'rc' 'antiphon' -Platform windows) } catch { $message = $_.Exception.Message }
+        if ($message -notmatch 'exclusion.*platform') { $missed += "$i=$message" }
+    }
+    Assert-C1323 ($missed.Count -eq 0) 'invalid-platforms-refuse-before-filtering' ($missed -join ';')
+    $missed = @()
+    foreach ($field in @('reason', 'owner')) {
+        $bad = Copy-C1323Object $policy
+        @($bad.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1323')[0].$field = ''
+        $message = ''
+        try { [void](Get-NightlyProfileExclusions $bad 'rc' 'antiphon' -Platform windows) } catch { $message = $_.Exception.Message }
+        if ($message -notmatch 'reason and owner') { $missed += $field }
+    }
+    Assert-C1323 ($missed.Count -eq 0) 'invalid-attribution-refuses-before-filtering' ($missed -join ',')
+    $changed = Copy-C1323Object $policy
+    @($changed.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1323')[0].platform = 'windows'
+    Assert-C1323 ((Get-NightlyPolicyHash $changed) -cne (Get-NightlyPolicyHash $policy)) 'platform-only-hash-changes'
+    [IO.File]::WriteAllText($path, ($changed | ConvertTo-Json -Depth 40))
+    $message = ''; try { [void](Read-NightlyExecutionPolicy -RepoRoot $repoRoot -PolicyPath $path) } catch { $message = $_.Exception.Message }
+    Assert-C1323 ($message -match 'stale policy hash') 'stale-platform-hash-refuses'
+    $message = ''; try { [void](ConvertFrom-ReleaseAuthorityPolicyBytes ([IO.File]::ReadAllBytes($path))) } catch { $message = $_.Exception.Message }
+    Assert-C1323 ($message -eq 'policy-hash-stale') 'authority-stale-hash-refuses'
+    $historical = Copy-C1323Object $policy
+    $historical.schemaVersion = 3
+    $historical.profiles.rc.exclusions = @($historical.profiles.rc.exclusions | Where-Object owner -ne 'CARD-1323')
+    Write-C1323Policy $historical $path
+    $old = Read-NightlyExecutionPolicy -RepoRoot $repoRoot -PolicyPath $path
+    $oldAuthority = ConvertFrom-ReleaseAuthorityPolicyBytes ([IO.File]::ReadAllBytes($path))
+    Assert-C1323 ($old.SchemaVersion -eq 3 -and (Same-C1323Set $oldAuthority.RequiredSuites $expectedSuites) -and (Same-C1323Set (Get-C1323Required $nodes @(Get-NightlyProfileExclusions $old.Object 'rc' 'e2e' -Platform linux)) $expectedWindows)) 'schema3-compatibility'
+    $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
+    $shipRows = @($shipped.Object.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1323')
+    Assert-C1323 ($shipped.SchemaVersion -eq 4 -and $shipRows.Count -eq 3 -and @($shipRows | Where-Object { $_.platform -cne 'linux' -or $_.suite -cne 'e2e' }).Count -eq 0 -and (Same-C1323Set $shipRows.class $scoped.Class)) 'shipped-three-linux-rows'
+    Assert-C1323 (@($shipped.Object.projectDispositions).Count -eq 11 -and $shipped.Object.selectionCatalog.path -ceq 'tests/test-selection-policy.json' -and @($shipped.Object.profiles.rc.exclusions | Where-Object class -eq 'ChannelOutboundIsolatedTests').Count -eq 1 -and @($shipped.Object.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1313').Count -gt 0) 'master-inventory-preserved'
+
+    $root = Join-Path $ResultsDirectory 'git-policy'
+    [void](New-Item -ItemType Directory $root)
+    [void](Invoke-C1323Git $root @('init', '--quiet'))
+    [void](Invoke-C1323Git $root @('config', 'user.name', 'C1323 fixture'))
+    [void](Invoke-C1323Git $root @('config', 'user.email', 'c1323@example.invalid'))
+    [void](Invoke-C1323Git $root @('config', 'core.autocrlf', 'false'))
+    [void](Invoke-C1323Git $root @('remote', 'add', 'origin', 'https://github.com/fixture/c1323'))
+    foreach ($file in @('tests/test-selection-policy.json', 'scripts/select-test-rosters.ps1', 'scripts/lib/test-selection.ps1')) {
+        Write-C1323File $root $file ([IO.File]::ReadAllText((Join-Path $repoRoot $file)))
+    }
+    Write-C1323File $root 'tests/test-execution-policy.json' ([Text.Encoding]::UTF8.GetString($bytes))
+    $catalog = Read-TestSelectionCatalog "$root/tests/test-selection-policy.json" $policy.selectionCatalog.hash
+    foreach ($input in @(Get-TestSelectionSorted @($catalog.sets.sourceInputs + $catalog.sets.members.source))) {
+        if ($input) { Write-C1323File $root $input 'fixture source' }
+    }
+    [void](Invoke-C1323Git $root @('add', '--all'))
+    [void](Invoke-C1323Git $root @('commit', '--quiet', '-m', 'fixture'))
+    $sha = Invoke-C1323Git $root @('rev-parse', 'HEAD')
+    $selection = Get-TestSelection $root $sha $sha 'rc'
+    Assert-C1323 ($null -ne $selection -and $selection.candidateSha -ceq $sha) 'schema4-selector-admitted'
+    Test-C1323FrozenLedger $root $sha $nodes $expectedWindows
+}
+
+function Test-C1323FrozenLedger($Root, $Sha, $Nodes, $ExpectedWindows) {
+    $candidate = Join-Path $ResultsDirectory 'candidate'
+    $identity = @{ RepositoryRoot = $Root; CandidateRoot = $candidate; Sha = $Sha; Repository = 'fixture/c1323'; CandidateId = 'fixture'; CandidateRef = 'fixture-ref' }
+    $authority = New-ReleaseGateAuthority @identity -IntentId 'fixture-intent' -ReleaseCardId '13231323-1323-1323-1323-132313231323' -CreatedUtc ([datetime]'2026-01-01T00:00:00Z')
+    $pinned = Test-ReleaseGatePinnedAuthority @identity
+    Assert-C1323 ($pinned.Ok -and (Same-C1323Set (Get-ReleaseAuthorityRequiredUids $Nodes $authority.exclusions 'e2e') $ExpectedWindows)) 'pinned-authority-validates-windows' ($pinned.Reasons -join ',')
+    $discovery = @{}
+    foreach ($suite in $authority.requiredSuites) {
+        if ($suite -in @('scripts', 'client')) { continue }
+        $discovery[$suite] = @([pscustomobject]@{ uid = "$suite-ordinary"; class = 'OfflineTests'; method = 'Runs' })
+    }
+    $discovery['e2e'] = $Nodes
+    $plan = New-ReleaseGateExecutionPlan $candidate $discovery @{ scripts = @('script'); client = @('client') }
+    $dir = Get-ReleaseAuthorityDir $candidate
+    $planPath = Join-Path $dir 'execution-plan.json'
+    $ledgerPath = Join-Path $dir 'ledger.json'
+    $start = '2026-01-01T00:01:00Z'; $end = '2026-01-01T00:02:00Z'
+    $ledger = [ordered]@{
+        intentId = $authority.intentId; candidateId = $authority.candidateId; candidateRef = $authority.candidateRef; sha = $Sha; runId = 'fixture-run'
+        authorityDigest = $pinned.Digest; executionPlanDigest = Get-NightlyFileSha256 $planPath
+        teardownSucceeded = $true; seamed = $false; noReport = $false; diagnostic = $false; selection = 'full'
+        startedAt = $start; completedAt = $end; chunks = @(); rosters = @()
+        prerequisites = @(@{ id = 'build'; exitCode = 0; succeeded = $true }, @{ id = 'client-bundle'; exitCode = 0; succeeded = $true }, @{ id = 'script-census'; exitCode = 0; succeeded = $true })
+        prepublicationReceipt = @{
+            kind = $script:ReleaseAuthorityReceiptKind; recipient = @{ kind = $script:ReleaseAuthorityRecipientKind; cardId = $authority.releaseCardId; revision = 1 }
+            correlation = @{ intentId = $authority.intentId; candidateId = $authority.candidateId; sha = $Sha; runId = 'fixture-run' }; acceptedAt = $end
+        }
+    }
+    foreach ($suite in $plan.suites) {
+        $common = @{ intentId = $authority.intentId; candidateId = $authority.candidateId; sha = $Sha; runId = 'fixture-run'; startedAt = $start; completedAt = $end; exitCode = 0; suite = $suite.id }
+        if ($suite.kind -eq 'roster') {
+            $common.entries = @($suite.entries | ForEach-Object { @{ id = $_; outcome = 'passed' } })
+            $ledger.rosters += $common
+            continue
+        }
+        foreach ($chunk in $suite.chunks) {
+            $row = $common.Clone(); $row.chunk = $chunk.id; $row.trx = "$($chunk.id).trx"
+            $trx = Join-Path $candidate $row.trx
+            Write-C487Trx $trx @($chunk.uids | ForEach-Object { @{ Id = $_; ClassName = $chunk.classes[0]; MethodName = 'Expanded'; Outcome = 'Passed' } })
+            $row.trxSha256 = Get-NightlyFileSha256 $trx
+            $row.executed = $chunk.uids.Count; $row.passed = $chunk.uids.Count; $row.failed = 0; $row.skipped = 0
+            $ledger.chunks += $row
+        }
+    }
+    # Only card I/O is supplied here; every authority, membership, digest and
+    # credit decision remains production code. No HTTP or publisher is invoked.
+    function Read-ReleaseGateReleaseCard {
+        param($BaseUrl, $CardId)
+        $description = "$script:ReleaseAuthorityCorrelationPrefix intentId=$($authority.intentId) candidateId=$($authority.candidateId) sha=$Sha runId=fixture-run"
+        return @{ Ok = $true; Card = [pscustomobject]@{ id = $CardId; revisionCount = 1; description = $description } }
+    }
+    Write-NightlyAtomicJson $ledgerPath $ledger
+    $green = [pscustomobject]@{ runId = 'fixture-run' }
+    $now = [datetime]'2026-01-01T00:03:00Z'
+    $valid = Test-ReleaseGateExecutionLedger $candidate $pinned $green $now
+    Assert-C1323 $valid.Ok 'complete-synthetic-ledger-validates' ($valid.Reasons -join ',')
+    $missing = 'AgentTaskLandDeliveryE2ETests-1'
+    $chunk = @($plan.suites | Where-Object id -eq 'e2e')[0].chunks[0]
+    $chunk.uids = @($chunk.uids | Where-Object { $_ -cne $missing })
+    Write-NightlyAtomicJson $planPath $plan
+    $ledger.executionPlanDigest = Get-NightlyFileSha256 $planPath
+    $row = @($ledger.chunks | Where-Object chunk -eq $chunk.id)[0]
+    $trx = Join-Path $candidate $row.trx
+    Write-C487Trx $trx @($chunk.uids | ForEach-Object { @{ Id = $_; ClassName = $chunk.classes[0]; MethodName = 'Expanded'; Outcome = 'Passed' } })
+    $row.trxSha256 = Get-NightlyFileSha256 $trx; $row.executed--; $row.passed--
+    Write-NightlyAtomicJson $ledgerPath $ledger
+    $invalid = Test-ReleaseGateExecutionLedger $candidate $pinned $green $now
+    Assert-C1323 (-not $invalid.Ok -and (Same-C1323Set $invalid.Reasons @("plan-uid-missing:$missing", "uid-missing:$missing"))) 'missing-windows-uid-refuses' ($invalid.Reasons -join ',')
+}
+
+try {
+    if ($Case -ne 'C1323_PlatformPolicy') { throw "unknown case: $Case" }
+    Test-C1323_PlatformPolicy
+} catch {
+    Write-C487Fail "C1323 unexpected exception" $_.ToString()
+}
+finally {
+    $objects = Join-Path $ResultsDirectory 'git-policy/.git/objects'
+    if (Test-Path -LiteralPath $objects) {
+        Get-ChildItem -LiteralPath $objects -Recurse -Force -File | ForEach-Object { $_.IsReadOnly = $false }
+    }
+}
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 0
