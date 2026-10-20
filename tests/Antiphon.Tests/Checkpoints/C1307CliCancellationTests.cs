@@ -128,7 +128,7 @@ public sealed class C1307CliCancellationTests : CheckpointTestBase
         success.Removals.ShouldBe(1);
         var invalid = new ConsoleSignals();
         (await Antiphon.Checkpoints.Program.MainAsync(["execute"], invalid.Subscribe,
-            token => new CheckpointApp.Runtime { RepoRoot = repo, CancellationToken = token }))).ShouldBe(2);
+            token => new CheckpointApp.Runtime { RepoRoot = repo, CancellationToken = token })).ShouldBe(2);
         invalid.Removals.ShouldBe(1);
         var error = new ConsoleSignals();
         await Should.ThrowAsync<InvalidOperationException>(() => Antiphon.Checkpoints.Program.MainAsync(
