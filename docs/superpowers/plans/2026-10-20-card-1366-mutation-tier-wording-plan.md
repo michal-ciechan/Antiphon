@@ -154,5 +154,5 @@ CP-2 is the final green acceptance selection.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1366-red/` | portable-unit-red | `/*/*/MechanicalPcContractTests/C479_V07_ActiveRecipesRouteBindingHighAndExecutionLow` | V-1 red witness | exactly 5 executed, 4 passed, 1 failed at c1355-bundle-routing-rule on the orchestrator argument, 0 skipped | 5 | 8 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1366-red/` | portable-unit-red | `/*/*/MechanicalPcContractTests*/C479_V07_ActiveRecipesRouteBindingHighAndExecutionLow*` | V-1 red witness | exactly 5 executed, 4 passed, 1 failed at c1355-bundle-routing-rule on the orchestrator argument, 0 skipped | 5 | 8 |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1366-green/` | portable-unit-green | `/*/*/(MechanicalPcContractTests*)\|(OrchestratorBundleOwnershipTests*)\|(InstructionBundleTests*)\|(CheckpointRepeatDocumentationTests*)/(C479_V07_ActiveRecipesRouteBindingHighAndExecutionLow*)\|(C1332_OrchestratorBodyFitsItsAllocation*)\|(the_worst_case_composition_measured_sits_far_under_the_budget*)\|(repeat_budget_reaches_code_briefs_without_bundle_growth*)` | V-1, R-1, R-2, R-3 | exactly 9 executed, 9 passed, 0 failed/skipped; all four named methods | 9 | 8 |
