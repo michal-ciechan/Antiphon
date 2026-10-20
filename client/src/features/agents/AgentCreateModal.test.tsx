@@ -99,24 +99,49 @@ describe('AgentCreateModal presets', () => {
     let submitted: CreateAgentRequest | null = null
     seedCreate((request) => { submitted = request })
 
-    // Settled, not polled: the profile and bundle reads plus the preset render outran a findBy
-    // window under load, and the per-key typing reached the hang detector (CARD-1246).
-    const { queryClient } = renderWithProviders(<AgentCreateModal opened onClose={() => {}} />)
-    await settleQueries(queryClient)
-
-    expect(screen.getByText('Standing orchestrator')).toBeInTheDocument()
-    expect(screen.getByRole('switch', { name: /Always on/i })).toBeChecked()
-
-    await fillRequiredFields()
-    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
-    await settleQueries(queryClient)
-    expect(submitted).toMatchObject({
-      preset: 'orchestrator',
-      replyStyle: 'Normal',
-      alwaysOn: true,
-      bundleKeys: ['orchestrator', 'board-api'],
-      remoteControlEnabled: true,
+    const getComputedStyle = window.getComputedStyle.bind(window)
+    let styleReads = 0
+    let positioningStyleReads = 0
+    const styleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((...args) => {
+      styleReads++
+      const stack = (new Error().stack ?? '').replaceAll('\\', '/')
+      if (/@floating-ui\/(?:dom|core)\//.test(stack)) positioningStyleReads++
+      return getComputedStyle(...args)
     })
+    try {
+      // Settled, not polled: the profile and bundle reads plus the preset render outran a findBy
+      // window under load, and the per-key typing reached the hang detector (CARD-1246).
+      const { queryClient, unmount } = renderWithProviders(<AgentCreateModal opened onClose={() => {}} />)
+      await settleQueries(queryClient)
+
+      expect(screen.getByText('Standing orchestrator')).toBeInTheDocument()
+      expect(screen.getByRole('switch', { name: /Always on/i })).toBeChecked()
+
+      const assignmentPolicy = screen.getByLabelText('Assignment policy')
+      await userEvent.click(assignmentPolicy)
+      await userEvent.click(screen.getByRole('option', { name: 'Manual confirm' }))
+      expect(assignmentPolicy).toHaveValue('Manual confirm')
+
+      await fillRequiredFields()
+      await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+      await settleQueries(queryClient)
+      expect(submitted).toMatchObject({
+        preset: 'orchestrator',
+        replyStyle: 'Normal',
+        alwaysOn: true,
+        bundleKeys: ['orchestrator', 'board-api'],
+        remoteControlEnabled: true,
+        assignmentPolicy: 'ManualConfirm',
+      })
+
+      unmount()
+      await settleQueries(queryClient)
+      console.info(`CARD-1280 style reads: total=${styleReads} positioning=${positioningStyleReads}`)
+      expect(styleReads).toBeGreaterThan(0)
+      expect(positioningStyleReads).toBe(0)
+    } finally {
+      styleSpy.mockRestore()
+    }
   })
 
   it('Worker chip submits the worker preset and empty bundles', async () => {

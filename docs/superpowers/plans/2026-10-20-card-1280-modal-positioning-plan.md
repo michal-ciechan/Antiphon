@@ -123,6 +123,10 @@ with the real interactions still passing.
 
 ## TestDesign handoff
 
+Code dispatch `865422b6-ccd8-43c8-a0c6-d78586cc68d9` supersedes the separate
+TestDesign dispatch below: implement the existing witness and four-test selection
+directly. The verification design below binds that selection without expanding it.
+
 Append the formal `## Verification design`; this brief did not fold that stage
 into Plan. Bind the one witness and narrow green below without expanding to a
 suite. The guard is the real modal's zero positioning-style-read assertion,
@@ -134,7 +138,7 @@ unproved by the mock.
 
 ### Checkpoints
 
-Proposed closed selection for TestDesign to finalize. **Lane for both rows:
+Closed selection confirmed by the Code brief. **Lane for both rows:
 portable client/jsdom, serial.** Each row uses the checkpoint tool's slot-owning
 execution, once per committed slice, with exact source SHA. No application build
 is needed. Run CP-1 alone at S1: its expected exit 1 is a recorded witness, not a
@@ -144,8 +148,8 @@ clean its owned alternate output before settlement.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---|---:|---|
-| CP-1 | S1 | n/a | modal-positioning-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/agents/AgentCreateModal.test.tsx -t "defaults to Standing orchestrator and submits preset with filled bundles" --no-file-parallelism` | S1 cost witness | 1 selected case fails only at positioning count; 2 cases filtered out; exit 1 expected | n/a | 1 | true |
-| CP-2 | S2 | n/a | modal-positioning-green | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/agents/AgentCreateModal.test.tsx src/features/agents/AgentSessionBackend.test.tsx --no-file-parallelism` | S1 regression and S2 create/settings behavior | 2 files, 4 tests passed, 0 failed/skipped; CLIENT TESTS EXIT CODE: 0 | n/a | 1 | true |
+| CP-1 | S1 | n/a | modal-positioning-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/agents/AgentCreateModal.test.tsx -t "defaults to Standing orchestrator and submits preset with filled bundles" --no-file-parallelism -JsonResultPath ../logs/card-1280/red.json` | V-1 red witness | 1 selected case fails only at positioning count; 2 cases filtered out; exit 1 expected | n/a | 1 | true |
+| CP-2 | S2 | n/a | modal-positioning-green | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/agents/AgentCreateModal.test.tsx src/features/agents/AgentSessionBackend.test.tsx --no-file-parallelism -JsonResultPath ../logs/card-1280/green.json` | V-1, R-1, R-2 | 2 files, 4 tests passed, 0 failed/skipped; CLIENT TESTS EXIT CODE: 0 | n/a | 1 | true |
 
 Estimated Code test floor: **2 minutes** (1 expected-red + 1 acceptance-green),
 plus dependency/tool setup and slot wait if needed. Estimated implementation:
@@ -153,3 +157,29 @@ plus dependency/tool setup and slot wait if needed. Estimated implementation:
 minutes, separately commissioned. Plan measurement executed exactly three
 cases once; no implementation, red witness, fix qualification, or full suite
 was run in this dispatch.
+
+## Verification design
+
+The Code brief explicitly limits ordinary qualification to CP-1 once before the
+mock and CP-2 once after it. No whole Unit lane, suite, stressor, production build
+or browser run is part of this card's commissioned scope. The checkpoint command
+rows report counts as n/a; inspect the fresh Vitest JSON assertions for their
+exact names, outcomes and durations instead of claiming a TRX was produced.
+
+| ID | Required proof |
+|---|---|
+| V-1 | `AgentCreateModal presets` / `defaults to Standing orchestrator and submits preset with filled bundles`: real Assignment policy selection and submitted ManualConfirm body pass; forwarding style spy observes positive total calls and zero Floating UI DOM/core calls after unmount/settling. CP-1 must first fail on a positive positioning count; CP-2 must pass the same assertion. |
+| V-2 | Manual source-reachability inspection: the positioning mock exists only in `client/src/test/setup.ts`, referenced by Vitest `test.setupFiles`; no production entry/import reaches it. Retain the inspected import-graph evidence without running a production build. |
+| R-1 | Both remaining create cases in CP-2: `Worker chip submits the worker preset and empty bundles`; `creates an explicitly Phone agent`. Preserve their existing submission assertions. |
+| R-2 | Full one-case `AgentSettingsModal session backend` file in CP-2: `does not disable or remap herdr when AlwaysOn is toggled on`; preserve real control and PATCH-body assertions. |
+
+No geometry is proved: clipping, target-width sizing, arrow placement and viewport
+collision handling remain outside this jsdom policy. Shared-setup consumers
+outside the four cases are not qualified by this narrow run. Real style/rect APIs,
+controls, accessibility reads and the 20-second hang detector remain intact.
+
+PC-1 (pending SourceLanding Mutation, not ordinary Code): restore the actual
+computePosition and autoUpdate exports and run only the exact V-1 case with the
+CP-1 file/name filter; require failure at its positioning-count assertion, restore
+the mock, and require the same case green. No variants are currently specified;
+Mutation owns missing-control discovery and the deliberate red/restore/green cycle.
