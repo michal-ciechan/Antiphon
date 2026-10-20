@@ -161,4 +161,4 @@ zero planned PCs does not discharge SourceLanding Mutation.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1370/` | state-publication-red | `/*/*/CheckpointStatePublicationTests/state_publication_survives_contention_and_preserves_completed_rows*` | V-1 injected | 1 expected assertion failure | 1 | 8 | true |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1370/` | state-publication-green | `/*/*/CheckpointStatePublicationTests/state_publication_survives_contention_and_preserves_completed_rows*` | V-1 injected, V-2, V-3 | 1 passed, 0 failed/skipped; native Windows pending | 1 | 8 | true |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1370-green/` | state-publication-green | `/*/*/CheckpointStatePublicationTests/state_publication_survives_contention_and_preserves_completed_rows*` | V-1 injected, V-2, V-3 | 1 passed, 0 failed/skipped; native Windows pending | 1 | 8 | true |
