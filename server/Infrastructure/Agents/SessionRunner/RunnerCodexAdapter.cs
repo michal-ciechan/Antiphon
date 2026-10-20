@@ -226,6 +226,9 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
     /// <c>AssistantText</c> rows, and <c>IsAskingQuestion</c> from that reply — not from a screen
     /// scrape, which over a real completed turn picked up the composer's ghost hint text and
     /// spinner fragments alongside the answer (measured, CARD-0108 §1).
+    /// A <c>turn_aborted</c> boundary instead returns <c>TurnCompleted: false</c> with the exact
+    /// <c>cancelled</c> stop reason, retaining diagnostic text. It returns before the screen
+    /// fallback, and the caller handles interruption separately from timeout (CARD-1322 S3/S4).
     ///
     /// <para>The screen heuristic is the FALLBACK for a session with no transcript rows, and for
     /// Codex it is deliberately not bare quiet: it requires the measured Working-indicator
@@ -279,9 +282,9 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
     }
 
     /// <summary>
-    /// A completed verdict when the tailed rollout proves it: a TurnEnd row past this prompt's
-    /// baseline, with the reply assembled from the AssistantText rows of the same window. Null
-    /// while the turn is still running or no transcript is available.
+    /// A completion or interruption verdict from the first TurnEnd past this prompt's baseline,
+    /// with the reply assembled from the AssistantText rows of the same window. Null while the
+    /// turn is still running or no transcript is available.
     /// </summary>
     private async Task<AgentTurnResult?> TryBuildTranscriptVerdictAsync(CancellationToken ct)
     {
@@ -292,9 +295,11 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
         var rows = transcript.Entries
             .Where(e => e.Sequence > _transcriptBaselineSequence)
             .ToList();
-        if (!rows.Any(e => e.Kind == TranscriptKinds.TurnEnd))
+        var boundary = rows.FirstOrDefault(e => e.Kind == TranscriptKinds.TurnEnd);
+        if (boundary is null)
             return null;
 
+        var completed = TranscriptKinds.IsReportBoundary(boundary.Kind, boundary.StopReason);
         var reply = string.Join(
             "\n\n",
             rows.Where(e => e.Kind == TranscriptKinds.AssistantText && !string.IsNullOrWhiteSpace(e.Text))
@@ -305,19 +310,21 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
             // A turn with no assistant text of its own (a pure tool turn, or rows we could not
             // read): the screen scrape is all there is, and it carries the scrape's known flaws.
             return new AgentTurnResult(
-                TurnCompleted: true,
+                TurnCompleted: completed,
                 ResponseText: CodexResponseAnalyzer.ExtractResponse(raw, _lastPrompt, preserveCursorWordBoundaries: true),
                 IsAskingQuestion: CodexResponseAnalyzer.IsAskingQuestion(raw, _lastPrompt, preserveCursorWordBoundaries: true),
-                RawSnapshot: raw);
+                RawSnapshot: raw,
+                StopReason: boundary.StopReason);
         }
 
         return new AgentTurnResult(
-            TurnCompleted: true,
+            TurnCompleted: completed,
             ResponseText: reply,
             // From the REPLY, never the screen: the status bar and the composer's ghost hint text
             // both live on the screen and both contain punctuation this would otherwise read.
             IsAskingQuestion: CodexResponseAnalyzer.IsAskingQuestion(reply),
-            RawSnapshot: raw);
+            RawSnapshot: raw,
+            StopReason: boundary.StopReason);
     }
 
     private void CaptureTranscriptBaseline(SessionRunnerTranscriptDto? snapshot)
