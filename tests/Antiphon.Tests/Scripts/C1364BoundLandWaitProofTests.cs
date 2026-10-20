@@ -248,7 +248,8 @@ public sealed class C1364BoundLandWaitProofTests
             if [ "$1" = '{{runner}}' ] && { [ "${FUNCNAME[1]}" = c1008_status_proof ] || [ "${FUNCNAME[1]}" = c994_status_proof ]; }; then
                 local n record
                 n=$(( $(wc -l < "$C1008_FIXTURE_ROOT/proofs.jsonl") + 1 ))
-                record="${C1008_RECORD:-${C994_RECORD:-null}}"
+                record="${C994_RECORD:-null}"
+                if [ -n "${C1008_RECORD:-}" ]; then record="$C1008_RECORD"; fi
                 jq -cn --argjson n "$n" --argjson record "$record" '{n:$n,record:$record}' >> "$C1008_FIXTURE_ROOT/proofs.jsonl"
                 if [ "$n" = '{{targetProof}}' ] && [ '{{(inject ? "1" : "0")}}' = 1 ]; then
                     jq --argjson land '{{Land(runner).ToJsonString()}}' '.scopes["{{ProjectId}}"].items += [$land]' "$C1008_FIXTURE_ROOT/tasks.json" > "$C1008_FIXTURE_ROOT/tasks.injected"
