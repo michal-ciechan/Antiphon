@@ -37,6 +37,24 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
 
     public async Task<LandingProtocolResult> RunAsync(AgentTask task, RepositoryLease lease,
         AgentTaskLandRequest? request, CancellationToken ct)
+        => await RunCoreAsync(task, lease, request, false, null, null, ct);
+
+    internal Task<LandingProtocolResult> PrepareAsync(AgentTask task, RepositoryLease lease,
+        AgentTaskLandRequest request, CancellationToken ct)
+        => RunCoreAsync(task, lease, request, true, null, null, ct);
+
+    internal Task<LandingVerification> VerifyPreparedAsync(PreparedLandingVerification ticket, Guid windowId, CancellationToken ct)
+        => verifier.VerifyAsync(ticket.Identity.WorktreePath, ticket.Filter,
+            new(ticket.Identity.TaskId, ticket.Identity.OperationId, ticket.Identity.RequestId,
+                CommonDirectory: ticket.Common, WindowId: windowId), ct);
+
+    internal Task<LandingProtocolResult> ResumeAsync(AgentTask task, RepositoryLease lease,
+        AgentTaskLandRequest request, PreparedLandingVerification ticket, LandingVerification verification, CancellationToken ct)
+        => RunCoreAsync(task, lease, request, false, ticket, verification, ct);
+
+    private async Task<LandingProtocolResult> RunCoreAsync(AgentTask task, RepositoryLease lease,
+        AgentTaskLandRequest? request, bool deferVerification, PreparedLandingVerification? ticket,
+        LandingVerification? completedVerification, CancellationToken ct)
     {
         if (task.RepairSourceTaskId is Guid repairOwner)
             throw new Application.Exceptions.ConflictException(
@@ -55,6 +73,13 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 FullRef(task.WorktreeBranch), FullRef(task.MergeTargetRef ?? "master"));
             var common = await git.CommonDirectoryAsync(coordinates.RepositoryPath, ct);
             Require(leases.Owns(lease, common), "repository_lease_required");
+            if (ticket is not null)
+            {
+                Require(op is not null && request is not null, "verification_ticket_changed");
+                await db.Entry(op!).ReloadAsync(ct);
+                await db.Entry(request!).ReloadAsync(ct);
+                await ValidateTicketAsync(task, op!, request!, ticket, ct);
+            }
             if (op is not null)
             {
                 await db.Entry(op).ReloadAsync(ct);
@@ -254,6 +279,13 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             {
                 await RecheckApprovalAsync(op, request, ct);
                 await RecheckSourceAsync(op, ct);
+                if (ticket is not null)
+                {
+                    Require(completedVerification?.Passed == true, "verification_failed");
+                    op.VerificationPassed = true;
+                }
+                else
+                {
                 op.VerificationStartedAt = Now();
                 var decision = await new LandVerificationPolicy(git).DecideAsync(op.RepositoryPath,
                     op.TargetFullRef, op.TargetBeforeSha, op.RebasedSourceSha, op.VerificationFilter,
@@ -277,10 +309,13 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 {
                     // Another repository land may have reset the shared land worktree since this op prepared.
                     var land = await VerifiedLandWorktreeAsync(op, op.RebasedSourceSha!, ct);
+                    if (deferVerification && request is not null)
+                        return new(op, null, []) { Verification = await CaptureTicketAsync(op, request, ct) };
                     var verification = await verifier.VerifyAsync(land, op.VerificationFilter,
                         new(op.TaskId, op.Id, request?.Id, CommonDirectory: common), ct);
                     Require(verification.Passed, "verification_failed");
                     op.VerificationPassed = true;
+                }
                 }
                 await RecheckSourceAsync(op, ct);
                 op.VerifiedSourceSha = op.RebasedSourceSha;
@@ -540,6 +575,55 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             if (head.Succeeded && head.Output.Trim() == sha && status.Succeeded && status.Output.Length == 0) return land;
         }
         return await PrepareLandWorktreeAsync(op, sha, ct);
+    }
+
+    private async Task<PreparedLandingVerification> CaptureTicketAsync(AgentTaskLanding op, AgentTaskLandRequest request,
+        CancellationToken ct)
+    {
+        var admin = await git.RunAsync(op.LandWorktreePath!, ["rev-parse", "--absolute-git-dir"], ct);
+        Require(admin.Succeeded, "land_worktree_identity_changed");
+        var registrations = await git.LiveRegistrationsAsync(op.RepositoryPath, ct);
+        return new(new(op.TaskId, request.Id, request.Attempt, op.Id, op.RebasedSourceSha!, op.LandWorktreePath!,
+                op.WorktreePath, op.SourceFullRef, op.TargetFullRef),
+            op.RepositoryPath, op.CommonDirectory, admin.Output.Trim(), op.TargetBeforeSha, Destination(op),
+            op.VerificationFilter, request.ExpectedSourceSha, request.ReviewEvidenceId, request.RecoveryMode,
+            request.RecoverySourceTaskId, op.RecoveryRefPrefix,
+            registrations.Where(r => r.Branch == op.SourceFullRef).Select(r => r.Path).Order(StringComparer.Ordinal).ToArray(),
+            Directory.Exists(op.WorktreePath) ? await git.CanonicalDirectoryAsync(op.WorktreePath, ct) : null);
+    }
+
+    private async Task ValidateTicketAsync(AgentTask task, AgentTaskLanding op, AgentTaskLandRequest request,
+        PreparedLandingVerification ticket, CancellationToken ct)
+    {
+        Require(request.IsPending && request.State == LandRequestState.Running
+            && task.CurrentLandRequestId == request.Id && task.ActiveLandingId == op.Id
+            && task.LandAttempt == request.Attempt && LandApproval.RequestStatusEligible(task, request)
+            && op.Active && op.Phase == LandPhase.Prepared, "verification_ticket_changed");
+        var current = await CaptureTicketAsync(op, request, ct);
+        Require(current.Identity == ticket.Identity && current.Repository == ticket.Repository && current.Common == ticket.Common
+            && current.LandGitDirectory == ticket.LandGitDirectory && current.TargetBeforeSha == ticket.TargetBeforeSha
+            && current.Destination == ticket.Destination && current.Filter == ticket.Filter
+            && current.ExpectedSourceSha == ticket.ExpectedSourceSha && current.ReviewEvidenceId == ticket.ReviewEvidenceId
+            && current.RecoveryMode == ticket.RecoveryMode && current.RecoverySourceTaskId == ticket.RecoverySourceTaskId
+            && current.RecoveryRefPrefix == ticket.RecoveryRefPrefix && current.SourceCanonical == ticket.SourceCanonical
+            && current.SourceRegistrations.SequenceEqual(ticket.SourceRegistrations), "verification_ticket_changed");
+        Require(await git.CommonDirectoryAsync(ticket.Identity.WorktreePath, ct) == ticket.Common,
+            "land_worktree_identity_changed");
+        var registrations = await git.LiveRegistrationsAsync(ticket.Repository, ct);
+        var land = registrations.Where(r => SamePath(r.Path, ticket.Identity.WorktreePath)).ToArray();
+        Require(land.Length == 1 && land[0].Branch is null && !land[0].Locked && !land[0].Prunable
+            && land[0].Head == ticket.Identity.CandidateSha, "land_worktree_identity_changed");
+        foreach (var path in ticket.SourceCanonical is null
+                     ? new[] { ticket.Identity.WorktreePath }
+                     : new[] { ticket.Identity.WorktreePath, ticket.Identity.SourcePath })
+        {
+            await RequireNoIndexLockAsync(path, ct);
+            Require(!await git.HasActiveSequencerAsync(path, ct), "verification_sequencer_changed");
+            var status = await git.RunAsync(path, ["status", "--porcelain=v1", "-z", "--untracked-files=no"], ct);
+            Require(status.Succeeded && status.Output.Length == 0, "verification_tracked_tree_changed");
+        }
+        var head = await git.RunAsync(ticket.Identity.WorktreePath, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
+        Require(head.Succeeded && head.Output.Trim() == ticket.Identity.CandidateSha, "land_worktree_changed");
     }
 
     private async Task ConfirmAsync(AgentTaskLanding op, LandingRemoteObservation remote,
@@ -845,6 +929,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
 
 public sealed record LandingProtocolResult(AgentTaskLanding? Operation, string? Reason, IReadOnlyList<string> Conflicts)
 {
+    public PreparedLandingVerification? Verification { get; init; }
     public bool Published => Operation is not null && new AgentTaskLandingState().HasPublication(Operation);
     public string? Detail { get; init; }
 }

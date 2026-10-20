@@ -132,6 +132,25 @@ can proceed; its original ordering key returns at the next periodic sweep.
 Snapshots hide provisional entries until reconciliation completes. Entry identity
 still prevents an old completion from releasing a newer request's claim.
 
+CARD-1379 verification holds the land-execution lock through publication and
+cleanup. The repository mutation lease covers source resolution, preparation,
+rebase and recovery pins, then ends together with its Git read-cache scope.
+An atomic verification-window marker fences ordinary writers during the build
+slot wait and verifier children. Only the owning process's live capability
+admits typed full-SHA fetches and distinct ordinary managed-worktree claims;
+purpose strings and a marker alone grant nothing. Unknown or unjoined child
+evidence still fences. Repair/adoption, SourceLanding, Interim and parked work
+retain ordinary admission.
+
+After joined verification and build-slot release, the window closes before a
+new mutation lease and read scope are acquired. The protocol reloads durable
+authority and validates the immutable candidate ticket, checkout identities,
+tracked cleanliness, locks, sequencers, pins, source, approval and destination.
+It refuses changed candidates instead of resetting them under an old result.
+The existing remote target observation, push CAS, confirmation and bounded
+target-race reprepare path remain authoritative. Completed artifacts do not
+make a restarted Prepared operation verified.
+
 Generated verification evidence stays ignored (CARD-1015); essential receipt lines and
 provenance belong in the stored task report. Ignored output does not dirty tracked source.
 Program currently registers `RefusingEvidenceRetention`, so publication can succeed while

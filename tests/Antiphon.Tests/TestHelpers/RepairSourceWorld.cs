@@ -24,6 +24,7 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
     public ControlledTaskProgressGit Git { get; private set; } = null!;
     public ControlledGitWorkspaceService FilesGit { get; private set; } = null!;
     public RepositoryMutationLease Leases { get; private set; } = null!;
+    public RepositoryLeaseWaiters Waiters { get; } = new();
     public DispatchSaveFault Fault { get; } = new();
     public AgentTask Owner { get; private set; } = null!;
     public AgentTask Repair { get; internal set; } = null!;
@@ -83,7 +84,7 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         await Repo.GitAsync("push", "-u", "origin", "master");
 
         Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        Leases = new RepositoryMutationLease(new LandingGit());
+        Leases = new RepositoryMutationLease(new LandingGit(), leaseWaiters: Waiters);
         Git = new ControlledTaskProgressGit(Leases);
         FilesGit = new ControlledGitWorkspaceService();
         BuildServices();
@@ -212,6 +213,7 @@ internal sealed class RepairSourceWorld : IAsyncDisposable
         services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
         services.AddSingleton<DelegationWorkspaceResolver>();
         services.AddSingleton<IRepositoryMutationLease>(Leases);
+        services.AddSingleton(Waiters);
         services.AddSingleton<ILandingGit>(Git);
         services.AddSingleton<ITaskProgressGit>(Git);
         if (LandingVerifier is not null)

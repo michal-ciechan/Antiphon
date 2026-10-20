@@ -629,6 +629,10 @@ ordered by original request time and ordinal request ID. During startup or a
 failed reconciliation, no provisional waiting position is asserted. Held work
 retains its original age and is eligible for one attempt per periodic sweep;
 eligible later work can proceed.
+Repository release and verification-window opening also wake the serial
+dispatcher. It services at most eight ready candidates through normal claim
+checks at a safe boundary, then returns to ordinary work. This is a wakeup and
+acquisition opportunity, not a fixed dispatch-latency guarantee.
 
 Land detail also includes `landRequest`: request/hold/progress clocks, holder, attempts,
 reconciliation disagreement, source SHAs, `sourceRefusalReason`, terminal failure

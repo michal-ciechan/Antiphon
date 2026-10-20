@@ -89,6 +89,8 @@ public sealed class WorktreeManager : IWorktreeManager
         var worktreeRoot = ResolveWorktreeRoot(create: true);
         var worktreePath = Path.GetFullPath(Path.Combine(worktreeRoot, BuildDirectoryName(validatedCardId)));
         EnsurePathUnderRoot(worktreePath, worktreeRoot, nameof(worktreePath));
+        if (!_creationLeases.AllowsWorktree(lease, worktreePath, branch))
+            throw new ConflictException("verification_window_worktree_mismatch");
         var creationLocks = Path.Combine(worktreeRoot, MetadataDirectoryName, "creation-locks");
         Directory.CreateDirectory(creationLocks);
         var lockName = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(NormalizePathForComparison(worktreePath))));
