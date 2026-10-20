@@ -846,7 +846,10 @@ function New-D13StateRecord {
         [string]$Explanation,
         [string]$ExceptionText = 'System.Exception: outer'
     )
-    $state = '{0}TestNodeStateProperty {{ Explanation = {1}, Exception = {2} }}' -f $StateName, $Explanation, $ExceptionText
+    $state = '{0}TestNodeStateProperty {{ Explanation = {1}' -f $StateName, $Explanation
+    if ($StateName -notin @('Passed', 'Skipped', 'Discovered', 'InProgress')) { $state += ', Exception = ' + $ExceptionText }
+    if ($StateName -eq 'Timeout') { $state += ', Timeout = 00:00:00.0250000' }
+    $state += ' }'
     return ('TestNodeUpdateMessage { DisplayName = TestNode update, Description = This data is used to report a TestNode state change., Properties = [], ParentTestNodeUid = <null>, TestNode = TestNode { Uid = TestNodeUid { Value = ' + $Uid + ' }, DisplayName = ' + $Method + ', Properties = [ TestMethodIdentifierProperty { AssemblyFullName = Probe, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null, Namespace = Probe, TypeName = ' + $TypeName + ', MethodName = ' + $Method + ', MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }, ' + $state + ' ] } }')
 }
 
@@ -907,13 +910,13 @@ function Test-D13_StateClassification {
         -Name 'D13 error quoting PassedTestNodeStateProperty stays failed' `
         -Detail ('error=' + $mis.Error + ' outcome=' + [string]$mis.Nodes[0].Outcome + ' message=' + [string]$mis.Nodes[0].Message)
 
-    $full = 'boom, Exception = INNER still the explanation'
+    $full = '[Test Failure] boom, Exception = INNER still the explanation'
     $cutUid = 'Probe.Ordinary.1.1.Truncated.1.1.0'
     $cut = ConvertFrom-D13StateText -Name 'd13-exception-text' -Text (Get-D13StateText -Records @(
-        (New-D13StateRecord -Uid $cutUid -TypeName 'Ordinary' -Method 'Truncated' -StateName 'Error' -Explanation $full -ExceptionText 'System.Exception: outer')))
+        (New-D13StateRecord -Uid $cutUid -TypeName 'Ordinary' -Method 'Truncated' -StateName 'Error' -Explanation $full -ExceptionText 'TUnit.Engine.Exceptions.TestFailedException: boom, Exception = INNER still the explanation')))
     Assert-C487 -Cond ($cut.Error -eq '' -and @($cut.Nodes).Count -eq 1 -and
         $cut.Nodes[0].Outcome -ceq 'Failed' -and $cut.Nodes[0].Message -ceq $full) `
-        -Name 'D13 explanation keeps text through the last exception field' `
+        -Name 'D13 explanation keeps embedded exception delimiters exactly' `
         -Detail ('message=' + [string]$cut.Nodes[0].Message)
 
     $unknownUid = 'Probe.UnknownCases.1.1.Only.1.1.0'
@@ -923,6 +926,30 @@ function Test-D13_StateClassification {
         $unknown.Nodes[0].Uid -ceq $unknownUid -and $unknown.Nodes[0].Outcome -ceq 'Failed' -and
         $unknown.Nodes[0].Message -ceq 'not started') -Name 'D13 unknown state is failed' `
         -Detail ('error=' + $unknown.Error + ' outcome=' + [string]$unknown.Nodes[0].Outcome + ' message=' + [string]$unknown.Nodes[0].Message)
+}
+
+function Assert-C1325Fixture {
+    param($Fixture, [string]$Group)
+    $parsed = ConvertFrom-D13StateText -Name ('c1325-' + $Fixture.Id) -Text (Get-D13StateText -Records @($Fixture.Record))
+    $nodes = @($parsed.Nodes)
+    Assert-C487 -Cond ($parsed.Error -eq '' -and $nodes.Count -eq 1 -and
+        $nodes[0].Uid -ceq $Fixture.Uid -and $nodes[0].ClassName -ceq $Fixture.ClassName -and
+        $nodes[0].Method -ceq $Fixture.Method -and $nodes[0].Outcome -ceq $Fixture.Outcome) `
+        -Name ('D13 ' + $Group + ' ' + $Fixture.Id + ' identity') -Detail $parsed.Error
+    $messageOk = $false
+    if ($nodes.Count -eq 1) {
+        $present = $nodes[0].PSObject.Properties.Name -contains 'Message'
+        $messageOk = if ($null -eq $Fixture.ExpectedMessage) { -not $present } else {
+            $present -and [string]::Equals($nodes[0].Message, $Fixture.ExpectedMessage, [StringComparison]::Ordinal)
+        }
+    }
+    Assert-C487 -Cond $messageOk -Name ('D13 ' + $Group + ' ' + $Fixture.Id + ' message') `
+        -Detail ('expected=' + [string]$Fixture.ExpectedMessage + ' actual=' + [string]$nodes[0].Message)
+}
+
+function Test-D13_ExplanationBoundary {
+    . (Join-Path $here 'fixtures/nightly/c1325-diagnostic-records.ps1')
+    foreach ($fixture in @(Get-C1325ExplanationFixtures)) { Assert-C1325Fixture -Fixture $fixture -Group 'EB' }
 }
 
 function New-C1341NpmFixture {

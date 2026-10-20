@@ -27,8 +27,15 @@ public sealed class NightlyExecutionDiagnosticTests
         "D13 cancelled-only is failed",
         "D13 mixed pass and timeout keeps both",
         "D13 error quoting PassedTestNodeStateProperty stays failed",
-        "D13 explanation keeps text through the last exception field",
+        "D13 explanation keeps embedded exception delimiters exactly",
         "D13 unknown state is failed");
+
+    [Test]
+    public Task D13_ExplanationBoundary() => RunCaseAsync(nameof(D13_ExplanationBoundary), 22,
+        Enumerable.Range(1, 11).SelectMany(id => new[]
+        {
+            $"D13 EB E{id:00} identity", $"D13 EB E{id:00} message"
+        }).ToArray());
 
     private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
         ScriptHarness.RunHarnessCaseAsync("test-nightly-tests.ps1", "D13", caseName, expectedRows, requiredRows);
