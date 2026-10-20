@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Antiphon.Tests.TestHelpers;
@@ -23,14 +24,14 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
         if (!OperatingSystem.IsLinux())
             Skip.Test("Linux FIFO admission proof");
 
-        var healthy = await InvokeAsync(site, "ordinary", cancellationToken);
+        var (healthy, _) = await InvokeAsync(site, "ordinary", cancellationToken);
         healthy.Exit.ShouldBe(0, healthy.Stdout + healthy.Stderr);
         healthy.Watchdog.ShouldBeFalse();
         if (site is "R3" or "R4")
         {
             healthy.Stdout.ShouldContain("PASS C585 AsciiOnly run-checkpoint.ps1 is ASCII-only");
             healthy.Stdout.ShouldContain("PASS C585 AsciiOnly the harness is ASCII-only");
-            var nonAscii = await InvokeAsync(site, "non-ascii", cancellationToken);
+            var (nonAscii, _) = await InvokeAsync(site, "non-ascii", cancellationToken);
             nonAscii.Exit.ShouldNotBe(0, nonAscii.Stdout + nonAscii.Stderr);
             nonAscii.Stdout.ShouldContain(site == "R3"
                 ? "FAIL C585 AsciiOnly run-checkpoint.ps1 is ASCII-only - 1"
@@ -39,20 +40,22 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
         else
         {
             healthy.Stdout.ShouldContain("CHECKPOINT USAGE phase=Namespace");
-            var changed = await InvokeAsync(site, "changed", cancellationToken);
+            var (changed, _) = await InvokeAsync(site, "changed", cancellationToken);
             changed.Exit.ShouldNotBe(0, changed.Stdout + changed.Stderr);
             changed.Stderr.ShouldContain("DLL digest changed");
         }
 
-        var blocked = await InvokeAsync(site, "fifo", cancellationToken);
-        Console.WriteLine($"{site} FIFO refusal ({blocked.Milliseconds} ms): {blocked.Stdout}{blocked.Stderr}");
+        var (blocked, readMilliseconds) = await InvokeAsync(site, "fifo", cancellationToken);
+        Console.WriteLine($"{site} FIFO probe ({blocked.Milliseconds} ms total): {blocked.Stdout}{blocked.Stderr}");
         blocked.Watchdog.ShouldBeFalse($"{site} reached an unbounded file read and required the 8 s watchdog");
-        blocked.Milliseconds.ShouldBeLessThan(4_000, $"{site} file admission must finish within 4 s");
+        readMilliseconds.Length.ShouldBe(site == "R2" ? 2 : 1,
+            "the selected real read must report its duration, including the post-child read for R2");
+        readMilliseconds[^1].ShouldBeLessThan(4_000, $"{site} file admission must finish within 4 s");
         blocked.Exit.ShouldNotBe(0, blocked.Stdout + blocked.Stderr);
         (blocked.Stdout + blocked.Stderr).ShouldContain("selected file is not regular");
     }
 
-    private async Task<CheckpointBoundedProbe.Result> InvokeAsync(string site, string shape,
+    private async Task<(CheckpointBoundedProbe.Result Probe, long[] ReadMilliseconds)> InvokeAsync(string site, string shape,
         CancellationToken cancellationToken)
     {
         var root = TempDir();
@@ -63,6 +66,25 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
         var shim = Path.Combine(root, "shims");
         Directory.CreateDirectory(shim);
         Copy("lib/checkpoint-file-reader.ps1");
+        // Instrument only the fixture copy. Time the real reader call after pwsh startup
+        // and Add-Type, preserving its bytes/errors and the independent whole-probe watchdog.
+        File.AppendAllText(Path.Combine(scripts, "lib/checkpoint-file-reader.ps1"), "\n" + """
+            $script:C1233ReadCheckpointBytes = ${function:Read-CheckpointBytes}
+            function Read-CheckpointBytes {
+                param([string]$Path)
+                if ([IO.Path]::GetFullPath($Path) -cne $env:C1233_READ_PATH) {
+                    & $script:C1233ReadCheckpointBytes $Path
+                    return
+                }
+                $clock = [Diagnostics.Stopwatch]::StartNew()
+                try {
+                    & $script:C1233ReadCheckpointBytes $Path
+                } finally {
+                    $clock.Stop()
+                    [Console]::Error.WriteLine("C1233_READ $env:C1233_NONCE $($clock.ElapsedMilliseconds)")
+                }
+            }
+            """ + "\n");
         var wrapper = Path.Combine(root, "invoke.ps1");
         var ready = """
             $ErrorActionPreference = 'Stop'
@@ -160,6 +182,12 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
         start.Environment["C1233_NONCE"] = nonce;
         start.Environment["C1233_SITE"] = site;
         start.Environment["C1233_SHAPE"] = shape;
+        start.Environment["C1233_READ_PATH"] = site switch
+        {
+            "R1" or "R2" => Path.Combine(root, "tests/Antiphon.Tests/bin-probe/Antiphon.Tests.dll"),
+            "R3" => Path.Combine(scripts, "run-checkpoint.ps1"),
+            _ => Path.Combine(scripts, "test-run-checkpoint.ps1")
+        };
         var childDone = Path.Combine(root, "child.done");
         start.Environment["C1233_CHILD_DONE"] = childDone;
         var result = await CheckpointBoundedProbe.RunAsync(start, nonce, RegisterCheckpointChild, cancellationToken);
@@ -179,7 +207,12 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
                     Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant());
             }
         }
-        return result;
+        var timingPrefix = $"C1233_READ {nonce} ";
+        var readMilliseconds = result.Stderr.Split('\n')
+            .Where(line => line.StartsWith(timingPrefix, StringComparison.Ordinal))
+            .Select(line => long.Parse(line[timingPrefix.Length..].Trim(), CultureInfo.InvariantCulture))
+            .ToArray();
+        return (result, readMilliseconds);
 
         void Copy(string relative) => File.Copy(Path.Combine(CheckpointFixtures.RepoRoot, "scripts", relative),
             Path.Combine(scripts, relative));
