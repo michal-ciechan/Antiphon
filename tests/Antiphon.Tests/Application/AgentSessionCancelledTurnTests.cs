@@ -27,14 +27,14 @@ public sealed class AgentSessionCancelledTurnTests
         // Independent controls run before the regression witness, including on the red commit.
         await CheckStartAsync(completed: true, stopReason: null, RunPhase.Succeeded);
         await CheckStartAsync(completed: false, stopReason: null, RunPhase.TimedOut);
-        await CheckStartAsync(completed: false, TranscriptKinds.StopReasons.Cancelled, RunPhase.StreamingTurn);
+        await CheckStartAsync(completed: false, TranscriptKinds.StopReasons.Cancelled, RunPhase.AwaitingInput);
     }
 
     [Test]
     public async Task C1322_Interrupted_result_survives_stall_scans()
     {
         await CheckStartAsync(completed: false, TranscriptKinds.StopReasons.Cancelled,
-            RunPhase.StreamingTurn, scanAfterInterruption: true);
+            RunPhase.AwaitingInput, scanAfterInterruption: true);
     }
 
     private static async Task CheckStartAsync(

@@ -282,8 +282,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 }
                 else if (turn.StopReason == TranscriptKinds.StopReasons.Cancelled)
                 {
-                    // An interrupted turn retains the Running session and StreamingTurn attempt.
-                    // Return control without finishing hooks or the timeout branch's kill/dispose.
+                    // Retain the Running session and unfinished attempt without leaving it in
+                    // the stall scanner's StreamingTurn set. A timestamp refresh alone would
+                    // only postpone the automatic kill of a session waiting for operator input.
+                    RunAttemptStateMachine.Transition(attempt, RunPhase.AwaitingInput, UtcNow());
                     _logger.LogInformation(
                         "Agent turn interrupted for session {SessionId}; retaining run attempt {RunAttemptId}",
                         session.Id, attempt.Id);
