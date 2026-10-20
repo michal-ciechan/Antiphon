@@ -7,6 +7,7 @@ using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -32,13 +33,17 @@ public partial class StandingRestartEscalationTests
             try
             {
                 var fresh = new FakeAgentProtocolAdapter();
+                // Freeze scheduling and its fresh failure scopes, while launch/queue polling
+                // continues to use the harness's advancing clock.
+                var supervisorClock = new FakeTimeProvider(DateTimeOffset.UtcNow);
                 await using var h = AgentSupervisionTests.BuildHarness(root, [fresh],
                     new SupervisionSettings { CapacityRecovery = new CapacityRecoverySettings
                         { Enabled = true, JitterSeconds = 0 } }, includeModelAvailability: modelDisabled,
-                    definitionKind: "ClaudeCode", connectionString: schema.ConnectionString);
+                    definitionKind: "ClaudeCode", connectionString: schema.ConnectionString,
+                    supervisorTimeProvider: supervisorClock);
                 var agent = await AgentSupervisionTests.CreateAlwaysOnAgentAsync(h, root);
                 var oldId = Guid.NewGuid();
-                var now = h.Clock.GetUtcNow().UtcDateTime;
+                var now = supervisorClock.GetUtcNow().UtcDateTime;
                 var generation = now.AddMinutes(-10);
                 var holdId = Guid.NewGuid();
                 await using (var db = CapacityRecoveryTestSupport.CreateContext(schema))
@@ -118,6 +123,7 @@ public partial class StandingRestartEscalationTests
                 if (!modelDisabled && !capacity)
                 {
                     h.Clock.Advance(TimeSpan.FromSeconds(161));
+                    supervisorClock.Advance(TimeSpan.FromSeconds(161));
                     await h.Supervisor().TickAsync(default);
                     await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
                     fresh.StartedSessionId.ShouldNotBeNull("the infrastructure failure must remain recoverable");
