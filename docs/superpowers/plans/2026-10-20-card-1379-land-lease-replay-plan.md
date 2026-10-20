@@ -764,6 +764,14 @@ red separately and verify it with the exact failing method at the predecessor.
 
 ### Checkpoints
 
+Code commissioning override (task `e1e0eae5`, 2026-10-20): CARD-1380 S2 is
+present at `8c70d23802bf989e38ed353adb5116b35ed5158a`. The explicit brief
+requires one red witness and one narrow green per behavior, with trailing
+wildcards and a 40-minute row timeout. CP-8 therefore selects Q1 only; Q2–Q4
+are deferred, not claimed passed. CP-9 is Windows-gated and not executed here.
+All PC-1–PC-106 variants remain pending and unbound for Mutation.
+The independent replay slice can precede the dependent lease slices.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1R | `tests/Antiphon.Tests -> bin-c1379-window-red/` | any-window-red | `/*/*/LandVerificationWindowTests/C1379_LiveVerifierAdmitsOnlyScopedPreflight` | V-1 red | exactly 1 executed; expected preflight assertion failure | 1 | 5 |
@@ -772,8 +780,8 @@ red separately and verify it with the exact failing method at the predecessor.
 | CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1379-release-green/` | any-release-green | `/*/*/LandVerificationLeaseWindowTests/C1379_*` | V-2, R-2 | all 6 listed, 0 failed/skipped | 6 | 8 |
 | CP-5 | S3R | `tests/Antiphon.Tests -> bin-c1379-handoff-red/` | any-handoff-red | `/*/*/LandDispatchHandoffTests/C1379_ReadyWaiterAcquiresBeforeNextLand` | V-3 red | exactly 1 executed; expected acquisition-order assertion failure | 1 | 5 |
 | CP-6 | S3 | `tests/Antiphon.Tests -> bin-c1379-handoff-green/` | any-handoff-green | `/*/*/LandDispatchHandoffTests/C1379_*` | V-3, R-3 | all 4 listed, 0 failed/skipped | 4 | 6 |
-| CP-7 | S4R | `tests/Antiphon.Tests -> bin-c1379-replay-red/` | any-replay-red | `/*/*/LandRestartReplayTests/C1379_OldHeldReplaysBeforeConcurrentNewRequest` | V-4 red | exactly 1 executed; expected replay-order assertion failure | 1 | 5 |
-| CP-8 | S4 | `tests/Antiphon.Tests -> bin-c1379-replay-green/` | any-replay-green | `/*/*/LandRestartReplayTests/C1379_*` | V-4, R-4 | all 4 listed, 0 failed/skipped | 4 | 6 |
+| CP-7 | S4R | `tests/Antiphon.Tests -> bin-c1379-replay-red/` | any-replay-red | `/*/*/LandRestartReplayTests/C1379_OldHeldReplaysBeforeConcurrentNewRequest*` | V-4 red | exactly 1 executed; expected replay-order assertion failure | 1 | 5 |
+| CP-8 | S4 | `tests/Antiphon.Tests -> bin-c1379-replay-green/` | any-replay-green | `/*/*/LandRestartReplayTests/C1379_OldHeldReplaysBeforeConcurrentNewRequest*` | V-4, R-4 trimmed | 1 selected witness, 0 failed/skipped | 1 | 6 |
 | CP-9 | S2 | `tests/Antiphon.Tests -> bin-c1379-native-windows/` | windows-native-lease | `/*/*/LandVerificationWindowNativeTests/C1379_*` | V-1, V-2, R-1, R-2 native | all 3 listed on Windows, 0 failed/skipped | 3 | 8 |
 
 
