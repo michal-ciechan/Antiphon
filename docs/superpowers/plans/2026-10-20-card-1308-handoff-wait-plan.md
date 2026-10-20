@@ -191,7 +191,7 @@ executed here. Barrier controls remain pending for Mutation.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
 | CP-1 | S1 | tests/Antiphon.Tests -> bin-c1308-red/ | integration-handoff-red | `/*/Antiphon.Tests.Application/SessionRuntimeActionDeferralTests/C1308_new_wakeup_rechecks_review_handoff_before_due*` | A-1 witness | 3 executed, expected early-progress assertion failures | 3 | 4 |
-| CP-2 | S2-S3 | tests/Antiphon.Tests -> bin-c1308-green/ | integration-handoff-green | `/*/Antiphon.Tests.Application/(SessionRuntimeActionDeferralTests)\|(SessionRuntimeActionTemporaryBlockTests)\|(SessionRuntimeActionRoutingTests)/(C1308_*)\|(C1259_new_working_or_blocked_state_defers_old_idle_action*)\|(C1259_new_requests_replace_backed_off_queue_work*)\|(C1259_transient_deferrals_back_off_without_charging_input*)` | A-1, A-2, A-3; original CP-2 through CP-5 | 17 passed, 0 failed/skipped | 17 | 8 |
+| CP-2 | S2-S3 | tests/Antiphon.Tests -> bin-c1308-green/ | integration-handoff-green | `/*/Antiphon.Tests.Application/(SessionRuntimeActionDeferralTests*)\|(SessionRuntimeActionTemporaryBlockTests*)\|(SessionRuntimeActionRoutingTests*)/(C1308_*)\|(C1259_new_working_or_blocked_state_defers_old_idle_action*)\|(C1259_new_requests_replace_backed_off_queue_work*)\|(C1259_transient_deferrals_back_off_without_charging_input*)` | A-1, A-2, A-3; original CP-2 through CP-5 | 17 passed, 0 failed/skipped | 17 | 8 |
 
 Batch S2/S3 edits and commits before the single green build. Run through the
 checkpoint tool per `docs/testing-and-build.md`, once per committed source group,
