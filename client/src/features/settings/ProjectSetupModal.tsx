@@ -319,14 +319,18 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
                     )}
                     {profilesUnknown ? (
                       <PendingRead label={profilesUnknown} />
-                    ) : modelsUnknown ? (
-                      <PendingRead label={modelsUnknown} />
                     ) : catalog.data?.profiles.length === 0 ? (
                       <Alert color="yellow">
                         No enabled AI Agent TUI profiles. <Anchor component={Link} to="/settings?tab=agent-tui">Set one up in AI Agent TUI settings</Anchor>.
                       </Alert>
                     ) : (
-                      <AgentTuiSelection tuiProfileId={tuiProfileId} modelId={modelId} onProfileChange={setTuiProfileId} onModelChange={setModelId} />
+                      <AgentTuiSelection
+                        tuiProfileId={tuiProfileId}
+                        modelId={modelId}
+                        onProfileChange={setTuiProfileId}
+                        onModelChange={setModelId}
+                        modelReadFallback={modelsUnknown ? <PendingRead label={modelsUnknown} /> : null}
+                      />
                     )}
                     <ModelLevelSelect value={modelLevel} onChange={setModelLevel} />
                     <ReplyStyleControl value={replyStyle} onChange={setReplyStyle} />

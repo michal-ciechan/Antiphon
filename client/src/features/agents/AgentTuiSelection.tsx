@@ -1,4 +1,5 @@
 import { Alert, Select, Stack, Text } from '@mantine/core'
+import type { ReactNode } from 'react'
 import {
   useAgentTuiModels,
   useAgentTuiProfiles,
@@ -22,12 +23,14 @@ export function AgentTuiSelection({
   modelId,
   onProfileChange,
   onModelChange,
+  modelReadFallback,
   liveSessionSelection,
 }: {
   tuiProfileId: string | null
   modelId: string | null
   onProfileChange: (profileId: string | null) => void
   onModelChange: (modelId: string | null) => void
+  modelReadFallback?: ReactNode
   liveSessionSelection?: {
     tuiProfileRevisionId: string | null
     effectiveModelId: string | null
@@ -73,20 +76,22 @@ export function AgentTuiSelection({
         required
       />
 
-      <Select
-        label="Exact model"
-        description={
-          modelArgumentUnsupported
-            ? modelArgumentCapability?.reason
-            : "Optional. Leave empty and the agent's tier chooses the model; on a profile that passes no model argument, nothing is passed."
-        }
-        data={modelOptions}
-        value={modelId ?? ''}
-        onChange={(value) => onModelChange(value && value.length > 0 ? value : null)}
-        searchable
-        disabled={!tuiProfileId || modelArgumentUnsupported}
-        nothingFoundMessage={modelsLoading ? 'Loading…' : 'No models'}
-      />
+      {modelReadFallback ?? (
+        <Select
+          label="Exact model"
+          description={
+            modelArgumentUnsupported
+              ? modelArgumentCapability?.reason
+              : "Optional. Leave empty and the agent's tier chooses the model; on a profile that passes no model argument, nothing is passed."
+          }
+          data={modelOptions}
+          value={modelId ?? ''}
+          onChange={(value) => onModelChange(value && value.length > 0 ? value : null)}
+          searchable
+          disabled={!tuiProfileId || modelArgumentUnsupported}
+          nothingFoundMessage={modelsLoading ? 'Loading…' : 'No models'}
+        />
+      )}
 
       {selectedProfile && (
         <Text size="xs" c="dimmed">
