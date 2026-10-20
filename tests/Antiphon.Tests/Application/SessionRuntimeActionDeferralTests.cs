@@ -80,6 +80,60 @@ public class SessionRuntimeActionDeferralTests
         h.Adapter.Killed.ShouldBeFalse();
     }
 
+    [Test]
+    public async Task C1308_still_blocked_handoff_recheck_yields_and_preserves_debt()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<ReviewReplyDispatcher>();
+                services.AddScoped<ReviewThreadService>();
+                services.AddScoped<AgentFilesService>();
+            }
+        });
+        var (source, original) = await DeferReviewAsync(h);
+        var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
+        (await actions.DrainPageAsync(h.SessionId, default)).ShouldBeFalse();
+        await using (var db = h.CreateObserverContext())
+            (await db.SessionRuntimeActions.SingleAsync(a => a.Id == original.Id)).Attempts.ShouldBe(original.Attempts,
+                "a hint without a newer request cannot bypass DueAt");
+
+        h.Runtime.SetTestPending(h.SessionId, null);
+        // This unrouted prompt must take precedence over the idle request. Its stored
+        // Working state must still prevent input when the handoff executes early.
+        await h.Runtime.ObserveTranscriptAsync(Entry(h, 3, TranscriptKinds.UserPrompt, "new work"), default);
+        await actions.RequestAsync(h.SessionId, "status", default);
+        (await actions.DrainPageAsync(h.SessionId, default)).ShouldBeFalse("a failed early recheck must not request another page");
+        await using (var db = h.CreateObserverContext())
+        {
+            var retained = await db.SessionRuntimeActions.SingleAsync(a => a.Id == original.Id);
+            retained.Attempts.ShouldBe(original.Attempts + 1, "one queue recheck per drain, not 128 bypasses of the new DueAt");
+            retained.TriggerKind.ShouldBe($"review:{source.Id:N}");
+            retained.AcceptedGeneration.ShouldBe(original.AcceptedGeneration);
+            retained.Phase.ShouldBe(SessionRuntimeActionCoordinator.QueuePhase);
+            retained.FailureReason.ShouldBe("Deferred");
+            retained.DueAt.ShouldBeGreaterThan(h.Now.AddSeconds(20));
+            (await db.SessionRuntimeActions.CountAsync()).ShouldBe(2, "retain the handoff and newer status debt after routing");
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == source.Id);
+            row.ReviewThreadId.ShouldBe(source.ReviewThreadId);
+            row.Status.ShouldBe(QueuedMessageStatus.Pending);
+            row.DeliveryAttempts.ShouldBe(0);
+            row.DeliveryVerdict.ShouldBeNull();
+            await db.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.StartedAt, original.AcceptedGeneration!.Value.AddMinutes(1)));
+        }
+        // The early path must use the existing generation check, never rebind a stale handoff.
+        await actions.DrainPageAsync(h.SessionId, default);
+        await using (var db = h.CreateObserverContext()) (await db.SessionRuntimeActions.CountAsync()).ShouldBe(0);
+        h.Adapter.Inputs.ShouldBeEmpty();
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        h.Adapter.Killed.ShouldBeFalse();
+        Finished(h).ShouldBe(0);
+    }
+
     private static async Task<(SessionQueuedMessage Source, SessionRuntimeAction Action)> DeferReviewAsync(BridgeQueueHarness h)
     {
         await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "earlier completed work");

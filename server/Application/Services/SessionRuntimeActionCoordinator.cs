@@ -159,8 +159,7 @@ public sealed class SessionRuntimeActionCoordinator(
             if (action is null) return false;
             // A queue wakeup is coalescible only after all of its routing has completed.
             // New work must be able to replace a deferred wakeup before its retry is due.
-            var superseded = action.Phase == QueuePhase && action.FailureReason == DeferredReason
-                && (action.TurnBoundary || action.ManualCompactBoundary || action.TriggerKind == "status")
+            var newerQueueRequest = action.Phase == QueuePhase && action.FailureReason == DeferredReason
                 && await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == sessionId
                     && a.Id != action.Id && a.Phase == QueuePhase
                     && (a.TurnBoundary || a.ManualCompactBoundary
@@ -168,11 +167,18 @@ public sealed class SessionRuntimeActionCoordinator(
                     && (a.Sequence > action.Sequence || (a.Sequence == action.Sequence
                         && (a.CreatedAt > action.CreatedAt
                             || (a.TriggerKind == "status" && action.TriggerKind != "status")))), ct);
-            if (action.DueAt > clock.GetUtcNow().UtcDateTime && !superseded) return false;
+            var superseded = newerQueueRequest
+                && (action.TurnBoundary || action.ManualCompactBoundary || action.TriggerKind == "status");
+            // A typed handoff must execute its own queue phase, never transfer its identity
+            // to a wakeup. The same newer-request ordering can still make it eligible early.
+            var recheckHandoff = newerQueueRequest && action.TranscriptEntryId is null
+                && action.TriggerKind.StartsWith("review:", StringComparison.Ordinal);
+            if (action.DueAt > clock.GetUtcNow().UtcDateTime && !superseded && !recheckHandoff) return false;
             ObserveAction(action);
             try
             {
-                await ExecuteAsync(scope.ServiceProvider, db, action, superseded, ct);
+                if (await ExecuteAsync(scope.ServiceProvider, db, action, superseded, ct) == ExecutionDisposition.Deferred)
+                    return false;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)
@@ -197,7 +203,9 @@ public sealed class SessionRuntimeActionCoordinator(
     private DateTime RetryAt(int attempts) => clock.GetUtcNow().UtcDateTime
         .AddSeconds(Math.Min(30, 1 << Math.Min(attempts - 1, 5)));
 
-    private async Task ExecuteAsync(IServiceProvider services, AppDbContext db, SessionRuntimeAction action,
+    private enum ExecutionDisposition { Continue, Deferred }
+
+    private async Task<ExecutionDisposition> ExecuteAsync(IServiceProvider services, AppDbContext db, SessionRuntimeAction action,
         bool superseded, CancellationToken ct)
     {
         var row = action.TranscriptEntryId is { } id
@@ -219,14 +227,14 @@ public sealed class SessionRuntimeActionCoordinator(
         {
             db.SessionRuntimeActions.Remove(action);
             await db.SaveChangesAsync(ct);
-            return;
+            return ExecutionDisposition.Continue;
         }
         // Re-select after routing so an older deferred queue wakeup can observe this
         // replacement before the new request completes and disappears.
-        if (routed) return;
+        if (routed) return ExecutionDisposition.Continue;
         // Re-query after routing: ingestion may have advanced while a downstream awaited.
         if (await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == action.AgentSessionId
-            && a.Id != action.Id && a.Phase < QueuePhase, ct)) return;
+            && a.Id != action.Id && a.Phase < QueuePhase, ct)) return ExecutionDisposition.Continue;
         var generation = await db.AgentSessions.Where(s => s.Id == action.AgentSessionId)
             .Select(s => (DateTime?)s.StartedAt).SingleOrDefaultAsync(ct);
         if (generation == action.AcceptedGeneration && action.Phase == QueuePhase)
@@ -241,7 +249,9 @@ public sealed class SessionRuntimeActionCoordinator(
                 action.DueAt = RetryAt(action.Attempts);
                 action.FailureReason = DeferredReason;
                 await db.SaveChangesAsync(ct);
-                return;
+                // The newer wake remains behind this head. Yield after one failed recheck
+                // so it cannot bypass the freshly persisted retry for the whole page.
+                return ExecutionDisposition.Deferred;
             }
             action.LateConfirmedChannelMessageIds = action.LateConfirmedChannelMessageIds
                 .Union(result.LateConfirmedChannelMessageIds).ToArray();
@@ -253,6 +263,7 @@ public sealed class SessionRuntimeActionCoordinator(
         if (action.Phase > QueuePhase) await runtime.ExecuteActionLateConfirmAsync(action, ct);
         db.SessionRuntimeActions.Remove(action);
         await db.SaveChangesAsync(ct);
+        return ExecutionDisposition.Continue;
     }
 
     private void Diagnostic(Exception exception, string message, Guid sessionId)
