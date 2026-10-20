@@ -37,8 +37,16 @@ public sealed class AgentSessionCancelledTurnTests
             RunPhase.AwaitingInput, scanAfterInterruption: true);
     }
 
+    [Test]
+    public async Task C1322_Follow_up_prompt_rearms_interrupted_attempt()
+    {
+        await CheckStartAsync(completed: false, TranscriptKinds.StopReasons.Cancelled,
+            RunPhase.AwaitingInput, resumeAfterInterruption: true);
+    }
+
     private static async Task CheckStartAsync(
-        bool completed, string? stopReason, RunPhase expectedPhase, bool scanAfterInterruption = false)
+        bool completed, string? stopReason, RunPhase expectedPhase, bool scanAfterInterruption = false,
+        bool resumeAfterInterruption = false)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
@@ -201,6 +209,55 @@ public sealed class AgentSessionCancelledTurnTests
                     attempt.CompletedAt.ShouldNotBeNull();
                     hooks.Calls.Count(c => c == "after_run").ShouldBe(1);
                 }
+            }
+
+            if (resumeAfterInterruption)
+            {
+                clock.Advance(TimeSpan.FromHours(1));
+                var prompt = new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = result.SessionId, Sequence = 10,
+                    Kind = TranscriptKinds.UserPrompt, Text = "Continue after interruption",
+                    Timestamp = clock.GetUtcNow().UtcDateTime, CreatedAt = clock.GetUtcNow().UtcDateTime
+                };
+                var action = new SessionRuntimeAction
+                {
+                    AgentSessionId = result.SessionId, Sequence = prompt.Sequence, Phase = 2
+                };
+
+                // Queued input and replay of the old turn are not evidence of a new turn.
+                prompt.Kind = TranscriptKinds.QueuedUserPrompt;
+                await runtime.ExecuteActionPhaseAsync(action, prompt, CancellationToken.None);
+                prompt.Kind = TranscriptKinds.UserPrompt;
+                prompt.Timestamp = attempt.PhaseStartedAt.AddSeconds(-1);
+                await runtime.ExecuteActionPhaseAsync(action, prompt, CancellationToken.None);
+                await reloaded.Entry(attempt).ReloadAsync();
+                attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+
+                prompt.Timestamp = clock.GetUtcNow().UtcDateTime;
+                await runtime.ExecuteActionPhaseAsync(action, prompt, CancellationToken.None);
+                await reloaded.Entry(attempt).ReloadAsync();
+                attempt.Phase.ShouldBe(RunPhase.StreamingTurn,
+                    "a confirmed follow-up prompt must re-arm the interrupted attempt's stall scan");
+                attempt.LastEventAt.ShouldBe(clock.GetUtcNow().UtcDateTime, TimeSpan.FromMilliseconds(1));
+                attempt.CompletedAt.ShouldBeNull();
+                await reloaded.Entry(session).ReloadAsync();
+                session.Status.ShouldBe(SessionStatus.Running);
+                adapter.KillCount.ShouldBe(0);
+
+                // Replaying the accepted prompt cannot extend the new turn's stall deadline.
+                var rearmedAt = attempt.LastEventAt;
+                clock.Advance(TimeSpan.FromMinutes(1));
+                await runtime.ExecuteActionPhaseAsync(action, prompt, CancellationToken.None);
+                await reloaded.Entry(attempt).ReloadAsync();
+                attempt.LastEventAt.ShouldBe(rearmedAt);
+                await using var scanDb = new AppDbContext(options);
+                var scan = new RunAttemptStallDetector(scanDb, runtime, events, settings, clock,
+                    NullLogger<RunAttemptStallDetector>.Instance);
+                (await scan.ScanAsync(CancellationToken.None)).ShouldBe(0);
+                clock.Advance(TimeSpan.FromMinutes(10));
+                (await scan.ScanAsync(CancellationToken.None)).ShouldBe(1);
+                adapter.KillCount.ShouldBe(1, "the existing StreamingTurn scan must be armed again");
             }
         }
         finally

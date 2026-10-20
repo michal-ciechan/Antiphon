@@ -1,4 +1,6 @@
 # CARD-0110 S6 / CARD-0475 S6 / CARD-0487: Slow classes in Antiphon.Tests.
+# CARD-1322: isolated migrated PostgreSQL, real session start and fresh-context stall scans; measured 6.7-10.6s.
+Antiphon.Tests.Application.AgentSessionCancelledTurnTests
 # CARD-1032: phone-home mirror join starts a real runner and scratch git. Measured 5-12s per method.
 Antiphon.Tests.Application.PhoneHomeMirrorJoinTests
 # CARD-1065 S9: legacy reclaim pages real Git and isolated PostgreSQL, including restart and cold resume.
