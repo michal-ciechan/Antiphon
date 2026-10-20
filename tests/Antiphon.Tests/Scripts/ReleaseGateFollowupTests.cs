@@ -11,7 +11,13 @@ public sealed class ReleaseGateFollowupTests
     [Test]
     public Task C1336_WrapperRef() =>
         ScriptHarness.RunHarnessCaseAsync("card1336-release-gate-followups.ps1", "C1336",
-            "C1336_WrapperRef", 1, ["C1336 W own-0"],
+            "C1336_WrapperRef", 9,
+            [
+                "C1336 W own-0", "C1336 W own-23",
+                "C1336 W missing-0", "C1336 W missing-23",
+                "C1336 W foreign-0", "C1336 W foreign-23",
+                "C1336 W schedule", "C1336 W master-unchanged", "C1336 W documentation"
+            ],
             ScriptHarnessOptions.Default with
             {
                 ScriptPath = Path.Combine(DelegateScriptRunner.RepoRoot,

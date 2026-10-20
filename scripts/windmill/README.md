@@ -19,7 +19,9 @@ Windmill and outside the Windows host: see `docs/nightly-watchdog.md`.
 
 - `u/lndcobra/antiphon_release_candidates` — desktop tag, `0 30 8,16 * * *`, Europe/London, empty
   args. **NOT REGISTERED and its schedule payload is `enabled: false`.** The lane tests the named
-  `rc/YYYY-MM-DD` ref. It does not cut `release/rc-<UTC stamp>` from `origin/master`. It runs
+  `rc/YYYY-MM-DD` ref. The wrapper explicitly passes `-Ref rc/2026-10-18`; review and update
+  this literal pin on a release-line rollover. It does not select a line from the current date
+  or remote branch order. It does not cut `release/rc-<UTC stamp>` from `origin/master`. It runs
   `nightly-run.ps1 -Profile rc -Trigger rc -Ref <candidate> -ExpectedSha <sha>` against the
   candidate's own state root, and publishes a CalVer tag plus GitHub Release only on RC
   complete-green. RC green earns release credit only — it never writes the master attempt, green,

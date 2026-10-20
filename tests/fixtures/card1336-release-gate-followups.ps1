@@ -96,4 +96,38 @@ source "$1"
 }
 
 Invoke-C1336Wrapper -Name 'own-0' -Schedule 'u/lndcobra/antiphon_release_candidates' -SshExit 0
-Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 1
+Invoke-C1336Wrapper -Name 'own-23' -Schedule 'u/lndcobra/antiphon_release_candidates' -SshExit 23
+Invoke-C1336Wrapper -Name 'missing-0' -Schedule '' -SshExit 0
+Invoke-C1336Wrapper -Name 'missing-23' -Schedule '' -SshExit 23
+Invoke-C1336Wrapper -Name 'foreign-0' -Schedule 'u/lndcobra/antiphon_nightly_tests' -SshExit 0
+Invoke-C1336Wrapper -Name 'foreign-23' -Schedule 'u/lndcobra/antiphon_nightly_tests' -SshExit 23
+
+$definition = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/windmill/antiphon-release-candidates.json') -Raw | ConvertFrom-Json
+$schedule = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/windmill/antiphon-release-candidates.schedule.json') -Raw | ConvertFrom-Json
+$scheduleOk = $schedule.enabled -is [bool] -and -not $schedule.enabled -and
+    $schedule.schedule -ceq '0 30 8,16 * * *' -and $schedule.timezone -ceq 'Europe/London' -and
+    $null -ne $schedule.args -and @($schedule.args.PSObject.Properties).Count -eq 0 -and
+    $null -ne $definition.schema.properties -and @($definition.schema.properties.PSObject.Properties).Count -eq 0 -and
+    $definition.schema.PSObject.Properties.Name -contains 'required' -and @($definition.schema.required).Count -eq 0
+Assert-C487 -Cond $scheduleOk -Name 'C1336 W schedule' -Detail ($schedule | ConvertTo-Json -Compress)
+
+# Frozen independent Git blob IDs, including Git's checkout line-ending normalization.
+$git = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$masterBlobs = @(& $git -C $repoRoot hash-object -- scripts/windmill/antiphon-nightly-tests.json scripts/windmill/antiphon-nightly-tests.schedule.json)
+if ($LASTEXITCODE -ne 0) { throw 'Cannot hash the master wrapper/schedule' }
+$masterOk = $masterBlobs.Count -eq 2 -and
+    $masterBlobs[0] -ceq '4073816bbfb057c4dcf12e051862d32441d68dc4' -and
+    $masterBlobs[1] -ceq '781f8559ea2598750eb130da49bb979f09e079c0'
+Assert-C487 -Cond $masterOk -Name 'C1336 W master-unchanged' -Detail ($masterBlobs -join ',')
+
+$readme = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/windmill/README.md') -Raw
+$description = [string]$definition.description
+$documentationOk = $description.Contains('rc/2026-10-18') -and $readme.Contains('-Ref rc/2026-10-18') -and
+    $description.Contains('rollover') -and $readme.Contains('rollover') -and
+    $description.Contains('NOT REGISTERED') -and $readme.Contains('NOT REGISTERED') -and
+    $description.Contains('inert') -and $description.Contains('schedule stays disabled') -and
+    $readme.Contains('enabled: false') -and $description.Contains('not qualified') -and
+    $readme.Contains('not qualified') -and $description -notmatch '[\x00-\x1f]' -and
+    [string]$definition.summary -notmatch '[\x00-\x1f]' -and $readme -notmatch '[\x00-\x08\x0b\x0c\x0e-\x1f]'
+Assert-C487 -Cond $documentationOk -Name 'C1336 W documentation'
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 9
