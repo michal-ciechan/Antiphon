@@ -60,7 +60,7 @@ public sealed class LandVerificationLeaseWindowTests
             await landing;
         }
         await using var final = world.CreateContext();
-        (await final.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == world.Owner.Id))
-            .RemoteConfirmedAt.ShouldNotBeNull();
+        var operation = await final.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == world.Owner.Id);
+        operation.RemoteConfirmedAt.ShouldNotBeNull("publication must resume after compatible dispatch; refusal=" + operation.LastReason);
     }
 }

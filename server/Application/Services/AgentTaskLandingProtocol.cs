@@ -611,8 +611,14 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             "land_worktree_identity_changed");
         var registrations = await git.LiveRegistrationsAsync(ticket.Repository, ct);
         var land = registrations.Where(r => SamePath(r.Path, ticket.Identity.WorktreePath)).ToArray();
-        Require(land.Length == 1 && land[0].Branch is null && !land[0].Locked && !land[0].Prunable
+        // The persistent land checkout is deliberately locked against pruning. Resume
+        // must retain that protection, not mistake it for an index/sequencer lock.
+        Require(land.Length == 1 && land[0].Branch is null && land[0].Locked && !land[0].Prunable
             && land[0].Head == ticket.Identity.CandidateSha, "land_worktree_identity_changed");
+        var protection = Path.Combine(ticket.LandGitDirectory, "locked");
+        LandVerificationArtifacts.RequireNoLinks(protection);
+        Require((await File.ReadAllTextAsync(protection, ct)).Trim() == LandWorkspace.LockReason,
+            "land_worktree_identity_changed");
         foreach (var path in ticket.SourceCanonical is null
                      ? new[] { ticket.Identity.WorktreePath }
                      : new[] { ticket.Identity.WorktreePath, ticket.Identity.SourcePath })
