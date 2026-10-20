@@ -377,6 +377,11 @@ function Test-C487_G026 {
         } else {
             Assert-C487 (-not (Test-Path -LiteralPath $releaseMarker)) 'G026 nightly clone does not gain release ownership'
         }
+        # A new attempt owns fresh state; this case tests reusing the cleaned clone,
+        # not the separate nightly lock-file lifecycle.
+        $args.StateRoot = Join-Path $root ($mode + '-retry-state')
+        $args.LogRoot = Join-Path $args.StateRoot 'logs'
+        $args.CoordinationRoot = Join-Path $root ($mode + '-retry-coord')
         $retry = Invoke-AntiphonNightlyRun @args
         Assert-C487 ($retry.ExitCode -eq 0 -and $retry.Phase -eq 'whatif') ('G026 ' + $mode + ' retry remains admitted') $retry.Refusal
     }
