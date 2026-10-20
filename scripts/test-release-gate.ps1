@@ -689,9 +689,9 @@ function Test-C599_ProfileSchema {
     try { [void](Read-NightlyExecutionPolicy -RepoRoot $repoRoot -PolicyPath $bad) } catch { $badMsg = $_.Exception.Message }
     Assert-C487 -Cond ($badMsg -match 'unsupported policy schema') -Name 'C599 ProfileSchema unknown version refuses' -Detail $badMsg
 
-    # Historical v1/v2 fixtures remain supported; the shipped inventory is v3.
+    # Historical v1/v2 fixtures remain supported; the shipped inventory is v4.
     $ship = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
-    Assert-C487 -Cond ([int]$ship.SchemaVersion -eq 3) -Name 'C599 ProfileSchema shipped policy is v3' -Detail ([string]$ship.SchemaVersion)
+    Assert-C487 -Cond ([int]$ship.SchemaVersion -eq 4) -Name 'C599 ProfileSchema shipped policy is v4' -Detail ([string]$ship.SchemaVersion)
     Assert-C487 -Cond ($null -ne $ship.Object.profiles.rc) -Name 'C599 ProfileSchema shipped policy defines rc' -Detail ''
 }
 
@@ -2393,7 +2393,7 @@ function Test-C599A_PinnedPolicySchema {
     Restore-C599ASnapshot -Snap $snap
     Assert-C487 -Cond ($repin.Ok) -Name 'C599 G-286: re-pinning the candidate to a new commit with a valid blob is accepted (repin control)' -Detail (@($repin.Reasons) -join ' ')
     $shapes = @(
-        @{ l = 'schema 4'; t = 'policy-schema-unsupported'; e = { param($o) $o.schemaVersion = 4 } },
+        @{ l = 'schema 99'; t = 'policy-schema-unsupported'; e = { param($o) $o.schemaVersion = 99 } },
         @{ l = 'schema 1'; t = 'policy-schema-unsupported'; e = { param($o) $o.schemaVersion = 1 } },
         @{ l = 'schema string'; t = 'policy-schema-unsupported'; e = { param($o) $o.schemaVersion = '2' } },
         @{ l = 'schema absent'; t = 'policy-schema-unsupported'; e = { param($o) $o.PSObject.Properties.Remove('schemaVersion') } },
@@ -2414,8 +2414,8 @@ function Test-C599A_PinnedPolicySchema {
     $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'unparseable blob' -Expect @('policy-unparseable') -Mutate {
         Set-C599APinnedPolicy -Fx $fx -PolicyBytes ([System.Text.Encoding]::UTF8.GetBytes('{ not json'))
     }
-    $bytes = New-C599APolicyBytes -Edit { param($o) $o.schemaVersion = 4 }
-    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher schema 4' -Publish -Expect @('policy-schema-unsupported') -Mutate { Set-C599APinnedPolicy -Fx $fx -PolicyBytes $bytes }
+    $bytes = New-C599APolicyBytes -Edit { param($o) $o.schemaVersion = 99 }
+    $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher schema 99' -Publish -Expect @('policy-schema-unsupported') -Mutate { Set-C599APinnedPolicy -Fx $fx -PolicyBytes $bytes }
     $bytes = New-C599APolicyBytes -Edit { param($o) $o.profiles.rc.requiredSuites = @($o.profiles.rc.requiredSuites | Where-Object { $_ -ne 'scripts' }) }
     $m += Invoke-C599AVariant -Fx $fx -Snap $snap -Label 'publisher rc without scripts' -Publish -Expect @('policy-rc-suite-missing:scripts') -Mutate { Set-C599APinnedPolicy -Fx $fx -PolicyBytes $bytes }
     Assert-C599AMatrix -Name 'C599 G-286: an unknown schema, missing or empty rc profile and each absent suite in the pinned blob refuse' -Results $m

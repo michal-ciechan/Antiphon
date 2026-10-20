@@ -157,7 +157,7 @@ function Get-TestSelection {
     $policyPath='tests/test-execution-policy.json'
     $policyText=Get-TestSelectionBlob $RepositoryRoot $CandidateSha $policyPath
     $policy=$policyText|ConvertFrom-Json
-    if($policy.schemaVersion -ne 3){throw 'policy-schema-unsupported'}
+    if($policy.schemaVersion -notin @(3,4)){throw 'policy-schema-unsupported'}
     if($policy.policyHash -cne (Get-NightlyPolicyHash $policy)){throw 'policy-hash-stale'}
     [void](Get-NightlyPolicyProfile $policy $Profile)
     Test-NightlyProjectDispositions $policy
