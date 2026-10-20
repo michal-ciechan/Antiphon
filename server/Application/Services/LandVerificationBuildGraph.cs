@@ -8,11 +8,15 @@ namespace Antiphon.Server.Application.Services;
 /// Re-audited at fbbb0ee2f1f0c8e5cdddaa5f982b249e886dc34d after the S2 re-pick:
 /// the same 292 entries, with five newer-master PowerShell changes for RC candidate identity,
 /// its fixture, bounded-reader timing and the desktop smoke guard; no new documentation inputs.
+/// Re-audited at bfcb02e8758febf088c2c1f97b3f401e417f0a77 on master 706d99b8a6eb624ddb1bda535b015205b2c0d50e:
+/// the same 292 entries; only scripts/validate-checkpoint-receipt.ps1 changed since the prior
+/// audit, adding a failed-report verdict check. Imports/resources/entrypoints still consume
+/// no docs Markdown or root README in the verification build.
 /// Re-audit imports/resources/entrypoints before changing this digest; drift means build.
 /// </summary>
 internal sealed class LandVerificationBuildGraph
 {
-    internal const string Fingerprint = "7CE3DBBB8333B1970B98BFFDFD3A8500763F51FE88ED0D9A7D2DAD3FC88F23A7";
+    internal const string Fingerprint = "D17D2800E1313509226CE7C83FDE19C8ABFD3AD5BA4A1C4CFA4BAA6EC980C789";
 
     internal bool Includes(string path)
     {
