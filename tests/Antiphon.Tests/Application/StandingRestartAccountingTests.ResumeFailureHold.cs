@@ -226,7 +226,8 @@ public partial class StandingRestartAccountingTests
         {
             await using var h = AgentSupervisionTests.BuildHarness(root,
                 [new FakeAgentProtocolAdapter(), t1, t2, t3, healthyResume],
-                new SupervisionSettings { HealthyUptimeResetMinutes = 5, ResumeFailureHoldAttempts = 5 },
+                // Keep this legacy resume/reset witness independent of bounded fresh recovery.
+                new SupervisionSettings { HealthyUptimeResetMinutes = 5, ResumeFailureHoldAttempts = 5, AutomaticFreshAfterResumeFailures = 0 },
                 definitionKind: "ClaudeCode");
             var agent = await AgentSupervisionTests.CreateAlwaysOnAgentAsync(h, root);
             var accepted = await h.Control.StartAsync(agent.Id, new(), default);
