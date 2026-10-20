@@ -136,8 +136,29 @@ lines, actual counts, build/source provenance and the failure assertion in the
 stored report. Remove task-owned `bin-c1370/` and `bin-c1370-tool/` outputs using the guarded cleanup
 path; a refusal remains visible. Code also runs the required evidence-diff guard.
 
+## Code commissioning adjustment (2026-10-20)
+
+The Code brief overrides execution to CP-1 expected red and CP-2 narrow green,
+with --row-timeout 40m, trailing method wildcards, no whole-Unit run and a 45-minute
+budget. The Linux task runs injected failures; V-1 native Windows acceptance stays
+pending for a separate Windows task. No placement pin is used here.
+Live defaults revision 2 and both eligible OS runners were read before execution.
+
+Current implementation base is 0c5c3ec3d03c5d10ba927f856733c5c79b1775c3, including
+CARD-1368/1358 and CARD-1369. Current references: RunStateStore.cs:27 (single write),
+RunScheduler.cs:236 (completed row publication), CheckpointApp.cs:156 (Publish),
+CheckpointApp.cs:467 (Finish), SafeWrite.cs:168 (atomic writer). Streaming stamps
+and host-exit adoption are retained. ReportValidator also needs to reject an
+infrastructure-failed report whose completed rows are individually green.
+
+V-1 injected replacement failure runs here; the native handle arm executes only
+on Windows and is not claimed covered by Linux. V-2 and V-3 run in the same method.
+No R-n or PC-n was supplied by Plan. Mutation must discover missing controls;
+zero planned PCs does not discharge SourceLanding Mutation.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c1370/` | windows-state-publication | `/*/*/CheckpointStatePublicationTests/state_publication_survives_contention_and_preserves_completed_rows` | V-1, V-2, V-3 | S1: 1 executed, 1 expected assertion failure; S2: 1 executed, 1 passed, 0 failed/skipped; native Windows required | 1 | 8 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1370/` | state-publication-red | `/*/*/CheckpointStatePublicationTests/state_publication_survives_contention_and_preserves_completed_rows*` | V-1 injected | 1 expected assertion failure | 1 | 8 | true |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1370/` | state-publication-green | `/*/*/CheckpointStatePublicationTests/state_publication_survives_contention_and_preserves_completed_rows*` | V-1 injected, V-2, V-3 | 1 passed, 0 failed/skipped; native Windows pending | 1 | 8 | true |
