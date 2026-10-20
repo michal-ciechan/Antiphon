@@ -2,9 +2,15 @@ param([Parameter(Mandatory)][string]$OutputPath)
 
 $ErrorActionPreference = 'Stop'
 if (-not $IsLinux) { throw 'The native orphan acceptance driver requires Linux on this lane.' }
+. (Join-Path $PSScriptRoot 'lib/checkpoint-process-runner.ps1')
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$sha = (& git -C $repo rev-parse HEAD).Trim()
-if ($LASTEXITCODE -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { throw 'Cannot resolve source SHA.' }
+$gitStart = [Diagnostics.ProcessStartInfo]::new('git')
+$gitStart.WorkingDirectory = $repo
+foreach ($argument in @('rev-parse', 'HEAD')) { [void]$gitStart.ArgumentList.Add($argument) }
+$gitResult = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run(
+    $gitStart, 30000, $true, [Threading.CancellationToken]::None)
+$sha = $gitResult.Stdout.Trim()
+if ($gitResult.TimedOut -or $gitResult.Exit -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { throw 'Cannot resolve source SHA.' }
 $output = [IO.Path]::GetFullPath((Join-Path $repo (Join-Path 'tests/Antiphon.Tests' $OutputPath)))
 $hostDll = Join-Path $output 'checkpoint-lifecycle-host/Antiphon.Checkpoints.LifecycleHost.dll'
 $toolDll = Join-Path $repo (Join-Path 'tools/Antiphon.Checkpoints' (Join-Path $OutputPath 'Antiphon.Checkpoints.dll'))
