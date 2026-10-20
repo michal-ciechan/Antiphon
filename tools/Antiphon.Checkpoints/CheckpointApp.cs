@@ -405,7 +405,9 @@ public static class CheckpointApp
             return false;
         }
 
-        model.OutputPaths = manifest.Builds
+        var selectedBuildIds = selected.Where(row => !row.IsCommand)
+            .Select(row => row.Build).ToHashSet(StringComparer.Ordinal);
+        model.OutputPaths = manifest.Builds.Where(build => selectedBuildIds.Contains(build.Id))
             .SelectMany(build => new CheckpointOutputCleanup(context).MatchingIsolatedDirectories(repo, build.Id))
             .Distinct(StringComparer.Ordinal)
             .ToList();
