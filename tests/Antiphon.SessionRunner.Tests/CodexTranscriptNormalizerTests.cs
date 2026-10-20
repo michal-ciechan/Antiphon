@@ -194,6 +194,61 @@ public class CodexTranscriptNormalizerTests
         await Task.CompletedTask;
     }
 
+    [Test]
+    public void C1322_Abort_consumes_usage_once()
+    {
+        // Synthetic cumulative snapshots qualify boundary accounting, not native replacement
+        // ordering. The resumed baseline is 1000 input / 400 cached / 10 cache-write / 100 output.
+        string[] lines =
+        [
+            """{"type":"session_meta","payload":{"id":"c1322-resumed"}}""",
+            """{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1100,"cached_input_tokens":440,"cache_write_input_tokens":12,"output_tokens":110},"last_token_usage":{"input_tokens":100,"cached_input_tokens":40,"cache_write_input_tokens":2,"output_tokens":10}}}}""",
+            """{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1400,"cached_input_tokens":560,"cache_write_input_tokens":18,"output_tokens":150}}}}""",
+            """{"type":"event_msg","payload":{"type":"turn_aborted","turn_id":"aborted-turn","reason":"interrupted","error":{"message":"401 Unauthorized","codex_error_info":"other"}}}""",
+            """{"type":"event_msg","payload":{"type":"turn_aborted"}}""",
+            """{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1650,"cached_input_tokens":650,"cache_write_input_tokens":21,"output_tokens":175}}}}""",
+            """{"type":"event_msg","payload":{"type":"task_complete","turn_id":"completed-turn"}}""",
+            """{"type":"event_msg","payload":{"type":"task_complete","turn_id":"no-count-turn"}}""",
+            // A changed containment rule or decreasing counter must never emit negative usage.
+            """{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1660,"cached_input_tokens":680,"cache_write_input_tokens":20,"output_tokens":170}}}}""",
+            """{"type":"event_msg","payload":{"type":"turn_aborted","reason":"replaced"}}""",
+            """{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1650,"cached_input_tokens":670,"cache_write_input_tokens":19,"output_tokens":160}}}}""",
+            """{"type":"event_msg","payload":{"type":"task_complete","turn_id":"decreased-counters"}}""",
+        ];
+        (int? Input, int? Output, int? Cached, int? CacheWrite)[] expectedUsage =
+        [
+            (240, 50, 160, 8),
+            (null, null, null, null),
+            (160, 25, 90, 3),
+            (null, null, null, null),
+            (0, 0, 30, 0),
+            (0, 0, 0, 0),
+        ];
+
+        var normalizer = new CodexTranscriptNormalizer(apiErrorTimeZoneId: "UTC");
+        var parts = lines.SelectMany(normalizer.Normalize).ToArray();
+        parts.Length.ShouldBe(6);
+        parts.ShouldAllBe(p => p.Kind == TranscriptKinds.TurnEnd && p.Role == "assistant");
+        parts.Select(p => p.StopReason).ShouldBe(new[]
+            { "cancelled", "cancelled", "end_turn", "end_turn", "cancelled", "end_turn" });
+        parts.Select(p => p.ApiCallId).ShouldBe(new string?[]
+            { "aborted-turn", null, "completed-turn", "no-count-turn", null, "decreased-counters" });
+        parts.Select(p => TranscriptKinds.IsReportBoundary(p.Kind, p.StopReason))
+            .ShouldBe(new[] { false, false, true, true, false, true });
+        parts.ShouldAllBe(p => p.IsApiError == null && p.ApiErrorClass == null
+            && p.ApiErrorStatus == null && p.ApiErrorTimeZoneId == null && p.Text == null);
+        parts.Select(p => (p.InputTokens, p.OutputTokens, p.CacheReadTokens, p.CacheCreationTokens))
+            .ShouldBe(expectedUsage, "each boundary consumes only its observed spend; abort usage cannot roll into completion");
+
+        var replay = new CodexTranscriptNormalizer(apiErrorTimeZoneId: "UTC");
+        var replayed = lines.SelectMany(replay.Normalize).ToArray();
+        replayed.Select(p => (p.InputTokens, p.OutputTokens, p.CacheReadTokens, p.CacheCreationTokens))
+            .ShouldBe(expectedUsage);
+        replayed.ShouldBe(parts, "re-tailing the same bytes preserves every part and its synthesized identity");
+        parts.Select(p => p.Uuid).ShouldBe(new[]
+            { "c1322-resumed#3", "c1322-resumed#4", "c1322-resumed#6", "c1322-resumed#7", "c1322-resumed#9", "c1322-resumed#11" });
+    }
+
     /// <summary>The other dialect: <c>codex exec</c> (and the Desktop app) write flat rows.</summary>
     [Test]
     public async Task Real_exec_rollout_yields_the_same_normalized_rows_from_the_flat_dialect()
