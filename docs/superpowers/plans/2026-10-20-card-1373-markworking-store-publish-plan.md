@@ -166,9 +166,25 @@ fake adapters. The trailing class/method wildcards and separately parenthesized
 method OR operands are required for the pinned TUnit discovery. Table pipes inside
 the filter are Markdown-escaped. CP-2 rebuilds because its source differs from CP-1.
 
+### Code commissioning addendum
+
+The Code brief starts from this plan's committed stack without waiting for the
+CARD-1362 landings; it supersedes D-5's waiting requirement. The commissioned
+Final profile also requires the whole Unit lane and the full affected
+`SessionMessageQueueWedgedHeadTests` class. CP-3 and CP-4 below add that required
+coverage to D-3's narrow witnesses, using CP-2's same committed isolated build.
+Run CP-2, CP-3 and CP-4 serially as one S2 group. The caller census remains a
+source-impact audit; it does not select those other classes for execution.
+No assembly-wide integration run is selected. Additional estimated execution
+cost is 8 + 3 minutes, bringing the ordinary checkpoint estimate to 23 minutes.
+The invariant for CP-3 is compatibility with the complete Unit lane; CP-4 covers
+the class's queue delivery, attempt charging and generation-kill protections.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1373-red/` | portable-integration-red | `/*/*/SessionMessageQueueWedgedHeadTests*/C1373_MarkWorkingAsync_updates_the_loaded_working_snapshot*` | V-1 red | exactly 1 executed, 1 expected final Working assertion failure, 0 skipped | 1 | 6 |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1373-green/` | portable-integration-green | `/*/*/SessionMessageQueueWedgedHeadTests*/(C1373_MarkWorkingAsync_updates_the_loaded_working_snapshot*)\|(Working_session_still_withholds_the_kill_after_a_failed_Enter_only*)` | V-1 green, R-1 | exactly the 2 named methods, 2 passed, 0 failed/skipped | 2 | 6 |
+| CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1373-green/` | final-unit | `/*/*/*/*[Category=Unit]` | Final Unit lane | all discovered Unit cases, 0 failed/skipped | 1 | 8 |
+| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1373-green/` | final-wedged-head | `/*/*/SessionMessageQueueWedgedHeadTests*/*` | Final full affected class, V-1, R-1 | every method in the class, 0 failed/skipped | 35 | 3 |
