@@ -184,35 +184,47 @@ function Test-NightlyPinnedDiagnosticVersions {
     }
 }
 
-function Get-NightlyDiagnosticStateName {
+function Get-NightlyDiagnosticStateProperty {
     param([string]$Record)
-    # The last structural state property wins. An explanation may quote an
-    # earlier name such as PassedTestNodeStateProperty without being that state.
-    $hits = [regex]::Matches($Record, '(?<![A-Za-z])(Passed|Failed|Error|Skipped|Timeout|Cancelled|Discovered|InProgress)TestNodeStateProperty \{')
-    if ($hits.Count -eq 0) { return '' }
-    switch ($hits[$hits.Count - 1].Groups[1].Value) {
+    $absent = [pscustomobject]@{ Name = ''; ExplanationStart = -1 }
+    # Enter the TestNode's own property list, not the update-message properties
+    # or display text. Match the pinned identifier -> optional location -> state
+    # transition; state-looking words in free text are not property boundaries.
+    $envelope = [regex]::Match($Record, '(?s)TestNode \{ Uid = TestNodeUid \{ Value = [^}]* \}, DisplayName = .*?, Properties = \[ ')
+    if (-not $envelope.Success) { return $absent }
+    $identifier = 'TestMethodIdentifierProperty \{ AssemblyFullName = [^{}\r\n]+, Namespace = [A-Za-z0-9_.]*, TypeName = [A-Za-z0-9_.]*, MethodName = [A-Za-z0-9_]*, MethodArity = \d+, ParameterTypeFullNames = \[[^{}\r\n]*\], ReturnTypeFullName = [^{}\r\n]+ \}, '
+    $location = '(?:TestFileLocationProperty \{ FilePath = [^\r\n]*?, LineSpan = LinePositionSpan \{ Start = LinePosition \{ Line = \d+, Column = \d+ \}, End = LinePosition \{ Line = \d+, Column = \d+ \} \} \}, )?'
+    $transition = [regex]::new($identifier + $location + '(?<name>[A-Za-z]+)TestNodeStateProperty \{ Explanation = ')
+    $hit = $transition.Match($Record, $envelope.Index + $envelope.Length)
+    if (-not $hit.Success) { return $absent }
+    # Unescaped free text can mimic a complete transition. Stop at the second
+    # interpretation: neither a terminal success nor an exact message is safe.
+    if ($hit.NextMatch().Success) { return $absent }
+    return [pscustomobject]@{ Name = $hit.Groups['name'].Value; ExplanationStart = $hit.Index + $hit.Length }
+}
+
+function Get-NightlyDiagnosticStateName {
+    param([string]$Record, $StateProperty = $null)
+    if ($null -eq $StateProperty) { $StateProperty = Get-NightlyDiagnosticStateProperty -Record $Record }
+    switch -CaseSensitive ($StateProperty.Name) {
         'Passed' { return 'Passed' }
         'Skipped' { return 'Skipped' }
         'Discovered' { return 'Discovered' }
         'InProgress' { return 'InProgress' }
-        default { return 'Failed' }
+        { $_ -cin @('Failed', 'Error', 'Timeout', 'Cancelled') } { return 'Failed' }
+        default { return '' }
     }
 }
 
 function Get-NightlyDiagnosticFailureMessage {
-    param([string]$Record)
-    $known = [regex]::Matches($Record, '(?s)(?<![A-Za-z])(?:Failed|Error|Timeout|Cancelled)TestNodeStateProperty \{ Explanation = ')
-    $hits = $known
-    if ($hits.Count -eq 0) {
-        $hits = [regex]::Matches($Record, '(?s)(?<![A-Za-z])[A-Za-z]+TestNodeStateProperty \{ Explanation = ')
-    }
-    if ($hits.Count -eq 0) { return $null }
-    $hit = $hits[$hits.Count - 1]
-    $tail = $Record.Substring($hit.Index + $hit.Length)
+    param([string]$Record, $StateProperty = $null)
+    if ($null -eq $StateProperty) { $StateProperty = Get-NightlyDiagnosticStateProperty -Record $Record }
+    if ($StateProperty.ExplanationStart -lt 0 -or $StateProperty.Name -cin @('Passed', 'Skipped', 'Discovered', 'InProgress')) { return $null }
+    $tail = $Record.Substring($StateProperty.ExplanationStart)
     # The pinned property is the last item in TestNode.Properties. Remove only
     # its structural suffix, never whitespace belonging to the explanation.
     $suffix = ' \} \] \} \}\s*\z'
-    if ($hit.Value.StartsWith('Timeout', [StringComparison]::Ordinal)) {
+    if ($StateProperty.Name -ceq 'Timeout') {
         $suffix = ', Timeout = (?:\d+\.)?\d{2}:\d{2}:\d{2}(?:\.\d+)?' + $suffix
     }
     $close = [regex]::Match($tail, $suffix)
@@ -254,7 +266,7 @@ function Test-NightlyDiagnosticExceptionTail {
 }
 
 function ConvertFrom-NightlyDiagnosticRecord {
-    param([string]$Record, [string]$State)
+    param([string]$Record, [string]$State, $StateProperty = $null)
     if ($Record -notmatch 'TestNodeUid \{ Value = (?<uid>[^}]+?) \}') {
         throw 'truncated diagnostic record: missing uid'
     }
@@ -297,7 +309,7 @@ function ConvertFrom-NightlyDiagnosticRecord {
     # Timeout and Cancelled are failed states. Only a unique validated field
     # boundary supplies Message; ambiguous or malformed text keeps Failed.
     if ($State -eq 'Failed') {
-        $message = Get-NightlyDiagnosticFailureMessage -Record $Record
+        $message = Get-NightlyDiagnosticFailureMessage -Record $Record -StateProperty $StateProperty
         if ($null -ne $message) {
             $node | Add-Member -NotePropertyName Message -NotePropertyValue $message
         }
@@ -393,7 +405,8 @@ function ConvertFrom-NightlyDiagnosticLog {
     $nodes = @()
     $seen = @{}
     foreach ($record in (Get-NightlyDiagnosticRecords -Text $text)) {
-        $state = Get-NightlyDiagnosticStateName -Record $record
+        $stateProperty = Get-NightlyDiagnosticStateProperty -Record $record
+        $state = Get-NightlyDiagnosticStateName -Record $record -StateProperty $stateProperty
         if ([string]::IsNullOrWhiteSpace($state)) {
             if ($Kind -eq 'discovery') { throw ('malformed discovery record: missing state {0}' -f $Path) }
             # A framed TestNode with no known state is a failure. A log with no
@@ -407,7 +420,7 @@ function ConvertFrom-NightlyDiagnosticLog {
         } elseif ($Kind -eq 'execution') {
             if ($state -eq 'InProgress' -or $state -eq 'Discovered') { continue }
         }
-        $node = ConvertFrom-NightlyDiagnosticRecord -Record $record -State $state
+        $node = ConvertFrom-NightlyDiagnosticRecord -Record $record -State $state -StateProperty $stateProperty
         if ($seen.ContainsKey($node.Uid)) {
             throw ('duplicate {0} uid {1}' -f $Kind, $node.Uid)
         }

@@ -99,6 +99,7 @@ function Get-C1325AmbiguousStateRecord {
     # transition are both structurally possible. Insert only in the exception
     # stack, so there are exactly two candidate transitions and the original
     # UID, explanation and echo remain intact. No brace-counting can disambiguate.
+    # LF raw-record identifier offsets: 3268, 6557; state offsets: 3852, 7066.
     $transition = 'TestMethodIdentifierProperty { AssemblyFullName = Antiphon.E2E, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null, Namespace = Antiphon.E2E, TypeName = AgentTaskLandDeliveryE2ETests, MethodName = C488_ApprovalPollingCannotConfirm, MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Threading.Tasks.Task }, TestFileLocationProperty { FilePath = Fixture.cs, LineSpan = LinePositionSpan { Start = LinePosition { Line = 1, Column = 0 }, End = LinePosition { Line = 1, Column = 0 } } }, PassedTestNodeStateProperty { Explanation = apparent success'
     return $D13FailureRecord.Replace("`r`n", "`n").Replace(' } ] } }', ("`n   at Fixture.Frame() quoting " + $transition + ' } ] } }'))
 }
