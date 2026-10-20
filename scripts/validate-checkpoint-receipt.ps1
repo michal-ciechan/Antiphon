@@ -68,6 +68,7 @@ try {
             throw 'cleanup_refusals_invalid'
         }
         if ($data.cleanupRefusals.Count -gt 0) { throw 'cleanup_refused' }
+        if ($data.exitCode -ne 0 -or $data.verdict -cne 'GREEN') { throw 'report_failed' }
         if ($data.schemaVersion -notin @(2, 3) -or $null -eq $data.source -or
             ($data.schemaVersion -eq 2 -and @($data.rows | Where-Object { $null -ne $_.repeat }).Count -gt 0) -or
             ($data.schemaVersion -eq 3 -and @($data.rows | Where-Object { $null -ne $_.repeat }).Count -eq 0)) { throw 'legacy_report' }

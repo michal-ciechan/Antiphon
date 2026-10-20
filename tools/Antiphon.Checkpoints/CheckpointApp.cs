@@ -86,7 +86,7 @@ public static class CheckpointApp
             // The scheduler may return a timeout/owner result after joining canceled
             // drivers. Only the invoking caller token selects the interrupt outcome.
             var canceled = cancellationToken.IsCancellationRequested;
-            var exit = canceled ? ExitCodes.Canceled : ExitCodes.ExecutorCrashed;
+            var exit = canceled ? ExitCodes.Canceled : ex is StatePublicationException ? ExitCodes.Invalid : ExitCodes.ExecutorCrashed;
             var reason = canceled ? "caller-requested"
                 : "executor.log or executor failure: " + ex.GetType().Name + ": " + ex.Message
                 + (ex.InnerException is null ? "" : " <- " + ex.InnerException.ToString().Replace("\n", " | "));
@@ -169,10 +169,10 @@ public static class CheckpointApp
             {
                 var refusal = store.Write(statePath, state);
                 if (refusal is not null)
-                    throw new InvalidOperationException("refused: " + refusal);
+                    throw new IOException("refused: " + refusal);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            { throw new IOException("required state.json receipt-write-failed", ex); }
+            { throw new StatePublicationException(ex); }
         }
 
         Publish();
@@ -193,6 +193,7 @@ public static class CheckpointApp
         var driver = runtime.Driver ?? new ProcessDriver();
         var scheduler = new RunScheduler(driver, platform);
         SchedulerResult result;
+        StatePublicationException? publicationFailure = null;
         using var watchCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         using var workCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, owner.Settled);
         async Task BeforeLaunch(CancellationToken token)
@@ -267,6 +268,12 @@ public static class CheckpointApp
                 State = state,
             };
         }
+        catch (StatePublicationException ex)
+        {
+            publicationFailure = ex;
+            state.Reason = ex.Message;
+            result = ex.PartialResult ?? new SchedulerResult { ExitCode = ExitCodes.Invalid, State = state };
+        }
         catch (Exception ex)
         {
             throw new InvalidOperationException("scheduler crashed", ex);
@@ -292,6 +299,39 @@ public static class CheckpointApp
         source.BuildSource = testRows.Count == 0 ? "notApplicable"
             : testRows.All(row => row.Source.BuildSource == "verified") ? "verified" : "unknown";
         var model = BuildReport(runDirectory, repo, request, manifest, state, result, context, cancellationToken);
+        async Task<int> RetainPublicationFailure(StatePublicationException failure)
+        {
+            state.ExitCode = model.ExitCode = ExitCodes.Invalid;
+            state.Reason = model.Reason = failure.Message;
+            model.Verdict = "RED";
+            model.CleanedOutputs = false;
+            model.OutputPaths = state.CreatedOutputPaths.ToList();
+            model.Evidence = Path.Combine(runDirectory, "report.md");
+            var output = runtime.Output ?? Console.Error;
+            foreach (var line in model.Rows.SelectMany(row => new[] { row.Line }.Concat(row.RerunLines))
+                         .Append(failure.Message))
+            {
+                output.WriteLine(line);
+                try { Note(line); }
+                catch (Exception logFailure) when (logFailure is IOException or UnauthorizedAccessException) { }
+            }
+            try { ReportWriter.WriteFiles(context, runDirectory, model); }
+            catch (Exception persistence) when (persistence is IOException or UnauthorizedAccessException)
+            { output.WriteLine("checkpoint terminal persistence failed: " + persistence.Message); }
+            try { await logWriter.FlushAsync().ConfigureAwait(false); }
+            catch (Exception logFailure) when (logFailure is IOException or UnauthorizedAccessException)
+            { output.WriteLine("checkpoint log persistence failed: " + logFailure.Message); }
+            try { await logWriter.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception logFailure) when (logFailure is IOException or UnauthorizedAccessException)
+            { output.WriteLine("checkpoint log disposal failed: " + logFailure.Message); }
+            return ExitCodes.Invalid;
+        }
+        if (publicationFailure is not null)
+            return await RetainPublicationFailure(publicationFailure).ConfigureAwait(false);
+        // Publish completion before baseline work or output cleanup. Wait also requires executor death.
+        try { Finish(state, model.ExitCode, Publish, () => { }, _ => { }, context); }
+        catch (StatePublicationException ex)
+        { return await RetainPublicationFailure(ex).ConfigureAwait(false); }
         if (!owner.Ended.IsCancellationRequested && !string.IsNullOrWhiteSpace(request.Baseline))
         {
             var remaining = state.TotalTimeoutAt is DateTimeOffset deadline
@@ -452,7 +492,6 @@ public static class CheckpointApp
         ReportWriter.WriteFiles(context, runDirectory, model);
         Note("done exit=" + model.ExitCode);
         await logWriter.FlushAsync().ConfigureAwait(false);
-        await logWriter.DisposeAsync().ConfigureAwait(false);
         if (owner.Bound && !owner.Ended.IsCancellationRequested)
             await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
         if (owner.Ended.IsCancellationRequested && model.ExitCode != ExitCodes.OwnerEnded)
@@ -464,7 +503,14 @@ public static class CheckpointApp
             ReportWriter.WriteFiles(context, runDirectory, model);
         }
         cancellationToken.ThrowIfCancellationRequested();
-        Finish(state, model.ExitCode, Publish, () => { }, _ => { }, context);
+        if (state.ExitCode != model.ExitCode)
+        {
+            state.ExitCode = model.ExitCode;
+            state.Reason = model.Reason;
+            try { Publish(); }
+            catch (StatePublicationException ex)
+            { return await RetainPublicationFailure(ex).ConfigureAwait(false); }
+        }
         return model.ExitCode;
         }
         finally

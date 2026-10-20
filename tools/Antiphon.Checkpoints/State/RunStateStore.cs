@@ -25,9 +25,23 @@ public sealed class RunStateStore
         var ownership = write.Under(directory, state.RunId, WriteKind.ToolOwnedReplaceable);
         var history = Path.Combine(directory, "state.history.jsonl");
         var json = JsonSerializer.Serialize(state, Json);
-        var refusal = write.Text(path, json, ownership);
-        if (refusal is not null)
-            return refusal;
+        for (var attempt = 0; ; attempt++)
+        {
+            // A read-only destination is a permanent policy refusal, not contention.
+            if (_context.Io.FileExists(path) && (_context.Io.Attributes(path) & FileAttributes.ReadOnly) != 0)
+                return "read-only";
+            try
+            {
+                var refusal = write.Text(path, json, ownership);
+                if (refusal is not null)
+                    return refusal;
+                break;
+            }
+            catch (Exception ex) when (attempt < 5 && IsContention(ex))
+            {
+                _context.Delay(TimeSpan.FromMilliseconds(50 << attempt));
+            }
+        }
         try
         {
             var line = JsonSerializer.Serialize(state, new JsonSerializerOptions(Json) { WriteIndented = false }) + "\n";
@@ -41,6 +55,18 @@ public sealed class RunStateStore
     }
 
     public RunState? TryRead(string path) => TryRead(path, out _);
+
+    private static bool IsContention(Exception failure)
+    {
+        if (failure is UnauthorizedAccessException)
+            return true;
+        if (failure is not IOException)
+            return false;
+        if (failure.HResult is unchecked((int)0x80070005) or unchecked((int)0x80070020) or unchecked((int)0x80070021))
+            return true;
+        // ReceiptFile retains the typed native failure when adding path context.
+        return failure.InnerException is { } inner && IsContention(inner);
+    }
 
     public RunState? TryRead(string path, out string? refusal) => TryRead(path, out refusal, CancellationToken.None);
 

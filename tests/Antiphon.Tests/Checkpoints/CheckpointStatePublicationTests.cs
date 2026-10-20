@@ -8,6 +8,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Integration")]
+[Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointStatePublicationTests : CheckpointTestBase
 {
@@ -20,6 +21,7 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
             new IOException("sharing", unchecked((int)0x80070020)),
             new IOException("lock", unchecked((int)0x80070021)),
             new UnauthorizedAccessException("access"),
+            new IOException("receipt context", new IOException("sharing", unchecked((int)0x80070020))),
         })
             StoreScenario(failure, failures: 1, expectedAttempts: 2, succeeds: true);
         StoreScenario(new IOException("sharing", unchecked((int)0x80070020)), 6, 6, false);
@@ -31,6 +33,7 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         await ExecuteScenario(final: false, transient: false);
         await ExecuteScenario(final: true, transient: false);
         await ExecuteScenario(final: false, transient: true);
+        await ExecuteScenario(final: false, transient: false, draining: true);
     }
 
     private void StoreScenario(Exception failure, int failures, int expectedAttempts, bool succeeds,
@@ -101,7 +104,7 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         Directory.GetFiles(Path.GetDirectoryName(path)!, "*.tmp").ShouldBeEmpty();
     }
 
-    private async Task ExecuteScenario(bool final, bool transient)
+    private async Task ExecuteScenario(bool final, bool transient, bool draining = false)
     {
         var repo = TempDir();
         CheckpointFixtureProcess.Git(repo, "init", "-b", "card1370");
@@ -117,18 +120,38 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
                 Filter = "/*/*/ExampleSurfaceTests/*", MinExecuted = 2, Expect = ["ExampleSurfaceTests"],
             }],
         };
+        if (draining)
+            manifest.Checkpoints.Add(new CheckpointSpec
+            {
+                Id = "CP-draining", After = ["all"], Build = "bin-c1370-fixture",
+                Filter = "/*/*/ExampleSurfaceTests/*", MinExecuted = 2, Expect = ["ExampleSurfaceTests"],
+            });
         if (!final && !transient)
             manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-never", After = ["all"], Command = "never", Serial = true });
         var io = new FaultIo();
         var context = new CheckpointCleanupContext(io, new CheckpointNativeGitRunner(), new ImmediateClock());
         var driver = new FakeDriver();
         string? trx = null;
-        driver.When(CheckpointFixtures.IsRun, (request, _) =>
+        var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var joined = false;
+        driver.When(CheckpointFixtures.IsRun, async (request, token) =>
         {
-            trx = CheckpointFixtures.TrxFile(request);
-            CheckpointFixtures.WriteResults(trx, ("Antiphon.Tests.ExampleSurfaceTests.one", "Passed"),
+            var path = CheckpointFixtures.TrxFile(request);
+            if (draining && path.Contains("CP-draining", StringComparison.Ordinal))
+            {
+                secondStarted.SetResult();
+                try { await Task.Delay(TimeSpan.FromSeconds(5), token); }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { joined = true; }
+                joined.ShouldBeTrue("publication failure must cancel and join the live sibling");
+            }
+            else
+            {
+                if (draining) await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                trx = path;
+            }
+            CheckpointFixtures.WriteResults(path, ("Antiphon.Tests.ExampleSurfaceTests.one", "Passed"),
                 ("Antiphon.Tests.ExampleSurfaceTests.two", "Passed"));
-            return Task.FromResult(new DriverResult(0, "", ""));
+            return new DriverResult(0, "", "");
         });
         var output = new StringWriter();
         var runtime = new CheckpointApp.Runtime
@@ -139,7 +162,7 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         };
         var run = CheckpointApp.CreateRun(manifest, new RunRequest
         {
-            Commit = source.Commit!, Branch = "fixture", KeepOutputs = true, Slots = "off", Serial = true,
+            Commit = source.Commit!, Branch = "fixture", KeepOutputs = !final, Slots = "off", Serial = !draining,
             Baseline = transient ? null : "must-not-launch",
         }, repo, runtime);
         var attempts = 0;
@@ -160,13 +183,15 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         report.ExitCode.ShouldBe(exit);
         report.Verdict.ShouldBe(transient ? "GREEN" : "RED");
         if (!transient) report.Reason.ShouldContain("receipt-write-failed");
-        var row = report.Rows.Single();
+        report.Rows.Count.ShouldBe(draining ? 2 : 1);
+        var row = report.Rows.Single(item => item.Id == "CP-first");
         row.Executed.ShouldBe(2); row.Passed.ShouldBe(2); row.Failed.ShouldBe(0); row.Skipped.ShouldBe(0);
         row.Trx.ShouldBe(trx); File.Exists(trx).ShouldBeTrue();
         row.Line.ShouldBe(completedLine);
         row.Source.BuildSource.ShouldBe("verified"); row.Source.Start.Commit.ShouldBe(source.Commit);
         report.Builds.Single().Source.BuildSource.ShouldBe("verified");
-        driver.Count(CheckpointFixtures.IsRun).ShouldBe(1);
+        driver.Count(CheckpointFixtures.IsRun).ShouldBe(draining ? 2 : 1);
+        driver.Calls.Count.ShouldBe(draining ? 3 : 2, "only the build and admitted rows may launch");
         driver.InFlight.ShouldBe(0);
         report.Unlisted.ShouldBeEmpty("no baseline launch on publication failure");
         if (!transient)
@@ -175,8 +200,32 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
             output.ToString().ShouldContain(row.Line);
             output.ToString().ShouldContain("receipt-write-failed");
             attempts.ShouldBe(6);
+            Directory.Exists(Path.Combine(repo, "sample", "bin-c1370-fixture")).ShouldBeTrue("retain outputs on publication failure");
+            var start = new System.Diagnostics.ProcessStartInfo("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
+            foreach (var argument in new[] { "-NoProfile", "-File", Path.Combine(CheckpointFixtures.RepoRoot,
+                "scripts", "validate-checkpoint-receipt.ps1"), "-Evidence", Path.Combine(run, "report.json"),
+                "-ExpectedSourceSha", source.Commit! }) start.ArgumentList.Add(argument);
+            var validation = CheckpointFixtureProcess.Run(start, 30_000);
+            validation.Exit.ShouldBe(2, validation.Stdout + validation.Stderr);
+            validation.Stdout.ShouldContain("report_failed");
+            var dead = new ProcessIdentityProbe(context).Current() with { Pid = int.MaxValue, StartUtcTicks = 1 };
+            ExecutorOwnershipStore.Write(run, dead, context);
+            var waited = new StringWriter();
+            (await new WaitCommand(context: context).WaitAsync(run, TimeSpan.FromSeconds(5),
+                TimeSpan.FromSeconds(60), waited, CancellationToken.None, source.Commit)).ShouldBe(2);
+            waited.ToString().ShouldContain(row.Line);
+            waited.ToString().ShouldContain("receipt-write-failed");
         }
         else new RunStateStore(context).TryRead(Path.Combine(run, "state.json"))!.Phase.ShouldBe("done");
+        if (draining)
+        {
+            joined.ShouldBeTrue();
+            var drained = report.Rows.Single(item => item.Id == "CP-draining");
+            drained.Executed.ShouldBe(2); drained.Passed.ShouldBe(2);
+            drained.Failed.ShouldBe(0); drained.Skipped.ShouldBe(0);
+            drained.Line.ShouldContain("executed=2 passed=2 failed=0 skipped=0");
+            File.Exists(drained.Trx).ShouldBeTrue();
+        }
     }
 
     private sealed class ImmediateClock : TimeProvider
