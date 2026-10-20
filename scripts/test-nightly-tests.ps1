@@ -952,6 +952,40 @@ function Test-D13_ExplanationBoundary {
     foreach ($fixture in @(Get-C1325ExplanationFixtures)) { Assert-C1325Fixture -Fixture $fixture -Group 'EB' }
 }
 
+function Test-D13_StatePropertyBoundary {
+    . (Join-Path $here 'fixtures/nightly/c1325-diagnostic-records.ps1')
+    $fixtures = @(Get-C1325StateFixtures)
+    foreach ($fixture in $fixtures) { Assert-C1325Fixture -Fixture $fixture -Group 'SB' }
+    $ambiguous = ConvertFrom-D13StateText -Name 'c1325-ambiguous-state' -Text (Get-D13StateText -Records @(
+        (Get-C1325AmbiguousStateRecord)))
+    Assert-C487 -Cond ($ambiguous.Error -eq '' -and @($ambiguous.Nodes).Count -eq 1 -and
+        $ambiguous.Nodes[0].Uid -ceq $C1325Uid -and
+        $ambiguous.Nodes[0].ClassName -ceq 'Antiphon.E2E.AgentTaskLandDeliveryE2ETests' -and
+        $ambiguous.Nodes[0].Method -ceq 'C488_ApprovalPollingCannotConfirm' -and
+        $ambiguous.Nodes[0].Outcome -ceq 'Failed' -and
+        $ambiguous.Nodes[0].PSObject.Properties.Name -notcontains 'Message') `
+        -Name 'D13 SB ambiguous envelope stays failed' -Detail $ambiguous.Error
+    $missing = ConvertFrom-D13StateText -Name 'c1325-missing-uid' -Text (Get-D13StateText -Records @(
+        $fixtures[0].Record.Replace(('Value = ' + $C1325Uid + ' }'), 'Value =  }')))
+    Assert-C487 -Cond ($missing.Error -ceq 'truncated diagnostic record: missing uid') `
+        -Name 'D13 SB missing UID refuses' -Detail $missing.Error
+    $path = Write-C1044Diagnostic -Name 'c1325-joined' -Text (Get-D13StateText -Records @($fixtures[0].Record))
+    $trx = Join-Path $ResultsDirectory 'c1325-joined.trx'
+    [IO.File]::WriteAllText($trx, $D13FailureTrx)
+    $discovery = Join-Path $ResultsDirectory 'c1325-joined.json'
+    Write-C487Discovery -Path $discovery -Nodes @(@{ uid = $C1325Uid; namespace = 'Antiphon.E2E';
+        type = 'AgentTaskLandDeliveryE2ETests'; method = 'C488_ApprovalPollingCannotConfirm'; state = 'Discovered' })
+    $verdict = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trx -DiscoveryPath $discovery -ExecutionDiagnosticPath $path `
+        -RunDirectory $ResultsDirectory -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-1)) -ProcessExit 0 `
+        -Sha 'c1325' -ExpectedSha 'c1325' -GitRef 'test' -ExpectedRef 'test' -PolicyHash 'test' -ExpectedPolicyHash 'test'
+    Assert-C487 -Cond ($verdict.coverageComplete -and -not $verdict.testsPassed -and
+        $verdict.reasons -contains 'failed-row' -and @($verdict.terminalNodes).Count -eq 1 -and
+        $verdict.terminalNodes[0].Uid -ceq $C1325Uid -and $verdict.terminalNodes[0].Outcome -ceq 'Failed' -and
+        [string]::Equals($verdict.terminalNodes[0].Message, $fixtures[0].ExpectedMessage, [StringComparison]::Ordinal) -and
+        @($verdict.reasons | Where-Object { $_ -match 'missing-expanded-row|trx-diagnostic-mismatch' }).Count -eq 0) `
+        -Name 'D13 SB failed TRX owns verdict' -Detail ($verdict.reasons -join ',')
+}
+
 function New-C1341NpmFixture {
     $root = Join-Path $ResultsDirectory ('c1341-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $root -Force | Out-Null

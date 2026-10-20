@@ -37,6 +37,16 @@ public sealed class NightlyExecutionDiagnosticTests
             $"D13 EB E{id:00} identity", $"D13 EB E{id:00} message"
         }).ToArray());
 
+    [Test]
+    public Task D13_StatePropertyBoundary() => RunCaseAsync(nameof(D13_StatePropertyBoundary), 27,
+        Enumerable.Range(1, 12).SelectMany(id => new[]
+        {
+            $"D13 SB S{id:00} identity", $"D13 SB S{id:00} message"
+        }).Concat(new[]
+        {
+            "D13 SB ambiguous envelope stays failed", "D13 SB missing UID refuses", "D13 SB failed TRX owns verdict"
+        }).ToArray());
+
     private static Task RunCaseAsync(string caseName, int expectedRows, params string[] requiredRows) =>
         ScriptHarness.RunHarnessCaseAsync("test-nightly-tests.ps1", "D13", caseName, expectedRows, requiredRows);
 }

@@ -61,6 +61,44 @@ function Get-C1325ExplanationFixtures {
     # explanation below. In the first interpretation Fixture.Frame starts the
     # stack; in the second the original captured stack follows the full echo.
     # Neither unescaped stack tail can prove which delimiter was the field.
+    # LF raw-record delimiter offsets: 3916 and 4001 (body offsets 19 and 104).
     $message = "boom, Exception = TUnit.Engine.Exceptions.TestFailedException: boom`n   at Fixture.Frame()"
     New-C1325Fixture 'E11' (New-C1325CapturedDerivative $message) $null -Provenance 'derived ambiguous exception boundary; two valid echo/stack splits'
+}
+
+function Get-C1325StateFixtures {
+    $quoted = "saw PassedTestNodeStateProperty { Explanation = decoy }`nouter line"
+    foreach ($row in @(@('S01', 'Passed'), @('S02', 'Skipped'), @('S03', 'Discovered'), @('S04', 'InProgress'))) {
+        $message = $quoted.Replace('Passed', $row[1])
+        New-C1325Fixture $row[0] (New-C1325CapturedDerivative $message) ('[Test Failure] ' + $message)
+    }
+    $message = 'saw FailedTestNodeStateProperty { Explanation = inner'
+    New-C1325Fixture 'S05' (New-C1325CapturedDerivative $message) ('[Test Failure] ' + $message)
+    $ordinary = '[Test Failure] ' + $C1325OriginalMessage
+    $record = $D13FailureRecord.Replace("`r`n", "`n").Replace(' } ] } }', "`n   at Fixture.PassedTestNodeStateProperty { Explanation = decoy } ] } }")
+    New-C1325Fixture 'S06' $record $ordinary -Provenance 'derived: quoted Passed header only in exception stack'
+    $record = $D13FailureRecord.Replace("`r`n", "`n").Replace('TrxExceptionProperty { Message = ',
+        "TrxExceptionProperty { Message = PassedTestNodeStateProperty { Explanation = decoy }`n")
+    New-C1325Fixture 'S07' $record $ordinary -Provenance 'derived: quoted Passed header only in earlier TRX text'
+    $record = $D13FailureRecord.Replace("`r`n", "`n").Replace(', DisplayName = C488_ApprovalPollingCannotConfirm, Properties = [',
+        ', DisplayName = FailedTestNodeStateProperty { Explanation = decoy }, Properties = [')
+    New-C1325Fixture 'S08' $record $ordinary -Provenance 'derived: quoted Failed header only in display name'
+    New-C1325Fixture 'S09' ((New-C1325CapturedDerivative $quoted).Replace("`n", "`r`n")) `
+        ('[Test Failure] ' + $quoted.Replace("`n", "`r`n")) -Newline 'CRLF'
+    $record = New-D13StateRecord -Uid 'Probe.C1325.1.1.Only.1.1.0' -TypeName 'C1325' -Method 'Only' `
+        -StateName 'Error' -Explanation ('[Test Failure] ' + $quoted) -ExceptionText ('TUnit.Engine.Exceptions.TestFailedException: ' + $quoted)
+    New-C1325Fixture 'S10' $record ('[Test Failure] ' + $quoted) -Short -Provenance 'reflected short envelope with derived quoted text'
+    $message = 'ordinary { balanced } and unmatched } { { braces'
+    New-C1325Fixture 'S11' (New-C1325CapturedDerivative $message) ('[Test Failure] ' + $message)
+    $record = '2026-10-04T12:00:00.000+00:00 Pinned.Logger INFORMATION ' + (New-C1325CapturedDerivative $quoted)
+    New-C1325Fixture 'S12' $record ('[Test Failure] ' + $quoted) -Provenance 'derived: supported logger prefix'
+}
+
+function Get-C1325AmbiguousStateRecord {
+    # The original Error and this complete identifier/location-to-Passed
+    # transition are both structurally possible. Insert only in the exception
+    # stack, so there are exactly two candidate transitions and the original
+    # UID, explanation and echo remain intact. No brace-counting can disambiguate.
+    $transition = 'TestMethodIdentifierProperty { AssemblyFullName = Antiphon.E2E, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null, Namespace = Antiphon.E2E, TypeName = AgentTaskLandDeliveryE2ETests, MethodName = C488_ApprovalPollingCannotConfirm, MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Threading.Tasks.Task }, TestFileLocationProperty { FilePath = Fixture.cs, LineSpan = LinePositionSpan { Start = LinePosition { Line = 1, Column = 0 }, End = LinePosition { Line = 1, Column = 0 } } }, PassedTestNodeStateProperty { Explanation = apparent success'
+    return $D13FailureRecord.Replace("`r`n", "`n").Replace(' } ] } }', ("`n   at Fixture.Frame() quoting " + $transition + ' } ] } }'))
 }
