@@ -11,12 +11,12 @@ public class ChromiumRuntimeSmokeTests
 {
     [Test]
     [Timeout(60_000)]
-    public async Task Chromium_launches_and_renders_local_content()
+    public async Task Chromium_launches_and_renders_local_content(CancellationToken cancellationToken)
     {
         var profile = Directory.CreateTempSubdirectory("antiphon-chromium-smoke-");
         try
         {
-            using var playwright = await Playwright.CreateAsync();
+            using var playwright = await Playwright.CreateAsync().WaitAsync(cancellationToken);
             IBrowserContext? context = null;
             try
             {
@@ -40,7 +40,7 @@ public class ChromiumRuntimeSmokeTests
             finally
             {
                 if (context is not null)
-                    await context.CloseAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                    await context.CloseAsync().WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
             }
         }
         finally
