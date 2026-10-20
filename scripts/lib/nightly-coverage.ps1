@@ -408,7 +408,16 @@ function ConvertFrom-NightlyDiagnosticLog {
         $stateProperty = Get-NightlyDiagnosticStateProperty -Record $record
         $state = Get-NightlyDiagnosticStateName -Record $record -StateProperty $stateProperty
         if ([string]::IsNullOrWhiteSpace($state)) {
-            if ($Kind -eq 'discovery') { throw ('malformed discovery record: missing state {0}' -f $Path) }
+            if ($Kind -eq 'discovery') {
+                # Preserve the specific malformed-identity refusal when a
+                # truncated discovery record still carries a discovery header.
+                # This presence check can only refine a refusal: it never
+                # selects state, admits a node, or borrows the next record.
+                if ($record -cmatch '(?<![A-Za-z])DiscoveredTestNodeStateProperty \{') {
+                    $null = ConvertFrom-NightlyDiagnosticRecord -Record $record -State '' -StateProperty $stateProperty
+                }
+                throw ('malformed discovery record: missing state {0}' -f $Path)
+            }
             # A framed TestNode with no known state is a failure. A log with no
             # TestNode still throws unknown diagnostic format below.
             if ($record -match 'TestNode \{ Uid = TestNodeUid') { $state = 'Failed' }
