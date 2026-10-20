@@ -5,6 +5,18 @@ Inspected base: `fef2503a3e5e4127315be61a17336477dd11b4d2` (CARD-1312).
 Test-only, master-only. No tests or builds run during planning.
 Predecessor: [CARD-1312 plan](2026-10-20-card-1312-shared-bin-isolation-plan.md).
 
+## Caller refinement after the first CP-2 run
+
+The first CP-2 run executed 19 methods: 16 passed and three NoBuild cases failed.
+Those cases had silently depended on an earlier case's build-source receipt in
+the shared `bin-c585h/`. Although admission permits unknown binding, the driver's
+final success trailer requires a matching receipt. The caller authorized each
+NoBuild fixture to seed its own isolated root and requested one CP-2 rerun.
+This supersedes the no-seed statements below: use a prior shim build into that
+fixture's root, with separate setup logs/results, preserving zero builds in the
+measured NoBuild call and the existing property/lease assertions. Do not change
+the production driver. Keep the historical red evidence.
+
 ## Ground truth
 
 All file:line references describe the inspected base.
