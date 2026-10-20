@@ -168,10 +168,10 @@ public sealed class RolePolicyToolBundleDispatchTests
     // the receipt; one complete matching UserPrompt is.
     // eligible: an idle parent takes the note inline.
     // busy: an open turn keeps the row Pending and untyped; the turn-end flush types it once.
-    // enqueue-failure: the insert save throws; the CARD-0231 reminder armed with the Failed status
-    // types the note once on a later tick, and the tick after that sees it Sent and adds nothing.
+    // enqueue-failure: the insert save throws; the durable failure obligation recovers the saved
+    // payload on a later tick without arming a legacy reminder.
     // crash-after-enqueue: the insert commits and the pre-type Sent save throws; after a restart a
-    // due reminder tick sees the Pending row and adds nothing, and the stranded flush types it once.
+    // outbox scan reuses the Pending row, and the stranded flush types it once.
     // Mutation: drop the enqueue in FailAndNotifyAsync -> no row after the refusing tick, red.
     [Test]
     [Timeout(120_000)]
@@ -236,20 +236,25 @@ public sealed class RolePolicyToolBundleDispatchTests
                 (await RowsAsync(store, parent.SessionId)).ShouldBeEmpty("a failed enqueue commits no row");
                 (await NotePromptsAsync(store, parent.SessionId)).ShouldBeEmpty("a failed enqueue types nothing");
                 failed.CompletionNoteQueuedAt.ShouldBeNull("a failed insert leaves the task unstamped");
-                var due = failed.NextCheckAt.ShouldNotBeNull("the reminder is armed with the Failed status");
+                failed.NextCheckAt.ShouldBeNull("the outbox owns delivery");
+                await using var debtDb = new AppDbContext(TestDbFixture.CreateDbContextOptions(store));
+                var obligation = await debtDb.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.TaskId == review.Id);
+                var due = obligation.NextAttemptAt;
 
                 fault.Mode = NoticeCut.None;
                 AdvanceTo(clock, due);
                 await TickAsync(provider, ct);
-                var recovered = (await RowsAsync(store, parent.SessionId)).ShouldHaveSingleItem("the reminder inserts the one note");
-                recovered.Body.ShouldContain("the first failure note did not reach you");
+                var recovered = (await RowsAsync(store, parent.SessionId)).ShouldHaveSingleItem("the outbox recovers one keyed note");
+                recovered.SourceLandNotificationId.ShouldBe(obligation.Id);
+                recovered.Body.ShouldBe(obligation.Body);
+                await parent.Queue.FlushStrandedQueuesAsync(ct);
                 await AssertDeliveredOnceAsync(parent, review.Id, recovered.Id, path);
 
                 clock.Advance(TimeSpan.FromHours(2));
                 await TickAsync(provider, ct);
                 await parent.Queue.OnTurnEndAsync(parent.SessionId, ct);
                 await AssertDeliveredOnceAsync(parent, review.Id, recovered.Id, path + " replay");
-                (await ReadTaskAsync(store, review.Id)).NextCheckAt.ShouldBeNull("a Sent note disarms the reminder");
+                (await ReadTaskAsync(store, review.Id)).NextCheckAt.ShouldBeNull("no legacy reminder is armed");
             }
             else if (path == "crash-after-enqueue")
             {
@@ -262,7 +267,10 @@ public sealed class RolePolicyToolBundleDispatchTests
                 failed.CompletionNoteQueuedAt.ShouldNotBeNull("the stamp committed with the insert");
                 failed.CompletionNoteDigest.ShouldBe(pending.ContentDigest);
                 (await NotePromptsAsync(store, parent.SessionId)).ShouldBeEmpty("the crash is before typing");
-                var due = failed.NextCheckAt.ShouldNotBeNull("the reminder is armed with the Failed status");
+                failed.NextCheckAt.ShouldBeNull("the outbox owns delivery");
+                await using var debtDb = new AppDbContext(TestDbFixture.CreateDbContextOptions(store));
+                var obligation = await debtDb.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.TaskId == review.Id);
+                var due = obligation.NextAttemptAt;
 
                 var sessionId = parent.SessionId;
                 var agentId = parent.AgentId;
@@ -280,9 +288,9 @@ public sealed class RolePolicyToolBundleDispatchTests
                 provider = BuildProvider(store, sink, UnknownKey, restarted, clock);
                 AdvanceTo(clock, due);
                 await TickAsync(provider, ct);
-                var still = (await RowsAsync(store, sessionId)).ShouldHaveSingleItem("a due reminder does not insert beside a Pending note");
+                var still = (await RowsAsync(store, sessionId)).ShouldHaveSingleItem("the outbox reuses the committed keyed row");
                 still.Id.ShouldBe(pending.Id);
-                still.Status.ShouldBe(QueuedMessageStatus.Pending, "the reminder tick does not type it");
+                still.Status.ShouldBe(QueuedMessageStatus.Pending, "reconciliation leaves typing to the queue");
                 (await NotePromptsAsync(store, sessionId)).ShouldBeEmpty();
 
                 (await restarted.Queue.FlushStrandedQueuesAsync(ct))
@@ -332,8 +340,9 @@ public sealed class RolePolicyToolBundleDispatchTests
             if (taskId is Guid owned)
             {
                 await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(store));
-                await db.AgentTaskEvents.Where(e => e.AgentTaskId == owned).ExecuteDeleteAsync();
                 await db.SessionQueuedMessages.Where(m => m.SourceTaskId == owned).ExecuteDeleteAsync();
+                await db.AgentTaskLandNotifications.Where(n => n.TaskId == owned).ExecuteDeleteAsync();
+                await db.AgentTaskEvents.Where(e => e.AgentTaskId == owned).ExecuteDeleteAsync();
                 await db.AgentTasks.Where(t => t.Id == owned).ExecuteDeleteAsync();
             }
             await provider.DisposeAsync();
@@ -538,6 +547,11 @@ public sealed class RolePolicyToolBundleDispatchTests
 
         var prompt = (await NotePromptsAsync(recipient.ConnectionString, recipient.SessionId)).ShouldHaveSingleItem(path);
         prompt.Kind.ShouldBe(TranscriptKinds.UserPrompt, path);
+        prompt.Sequence.ShouldBeGreaterThan(row.LastDeliveryBaselineSequence.ShouldNotBeNull(path), path);
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(recipient.ConnectionString));
+        var obligation = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.TaskId == taskId);
+        row.SourceLandNotificationId.ShouldBe(obligation.Id, path);
+        row.Body.ShouldBe(obligation.Body, path);
         PromptSubmissionMatch.IsCompleteIn(row.Body, prompt.Text).ShouldBeTrue($"{path}: complete matching UserPrompt");
         recipient.Adapter.SubmittedBodies.Count(b => PromptSubmissionMatch.IsCompleteIn(row.Body, b))
             .ShouldBe(1, $"{path}: typed once");
