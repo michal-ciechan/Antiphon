@@ -617,7 +617,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             && land[0].Head == ticket.Identity.CandidateSha, "land_worktree_identity_changed");
         var protection = Path.Combine(ticket.LandGitDirectory, "locked");
         LandVerificationArtifacts.RequireNoLinks(protection);
-        Require((await File.ReadAllTextAsync(protection, ct)).Trim() == LandWorkspace.LockReason,
+        Require((await File.ReadAllTextAsync(protection, ct)).Trim() == Infrastructure.Git.LandWorkspace.LockReason,
             "land_worktree_identity_changed");
         foreach (var path in ticket.SourceCanonical is null
                      ? new[] { ticket.Identity.WorktreePath }
