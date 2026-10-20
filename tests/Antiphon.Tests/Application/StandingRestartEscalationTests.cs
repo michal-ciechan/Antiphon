@@ -62,6 +62,7 @@ public partial class StandingRestartEscalationTests
             healthy.StartedSessionId.ShouldBe(id);
             healthy.StartedArgs.ShouldContain("--resume");
             (await ReadAsync(agent.Id)).AutomaticResumeFailures.ShouldBe(3, "queued acceptance is not recovery");
+            DateTime healthyBoundary;
             await using (var db = AgentSupervisionTests.CreateContext())
             {
                 var state = (await db.AgentSupervisionStates.FindAsync(agent.Id))!;
@@ -69,13 +70,12 @@ public partial class StandingRestartEscalationTests
                 state.AutomaticFreshAlertedHoldAt = h.Clock.GetUtcNow().UtcDateTime;
                 await db.SaveChangesAsync();
                 var completed = (await db.AgentSessions.FindAsync(id))!.InteractiveLaunchCompletedAt!.Value;
-                h.Clock.Advance(completed.AddMinutes(5).AddTicks(-1) - h.Clock.GetUtcNow().UtcDateTime);
+                healthyBoundary = completed.AddMinutes(5);
             }
-            await h.Supervisor().TickAsync(default);
+            await TickAtAsync(h, healthyBoundary.AddTicks(-1));
             (await ReadAsync(agent.Id)).AutomaticResumeFailures.ShouldBe(3);
             (await ReadAsync(agent.Id)).AutomaticFreshConsumed.ShouldBeTrue();
-            h.Clock.Advance(TimeSpan.FromTicks(1));
-            await h.Supervisor().TickAsync(default);
+            await TickAtAsync(h, healthyBoundary);
             var recovered = await ReadAsync(agent.Id);
             recovered.AutomaticResumeFailures.ShouldBe(0);
             recovered.LastAutomaticResumeSessionId.ShouldBeNull();

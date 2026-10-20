@@ -14,6 +14,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -73,8 +74,10 @@ public partial class StandingRestartEscalationTests
                 if (variant == "preflight")
                 {
                     h.Runner.ListOverride = _ => throw new TimeoutException("inventory unavailable");
+                    await using var actionScope = h.Provider.CreateAsyncScope();
                     var refused = await Should.ThrowAsync<ServiceUnavailableException>(
-                        h.Control.StartAsync(agent.Id, new(), default, automatic: true));
+                        actionScope.ServiceProvider.GetRequiredService<AgentControlService>()
+                            .StartAsync(agent.Id, new(), default, automatic: true));
                     refused.Code.ShouldBe("standing_resume_runner_unavailable");
                     var state = await ReadAsync(agent.Id);
                     state.AutomaticResumeFailures.ShouldBe(2);
@@ -165,14 +168,12 @@ public partial class StandingRestartEscalationTests
                 {
                     session.Status = variant == "starting" ? SessionStatus.Starting : SessionStatus.Running;
                     session.InteractiveLaunchCompletedAt = variant == "running-incomplete" ? null : marker;
-                    h.Clock.Advance(marker.AddMinutes(5) - h.Clock.GetUtcNow().UtcDateTime);
-                    if (variant == "healthy-before") h.Clock.Advance(TimeSpan.FromTicks(-1));
                 }
                 await db.SaveChangesAsync();
             }
             var resets = variant == "healthy-boundary" || variant.StartsWith("manual-");
             if (variant.StartsWith("healthy-") || variant is "starting" or "running-incomplete")
-                await h.Supervisor().TickAsync(default);
+                await TickAtAsync(h, marker.AddMinutes(5).AddTicks(variant == "healthy-before" ? -1 : 0));
             else if (variant == "clear-only")
             {
                 await using var db = AgentSupervisionTests.CreateContext();
@@ -182,7 +183,9 @@ public partial class StandingRestartEscalationTests
             else if (variant == "rejected-human")
             {
                 h.Runner.ListOverride = _ => throw new TimeoutException("inventory unavailable");
-                await Should.ThrowAsync<ServiceUnavailableException>(h.Control.StartAsync(agent.Id, new(), default));
+                await using var actionScope = h.Provider.CreateAsyncScope();
+                await Should.ThrowAsync<ServiceUnavailableException>(actionScope.ServiceProvider
+                    .GetRequiredService<AgentControlService>().StartAsync(agent.Id, new(), default));
             }
             else
             {
@@ -194,7 +197,9 @@ public partial class StandingRestartEscalationTests
                     _ => new StartAgentRequest()
                 };
                 h.Clock.Advance(TimeSpan.FromSeconds(1));
-                await h.Control.StartAsync(agent.Id, request, default, automatic: variant == "automatic-accepted");
+                await using var actionScope = h.Provider.CreateAsyncScope();
+                await actionScope.ServiceProvider.GetRequiredService<AgentControlService>()
+                    .StartAsync(agent.Id, request, default, automatic: variant == "automatic-accepted");
                 await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
             }
             var after = await ReadAsync(agent.Id);
@@ -249,6 +254,15 @@ public partial class StandingRestartEscalationTests
         state.AutomaticFreshConsumed.ShouldBeFalse();
         state.AutomaticFreshAlertedHoldAt.ShouldBeNull();
         verify.Database.HasPendingModelChanges().ShouldBeFalse();
+    }
+
+    // Freeze only the observation. Queue polling retains the harness's advancing clock.
+    private async Task TickAtAsync(AgentSupervisionTests.Harness h, DateTime at)
+    {
+        await using var scope = h.Provider.CreateAsyncScope();
+        var supervisor = ActivatorUtilities.CreateInstance<AgentSupervisorService>(
+            scope.ServiceProvider, new FakeTimeProvider(new DateTimeOffset(at)));
+        await supervisor.TickAsync(default);
     }
 
     private sealed class ReservationFailure : DbTransactionInterceptor
