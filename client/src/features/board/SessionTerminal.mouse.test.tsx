@@ -448,6 +448,13 @@ describe.sequential('CARD-0148 mouse policy', () => {
   })
 
   it('reset and instances remain independent', async () => {
+    function resetGestures(terminal: Terminal) {
+      hover(terminal)
+      press(terminal)
+      release()
+      wheel(terminal, -1)
+      wheel(terminal, 1)
+    }
     async function assertBareReports(bare: Terminal, label: string) {
       const bareEvents = collect(bare)
       await write(bare, '\x1b[?1003;1006h')
@@ -464,11 +471,13 @@ describe.sequential('CARD-0148 mouse policy', () => {
     const terminal = openTerminal(true)
     await assertBareReports(before, 'created before mirror')
     const emitted = collect(terminal)
+    // One reset must preserve every registered protocol; V-3 owns the modifier
+    // matrix. Keep this reset proof to its specified hover/press/wheel gestures.
+    terminal.reset()
     for (const { name, mode } of protocols) {
-      terminal.reset()
-      await write(terminal, `\x1b[?${mode};1006hHELLO WORLD`)
+      await write(terminal, `\x1b[?${mode};1006h\x1b[HHELLO WORLD`)
       emitted.clear()
-      gestures(terminal)
+      resetGestures(terminal)
       expect(emitted.data, `${name} rearm`).toEqual([])
       expect(emitted.binary, `${name} rearm`).toEqual([])
       dragHello(terminal)
@@ -480,7 +489,7 @@ describe.sequential('CARD-0148 mouse policy', () => {
     const fresh = openTerminal(true)
     const freshEvents = collect(fresh)
     await write(fresh, GROK_STARTUP + 'HELLO WORLD')
-    gestures(fresh)
+    resetGestures(fresh)
     dragHello(fresh)
     expect(fresh.getSelection()).toBe('HELLO')
     expect(freshEvents.data).toEqual([])
