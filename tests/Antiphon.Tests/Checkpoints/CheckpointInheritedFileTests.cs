@@ -90,7 +90,7 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
             File.WriteAllText(binding, JsonSerializer.Serialize(new
             {
                 sha, digest = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
-                phase = "Namespace", output, sandbox
+                phase = "Namespace", output = output + Path.DirectorySeparatorChar, sandbox
             }));
             CheckpointBoundedProbe.Executable(Path.Combine(shim, "git"), $"#!/bin/sh\nprintf '%s\\n' '{sha}'\n");
             CheckpointBoundedProbe.Executable(Path.Combine(shim, "dotnet"), """
@@ -160,7 +160,10 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
             if (site == "R1" && shape == "fifo")
                 File.Exists(childDone).ShouldBeFalse("pre-run refusal must precede the child");
             else
+            {
+                File.Exists(childDone).ShouldBeTrue(result.Stdout + result.Stderr);
                 File.ReadAllText(childDone).ShouldBe(nonce, "the post-run check must follow the fake child");
+            }
             if (shape == "ordinary")
             {
                 using var pair = JsonDocument.Parse(File.ReadAllText(binding!));
