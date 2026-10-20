@@ -314,6 +314,7 @@ public static class CheckpointApp
                 output.WriteLine(line);
                 try { Note(line); }
                 catch (Exception logFailure) when (logFailure is IOException or UnauthorizedAccessException) { }
+                catch (ObjectDisposedException) { } // Terminal publication follows log settlement.
             }
             try { ReportWriter.WriteFiles(context, runDirectory, model); }
             catch (Exception persistence) when (persistence is IOException or UnauthorizedAccessException)
@@ -321,6 +322,7 @@ public static class CheckpointApp
             try { await logWriter.FlushAsync().ConfigureAwait(false); }
             catch (Exception logFailure) when (logFailure is IOException or UnauthorizedAccessException)
             { output.WriteLine("checkpoint log persistence failed: " + logFailure.Message); }
+            catch (ObjectDisposedException) { }
             try { await logWriter.DisposeAsync().ConfigureAwait(false); }
             catch (Exception logFailure) when (logFailure is IOException or UnauthorizedAccessException)
             { output.WriteLine("checkpoint log disposal failed: " + logFailure.Message); }
@@ -328,8 +330,10 @@ public static class CheckpointApp
         }
         if (publicationFailure is not null)
             return await RetainPublicationFailure(publicationFailure).ConfigureAwait(false);
-        // Publish completion before baseline work or output cleanup. Wait also requires executor death.
-        try { Finish(state, model.ExitCode, Publish, () => { }, _ => { }, context); }
+        // Keep a nonterminal receipt until Git evidence, cleanup and owner settlement
+        // determine the final exit. A failed terminal write must not expose an earlier green.
+        state.Phase = "finishing";
+        try { Publish(); }
         catch (StatePublicationException ex)
         { return await RetainPublicationFailure(ex).ConfigureAwait(false); }
         if (!owner.Ended.IsCancellationRequested && !string.IsNullOrWhiteSpace(request.Baseline))
@@ -490,8 +494,8 @@ public static class CheckpointApp
             ReportWriter.WriteFiles(context, runDirectory, model);
         }
         ReportWriter.WriteFiles(context, runDirectory, model);
-        Note("done exit=" + model.ExitCode);
-        await logWriter.FlushAsync().ConfigureAwait(false);
+        watchCancel.Cancel();
+        await watcher.ConfigureAwait(false);
         if (owner.Bound && !owner.Ended.IsCancellationRequested)
             await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
         if (owner.Ended.IsCancellationRequested && model.ExitCode != ExitCodes.OwnerEnded)
@@ -503,14 +507,13 @@ public static class CheckpointApp
             ReportWriter.WriteFiles(context, runDirectory, model);
         }
         cancellationToken.ThrowIfCancellationRequested();
-        if (state.ExitCode != model.ExitCode)
-        {
-            state.ExitCode = model.ExitCode;
-            state.Reason = model.Reason;
-            try { Publish(); }
-            catch (StatePublicationException ex)
-            { return await RetainPublicationFailure(ex).ConfigureAwait(false); }
-        }
+        Note("done exit=" + model.ExitCode);
+        await logWriter.FlushAsync().ConfigureAwait(false);
+        await logWriter.DisposeAsync().ConfigureAwait(false);
+        state.Reason = model.Reason;
+        try { Finish(state, model.ExitCode, Publish, () => { }, _ => { }, context); }
+        catch (StatePublicationException ex)
+        { return await RetainPublicationFailure(ex).ConfigureAwait(false); }
         return model.ExitCode;
         }
         finally

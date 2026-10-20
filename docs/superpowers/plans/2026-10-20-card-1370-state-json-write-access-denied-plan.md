@@ -188,3 +188,11 @@ cleanup failure through the I/O adapter, and denies all corrective state moves.
 It requires waiter exit 2, no surviving done/0 state, and nonterminal state
 during cleanup. This repairs the prematurely published terminal verdict.
 Native Windows V-1 remains pending; no R-n or PC-n was added.
+
+The earlier S2 completion-before-cleanup description is superseded: the repair
+publishes `finishing` before baseline/evidence/cleanup work, joins the owner
+watcher, settles the final owner verdict and log, then publishes `done` once.
+A denied terminal write retains the nonterminal receipt and the failed report.
+The red witness at `dca441feb3ec46d23911446589092d25f2c78a65` failed on the
+surviving done/0 receipt. Its waiter already returned 2 via receipt mismatch;
+the repaired path must expose the retained receipt-write-failed report instead.
