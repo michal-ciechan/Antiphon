@@ -16,7 +16,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [Category("Slow")]
 [NotInParallel]
-public class StandingRestartEscalationTests
+public partial class StandingRestartEscalationTests
 {
     [Test]
     public async Task C510_counts_only_distinct_admitted_failed_resumes()
