@@ -407,13 +407,13 @@ the card's "one red witness per rule" acceptance.
 | CP-17 | S9R | `tests/Antiphon.Tests -> bin-c1380-9r/` | any-age-red | `/*/*/LandObservationAgeTests/C1379_HeldNoteShowsAgeAtFirstDeliveryAttempt*` | V-9 red | exactly 1 executed, expected assertion failure | 1 | 5 |
 | CP-18 | S9 | `tests/Antiphon.Tests -> bin-c1380-9/` | any-age-green | `/*/*/(LandObservationAgeTests\|AgentTaskLandQueuedReceiptTests\|AgentTaskLandNotificationRecoveryTests)/*` | V-9, R-9 | all listed, at least 6 new tests, 0 failed/skipped | 6 | 8 |
 | CP-19 | S5W | `tests/Antiphon.Tests -> bin-c1380-windows/` | windows-lease-native | `/*/*/(LandVerificationReservationTests\|LandVerificationConcurrencyTests\|RepositoryMutationLeaseTests)/*` | V-4, V-5, R-4, R-5 native | all listed on Windows, at least 12 executed, 0 failed/skipped | 12 | 10 |
-| CP-20 | S1 | CP-2 | any-warm-unit | `/*/*/*/*[Category=Unit]` | S1 Final whole Unit lane | all Unit tests, 0 failed/skipped | 1 | 8 |
 
 S1 Code selection correction: CP-2 uses the pinned TUnit OR syntax with each
-class operand parenthesized and wildcarded. CP-20 supplies the Final profile's
-whole Unit obligation using CP-2's exact-source build; it adds no full-assembly
-run. CP-1 remains the single historical red witness. Later slices retain their
-own separate commissioning and checkpoint obligations.
+class operand parenthesized and wildcarded. The operator's S1 refinement prohibits
+whole Unit lane runs: S1 executes CP-1 red and CP-2 green only. The initially added
+CP-20 was withdrawn before execution; its shared build was stopped and its owned
+output removed. Later slices retain their separate commissioning and checkpoint
+obligations.
 
 ## Shipment, measurement and rollback
 
