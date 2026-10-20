@@ -158,3 +158,83 @@ A file/build/slot/fixture refusal or zero-test selection is incomplete execution
 not a passing sweep. Remove only task-owned alternate outputs after all
 processes finish. The caller receives the tested SHA, per-row counts and
 dispositions; it must not close this card solely because CARD-0690 is Done.
+
+## Verification evidence - 2026-10-20, task cd5febb7
+
+**Not ready to close: 18 executed, 17 passed, 1 failed, 0 skipped. Next: code.** No product or test files were changed. TestDesign was explicitly skipped by the Verify brief; this append records execution of the existing manifest.
+
+Tested source: `da583971d4f6d33f609bd6907c6d9e3fadf37e28`; assigned branch: `feat/card-task-cd5febb7`. These results predate the documentation-only evidence commit and must not be relabeled as execution of that later commit. Linux host: Debian 12, .NET 9.0.21, TUnit 1.44.0.
+
+| Selection | Executed | Passed | Failed | Skipped |
+|---|---:|---:|---:|---:|
+| CP-1 / linux-fake-pins | 2 | 2 | 0 | 0 |
+| CP-2 / linux-fake-ready | 2 | 2 | 0 | 0 |
+| CP-3 / linux-fake-disposal | 6 | 6 | 0 | 0 |
+| CP-4 / linux-fake-standing | 7 | 7 | 0 | 0 |
+| CP-5 / linux-fake-converter | 1 | 0 | 1 | 0 |
+
+CP-5 failed in `ChannelOutboundRecoveryTests.Running_converter_reconciles_after_dispatcher_death`:
+
+> ConflictException: Message delivery could not be verified — the terminal did not accept it (the submitting Enter produced no output). The message has been returned to the queue.
+
+The exception originates at `SessionMessageQueueService.SendNowAsync`, lines 1566/1573, and is observed while awaiting `nativeBriefDelivery` at `ChannelOutboundRecoveryTests.cs:878`, after releasing the converter gate. The test is unchanged between the baseline, CARD-1277 tip and assigned source. The failure is not a build, fixture-startup, zero-test or checkpoint deadline failure.
+
+### Attribution diagnostics
+
+Only CP-5 was selected in each extra run, with a separate clean detached checkout and one gated build. The same current checkpoint-tool binary ran both diagnostics, with the original plan selection, `--serial --row-timeout 40m --expected-source-sha <diagnostic SHA>`. Each used a fresh TRX and `TUNIT_MAX_PARALLEL_TESTS=1`. No current-source retry or passing-row rerun was performed.
+
+- Before CARD-1277: `5e21b61a2d3b05d919edee81d71e43dd65f34751`, run `20261020-151610-41e6`: 1 executed, 1 passed, 0 failed/skipped. Receipt validation exited 0: `CHECKPOINT SOURCE VALID source=5e21b61a2d3b05d919edee81d71e43dd65f34751 rows=1`.
+- CARD-1277 final commit: `b5d46722a18c963acac6ebc47ac12a50487ed87c`, run `20261020-152312-ca3a`: 1 executed, 1 passed, 0 failed, 0 skipped.
+
+Attribution: both the immediate pre-CARD-1277 source and its final tip pass, while the assigned source fails. The failure was not reproduced in the CARD-1277 change range. Both fake implementations and this test are unchanged from the CARD-1277 tip to the assigned source, while queue-delivery code changed later. A later regression or timing-dependent failure remains unresolved; do not label it inherited or proven to be caused by CARD-1277.
+
+Next Code should investigate this exact method and the native brief Enter/acceptance handshake around the converter gate, preserving the demonstrated failure before changing behavior. No timeout, assertion, skip, environment or platform guard was weakened. No card was filed; the caller owns follow-up assignment. Master only; no deployment or activation.
+
+### Commands and provenance
+
+Bootstrap (gated, 13.13s compiler time, 4 warnings, 0 errors):
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1284-checkpoint-bootstrap -- dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-c1284-tool/ --nologo
+dotnet tools/Antiphon.Checkpoints/bin-c1284-tool/Antiphon.Checkpoints.dll run --plan docs/superpowers/plans/2026-10-20-card-1284-linux-fake-cli-regression-plan.md --rows CP-1,CP-2,CP-3,CP-4,CP-5 --serial --row-timeout 40m --expected-source-sha da583971d4f6d33f609bd6907c6d9e3fadf37e28 --max-wait 45s
+```
+
+Every running observer was awaited, repeating `wait` after exit 75. The ordinary run used one build, reused it for CP-2 through CP-5, and executed serially. Every bootstrap/build/test received a build-slot lease, without slot bypass. The two extra builds and exact CP-5 runs were failure-attribution diagnostics. Baseline checkouts were created manually and run through the checkpoint tool to avoid rerunning the current-source failure merely to trigger its automatic `--baseline` comparer. The post-change diagnostic used `--keep-outputs`; outputs were then removed manually after executor exit.
+
+Nonexecuting setup refusals: the first DLL invocation incorrectly included `net9.0/`; it was corrected to the bootstrap-reported path. An external baseline results root was refused, so the required worktree-local root was used and its receipts later copied unchanged. A baseline wait without its `--repo-root` was refused; the observer was corrected. None launched an extra test or build.
+
+The current run records `dirty=0`, `sourceState=clean`, `buildSource=verified` on all five rows. Its overall verdict remains RED. Attempting receipt validation for CP-1 through CP-4 returned exit 2, `CHECKPOINT SOURCE INVALID reason=cleanup_refused`, because the red run retained its output directory. Manual cleanup does not rewrite that historical receipt or manufacture a clean qualification.
+
+Raw reports, TRX, build logs, console logs and process-exit diagnostics remain ignored under `.antiphon/checkpoints/<run-id>/` in the assigned checkout. The baseline receipts retain their original absolute paths; their run directories were copied unchanged into that evidence root before removing temporary checkouts. The test deletes its own temporary native transcript/JSONL directory in `finally`, so raw native JSONL is unavailable; retained stdout includes owned-host/descendant exit observations. Generated payloads are not committed.
+
+The CARD-1277-tip receipt also validated with exit 0: CHECKPOINT SOURCE VALID source=b5d46722a18c963acac6ebc47ac12a50487ed87c rows=1. Reported run wall times were 8m49s (ordinary), 5m34s (pre-change) and 5m12s (CARD-1277 tip), excluding observer cleanup. All three executors terminated; both detached checkouts and all three task-owned alternate compiler-output roots were removed. Build-log evidence directories with bin-c1284-linux in their names remain as evidence, not compiler outputs.
+
+### Unedited checkpoint lines
+
+```text
+CHECKPOINT CP-1 commit=da583971d4f6d33f609bd6907c6d9e3fadf37e28 build=ok filter=/*/*/Card1277PtyHostFixtureTests*/* executed=2 passed=2 failed=0 skipped=0 trx=/work/worktrees/task-cd5febb7/.antiphon/checkpoints/20261020-150559-9d6b/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=da583971d4f6d33f609bd6907c6d9e3fadf37e28 sourceState=clean buildSource=verified
+CHECKPOINT CP-2 commit=da583971d4f6d33f609bd6907c6d9e3fadf37e28 build=reused filter=/*/*/RunnerGrokAdapterReadyTestsPty*/Fake_dashboard_marker_reaches_ready_and_complete_first_prompt* executed=2 passed=2 failed=0 skipped=0 trx=/work/worktrees/task-cd5febb7/.antiphon/checkpoints/20261020-150559-9d6b/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=da583971d4f6d33f609bd6907c6d9e3fadf37e28 sourceState=clean buildSource=verified
+CHECKPOINT CP-3 commit=da583971d4f6d33f609bd6907c6d9e3fadf37e28 build=reused filter=/*/*/DirectSessionRunnerClientDisposalTests*/* executed=6 passed=6 failed=0 skipped=0 trx=/work/worktrees/task-cd5febb7/.antiphon/checkpoints/20261020-150559-9d6b/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=da583971d4f6d33f609bd6907c6d9e3fadf37e28 sourceState=clean buildSource=verified
+CHECKPOINT CP-4 commit=da583971d4f6d33f609bd6907c6d9e3fadf37e28 build=reused filter=/*/*/HerdrAlwaysOnChannelParityTests*/(Standing_ptyhost_history_recovery_preserves_native_identity_and_queued_reply*)|(Standing_native_wire_missing_target_never_creates*) executed=7 passed=7 failed=0 skipped=0 trx=/work/worktrees/task-cd5febb7/.antiphon/checkpoints/20261020-150559-9d6b/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=da583971d4f6d33f609bd6907c6d9e3fadf37e28 sourceState=clean buildSource=verified
+CHECKPOINT CP-5 commit=da583971d4f6d33f609bd6907c6d9e3fadf37e28 build=reused filter=/*/*/ChannelOutboundRecoveryTests*/Running_converter_reconciles_after_dispatcher_death* executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-cd5febb7/.antiphon/checkpoints/20261020-150559-9d6b/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=da583971d4f6d33f609bd6907c6d9e3fadf37e28 sourceState=clean buildSource=verified
+CHECKPOINT CP-5 commit=5e21b61a2d3b05d919edee81d71e43dd65f34751 build=ok filter=/*/*/ChannelOutboundRecoveryTests*/Running_converter_reconciles_after_dispatcher_death* executed=1 passed=1 failed=0 skipped=0 trx=/tmp/antiphon-checkpoints-baseline/c1284-cd5febb7/pre-card1277/.antiphon/checkpoints/20261020-151610-41e6/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=5e21b61a2d3b05d919edee81d71e43dd65f34751 sourceState=clean buildSource=verified
+CHECKPOINT CP-5 commit=b5d46722a18c963acac6ebc47ac12a50487ed87c build=ok filter=/*/*/ChannelOutboundRecoveryTests*/Running_converter_reconciles_after_dispatcher_death* executed=1 passed=1 failed=0 skipped=0 trx=/tmp/antiphon-checkpoints-baseline/c1284-cd5febb7/post-card1277/.antiphon/checkpoints/20261020-152312-ca3a/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=b5d46722a18c963acac6ebc47ac12a50487ed87c sourceState=clean buildSource=verified
+```
+
+### Fresh TRX identities and digests
+
+| Run / row | TestRun ID | SHA-256 |
+|---|---|---|
+| 20261020-150559-9d6b / CP-1 | 46b33628-90dc-4a16-af86-11d2820fef21 | c7febd4629002e99e6d78dcef8e9e7cb3593c300f78c44ef06a3537bcf5faf2f |
+| 20261020-150559-9d6b / CP-2 | ea4acd1d-1d7f-4c6e-bb1d-0f8032493742 | cc15520dbb1e7e67b302934abeecd51fe4c5de29202c56048e59b2a9ed4f46b6 |
+| 20261020-150559-9d6b / CP-3 | 51c7aab1-47e9-43d5-92be-fa176ed36641 | 6891fa2fc79a990f2159887b17ccb1c00fd3eebd31cc543e26beb1af2964e71e |
+| 20261020-150559-9d6b / CP-4 | 076611af-6a56-4619-a2c3-5af904324ebc | c2f70622cbaf4f8cd69975acfef70b052c96dd9848648b48f3e79f9c00de190c |
+| 20261020-150559-9d6b / CP-5 | 351c93e7-aa84-474f-bb0e-823ae44a7301 | 4f7768737a81962e2f79afa059a3c01a7ad91225db7e023e1f1a436157d8b7da |
+| 20261020-151610-41e6 / CP-5 | 7afa770b-4354-4a0f-a19b-f7f4f9811021 | 6c62c5f14b62a29572658b7bad8febb049a246675878f6778ca8796e397952fd |
+| 20261020-152312-ca3a / CP-5 | 1cd6c53d-c534-4c74-8fb0-19b651ef56fe | 23b34636d834476bcc7725934876ba6f838aca65eca2d92f0fc393ba9ec8a594 |
+
+The ordinary TRX roster was checked against the planned 18 results: 2 nonce/two-write pins, 2 readiness arguments, 6 disposal controls, 4 standing-history plus 3 missing-target arguments, and 1 converter case. No whole-Unit or Windows-gated native fake CLI tests ran.
+
+--- next stage ---
+next: code
+handoff: Investigate CP-5 native prompt acceptance; preserve the current failure and the pre/post-CARD-1277 diagnostic outcomes. Keep CARD-1284 open.
+artifact: docs/superpowers/plans/2026-10-20-card-1284-linux-fake-cli-regression-plan.md
