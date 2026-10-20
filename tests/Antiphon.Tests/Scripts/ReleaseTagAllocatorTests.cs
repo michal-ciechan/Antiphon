@@ -8,6 +8,15 @@ namespace Antiphon.Tests.Scripts;
 public sealed class ReleaseTagAllocatorTests
 {
     [Test]
+    public Task C1339_PromoteAuthorityHash() =>
+        ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1339", "C1339_PromoteAuthorityHash", 5,
+            "C1339 G-38 promotion-hash-required",
+            "C1339 G-39 promotion-fresh-authority",
+            "C1339 G-40 promotion-resume-authority",
+            "C1339 G-41 promotion-repository",
+            "C1339 G-42 promotion-card-readback");
+
+    [Test]
     public Task C1339_AllocationUtcDay() =>
         ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1339", "C1339_AllocationUtcDay", 5,
             "C1339 G-33 utc-day",
