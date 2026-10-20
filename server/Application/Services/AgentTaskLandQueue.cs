@@ -5,23 +5,70 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>
 /// In-process hand-off for explicit branch landings (CARD-0331). The durable fact that a land
-/// is wanted lives on <c>AgentTasks.LandRequestedAt</c>; this channel exists so the sweep never
-/// waits on git. The channel is one global single reader. <see cref="Capture"/> is the ordered
+/// is wanted lives on <c>AgentTaskLandRequests</c>; wakeups only request reconciliation.
+/// There is one global single reader. <see cref="Capture"/> is the ordered
 /// snapshot of the entry now executing and the entries still waiting.
 /// </summary>
 public sealed class AgentTaskLandQueue
 {
     private readonly object _gate = new();
     private readonly Dictionary<Guid, LandRequest> _active = new();
-    private readonly Channel<LandRequest> _channel = Channel.CreateUnbounded<LandRequest>(
-        new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+    private readonly Channel<bool> _wake = Channel.CreateBounded<bool>(
+        new BoundedChannelOptions(1) { SingleReader = true, FullMode = BoundedChannelFullMode.DropWrite });
     private readonly List<Tracked> _waiting = new();
+    private readonly HashSet<Guid> _attempted = new();
     private Tracked? _executing;
     private long _nextEntryId;
+    private bool _durableReader;
+    private bool _reconciled;
+
+    // Serializes complete database snapshots, not execution. A failed snapshot never opens
+    // the reader or replaces the last complete ready set.
+    internal SemaphoreSlim ReconciliationGate { get; } = new(1, 1);
+    public void Wake() => _wake.Writer.TryWrite(true);
+    internal void RequireReconciliation()
+    {
+        lock (_gate) { _durableReader = true; _reconciled = false; }
+    }
+    internal void InvalidateSnapshot()
+    {
+        lock (_gate) _reconciled = false;
+    }
+
+    internal bool IsExecuting(Guid taskId)
+    {
+        lock (_gate) return _executing?.Request.TaskId == taskId;
+    }
+
+    internal void Reconcile(IReadOnlyList<LandRequest> pending, bool nextGeneration)
+    {
+        lock (_gate)
+        {
+            if (nextGeneration) _attempted.Clear();
+            var identities = pending.Where(r => r.RequestId.HasValue).Select(r => r.RequestId!.Value).ToHashSet();
+            _attempted.RemoveWhere(id => !identities.Contains(id)
+                && _executing?.Request.RequestId != id);
+            foreach (var waiting in _waiting)
+                if (_active.TryGetValue(waiting.Request.TaskId, out var active)
+                    && ReferenceEquals(active, waiting.Request))
+                    _active.Remove(waiting.Request.TaskId);
+            _waiting.Clear();
+            foreach (var request in pending.OrderBy(r => r.RequestedAt)
+                         .ThenBy(r => r.RequestId?.ToString("N"), StringComparer.Ordinal))
+            {
+                if (_executing?.Request.TaskId == request.TaskId
+                    || request.RequestId is Guid id && _attempted.Contains(id)) continue;
+                _active[request.TaskId] = request;
+                _waiting.Add(new Tracked(++_nextEntryId, request));
+            }
+            _reconciled = true;
+        }
+        if (nextGeneration) Wake();
+    }
 
     /// <summary>
-    /// Hand a pending land to the drain. Returns false when this id is already queued or
-    /// running in this process — never duplicated.
+    /// Record a volatile hint. The production reader must reconcile the complete durable
+    /// snapshot before consuming it. Returns false when this task is already queued or running.
     /// </summary>
     public bool TryEnqueue(Guid taskId, string? verifyFilter, Guid? requestId = null)
     {
@@ -30,11 +77,10 @@ public sealed class AgentTaskLandQueue
         {
             if (_active.ContainsKey(taskId))
                 return false;
-            if (!_channel.Writer.TryWrite(item))
-                return false;
-
             _active.Add(taskId, item);
             _waiting.Add(new Tracked(++_nextEntryId, item));
+            _reconciled = false;
+            Wake();
             return true;
         }
     }
@@ -72,12 +118,19 @@ public sealed class AgentTaskLandQueue
         }
     }
 
-    public async IAsyncEnumerable<LandRequest> ReadAllAsync([EnumeratorCancellation] CancellationToken ct)
+    public async IAsyncEnumerable<LandRequest> ReadAllAsync([EnumeratorCancellation] CancellationToken ct,
+        Func<CancellationToken, Task<bool>>? reconcile = null)
     {
-        while (await _channel.Reader.WaitToReadAsync(ct).ConfigureAwait(false))
+        while (!ct.IsCancellationRequested)
         {
-            while (TryDequeue(out var request))
+            // The first selection is behind the same full reconciliation as every later
+            // selection. A wake is only a hint, including during startup.
+            if ((reconcile is null || await reconcile(ct)) && TryDequeue(out var request))
+            {
                 yield return request;
+                continue;
+            }
+            await _wake.Reader.ReadAsync(ct).ConfigureAwait(false);
         }
     }
 
@@ -95,8 +148,13 @@ public sealed class AgentTaskLandQueue
     {
         lock (_gate)
         {
-            if (!_channel.Reader.TryRead(out request!))
+            if (_waiting.Count == 0 || _durableReader && !_reconciled)
+            {
+                request = null!;
                 return false;
+            }
+            request = _waiting[0].Request;
+            if (request.RequestId is Guid id) _attempted.Add(id);
             Promote(request);
             return true;
         }
@@ -107,6 +165,8 @@ public sealed class AgentTaskLandQueue
     {
         lock (_gate)
         {
+            if (_durableReader && !_reconciled)
+                return new LandQueueSnapshot(observedAt, _executing?.ToEntry(), []);
             var waiting = new LandQueueEntry[_waiting.Count];
             for (var i = 0; i < _waiting.Count; i++)
                 waiting[i] = _waiting[i].ToEntry();
@@ -136,7 +196,8 @@ public sealed class AgentTaskLandQueue
         public LandQueueEntry ToEntry() => new(entryId, Request.TaskId, Request.RequestId);
     }
 
-    public sealed record LandRequest(Guid TaskId, string? VerifyFilter, Guid? RequestId = null);
+    public sealed record LandRequest(Guid TaskId, string? VerifyFilter, Guid? RequestId = null,
+        DateTime? RequestedAt = null);
 }
 
 /// <summary>One accepted channel entry. EntryId distinguishes a requeue from an unread older item.</summary>

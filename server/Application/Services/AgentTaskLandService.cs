@@ -1074,8 +1074,23 @@ public sealed class AgentTaskLandService
     /// Re-enqueue pending lands this process does not hold. Runs immediately at boot and every
     /// <see cref="DelegationSettings.LandSweepSeconds"/>.
     /// </summary>
-    public async Task SweepAsync(CancellationToken ct)
+    public Task SweepAsync(CancellationToken ct) => ReconcileQueueAsync(nextGeneration: true, ct);
+
+    internal async Task ReconcileQueueAsync(bool nextGeneration, CancellationToken ct)
     {
+        await _queue.ReconciliationGate.WaitAsync(ct);
+        try
+        {
+            _queue.InvalidateSnapshot();
+            var pending = await ReconcilePendingAsync(ct);
+            _queue.Reconcile(pending, nextGeneration);
+        }
+        finally { _queue.ReconciliationGate.Release(); }
+    }
+
+    private async Task<IReadOnlyList<AgentTaskLandQueue.LandRequest>> ReconcilePendingAsync(CancellationToken ct)
+    {
+        var ready = new List<AgentTaskLandQueue.LandRequest>();
         var stale = await _db.AgentTasks
             .Where(t => t.LandRequestedAt != null
                 && t.Status != AgentTaskStatus.Succeeded
@@ -1110,7 +1125,7 @@ public sealed class AgentTaskLandService
         var maxAttempts = Math.Clamp(_settings.LandMaxAttempts, 1, 10);
         foreach (var row in pending)
         {
-            if (_queue.IsActive(row.Id))
+            if (_queue.IsExecuting(row.Id))
                 continue;
             var request = await EnsureRequestAsync(row, ct);
             if (!request.IsPending || request.State == LandRequestState.NeedsResolution
@@ -1158,8 +1173,9 @@ public sealed class AgentTaskLandService
             request = await GetRequestAsync(row, ct);
             if (request is null || !request.IsPending || request.State == LandRequestState.NeedsResolution
                 || !LandApproval.RequestStatusEligible(row, request)) continue;
-            _queue.TryEnqueue(row.Id, request.VerifyFilter, request.Id);
+            ready.Add(new(row.Id, request.VerifyFilter, request.Id, request.RequestedAt));
         }
+        return ready;
     }
 
     /// <summary>
