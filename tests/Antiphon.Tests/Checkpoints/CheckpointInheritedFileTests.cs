@@ -45,6 +45,7 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
         }
 
         var blocked = await InvokeAsync(site, "fifo", cancellationToken);
+        Console.WriteLine($"{site} FIFO refusal ({blocked.Milliseconds} ms): {blocked.Stdout}{blocked.Stderr}");
         blocked.Watchdog.ShouldBeFalse($"{site} reached an unbounded file read and required the 8 s watchdog");
         blocked.Milliseconds.ShouldBeLessThan(4_000, $"{site} file admission must finish within 4 s");
         blocked.Exit.ShouldNotBe(0, blocked.Stdout + blocked.Stderr);
@@ -116,7 +117,14 @@ public sealed class CheckpointInheritedFileTests : CheckpointTestBase
                         createdRoots = 0; deletedRoots = 0; copiedLogicalBytes = 0; eventHighWaterRoots = 0; eventHighWaterCopiedBytes = 0 }
                 }
                 """);
-            File.WriteAllText(wrapper, ready + "\n& \"$PSScriptRoot/scripts/verify-checkpoint-temp-usage.ps1\" -Phase Namespace -Pass 1 -OutputPath 'bin-probe/'\n");
+            File.WriteAllText(wrapper, ready + "\n" + """
+                try {
+                    & "$PSScriptRoot/scripts/verify-checkpoint-temp-usage.ps1" -Phase Namespace -Pass 1 -OutputPath 'bin-probe/'
+                } catch {
+                    [Console]::Error.WriteLine($_.Exception.Message)
+                    exit 1
+                }
+                """);
         }
         else
         {
