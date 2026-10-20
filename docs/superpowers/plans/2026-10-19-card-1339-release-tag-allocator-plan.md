@@ -717,7 +717,6 @@ methods** (V-2 is deliberately run again for S3).
 | CP-10 | S5 | `tests/Antiphon.Tests -> bin-c1339-s5-green/` | s5-green | `/*/*/(ReleaseTagAllocatorTests*)\|(ReleaseBranchModelGateTests*)/(C1339_PromoteReservationAndTarget*)\|(C1311_PreReleaseTag*)` | V-5, R-5 | M5, C1311_PreReleaseTag: exactly 2 executed, 0 failed/skipped; 30 harness rows | 2 | 5 |
 | CP-11 | Final | `tests/Antiphon.Tests -> bin-c1339-final-unit/` | final-unit | `/*/*/*/*[Category=Unit]` | Final Unit regression lane | All selected Unit cases, nonzero execution, 0 failed/skipped; retain full TRX roster | 1 | 10 |
 | CP-12 | Final | `tests/Antiphon.Tests -> bin-c1339-final-integration/` | final-integration | `/*/*/(ReleaseTagAllocatorTests*)\|(ReleaseGatePublicationTests*)\|(ReleaseGatePublicationAuthorityTests*)\|(ReleaseBranchModelGateTests*)/*` | V-1..V-5, R-1..R-5, full affected classes | Exactly 31 methods executed, 0 failed/skipped | 31 | 12 |
-
 | CP-13 | S5-root-red | `tests/Antiphon.Tests -> bin-c1339-root-red/` | root-witness | `/*/*/ReleaseTagAllocatorTests/C1339_PromoteReservationAndTarget` | V-5, R-5 root-shape repair witness | M5: exactly 1 executed, 1 failed at G-45 reservation-typed, 0 skipped | 1 | 4 |
 | CP-14 | S5-repair | `tests/Antiphon.Tests -> bin-c1339-repair-green/` | repair-green | `/*/*/(ReleaseTagAllocatorTests*)\|(ReleaseBranchModelGateTests*)/(C1339_PromoteReservationAndTarget*)\|(C1311_PreReleaseTag*)` | V-5, R-5, CP-10 repair | Exactly 2 executed, 0 failed/skipped; 30 harness rows | 2 | 5 |
 
@@ -802,3 +801,17 @@ combined ordinary estimate is 854.25 minutes (45 historic + 22 Final + 787.25).
 These remain estimates, not measured savings or qualification.
 The unbound handoff is
 [the mutation candidate](../mutations/2026-10-20-card-1339-release-tag-allocator-candidate.md).
+
+### S5 ordinary repair amendment
+
+CP-10 at 3957dee47c932695cb6f763da48c91971e728f6b failed: the new unrelated-row
+oracle fed a deserialized DateTime to the general canonical serializer, and the
+legacy trace predicate mistook an explicit positive refspec for a delete. Use
+bounded JSON comparison and distinguish empty-source deletion; retain explicit
+negative controls for deletion and force. Neither timeout nor safety invariant
+changes. CP-13 adds a real wrapped-root defect witness: ConvertFrom-Json unwraps
+a one-element root array, so a valid journal inside an array was admitted.
+CP-14 reruns both failed CP-10 methods after the root-shape fix. Its fresh green
+is the repair receipt; retain CP-10 red. Additional estimate is 9 minutes,
+raising the previous combined estimate from 854.25 to 863.25 minutes. PC-75's
+root-object variant must use the one-element wrapped journal (not only []).
