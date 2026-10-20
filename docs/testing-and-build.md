@@ -492,6 +492,24 @@ Exit codes: 0 green, 1 failed tests, 2 invalid manifest/build, missing/malformed
 
 CARD-1254 shadow-copy safety boundary: only paths copied and recorded by the starter are sealed; no disk record is imported into SafeWrite's generic creation registry. The cleanup gate, executor-generation check, current-image veto and SafeDelete Git/link/containment checks remain in force. Inventory and bytes are checked before cleanup and again per entry; files are unlinked individually and directories removed nonrecursively. The receipt and ownership journal share the OS-account trust boundary: their hash detects changes to the receipt alone, not an actor able to forge both control records. Cooperating writers use the gate; there is no atomic filesystem transaction against a hostile same-account writer. Linux directories bind device/inode; the portable fallback uses creation time and requires native Windows qualification. A definite native launch refusal now records `not-started`; ambiguous launch or failed custody publication remains retained.
 
+CARD-1307 sealed tool removal publishes `<run>/tool-removal-started.json` under the
+cleanup lock after dead-owner and full authority admission, before any tool unlink.
+It records the run, tool path and authority digest through ordinary safe-write
+ownership. Failure to publish permits no tool deletion. The marker stays after
+successful removal and records process interruption, not power-loss durability.
+If removal fails or a later invocation finds that marker beside a remaining tool,
+cleanup returns non-clean `Refused` with `tool-removal-incomplete`, paths and manual
+inspection guidance. The tool may be partially removed; the marker can also precede
+the first unlink. No retry imports or reseals the incomplete inventory, and marker
+presence never grants custody. Invalid or linked markers remain refusals.
+
+To recover, establish executor death and inspect containment, links and the remaining
+files before manually removing that specific tool residue. Keep the run receipts,
+ownership seal and removal marker. A later `wait --run <run>` can observe
+`AlreadyAbsent`; `clean` still requires manual removal. Deleting the marker,
+editing/resealing the inventory or importing it into creation records is not recovery.
+Legacy unsealed copies retain their current-process ledger behavior.
+
 `import --plan <plan.md>` writes the same manifest as YAML under `.antiphon/` when a row needs `knownFlaky`, `serial`, or a timeout pin. A legacy eight-column table (minutes stored under `Min`) is refused until the time column is renamed `EstimatedMinutes` (CARD-0617). `import` treats 45 minutes as an advisory threshold: imported row timeouts are `max(15, 3 * selected EstimatedMinutes)`, using the platform-selected estimate. Estimate 15 gives 45 minutes without a warning; estimate 16 gives 48 minutes with a warning suggesting a split. Row timeouts are not capped at 45 minutes; positive explicit timeouts are used unchanged, and without an estimate the manifest fallback is `max(15, manifestDefault)`. The independent total-run deadline still applies and can stop a row earlier. `import` also warns when a row names more than four land classes. A land row stays at about 120 `[Test]` methods. `row` runs one row with the same lines as `scripts/run-checkpoint.ps1`. The repo tool manifest does not list this package until a feed exists; prove the package with `dotnet pack` and `dotnet tool install --tool-path`.
 
 ### Static plan-to-test coverage (CARD-0891/0901)
