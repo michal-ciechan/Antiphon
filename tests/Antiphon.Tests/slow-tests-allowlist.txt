@@ -237,6 +237,7 @@ Antiphon.Tests.Application.ReviewEvidenceSettlementTests
 Antiphon.Tests.Application.ReviewEvidenceDeliveryTests
 # CARD-0835: source-bound executor reports with process fixtures.
 Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests
+Antiphon.Tests.Checkpoints.CheckpointStatePublicationTests
 # CARD-0835: isolated Review/land migration and resume matrix.
 Antiphon.Tests.Application.CheckpointSourceApprovalTests
 # CARD-0788: real reply settlement with isolated database and scratch Git repository.

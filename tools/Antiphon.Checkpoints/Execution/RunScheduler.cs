@@ -279,12 +279,28 @@ public sealed class RunScheduler
         Publish(request);
         return new SchedulerResult { ExitCode = exit, Rows = finished, State = request.State };
         }
-        catch
+        catch (Exception failure)
         {
             total.Cancel();
-            foreach (var (_, task, _) in running)
+            foreach (var (spec, task, progress) in running)
             {
-                try { await task.ConfigureAwait(false); }
+                try
+                {
+                    var drained = await task.ConfigureAwait(false);
+                    if (failure is StatePublicationException && !finished.Any(row => row.Id == spec.Id))
+                    {
+                        finished.Add(drained);
+                        progress.State = drained.State;
+                        progress.ExitCode = drained.ExitCode;
+                        progress.Line = drained.Line;
+                        progress.Slot = drained.Slot;
+                        progress.SlotReason = drained.SlotReason;
+                        progress.WaitedSeconds = drained.WaitedSeconds;
+                        progress.Seconds = drained.Seconds;
+                        progress.Repeat = drained.Repeat;
+                        progress.Timings = drained.Timings;
+                    }
+                }
                 catch { /* preserve the original scheduler failure after draining */ }
             }
             if (buildTask is not null)
@@ -292,6 +308,11 @@ public sealed class RunScheduler
                 try { await buildTask.ConfigureAwait(false); }
                 catch { /* preserve the original scheduler failure after draining */ }
             }
+            if (failure is StatePublicationException publication)
+                publication.PartialResult = new SchedulerResult
+                {
+                    ExitCode = ExitCodes.Invalid, Rows = finished, State = request.State,
+                };
             throw;
         }
     }

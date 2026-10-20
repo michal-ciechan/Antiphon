@@ -25,6 +25,8 @@ public static class ReportValidator
     {
         if (report.CleanupRefusals.Count > 0)
             return "cleanup_refused";
+        if (report.ExitCode != ExitCodes.Green || report.Verdict != "GREEN")
+            return "report_failed";
         if (expectedRepeat < 1 || report.SchemaVersion is not (2 or 3)
             || report.SchemaVersion == 2 && report.Rows.Any(row => row.Repeat is not null)
             || report.SchemaVersion == 3 && report.Rows.All(row => row.Repeat is null)

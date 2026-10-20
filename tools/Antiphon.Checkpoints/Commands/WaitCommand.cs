@@ -72,8 +72,8 @@ public sealed class WaitCommand
                 || stateRefusal.Contains("receipt-identity:", StringComparison.Ordinal)))
             { output.WriteLine("refused: " + stateRefusal); return ExitCodes.Invalid; }
             var observed = cleanup.ObserveExecutor(runDirectory, cancellationToken);
-            // Finish publishes phase=done after the "done exit=" log line, and the
-            // process can exit in that window. Re-read once death is observed.
+            // Completion can precede output cleanup; only executor death releases the waiter.
+            // Re-read after observing death to include the last publication.
             if (observed.Verdict == ProcessVerdict.Dead && state?.Phase != "done")
                 state = _store.TryRead(statePath, out _, cancellationToken);
             if (state?.Phase == "done" && observed.Verdict == ProcessVerdict.Dead)
@@ -110,6 +110,22 @@ public sealed class WaitCommand
                     output.WriteLine("refused: " + diedReceipt.Reason);
                 cancellationToken.ThrowIfCancellationRequested();
                 output.WriteLine("executor died without phase=done");
+                // A failed state publication cannot seal a terminal state. Its report is
+                // diagnostic evidence only, and must never yield a successful verdict.
+                try
+                {
+                    var failed = ReceiptJson.Read<ReportModel>(_context, Path.Combine(runDirectory, "report.json"),
+                        ReportWriter.Json, cancellationToken);
+                    if (failed?.RunId == Path.GetFileName(Path.TrimEndingDirectorySeparator(runDirectory))
+                        && failed.ExitCode == ExitCodes.Invalid && failed.Verdict == "RED"
+                        && failed.Reason == StatePublicationException.ReceiptFailureReason)
+                    {
+                        output.Write(ReportWriter.Markdown(_context, failed));
+                        return ExitCodes.Invalid;
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+                { output.WriteLine("failed report unavailable: " + ex.Message); }
                 output.WriteLine(Tail(logPath, cancellationToken));
                 return ExitCodes.ExecutorCrashed;
             }

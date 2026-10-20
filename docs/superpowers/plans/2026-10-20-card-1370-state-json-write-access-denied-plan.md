@@ -156,6 +156,19 @@ on Windows and is not claimed covered by Linux. V-2 and V-3 run in the same meth
 No R-n or PC-n was supplied by Plan. Mutation must discover missing controls;
 zero planned PCs does not discharge SourceLanding Mutation.
 
+S2 also keeps the failed report visible through WaitCommand when the executor
+dies with stale state, and rejects a red report in both receipt validators.
+Completion publication precedes baseline work and output cleanup; wait still
+requires executor death. The witness includes an acknowledged in-flight sibling
+which completes while cancellation drains it, and checks the PowerShell validator.
+The unbound Mutation candidate is `docs/superpowers/mutations/2026-10-20-card-1370-candidate.md`.
+
+The first CP-1 execution exposed a fixture timer error, not the guarded defect:
+its accelerated clock fired the receipt-reader deadline immediately. A separate
+test-only commit preserves that deadline. The corrected CP-1 at
+`767433e555a049b2117c157256ab8967a3dcd45d` executed one test and failed at the
+explicit transient-publication success assertion, with production unchanged.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
