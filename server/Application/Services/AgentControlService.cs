@@ -56,6 +56,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
     private readonly PhoneHomeLaunchPolicy? _phoneHome;
     private readonly ISessionRunnerDirectory? _runnerDirectory;
     private readonly WorkspaceUseAdmission? _workspaceUse;
+    private readonly StandingRestartEscalationPolicy _restartEscalation;
 
     public AgentControlService(
         AppDbContext db,
@@ -99,6 +100,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
         _eventBus = eventBus;
         _timeProvider = timeProvider;
         _delegationSettings = delegationSettings.Value;
+        _restartEscalation = new StandingRestartEscalationPolicy(supervision?.Value ?? new(), _delegationSettings);
         _logger = logger;
         _workspace = workspace;
         _apiKeyEnvResolver = apiKeyEnvResolver;
@@ -145,8 +147,21 @@ public sealed class AgentControlService : ICompactionContinuationResume
     /// is supplied. <see cref="Agent.Details"/> is standing-job metadata (CLAUDE.md) and is never
     /// typed as that prompt (CARD-0283).
     /// </summary>
-    public async Task<AgentDetailDto> StartAsync(
+    public Task<AgentDetailDto> StartAsync(
         Guid agentId, StartAgentRequest request, CancellationToken ct, bool automatic = false, Guid? compactionRecoveryId = null)
+        => StartCoreAsync(agentId, request, automatic, compactionRecoveryId, null, ct);
+
+    internal Task<AgentDetailDto> StartSupervisedFreshAsync(
+        Guid agentId, Guid expectedSessionId, DateTime expectedStartedAt, string? capacityActionKey, CancellationToken ct) =>
+        StartCoreAsync(agentId, new StartAgentRequest(Fresh: true, IgnoreSubscriptionQuota: true,
+                CapacityRecovery: capacityActionKey is not null), automatic: true, compactionRecoveryId: null,
+            new SupervisedFreshReservation(expectedSessionId, expectedStartedAt, capacityActionKey), ct);
+
+    private sealed record SupervisedFreshReservation(Guid SessionId, DateTime StartedAt, string? CapacityActionKey);
+
+    private async Task<AgentDetailDto> StartCoreAsync(
+        Guid agentId, StartAgentRequest request, bool automatic, Guid? compactionRecoveryId,
+        SupervisedFreshReservation? supervisedFresh, CancellationToken ct)
     {
         if ((request.Fresh ? 1 : 0) + (request.ResumeSessionId is not null ? 1 : 0) + (request.RetryContinuity ? 1 : 0) > 1)
             throw new ValidationException("start", "fresh, resumeSessionId and retryContinuity are mutually exclusive.");
@@ -157,9 +172,12 @@ public sealed class AgentControlService : ICompactionContinuationResume
                     "Compaction recovery resumes only the captured conversation.",
                     "standing_recovery_operator_required");
         }
-        else if ((automatic || request.CapacityRecovery) && (request.Fresh || request.ResumeSessionId is not null || request.RetryContinuity))
+        else if (supervisedFresh is null && (automatic || request.CapacityRecovery) && (request.Fresh || request.ResumeSessionId is not null || request.RetryContinuity))
             throw new ConflictException("Automatic recovery cannot select or discard history.", "standing_recovery_operator_required");
         var agent = await LockAgentAsync(agentId, ct);
+        if (supervisedFresh is not null && (!agent.AlwaysOn || agent.IsPoolDelegate
+            || agent.StandingSpecialistRole is not null || StandingSpecialistSeatPolicy.IsCheck(agent, _delegationSettings)))
+            throw new ConflictException("This agent is not eligible for automatic fresh recovery.", "standing_automatic_fresh_ineligible");
 
         if (await StandingSpecialistSeatPolicy.StartRefusalAsync(_db, agent, _delegationSettings, automatic || request.CapacityRecovery, ct) is { } specialistRefusal)
             throw new ConflictException(specialistRefusal, "specialist_start_refused");
@@ -260,7 +278,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
         }
         var remoteControlName = remoteControl ? agent.Name : null;
         var card = await ResolveStartCardAsync(agent, ct);
-        if (card is not null && (request.ResumeSessionId is not null || request.RetryContinuity))
+        if (card is not null && (supervisedFresh is not null || request.ResumeSessionId is not null || request.RetryContinuity))
             throw new ConflictException("Settle queued card work before conversation recovery.", "standing_resume_card_work_pending");
         var launchEnvOverride = AgentLaunchEnv.ValidateOverride(
             request.LaunchEnvOverride, "launchEnvOverride");
@@ -295,7 +313,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
             sessionId = await StartInteractiveSessionAsync(
                 agent, remoteControlName, request.Fresh, launchEnvOverride, initialPrompt,
                 request.PolicyRefreshDelta, request.ResumeSessionId, request.RetryContinuity, automatic || request.CapacityRecovery, ct,
-                compactionRecoveryId);
+                compactionRecoveryId, supervisedFresh);
             agent.CurrentCardId = null;
         }
 
@@ -381,7 +399,8 @@ public sealed class AgentControlService : ICompactionContinuationResume
         bool retryContinuity,
         bool automatic,
         CancellationToken ct,
-        Guid? compactionRecoveryId = null)
+        Guid? compactionRecoveryId = null,
+        SupervisedFreshReservation? supervisedFresh = null)
     {
         var expectedAgentVersion = agent.UpdatedAt;
         if (string.IsNullOrWhiteSpace(agent.WorkingDirectory))
@@ -501,7 +520,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
         // Include a Fresh target before it exists: its queue lock bridges commit to enqueue,
         // preventing a later Start from reserving it before this worker owns the launch.
         var involved = new[] { sourceId, chosenSessionId }.OfType<Guid>().Distinct().Order().ToArray();
-        if (resumeSessionId is not null && _sessionRunner is null)
+        if ((resumeSessionId is not null || supervisedFresh is not null) && _sessionRunner is null)
             throw new ServiceUnavailableException("Runner liveness cannot be verified.", "standing_resume_runner_unavailable");
         if (_sessionRunner is not null && involved.Length > 0)
         {
@@ -531,6 +550,8 @@ public sealed class AgentControlService : ICompactionContinuationResume
             await _db.Entry(agent).ReloadAsync(ct);
             if (agent.PersistentSessionId != expectedPointer)
                 throw new ConflictException("The current conversation changed; refresh and retry.", "standing_resume_current_changed");
+            if (supervisedFresh is not null && sourceId != supervisedFresh.SessionId)
+                throw new ConflictException("The supervised conversation changed.", "standing_resume_current_changed");
             if (previous is not null && previous.Id != sourceId && _launchQueue.Owns(previous.Id))
                 throw new ConflictException("A launch still owns the selected conversation.", "standing_resume_target_active");
             if (await HasLiveSessionAsync(agent, ct) || involved.Any(id => _launchQueue.Owns(id)))
@@ -541,6 +562,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
             if (agent.UpdatedAt != expectedAgentVersion)
                 throw new ConflictException("Agent settings or intent changed during preflight.", "standing_resume_current_changed");
             var intent = await GetOrCreateSupervisionStateAsync(agent.Id, ct);
+            CapacityRecoveryWait? admittedCapacity = null;
             if (_db.Entry(intent).State != EntityState.Added) await _db.Entry(intent).ReloadAsync(ct);
             if (automatic && (intent.Suspended || intent.LivenessLatchedAt is not null))
                 throw new ConflictException("Start was superseded by operator intent.", "standing_start_intent_revoked");
@@ -550,6 +572,33 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 throw new ConflictException("Conversation recovery needs a decision.", StandingContinuityState.HeldCode);
             if (await ResolveStartCardAsync(agent, ct) is not null)
                 throw new ConflictException("Card work became pending.", "standing_resume_card_work_pending");
+            if (supervisedFresh is not null)
+            {
+                var captured = await _db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == supervisedFresh.SessionId, ct);
+                if (captured is null || captured.StartedAt != supervisedFresh.StartedAt)
+                    throw new ConflictException("The supervised generation changed.", "standing_resume_current_changed");
+                if (!_restartEscalation.CanReserve(agent, intent, captured, spec.Kind)
+                    || await CheckCompactionAdmission.BlocksAutomaticRestartAsync(_db, agent.Id, ct))
+                    throw new ConflictException("Automatic fresh recovery is no longer eligible.", "standing_automatic_fresh_ineligible");
+                var ownership = new StandingSessionOwnership(_db);
+                await ownership.RequireAsync(agent, captured, ct);
+                if (ownership.Refusal(agent, captured, spec.Kind, cwd) is { } sourceRefusal)
+                    throw new ConflictException("The supervised conversation is incompatible.", sourceRefusal);
+                var wait = await _db.CapacityRecoveryWaits.AsNoTracking().FirstOrDefaultAsync(w =>
+                    (w.AgentId == agent.Id || w.ConsumerKey == $"agent:{agent.Id:N}")
+                    && w.State != CapacityRecoveryWaitState.Progressed && w.State != CapacityRecoveryWaitState.Canceled
+                    && w.State != CapacityRecoveryWaitState.Superseded && w.State != CapacityRecoveryWaitState.Exhausted, ct);
+                if (wait is not null || supervisedFresh.CapacityActionKey is not null)
+                {
+                    if (wait is null || supervisedFresh.CapacityActionKey is null
+                        || wait.ActionKey != supervisedFresh.CapacityActionKey
+                        || intent.CapacityRecoveryActionKey != wait.ActionKey
+                        || wait.ExecutionKind != spec.Kind || wait.State != CapacityRecoveryWaitState.Admitted
+                        || wait.OutcomeReason != nameof(CapacityRedemptionPath.Start))
+                        throw new ConflictException("Automatic fresh recovery needs its admitted capacity grant.", "standing_automatic_fresh_capacity_required");
+                    admittedCapacity = wait;
+                }
+            }
             if (previous is not null)
             {
                 await _db.Entry(previous).ReloadAsync(ct);
@@ -561,8 +610,9 @@ public sealed class AgentControlService : ICompactionContinuationResume
             }
             var switching = sourceId is not null && sourceId != chosenSessionId;
             var pending = new List<SessionQueuedMessage>();
-            if (resumeSessionId is not null && await _db.AgentTasks.AnyAsync(t => t.AgentSessionId != null
-                && involved.Contains(t.AgentSessionId.Value)
+            if ((resumeSessionId is not null || supervisedFresh is not null) && await _db.AgentTasks.AnyAsync(t =>
+                (t.AgentSessionId != null && involved.Contains(t.AgentSessionId.Value)
+                    || supervisedFresh != null && t.AgentId == agent.Id)
                 && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked), ct))
                 throw new ConflictException("Settle execution assignments before selecting history.", "standing_resume_work_in_flight");
             if (switching)
@@ -571,6 +621,8 @@ public sealed class AgentControlService : ICompactionContinuationResume
                     && m.Status == QueuedMessageStatus.Pending && m.RulesRefreshKey == null).OrderBy(m => m.Sequence).ThenBy(m => m.Id).ToListAsync(ct);
                 if (pending.Any(m => !StandingQueueSwitchPolicy.NeverAttempted(m)))
                     throw new ConflictException($"Resolve attempted pending input in /sessions/{sourceId}/queue before switching.", "standing_resume_delivery_pending");
+                if (supervisedFresh is not null && pending.Any(m => !_restartEscalation.CanTransfer(m)))
+                    throw new ConflictException($"Resolve producer-bound pending input in /sessions/{sourceId}/queue before automatic recovery.", "standing_resume_delivery_pending");
                 if (pending.Count > 0)
                 {
                     var sourceSession = await _db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sourceId, ct);
@@ -658,6 +710,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 CreatedAt = now,
                 StartedAt = now,
                 LastSeenAt = now,
+                CapacityRecoveryActionKey = supervisedFresh?.CapacityActionKey,
                 DelegationTokenHash = composition.DelegationTokenHash,
                 TuiProfileRevisionId = resolved.ProfileRevisionId,
                 EffectiveModelId = resolved.EffectiveModelId,
@@ -733,6 +786,20 @@ public sealed class AgentControlService : ICompactionContinuationResume
 
             async Task AcceptAsync(AgentSession accepted)
             {
+                if (admittedCapacity is { } capacity)
+                {
+                    // Move the admitted standing wait with its owner so transcript progress
+                    // is observed on the new conversation. Revocation rolls back reservation.
+                    var changed = await _db.CapacityRecoveryWaits.Where(w => w.Id == capacity.Id
+                        && w.ActionKey == capacity.ActionKey && w.Version == capacity.Version
+                        && w.State == CapacityRecoveryWaitState.Admitted)
+                        .ExecuteUpdateAsync(u => u.SetProperty(w => w.SessionId, accepted.Id)
+                            .SetProperty(w => w.SessionStartedAt, accepted.StartedAt)
+                            .SetProperty(w => w.Version, w => w.Version + 1)
+                            .SetProperty(w => w.UpdatedAt, UtcNow()), ct);
+                    if (changed != 1)
+                        throw new ConflictException("The admitted capacity action changed.", "standing_automatic_fresh_capacity_required");
+                }
                 if (pending.Count > 0)
                 {
                     var sequence = await _db.SessionQueuedMessages.Where(m => m.AgentSessionId == accepted.Id)
@@ -744,6 +811,11 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 agent.CurrentCardId = null;
                 agent.UpdatedAt = UtcNow();
                 new StandingContinuityState(_db, _timeProvider).Clear(intent);
+                if (supervisedFresh is not null)
+                {
+                    intent.AutomaticFreshConsumed = true;
+                    intent.NextRestartAt = null;
+                }
                 if (!automatic)
                 {
                     intent.ContinuityResumeFailures = 0;
@@ -771,7 +843,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
                             : resumeSessionId is not null || retryContinuity ? AgentIncidentKind.StandingResumeSelected : AgentIncidentKind.ResumeUnsupported,
                         Severity = AlertSeverity.Info,
                         CreatedAt = UtcNow(),
-                        Message = $"Accepted {(fresh ? "explicit fresh conversation" : retryContinuity ? "repaired-target retry" : resumeSessionId is not null ? "resume selection" : "new session (native resume unsupported)")}: {expectedPointer ?? "none"} -> {accepted.Id:D}; launch queued.",
+                        Message = $"Accepted {(supervisedFresh is not null ? "bounded automatic fresh conversation; prior conversation retained" : fresh ? "explicit fresh conversation" : retryContinuity ? "repaired-target retry" : resumeSessionId is not null ? "resume selection" : "new session (native resume unsupported)")}: {expectedPointer ?? "none"} -> {accepted.Id:D}; launch queued.",
                     });
                 await _db.SaveChangesAsync(ct);
             }

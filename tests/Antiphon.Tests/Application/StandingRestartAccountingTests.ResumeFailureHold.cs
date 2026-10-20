@@ -26,7 +26,8 @@ public partial class StandingRestartAccountingTests
         {
             await using var h = AgentSupervisionTests.BuildHarness(root,
                 [new FakeAgentProtocolAdapter(), t1, t2, t3, t4, sentinel],
-                new SupervisionSettings { HealthyUptimeResetMinutes = 5, ResumeFailureHoldAttempts = 5 },
+                // Exercise the legacy continuity hold with the independent fresh exception disabled.
+                new SupervisionSettings { HealthyUptimeResetMinutes = 5, ResumeFailureHoldAttempts = 5, AutomaticFreshAfterResumeFailures = 0 },
                 definitionKind: "ClaudeCode");
             var agent = await AgentSupervisionTests.CreateAlwaysOnAgentAsync(h, root);
             var accepted = await h.Control.StartAsync(agent.Id, new(), default);
@@ -278,7 +279,8 @@ public partial class StandingRestartAccountingTests
         {
             await using var h = AgentSupervisionTests.BuildHarness(root,
                 [new FakeAgentProtocolAdapter(), t[0], t[1], t[2], t[3], healthyRetry, t[4], t[5], t[6], t[7], sentinel],
-                new SupervisionSettings { HealthyUptimeResetMinutes = 5, ResumeFailureHoldAttempts = 5 },
+                // Human retry must preserve this legacy hold mode across both episodes.
+                new SupervisionSettings { HealthyUptimeResetMinutes = 5, ResumeFailureHoldAttempts = 5, AutomaticFreshAfterResumeFailures = 0 },
                 definitionKind: "ClaudeCode");
             var agent = await AgentSupervisionTests.CreateAlwaysOnAgentAsync(h, root);
             var accepted = await h.Control.StartAsync(agent.Id, new(), default);

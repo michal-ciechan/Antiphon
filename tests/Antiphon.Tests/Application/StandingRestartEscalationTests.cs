@@ -55,21 +55,22 @@ public partial class StandingRestartEscalationTests
                 state.ContinuityResumeFailures.ShouldBe(attempt + 1, "legacy accounting still includes the initial crash");
             }
 
-            // S1 records the threshold; S2 alone will authorize a new conversation.
+            // S2 consumes the allowance at this threshold; queued acceptance is not health.
             h.Clock.Advance(TimeSpan.FromSeconds(81));
             await h.Supervisor().TickAsync(default);
             await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
-            healthy.StartedSessionId.ShouldBe(id);
-            healthy.StartedArgs.ShouldContain("--resume");
+            healthy.StartedSessionId.ShouldNotBeNull();
+            healthy.StartedSessionId.ShouldNotBe(id);
+            healthy.StartedArgs.ShouldNotContain("--resume");
             (await ReadAsync(agent.Id)).AutomaticResumeFailures.ShouldBe(3, "queued acceptance is not recovery");
             DateTime healthyBoundary;
             await using (var db = AgentSupervisionTests.CreateContext())
             {
                 var state = (await db.AgentSupervisionStates.FindAsync(agent.Id))!;
-                state.AutomaticFreshConsumed = true;
+                state.AutomaticFreshConsumed.ShouldBeTrue();
                 state.AutomaticFreshAlertedHoldAt = h.Clock.GetUtcNow().UtcDateTime;
                 await db.SaveChangesAsync();
-                var completed = (await db.AgentSessions.FindAsync(id))!.InteractiveLaunchCompletedAt!.Value;
+                var completed = (await db.AgentSessions.FindAsync(healthy.StartedSessionId!.Value))!.InteractiveLaunchCompletedAt!.Value;
                 healthyBoundary = completed.AddMinutes(5);
             }
             await TickAtAsync(h, healthyBoundary.AddTicks(-1));

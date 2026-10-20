@@ -143,7 +143,10 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             }
             return await CompleteAsync(false);
         }
-        if (state.Suspended || state.LivenessLatchedAt is not null || state.ContinuityHeldAt is not null)
+        var current = await FindPersistentSessionAsync(agent, statuses: null, ct);
+        var escalation = new StandingRestartEscalationPolicy(_settings, _delegation);
+        if (state.Suspended || state.LivenessLatchedAt is not null
+            || state.ContinuityHeldAt is not null && !escalation.CanReserve(agent, state, current, current?.AgentKind ?? agent.Kind))
             return await CompleteAsync(false);
         if (Guid.TryParse(agent.PersistentSessionId, out var ownedId) && _launchQueue.Owns(ownedId))
             return await CompleteAsync(false);
@@ -200,6 +203,18 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 && w.State != CapacityRecoveryWaitState.Progressed && w.State != CapacityRecoveryWaitState.Canceled
                 && w.State != CapacityRecoveryWaitState.Superseded && w.State != CapacityRecoveryWaitState.Exhausted, ct))
         {
+            // Capacity waits also consume the admitted terminal generation before choosing
+            // recovery. The shared generation stamp keeps ordinary observation idempotent.
+            if (current?.RestartFailureKind == RestartFailureKind.ContinuityUnavailable)
+            {
+                await new StandingContinuityState(_db, _timeProvider).HoldAsync(agent.Id, current.Id,
+                    StandingContinuityReason.NativeSessionMissing, ct);
+                return await CompleteAsync(false);
+            }
+            if (current is not null) new RestartFailurePolicy().Observe(state, current);
+            if (await TryHoldRepeatedResumeFailureAsync(agent, state, current?.Id,
+                current?.Status, current?.RestartFailureKind, ct))
+                return await CompleteAsync(false);
             await CompleteAsync(false);
             await transaction.DisposeAsync();
             return await TryHandleCapacityWaitAsync(agent, state, ct) ?? false;
@@ -268,7 +283,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         state.UpdatedAt = now;
         await _db.SaveChangesAsync(ct);
 
-        // Failure counts pace retries; they never authorize a new conversation.
+        // Admission rechecks the bounded exception under the queue/session/agent locks.
         await transaction.CommitAsync(ct);
         await transaction.DisposeAsync();
         // A manual Start may have consumed another outcome while this tick was handing off.
@@ -280,12 +295,11 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             if (await CheckCompactionAdmission.BlocksAutomaticRestartAsync(_db, agent.Id, ct))
                 return false;
             _logger.LogInformation(
-                "Agent {AgentName}: supervised restart attempt {Attempt} ({Mode})",
-                agent.Name, attemptNumber, "resume");
+                "Agent {AgentName}: supervised restart attempt {Attempt}",
+                agent.Name, attemptNumber);
             // IgnoreSubscriptionQuota: a supervisor cannot pick another provider, and stopping
             // AlwaysOn restarts on a quota reading is the silent-stop the CARD-0136 gate forbids.
-            await _control.StartAsync(
-                agent.Id, new StartAgentRequest(Fresh: false, IgnoreSubscriptionQuota: !StandingSpecialistSeatPolicy.IsAlternate(agent)), ct, automatic: true);
+            await StartSupervisedRestartAsync(agent, state, beforeAttempt, capacityActionKey: null, ct);
 
             // Success ⇒ stop scheduling; the failure counter only resets after sustained health.
             // (StartAsync clears supervision state itself for manual semantics; re-load ours.)
@@ -468,11 +482,20 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         await _db.SaveChangesAsync(ct);
         if (await CheckCompactionAdmission.BlocksAutomaticRestartAsync(_db, agent.Id, ct))
             return false;
-        await _control.StartAsync(
-            agent.Id,
-            new StartAgentRequest(Fresh: false, IgnoreSubscriptionQuota: !StandingSpecialistSeatPolicy.IsAlternate(agent), CapacityRecovery: true),
-            ct, automatic: true);
+        await StartSupervisedRestartAsync(agent, state,
+            await FindPersistentSessionAsync(agent, statuses: null, ct), wait.ActionKey, ct);
         return true;
+    }
+
+    private Task<AgentDetailDto> StartSupervisedRestartAsync(
+        Agent agent, AgentSupervisionState state, AgentSession? current, string? capacityActionKey, CancellationToken ct)
+    {
+        var policy = new StandingRestartEscalationPolicy(_settings, _delegation);
+        return policy.CanReserve(agent, state, current, current?.AgentKind ?? agent.Kind)
+            ? _control.StartSupervisedFreshAsync(agent.Id, current!.Id, current.StartedAt, capacityActionKey, ct)
+            : _control.StartAsync(agent.Id, new StartAgentRequest(Fresh: false,
+                IgnoreSubscriptionQuota: !StandingSpecialistSeatPolicy.IsAlternate(agent),
+                CapacityRecovery: capacityActionKey is not null), ct, automatic: true);
     }
 
     private async Task<bool> TryHoldRepeatedResumeFailureAsync(

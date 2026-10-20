@@ -22,7 +22,7 @@ public sealed class SupervisionSettings
     /// <summary>Continuous Running time after which the failure counter resets.</summary>
     public int HealthyUptimeResetMinutes { get; set; } = 10;
 
-    /// <summary>Deprecated compatibility setting, ignored. Only an explicit Fresh request replaces continuity.</summary>
+    /// <summary>Deprecated compatibility setting, ignored. Automatic fresh uses the separate admitted-resume policy.</summary>
     public int FreshAfterResumeFailures { get; set; } = 2;
 
     /// <summary>
