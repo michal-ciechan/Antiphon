@@ -184,6 +184,8 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         public List<TimeSpan> Delays { get; } = [];
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
+            if (dueTime >= TimeSpan.FromSeconds(1))
+                return TimeProvider.System.CreateTimer(callback, state, dueTime, period);
             Delays.Add(dueTime);
             return TimeProvider.System.CreateTimer(callback, state, TimeSpan.Zero, Timeout.InfiniteTimeSpan);
         }
