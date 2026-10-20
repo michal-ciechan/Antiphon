@@ -2061,8 +2061,10 @@ public sealed class AgentSessionRuntime
 
         // Phase 2 follows the persist batch, so a command wrapper is already stored
         // even when its raw slash-command echo precedes it in the transcript.
+        // Only wrappers admitted in this input-wait window identify its command echoes.
         var prompts = await db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == prompt.AgentSessionId
+                && t.CreatedAt >= attempt.PhaseStartedAt
                 && (t.Kind == TranscriptKinds.UserPrompt
                     || t.Kind == TranscriptKinds.QueuedUserPrompt))
             .Select(t => t.Text)
