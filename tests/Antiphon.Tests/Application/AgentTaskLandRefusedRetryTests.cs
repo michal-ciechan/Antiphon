@@ -31,8 +31,9 @@ public sealed class AgentTaskLandRefusedRetryTests
         var b = await s.ExecuteAsync();
         b.Id.ShouldNotBe(s.A.Id, "explicit retry must allocate B before any cleanup assertions");
         b.TargetBeforeSha.ShouldBe(s.A.TargetBeforeSha);
-        b.VerificationSkipReason.ShouldBe("base_unchanged");
-        s.H.Verifier.Calls.ShouldBe(0);
+        b.VerificationSkipReason.ShouldBeNull();
+        b.VerificationPassed.ShouldBeTrue();
+        s.H.Verifier.Calls.ShouldBe(1, "an unchanged source in an unknown graph still needs verification");
         s.Trace.ShouldContain(t => s.IsTargetStatus(t.Repository, t.Args) && t.Result.Succeeded && t.Result.Output.Length == 0);
         await s.AssertReplacementAsync(b);
         await s.AssertSuccessAsync(b);

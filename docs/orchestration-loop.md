@@ -2077,8 +2077,38 @@ owned cold outputs for diagnosis.
 Build and selected tests share the same artifacts and build slot. Each selected
 test invocation writes to a fresh owned results directory; only its exact TRX
 path can authorize success. An older passing TRX cannot satisfy a missing report.
-S1 preserves the existing `base_unchanged` and AlreadyPresent behavior and keeps
-the repository mutation lease throughout verification. Stable paths alone are
+S2 replaces the unconditional `base_unchanged` shortcut for new publication.
+`Landing:ForceVerificationBuild` defaults to `false`; `true`, a nonempty `-Verify`
+filter, or any target other than `refs/heads/master` requires a build. AlreadyPresent
+still proves exact remote containment without a new publication or a promised build,
+even when force-build is set. Historical `base_unchanged` receipts remain readable.
+
+On master, only regular mode-100644 changes to `docs/**/*.md` and root `README.md`
+can skip. The policy reads a NUL-delimited raw diff of the pinned `TargetBeforeSha`
+and actual `RebasedSourceSha`, including both names of renames and both file modes.
+Empty diffs qualify under the same checks. All other paths, type/mode changes,
+links, submodules, malformed output and failed reads build. Bundle Markdown and
+docs JSON are build inputs. Review, approval, source checks, publication CAS,
+confirmation and cleanup remain required; this is not an advisory-review exemption.
+
+The candidate must also match the audited 292-entry build-graph inventory in
+`LandVerificationBuildGraph`: project formats, props/targets, solution formats,
+response files, `Directory.Build.*`, SDK/NuGet/package configuration and locks,
+Git attributes/submodules, tool manifests and executable script entrypoints.
+The fingerprint is SHA-256 over ordinal-sorted `git ls-tree -r -z <candidate>`
+records selected by that inventory, each terminated by NUL (mode, object ID, path).
+It is compiled into the policy, never accepted from the candidate. New, removed or
+changed graph inputs force a build until the imports/resources/entrypoints and
+documentation allowlist are re-audited and the fingerprint explicitly reviewed.
+Unknown repositories build. No MSBuild evaluation is run to decide a skip.
+
+A skip records `Stage=Verify`, `Outcome=Skipped`, `Detail=non-code`, with
+`VerificationPassed=false`. The landing's `VerificationCommand` records
+`Skipped(non-code)`, target/candidate SHAs and the audited graph fingerprint;
+structured logs include task, operation, request and decision reason. Executed
+builds keep their existing slot accounting and failure refusal. A skipped build
+takes no compiler slot. The repository mutation lease remains held throughout.
+Stable paths alone are
 not timing evidence; real cold/warm measurements remain post-activation work.
 This is master-first work; RC adoption and activation require the operator's go.
 

@@ -104,11 +104,16 @@ public sealed class AgentTaskLandingState
         var containment = operation.VerificationSkipReason == "exact_remote_containment"
             && operation.RebasedSourceSha is null
             && (!derivation || operation.VerifiedSourceSha == operation.PreparationInputSha);
+        // Historical base_unchanged receipts remain readable; the Prepared protocol no longer emits them.
+        var nonCode = operation.VerificationSkipReason == "non-code"
+            && operation.SchemaVersion == 3 && operation.TargetFullRef == "refs/heads/master"
+            && IsOid(operation.RebasedSourceSha) && operation.PreparedPinned
+            && string.IsNullOrWhiteSpace(operation.VerificationFilter);
         return IsOid(operation.VerifiedSourceSha)
             && operation.VerifiedAt is not null && operation.SourcePinned && operation.TargetPinned
             && (operation.RebasedSourceSha is null || operation.PreparedPinned)
             && operation.VerifiedSourceSha == expected
-            && (operation.VerificationPassed || baseUnchanged || containment);
+            && (operation.VerificationPassed || baseUnchanged || containment || nonCode);
     }
 
     private static bool IsOid(string? value) => GitObjectId.IsFull(value);
