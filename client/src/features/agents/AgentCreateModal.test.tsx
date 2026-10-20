@@ -117,7 +117,7 @@ describe('AgentCreateModal presets', () => {
       expect(screen.getByText('Standing orchestrator')).toBeInTheDocument()
       expect(screen.getByRole('switch', { name: /Always on/i })).toBeChecked()
 
-      const assignmentPolicy = screen.getByLabelText('Assignment policy')
+      const assignmentPolicy = screen.getByLabelText('Assignment policy', { selector: 'input' })
       await userEvent.click(assignmentPolicy)
       await userEvent.click(screen.getByRole('option', { name: 'Manual confirm' }))
       expect(assignmentPolicy).toHaveValue('Manual confirm')
