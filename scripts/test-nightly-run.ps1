@@ -322,6 +322,7 @@ function Test-C487_G026 {
     # No test/build child or network access is needed for bootstrap-only WhatIf.
     $root = Join-Path $ResultsDirectory ([guid]::NewGuid().ToString('N'))
     $seed = Join-Path $root 'seed'
+    $remote = $seed.Replace('\', '/')
     New-Item -ItemType Directory -Path $seed -Force | Out-Null
     function Invoke-BootstrapFixtureGit {
         param([string]$Directory, [string[]]$GitArgs)
@@ -339,10 +340,10 @@ function Test-C487_G026 {
         $state = Join-Path $root ($mode + '-state')
         $nightlyMarker = Join-Path $clone '.antiphon-nightly-owned'
         $releaseMarker = Join-Path $clone '.antiphon-release-owned'
-        $nightlyBytes = '{"origin":"' + $seed.Replace('\', '\\') + '","kind":"nightly-clone"}'
-        $releaseBytes = '{"origin":"' + $seed.Replace('\', '\\') + '","kind":"release-clone"}'
+        $nightlyBytes = '{"origin":"' + $remote + '","kind":"nightly-clone"}'
+        $releaseBytes = '{"origin":"' + $remote + '","kind":"release-clone"}'
         if ($mode -eq 'existing') {
-            Invoke-BootstrapFixtureGit $root @('clone', $seed, $clone)
+            Invoke-BootstrapFixtureGit $root @('clone', $remote, $clone)
             Invoke-BootstrapFixtureGit $clone @('config', '--local', 'core.longpaths', 'false')
             [IO.File]::WriteAllText($nightlyMarker, $nightlyBytes)
             [IO.File]::WriteAllText($releaseMarker, $releaseBytes)
@@ -357,14 +358,14 @@ function Test-C487_G026 {
         }
         $args = @{
             CheckoutRoot = $clone; StateRoot = $state; LogRoot = (Join-Path $state 'logs')
-            RemoteUrl = $seed; Ref = 'master'; Trigger = 'manual'; WhatIf = $true
+            RemoteUrl = $remote; Ref = 'master'; Trigger = 'manual'; WhatIf = $true
             CoordinationRoot = (Join-Path $root ($mode + '-coord')); PassThru = $true
         }
         $run = Invoke-AntiphonNightlyRun @args
         Assert-C487 ($run.ExitCode -eq 0 -and $run.Phase -eq 'whatif') ('G026 ' + $mode + ' sync completes') ($run | ConvertTo-Json -Compress)
         $longpaths = & git -C $clone config --local --get core.longpaths
         Assert-C487 ($longpaths -eq 'true') ('G026 ' + $mode + ' clone enables long paths') ([string]$longpaths)
-        $ownership = Test-NightlyRunContextOwnership -ClonePath $clone -StateRoot $state -ExpectedOrigin $seed
+        $ownership = Test-NightlyRunContextOwnership -ClonePath $clone -StateRoot $state -ExpectedOrigin $remote
         Assert-C487 $ownership.Ok ('G026 ' + $mode + ' ownership survives clean') $ownership.Reason
         Assert-C487 (([IO.File]::ReadAllText((Join-Path $clone 'tracked.txt'))).Trim() -eq 'keep') ('G026 ' + $mode + ' tracked file retained')
         if ($mode -eq 'existing') {
