@@ -3600,7 +3600,8 @@ function Test-C1311_PreReleaseTag {
     [void](New-ReleaseGateTagReservation -RemoteTags @() -JournalPath $proposalJournal -CandidateId $id2 -Sha $ShaC -CutUtc $cut)
     $closed = $false
     if (Get-Command -Name Set-ReleaseGateReservationFinalTag -ErrorAction SilentlyContinue) {
-        $closed = [bool](Set-ReleaseGateReservationFinalTag -JournalPath $proposalJournal -CandidateId $id1 -FinalTag 'v2026.10.15.1')
+        [void](Set-ReleaseGateReservationPublished -JournalPath $proposalJournal -CandidateId $id1 -ReleaseId 'fixture-pre' -ReleaseUrl 'https://example.invalid/pre')
+        $closed = [bool](Set-ReleaseGateReservationFinalTag -JournalPath $proposalJournal -CandidateId $id1 -Sha $ShaB -PreReleaseTag $p1.Tag -FinalTag 'v2026.10.15.1')
     }
     $p3 = Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $proposalJournal -CandidateId $id3 -Sha $shaD -CutUtc $cut
     $p4 = Get-ReleaseGateTagProposal -RemoteTags @() -JournalPath $proposalJournal -CandidateId $id4 -Sha $shaE -CutUtc (Get-C1311Utc '2026-10-16T00:00:00Z')
@@ -4025,6 +4026,7 @@ function Test-C1339_ExactRemoteRefs {
             if ($order -eq 'exact-first') { [array]::Reverse($lines) }
             Write-NightlyAtomicJson -Path $fx.FaultPath -Object @{ reads = @(@{ ref = 'refs/tags/' + $fx.PreTag + '^{}'; mode = 'replace'; exit = 0; output = ($lines -join "`n") }) }
         }
+        Initialize-C1339PromotionReservation $fx
         $r = Invoke-C1339Promote $fx
         $peel = Invoke-C1339LocalGit $fx @('rev-parse', '--verify', ('refs/tags/' + $fx.FinalTag + '^{}')) -Remote -AllowAbsent
         $results += New-C1339Check ($r.ExitCode -eq 0 -and $r.Promoted -and $peel -ceq $fx.Head) ($order + ' refusal=' + $r.Refusal + ' peel=' + $peel)
@@ -4139,6 +4141,7 @@ function Test-C1339_ExactRemoteRefs {
     Add-C1339Tag $fx $fx.PreTag $fx.Head
     [void](Invoke-C1339LocalGit $fx @('push', $fx.Bare, ($fx.B + ':refs/heads/' + $fx.CandidateRef)))
     Set-C1339Read $fx ('refs/heads/' + $fx.CandidateRef) ($fx.Head + "`trefs/heads/archive/" + $fx.CandidateRef)
+    Initialize-C1339PromotionReservation $fx
     $r = Invoke-C1339Promote $fx
     Assert-C487 -Cond ($r.Refusal -eq 'remote-candidate-moved' -and (Test-C1339NoWrites $fx) -and (Get-C1339Peel $fx $fx.FinalTag) -eq '') -Name 'C1339 G-14 promotion-head-read' -Detail $r.Refusal
 
@@ -4148,6 +4151,7 @@ function Test-C1339_ExactRemoteRefs {
         Add-C1339Tag $fx $fx.PreTag $fx.Head
         Add-C1339Tag $fx ('refs/tags/' + $fx.FinalTag) $fx.Head
         if ($conflict) { Add-C1339Tag $fx $fx.FinalTag $fx.C }
+        Initialize-C1339PromotionReservation $fx
         $r = Invoke-C1339Promote $fx
         $peel = Get-C1339Peel $fx $fx.FinalTag
         $privateRefs = Invoke-C1339LocalGit $fx @('for-each-ref', '--format=%(refname)', 'refs/antiphon-release-push/')
@@ -4164,6 +4168,7 @@ function Test-C1339_ExactRemoteRefs {
         $nestedSha = $fx.B
         if ($push -eq 'before') { $nestedSha = $fx.Head }
         Set-C1339Read $fx ('refs/tags/' + $fx.FinalTag + '^{}') ($nestedSha + "`trefs/tags/refs/tags/" + $fx.FinalTag + '^{}') -Ordinal 2 -Push $push
+        Initialize-C1339PromotionReservation $fx
         $r = Invoke-C1339Promote $fx
         $peel = Get-C1339Peel $fx $fx.FinalTag
         $ok = $r.Refusal -eq 'tag-push-failed' -and $peel -eq ''
@@ -4178,6 +4183,7 @@ function Test-C1339_ExactRemoteRefs {
         Add-C1339Tag $fx $fx.PreTag $fx.Head
         if ($failure) { Set-C1339Read $fx ('refs/tags/' + $fx.FinalTag + '^{}') -Mode replace -Ordinal 2 -Exit 1 }
         else { Set-C1339Read $fx ('refs/tags/' + $fx.FinalTag + '^{}') ($fx.B + "`trefs/tags/refs/tags/" + $fx.FinalTag + '^{}') -Ordinal 2 }
+        Initialize-C1339PromotionReservation $fx
         $r = Invoke-C1339Promote $fx
         $ok = $r.ExitCode -eq 0 -and $r.Promoted
         if ($failure) { $ok = $r.Refusal -eq 'tag-peel' -and -not $r.Promoted -and -not $r.Resumed }
@@ -4578,7 +4584,7 @@ function Install-C1339WriterFault {
 `$script:C1339Writer = (Get-Command Write-NightlyAtomicJson).ScriptBlock
 function script:Write-NightlyAtomicJson {
     param([string]`$Path, `$Object)
-    if (`$Path -ceq '$($Fx.ReleaseRoot)/publications.json' -and (Test-Path '$($Fx.FaultPath)')) {
+    if (`$Path -ceq '$(Join-Path $Fx.ReleaseRoot 'publications.json')' -and (Test-Path '$($Fx.FaultPath)')) {
         `$fault = Get-Content '$($Fx.FaultPath)' -Raw | ConvertFrom-Json
         if (`$fault.writer -eq 'throw') { throw 'fixture-atomic-write-failure' }
         if (`$fault.writer -eq 'silent') { return }
@@ -4612,6 +4618,7 @@ function Test-C1339_PromoteReservationAndTarget {
             { Update-C599Json $path { param($j) $j.reservations = @($j.reservations[0], $j.reservations[0]) } }) },
         @{ label = 'C1339 G-45 reservation-typed'; reason = 'invalid'; edits = @(
             { Set-Content -LiteralPath $path -Value '{broken' },
+            { Set-Content -LiteralPath $path -Value '[]' },
             { Update-C599Json $path { param($j) $j.schemaVersion = '1' } },
             { Update-C599Json $path { param($j) $j.schemaVersion = 2 } },
             { Update-C599Json $path { param($j) $j.reservations = $j.reservations[0] } },
@@ -4619,7 +4626,10 @@ function Test-C1339_PromoteReservationAndTarget {
             { Update-C599Json $path { param($j) $j.reservations[0].candidateId = @($j.reservations[0].candidateId) } },
             { Update-C599Json $path { param($j) $j.reservations[0].sha = @($j.reservations[0].sha) } },
             { Update-C599Json $path { param($j) $j.reservations[0].tag = @($j.reservations[0].tag) } },
-            { Update-C599Json $path { param($j) $j.reservations[0].published = 'true' } }) },
+            { Update-C599Json $path { param($j) $j.reservations[0].published = 'true' } },
+            { Update-C599Json $path { param($j) $j.reservations[0].releaseId = @('fixture-pre') } },
+            { Update-C599Json $path { param($j) $j.reservations[0].releaseUrl = @('https://example.invalid/pre') } },
+            { Update-C599Json $path { param($j) Set-C599AField $j.reservations[0] 'finalTag' @('v2026.10.15.1') } }) },
         @{ label = 'C1339 G-46 reservation-candidate'; reason = 'candidate-mismatch'; edits = @(
             { Update-C599Json $path { param($j) $j.reservations[0].candidateId = 'foreign-candidate' } }) },
         @{ label = 'C1339 G-47 reservation-sha'; reason = 'sha-mismatch'; edits = @(
@@ -4635,8 +4645,8 @@ function Test-C1339_PromoteReservationAndTarget {
         @{ label = 'C1339 G-51 reservation-release-url'; reason = 'release-identity'; edits = @(
             { Update-C599Json $path { param($j) $j.reservations[0].releaseUrl = '' } }) },
         @{ label = 'C1339 G-52 reservation-final-consistent'; reason = 'final-conflict'; edits = @(
-            { Update-C599Json $path { param($j) $j.reservations[0].finalTag = 'v2026.10.15.2' } },
-            { Update-C599Json $path { param($j) $j.reservations[0].finalTag = $fx.PreTag } }) }
+            { Update-C599Json $path { param($j) Set-C599AField $j.reservations[0] 'finalTag' 'v2026.10.15.2' } },
+            { Update-C599Json $path { param($j) Set-C599AField $j.reservations[0] 'finalTag' $fx.PreTag } }) }
     )
     foreach ($resume in @($false, $true)) {
         $fx = New-C1339PromotionFixture
@@ -4648,6 +4658,12 @@ function Test-C1339_PromoteReservationAndTarget {
             $checks = @(New-C1339Check ($valid.ExitCode -eq 0 -and $result.ExitCode -eq 0) 'valid controls')
             foreach ($edit in $variant.edits) {
                 $checks += Invoke-C1339ReservationVariant $fx $snap $edit ('promotion-reservation-' + $variant.reason)
+            }
+            if ($variant.label -eq 'C1339 G-52 reservation-final-consistent') {
+                $path = Join-Path $fx.ReleaseRoot 'publications.json'
+                $before = [IO.File]::ReadAllText($path)
+                $wrongFinal = Set-ReleaseGateReservationFinalTag -JournalPath $path -CandidateId $fx.CandidateId -Sha $fx.Head -PreReleaseTag $fx.PreTag -FinalTag 'v2026.10.15.2'
+                $checks += New-C1339Check (-not $wrongFinal -and [IO.File]::ReadAllText($path) -ceq $before) 'recorder final must match pre-release'
             }
             if (-not $resume) { Assert-C599AMatrix $variant.label $checks }
             else { $resumedChecks += $checks }
