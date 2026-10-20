@@ -16,36 +16,38 @@ public class ChromiumRuntimeSmokeTests
         var profile = Directory.CreateTempSubdirectory("antiphon-chromium-smoke-");
         try
         {
-            using var playwright = await Playwright.CreateAsync().WaitAsync(cancellationToken);
-            IBrowserContext? context = null;
-            try
+            await CreatedResource.UseAsync(Playwright.CreateAsync(), async playwright =>
             {
-                context = await playwright.Chromium.LaunchPersistentContextAsync(profile.FullName,
-                    new BrowserTypeLaunchPersistentContextOptions
-                    {
-                        Headless = true,
-                        Timeout = 30_000
-                    });
-                var page = context.Pages.Single();
-                await page.RouteAsync("**/*", route => route.AbortAsync());
-                await page.SetContentAsync("""
-                    <!doctype html><html><body>
-                    <p id="status">pending</p>
-                    <script>document.querySelector('#status').textContent = 'Chromium rendered local content';</script>
-                    </body></html>
-                    """, new PageSetContentOptions { Timeout = 5_000 });
-                (await page.Locator("#status").InnerTextAsync(new LocatorInnerTextOptions { Timeout = 5_000 }))
-                    .ShouldBe("Chromium rendered local content");
-            }
-            finally
-            {
-                if (context is not null)
-                    await context.CloseAsync().WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
-            }
+                IBrowserContext? context = null;
+                try
+                {
+                    context = await playwright.Chromium.LaunchPersistentContextAsync(profile.FullName,
+                        new BrowserTypeLaunchPersistentContextOptions
+                        {
+                            Headless = true,
+                            Timeout = 30_000
+                        });
+                    var page = context.Pages.Single();
+                    await page.RouteAsync("**/*", route => route.AbortAsync());
+                    await page.SetContentAsync("""
+                        <!doctype html><html><body>
+                        <p id="status">pending</p>
+                        <script>document.querySelector('#status').textContent = 'Chromium rendered local content';</script>
+                        </body></html>
+                        """, new PageSetContentOptions { Timeout = 5_000 });
+                    (await page.Locator("#status").InnerTextAsync(new LocatorInnerTextOptions { Timeout = 5_000 }))
+                        .ShouldBe("Chromium rendered local content");
+                }
+                finally
+                {
+                    if (context is not null)
+                        await context.CloseAsync().WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                }
+            }, cancellationToken);
         }
         finally
         {
-            // Playwright disposal has stopped its driver and browser before deleting our profile.
+            // An opened browser is disposed before its profile; cancelled creation never uses it.
             profile.Delete(recursive: true);
         }
     }
