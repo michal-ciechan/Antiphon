@@ -168,7 +168,7 @@ public sealed class CheckpointEofStallTests
                 Node = Files.Io.Put(Path, Original);
                 _identity = (Node.Stat.Device, Node.Stat.Inode);
                 OriginalStamp = Stamp();
-                OriginalStamp.ShouldBe("file|65536|" + Convert.ToHexString(SHA256.HashData(Original)));
+                OriginalStamp.ShouldBe("file|65536|" + Convert.ToHexString(SHA256.HashData(Original)).ToLowerInvariant());
             }
             catch
             {
