@@ -513,51 +513,41 @@ PC after confirmed land. Completion of this design does not claim PC-clean.
 
 ### Checkpoints
 
-Use the schema in `docs/testing-and-build.md`. All TUnit rows use
-`tests/Antiphon.Tests`. Method-prefix stars include parameterized results only;
-inspect the executed roster for unintended matches. Min counts executions,
-not internal assertions. S1 has 9 intended assertion failures; S2 has 23 passing
-executions. Each row owns one exact filter. Two isolated builds total, reused
-only within the same committed After group; no whole-Unit or whole-class run.
+Code commissioning override, task 3d53859f (2026-10-20): the explicit minimal
+selection supersedes the original 16-row manifest and generic whole-Unit profile.
+S1 registers only blank and common-base arguments on the two red methods; S2
+adds their remaining argument variants. This yields exactly one red witness
+per changed behavior, followed by one grouped green selection per area.
+CP-2/CP-3 red selections are skipped, with their green cases merged into CP-5.
+Original CP-5 through CP-10 are merged into CP-5 (14 executions). CP-11/CP-12
+existing duplicate/simple-name/reason checks are skipped as explicitly directed;
+V-6/R-5's inherited duplicate checks are not claimed executed. CP-13 is retained.
+CP-14 through CP-16 are merged into CP-14 (the full new Integration class,
+5 executions). There is no whole-Unit or full assembly run. No PC binding or
+execution is commissioned; all PC-1 through PC-18 remain pending.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1383-red/` | red-detached | `/*/*/TestClassificationPolicyTests/C1383_Detached_reason_is_rejected*` | V-1, R-1 | 3 executed, 3 intended orphan-reason assertion failures, 0 skipped | 3 | 4 |
-| CP-2 | S1 | CP-1 | red-adjacency | `/*/*/TestClassificationPolicyTests/C1383_Row_without_adjacent_reason_is_rejected*` | V-2, R-2 | 2 executed, 2 intended missing-adjacent-reason assertion failures, 0 skipped | 2 | 1 |
-| CP-3 | S1 | CP-1 | red-headers | `/*/*/TestClassificationPolicyTests/C1383_Header_after_records_is_rejected*` | V-2, R-2 | 2 executed, 2 intended header-after-entry assertion failures, 0 skipped | 2 | 1 |
-| CP-4 | S1 | CP-1 | red-real-union | `/*/*/SlowTestRegistryMergeTests/C1383_Rebase_preserves_distinct_appended_pairs*` | V-7, R-7 | 2 executed, 2 intended rebase-success assertion failures with real registry conflicts, 0 skipped | 2 | 1 |
-| CP-5 | S2 | `tests/Antiphon.Tests -> bin-c1383-green/` | green-detached | `/*/*/TestClassificationPolicyTests/C1383_Detached_reason_is_rejected*` | V-1, R-1 | all 3 listed variants, 0 failed/skipped | 3 | 4 |
-| CP-6 | S2 | CP-5 | green-adjacency | `/*/*/TestClassificationPolicyTests/C1383_Row_without_adjacent_reason_is_rejected*` | V-2, R-2 | all 2 listed variants, 0 failed/skipped | 2 | 1 |
-| CP-7 | S2 | CP-5 | green-headers | `/*/*/TestClassificationPolicyTests/C1383_Header_after_records_is_rejected*` | V-2, R-2 | all 2 listed variants, 0 failed/skipped | 2 | 1 |
-| CP-8 | S2 | CP-5 | green-valid-layout | `/*/*/TestClassificationPolicyTests/C1383_Valid_reason_pairs_are_accepted*` | V-3, R-3 | all 4 listed variants, 0 failed/skipped | 4 | 1 |
-| CP-9 | S2 | CP-5 | green-opt-in | `/*/*/TestClassificationPolicyTests/C1383_Layout_opt_in_is_scoped*` | V-4, R-4 | all 2 listed variants, 0 failed/skipped | 2 | 1 |
-| CP-10 | S2 | CP-5 | green-public-reader | `/*/*/TestClassificationPolicyTests/C1383_ReadRegistry_retains_legacy_layout_behavior` | V-5, R-4 | 1 listed method, 0 failed/skipped | 1 | 1 |
-| CP-11 | S2 | CP-5 | green-existing-identity | `/*/*/TestClassificationPolicyTests/C487_G062*` | V-6, R-5 | both existing argument rows, including internal case-fold duplicate assertion, 0 failed/skipped | 2 | 1 |
-| CP-12 | S2 | CP-5 | green-existing-reason | `/*/*/TestClassificationPolicyTests/C487_G064` | V-6, R-5 | 1 method with all 3 content inputs, 0 failed/skipped | 1 | 1 |
-| CP-13 | S2 | CP-5 | green-repository-guard | `/*/*/TestClassificationGuardTests/Registry_matches_compiled_metadata` | V-6, R-6 | 1 actual-repository guard, 0 failed/skipped | 1 | 1 |
-| CP-14 | S2 | CP-5 | green-real-union | `/*/*/SlowTestRegistryMergeTests/C1383_Rebase_preserves_distinct_appended_pairs*` | V-7, R-7 | both target-history variants, 0 failed/skipped | 2 | 1 |
-| CP-15 | S2 | CP-5 | green-union-collapse | `/*/*/SlowTestRegistryMergeTests/C1383_Union_collapsed_lines_are_rejected*` | V-8, R-8 | both collapse variants reach the guard after successful Git, 0 failed/skipped | 2 | 1 |
-| CP-16 | S2 | CP-5 | green-first-landing | `/*/*/SlowTestRegistryMergeTests/C1383_Source_only_attribute_does_not_rescue_first_rebase` | V-9, R-9 | 1 expected-conflict characterization passes, 0 failed/skipped | 1 | 1 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1383-red/` | red-detached | `/*/*/TestClassificationPolicyTests/C1383_Detached_reason_is_rejected*` | V-1, R-1 | 1 intended orphan-reason assertion failure | 1 | 4 |
+| CP-4 | S1 | CP-1 | red-real-union | `/*/*/SlowTestRegistryMergeTests/C1383_Rebase_preserves_distinct_appended_pairs*` | V-7, R-7 | 1 intended real rebase-success assertion failure | 1 | 1 |
+| CP-5 | S2 | `tests/Antiphon.Tests -> bin-c1383-green/` | green-layout | `/*/*/TestClassificationPolicyTests/C1383_*` | V-1, V-2, V-3, V-4, V-5, R-1, R-2, R-3, R-4 | all 14 variants, 0 failed/skipped | 14 | 4 |
+| CP-13 | S2 | CP-5 | green-repository | `/*/*/TestClassificationGuardTests/Registry_matches_compiled_metadata*` | V-6, R-6 | 1 actual-repository guard, 0 failed/skipped | 1 | 1 |
+| CP-14 | S2 | CP-5 | green-real-git | `/*/*/SlowTestRegistryMergeTests/C1383_*` | V-7, V-8, V-9, R-7, R-8, R-9 | all 5 variants, 0 failed/skipped | 5 | 1 |
 
-Run one checkpoint-tool invocation per committed group with `--serial`, so
-separate Antiphon.Tests hosts do not overlap their assembly-local process
-limiters. Use `run --plan <this-file> --after S1 --expected-source-sha <S1-sha>
---serial`, then the corresponding `--after S2 --expected-source-sha <S2-sha>`.
-Bootstrap the tool through `scripts/build-slot.ps1`; the tool takes slots for
-its own builds/rows. Await `wait --run <id>` until exit is not 75. Do not end the
-delegate with a running executor.
-
-S1's run is expected to return failed, with all four rows still collected;
-preserve those red receipts as red, never qualify them as clean-green evidence.
-S2 must satisfy every green row and strict SHA/clean-build receipt validation.
-Ordinary Review checks S1's historical witnesses and verifies S2's green scope;
-it does not rerun S1 against the fixed tip expecting red. Code and Review run
-`pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -BaseRef <assigned-base>
--HeadRef HEAD`, a required read-only history check outside TUnit counts.
-Keep generated evidence ignored, inventory owned outputs and remove them via
-the documented custody-aware cleanup after all processes finish.
+Run one checkpoint-tool invocation per committed group using --serial,
+--row-timeout 40m and --expected-source-sha at that group's committed HEAD.
+Bootstrap through scripts/build-slot.ps1. Await wait until exit is not 75.
+Keep and inspect fresh TRX, source receipts and unedited CHECKPOINT lines.
+S1 is expected red; S2 must be green with verified clean source provenance.
+Review the registry migration's ordered names and reasons independently.
+Run scripts/check-evidence-diff.ps1 over the complete assigned base..HEAD.
 
 ### Cost
+
+Commissioned trimmed Code budget: 11 estimated checkpoint minutes (two builds,
+five narrow rows), plus authoring and tool bootstrap within the 45-minute brief.
+The original TestDesign estimates below are historical, not the active run list.
+
 
 All numbers below are **estimated**, not measured by TestDesign; slot queue
 waits and environment failures are reported separately.

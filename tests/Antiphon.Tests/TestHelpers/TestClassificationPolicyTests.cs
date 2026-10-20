@@ -11,6 +11,136 @@ namespace Antiphon.Tests.TestHelpers;
 public sealed class TestClassificationPolicyTests
 {
     [Test]
+    [Arguments("blank")]
+    public void C1383_Detached_reason_is_rejected(string shape)
+    {
+        var text = "# CARD-1383 first\n" + (shape switch
+        {
+            "blank" => "\n" + C1383Smoke + "\n",
+            "overwritten" => "# CARD-1383 second\n" + C1383Smoke + "\n",
+            _ => ""
+        });
+        var errors = C1383Errors(text);
+        errors.ShouldContain("orphan-reason line 1");
+        if (shape == "blank")
+            errors.ShouldContain("missing-adjacent-reason line 3 " + C1383Smoke);
+    }
+
+    [Test]
+    [Arguments("bare-row")]
+    [Arguments("second-row")]
+    public void C1383_Row_without_adjacent_reason_is_rejected(string shape)
+    {
+        var prefix = shape == "bare-row" ? "" : "# CARD-1383 first\n" + C1383Other + "\n";
+        C1383Errors(prefix + C1383Smoke + "\n")
+            .ShouldContain($"missing-adjacent-reason line {(shape == "bare-row" ? 1 : 3)} {C1383Smoke}");
+    }
+
+    [Test]
+    [Arguments("between-pairs")]
+    [Arguments("interrupts-first-pair")]
+    public void C1383_Header_after_records_is_rejected(string shape)
+    {
+        var interrupted = shape == "interrupts-first-pair";
+        var text = interrupted
+            ? "# CARD-1383 reason\n## misplaced header\n" + C1383Smoke + "\n"
+            : "# CARD-1383 reason\n" + C1383Smoke + "\n## misplaced header\n";
+        var errors = C1383Errors(text);
+        errors.ShouldContain($"header-after-entry line {(interrupted ? 2 : 3)}");
+        if (interrupted)
+        {
+            errors.ShouldContain("orphan-reason line 1");
+            errors.ShouldContain("missing-adjacent-reason line 3 " + C1383Smoke);
+        }
+    }
+
+    [Test]
+    [Arguments("\n", true)]
+    [Arguments("\n", false)]
+    [Arguments("\r\n", true)]
+    [Arguments("\r\n", false)]
+    public void C1383_Valid_reason_pairs_are_accepted(string newline, bool finalNewline)
+    {
+        var entries = C1383Entries();
+        var text = "## Registry instructions\n## More instructions\n\n"
+            + string.Join("\n\n", entries.Select(e => $"# {e.Reason}\n{e.Name}"));
+        text = (text + (finalNewline ? "\n" : "")).Replace("\n", newline);
+        C1383WithRegistry(text, path =>
+        {
+            TestClassificationMetadata.AssertRegistryMatches(GetType().Assembly, path, true).ShouldBe("");
+            var actual = TestClassificationMetadata.ReadRegistry(path);
+            actual.Select(e => (e.Name, e.Reason)).ShouldBe(entries.Select(e => (e.Name, e.Reason)));
+        });
+    }
+
+    [Test]
+    [Arguments("non-repository")]
+    [Arguments("other-assembly")]
+    public void C1383_Layout_opt_in_is_scoped(string mode)
+    {
+        if (mode == "non-repository")
+        {
+            var text = C1383RegistryText(C1383Entries());
+            text = text.Insert(text.IndexOf('\n') + 1, "\n") + "# CARD-1383 orphan\n";
+            C1383WithRegistry(text, path =>
+                TestClassificationMetadata.AssertRegistryMatches(GetType().Assembly, path, false).ShouldBe(""));
+        }
+        else
+        {
+            var assembly = System.Reflection.Emit.AssemblyBuilder.DefineDynamicAssembly(
+                new System.Reflection.AssemblyName("C1383.Other"), System.Reflection.Emit.AssemblyBuilderAccess.Run);
+            C1383WithRegistry("# CARD-1383 orphan\n", path =>
+                TestClassificationMetadata.AssertRegistryMatches(assembly, path, true).ShouldBe(""));
+        }
+    }
+
+    [Test]
+    public void C1383_ReadRegistry_retains_legacy_layout_behavior()
+    {
+        var text = $"# CARD-1383 first\n\n{C1383Smoke}\n# CARD-1383 overwritten\n# CARD-1383 surviving\n{C1383Other}\n# CARD-1383 orphan\n";
+        C1383WithRegistry(text, path => TestClassificationMetadata.ReadRegistry(path).ShouldBe(
+            new[]
+            {
+                new TestClassificationMetadata.RegistryEntry(C1383Smoke, "CARD-1383 first", 3),
+                new TestClassificationMetadata.RegistryEntry(C1383Other, "CARD-1383 surviving", 6)
+            }));
+    }
+
+    internal const string C1383Smoke = "Antiphon.Tests.SmokeTests";
+    internal const string C1383Other = "Antiphon.Tests.Application.WorktreeDefaultAdmissionTests";
+
+    internal static IReadOnlyList<TestClassificationMetadata.RegistryEntry> C1383Entries()
+    {
+        var assembly = typeof(TestClassificationPolicyTests).Assembly;
+        var entries = TestClassificationMetadata.ReadRegistry(TestClassificationMetadata.FindRegistryPath(assembly));
+        var slow = TestClassificationMetadata.Read(assembly).Where(c => c.Categories.Contains("Slow"))
+            .Select(c => c.FullName).ToArray();
+        slow.ShouldContain(C1383Smoke);
+        slow.ShouldContain(C1383Other);
+        entries.Select(e => e.Name).ShouldContain(C1383Smoke);
+        entries.Select(e => e.Name).ShouldContain(C1383Other);
+        return entries;
+    }
+
+    internal static string C1383RegistryText(IEnumerable<TestClassificationMetadata.RegistryEntry> entries) =>
+        string.Concat(entries.Select(e => $"# {e.Reason}\n{e.Name}\n"));
+
+    internal static string C1383Errors(string text)
+    {
+        var errors = "";
+        C1383WithRegistry(text, path => errors = TestClassificationMetadata.AssertRegistryMatches(
+            typeof(TestClassificationPolicyTests).Assembly, path, true));
+        return errors;
+    }
+
+    private static void C1383WithRegistry(string text, Action<string> check)
+    {
+        var path = WriteTempRegistry(text);
+        try { check(path); }
+        finally { File.Delete(path); }
+    }
+
+    [Test]
     public void C487_G059()
     {
         var assembly = typeof(TestClassificationPolicyTests).Assembly;
