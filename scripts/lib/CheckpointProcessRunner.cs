@@ -19,7 +19,36 @@ namespace Antiphon.Checkpoints
             public bool TimedOut { get; set; }
         }
 
+        public sealed class BytesResult
+        {
+            public int Exit { get; set; }
+            public byte[] Stdout { get; set; } = Array.Empty<byte>();
+            public string Stderr { get; set; } = "";
+            public bool TimedOut { get; set; }
+        }
+
         public static Result Run(ProcessStartInfo start, int timeoutMs, bool git, CancellationToken cancellationToken = default)
+        {
+            var result = RunCaptured(start, timeoutMs, git, ReadTextAsync, cancellationToken);
+            return new Result { Exit = result.Exit, Stdout = result.Stdout ?? "", Stderr = result.Stderr, TimedOut = result.TimedOut };
+        }
+
+        public static BytesResult RunBytes(ProcessStartInfo start, int timeoutMs, bool git, CancellationToken cancellationToken = default)
+        {
+            var result = RunCaptured(start, timeoutMs, git, ReadBytesAsync, cancellationToken);
+            return new BytesResult { Exit = result.Exit, Stdout = result.Stdout ?? Array.Empty<byte>(), Stderr = result.Stderr, TimedOut = result.TimedOut };
+        }
+
+        private sealed class Captured<T>
+        {
+            public int Exit { get; set; }
+            public T Stdout { get; set; } = default!;
+            public string Stderr { get; set; } = "";
+            public bool TimedOut { get; set; }
+        }
+
+        private static Captured<T> RunCaptured<T>(ProcessStartInfo start, int timeoutMs, bool git,
+            Func<Process, CancellationToken, Task<T>> readStdout, CancellationToken cancellationToken)
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(timeoutMs);
@@ -36,7 +65,7 @@ namespace Antiphon.Checkpoints
                     config.ArgumentList.Add("config"); config.ArgumentList.Add("--null");
                     config.ArgumentList.Add("--get-regexp");
                     config.ArgumentList.Add("^(filter\\..*\\.(clean|smudge|process|required)|diff\\..*\\.textconv)$");
-                    var settings = RunCoreAsync(config, deadline.Token).GetAwaiter().GetResult();
+                    var settings = RunCoreAsync(config, ReadTextAsync, deadline.Token).GetAwaiter().GetResult();
                     foreach (var entry in settings.Stdout.Split('\0'))
                     {
                         var split = entry.IndexOf('\n');
@@ -47,10 +76,20 @@ namespace Antiphon.Checkpoints
                         start.ArgumentList.Insert(0, "-c");
                     }
                 }
-                return RunCoreAsync(start, deadline.Token).GetAwaiter().GetResult();
+                return RunCoreAsync(start, readStdout, deadline.Token).GetAwaiter().GetResult();
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            { return new Result { Exit = 128, TimedOut = true }; }
+            { return new Captured<T> { Exit = 128, TimedOut = true }; }
+        }
+
+        private static Task<string> ReadTextAsync(Process process, CancellationToken cancellationToken) =>
+            process.StandardOutput.ReadToEndAsync(cancellationToken);
+
+        private static async Task<byte[]> ReadBytesAsync(Process process, CancellationToken cancellationToken)
+        {
+            using var output = new MemoryStream();
+            await process.StandardOutput.BaseStream.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+            return output.ToArray();
         }
 
         private static void HardenGit(ProcessStartInfo start)
@@ -65,7 +104,8 @@ namespace Antiphon.Checkpoints
             { start.ArgumentList.Insert(0, setting); start.ArgumentList.Insert(0, "-c"); }
         }
 
-        private static async Task<Result> RunCoreAsync(ProcessStartInfo start, CancellationToken cancellationToken)
+        private static async Task<Captured<T>> RunCoreAsync<T>(ProcessStartInfo start,
+            Func<Process, CancellationToken, Task<T>> readStdout, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (OperatingSystem.IsLinux())
@@ -95,11 +135,11 @@ namespace Antiphon.Checkpoints
                     if (job == IntPtr.Zero || !AssignProcessToJobObject(job, process.Handle))
                         throw new InvalidOperationException("process custody unavailable");
                 }
-                var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
+                var stdout = readStdout(process, cancellationToken);
                 var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
                 // This token covers BOTH direct-child exit and inherited redirected descriptors.
                 await Task.WhenAll(process.WaitForExitAsync(cancellationToken), stdout, stderr).WaitAsync(cancellationToken).ConfigureAwait(false);
-                return new Result { Exit = process.ExitCode, Stdout = await stdout.ConfigureAwait(false), Stderr = await stderr.ConfigureAwait(false) };
+                return new Captured<T> { Exit = process.ExitCode, Stdout = await stdout.ConfigureAwait(false), Stderr = await stderr.ConfigureAwait(false) };
             }
             finally
             {
