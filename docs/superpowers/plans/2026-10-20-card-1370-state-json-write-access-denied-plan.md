@@ -175,3 +175,16 @@ explicit transient-publication success assertion, with production unchanged.
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1370/` | state-publication-red | `/*/*/CheckpointStatePublicationTests/state_publication_survives_contention_and_preserves_completed_rows*` | V-1 injected | 1 expected assertion failure | 1 | 8 | true |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1370-green/` | state-publication-green | `/*/*/CheckpointStatePublicationTests/state_publication_survives_contention_and_preserves_completed_rows*` | V-1 injected, V-2, V-3 | 1 passed, 0 failed/skipped; native Windows pending | 1 | 8 | true |
+| CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1370-registry/` | state-publication-registry | `/*/*/TestClassificationGuardTests/Registry_matches_compiled_metadata*` | Review c3204e73 registry defect | 1 passed, 0 failed/skipped | 1 | 8 | true |
+
+## Review c3204e73 repair commissioning (520be308)
+
+This repair owns publication on `feat/card-task-520be308`, starting at
+`82ef7bbc99488fa1ff92d3ef26ccbd49be29c4ee`. The brief requires CP-1 once
+expected red for the extended V-3 witness, then CP-2 and CP-3 once green,
+using `--row-timeout 40m`. No whole-Unit selection is commissioned.
+The new V-3 arm allows the old initial Finish to succeed, induces a real
+cleanup failure through the I/O adapter, and denies all corrective state moves.
+It requires waiter exit 2, no surviving done/0 state, and nonterminal state
+during cleanup. This repairs the prematurely published terminal verdict.
+Native Windows V-1 remains pending; no R-n or PC-n was added.

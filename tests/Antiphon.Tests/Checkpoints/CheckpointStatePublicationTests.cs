@@ -34,6 +34,7 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         await ExecuteScenario(final: true, transient: false);
         await ExecuteScenario(final: false, transient: true);
         await ExecuteScenario(final: false, transient: false, draining: true);
+        await ExecuteScenario(final: true, transient: false, corrective: true);
     }
 
     private void StoreScenario(Exception failure, int failures, int expectedAttempts, bool succeeds,
@@ -104,7 +105,7 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         Directory.GetFiles(Path.GetDirectoryName(path)!, "*.tmp").ShouldBeEmpty();
     }
 
-    private async Task ExecuteScenario(bool final, bool transient, bool draining = false)
+    private async Task ExecuteScenario(bool final, bool transient, bool draining = false, bool corrective = false)
     {
         var repo = TempDir();
         CheckpointFixtureProcess.Git(repo, "init", "-b", "card1370");
@@ -171,13 +172,23 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         }, repo, runtime);
         var attempts = 0;
         string? completedLine = null;
+        string? phaseAtCleanup = null;
+        io.BeforeUnlink = path =>
+        {
+            if (!corrective || !path.Contains("bin-c1370-fixture", StringComparison.Ordinal)) return;
+            phaseAtCleanup = new RunStateStore(context).TryRead(Path.Combine(run, "state.json"))!.Phase;
+            throw new IOException("injected output cleanup failure");
+        };
         io.BeforeMove = (temporary, destination) =>
         {
             if (destination != Path.Combine(run, "state.json")) return;
             var state = JsonSerializer.Deserialize<RunState>(File.ReadAllText(temporary), RunStateStore.Json)!;
             var completed = state.Rows.FirstOrDefault(row => row.Id == "CP-first" && row.State == "green");
-            if (completed is null || final && state.Phase != "done") return;
+            if (completed is null || final && state.Phase is not ("finishing" or "done")) return;
             completedLine ??= completed.Line;
+            // Let the first successful Finish publish on the defective path, then deny
+            // every corrective publication after cleanup changes the verdict to red.
+            if (corrective && (state.Phase != "done" || state.ExitCode == 0)) return;
             if (++attempts <= (transient ? 1 : int.MaxValue))
                 throw new IOException("injected sharing violation", unchecked((int)0x80070020));
         };
@@ -212,12 +223,19 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
                 "-ExpectedSourceSha", source.Commit! }) start.ArgumentList.Add(argument);
             var validation = CheckpointFixtureProcess.Run(start, 30_000);
             validation.Exit.ShouldBe(2, validation.Stdout + validation.Stderr);
-            validation.Stdout.ShouldContain("report_failed");
+            validation.Stdout.ShouldContain(corrective ? "cleanup_refused" : "report_failed");
             var dead = new ProcessIdentityProbe(context).Current() with { Pid = int.MaxValue, StartUtcTicks = 1 };
             ExecutorOwnershipStore.Write(run, dead, context);
             var waited = new StringWriter();
             (await new WaitCommand(context: context).WaitAsync(run, TimeSpan.FromSeconds(5),
                 TimeSpan.FromSeconds(60), waited, CancellationToken.None, source.Commit)).ShouldBe(2);
+            if (corrective)
+            {
+                var persisted = new RunStateStore(context).TryRead(Path.Combine(run, "state.json"));
+                (persisted?.Phase == "done" && persisted.ExitCode == 0)
+                    .ShouldBeFalse("a failed corrective publication must not leave a green terminal receipt");
+                phaseAtCleanup.ShouldBe("finishing", "cleanup must settle before terminal publication");
+            }
             waited.ToString().ShouldContain(row.Line);
             waited.ToString().ShouldContain("receipt-write-failed");
         }
@@ -250,6 +268,7 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         private readonly ICheckpointCleanupIo _inner = new CheckpointNativeIo();
         public Action<string, string>? BeforeMove { get; set; }
         public Action? MoveFailed { get; set; }
+        public Action<string>? BeforeUnlink { get; set; }
         public string? ReadOnlyPath { get; set; }
         public void Move(string source, string destination, bool overwrite)
         {
@@ -284,7 +303,11 @@ public sealed class CheckpointStatePublicationTests : CheckpointTestBase
         public void WriteBytes(string path, ReadOnlySpan<byte> bytes) => _inner.WriteBytes(path, bytes);
         public void AppendText(string path, string text) => _inner.AppendText(path, text);
         public void Copy(string source, string destination, bool overwrite) => _inner.Copy(source, destination, overwrite);
-        public void Unlink(string path) => _inner.Unlink(path);
+        public void Unlink(string path)
+        {
+            BeforeUnlink?.Invoke(path);
+            _inner.Unlink(path);
+        }
         public void RemoveDirectory(string path, bool recursive) => _inner.RemoveDirectory(path, recursive);
         public string? EnvironmentVariable(string name) => _inner.EnvironmentVariable(name);
     }
