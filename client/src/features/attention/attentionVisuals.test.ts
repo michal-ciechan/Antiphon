@@ -168,6 +168,12 @@ describe('attentionVisuals', () => {
     expect(homeBucketOf(item({ kind, severity }))).toBe(bucket)
   })
 
+  it('C1372 describes SessionUnowned using current agent pointer ownership', () => {
+    expect(ATTENTION_VISUALS.SessionUnowned.hint).toBe(
+      'A live session has no agent pointer, card or open task. Inspect its evidence.',
+    )
+  })
+
   it('maps every kind to a label, a colour, an icon and a hint', () => {
     for (const kind of ALL_KINDS) {
       const visual = ATTENTION_VISUALS[kind]
