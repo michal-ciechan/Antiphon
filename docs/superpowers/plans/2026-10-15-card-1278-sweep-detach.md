@@ -44,7 +44,7 @@ rows is not the sweep's and propagates untouched (the `ex.Entries.All(e => e.Ent
 | PC-1 | the last attempt rethrows without detaching (the pre-CARD-1278 `when (attempt < SweepAttempts …)` filter) | V-1 (`DbUpdateConcurrencyException` from the create), V-3, V-4 |
 | PC-2 | detach `ex.Entries` (the failed row) and not the other rows cleared in that attempt | V-3 (the row that did not lose stays modified) |
 | PC-3 | swallow the lost race on the last attempt (return the live rows) | V-2 (no exception), CARD-1275 V-23 |
-| PC-4 | drop the bound (retry while the race is lost) | V-1/V-2/V-3 `SweepAttempts` save counts (the competitor is armed for each save) |
+| PC-4 | drop the bound (retry while the race is lost) | All four fixtures arm exactly `SweepAttempts + 1` competing commits (four today), so save five succeeds. V-1 fails its competitor count; V-2/V-3/V-4 fail the expected `DbUpdateConcurrencyException` because none is thrown. Use V-4 alone for the method-scoped readable-red witness; cancellation or timeout is not an accepted red. |
 
 ### Checkpoints
 

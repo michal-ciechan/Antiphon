@@ -97,9 +97,9 @@ decision. This plan does not add or change any session waiting for input.
 
 ## Verification design
 
-TestDesign remains the next stage because the brief did not fold that stage into
-Plan. Confirm this small closed selection without widening it. This section
-supplies the intended witness and narrow green for that handoff.
+The Code brief explicitly skips TestDesign and retains this small closed selection:
+one bounded readable-red diagnostic and one ordinary green row for all four methods,
+with `--row-timeout 40m`. Formal PCs remain pending for SourceLanding Mutation.
 
 | ID | Existing method | Required ordinary result |
 |---|---|---|
@@ -141,4 +141,4 @@ The Group names the lane. One ordinary green row covers exactly four methods.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1283/` | integration-sweep-fixtures | `/*/*/(ComplexityChainRaceTests)\|(MatrixDefaultComplexityCreateTests)/(A_sweep_that_loses_every_attempt_lets_the_concurrency_error_propagate)\|(A_sweep_of_several_rows_that_loses_every_attempt_leaves_none_of_them_modified)\|(A_default_tier_create_whose_expiry_sweep_loses_every_race_is_created_with_the_warning)\|(An_explicit_complexity_create_whose_expiry_sweep_loses_every_race_still_fails)` | V-1, V-2, V-3, V-4 | all four listed methods, 4 passed, 0 failed/skipped | 4 | 8 | true | n/a |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1283/` | integration-sweep-fixtures | `/*/*/(ComplexityChainRaceTests*)\|(MatrixDefaultComplexityCreateTests*)/(A_sweep_that_loses_every_attempt_lets_the_concurrency_error_propagate*)\|(A_sweep_of_several_rows_that_loses_every_attempt_leaves_none_of_them_modified*)\|(A_default_tier_create_whose_expiry_sweep_loses_every_race_is_created_with_the_warning*)\|(An_explicit_complexity_create_whose_expiry_sweep_loses_every_race_still_fails*)` | V-1, V-2, V-3, V-4 | all four listed methods, 4 passed, 0 failed/skipped | 4 | 8 | true | n/a |

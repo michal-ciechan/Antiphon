@@ -236,8 +236,8 @@ public sealed class ComplexityChainRaceTests
         var race = new CompetingCommit();
         await using var db = Open(schema, race);
 
-        // Before each sweep save another writer rotates the expired row's token, so every save loses.
-        race.Arm(int.MaxValue, async () =>
+        // One conflict beyond the bound detects an extra retry without sustaining an endless loop.
+        race.Arm(ComplexityRoutingService.SweepAttempts + 1, async () =>
         {
             await using var other = Open(schema);
             await other.ComplexityChains
@@ -272,7 +272,7 @@ public sealed class ComplexityChainRaceTests
         await using var db = Open(schema, race);
 
         // Only the Plan row loses; the Code row's clear was valid but rolled back with the batch.
-        race.Arm(int.MaxValue, async () =>
+        race.Arm(ComplexityRoutingService.SweepAttempts + 1, async () =>
         {
             await using var other = Open(schema);
             await other.ComplexityChains.Where(c => c.Id == lost.Id)

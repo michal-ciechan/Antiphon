@@ -354,7 +354,7 @@ public sealed class MatrixDefaultComplexityCreateTests
         var race = new SweepRace();
         await using var f = await Fixture.CreateAsync(race);
         var expired = await f.ExpiredRow(AgentTaskRole.Plan);
-        race.Compete = () => f.RotateToken(expired);
+        race.Arm(ComplexityRoutingService.SweepAttempts + 1, () => f.RotateToken(expired));
         var result = await f.Create();
         race.Fired.ShouldBe(ComplexityRoutingService.SweepAttempts);
         result.Status.ShouldBe(AgentTaskStatus.Queued);
@@ -375,7 +375,7 @@ public sealed class MatrixDefaultComplexityCreateTests
         var race = new SweepRace();
         await using var f = await Fixture.CreateAsync(race);
         var expired = await f.ExpiredRow(AgentTaskRole.Plan);
-        race.Compete = () => f.RotateToken(expired);
+        race.Arm(ComplexityRoutingService.SweepAttempts + 1, () => f.RotateToken(expired));
         await Should.ThrowAsync<DbUpdateConcurrencyException>(() => f.Create(
             new("plan it", Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared, Complexity: TaskComplexity.Medium)));
         race.Fired.ShouldBe(ComplexityRoutingService.SweepAttempts);
@@ -406,19 +406,30 @@ public sealed class MatrixDefaultComplexityCreateTests
         { Check(command); return ValueTask.FromResult(result); }
     }
 
-    /// <summary>Runs <see cref="Compete"/> before each save that carries a modified chain row (the sweep's).</summary>
+    /// <summary>Runs a finite number of competing writes before saves carrying a modified chain row (the sweep's).</summary>
     private sealed class SweepRace : SaveChangesInterceptor
     {
-        public Func<Task>? Compete { get; set; }
+        private Func<Task> _compete = () => Task.CompletedTask;
+        private int _remaining;
+
         public int Fired { get; private set; }
+
+        public void Arm(int times, Func<Task> compete)
+        {
+            _compete = compete;
+            _remaining = times;
+            Fired = 0;
+        }
+
         public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
             DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
         {
-            if (Compete is not null && eventData.Context!.ChangeTracker.Entries<ComplexityChain>()
+            if (_remaining > 0 && eventData.Context!.ChangeTracker.Entries<ComplexityChain>()
                     .Any(e => e.State == EntityState.Modified))
             {
+                _remaining--;
                 Fired++;
-                await Compete();
+                await _compete();
             }
             return result;
         }
