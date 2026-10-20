@@ -391,7 +391,7 @@ the card's "one red witness per rule" acceptance.
 | CP-1 | S1R | `tests/Antiphon.Tests -> bin-c1380-1r/` | any-warm-red | `/*/*/LandWarmArtifactsTests/C1380_WarmPathIsReusedAcrossTwoRebasedLands*` | V-1 red | exactly 1 executed, expected assertion failure | 1 | 5 |
 | CP-2 | S1 | `tests/Antiphon.Tests -> bin-c1380-1/` | any-warm-green | `/*/*/(LandWarmArtifactsTests*)\|(LandVerificationBuildSlotTests*)/*` | V-1, R-1 | all listed, at least 6 new tests, 0 failed/skipped | 6 | 6 |
 | CP-3 | S2R | `tests/Antiphon.Tests -> bin-c1380-2r/` | any-noncode-red | `/*/*/LandNonCodeSkipTests/C1380_DocsOnlyRebasedLandRecordsNonCodeSkip*` | V-2 red | exactly 1 executed, expected assertion failure | 1 | 5 |
-| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1380-2/` | any-noncode-green | `/*/*/(LandNonCodeSkipTests*)\|(AgentTaskLandStageOutcomeTests*)/*` | V-2, R-2 | all listed, at least 7 new tests, 0 failed/skipped | 7 | 7 |
+| CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1380-2/` | any-noncode-green | `/*/*/(LandNonCodeSkipTests*)\|(AgentTaskLandStageOutcomeTests*)\|(AgentTaskLandRefusedRetryTests*)\|(AgentTaskLandingStateTests*)/*` | V-2, R-2 | all listed, at least 7 new tests, 0 failed/skipped | 7 | 7 |
 | CP-5 | S3R | `tests/Antiphon.Tests -> bin-c1380-3r/` | any-review-tree-red | `/*/*/LandReviewedTreeSkipTests/C1380_EqualTreeReceiptSkipsDifferentCommit*` | V-3 red | exactly 1 executed, expected assertion failure | 1 | 5 |
 | CP-6 | S3 | `tests/Antiphon.Tests -> bin-c1380-3/` | any-review-tree-green | `/*/*/(LandReviewedTreeSkipTests\|InterimVerificationLandGuardTests)/*` | V-3, R-3 | all listed, at least 6 new tests, 0 failed/skipped | 6 | 7 |
 | CP-7 | S4R | `tests/Antiphon.Tests -> bin-c1380-4r/` | any-reservation-red | `/*/*/LandVerificationReservationTests/C1380_LiveReservedVerifierAllowsOnlyPreflight*` | V-4 red | exactly 1 executed, expected assertion failure | 1 | 5 |
@@ -414,6 +414,14 @@ whole Unit lane runs: S1 executes CP-1 red and CP-2 green only. The initially ad
 CP-20 was withdrawn before execution; its shared build was stopped and its owned
 output removed. Later slices retain their separate commissioning and checkpoint
 obligations.
+
+S2 Code selection: the brief explicitly requires CP-3 red once and CP-4 green
+once with `--row-timeout 40m`, and no whole-Unit run. CP-4 includes the full
+`AgentTaskLandingStateTests` and `AgentTaskLandRefusedRetryTests` classes because
+the state validator must recognize the new persisted skip and the retry witness
+must require a build for an unchanged source in an unknown graph. These are
+bounded R-2 additions, not a full-assembly run. CP-4 uses the same qualified TUnit
+OR syntax and trailing class wildcards as S1. PC-1 and PC-2 remain pending.
 
 ## Shipment, measurement and rollback
 
