@@ -18,9 +18,8 @@ public partial class StandingRestartEscalationTests
     public async Task C510_S2_three_failed_resumes_reserve_fresh_only_once()
     {
         var root = AgentSupervisionTests.NewTempRoot();
-        var resumes = Enumerable.Range(1, 3).Select(n => new FakeAgentProtocolAdapter
-            { ThrowOnStart = new InvalidOperationException($"resume {n}") }).ToArray();
-        var fresh = new FakeAgentProtocolAdapter { ThrowOnStart = new InvalidOperationException("fresh failed") };
+        var resumes = Enumerable.Range(1, 3).Select(_ => new FakeAgentProtocolAdapter()).ToArray();
+        var fresh = new FakeAgentProtocolAdapter();
         try
         {
             Guid agentId;
@@ -42,6 +41,8 @@ public partial class StandingRestartEscalationTests
                     h.Clock.Advance(TimeSpan.FromSeconds(5 * Math.Pow(2, n) + 1));
                     await h.Supervisor().TickAsync(default);
                     await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
+                    await SessionExitObservation.ObserveMatchingAsync(h.Provider.GetRequiredService<AgentSessionRuntime>(),
+                        oldId, 1, AgentExitReason.ProcessExited, AgentSupervisionTests.CreateContext);
                     await h.Supervisor().TickAsync(default);
                     resumes[n - 1].StartedSessionId.ShouldBe(oldId);
                     resumes[n - 1].StartedArgs.ShouldContain("--resume");
@@ -60,6 +61,8 @@ public partial class StandingRestartEscalationTests
                 var state = await ReadAsync(agentId);
                 state.AutomaticFreshConsumed.ShouldBeTrue();
                 state.AutomaticResumeFailures.ShouldBe(3, "queued fresh is not health");
+                await SessionExitObservation.ObserveMatchingAsync(h.Provider.GetRequiredService<AgentSessionRuntime>(),
+                    newId, 1, AgentExitReason.ProcessExited, AgentSupervisionTests.CreateContext);
             }
             // The failed Fresh must not re-arm when the provider and scoped services restart.
             await using var rebuilt = AgentSupervisionTests.BuildHarness(root, [], definitionKind: "ClaudeCode");
