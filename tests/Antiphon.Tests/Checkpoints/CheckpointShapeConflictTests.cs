@@ -481,13 +481,8 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     internal async Task<RunResult> WaitAsync(ProcessStartInfo start, CancellationToken cancellationToken)
     {
-        using var process = Process.Start(start);
-        process.ShouldNotBeNull();
-        RegisterCheckpointChild(process);
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
-        return new RunResult(process.ExitCode, (await stdoutTask) + (await stderrTask));
+        var result = await CheckpointFixtureProcess.RunAsync(start, cancellationToken);
+        return new RunResult(result.Exit, result.Stdout + result.Stderr);
     }
 
     private static void Write(string root, string relative, string content)
