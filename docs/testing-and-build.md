@@ -968,6 +968,18 @@ Commit before each big run and record the commit and temporary PC mutations it e
 
 ## Nightly
 
+The pinned TUnit 1.44.0/MTP 2.2.2 diagnostic adapter reads unescaped human-readable
+records, not a general serialization. It selects the unique identifier/location-to-state
+transition and validates exception boundaries against the explanation echo. Ordinary
+quoted headers, braces and delimiters are preserved. A complete competing transition
+keeps execution Failed; an ambiguous explanation split omits Message. TRX still owns
+the suite verdict. See [CARD-1325 fixtures](../scripts/fixtures/nightly/c1325-diagnostic-records.ps1)
+for captured, derived and reflected provenance. The bounded 2026-10-20 local timeout
+and cancellation probes both emitted Error, so real Timeout/Cancelled captures remain
+unavailable; their controls establish reflected-shape parsing only. Changing
+`lib/nightly-coverage.ps1` correctly invalidates an authority bound to its old script
+digest; this changes no authority-refresh or release procedure.
+
 **Deployment audit, 2026-09-11 (CARD-0487): the named Windmill script and schedule
 are absent.** A read-only census of the live Windmill database found no matching
 script, schedule or retained job. The latest local `last-run.json` is a failed
