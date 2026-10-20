@@ -974,9 +974,15 @@ transition and validates exception boundaries against the explanation echo. Ordi
 quoted headers, braces and delimiters are preserved. A complete competing transition
 keeps execution Failed; an ambiguous explanation split omits Message. TRX still owns
 the suite verdict. See [CARD-1325 fixtures](../scripts/fixtures/nightly/c1325-diagnostic-records.ps1)
-for captured, derived and reflected provenance. The bounded 2026-10-20 local timeout
-and cancellation probes both emitted Error, so real Timeout/Cancelled captures remain
-unavailable; their controls establish reflected-shape parsing only. Changing
+for captured, derived and reflected provenance. The original bounded 2026-10-20
+CARD-1325 timeout and cancellation probes both emitted Error; their controls
+establish reflected-shape parsing only. The subsequent
+[CARD-1375 captures](../scripts/fixtures/nightly/c1375-provenance.md) supply real
+Timeout and Cancelled producer records: an elapsed `[Timeout]` with detailed
+stack traces, and local cancellation followed by TUnit's public result override.
+The latter does not establish automatic classification of external cancellation.
+These native records have empty exception fields and an empty Timeout value;
+an empty cancelled explanation remains absent Message. Changing
 `lib/nightly-coverage.ps1` correctly invalidates an authority bound to its old script
 digest; this changes no authority-refresh or release procedure.
 

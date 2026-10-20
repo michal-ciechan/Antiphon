@@ -225,7 +225,8 @@ function Get-NightlyDiagnosticFailureMessage {
     # its structural suffix, never whitespace belonging to the explanation.
     $suffix = ' \} \] \} \}\s*\z'
     if ($StateProperty.Name -ceq 'Timeout') {
-        $suffix = ', Timeout = (?:\d+\.)?\d{2}:\d{2}:\d{2}(?:\.\d+)?' + $suffix
+        # Native MTP 2.2.2 prints a null Timeout as empty text.
+        $suffix = ', Timeout = (?:(?:\d+\.)?\d{2}:\d{2}:\d{2}(?:\.\d+)?)?' + $suffix
     }
     $close = [regex]::Match($tail, $suffix)
     if (-not $close.Success) { return $null }
@@ -236,19 +237,21 @@ function Get-NightlyDiagnosticFailureMessage {
     while (($offset = $body.IndexOf($marker, $offset, [StringComparison]::Ordinal)) -ge 0) {
         $message = $body.Substring(0, $offset)
         $exception = $body.Substring($offset + $marker.Length)
-        if (Test-NightlyDiagnosticExceptionTail -Message $message -ExceptionText $exception) {
+        if (Test-NightlyDiagnosticExceptionTail -Message $message -ExceptionText $exception `
+            -AllowEmpty ($StateProperty.Name -cin @('Timeout', 'Cancelled'))) {
             $candidates += $message
         }
         $offset += $marker.Length
     }
     # ToString() does not escape messages or stacks. More than one valid split
     # is real ambiguity, not permission to publish the first or last candidate.
-    if ($candidates.Count -eq 1) { return $candidates[0] }
+    if ($candidates.Count -eq 1 -and $candidates[0].Length -gt 0) { return $candidates[0] }
     return $null
 }
 
 function Test-NightlyDiagnosticExceptionTail {
-    param([string]$Message, [string]$ExceptionText)
+    param([string]$Message, [string]$ExceptionText, [bool]$AllowEmpty = $false)
+    if ($AllowEmpty -and $ExceptionText.Length -eq 0) { return $true }
     if ($ExceptionText -ceq '<null>') { return $true }
     $echoType = 'TUnit.Engine.Exceptions.TestFailedException: '
     if ($ExceptionText.StartsWith($echoType, [StringComparison]::Ordinal)) {
