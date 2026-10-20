@@ -17,6 +17,8 @@ using static Antiphon.Tests.Application.RolePolicyToolBundleDispatchTests;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
+[ParallelLimiter<ProcessSpawnLimit>]
 [NotInParallel("AgentQueue")]
 public sealed class PreDispatchFailureDeliveryTests
 {
@@ -27,7 +29,7 @@ public sealed class PreDispatchFailureDeliveryTests
     public async Task Pre_dispatch_failed_commit_keeps_the_caller_obligation(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        await using var parent = await CreateParentAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             PreserveDatabaseOnDispose = true,
@@ -90,7 +92,7 @@ public sealed class PreDispatchFailureDeliveryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var fault = new QueueInsertFault { Remaining = 2 };
-        var parent = await BridgeQueueHarness.CreateAsync(new()
+        var parent = await CreateParentAsync(new()
         {
             ConnectionString = schema.ConnectionString,
             PreserveDatabaseOnDispose = true,
@@ -117,7 +119,7 @@ public sealed class PreDispatchFailureDeliveryTests
             var sessionId = parent.SessionId;
             var agentId = parent.AgentId;
             await parent.DisposeAsync();
-            parent = await BridgeQueueHarness.CreateAsync(new()
+            parent = await CreateParentAsync(new()
             {
                 ConnectionString = schema.ConnectionString,
                 PreserveDatabaseOnDispose = true,
@@ -178,10 +180,12 @@ public sealed class PreDispatchFailureDeliveryTests
     public async Task Preflight_failure_obligation_commits_with_its_claim(bool interruptClaim, CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        await using var parent = await CreateParentAsync(new()
         {
             ConnectionString = schema.ConnectionString, PreserveDatabaseOnDispose = true,
         });
+        using var repo = new ScratchGitRepo("c1232-claim");
+        await repo.CommitFileAsync("README.md", "isolated preflight claim\n");
         var sink = new RecordingSink();
         using var interrupted = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var cut = new FailedCommitCut(interrupted);
@@ -193,7 +197,8 @@ public sealed class PreDispatchFailureDeliveryTests
             task.AgentId = parent.AgentId;
             task.Ephemeral = false;
             task.Workspace = WorkspaceMode.Worktree;
-            task.RepoPath = parent.TempRoot;
+            task.WorkingDirectory = repo.Path;
+            task.RepoPath = repo.Path;
             await db.SaveChangesAsync(ct);
         }
         if (interruptClaim)
@@ -215,7 +220,7 @@ public sealed class PreDispatchFailureDeliveryTests
         await using var verify = parent.CreateObserverContext();
         var failed = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, ct);
         failed.Status.ShouldBe(AgentTaskStatus.Failed);
-        failed.FailureReason.ShouldContain("workspace_existing_agent_conflict");
+        failed.FailureReason.ShouldNotBeNull().ShouldContain("workspace_existing_agent_conflict");
         failed.DispatchedAt.ShouldBeNull();
         var debt = await verify.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.TaskId == taskId, ct);
         debt.SourceEventId.ShouldBe((await verify.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == taskId
@@ -235,7 +240,7 @@ public sealed class PreDispatchFailureDeliveryTests
     public async Task Pre_dispatch_excluded_routes_create_no_obligation(AgentTaskReplyTo route)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        await using var parent = await CreateParentAsync(new()
         {
             ConnectionString = schema.ConnectionString, PreserveDatabaseOnDispose = true,
         });
@@ -265,7 +270,11 @@ public sealed class PreDispatchFailureDeliveryTests
     public async Task Pre_dispatch_snapshot_survives_task_retry()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        await using var parent = await CreateParentAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, PreserveDatabaseOnDispose = true,
+        });
+        await using var other = await CreateParentAsync(new()
         {
             ConnectionString = schema.ConnectionString, PreserveDatabaseOnDispose = true,
         });
@@ -292,8 +301,9 @@ public sealed class PreDispatchFailureDeliveryTests
         await using (var scope = first.CreateAsyncScope())
             await scope.ServiceProvider.GetRequiredService<AgentTaskService>().RetryAsync(taskId, CancellationToken.None);
         await verify.AgentTasks.Where(t => t.Id == taskId).ExecuteUpdateAsync(
-            s => s.SetProperty(t => t.Title, "second distinct failure title"));
-        await using var second = BuildProvider(schema.ConnectionString, sink, UnknownKey + "-later", parent, checkEnabled: false);
+            s => s.SetProperty(t => t.Title, "second distinct failure title")
+                .SetProperty(t => t.ParentSessionId, other.SessionId));
+        await using var second = BuildProvider(schema.ConnectionString, sink, UnknownKey + "-later", other, checkEnabled: false);
         await TickAsync(second, CancellationToken.None);
         var debts = await verify.AgentTaskLandNotifications.AsNoTracking().Where(n => n.TaskId == taskId).ToListAsync();
         debts.Count.ShouldBe(2);
@@ -310,11 +320,13 @@ public sealed class PreDispatchFailureDeliveryTests
         await parent.Queue.OnTurnEndAsync(parent.SessionId, CancellationToken.None);
         await RecoverAsync(second, CancellationToken.None);
         await AssertReceiptAsync(parent, original, rootId, CancellationToken.None);
-        await AssertReceiptAsync(parent, later, rootId, CancellationToken.None);
+        await AssertReceiptAsync(other, later, rootId, CancellationToken.None);
         await RecoverAsync(second, CancellationToken.None);
         await parent.Queue.OnTurnEndAsync(parent.SessionId, CancellationToken.None);
-        (await RowsAsync(schema.ConnectionString, parent.SessionId)).Count.ShouldBe(2);
-        parent.Adapter.SubmittedBodies.Count.ShouldBe(2);
+        (await RowsAsync(schema.ConnectionString, parent.SessionId)).Count.ShouldBe(1);
+        (await RowsAsync(schema.ConnectionString, other.SessionId)).Count.ShouldBe(1);
+        parent.Adapter.SubmittedBodies.Count.ShouldBe(1);
+        other.Adapter.SubmittedBodies.Count.ShouldBe(1);
         sink.Items.ShouldBeEmpty();
     }
 
@@ -322,7 +334,7 @@ public sealed class PreDispatchFailureDeliveryTests
     public async Task Pre_dispatch_receipt_requires_complete_user_prompt()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        await using var parent = await CreateParentAsync(new()
         {
             ConnectionString = schema.ConnectionString, PreserveDatabaseOnDispose = true,
         });
@@ -354,7 +366,7 @@ public sealed class PreDispatchFailureDeliveryTests
     public async Task Pre_dispatch_recovery_retains_authoritative_row(string state)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        await using var parent = await CreateParentAsync(new()
         {
             ConnectionString = schema.ConnectionString, PreserveDatabaseOnDispose = true,
         });
@@ -374,8 +386,14 @@ public sealed class PreDispatchFailureDeliveryTests
         else if (state == "missing")
             await verify.SessionQueuedMessages.Where(m => m.Id == original.Id).ExecuteDeleteAsync();
         else
+        {
+            var floor = await parent.CurrentTranscriptMaxSequenceAsync();
+            var attemptedAt = DateTime.UtcNow;
             await verify.SessionQueuedMessages.Where(m => m.Id == original.Id).ExecuteUpdateAsync(
-                s => s.SetProperty(m => m.DeliveryAttempts, 3));
+                s => s.SetProperty(m => m.DeliveryAttempts, 3)
+                    .SetProperty(m => m.LastDeliveryBaselineSequence, floor)
+                    .SetProperty(m => m.LastDeliveryStartedAt, attemptedAt));
+        }
         await RecoverAsync(provider, CancellationToken.None);
         await RecoverAsync(provider, CancellationToken.None);
         var held = await verify.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == debt.Id);
@@ -404,7 +422,7 @@ public sealed class PreDispatchFailureDeliveryTests
     public async Task Pre_dispatch_recovery_waits_for_destination()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var parent = await BridgeQueueHarness.CreateAsync(new()
+        await using var parent = await CreateParentAsync(new()
         {
             ConnectionString = schema.ConnectionString, PreserveDatabaseOnDispose = true,
         });
@@ -454,6 +472,17 @@ public sealed class PreDispatchFailureDeliveryTests
         var confirmed = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == debt.Id, ct);
         confirmed.State.ShouldBe(LandNotificationState.Confirmed);
         confirmed.ConfirmingPromptSequence.ShouldBe(prompt.Sequence);
+    }
+
+    private static async Task<BridgeQueueHarness> CreateParentAsync(BridgeQueueHarness.HarnessOptions options)
+    {
+        var parent = await BridgeQueueHarness.CreateAsync(options);
+        if (options.AttachSessionId is null)
+        {
+            await parent.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "caller baseline before delegation");
+            await parent.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        }
+        return parent;
     }
 
     private static async Task RecoverAsync(ServiceProvider provider, CancellationToken ct)
