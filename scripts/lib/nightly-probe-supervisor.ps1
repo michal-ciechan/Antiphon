@@ -105,11 +105,10 @@ function Invoke-NightlyProbeSupervisor {
         # One real allowance includes all kill calls, joins and both EOF drains.
         $cleanup.Start()
         if ($started) {
-            # CARD-1375 CP-3 intentional negative control: suppress both kill paths.
-            try { if (-not $process.HasExited) { } }
+            try { if (-not $process.HasExited) { $process.Kill($true) } }
             catch { $errors.Add("root kill: $($_.Exception.Message)") }
             foreach ($identity in $descendants) {
-                try { if (Test-NightlyProbeIdentityAlive $identity) { } }
+                try { if (Test-NightlyProbeIdentityAlive $identity) { $identity.Process.Kill() } }
                 catch { $errors.Add("descendant kill: $($_.Exception.Message)") }
             }
             try { $rootJoined = $process.WaitForExit([int][Math]::Max(0, 5000 - $cleanup.ElapsedMilliseconds)) }
