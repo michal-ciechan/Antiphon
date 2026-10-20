@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -28,7 +29,18 @@ public sealed class CheckpointBoundedReaderTests : CheckpointTestBase
     [Test]
     public async Task C1381_Project_read_budget_excludes_startup_delay()
     {
-        await RunProbeAsync("project", "held", 5000);
+        using var result = JsonDocument.Parse(await RunProbeAsync("project", "held", 5000));
+        var probe = result.RootElement;
+        probe.GetProperty("expired").GetBoolean().ShouldBeFalse();
+        probe.GetProperty("survivor").GetBoolean().ShouldBeFalse();
+        probe.GetProperty("code").GetInt32().ShouldBe(0);
+        probe.GetProperty("timingValid").GetBoolean().ShouldBeTrue();
+        probe.GetProperty("bound").GetInt32().ShouldBe(4000);
+        probe.GetProperty("watchdogMs").GetInt32().ShouldBe(30000);
+        probe.GetProperty("delayElapsedMs").GetInt64().ShouldBeGreaterThanOrEqualTo(5000);
+        probe.GetProperty("elapsed").GetInt64().ShouldBeGreaterThanOrEqualTo(5000);
+        probe.GetProperty("readElapsedMs").GetInt64().ShouldBeGreaterThanOrEqualTo(0);
+        probe.GetProperty("readElapsedMs").GetInt64().ShouldBeLessThan(4000);
     }
 
     private async Task<string> RunProbeAsync(string mode, string shape, int? preReadDelayMs = null)
@@ -41,8 +53,9 @@ public sealed class CheckpointBoundedReaderTests : CheckpointTestBase
         using var process = Process.Start(psi)!;
         RegisterCheckpointChild(process);
         var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync(); // The owned supervisor enforces and asserts the exact hard bound.
+        await process.WaitForExitAsync(); // The supervisor checks read acceptance and independent emergency cleanup.
         var output = await stdout;
+        Console.WriteLine(output);
         process.ExitCode.ShouldBe(0, output + await stderr);
         return output;
     }
