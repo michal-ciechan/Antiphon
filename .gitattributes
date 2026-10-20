@@ -1,6 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 
+# Independent Slow registry additions can merge; the metadata guard validates the resulting pairs.
+tests/Antiphon.Tests/slow-tests-allowlist.txt merge=union
+
 # CARD-0907: consumed PTY bytes and frozen grids must survive Windows checkout unchanged.
 tests/Antiphon.Agents.Pty.Tests/Fixtures/CodexStartup/v0160-*.txt text eol=lf
 tests/Antiphon.Agents.Pty.Tests/Fixtures/CodexStartup/v0160-*.ansi -text
