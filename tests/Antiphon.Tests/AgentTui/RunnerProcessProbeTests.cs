@@ -47,6 +47,121 @@ public sealed class RunnerProcessProbeTests
         }
     }
 
+    /// <summary>
+    /// CARD-1414: a developer Windows host inherits a user PATH past the 4000-character value
+    /// ceiling (4645 on the qualification desktop), which refused every probe on that host with
+    /// "The bounded child environment is unavailable." The inherited PATH is bounded on an entry
+    /// boundary instead: empty, duplicate and missing entries go first, then the list is cut to
+    /// the ceiling at a whole entry in the original order, and the probe still runs.
+    /// </summary>
+    [Test]
+    public async Task Inherited_path_over_the_ceiling_is_bounded_on_an_entry_boundary_and_the_probe_runs()
+    {
+        const int ceiling = 4000;
+        var previous = Environment.GetEnvironmentVariable("PATH");
+        var scratch = CreateScratch();
+        try
+        {
+            var comparer = OperatingSystem.IsWindows()
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal;
+            var inherited = (previous ?? string.Empty)
+                .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+                .Select(entry => entry.Trim().Trim('"'))
+                .Where(entry => entry.Length > 0)
+                .Distinct(comparer)
+                .ToList();
+            var existing = inherited.Where(Directory.Exists).ToList();
+            var keep = new List<string>();
+            for (var index = 0; index < 40; index++)
+            {
+                var directory = Path.Combine(scratch, $"keep-{index:D2}-" + new string('k', 120));
+                Directory.CreateDirectory(directory);
+                keep.Add(directory);
+            }
+            var missing = Enumerable.Range(0, 10)
+                .Select(index => Path.Combine(scratch, $"missing-{index:D2}-" + new string('m', 120)))
+                .ToList();
+            // Real entries first so the parent still resolves pwsh through this PATH.
+            var composed = new List<string>(inherited);
+            for (var index = 0; index < keep.Count; index++)
+            {
+                composed.Add(keep[index]);
+                composed.Add(string.Empty);
+                composed.Add(keep[index]);
+                composed.Add(missing[index % missing.Count]);
+            }
+            var longPath = string.Join(Path.PathSeparator, composed);
+            longPath.Length.ShouldBeGreaterThan(ceiling);
+
+            var expected = new List<string>();
+            var length = 0;
+            foreach (var entry in existing.Concat(keep))
+            {
+                var next = length + (expected.Count == 0 ? 0 : 1) + entry.Length;
+                if (next > ceiling)
+                    break;
+                expected.Add(entry);
+                length = next;
+            }
+            expected.ShouldContain(keep[0]);
+            expected.Count.ShouldBeLessThan(existing.Count + keep.Count);
+
+            var script = WriteHelper(scratch);
+            Environment.SetEnvironmentVariable("PATH", longPath);
+            var result = await CreateProbe().RunAsync(Request(script, ["path"]), CancellationToken.None);
+
+            result.Error.ShouldBeNull();
+            result.ExitCode.ShouldBe(0);
+            var childPath = result.StandardOutput.ReplaceLineEndings("\n").TrimEnd('\n');
+            childPath.Length.ShouldBeLessThanOrEqualTo(ceiling);
+            childPath.Split(Path.PathSeparator).ShouldBe(expected);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", previous);
+            DeleteScratchBestEffort(scratch);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1414: only the inherited PATH list is bounded. Every other inherited value keeps the
+    /// hard ceiling, which is also the per-value bound the output redactor allocates for.
+    /// </summary>
+    [Test]
+    public async Task Oversized_inherited_non_path_value_is_still_refused_before_start()
+    {
+        var name = OperatingSystem.IsWindows() ? "ComSpec" : "LOGNAME";
+        var previous = Environment.GetEnvironmentVariable(name);
+        var startCalls = 0;
+        var probe = CreateProbe(
+            new RunnerProcessReaper(),
+            seams: new RunnerProcessProbeSeams
+            {
+                StartProcessAsync = (_, _) =>
+                {
+                    startCalls++;
+                    return Task.FromResult(false);
+                }
+            });
+        try
+        {
+            Environment.SetEnvironmentVariable(name, new string('v', 4001));
+            var result = await probe.RunAsync(
+                new RunnerProcessRequest("unused", [], null, new Dictionary<string, string>(), SecretValues: []),
+                CancellationToken.None);
+
+            result.Started.ShouldBeFalse();
+            result.StandardOutput.ShouldBeEmpty();
+            result.Error.ShouldBe("The bounded child environment is unavailable.");
+            startCalls.ShouldBe(0);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(name, previous);
+        }
+    }
+
     [Test]
     public async Task Probe_preserves_argument_boundaries_without_shell_interpretation()
     {
@@ -1222,6 +1337,10 @@ public sealed class RunnerProcessProbeTests
             if ($mode -eq 'environment') {
                 [Console]::Out.WriteLine(('host=' + [bool](Test-Path ('Env:' + $args[1]))))
                 [Console]::Out.WriteLine(('declared=' + ([Environment]::GetEnvironmentVariable($args[2]) -eq 'ordinary')))
+                exit 0
+            }
+            if ($mode -eq 'path') {
+                [Console]::Out.Write([Environment]::GetEnvironmentVariable('PATH'))
                 exit 0
             }
             if ($mode -eq 'arguments') {
