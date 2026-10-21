@@ -405,7 +405,7 @@ internal static class C1361CensusProbes
         try { $value={{(wait ? "Wait-RecycleTaskCensus" : "Assert-RecycleTaskCensus")}} -RunnerId server2 -ProjectId '{{Project}}' {{(report ? "-Report" : "")}}; $snapshot=$script:recycleReceipt.snapshot }
         catch { $errorText=$_.Exception.Message; $code=2 }
         $returned=$null; $reportResult=$null
-        if ($code -eq 0 -and '{{report}}' -eq 'False') { $returned=$value|ConvertFrom-Json }
+        if ($code -eq 0 -and '{{report}}' -eq 'False' -and $null -ne $value) { $returned=$value|ConvertFrom-Json }
         if ($code -eq 0 -and '{{report}}' -eq 'True') { $reportResult=$value }
         @{error=$errorText;code=$code;snapshot=$snapshot;returned=$returned;report=$reportResult;reads=@($script:reads);sleeps=$script:sleeps} | ConvertTo-Json -Depth 40 | Set-Content "$root/result.json"
         """;
