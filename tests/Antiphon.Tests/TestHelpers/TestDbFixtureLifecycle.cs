@@ -214,7 +214,12 @@ internal class TestDbOperations
     /// stays a version check on a cache hit.
     /// </summary>
     public virtual Task WarmMigratorAsync(string connectionString) =>
-        throw new NotImplementedException("CARD-1420 red: migrator warm-up not wired");
+        Task.Run(() =>
+        {
+            using var context = new AppDbContext(TestDbFixtureLifecycle.BuildOptions(connectionString));
+            if (context.Database.HasPendingModelChanges())
+                throw new InvalidOperationException("the model has changes its migrations snapshot lacks");
+        });
 
     /// <summary>The migrations assembly's ordered migration IDs (reflection only, no connection).</summary>
     public virtual IReadOnlyList<string> GetAssemblyMigrations() => AssemblyMigrations.Value;
@@ -529,21 +534,37 @@ internal sealed class TestDbFixtureLifecycle
         if (_cache.TryRead(key, out var snapshot) && snapshot is not null)
         {
             string? failure = null;
+            Task? warm = null;
             try
             {
                 var expected = _ops.GetAssemblyMigrations();
                 if (!snapshot.MigrationIds.SequenceEqual(expected, StringComparer.Ordinal))
                     throw new InvalidOperationException("snapshot migrations differ from the assembly migrations");
+                // A hit runs no EF migrate, which is what warms the model differ for a test's first
+                // MigrateAsync. Warm it (CPU only, no database) while psql restores.
+                warm = _ops.WarmMigratorAsync(shared);
                 await _ops.RestoreSnapshotAsync(container, TestDbFixture.SharedDatabaseName, snapshot.Sql)
                     .ConfigureAwait(false);
                 var applied = await _ops.ReadAppliedMigrationsAsync(shared).ConfigureAwait(false);
                 if (!applied.SequenceEqual(expected, StringComparer.Ordinal))
                     throw new InvalidOperationException(
                         $"restored history has {applied.Count} migrations, assembly has {expected.Count}");
+                await warm.ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 failure = ex.GetType().Name + ": " + ex.Message;
+                if (warm is not null)
+                {
+                    try
+                    {
+                        await warm.ConfigureAwait(false);
+                    }
+                    catch (Exception)
+                    {
+                        // Observed; the first failure decides the fallback.
+                    }
+                }
             }
 
             if (failure is null)
