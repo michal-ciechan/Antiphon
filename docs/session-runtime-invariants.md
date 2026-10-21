@@ -49,6 +49,24 @@ generation after publication. Incomplete or stale snapshots retain the evidence.
 Queue pruning rechecks eligibility while holding
 the same mutation lease as transcript/action admission.
 
+A failed channel reply does not hold the other phases (CARD-1422). Every other
+failed phase still retains its action and holds this session's later actions in
+sequence order, as above. When the channel phase (4) throws, the coordinator saves
+a separate `channel` debt row (same sequence, attempt 1, capped retry) together
+with the action's phase advance, so review routing, task settlement, refinement
+confirmation and catch-up still run. A route action that reaches phase 4 while an
+earlier channel debt is owed does not dispatch: it saves its own debt row behind
+it. Only the earliest debt row of a session runs, and only when due, so replies
+publish in transcript order. A failed debt retry pushes later debt to its new due
+time and does not end the drain page. The queue phase does not wait for channel
+debt, because the dispatcher resolves each turn from stored rows. A late-confirm
+publication waits while channel debt at or below its sequence is owed. Replay
+stays idempotent through the dispatcher's existing claim and pending-range rules.
+`ChannelReplyLost` remains the backstop for a reply that never publishes.
+Pinned by `AgentTaskCatchUpSettlementTests.catch_up_settles_even_when_channel_reply_dispatch_throws`,
+`AgentTaskCatchUpSettlementTests.a_throwing_settlement_phase_still_holds_the_later_actions_in_order`
+and `SessionRuntimeActionRecoveryTests.C1422_failed_channel_reply_is_retried_in_order_after_the_dispatcher_recovers`.
+
 Implementation and qualification status, including remaining routing/recovery
 work, is recorded in
 [the continuation evidence](superpowers/plans/2026-10-15-card-1259-code-s2-s4-evidence.md).
