@@ -1,3 +1,5 @@
+using System.Reflection;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -5,6 +7,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -160,6 +163,102 @@ public partial class StandingRestartEscalationTests
         finally { await AgentSupervisionTests.CleanupAsync(root); }
     }
 
+    [Test]
+    public async Task C510_S3_later_episode_raises_one_warning_per_reservation()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var root = AgentSupervisionTests.NewTempRoot();
+        try
+        {
+            var first = new FakeAgentProtocolAdapter();
+            var resume1 = new FakeAgentProtocolAdapter { ThrowOnStart = new InvalidOperationException("resume 1") };
+            var resume2 = new FakeAgentProtocolAdapter { ThrowOnStart = new ArgumentException("resume 2") };
+            var resume3 = new FakeAgentProtocolAdapter { ThrowOnStart = new InvalidOperationException("resume 3") };
+            var second = new FakeAgentProtocolAdapter();
+            await using var h = Harness(root, schema, [first, resume1, resume2, resume3, second]);
+            var agent = await AgentSupervisionTests.CreateAlwaysOnAgentAsync(h, root);
+            var oldId = Guid.NewGuid();
+            var generation = h.Clock.GetUtcNow().UtcDateTime.AddMinutes(-10);
+            await using (var db = CapacityRecoveryTestSupport.CreateContext(schema))
+            {
+                var owner = (await db.Agents.FindAsync(agent.Id))!;
+                owner.Kind = AgentKind.ClaudeCode;
+                owner.PersistentSessionId = oldId.ToString("D");
+                db.AgentSessions.Add(Session(oldId, agent.Id, owner.WorkingDirectory, generation));
+                db.AgentSupervisionStates.Add(Eligible(agent.Id, oldId, generation, h));
+                await db.SaveChangesAsync();
+            }
+
+            await h.Supervisor().TickAsync(default);
+            await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
+            first.StartedSessionId.ShouldNotBeNull(string.Join(Environment.NewLine, h.SupervisorLog));
+            var firstNew = first.StartedSessionId!.Value;
+            (await FreshWarningsAsync(schema, agent.Id)).Count.ShouldBe(1);
+
+            DateTime completed;
+            await using (var db = CapacityRecoveryTestSupport.CreateContext(schema))
+            {
+                var session = (await db.AgentSessions.FindAsync(firstNew))!;
+                session.Status.ShouldBe(SessionStatus.Running);
+                session.InteractiveLaunchCompletedAt.ShouldNotBeNull();
+                completed = session.InteractiveLaunchCompletedAt!.Value;
+            }
+
+            await TickAtAsync(h, completed.AddMinutes(10));
+            var reset = await ReadSchemaAsync(schema, agent.Id);
+            reset.AutomaticResumeFailures.ShouldBe(0);
+            reset.AutomaticFreshConsumed.ShouldBeFalse();
+
+            await SessionExitObservation.ObserveMatchingAsync(
+                h.Provider.GetRequiredService<AgentSessionRuntime>(),
+                firstNew, 1, AgentExitReason.ProcessExited,
+                () => CapacityRecoveryTestSupport.CreateContext(schema));
+            await h.Supervisor().TickAsync(default);
+            (await ReadSchemaAsync(schema, agent.Id)).AutomaticResumeFailures.ShouldBe(0,
+                string.Join(Environment.NewLine, h.SupervisorLog));
+
+            for (var attempt = 1; attempt <= 3; attempt++)
+            {
+                h.Clock.Advance(TimeSpan.FromSeconds(5 * Math.Pow(2, attempt) + 1));
+                await h.Supervisor().TickAsync(default);
+                await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
+                await h.Supervisor().TickAsync(default);
+                await h.Supervisor().TickAsync(default);
+                (await ReadSchemaAsync(schema, agent.Id)).AutomaticResumeFailures.ShouldBe(attempt,
+                    string.Join(Environment.NewLine, h.SupervisorLog));
+            }
+
+            h.Clock.Advance(TimeSpan.FromSeconds(81));
+            await h.Supervisor().TickAsync(default);
+            await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
+            second.StartedSessionId.ShouldNotBeNull(string.Join(Environment.NewLine, h.SupervisorLog));
+            second.StartedSessionId.ShouldNotBe(firstNew);
+
+            var incidents = await FreshIncidentsAsync(schema, agent.Id);
+            incidents.Count.ShouldBe(2);
+            incidents[0].SessionId.ShouldBe(firstNew);
+            incidents[1].SessionId.ShouldBe(second.StartedSessionId);
+            var alerts = await FreshWarningsAsync(schema, agent.Id);
+            alerts.Count.ShouldBe(2);
+            alerts.Select(a => a.DedupKey).ShouldBe(incidents.Select(incident => FreshDedupKey(agent.Id, incident.Id)));
+            alerts[0].SessionId.ShouldBe(firstNew);
+            alerts[1].SessionId.ShouldBe(second.StartedSessionId);
+            alerts.ShouldAllBe(a => a.Severity == AlertSeverity.Warning && a.Source == "supervisor");
+
+            await ReplayFreshStartedAlertAsync(h, agent.Id);
+            (await FreshWarningsAsync(schema, agent.Id)).Count.ShouldBe(2);
+
+            await using var rebuilt = Harness(root, schema, []);
+            await ReplayFreshStartedAlertAsync(rebuilt, agent.Id);
+            var replayed = await FreshWarningsAsync(schema, agent.Id);
+            replayed.Count.ShouldBe(2);
+            foreach (var incident in incidents)
+                replayed.ShouldContain(a => a.DedupKey == FreshDedupKey(agent.Id, incident.Id));
+            replayed.Select(a => a.DedupKey).Distinct().Count().ShouldBe(2);
+        }
+        finally { await AgentSupervisionTests.CleanupAsync(root); }
+    }
+
     private static AgentSupervisionTests.Harness Harness(
         string root, IsolatedTestSchema schema, IReadOnlyList<Antiphon.Server.Application.Interfaces.IAgentProtocolAdapter> adapters) =>
         AgentSupervisionTests.BuildHarness(root, adapters, new SupervisionSettings(),
@@ -259,5 +358,42 @@ public partial class StandingRestartEscalationTests
         alert.SessionId.ShouldBe(newId);
         alert.Detail.ShouldContain("fresh launch queued");
         alert.Detail.ShouldNotContain("recovered");
+    }
+
+    private static string FreshDedupKey(Guid agentId, Guid incidentId) =>
+        $"supervisor:StandingAutomaticFreshStarted:{agentId:N}:{incidentId:N}";
+
+    private static async Task<AgentSupervisionState> ReadSchemaAsync(IsolatedTestSchema schema, Guid agentId)
+    {
+        await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
+        return await db.AgentSupervisionStates.AsNoTracking().SingleAsync(s => s.AgentId == agentId);
+    }
+
+    private static async Task<List<AgentIncident>> FreshIncidentsAsync(IsolatedTestSchema schema, Guid agentId)
+    {
+        await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
+        return await db.AgentIncidents.AsNoTracking()
+            .Where(i => i.AgentId == agentId && i.Kind == AgentIncidentKind.StandingAutomaticFreshStarted)
+            .OrderBy(i => i.CreatedAt).ThenBy(i => i.Id)
+            .ToListAsync();
+    }
+
+    private static async Task<List<Alert>> FreshWarningsAsync(IsolatedTestSchema schema, Guid agentId)
+    {
+        await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
+        return await db.Alerts.AsNoTracking()
+            .Where(a => a.AgentId == agentId && a.Detail != null && a.Detail.Contains("StandingAutomaticFreshStarted"))
+            .OrderBy(a => a.CreatedAt).ThenBy(a => a.Id)
+            .ToListAsync();
+    }
+
+    private static async Task ReplayFreshStartedAlertAsync(AgentSupervisionTests.Harness harness, Guid agentId)
+    {
+        var supervisor = harness.Supervisor();
+        var method = typeof(AgentSupervisorService).GetMethod(
+            "TryRaiseFreshStartedAlertAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        method.ShouldNotBeNull();
+        await (Task)method.Invoke(supervisor, [agentId, CancellationToken.None])!;
     }
 }
