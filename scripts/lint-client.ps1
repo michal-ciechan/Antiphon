@@ -1,7 +1,8 @@
 # Lints the client the release gate lints, without running Vitest.
 #
 # CARD-1393. Production command, working directory client/:
-#   node client/node_modules/eslint/bin/eslint.js . --max-warnings 0
+#   node client/node_modules/eslint/bin/eslint.js . --max-warnings 0 --cache --cache-location node_modules/.tmp/eslintcache
+# The cache file stays under client/node_modules/.tmp, which is gitignored (CARD-1398).
 # -Path <file> runs from that file's directory:
 #   node client/node_modules/eslint/bin/eslint.js <file> --max-warnings 0
 #
@@ -21,25 +22,14 @@ if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out
 $logFile = Join-Path $logDir 'client-lint.log'
 $eslint = Join-Path (Join-Path (Join-Path $clientDir 'node_modules') 'eslint') (Join-Path 'bin' 'eslint.js')
 
-function Install-ClientDependencies {
-    Write-Output "eslint is not installed at $eslint - installing client dependencies first."
-    $npmExe = if (Get-Command npm.cmd -ErrorAction SilentlyContinue) { 'npm.cmd' } else { 'npm' }
-    $installVerb = if (Test-Path (Join-Path $clientDir 'package-lock.json')) { 'ci' } else { 'install' }
-    Push-Location $clientDir
-    try {
-        & $npmExe $installVerb
-        $installCode = $LASTEXITCODE
-    }
-    finally {
-        Pop-Location
-    }
-    if ($installCode -ne 0) {
-        Write-Output "npm $installVerb exited with code $installCode."
-    }
-}
+. (Join-Path $PSScriptRoot (Join-Path 'lib' 'client-npm-install.ps1'))
 
 if (-not (Test-Path -LiteralPath $eslint)) {
-    Install-ClientDependencies
+    Write-Output "eslint is not installed at $eslint - installing client dependencies first."
+    $installCode = Install-ClientNpmDependencies -RepoRoot $repoRoot -RequiredPaths @($eslint)
+    if ($installCode -ne 0) {
+        Write-Output "npm ci exited with code $installCode."
+    }
 }
 
 if (-not (Test-Path -LiteralPath $eslint)) {
@@ -73,9 +63,14 @@ if (-not [string]::IsNullOrWhiteSpace($Path)) {
     }
 }
 else {
+    $eslintCache = Join-Path (Join-Path (Join-Path $clientDir 'node_modules') '.tmp') 'eslintcache'
+    $eslintCacheDir = Split-Path -Parent $eslintCache
+    if (-not (Test-Path -LiteralPath $eslintCacheDir)) {
+        New-Item -ItemType Directory -Path $eslintCacheDir | Out-Null
+    }
     Push-Location $clientDir
     try {
-        & node $eslint . --max-warnings 0 2>&1 | Tee-Object -FilePath $logFile
+        & node $eslint . --max-warnings 0 --cache --cache-location $eslintCache 2>&1 | Tee-Object -FilePath $logFile
         $code = $LASTEXITCODE
     }
     finally {

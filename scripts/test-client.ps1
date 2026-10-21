@@ -32,10 +32,24 @@
 
 $ErrorActionPreference = 'Continue'
 $jsonResultPath = ''
+$typecheckProject = ''
+$lintPath = ''
 $forward = @()
 for ($i = 0; $i -lt $args.Count; $i++) {
     if ([string]$args[$i] -eq '-JsonResultPath' -and ($i + 1) -lt $args.Count) {
         $jsonResultPath = [string]$args[$i + 1]
+        $i++
+        continue
+    }
+    # Witness switches (CARD-1398). They are not vitest filters. -TypecheckProject
+    # forwards to typecheck-client.ps1 -Project. -LintPath forwards to lint-client.ps1 -Path.
+    if ([string]$args[$i] -eq '-TypecheckProject' -and ($i + 1) -lt $args.Count) {
+        $typecheckProject = [string]$args[$i + 1]
+        $i++
+        continue
+    }
+    if ([string]$args[$i] -eq '-LintPath' -and ($i + 1) -lt $args.Count) {
+        $lintPath = [string]$args[$i + 1]
         $i++
         continue
     }
@@ -55,23 +69,16 @@ $eslint = Join-Path (Join-Path (Join-Path $clientDir 'node_modules') 'eslint') (
 # end for an agent that cannot type the command itself - it cost CARD-0417's review (task f42b6b25)
 # the client evidence entirely. So install once, here, and then re-check. A suite that still cannot
 # run fails just as loudly as before; it is only the install that is no longer somebody else's job.
-# Typecheck and lint share this one install (CARD-1393).
+# Typecheck and lint share this one install (CARD-1393). The install takes
+# logs/client-npm-ci.lock so a second cold row waits instead of running npm ci
+# beside this one (CARD-1394, CARD-1398). npm.cmd, not the npm.ps1 shim: the shim
+# re-parses the calling line's SOURCE TEXT (the CARD-0307 trap).
+. (Join-Path $PSScriptRoot (Join-Path 'lib' 'client-npm-install.ps1'))
 if (-not (Test-Path $vitest) -or -not (Test-Path -LiteralPath $tsc) -or -not (Test-Path -LiteralPath $eslint)) {
     Write-Output "client dependencies are not installed - installing once for vitest, tsc and eslint."
-    # npm.cmd, not the npm.ps1 shim: the shim re-parses the calling line's SOURCE TEXT for its
-    # arguments (the CARD-0307 trap that silently ate this script's vitest filter).
-    $npmExe = if (Get-Command npm.cmd -ErrorAction SilentlyContinue) { 'npm.cmd' } else { 'npm' }
-    $installVerb = if (Test-Path (Join-Path $clientDir 'package-lock.json')) { 'ci' } else { 'install' }
-    Push-Location $clientDir
-    try {
-        & $npmExe $installVerb
-        $installCode = $LASTEXITCODE
-    }
-    finally {
-        Pop-Location
-    }
+    $installCode = Install-ClientNpmDependencies -RepoRoot $repoRoot -RequiredPaths @($vitest, $tsc, $eslint)
     if ($installCode -ne 0) {
-        Write-Output "npm $installVerb exited with code $installCode."
+        Write-Output "npm ci exited with code $installCode."
     }
 }
 
@@ -85,7 +92,11 @@ if (-not (Test-Path $vitest)) {
 $typecheckScript = Join-Path $PSScriptRoot 'typecheck-client.ps1'
 $shell = 'pwsh'
 if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) { $shell = 'powershell' }
-& $shell -NoProfile -NonInteractive -File $typecheckScript
+$typecheckArgs = @()
+if (-not [string]::IsNullOrWhiteSpace($typecheckProject)) {
+    $typecheckArgs = @('-Project', $typecheckProject)
+}
+& $shell -NoProfile -NonInteractive -File $typecheckScript @typecheckArgs
 $typecheckCode = $LASTEXITCODE
 if ($null -eq $typecheckCode -or $typecheckCode -ne 0) {
     if ($null -eq $typecheckCode) { $typecheckCode = 1 }
@@ -95,7 +106,11 @@ if ($null -eq $typecheckCode -or $typecheckCode -ne 0) {
 }
 
 $lintScript = Join-Path $PSScriptRoot 'lint-client.ps1'
-& $shell -NoProfile -NonInteractive -File $lintScript
+$lintArgs = @()
+if (-not [string]::IsNullOrWhiteSpace($lintPath)) {
+    $lintArgs = @('-Path', $lintPath)
+}
+& $shell -NoProfile -NonInteractive -File $lintScript @lintArgs
 $lintCode = $LASTEXITCODE
 if ($null -eq $lintCode -or $lintCode -ne 0) {
     if ($null -eq $lintCode) { $lintCode = 1 }
