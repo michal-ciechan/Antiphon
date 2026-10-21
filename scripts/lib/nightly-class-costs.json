@@ -1,0 +1,38 @@
+{
+  "format": "antiphon-nightly-class-costs-v1",
+  "platform": "windows",
+  "source": "rows with basis measured: single-class launch groups of the rc/2026-10-20 Windows qualification at 66e9cfa9f (docs/investigations/2026-10-21-rc-2026-10-20-windows-qualification-reds.md groups 19, 25, 26, 27); basis pace: the 9.2 s/node serial pace of the watchdog-killed Windows group 9 (CARD-1410), until a TRX row replaces it",
+  "refresh": "pwsh -NoProfile -File scripts/refresh-nightly-class-costs.ps1 -TrxPath (Get-ChildItem <run>\\logs\\*\\antiphon-*.trx).FullName",
+  "classes": {
+    "Antiphon.Tests.Application.AgentSessionLaunchFailureTests": {
+      "nodes": 71,
+      "seconds": 121,
+      "basis": "measured"
+    },
+    "Antiphon.Tests.Application.AgentTaskDeliveryWatchdogTests": {
+      "nodes": 86,
+      "seconds": 227,
+      "basis": "measured"
+    },
+    "Antiphon.Tests.Application.AgentTaskDispatchBaseGuardTests": {
+      "nodes": 92,
+      "seconds": 497,
+      "basis": "measured"
+    },
+    "Antiphon.Tests.Application.AgentTaskLandActiveSourceClaimTests": {
+      "nodes": 16,
+      "seconds": 1920,
+      "basis": "measured"
+    },
+    "Antiphon.Tests.Application.DelegationDispatchRecoveryBoundaryTests": {
+      "nodes": 381,
+      "seconds": 3505,
+      "basis": "pace"
+    },
+    "Antiphon.Tests.Scripts.RemoteScriptContractTests": {
+      "nodes": 499,
+      "seconds": 4591,
+      "basis": "pace"
+    }
+  }
+}
