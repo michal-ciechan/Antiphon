@@ -18,6 +18,8 @@ public sealed class SessionRuntimeActionCoordinator(
     internal const int HintCapacity = 128;
     internal const int PageSize = 128;
     internal const int QueuePhase = 8;
+    internal const int ChannelReplyPhase = 4;
+    internal const string ChannelReplyDebt = "channel";
     private const string DeferredReason = "Deferred";
     private readonly Channel<Guid> _hints = Channel.CreateBounded<Guid>(new BoundedChannelOptions(HintCapacity)
         { FullMode = BoundedChannelFullMode.Wait, AllowSynchronousContinuations = false });

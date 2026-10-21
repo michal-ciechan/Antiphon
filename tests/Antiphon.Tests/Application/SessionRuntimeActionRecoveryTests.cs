@@ -224,6 +224,64 @@ public class SessionRuntimeActionRecoveryTests
         producer.Sent.ShouldAllBe(r => r.ConversationId == destination);
     }
 
+    // CARD-1422: a failing channel reply becomes its own debt. The turn's other phases
+    // finish, the reply is retried after the dispatcher recovers, and replies keep their order.
+    [Test]
+    public async Task C1422_failed_channel_reply_is_retried_in_order_after_the_dispatcher_recovers()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var producer = new RecordingProducer { Failing = true };
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
+            ConfigureServices = s => s.AddSingleton<IAntiphonMessagingProducer>(producer)
+        });
+        const string destination = "ordered-recipient";
+        const string first = "[Telegram Family] First question";
+        const string second = "[Telegram Family] Second question";
+        var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
+        await h.SeedChannelCorrelationAsync(first, "telegram:" + destination);
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 1, "UserPrompt", first), Entry(h, 2, "AssistantText", "first answer"), Entry(h, 3, "TurnEnd", null)]);
+        await actions.DrainPageAsync(h.SessionId, default);
+
+        producer.Failures.ShouldBeGreaterThan(0, "the real producer must be reached");
+        producer.Sent.ShouldBeEmpty();
+        await using (var db = h.CreateObserverContext())
+        {
+            var pending = await db.SessionRuntimeActions.AsNoTracking().Where(a => a.AgentSessionId == h.SessionId).ToListAsync();
+            var debt = pending.Where(a => a.TriggerKind == SessionRuntimeActionCoordinator.ChannelReplyDebt)
+                .OrderBy(a => a.Sequence).ToList();
+            debt.ShouldNotBeEmpty();
+            debt[0].Attempts.ShouldBeGreaterThan(0);
+            debt[0].FailureReason.ShouldNotBeNull();
+            pending.Where(a => a.TriggerKind != SessionRuntimeActionCoordinator.ChannelReplyDebt)
+                .ShouldAllBe(a => a.Phase > SessionRuntimeActionCoordinator.ChannelReplyPhase,
+                    "the failed reply cannot hold the turn's later phases");
+            // Hold the first reply's backoff open while the next turn arrives.
+            await db.SessionRuntimeActions.Where(a => a.TriggerKind == SessionRuntimeActionCoordinator.ChannelReplyDebt)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, DateTime.UtcNow.AddHours(1)));
+        }
+
+        producer.Failing = false;
+        await h.SeedChannelCorrelationAsync(second, "telegram:" + destination);
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 4, "UserPrompt", second), Entry(h, 5, "AssistantText", "second answer"), Entry(h, 6, "TurnEnd", null)]);
+        await actions.DrainPageAsync(h.SessionId, default);
+        producer.Sent.ShouldBeEmpty("a later reply cannot overtake an earlier owed reply");
+
+        await using (var db = h.CreateObserverContext())
+            await db.SessionRuntimeActions.ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, DateTime.UtcNow.AddSeconds(-1)));
+        await actions.DrainPageAsync(h.SessionId, default);
+
+        producer.Sent.Select(r => r.Text).ShouldBe(["first answer", "second answer"]);
+        producer.Sent.ShouldAllBe(r => r.ConversationId == destination);
+        await using var verify = h.CreateObserverContext();
+        (await verify.SessionRuntimeActions.AnyAsync(a => a.TriggerKind == SessionRuntimeActionCoordinator.ChannelReplyDebt))
+            .ShouldBeFalse("delivered replies leave no debt");
+    }
+
     [Test]
     public async Task C1259_queue_prune_holds_the_transcript_mutation_lease()
     {
@@ -313,11 +371,12 @@ public class SessionRuntimeActionRecoveryTests
     {
         public List<ChannelReply> Sent { get; } = [];
         public bool FailNext;
+        public bool Failing;
         public int Failures;
         public Func<Task>? OnSend;
         public async Task SendAsync(ChannelReply reply, CancellationToken ct = default)
         {
-            if (FailNext) { FailNext = false; Failures++; throw new IOException("pre-accept failure"); }
+            if (FailNext || Failing) { FailNext = false; Failures++; throw new IOException("pre-accept failure"); }
             Sent.Add(reply);
             if (OnSend is not null) await OnSend();
         }
