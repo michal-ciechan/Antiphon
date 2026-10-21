@@ -370,7 +370,7 @@ public sealed class AgentSessionCancelledTurnTests
             await Db.SaveChangesAsync();
             var service = new AgentSessionService(
                 Db,
-                new FakeWorktrees(Path.Combine(Scratch, "worktree")),
+                new FakeWorktrees(Path.Combine(Scratch, Guid.NewGuid().ToString("N"))),
                 new WorkspaceHookService(new RecordingHooks(), NullLogger<WorkspaceHookService>.Instance),
                 new AdapterFactory(adapter),
                 Runtime,
