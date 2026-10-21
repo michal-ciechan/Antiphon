@@ -23,9 +23,9 @@ public sealed class ReleaseGatePlatformTests
 
     [Test]
     public Task C1415_SkipExclusions() =>
-        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1415_SkipExclusions", 9,
-            "C1323 c1415-four-method-scoped-rows", "C1323 c1415-excluded-methods-exist",
+        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1415_SkipExclusions", 10,
+            "C1323 c1415-two-method-scoped-rows", "C1323 c1415-excluded-methods-exist",
             "C1323 c1415-windows-excludes-exactly", "C1323 c1415-windows-launches-only-required",
             "C1323 c1415-windows-census-complete", "C1323 c1415-linux-excludes-exactly",
-            "C1323 c1415-launched-skips-stay-incomplete");
+            "C1323 c1425-pack-methods-required", "C1323 c1415-launched-skips-stay-incomplete");
 }

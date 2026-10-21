@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "2d6ee9af7d4daaf3df0472ebdd2fe0fc7bc20589369cecdcb416f0ddd17443aa",
+  "policyHash": "9b4275bbbc5443e8f3a2548fb9e3c1a94c9012c172577be8bac96d11d8042576",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -565,29 +565,6 @@
           "platform": "linux",
           "reason": "Requires Windows ConPTY and native FakeGrok; retained in the Windows RC roster.",
           "owner": "CARD-1323"
-        },
-        {
-          "suite": "antiphon",
-          "class": "AdvisoryChangePolicyTests",
-          "methods": [
-            "C1303_R12_LandRefusesUnavailableCorrectedEvidence",
-            "C1281_ReceiptCorrection",
-            "C1281_IncompleteNeverClean"
-          ],
-          "reason": "Needs the untracked CARD-1281 producer pack (git common dir antiphon/code-evidence/04228bff, pinned by SHA-256); skips on every clone without it until a tracked fixture exists.",
-          "owner": "CARD-1415"
-        },
-        {
-          "suite": "antiphon",
-          "class": "PipelineSpeedIntegrationTests",
-          "methods": [
-            "C1281_B1Authorization",
-            "C1281_B1ReceiptImport",
-            "C1281_B1CorrectionTransaction",
-            "C1281_WiredRoundtrip"
-          ],
-          "reason": "Needs the untracked CARD-1281 producer pack (git common dir antiphon/code-evidence/04228bff, pinned by SHA-256); skips on every clone without it until a tracked fixture exists. C1281_WiredRoundtripDelivery stays required.",
-          "owner": "CARD-1415"
         },
         {
           "suite": "antiphon",
