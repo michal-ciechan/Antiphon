@@ -467,13 +467,14 @@ public sealed class AgentSessionRuntime
 
         if (TranscriptKinds.IsInterruptPrompt(row.Kind, row.Text))
         {
+            // Sequence, not CreatedAt: the marker can be saved before this prompt is processed.
             if (RunAttemptStateMachine.IsRearmedStreamingTurn(attempt)
-                && row.CreatedAt >= attempt.PhaseStartedAt)
+                && row.Sequence > RunAttemptStateMachine.RearmPromptSequence(attempt))
                 await EndRearmedStreamingTurnAsync(db, card, sessionId, attempt, ct);
             return;
         }
 
-        if (row.CreatedAt <= attempt.PhaseStartedAt)
+        if (row.Sequence <= RunAttemptStateMachine.RearmPromptSequence(attempt))
             return;
         if (attempt.Phase == RunPhase.StreamingTurn && row.CreatedAt <= attempt.LastEventAt)
             return;
@@ -488,7 +489,10 @@ public sealed class AgentSessionRuntime
             if (row.Text?.Trim().StartsWith('/') == true)
                 RunAttemptStateMachine.ArmProvisionalStreamingTurn(attempt, now);
             else
+            {
                 RunAttemptStateMachine.Transition(attempt, RunPhase.StreamingTurn, now);
+                RunAttemptStateMachine.RememberRearmPrompt(attempt, row.Sequence);
+            }
 
             await db.SaveChangesAsync(ct);
             await PublishInterruptedAttemptAsync(card, sessionId, attempt);
@@ -505,9 +509,8 @@ public sealed class AgentSessionRuntime
     private async Task EndRearmedTurnAsync(
         IServiceProvider services, Guid sessionId, TranscriptEntry row, CancellationToken ct)
     {
-        if (row.StopReason is not (TranscriptKinds.StopReasons.EndTurn or TranscriptKinds.StopReasons.Cancelled))
-            return;
-
+        // Any stop reason ends the current re-armed turn. Master does not kill a
+        // finished turn that stopped for error, max_tokens, stop_sequence, refusal, or null.
         var db = services.GetRequiredService<AppDbContext>();
         var running = await db.AgentSessions.AsNoTracking()
             .AnyAsync(s => s.Id == sessionId && s.Status == SessionStatus.Running, ct);
@@ -520,9 +523,12 @@ public sealed class AgentSessionRuntime
             .OrderByDescending(a => a.AttemptNumber)
             .ThenByDescending(a => a.CreatedAt)
             .FirstOrDefaultAsync(ct);
+        // CreatedAt is the save clock and PhaseStartedAt is the processing clock.
+        // One session's actions already run in Sequence order, so the previous turn is
+        // a TurnEnd at or before the prompt that re-armed this one.
         if (attempt?.Card is not { } card
             || !RunAttemptStateMachine.IsRearmedStreamingTurn(attempt)
-            || row.CreatedAt < attempt.PhaseStartedAt)
+            || row.Sequence <= RunAttemptStateMachine.RearmPromptSequence(attempt))
             return;
 
         await EndRearmedStreamingTurnAsync(db, card, sessionId, attempt, ct);

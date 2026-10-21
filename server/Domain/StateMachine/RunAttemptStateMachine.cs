@@ -59,6 +59,10 @@ public static class RunAttemptStateMachine
     // wait can arm provisionally after an earlier wait already recorded its duration.
     internal const string OpenInputWaitKey = "OpenInputWait";
 
+    // Sequence of the prompt that entered the current real StreamingTurn.
+    // A later TurnEnd or interrupt belongs to this turn only when its sequence is higher.
+    internal const string RearmPromptSequenceKey = "RearmPromptSequence";
+
     public static bool HasAwaitingInputDuration(RunAttempt attempt) =>
         ReadDurations(attempt.PhaseDurationsJson).ContainsKey(RunPhase.AwaitingInput.ToString());
 
@@ -85,9 +89,26 @@ public static class RunAttemptStateMachine
                 $"Provisional streaming arm requires {RunPhase.AwaitingInput}, not {attempt.Phase}.");
         }
 
+        // A wait already sitting in AwaitingInput before this marker existed has none.
+        // Without it the slash prompt is not provisional, the wrapper cannot restore,
+        // and the stall scanner kills the session.
+        if (!HasOpenInputWait(attempt))
+            SetOpenInputWait(attempt);
+
         attempt.Phase = RunPhase.StreamingTurn;
         attempt.LastEventAt = utcNow;
     }
+
+    public static long RearmPromptSequence(RunAttempt attempt)
+    {
+        var durations = ReadDurations(attempt.PhaseDurationsJson);
+        return durations.TryGetValue(RearmPromptSequenceKey, out var sequence)
+            ? (long)sequence
+            : 0;
+    }
+
+    public static void RememberRearmPrompt(RunAttempt attempt, long sequence) =>
+        WriteDurations(attempt, durations => { durations[RearmPromptSequenceKey] = sequence; });
 
     public static void RestoreProvisionalAwaitingInput(RunAttempt attempt)
     {
