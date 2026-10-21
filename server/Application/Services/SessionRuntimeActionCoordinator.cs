@@ -19,6 +19,8 @@ public sealed class SessionRuntimeActionCoordinator(
     internal const int PageSize = 128;
     internal const int QueuePhase = 8;
     internal const int ChannelReplyPhase = 4;
+    // A channel reply that failed, or that waits behind one, is its own debt row so
+    // a channel outage cannot hold settlement, refinement confirmation or catch-up.
     internal const string ChannelReplyDebt = "channel";
     private const string DeferredReason = "Deferred";
     private readonly Channel<Guid> _hints = Channel.CreateBounded<Guid>(new BoundedChannelOptions(HintCapacity)
@@ -155,7 +157,12 @@ public sealed class SessionRuntimeActionCoordinator(
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             // Route all committed work before considering any idle request. A failed earlier
             // action holds this session's order, without occupying a worker between retries.
-            var action = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == sessionId)
+            // Channel debt holds only later channel debt: its earliest row runs when due.
+            var now = clock.GetUtcNow().UtcDateTime;
+            var action = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == sessionId
+                    && (a.TriggerKind != ChannelReplyDebt || (a.DueAt <= now
+                        && !db.SessionRuntimeActions.Any(b => b.AgentSessionId == sessionId
+                            && b.TriggerKind == ChannelReplyDebt && b.Sequence < a.Sequence))))
                 .OrderBy(a => a.Phase >= QueuePhase).ThenBy(a => a.Sequence).ThenBy(a => a.TriggerKind)
                 .FirstOrDefaultAsync(ct);
             if (action is null) return false;
@@ -193,7 +200,11 @@ public sealed class SessionRuntimeActionCoordinator(
                     .ExecuteUpdateAsync(s => s.SetProperty(a => a.Attempts, attempts)
                         .SetProperty(a => a.DueAt, due).SetProperty(a => a.FailureReason, reason), ct);
                 Diagnostic(ex, "Action phase retained for retry", sessionId);
-                return false;
+                if (action.TriggerKind != ChannelReplyDebt) return false;
+                // Later replies wait for this one; they need no wakeup before it is due.
+                await db.SessionRuntimeActions.Where(a => a.AgentSessionId == sessionId
+                        && a.TriggerKind == ChannelReplyDebt && a.Sequence > action.Sequence && a.DueAt < due)
+                    .ExecuteUpdateAsync(s => s.SetProperty(a => a.DueAt, due), ct);
             }
         }
         return true;
@@ -213,11 +224,20 @@ public sealed class SessionRuntimeActionCoordinator(
         var row = action.TranscriptEntryId is { } id
             ? await db.TranscriptEntries.AsNoTracking().SingleAsync(t => t.Id == id, ct) : null;
         var runtime = services.GetRequiredService<AgentSessionRuntime>();
+        if (action.TriggerKind == ChannelReplyDebt)
+        {
+            await runtime.ExecuteActionChannelReplyAsync(action.AgentSessionId, action.Sequence, ct);
+            db.SessionRuntimeActions.Remove(action);
+            await db.SaveChangesAsync(ct);
+            return ExecutionDisposition.Continue;
+        }
         var routed = action.Phase < QueuePhase;
         while (action.Phase < QueuePhase)
         {
             ct.ThrowIfCancellationRequested();
-            await runtime.ExecuteActionPhaseAsync(action, row, ct);
+            if (action.Phase == ChannelReplyPhase && AgentSessionRuntime.RoutesReplies(action, row))
+                await ExecuteChannelReplyPhaseAsync(runtime, db, action, ct);
+            else await runtime.ExecuteActionPhaseAsync(action, row, ct);
             action.Phase++;
             action.Attempts = 0;
             action.FailureReason = null;
@@ -235,8 +255,11 @@ public sealed class SessionRuntimeActionCoordinator(
         // replacement before the new request completes and disappears.
         if (routed) return ExecutionDisposition.Continue;
         // Re-query after routing: ingestion may have advanced while a downstream awaited.
+        // Channel debt is not routing the queue waits for; the dispatcher resolves its
+        // turn from stored rows, and replies keep their own order.
         if (await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == action.AgentSessionId
-            && a.Id != action.Id && a.Phase < QueuePhase, ct)) return ExecutionDisposition.Continue;
+            && a.Id != action.Id && a.Phase < QueuePhase && a.TriggerKind != ChannelReplyDebt, ct))
+            return ExecutionDisposition.Continue;
         var generation = await db.AgentSessions.Where(s => s.Id == action.AgentSessionId)
             .Select(s => (DateTime?)s.StartedAt).SingleOrDefaultAsync(ct);
         if (generation == action.AcceptedGeneration && action.Phase == QueuePhase)
@@ -262,10 +285,53 @@ public sealed class SessionRuntimeActionCoordinator(
             action.FailureReason = null;
             await db.SaveChangesAsync(ct);
         }
-        if (action.Phase > QueuePhase) await runtime.ExecuteActionLateConfirmAsync(action, ct);
+        if (action.Phase > QueuePhase)
+        {
+            // Late-confirmed replies publish after any earlier owed reply, never past it.
+            if (action.LateConfirmedChannelMessageIds.Length > 0
+                && await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == action.AgentSessionId
+                    && a.TriggerKind == ChannelReplyDebt && a.Sequence <= action.Sequence, ct))
+                throw new InvalidOperationException("An earlier channel reply remains owed.");
+            await runtime.ExecuteActionLateConfirmAsync(action, ct);
+        }
         db.SessionRuntimeActions.Remove(action);
         await db.SaveChangesAsync(ct);
         return ExecutionDisposition.Continue;
+    }
+
+    /// <summary>
+    /// Runs this action's channel reply, unless an earlier reply is still owed. A failed or
+    /// waiting reply becomes channel debt, saved with this action's phase advance, so the
+    /// later phases (review, settlement, refinement confirmation, catch-up) still run.
+    /// </summary>
+    private async Task ExecuteChannelReplyPhaseAsync(AgentSessionRuntime runtime, AppDbContext db,
+        SessionRuntimeAction action, CancellationToken ct)
+    {
+        var owed = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == action.AgentSessionId
+                && a.TriggerKind == ChannelReplyDebt && a.Sequence < action.Sequence)
+            .MaxAsync(a => (DateTime?)a.DueAt, ct);
+        var now = clock.GetUtcNow().UtcDateTime;
+        Exception? failure = null;
+        if (owed is null)
+        {
+            try
+            {
+                await runtime.ExecuteActionChannelReplyAsync(action.AgentSessionId, action.Sequence, ct);
+                return;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex) { failure = ex; }
+        }
+        if (await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == action.AgentSessionId
+            && a.Sequence == action.Sequence && a.TriggerKind == ChannelReplyDebt, ct)) return;
+        db.SessionRuntimeActions.Add(new SessionRuntimeAction { Id = Guid.NewGuid(),
+            AgentSessionId = action.AgentSessionId, AcceptedGeneration = action.AcceptedGeneration,
+            AcceptedTaskId = action.AcceptedTaskId, AcceptedTaskAttempt = action.AcceptedTaskAttempt,
+            Sequence = action.Sequence, ProducerSequence = action.ProducerSequence,
+            TriggerKind = ChannelReplyDebt, Phase = ChannelReplyPhase, CreatedAt = now,
+            DueAt = failure is null ? (owed > now ? owed.Value : now) : RetryAt(1),
+            Attempts = failure is null ? 0 : 1, FailureReason = failure?.GetType().Name });
+        if (failure is not null) Diagnostic(failure, "Channel reply retained as debt", action.AgentSessionId);
     }
 
     private void Diagnostic(Exception exception, string message, Guid sessionId)
