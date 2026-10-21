@@ -16,7 +16,7 @@ The committed manifest stays digest `F240D0F1DBF9AA627A0A3637B52318B8030181B60F2
 
 **D-2 — One `%XX` decode.** Decode each `%` plus two hex digits once, as UTF-8 bytes, before slash normalization. A decoded NUL refuses. Unknown `%` text stays literal.
 
-**D-3 — Imported files use the importing project directory.** `.props` and `.targets` item includes are resolved once per project that imports them, directly or through another import. The nearest `Directory.Build.props` and `Directory.Build.targets` above each project count as imported. `$(MSBuildThisFileDirectory)` stays the file's directory. `$(MSBuildProjectDirectory)` is the importing project. An `Import` path that still contains an unknown `$(...)` is not followed. A file with no importer keeps file-relative resolution.
+**D-3 — Imported files are checked from the file and from every importer.** `.props` and `.targets` item includes are resolved from the file's own directory and from each project that imports them, directly or through another import. The nearest `Directory.Build.props` and `Directory.Build.targets` above each project count as imported. An `Import` `Project` path that starts with `$(MSBuildThisFileDirectory)` or `$(MSBuildProjectDirectory)` is expanded from that property and is not prefixed with the importing file's folder again. `$(MSBuildThisFileDirectory)` in an include is that file's directory. `$(MSBuildProjectDirectory)` is the directory being checked. An `Import` `Project` path that still contains an unknown `$(...)` is refused and is not followed.
 
 **D-4 — AdditionalFiles is inspected** the same way as EmbeddedResource, Content, None, and Compile. Item type names match ignore-case.
 
@@ -54,11 +54,21 @@ Commit `fecdad3a2633b1c3e5d23e3b0797218c6ee940db` adds four tests and no script 
 | V-3 | `../%64ocs/**/*.md` refuses and the message keeps the encoded include. | `C1400_UpdateRefusesPercentEncodedDocsInclude` |
 | V-4 | AdditionalFiles `../docs/**/*.md` refuses. | `C1400_UpdateRefusesAdditionalFilesDocsInclude` |
 | V-5 | The original `../docs/**/*.md` refusal still holds, and `-Check` still matches the manifest. | `C1390_UpdateRefusesDocsMarkdownInput`, `C1385_RegistryMatchesNarrowGraph` |
+| V-6 | `$(MSBuildThisFileDirectory)../eng/x/shared.props` is followed, and `../docs/**/*.md` in that props refuses. | `C1400_RepairAnchoredImportRefusesDocsInclude` |
+| V-7 | A project import of `$(MSBuildProjectDirectory)/../eng/mid.props` and that file's `$(MSBuildThisFileDirectory)x/shared.props` are both followed, and the nested docs include refuses. | `C1400_RepairNestedAnchoredImportRefusesDocsInclude` |
+| V-8 | `B/B.csproj` importing `$(RepoRoot)build/x.props` while `src/App/App.csproj` imports the same props relatively still refuses. | `C1400_RepairRepoRootPropertyImportRefuses` |
+| V-9 | `B/B.csproj` importing `$(MSBuildThisFileDirectory)../build/x.props` while `src/App` imports it relatively still refuses `../docs/*.md`. | `C1400_RepairSplitAnchoredImportRefusesDocsInclude` |
+| V-10 | A props file imported only by a relative path is still checked from its own directory, so `build/x.props` `../docs/*.md` refuses. | `C1400_RepairOwnDirectoryStillRefusesWhenImported` |
+| V-11 | An `Import` `Project` path that still contains `$(RepoRoot)` refuses even when the target include is not docs markdown. | `C1400_RepairUnresolvedImportRefuses` |
 
 No R-n. No positive controls. Mutation has nothing new to plant beyond the refusal predicate. Zero new PC rows. Existing land PCs stay pending for SourceLanding Mutation.
+
+### S3 — Anchored-import repair
+
+Review c26b14f3. Unlisted red run at `7d15e1b2e70e2c7e58be70925bd641d520765bd9`, script still the regression. The first command forwarded `-nodeReuse:false` to TUnit and executed no tests (exit 5). Build slot `09476500-ed15-4e28-b032-55bbbd89250e`, waited=0s, held=151s. The witness reused that output: slot `bac7255f-4827-4aba-b234-23215ea3f5fb`, waited=0s, held=13s. Filter `/*/*/LandNonCodeSkipTests/C1400_Repair*`. 6 executed, 6 failed, 0 skipped. Each failure was exit 0 with a printed digest.
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---:|---:|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1400/` | c1400-docs | `/*/*/LandNonCodeSkipTests/(C1400_*)\|(C1390_UpdateRefusesDocsMarkdownInput*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-1 V-2 V-3 V-4 V-5 | exactly 6 executed, 0 failed/skipped | 6 | 20 |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1400/` | c1400-docs | `/*/*/LandNonCodeSkipTests/(C1400_*)\|(C1390_UpdateRefusesDocsMarkdownInput*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-1 V-2 V-3 V-4 V-5 V-6 V-7 V-8 V-9 V-10 V-11 | exactly 12 executed, 0 failed/skipped | 12 | 20 |
