@@ -125,7 +125,7 @@ Minimal by brief. The new tests are the roster and limit tests. They can go red:
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1421-lanes/` | rosters | `/*/*/ProcessSpawnLimitTests/*` | V-1, V-2 | all pass, 0 failed | 7 | 8 |
-| CP-2 | S2 | CP-1 (-NoBuild) | git-lane-repeat | `/*/*/(LandingGitTests*)\|(GitIndexLockPathTests*)\|(AgentTaskLandIndexLockTests*)\|(GitWorkspaceServiceIndexLockTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(CardFilePrivacyConcurrencyTests*)\|(AgentTaskLandConcurrencyTests*)/*` | V-3, run with checkpoint-tool `--repeat 3` and qualified with `--expected-repeat 3` | 0 failed in every ordinal | 150 | 25 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1421-repeat/` | git-lane-repeat | `/*/*/(LandingGitTests*)\|(GitIndexLockPathTests*)\|(AgentTaskLandIndexLockTests*)\|(GitWorkspaceServiceIndexLockTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(CardFilePrivacyConcurrencyTests*)\|(AgentTaskLandConcurrencyTests*)/*` | V-3, run with checkpoint-tool `--repeat 3` and qualified with `--expected-repeat 3` | 0 failed in every ordinal | 150 | 25 |
 | CP-3 | S2 | CP-1 (-NoBuild) | pty-beside-git | `/*/*/(SessionMessageQueuePtyIntegrationTests*)\|(GatedCommitServiceTests*)\|(AgentTaskWorktreeBaseResolverTests*)/*` | V-4 | 0 failed | 60 | 12 |
 
 Run S1-S2 as one checkpoint-tool run (`--after S2`). CP-2 needs its own build output if the tool requires one per repeat N (testing guide, Repeat proof). In that case give it `bin-c1421-repeat/`. `Min` is a floor taken from source row counts: confirm `executed=` in each CHECKPOINT line. S3 is docs-only and needs no checkpoint.
@@ -145,6 +145,7 @@ One `Antiphon.Tests` build, the roster row, one repeated subset row and one mixe
   - `DeliverableBundleServiceTests` (the renderer browser-launch seam, exercised with a fake `fake-browser.sh`).
   108 classes move.
 - **CP-2 names `GitIndexLockPathTests`.** In `GitIndexLockTests.cs` the limiter sits on `GitIndexLockPathTests`. `GitIndexLockTests` is a unit class with no limiter, so the planned `(GitIndexLockTests*)` operand would not have run the git class.
+- **CP-2 has its own build, `bin-c1421-repeat/`.** The checkpoint tool refuses to reuse a build for a row with a different repeat count (`reused build ... has a different repeat`).
 - **Git hooks count as git.** `LandingGitTests`, `CardFileGitFailureAcceptanceTests` and `GitWorkspaceServiceIndexLockTests` install `#!/bin/sh` git hooks. `git` itself starts those hooks, and `LandingGit`'s budget kill ends them with it. They are treated as git children, not test-started processes.
 
 ## Follow-ups (file as cards, not in this card)
