@@ -793,7 +793,10 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
     // inherited PATH list is bounded here rather than raising the ceiling for every variable:
     // the ceiling is also the per-secret redaction bound, and every other oversized value is
     // still refused. Empty, duplicate and missing entries go first; the rest is cut on a whole
-    // entry in the original search order.
+    // entry in the original search order. When nothing survives, the original value is returned
+    // so the ceiling still refuses it: an empty PATH would make a POSIX child search its working
+    // directory. A Windows UNC entry is kept without an existence check, which could otherwise
+    // block on an unreachable share before the probe's timeout or cancellation can act.
     private static string BoundInheritedPath(string path)
     {
         if (path.Length <= MaximumEnvironmentValueLength)
@@ -803,7 +806,10 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         foreach (var rawEntry in path.Split(Path.PathSeparator))
         {
             var entry = rawEntry.Trim().Trim('"');
-            if (entry.Length == 0 || !seen.Add(entry) || !Directory.Exists(entry))
+            if (entry.Length == 0 || !seen.Add(entry))
+                continue;
+            var unc = OperatingSystem.IsWindows() && entry.StartsWith(@"\\", StringComparison.Ordinal);
+            if (!unc && !Directory.Exists(entry))
                 continue;
             var separatorLength = bounded.Length == 0 ? 0 : 1;
             if (bounded.Length + separatorLength + entry.Length > MaximumEnvironmentValueLength)
@@ -812,7 +818,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
                 bounded.Append(Path.PathSeparator);
             bounded.Append(entry);
         }
-        return bounded.ToString();
+        return bounded.Length == 0 ? path : bounded.ToString();
     }
 
     private static string[] ExecutableExtensions(string executable)
