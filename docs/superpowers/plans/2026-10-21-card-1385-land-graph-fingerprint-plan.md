@@ -85,14 +85,13 @@ No whole-Unit run. Do not retarget `OnlyDocumentation` cases (`C1380_NonAllowlis
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1385-red/` | unrelated-script-red | `/*/*/LandNonCodeSkipTests/(C1385_UnrelatedScriptChangeStillSkips*)` | V-1 | exactly 1 executed, 1 failed | 1 | 10 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1385/` | unrelated-script-green | `/*/*/LandNonCodeSkipTests/C1385_UnrelatedScriptChangeStillSkips` | V-1 | exactly 1 executed, 0 failed/skipped | 1 | 10 |
-| CP-3 | S2 | CP-2 | registry-green | `/*/*/LandNonCodeSkipTests/C1385_RegistryMatchesNarrowGraph` | V-2 | exactly 1 executed, 0 failed/skipped | 1 | 2 |
-| CP-4 | S2 | CP-2 | docs-skip-green | `/*/*/LandNonCodeSkipTests/C1380_DocsOnlyRebasedLandRecordsNonCodeSkip` | V-3 | exactly 1 executed, 0 failed/skipped | 1 | 4 |
-| CP-5 | S2 | CP-2 | definition-drift-green | `/*/*/LandNonCodeSkipTests/C1380_TargetGraphDriftAndNewProjectsBuild` | V-4 | exactly 2 executed, 0 failed/skipped | 2 | 5 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1385/` | narrow-graph-green | `/*/*/LandNonCodeSkipTests/(C1380_AlreadyPresentDoesNotPromiseANewBuildEvenWhenForced*)\|(C1380_CSharpChangeBuilds*)\|(C1380_DocsOnlyRebasedLandRecordsNonCodeSkip*)\|(C1380_FailedBuildRefusesPublication*)\|(C1380_NonAllowlistedInputsBuild*)\|(C1380_OverridesAndReleaseTargetsBuild*)\|(C1380_RegularDocumentationChangesSkip*)\|(C1380_RenameBothNamesAndFileModesAreChecked*)\|(C1380_TargetContainedCodeIsExcludedFromTheActualRebasedDiff*)\|(C1380_TargetGraphDriftAndNewProjectsBuild*)\|(C1380_UnchangedBaseStillBuildsCode*)\|(C1380_UnknownRepositoryBuilds*)\|(C1380_UnreadableOrMalformedGitCannotSkip*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1385_UnrelatedScriptChangeStillSkips*)` | V-1 V-2 V-3 V-4 | exactly 44 executed, 0 failed/skipped | 44 | 30 |
+
+Dispatch merged the original CP-2..CP-5 rows, plus the existing 42 `LandNonCodeSkipTests` cases, into CP-2. Each method has a trailing wildcard so parameterized cases are selected. CP-1 stays the red witness.
 
 ### Cost
 
-Ordinary Code floor is 31 minutes (sum of `EstimatedMinutes`), plus authoring. Run the checkpoint tool once per slice group (`--after S1`, then `--after S2`). CP-1's failure is the witness, not a defect to fix inside S1.
+Ordinary Code floor is 40 minutes (sum of `EstimatedMinutes`), plus authoring. Run the checkpoint tool once per slice group (`--after S1`, then `--after S2`). CP-1's failure is the witness, not a defect to fix inside S1.
 
 ## RC
 

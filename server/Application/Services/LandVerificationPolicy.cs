@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain;
 
@@ -90,8 +88,9 @@ internal sealed class LandVerificationPolicy(ILandingGit git)
             if (metadata[0] is not ("100644" or "100755") || metadata[1] != "blob") return false;
             selected.Add(row);
         }
-        selected.Sort(StringComparer.Ordinal);
-        var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\0', selected) + '\0')));
-        return fingerprint == LandVerificationBuildGraph.Fingerprint;
+        var audited = LandVerificationBuildGraph.AuditedCount;
+        return audited is int count
+            && count == selected.Count
+            && LandVerificationBuildGraph.FingerprintOf(selected) == LandVerificationBuildGraph.Fingerprint;
     }
 }
