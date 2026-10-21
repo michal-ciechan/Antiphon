@@ -983,6 +983,165 @@ function Test-C1389_BootSourcePinned {
     Assert-C487 -Cond $kept -Name 'C1389 Boot live owner writes no reclaim record' -Detail (Get-C1386LockText $fx)
 }
 
+function Reset-C1389HeldLock {
+    if ($script:NightlyLockStream) {
+        try { $script:NightlyLockStream.Dispose() } catch { }
+        $script:NightlyLockStream = $null
+    }
+    $script:NightlyOwnedLock = $false
+}
+
+function Test-C1389_ReclaimThenExitReleasesLock {
+    $fx = New-RunFx
+    Reset-C1389HeldLock
+    $script:NightlySeams = @{
+        IsProcessAlive = { param($ProcessId) return $false }
+        GetBootId = { return '157' }
+        GetHostId = { return 'host-current' }
+        GetParentProcess = { param($ProcessId) return [pscustomobject]@{ Id = 0; StartTimeUtc = $null } }
+    }
+    Write-C1386Plant -Fx $fx -OwnerPid 424401 -ParentPid 424402 -RunId 'stale-run' -BootId '157' -HostId 'host-current'
+    $first = Enter-NightlyExclusiveLock -StateRoot $fx.State -RunId 'reclaim-run'
+    $firstOk = $false
+    $firstReason = ''
+    if ($null -ne $first) { $firstOk = [bool]$first.Ok; $firstReason = [string]$first.Reason }
+    $ownDetail = ('ok=' + $firstOk + ' reason=' + $firstReason)
+    Assert-C487 -Cond ($firstOk -and ($firstReason -eq 'reclaimed')) -Name 'C1389 Exit reclaim owns the lock' -Detail $ownDetail
+    Exit-NightlyExclusiveLock -StateRoot $fx.State -RunId 'reclaim-run'
+    $lockPath = Join-Path $fx.State 'run.lock'
+    $removed = -not (Test-Path -LiteralPath $lockPath)
+    $left = ''
+    if (-not $removed) {
+        try { $left = [System.IO.File]::ReadAllText($lockPath) } catch { $left = [string]$_.Exception.Message }
+    }
+    Assert-C487 -Cond $removed -Name 'C1389 Exit removes the reclaimed lock' -Detail $left
+    $second = Enter-NightlyExclusiveLock -StateRoot $fx.State -RunId 'next-run'
+    $secondOk = $false
+    $secondReason = ''
+    if ($null -ne $second) { $secondOk = [bool]$second.Ok; $secondReason = [string]$second.Reason }
+    Assert-C487 -Cond ($secondOk -and ($secondReason -eq 'acquired')) -Name 'C1389 Exit next enter acquires' -Detail ('ok=' + $secondOk + ' reason=' + $secondReason)
+    if ($secondOk) { Exit-NightlyExclusiveLock -StateRoot $fx.State -RunId 'next-run' }
+}
+
+function Write-C1389HopChild {
+    param([string]$Path)
+    $text = @'
+#requires -Version 5.1
+param(
+    [string]$CommonPath,
+    [string]$StateRoot,
+    [string]$ContinueRunId,
+    [int]$ContinueParentPid,
+    [string]$ResultPath
+)
+$ErrorActionPreference = 'Stop'
+try {
+    . $CommonPath
+    $result = Enter-NightlyExclusiveLock -StateRoot $StateRoot -RunId 'hop-child' -ContinueRunId $ContinueRunId -ContinueParentPid $ContinueParentPid
+    $seen = ''
+    $ok = $false
+    $reason = ''
+    if ($null -ne $result) {
+        $ok = [bool]$result.Ok
+        $reason = [string]$result.Reason
+        if ($null -ne $result.Record) { $seen = [string]$result.Record.runId }
+    }
+    $out = [ordered]@{ Ok = $ok; Reason = $reason; SeenRunId = $seen }
+    [System.IO.File]::WriteAllText($ResultPath, ($out | ConvertTo-Json -Compress))
+    exit 0
+} catch {
+    $err = [ordered]@{ Ok = $false; Reason = 'child-error'; SeenRunId = ''; Error = [string]$_.Exception.Message }
+    try { [System.IO.File]::WriteAllText($ResultPath, ($err | ConvertTo-Json -Compress)) } catch { }
+    exit 1
+}
+'@
+    [System.IO.File]::WriteAllText($Path, $text.Replace("`r`n", "`n"))
+}
+
+function Start-C1389HopChild {
+    param(
+        [string]$ChildPath,
+        [string]$CommonPath,
+        [string]$StateRoot,
+        [string]$ContinueRunId,
+        [int]$ContinueParentPid,
+        [string]$ResultPath
+    )
+    $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
+    $arg = '-NoProfile -NonInteractive -File "' + $ChildPath + '" -CommonPath "' + $CommonPath + '" -StateRoot "' + $StateRoot + '" -ContinueRunId "' + $ContinueRunId + '" -ContinueParentPid ' + $ContinueParentPid + ' -ResultPath "' + $ResultPath + '"'
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $pwsh
+    $psi.Arguments = $arg
+    $psi.WorkingDirectory = (Split-Path -Parent $ChildPath)
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    return [System.Diagnostics.Process]::Start($psi)
+}
+
+function Test-C1389_HopChildReadsReclaimedLock {
+    $fx = New-RunFx
+    Reset-C1389HeldLock
+    $script:NightlySeams = @{
+        IsProcessAlive = { param($ProcessId) return $false }
+        GetBootId = { return '157' }
+        GetHostId = { return 'host-current' }
+        GetParentProcess = { param($ProcessId) return [pscustomobject]@{ Id = 0; StartTimeUtc = $null } }
+    }
+    $reclaimRun = 'reclaimed-run'
+    Write-C1386Plant -Fx $fx -OwnerPid 424421 -ParentPid 424422 -RunId 'stale-run' -BootId '157' -HostId 'host-current'
+    $first = Enter-NightlyExclusiveLock -StateRoot $fx.State -RunId $reclaimRun
+    $firstOk = $false
+    $firstReason = ''
+    if ($null -ne $first) { $firstOk = [bool]$first.Ok; $firstReason = [string]$first.Reason }
+    Assert-C487 -Cond ($firstOk -and ($firstReason -eq 'reclaimed')) -Name 'C1389 Hop reclaim owns the lock' -Detail ('ok=' + $firstOk + ' reason=' + $firstReason)
+    $fixture = Join-Path $fx.Root 'hop'
+    New-Item -ItemType Directory -Path $fixture -Force | Out-Null
+    $childPath = Join-Path $fixture 'hop-child.ps1'
+    $resultPath = Join-Path $fixture 'hop.json'
+    Write-C1389HopChild -Path $childPath
+    $common = Join-Path $PSScriptRoot (Join-Path 'lib' 'nightly-common.ps1')
+    $proc = $null
+    try {
+        $proc = Start-C1389HopChild -ChildPath $childPath -CommonPath $common -StateRoot $fx.State -ContinueRunId $reclaimRun -ContinueParentPid $PID -ResultPath $resultPath
+        [void](Wait-C1389File -Path $resultPath -Seconds 30)
+    } finally {
+        if ($null -ne $proc -and -not $proc.HasExited) {
+            try { [void]$proc.WaitForExit(15000) } catch { }
+        }
+        if ($null -ne $proc -and -not $proc.HasExited) {
+            try { $proc.Kill() } catch { }
+        }
+    }
+    $hop = Read-C1389JsonFile -Path $resultPath
+    $seen = ''
+    $hopReason = ''
+    if ($null -ne $hop) { $seen = [string]$hop.SeenRunId; $hopReason = [string]$hop.Reason }
+    $detail = ('reason=' + $hopReason + ' seen=' + $seen + ' want=' + $reclaimRun)
+    Assert-C487 -Cond (($seen -eq $reclaimRun) -and ($hopReason -eq 'hop')) -Name 'C1389 Hop child reads the reclaimed run id' -Detail $detail
+    Exit-NightlyExclusiveLock -StateRoot $fx.State -RunId $reclaimRun
+}
+
+function Test-C1389_OldFormatBootIdRefuses {
+    $fx = New-RunFx
+    Reset-C1389HeldLock
+    $script:NightlySeams = @{
+        IsProcessAlive = { param($ProcessId) return ([int]$ProcessId -eq 424410) }
+        GetBootId = { return '157' }
+        GetHostId = { return 'host-current' }
+    }
+    $oldBoot = '2026-01-02T03:04:05.0000000Z'
+    Write-C1386Plant -Fx $fx -OwnerPid 424410 -ParentPid 424411 -RunId 'old-format-run' -BootId $oldBoot -HostId 'host-current'
+    $result = Enter-NightlyExclusiveLock -StateRoot $fx.State -RunId 'thief-run'
+    $ok = $false
+    $reason = ''
+    if ($null -ne $result) { $ok = [bool]$result.Ok; $reason = [string]$result.Reason }
+    Reset-C1389HeldLock
+    $detail = ('ok=' + $ok + ' reason=' + $reason)
+    Assert-C487 -Cond ((-not $ok) -and ($reason -eq 'lock-held')) -Name 'C1389 OldFormat boot id refuses' -Detail $detail
+    $kept = (Test-C1386RunIdKept -Fx $fx -RunId 'old-format-run') -and (Test-C1386NoReclaim -Fx $fx)
+    Assert-C487 -Cond $kept -Name 'C1389 OldFormat boot id keeps the lock' -Detail (Get-C1386LockText $fx)
+}
+
 function Test-C487_PrerequisiteSettle {
     # A child that exits nonzero while summary.json still says testsPassed must
     # not leave that success flag settled beside last-run.json.
