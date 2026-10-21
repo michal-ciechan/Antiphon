@@ -140,6 +140,10 @@ public sealed class LandingGitProfile
     public void CanonicalHit() => Interlocked.Increment(ref _canonicalHits);
     public void Inspection() => Interlocked.Increment(ref _inspections);
 
+    // CARD-1432 S4 red-witness placeholders; the histogram lands in the next commit.
+    public IReadOnlyDictionary<string, long> Histogram => new Dictionary<string, long>();
+    public string DescribeHistogram() => "{}";
+
     public string Describe() => string.Create(System.Globalization.CultureInfo.InvariantCulture,
         $"processes={Processes} worktreeList={WorktreeLists} registrationHits={RegistrationHits} canonicalHits={CanonicalHits} inspections={Inspections} remote={RemoteRoundTrips} gitSeconds={GitSeconds:F2}");
 }
