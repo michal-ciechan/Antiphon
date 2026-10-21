@@ -6184,10 +6184,11 @@ def open_status_move($before;$after;$detail;$runner):
     done
 }
 
-# CARD-1105 / CARD-1197. Once removal has been journaled, other runners may finish or open
-# tasks. containersRemoved, removing, recreating and verified share that compare: a journal
-# task that is still open must still match, including its runner. Every earlier phase keeps
-# the byte compare. A missing phase, or tasks that are not an object, refuses.
+# CARD-1105 / CARD-1197 / CARD-1399. Once removal has been journaled, other runners may finish
+# or open tasks. containersRemoved, removing, volumesRemoved, recreating and verified share
+# that compare, the same post-removal phases as c1008_tasks_containers_removed. A journal
+# task that is still open must still match, including its runner. stopped and every earlier
+# phase keep the byte compare. A missing phase, or tasks that are not an object, refuses.
 c1008_tasks_match_record() {
     local tasks="$1" phase="" saved="" live_norm="" saved_norm=""
     saved="$(printf '%s' "$C1008_RECORD" | jq -c '.tasks' 2>/dev/null)" || return 1
@@ -6195,7 +6196,7 @@ c1008_tasks_match_record() {
     printf '%s' "$saved" | jq -e 'type=="object"' >/dev/null 2>&1 || return 1
     printf '%s' "$tasks" | jq -e 'type=="object"' >/dev/null 2>&1 || return 1
     [ -n "$phase" ] || return 1
-    if [ "$phase" != "containersRemoved" ] && [ "$phase" != "removing" ] && [ "$phase" != "recreating" ] && [ "$phase" != "verified" ]; then
+    if [ "$phase" != "containersRemoved" ] && [ "$phase" != "removing" ] && [ "$phase" != "volumesRemoved" ] && [ "$phase" != "recreating" ] && [ "$phase" != "verified" ]; then
         live_norm="$(printf '%s' "$tasks" | jq -Sc . 2>/dev/null)" || return 1
         saved_norm="$(printf '%s' "$saved" | jq -Sc . 2>/dev/null)" || return 1
         [ "$live_norm" = "$saved_norm" ]
