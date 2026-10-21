@@ -388,6 +388,82 @@ function Test-T7 {
     else { Write-Fail 'T-7' ($reasons -join '; ') }
 }
 
+function Test-T9 {
+    # -StopOnly -WhatIf must not POST and must not reach dev-aspire.ps1.
+    $declared = Select-String -LiteralPath (Join-Path $here 'restart-apphost.ps1') -Pattern 'StopOnly' -SimpleMatch
+    $fx = New-C716Fixture -Config @{ gracefulClass = 'accepted'; gracefulPid = 4242; gracefulAlivePolls = 1 }
+    try {
+        $r = Invoke-C716Restart -Root $fx.Root -Arguments @('-StopOnly', '-WhatIf')
+        $lock = Join-Path (Join-Path $fx.Root 'logs') 'apphost.restart.lock'
+        $ok = ($null -ne $declared) -and
+            ($r.ExitCode -eq 0) -and
+            ((Count-C716Kind $r.Trace 'graceful') -eq 0) -and
+            ((Count-C716Kind $r.Trace 'launch') -eq 0) -and
+            ((Count-C716Kind $r.Trace 'stop-tree') -eq 0) -and
+            ($r.Text -match 'STOP-ONLY WHATIF') -and
+            ($r.Text -notmatch 'launching dev-aspire') -and
+            (-not (Test-Path -LiteralPath $lock))
+        if ($ok) { Write-Pass 'T-9' }
+        else {
+            Write-Fail 'T-9' ("declared=$([bool]($null -ne $declared)) exit=$($r.ExitCode) graceful=$(Count-C716Kind $r.Trace 'graceful') launch=$(Count-C716Kind $r.Trace 'launch') stop=$(Count-C716Kind $r.Trace 'stop-tree'); $($r.Text)")
+        }
+    } catch {
+        Write-Fail 'T-9' $_.Exception.Message
+    } finally {
+        Remove-C716Fixture $fx
+    }
+}
+
+function Test-T10 {
+    # Real -StopOnly posts the graceful stop, frees the tree, and exits before relaunch.
+    $fx = New-C716Fixture -Config @{
+        gracefulClass = 'accepted'; gracefulPid = 4242; gracefulAlivePolls = 1; gracefulDetail = 'accepted'
+    }
+    try {
+        $r = Invoke-C716Restart -Root $fx.Root -Arguments @('-StopOnly', '-TimeoutSec', '8')
+        $gracefulAt = Index-C716Kind $r.Trace 'graceful'
+        $stopAt = Index-C716Kind $r.Trace 'stop-tree'
+        $launchAt = Index-C716Kind $r.Trace 'launch'
+        $lock = Join-Path (Join-Path $fx.Root 'logs') 'apphost.restart.lock'
+        $ok = ($r.ExitCode -eq 0) -and
+            ($gracefulAt -ge 0) -and
+            ($stopAt -gt $gracefulAt) -and
+            ($launchAt -lt 0) -and
+            ($r.Text -match 'STOP-ONLY: AppHost stopped') -and
+            ($r.Text -notmatch 'launching dev-aspire') -and
+            (-not (Test-Path -LiteralPath $lock))
+        if ($ok) { Write-Pass 'T-10' }
+        else {
+            Write-Fail 'T-10' ("exit=$($r.ExitCode) gracefulAt=$gracefulAt stopAt=$stopAt launchAt=$launchAt; $($r.Text)")
+        }
+    } catch {
+        Write-Fail 'T-10' $_.Exception.Message
+    } finally {
+        Remove-C716Fixture $fx
+    }
+}
+
+function Test-T12 {
+    # -WhatIf without -StopOnly is a refusal. It must not become a restart.
+    $fx = New-C716Fixture -Config @{ gracefulClass = 'accepted'; gracefulPid = 4242 }
+    try {
+        $r = Invoke-C716Restart -Root $fx.Root -Arguments @('-WhatIf')
+        $ok = ($r.ExitCode -eq 3) -and
+            ((Count-C716Kind $r.Trace 'graceful') -eq 0) -and
+            ((Count-C716Kind $r.Trace 'launch') -eq 0) -and
+            ($r.Text -match 'REFUSED:') -and
+            ($r.Text -match 'Nothing was killed')
+        if ($ok) { Write-Pass 'T-12' }
+        else {
+            Write-Fail 'T-12' ("exit=$($r.ExitCode) graceful=$(Count-C716Kind $r.Trace 'graceful') launch=$(Count-C716Kind $r.Trace 'launch'); $($r.Text)")
+        }
+    } catch {
+        Write-Fail 'T-12' $_.Exception.Message
+    } finally {
+        Remove-C716Fixture $fx
+    }
+}
+
 function Get-C716FreePort {
     $tcp = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Loopback, 0)
     $tcp.Start()
@@ -567,10 +643,10 @@ function Test-T8 {
     }
 }
 
-$all = @('T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8')
+$all = @('T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9', 'T10', 'T12')
 if ($Case) {
     $name = $Case
-    if ($name -match '^T-([1-8])$') { $name = 'T' + $Matches[1] }
+    if ($name -match '^T-([0-9]+)$') { $name = 'T' + $Matches[1] }
     $fn = Get-Command -Name ('Test-{0}' -f $name) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
     & $fn
