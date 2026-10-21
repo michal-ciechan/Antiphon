@@ -196,7 +196,8 @@ public partial class StandingRestartEscalationTests
         held.ContinuitySessionId.ShouldBe(oldId);
         held.NextRestartAt.ShouldBeNull();
         held.AutomaticFreshConsumed.ShouldBeFalse();
-        held.AutomaticFreshAlertedHoldAt.ShouldBe(held.ContinuityHeldAt!.Value, TimeSpan.FromMilliseconds(1));
+        held.AutomaticFreshAlertedHoldAt.ShouldNotBeNull();
+        held.AutomaticFreshAlertedHoldAt!.Value.ShouldBe(held.ContinuityHeldAt!.Value, TimeSpan.FromMilliseconds(1));
         (await verify.Agents.FindAsync(agentId))!.PersistentSessionId.ShouldBe(oldId.ToString("D"));
         (await verify.AgentSessions.CountAsync(s => s.StandingAgentId == agentId)).ShouldBe(1);
         var message = (await verify.SessionQueuedMessages.SingleAsync(m => m.Id == messageId))!;
