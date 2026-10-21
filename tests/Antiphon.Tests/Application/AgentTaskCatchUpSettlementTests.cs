@@ -33,6 +33,7 @@ public class AgentTaskCatchUpSettlementTests
         var runtime = scenario.RuntimeFor(MarkedReportSnapshot(seeded));
 
         await runtime.SyncTranscriptAsync(seeded.SessionId, CancellationToken.None);
+        await scenario.DrainAsync(seeded.SessionId);
 
         var settled = await scenario.ReadTaskAsync(seeded.TaskId);
         settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
@@ -47,6 +48,7 @@ public class AgentTaskCatchUpSettlementTests
         var runtime = scenario.RuntimeFor(MarkedReportSnapshot(seeded), throwOnChannelReply: true);
 
         await runtime.SyncTranscriptAsync(seeded.SessionId, CancellationToken.None);
+        await scenario.DrainAsync(seeded.SessionId);
 
         var settled = await scenario.ReadTaskAsync(seeded.TaskId);
         settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
@@ -64,6 +66,7 @@ public class AgentTaskCatchUpSettlementTests
 
         var runtime = scenario.RuntimeFor(snapshot);
         await runtime.SyncTranscriptAsync(seeded.SessionId, CancellationToken.None);
+        await scenario.DrainAsync(seeded.SessionId);
 
         var settled = await scenario.ReadTaskAsync(seeded.TaskId);
         settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
@@ -80,6 +83,7 @@ public class AgentTaskCatchUpSettlementTests
         var runtime = scenario.RuntimeFor(MarkedReportSnapshot(seeded), logs: logs);
 
         await runtime.SyncTranscriptAsync(seeded.SessionId, CancellationToken.None);
+        await scenario.DrainAsync(seeded.SessionId);
 
         logs.ShouldNotContain(l => l.Contains("Catch-up settlement", StringComparison.Ordinal));
         (await scenario.ReadTaskAsync(seeded.TaskId)).Status.ShouldBe(AgentTaskStatus.Succeeded);
@@ -93,6 +97,7 @@ public class AgentTaskCatchUpSettlementTests
         var runtime = scenario.RuntimeFor(MidTurnSnapshot(seeded));
 
         await runtime.SyncTranscriptAsync(seeded.SessionId, CancellationToken.None);
+        await scenario.DrainAsync(seeded.SessionId);
 
         (await scenario.ReadTaskAsync(seeded.TaskId)).Status.ShouldBe(AgentTaskStatus.Dispatched);
     }
@@ -135,6 +140,7 @@ public class AgentTaskCatchUpSettlementTests
     {
         private readonly List<Guid> _tasks = [];
         private readonly List<Guid> _sessions = [];
+        private readonly List<ServiceProvider> _providers = [];
 
         public async Task<Seeded> SeedDispatchedAsync()
         {
@@ -236,6 +242,17 @@ public class AgentTaskCatchUpSettlementTests
             services.AddSingleton(Options.Create(new AgentSessionSettings()));
             services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
             services.AddSingleton<AgentTaskReplyService>();
+            // CARD-1259 (dd039a405): catch-up persists through SessionStateStore and defers
+            // settlement to SessionRuntimeActionCoordinator, which resolves the runtime from DI.
+            services.AddSingleton(Options.Create(new SessionStateSettings()));
+            services.AddSingleton<SessionStateCommandMetrics>();
+            services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+            services.AddSingleton<SessionStateStore>();
+            services.AddSingleton<SessionRuntimeActionCoordinator>();
+            services.AddSingleton<ISessionRunnerClient>(new SnapshotRunnerClient(snapshot));
+            if (logs is null)
+                services.AddSingleton<ILogger<AgentSessionRuntime>>(NullLogger<AgentSessionRuntime>.Instance);
+            services.AddSingleton<AgentSessionRuntime>();
             if (throwOnChannelReply)
             {
                 services.AddSingleton<ChannelReplyDispatcher>(_ =>
@@ -243,21 +260,22 @@ public class AgentTaskCatchUpSettlementTests
             }
 
             var provider = services.BuildServiceProvider();
-            return new AgentSessionRuntime(
-                new SnapshotRunnerClient(snapshot),
-                provider.GetRequiredService<IEventBus>(),
-                Options.Create(new AgentSessionSettings()),
-                provider.GetRequiredService<IServiceScopeFactory>(),
-                TimeProvider.System,
-                logs is null
-                    ? NullLogger<AgentSessionRuntime>.Instance
-                    : provider.GetRequiredService<ILogger<AgentSessionRuntime>>());
+            _providers.Add(provider);
+            return provider.GetRequiredService<AgentSessionRuntime>();
         }
+
+        /// <summary>Runs the deferred transcript actions the hosted worker would run in production.</summary>
+        public Task DrainAsync(Guid sessionId) =>
+            _providers[^1].GetRequiredService<SessionRuntimeActionCoordinator>()
+                .DrainPageAsync(sessionId, CancellationToken.None);
 
         public async ValueTask DisposeAsync()
         {
+            foreach (var provider in _providers)
+                await provider.DisposeAsync();
             await using var db = CreateContext();
             await db.AgentTaskEvents.Where(e => _tasks.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
+            await db.SessionRuntimeActions.Where(a => _sessions.Contains(a.AgentSessionId)).ExecuteDeleteAsync();
             await db.TranscriptEntries.Where(e => _sessions.Contains(e.AgentSessionId)).ExecuteDeleteAsync();
             await db.SessionQueuedMessages.Where(m => _sessions.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
             await db.AgentTasks.Where(t => _tasks.Contains(t.Id)).ExecuteDeleteAsync();

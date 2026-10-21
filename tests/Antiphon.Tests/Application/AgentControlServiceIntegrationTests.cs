@@ -863,7 +863,17 @@ public class AgentControlServiceIntegrationTests
             Directory.CreateDirectory(workspace);
             var firstAdapter = new FakeAgentProtocolAdapter();
             var resumeAdapter = new FakeAgentProtocolAdapter();
-            await using var harness = BuildHarness(tempRoot, [firstAdapter, resumeAdapter], defaultKind: "ClaudeCode");
+            // CARD-1259 (dd039a405): the restart boundary is appended through SessionStateStore and
+            // hinted to SessionRuntimeActionCoordinator; without them the write is refused and logged.
+            await using var harness = BuildHarness(tempRoot, [firstAdapter, resumeAdapter], defaultKind: "ClaudeCode",
+                configureServices: services =>
+                {
+                    services.AddSingleton(Options.Create(new SessionStateSettings()));
+                    services.AddSingleton<SessionStateCommandMetrics>();
+                    services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+                    services.AddSingleton<SessionStateStore>();
+                    services.AddSingleton<SessionRuntimeActionCoordinator>();
+                });
 
             var agent = await harness.AgentService.CreateAsync(
                 new CreateAgentRequest("Interrupted Claude", workspace), CancellationToken.None);
@@ -901,6 +911,10 @@ public class AgentControlServiceIntegrationTests
         }
         finally
         {
+            await using (var cleanup = CreateContext())
+                await cleanup.SessionRuntimeActions
+                    .Where(a => cleanup.AgentSessions.Any(x => x.Id == a.AgentSessionId && x.Cwd.StartsWith(tempRoot)))
+                    .ExecuteDeleteAsync();
             await CleanupProjectsByTempRootAsync(tempRoot);
             DeleteDirectoryBestEffort(tempRoot);
         }
