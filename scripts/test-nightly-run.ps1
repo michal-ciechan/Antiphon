@@ -628,8 +628,8 @@ function Test-C1386_DeadOwnerReclaimed {
     Assert-C487 -Cond $sameOk -Name 'C1386 DeadOwner same-boot records dead-owner-same-boot' -Detail ('phase={0} refusal={1} reason={2}' -f (Get-C1386Phase $sameResult), (Get-C1386Refusal $sameResult), $sameReason)
 
     $reboot = New-RunFx
-    Write-C1386Seams -Fx $reboot -AlivePids @(424205) -BootId $boot -HostId $hostId
-    Write-C1386Plant -Fx $reboot -OwnerPid 424205 -ParentPid 424206 -RunId 'reboot-run' -BootId 'boot-previous' -HostId $hostId
+    Write-C1386Seams -Fx $reboot -AlivePids @(424205) -BootId '157' -HostId $hostId
+    Write-C1386Plant -Fx $reboot -OwnerPid 424205 -ParentPid 424206 -RunId 'reboot-run' -BootId '156' -HostId $hostId
     $rebootResult = Invoke-C1386FxRun -Fx $reboot
     $rebootReason = Get-C1386ReclaimReason $reboot
     $reclaimed = ((Get-C1386Phase $rebootResult) -ne 'lock' -and [string]::IsNullOrWhiteSpace((Get-C1386Refusal $rebootResult)) -and (Test-C1386RunIdGone -Fx $reboot -RunId 'reboot-run'))
