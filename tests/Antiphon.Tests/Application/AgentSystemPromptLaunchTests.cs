@@ -128,7 +128,12 @@ public class AgentSystemPromptLaunchTests
         await using var db = CreateContext();
         (await db.SessionQueuedMessages.Where(m => m.AgentSessionId == newSessionId).ToListAsync())
             .ShouldAllBe(m => m.Status == QueuedMessageStatus.Sent);
-        (await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId)).ShouldBeFalse();
+        // CARD-0466 (344125472): an explicit Fresh start records one audit incident
+        // (AgentControlService.cs:850-862, StandingFreshSelected); nothing else is raised.
+        var incident = (await db.AgentIncidents.Where(i => i.AgentId == h.AgentId).ToListAsync())
+            .ShouldHaveSingleItem();
+        incident.Kind.ShouldBe(AgentIncidentKind.StandingFreshSelected);
+        incident.SessionId.ShouldBe(newSessionId);
     }
 
     [Test]
