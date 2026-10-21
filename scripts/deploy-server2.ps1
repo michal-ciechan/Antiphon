@@ -903,6 +903,10 @@ function Wait-RecycleTaskCensus {
             }
             return $snapshot
         } catch {
+            # CARD-1371. Resume continues a recycle that may already have removed
+            # containers. Exhausted count drift must not stop that resume; the host
+            # census still refuses Drift until the journal says the containers are gone.
+            if ($ResumeRecycle -and $_.Exception.Message -cmatch '^RecycleTaskCensusUnknown cause=Drift ') { return $null }
             if ($_.Exception.Message -cnotmatch '^RecycleLandInFlight ([0-9a-f-]{36})$') { throw }
             $landId = $Matches[1]
             if ([datetime]::UtcNow -ge $deadline) {

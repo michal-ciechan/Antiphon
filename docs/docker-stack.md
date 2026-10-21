@@ -291,6 +291,12 @@ project in sorted order. An advertisement conflict reports the first advertised 
 and the later count; final reconciliation reports advertised versus collected rows.
 Malformed counts still refuse immediately as `Malformed`, and binding and land guards
 take precedence. Drift never enters the separate bound-land wait or permits a partial closure.
+That refusal stops removal from starting. Once the journal records `ownedRemoved` or a
+phase of `containersRemoved`, `removing`, `volumesRemoved`, `recreating` or `verified`,
+the same drift is still retried, and the final attempt keeps the walked rows. Binding
+and land guards still refuse before that acceptance. A wrapper `-ResumeRecycle` does
+not treat exhausted Drift as fatal; the host census applies the journal rule. Malformed
+counts and every pre-removal Drift refusal stay immediate refusals.
 
 CARD-1326 keeps two edges of that exception. A task that appears under a nested excluded
 scope still ends `RecycleTaskCensusUnknown cause=Unstable`: forgiveness rewrites the open
@@ -306,7 +312,9 @@ refuse `RecycleLandInFlight` on a row bound to the recycled runner, after the bo
 above. Project resolution
 uses `RecycleProjectUnresolved` and its cause. Each census retains approved read
 timings/counts and reduced task/land facts; no task prose, credentials or response body
-is retained. A refusal stops the phase before destructive work, including on resume.
+is retained. A refusal stops the phase before destructive work, including on resume,
+while the journal still shows the containers present. After the journal records
+container removal, persistent count drift follows the retry-and-keep rule above.
 
 Always retire `server2-temp` once scheduling has moved back to the verified, accepting
 main runner. After drain and the checks below, temp is disposable: `compose_temp down -v`

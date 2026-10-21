@@ -5910,6 +5910,14 @@ c1008_tasks_wait() {
     return "$code"
 }
 
+# CARD-1371. Removal is journaled once ownedRemoved is true or the phase is past the
+# container rm. The last census attempt then keeps the walked rows. Earlier attempts
+# still retry. An empty or unreadable journal, and every earlier phase, still refuse.
+c1008_tasks_containers_removed() {
+    [ -n "${C1008_RECORD:-}" ] || return 1
+    printf '%s' "$C1008_RECORD" | jq -e '(.ownedRemoved==true) or (.phase=="containersRemoved") or (.phase=="removing") or (.phase=="volumesRemoved") or (.phase=="recreating") or (.phase=="verified")' >/dev/null 2>&1
+}
+
 c1008_tasks_collect() {
     # CARD-1371: bounded retries restart both passes; only cross-read Drift is retryable.
     # Keep the attempt inside this function so extracted offline census probes use the real policy.
@@ -6076,7 +6084,13 @@ def open_status_move($before;$after;$detail;$runner):
                 if $counts[$id]!=$actual and (has($id)|not)
                 then .[$id]={expected:$counts[$id],observed:$actual,path:$path} else . end)')" || return 2
         drift="$(printf '%s' "$drifts" | jq -r 'to_entries|sort_by(.key)|first // empty | "project=\(.key) expected=\(.value.expected) observed=\(.value.observed) path=\(.value.path)"')" || return 2
-        if [ -n "$drift" ]; then C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Drift field=excluded.byProject.count $drift"; return 2; fi
+        if [ -n "$drift" ]; then
+            C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Drift field=excluded.byProject.count $drift"
+            # Attempts 1 and 2 always retry. Attempt 3 refuses until the journal says
+            # the containers are gone, then keeps these rows. Binding and land already ran.
+            if [ "$attempt" -lt 3 ] || ! c1008_tasks_containers_removed; then return 2; fi
+            C1008_TASK_ERROR=''
+        fi
         # CARD-1353 D-2: the compared land closure keeps bound rows only and no scopes entry, so an
         # off-runner land requested between the passes or between the proofs cannot end Unstable.
         # C1008_CENSUS_TASKS (the receipt) and the per-scope count reconciliation above stay complete.
