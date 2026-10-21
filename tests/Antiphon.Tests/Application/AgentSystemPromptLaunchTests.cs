@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -131,7 +132,7 @@ public class AgentSystemPromptLaunchTests
     }
 
     [Test]
-    public async Task Second_start_on_a_live_session_is_a_no_op_and_does_not_rebootstrap()
+    public async Task Second_start_on_a_live_session_is_refused_and_does_not_rebootstrap()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
         await SetPreambleAsync(h, Template);
@@ -140,7 +141,10 @@ public class AgentSystemPromptLaunchTests
         var started = await StartAsync(h, fresh: true);
         Factory(h).Created.Count.ShouldBe(1);
 
-        await StartAsync(h, fresh: true); // live session — idempotent no-op
+        // Since 344125472 (explicit owned recovery) a fresh start on a live session is refused
+        // rather than ignored: the operator must stop the current conversation first.
+        var refused = await Should.ThrowAsync<ConflictException>(() => StartAsync(h, fresh: true));
+        refused.Code.ShouldBe("standing_resume_current_active");
 
         Factory(h).Created.Count.ShouldBe(1, "no second process, no second bootstrap");
         Factory(h).Created[0].SubmittedBodies.ShouldBe(
@@ -766,7 +770,9 @@ public class AgentSystemPromptLaunchTests
                             ["fake"] = new AgentDefinition
                             {
                                 Kind = "ClaudeCode",
-                                Exe = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                                Exe = OperatingSystem.IsWindows()
+                                    ? Path.Combine(Environment.SystemDirectory, "cmd.exe")
+                                    : "/bin/sh",
                             },
                         },
                     }));

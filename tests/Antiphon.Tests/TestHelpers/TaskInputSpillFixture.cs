@@ -140,6 +140,7 @@ internal sealed class TaskInputDeliveryFixture : IAsyncDisposable
     public Task InsertTranscriptEntryAsync(string kind, string? text = null,
         string? toolName = null, string? toolUseId = null) =>
         _bridge.InsertTranscriptEntryAsync(kind, text, toolName: toolName, toolUseId: toolUseId);
+    public Task MarkIdleAsync() => _bridge.MarkIdleAsync();
     public AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
 
     private TaskInputDeliveryFixture(IsolatedTestSchema schema, BridgeQueueHarness bridge,

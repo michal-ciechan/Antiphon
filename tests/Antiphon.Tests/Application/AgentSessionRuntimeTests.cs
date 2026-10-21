@@ -205,13 +205,23 @@ public partial class AgentSessionRuntimeTests
             npgsql.MigrationsAssembly("Antiphon.Server");
             npgsql.SetPostgresVersion(16, 0);
         }));
+        // CARD-1259 (dd039a405): transcript ingestion persists through SessionStateStore and hints
+        // the action coordinator; without them every row is dropped as a persist failure.
+        services.AddLogging();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(Options.Create(new SessionStateSettings()));
+        services.AddSingleton<SessionStateCommandMetrics>();
+        services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+        services.AddSingleton<SessionStateStore>();
+        services.AddSingleton<SessionRuntimeActionCoordinator>();
         await using var provider = services.BuildServiceProvider();
         var runtime = new AgentSessionRuntime(
             new MockEventBus(),
             Options.Create(new AgentSessionSettings { SessionLogPath = logPath }),
             provider.GetRequiredService<IServiceScopeFactory>(),
             TimeProvider.System,
-            NullLogger<AgentSessionRuntime>.Instance);
+            NullLogger<AgentSessionRuntime>.Instance,
+            states: provider.GetRequiredService<SessionStateStore>());
 
         try
         {
@@ -237,6 +247,7 @@ public partial class AgentSessionRuntimeTests
         finally
         {
             await using var cleanup = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+            await cleanup.SessionRuntimeActions.Where(a => a.AgentSessionId == sessionId).ExecuteDeleteAsync();
             await cleanup.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
             await cleanup.AgentSessions.Where(s => s.Id == sessionId).ExecuteDeleteAsync();
             DeleteDirectoryBestEffort(logPath);

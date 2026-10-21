@@ -507,6 +507,16 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         await lease.ReconcileAsync(reset: false, CancellationToken.None);
     }
 
+    /// <summary>Ends the current turn and makes it visible to the loaded working-state store, the twin of <see cref="MarkWorkingAsync"/>.</summary>
+    public async Task MarkIdleAsync(Guid? sessionId = null)
+    {
+        var id = sessionId ?? SessionId;
+        using var lease = await Provider.GetRequiredService<SessionStateStore>()
+            .BeginWriteAsync(id, CancellationToken.None);
+        await InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, sessionId: id);
+        await lease.ReconcileAsync(reset: false, CancellationToken.None);
+    }
+
     /// <summary>
     /// A Pending message already in the queue. <paramref name="deliveryAttempts"/> and
     /// <paramref name="baselineSequence"/> reproduce a message that has ALREADY been typed once
