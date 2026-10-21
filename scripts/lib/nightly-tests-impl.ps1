@@ -56,6 +56,28 @@ function Get-NightlyProfileExecutionChunks {
     }
 }
 
+function Get-NightlyProfileLaunchPlan {
+    # Profile leaves stay one class, or one exact method, per chunk.
+    param([object[]]$DiscoveryNodes, [object[]]$Chunks, [object[]]$Exclusions)
+    return @(Get-NightlyProfileExecutionChunks -DiscoveryNodes $DiscoveryNodes -Chunks $Chunks -Exclusions $Exclusions)
+}
+
+function Resolve-NightlySuiteChunks {
+    # Master nightly is not profile-aware and has no exclusions, so it stays
+    # the single all chunk. Only a profile that actually excludes packs leaves.
+    param(
+        [object[]]$DiscoveryNodes,
+        [object[]]$Chunks,
+        [object[]]$Exclusions,
+        [bool]$ProfileAware,
+        [bool]$Native
+    )
+    if ($Native -and $ProfileAware -and @($Exclusions).Count -gt 0) {
+        return @(Get-NightlyProfileLaunchPlan -DiscoveryNodes $DiscoveryNodes -Chunks $Chunks -Exclusions $Exclusions)
+    }
+    return @($Chunks)
+}
+
 function Test-NightlySuiteIsNative {
     <#
       A native suite is one that runs a built TUnit assembly: it owns its process tree,
@@ -168,7 +190,8 @@ function Get-NightlyNativeExecutionArguments {
         [string]$TrxPath,
         [string]$DiagnosticDirectory,
         [string[]]$Classes,
-        [string]$ExactFilter = ''
+        [string]$ExactFilter = '',
+        [string]$GroupFilter = ''
     )
     if ([string]::IsNullOrWhiteSpace($TrxPath)) { throw 'missing trx path' }
     if ([string]::IsNullOrWhiteSpace($DiagnosticDirectory)) { throw 'missing diagnostic directory' }
@@ -186,10 +209,16 @@ function Get-NightlyNativeExecutionArguments {
         '--diagnostic',
         '--diagnostic-output-directory', $DiagnosticDirectory
     )
+    if (-not [string]::IsNullOrWhiteSpace($ExactFilter) -and -not [string]::IsNullOrWhiteSpace($GroupFilter)) {
+        throw 'ambiguous-chunk-filter'
+    }
     if ($ExactFilter) {
         if ($ExactFilter -notmatch '^/\*/[A-Za-z_][A-Za-z0-9_.]*/[A-Za-z_][A-Za-z0-9_]*/[A-Za-z_][A-Za-z0-9_]*$') { throw 'invalid-exact-filter' }
         $nativeArgs += '--treenode-filter'
         $nativeArgs += $ExactFilter
+    } elseif (-not [string]::IsNullOrWhiteSpace($GroupFilter)) {
+        # CARD-1397 groups replace this refusal with a suffix-safe CARD-0403 filter.
+        throw 'invalid-group-filter'
     } elseif ($Classes -and @($Classes).Count -gt 0) {
         if (@($Classes).Count -ne 1) { throw 'multiple classes require split exact roster chunks' }
         $class = Get-NightlyBareClassIdentity -Name ([string]$Classes[0])
@@ -604,7 +633,7 @@ function Invoke-AntiphonNightlyTests {
                     $suiteDiscoveryNodes = @((Read-NightlyDiscoveryDocument $profileDiscoveryPath).Nodes)
                     $suiteCensus = Get-NightlyDiscoveryCensus $suiteDiscoveryNodes $profileExclusions -ProfileAware
                     if (-not $suiteCensus.Ok) { throw 'profile-discovery-census-incomplete' }
-                    $chunks = @(Get-NightlyProfileExecutionChunks $suiteDiscoveryNodes $chunks $profileExclusions)
+                    $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $suiteDiscoveryNodes -Chunks $chunks -Exclusions $profileExclusions -ProfileAware:$profileAware -Native:$isNative)
                     if ($chunks.Count -eq 0) { throw 'zero-required-uid' }
                 }
                 $chunkIndex = 0
@@ -658,7 +687,9 @@ function Invoke-AntiphonNightlyTests {
                         New-Item -ItemType Directory -Path $execDiagDir -Force | Out-Null
                         $chunkClasses = @()
                         if ($chunk.classes -and @($chunk.classes).Count -gt 0) { $chunkClasses = @($chunk.classes) }
-                        $args = @(Get-NightlyNativeExecutionArguments -TrxPath $trxPath -DiagnosticDirectory $execDiagDir -Classes $chunkClasses -ExactFilter ([string]$chunk.exactFilter))
+                        $groupFilter = ''
+                        if ($chunk.PSObject.Properties.Name -contains 'groupFilter') { $groupFilter = [string]$chunk.groupFilter }
+                        $args = @(Get-NightlyNativeExecutionArguments -TrxPath $trxPath -DiagnosticDirectory $execDiagDir -Classes $chunkClasses -ExactFilter ([string]$chunk.exactFilter) -GroupFilter $groupFilter)
                         $run = Invoke-NightlyOwnedProcess -FilePath $exe -ArgumentList $args -WorkingDirectory $RepoRoot `
                             -TimeoutMilliseconds (Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key $suiteId -Fallback 3600000) `
                             -Environment $envMap -LogPath $logPath
