@@ -188,7 +188,7 @@ function Test-C1408_ProcessExitCodeAndRollbackLine {
     $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 1000)
     $rp = Join-Path $root 'child-result.json'
     $cmd = @'
-& '__MON__' -Mode Watch -Execute -ServerBaseUrl 'http://fake.invalid' -ProjectId 'p1' -BaselinePath '__BP__' -ResultPath '__RP__' -SampleCount 5 -HttpGet { param([string]$Url); if ($Url -like '*/pipeline*') { return @{ StatusCode = 200; Body = '{}'; ElapsedMs = 3500 } }; if ($Url -like '*/api/agent-tasks?*') { return @{ StatusCode = 200; Body = '{"items":[]}' } }; if ($Url -like '*/health*') { return @{ StatusCode = 200; Body = 'Healthy' } }; return @{ StatusCode = 200; Body = '{"sha":"aaaa","capabilities":["land-v2"]}' } }
+& '__MON__' -Mode Watch -Execute -ServerBaseUrl 'http://fake.invalid' -ProjectId 'p1' -BaselinePath '__BP__' -ResultPath '__RP__' -SampleCount 5 -HttpGet { param([string]$Url); if ($Url -like '*/pipeline*') { return @{ StatusCode = 200; Body = '{}'; ElapsedMs = 3500 } }; if ($Url -like '*/api/agent-tasks?*') { return @{ StatusCode = 200; Body = '{"items":[]}' } }; if ($Url -like '*/health*') { return @{ StatusCode = 200; Body = 'Healthy' } }; return @{ StatusCode = 200; Body = '{"sha":"aaaa","capabilities":["land-v2"]}' } }; exit $LASTEXITCODE
 '@
     $cmd = $cmd.Replace('__MON__', $monitor).Replace('__BP__', $b.BaselinePath).Replace('__RP__', $rp)
     $out = & pwsh -NoProfile -NonInteractive -Command $cmd 2>&1 | ForEach-Object { [string]$_ }
