@@ -226,6 +226,19 @@ function Test-DrillRefusesProduction {
         Assert-True ($volume.Out -match 'reason=drill-refused') 'drill volume reason' $volume.Out
         Assert-NoDocker $volume 'drill volume'
         Assert-DestUntouched $fx 'drill volume'
+        Remove-Item -LiteralPath $fx.Marker -Force -ErrorAction SilentlyContinue
+        $slash = Invoke-Snapshot -Fixture $fx -Arguments ($common + @('-ScratchContainer', 'antiphon-postgres/'))
+        Assert-True ($slash.Exit -eq 9) 'trailing slash exits 9' "exit=$($slash.Exit) $($slash.Out)"
+        Assert-True ($slash.Out -match 'reason=drill-refused') 'trailing slash reason' $slash.Out
+        Assert-True ($slash.Out -match 'guard=production-container') 'trailing slash guard' $slash.Out
+        Assert-NoDocker $slash 'trailing slash'
+        Remove-Item -LiteralPath $fx.Marker -Force -ErrorAction SilentlyContinue
+        $slashVolume = Invoke-Snapshot -Fixture $fx -Arguments ($common + @(
+            '-ScratchContainer', 'antiphon-postgres-drill', '-ScratchVolume', 'antiphon_pgdata/'
+        ))
+        Assert-True ($slashVolume.Exit -eq 9) 'trailing slash volume exits 9' "exit=$($slashVolume.Exit) $($slashVolume.Out)"
+        Assert-True ($slashVolume.Out -match 'guard=production-volume') 'trailing slash volume guard' $slashVolume.Out
+        Assert-NoDocker $slashVolume 'trailing slash volume'
     } finally { Remove-Fixture $fx }
 }
 
@@ -305,6 +318,11 @@ unlabelled_json='{"Id":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 mount_json='{"Id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"Mounts":[{"Name":"antiphon_pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
 clean_json='{"Id":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"Mounts":[{"Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
 server2_json='{"Id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","Name":"/antiphon-server2-postgres-postgres-1","Config":{"Labels":{}},"Mounts":[{"Name":"antiphon-server2-postgres_pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["postgres"]}}}}'
+custom_source_json='{"Id":"1212121212121212121212121212121212121212121212121212121212121212","Name":"/custom-pg","Config":{"Labels":{}},"Mounts":[{"Name":"custom_pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["custom-pg"]}}}}'
+labelled_source_json='{"Id":"3434343434343434343434343434343434343434343434343434343434343434","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"Mounts":[{"Name":"custom_pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
+mismatch_json='{"Id":"5656565656565656565656565656565656565656565656565656565656565656","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"Mounts":[{"Name":"scratcha","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
+pghost_json='{"Id":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"},"Env":["PGHOST=db.internal","PGPORT=5432"]},"Mounts":[{"Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
+own_running_json='{"Id":"7878787878787878787878787878787878787878787878787878787878787878","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"Mounts":[{"Name":"custom_pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
 emit() {
     if [ "$name_format" = "1" ]; then
         printf '/%s\n' "$2"
@@ -338,6 +356,10 @@ case "$cmd" in
             fi
             exit 1
         fi
+        if [ "$target" = "custom-pg" ]; then
+            emit "$custom_source_json" "custom-pg"
+            exit 0
+        fi
         case "$scenario" in
             prefix)
                 emit "$source_json" "antiphon-postgres"
@@ -368,6 +390,32 @@ case "$cmd" in
                     exit 1
                 fi
                 emit "$clean_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            own-volume)
+                if [ ! -f "$state" ]; then
+                    exit 1
+                fi
+                emit "$own_running_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            foreign-volume|plain-volume)
+                if [ ! -f "$state" ]; then
+                    exit 1
+                fi
+                emit "$clean_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            labelled-source)
+                emit "$labelled_source_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            mismatch)
+                emit "$mismatch_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            pghost)
+                emit "$pghost_json" "antiphon-postgres-drill"
                 exit 0
                 ;;
             *)
@@ -411,6 +459,51 @@ case "$cmd" in
         fi
         exit 0
         ;;
+    volume)
+        sub="$1"
+        vol_file="${state}.volumes"
+        case "$sub" in
+            inspect)
+                if [ "$scenario" = "plain-volume" ] && [ "$target" = "windmill_db" ]; then
+                    printf '%s\n' '{"Name":"windmill_db","Labels":{}}'
+                    exit 0
+                fi
+                if [ "$scenario" = "foreign-volume" ] && [ "$target" = "windmill_db" ]; then
+                    printf '%s\n' '{"Name":"windmill_db","Labels":{}}'
+                    exit 0
+                fi
+                if [ -f "$vol_file" ] && grep -qx -- "$target" "$vol_file"; then
+                    printf '{"Name":"%s","Labels":{"antiphon.snapshot-drill":"1"}}\n' "$target"
+                    exit 0
+                fi
+                exit 1
+                ;;
+            create)
+                if [ -n "$vol_file" ]; then
+                    printf '%s\n' "$target" >> "$vol_file"
+                fi
+                exit 0
+                ;;
+            rm)
+                exit 0
+                ;;
+        esac
+        exit 0
+        ;;
+    ps)
+        vol=""
+        for arg in "$@"; do
+            case "$arg" in
+                volume=*)
+                    vol="${arg#volume=}"
+                    ;;
+            esac
+        done
+        if [ "$scenario" = "foreign-volume" ] && [ "$vol" = "windmill_db" ]; then
+            printf '%s\n' 'abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd'
+        fi
+        exit 0
+        ;;
     *)
         exit 0
         ;;
@@ -444,6 +537,9 @@ exit 0
 function Invoke-DrillCase {
     param($Fixture, [string]$Scenario, [string[]]$Extra, [string]$PlainBytes = '32')
     Remove-Item -LiteralPath $Fixture.Marker -Force -ErrorAction SilentlyContinue
+    $dockerState = Join-Path $Fixture.Root 'docker-state'
+    Remove-Item -LiteralPath $dockerState -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath ($dockerState + '.volumes') -Force -ErrorAction SilentlyContinue
     $cipher = Join-Path $Fixture.Dest 'antiphon-20261021T120000Z.dump.age'
     Set-Content -LiteralPath $cipher -Value 'cipher' -Encoding ASCII
     $arguments = @(
@@ -510,6 +606,15 @@ function Test-DrillRefusesSourceMount {
             '-ScratchVolume', 'antiphon-postgres-drill-pgdata'
         )
         Assert-DrillRefused $result $fx 'production-mount' 'source mount'
+        $custom = Invoke-DrillCase $fx 'labelled-source' @(
+            '-Container', 'custom-pg',
+            '-SourceVolume', 'antiphon_pgdata',
+            '-ScratchContainer', 'antiphon-postgres-drill',
+            '-ScratchVolume', 'antiphon-postgres-drill-pgdata'
+        ) '1048576'
+        Assert-DrillRefused $custom $fx 'source-mount' 'custom source mount'
+        Assert-True ($custom.Tools -notmatch 'volume rm') 'custom source mount leaves volumes' $custom.Tools
+        Assert-True ($custom.Tools -notmatch 'run -d') 'custom source mount does not start postgres' $custom.Tools
     } finally { Remove-Fixture $fx }
 }
 
@@ -660,6 +765,154 @@ function Test-StagingHygiene {
     }
 }
 
+function Assert-VolumeUntouched {
+    param($Result, [string]$Name)
+    Assert-True ($Result.Tools -notmatch 'volume rm') "$Name does not remove a volume" $Result.Tools
+    Assert-True ($Result.Tools -notmatch 'volume create') "$Name does not create a volume" $Result.Tools
+    Assert-True ($Result.Tools -notmatch 'run -d') "$Name does not start postgres" $Result.Tools
+}
+
+function Test-DrillRefusesOwnVolume {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'DrillRefusesOwnVolume script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $result = Invoke-DrillCase $fx 'own-volume' @(
+            '-Container', 'custom-pg',
+            '-SourceVolume', 'antiphon_pgdata',
+            '-ScratchContainer', 'antiphon-postgres-drill',
+            '-ScratchVolume', 'custom_pgdata'
+        ) '1048576'
+        Assert-DrillRefused $result $fx 'source-mount' 'own volume'
+        Assert-VolumeUntouched $result 'own volume'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-DrillRefusesForeignVolume {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'DrillRefusesForeignVolume script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $live = Invoke-DrillCase $fx 'foreign-volume' @(
+            '-ScratchContainer', 'antiphon-postgres-drill',
+            '-ScratchVolume', 'windmill_db'
+        ) '1048576'
+        Assert-DrillRefused $live $fx 'foreign-mount' 'foreign volume'
+        Assert-VolumeUntouched $live 'foreign volume'
+        $plain = Invoke-DrillCase $fx 'plain-volume' @(
+            '-ScratchContainer', 'antiphon-postgres-drill',
+            '-ScratchVolume', 'windmill_db'
+        ) '1048576'
+        Assert-DrillRefused $plain $fx 'unlabelled-volume' 'unlabelled volume'
+        Assert-VolumeUntouched $plain 'unlabelled volume'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-DrillRefusesVolumeMismatch {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'DrillRefusesVolumeMismatch script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $result = Invoke-DrillCase $fx 'mismatch' @(
+            '-ScratchContainer', 'antiphon-postgres-drill',
+            '-ScratchVolume', 'windmill_db'
+        ) '1048576'
+        Assert-DrillRefused $result $fx 'volume-mismatch' 'volume mismatch'
+        Assert-VolumeUntouched $result 'volume mismatch'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-DrillRefusesPgHost {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'DrillRefusesPgHost script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $result = Invoke-DrillCase $fx 'pghost' @(
+            '-ScratchContainer', 'antiphon-postgres-drill',
+            '-ScratchVolume', 'antiphon-postgres-drill-pgdata'
+        ) '1048576'
+        Assert-DrillRefused $result $fx 'pghost' 'pghost'
+        Assert-True ($result.Tools -notmatch 'volume rm') 'pghost leaves volumes' $result.Tools
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-StagingPreservesOperatorFiles {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'StagingPreservesOperatorFiles script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $notes = Join-Path $fx.Stage 'notes.txt'
+        $backup = Join-Path $fx.Stage 'dev-backup-20261020.dump'
+        Set-Content -LiteralPath $notes -Value 'operator notes' -Encoding ASCII
+        Set-Content -LiteralPath $backup -Value 'operator dump' -Encoding ASCII
+        $refused = Invoke-DrillCase $fx 'prefix' @('-ScratchContainer', '0123abcd9f')
+        Assert-DrillRefused $refused $fx 'id-prefix' 'staging drill refusal'
+        Assert-True (Test-Path -LiteralPath $notes) 'refused drill keeps notes' $notes
+        Assert-True (Test-Path -LiteralPath $backup) 'refused drill keeps dev-backup' $backup
+        Assert-True (Test-Path -LiteralPath $fx.Stage) 'refused drill keeps the staging root' $fx.Stage
+        if (-not (Test-Path -LiteralPath $fx.Stage)) {
+            New-Item -ItemType Directory -Path $fx.Stage | Out-Null
+        }
+        Set-Content -LiteralPath $notes -Value 'operator notes' -Encoding ASCII
+        Set-Content -LiteralPath $backup -Value 'operator dump' -Encoding ASCII
+        $published = Invoke-PublishCase $fx '1048576' '1'
+        Assert-True ($published.Exit -eq 0) 'execute keeps operator staging and exits 0' "exit=$($published.Exit) $($published.Out)"
+        Assert-True (Test-Path -LiteralPath $notes) 'execute keeps notes' $notes
+        Assert-True (Test-Path -LiteralPath $backup) 'execute keeps dev-backup' $backup
+        Assert-True (Test-Path -LiteralPath $fx.Stage) 'execute keeps the staging root' $fx.Stage
+        $runs = @(Get-ChildItem -LiteralPath $fx.Stage -Force -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^run-' })
+        Assert-True ($runs.Count -eq 0) 'execute removes only its run directory' ("count=$($runs.Count)")
+        Assert-NoSecret $published $fx 'execute operator staging'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-StagingRefusesLink {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'StagingRefusesLink script exists' $scriptPath; return }
+        $outside = Join-Path $fx.Root 'outside'
+        New-Item -ItemType Directory -Path $outside | Out-Null
+        & chmod 0755 -- $outside
+        $dump = Join-Path $outside 'other.dump'
+        $notes = Join-Path $outside 'notes.txt'
+        Set-Content -LiteralPath $dump -Value 'outside dump' -Encoding ASCII
+        Set-Content -LiteralPath $notes -Value 'outside notes' -Encoding ASCII
+        $link = Join-Path $fx.Root 'stage-link'
+        New-Item -ItemType SymbolicLink -Path $link -Target $outside | Out-Null
+        $result = Invoke-Snapshot -Fixture $fx -Arguments @(
+            '-Execute', '-RecipientFile', $fx.Recipient,
+            '-Destination', $fx.Dest, '-SyncRoot', $fx.Sync, '-StagingPath', $link
+        )
+        Assert-True ($result.Exit -eq 3) 'symlink staging exits 3' "exit=$($result.Exit) $($result.Out)"
+        Assert-True ($result.Out -match 'reason=staging-link') 'symlink staging reason' $result.Out
+        Assert-True (Test-Path -LiteralPath $dump) 'symlink staging keeps the outside dump' $dump
+        Assert-True (Test-Path -LiteralPath $notes) 'symlink staging keeps outside notes' $notes
+        $mode = (& stat -c %a -- $outside).Trim()
+        Assert-True ($mode -eq '755') 'symlink staging leaves the outside mode' $mode
+        Assert-NoDocker $result 'symlink staging'
+        Assert-NoSecret $result $fx 'symlink staging'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-StagingOutsideDestination {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'StagingOutsideDestination script exists' $scriptPath; return }
+        $dest = Join-Path $fx.Root 'offsync-dest'
+        $stage = Join-Path $dest 'nested-stage'
+        New-Item -ItemType Directory -Path $dest | Out-Null
+        $result = Invoke-Snapshot -Fixture $fx -Arguments @(
+            '-WhatIf', '-RecipientFile', $fx.Recipient,
+            '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $stage
+        )
+        Assert-True ($result.Exit -eq 3) 'staging inside destination exits 3' "exit=$($result.Exit) $($result.Out)"
+        Assert-True ($result.Out -match 'reason=staging-inside-destination') 'staging inside destination reason' $result.Out
+        Assert-NoDocker $result 'staging inside destination'
+        Assert-NoSecret $result $fx 'staging inside destination'
+        Assert-True (-not (Test-Path -LiteralPath $stage)) 'staging inside destination creates nothing' $stage
+    } finally { Remove-Fixture $fx }
+}
+
 function Test-DrillRemovesScratch {
     $id = 'c' * 64
     $fx = New-Fixture
@@ -693,8 +946,10 @@ $all = @(
     'DrillRefusesProduction', 'DrillPlan', 'Retention',
     'DrillRefusesIdPrefix', 'DrillRefusesAlias', 'DrillRefusesUnlabelled',
     'DrillRefusesSourceMount', 'DrillRefusesProductionLikeName', 'DrillRefusesScratchDatabase',
+    'DrillRefusesOwnVolume', 'DrillRefusesForeignVolume', 'DrillRefusesVolumeMismatch', 'DrillRefusesPgHost',
     'PublishRejectsTinyDump', 'PublishRejectsMissingTableData',
-    'RetentionIgnoresConflictCopy', 'StagingHygiene', 'DrillRemovesScratch'
+    'RetentionIgnoresConflictCopy', 'StagingHygiene', 'StagingPreservesOperatorFiles',
+    'StagingRefusesLink', 'StagingOutsideDestination', 'DrillRemovesScratch'
 )
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
