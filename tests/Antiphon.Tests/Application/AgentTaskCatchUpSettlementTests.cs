@@ -55,6 +55,30 @@ public class AgentTaskCatchUpSettlementTests
         settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
     }
 
+    // CARD-1422: only the channel reply is isolated. A failed settlement still holds this
+    // session's later actions, which may depend on it, in sequence order.
+    [Test]
+    public async Task a_throwing_settlement_phase_still_holds_the_later_actions_in_order()
+    {
+        await using var scenario = new Scenario();
+        var seeded = await scenario.SeedDispatchedAsync();
+        var runtime = scenario.RuntimeFor(MarkedReportSnapshot(seeded), throwOnSettlement: true);
+
+        await runtime.SyncTranscriptAsync(seeded.SessionId, CancellationToken.None);
+        await scenario.DrainAsync(seeded.SessionId);
+
+        var actions = await scenario.ReadActionsAsync(seeded.SessionId);
+        var failed = actions.Where(a => a.FailureReason != null).ShouldHaveSingleItem();
+        failed.Sequence.ShouldBe(2);
+        failed.Phase.ShouldBe(6, "the settlement phase is retained, not skipped");
+        failed.Attempts.ShouldBe(1);
+        var later = actions.Where(a => a.Sequence > failed.Sequence).ToList();
+        later.Select(a => a.TriggerKind).ShouldBe(["catchup", "transcript"]);
+        later.ShouldAllBe(a => a.Attempts == 0 && a.Phase <= 1, "later actions wait behind the failed settlement");
+        actions.ShouldNotContain(a => a.TriggerKind == SessionRuntimeActionCoordinator.ChannelReplyDebt);
+        (await scenario.ReadTaskAsync(seeded.TaskId)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+    }
+
     [Test]
     public async Task catch_up_settles_when_the_turn_end_was_already_persisted()
     {
@@ -221,6 +245,13 @@ public class AgentTaskCatchUpSettlementTests
                     .SetProperty(t => t.CompletedAt, DateTime.UtcNow));
         }
 
+        public async Task<List<SessionRuntimeAction>> ReadActionsAsync(Guid sessionId)
+        {
+            await using var db = CreateContext();
+            return await db.SessionRuntimeActions.AsNoTracking().Where(a => a.AgentSessionId == sessionId)
+                .OrderBy(a => a.Sequence).ThenBy(a => a.TriggerKind).ToListAsync();
+        }
+
         public async Task<AgentTask> ReadTaskAsync(Guid taskId)
         {
             await using var db = CreateContext();
@@ -228,7 +259,8 @@ public class AgentTaskCatchUpSettlementTests
         }
 
         public AgentSessionRuntime RuntimeFor(
-            SessionRunnerTranscriptDto snapshot, bool throwOnChannelReply = false, List<string>? logs = null)
+            SessionRunnerTranscriptDto snapshot, bool throwOnChannelReply = false, List<string>? logs = null,
+            bool throwOnSettlement = false)
         {
             var services = new ServiceCollection();
             services.AddLogging();
@@ -241,7 +273,11 @@ public class AgentTaskCatchUpSettlementTests
             services.AddSingleton(Options.Create(new DelegationSettings()));
             services.AddSingleton(Options.Create(new AgentSessionSettings()));
             services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
-            services.AddSingleton<AgentTaskReplyService>();
+            if (throwOnSettlement)
+                services.AddSingleton<AgentTaskReplyService>(_ =>
+                    throw new InvalidOperationException("settlement boom"));
+            else
+                services.AddSingleton<AgentTaskReplyService>();
             // CARD-1259 (dd039a405): catch-up persists through SessionStateStore and defers
             // settlement to SessionRuntimeActionCoordinator, which resolves the runtime from DI.
             services.AddSingleton(Options.Create(new SessionStateSettings()));
