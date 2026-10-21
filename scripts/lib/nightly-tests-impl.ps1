@@ -120,8 +120,59 @@ function Test-NightlyClassGroupFilter {
     return $true
 }
 
+# CARD-1404. An ordinary required node weighs 1. Slow weighs 4. Land*,
+# Delivery* and Check* double that. 120 stays near ten minutes of serial
+# land-lane work, under watchdogs.antiphon (3600000). A class already over
+# the cap still launches, alone; the packer does not split it into methods.
+$script:NightlyLaunchGroupNodeCap = 120
+$script:NightlyLaunchSlowNodeWeight = 4
+$script:NightlyLaunchHeavyFamilyWeight = 2
+
+function Test-NightlyHeavyFamilyType {
+    param([string]$TypeName)
+    if ([string]::IsNullOrEmpty($TypeName)) { return $false }
+    foreach ($prefix in @('Land', 'Delivery', 'Check')) {
+        if ($TypeName.StartsWith($prefix, [StringComparison]::Ordinal)) { return $true }
+    }
+    return $false
+}
+
+function Get-NightlyLaunchClassCost {
+    param([object[]]$Nodes, [string]$TypeName)
+    $count = 0
+    $weight = 0
+    $heavy = Test-NightlyHeavyFamilyType -TypeName $TypeName
+    foreach ($node in @($Nodes)) {
+        if ($null -eq $node) { continue }
+        $count++
+        $unit = 1
+        foreach ($category in @($node.Categories)) {
+            if ([string]$category -ceq 'Slow') { $unit = [int]$script:NightlyLaunchSlowNodeWeight; break }
+        }
+        if ($heavy) { $unit = $unit * [int]$script:NightlyLaunchHeavyFamilyWeight }
+        $weight += $unit
+    }
+    if ($count -eq 0) {
+        $count = 1
+        $weight = $(if ($heavy) { [int]$script:NightlyLaunchHeavyFamilyWeight } else { 1 })
+    }
+    return [pscustomobject]@{ NodeCount = $count; Weight = $weight }
+}
+
+function Get-NightlyPackedItemNodes {
+    param($Item)
+    if ($Item.PSObject.Properties.Name -contains 'NodeCount') { return [int]$Item.NodeCount }
+    return 1
+}
+
+function Get-NightlyPackedItemWeight {
+    param($Item)
+    if ($Item.PSObject.Properties.Name -contains 'Weight') { return [int]$Item.Weight }
+    return 1
+}
+
 function Split-NightlyClassGroupsAtSize {
-    param($ByNamespace, $Unsafe, [int]$MaxSize)
+    param($ByNamespace, $Unsafe, [int]$MaxSize, [int]$MaxNodes, [int]$MaxWeight)
     $groups = New-Object System.Collections.ArrayList
     foreach ($ns in (@($ByNamespace.Keys) | Sort-Object)) {
         $singles = New-Object System.Collections.ArrayList
@@ -134,8 +185,20 @@ function Split-NightlyClassGroupsAtSize {
         $bins = New-Object System.Collections.ArrayList
         foreach ($item in $pool) {
             $placed = $false
+            $addNodes = Get-NightlyPackedItemNodes $item
+            $addWeight = Get-NightlyPackedItemWeight $item
             foreach ($bin in @($bins)) {
                 if ($bin.Count -ge $MaxSize) { continue }
+                if ($bin.Count -gt 0) {
+                    $haveNodes = 0
+                    $haveWeight = 0
+                    foreach ($have in @($bin)) {
+                        $haveNodes += Get-NightlyPackedItemNodes $have
+                        $haveWeight += Get-NightlyPackedItemWeight $have
+                    }
+                    if (($haveNodes + $addNodes) -gt $MaxNodes) { continue }
+                    if (($haveWeight + $addWeight) -gt $MaxWeight) { continue }
+                }
                 [void]$bin.Add($item)
                 $placed = $true
                 break
@@ -160,6 +223,16 @@ function ConvertTo-NightlyProfileLaunchGroups {
     param([object[]]$Leaves, [object[]]$DiscoveryNodes)
     $exact = New-Object System.Collections.ArrayList
     $classItems = New-Object System.Collections.ArrayList
+    $nodesByBare = @{}
+    foreach ($node in @($DiscoveryNodes)) {
+        if ($null -eq $node) { continue }
+        $bare = Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)
+        if ([string]::IsNullOrWhiteSpace($bare)) { continue }
+        if (-not $nodesByBare.ContainsKey($bare)) {
+            $nodesByBare[$bare] = New-Object System.Collections.ArrayList
+        }
+        [void]$nodesByBare[$bare].Add($node)
+    }
     $sourceId = 'all'
     foreach ($leaf in @($Leaves)) {
         $id = [string]$leaf.id
@@ -171,6 +244,11 @@ function ConvertTo-NightlyProfileLaunchGroups {
         }
         $parts = Get-NightlyBareTypeParts -ClassName ([string]@($leaf.classes)[0])
         if ($null -eq $parts) { throw 'profile-discovery-namespace-required' }
+        $known = @()
+        if ($nodesByBare.ContainsKey($parts.Bare)) { $known = @($nodesByBare[$parts.Bare].ToArray()) }
+        $cost = Get-NightlyLaunchClassCost -Nodes $known -TypeName $parts.Type
+        Add-Member -InputObject $parts -NotePropertyName NodeCount -NotePropertyValue ([int]$cost.NodeCount)
+        Add-Member -InputObject $parts -NotePropertyName Weight -NotePropertyValue ([int]$cost.Weight)
         [void]$classItems.Add($parts)
     }
 
@@ -223,8 +301,9 @@ function ConvertTo-NightlyProfileLaunchGroups {
             $desired = [Math]::Max(1, [int]([Math]::Ceiling($n / [double]$maxSize)))
         }
         $bestScore = [int]::MaxValue
+        $cap = [int]$script:NightlyLaunchGroupNodeCap
         foreach ($size in ($minSize..$maxSize)) {
-            $candidate = Split-NightlyClassGroupsAtSize -ByNamespace $byNs -Unsafe $unsafe -MaxSize $size
+            $candidate = Split-NightlyClassGroupsAtSize -ByNamespace $byNs -Unsafe $unsafe -MaxSize $size -MaxNodes $cap -MaxWeight $cap
             $count = @($candidate.Groups).Count
             $inRange = ($n -lt 40) -or ($count -ge 40 -and $count -le 60)
             $distance = [Math]::Abs($count - $desired)
@@ -246,6 +325,12 @@ function ConvertTo-NightlyProfileLaunchGroups {
             $ns = [string]$items[0].Namespace
             $types = @($items | ForEach-Object { [string]$_.Type })
             $bares = @($items | ForEach-Object { [string]$_.Bare } | Sort-Object)
+            $sumNodes = 0
+            $sumWeight = 0
+            foreach ($item in $items) {
+                $sumNodes += Get-NightlyPackedItemNodes $item
+                $sumWeight += Get-NightlyPackedItemWeight $item
+            }
             $filter = ''
             if ($types.Count -ge 2) { $filter = New-NightlyClassGroupFilter -Namespace $ns -TypeNames $types }
             [void]$groups.Add([pscustomobject]@{
@@ -254,6 +339,8 @@ function ConvertTo-NightlyProfileLaunchGroups {
                 exactFilter = ''
                 groupFilter = $filter
                 nodes = @()
+                nodeCount = $sumNodes
+                weight = $sumWeight
             })
         }
     }
