@@ -28,19 +28,57 @@ function New-C1408Scratch {
     return $root
 }
 
+# Land detail by task id; the fake detail endpoint serves it. The list item never carries it.
+$script:C1408LandById = @{}
+
+# The real GET /api/agent-tasks item shape: AgentTaskSummaryDto (server/Application/Dtos/AgentTaskDtos.cs),
+# camelCase, nulls written, enums as names. It has no landing or landRequest field; those are only on the
+# detail DTO (AgentTaskDetailDto.Landing / LandRequest). -Land sets the detail the fake serves:
+# Refused (landing.phase and publication Refused), NeedsResolution (landRequest.state), Landed (Complete).
 function New-C1408Task {
-    param([string]$Status = 'Succeeded', [string]$LandOutcome = '', [string]$LandRequestStatus = '')
-    $item = [ordered]@{ id = [guid]::NewGuid().ToString(); status = $Status; landing = $null; landRequest = $null }
-    if ($LandOutcome) { $item.landing = @{ outcome = $LandOutcome } }
-    if ($LandRequestStatus) { $item.landRequest = @{ status = $LandRequestStatus } }
+    param([string]$Status = 'Succeeded', [ValidateSet('', 'Refused', 'NeedsResolution', 'Landed')][string]$Land = '')
+    $id = [guid]::NewGuid().ToString()
+    $item = [ordered]@{
+        id = $id; rootTaskId = $id; parentTaskId = $null; depth = 0; title = 'c1408 fake'; kind = 'Worker'; role = 'Code'
+        agentKind = 'ClaudeCode'; modelLevel = 'High'; escalatedFrom = $null; status = $Status; workspace = 'Worktree'
+        workingDirectory = '/work/repos/antiphon'; repoPath = '/work/repos/antiphon'; worktreePath = $null; worktreeBranch = $null
+        scope = $null; observedScope = $null; agentId = $null; agentName = $null; agentSessionId = $null; attempt = 1
+        createdAt = '2026-10-21T09:40:00Z'; dispatchedAt = '2026-10-21T09:40:01Z'; completedAt = '2026-10-21T09:50:00Z'; readAt = $null
+        deliverablePath = $null; deliverableRef = $null; recoveredAt = $null; tokensIn = 0; cacheReadTokens = 0; cacheCreationTokens = 0
+        tokensOut = 0; costUsd = 0; costPricingVersion = 1; subtreeCostUsd = 0; childCount = 0; expectedDurationMinutes = 30
+        nextCheckAt = $null; checkCount = 0; landRequestedAt = $null; landStartedAt = $null; landAttempt = 0; cardId = $null
+        cardIdentifier = $null; reportEvidence = 'Marked'; complexity = $null; repliedAt = $null; projectId = 'p1'; projectName = 'Antiphon'
+        boardId = $null; boardName = $null; scopeSource = 'Task'; requiredPlatform = 'Any'; runnerId = $null; requirementSource = 'Default'
+        observedPlatform = $null; runnerDefaultsRevision = $null; runnerSelectionSource = $null; interruptWritten = $null
+        refinementDelivered = $null; effectiveModelId = $null
+    }
+    if ($Land) {
+        $item.landAttempt = 1
+        $landing = $null
+        $request = [ordered]@{ id = [guid]::NewGuid().ToString(); state = 'Completed'; requestedAt = '2026-10-21T09:51:00Z'; startedAt = '2026-10-21T09:51:01Z'; attempt = 1; terminalFailureCode = $null }
+        switch ($Land) {
+            'Refused' { $landing = [ordered]@{ operationId = [guid]::NewGuid().ToString(); phase = 'Refused'; mode = 'Fresh'; publication = 'Refused'; cleanup = 'NotStarted'; sourceSha = 'aaaa'; reason = 'conflict' } }
+            'NeedsResolution' { $request.state = 'NeedsResolution'; $item.landRequestedAt = '2026-10-21T09:51:00Z' }
+            'Landed' { $landing = [ordered]@{ operationId = [guid]::NewGuid().ToString(); phase = 'Complete'; mode = 'Fresh'; publication = 'Landed'; cleanup = 'Complete'; sourceSha = 'aaaa'; reason = $null } }
+        }
+        $script:C1408LandById[$id] = @{ landing = $landing; landRequest = $request }
+    }
     return $item
 }
 
-# Fake GET seam. Routes by URL substring; pipeline samples report their own ElapsedMs.
+# The server's list refusal (AgentTaskScope.SupportedListQueryKeys, AgentTaskEndpoints.RejectUnknownListQueryKeys).
+$script:C1408ListKeys = @('rootId', 'since', 'status', 'includeChecks', 'landPending', 'projectId', 'boardId', 'unscoped')
+
+# Fake GET seam. Routes by URL; pipeline samples report their own ElapsedMs. The list refuses unknown
+# query keys with 400 like the server; the detail route serves AgentTaskDetailDto's summary/landing/landRequest.
 function New-C1408FakeHttp {
-    param([double[]]$PipelineMs = @(100), [object[]]$Items = @(), [string]$VersionSha = 'aaaa', [int]$HealthCode = 200, [hashtable]$Counter)
+    param([double[]]$PipelineMs = @(100), [object[]]$Items = @(), [string]$VersionSha = 'aaaa', [int]$HealthCode = 200, [hashtable]$Counter,
+        [int]$ListStatus = 200, [string]$ListBody = '', [int]$DetailStatus = 200, [string]$DiagBody = '')
     if (-not $Counter) { $Counter = @{ calls = 0 } }
-    $state = @{ i = 0; Pipeline = $PipelineMs; Items = $Items; Sha = $VersionSha; Health = $HealthCode; Counter = $Counter }
+    if (-not $Counter.ContainsKey('details')) { $Counter.details = 0 }
+    if (-not $Counter.ContainsKey('listUrls')) { $Counter.listUrls = New-Object System.Collections.ArrayList }
+    if (-not $DiagBody) { $DiagBody = '{"pool":{"NoResetOnClose":true,"MaxPoolSize":100,"connectionString":"Host=x;Password=hunter2"},"password":"hunter2"}' }
+    $state = @{ i = 0; Pipeline = $PipelineMs; Items = $Items; Sha = $VersionSha; Health = $HealthCode; Counter = $Counter; ListStatus = $ListStatus; ListBody = $ListBody; DetailStatus = $DetailStatus; Diag = $DiagBody; Keys = $script:C1408ListKeys; Lands = $script:C1408LandById }
     return {
         param([string]$Url)
         $s = $state
@@ -50,12 +88,33 @@ function New-C1408FakeHttp {
             $s.i++
             return @{ StatusCode = 200; Body = '{"ok":true}'; ElapsedMs = $ms }
         }
-        if ($Url -like '*/api/agent-tasks?*') {
-            $body = @{ scope = 'p1'; items = @($s.Items); excluded = @() } | ConvertTo-Json -Depth 6
+        if ($Url -match '/api/agent-tasks(\?(?<q>[^#]*))?$') {
+            [void]$s.Counter.listUrls.Add($Url)
+            foreach ($pair in ([string]$Matches['q']).Split('&')) {
+                if (-not $pair) { continue }
+                $key = [uri]::UnescapeDataString($pair.Split('=')[0])
+                if (@($s.Keys | Where-Object { $_ -ieq $key }).Count -eq 0) {
+                    return @{ StatusCode = 400; Body = ('{"title":"unknown query parameter","detail":"' + $key + '"}') }
+                }
+            }
+            if ($s.ListStatus -ne 200) { return @{ StatusCode = $s.ListStatus; Body = '{"title":"failed"}' } }
+            if ($s.ListBody) { return @{ StatusCode = 200; Body = $s.ListBody } }
+            $body = [ordered]@{ scope = [ordered]@{ projectId = 'p1'; projectName = 'Antiphon'; boardId = $null; boardName = $null; unscoped = 'exclude' }; items = @($s.Items); excluded = [ordered]@{ total = 0; unscoped = 0; byProject = @() } } | ConvertTo-Json -Depth 8
             return @{ StatusCode = 200; Body = $body }
         }
+        if ($Url -match '/api/agent-tasks/(?<id>[0-9a-fA-F-]{36})$') {
+            $s.Counter.details++
+            if ($s.DetailStatus -ne 200) { return @{ StatusCode = $s.DetailStatus; Body = '{"title":"failed"}' } }
+            $id = $Matches['id']
+            $summary = @($s.Items | Where-Object { $_.id -eq $id }) | Select-Object -First 1
+            if ($null -eq $summary) { return @{ StatusCode = 404; Body = '{"title":"not found"}' } }
+            $land = $s.Lands[$id]
+            $detail = [ordered]@{ summary = $summary; goal = 'g'; result = $null; failureReason = $null; events = @(); landing = $null; landRequest = $null }
+            if ($land) { $detail.landing = $land.landing; $detail.landRequest = $land.landRequest }
+            return @{ StatusCode = 200; Body = ($detail | ConvertTo-Json -Depth 8) }
+        }
         if ($Url -like '*/api/diagnostics/session-state*') {
-            return @{ StatusCode = 200; Body = '{"pool":{"NoResetOnClose":true,"MaxPoolSize":100,"connectionString":"Host=x;Password=hunter2"},"password":"hunter2"}' }
+            return @{ StatusCode = 200; Body = $s.Diag }
         }
         if ($Url -like '*/health*') { return @{ StatusCode = $s.Health; Body = 'Healthy' } }
         if ($Url -like '*/api/version*') { return @{ StatusCode = 200; Body = ('{"sha":"' + $s.Sha + '","capabilities":["land-v2"]}') } }
@@ -80,19 +139,22 @@ function New-C1408FakeTcp {
 $script:FixedNow = { [datetime]::new(2026, 10, 21, 10, 0, 0, [System.DateTimeKind]::Utc) }
 
 function Invoke-C1408Baseline {
-    param([string]$Root, [double[]]$PipelineMs, [object[]]$Items = @(), [string]$Sha = 'aaaa')
-    $bp = Join-Path $Root 'baseline.json'
-    $rp = Join-Path $Root 'baseline-result.json'
+    param([string]$Root, [double[]]$PipelineMs, [object[]]$Items = @(), [string]$Sha = 'aaaa', [string]$Name = 'baseline')
+    $bp = Join-Path $Root ($Name + '.json')
+    $rp = Join-Path $Root ($Name + '-result.json')
     $http = New-C1408FakeHttp -PipelineMs $PipelineMs -Items $Items -VersionSha $Sha
     $r = Invoke-PostgresCutoverMonitor -Mode Baseline -Execute -ServerBaseUrl 'http://fake.invalid' -ProjectId 'p1' -BaselinePath $bp -ResultPath $rp -SampleCount $PipelineMs.Count -HttpGet $http -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
     return [pscustomobject]@{ Result = $r; BaselinePath = $bp }
 }
 
 function Invoke-C1408Watch {
-    param([string]$Root, [string]$BaselinePath, [double[]]$PipelineMs, [object[]]$Items = @(), [string]$Sha = 'aaaa', [int]$HealthCode = 200, [string]$Name = 'watch')
+    param([string]$Root, [string]$BaselinePath, [double[]]$PipelineMs, [object[]]$Items = @(), [string]$Sha = 'aaaa', [int]$HealthCode = 200, [string]$Name = 'watch',
+        [hashtable]$Counter, [int]$ListStatus = 200, [string]$ListBody = '', [int]$DetailStatus = 200, [int]$MaxLandDetails = 0)
     $rp = Join-Path $Root ($Name + '-result.json')
-    $http = New-C1408FakeHttp -PipelineMs $PipelineMs -Items $Items -VersionSha $Sha -HealthCode $HealthCode
-    return Invoke-PostgresCutoverMonitor -Mode Watch -Execute -ServerBaseUrl 'http://fake.invalid' -ProjectId 'p1' -BaselinePath $BaselinePath -ResultPath $rp -SampleCount $PipelineMs.Count -HttpGet $http -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
+    $http = New-C1408FakeHttp -PipelineMs $PipelineMs -Items $Items -VersionSha $Sha -HealthCode $HealthCode -Counter $Counter -ListStatus $ListStatus -ListBody $ListBody -DetailStatus $DetailStatus
+    $extra = @{}
+    if ($MaxLandDetails -gt 0) { $extra.MaxLandDetailRequests = $MaxLandDetails }
+    return Invoke-PostgresCutoverMonitor -Mode Watch -Execute -ServerBaseUrl 'http://fake.invalid' -ProjectId 'p1' -BaselinePath $BaselinePath -ResultPath $rp -SampleCount $PipelineMs.Count -HttpGet $http -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow @extra
 }
 
 function Get-C1408Twenty {
@@ -124,7 +186,7 @@ function Test-C1408_FloorHoldsUnderOneSecond {
     $w = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 600)
     Assert-C1408 -Cond ($w.ExitCode -eq 0 -and $w.Verdict -eq 'OK') -Name 'median 600 vs baseline 50 (12x, under 1 s) exits 0' -Detail ('exit=' + $w.ExitCode + ' verdict=' + $w.Verdict)
     Assert-C1408 -Cond (@($w.Lines | Where-Object { $_ -like 'NOTE*' }).Count -ge 1) -Name 'ratio-only excess prints a NOTE'
-    $b2 = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 1100)
+    $b2 = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 1100) -Name 'baseline2'
     $w2 = Invoke-C1408Watch -Root $root -BaselinePath $b2.BaselinePath -PipelineMs (Get-C1408Twenty -Median 2000) -Name 'watch2'
     Assert-C1408 -Cond ($w2.ExitCode -eq 0) -Name 'median 2000 vs baseline 1100 (above floor, under 3x) exits 0' -Detail ('exit=' + $w2.ExitCode)
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
@@ -133,13 +195,14 @@ function Test-C1408_FloorHoldsUnderOneSecond {
 function Test-C1408_FailureCountRollback {
     $root = New-C1408Scratch
     $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100) -Items @((New-C1408Task -Status 'Failed'))
-    $four = @((New-C1408Task -Status 'Failed'), (New-C1408Task -Status 'Failed'), (New-C1408Task -Status 'Succeeded' -LandOutcome 'LandRefused'), (New-C1408Task -Status 'Blocked' -LandRequestStatus 'NeedsResolution'), (New-C1408Task -Status 'Succeeded'))
+    $four = @((New-C1408Task -Status 'Failed'), (New-C1408Task -Status 'Failed'), (New-C1408Task -Status 'Succeeded' -Land 'Refused'), (New-C1408Task -Status 'Blocked' -Land 'NeedsResolution'), (New-C1408Task -Status 'Succeeded'))
     $w = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -Items $four
     Assert-C1408 -Cond ($w.ExitCode -eq 2 -and $w.Verdict -eq 'ROLLBACK') -Name 'failures 4 vs baseline 1 exits 2 ROLLBACK' -Detail ('exit=' + $w.ExitCode + ' ' + ($w.Lines -join ' | '))
-    $three = @((New-C1408Task -Status 'Failed'), (New-C1408Task -Status 'Failed'), (New-C1408Task -Status 'Succeeded' -LandOutcome 'LandRefused'))
+    $three = @((New-C1408Task -Status 'Failed'), (New-C1408Task -Status 'Failed'), (New-C1408Task -Status 'Succeeded' -Land 'Refused'))
     $w2 = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -Items $three -Name 'watch2'
     Assert-C1408 -Cond ($w2.ExitCode -eq 1 -and $w2.Verdict -eq 'WARN') -Name 'failures 3 vs baseline 1 (exactly +2) is WARN, not rollback' -Detail ('exit=' + $w2.ExitCode + ' verdict=' + $w2.Verdict)
-    Assert-C1408 -Cond ((Get-CutoverFailureCount -Items $four).Total -eq 4) -Name 'failure count sums failed tasks and failed lands'
+    $f = (Get-Content -LiteralPath $w.ResultPath -Raw | ConvertFrom-Json).failures
+    Assert-C1408 -Cond ([int]$f.total -eq 4 -and [int]$f.failedTasks -eq 2 -and [int]$f.failedLands -eq 2) -Name 'failure count sums failed tasks and failed lands' -Detail ($f | ConvertTo-Json -Compress)
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 
@@ -198,6 +261,102 @@ function Test-C1408_ProcessExitCodeAndRollbackLine {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# D1 (Review 39af9e8d): the list is read with the server's supported key, and an unreadable list never yields OK.
+function Test-C1408_TaskListUnreadableIsNeverOk {
+    $root = New-C1408Scratch
+    $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100)
+    Assert-C1408 -Cond ($b.Result.ExitCode -eq 0) -Name 'baseline against the key-checking list fake exits 0' -Detail ('exit=' + $b.Result.ExitCode + ' ' + ($b.Result.Lines -join ' | '))
+    $ten = @(); for ($i = 0; $i -lt 10; $i++) { $ten += (New-C1408Task -Status 'Failed') }
+    $c = @{ calls = 0 }
+    $w = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -Items $ten -Counter $c
+    Assert-C1408 -Cond ($w.ExitCode -eq 2 -and $w.Verdict -eq 'ROLLBACK') -Name 'ten failed tasks behind a server-shaped list exit 2 ROLLBACK' -Detail ('exit=' + $w.ExitCode + ' ' + ($w.Lines -join ' | '))
+    $listUrl = [string]@($c.listUrls)[0]
+    Assert-C1408 -Cond ($listUrl -match '[?&]since=' -and $listUrl -notmatch '(?i)updatedSince') -Name 'task list asks with since=, not updatedSince=' -Detail $listUrl
+    $w400 = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -Items $ten -ListStatus 400 -Name 'w400'
+    Assert-C1408 -Cond ($w400.ExitCode -eq 4 -and $w400.Verdict -eq 'INVALID') -Name 'a non-200 task list exits 4 INVALID, not 0' -Detail ('exit=' + $w400.ExitCode + ' ' + ($w400.Lines -join ' | '))
+    $wTxt = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -ListBody '<html>proxy error</html>' -Name 'wtxt'
+    Assert-C1408 -Cond ($wTxt.ExitCode -eq 4) -Name 'a non-JSON task list body exits 4' -Detail ('exit=' + $wTxt.ExitCode)
+    $wEnv = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -ListBody '{"scope":null,"excluded":{"total":0}}' -Name 'wenv'
+    Assert-C1408 -Cond ($wEnv.ExitCode -eq 4) -Name 'a task list without the items envelope exits 4' -Detail ('exit=' + $wEnv.ExitCode)
+    $wEmpty = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -ListBody '{"scope":null,"items":[],"excluded":{"total":0}}' -Name 'wempty'
+    Assert-C1408 -Cond ($wEmpty.ExitCode -eq 0) -Name 'an empty items envelope is a readable list (exit 0)' -Detail ('exit=' + $wEmpty.ExitCode + ' ' + ($wEmpty.Lines -join ' | '))
+    $wSlow = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 3500) -ListStatus 500 -Name 'wslow'
+    Assert-C1408 -Cond ($wSlow.ExitCode -eq 2) -Name 'a latency rollback still exits 2 when the list is unreadable' -Detail ('exit=' + $wSlow.ExitCode)
+    $bp2 = Join-Path $root 'bad-baseline.json'
+    $bb = Invoke-PostgresCutoverMonitor -Mode Baseline -Execute -ServerBaseUrl 'http://fake.invalid' -ProjectId 'p1' -BaselinePath $bp2 -ResultPath (Join-Path $root 'bad-baseline-result.json') -SampleCount 3 -HttpGet (New-C1408FakeHttp -ListStatus 400) -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
+    Assert-C1408 -Cond ($bb.ExitCode -eq 4 -and -not (Test-Path -LiteralPath $bp2)) -Name 'baseline with an unreadable list exits 4 and writes no baseline' -Detail ('exit=' + $bb.ExitCode)
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# D2 (Review 39af9e8d): list items carry no land outcome; failed lands come from the detail route, bounded.
+function Test-C1408_FailedLandsFromTaskDetail {
+    $root = New-C1408Scratch
+    $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100)
+    $refused = New-C1408Task -Status 'Succeeded' -Land 'Refused'
+    Assert-C1408 -Cond (-not $refused.Contains('landing') -and -not $refused.Contains('landRequest') -and $refused.Contains('landAttempt')) -Name 'fake list item has the summary shape: no landing/landRequest, has landAttempt'
+    $items = @($refused, (New-C1408Task -Status 'Blocked' -Land 'NeedsResolution'), (New-C1408Task -Status 'Succeeded' -Land 'Refused'), (New-C1408Task -Status 'Succeeded' -Land 'Landed'), (New-C1408Task -Status 'Succeeded'), (New-C1408Task -Status 'Succeeded'))
+    $c = @{ calls = 0 }
+    $w = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -Items $items -Counter $c
+    $f = (Get-Content -LiteralPath $w.ResultPath -Raw | ConvertFrom-Json).failures
+    Assert-C1408 -Cond ([int]$f.failedLands -eq 3 -and [int]$f.failedTasks -eq 0) -Name 'three failed lands are counted from task detail' -Detail ($f | ConvertTo-Json -Compress)
+    Assert-C1408 -Cond ($w.ExitCode -eq 2 -and $w.Verdict -eq 'ROLLBACK') -Name 'three failed lands vs baseline 0 exit 2 ROLLBACK' -Detail ('exit=' + $w.ExitCode + ' ' + ($w.Lines -join ' | '))
+    Assert-C1408 -Cond ($c.details -eq 4) -Name 'detail is fetched only for the four tasks with a land attempt' -Detail ('details=' + $c.details)
+    $wCap = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -Items @((New-C1408Task -Land 'Landed'), (New-C1408Task -Land 'Landed'), (New-C1408Task -Land 'Landed')) -MaxLandDetails 2 -Name 'wcap'
+    Assert-C1408 -Cond ($wCap.ExitCode -eq 4) -Name 'more land candidates than -MaxLandDetailRequests exits 4' -Detail ('exit=' + $wCap.ExitCode + ' ' + ($wCap.Lines -join ' | '))
+    $wDet = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -Items @((New-C1408Task -Land 'Refused')) -DetailStatus 500 -Name 'wdet'
+    Assert-C1408 -Cond ($wDet.ExitCode -eq 4) -Name 'an unreadable task detail exits 4' -Detail ('exit=' + $wDet.ExitCode)
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# D3 (Review 39af9e8d): URL userinfo and secret query values are never printed or recorded.
+function Test-C1408_UrlSecretsNeverPrinted {
+    $root = New-C1408Scratch
+    $server = 'http://SENTUSER1408:SENTPW1408@fake.invalid'
+    $pipe = 'http://fake.invalid/api/agent-tasks/pipeline?projectId=p1&access_token=SENTTOK1408'
+    $bp = Join-Path $root 'baseline.json'
+    $b = Invoke-PostgresCutoverMonitor -Mode Baseline -Execute -ServerBaseUrl $server -PipelineUrl $pipe -ProjectId 'p1' -BaselinePath $bp -ResultPath (Join-Path $root 'b-result.json') -SampleCount 3 -HttpGet (New-C1408FakeHttp) -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
+    $w = Invoke-PostgresCutoverMonitor -Mode Watch -Execute -ServerBaseUrl $server -PipelineUrl $pipe -ProjectId 'p1' -BaselinePath $bp -ResultPath (Join-Path $root 'w-result.json') -SampleCount 3 -HttpGet (New-C1408FakeHttp) -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
+    $p = Invoke-PostgresCutoverMonitor -Mode Plan -ServerBaseUrl $server -PipelineUrl $pipe -ProjectId 'p1' -BaselinePath $bp -Now $script:FixedNow
+    $sentinel = 'SENTUSER1408|SENTPW1408|SENTTOK1408'
+    $lines = @($b.Lines) + @($w.Lines) + @($p.Lines)
+    Assert-C1408 -Cond ($b.ExitCode -eq 0 -and $w.ExitCode -eq 0) -Name 'credentialed urls still measure (baseline and watch exit 0)' -Detail ('b=' + $b.ExitCode + ' w=' + $w.ExitCode + ' ' + ($lines -join ' | '))
+    Assert-C1408 -Cond (@($lines | Where-Object { $_ -match $sentinel }).Count -eq 0) -Name 'no userinfo or token sentinel in Plan, Baseline or Watch lines' -Detail (@($lines | Where-Object { $_ -match $sentinel }) -join ' | ')
+    $json = ''
+    foreach ($f in @(Get-ChildItem -LiteralPath $root -Filter '*.json')) { $json += (Get-Content -LiteralPath $f.FullName -Raw) }
+    Assert-C1408 -Cond ($json.Length -gt 0 -and $json -notmatch $sentinel) -Name 'no userinfo or token sentinel in any recorded json' -Detail ([regex]::Match($json, '.{0,40}(' + $sentinel + ').{0,20}').Value)
+    $errOut = Join-Path $root 'child.err'
+    $cmd = @'
+& '__MON__' -Mode Watch -Execute -ServerBaseUrl '__SRV__' -PipelineUrl '__PIPE__' -ProjectId 'p1' -BaselinePath '__BP__' -ResultPath '__RP__' -SampleCount 2 -HttpGet { param([string]$Url); throw ('request failed for ' + $Url) }; & '__MON__' -Mode Plan -ServerBaseUrl '__SRV__' -PipelineUrl '__PIPE__'; exit $LASTEXITCODE
+'@
+    $cmd = $cmd.Replace('__MON__', $monitor).Replace('__SRV__', $server).Replace('__PIPE__', $pipe).Replace('__BP__', $bp).Replace('__RP__', (Join-Path $root 'child-result.json'))
+    $out = @(& pwsh -NoProfile -NonInteractive -Command $cmd 2> $errOut | ForEach-Object { [string]$_ })
+    $err = ''
+    if (Test-Path -LiteralPath $errOut) { $err = [string](Get-Content -LiteralPath $errOut -Raw) }
+    Assert-C1408 -Cond ($out.Count -gt 0 -and @($out | Where-Object { $_ -match $sentinel }).Count -eq 0 -and $err -notmatch $sentinel) -Name 'child pwsh stdout and stderr carry no sentinel, including request errors' -Detail ((@($out | Where-Object { $_ -match $sentinel }) -join ' | ') + ' ERR ' + $err)
+    $childJson = ''
+    if (Test-Path -LiteralPath (Join-Path $root 'child-result.json')) { $childJson = Get-Content -LiteralPath (Join-Path $root 'child-result.json') -Raw }
+    Assert-C1408 -Cond ($childJson -notmatch $sentinel -and $childJson -match 'request failed') -Name 'recorded request errors keep the message without the sentinel' -Detail $childJson
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# Review 39af9e8d advisories: secret value shapes, crash exit code, non-finite baseline median.
+function Test-C1408_AdvisoryGuards {
+    $root = New-C1408Scratch
+    $bp = Join-Path $root 'baseline.json'
+    $diag = '{"pool":{"NoResetOnClose":true,"dsn":"postgres://u:SENTDSN1408@h/db","note":"Host=x;Pwd=SENTPWD1408;Database=a"}}'
+    $b = Invoke-PostgresCutoverMonitor -Mode Baseline -Execute -ServerBaseUrl 'http://fake.invalid' -ProjectId 'p1' -BaselinePath $bp -ResultPath (Join-Path $root 'b-result.json') -SampleCount 3 -HttpGet (New-C1408FakeHttp -DiagBody $diag) -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
+    $raw = Get-Content -LiteralPath $bp -Raw
+    Assert-C1408 -Cond ($b.ExitCode -eq 0 -and $raw -notmatch 'SENTDSN1408|SENTPWD1408' -and $raw -match 'NoResetOnClose') -Name 'dsn and connection-string-shaped values are dropped by shape' -Detail $raw
+    $crash = Invoke-PostgresCutoverMonitor -Mode Watch -Execute -ServerBaseUrl 'http://fake.invalid' -ProjectId 'p1' -BaselinePath $bp -ResultPath (Join-Path $root 'crash.json') -SampleCount 3 -HttpGet (New-C1408FakeHttp) -TcpConnectMs (New-C1408FakeTcp) -Now { throw 'clock unavailable' }
+    Assert-C1408 -Cond ($crash.ExitCode -eq 4 -and $crash.Verdict -eq 'INVALID') -Name 'an unexpected error exits 4 INVALID, not 1' -Detail ('exit=' + $crash.ExitCode + ' ' + ($crash.Lines -join ' | '))
+    $nanPath = Join-Path $root 'nan-baseline.json'
+    $nan = (Get-Content -LiteralPath $bp -Raw).Replace('"medianMs": 100', '"medianMs": "NaN"')
+    [System.IO.File]::WriteAllText($nanPath, $nan)
+    $wNan = Invoke-C1408Watch -Root $root -BaselinePath $nanPath -PipelineMs (Get-C1408Twenty -Median 5000) -Name 'wnan'
+    Assert-C1408 -Cond ($nan -match '"NaN"' -and $wNan.ExitCode -eq 4) -Name 'a NaN baseline median exits 4, never a silent OK' -Detail ('exit=' + $wNan.ExitCode)
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $cases = @(
     'C1408_RollbackAboveFloorAndRatio',
     'C1408_FloorHoldsUnderOneSecond',
@@ -205,7 +364,11 @@ $cases = @(
     'C1408_PreWindowAbort',
     'C1408_PlanDefaultDoesNotMeasure',
     'C1408_SourceIsReadOnly',
-    'C1408_ProcessExitCodeAndRollbackLine'
+    'C1408_ProcessExitCodeAndRollbackLine',
+    'C1408_TaskListUnreadableIsNeverOk',
+    'C1408_FailedLandsFromTaskDetail',
+    'C1408_UrlSecretsNeverPrinted',
+    'C1408_AdvisoryGuards'
 )
 
 if (-not (Test-Path -LiteralPath $monitor)) {
