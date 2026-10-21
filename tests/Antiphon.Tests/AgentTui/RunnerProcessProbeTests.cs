@@ -52,20 +52,21 @@ public sealed class RunnerProcessProbeTests
     /// ceiling (4645 on the qualification desktop), which refused every probe on that host with
     /// "The bounded child environment is unavailable." The inherited PATH is bounded on an entry
     /// boundary instead: empty, duplicate and missing entries go first, then the list is cut to
-    /// the ceiling at a whole entry in the original order, and the probe still runs.
+    /// the ceiling at a whole entry in the original order, and the probe still runs. The long
+    /// PATH reaches the probe through its inherited-environment seam, so the test never changes
+    /// the PATH every other test in this process reads.
     /// </summary>
     [Test]
     public async Task Inherited_path_over_the_ceiling_is_bounded_on_an_entry_boundary_and_the_probe_runs()
     {
         const int ceiling = 4000;
-        var previous = Environment.GetEnvironmentVariable("PATH");
         var scratch = CreateScratch();
         try
         {
             var comparer = OperatingSystem.IsWindows()
                 ? StringComparer.OrdinalIgnoreCase
                 : StringComparer.Ordinal;
-            var inherited = (previous ?? string.Empty)
+            var inherited = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
                 .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
                 .Select(entry => entry.Trim().Trim('"'))
                 .Where(entry => entry.Length > 0)
@@ -82,7 +83,7 @@ public sealed class RunnerProcessProbeTests
             var missing = Enumerable.Range(0, 10)
                 .Select(index => Path.Combine(scratch, $"missing-{index:D2}-" + new string('m', 120)))
                 .ToList();
-            // Real entries first so the parent still resolves pwsh through this PATH.
+            // Real entries first so the child still resolves its own tools through this PATH.
             var composed = new List<string>(inherited);
             for (var index = 0; index < keep.Count; index++)
             {
@@ -108,8 +109,10 @@ public sealed class RunnerProcessProbeTests
             expected.Count.ShouldBeLessThan(existing.Count + keep.Count);
 
             var script = WriteHelper(scratch);
-            Environment.SetEnvironmentVariable("PATH", longPath);
-            var result = await CreateProbe().RunAsync(Request(script, ["path"]), CancellationToken.None);
+            var probe = CreateProbe(
+                new RunnerProcessReaper(),
+                seams: new RunnerProcessProbeSeams { InheritedEnvironmentVariable = InheritedWith("PATH", longPath) });
+            var result = await probe.RunAsync(Request(script, ["path"]), CancellationToken.None);
 
             result.Error.ShouldBeNull();
             result.ExitCode.ShouldBe(0);
@@ -126,7 +129,6 @@ public sealed class RunnerProcessProbeTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PATH", previous);
             DeleteScratchBestEffort(scratch);
         }
     }
@@ -143,19 +145,7 @@ public sealed class RunnerProcessProbeTests
     public async Task Inherited_path_with_nothing_bounded_is_still_refused_before_start(string shape)
     {
         const int ceiling = 4000;
-        var previous = Environment.GetEnvironmentVariable("PATH");
         var scratch = CreateScratch();
-        var startCalls = 0;
-        var probe = CreateProbe(
-            new RunnerProcessReaper(),
-            seams: new RunnerProcessProbeSeams
-            {
-                StartProcessAsync = (_, _) =>
-                {
-                    startCalls++;
-                    return Task.FromResult(false);
-                }
-            });
         try
         {
             string longPath;
@@ -178,19 +168,10 @@ public sealed class RunnerProcessProbeTests
             }
             longPath.Length.ShouldBeGreaterThan(ceiling);
 
-            Environment.SetEnvironmentVariable("PATH", longPath);
-            var result = await probe.RunAsync(
-                new RunnerProcessRequest("unused", [], null, new Dictionary<string, string>(), SecretValues: []),
-                CancellationToken.None);
-
-            result.Started.ShouldBeFalse();
-            result.StandardOutput.ShouldBeEmpty();
-            result.Error.ShouldBe("The bounded child environment is unavailable.");
-            startCalls.ShouldBe(0);
+            await ShouldRefuseInheritedValueBeforeStart("PATH", longPath);
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PATH", previous);
             DeleteScratchBestEffort(scratch);
         }
     }
@@ -203,35 +184,40 @@ public sealed class RunnerProcessProbeTests
     public async Task Oversized_inherited_non_path_value_is_still_refused_before_start()
     {
         var name = OperatingSystem.IsWindows() ? "ComSpec" : "LOGNAME";
-        var previous = Environment.GetEnvironmentVariable(name);
+        await ShouldRefuseInheritedValueBeforeStart(name, new string('v', 4001));
+    }
+
+    private static async Task ShouldRefuseInheritedValueBeforeStart(string name, string value)
+    {
         var startCalls = 0;
         var probe = CreateProbe(
             new RunnerProcessReaper(),
             seams: new RunnerProcessProbeSeams
             {
+                InheritedEnvironmentVariable = InheritedWith(name, value),
                 StartProcessAsync = (_, _) =>
                 {
                     startCalls++;
                     return Task.FromResult(false);
                 }
             });
-        try
-        {
-            Environment.SetEnvironmentVariable(name, new string('v', 4001));
-            var result = await probe.RunAsync(
-                new RunnerProcessRequest("unused", [], null, new Dictionary<string, string>(), SecretValues: []),
-                CancellationToken.None);
 
-            result.Started.ShouldBeFalse();
-            result.StandardOutput.ShouldBeEmpty();
-            result.Error.ShouldBe("The bounded child environment is unavailable.");
-            startCalls.ShouldBe(0);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(name, previous);
-        }
+        var result = await probe.RunAsync(
+            new RunnerProcessRequest("unused", [], null, new Dictionary<string, string>(), SecretValues: []),
+            CancellationToken.None);
+
+        result.Started.ShouldBeFalse();
+        result.StandardOutput.ShouldBeEmpty();
+        result.Error.ShouldBe("The bounded child environment is unavailable.");
+        startCalls.ShouldBe(0);
     }
+
+    // The probe's inherited environment with one value replaced, leaving the process-wide
+    // environment untouched for every concurrently running test.
+    private static Func<string, string?> InheritedWith(string name, string value) =>
+        candidate => string.Equals(candidate, name, StringComparison.Ordinal)
+            ? value
+            : Environment.GetEnvironmentVariable(candidate);
 
     [Test]
     public async Task Probe_preserves_argument_boundaries_without_shell_interpretation()
