@@ -263,37 +263,27 @@ public sealed class AgentSessionCancelledTurnTests
     }
 
     [Test]
-    public async Task C1382_Rearm_previous_turn_end_does_not_end_current_turn()
+    public async Task C1382_Rearm_launch_prompt_saved_before_cancel_stays_waiting()
     {
         await using var world = await EchoWorld.OpenAsync();
-        var session = await world.StartCancelledAsync();
-        await ArmRealPromptAsync(world, session);
-        world.Clock.Advance(TimeSpan.FromSeconds(1));
-        await world.PersistAsync(session, null, TranscriptKinds.TurnEnd, TranscriptKinds.StopReasons.EndTurn);
+        var session = await world.StartCancelledAsync(persistLaunchPrompt: true);
+        var waiting = await world.ReloadAsync(session);
+        waiting.Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+        var saved = await world.EarliestPromptCreatedAtAsync(session);
+        saved.ShouldBeLessThanOrEqualTo(waiting.Attempt.PhaseStartedAt);
+        (await world.CountPromptsAsync(session)).ShouldBe(1);
+
+        world.Events.Clear();
         await world.DrainAsync(session);
-        var previousEnd = await world.LatestTurnEndSequenceAsync(session);
-        (await world.ReloadAsync(session)).Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+        var drained = await world.ReloadAsync(session);
+        drained.Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+        drained.Attempt.PhaseStartedAt.ShouldBe(waiting.Attempt.PhaseStartedAt);
+        drained.Attempt.LastEventAt.ShouldBe(waiting.Attempt.LastEventAt);
+        drained.Session.Status.ShouldBe(SessionStatus.Running);
+        session.Adapter.KillCount.ShouldBe(0);
+        PhaseChanges(world).ShouldBeEmpty();
 
         await ArmRealPromptAsync(world, session);
-        var armed = await world.ReloadAsync(session);
-        armed.Attempt.Phase.ShouldBe(RunPhase.StreamingTurn);
-        var armedAt = armed.Attempt.PhaseStartedAt;
-
-        // The previous turn's row keeps its sequence and is persisted again after this
-        // re-arm, so its save clock is newer than PhaseStartedAt.
-        world.Clock.Advance(TimeSpan.FromSeconds(1));
-        await world.ReplayTurnEndAsync(session, previousEnd);
-        await world.DrainAsync(session);
-        var held = await world.ReloadAsync(session);
-        held.Attempt.Phase.ShouldBe(RunPhase.StreamingTurn);
-        held.Attempt.PhaseStartedAt.ShouldBe(armedAt);
-        held.Session.Status.ShouldBe(SessionStatus.Running);
-
-        world.Clock.Advance(TimeSpan.FromSeconds(1));
-        await world.PersistAsync(session, null, TranscriptKinds.TurnEnd, TranscriptKinds.StopReasons.EndTurn);
-        await world.DrainAsync(session);
-        (await world.ReloadAsync(session)).Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
-        await AssertUnscannedAsync(world, session);
     }
 
     [Test]
@@ -668,7 +658,7 @@ public sealed class AgentSessionCancelledTurnTests
             };
         }
 
-        public async Task<LiveAttempt> StartCancelledAsync()
+        public async Task<LiveAttempt> StartCancelledAsync(bool persistLaunchPrompt = false)
         {
             var adapter = new FakeAgentProtocolAdapter
             {
@@ -677,6 +667,8 @@ public sealed class AgentSessionCancelledTurnTests
                 TurnCompleted = false,
                 TurnStopReason = TranscriptKinds.StopReasons.Cancelled
             };
+            if (persistLaunchPrompt)
+                adapter.OnPrompt = (prompt, ct) => PersistLaunchPromptAsync(adapter, prompt, ct);
             var card = CreateCard(Scratch);
             Db.Add(card.Board.Project);
             await Db.SaveChangesAsync();
@@ -730,43 +722,37 @@ public sealed class AgentSessionCancelledTurnTests
         public Task DrainAsync(LiveAttempt session) =>
             Actions.DrainPageAsync(session.SessionId, CancellationToken.None);
 
-        public async Task<long> LatestTurnEndSequenceAsync(LiveAttempt session)
+        private async Task PersistLaunchPromptAsync(
+            FakeAgentProtocolAdapter adapter, string prompt, CancellationToken ct)
+        {
+            var sessionId = adapter.StartedSessionId
+                ?? throw new InvalidOperationException("launch prompt arrived before the session id");
+            var stored = await Runtime.PersistTranscriptAsync(sessionId,
+            [
+                new SessionRunnerTranscriptEvent(sessionId, Interlocked.Increment(ref _sequence),
+                    TranscriptKinds.UserPrompt, Guid.NewGuid().ToString("D"), null, Clock.GetUtcNow(),
+                    "user", prompt, null, null, null, null, null)
+            ], ct);
+            if (stored.LastStoredSeq is null)
+            {
+                Runtime.TryGetTranscriptPersistFailure(sessionId, out var failure);
+                throw new InvalidOperationException(failure?.Detail ?? "launch prompt was not stored");
+            }
+        }
+
+        public async Task<int> CountPromptsAsync(LiveAttempt session)
+        {
+            await using var db = new AppDbContext(DbOptions);
+            return await db.TranscriptEntries.CountAsync(t =>
+                t.AgentSessionId == session.SessionId && t.Kind == TranscriptKinds.UserPrompt);
+        }
+
+        public async Task<DateTime> EarliestPromptCreatedAtAsync(LiveAttempt session)
         {
             await using var db = new AppDbContext(DbOptions);
             return await db.TranscriptEntries
-                .Where(t => t.AgentSessionId == session.SessionId && t.Kind == TranscriptKinds.TurnEnd)
-                .MaxAsync(t => t.Sequence);
-        }
-
-        public async Task ReplayTurnEndAsync(LiveAttempt session, long sequence)
-        {
-            await using var db = new AppDbContext(DbOptions);
-            var row = await db.TranscriptEntries.SingleAsync(t =>
-                t.AgentSessionId == session.SessionId && t.Sequence == sequence && t.Kind == TranscriptKinds.TurnEnd);
-            var now = Clock.GetUtcNow().UtcDateTime;
-            row.CreatedAt = now;
-            var pending = await db.SessionRuntimeActions
-                .Where(a => a.AgentSessionId == session.SessionId && a.Sequence == sequence && a.TriggerKind == "transcript")
-                .ToListAsync();
-            db.SessionRuntimeActions.RemoveRange(pending);
-            var generation = await db.AgentSessions.Where(s => s.Id == session.SessionId)
-                .Select(s => s.StartedAt).SingleAsync();
-            var projection = TranscriptUiProjection.Stored(row, row.Sequence);
-            db.SessionRuntimeActions.Add(new SessionRuntimeAction
-            {
-                Id = Guid.NewGuid(),
-                AgentSessionId = session.SessionId,
-                TranscriptEntryId = row.Id,
-                AcceptedGeneration = generation,
-                Sequence = row.Sequence,
-                ProducerSequence = row.Sequence,
-                TriggerKind = "transcript",
-                CreatedAt = now,
-                DueAt = now,
-                UiProjectionVersion = 1,
-                UiProjectionDelta = TranscriptUiProjection.Capture(projection, row)
-            });
-            await db.SaveChangesAsync();
+                .Where(t => t.AgentSessionId == session.SessionId && t.Kind == TranscriptKinds.UserPrompt)
+                .MinAsync(t => t.CreatedAt);
         }
 
         public async Task RemoveOpenInputWaitAsync(LiveAttempt session)
