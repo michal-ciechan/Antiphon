@@ -20,7 +20,7 @@ namespace Antiphon.Tests.Api;
 /// agent's project. Shortfall is zero when that board has no dispatchable card.
 /// </summary>
 [Category("Integration")]
-[NotInParallel("KeepSixShortfall")]
+[NotInParallel("KeepSix")]
 [ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
 public class KeepSixShortfallTests
 {
