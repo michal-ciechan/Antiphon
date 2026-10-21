@@ -4,13 +4,20 @@
 # not only definition rows.
 # CARD-1400: -Check and -Update refuse an EmbeddedResource, Content, None,
 # Compile, or AdditionalFiles include that can select docs/**/*.md or the root
-# README.md. Matching is case-insensitive after one %XX decode. An include in
-# an imported .props or .targets file, including the nearest Directory.Build.props
-# and Directory.Build.targets, is resolved from the importing project's directory.
-# $(MSBuildThisFileDirectory) stays that file's directory. An unknown $(...) is
-# refused only when the text contains the exact spellings docs and .md, or README,
-# so $(DocsDir)*.md stays accepted. Import, ReadLinesFromFile, Copy, and property
-# functions are not inspected. ASCII-only: must parse under Windows PowerShell 5.1.
+# README.md. Matching is case-insensitive after one %XX decode. Every such
+# include is resolved from the definition file's own directory and from each
+# importing project's directory, including through another import. The nearest
+# Directory.Build.props and Directory.Build.targets above a project count as
+# imported. An Import Project path that starts with $(MSBuildThisFileDirectory)
+# or $(MSBuildProjectDirectory) is expanded from that property and is not
+# prefixed with the importing file's folder again. $(MSBuildThisFileDirectory)
+# in an include is that file's directory. $(MSBuildProjectDirectory) is the
+# directory being checked. An Import Project path that still contains an
+# unknown $(...) is refused and is not followed. An unknown $(...) in an item
+# include is refused only when the text contains the exact spellings docs and
+# .md, or README, so $(DocsDir)*.md stays accepted. Import, ReadLinesFromFile,
+# Copy, and property functions that read files are not inspected.
+# ASCII-only: must parse under Windows PowerShell 5.1.
 #
 # Usage:
 #   pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 [-Check]
@@ -345,19 +352,25 @@ function Get-ResolvedImportPaths([string]$Root, [string]$FromFile, [string]$Proj
     if ($null -eq $decoded) {
         Exit-Audit 1 (Format-ApprovalRefusal $FromFile 'Import' $ProjectAttr)
     }
-    $text = $decoded.Replace('\', '/')
+    $text = $decoded.Replace('\', '/').Trim()
     $fromDir = Get-RepoDirectory $FromFile
     if ([string]::IsNullOrEmpty($fromDir)) { $fileDir = './' }
     else { $fileDir = $fromDir + '/' }
     if ([string]::IsNullOrEmpty($ProjectDirectory)) { $projectDir = '.' }
     else { $projectDir = $ProjectDirectory }
+    $startsAnchored = $text -match '^(?i)\$\(\s*MSBuild(ThisFile|Project)Directory\s*\)'
     $text = [regex]::Replace($text, '(?i)\$\(\s*MSBuildThisFileDirectory\s*\)', (ConvertTo-RegexReplacement $fileDir))
     $text = [regex]::Replace($text, '(?i)\$\(\s*MSBuildProjectDirectory\s*\)', (ConvertTo-RegexReplacement $projectDir))
-    if ($text.IndexOf('$(') -ge 0) { return $null }
+    if ($text.IndexOf('$(') -ge 0) {
+        Exit-Audit 1 (Format-UnresolvedImportRefusal $FromFile $ProjectAttr)
+    }
     if ($text -match '^[A-Za-z]:/' -or $text.StartsWith('/')) {
         $relative = ConvertTo-RepoRelative $text $Root
         if ($null -eq $relative) { return $null }
         $text = $relative
+    }
+    elseif ($startsAnchored) {
+        if ($text.StartsWith('./')) { $text = $text.Substring(2) }
     }
     elseif (-not [string]::IsNullOrEmpty($fromDir)) {
         $text = $fromDir + '/' + $text
@@ -425,6 +438,10 @@ function Format-ApprovalRefusal([string]$Path, [string]$Item, [string]$Include) 
     return 'definition file includes docs markdown or the root README.md; -Update cannot approve it: ' + $Path + ' ' + $Item + ' Include=' + $Include
 }
 
+function Format-UnresolvedImportRefusal([string]$Path, [string]$ProjectAttr) {
+    return 'definition file import cannot be resolved; -Update cannot approve it: ' + $Path + ' Import Project=' + $ProjectAttr
+}
+
 function Get-GitBytes([string]$Root, [string]$Arguments) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = 'git'
@@ -484,13 +501,12 @@ function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows) {
     foreach ($path in @($known.Keys)) {
         $doc = $known[$path]
         $directories = New-Object 'System.Collections.Generic.List[string]'
-        if (Test-ProjFile ([string]$path)) { [void]$directories.Add((Get-RepoDirectory ([string]$path))) }
+        [void]$directories.Add((Get-RepoDirectory ([string]$path)))
         if ($bases.ContainsKey([string]$path)) {
             foreach ($dir in $bases[[string]$path]) {
                 if (-not $directories.Contains([string]$dir)) { [void]$directories.Add([string]$dir) }
             }
         }
-        if ($directories.Count -eq 0) { [void]$directories.Add((Get-RepoDirectory ([string]$path))) }
         foreach ($node in $doc.GetElementsByTagName('*')) {
             $local = [string]$node.LocalName
             $watched = $false
