@@ -98,7 +98,7 @@ function ConvertFrom-NightlyDiscoveryDocument {
     if ([string]::IsNullOrWhiteSpace([string]$Object.assemblyHash)) {
         throw 'missing assemblyHash'
     }
-    $nodes = @()
+    $nodes = [Collections.Generic.List[object]]::new()
     $uids = @{}
     foreach ($n in @($Object.nodes)) {
         $uid = [string]$n.uid
@@ -117,7 +117,7 @@ function ConvertFrom-NightlyDiscoveryDocument {
         foreach ($c in $categories) {
             if ($c -eq 'OptIn' -or $c -eq 'Explicit') { $excluded = $true }
         }
-        $nodes += [pscustomobject]@{
+        $nodes.Add([pscustomobject]@{
             Uid = $uid
             Assembly = [string]$n.assembly
             Namespace = [string]$n.namespace
@@ -128,14 +128,14 @@ function ConvertFrom-NightlyDiscoveryDocument {
             ClassName = $(if ([string]::IsNullOrWhiteSpace([string]$n.namespace)) { $typeName } else { '{0}.{1}' -f $n.namespace, $typeName })
             Excluded = $excluded
             Categories = $categories
-        }
+        })
     }
     return [pscustomobject]@{
         Format = $format
         TunitVersion = $tunit
         MtpVersion = $mtp
         AssemblyHash = [string]$Object.assemblyHash
-        Nodes = $nodes
+        Nodes = $nodes.ToArray()
     }
 }
 
@@ -769,14 +769,14 @@ function Get-NightlyDiscoveryCensus {
       disposition; duplicates and unclassified nodes are reported, never dropped.
     #>
     param([object[]]$DiscoveryNodes, $ProfileExclusions = $null, [switch]$ProfileAware)
-    $required = @()
-    $excluded = @()
+    $required = [Collections.Generic.List[object]]::new()
+    $excluded = [Collections.Generic.List[object]]::new()
     $seen = @{}
-    $duplicates = @()
+    $duplicates = [Collections.Generic.List[object]]::new()
     foreach ($n in @($DiscoveryNodes)) {
         $uid = [string]$n.Uid
         if ([string]::IsNullOrWhiteSpace($uid)) { continue }
-        if ($seen.ContainsKey($uid)) { $duplicates += $uid; continue }
+        if ($seen.ContainsKey($uid)) { $duplicates.Add($uid); continue }
         $seen[$uid] = $true
         $d = Get-NightlyDiscoveryDisposition -Node $n -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware
         $row = [ordered]@{
@@ -788,17 +788,17 @@ function Get-NightlyDiscoveryCensus {
             reason = $d.Reason
             owner = $d.Owner
         }
-        if ($d.Disposition -eq 'required') { $required += $row } else { $excluded += $row }
+        if ($d.Disposition -eq 'required') { $required.Add($row) } else { $excluded.Add($row) }
     }
     $digest = Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object ([ordered]@{
-        required = @(@($required) | ForEach-Object { $_.uid } | Sort-Object)
-        excluded = @(@($excluded) | ForEach-Object { $_.uid } | Sort-Object)
+        required = @(@(foreach ($r in $required) { $r.uid }) | Sort-Object)
+        excluded = @(@(foreach ($r in $excluded) { $r.uid }) | Sort-Object)
     }))
     return [pscustomobject]@{
         Ok = ($duplicates.Count -eq 0 -and $required.Count -gt 0)
-        Required = $required
-        Excluded = $excluded
-        Duplicates = $duplicates
+        Required = $required.ToArray()
+        Excluded = $excluded.ToArray()
+        Duplicates = $duplicates.ToArray()
         Digest = $digest
         RequiredCount = $required.Count
         ExcludedCount = $excluded.Count
@@ -807,7 +807,7 @@ function Get-NightlyDiscoveryCensus {
 
 function Get-NightlyRequiredDiscoveryUids {
     param([object[]]$DiscoveryNodes, [string[]]$RequiredClasses = @(), $ProfileExclusions = $null, [switch]$ProfileAware)
-    $uids = @()
+    $uids = [Collections.Generic.List[object]]::new()
     $seen = @{}
     foreach ($n in @($DiscoveryNodes)) {
         if (Test-NightlyDiscoveryExcluded -Node $n -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware) { continue }
@@ -818,9 +818,138 @@ function Get-NightlyRequiredDiscoveryUids {
         if ([string]::IsNullOrWhiteSpace($uid)) { continue }
         if ($seen.ContainsKey($uid)) { continue }
         $seen[$uid] = $true
-        $uids += $uid
+        $uids.Add($uid)
     }
-    return $uids
+    return $uids.ToArray()
+}
+
+<#
+  CARD-1419: every launch of a native suite is judged against the same discovery,
+  so a suite parses and censuses it once. A launch then looks up only its own
+  classes instead of walking every discovered node again. Results equal the
+  per-node functions above; the index only stops repeating them.
+#>
+function New-NightlyDiscoveryIndex {
+    return [pscustomobject]@{
+        Entries = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    }
+}
+
+function Get-NightlyDiscoveryIndexEntry {
+    # Keyed by content, not path: the profile lane reuses one file, the default
+    # lane writes the same discovery beside each launch, and a rewrite is new bytes.
+    param($Index, [string]$Path)
+    $key = ''
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try { $key = [BitConverter]::ToString($sha.ComputeHash([System.IO.File]::ReadAllBytes($Path))) }
+        finally { $sha.Dispose() }
+        if ($Index.Entries.ContainsKey($key)) { return $Index.Entries[$key] }
+    }
+    $document = Read-NightlyDiscoveryDocument -Path $Path
+    $inProgress = [Collections.Generic.List[object]]::new()
+    foreach ($n in @($document.Nodes)) {
+        if ($n.State -eq 'InProgress') { $inProgress.Add($n) }
+    }
+    $entry = [pscustomobject]@{
+        Document = $document
+        InProgress = $inProgress.ToArray()
+        Views = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    }
+    if ($key) { $Index.Entries[$key] = $entry }
+    return $entry
+}
+
+function Get-NightlyDiscoveryIndexView {
+    # One disposition pass per entry and exclusion policy: the census, the
+    # all-classes required set, and a class lookup that mirrors
+    # Test-NightlyClassAssigned (name or bare name, of ClassName or Type).
+    param($Entry, $ProfileExclusions = $null, [switch]$ProfileAware)
+    $policyKey = 'default'
+    if ($ProfileAware) { $policyKey = 'profile:' + (ConvertTo-Json -InputObject $ProfileExclusions -Depth 8 -Compress) }
+    if ($Entry.Views.ContainsKey($policyKey)) { return $Entry.Views[$policyKey] }
+    $nodes = @($Entry.Document.Nodes)
+    $excluded = New-Object 'bool[]' $nodes.Count
+    $byClass = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::OrdinalIgnoreCase)
+    $allRequired = [Collections.Generic.List[object]]::new()
+    $seenUid = @{}
+    $classes = [Collections.Generic.List[object]]::new()
+    $seenClass = @{}
+    for ($i = 0; $i -lt $nodes.Count; $i++) {
+        $n = $nodes[$i]
+        $className = [string]$n.ClassName
+        $typeName = [string]$n.Type
+        $names = [Collections.Generic.List[string]]::new()
+        if (-not [string]::IsNullOrWhiteSpace($className)) {
+            $names.Add($className)
+            $names.Add((Get-NightlyBareClassIdentity -Name $className))
+        }
+        if (-not [string]::IsNullOrWhiteSpace($typeName)) {
+            $names.Add($typeName)
+            $names.Add((Get-NightlyBareClassIdentity -Name $typeName))
+        }
+        foreach ($name in $names) {
+            $hits = $null
+            if (-not $byClass.TryGetValue($name, [ref]$hits)) {
+                $hits = [Collections.Generic.List[int]]::new()
+                $byClass[$name] = $hits
+            }
+            if ($hits.Count -eq 0 -or $hits[$hits.Count - 1] -ne $i) { $hits.Add($i) }
+        }
+        if (Test-NightlyDiscoveryExcluded -Node $n -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware) {
+            $excluded[$i] = $true
+            continue
+        }
+        $uid = [string]$n.Uid
+        if (-not [string]::IsNullOrWhiteSpace($uid) -and -not $seenUid.ContainsKey($uid)) {
+            $seenUid[$uid] = $true
+            $allRequired.Add($uid)
+        }
+        $t = Get-NightlyBareClassIdentity -Name $className
+        if ([string]::IsNullOrWhiteSpace($t)) { $t = Get-NightlyBareClassIdentity -Name $typeName }
+        if (-not [string]::IsNullOrWhiteSpace($t) -and -not $seenClass.ContainsKey($t)) {
+            $seenClass[$t] = $true
+            $classes.Add($t)
+        }
+    }
+    $view = [pscustomobject]@{
+        Nodes = $nodes
+        Excluded = $excluded
+        ByClass = $byClass
+        RequiredUids = $allRequired.ToArray()
+        Classes = $classes.ToArray()
+        Census = (Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware)
+    }
+    $Entry.Views[$policyKey] = $view
+    return $view
+}
+
+function Get-NightlyDiscoveryIndexRequiredUids {
+    # Same set and discovery order as Get-NightlyRequiredDiscoveryUids, from the
+    # launch's classes alone.
+    param($View, [string[]]$RequiredClasses = @())
+    if ($null -eq $RequiredClasses -or @($RequiredClasses).Count -eq 0) { return $View.RequiredUids }
+    $selected = [Collections.Generic.SortedSet[int]]::new()
+    foreach ($c in @($RequiredClasses)) {
+        $want = [string]$c
+        if ([string]::IsNullOrWhiteSpace($want)) { continue }
+        foreach ($name in @($want, (Get-NightlyBareClassIdentity -Name $want))) {
+            $hits = $null
+            if ($View.ByClass.TryGetValue($name, [ref]$hits)) {
+                foreach ($i in $hits) { [void]$selected.Add($i) }
+            }
+        }
+    }
+    $uids = [Collections.Generic.List[object]]::new()
+    $seen = @{}
+    foreach ($i in $selected) {
+        if ($View.Excluded[$i]) { continue }
+        $uid = [string]$View.Nodes[$i].Uid
+        if ([string]::IsNullOrWhiteSpace($uid) -or $seen.ContainsKey($uid)) { continue }
+        $seen[$uid] = $true
+        $uids.Add($uid)
+    }
+    return $uids.ToArray()
 }
 
 function Get-NightlyIdentityBagKey {
@@ -960,13 +1089,13 @@ function Test-NightlyExpandedRowsPresent {
         $uid = [string]$r.Uid
         if (-not [string]::IsNullOrWhiteSpace($uid)) { $terminalUids[$uid] = $true }
     }
-    $missing = @()
+    $missing = [Collections.Generic.List[object]]::new()
     foreach ($uid in @($RequiredUids)) {
         $key = [string]$uid
         if ([string]::IsNullOrWhiteSpace($key)) { continue }
-        if (-not $terminalUids.ContainsKey($key)) { $missing += $key }
+        if (-not $terminalUids.ContainsKey($key)) { $missing.Add($key) }
     }
-    return [pscustomobject]@{ Ok = ($missing.Count -eq 0); Missing = $missing }
+    return [pscustomobject]@{ Ok = ($missing.Count -eq 0); Missing = $missing.ToArray() }
 }
 
 function Test-NightlyTrxDiagnosticCrossCheck {
@@ -1059,7 +1188,8 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         [string]$ExpectedPolicyHash,
         [string[]]$RequiredClasses = @(),
         $ProfileExclusions = $null,
-        [switch]$ProfileAware
+        [switch]$ProfileAware,
+        $DiscoveryIndex = $null
     )
     $reasons = @()
     if ([string]::IsNullOrWhiteSpace($TrxPath) -or -not (Test-Path -LiteralPath $TrxPath)) {
@@ -1091,13 +1221,16 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         }
     }
     $discoveryNodes = @()
+    $discoveryEntry = $null
+    $discoveryView = $null
     $discoveryPresent = $false
     if ([string]::IsNullOrWhiteSpace($DiscoveryPath) -or -not (Test-Path -LiteralPath $DiscoveryPath)) {
         $reasons += 'missing-discovery'
     } else {
         try {
-            $disc = Read-NightlyDiscoveryDocument -Path $DiscoveryPath
-            $discoveryNodes = @($disc.Nodes)
+            if ($null -eq $DiscoveryIndex) { $DiscoveryIndex = New-NightlyDiscoveryIndex }
+            $discoveryEntry = Get-NightlyDiscoveryIndexEntry -Index $DiscoveryIndex -Path $DiscoveryPath
+            $discoveryNodes = @($discoveryEntry.Document.Nodes)
             if ($discoveryNodes.Count -eq 0) {
                 $reasons += 'empty-discovery'
             } else {
@@ -1131,18 +1264,22 @@ function ConvertTo-NightlyNativeSuiteVerdict {
             $reasons += $_.Exception.Message
         }
     }
+    # The coverage verdict reads discovery only for its InProgress nodes.
+    $inProgressNodes = @()
+    if ($discoveryEntry) { $inProgressNodes = @($discoveryEntry.InProgress) }
     $verdict = ConvertTo-NightlyCoverageVerdict -TerminalRows $rows -ProcessExit $ProcessExit `
         -Sha $Sha -ExpectedSha $ExpectedSha -GitRef $GitRef -ExpectedRef $ExpectedRef `
         -PolicyHash $PolicyHash -ExpectedPolicyHash $ExpectedPolicyHash `
-        -DiscoveryNodes $discoveryNodes -UsedDiscoveryAsExecution $false
+        -DiscoveryNodes $inProgressNodes -UsedDiscoveryAsExecution $false
     $coverageComplete = [bool]$verdict.coverageComplete
     $testsPassed = [bool]$verdict.testsPassed
     foreach ($r in @($verdict.reasons)) { $reasons += $r }
     if (-not $discoveryPresent) {
         $coverageComplete = $false
     } else {
-        $requiredUids = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes $discoveryNodes -RequiredClasses $RequiredClasses -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware)
-        $censusCheck = Get-NightlyDiscoveryCensus -DiscoveryNodes $discoveryNodes -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware
+        $discoveryView = Get-NightlyDiscoveryIndexView -Entry $discoveryEntry -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware
+        $requiredUids = @(Get-NightlyDiscoveryIndexRequiredUids -View $discoveryView -RequiredClasses $RequiredClasses)
+        $censusCheck = $discoveryView.Census
         if ($censusCheck.Duplicates.Count -gt 0) {
             $coverageComplete = $false
             $reasons += ('duplicate-discovery-uid {0}' -f ($censusCheck.Duplicates -join ','))
@@ -1176,15 +1313,7 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         if ($RequiredClasses -and @($RequiredClasses).Count -gt 0) {
             foreach ($c in @($RequiredClasses)) { $classReq += [string]$c }
         } else {
-            $seenClass = @{}
-            foreach ($n in $discoveryNodes) {
-                if (Test-NightlyDiscoveryExcluded -Node $n -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware) { continue }
-                $t = Get-NightlyBareClassIdentity -Name ([string]$n.ClassName)
-                if ([string]::IsNullOrWhiteSpace($t)) { $t = Get-NightlyBareClassIdentity -Name ([string]$n.Type) }
-                if ([string]::IsNullOrWhiteSpace($t) -or $seenClass.ContainsKey($t)) { continue }
-                $seenClass[$t] = $true
-                $classReq += $t
-            }
+            $classReq = @($discoveryView.Classes)
         }
         if ($classReq.Count -gt 0) {
             $member = Test-NightlyRequiredClassesPresent -TerminalRows $rows -RequiredClasses $classReq
@@ -1197,7 +1326,7 @@ function ConvertTo-NightlyNativeSuiteVerdict {
     }
     $censusOut = $null
     if ($discoveryPresent) {
-        $censusOut = Get-NightlyDiscoveryCensus -DiscoveryNodes $discoveryNodes -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware
+        $censusOut = $discoveryView.Census
     }
     return [pscustomobject]@{
         coverageComplete = $coverageComplete
