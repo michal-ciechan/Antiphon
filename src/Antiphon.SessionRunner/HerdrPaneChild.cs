@@ -21,6 +21,7 @@ internal sealed class HerdrPaneChild : ISessionChild
     private readonly HerdrPlacementCoordinator? _coordinator;
     private readonly Func<string, Guid?, PaneBinding?>? _findBound;
     private readonly HerdrNamedTabResolver _namedTabs;
+    private readonly Func<RunnerLaunchRequest, CancellationToken, Task<RunnerLaunchRequest>>? _prepareRules;
 
     private Guid _sessionId;
     private string? _paneId;
@@ -44,7 +45,8 @@ internal sealed class HerdrPaneChild : ISessionChild
         Func<IReadOnlyList<HerdrPaneAllocator.LivePane>> liveAntiphonPanes,
         IProcessLivenessProbe processLiveness,
         HerdrPlacementCoordinator? coordinator = null,
-        Func<string, Guid?, PaneBinding?>? findBoundPane = null)
+        Func<string, Guid?, PaneBinding?>? findBoundPane = null,
+        Func<RunnerLaunchRequest, CancellationToken, Task<RunnerLaunchRequest>>? prepareRules = null)
     {
         _client = client;
         _settings = settings;
@@ -53,6 +55,7 @@ internal sealed class HerdrPaneChild : ISessionChild
         _processLiveness = processLiveness;
         _coordinator = coordinator;
         _findBound = findBoundPane;
+        _prepareRules = prepareRules;
         _namedTabs = new HerdrNamedTabResolver(HerdrNamedTabResolver.HostLabelComparer);
     }
 
@@ -293,10 +296,15 @@ internal sealed class HerdrPaneChild : ISessionChild
         await _client.ConnectAndValidateAsync(ct);
 
         IAsyncDisposable? keyLock = null;
-        if (!string.IsNullOrWhiteSpace(opts.TabLabel) && _coordinator is not null)
+        if ((!string.IsNullOrWhiteSpace(opts.TabLabel) || _prepareRules is not null) && _coordinator is not null)
             keyLock = await _coordinator.LockWorkspaceKeyAsync(opts.WorkspaceKey, ct);
         try
         {
+            if (_prepareRules is not null)
+            {
+                await RequireStoppedRulesTargetAsync(request, opts, ct);
+                request = await _prepareRules(request, ct);
+            }
             var ensured = await EnsureWorkspaceAsync(opts, request.Env, ct);
             if (!string.IsNullOrWhiteSpace(opts.TabLabel))
                 return await LaunchNamedAsync(request, opts, expectedKind, ensured, keyLock, ct);
@@ -347,6 +355,36 @@ internal sealed class HerdrPaneChild : ISessionChild
         {
             if (keyLock is not null)
                 await keyLock.DisposeAsync();
+        }
+    }
+
+    private async Task RequireStoppedRulesTargetAsync(RunnerLaunchRequest request, HerdrLaunchOptions opts, CancellationToken ct)
+    {
+        var panes = new HashSet<string>(StringComparer.Ordinal);
+        var previous = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
+        if (!string.IsNullOrEmpty(previous?.PaneId)) panes.Add(previous.PaneId);
+        var last = HerdrLastPane.TryLoad(_settings.SessionLogPath, request.SessionId);
+        if (last is null && opts.ReusePaneOfSessionId is Guid old) last = HerdrLastPane.TryLoad(_settings.SessionLogPath, old);
+        if (last is not null && string.Equals(last.WorkspaceKey, opts.WorkspaceKey, StringComparison.Ordinal)) panes.Add(last.PaneId);
+        if (!string.IsNullOrWhiteSpace(opts.TabLabel))
+        {
+            var workspace = FindExistingWorkspaceId(await _client.WorkspaceListAsync(ct), opts);
+            if (workspace is not null)
+            {
+                var pick = await _namedTabs.TryPickAsync(workspace, opts.TabLabel,
+                    token => _client.TabListAsync(workspace, token), token => _client.PaneListAsync(workspace, token), ct);
+                if (pick is not null) { RefuseIfForeignBinding(pick.Pane.PaneId, request.SessionId, opts); panes.Add(pick.Pane.PaneId); }
+            }
+        }
+        foreach (var paneId in panes)
+        {
+            try
+            {
+                var proc = await _client.PaneProcessInfoAsync(paneId, ct);
+                if ((proc.ForegroundProcesses ?? []).Any(p => proc.ShellPid is not int shell || p.Pid != shell))
+                    throw new GrokRulesTransportException("grok_rules_receipt_invalid", "live_target_requires_stopped_process");
+            }
+            catch (HerdrApiException ex) when (IsPaneNotFound(ex)) { }
         }
     }
 
@@ -863,8 +901,21 @@ internal sealed class HerdrPaneChild : ISessionChild
                     SessionId = request.SessionId, WorkspaceKey = opts.WorkspaceKey,
                     WorkspaceId = workspaceId, TabId = tabId, PaneId = paneId, ShellPid = shellPid,
                     LaunchPending = true, GrokRulesReceipt = request.InstalledGrokRulesReceipt,
+                    AgentKind = expectedKind, Cwd = request.Cwd, LaunchedAtUtc = DateTime.UtcNow,
                     UpdatedAtUtc = DateTime.UtcNow,
                 }.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
+            if (request.InstalledGrokRulesReceipt is not null)
+            {
+                try
+                {
+                    new TranscriptSidecar { SessionId = request.SessionId, Cwd = request.Cwd,
+                        Format = TranscriptFormats.Grok, TranscriptPath = GrokTranscriptTailer.ResolveUpdatesPath(request.Env, request.Cwd, request.SessionId),
+                        ChildStartUtc = DateTime.UtcNow, UpdatedAtUtc = DateTime.UtcNow }
+                        .SaveAtomic(TranscriptSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                { throw new GrokRulesTransportException("grok_rules_file_write_failed", "transcript_metadata"); }
+            }
             await _client.PaneSendTextAsync(paneId, typed, ct);
             await _client.PaneSendKeysAsync(paneId, ["enter"], ct);
 
@@ -918,6 +969,8 @@ internal sealed class HerdrPaneChild : ISessionChild
         CancellationToken ct,
         bool delayPaneIdAssignment = false)
     {
+        if (request.GrokRulesPayload is not null)
+            throw new GrokRulesTransportException("grok_rules_receipt_invalid", "live_target_requires_stopped_process");
         var occupant = target.Occupant
             ?? throw new InvalidOperationException("AdoptInPlace requires an occupant.");
 

@@ -1,3 +1,6 @@
+using System.Text;
+using System.Text.Json;
+using Microsoft.Extensions.Options;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -24,6 +27,64 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("AgentSessionInterruptedLaunchResume")]
 public class AgentSessionInterruptedLaunchResumeTests
 {
+    [Test, Arguments(false), Arguments(true), Timeout(60_000)]
+    public async Task Dropped_runner_start_response_recovers_same_receipt_and_barrier_without_second_child(bool missing)
+    {
+        var hold = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adapter = new FakeAgentProtocolAdapter { ReadyHold = hold };
+        var runner = new RecordingKillRunner { DropStartResponse = true };
+        await using var f = await ResumeFixture.CreateAsync(adapter, runner, dispatchedTask: true);
+        adapter.RegisterOnStart = f.Runtime;
+        var payload = new GrokRulesPayload("durable runner-only rules\n",1,Guid.NewGuid());
+        var bytes = Encoding.UTF8.GetBytes(payload.Content);
+        var receipt = new GrokRulesReceipt($"C:\\remote\\instructions\\grok\\{f.SessionId:N}\\rules.md", GrokRulesTransport.Hash(bytes),bytes.Length,1,payload.Generation);
+        runner.Receipt = missing ? null : receipt;
+        await using var db = ResumeFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
+        session.AgentKind = AgentKind.Grok; session.GrokRulesGeneration = receipt.Generation;
+        session.GrokRulesExpectedSha256 = receipt.Sha256; session.GrokRulesExpectedByteCount = receipt.ByteCount;
+        session.GrokRulesState = GrokRulesState.Pending; await db.SaveChangesAsync();
+        await Should.ThrowAsync<HttpRequestException>(() => runner.StartAsync(f.SessionId,
+            new AgentLaunchSpec("test",AgentKind.Grok,"grok",[],new Dictionary<string,string>(),session.Cwd,120,30,GrokRulesPayload:payload),CancellationToken.None));
+        session.GrokRulesReceiptJson.ShouldBeNull();
+        var resume = f.ResumeAsync();
+        try
+        {
+            if (missing)
+            {
+                hold.TrySetResult(true);
+                await Should.ThrowAsync<Exception>(resume);
+                await db.Entry(session).ReloadAsync();
+                session.Status.ShouldBe(SessionStatus.Failed); adapter.Killed.ShouldBeTrue();
+                adapter.SubmittedBodies.ShouldBeEmpty(); runner.Starts.ShouldBe(1);
+                return;
+            }
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (!await db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == f.SessionId && m.RulesRefreshKey != null)
+                && DateTime.UtcNow < deadline && !resume.IsCompleted) await Task.Delay(20);
+            if (resume.IsFaulted) await resume;
+            await db.Entry(session).ReloadAsync();
+            GrokRulesRefreshService.Receipt(session).ShouldBe(receipt);
+            var refresh = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == f.SessionId && m.RulesRefreshKey != null);
+            refresh.RulesDeadlineAt.ShouldBeNull(); adapter.SubmittedBodies.ShouldBeEmpty();
+            adapter.OnSubmitted = async body => {
+                await f.InsertTranscriptAsync(TranscriptKinds.UserPrompt, body);
+                if (body.StartsWith(GrokRulesRefreshService.Header(refresh.Id)))
+                    await f.InsertTranscriptAsync(TranscriptKinds.AssistantText,$"ANTIPHON_RULES_ACK id={refresh.Id:N} generation={receipt.Generation:N} sha256={receipt.Sha256}");
+                await f.InsertTranscriptAsync(TranscriptKinds.TurnEnd,stopReason:"end_turn");
+            };
+            hold.SetResult(true); await resume;
+            await f.ResumeAsync();
+            runner.Starts.ShouldBe(1); adapter.Attached.ShouldBeTrue();
+            adapter.SubmittedBodies[0].ShouldStartWith(GrokRulesRefreshService.Header(refresh.Id));
+            adapter.SubmittedBodies.Count.ShouldBe(2);
+            (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == f.SessionId && m.RulesRefreshKey != null)).ShouldBe(1);
+            (await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId)).Goal.ShouldBe("Do the thing.");
+            await db.Entry(session).ReloadAsync(); session.GrokRulesState.ShouldBe(GrokRulesState.Ready);
+        }
+        finally { hold.TrySetResult(false); try { await resume; } catch { } }
+    }
+
     [Test]
     public async Task Delegate_Starting_row_attaches_becomes_Running_and_flushes_the_pending_brief()
     {
@@ -190,6 +251,8 @@ public class AgentSessionInterruptedLaunchResumeTests
                 ConfigureServices = s =>
                 {
                     s.AddSingleton<IAgentProtocolAdapterFactory>(new OneAdapterFactory(adapter));
+                    s.AddSingleton(Options.Create(new GrokRulesSettings()));
+                    s.AddSingleton<GrokRulesRefreshService>();
                     if (runner is not null)
                         s.AddSingleton<ISessionRunnerClient>(runner);
                 },
@@ -305,6 +368,9 @@ public class AgentSessionInterruptedLaunchResumeTests
     {
         public Guid SessionId { get; set; }
         public List<Guid> Killed { get; } = [];
+        public GrokRulesReceipt? Receipt { get; set; }
+        public int Starts { get; private set; }
+        public bool DropStartResponse { get; set; }
 
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([Running()]);
@@ -318,8 +384,12 @@ public class AgentSessionInterruptedLaunchResumeTests
             return Task.FromResult(Running() with { SessionId = sessionId, Status = "Exited", ExitCode = 0 });
         }
 
-        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) =>
-            throw new NotSupportedException();
+        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
+        {
+            Starts++; SessionId = sessionId;
+            if (DropStartResponse) throw new HttpRequestException("Injected response drop after runner receipt commit");
+            return Task.FromResult(Running());
+        }
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerBufferDto(sessionId, "", 0));
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
@@ -337,7 +407,7 @@ public class AgentSessionInterruptedLaunchResumeTests
 
         private SessionRunnerSessionDto Running() =>
             new(SessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddMinutes(-2),
-                Status: "Running", ExitCode: null, ExitReason: AgentExitReason.Unknown, LastSequence: 1);
+                Status: "Running", ExitCode: null, ExitReason: AgentExitReason.Unknown, LastSequence: 1, GrokRulesReceipt: Receipt);
     }
 
     private sealed class NonAttachableAdapter : IAgentProtocolAdapter

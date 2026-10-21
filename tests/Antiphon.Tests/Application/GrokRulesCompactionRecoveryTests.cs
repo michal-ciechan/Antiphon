@@ -27,6 +27,7 @@ public sealed class GrokRulesCompactionRecoveryTests
     private const string CapturedEnd = """{"timestamp":1787001911,"method":"_x.ai/session/update","params":{"sessionId":"01a01178-bfe3-7493-b326-1785d2ebf7db","update":{"sessionUpdate":"turn_completed","prompt_id":"fb469fb0-6940-476a-bc78-fdf757090144","stop_reason":"end_turn","usage":{"inputTokens":18747424,"outputTokens":70713,"totalTokens":18818137,"cachedReadTokens":18482432,"cacheCreationTokens":0,"reasoningTokens":62843,"modelCalls":103,"apiDurationMs":1273834,"costUsdTicks":26753525600,"modelUsage":{"grok-4.6-build":{"inputTokens":18747424,"outputTokens":70713,"totalTokens":18818137,"cachedReadTokens":18482432,"cacheCreationTokens":0,"reasoningTokens":62843,"modelCalls":103,"apiDurationMs":1273834,"costUsdTicks":26753525600}},"numTurns":103}},"_meta":{"eventId":"01a01178-bfe3-7493-b326-1785d2ebf7db-5081","agentTimestampMs":1787001911643}}}""";
 
     [Test]
+    [Arguments("live", "blocked-Herdr")]
     [Arguments("live", "standing")]
     [Arguments("live", "channel")]
     [Arguments("live", "retired-pool")]
@@ -42,8 +43,15 @@ public sealed class GrokRulesCompactionRecoveryTests
             services.AddSingleton(Options.Create(new GrokRulesSettings()));
             services.AddSingleton<GrokRulesRefreshService>();
             services.AddSingleton<CompactionRecoveryService>();
+            if (population == "blocked-Herdr")
+            {
+                services.AddSingleton<PtyDeliveryProfile>();
+                services.AddSingleton<SessionDeliveryProfile>();
+            }
         }});
         var rules = h.Provider.GetRequiredService<GrokRulesRefreshService>();
+        if (population == "blocked-Herdr")
+            h.Runner.Capabilities = new("test", "test", "test", false, SessionBackends: [SessionBackends.Herdr]);
         var payload = new GrokRulesPayload("attachment-only standing rules\n", 1, Guid.NewGuid());
         var bytes = Encoding.UTF8.GetBytes(payload.Content);
         var receipt = new GrokRulesReceipt($"C:\\remote\\instructions\\grok\\{h.SessionId:N}\\rules.md",
@@ -51,6 +59,7 @@ public sealed class GrokRulesCompactionRecoveryTests
         await using var db = BridgeQueueHarness.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
         session.AgentKind = AgentKind.Grok;
+        if (population == "blocked-Herdr") session.SessionBackend = SessionBackend.Herdr;
         session.GrokRulesGeneration = receipt.Generation;
         session.GrokRulesExpectedSha256 = receipt.Sha256;
         session.GrokRulesExpectedByteCount = receipt.ByteCount;
@@ -121,8 +130,18 @@ public sealed class GrokRulesCompactionRecoveryTests
         while (tailer.Snapshot().Entries.Count < 3 && DateTime.UtcNow < endDeadline) await Task.Delay(20);
         var turnEnd = JsonSerializer.Deserialize<SessionRunnerTranscriptEvent>(JsonSerializer.Serialize(tailer.Snapshot().Entries.Last()))! with { Sequence = 101 };
         turnEnd.Kind.ShouldBe(TranscriptKinds.TurnEnd);
+        if (population == "blocked-Herdr") h.Runtime.SetTestAgentStatus(h.SessionId, "blocked");
         await h.Runtime.ObserveTranscriptAsync(turnEnd, CancellationToken.None);
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        if (population == "blocked-Herdr")
+        {
+            h.Adapter.SubmittedBodies.ShouldBeEmpty("blocked provider UI cannot charge or type a refresh attempt");
+            var held = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == refresh.Id);
+            held.DeliveryAttempts.ShouldBe(0);
+            held.RulesDeadlineAt.ShouldBeNull("blocked UI is not an eligible start for the refresh timeout");
+            h.Runtime.SetTestAgentStatus(h.SessionId, "idle");
+            await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        }
         h.Adapter.SubmittedBodies.ShouldHaveSingleItem().ShouldStartWith(GrokRulesRefreshService.Header(refresh.Id));
         (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == ordinary)).Status.ShouldBe(QueuedMessageStatus.Pending);
 

@@ -1361,8 +1361,9 @@ public class AgentTaskDeliveryWatchdogTests
 
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        replies.DelayAfterOpenTaskLoadedAsync = async (_, ct) =>
+        replies.DelayAfterOpenTaskLoadedAsync = async (sessionId, ct) =>
         {
+            if (sessionId != task.AgentSessionId) return; // global sweep may also settle earlier fixture rows
             entered.TrySetResult();
             using var reg = ct.Register(() => release.TrySetCanceled());
             await release.Task.WaitAsync(ct);

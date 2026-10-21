@@ -65,7 +65,7 @@ public sealed class GrokRulesFileLaunchTests
     }
 
     [Test]
-    public async Task Herdr_receipt_is_durable_before_first_request_and_before_typing()
+    public async Task Herdr_receipt_is_durable_before_first_effect_and_before_typing()
     {
         await using var fake = new FakeHerdrServer { LaunchScriptAgentKind = HerdrAgentKinds.Grok };
         fake.Start();
@@ -86,11 +86,13 @@ public sealed class GrokRulesFileLaunchTests
         try
         {
             var result = await runtime.StartAsync(request, CancellationToken.None);
-            foreach (var snapshot in snapshots)
+            var effects = snapshots.Where(s => s.Method is "workspace.create" or "workspace.report_metadata" or "tab.create" or "pane.rename" or "pane.send_text" or "pane.send_keys").ToList();
+            effects.ShouldNotBeEmpty();
+            foreach (var snapshot in effects)
                 snapshot.Bytes.ShouldBe(GrokRulesTransport.Encode(request.GrokRulesPayload!, true, 262144),
                     "complete rules bytes must precede the first allocation and every subsequent launch boundary");
-            var initial = snapshots.First().Sidecar;
-            initial.ShouldNotBeNull("receipt must precede even the first Herdr request");
+            var initial = effects.First().Sidecar;
+            initial.ShouldNotBeNull("receipt must precede the first Herdr mutation after read-only target checks");
             initial.LaunchPending.ShouldBeTrue();
             initial.GrokRulesReceipt.ShouldBe(result.GrokRulesReceipt);
             var typed = snapshots.First(s => s.Method == "pane.send_text").Sidecar;

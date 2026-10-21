@@ -218,7 +218,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 throw new GrokRulesTransportException("grok_rules_argv_unsafe", "command_line_budget");
             request = request with
             {
-                InstalledGrokRulesReceipt = await store.WriteAsync(request.SessionId, rules, ct),
+                InstalledGrokRulesReceipt = useHerdr ? null : await store.WriteAsync(request.SessionId, rules, ct),
             };
         }
 
@@ -253,13 +253,6 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             if (useHerdr)
             {
-                if (request.InstalledGrokRulesReceipt is { } receipt)
-                    new HerdrPaneSidecar
-                    {
-                        SessionId = request.SessionId, GrokRulesReceipt = receipt, LaunchPending = true,
-                        WorkspaceKey = request.Herdr!.WorkspaceKey, WorkspaceId = "", TabId = "", PaneId = "",
-                        UpdatedAtUtc = DateTime.UtcNow,
-                    }.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
                 await session.StartHerdrAsync(
                     request,
                     _herdrClient!,
@@ -809,9 +802,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// </summary>
     private async Task AdoptHerdrSessionsAsync(IProcessLivenessProbe probe, CancellationToken ct)
     {
-        foreach (var sidecar in HerdrPaneSidecar.LoadAll(_settings.SessionLogPath))
+        foreach (var saved in HerdrPaneSidecar.LoadAll(_settings.SessionLogPath))
         {
             ct.ThrowIfCancellationRequested();
+            var sidecar = await RecoverPendingGrokChildAsync(saved, probe, ct);
             if (_sessions.ContainsKey(sidecar.SessionId))
                 continue;
 
@@ -846,6 +840,31 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
     }
 
+    private async Task<HerdrPaneSidecar> RecoverPendingGrokChildAsync(HerdrPaneSidecar sidecar, IProcessLivenessProbe probe, CancellationToken ct)
+    {
+        if (!sidecar.LaunchPending || sidecar.GrokRulesReceipt is null || sidecar.ChildPid is not null
+            || string.IsNullOrEmpty(sidecar.PaneId) || _herdrClient is null) return sidecar;
+        try
+        {
+            await _herdrClient.ConnectAndValidateAsync(ct);
+            var pane = await _herdrClient.PaneGetAsync(sidecar.PaneId, ct);
+            var proc = await _herdrClient.PaneProcessInfoAsync(sidecar.PaneId, ct);
+            var candidates = (proc.ForegroundProcesses ?? []).Where(p => p.Pid != proc.ShellPid).ToList();
+            if (pane.Agent != HerdrAgentKinds.Grok || proc.ShellPid != sidecar.ShellPid || candidates.Count != 1
+                || !HerdrPaneChild.TryReadNativeSessionId(candidates[0].Argv, out var native) || native != sidecar.SessionId)
+                return sidecar;
+            var child = candidates[0];
+            var started = probe.TryGetStartTimeUtc(child.Pid);
+            if (started is null || started < sidecar.LaunchedAtUtc.AddSeconds(-1) || !probe.IsAlive(child.Pid, started.Value)) return sidecar;
+            var recovered = sidecar with { ChildPid = child.Pid, LaunchedAtUtc = started.Value, LaunchPending = false, UpdatedAtUtc = DateTime.UtcNow };
+            recovered.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, sidecar.SessionId));
+            sidecar = recovered;
+        }
+        catch (Exception ex) when (ex is HerdrApiException or HerdrBackendUnavailableException or IOException or UnauthorizedAccessException or GrokRulesTransportException)
+        { _logger.LogWarning("Pending Grok child identity remains unverified for session {SessionId}", sidecar.SessionId); }
+        return sidecar;
+    }
+
     private enum HerdrBarVerdict { Adopt, RestartPresumedDead, ChildGone, Unreachable }
 
     /// <summary>
@@ -855,6 +874,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     private async Task<HerdrBarVerdict> EvaluateHerdrBarAsync(
         HerdrPaneSidecar sidecar, IProcessLivenessProbe probe, CancellationToken ct)
     {
+        // A launch interrupted after typing but before pid persistence is not proof of death.
+        // Retain ownership until exact native argv/shell/pid evidence reconstructs the child.
+        if (sidecar.LaunchPending && sidecar.GrokRulesReceipt is not null && sidecar.ChildPid is null
+            && !string.IsNullOrEmpty(sidecar.PaneId)) return HerdrBarVerdict.Unreachable;
         try
         {
             await _herdrClient!.ConnectAndValidateAsync(ct);
@@ -905,6 +928,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         if (sidecar is null || _herdrClient is null)
             return;
 
+        sidecar = await RecoverPendingGrokChildAsync(sidecar, probe, ct);
         var verdict = await EvaluateHerdrBarAsync(sidecar, probe, ct);
         switch (verdict)
         {
@@ -1337,8 +1361,21 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _backend = SessionBackends.Herdr;
                 _herdrChild = new HerdrPaneChild(
                     herdrClient, _settings, _logger, liveAntiphonPanes, _processLiveness,
-                    placement,
-                    findBound);
+                    placement, findBound, prepareRules: request.GrokRulesPayload is null ? null : async (launch, token) =>
+                    {
+                        // Target eligibility is checked under placement ownership before replacing
+                        // a file that an operator-relaunched native child may still be using.
+                        var receipt = await new GrokRulesFileStore(_settings.SessionLogPath, _settings.GrokRules)
+                            .WriteAsync(launch.SessionId, launch.GrokRulesPayload!, token);
+                        new HerdrPaneSidecar
+                        {
+                            SessionId = launch.SessionId, GrokRulesReceipt = receipt, LaunchPending = true,
+                            WorkspaceKey = launch.Herdr!.WorkspaceKey, WorkspaceId = "", TabId = "", PaneId = "",
+                            UpdatedAtUtc = DateTime.UtcNow,
+                        }.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, launch.SessionId));
+                        GrokRulesReceipt = receipt;
+                        return launch with { InstalledGrokRulesReceipt = receipt };
+                    });
                 _herdrChild.Exited += exit =>
                 {
                     lock (_gate)
@@ -1985,6 +2022,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _backend = SessionBackends.Herdr,
                 _pendingReason = HerdrPendingReasons.Unreachable,
                 _pendingSidecar = sidecar,
+                GrokRulesReceipt = sidecar.GrokRulesReceipt,
                 _herdrOrigin = sidecar.Origin ?? HerdrPaneOrigins.Launched,
             };
         }
@@ -2397,6 +2435,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private void KillPendingHerdr()
         {
             var sidecar = _pendingSidecar;
+            if (sidecar is { LaunchPending: true, GrokRulesReceipt: not null, ChildPid: null })
+                return; // cannot report confirmed cleanup of an as-yet unidentified native child
             var attached = string.Equals(sidecar?.Origin, HerdrPaneOrigins.Attached, StringComparison.OrdinalIgnoreCase);
             if (!attached
                 && sidecar?.ChildPid is int pid

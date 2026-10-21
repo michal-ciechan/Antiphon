@@ -1287,6 +1287,10 @@ public sealed class CardService : IScheduledCardActions
             effectiveModelId = resolved.EffectiveModelId;
         }
 
+        // Validate resolved profile/registry arguments before claiming the card. Composition
+        // now travels in the typed rules payload, so it cannot stand in for this raw-argv guard.
+        GrokLaunchArgs.EnsureWindowsRulesArgv(spec.Args, spec.Kind, spec.Backend, spec.Env, $"Card '{card.Identifier}'");
+
         // CARD-0212: refuse an explicit remote-control name on a kind that cannot take it
         // before claiming a session row, so a 409 leaves no session behind.
         RemoteControlPolicy.Require(

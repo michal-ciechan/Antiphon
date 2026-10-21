@@ -87,22 +87,12 @@ public class DelegateLaunchArgvIntegrityTests
         using var _ = provider;
 
         var checkedCases = 0;
-        var refusedGrokCases = 0;
         foreach (var kind in Enum.GetValues<AgentTaskKind>())
         foreach (var role in Enum.GetValues<AgentTaskRole>())
         foreach (var agentKind in Enum.GetValues<AgentKind>())
         {
             var sessionId = Guid.NewGuid();
             var task = TaskFor(kind, role, agentKind);
-            if (agentKind == AgentKind.Grok && !AgentTaskRoles.IsSpecialist(role))
-            {
-                var ex = Should.Throw<ConflictException>(
-                    () => ComposeLaunchArgs(dispatcher, task, agentKind, sessionId, Attachments));
-                ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
-                refusedGrokCases++;
-                continue;
-            }
-
             var args = ComposeLaunchArgs(dispatcher, task, agentKind, sessionId, Attachments);
 
             var because = $"{kind}/{role} on {agentKind}";
@@ -113,7 +103,7 @@ public class DelegateLaunchArgvIntegrityTests
             checkedCases++;
         }
 
-        (checkedCases + refusedGrokCases).ShouldBe(
+        checkedCases.ShouldBe(
             Enum.GetValues<AgentTaskKind>().Length
             * Enum.GetValues<AgentTaskRole>().Length
             * Enum.GetValues<AgentKind>().Length,
@@ -134,22 +124,12 @@ public class DelegateLaunchArgvIntegrityTests
         using var _ = provider;
 
         var checkedCases = 0;
-        var refusedGrokCases = 0;
         foreach (var kind in Enum.GetValues<AgentTaskKind>())
         foreach (var role in Enum.GetValues<AgentTaskRole>())
         foreach (var agentKind in Enum.GetValues<AgentKind>())
         {
             var sessionId = Guid.NewGuid();
             var task = TaskFor(kind, role, agentKind);
-            if (agentKind == AgentKind.Grok && !AgentTaskRoles.IsSpecialist(role))
-            {
-                var ex = Should.Throw<ConflictException>(
-                    () => ComposeLaunchArgs(dispatcher, task, agentKind, sessionId, attached: null));
-                ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
-                refusedGrokCases++;
-                continue;
-            }
-
             var args = ComposeLaunchArgs(dispatcher, task, agentKind, sessionId, attached: null);
 
             var because = $"{kind}/{role} on {agentKind} (role defaults only)";
@@ -160,7 +140,7 @@ public class DelegateLaunchArgvIntegrityTests
             checkedCases++;
         }
 
-        (checkedCases + refusedGrokCases).ShouldBe(
+        checkedCases.ShouldBe(
             Enum.GetValues<AgentTaskKind>().Length
             * Enum.GetValues<AgentTaskRole>().Length
             * Enum.GetValues<AgentKind>().Length);
@@ -487,7 +467,20 @@ public class DelegateLaunchArgvIntegrityTests
             Rows = 30,
         };
 
-        var args = dispatcher.BuildLaunchSpec(task, agent, session, attached).Args;
+        var spec = dispatcher.BuildLaunchSpec(task, agent, session, attached);
+        var args = spec.Args.ToList();
+        if (agentKind == AgentKind.Grok)
+        {
+            var expected = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(task.Kind, task.Role, attached));
+            if (!expected.IsEmpty)
+            {
+                spec.GrokRulesPayload.ShouldNotBeNull().Content.ShouldBe(expected.Text);
+                args.ShouldNotContain(a => a == expected.Text);
+                var bootstrap = GrokRulesTransport.Bootstrap($@"C:\runner root\instructions\grok\{sessionId:N}\rules.md");
+                args.AddRange(["--rules", bootstrap]);
+                GrokRulesArgvPolicy.ValidateArgv(args, isWindows: true, isGrok: true).ShouldBeNull();
+            }
+        }
         IReadOnlyList<string> withIdentity = AgentSessionService.UsesSessionIdentityArgs(agentKind)
             ? AgentSessionService.BuildSessionIdentityArgs(args, sessionId, resumeMode: null)
             : args;

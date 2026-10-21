@@ -14,11 +14,27 @@ namespace Antiphon.Tests.Application;
 public sealed class GrokRulesQueueBarrierTests
 {
     [Test]
-    [Arguments("flush")]
-    [Arguments("now")]
-    [Arguments("send_now")]
-    [Arguments("expired_hold")]
-    public async Task Closed_rules_barrier_holds_ordinary_input_on_each_delivery_entry_point(string entryPoint)
+    [Arguments("flush", QueuedMessageOrigin.Ui)]
+    [Arguments("flush", QueuedMessageOrigin.Channel)]
+    [Arguments("flush", QueuedMessageOrigin.Delegation)]
+    [Arguments("flush", QueuedMessageOrigin.Check)]
+    [Arguments("flush", QueuedMessageOrigin.Scheduled)]
+    [Arguments("now", QueuedMessageOrigin.Ui)]
+    [Arguments("now", QueuedMessageOrigin.Channel)]
+    [Arguments("now", QueuedMessageOrigin.Delegation)]
+    [Arguments("now", QueuedMessageOrigin.Check)]
+    [Arguments("now", QueuedMessageOrigin.Scheduled)]
+    [Arguments("send_now", QueuedMessageOrigin.Ui)]
+    [Arguments("send_now", QueuedMessageOrigin.Channel)]
+    [Arguments("send_now", QueuedMessageOrigin.Delegation)]
+    [Arguments("send_now", QueuedMessageOrigin.Check)]
+    [Arguments("send_now", QueuedMessageOrigin.Scheduled)]
+    [Arguments("expired_hold", QueuedMessageOrigin.Ui)]
+    [Arguments("expired_hold", QueuedMessageOrigin.Channel)]
+    [Arguments("expired_hold", QueuedMessageOrigin.Delegation)]
+    [Arguments("expired_hold", QueuedMessageOrigin.Check)]
+    [Arguments("expired_hold", QueuedMessageOrigin.Scheduled)]
+    public async Task Closed_rules_barrier_holds_ordinary_input_on_each_delivery_entry_point(string entryPoint, QueuedMessageOrigin origin)
     {
         await using var h = await BridgeQueueHarness.CreateAsync();
         await using var db = BridgeQueueHarness.CreateContext();
@@ -26,14 +42,14 @@ public sealed class GrokRulesQueueBarrierTests
         session.AgentKind = AgentKind.Grok;
         session.GrokRulesState = GrokRulesState.Pending;
         await db.SaveChangesAsync();
-        var id = await h.SeedPendingMessageAsync("ordinary task goal");
+        var id = await h.SeedPendingMessageAsync("ordinary task goal", origin: origin);
         if (entryPoint == "expired_hold")
             await db.SessionQueuedMessages.Where(m => m.Id == id).ExecuteUpdateAsync(s =>
                 s.SetProperty(m => m.HoldUntil, DateTime.UtcNow.AddMinutes(-1)));
         Exception? failure = null;
         try
         {
-            if (entryPoint == "now") await h.Queue.EnqueueAsync(h.SessionId, "urgent task goal", MessageSendMode.Now, CancellationToken.None);
+            if (entryPoint == "now") await h.Queue.EnqueueAsync(h.SessionId, "urgent task goal", MessageSendMode.Now, CancellationToken.None, origin: origin);
             else if (entryPoint == "send_now") await h.Queue.SendNowAsync(h.SessionId, id, CancellationToken.None);
             else await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
         }
