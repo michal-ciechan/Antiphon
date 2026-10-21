@@ -353,6 +353,144 @@ public sealed class LandNonCodeSkipTests
     }
 
     [Test]
+    public async Task C1400_UpdateRefusesCaseVariantDocsInputs()
+    {
+        string[] includes = ["../Docs/**/*.md", "../docs/**/*.MD", "../readme.md"];
+        foreach (var include in includes)
+        {
+            var root = await InitAuditRepositoryAsync($"""
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <EmbeddedResource Include="{include}" />
+                  </ItemGroup>
+                </Project>
+                """);
+            try
+            {
+                var ran = await RunAuditAsync(root, "en-US", "-Update");
+                ran.Code.ShouldBe(1, include + " " + ran.Stdout + ran.Stderr);
+                ran.Stderr.ShouldContain("cannot approve it");
+                ran.Stderr.IndexOf(include, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
+                File.Exists(AuditManifest(root)).ShouldBeFalse();
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Test]
+    public async Task C1400_UpdateRefusesImportedPropsDocsInclude()
+    {
+        var explicitImport = await InitAuditTreeAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../eng/x/shared.props" />
+                </Project>
+                """,
+            ["eng/x/shared.props"] = """
+                <Project>
+                  <ItemGroup>
+                    <Content Include="../docs/**/*.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+        });
+        try
+        {
+            var ran = await RunAuditAsync(explicitImport, "en-US", "-Update");
+            ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
+            ran.Stderr.ShouldContain("cannot approve it");
+            ran.Stderr.IndexOf("eng/x/shared.props", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
+            ran.Stderr.IndexOf("../docs/**/*.md", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
+            File.Exists(AuditManifest(explicitImport)).ShouldBeFalse();
+        }
+        finally
+        {
+            Directory.Delete(explicitImport, recursive: true);
+        }
+
+        var directoryBuild = await InitAuditTreeAsync(new Dictionary<string, string>
+        {
+            ["Directory.Build.props"] = """
+                <Project>
+                  <ItemGroup>
+                    <None Include="$(MSBuildProjectDirectory)/../docs/**/*.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                </Project>
+                """,
+        });
+        try
+        {
+            var ran = await RunAuditAsync(directoryBuild, "en-US", "-Update");
+            ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
+            ran.Stderr.ShouldContain("cannot approve it");
+            ran.Stderr.IndexOf("Directory.Build.props", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
+            ran.Stderr.IndexOf("$(MSBuildProjectDirectory)/../docs/**/*.md", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
+            File.Exists(AuditManifest(directoryBuild)).ShouldBeFalse();
+        }
+        finally
+        {
+            Directory.Delete(directoryBuild, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task C1400_UpdateRefusesPercentEncodedDocsInclude()
+    {
+        var root = await InitAuditRepositoryAsync("""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <None Include="../%64ocs/**/*.md" />
+              </ItemGroup>
+            </Project>
+            """);
+        try
+        {
+            var ran = await RunAuditAsync(root, "en-US", "-Update");
+            ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
+            ran.Stderr.ShouldContain("cannot approve it");
+            ran.Stderr.IndexOf("../%64ocs/**/*.md", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
+            File.Exists(AuditManifest(root)).ShouldBeFalse();
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task C1400_UpdateRefusesAdditionalFilesDocsInclude()
+    {
+        var root = await InitAuditRepositoryAsync("""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <AdditionalFiles Include="../docs/**/*.md" />
+              </ItemGroup>
+            </Project>
+            """);
+        try
+        {
+            var ran = await RunAuditAsync(root, "en-US", "-Update");
+            ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
+            ran.Stderr.ShouldContain("cannot approve it");
+            ran.Stderr.IndexOf("AdditionalFiles", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
+            ran.Stderr.IndexOf("../docs/**/*.md", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
+            File.Exists(AuditManifest(root)).ShouldBeFalse();
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task C1390_MissingNulFailsUnderNonInvariantCulture()
     {
         var root = await InitAuditRepositoryAsync("<Project Sdk=\"Microsoft.NET.Sdk\"></Project>\n");
@@ -528,6 +666,28 @@ public sealed class LandNonCodeSkipTests
         await GitAsync(root, "config", "user.email", "c1390@example.invalid");
         await GitAsync(root, "config", "user.name", "CARD-1390");
         await GitAsync(root, "add", "--", "server/App.csproj", "scripts/audit-land-verification-graph.ps1");
+        await GitAsync(root, "commit", "-m", "fixture");
+        return root;
+    }
+
+    private static async Task<string> InitAuditTreeAsync(IReadOnlyDictionary<string, string> files)
+    {
+        var root = Directory.CreateTempSubdirectory("c1400-audit-").FullName;
+        Directory.CreateDirectory(Path.Combine(root, "scripts"));
+        File.Copy(
+            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "audit-land-verification-graph.ps1"),
+            Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
+        foreach (var (relative, content) in files)
+        {
+            var full = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            await File.WriteAllTextAsync(full, content);
+        }
+
+        await GitAsync(root, "init", "-b", "master");
+        await GitAsync(root, "config", "user.email", "c1400@example.invalid");
+        await GitAsync(root, "config", "user.name", "CARD-1400");
+        await GitAsync(root, "add", "--", ".");
         await GitAsync(root, "commit", "-m", "fixture");
         return root;
     }
