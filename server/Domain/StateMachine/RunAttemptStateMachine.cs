@@ -34,10 +34,15 @@ public static class RunAttemptStateMachine
                 $"Invalid run attempt phase transition from {attempt.Phase} to {nextPhase}.");
         }
 
+        var leaving = attempt.Phase;
         RecordDuration(attempt, utcNow);
         attempt.Phase = nextPhase;
         attempt.PhaseStartedAt = utcNow;
         attempt.LastEventAt = utcNow;
+        if (nextPhase == RunPhase.AwaitingInput)
+            SetOpenInputWait(attempt);
+        else if (leaving == RunPhase.AwaitingInput)
+            ClearOpenInputWait(attempt);
 
         if (IsTerminal(nextPhase))
             attempt.CompletedAt = utcNow;
@@ -50,19 +55,26 @@ public static class RunAttemptStateMachine
             or RunPhase.Stalled
             or RunPhase.Canceled;
 
+    // One open input wait. A real Transition out of AwaitingInput removes it, so a later
+    // wait can arm provisionally after an earlier wait already recorded its duration.
+    internal const string OpenInputWaitKey = "OpenInputWait";
+
     public static bool HasAwaitingInputDuration(RunAttempt attempt) =>
         ReadDurations(attempt.PhaseDurationsJson).ContainsKey(RunPhase.AwaitingInput.ToString());
 
-    // Cancellation records StreamingTurn when it enters AwaitingInput. The provisional arm
-    // leaves that key and does not record AwaitingInput. A first streaming turn has neither.
-    public static bool IsProvisionalStreamingTurn(RunAttempt attempt)
+    public static bool IsProvisionalStreamingTurn(RunAttempt attempt) =>
+        attempt.Phase == RunPhase.StreamingTurn && HasOpenInputWait(attempt);
+
+    // The launch StreamingTurn has neither marker. A provisional arm still has the marker.
+    // A real re-arm has closed AwaitingInput and cleared the marker.
+    public static bool IsRearmedStreamingTurn(RunAttempt attempt)
     {
         if (attempt.Phase != RunPhase.StreamingTurn)
             return false;
 
         var durations = ReadDurations(attempt.PhaseDurationsJson);
-        return durations.ContainsKey(RunPhase.StreamingTurn.ToString())
-            && !durations.ContainsKey(RunPhase.AwaitingInput.ToString());
+        return durations.ContainsKey(OpenInputWaitKey)
+            || durations.ContainsKey(RunPhase.AwaitingInput.ToString());
     }
 
     public static void ArmProvisionalStreamingTurn(RunAttempt attempt, DateTime utcNow)
@@ -82,12 +94,21 @@ public static class RunAttemptStateMachine
         if (!IsProvisionalStreamingTurn(attempt))
         {
             throw new InvalidOperationException(
-                "Provisional input-wait restore requires a streaming turn that has not closed AwaitingInput.");
+                "Provisional input-wait restore requires the open input-wait marker.");
         }
 
         attempt.Phase = RunPhase.AwaitingInput;
         attempt.LastEventAt = attempt.PhaseStartedAt;
     }
+
+    private static bool HasOpenInputWait(RunAttempt attempt) =>
+        ReadDurations(attempt.PhaseDurationsJson).ContainsKey(OpenInputWaitKey);
+
+    private static void SetOpenInputWait(RunAttempt attempt) =>
+        WriteDurations(attempt, durations => { durations[OpenInputWaitKey] = 1; });
+
+    private static void ClearOpenInputWait(RunAttempt attempt) =>
+        WriteDurations(attempt, durations => { durations.Remove(OpenInputWaitKey); });
 
     private static void RecordDuration(RunAttempt attempt, DateTime utcNow)
     {
@@ -99,6 +120,13 @@ public static class RunAttemptStateMachine
             ? existing + elapsedMs
             : elapsedMs;
 
+        attempt.PhaseDurationsJson = JsonSerializer.Serialize(durations);
+    }
+
+    private static void WriteDurations(RunAttempt attempt, Action<Dictionary<string, double>> edit)
+    {
+        var durations = ReadDurations(attempt.PhaseDurationsJson);
+        edit(durations);
         attempt.PhaseDurationsJson = JsonSerializer.Serialize(durations);
     }
 

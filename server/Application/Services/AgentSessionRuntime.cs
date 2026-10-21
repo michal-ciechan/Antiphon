@@ -397,6 +397,9 @@ public sealed class AgentSessionRuntime
                 if (services.GetService<SessionMessageQueueService>() is { } refinementQueue)
                     await refinementQueue.ConfirmSentRefinementsAsync(sessionId, ct);
                 break;
+            case 2 when kind == TranscriptKinds.TurnEnd && row is not null:
+                await EndRearmedTurnAsync(services, sessionId, row, ct);
+                break;
             case 3 when kind == TranscriptKinds.CompactBoundary:
                 if (services.GetService<CompactionRecoveryService>() is { } recovery)
                     await recovery.OnCompactBoundaryAsync(sessionId, action.Sequence, ct);
@@ -462,12 +465,19 @@ public sealed class AgentSessionRuntime
             return;
         }
 
+        if (TranscriptKinds.IsInterruptPrompt(row.Kind, row.Text))
+        {
+            if (RunAttemptStateMachine.IsRearmedStreamingTurn(attempt)
+                && row.CreatedAt >= attempt.PhaseStartedAt)
+                await EndRearmedStreamingTurnAsync(db, card, sessionId, attempt, ct);
+            return;
+        }
+
         if (row.CreatedAt <= attempt.PhaseStartedAt)
             return;
         if (attempt.Phase == RunPhase.StreamingTurn && row.CreatedAt <= attempt.LastEventAt)
             return;
         if (IsCommandHousekeeping(row.Kind, row.Text, names)
-            || TranscriptKinds.IsInterruptPrompt(row.Kind, row.Text)
             || TranscriptKinds.IsCompactionContinuationPrompt(row.Kind, row.Text)
             || TranscriptKinds.IsTaskNotificationPrompt(row.Kind, row.Text))
             return;
@@ -490,6 +500,40 @@ public sealed class AgentSessionRuntime
             attempt.LastEventAt = now;
             await db.SaveChangesAsync(ct);
         }
+    }
+
+    private async Task EndRearmedTurnAsync(
+        IServiceProvider services, Guid sessionId, TranscriptEntry row, CancellationToken ct)
+    {
+        if (row.StopReason is not (TranscriptKinds.StopReasons.EndTurn or TranscriptKinds.StopReasons.Cancelled))
+            return;
+
+        var db = services.GetRequiredService<AppDbContext>();
+        var running = await db.AgentSessions.AsNoTracking()
+            .AnyAsync(s => s.Id == sessionId && s.Status == SessionStatus.Running, ct);
+        if (!running)
+            return;
+
+        var attempt = await db.RunAttempts
+            .Include(a => a.Card)
+            .Where(a => a.AgentSessionId == sessionId && a.CompletedAt == null)
+            .OrderByDescending(a => a.AttemptNumber)
+            .ThenByDescending(a => a.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (attempt?.Card is not { } card
+            || !RunAttemptStateMachine.IsRearmedStreamingTurn(attempt)
+            || row.CreatedAt < attempt.PhaseStartedAt)
+            return;
+
+        await EndRearmedStreamingTurnAsync(db, card, sessionId, attempt, ct);
+    }
+
+    private async Task EndRearmedStreamingTurnAsync(
+        AppDbContext db, Card card, Guid sessionId, RunAttempt attempt, CancellationToken ct)
+    {
+        RunAttemptStateMachine.Transition(attempt, RunPhase.AwaitingInput, UtcNow());
+        await db.SaveChangesAsync(ct);
+        await PublishInterruptedAttemptAsync(card, sessionId, attempt);
     }
 
     private static bool IsCommandHousekeeping(
