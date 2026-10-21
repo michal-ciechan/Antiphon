@@ -1,9 +1,16 @@
 # CARD-1385: hash the dotnet-build definition files at HEAD and compare them
 # with server/Application/Services/LandVerificationBuildGraph.manifest.txt.
-# CARD-1390: the trailing NUL check is ordinal. -Check and -Update refuse an
-# EmbeddedResource, Content, None, or Compile include that can select
-# docs/**/*.md or the root README.md. Every ls-tree row is validated, not
-# only definition rows. ASCII-only: must parse under Windows PowerShell 5.1.
+# CARD-1390: the trailing NUL check is ordinal. Every ls-tree row is validated,
+# not only definition rows.
+# CARD-1400: -Check and -Update refuse an EmbeddedResource, Content, None,
+# Compile, or AdditionalFiles include that can select docs/**/*.md or the root
+# README.md. Matching is case-insensitive after one %XX decode. An include in
+# an imported .props or .targets file, including the nearest Directory.Build.props
+# and Directory.Build.targets, is resolved from the importing project's directory.
+# $(MSBuildThisFileDirectory) stays that file's directory. An unknown $(...) is
+# refused only when the text contains the exact spellings docs and .md, or README,
+# so $(DocsDir)*.md stays accepted. Import, ReadLinesFromFile, Copy, and property
+# functions are not inspected. ASCII-only: must parse under Windows PowerShell 5.1.
 #
 # Usage:
 #   pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 [-Check]
@@ -125,16 +132,16 @@ function New-SegmentList([string]$Pattern) {
 
 function Test-SegmentMatch([string]$Glob, [string]$Text) {
     $body = [regex]::Escape($Glob).Replace('\*', '[^/]*').Replace('\?', '[^/]')
-    return [regex]::IsMatch($Text, '^' + $body + '$')
+    return [regex]::IsMatch($Text, '^' + $body + '$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
 }
 
 function Test-SegmentCanBeMarkdownFile([string]$Segment) {
     if (Test-SegmentMatch $Segment 'a.md') { return $true }
     if ($Segment.IndexOf('*') -lt 0 -and $Segment.IndexOf('?') -lt 0) {
-        return $Segment.EndsWith('.md', [System.StringComparison]::Ordinal)
+        return $Segment.EndsWith('.md', [System.StringComparison]::OrdinalIgnoreCase)
     }
     $concrete = $Segment.Replace('*', 'a').Replace('?', 'a')
-    return $concrete.EndsWith('.md', [System.StringComparison]::Ordinal)
+    return $concrete.EndsWith('.md', [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function Test-SegmentCanBeDirectory([string]$Segment) {
@@ -225,18 +232,72 @@ function Normalize-RepoPattern([string]$Combined) {
     return ($stack -join '/')
 }
 
-function Resolve-IncludePattern([string]$Root, [string]$DefinitionPath, [string]$Include) {
-    $include = $Include.Replace('\', '/')
-    $base = [System.IO.Path]::GetDirectoryName($DefinitionPath.Replace('\', '/'))
-    if ([string]::IsNullOrEmpty($base)) {
-        $base = ''
+function Get-RepoDirectory([string]$Path) {
+    $base = [System.IO.Path]::GetDirectoryName($Path.Replace('\', '/'))
+    if ([string]::IsNullOrEmpty($base)) { return '' }
+    return $base.Replace('\', '/')
+}
+
+function Test-ProjFile([string]$Path) {
+    $extension = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+    return $extension.EndsWith('proj', [System.StringComparison]::Ordinal)
+}
+
+function ConvertFrom-HexByte([string]$Hex) {
+    if ($Hex.Length -ne 2) { return -1 }
+    $n = 0
+    foreach ($c in $Hex.ToCharArray()) {
+        $d = [int]$c
+        if ($d -ge 48 -and $d -le 57) { $v = $d - 48 }
+        elseif ($d -ge 65 -and $d -le 70) { $v = $d - 55 }
+        elseif ($d -ge 97 -and $d -le 102) { $v = $d - 87 }
+        else { return -1 }
+        $n = ($n * 16) + $v
+    }
+    return $n
+}
+
+function ConvertFrom-PercentEncoding([string]$Value) {
+    $bytes = New-Object 'System.Collections.Generic.List[byte]'
+    $i = 0
+    while ($i -lt $Value.Length) {
+        $c = $Value[$i]
+        if (($c -eq '%') -and (($i + 2) -lt $Value.Length)) {
+            $n = ConvertFrom-HexByte $Value.Substring($i + 1, 2)
+            if ($n -ge 0) {
+                if ($n -eq 0) { return $null }
+                [void]$bytes.Add([byte]$n)
+                $i = $i + 3
+                continue
+            }
+        }
+        $encoded = [System.Text.Encoding]::UTF8.GetBytes([string]$c)
+        foreach ($b in $encoded) { [void]$bytes.Add([byte]$b) }
+        $i = $i + 1
+    }
+    return [System.Text.Encoding]::UTF8.GetString($bytes.ToArray())
+}
+
+function Test-PathMatchesPattern([string]$Pattern, [string]$Path) {
+    $psegs = New-SegmentList $Pattern
+    $tsegs = New-SegmentList $Path
+    return Test-GlobWalk $psegs 0 $tsegs 0
+}
+
+function Resolve-IncludePattern([string]$Root, [string]$DefinitionPath, [string]$ProjectDirectory, [string]$Include) {
+    $decoded = ConvertFrom-PercentEncoding $Include
+    if ($null -eq $decoded) { return 'escape' }
+    $include = $decoded.Replace('\', '/')
+    $fileBase = Get-RepoDirectory $DefinitionPath
+    if ([string]::IsNullOrEmpty($fileBase)) { $fileDir = './' }
+    else { $fileDir = $fileBase + '/' }
+    if ([string]::IsNullOrEmpty($ProjectDirectory)) {
         $projectDir = '.'
-        $fileDir = './'
+        $projectBase = ''
     }
     else {
-        $base = $base.Replace('\', '/')
-        $projectDir = $base
-        $fileDir = $base + '/'
+        $projectDir = $ProjectDirectory
+        $projectBase = $ProjectDirectory
     }
     $anchored = $include -match '(?i)\$\(\s*MSBuild(ThisFile|Project)Directory\s*\)'
     $expanded = [regex]::Replace($include, '(?i)\$\(\s*MSBuildThisFileDirectory\s*\)', (ConvertTo-RegexReplacement $fileDir))
@@ -253,10 +314,111 @@ function Resolve-IncludePattern([string]$Root, [string]$DefinitionPath, [string]
     elseif ($anchored) {
         if ($expanded.StartsWith('./')) { $expanded = $expanded.Substring(2) }
     }
-    elseif ($base.Length -gt 0) {
-        $expanded = $base + '/' + $expanded
+    elseif ($projectBase.Length -gt 0) {
+        $expanded = $projectBase + '/' + $expanded
     }
     return Normalize-RepoPattern $expanded
+}
+
+function Test-ResolvedIncludeRefused([string]$Resolved) {
+    if ($Resolved -eq 'forbidden-property' -or $Resolved -eq 'escape') { return $true }
+    if ($Resolved -eq 'outside' -or $Resolved -eq 'unresolved') { return $false }
+    if ((Test-PatternMatchesReadme $Resolved) -or (Test-PatternSelectsDocsMarkdown $Resolved)) { return $true }
+    return $false
+}
+
+function Find-NearestDirectoryBuild($Known, [string]$ProjectDirectory, [string]$FileName) {
+    $dir = $ProjectDirectory
+    while ($true) {
+        if ([string]::IsNullOrEmpty($dir)) { $candidate = $FileName }
+        else { $candidate = $dir + '/' + $FileName }
+        if ($Known.ContainsKey($candidate)) { return $candidate }
+        if ([string]::IsNullOrEmpty($dir)) { return $null }
+        $slash = $dir.LastIndexOf('/')
+        if ($slash -lt 0) { $dir = '' }
+        else { $dir = $dir.Substring(0, $slash) }
+    }
+}
+
+function Get-ResolvedImportPaths([string]$Root, [string]$FromFile, [string]$ProjectDirectory, [string]$ProjectAttr, $Known) {
+    $decoded = ConvertFrom-PercentEncoding $ProjectAttr
+    if ($null -eq $decoded) {
+        Exit-Audit 1 (Format-ApprovalRefusal $FromFile 'Import' $ProjectAttr)
+    }
+    $text = $decoded.Replace('\', '/')
+    $fromDir = Get-RepoDirectory $FromFile
+    if ([string]::IsNullOrEmpty($fromDir)) { $fileDir = './' }
+    else { $fileDir = $fromDir + '/' }
+    if ([string]::IsNullOrEmpty($ProjectDirectory)) { $projectDir = '.' }
+    else { $projectDir = $ProjectDirectory }
+    $text = [regex]::Replace($text, '(?i)\$\(\s*MSBuildThisFileDirectory\s*\)', (ConvertTo-RegexReplacement $fileDir))
+    $text = [regex]::Replace($text, '(?i)\$\(\s*MSBuildProjectDirectory\s*\)', (ConvertTo-RegexReplacement $projectDir))
+    if ($text.IndexOf('$(') -ge 0) { return $null }
+    if ($text -match '^[A-Za-z]:/' -or $text.StartsWith('/')) {
+        $relative = ConvertTo-RepoRelative $text $Root
+        if ($null -eq $relative) { return $null }
+        $text = $relative
+    }
+    elseif (-not [string]::IsNullOrEmpty($fromDir)) {
+        $text = $fromDir + '/' + $text
+    }
+    $norm = Normalize-RepoPattern $text
+    if ($norm -eq 'outside' -or $norm -eq 'escape') { return $null }
+    $matches = New-Object 'System.Collections.Generic.List[string]'
+    if (($norm.IndexOf('*') -ge 0) -or ($norm.IndexOf('?') -ge 0)) {
+        foreach ($candidate in @($Known.Keys)) {
+            if (Test-PathMatchesPattern $norm ([string]$candidate)) { [void]$matches.Add([string]$candidate) }
+        }
+    }
+    elseif ($Known.ContainsKey($norm)) {
+        [void]$matches.Add($norm)
+    }
+    return ,$matches.ToArray()
+}
+
+function Add-ImporterBase($Map, [string]$Path, [string]$ProjectDirectory) {
+    if (-not $Map.ContainsKey($Path)) {
+        $Map[$Path] = New-Object 'System.Collections.Generic.List[string]'
+    }
+    $list = $Map[$Path]
+    if (-not $list.Contains($ProjectDirectory)) { [void]$list.Add($ProjectDirectory) }
+}
+
+function Add-ImportQueue($Doc, [string]$FromFile, [string]$ProjectDirectory, $Queue, $Known, [string]$Root) {
+    foreach ($node in $Doc.GetElementsByTagName('*')) {
+        if ($node.LocalName -ne 'Import') { continue }
+        $project = $node.GetAttribute('Project')
+        if ([string]::IsNullOrWhiteSpace($project)) { continue }
+        $targets = @(Get-ResolvedImportPaths $Root $FromFile $ProjectDirectory $project $Known)
+        foreach ($target in $targets) {
+            if ([string]::IsNullOrEmpty([string]$target)) { continue }
+            $Queue.Enqueue([string]$target)
+        }
+    }
+}
+
+function Get-ImportedProjectDirectories([string]$Root, $Known) {
+    $bases = @{}
+    foreach ($path in @($Known.Keys)) {
+        if (-not (Test-ProjFile ([string]$path))) { continue }
+        $projectDir = Get-RepoDirectory ([string]$path)
+        $queue = New-Object 'System.Collections.Generic.Queue[string]'
+        $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+        foreach ($name in @('Directory.Build.props', 'Directory.Build.targets')) {
+            $hit = Find-NearestDirectoryBuild $Known $projectDir $name
+            if ($null -ne $hit) { $queue.Enqueue([string]$hit) }
+        }
+        Add-ImportQueue $Known[$path] ([string]$path) $projectDir $queue $Known $Root
+        while ($queue.Count -gt 0) {
+            $current = [string]$queue.Dequeue()
+            if (-not $seen.Add($current)) { continue }
+            Add-ImporterBase $bases $current $projectDir
+            if ($Known.ContainsKey($current)) {
+                Add-ImportQueue $Known[$current] $current $projectDir $queue $Known $Root
+            }
+        }
+    }
+    return $bases
 }
 
 function Format-ApprovalRefusal([string]$Path, [string]$Item, [string]$Include) {
@@ -297,8 +459,9 @@ function Get-GitBytes([string]$Root, [string]$Arguments) {
 }
 
 function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows) {
-    $names = @('EmbeddedResource', 'Content', 'None', 'Compile')
+    $names = @('EmbeddedResource', 'Content', 'None', 'Compile', 'AdditionalFiles')
     $utf = New-Object System.Text.UTF8Encoding $false
+    $known = @{}
     foreach ($row in $Rows) {
         $tab = $row.IndexOf([char]9)
         $meta = $row.Substring(0, $tab).Split(' ')
@@ -315,28 +478,36 @@ function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows) {
         catch {
             Exit-Audit 1 ('definition file is not readable project XML and cannot be approved: ' + $path)
         }
-        foreach ($node in $doc.GetElementsByTagName('*')) {
-            $local = $node.LocalName
-            $known = $false
-            foreach ($name in $names) {
-                if ($local -eq $name) { $known = $true }
+        $known[$path] = $doc
+    }
+    $bases = Get-ImportedProjectDirectories $Root $known
+    foreach ($path in @($known.Keys)) {
+        $doc = $known[$path]
+        $directories = New-Object 'System.Collections.Generic.List[string]'
+        if (Test-ProjFile ([string]$path)) { [void]$directories.Add((Get-RepoDirectory ([string]$path))) }
+        if ($bases.ContainsKey([string]$path)) {
+            foreach ($dir in $bases[[string]$path]) {
+                if (-not $directories.Contains([string]$dir)) { [void]$directories.Add([string]$dir) }
             }
-            if (-not $known) { continue }
+        }
+        if ($directories.Count -eq 0) { [void]$directories.Add((Get-RepoDirectory ([string]$path))) }
+        foreach ($node in $doc.GetElementsByTagName('*')) {
+            $local = [string]$node.LocalName
+            $watched = $false
+            foreach ($name in $names) {
+                if ($local.Equals($name, [System.StringComparison]::OrdinalIgnoreCase)) { $watched = $true }
+            }
+            if (-not $watched) { continue }
             $include = $node.GetAttribute('Include')
             if ([string]::IsNullOrWhiteSpace($include)) { continue }
             foreach ($segment in $include.Split(';')) {
                 $segment = $segment.Trim()
                 if ($segment.Length -eq 0) { continue }
-                $resolved = Resolve-IncludePattern $Root $path $segment
-                $refuse = $false
-                if ($resolved -eq 'forbidden-property' -or $resolved -eq 'escape') { $refuse = $true }
-                elseif ($resolved -ne 'outside' -and $resolved -ne 'unresolved') {
-                    if ((Test-PatternMatchesReadme $resolved) -or (Test-PatternSelectsDocsMarkdown $resolved)) {
-                        $refuse = $true
+                foreach ($directory in $directories) {
+                    $resolved = Resolve-IncludePattern $Root ([string]$path) ([string]$directory) $segment
+                    if (Test-ResolvedIncludeRefused ([string]$resolved)) {
+                        Exit-Audit 1 (Format-ApprovalRefusal ([string]$path) $local $segment)
                     }
-                }
-                if ($refuse) {
-                    Exit-Audit 1 (Format-ApprovalRefusal $path $local $segment)
                 }
             }
         }
