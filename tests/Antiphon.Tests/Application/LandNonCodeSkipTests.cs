@@ -491,6 +491,141 @@ public sealed class LandNonCodeSkipTests
     }
 
     [Test]
+    public async Task C1400_RepairAnchoredImportRefusesDocsInclude()
+    {
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="$(MSBuildThisFileDirectory)../eng/x/shared.props" />
+                </Project>
+                """,
+            ["eng/x/shared.props"] = """
+                <Project>
+                  <ItemGroup>
+                    <Content Include="../docs/**/*.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "eng/x/shared.props", "../docs/**/*.md");
+    }
+
+    [Test]
+    public async Task C1400_RepairNestedAnchoredImportRefusesDocsInclude()
+    {
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="$(MSBuildProjectDirectory)/../eng/mid.props" />
+                </Project>
+                """,
+            ["eng/mid.props"] = """
+                <Project>
+                  <Import Project="$(MSBuildThisFileDirectory)x/shared.props" />
+                </Project>
+                """,
+            ["eng/x/shared.props"] = """
+                <Project>
+                  <ItemGroup>
+                    <Content Include="../docs/**/*.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "eng/x/shared.props", "../docs/**/*.md");
+    }
+
+    [Test]
+    public async Task C1400_RepairRepoRootPropertyImportRefuses()
+    {
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["build/x.props"] = """
+                <Project>
+                  <ItemGroup>
+                    <None Include="../docs/*.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+            ["B/B.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="$(RepoRoot)build/x.props" />
+                </Project>
+                """,
+            ["src/App/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../../build/x.props" />
+                </Project>
+                """,
+        }, "cannot approve it");
+    }
+
+    [Test]
+    public async Task C1400_RepairSplitAnchoredImportRefusesDocsInclude()
+    {
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["build/x.props"] = """
+                <Project>
+                  <ItemGroup>
+                    <None Include="../docs/*.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+            ["B/B.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="$(MSBuildThisFileDirectory)../build/x.props" />
+                </Project>
+                """,
+            ["src/App/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../../build/x.props" />
+                </Project>
+                """,
+        }, "build/x.props", "../docs/*.md");
+    }
+
+    [Test]
+    public async Task C1400_RepairOwnDirectoryStillRefusesWhenImported()
+    {
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["build/x.props"] = """
+                <Project>
+                  <ItemGroup>
+                    <None Include="../docs/*.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+            ["src/App/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../../build/x.props" />
+                </Project>
+                """,
+        }, "build/x.props", "../docs/*.md");
+    }
+
+    [Test]
+    public async Task C1400_RepairUnresolvedImportRefuses()
+    {
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["safe/note.props"] = """
+                <Project>
+                  <ItemGroup>
+                    <None Include="notes.txt" />
+                  </ItemGroup>
+                </Project>
+                """,
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="$(RepoRoot)safe/note.props" />
+                </Project>
+                """,
+        }, "$(RepoRoot)safe/note.props");
+    }
+
+    [Test]
     public async Task C1390_MissingNulFailsUnderNonInvariantCulture()
     {
         var root = await InitAuditRepositoryAsync("<Project Sdk=\"Microsoft.NET.Sdk\"></Project>\n");
@@ -652,6 +787,24 @@ public sealed class LandNonCodeSkipTests
 
     private static string AuditManifest(string root) => Path.Combine(root, "server", "Application", "Services",
         "LandVerificationBuildGraph.manifest.txt");
+
+    private static async Task AssertUpdateRefusesAsync(IReadOnlyDictionary<string, string> files, params string[] needles)
+    {
+        var root = await InitAuditTreeAsync(files);
+        try
+        {
+            var ran = await RunAuditAsync(root, "en-US", "-Update");
+            ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
+            ran.Stderr.ShouldContain("cannot approve it");
+            foreach (var needle in needles)
+                ran.Stderr.IndexOf(needle, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
+            File.Exists(AuditManifest(root)).ShouldBeFalse();
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 
     private static async Task<string> InitAuditRepositoryAsync(string project)
     {
