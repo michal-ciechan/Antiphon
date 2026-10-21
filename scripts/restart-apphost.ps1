@@ -32,12 +32,20 @@
 .PARAMETER GracefulStopTimeoutSec
     Seconds to wait for the server PID after POST /api/operator/shutdown returns 202 (default 20).
 .PARAMETER SkipGracefulStop   Skip the graceful POST and go straight to the force-kill.
+.PARAMETER StopOnly
+    Run the graceful stop and the AppHost port free, then exit before dev-aspire.ps1.
+    Postgres and the session runner on 17204 are not touched. The restart lock is
+    released on the way out because no launch child is left behind.
+.PARAMETER WhatIf
+    With -StopOnly, print the stop and do not POST, take a lock, or launch.
+    Without -StopOnly, refuse (exit 3) and kill nothing.
 
 .OUTPUTS
     Exit codes:
-      0  restarted, dashboard up, /health 200, and /api/version SHA matches the intended HEAD
+      0  restarted, dashboard up, /health 200, and /api/version SHA matches the intended HEAD;
+         also -StopOnly finished and did not relaunch
       1  failed (build failed, or did not come up within TimeoutSec)
-      3  REFUSED - a linked/unverifiable worktree root, SHA admission failure, or another restart or launch is in flight; nothing was killed
+      3  REFUSED - a linked/unverifiable worktree root, SHA admission failure, another restart or launch is in flight, or -WhatIf without -StopOnly; nothing was killed
       4  Aspire's DCP dependency check timed out (see the printed verdict)
       5  server build unverified - health succeeded but /api/version SHA did not match; lock retained, child left running
 .PARAMETER ExpectedServerSha
@@ -57,7 +65,9 @@ param(
     [switch]$AllowWorktree,
     [string]$ExpectedServerSha,
     [int]$GracefulStopTimeoutSec = 20,
-    [switch]$SkipGracefulStop
+    [switch]$SkipGracefulStop,
+    [switch]$StopOnly,
+    [switch]$WhatIf
 )
 
 $ErrorActionPreference = 'Stop'
@@ -103,6 +113,32 @@ function Read-PidFile([string]$file) {
         if ($v -match '^\d+$') { return [int]$v }
     }
     return $null
+}
+
+if ($WhatIf -and -not $StopOnly) {
+    Write-Host "REFUSED: -WhatIf is only valid with -StopOnly. A restart was not started." -ForegroundColor Yellow
+    Write-Host "  Nothing was killed." -ForegroundColor DarkGray
+    exit 3
+}
+if ($StopOnly -and $WhatIf) {
+    $whatIfLaunch = $null
+    $whatIfRestart = $null
+    if (Test-Path -LiteralPath $logDir) {
+        $whatIfLaunch = Test-AppHostLockActive -Path $launchLock -MaxAgeMinutes $LockMaxAgeMinutes -Label 'launch lock'
+        $whatIfRestart = Test-AppHostLockActive -Path $restartLock -MaxAgeMinutes $LockMaxAgeMinutes -Label 'restart lock'
+    }
+    if ($whatIfLaunch -or $whatIfRestart) {
+        $why = $whatIfLaunch
+        if (-not $why) { $why = $whatIfRestart }
+        Write-Host "REFUSED: a launch or restart is in flight - $why" -ForegroundColor Yellow
+        Write-Host "  Nothing was killed." -ForegroundColor DarkGray
+        exit 3
+    }
+    Write-Host "STOP-ONLY WHATIF: would POST /api/operator/shutdown, free AppHost ports, and exit before dev-aspire.ps1."
+    Write-Host "  ports: $($appHostPorts -join ',')"
+    Write-Host "  preserving session-runner port $sessionRunnerPort and antiphon-postgres."
+    Write-Host "  Nothing was stopped. Nothing was launched."
+    exit 0
 }
 
 Write-Host "Restarting Antiphon AppHost..." -ForegroundColor Cyan
@@ -220,6 +256,12 @@ try {
     $gitIndexLockAfterKill = Get-AppHostGitIndexLock -SourceRoot $root
     if ($gitIndexLockAfterKill -and $gitIndexLockAfterKill.LastWriteTimeUtc -gt $restartBeganUtc) {
         Write-Host "NOTE: git index lock appeared during this restart's kill (mtime after script start); probably orphaned by this restart's kill. $($gitIndexLockAfterKill.Path). Remove it with: Remove-Item '$($gitIndexLockAfterKill.Path)'. Never remove a lock while a git process older than it is running." -ForegroundColor Yellow
+    }
+
+    if ($StopOnly) {
+        Write-Host "STOP-ONLY: AppHost stopped. Relaunch skipped."
+        Write-Host "  preserving session-runner port $sessionRunnerPort and antiphon-postgres."
+        exit 0
     }
 
     # 4) Reset launch signals so the wait below is not fooled by stale state.
