@@ -28,6 +28,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
     private readonly object _gate = new();
     private readonly Dictionary<string, Ticket> _tickets = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RunnerSlot> _slots = new(StringComparer.Ordinal);
+    private readonly object _desktopGate = new();
+    private readonly DesktopCapabilitiesSnapshot _desktopSnapshot = new();
     private readonly ILogger _logger;
     private readonly Antiphon.Server.Application.Services.RemoteSpillCourier? _spills;
     private readonly IRunnerEligibilityObserver? _observer;
@@ -746,27 +748,29 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
     {
         if (string.IsNullOrWhiteSpace(runnerId) || RunnerRequestIntent.IsDesktopAlias(runnerId))
         {
-            RunnerCapabilitiesDto? caps = null;
+            RunnerCapabilitiesProbe probe;
             try
             {
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                timeout.CancelAfter(TimeSpan.FromSeconds(2));
-                caps = await _local.GetCapabilitiesAsync(timeout.Token);
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2), _clock);
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+                probe = await _local.ProbeCapabilitiesAsync(timeout.Token);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                caps = null;
+                probe = new RunnerCapabilitiesProbe(null, "deadline", false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                caps = null;
+                var (reason, definite) = RunnerCapabilitiesFailure.Classify(ex);
+                probe = new RunnerCapabilitiesProbe(null, reason, definite);
             }
 
+            var (caps, observedAt) = FoldDesktopProbe(probe);
             var platform = RunnerPlatformWire.Normalize(caps?.Platform);
             var features = caps?.Features ?? [];
             return new RunnerDescriptor(
                 RunnerPlatformWire.DesktopId, "Desktop", platform,
-                platform is null ? null : _clock.GetUtcNow(),
+                platform is null ? null : observedAt,
                 caps is not null, caps is not null && features.Contains(RunnerPlatformWire.Feature),
                 platform is null, null, caps);
         }
@@ -782,6 +786,76 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             slot.Id, display, observed,
             observed is null ? null : slot.PlatformObservedAt ?? live?.LastHeartbeatUtc ?? _clock.GetUtcNow(),
             eligible, eligible, !eligible, eligible ? live?.Capacity : null, LatestCapabilities(slot, live));
+    }
+
+    /// <summary>
+    /// CARD-1424 D-1..D-5: folds one desktop probe into the last-known-good snapshot. A success
+    /// replaces it (observed now). An ambiguous failure serves it while it is at most
+    /// <c>DesktopCapabilitiesGraceSeconds</c> old; a definite failure marks the runner absent until
+    /// the next success. Null capabilities mean the row is stale.
+    /// </summary>
+    private (RunnerCapabilitiesDto? Capabilities, DateTimeOffset? ObservedAt) FoldDesktopProbe(RunnerCapabilitiesProbe probe)
+    {
+        var now = _clock.GetUtcNow();
+        Action? log = null;
+        RunnerCapabilitiesDto? served;
+        DateTimeOffset? observedAt;
+        lock (_desktopGate)
+        {
+            var snapshot = _desktopSnapshot;
+            if (probe.Capabilities is { } fresh)
+            {
+                if (snapshot.ConsecutiveFailures > 0)
+                {
+                    var failures = snapshot.ConsecutiveFailures;
+                    var seconds = (long)(now - snapshot.StreakStartedAt).TotalSeconds;
+                    log = () => _logger.LogInformation(
+                        "Desktop runner capabilities recovered after {Failures} failed probes in {Seconds}s", failures, seconds);
+                }
+
+                snapshot.LastGood = fresh;
+                snapshot.ObservedAt = now;
+                snapshot.Absent = false;
+                snapshot.ConsecutiveFailures = 0;
+                snapshot.LastReason = null;
+                snapshot.LastServing = null;
+                served = fresh;
+                observedAt = now;
+            }
+            else
+            {
+                var reason = probe.FailureReason ?? RunnerCapabilitiesProbe.NoAnswer;
+                if (probe.Definite)
+                    snapshot.Absent = true;
+                double? age = snapshot.LastGood is null ? null : (now - snapshot.ObservedAt).TotalSeconds;
+                var serving = !snapshot.Absent && _settings.DesktopCapabilitiesGraceSeconds > 0
+                    && age is { } a && a <= _settings.DesktopCapabilitiesGraceSeconds;
+                if (snapshot.ConsecutiveFailures++ == 0)
+                    snapshot.StreakStartedAt = now;
+                var write = snapshot.ConsecutiveFailures == 1
+                    || !string.Equals(reason, snapshot.LastReason, StringComparison.Ordinal)
+                    || (!serving && snapshot.LastServing != false)
+                    || (now - snapshot.LastLoggedAt).TotalSeconds >= _settings.DesktopCapabilitiesFailureLogSeconds;
+                snapshot.LastReason = reason;
+                snapshot.LastServing = serving;
+                if (write)
+                {
+                    snapshot.LastLoggedAt = now;
+                    var failures = snapshot.ConsecutiveFailures;
+                    var ageSeconds = age is { } seen ? (long?)seen : null;
+                    var state = serving ? "last-good" : "stale";
+                    log = () => _logger.LogWarning(
+                        "Desktop runner capabilities probe failed reason {Reason} consecutive {Failures} snapshotAgeSeconds {AgeSeconds} serving {Serving}",
+                        reason, failures, ageSeconds, state);
+                }
+
+                served = serving ? snapshot.LastGood : null;
+                observedAt = serving ? snapshot.ObservedAt : null;
+            }
+        }
+
+        log?.Invoke();
+        return (served, observedAt);
     }
 
     private bool IsCurrent(PhoneHomeLiveConnection connection)
@@ -860,6 +934,19 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         }
 
         return slot.Live;
+    }
+
+    /// <summary>CARD-1424 D-1: the desktop's last good capabilities and the current failure streak. Guarded by <c>_desktopGate</c>.</summary>
+    private sealed class DesktopCapabilitiesSnapshot
+    {
+        public RunnerCapabilitiesDto? LastGood;
+        public DateTimeOffset ObservedAt;
+        public bool Absent;
+        public int ConsecutiveFailures;
+        public string? LastReason;
+        public bool? LastServing;
+        public DateTimeOffset StreakStartedAt;
+        public DateTimeOffset LastLoggedAt;
     }
 
     private sealed class RunnerSlot
