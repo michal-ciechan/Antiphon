@@ -359,11 +359,15 @@ public class AgentSystemPromptLaunchTests
         await SetPreambleAsync(h, Template);
         var chatId = await h.BindChannelAsync();
         const string channelBody = "[Telegram \"AZ Care\" — Mike 21:03] Give me message to Phil";
+        var channelRowId = Guid.NewGuid();
+        // CARD-0584 (3dabf80a6): the queue types a Channel row behind its wire marker
+        // (ChannelPromptCorrelation.Mark, ChannelPromptCorrelation.cs:16).
+        var markedChannelBody = ChannelPromptCorrelation.Mark(channelRowId, channelBody);
         await using (var db = CreateContext())
         {
             db.SessionQueuedMessages.Add(new SessionQueuedMessage
             {
-                Id = Guid.NewGuid(),
+                Id = channelRowId,
                 AgentSessionId = h.SessionId,
                 Body = channelBody,
                 Status = QueuedMessageStatus.Pending,
@@ -383,15 +387,15 @@ public class AgentSystemPromptLaunchTests
             {
                 if (a.StartedSessionId is not Guid sessionId)
                     return;
-                await BridgeQueueHarness.InsertEntryAsync(
-                    sessionId, TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow);
+                await StoreVisibleAsync(h, sessionId, () => BridgeQueueHarness.InsertEntryAsync(
+                    sessionId, TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow));
             };
         });
 
         await StartAsync(h, fresh: false);
 
         var adapter = Factory(h).Created.ShouldHaveSingleItem();
-        adapter.SubmittedBodies.ShouldBe([channelBody],
+        adapter.SubmittedBodies.ShouldBe([markedChannelBody],
             "the launch note must not type until the owed channel turn ends");
 
         await using (var db = CreateContext())
@@ -403,11 +407,12 @@ public class AgentSystemPromptLaunchTests
             note.Status.ShouldBe(QueuedMessageStatus.Pending);
         }
 
-        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await StoreVisibleAsync(h, h.SessionId,
+            () => h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn"));
         await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
 
         adapter.SubmittedBodies.ShouldBe(
-            [channelBody, ChannelPreamble.WithSessionTag(ChannelPreamble.RestartResumeBody, h.SessionId)]);
+            [markedChannelBody, ChannelPreamble.WithSessionTag(ChannelPreamble.RestartResumeBody, h.SessionId)]);
         await using (var db = CreateContext())
         {
             var note = await db.SessionQueuedMessages.SingleAsync(m =>
@@ -779,6 +784,19 @@ public class AgentSystemPromptLaunchTests
         await using var db = CreateContext();
         await db.Agents.Where(a => a.Id == h.AgentId)
             .ExecuteUpdateAsync(u => u.SetProperty(a => a.SystemPromptAppend, template));
+    }
+
+    /// <summary>
+    /// A raw transcript insert made visible to the loaded working-state store: the queue reads
+    /// working through SessionStateStore (SessionMessageQueueService.ReadWorkingAsync), the same
+    /// lease-then-reconcile shape as <see cref="BridgeQueueHarness.MarkWorkingAsync"/>.
+    /// </summary>
+    private static async Task StoreVisibleAsync(BridgeQueueHarness h, Guid sessionId, Func<Task> insert)
+    {
+        using var lease = await h.Provider.GetRequiredService<SessionStateStore>()
+            .BeginWriteAsync(sessionId, CancellationToken.None);
+        await insert();
+        await lease.ReconcileAsync(reset: false, CancellationToken.None);
     }
 
     private static Task EndSessionAsync(BridgeQueueHarness h, SessionStatus status) =>
