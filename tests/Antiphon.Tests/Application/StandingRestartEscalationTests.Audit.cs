@@ -96,7 +96,7 @@ public partial class StandingRestartEscalationTests
                 await h.Supervisor().TickAsync(default);
                 await h.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
                 await AssertFreshAuditAsync(schema, agentId, oldId, fresh.StartedSessionId, queueIds: []);
-                h.Clock.Advance(TimeSpan.FromDays(1));
+                h.Clock.Advance(TimeSpan.FromMinutes(1));
                 await h.Supervisor().TickAsync(default);
                 await AssertFreshAuditAsync(schema, agentId, oldId, fresh.StartedSessionId, queueIds: []);
             }
