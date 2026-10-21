@@ -882,8 +882,14 @@ public class AgentControlServiceIntegrationTests
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
             var sessionId = Guid.Parse(first.PersistentSessionId!);
 
-            // The turn that never ended: activity with nothing ending it.
-            await SeedTranscriptEntryAsync(sessionId, 1, TranscriptKinds.AssistantText, "half-finished work");
+            // The turn that never ended: activity with nothing ending it. Seeded under a store
+            // lease and reconciled, so the loaded working state sees it (CARD-1259).
+            using (var lease = await harness.Provider.GetRequiredService<SessionStateStore>()
+                .BeginWriteAsync(sessionId, CancellationToken.None))
+            {
+                await SeedTranscriptEntryAsync(sessionId, 1, TranscriptKinds.AssistantText, "half-finished work");
+                await lease.ReconcileAsync(reset: false, CancellationToken.None);
+            }
 
             await MarkSessionEndedAsync(first.PersistentSessionId!, SessionStatus.Stopped);
 
