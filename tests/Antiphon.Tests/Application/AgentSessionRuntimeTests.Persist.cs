@@ -450,6 +450,44 @@ public partial class AgentSessionRuntimeTests
         f.Logs.ShouldNotContain(l => l.Contains("Failed to persist"));
     }
 
+    [Test]
+    public async Task C1403_persist_prelude_keeps_dedup_and_rebase()
+    {
+        // CARD-1403 S3 / V-8: the one-command prelude must give the same dedup and rebase answers
+        // as the four reads it replaced.
+        await using var f = await PersistFixture.CreateAsync();
+        var batch = new[]
+        {
+            TranscriptEvent(f.SessionId, 1, TranscriptKinds.UserPrompt, "c1403-a", "prompt"),
+            TranscriptEvent(f.SessionId, 2, TranscriptKinds.AssistantText, "c1403-b", "answer"),
+            TranscriptEvent(f.SessionId, 3, TranscriptKinds.ToolCall, "c1403-b", "same uuid, other kind"),
+            TranscriptEvent(f.SessionId, 4, TranscriptKinds.ToolResult, "unused", "four") with { Uuid = null },
+            TranscriptEvent(f.SessionId, 5, TranscriptKinds.ToolResult, "unused", "five") with { Uuid = null },
+        };
+        (await f.Runtime.PersistTranscriptAsync(f.SessionId, batch)).LastStoredSeq.ShouldBe(5);
+        (await f.Runtime.PersistTranscriptAsync(f.SessionId, batch)).LastStoredSeq.ShouldBeNull("a replay adds nothing");
+        (await f.RowsAsync()).Select(r => r.Sequence).ShouldBe([1L, 2L, 3L, 4L, 5L]);
+
+        // A relaunched tailer restarts its numbering: new UUIDs are rebased past the stored max, a
+        // null-UUID row whose sequence is already stored is a duplicate, and a new one is rebased.
+        var relaunch = new[]
+        {
+            TranscriptEvent(f.SessionId, 1, TranscriptKinds.UserPrompt, "c1403-r1", "relaunch prompt"),
+            TranscriptEvent(f.SessionId, 2, TranscriptKinds.AssistantText, "c1403-r2", "relaunch answer"),
+            TranscriptEvent(f.SessionId, 5, TranscriptKinds.ToolResult, "unused", "stored five") with { Uuid = null },
+            TranscriptEvent(f.SessionId, 6, TranscriptKinds.ToolResult, "unused", "late six") with { Uuid = null },
+        };
+        (await f.Runtime.PersistTranscriptAsync(f.SessionId, relaunch)).LastStoredSeq.ShouldBe(8);
+        (await f.Runtime.PersistTranscriptAsync(f.SessionId, relaunch)).LastStoredSeq.ShouldBeNull();
+
+        var rows = await f.RowsAsync();
+        rows.Select(r => r.Sequence).ShouldBe([1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L]);
+        rows.Select(r => r.Text).ShouldBe(["prompt", "answer", "same uuid, other kind", "four", "five",
+            "relaunch prompt", "relaunch answer", "late six"]);
+        rows.Count(r => r.Uuid == "c1403-b").ShouldBe(2);
+        f.Logs.ShouldNotContain(l => l.Contains("Failed to persist"));
+    }
+
     private sealed class PersistFixture(
         ServiceProvider provider,
         string logPath,
