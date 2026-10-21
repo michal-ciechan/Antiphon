@@ -446,14 +446,28 @@ function Invoke-AntiphonNightlyTests {
             $npmCi = Invoke-NightlyOwnedProcess -FilePath $npmCiLaunch.FilePath -ArgumentList $npmCiLaunch.ArgumentList `
                 -WorkingDirectory $clientDir -TimeoutMilliseconds 600000 -LogPath (Join-Path $LogRoot 'npm-ci.log')
             $buildResults += [ordered]@{ name = 'npm ci'; exitCode = $npmCi.ExitCode; timedOut = $npmCi.TimedOut; result = $(if ($npmCi.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
-            if ($npmCi.ExitCode -ne 0) { $npmOk = $false; $overallFailed = $true; Set-NightlyOutcome BUILD; $coverageComplete = $false }
+            if ($npmCi.ExitCode -ne 0) {
+                $npmOk = $false
+                $overallFailed = $true
+                $testsPassed = $false
+                Set-NightlyOutcome BUILD
+                $coverageComplete = $false
+                $reasons += 'prerequisite-failed:npm ci'
+            }
 
             if ($npmOk) {
                 $npmBuildLaunch = Get-NightlyNpmLaunch -NpmArguments @('run', 'build')
                 $npmBuild = Invoke-NightlyOwnedProcess -FilePath $npmBuildLaunch.FilePath -ArgumentList $npmBuildLaunch.ArgumentList `
                     -WorkingDirectory $clientDir -TimeoutMilliseconds 600000 -LogPath (Join-Path $LogRoot 'npm-build.log')
                 $buildResults += [ordered]@{ name = 'npm run build'; exitCode = $npmBuild.ExitCode; timedOut = $npmBuild.TimedOut; result = $(if ($npmBuild.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
-                if ($npmBuild.ExitCode -ne 0) { $npmOk = $false; $overallFailed = $true; Set-NightlyOutcome BUILD; $coverageComplete = $false }
+                if ($npmBuild.ExitCode -ne 0) {
+                    $npmOk = $false
+                    $overallFailed = $true
+                    $testsPassed = $false
+                    Set-NightlyOutcome BUILD
+                    $coverageComplete = $false
+                    $reasons += 'prerequisite-failed:npm run build'
+                }
                 else {
                     $dist = Join-Path $clientDir (Join-Path 'dist' 'index.html')
                     $receipt = Join-Path $LogRoot 'client-build-receipt.json'
@@ -466,16 +480,33 @@ function Invoke-AntiphonNightlyTests {
                 $lint = Invoke-NightlyOwnedProcess -FilePath $lintLaunch.FilePath -ArgumentList $lintLaunch.ArgumentList `
                     -WorkingDirectory $clientDir -TimeoutMilliseconds 600000 -LogPath (Join-Path $LogRoot 'client-lint.log')
                 $buildResults += [ordered]@{ name = 'client lint'; exitCode = $lint.ExitCode; timedOut = $lint.TimedOut; result = $(if ($lint.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
-                if ($lint.ExitCode -ne 0) { $lintOk = $false; $overallFailed = $true; Set-NightlyOutcome BUILD; $coverageComplete = $false }
+                if ($lint.ExitCode -ne 0) {
+                    $lintOk = $false
+                    $overallFailed = $true
+                    $testsPassed = $false
+                    Set-NightlyOutcome BUILD
+                    $coverageComplete = $false
+                    $reasons += 'prerequisite-failed:client lint'
+                }
             }
 
-            $dotnetBuild = Invoke-NightlyOwnedProcess -FilePath 'dotnet' -ArgumentList @('build', 'Antiphon.sln', '-c', 'Debug', '--nologo') `
-                -WorkingDirectory $RepoRoot -TimeoutMilliseconds 1200000 -LogPath (Join-Path $LogRoot 'dotnet-build.log')
-            $buildResults += [ordered]@{ name = 'dotnet build Antiphon.sln'; exitCode = $dotnetBuild.ExitCode; timedOut = $dotnetBuild.TimedOut; result = $(if ($dotnetBuild.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
-            if ($dotnetBuild.ExitCode -ne 0) { $dotnetOk = $false; $overallFailed = $true; Set-NightlyOutcome BUILD; $coverageComplete = $false }
+            if ($npmOk -and $lintOk) {
+                $dotnetBuild = Invoke-NightlyOwnedProcess -FilePath 'dotnet' -ArgumentList @('build', 'Antiphon.sln', '-c', 'Debug', '--nologo') `
+                    -WorkingDirectory $RepoRoot -TimeoutMilliseconds 1200000 -LogPath (Join-Path $LogRoot 'dotnet-build.log')
+                $buildResults += [ordered]@{ name = 'dotnet build Antiphon.sln'; exitCode = $dotnetBuild.ExitCode; timedOut = $dotnetBuild.TimedOut; result = $(if ($dotnetBuild.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
+                if ($dotnetBuild.ExitCode -ne 0) {
+                    $dotnetOk = $false
+                    $overallFailed = $true
+                    $testsPassed = $false
+                    Set-NightlyOutcome BUILD
+                    $coverageComplete = $false
+                    $reasons += 'prerequisite-failed:dotnet build'
+                }
+            }
 
             $suiteMap = Get-NightlySuiteMap -PolicyObject $policy.Object
             foreach ($suiteId in $selectedSuites) {
+                if (-not $npmOk -or -not $lintOk -or -not $dotnetOk) { break }
                 $suite = $suiteMap[$suiteId]
                 $profileExclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile $Profile -SuiteId $suiteId -Platform $platform)
                 $label = [string]$suite.name

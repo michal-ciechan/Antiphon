@@ -9,6 +9,11 @@ $script:NightlyDiscoveryFormat = 'antiphon-tunit-discovery-v1'
 $script:NightlyExecutionFormat = 'antiphon-tunit-execution-v1'
 $script:NightlySupportedTunit = '1.44.0'
 $script:NightlySupportedMtp = '2.2.2'
+# TUnit 1.44 GetClassTypeName: nested '+', generic backtick arity, constructor
+# arguments, and a middle dot where a string argument contained '.'.
+# The field ends at ", MethodName = " followed by MethodArity, so a comma
+# inside the arguments cannot terminate the name early.
+$script:NightlyDiagnosticTypeNameClass = '[A-Za-z0-9_.+\x60()<>,\[\] \u00B7-]'
 
 function Read-NightlyTrxIdentities {
     param([string]$TrxPath)
@@ -192,7 +197,7 @@ function Get-NightlyDiagnosticStateProperty {
     # transition; state-looking words in free text are not property boundaries.
     $envelope = [regex]::Match($Record, '(?s)TestNode \{ Uid = TestNodeUid \{ Value = [^}]* \}, DisplayName = .*?, Properties = \[ ')
     if (-not $envelope.Success) { return $absent }
-    $identifier = 'TestMethodIdentifierProperty \{ AssemblyFullName = [^{}\r\n]+, Namespace = [A-Za-z0-9_.]*, TypeName = [A-Za-z0-9_.]*, MethodName = [A-Za-z0-9_]*, MethodArity = \d+, ParameterTypeFullNames = \[[^{}\r\n]*\], ReturnTypeFullName = [^{}\r\n]+ \}, '
+    $identifier = 'TestMethodIdentifierProperty \{ AssemblyFullName = [^{}\r\n]+, Namespace = [A-Za-z0-9_.]*, TypeName = ' + $script:NightlyDiagnosticTypeNameClass + '*?, MethodName = [A-Za-z0-9_]*, MethodArity = \d+, ParameterTypeFullNames = \[[^{}\r\n]*\], ReturnTypeFullName = [^{}\r\n]+ \}, '
     $location = '(?:TestFileLocationProperty \{ FilePath = [^\r\n]*?, LineSpan = LinePositionSpan \{ Start = LinePosition \{ Line = \d+, Column = \d+ \}, End = LinePosition \{ Line = \d+, Column = \d+ \} \} \}, )?'
     $transition = [regex]::new($identifier + $location + '(?<name>[A-Za-z]+)TestNodeStateProperty \{ Explanation = ')
     $hit = $transition.Match($Record, $envelope.Index + $envelope.Length)
@@ -278,7 +283,8 @@ function ConvertFrom-NightlyDiagnosticRecord {
     $method = ''
     $ns = ''
     $assembly = ''
-    if ($Record -match '(?<![A-Za-z])TypeName = (?<type>[A-Za-z0-9_\.]+)') { $typeName = $Matches['type'] }
+    $typePattern = '(?<![A-Za-z])TypeName = (?<type>' + $script:NightlyDiagnosticTypeNameClass + '+?), MethodName = '
+    if ($Record -match $typePattern) { $typeName = $Matches['type'] }
     if ($Record -match '(?<![A-Za-z])MethodName = (?<method>[A-Za-z0-9_]+)') { $method = $Matches['method'] }
     if ($Record -match '(?<![A-Za-z])Namespace = (?<ns>[A-Za-z0-9_\.]+)') { $ns = $Matches['ns'] }
     if ($Record -match 'AssemblyFullName = (?<asm>[^,]+)') { $assembly = $Matches['asm'].Trim() }
