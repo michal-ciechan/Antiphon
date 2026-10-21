@@ -2126,9 +2126,11 @@ ends with `proj` or is `.props`, `.targets`, `.sln`, `.slnx`, `.slnf`, or `.rsp`
 when the file name starts with `Directory.Build.`, or when the lowercased file
 name is `global.json`, `nuget.config`, `packages.lock.json`, `packages.config`,
 or `directory.packages.props`. Editing an unrelated script leaves that digest
-unchanged, so a docs-only skip still applies. A path that can read `docs/**/*.md`
-or the root `README.md` does so through a definition file, and that edit changes
-the digest, so the skip stops until the manifest is regenerated.
+unchanged, so a docs-only skip still applies. `-Check` and `-Update` refuse an
+EmbeddedResource, Content, None, or Compile include that can select `docs/**/*.md`
+or the root `README.md`. The failure names the definition file and the include.
+Regenerating the manifest does not approve that include. Any other definition-file
+edit still changes the digest, so the skip stops until the manifest is regenerated.
 
 The fingerprint is SHA-256 over ordinal-sorted `git ls-tree -r -z <candidate>`
 records selected by that inventory, each terminated by NUL (mode, type, object ID, path).
