@@ -37,6 +37,50 @@ public sealed class GitIndexLockTests
     }
 
     [Test]
+    public void C1436_census_drops_git_that_exits_mid_census()
+    {
+        // CARD-1436: a git listed by the census that exits before its start time is read is not a holder.
+        var gone = new FakeProcess(42, () => throw new InvalidOperationException("No process is associated with this object."),
+            () => true);
+        var census = GitIndexLock.CensusGitProcesses(new FakeSource(gone));
+        census.ShouldBeEmpty();
+        gone.Disposed.ShouldBeTrue();
+        GitIndexLock.Classify(StaleLock(census), StaleAfter, Now).ShouldBe(GitIndexLock.Kind.Stale);
+    }
+
+    [Test]
+    public void C1436_census_keeps_live_holders()
+    {
+        // CARD-1436: a live git started before the lock, and a live git whose start time is unreadable,
+        // still hold the lock.
+        var mtime = Now - TimeSpan.FromSeconds(600);
+        var older = new FakeProcess(7, () => mtime.AddSeconds(-5), () => false);
+        var denied = new FakeProcess(8, () => throw new System.ComponentModel.Win32Exception(5),
+            () => throw new System.ComponentModel.Win32Exception(5));
+        var census = GitIndexLock.CensusGitProcesses(new FakeSource(older, denied));
+        census.ShouldBe([(7, mtime.AddSeconds(-5)), (8, (DateTime?)null)]);
+        GitIndexLock.Classify(StaleLock([census[0]]), StaleAfter, Now).ShouldBe(GitIndexLock.Kind.Held);
+        GitIndexLock.Classify(StaleLock([census[1]]), StaleAfter, Now).ShouldBe(GitIndexLock.Kind.Held);
+    }
+
+    private static GitIndexLock.Observation StaleLock(IReadOnlyList<(int Pid, DateTime? StartUtc)> census)
+        => new(@"C:\tmp\index.lock", true, Now - TimeSpan.FromSeconds(600), 0, census);
+
+    private sealed class FakeSource(params GitIndexLock.ICensusProcess[] processes) : GitIndexLock.IProcessSource
+    {
+        public IReadOnlyList<GitIndexLock.ICensusProcess> GitProcesses() => processes;
+    }
+
+    private sealed class FakeProcess(int id, Func<DateTime> start, Func<bool> exited) : GitIndexLock.ICensusProcess
+    {
+        public bool Disposed { get; private set; }
+        public int Id => id;
+        public DateTime StartTimeUtc => start();
+        public bool HasExited => exited();
+        public void Dispose() => Disposed = true;
+    }
+
+    [Test]
     public void Evaluate_path_error_is_held()
     {
         var observation = new LandingIndexLockObservation(
