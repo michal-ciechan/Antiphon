@@ -29,6 +29,9 @@ public class AgentSessionRuntimeActivityTests
             ConfigureDbContext = o => o.AddInterceptors(writes),
         });
         writes.Reset();
+        // Since 79c68358a (CARD-0735) the harness seeds LastSeenAt from this clock, so a burst that
+        // starts at the seeding instant would make its first write an unchanged value (an EF no-op).
+        clock.Advance(TimeSpan.FromSeconds(5));
 
         // 10 ms apart, so every chunk would be a real change to LastSeenAt (a same-instant rewrite
         // is an EF no-op and could not show the difference); the burst spans 190 ms.

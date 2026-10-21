@@ -83,7 +83,8 @@ public sealed class AgentTaskInputFallbackTests
         f.Adapter.BeforeInput = (text, ct) => runnerClient.SendInputAsync(f.SessionId, text, ct);
         if (path == "flush")
         {
-            await f.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd);
+            // CARD-1259: flush reads Working from SessionStateStore, so the TurnEnd must reach it.
+            await f.MarkIdleAsync();
             await f.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
         }
         else if (path == "enqueue-now")
@@ -374,7 +375,8 @@ public sealed class AgentTaskInputFallbackTests
         f.Adapter.BeforeInput = (_, _) => throw new RunnerSpillWriteException();
         if (path == "flush")
         {
-            await f.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd);
+            // CARD-1259: flush reads Working from SessionStateStore, so the TurnEnd must reach it.
+            await f.MarkIdleAsync();
             await f.Queue.FlushSessionAsync(f.SessionId, CancellationToken.None);
         }
         else if (path == "enqueue-now")
