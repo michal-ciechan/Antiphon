@@ -409,6 +409,47 @@ public partial class AgentSessionRuntimeTests
         f.Logs.ShouldNotContain(l => l.Contains("Transcript sync skipped"));
     }
 
+    [Test]
+    public async Task C1403_persist_prelude_is_one_command()
+    {
+        // CARD-1403 S3 / V-7: a mixed batch on a session with prior rows used to read the session,
+        // the UUID identities, the null-UUID sequences and the stored max in four commands.
+        var budget = new QueryBudget(null, "rt.ingest.", "session-state.identity");
+        await using var f = await PersistFixture.CreateAsync(budget);
+        await f.Runtime.PersistTranscriptAsync(f.SessionId,
+            [TranscriptEvent(f.SessionId, 1, TranscriptKinds.UserPrompt, "c1403-prior", "prior")]);
+        var batch = Enumerable.Range(0, 10)
+            .Select(i => TranscriptEvent(f.SessionId, i + 2, TranscriptKinds.AssistantText, $"c1403-{i}", "row"))
+            .Concat(new[]
+            {
+                TranscriptEvent(f.SessionId, 20, TranscriptKinds.ToolResult, "unused", "no uuid") with { Uuid = null },
+                TranscriptEvent(f.SessionId, 21, TranscriptKinds.ToolResult, "unused", "no uuid") with { Uuid = null },
+            })
+            .ToArray();
+
+        using (var scope = budget.Begin())
+        {
+            (await f.Runtime.PersistTranscriptAsync(f.SessionId, batch)).LastStoredSeq.ShouldNotBeNull();
+            scope.ShouldBeWithin(1);
+            scope.Count.ShouldBe(1);
+        }
+
+        // D-3: a duplicate batch pays the same prelude; with 100 ms injected per prelude command
+        // the count is the assertion and the elapsed time is evidence only.
+        budget.Delay = TimeSpan.FromMilliseconds(100);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        using (var scope = budget.Begin())
+        {
+            (await f.Runtime.PersistTranscriptAsync(f.SessionId, batch)).LastStoredSeq.ShouldBeNull();
+            Console.WriteLine($"C1403 ingest prelude with 100 ms per prelude command: {scope.Count} command(s), "
+                + $"{clock.ElapsedMilliseconds} ms elapsed");
+            scope.Count.ShouldBe(1);
+        }
+
+        (await f.RowsAsync()).Count.ShouldBe(13);
+        f.Logs.ShouldNotContain(l => l.Contains("Failed to persist"));
+    }
+
     private sealed class PersistFixture(
         ServiceProvider provider,
         string logPath,

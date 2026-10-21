@@ -7,6 +7,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -344,6 +345,52 @@ public class BootReplyWatchdogTests
         (await scenario.SweepAsync()).ShouldBe(1);
     }
 
+    [Test]
+    public async Task C1403_sweep_checks_unarmed_sessions_in_one_command()
+    {
+        // CARD-1403 S1 / V-3: five live sessions that answered on this launch and so keep null
+        // watch columns forever. The self-heal used to ask each of them its own reply EXISTS on
+        // every tick; the sweep now asks all of them in one command.
+        var scenarios = Enumerable.Range(0, 5).Select(_ => new Scenario()).ToArray();
+        try
+        {
+            foreach (var scenario in scenarios)
+            {
+                await scenario.SeedPromptAsync(minutesAgo: 30);
+                await scenario.SeedRowAsync(TranscriptKinds.AssistantText, minutesAgo: 29);
+            }
+
+            var budget = new QueryBudget(null, BootReplyWatch.ReplyExistsTag);
+            using (var scope = budget.Begin())
+            {
+                await scenarios[0].SweepAsync(interceptor: budget);
+                scope.ShouldBeWithin(1);
+                scope.Count.ShouldBe(1);
+            }
+
+            // D-3: the same sweep with 100 ms injected per reply command. The count is the
+            // assertion; the elapsed time is evidence for the test output only.
+            budget.Delay = TimeSpan.FromMilliseconds(100);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            using (var scope = budget.Begin())
+            {
+                await scenarios[0].SweepAsync(interceptor: budget);
+                Console.WriteLine($"C1403 boot sweep with 100 ms per reply command: {scope.Count} command(s), "
+                    + $"{clock.ElapsedMilliseconds} ms elapsed");
+                scope.Count.ShouldBe(1);
+            }
+
+            await using var verify = CreateContext();
+            var ids = scenarios.Select(s => s.SessionId).ToArray();
+            (await verify.AgentSessions.Where(s => ids.Contains(s.Id)).ToListAsync())
+                .ShouldAllBe(s => s.BootPromptSequence == null && s.BootReplyDueAt == null);
+        }
+        finally
+        {
+            foreach (var scenario in scenarios) await scenario.DisposeAsync();
+        }
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
@@ -421,6 +468,25 @@ public class BootReplyWatchdogTests
             await db.SaveChangesAsync();
         }
 
+        public async Task SeedRulesTurnAsync(long promptSequence, long? turnEndSequence)
+        {
+            await using var db = CreateContext();
+            await EnsureSessionAsync(db);
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = SessionId,
+                Sequence = 1,
+                Body = "[antiphon-grok-rules:c1403]",
+                CreatedAt = DateTime.UtcNow,
+                RulesRefreshKey = "c1403:" + Guid.NewGuid().ToString("N"),
+                RulesPromptSequence = promptSequence,
+                RulesTurnEndSequence = turnEndSequence,
+                Status = QueuedMessageStatus.Sent,
+            });
+            await db.SaveChangesAsync();
+        }
+
         public async Task ArmAsync()
         {
             await using var db = CreateContext();
@@ -454,11 +520,15 @@ public class BootReplyWatchdogTests
 
         public Guid? TaskId { get; private set; }
 
-        public async Task<int> SweepAsync(int deadlineMinutes = Deadline)
+        public async Task<int> SweepAsync(int deadlineMinutes = Deadline, IInterceptor? interceptor = null)
         {
             var services = new ServiceCollection();
             services.AddLogging();
-            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+            services.AddDbContext<AppDbContext>(o =>
+            {
+                o.UseNpgsql(TestDbFixture.ConnectionString);
+                if (interceptor is not null) o.AddInterceptors(interceptor);
+            });
             services.AddSingleton<IDelegateSessionStopper>(Stopper);
             var provider = services.BuildServiceProvider();
             var sweep = new BootReplyWatchdogService(
@@ -511,6 +581,7 @@ public class BootReplyWatchdogTests
             await db.AgentIncidents.Where(i => i.SessionId == SessionId).ExecuteDeleteAsync();
             if (AgentId != Guid.Empty)
                 await db.AgentIncidents.Where(i => i.AgentId == AgentId).ExecuteDeleteAsync();
+            await db.SessionQueuedMessages.Where(m => m.AgentSessionId == SessionId).ExecuteDeleteAsync();
             await db.TranscriptEntries.Where(e => e.AgentSessionId == SessionId).ExecuteDeleteAsync();
             if (TaskId is Guid taskId)
                 await db.AgentTasks.Where(t => t.Id == taskId).ExecuteDeleteAsync();
