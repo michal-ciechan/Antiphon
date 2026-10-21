@@ -10,6 +10,11 @@
 
     The script never prints a password or a connection string, never removes a
     data directory, and never passes a worktree override to the restart script.
+    Start it with pwsh -File. A same-process call cannot see -ConfirmWindow.
+    A real run that finds logs/apphost.down-on-purpose already present refuses
+    before it enters maintenance. After this run enters, every exit clears that
+    marker and the keep-six hold. A failure after StopOnly and before the
+    secret changes restarts AppHost on the old connection string first.
     ASCII-only: it may run under Windows PowerShell 5.1.
 #>
 [CmdletBinding(PositionalBinding = $false)]
@@ -85,7 +90,7 @@ function Show-CutoverWhatIf {
     Write-Host '  STOP GATE 0: refuse without a verified snapshot reference and a passed drill record, when latency is above 20 ms, when the drill misses the time gate, or when the new listener is reachable off the tailnet. No production writer has moved.'
     Write-Host 'PHASE 1 Quiesce'
     Write-Host '  EXIT CHECK 1: maintenance mode is entered before the hold and StopOnly, dispatch hold is recorded, landPending is empty, repository preview has no uncertain child, and StopOnly leaves AppHost ports free while 17204 and antiphon-postgres stay up.'
-    Write-Host '  STOP GATE 1: landPending is not empty, the repository preview shows an uncertain child, StopOnly would relaunch, or port 17204 or 17280 was touched. Leave the old database in place.'
+    Write-Host '  STOP GATE 1: landPending is not empty, the repository preview shows an uncertain child, StopOnly would relaunch, or port 17204 or 17280 was touched. A pre-existing logs/apphost.down-on-purpose marker refuses before this run enters maintenance. Leave the old database in place.'
     Write-Host 'PHASE 2 Final dump and restore'
     Write-Host '  EXIT CHECK 2: pg_dump -Fc sees no other session, and pg_restore exits 0.'
     Write-Host '  STOP GATE 2: another session appears, or pg_restore exits non-zero. Do not dump under writers. Leave the desktop container up.'
@@ -146,6 +151,15 @@ function Assert-CutoverPhase0Files {
     }
 }
 
+function Get-CutoverItemsCount {
+    param($Doc)
+    if ($null -eq $Doc -or $Doc -isnot [System.Management.Automation.PSCustomObject]) { return -3 }
+    $prop = $Doc.PSObject.Properties['items']
+    if ($null -eq $prop) { return -3 }
+    if ($null -eq $Doc.items) { return 0 }
+    return @($Doc.items).Count
+}
+
 function Get-CutoverLandPendingCount {
     if (-not [string]::IsNullOrWhiteSpace($LandPendingFixture)) {
         if (-not (Test-Path -LiteralPath $LandPendingFixture -PathType Leaf)) { return -1 }
@@ -154,15 +168,27 @@ function Get-CutoverLandPendingCount {
         } catch {
             return -2
         }
-        $count = 0
-        if ($null -ne $doc.items) { $count = @($doc.items).Count }
+        $count = Get-CutoverItemsCount $doc
+        if ($count -lt 0) { return -2 }
         return $count
     }
     $pendingUri = '/api/agent-tasks?projectId=' + [uri]::EscapeDataString($ProjectId) + '&landPending=true'
-    $pending = Invoke-CutoverGet $pendingUri
-    $pendingCount = 0
-    if ($null -ne $pending.items) { $pendingCount = @($pending.items).Count }
-    return $pendingCount
+    $uri = $ApiBase.TrimEnd('/') + '/' + $pendingUri.TrimStart('/')
+    try {
+        $response = Invoke-WebRequest -Method Get -Uri $uri -TimeoutSec 15 -UseBasicParsing
+    } catch {
+        Fail-Cutover ('REFUSED: GET ' + $pendingUri + ' failed. Body not printed. StopOnly was not run.')
+    }
+    try {
+        $doc = $response.Content | ConvertFrom-Json
+    } catch {
+        Fail-Cutover 'REFUSED: landPending response was not JSON. Body not printed. StopOnly was not run.'
+    }
+    $count = Get-CutoverItemsCount $doc
+    if ($count -lt 0) {
+        Fail-Cutover 'REFUSED: landPending response has no items array. Body not printed. StopOnly was not run.'
+    }
+    return $count
 }
 
 function Invoke-CutoverMaintenance {
@@ -194,6 +220,98 @@ function Clear-CutoverHold {
     $hold = Join-Path $Repository 'scripts/keep-six.ps1'
     & $script:CommandHost -NoProfile -File $hold -ClearHold -Agent $HoldAgent | Out-Null
     return $LASTEXITCODE
+}
+
+function Reset-CutoverWindowState {
+    $script:CutoverEnteredMaintenance = $false
+    $script:CutoverHoldRecorded = $false
+    $script:CutoverStopOnlyCompleted = $false
+    $script:CutoverSecretChanged = $false
+    $script:CutoverOldStringRestartAttempted = $false
+    $script:CutoverOldStringRestartSucceeded = $false
+    $script:CutoverWindowSucceeded = $false
+}
+
+function Get-CutoverMaintenanceMarkerPath {
+    return (Join-Path (Join-Path $Repository 'logs') 'apphost.down-on-purpose')
+}
+
+function Assert-CutoverMaintenanceFree {
+    $marker = Get-CutoverMaintenanceMarkerPath
+    if (Test-Path -LiteralPath $marker) {
+        Fail-Cutover 'REFUSED: maintenance marker already exists at logs/apphost.down-on-purpose. This run did not enter it. The operator must clear the marker before the window can start.'
+    }
+}
+
+function Clear-CutoverRecordedHold {
+    if (-not $script:CutoverHoldRecorded) { return 0 }
+    $code = 1
+    try { $code = Clear-CutoverHold } catch { $code = 1 }
+    if ($code -eq 0) { $script:CutoverHoldRecorded = $false }
+    return $code
+}
+
+function Clear-CutoverRecordedMaintenance {
+    if (-not $script:CutoverEnteredMaintenance) { return 0 }
+    $code = 1
+    try { $code = Clear-CutoverMaintenanceQuiet } catch { $code = 1 }
+    if ($code -eq 0) { $script:CutoverEnteredMaintenance = $false }
+    return $code
+}
+
+function Complete-CutoverWindowExit {
+    param([switch]$AllowOldStringRestart)
+    # Never throw here. The caller's exit code and message must survive.
+    try {
+        $entered = [bool]$script:CutoverEnteredMaintenance
+        $held = [bool]$script:CutoverHoldRecorded
+        $stopped = [bool]$script:CutoverStopOnlyCompleted
+        $secret = [bool]$script:CutoverSecretChanged
+        $restarted = [bool]$script:CutoverOldStringRestartAttempted
+        $restartOk = [bool]$script:CutoverOldStringRestartSucceeded
+        $success = [bool]$script:CutoverWindowSucceeded
+        if ($AllowOldStringRestart -and $stopped -and -not $secret -and -not $restarted) {
+            $script:CutoverOldStringRestartAttempted = $true
+            $code = 1
+            try {
+                $output = Invoke-CutoverRestart -ExpectedSha $RcTip
+                if ($output -is [array]) { $code = [int]$output[-1] } else { $code = [int]$output }
+            } catch {
+                $code = 1
+            }
+            if ($code -eq 0) {
+                $script:CutoverOldStringRestartSucceeded = $true
+                Write-Host 'RECOVERY: restarted AppHost on the old connection string before lifting maintenance. The secret was not changed.'
+            } else {
+                Write-Host ('RECOVERY: AppHost is still down. The secret was not changed. Start AppHost on the old connection string with restart-apphost.ps1 -ExpectedServerSha. Restart exit ' + $code + '.')
+            }
+        } elseif (-not $success -and $secret) {
+            Write-Host 'RECOVERY: the connection secret was already changed. This run does not restart on the old string. Operator runs phase 6.'
+        } elseif ($AllowOldStringRestart -and -not $success -and $stopped -and -not $secret -and $restarted -and -not $restartOk) {
+            Write-Host 'RECOVERY: AppHost is still down. The secret was not changed. Start AppHost on the old connection string with restart-apphost.ps1 -ExpectedServerSha.'
+        } elseif ($AllowOldStringRestart -and -not $success -and $entered -and -not $stopped) {
+            Write-Host 'RECOVERY: StopOnly did not complete. This run does not restart AppHost. Maintenance entered by this run will be lifted.'
+        } elseif (-not $AllowOldStringRestart -and -not $success -and $entered) {
+            Write-Host 'RECOVERY: rollback did not finish. Do not start a second copy if the restart lock is held. Maintenance entered by this run will be lifted.'
+        }
+        if ($held) {
+            try { Clear-CutoverRecordedHold | Out-Null } catch {
+                Write-Host 'RECOVERY: keep-six -ClearHold failed. The original error still stands.'
+            }
+        }
+        if ($script:CutoverEnteredMaintenance) {
+            try {
+                $clearCode = Clear-CutoverRecordedMaintenance
+                if ($clearCode -ne 0) {
+                    Write-Host 'RECOVERY: maintenance clear failed. The original error still stands. The operator clears it with set-apphost-maintenance.ps1 -Clear only if this run entered maintenance.'
+                }
+            } catch {
+                Write-Host 'RECOVERY: maintenance clear failed. The original error still stands.'
+            }
+        }
+    } catch {
+        Write-Host 'RECOVERY: cleanup failed. The original error still stands.'
+    }
 }
 
 function Assert-CutoverOperatorInputs {
@@ -453,6 +571,8 @@ function Invoke-CutoverCopyAndRestore {
 
 function Invoke-CutoverRollback {
     Assert-CutoverOperatorInputs
+    Reset-CutoverWindowState
+    Assert-CutoverMaintenanceFree
     $compose = Join-Path $Repository 'docker-compose.dev.yml'
     Write-Host 'PHASE 6: starting desktop postgres. The data directory is not removed.'
     & docker compose -f $compose start postgres
@@ -467,19 +587,29 @@ function Invoke-CutoverRollback {
     if ($extra) {
         Write-Host 'PHASE 6: -AcceptDataLossRollback accepted. Rows that exist only on the new database will be left behind.'
     }
-    Invoke-CutoverMaintenance
-    Set-CutoverConnectionSecret -Remove
-    $code = Invoke-CutoverRestart -ExpectedSha $RcTip
-    if ($code -ne 0) { Fail-Cutover ('REFUSED: rollback restart exited ' + $code + '. Do not start a second copy if the lock is held.') }
-    Invoke-CutoverMaintenance -Clear
-    Write-Host 'PHASE 6 exit check: AppHost restarted against the untouched desktop volume. Maintenance lifted.'
-    exit 0
+    try {
+        Invoke-CutoverMaintenance
+        $script:CutoverEnteredMaintenance = $true
+        Set-CutoverConnectionSecret -Remove
+        $code = Invoke-CutoverRestart -ExpectedSha $RcTip
+        if ($code -ne 0) { Fail-Cutover ('REFUSED: rollback restart exited ' + $code + '. Do not start a second copy if the lock is held.') }
+        Invoke-CutoverMaintenance -Clear
+        $script:CutoverEnteredMaintenance = $false
+        Write-Host 'PHASE 6 exit check: AppHost restarted against the untouched desktop volume. Maintenance lifted.'
+        $script:CutoverWindowSucceeded = $true
+        exit 0
+    } finally {
+        Complete-CutoverWindowExit
+    }
 }
 
 function Invoke-CutoverWindow {
     Assert-CutoverPhase0Files
     Assert-CutoverOperatorInputs
+    Reset-CutoverWindowState
+    Assert-CutoverMaintenanceFree
 
+    try {
     $version = Invoke-CutoverGet '/api/version'
     $sha = [string]$version.version
     if ($sha.ToLowerInvariant() -ne $RcTip.ToLowerInvariant()) {
@@ -516,24 +646,26 @@ function Invoke-CutoverWindow {
     }
 
     Invoke-CutoverMaintenance
+    $script:CutoverEnteredMaintenance = $true
     $hold = Join-Path $Repository 'scripts/keep-six.ps1'
     & $script:CommandHost -NoProfile -File $hold -Hold -Agent $HoldAgent -Reason $HoldReason -Until $HoldUntil | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        Clear-CutoverMaintenanceQuiet | Out-Null
+        Clear-CutoverRecordedMaintenance | Out-Null
         Fail-Cutover 'REFUSED: dispatch hold was not recorded. StopOnly was not run.'
     }
+    $script:CutoverHoldRecorded = $true
     $pendingCount = Get-CutoverLandPendingCount
     if ($pendingCount -lt 0) {
-        Clear-CutoverHold | Out-Null
-        Clear-CutoverMaintenanceQuiet | Out-Null
+        Clear-CutoverRecordedHold | Out-Null
+        Clear-CutoverRecordedMaintenance | Out-Null
         if ($pendingCount -eq -1) {
             Fail-Cutover 'REFUSED: landPending fixture is missing. StopOnly was not run.'
         }
         Fail-Cutover 'REFUSED: landPending fixture could not be read. StopOnly was not run.'
     }
     if ($pendingCount -ne 0) {
-        $released = Clear-CutoverHold
-        Clear-CutoverMaintenanceQuiet | Out-Null
+        $released = Clear-CutoverRecordedHold
+        Clear-CutoverRecordedMaintenance | Out-Null
         if ($released -ne 0) {
             Fail-Cutover 'REFUSED: landPending is not empty, and the keep-six hold could not be released. StopOnly was not run.'
         }
@@ -544,24 +676,29 @@ function Invoke-CutoverWindow {
     $preview = Join-Path $Repository 'scripts/recover-repository-children.ps1'
     & $script:CommandHost -NoProfile -File $preview -Repository $Repository | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        Clear-CutoverHold | Out-Null
-        Clear-CutoverMaintenanceQuiet | Out-Null
+        Clear-CutoverRecordedHold | Out-Null
+        Clear-CutoverRecordedMaintenance | Out-Null
         Fail-Cutover 'REFUSED: repository preview is not clear. StopOnly was not run.'
     }
 
     $stopCode = Invoke-CutoverRestart -StopOnly
     if ($stopCode -ne 0) {
-        Clear-CutoverHold | Out-Null
-        Clear-CutoverMaintenanceQuiet | Out-Null
+        Clear-CutoverRecordedHold | Out-Null
+        Clear-CutoverRecordedMaintenance | Out-Null
         Fail-Cutover ('REFUSED: StopOnly exited ' + $stopCode + '. The old database stays in place.')
     }
+    $script:CutoverStopOnlyCompleted = $true
     Write-Host 'PHASE 1 StopOnly exited 0. Relaunch was not requested by this script.'
 
     $sessions = Invoke-CutoverPsql -Target source -Sql "SELECT count(*) FROM pg_stat_activity WHERE datname = 'antiphon' AND pid <> pg_backend_pid()"
     if ($sessions -ne '0') {
         Write-Host 'STOP GATE 2: another session is connected. Start AppHost again on the old string. The secret was not changed.'
+        $script:CutoverOldStringRestartAttempted = $true
         $abandon = Invoke-CutoverRestart -ExpectedSha $RcTip
-        if ($abandon -eq 0) { Clear-CutoverMaintenanceQuiet | Out-Null }
+        if ($abandon -eq 0) {
+            $script:CutoverOldStringRestartSucceeded = $true
+            Clear-CutoverRecordedMaintenance | Out-Null
+        }
         Fail-Cutover ('REFUSED: dump refused because another session is connected. Restart exit ' + $abandon + '.')
     }
     $stamp = [datetime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
@@ -601,12 +738,14 @@ function Invoke-CutoverWindow {
     $status = (& docker inspect -f '{{.State.Status}}' antiphon-postgres | Out-String).Trim()
     if ($status -ne 'exited') { Fail-Cutover 'REFUSED: desktop postgres is not exited. The secret was not changed.' }
     Set-CutoverConnectionSecret
+    $script:CutoverSecretChanged = $true
     $up = Invoke-CutoverRestart -ExpectedSha $RcTip
     if ($up -ne 0) {
         Write-Host 'STOP GATE 4: restart did not exit 0 after the secret changed. Exit 5 keeps the restart lock. Operator runs phase 6.'
         Fail-Cutover ('REFUSED: restart exited ' + $up + '. Do not start a second copy.')
     }
     Invoke-CutoverMaintenance -Clear
+    $script:CutoverEnteredMaintenance = $false
     Write-Host 'PHASE 4 restart exited 0.'
 
     try {
@@ -631,7 +770,11 @@ function Invoke-CutoverWindow {
     }
     Write-Host 'PHASE 5 mechanical checks passed.'
     Write-Host 'OPERATOR: confirm one dispatch, one land, Hangfire, and the 30 minute monitor. This script does not create that task.'
+    $script:CutoverWindowSucceeded = $true
     exit 0
+    } finally {
+        Complete-CutoverWindowExit -AllowOldStringRestart
+    }
 }
 
 if (-not $Execute) {
