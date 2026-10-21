@@ -231,6 +231,8 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         foreach (var name in BootstrapEnvironmentNames())
         {
             var value = Environment.GetEnvironmentVariable(name);
+            if (value is not null && string.Equals(name, "PATH", StringComparison.Ordinal))
+                value = BoundInheritedPath(value);
             if (value is not null)
                 childEnvironment[name] = value;
         }
@@ -785,6 +787,33 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
     private static IReadOnlyList<string> BootstrapEnvironmentNames() => OperatingSystem.IsWindows()
         ? ["PATH", "PATHEXT", "SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP", "USERPROFILE"]
         : ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE"];
+
+    // CARD-1414: an ordinary developer user PATH can exceed the per-value ceiling (4645
+    // characters on the Windows qualification desktop), which refused every probe. Only the
+    // inherited PATH list is bounded here rather than raising the ceiling for every variable:
+    // the ceiling is also the per-secret redaction bound, and every other oversized value is
+    // still refused. Empty, duplicate and missing entries go first; the rest is cut on a whole
+    // entry in the original search order.
+    private static string BoundInheritedPath(string path)
+    {
+        if (path.Length <= MaximumEnvironmentValueLength)
+            return path;
+        var seen = new HashSet<string>(EnvironmentNameComparer());
+        var bounded = new StringBuilder();
+        foreach (var rawEntry in path.Split(Path.PathSeparator))
+        {
+            var entry = rawEntry.Trim().Trim('"');
+            if (entry.Length == 0 || !seen.Add(entry) || !Directory.Exists(entry))
+                continue;
+            var separatorLength = bounded.Length == 0 ? 0 : 1;
+            if (bounded.Length + separatorLength + entry.Length > MaximumEnvironmentValueLength)
+                break;
+            if (separatorLength > 0)
+                bounded.Append(Path.PathSeparator);
+            bounded.Append(entry);
+        }
+        return bounded.ToString();
+    }
 
     private static string[] ExecutableExtensions(string executable)
     {
