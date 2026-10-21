@@ -659,6 +659,12 @@ function Get-NightlyLockOptionalPid {
     return ''
 }
 
+function Test-NightlyDecimalBootId {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    return $Value -match '^[0-9]+$'
+}
+
 function Resolve-NightlyStaleLock {
     param($Existing, [string]$RunId, [string]$BootId, [string]$HostId)
     if ($null -eq $Existing) {
@@ -673,8 +679,12 @@ function Resolve-NightlyStaleLock {
     $bootBoth = (-not [string]::IsNullOrWhiteSpace($recordBoot)) -and (-not [string]::IsNullOrWhiteSpace($currentBoot))
     $hostBoth = (-not [string]::IsNullOrWhiteSpace($recordHost)) -and (-not [string]::IsNullOrWhiteSpace($currentHost))
     # A recycled pid after reboot is reclaimed before the live-owner check.
+    # Both ids must be registry BootId decimals. A LastBootUpTime string is ambiguous.
     if ($hostBoth -and $bootBoth -and [string]::Equals($recordHost, $currentHost, [StringComparison]::Ordinal) -and -not [string]::Equals($recordBoot, $currentBoot, [StringComparison]::Ordinal)) {
-        return [pscustomobject]@{ Action = 'reclaim'; Reason = 'dead-owner-rebooted' }
+        if ((Test-NightlyDecimalBootId -Value $recordBoot) -and (Test-NightlyDecimalBootId -Value $currentBoot)) {
+            return [pscustomobject]@{ Action = 'reclaim'; Reason = 'dead-owner-rebooted' }
+        }
+        return [pscustomobject]@{ Action = 'refuse'; Reason = 'lock-held' }
     }
     $ownerPid = Get-NightlyLockFieldPid -Record $Existing -Name 'pid'
     $ownerAlive = $false
@@ -907,7 +917,21 @@ function Enter-NightlyReclaimedLock {
             $stream = $null
             return [pscustomobject]@{ Ok = $false; Reason = 'lock-held'; OwnsLock = $false; Record = $Existing }
         }
-        $script:NightlyLockStream = $stream
+        # Readers share the handle after the exclusive compare and publish.
+        $exclusive = $stream
+        $stream = $null
+        try { $exclusive.Dispose() } catch { }
+        $shared = $null
+        try {
+            $shared = [System.IO.File]::Open(
+                $LockPath,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Write,
+                [System.IO.FileShare]::Read)
+        } catch {
+            $shared = $null
+        }
+        $script:NightlyLockStream = $shared
         $owned = $true
         $script:NightlyOwnedLock = $true
         return [pscustomobject]@{ Ok = $true; Reason = 'reclaimed'; OwnsLock = $true; Record = [pscustomobject]$record }
