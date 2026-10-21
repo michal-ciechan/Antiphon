@@ -91,6 +91,6 @@ The checkpoint tool adds `UseAppHost=false` on Linux; do not put it in this tabl
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1386/` | dead-owner | `/*/*/NightlyDeadOwnerLockTests/C1386_DeadOwnerReclaimed` | V-1 | all listed, 0 failed/skipped | 1 | 15 |
-| CP-2 | S1 | CP-1 | live-owner | `/*/*/NightlyDeadOwnerLockTests/C1386_LiveOwnerRefused` | V-2 | all listed, 0 failed/skipped | 1 | 4 |
-| CP-3 | S1 | CP-1 | ambiguous-owner | `/*/*/NightlyDeadOwnerLockTests/C1386_AmbiguousOwnerRefused` | V-3 | all listed, 0 failed/skipped | 1 | 4 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1386/` | dead-owner | `/*/*/NightlyDeadOwnerLockTests/C1386_DeadOwnerReclaimed*` | V-1 | all listed, 0 failed/skipped | 1 | 15 |
+| CP-2 | S1 | CP-1 | live-owner | `/*/*/NightlyDeadOwnerLockTests/C1386_LiveOwnerRefused*` | V-2 | all listed, 0 failed/skipped | 1 | 4 |
+| CP-3 | S1 | CP-1 | ambiguous-owner | `/*/*/NightlyDeadOwnerLockTests/C1386_AmbiguousOwnerRefused*` | V-3 | all listed, 0 failed/skipped | 1 | 4 |
