@@ -20,7 +20,7 @@ namespace Antiphon.Tests.Application;
 // task's own pushed commit BEFORE anything attributes progress, resolves files or counts commits.
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class RunnerTaskSettlementTests
 {
     [Test]

@@ -17,7 +17,7 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0032 slice 3 — transactional project, board, and first-agent setup.</summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public class ProjectSetupServiceTests
 {
     [Test]

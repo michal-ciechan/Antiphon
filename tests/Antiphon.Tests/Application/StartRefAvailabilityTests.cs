@@ -19,7 +19,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("GitIntegration")]
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public class StartRefAvailabilityTests
 {
     private static StartRefAvailability Build(TimeSpan? fetchTimeout = null, IRepositoryMutationLease? leases = null) =>

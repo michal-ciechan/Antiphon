@@ -15,7 +15,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class ReviewEvidenceRebindingTests
 {
     private const string Sha = "0123456789abcdef0123456789abcdef01234567";

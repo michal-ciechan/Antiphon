@@ -16,7 +16,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public class WorktreeStartRefDispatchTests
 {
     [Test]

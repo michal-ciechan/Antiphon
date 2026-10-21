@@ -21,7 +21,7 @@ namespace Antiphon.Tests.Application;
 /// CARD-0328 S3: first-match-wins residue labels, plus one real-git execute gate.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class WorktreeResidueSweepTests
 {
 

@@ -24,7 +24,7 @@ namespace Antiphon.Tests.Application;
 // desktop repository with the task worktree at baseline B, and a separate clone standing in for
 // the runner. Only the clone commits and pushes, so the desktop has never seen S before the sync.
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class RunnerSettlementSyncTests
 {
 

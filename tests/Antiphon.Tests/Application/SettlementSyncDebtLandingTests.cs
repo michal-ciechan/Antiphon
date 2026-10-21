@@ -16,7 +16,7 @@ namespace Antiphon.Tests.Application;
 /// not a refusal; the land leaves the stored sync unconfirmed.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class SettlementSyncDebtLandingTests
 {
     [Test]
