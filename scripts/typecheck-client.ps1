@@ -2,6 +2,8 @@
 #
 # CARD-1387. Production command, working directory client/:
 #   node client/node_modules/typescript/bin/tsc -b --pretty false
+# client/tsconfig.app.json and tsconfig.node.json set incremental and noEmit,
+# with tsBuildInfoFile under client/node_modules/.tmp (CARD-1394).
 # -Project <tsconfig> runs from the repo root:
 #   node client/node_modules/typescript/bin/tsc --pretty false --noEmit -p <tsconfig>
 #
@@ -21,25 +23,14 @@ if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out
 $logFile = Join-Path $logDir 'client-typecheck.log'
 $tsc = Join-Path (Join-Path (Join-Path $clientDir 'node_modules') 'typescript') (Join-Path 'bin' 'tsc')
 
-function Install-ClientDependencies {
-    Write-Output "typescript is not installed at $tsc - installing client dependencies first."
-    $npmExe = if (Get-Command npm.cmd -ErrorAction SilentlyContinue) { 'npm.cmd' } else { 'npm' }
-    $installVerb = if (Test-Path (Join-Path $clientDir 'package-lock.json')) { 'ci' } else { 'install' }
-    Push-Location $clientDir
-    try {
-        & $npmExe $installVerb
-        $installCode = $LASTEXITCODE
-    }
-    finally {
-        Pop-Location
-    }
-    if ($installCode -ne 0) {
-        Write-Output "npm $installVerb exited with code $installCode."
-    }
-}
+. (Join-Path $PSScriptRoot (Join-Path 'lib' 'client-npm-install.ps1'))
 
 if (-not (Test-Path -LiteralPath $tsc)) {
-    Install-ClientDependencies
+    Write-Output "typescript is not installed at $tsc - installing client dependencies first."
+    $installCode = Install-ClientNpmDependencies -RepoRoot $repoRoot -RequiredPaths @($tsc)
+    if ($installCode -ne 0) {
+        Write-Output "npm ci exited with code $installCode."
+    }
 }
 
 if (-not (Test-Path -LiteralPath $tsc)) {
@@ -61,6 +52,14 @@ else {
     }
     finally {
         Pop-Location
+    }
+    # tsc -b with incremental and noEmit returns 1 for a source diagnostic.
+    # Without incremental the same diagnostic returns 2. Keep that historical
+    # gate code (CARD-1394). A compiler failure that is not a source diagnostic
+    # stays 1.
+    if ($code -eq 1 -and (Test-Path -LiteralPath $logFile)) {
+        $logged = [System.IO.File]::ReadAllText($logFile)
+        if ($logged -match '\(\d+,\d+\): error TS') { $code = 2 }
     }
 }
 

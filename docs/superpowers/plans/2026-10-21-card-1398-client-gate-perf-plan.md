@@ -22,7 +22,9 @@ No separate Plan or TestDesign artifact was on `origin/master`. This file is the
 
 ### D-1 — Incremental typecheck without turning emit back on
 
-Set `"incremental": true` on `client/tsconfig.app.json` and `client/tsconfig.node.json`. Keep `"noEmit": true` and the existing `tsBuildInfoFile` under `client/node_modules/.tmp`. Do not set `composite` (it requires declaration emit and fights `noEmit`). Leave the gate command as `node .../tsc -b --pretty false` so `npm run build`'s `tsc -b` uses the same setting. A type error must still exit with tsc's own code (2).
+Set `"incremental": true` on `client/tsconfig.app.json` and `client/tsconfig.node.json`. Keep `"noEmit": true` and the existing `tsBuildInfoFile` under `client/node_modules/.tmp`. Do not set `composite` (it requires declaration emit and fights `noEmit`). Leave the gate command as `node .../tsc -b --pretty false` so `npm run build`'s `tsc -b` uses the same setting.
+
+Measured on this worktree: the first `tsc -b` after the setting wrote the tsbuildinfo files in 26.2 s (exit 0). The next `tsc -b` was 0.3 s and reported both projects up to date. `tsc --noEmit --incremental -p` did not short-circuit (about 7-12 s on a repeat). `tsc -b` with incremental returns 1 for a source diagnostic such as TS2322; the same diagnostic without incremental returns 2. `typecheck-client.ps1` maps that source-diagnostic 1 back to 2. A compiler failure that is not a `file(line,col): error TS` diagnostic stays 1. The `-Project` witness path is `tsc --noEmit -p` and already exits 2.
 
 ### D-2 — ESLint cache under an ignored path
 
@@ -55,7 +57,7 @@ No `Antiphon.Tests` build, no Unit lane, no Vitest suite, no `npm run build`. CP
 
 ### D-6 — Replace the stale scoped-run figure with the measured warm time
 
-In Preserved Gotcha #19, replace `~15-35 s` with the single measured warm `scripts/test-client.ps1 attentionVisuals.test` wall time, and state that typecheck is incremental, lint uses the ignored ESLint cache, and `npm ci` takes the lock. Do not widen `TestClientFilterTests`'s 180 s budget.
+In Preserved Gotcha #19, replace `~15-35 s` with the single measured warm `scripts/test-client.ps1 attentionVisuals.test` wall time: **17.9 s**, exit 0, one file (`attentionVisuals.test.ts`, 31 tests) on 2026-10-21 after the incremental typecheck and eslint cache were warm. State that typecheck is incremental, lint uses the ignored ESLint cache, and `npm ci` takes the lock. Do not widen `TestClientFilterTests`'s 180 s budget. The 17.9 s run fits it.
 
 ### D-7 — Master only
 
