@@ -15,7 +15,7 @@ namespace Antiphon.Tests.Infrastructure;
 
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class CompletedCardWorktreeRemovalTests
 {
     [Test]

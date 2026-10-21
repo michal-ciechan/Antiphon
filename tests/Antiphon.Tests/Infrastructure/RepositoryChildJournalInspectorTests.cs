@@ -10,7 +10,7 @@ namespace Antiphon.Tests.Infrastructure;
 
 /// <summary>CARD-0726 V-5..V-7, V-24, V-25. Journal records are classified and never deleted.</summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class RepositoryChildJournalInspectorTests
 {
     [Test]

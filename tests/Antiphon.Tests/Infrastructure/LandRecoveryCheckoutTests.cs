@@ -6,7 +6,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Infrastructure;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class LandRecoveryCheckoutTests
 {
     [Test]

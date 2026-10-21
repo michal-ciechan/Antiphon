@@ -11,7 +11,7 @@ namespace Antiphon.Tests.Infrastructure;
 
 /// <summary>CARD-0688 V-1: the persistent, locked, detached land worktree (real git).</summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class LandWorkspaceTests
 {
     [Test]

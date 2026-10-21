@@ -8,7 +8,7 @@ using static Antiphon.Tests.TestHelpers.TestClassificationPolicyTests;
 namespace Antiphon.Tests.Infrastructure;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class SlowTestRegistryMergeTests
 {
     private const string Registry = "tests/Antiphon.Tests/slow-tests-allowlist.txt";

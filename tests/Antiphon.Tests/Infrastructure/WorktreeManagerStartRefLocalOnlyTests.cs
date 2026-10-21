@@ -17,7 +17,7 @@ namespace Antiphon.Tests.Infrastructure;
 /// </summary>
 [Category("GitIntegration")]
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public class WorktreeManagerStartRefLocalOnlyTests
 {
     [Test]
