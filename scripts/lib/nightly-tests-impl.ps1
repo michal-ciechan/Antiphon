@@ -426,6 +426,7 @@ function Invoke-AntiphonNightlyTests {
     $npmOk = $true
     $dotnetOk = $true
     $lintOk = $true
+    $lintBlocksPipeline = $false
     $activeNative = 0
 
     try {
@@ -489,14 +490,23 @@ function Invoke-AntiphonNightlyTests {
                 if ($lint.ExitCode -ne 0) {
                     $lintOk = $false
                     $overallFailed = $true
-                    $testsPassed = $false
-                    Set-NightlyOutcome BUILD
-                    $coverageComplete = $false
-                    $reasons += 'prerequisite-failed:client lint'
+                    # Profile nightly records the lint failure and still runs dotnet
+                    # and the suites. Every other profile, including rc, stops here.
+                    # Do not mark testsPassed yet on nightly: a later suite failure
+                    # must be able to set TESTS, and a green suite stays BUILD.
+                    if ($Profile -eq 'nightly') {
+                        $reasons += 'client-lint-failed'
+                    } else {
+                        $lintBlocksPipeline = $true
+                        $testsPassed = $false
+                        Set-NightlyOutcome BUILD
+                        $coverageComplete = $false
+                        $reasons += 'prerequisite-failed:client lint'
+                    }
                 }
             }
 
-            if ($npmOk -and $lintOk) {
+            if ($npmOk -and -not $lintBlocksPipeline) {
                 $dotnetBuild = Invoke-NightlyOwnedProcess -FilePath 'dotnet' -ArgumentList @('build', 'Antiphon.sln', '-c', 'Debug', '--nologo') `
                     -WorkingDirectory $RepoRoot -TimeoutMilliseconds 1200000 -LogPath (Join-Path $LogRoot 'dotnet-build.log')
                 $buildResults += [ordered]@{ name = 'dotnet build Antiphon.sln'; exitCode = $dotnetBuild.ExitCode; timedOut = $dotnetBuild.TimedOut; result = $(if ($dotnetBuild.ExitCode -eq 0) { 'pass' } else { 'FAIL' }) }
@@ -512,7 +522,7 @@ function Invoke-AntiphonNightlyTests {
 
             $suiteMap = Get-NightlySuiteMap -PolicyObject $policy.Object
             foreach ($suiteId in $selectedSuites) {
-                if (-not $npmOk -or -not $lintOk -or -not $dotnetOk) { break }
+                if (-not $npmOk -or $lintBlocksPipeline -or -not $dotnetOk) { break }
                 $suite = $suiteMap[$suiteId]
                 $profileExclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile $Profile -SuiteId $suiteId -Platform $platform)
                 $label = [string]$suite.name
@@ -799,7 +809,11 @@ function Invoke-AntiphonNightlyTests {
         $reasons += $_.Exception.Message
     }
 
-    if (-not $lintOk) { $coverageComplete = $false; $testsPassed = $false }
+    if (-not $lintOk) {
+        $coverageComplete = $false
+        $testsPassed = $false
+        if ($Profile -eq 'nightly' -and $script:NightlyTestsOutcome -eq 'green') { Set-NightlyOutcome BUILD }
+    }
     if ($nativeActiveMax -gt 1) { $coverageComplete = $false; $reasons += 'native-overlap' }
 
     $coverageScope = 'Full'

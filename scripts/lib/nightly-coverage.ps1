@@ -273,6 +273,38 @@ function Test-NightlyDiagnosticExceptionTail {
     return ($ExceptionText -cmatch '\A[A-Za-z_][A-Za-z0-9_.+`]*Exception: [^\r\n]*(?:\r?\n   at [\s\S]*)?\z')
 }
 
+function Test-NightlyDiagnosticTypeNameComplete {
+    # A node name is a complete identifier, optionally followed by one balanced
+    # constructor-argument suffix. Commas belong inside those arguments.
+    # IndexOf plus a balance count stays within Windows PowerShell 5.1.
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    $openAt = $Name.IndexOf('(')
+    $closeAt = $Name.IndexOf(')')
+    $commaAt = $Name.IndexOf(',')
+    if ($openAt -lt 0 -and $closeAt -lt 0) {
+        if ($commaAt -ge 0) { return $false }
+        return $true
+    }
+    if ($openAt -le 0) { return $false }
+    if (-not $Name.EndsWith(')', [StringComparison]::Ordinal)) { return $false }
+    $depth = 0
+    $i = 0
+    while ($i -lt $Name.Length) {
+        $ch = $Name.Substring($i, 1)
+        if ($ch -eq '(') {
+            $depth++
+        } elseif ($ch -eq ')') {
+            $depth--
+            if ($depth -lt 0) { return $false }
+        } elseif ($ch -eq ',' -and $depth -eq 0) {
+            return $false
+        }
+        $i++
+    }
+    return ($depth -eq 0)
+}
+
 function ConvertFrom-NightlyDiagnosticRecord {
     param([string]$Record, [string]$State, $StateProperty = $null)
     if ($Record -notmatch 'TestNodeUid \{ Value = (?<uid>[^}]+?) \}') {
@@ -290,6 +322,9 @@ function ConvertFrom-NightlyDiagnosticRecord {
     if ($Record -match 'AssemblyFullName = (?<asm>[^,]+)') { $assembly = $Matches['asm'].Trim() }
     if ([string]::IsNullOrWhiteSpace($uid)) { throw 'truncated diagnostic record: missing uid' }
     if ([string]::IsNullOrWhiteSpace($typeName) -or [string]::IsNullOrWhiteSpace($method)) {
+        throw ('truncated diagnostic record uid={0}' -f $uid)
+    }
+    if (-not (Test-NightlyDiagnosticTypeNameComplete -Name $typeName)) {
         throw ('truncated diagnostic record uid={0}' -f $uid)
     }
     $categories = @()
@@ -373,8 +408,28 @@ function Get-NightlyDiagnosticRecords {
     param([string]$Text)
     # A record ends at the next structural node update or logging header, never
     # at display-name punctuation. Keep the original physical line endings.
+    # Every TestNodeUpdateMessage envelope starts a record, including a second
+    # envelope on the same line. A bare TestNode { Uid in explanation text does not.
     $record = New-Object System.Text.StringBuilder
+    $envelopePattern = 'TestNodeUpdateMessage \{[^\r\n]*?TestNode = TestNode \{ Uid = TestNodeUid'
     foreach ($line in [regex]::Split($Text, '(?<=\n)')) {
+        $envelopeHits = [regex]::Matches($line, $envelopePattern)
+        if ($envelopeHits.Count -ge 2) {
+            if ($record.Length -gt 0) { $record.ToString(); [void]$record.Clear() }
+            $start = 0
+            $hitIndex = 1
+            while ($hitIndex -lt $envelopeHits.Count) {
+                $at = $envelopeHits[$hitIndex].Index
+                if ($at -gt $start) {
+                    $piece = $line.Substring($start, $at - $start)
+                    if ($piece.Length -gt 0) { $piece }
+                }
+                $start = $at
+                $hitIndex++
+            }
+            if ($start -lt $line.Length) { [void]$record.Append($line.Substring($start)) }
+            continue
+        }
         $nodeStart = $line -match '^(?:[^\r\n]*?TestNodeUpdateMessage \{[^\r\n]*?TestNode = |\s*)TestNode \{ Uid = TestNodeUid'
         $headerStart = $line -match '^\d{4}-\d{2}-\d{2}T\S+\s+\S+\s+(?:TRACE|DEBUG|INFORMATION|WARNING|ERROR|CRITICAL)\b' -or
                        $line -match '^\s*version:\s+'
@@ -637,7 +692,6 @@ function Test-NightlyClassAssigned {
     if (-not [string]::IsNullOrWhiteSpace($ClassName)) {
         $candidates += $ClassName
         $candidates += (Get-NightlyBareClassIdentity -Name $ClassName)
-        $candidates += (Get-NightlyClassNameFromIdentity -ClassName $ClassName)
     }
     if (-not [string]::IsNullOrWhiteSpace($TypeName)) {
         $candidates += $TypeName
@@ -647,11 +701,9 @@ function Test-NightlyClassAssigned {
         $want = [string]$c
         if ([string]::IsNullOrWhiteSpace($want)) { continue }
         $wantBare = Get-NightlyBareClassIdentity -Name $want
-        $wantSimple = Get-NightlyClassNameFromIdentity -ClassName $want
         foreach ($have in $candidates) {
             if ([string]::Equals($want, $have, [StringComparison]::OrdinalIgnoreCase)) { return $true }
             if ([string]::Equals($wantBare, $have, [StringComparison]::OrdinalIgnoreCase)) { return $true }
-            if ([string]::Equals($wantSimple, $have, [StringComparison]::OrdinalIgnoreCase)) { return $true }
         }
     }
     return $false
@@ -978,15 +1030,13 @@ function Test-NightlyRequiredClassesPresent {
         if ([string]::IsNullOrWhiteSpace($cn)) { continue }
         $present[$cn] = $true
         $present[(Get-NightlyBareClassIdentity -Name $cn)] = $true
-        $present[(Get-NightlyClassNameFromIdentity -ClassName $cn)] = $true
     }
     $missing = @()
     foreach ($c in @($RequiredClasses)) {
         $name = [string]$c
         if ([string]::IsNullOrWhiteSpace($name)) { continue }
         $wantBare = Get-NightlyBareClassIdentity -Name $name
-        $wantSimple = Get-NightlyClassNameFromIdentity -ClassName $name
-        if (-not $present.ContainsKey($name) -and -not $present.ContainsKey($wantBare) -and -not $present.ContainsKey($wantSimple)) {
+        if (-not $present.ContainsKey($name) -and -not $present.ContainsKey($wantBare)) {
             $missing += $name
         }
     }
@@ -1129,8 +1179,8 @@ function ConvertTo-NightlyNativeSuiteVerdict {
             $seenClass = @{}
             foreach ($n in $discoveryNodes) {
                 if (Test-NightlyDiscoveryExcluded -Node $n -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware) { continue }
-                $t = [string]$n.Type
-                if ([string]::IsNullOrWhiteSpace($t)) { $t = Get-NightlyClassNameFromIdentity -ClassName ([string]$n.ClassName) }
+                $t = Get-NightlyBareClassIdentity -Name ([string]$n.ClassName)
+                if ([string]::IsNullOrWhiteSpace($t)) { $t = Get-NightlyBareClassIdentity -Name ([string]$n.Type) }
                 if ([string]::IsNullOrWhiteSpace($t) -or $seenClass.ContainsKey($t)) { continue }
                 $seenClass[$t] = $true
                 $classReq += $t
