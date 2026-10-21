@@ -30,7 +30,6 @@ internal sealed class ControlledTestDbOperations : TestDbOperations
     public int CaptureCalls;
     public int RestoreCalls;
     public int ResetCalls;
-    public int VerifyCalls;
     public byte[]? RestoredSql;
 
     public override Task<OwnedTestDbContainer> CreateAsync()
@@ -93,12 +92,6 @@ internal sealed class ControlledTestDbOperations : TestDbOperations
     }
 
     public override IReadOnlyList<string> GetAssemblyMigrations() => Migrations;
-
-    public override Task VerifyCurrentAsync(string connectionString)
-    {
-        Interlocked.Increment(ref VerifyCalls);
-        return Task.CompletedTask;
-    }
 
     public override Task ResetSharedDatabaseAsync(string maintenanceConnectionString)
     {
