@@ -53,7 +53,7 @@ as it is: each test project has its own limiter types, and no limiter is shared 
 
 | Risk | Where | Mitigation |
 |---|---|---|
-| Shared repo fixtures / `index.lock` contention | Any test sharing a repo across tests | None of the 114 shares one. Each fixture uses a GUID temp root (`LandingGitFixture.cs:26`, `ScratchGitRepo`). Real-checkout git stays strict (D-4). CP-2 runs `GitIndexLockTests` and `AgentTaskLandIndexLockTests` 3x concurrently. |
+| Shared repo fixtures / `index.lock` contention | Any test sharing a repo across tests | None of the 114 shares one. Each fixture uses a GUID temp root (`LandingGitFixture.cs:26`, `ScratchGitRepo`). Real-checkout git stays strict (D-4). CP-2 runs `GitIndexLockPathTests` and `AgentTaskLandIndexLockTests` 3x concurrently. |
 | Global git config races | `ScratchGitRepo` inherits the user's global config | Global config is read only; no candidate writes `--global`/`--system`. `LandingGitFixture` uses a private `HOME`. |
 | Windows file locks (Defender, `git gc --auto` detach, `fsmonitor`) during temp-dir cleanup | Windows rc runs | Width is capped at 4 (D-1). Override to 1 to bisect. Any new Windows cleanup red in the next rc is triaged against `ANTIPHON_TEST_GIT_SPAWN_LIMIT=1` before it is called a regression. |
 | Process-tree safety | git children (`git-remote-*`, credential helpers) | No candidate kills a process tree or owns a long-lived child. Each git call is awaited to exit. Pty and worker classes, which own process trees, stay strict. |
@@ -110,7 +110,7 @@ Minimal by brief. The new tests are the roster and limit tests. They can go red:
 - **V-2:** Moved classes carry the git limiter, strict roster classes keep theirs, none carries both (S1/S2 roster tests).
 - **V-3 (no new flakiness):** a repeated run, `--repeat 3`, within the repeat-proof budget (3 normal), of the classes most exposed to git contention. It runs in one host, so the git lane really runs them concurrently with each other:
   - `LandingGitTests`
-  - `GitIndexLockTests`
+  - `GitIndexLockPathTests` (the limited class in `GitIndexLockTests.cs`; `GitIndexLockTests` itself is a unit class with no limiter)
   - `AgentTaskLandIndexLockTests`
   - `GitWorkspaceServiceIndexLockTests`
   - `AgentTaskDispatchBaseGuardTests`
@@ -125,7 +125,7 @@ Minimal by brief. The new tests are the roster and limit tests. They can go red:
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1421-lanes/` | rosters | `/*/*/ProcessSpawnLimitTests/*` | V-1, V-2 | all pass, 0 failed | 7 | 8 |
-| CP-2 | S2 | CP-1 (-NoBuild) | git-lane-repeat | `/*/*/(LandingGitTests*)\|(GitIndexLockTests*)\|(AgentTaskLandIndexLockTests*)\|(GitWorkspaceServiceIndexLockTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(CardFilePrivacyConcurrencyTests*)\|(AgentTaskLandConcurrencyTests*)/*` | V-3, run with checkpoint-tool `--repeat 3` and qualified with `--expected-repeat 3` | 0 failed in every ordinal | 150 | 25 |
+| CP-2 | S2 | CP-1 (-NoBuild) | git-lane-repeat | `/*/*/(LandingGitTests*)\|(GitIndexLockPathTests*)\|(AgentTaskLandIndexLockTests*)\|(GitWorkspaceServiceIndexLockTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(CardFilePrivacyConcurrencyTests*)\|(AgentTaskLandConcurrencyTests*)/*` | V-3, run with checkpoint-tool `--repeat 3` and qualified with `--expected-repeat 3` | 0 failed in every ordinal | 150 | 25 |
 | CP-3 | S2 | CP-1 (-NoBuild) | pty-beside-git | `/*/*/(SessionMessageQueuePtyIntegrationTests*)\|(GatedCommitServiceTests*)\|(AgentTaskWorktreeBaseResolverTests*)/*` | V-4 | 0 failed | 60 | 12 |
 
 Run S1-S2 as one checkpoint-tool run (`--after S2`). CP-2 needs its own build output if the tool requires one per repeat N (testing guide, Repeat proof). In that case give it `bin-c1421-repeat/`. `Min` is a floor taken from source row counts: confirm `executed=` in each CHECKPOINT line. S3 is docs-only and needs no checkpoint.
@@ -133,6 +133,19 @@ Run S1-S2 as one checkpoint-tool run (`--after S2`). CP-2 needs its own build ou
 ### Cost
 
 One `Antiphon.Tests` build, the roster row, one repeated subset row and one mixed row: about 45 minutes on server2. Anything beyond this table needs a stated reason.
+
+## Code amendments (task 40c93127)
+
+- **Six Appendix-A classes stay strict.** The census read one file per class. These classes are partial, and a sibling file, or the production seam, starts a non-git child, so D-2 keeps them strict:
+  - `AdvisoryChangePolicyTests` (`.Correction.cs`: `CheckpointReceiptValidator`, real `DelegateScriptRunner.RepoRoot`).
+  - `AgentTaskLandPublicationTests` (`.Delivery.cs`: `BridgeQueueHarness`). It stays in the strict roster, so the git roster has 15 entries, not 16.
+  - `DispatchBaseNotificationTests` (`.Coverage.cs`, `.InspectionDelivery.cs`: `BridgeQueueHarness`).
+  - `DispatcherSiblingInspectionSchedulingTests` (`.BriefRecovery.cs`, `.Delivery.cs`: `BridgeQueueHarness`, a Raw `/bin/sh` agent).
+  - `PipelineSpeedIntegrationTests` (`.Http.cs`: `C544DeliveryRig`, an `AntiphonWebAppFactory`).
+  - `DeliverableBundleServiceTests` (the renderer browser-launch seam, exercised with a fake `fake-browser.sh`).
+  108 classes move.
+- **CP-2 names `GitIndexLockPathTests`.** In `GitIndexLockTests.cs` the limiter sits on `GitIndexLockPathTests`. `GitIndexLockTests` is a unit class with no limiter, so the planned `(GitIndexLockTests*)` operand would not have run the git class.
+- **Git hooks count as git.** `LandingGitTests`, `CardFileGitFailureAcceptanceTests` and `GitWorkspaceServiceIndexLockTests` install `#!/bin/sh` git hooks. `git` itself starts those hooks, and `LandingGit`'s budget kill ends them with it. They are treated as git children, not test-started processes.
 
 ## Follow-ups (file as cards, not in this card)
 
