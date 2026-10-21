@@ -6,7 +6,7 @@ Target: **master only**. No product-host restart. Code authoring plus the propos
 
 The ordinary client gate is `scripts/test-client.ps1`. It runs Vitest and does not typecheck. `npm run build` is `tsc -b && vite build`, and `tsc -b` includes every file under `client/src`, tests included. A type error in a test file therefore stays green through the gate tasks and Review already run, and fails the release build. The known instance is `SessionTerminal.mouse.test.tsx` TS2353 (`cols`/`rows` on `ITerminalOptions` for `@xterm/xterm` 6.0.0), repaired on this master tip by `b71157f20938f2fe842ee896103aadcf95dad6d1`. The card names that repair as CARD-1350 (`025c3850`, type-only); that object is not in this clone. This plan does not re-fix that file.
 
-TestDesign is a separate stage. The section below is the proposal it freezes. This file has no `### Checkpoints` table yet, so the checkpoint importer has nothing to run.
+TestDesign was skipped for this Code dispatch. The `### Checkpoints` table below is the closed list the checkpoint importer runs.
 
 ## Ground truth
 
@@ -110,9 +110,11 @@ If `typescript/bin/tsc` is absent, reuse the existing npm ci install in `test-cl
 
 Commit and push before CP-2 and CP-3. Do not start Vitest in either row. Do not run `npm run build`. Record `CLIENT TYPECHECK EXIT CODE` and the full SHA. Run `scripts/check-evidence-diff.ps1` over the Code task base through its pushed tip.
 
-## Proposed verification
+## Verification design
 
-TestDesign turns this table into the file's first `### Checkpoints` table. Until that edit, this heading is not importer input.
+TestDesign was skipped. This table is the closed checkpoint list.
+
+### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---:|
