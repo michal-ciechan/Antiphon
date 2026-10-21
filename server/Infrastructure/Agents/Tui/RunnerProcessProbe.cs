@@ -797,8 +797,14 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
     // still refused. Empty, duplicate and missing entries go first; the rest is cut on a whole
     // entry in the original search order. When nothing survives, the original value is returned
     // so the ceiling still refuses it: an empty PATH would make a POSIX child search its working
-    // directory. A Windows UNC entry is kept without an existence check, which could otherwise
-    // block on an unreachable share before the probe's timeout or cancellation can act.
+    // directory. A relative entry (".", "bin", "C:tools", "\tools") is dropped before any check:
+    // Directory.Exists would resolve it against this server's current directory, while the child
+    // resolves it against its own working directory. Quotes and padding are trimmed on Windows
+    // only; on POSIX they are part of the name, and trimming could turn a relative name absolute.
+    // A Windows UNC entry is kept without an existence check, which could otherwise block on an
+    // unreachable share before the probe's timeout or cancellation can act. The existence check
+    // for every other entry also runs before that timeout, so a mapped drive whose server is
+    // unreachable can still stall it on Windows.
     private static string BoundInheritedPath(string path)
     {
         if (path.Length <= MaximumEnvironmentValueLength)
@@ -807,8 +813,8 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         var bounded = new StringBuilder();
         foreach (var rawEntry in path.Split(Path.PathSeparator))
         {
-            var entry = rawEntry.Trim().Trim('"');
-            if (entry.Length == 0 || !seen.Add(entry))
+            var entry = OperatingSystem.IsWindows() ? rawEntry.Trim().Trim('"') : rawEntry;
+            if (entry.Length == 0 || !Path.IsPathFullyQualified(entry) || !seen.Add(entry))
                 continue;
             var unc = OperatingSystem.IsWindows() && entry.StartsWith(@"\\", StringComparison.Ordinal);
             if (!unc && !Directory.Exists(entry))
