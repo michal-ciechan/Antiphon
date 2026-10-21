@@ -73,7 +73,7 @@ Use `dotnet run --project tools/Antiphon.Checkpoints -- run --plan <this-path> -
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1382/` | integration-echo-order | `/*/*/AgentSessionCancelledTurnTests/C1382_Echo_before_wrapper_does_not_stick_streaming_turn` | V-1 | all listed, 0 failed/skipped | 1 | 8 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1382/` | integration-echo-order | `/*/*/AgentSessionCancelledTurnTests/C1382_Echo_before_wrapper_does_not_stick_streaming_turn*` | V-1 | all listed, 0 failed/skipped | 1 | 8 |
 
 ### Cost
 
