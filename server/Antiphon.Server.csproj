@@ -30,6 +30,11 @@
     <!-- CARD-1213: shared fragments a bundle pulls in with {{NAME}}. Not bundles: InstructionBundles
          skips the Fragments. prefix and InstructionFragments loads them. -->
     <EmbeddedResource Include="Bundles\Fragments\*.md" />
+    <!-- CARD-1385: land-graph digest. Outside the Bundles prefix, so InstructionBundles ignores it. -->
+    <None Remove="Application\Services\LandVerificationBuildGraph.manifest.txt" />
+    <EmbeddedResource Include="Application\Services\LandVerificationBuildGraph.manifest.txt">
+      <LogicalName>Antiphon.Server.LandVerificationBuildGraph.manifest.txt</LogicalName>
+    </EmbeddedResource>
     <!-- CARD-0306: per-launch remoteControlAtStartup:false overlay. Path, never inline JSON.
          Update, not Include: the SDK already globs this as Content. TargetPath flattens it
          next to the assembly so ApplyOff can resolve AppContext.BaseDirectory + filename. -->

@@ -1,4 +1,8 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Text;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
@@ -271,6 +275,60 @@ public sealed class LandNonCodeSkipTests
     }
 
     [Test]
+    public async Task C1385_RegistryMatchesNarrowGraph()
+    {
+        var root = DelegateScriptRunner.RepoRoot;
+        var raw = await ReadHeadTreeAsync(root);
+        raw.EndsWith('\0').ShouldBeTrue();
+        var graph = new LandVerificationBuildGraph();
+        var selected = new List<string>();
+        var paths = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var row in raw.Split('\0').SkipLast(1))
+        {
+            var tab = row.IndexOf('\t');
+            tab.ShouldBeGreaterThanOrEqualTo(0);
+            var metadata = row[..tab].Split(' ');
+            var path = row[(tab + 1)..];
+            metadata.Length.ShouldBe(3);
+            paths.Add(path).ShouldBeTrue(path);
+            if (!graph.Includes(path)) continue;
+            (metadata[0] is "100644" or "100755").ShouldBeTrue(path);
+            metadata[1].ShouldBe("blob", path);
+            selected.Add(row);
+        }
+
+        var digest = LandVerificationBuildGraph.FingerprintOf(selected);
+        digest.ShouldBe(LandVerificationBuildGraph.Fingerprint);
+        LandVerificationBuildGraph.AuditedCount.ShouldBe(selected.Count);
+
+        var manifestLines = await File.ReadAllLinesAsync(Path.Combine(root, "server", "Application", "Services",
+            "LandVerificationBuildGraph.manifest.txt"));
+        manifestLines.Length.ShouldBe(2);
+        manifestLines[0].ShouldBe(digest);
+        int.Parse(manifestLines[1], CultureInfo.InvariantCulture).ShouldBe(selected.Count);
+
+        var start = new ProcessStartInfo("pwsh")
+        {
+            WorkingDirectory = root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-NonInteractive");
+        start.ArgumentList.Add("-File");
+        start.ArgumentList.Add(Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
+        start.ArgumentList.Add("-Check");
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
+        var stdout = await process.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        process.ExitCode.ShouldBe(0, stdout + stderr);
+        stdout.ShouldContain("digest=" + digest);
+        stdout.ShouldContain("count=" + selected.Count.ToString(CultureInfo.InvariantCulture));
+    }
+
+    [Test]
     public async Task C1380_AlreadyPresentDoesNotPromiseANewBuildEvenWhenForced()
     {
         await using var h = new LandingSafetyHarness();
@@ -334,15 +392,11 @@ public sealed class LandNonCodeSkipTests
     {
         var root = DelegateScriptRunner.RepoRoot;
         var paths = (await h.Fixture.RequiredAsync(root, "ls-files", "-z")).Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var graph = new LandVerificationBuildGraph();
         var graphPaths = new List<string>();
         foreach (var path in paths)
         {
-            var name = Path.GetFileName(path);
-            var extension = Path.GetExtension(path);
-            if (!(extension.EndsWith("proj", StringComparison.OrdinalIgnoreCase)
-                || new[] { ".props", ".targets", ".sln", ".slnx", ".slnf", ".rsp", ".ps1", ".sh", ".cmd", ".bat", ".py" }.Contains(extension.ToLowerInvariant())
-                || name.StartsWith("Directory.Build.", StringComparison.OrdinalIgnoreCase)
-                || new[] { "global.json", "nuget.config", "packages.lock.json", "packages.config", "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", ".gitmodules", ".gitattributes", "dotnet-tools.json" }.Contains(name.ToLowerInvariant()))) continue;
+            if (!graph.Includes(path)) continue;
             graphPaths.Add(path);
             var destination = Path.Combine(h.Fixture.Repository, path);
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
@@ -355,5 +409,24 @@ public sealed class LandNonCodeSkipTests
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "-m", "audited build graph");
         await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", "master");
         await h.Fixture.RequiredAsync(h.Fixture.Source, "rebase", "master");
+    }
+
+    private static async Task<string> ReadHeadTreeAsync(string root)
+    {
+        var start = new ProcessStartInfo("git", "ls-tree -r -z HEAD")
+        {
+            WorkingDirectory = root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+            UseShellExecute = false,
+        };
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("git did not start.");
+        var stdout = await process.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        process.ExitCode.ShouldBe(0, stderr);
+        return stdout;
     }
 }
