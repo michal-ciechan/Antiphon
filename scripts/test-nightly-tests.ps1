@@ -1846,7 +1846,7 @@ function Test-C1410_MeasuredCostGroups {
                     foreach ($op in $ops) { if (([string]$node.Method).StartsWith($op, [StringComparison]::Ordinal)) { [void]$hits.Add($node); break } }
                 }
             } else {
-                foreach ($className in @($chunk.classes)) { foreach ($node in @($byBare[[string]$className])) { [void]$hits.Add($node) } }
+                foreach ($className in @($chunk.classes)) { $rows = $byBare[[string]$className]; if ($null -ne $rows) { foreach ($node in $rows) { [void]$hits.Add($node) } } }
             }
             $seconds = 0.0
             $methods = @{}
