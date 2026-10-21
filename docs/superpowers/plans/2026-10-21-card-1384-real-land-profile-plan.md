@@ -69,3 +69,12 @@ Green, after S1 is committed: the same filter, one narrow run, through the check
 ## Shipment
 
 Commit and push S1 to the assigned branch. Fetch `origin/master` and run `git merge-tree --write-tree origin/master HEAD`. Do not merge or rebase the task branch. Land master only, through the normal land path. No rc activation and no server restart.
+
+### Checkpoints
+
+TestDesign was skipped. This is the one Code run: C688 after S1, plus the four CARD-1379 lease-window witnesses, sharing one build. No Unit lane.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---|---:|---|
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1384/` | real-land-profile | `/*/*/AgentTaskLandRefusedRetryTests/C688_RealLandProfile*` | D-3 | 1 passed, 0 failed | 1 | 15 | true |
+| CP-2 | S1 | CP-1 | lease-window | `/*/*/(LandVerificationLeaseWindowTests*)\|(LandDispatchHandoffTests*)\|(LandRestartReplayTests*)\|(LandVerificationWindowTests*)/*` | CARD-1379 witnesses | 4 passed, 0 failed | 4 | 12 | true |
