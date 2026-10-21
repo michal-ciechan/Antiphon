@@ -37,9 +37,19 @@ public sealed class TestSchemaSnapshotTests
 
         foreach (var mode in DumpModes)
         {
-            var diff = Compare(
-                await DumpAsync(pair.MigratedReady.Container, mode),
-                await DumpAsync(pair.RestoredReady.Container, mode));
+            var fresh = await DumpAsync(pair.MigratedReady.Container, mode);
+            var restored = await DumpAsync(pair.RestoredReady.Container, mode);
+
+            // The raw difference may only be the known re-parse of an index predicate (see
+            // CanonicalizeArrayCasts); no table, constraint, sequence or data line may differ.
+            var raw = Compare(fresh, restored);
+            raw.OnlyInFirst.Concat(raw.OnlyInSecond).ShouldAllBe(
+                line => line.StartsWith("CREATE INDEX ", StringComparison.Ordinal)
+                    || line.StartsWith("CREATE UNIQUE INDEX ", StringComparison.Ordinal),
+                mode);
+            raw.OnlyInFirst.Count.ShouldBe(raw.OnlyInSecond.Count, mode);
+
+            var diff = Compare(CanonicalizeArrayCasts(fresh), CanonicalizeArrayCasts(restored));
             diff.OnlyInFirst.ShouldBeEmpty($"{mode}: lines only in the fresh migration");
             diff.OnlyInSecond.ShouldBeEmpty($"{mode}: lines only in the restored store");
         }
@@ -55,8 +65,8 @@ public sealed class TestSchemaSnapshotTests
         foreach (var mode in DumpModes)
         {
             var diff = Compare(
-                await DumpAsync(pair.MigratedReady.Container, mode),
-                await DumpAsync(pair.RestoredReady.Container, mode));
+                CanonicalizeArrayCasts(await DumpAsync(pair.MigratedReady.Container, mode)),
+                CanonicalizeArrayCasts(await DumpAsync(pair.RestoredReady.Container, mode)));
 
             diff.OnlyInSecond.ShouldBeEmpty(mode);
             diff.OnlyInFirst.ShouldNotBeEmpty(mode);
@@ -124,6 +134,26 @@ public sealed class TestSchemaSnapshotTests
                 && !line.StartsWith("--", StringComparison.Ordinal)
                 && !line.StartsWith("\\restrict", StringComparison.Ordinal)
                 && !line.StartsWith("\\unrestrict", StringComparison.Ordinal))
+            .ToArray();
+
+    private static readonly System.Text.RegularExpressions.Regex VarcharArrayCast = new(
+        @"\(\(ARRAY\[(?<items>'(?:[^']|'')*'::character varying(?:, '(?:[^']|'')*'::character varying)*)\]\)::text\[\]\)",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static readonly System.Text.RegularExpressions.Regex VarcharLiteral = new(
+        @"'(?:[^']|'')*'::character varying",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// pg_dump is not a textual fixed point for a varchar <c>IN (...)</c> list: a fresh migration
+    /// stores <c>ANY ((ARRAY['a'::character varying, ...])::text[])</c>, and replaying that text
+    /// re-parses the cast into each element, <c>ANY (ARRAY[('a'::character varying)::text, ...])</c>.
+    /// Both fold to the same <c>text[]</c> constant. Rewrites only the first form into the second.
+    /// </summary>
+    internal static IReadOnlyList<string> CanonicalizeArrayCasts(IReadOnlyList<string> lines) =>
+        lines.Select(line => VarcharArrayCast.Replace(line, match =>
+                "(ARRAY[" + string.Join(", ", VarcharLiteral.Matches(match.Groups["items"].Value)
+                    .Select(item => "(" + item.Value + ")::text")) + "])"))
             .ToArray();
 
     /// <summary>Multiset line difference, so a duplicated or missing line is still reported.</summary>
