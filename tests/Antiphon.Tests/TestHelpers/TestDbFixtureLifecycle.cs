@@ -208,20 +208,6 @@ internal class TestDbOperations
         return applied;
     }
 
-    /// <summary>
-    /// CARD-1420: on a restored store, an EF version check confirms nothing is pending and warms the
-    /// process's model and migrator caches, as a migrating bootstrap does, so a test's first
-    /// <c>MigrateAsync</c> stays a version check.
-    /// </summary>
-    public virtual async Task VerifyCurrentAsync(string connectionString)
-    {
-        await using var context = new AppDbContext(TestDbFixtureLifecycle.BuildOptions(connectionString));
-        var pending = (await context.Database.GetPendingMigrationsAsync().ConfigureAwait(false)).ToArray();
-        if (pending.Length > 0)
-            throw new InvalidOperationException($"restored store has {pending.Length} pending migrations");
-        await context.Database.MigrateAsync().ConfigureAwait(false);
-    }
-
     /// <summary>The migrations assembly's ordered migration IDs (reflection only, no connection).</summary>
     public virtual IReadOnlyList<string> GetAssemblyMigrations() => AssemblyMigrations.Value;
 
@@ -546,7 +532,6 @@ internal sealed class TestDbFixtureLifecycle
                 if (!applied.SequenceEqual(expected, StringComparer.Ordinal))
                     throw new InvalidOperationException(
                         $"restored history has {applied.Count} migrations, assembly has {expected.Count}");
-                await _ops.VerifyCurrentAsync(shared).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
