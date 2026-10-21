@@ -15,11 +15,17 @@ internal sealed class LandVerificationBuildGraph
 
     private static readonly Lazy<Manifest> Loaded = new(ReadManifest);
 
+    // AsyncLocal, not a process-wide override: the registry test reads the embedded manifest
+    // in the same process, and a static swap would race it.
+    private static readonly AsyncLocal<Manifest?> ScopedManifest = new();
+
+    private static Manifest Current => ScopedManifest.Value ?? Loaded.Value;
+
     /// <summary>Manifest digest, or empty when the manifest is missing, short, or not uppercase hex.</summary>
-    internal static string Fingerprint => Loaded.Value.Digest ?? "";
+    internal static string Fingerprint => Current.Digest ?? "";
 
     /// <summary>Manifest count, or null when the manifest cannot be read.</summary>
-    internal static int? AuditedCount => Loaded.Value.Count;
+    internal static int? AuditedCount => Current.Count;
 
     internal bool Includes(string path)
     {
@@ -48,17 +54,7 @@ internal sealed class LandVerificationBuildGraph
             using var stream = typeof(LandVerificationBuildGraph).Assembly.GetManifestResourceStream(ManifestResource);
             if (stream is null) return new(null, null);
             using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-            var digest = reader.ReadLine();
-            var countLine = reader.ReadLine();
-            if (reader.ReadLine() is not null) return new(null, null);
-            if (digest is null || digest.Length != 64
-                || !digest.All(static c => c is >= '0' and <= '9' or >= 'A' and <= 'F'))
-                return new(null, null);
-            if (countLine is null
-                || !int.TryParse(countLine, NumberStyles.None, CultureInfo.InvariantCulture, out var count)
-                || count < 0)
-                return new(null, null);
-            return new(digest, count);
+            return ParseManifest(reader.ReadToEnd());
         }
         catch (Exception)
         {
@@ -67,22 +63,38 @@ internal sealed class LandVerificationBuildGraph
     }
 
     /// <summary>
-    /// CARD-1390 test seam. The text is not consulted yet, so a malformed manifest still
-    /// leaves the embedded digest in force and a docs-only land can skip.
+    /// CARD-1390 test seam. Malformed text is an empty manifest on this async flow, so it
+    /// shadows the embedded digest and a docs-only land has to build.
     /// </summary>
     internal static IDisposable UseManifestText(string text)
     {
-        _ = text;
-        return EmptyManifestScope.Instance;
+        var previous = ScopedManifest.Value;
+        ScopedManifest.Value = ParseManifest(text);
+        return new ManifestScope(previous);
     }
 
-    private sealed class EmptyManifestScope : IDisposable
+    private static Manifest ParseManifest(string text)
     {
-        internal static readonly EmptyManifestScope Instance = new();
+        var normalized = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        var lines = normalized.Split('\n');
+        if (lines.Length > 0 && lines[^1].Length == 0)
+            lines = lines[..^1];
+        if (lines.Length != 2) return new(null, null);
+        var digest = lines[0];
+        if (digest.Length != 64 || !digest.All(static c => c is >= '0' and <= '9' or >= 'A' and <= 'F'))
+            return new(null, null);
+        if (!int.TryParse(lines[1], NumberStyles.None, CultureInfo.InvariantCulture, out var count) || count < 0)
+            return new(null, null);
+        return new(digest, count);
+    }
 
-        public void Dispose()
-        {
-        }
+    private sealed class ManifestScope : IDisposable
+    {
+        private readonly Manifest? _previous;
+
+        internal ManifestScope(Manifest? previous) => _previous = previous;
+
+        public void Dispose() => ScopedManifest.Value = _previous;
     }
 
     private readonly record struct Manifest(string? Digest, int? Count);
