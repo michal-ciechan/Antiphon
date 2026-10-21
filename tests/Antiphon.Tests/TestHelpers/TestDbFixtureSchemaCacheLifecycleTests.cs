@@ -34,6 +34,7 @@ public sealed class TestDbFixtureSchemaCacheLifecycleTests
         lifecycle.CacheFallback.ShouldBe(0);
         lifecycle.SchemaSource.ShouldBe("hit");
         ops.MigrateCalls.ShouldBe(0);
+        ops.VerifyCalls.ShouldBe(1, "a hit runs the EF version check before readiness");
         ops.RestoredSql.ShouldBe(SeededSql);
         cache.TryRead(key, out _).ShouldBeTrue("a hit keeps its entry");
         await lifecycle.DisposeAsync();
