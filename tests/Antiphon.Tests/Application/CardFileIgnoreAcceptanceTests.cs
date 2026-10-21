@@ -14,7 +14,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public class CardFileIgnoreAcceptanceTests
 {
     private static CardFileRepository Repository() => new(new GitProcessGate(), Options.Create(new GitSettings()), NullLogger<CardFileRepository>.Instance);

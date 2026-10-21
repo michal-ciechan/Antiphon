@@ -14,7 +14,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public class CardFilePrivacyBoundaryAcceptanceTests
 {
     private static CardService Cards(CardFilePrivacyWorld world, AppDbContext db, MockEventBus events) =>

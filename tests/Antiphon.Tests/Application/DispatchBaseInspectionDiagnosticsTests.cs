@@ -21,7 +21,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class DispatchBaseInspectionDiagnosticsTests
 {
     private static readonly string[] Codes = ["inspection_timeout", "candidate_limit", "git_command_limit", "git_inspection_error"];

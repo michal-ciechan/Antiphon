@@ -19,7 +19,7 @@ namespace Antiphon.Tests.Application;
 /// intentionally durable and the assembly's normal Postgres container is shared.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public class AgentTaskProjectScopeTests
 {
     [Test]

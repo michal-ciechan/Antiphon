@@ -18,7 +18,7 @@ namespace Antiphon.Tests.Application;
 /// latch, Final Review settlement and land all act on one owner.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class InterimVerificationLandGitTests
 {
     private const string Filter = "/*/*/C544PinnedClass/*";

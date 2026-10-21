@@ -11,7 +11,7 @@ namespace Antiphon.Tests.Application;
 // stalls the in-process runner (rule and reason: TerminalRunnerSeatReleaseTests header).
 [Category("Integration")]
 [NotInParallel]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public class CardFilePrivacySyncAcceptanceTests
 {
     [Test]

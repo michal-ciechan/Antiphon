@@ -14,7 +14,7 @@ using Antiphon.Server.Application.Settings;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class AgentTaskLandHoldVisibilityTests
 {
     [Test]

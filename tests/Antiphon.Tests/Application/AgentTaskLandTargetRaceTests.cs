@@ -14,7 +14,7 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0711: a push that races a schema-3 land is rebased again inside the same request.</summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class AgentTaskLandTargetRaceTests
 {
     [Test]

@@ -21,7 +21,7 @@ namespace Antiphon.Tests.Application;
 /// assertion names its row.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class InterimVerificationPolicyTests
 {
     [Test]

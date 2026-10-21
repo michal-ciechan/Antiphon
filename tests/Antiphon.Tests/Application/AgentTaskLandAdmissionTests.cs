@@ -14,7 +14,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 [Category("Slow")]
 public sealed class AgentTaskLandAdmissionTests
 {

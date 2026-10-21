@@ -16,7 +16,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [NotInParallel("AgentQueue")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class CommitOnSettlePolicyTests
 {
     [Test]

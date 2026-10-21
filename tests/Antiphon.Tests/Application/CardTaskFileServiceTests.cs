@@ -19,7 +19,7 @@ namespace Antiphon.Tests.Application;
 /// directory and its own rows — the assembly shares one Postgres.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public class CardTaskFileServiceTests
 {
     [Test]

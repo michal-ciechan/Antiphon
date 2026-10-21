@@ -18,7 +18,7 @@ namespace Antiphon.Tests.Application;
 /// diagnostic Held events, HoldEpisode and progress clocks keep their existing behaviour.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class AgentTaskLandHeldNotificationTests
 {
     private const string Unknown = "unknown";
