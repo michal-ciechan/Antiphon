@@ -742,6 +742,62 @@ function Test-C1044_FixtureTypeName {
     Assert-C1044Rejects -Name 'empty TypeName still truncated' -Text (Get-C1044DiscoveryText -Records @($emptyType)) -Pattern 'truncated diagnostic record'
 }
 
+function Test-C1044_FixtureClassChunks {
+    # RC profile chunks are one class filter per discovered class. TUnit's
+    # treenode path uses the metadata class name, so a constructor suffix must
+    # not reach the filter, the exact roster, policy class rows, or TRX keys.
+    $fixture = 'CardFilePolicyApiTests(CardFileSyncEndpointWebAppFactory)'
+    $agent = 'AgentTuiApiTests(AgentTuiApiWebAppFactory)'
+    $records = @(
+        (New-C1044DiscoveryRecord -Uid 'lists-uid' -TypeName $fixture -Method 'ListsFiles'),
+        (New-C1044DiscoveryRecord -Uid 'other-uid' -TypeName $fixture -Method 'Other'),
+        (New-C1044DiscoveryRecord -Uid 'agent-uid' -TypeName $agent -Method 'Shows'),
+        (New-C1044DiscoveryRecord -Uid 'plain-uid' -TypeName 'Ordinary' -Method 'Plain')
+    )
+    $path = Write-C1044Diagnostic -Name 'fixture-chunks' -Text (Get-C1044DiscoveryText -Records $records)
+    $parsed = ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery
+    $nodes = @($parsed.Nodes)
+    $hold = @([pscustomobject]@{ Class = 'CardFilePolicyApiTests'; Methods = @('Other'); Reason = 'held method'; Owner = 'C1044' })
+    $chunks = @(Get-NightlyProfileExecutionChunks -DiscoveryNodes $nodes -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $hold)
+    $invalid = @()
+    $launched = @()
+    foreach ($chunk in $chunks) {
+        try {
+            $argv = @(Get-NightlyNativeExecutionArguments -TrxPath (Join-Path $ResultsDirectory 'chunk.trx') -DiagnosticDirectory $ResultsDirectory -Classes @($chunk.classes) -ExactFilter ([string]$chunk.exactFilter))
+            $launched += ($argv -join ' ')
+        } catch {
+            $invalid += [string]$_.Exception.Message
+        }
+    }
+    $joined = $launched -join ' || '
+    $paren = $joined.Contains('(')
+    $sawAgent = $joined.Contains('/AgentTuiApiTests/')
+    $sawLists = $joined.Contains('/CardFilePolicyApiTests/ListsFiles')
+    $sawPlain = $joined.Contains('/Ordinary/')
+    $sawOther = $joined.Contains('/Other')
+    $rosterError = ''
+    $filterOk = $false
+    try {
+        $doc = ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash 'fixture-hash'
+        $memberClass = 'Antiphon.Tests.Application.' + $fixture
+        $roster = New-NightlyExactRoster -Discovery $doc -Members @([pscustomobject]@{ class = $memberClass; method = 'ListsFiles' })
+        foreach ($row in @($roster.Chunks)) {
+            if ([string]$row.Filter -ceq '/*/Antiphon.Tests.Application/CardFilePolicyApiTests/ListsFiles') { $filterOk = $true }
+        }
+    } catch {
+        $rosterError = [string]$_.Exception.Message
+    }
+    $fixtureNode = @($nodes | Where-Object { $_.Uid -ceq 'lists-uid' })[0]
+    $policy = Test-NightlyProfileNodeExcluded -Node $fixtureNode -Exclusions @([pscustomobject]@{ Class = 'CardFilePolicyApiTests'; Methods = @(); Reason = 'held class'; Owner = 'C1044' })
+    $trx = @([pscustomobject]@{ ClassName = 'Antiphon.Tests.Application.CardFilePolicyApiTests'; MethodName = 'ListsFiles'; Outcome = 'Passed' })
+    $terminal = @([pscustomobject]@{ ClassName = ('Antiphon.Tests.Application.' + $fixture); Type = $fixture; Method = 'ListsFiles'; Outcome = 'Passed'; Uid = 'lists-uid' })
+    $cross = Test-NightlyTrxDiagnosticCrossCheck -TrxRows $trx -TerminalNodes $terminal -RequiredClasses @('Antiphon.Tests.Application.CardFilePolicyApiTests')
+    $classInvalid = @($invalid | Where-Object { $_ -eq 'invalid-class-filter' -or $_ -eq 'invalid-exact-filter' })
+    $ok = ($nodes.Count -eq 4 -and @($chunks).Count -ge 3 -and $classInvalid.Count -eq 0 -and -not $paren -and $sawAgent -and $sawLists -and $sawPlain -and -not $sawOther -and $filterOk -and $policy -and $cross.Ok -and [string]::IsNullOrWhiteSpace($rosterError))
+    Assert-C487 -Cond $ok -Name 'C1044 fixture discovery rc chunks and exact roster have zero invalid-class-filter' `
+        -Detail ('nodes=' + $nodes.Count + ' chunks=' + @($chunks).Count + ' invalid=' + ($invalid -join ',') + ' paren=' + $paren + ' agent=' + $sawAgent + ' lists=' + $sawLists + ' plain=' + $sawPlain + ' other=' + $sawOther + ' roster=' + $filterOk + ' rosterError=' + $rosterError + ' policy=' + $policy + ' cross=' + $cross.Ok + ' launched=' + $joined)
+}
+
 function Test-C1044_ParserCompatibility {
     $root = Get-C487ProbeRoot
     $golden = [System.IO.File]::ReadAllText((Join-Path $root 'discovery.diag'))
