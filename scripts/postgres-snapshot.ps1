@@ -5,10 +5,11 @@
 
     Default and -WhatIf print the plan and run no docker, age, or pg_restore.
     -Execute dumps with pg_dump -Fc inside the source container, checks
-    pg_restore --list and the byte size, encrypts with age, then copies the
-    ciphertext into the snapshot directory. Retention keeps 14 dailies and
-    prunes only after that new file is verified. -RestoreDrill restores the
-    newest snapshot into a scratch container and volume.
+    pg_restore --list for TABLE DATA and a minimum byte size, encrypts with
+    age, then copies the ciphertext into the snapshot directory. Retention
+    keeps 14 exact dailies and prunes only after that new file is verified.
+    -RestoreDrill restores the newest snapshot into a labelled scratch
+    container and removes that container and volume unless -KeepScratch.
 
     The recipient and identity are -RecipientFile / -IdentityFile paths, or
     -RecipientRef / -IdentityRef environment-variable names whose values are
@@ -30,11 +31,27 @@ param(
     [string]$IdentityFile = '',
     [string]$IdentityRef = '',
     [int]$Retain = 14,
+    [int64]$MinimumDumpBytes = 1048576,
+    [switch]$KeepScratch,
     [string]$ScratchContainer = 'antiphon-postgres-drill',
     [string]$ScratchDatabase = 'antiphon_drill',
     [string]$ScratchVolume = 'antiphon-postgres-drill-pgdata',
     [string]$SourceVolume = 'antiphon_pgdata',
     [string]$ScratchImage = 'postgres:16'
+)
+
+# A drill may reuse only a container that carries this label. These names stay
+# refused even when that container is not the current source.
+$script:SnapshotDrillLabel = 'antiphon.snapshot-drill'
+$script:SnapshotDumpPattern = '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump\.age$'
+$script:SnapshotProductionContainers = @(
+    'antiphon-postgres',
+    'antiphon-server2-postgres-postgres-1'
+)
+$script:SnapshotProductionVolumes = @(
+    'antiphon_pgdata',
+    'antiphon-server2-postgres_pgdata',
+    'pgdata'
 )
 
 function Get-SnapshotPruneSet {
@@ -53,10 +70,15 @@ function Get-SnapshotPruneSet {
     }
     $all = New-Object System.Collections.Generic.List[string]
     foreach ($name in @($Names)) {
-        if (-not [string]::IsNullOrWhiteSpace($name)) { [void]$all.Add([string]$name) }
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        if ($name -notmatch $script:SnapshotDumpPattern) { continue }
+        [void]$all.Add([string]$name)
     }
-    if (-not [string]::IsNullOrWhiteSpace($NewName) -and -not $all.Contains($NewName)) {
-        [void]$all.Add($NewName)
+    if (-not [string]::IsNullOrWhiteSpace($NewName)) {
+        if ($NewName -notmatch $script:SnapshotDumpPattern) {
+            return [pscustomobject]@{ Ok = $false; Drop = $none; Reason = 'bad-name' }
+        }
+        if (-not $all.Contains($NewName)) { [void]$all.Add($NewName) }
     }
     $ordered = $all.ToArray()
     [Array]::Sort($ordered, [StringComparer]::Ordinal)
@@ -108,20 +130,150 @@ function Resolve-SnapshotReferencePath {
     return $value
 }
 
+function Get-SnapshotBareName {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return '' }
+    return $Value.Trim().TrimStart('/')
+}
+
+function Test-SnapshotNameMatch {
+    param([string]$Value, [string[]]$Candidates)
+    $bare = Get-SnapshotBareName $Value
+    if ([string]::IsNullOrWhiteSpace($bare)) { return $false }
+    foreach ($candidate in @($Candidates)) {
+        $other = Get-SnapshotBareName $candidate
+        if ([string]::IsNullOrWhiteSpace($other)) { continue }
+        if ($bare.Equals($other, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
+function Test-SnapshotSameId {
+    param([string]$Left, [string]$Right)
+    if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) { return $false }
+    return $Left.Equals($Right, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-SnapshotIdPrefixHit {
+    param([string]$Token, [string[]]$Ids)
+    if ([string]::IsNullOrWhiteSpace($Token)) { return $false }
+    $token = $Token.Trim()
+    if ($token -notmatch '^[0-9a-fA-F]{4,64}$') { return $false }
+    foreach ($id in @($Ids)) {
+        if ([string]::IsNullOrWhiteSpace($id)) { continue }
+        if ($id.StartsWith($token, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        if ($token.Length -gt $id.Length -and $token.StartsWith($id, [StringComparison]::OrdinalIgnoreCase) -and $id.Length -ge 4) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-SnapshotTableData {
+    param([string[]]$Lines)
+    foreach ($line in @($Lines)) {
+        if ($line -match '(?i)(^|[^A-Za-z])TABLE DATA([^A-Za-z]|$)') { return $true }
+    }
+    return $false
+}
+
 function Test-SnapshotDrillRefused {
     param(
         [string]$SourceContainer,
+        [string]$SourceDatabase,
         [string]$DrillContainer,
+        [string]$DrillDatabase,
         [string]$DrillVolume,
         [string]$LiveVolume
     )
-    $badContainers = @('antiphon-postgres')
-    $badVolumes = @('antiphon_pgdata', 'antiphon-server2-postgres_pgdata', 'pgdata')
-    if ($DrillContainer -eq $SourceContainer) { return $true }
-    if ($badContainers -contains $DrillContainer) { return $true }
-    if ($DrillVolume -eq $LiveVolume) { return $true }
-    if ($badVolumes -contains $DrillVolume) { return $true }
-    return $false
+    if (Test-SnapshotNameMatch $DrillContainer @($SourceContainer)) { return 'production-container' }
+    if (Test-SnapshotNameMatch $DrillContainer $script:SnapshotProductionContainers) { return 'production-name' }
+    if (Test-SnapshotNameMatch $DrillVolume @($LiveVolume)) { return 'production-volume' }
+    if (Test-SnapshotNameMatch $DrillVolume $script:SnapshotProductionVolumes) { return 'production-volume' }
+    if (Test-SnapshotNameMatch $DrillDatabase @($SourceDatabase)) { return 'database' }
+    if (Test-SnapshotNameMatch $DrillDatabase @('antiphon')) { return 'database' }
+    return ''
+}
+
+function Update-SnapshotRetention {
+    param([string]$DestDir, [int]$Keep, [string]$NewName)
+    $names = New-Object System.Collections.Generic.List[string]
+    foreach ($file in @(Get-ChildItem -LiteralPath $DestDir -Filter 'antiphon-*.dump.age' -File -ErrorAction SilentlyContinue)) {
+        if ($file.Name -match $script:SnapshotDumpPattern) { [void]$names.Add($file.Name) }
+    }
+    $prune = Get-SnapshotPruneSet -Names $names.ToArray() -Retain $Keep -NewName $NewName -Verified $true
+    if (-not $prune.Ok) {
+        return [pscustomobject]@{ Ok = $false; Reason = $prune.Reason; Kept = 0 }
+    }
+    foreach ($name in @($prune.Drop)) {
+        if ($name -notmatch $script:SnapshotDumpPattern -or $name -eq $NewName) { continue }
+        $victim = Join-Path $DestDir $name
+        if (-not (Test-SnapshotPathInside $DestDir $victim)) {
+            return [pscustomobject]@{ Ok = $false; Reason = 'outside-destination'; Kept = 0 }
+        }
+        Remove-Item -LiteralPath $victim -Force
+    }
+    $left = @(Get-ChildItem -LiteralPath $DestDir -Filter 'antiphon-*.dump.age' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match $script:SnapshotDumpPattern })
+    $still = @($left | Where-Object { $_.Name -eq $NewName })
+    if ($left.Count -lt 1 -or $left.Count -gt $Keep -or $still.Count -ne 1) {
+        return [pscustomobject]@{ Ok = $false; Reason = 'prune-failed'; Kept = $left.Count }
+    }
+    return [pscustomobject]@{ Ok = $true; Reason = 'prune'; Kept = $left.Count }
+}
+
+function Protect-SnapshotStaging {
+    param([string]$Path)
+    if ($env:OS -eq 'Windows_NT') {
+        try {
+            $acl = New-Object System.Security.AccessControl.DirectorySecurity
+            $acl.SetAccessRuleProtection($true, $false)
+            $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+            $inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                $identity,
+                [System.Security.AccessControl.FileSystemRights]::FullControl,
+                $inherit,
+                [System.Security.AccessControl.PropagationFlags]::None,
+                [System.Security.AccessControl.AccessControlType]::Allow)
+            $acl.AddAccessRule($rule)
+            $dir = New-Object System.IO.DirectoryInfo $Path
+            $dir.SetAccessControl($acl)
+            return $true
+        } catch {
+            return $false
+        }
+    }
+    # Callers may isolate PATH to fixture binaries, so chmod is not looked up there.
+    $chmod = $null
+    foreach ($candidate in @('/bin/chmod', '/usr/bin/chmod')) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $chmod = $candidate; break }
+    }
+    if (-not $chmod) { return $false }
+    & $chmod '0700' '--' $Path
+    if ($LASTEXITCODE -ne 0) { return $false }
+    return $true
+}
+
+function Initialize-SnapshotStaging {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    if (-not (Test-Path -LiteralPath $Path)) {
+        New-Item -ItemType Directory -Path $Path | Out-Null
+    }
+    foreach ($file in @(Get-ChildItem -LiteralPath $Path -Force -File -ErrorAction SilentlyContinue)) {
+        if ($file.Extension.Equals('.dump', [StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return (Protect-SnapshotStaging $Path)
+}
+
+function Remove-SnapshotStaging {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return $true }
+    Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
+    return -not (Test-Path -LiteralPath $Path)
 }
 
 function Get-SnapshotReasonCode {
@@ -139,6 +291,8 @@ function Get-SnapshotReasonCode {
         'missing-age' { return 3 }
         'missing-sync-root' { return 3 }
         'staging-inside-sync' { return 3 }
+        'staging-mode' { return 3 }
+        'staging-cleanup' { return 3 }
         'missing-docker' { return 4 }
         'dump-failed' { return 4 }
         'verify-failed' { return 5 }
@@ -219,7 +373,8 @@ function Invoke-SnapshotPublish {
         [string]$RecipientPath,
         [int]$Keep,
         [string]$Docker,
-        [string]$Age
+        [string]$Age,
+        [int64]$MinimumBytes
     )
     $stamp = [datetime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
     $containerDump = '/tmp/antiphon-snapshot-' + $stamp + '.dump'
@@ -236,7 +391,7 @@ function Invoke-SnapshotPublish {
         if ($dump.Exit -ne 0) { return [pscustomobject]@{ Code = 4; Reason = 'dump-failed' } }
         $list = Invoke-SnapshotNative $Docker @('exec', $SourceContainer, 'pg_restore', '--list', $containerDump)
         $listed = @($list.Lines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-        if ($list.Exit -ne 0 -or $listed.Count -lt 1) {
+        if ($list.Exit -ne 0 -or -not (Test-SnapshotTableData $listed)) {
             return [pscustomobject]@{ Code = 5; Reason = 'verify-failed' }
         }
         $sizeText = Invoke-SnapshotNative $Docker @('exec', $SourceContainer, 'wc', '-c', $containerDump)
@@ -244,7 +399,7 @@ function Invoke-SnapshotPublish {
         if ($sizeText.Lines.Count -gt 0 -and ([string]$sizeText.Lines[0]) -match '(\d+)') {
             $containerBytes = [int64]$Matches[1]
         }
-        if ($sizeText.Exit -ne 0 -or $containerBytes -le 0) {
+        if ($sizeText.Exit -ne 0 -or $containerBytes -lt $MinimumBytes) {
             return [pscustomobject]@{ Code = 5; Reason = 'verify-failed' }
         }
         $copied = Invoke-SnapshotNative $Docker @('cp', ($SourceContainer + ':' + $containerDump), $hostDump)
@@ -275,32 +430,13 @@ function Invoke-SnapshotPublish {
             $published = $false
             return [pscustomobject]@{ Code = 7; Reason = 'copy-failed' }
         }
-        $names = @(Get-ChildItem -LiteralPath $DestDir -Filter 'antiphon-*.dump.age' -File | ForEach-Object { $_.Name })
-        $prune = Get-SnapshotPruneSet -Names $names -Retain $Keep -NewName $destName -Verified $true
+        $prune = Update-SnapshotRetention $DestDir $Keep $destName
         if (-not $prune.Ok) {
             Write-SnapshotStatus $DestDir $stamp 8 $destBytes
             return [pscustomobject]@{ Code = 8; Reason = 'prune-failed' }
         }
-        foreach ($name in @($prune.Drop)) {
-            if ($name -eq $destName -or $name -notmatch '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump\.age$') {
-                Write-SnapshotStatus $DestDir $stamp 8 $destBytes
-                return [pscustomobject]@{ Code = 8; Reason = 'prune-failed' }
-            }
-            $victim = Join-Path $DestDir $name
-            if (-not (Test-SnapshotPathInside $DestDir $victim)) {
-                Write-SnapshotStatus $DestDir $stamp 8 $destBytes
-                return [pscustomobject]@{ Code = 8; Reason = 'prune-failed' }
-            }
-            Remove-Item -LiteralPath $victim -Force
-        }
-        $left = @(Get-ChildItem -LiteralPath $DestDir -Filter 'antiphon-*.dump.age' -File)
-        $still = @($left | Where-Object { $_.Name -eq $destName })
-        if ($left.Count -lt 1 -or $left.Count -gt $Keep -or $still.Count -ne 1) {
-            Write-SnapshotStatus $DestDir $stamp 8 $destBytes
-            return [pscustomobject]@{ Code = 8; Reason = 'prune-failed' }
-        }
         Write-SnapshotStatus $DestDir $stamp 0 $destBytes
-        return [pscustomobject]@{ Code = 0; Reason = 'ok'; Detail = ('bytes=' + $destBytes + ' kept=' + $left.Count) }
+        return [pscustomobject]@{ Code = 0; Reason = 'ok'; Detail = ('bytes=' + $destBytes + ' kept=' + $prune.Kept) }
     } finally {
         if (-not [string]::IsNullOrWhiteSpace($containerDump)) {
             Invoke-SnapshotNative $Docker @('exec', $SourceContainer, 'rm', '-f', $containerDump) | Out-Null
@@ -309,6 +445,104 @@ function Invoke-SnapshotPublish {
         [void]$partial.Add($hostDump)
         if (-not $published) { [void]$partial.Add($hostCipher) }
         Remove-SnapshotPartial $partial.ToArray()
+    }
+}
+
+function Get-SnapshotContainerFact {
+    param([string]$Docker, [string]$Name)
+    $missing = [pscustomobject]@{ Found = $false; Parse = $false; Id = ''; Name = ''; Label = ''; Mounts = @(); Aliases = @() }
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $missing }
+    $result = Invoke-SnapshotNative $Docker @('inspect', '--format', '{{json .}}', $Name)
+    if ($result.Exit -ne 0) { return $missing }
+    $text = (($result.Lines -join "`n").Trim())
+    $bad = [pscustomobject]@{ Found = $true; Parse = $false; Id = ''; Name = ''; Label = ''; Mounts = @(); Aliases = @() }
+    if ([string]::IsNullOrWhiteSpace($text)) { return $bad }
+    try { $info = $text | ConvertFrom-Json } catch { return $bad }
+    if ($info -is [System.Array]) { $info = $info[0] }
+    $label = ''
+    if ($info.Config -and $info.Config.Labels) {
+        $prop = $info.Config.Labels.PSObject.Properties[$script:SnapshotDrillLabel]
+        if ($prop) { $label = [string]$prop.Value }
+    }
+    $mounts = New-Object System.Collections.Generic.List[string]
+    if ($info.Mounts) {
+        foreach ($mount in @($info.Mounts)) {
+            if ($mount -and -not [string]::IsNullOrWhiteSpace($mount.Name)) { [void]$mounts.Add([string]$mount.Name) }
+        }
+    }
+    $aliases = New-Object System.Collections.Generic.List[string]
+    if ($info.NetworkSettings -and $info.NetworkSettings.Networks) {
+        foreach ($net in $info.NetworkSettings.Networks.PSObject.Properties) {
+            if (-not $net.Value -or -not $net.Value.Aliases) { continue }
+            foreach ($alias in @($net.Value.Aliases)) {
+                if (-not [string]::IsNullOrWhiteSpace($alias)) { [void]$aliases.Add([string]$alias) }
+            }
+        }
+    }
+    $id = ''
+    if ($info.Id) { $id = [string]$info.Id }
+    $bare = ''
+    if ($info.Name) { $bare = Get-SnapshotBareName ([string]$info.Name) }
+    return [pscustomobject]@{
+        Found = $true; Parse = $true; Id = $id; Name = $bare; Label = $label
+        Mounts = $mounts.ToArray(); Aliases = $aliases.ToArray()
+    }
+}
+
+function Get-SnapshotProductionIds {
+    param([string]$Docker, [string]$SourceContainer, $SourceFact)
+    $ids = New-Object System.Collections.Generic.List[string]
+    if ($SourceFact.Found -and $SourceFact.Parse -and -not [string]::IsNullOrWhiteSpace($SourceFact.Id)) {
+        [void]$ids.Add($SourceFact.Id)
+    }
+    foreach ($name in @($script:SnapshotProductionContainers)) {
+        if (Test-SnapshotNameMatch $name @($SourceContainer)) { continue }
+        $other = Get-SnapshotContainerFact $Docker $name
+        if ($other.Found -and $other.Parse -and -not [string]::IsNullOrWhiteSpace($other.Id)) {
+            [void]$ids.Add($other.Id)
+        }
+    }
+    return $ids.ToArray()
+}
+
+function Test-SnapshotReuseGuard {
+    param($Fact, [string]$SourceId, [string]$SourceName, [string]$SourceVolume, [string[]]$ProductionIds)
+    if (-not $Fact.Found -or -not $Fact.Parse) { return 'inspect' }
+    if (Test-SnapshotSameId $Fact.Id $SourceId) { return 'source-id' }
+    if (Test-SnapshotIdPrefixHit $Fact.Id $ProductionIds) { return 'id-prefix' }
+    $names = @($script:SnapshotProductionContainers) + @($SourceName)
+    if (Test-SnapshotNameMatch $Fact.Name $names) { return 'production-name' }
+    foreach ($alias in @($Fact.Aliases)) {
+        if (Test-SnapshotNameMatch $alias @($Fact.Name)) { continue }
+        if (Test-SnapshotNameMatch $alias $names) { return 'alias' }
+    }
+    if ($Fact.Label -ne '1') { return 'unlabelled' }
+    $volumes = @($script:SnapshotProductionVolumes) + @($SourceVolume)
+    foreach ($mount in @($Fact.Mounts)) {
+        if (Test-SnapshotNameMatch $mount $volumes) { return 'production-mount' }
+    }
+    return 'ok'
+}
+
+function Remove-SnapshotDrillContainer {
+    param(
+        [string]$Docker,
+        [string]$DrillContainer,
+        [string]$DrillVolume,
+        [string]$SourceId,
+        [string]$SourceVolume
+    )
+    $fact = Get-SnapshotContainerFact $Docker $DrillContainer
+    $removed = $false
+    if ($fact.Found -and $fact.Parse -and $fact.Label -eq '1' -and -not (Test-SnapshotSameId $fact.Id $SourceId)) {
+        if (-not (Test-SnapshotNameMatch $fact.Name $script:SnapshotProductionContainers)) {
+            Invoke-SnapshotNative $Docker @('rm', '-f', $fact.Id) | Out-Null
+            $removed = $true
+        }
+    }
+    $denied = @($script:SnapshotProductionVolumes) + @($SourceVolume)
+    if ($removed -and -not (Test-SnapshotNameMatch $DrillVolume $denied)) {
+        Invoke-SnapshotNative $Docker @('volume', 'rm', $DrillVolume) | Out-Null
     }
 }
 
@@ -322,66 +556,119 @@ function Invoke-SnapshotDrill {
         [string]$DrillVolume,
         [string]$Image,
         [string]$Docker,
-        [string]$Age
+        [string]$Age,
+        [string]$SourceContainer,
+        [string]$SourceDatabase,
+        [string]$SourceVolume,
+        [int64]$MinimumBytes,
+        [bool]$Keep
     )
-    $newest = @(Get-ChildItem -LiteralPath $DestDir -Filter 'antiphon-*.dump.age' -File | Sort-Object Name -Descending)
-    if ($newest.Count -lt 1) { return [pscustomobject]@{ Code = 9; Reason = 'missing-snapshot' } }
-    $cipher = $newest[0]
-    $plainName = 'antiphon-drill-plain.dump'
-    $plain = Join-Path $Stage $plainName
+    $owned = $false
+    $sourceId = ''
+    $plain = Join-Path $Stage 'antiphon-drill-plain.dump'
     try {
-        $decoded = Invoke-SnapshotNative $Age @('-d', '-i', $IdentityPath, '-o', $plain, $cipher.FullName)
-        if ($decoded.Exit -ne 0 -or -not (Test-Path -LiteralPath $plain)) {
-            return [pscustomobject]@{ Code = 9; Reason = 'drill-failed' }
+        if (Test-SnapshotNameMatch $DrillDatabase @($SourceDatabase, 'antiphon')) {
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=database' }
         }
-        $plainBytes = ([System.IO.FileInfo]::new($plain)).Length
-        if ($plainBytes -le 0) { return [pscustomobject]@{ Code = 5; Reason = 'verify-failed' } }
-        $listed = Invoke-SnapshotNative $Docker @(
-            'run', '--rm', '--network', 'none',
-            '-v', ($Stage + ':/work:ro'),
-            '--entrypoint', 'pg_restore', $Image,
-            '--list', ('/work/' + $plainName)
-        )
-        $toc = @($listed.Lines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-        if ($listed.Exit -ne 0 -or $toc.Count -lt 1) {
-            return [pscustomobject]@{ Code = 5; Reason = 'verify-failed' }
+        $source = Get-SnapshotContainerFact $Docker $SourceContainer
+        if (-not $source.Found -or -not $source.Parse -or [string]::IsNullOrWhiteSpace($source.Id)) {
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=source-unknown' }
         }
-        $inspect = Invoke-SnapshotNative $Docker @('inspect', '--format', '{{.Name}}', $DrillContainer)
-        if ($inspect.Exit -ne 0) {
+        $sourceId = $source.Id
+        $productionIds = @(Get-SnapshotProductionIds $Docker $SourceContainer $source)
+        if (Test-SnapshotIdPrefixHit $DrillContainer $productionIds) {
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=id-prefix' }
+        }
+        $existing = Get-SnapshotContainerFact $Docker $DrillContainer
+        if ($existing.Found -and -not $existing.Parse) {
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=inspect' }
+        }
+        $targetId = ''
+        if ($existing.Found) {
+            if (Test-SnapshotIdPrefixHit $DrillContainer (@($existing.Id) + $productionIds)) {
+                return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=id-prefix' }
+            }
+            $guard = Test-SnapshotReuseGuard $existing $sourceId $source.Name $SourceVolume $productionIds
+            if ($guard -ne 'ok') {
+                return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = ('guard=' + $guard) }
+            }
+            $targetId = $existing.Id
+        } else {
             $started = Invoke-SnapshotNative $Docker @(
-                'run', '-d', '--name', $DrillContainer, '--network', 'none',
+                'run', '-d', '--name', $DrillContainer,
+                '--label', ($script:SnapshotDrillLabel + '=1'),
+                '--network', 'none',
                 '-v', ($DrillVolume + ':/var/lib/postgresql/data'),
                 '-e', 'POSTGRES_HOST_AUTH_METHOD=trust',
                 '-e', 'POSTGRES_USER=antiphon',
                 $Image
             )
-            if ($started.Exit -ne 0) { return [pscustomobject]@{ Code = 9; Reason = 'drill-failed' } }
+            if ($started.Exit -ne 0) {
+                return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' }
+            }
+            $created = Get-SnapshotContainerFact $Docker $DrillContainer
+            $guard = Test-SnapshotReuseGuard $created $sourceId $source.Name $SourceVolume $productionIds
+            if ($guard -ne 'ok') {
+                if ($created.Found -and $created.Parse -and $created.Label -eq '1' -and -not (Test-SnapshotSameId $created.Id $sourceId)) {
+                    $owned = $true
+                }
+                return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = ('guard=' + $guard) }
+            }
+            $targetId = $created.Id
+        }
+        if ([string]::IsNullOrWhiteSpace($targetId)) {
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=inspect' }
+        }
+        $owned = $true
+        $newest = @(Get-ChildItem -LiteralPath $DestDir -Filter 'antiphon-*.dump.age' -File | Sort-Object Name -Descending)
+        if ($newest.Count -lt 1) { return [pscustomobject]@{ Code = 9; Reason = 'missing-snapshot'; Detail = '' } }
+        $decoded = Invoke-SnapshotNative $Age @('-d', '-i', $IdentityPath, '-o', $plain, $newest[0].FullName)
+        if ($decoded.Exit -ne 0 -or -not (Test-Path -LiteralPath $plain)) {
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' }
+        }
+        $plainBytes = ([System.IO.FileInfo]::new($plain)).Length
+        if ($plainBytes -lt $MinimumBytes) {
+            return [pscustomobject]@{ Code = 5; Reason = 'verify-failed'; Detail = '' }
+        }
+        $listed = Invoke-SnapshotNative $Docker @(
+            'run', '--rm', '--network', 'none',
+            '-v', ($Stage + ':/work:ro'),
+            '--entrypoint', 'pg_restore', $Image,
+            '--list', '/work/antiphon-drill-plain.dump'
+        )
+        $toc = @($listed.Lines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($listed.Exit -ne 0 -or -not (Test-SnapshotTableData $toc)) {
+            return [pscustomobject]@{ Code = 5; Reason = 'verify-failed'; Detail = '' }
         }
         $ready = $false
         for ($try = 0; $try -lt 12; $try++) {
-            $probe = Invoke-SnapshotNative $Docker @('exec', $DrillContainer, 'pg_isready', '-U', 'antiphon')
+            $probe = Invoke-SnapshotNative $Docker @('exec', $targetId, 'pg_isready', '-U', 'antiphon')
             if ($probe.Exit -eq 0) { $ready = $true; break }
             Start-Sleep -Seconds 1
         }
-        if (-not $ready) { return [pscustomobject]@{ Code = 9; Reason = 'drill-failed' } }
-        if ($DrillDatabase -ne 'antiphon') {
-            $created = Invoke-SnapshotNative $Docker @(
-                'exec', $DrillContainer, 'createdb', '-U', 'antiphon', $DrillDatabase
-            )
-            if ($created.Exit -ne 0) { return [pscustomobject]@{ Code = 9; Reason = 'drill-failed' } }
+        if (-not $ready) { return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' } }
+        if (Test-SnapshotNameMatch $DrillDatabase @('antiphon', $SourceDatabase)) {
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=database' }
         }
+        $dropped = Invoke-SnapshotNative $Docker @('exec', $targetId, 'dropdb', '--if-exists', '-U', 'antiphon', $DrillDatabase)
+        if ($dropped.Exit -ne 0) { return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' } }
+        $createdDb = Invoke-SnapshotNative $Docker @('exec', $targetId, 'createdb', '-U', 'antiphon', $DrillDatabase)
+        if ($createdDb.Exit -ne 0) { return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' } }
         $remote = '/tmp/antiphon-drill.dump'
-        $sent = Invoke-SnapshotNative $Docker @('cp', $plain, ($DrillContainer + ':' + $remote))
-        if ($sent.Exit -ne 0) { return [pscustomobject]@{ Code = 9; Reason = 'drill-failed' } }
+        $sent = Invoke-SnapshotNative $Docker @('cp', $plain, ($targetId + ':' + $remote))
+        if ($sent.Exit -ne 0) { return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' } }
         $restored = Invoke-SnapshotNative $Docker @(
-            'exec', $DrillContainer, 'pg_restore', '--no-owner', '--no-acl', '--exit-on-error',
+            'exec', $targetId, 'pg_restore', '--no-owner', '--no-acl', '--exit-on-error',
             '-U', 'antiphon', '-d', $DrillDatabase, $remote
         )
-        Invoke-SnapshotNative $Docker @('exec', $DrillContainer, 'rm', '-f', $remote) | Out-Null
-        if ($restored.Exit -ne 0) { return [pscustomobject]@{ Code = 9; Reason = 'drill-failed' } }
+        Invoke-SnapshotNative $Docker @('exec', $targetId, 'rm', '-f', $remote) | Out-Null
+        if ($restored.Exit -ne 0) { return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' } }
         return [pscustomobject]@{ Code = 0; Reason = 'ok'; Detail = ('drill=1 bytes=' + $plainBytes) }
     } finally {
         Remove-SnapshotPartial @($plain)
+        if ($owned -and -not $Keep) {
+            Remove-SnapshotDrillContainer $Docker $DrillContainer $DrillVolume $sourceId $SourceVolume
+        }
     }
 }
 
@@ -405,11 +692,12 @@ function Invoke-PostgresSnapshot {
         (Test-SnapshotToken $ScratchContainer) -and (Test-SnapshotToken $ScratchDatabase) -and
         (Test-SnapshotToken $ScratchVolume) -and (Test-SnapshotToken $SourceVolume) -and
         (Test-SnapshotImage $ScratchImage)
-    if (-not $namesOk -or $Retain -lt 1) {
+    if (-not $namesOk -or $Retain -lt 1 -or $MinimumDumpBytes -lt 1) {
         return Write-SnapshotResult $planOnly 'bad-name' ''
     }
-    if (Test-SnapshotDrillRefused $Container $ScratchContainer $ScratchVolume $SourceVolume) {
-        return Write-SnapshotResult $planOnly 'drill-refused' ''
+    $drillGuard = Test-SnapshotDrillRefused $Container $Database $ScratchContainer $ScratchDatabase $ScratchVolume $SourceVolume
+    if (-not [string]::IsNullOrWhiteSpace($drillGuard)) {
+        return Write-SnapshotResult $planOnly 'drill-refused' ('guard=' + $drillGuard)
     }
     if (-not (Test-Path -LiteralPath $sync -PathType Container)) {
         return Write-SnapshotResult $planOnly 'missing-sync-root' ''
@@ -428,18 +716,23 @@ function Invoke-PostgresSnapshot {
         if ($identityState -ne 'ok') { return Write-SnapshotResult $planOnly $identityState '' }
         if ($planOnly) {
             Write-Output 'step drill: decrypt the newest snapshot with age -d -i <identity-file>'
-            Write-Output 'step drill: pg_restore --list and a size check on the plaintext'
+            Write-Output ('step drill: pg_restore --list must include TABLE DATA and the plaintext must be at least ' + $MinimumDumpBytes + ' bytes')
             Write-Output ('step drill: pg_restore into scratch container ' + $ScratchContainer + ' database ' + $ScratchDatabase + ' volume ' + $ScratchVolume)
             Write-Output 'step drill: leave the production database and volume untouched'
+            Write-Output 'step drill: remove the labelled scratch container and volume unless -KeepScratch'
             return Write-SnapshotResult $true 'ok' ('drill=1 scratch=' + $ScratchContainer)
         }
-        $ageCmd = Get-Command age -CommandType Application -ErrorAction SilentlyContinue
-        $dockerCmd = Get-Command docker -CommandType Application -ErrorAction SilentlyContinue
+        $ageCmd = Get-Command age -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        $dockerCmd = Get-Command docker -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $ageCmd) { return Write-SnapshotResult $false 'missing-age' '' }
         if (-not $dockerCmd) { return Write-SnapshotResult $false 'missing-docker' '' }
-        if (-not (Test-Path -LiteralPath $stage)) { New-Item -ItemType Directory -Path $stage -Force | Out-Null }
-        $drilled = Invoke-SnapshotDrill $stage $dest $identity $ScratchContainer $ScratchDatabase $ScratchVolume $ScratchImage $dockerCmd.Source $ageCmd.Source
-        return Write-SnapshotResult $false $drilled.Reason $drilled.Detail
+        if (-not (Initialize-SnapshotStaging $stage)) { return Write-SnapshotResult $false 'staging-mode' '' }
+        try {
+            $drilled = Invoke-SnapshotDrill $stage $dest $identity $ScratchContainer $ScratchDatabase $ScratchVolume $ScratchImage $dockerCmd.Source $ageCmd.Source $Container $Database $SourceVolume $MinimumDumpBytes ([bool]$KeepScratch)
+            return Write-SnapshotResult $false $drilled.Reason $drilled.Detail
+        } finally {
+            [void](Remove-SnapshotStaging $stage)
+        }
     }
 
     $recipient = Resolve-SnapshotReferencePath $RecipientFile $RecipientRef
@@ -452,20 +745,24 @@ function Invoke-PostgresSnapshot {
 
     if ($planOnly) {
         Write-Output ('step dump: docker exec ' + $Container + ' pg_dump -Fc --no-owner --no-acl -U antiphon -d ' + $Database + ' -f /tmp/antiphon-snapshot.dump')
-        Write-Output 'step verify: pg_restore --list and a size check before the destination is touched'
+        Write-Output ('step verify: pg_restore --list must include TABLE DATA and the dump must be at least ' + $MinimumDumpBytes + ' bytes')
         Write-Output 'step encrypt: age -R <recipient-file> -o <staging>.dump.age'
         Write-Output 'step copy: move the ciphertext into the snapshot directory as a new antiphon-<utc>.dump.age file'
         Write-Output ('step retention: keep ' + $Retain + ' dump.age files and prune only after the new file is verified')
         return Write-SnapshotResult $true 'ok' ('dump=1 encrypt=1 copy=1 retention=' + $Retain)
     }
 
-    $ageCmd = Get-Command age -CommandType Application -ErrorAction SilentlyContinue
-    $dockerCmd = Get-Command docker -CommandType Application -ErrorAction SilentlyContinue
+    $ageCmd = Get-Command age -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    $dockerCmd = Get-Command docker -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $ageCmd) { return Write-SnapshotResult $false 'missing-age' '' }
     if (-not $dockerCmd) { return Write-SnapshotResult $false 'missing-docker' '' }
-    if (-not (Test-Path -LiteralPath $stage)) { New-Item -ItemType Directory -Path $stage -Force | Out-Null }
-    $published = Invoke-SnapshotPublish $Container $Database $stage $dest $recipient $Retain $dockerCmd.Source $ageCmd.Source
-    return Write-SnapshotResult $false $published.Reason $published.Detail
+    if (-not (Initialize-SnapshotStaging $stage)) { return Write-SnapshotResult $false 'staging-mode' '' }
+    try {
+        $published = Invoke-SnapshotPublish $Container $Database $stage $dest $recipient $Retain $dockerCmd.Source $ageCmd.Source $MinimumDumpBytes
+        return Write-SnapshotResult $false $published.Reason $published.Detail
+    } finally {
+        [void](Remove-SnapshotStaging $stage)
+    }
 }
 
 if ($MyInvocation.InvocationName -eq '.') { return }
