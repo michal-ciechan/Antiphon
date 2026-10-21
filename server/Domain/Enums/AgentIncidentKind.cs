@@ -656,4 +656,18 @@ public enum AgentIncidentKind
 
     /// <summary>CARD-0822: one orchestrator session was queued a settings-changed note. Info.</summary>
     OrchestratorInstructionsNotified = 82,
+
+    /// <summary>
+    /// CARD-0510: one automatic fresh conversation was reserved. Warning. Metadata only
+    /// (agent, old and new session ids, count, threshold, reason, queue ids). Written in the
+    /// reservation transaction, once per consumed allowance. No message body.
+    /// </summary>
+    StandingAutomaticFreshStarted = 83,
+
+    /// <summary>
+    /// CARD-0510: an automatic fresh reservation was refused, or a consumed fresh episode
+    /// is held again. Error. One row per <c>ContinuityHeldAt</c>. Names agent, session and
+    /// queue ids, never the queued body.
+    /// </summary>
+    StandingAutomaticFreshRefused = 84,
 }
