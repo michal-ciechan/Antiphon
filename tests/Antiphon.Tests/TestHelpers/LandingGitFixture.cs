@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Shouldly;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Infrastructure.Git;
 
 namespace Antiphon.Tests.TestHelpers;
@@ -165,6 +166,33 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         public Func<string, Task>? BeforeUnregister { get; set; }
         public Func<string, Task>? AfterUnregister { get; set; }
         public List<string> RegistrationDrops { get; } = [];
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte> _children = new();
+
+        /// <summary>CARD-1436: the index-lock census sees only this fixture's own git children, never the host's.</summary>
+        protected override GitIndexLock.IProcessSource GitProcesses => new ChildProcesses(_children);
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            var child = base.StartProcess(start);
+            if (child is not null) _children.TryAdd(child.Id, 0);
+            return child;
+        }
+
+        private sealed class ChildProcesses(System.Collections.Concurrent.ConcurrentDictionary<int, byte> children)
+            : GitIndexLock.IProcessSource
+        {
+            public IReadOnlyList<GitIndexLock.ICensusProcess> GitProcesses()
+            {
+                var live = new List<GitIndexLock.ICensusProcess>();
+                foreach (var pid in children.Keys)
+                {
+                    try { live.Add(new GitIndexLock.HostProcess(Process.GetProcessById(pid))); }
+                    catch (ArgumentException) { children.TryRemove(pid, out _); }
+                }
+                return live;
+            }
+        }
+
         protected override void ConfigureProcess(ProcessStartInfo start)
         {
             start.Environment["HOME"] = home;
