@@ -391,6 +391,47 @@ public class BootReplyWatchdogTests
         }
     }
 
+    [Test]
+    public async Task C1403_batch_reply_check_matches_single_session_check()
+    {
+        // CARD-1403 S1 / V-4: one predicate source. Each case is one session; the batch over all of
+        // them must give every session the answer the single-session form gives, and both must
+        // give the answer the predicate defines.
+        var afterClock = new Scenario();
+        var beforeClock = new Scenario();
+        var rulesTurn = new Scenario();
+        var turnEndOnly = new Scenario();
+        var promptOnly = new Scenario();
+        var all = new[] { afterClock, beforeClock, rulesTurn, turnEndOnly, promptOnly };
+        try
+        {
+            await afterClock.SeedRowAsync(TranscriptKinds.AssistantText, minutesAgo: 10);
+            await beforeClock.SeedRowAsync(TranscriptKinds.AssistantText, minutesAgo: 60);
+            await rulesTurn.SeedRowAsync(TranscriptKinds.UserPrompt, minutesAgo: 12, "[antiphon-grok-rules:c1403]");
+            await rulesTurn.SeedRowAsync(TranscriptKinds.AssistantText, minutesAgo: 11);
+            await rulesTurn.SeedRowAsync(TranscriptKinds.TurnEnd, minutesAgo: 10);
+            await rulesTurn.SeedRulesTurnAsync(promptSequence: 1, turnEndSequence: 3);
+            await turnEndOnly.SeedRowAsync(TranscriptKinds.TurnEnd, minutesAgo: 10);
+            await promptOnly.SeedPromptAsync(minutesAgo: 10);
+
+            var clock = DateTime.UtcNow.AddMinutes(-30);
+            await using var db = CreateContext();
+            var batch = await BootReplyWatch.HasModelReplySinceBatchAsync(
+                db, all.Select(s => (s.SessionId, clock)).ToArray(), CancellationToken.None);
+            batch.OrderBy(id => id).ToArray()
+                .ShouldBe(new[] { afterClock.SessionId, turnEndOnly.SessionId }.OrderBy(id => id).ToArray());
+            foreach (var scenario in all)
+            {
+                (await BootReplyWatch.HasModelReplySinceAsync(db, scenario.SessionId, clock, CancellationToken.None))
+                    .ShouldBe(batch.Contains(scenario.SessionId), $"session {Array.IndexOf(all, scenario)}");
+            }
+        }
+        finally
+        {
+            foreach (var scenario in all) await scenario.DisposeAsync();
+        }
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());

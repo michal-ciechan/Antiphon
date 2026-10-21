@@ -3,6 +3,8 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
+using NpgsqlTypes;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -80,26 +82,59 @@ internal static class BootReplyWatch
     internal const string ReplyExistsTag = "rt.boot-reply.exists";
 
     /// <summary>
+    /// CARD-1403 S1 (D-4): the reply predicate, once, over any number of (session, clock) pairs.
+    /// A row answers when it is one of the five <see cref="IsModelReply"/> kinds, at or after its
+    /// session's clock (<c>Timestamp ?? CreatedAt</c>), and not inside a Grok rules turn
+    /// (<c>RulesPromptSequence &lt; Sequence &lt;= RulesTurnEndSequence</c>, open-ended while the
+    /// turn has not ended). The kinds stay literal: a parameterized list hides the index filter.
+    /// </summary>
+    private const string ReplySinceSql = $"""
+        SELECT p."SessionId" AS "Value"
+        FROM unnest(@sessionIds, @clocks) AS p("SessionId", "Clock")
+        WHERE EXISTS (
+            SELECT 1 FROM "TranscriptEntries" AS t
+            WHERE t."AgentSessionId" = p."SessionId"
+              AND COALESCE(t."Timestamp", t."CreatedAt") >= p."Clock"
+              AND t."Kind" IN ('{TranscriptKinds.AssistantText}', '{TranscriptKinds.Thinking}',
+                  '{TranscriptKinds.ToolCall}', '{TranscriptKinds.ToolResult}', '{TranscriptKinds.TurnEnd}')
+              AND NOT EXISTS (
+                  SELECT 1 FROM "SessionQueuedMessages" AS m
+                  WHERE m."AgentSessionId" = p."SessionId" AND m."RulesRefreshKey" IS NOT NULL
+                    AND m."RulesPromptSequence" IS NOT NULL AND t."Sequence" > m."RulesPromptSequence"
+                    AND (m."RulesTurnEndSequence" IS NULL OR t."Sequence" <= m."RulesTurnEndSequence")))
+        """;
+
+    /// <summary>
     /// Cheap EXISTS: has the model produced anything on this session since
     /// <paramref name="clock"/>? The sweep's self-heal must ask this BEFORE loading rows — every
     /// healthy session after its first answer has null watch columns forever, and pulling every
     /// row+text since the launch clock on a 10s tick is how this cost ~4.4MB in steady state.
-    /// EF cannot translate <see cref="IsModelReply"/>; the kind list is the same five kinds.
+    /// A one-pair call of <see cref="HasModelReplySinceBatchAsync"/>, so the predicate has one source.
     /// </summary>
-    internal static Task<bool> HasModelReplySinceAsync(
+    internal static async Task<bool> HasModelReplySinceAsync(
         AppDbContext db, Guid sessionId, DateTime clock, CancellationToken ct) =>
-        db.TranscriptEntries.AsNoTracking().TagWith(ReplyExistsTag).AnyAsync(
-            t => t.AgentSessionId == sessionId
-                && (t.Timestamp ?? t.CreatedAt) >= clock
-                && !db.SessionQueuedMessages.Any(m => m.AgentSessionId == sessionId && m.RulesRefreshKey != null
-                    && m.RulesPromptSequence != null && t.Sequence > m.RulesPromptSequence
-                    && (m.RulesTurnEndSequence == null || t.Sequence <= m.RulesTurnEndSequence))
-                && (t.Kind == TranscriptKinds.AssistantText
-                    || t.Kind == TranscriptKinds.Thinking
-                    || t.Kind == TranscriptKinds.ToolCall
-                    || t.Kind == TranscriptKinds.ToolResult
-                    || t.Kind == TranscriptKinds.TurnEnd),
-            ct);
+        (await HasModelReplySinceBatchAsync(db, [(sessionId, clock)], ct)).Contains(sessionId);
+
+    /// <summary>
+    /// CARD-1403 S1: the sessions among <paramref name="sessions"/> the model has answered since
+    /// their own clock, in ONE command however many sessions are asked about. Not cached (D-4):
+    /// the rules-turn columns are stamped by another writer, so yesterday's answer is not proof.
+    /// </summary>
+    internal static async Task<IReadOnlySet<Guid>> HasModelReplySinceBatchAsync(
+        AppDbContext db, IReadOnlyCollection<(Guid SessionId, DateTime Clock)> sessions, CancellationToken ct)
+    {
+        if (sessions.Count == 0) return new HashSet<Guid>();
+        var ids = new NpgsqlParameter("sessionIds", NpgsqlDbType.Array | NpgsqlDbType.Uuid)
+        {
+            Value = sessions.Select(s => s.SessionId).ToArray()
+        };
+        var clocks = new NpgsqlParameter("clocks", NpgsqlDbType.Array | NpgsqlDbType.TimestampTz)
+        {
+            Value = sessions.Select(s => s.Clock).ToArray()
+        };
+        return (await db.Database.SqlQueryRaw<Guid>(ReplySinceSql, ids, clocks)
+            .TagWith(ReplyExistsTag).ToListAsync(ct)).ToHashSet();
+    }
 
     internal enum Status
     {
@@ -174,8 +209,7 @@ internal static class BootReplyWatch
     internal static async Task<BootTurn?> LoadBootTurnAsync(
         AppDbContext db, Guid sessionId, DateTime clock, CancellationToken ct)
     {
-        if (await db.AgentSessions.AnyAsync(s => s.Id == sessionId
-            && (s.GrokRulesState == GrokRulesState.Pending || s.GrokRulesState == GrokRulesState.Failed), ct)) return null;
+        if (await GrokRulesUnsettledAsync(db, sessionId, ct)) return null;
         // EXISTS first: do not load Sequence/Kind/Text/At for every row since the clock just to
         // discover the session already answered. Text is loaded only for the prompt rows the
         // housekeeping check actually needs.
@@ -184,6 +218,10 @@ internal static class BootReplyWatch
 
         return (await LoadPromptTurnAsync(db, sessionId, clock, ct))?.Turn;
     }
+
+    private static Task<bool> GrokRulesUnsettledAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>
+        db.AgentSessions.AnyAsync(s => s.Id == sessionId
+            && (s.GrokRulesState == GrokRulesState.Pending || s.GrokRulesState == GrokRulesState.Failed), ct);
 
     /// <summary>
     /// CARD-1156: the same predicate as <see cref="LoadBootTurnAsync(AppDbContext, Guid, DateTime, CancellationToken)"/>
@@ -273,8 +311,14 @@ internal static class BootReplyWatch
     /// sweep may run it to re-derive a watch a restart lost (the CARD-0331 mistake this avoids).
     /// The caller owns <c>SaveChangesAsync</c>.</para>
     /// </summary>
+    /// <param name="replyChecked">
+    /// CARD-1403 S1: the caller has just asked <see cref="HasModelReplySinceBatchAsync"/> for this
+    /// session on its launch clock and it said no, so the reply EXISTS is not repeated. A reply that
+    /// lands after that answer sits past the armed prompt, and the caller's own watch evaluation
+    /// disarms it on the same pass.
+    /// </param>
     internal static async Task<DateTime?> TryArmAsync(
-        AppDbContext db, Guid sessionId, int deadlineMinutes, CancellationToken ct)
+        AppDbContext db, Guid sessionId, int deadlineMinutes, CancellationToken ct, bool replyChecked = false)
     {
         var session = await db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
         if (session is null)
@@ -300,7 +344,12 @@ internal static class BootReplyWatch
             return null;
         }
 
-        var boot = await LoadBootTurnAsync(db, sessionId, LaunchClock(session), ct);
+        var clock = LaunchClock(session);
+        var boot = !replyChecked
+            ? await LoadBootTurnAsync(db, sessionId, clock, ct)
+            : await GrokRulesUnsettledAsync(db, sessionId, ct)
+                ? null
+                : (await LoadPromptTurnAsync(db, sessionId, clock, ct))?.Turn;
         if (boot is null)
         {
             session.BootPromptSequence = null;
