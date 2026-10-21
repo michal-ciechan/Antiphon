@@ -518,8 +518,11 @@ describe.sequential('CARD-0148 mouse policy', () => {
     const bareEvents = collect(bare)
     await write(bare, 'HELLO WORLD\x1b[1;11H')
     altClick(bare)
-    expect(bareEvents.data.join(''), 'bare alt-click reachability').not.toBe('')
-    expect(bareEvents.data.join('')).toMatch(/^(\x1b\[D)+$/)
+    const sent = bareEvents.data.join('')
+    const cursorLeft = '\x1b[D'
+    expect(sent, 'bare alt-click reachability').not.toBe('')
+    expect(sent, 'bare alt-click cursor-left').toBe(
+      cursorLeft.repeat(Math.floor(sent.length / cursorLeft.length)))
     closeTerminal(bare)
     const terminal = openTerminal(true, { altClickMovesCursor: true })
     const emitted = collect(terminal)
