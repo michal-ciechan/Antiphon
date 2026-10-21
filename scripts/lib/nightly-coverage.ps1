@@ -608,10 +608,25 @@ function Test-NightlyFreshEvidence {
     return [pscustomobject]@{ Ok = $true; Reason = '' }
 }
 
+function Get-NightlyBareClassIdentity {
+    # TUnit 1.44 GetClassTypeName appends constructor arguments, for example
+    # AgentTuiApiTests(AgentTuiApiWebAppFactory). The treenode filter path uses
+    # the metadata class name and does not include that suffix, so chunking,
+    # filters, roster matching, policy rows, and TRX keys share the bare name.
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $Name }
+    $open = $Name.IndexOf('(')
+    if ($open -gt 0 -and $Name.EndsWith(')', [StringComparison]::Ordinal)) {
+        return $Name.Substring(0, $open)
+    }
+    return $Name
+}
+
 function Get-NightlyClassNameFromIdentity {
     param([string]$ClassName)
     if ([string]::IsNullOrWhiteSpace($ClassName)) { return $ClassName }
-    $parts = $ClassName.Split('.')
+    $bare = Get-NightlyBareClassIdentity -Name $ClassName
+    $parts = $bare.Split('.')
     return $parts[$parts.Length - 1]
 }
 
@@ -621,14 +636,22 @@ function Test-NightlyClassAssigned {
     $candidates = @()
     if (-not [string]::IsNullOrWhiteSpace($ClassName)) {
         $candidates += $ClassName
+        $candidates += (Get-NightlyBareClassIdentity -Name $ClassName)
         $candidates += (Get-NightlyClassNameFromIdentity -ClassName $ClassName)
     }
-    if (-not [string]::IsNullOrWhiteSpace($TypeName)) { $candidates += $TypeName }
+    if (-not [string]::IsNullOrWhiteSpace($TypeName)) {
+        $candidates += $TypeName
+        $candidates += (Get-NightlyBareClassIdentity -Name $TypeName)
+    }
     foreach ($c in @($RequiredClasses)) {
         $want = [string]$c
         if ([string]::IsNullOrWhiteSpace($want)) { continue }
+        $wantBare = Get-NightlyBareClassIdentity -Name $want
+        $wantSimple = Get-NightlyClassNameFromIdentity -ClassName $want
         foreach ($have in $candidates) {
             if ([string]::Equals($want, $have, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+            if ([string]::Equals($wantBare, $have, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+            if ([string]::Equals($wantSimple, $have, [StringComparison]::OrdinalIgnoreCase)) { return $true }
         }
     }
     return $false
@@ -954,13 +977,18 @@ function Test-NightlyRequiredClassesPresent {
         $cn = [string]$r.ClassName
         if ([string]::IsNullOrWhiteSpace($cn)) { continue }
         $present[$cn] = $true
+        $present[(Get-NightlyBareClassIdentity -Name $cn)] = $true
         $present[(Get-NightlyClassNameFromIdentity -ClassName $cn)] = $true
     }
     $missing = @()
     foreach ($c in @($RequiredClasses)) {
         $name = [string]$c
         if ([string]::IsNullOrWhiteSpace($name)) { continue }
-        if (-not $present.ContainsKey($name)) { $missing += $name }
+        $wantBare = Get-NightlyBareClassIdentity -Name $name
+        $wantSimple = Get-NightlyClassNameFromIdentity -ClassName $name
+        if (-not $present.ContainsKey($name) -and -not $present.ContainsKey($wantBare) -and -not $present.ContainsKey($wantSimple)) {
+            $missing += $name
+        }
     }
     return [pscustomobject]@{ Ok = ($missing.Count -eq 0); Missing = $missing }
 }
@@ -1160,9 +1188,10 @@ function New-NightlyExactRoster {
     if (@($parsed.Nodes).Count -eq 0) { throw 'empty-discovery' }
     $selected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($member in $Members) {
-        $class = [string]$member.class; $method = [string]$member.method
+        $class = Get-NightlyBareClassIdentity -Name ([string]$member.class)
+        $method = [string]$member.method
         if ($class -notmatch '^[A-Za-z_][A-Za-z0-9_.]*$' -or ($method -and $method -notmatch '^[A-Za-z_][A-Za-z0-9_]*$')) { throw 'unresolvable-exact-member' }
-        $matches = @($parsed.Nodes | Where-Object { $_.ClassName -ceq $class -and (-not $method -or $_.Method -ceq $method) })
+        $matches = @($parsed.Nodes | Where-Object { (Get-NightlyBareClassIdentity -Name ([string]$_.ClassName)) -ceq $class -and (-not $method -or $_.Method -ceq $method) })
         if ($matches.Count -eq 0) { throw ('missing-exact-member:' + $class + '.' + $method) }
         foreach ($node in $matches) { [void]$selected.Add($node.Uid) }
     }
@@ -1180,10 +1209,11 @@ function New-NightlyExactRoster {
     $groups = [Collections.Generic.SortedDictionary[string,object]]::new([StringComparer]::Ordinal)
     foreach ($node in $parsed.Nodes) {
         if (-not $selected.Contains($node.Uid)) { continue }
-        foreach ($part in @($node.Namespace, $node.Type, $node.Method)) {
+        $bareType = Get-NightlyBareClassIdentity -Name ([string]$node.Type)
+        foreach ($part in @($node.Namespace, $bareType, $node.Method)) {
             if ($part -notmatch '^[A-Za-z_][A-Za-z0-9_.]*$') { throw 'unresolvable-filter-identity' }
         }
-        $filter = '/*/{0}/{1}/{2}' -f $node.Namespace, $node.Type, $node.Method
+        $filter = '/*/{0}/{1}/{2}' -f $node.Namespace, $bareType, $node.Method
         if (-not $groups.ContainsKey($filter)) { $groups.Add($filter, [Collections.Generic.List[string]]::new()) }
         $groups[$filter].Add($node.Uid)
     }
