@@ -194,6 +194,10 @@ A trimmed slash prompt arms StreamingTurn without Transition and keeps PhaseStar
 The same-window command wrapper, or an echo that already sees that wrapper, restores AwaitingInput and sets LastEventAt back to PhaseStartedAt.
 Echo-before-wrapper and wrapper-before-echo both end on that unscanned input wait.
 An older wrapper outside this wait does not suppress a later slash-prefixed prompt.
+A TurnEnd with stop_reason end_turn or cancelled on the re-armed attempt, and a later interrupt marker, Transition back to AwaitingInput.
+StartAsync still completes the launch turn, including Finishing and Succeeded. The launch StreamingTurn is not re-armed, so its TurnEnd does not take this path.
+Each entry to AwaitingInput opens a per-wait marker. A real Transition to StreamingTurn closes it. Provisional arm leaves it open, so the echo window applies again after a later interrupt, including when an earlier wait already recorded an AwaitingInput duration.
+Echo-looking transcript rows after a real prompt do not move LastEventAt, so the scanner still measures StallTimeoutMs from that prompt.
 Parking stays disabled. Re-arm does not release the seat, stop the process, or add an input-wait deadline.
 The only kill remains the StreamingTurn scanner.
 
