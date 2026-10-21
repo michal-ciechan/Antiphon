@@ -156,17 +156,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         // routing snapshot through ordinary mint -> snapshot creation/identity validation refuses.
         using var repo = new ScratchGitRepo("c1213-snapshot"); await repo.CommitFileAsync("seed.txt", "seed");
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync(); await using var db = CreateContext(schema);
-        var sourceCard = await SeedCardAsync(db, "CARD-1213");
-        var companion = new Card { Id = Guid.NewGuid(), BoardId = sourceCard.BoardId, BoardColumnId = sourceCard.BoardColumnId, Identifier = "CARD-1214", Title = "companion", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
-        db.Cards.Add(companion);
-        var source = await SeedQueuedWorktreeTaskAsync(db, repo.Path, sourceCard.Id, null);
-        source.Status = AgentTaskStatus.Succeeded;
-        var sha = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
-        var opId = Guid.NewGuid(); var common = Path.Combine(repo.Path, ".git");
-        var publication = new AgentTaskLanding { Id = opId, TaskId = source.Id, SchemaVersion = 1, Publication = LandPublicationOutcome.Landed,
-            RepositoryPath = repo.Path, CommonDirectory = common, WorktreePath = repo.Path, GitDirectory = common, SourceFullRef = "refs/heads/source", TargetFullRef = "refs/heads/master", DestinationFullRef = "refs/heads/master", OriginalSourceSha = sha, TargetBeforeSha = sha, VerifiedSourceSha = sha, ObservedRemoteTargetSha = sha,
-            RemoteFingerprint = new string('a', 64), RemoteConfirmedAt = DateTime.UtcNow, VerifiedAt = DateTime.UtcNow, SourcePinned = true, TargetPinned = true, VerificationSkipReason = "exact_remote_containment", ConfirmationMethod = "push-endpoint-read-fetch-ancestry", RecoveryRefPrefix = $"refs/antiphon/land/{source.Id:N}/{opId:N}" };
-        new AgentTaskLandingState().HasPublication(publication).ShouldBeTrue(); db.AgentTaskLandings.Add(publication); await db.SaveChangesAsync();
+        var (sourceCard, companion, opId, sha) = await SeedC1213PublicationAsync(db, repo);
         await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, runners: new C1213Directory("capable"), cardBranchNames: true);
         await using var scope = provider.CreateAsyncScope();
         var service = scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>();
@@ -182,10 +172,19 @@ public partial class AgentTaskDispatchBaseGuardTests
         task.WorktreeBranch = "feat/card-1214-mutation-" + task.Id.ToString("N")[..8];
         await Should.ThrowAsync<ConflictException>(() => service.ValidateVerificationAsync(task, lease, default));
         }
+    }
+
+    [Test]
+    public async Task C1213_RemoteSourceLandingKeepsLegacyIdentity()
+    {
         // The remote arm drives RemoteVerificationWorkspace, which admits only POSIX runner paths
-        // (the remote runner is Linux-only), against real temp directories (CARD-1415).
+        // (the remote runner is Linux-only), against real temp directories. It is its own method so
+        // the local arm stays required on Windows; rc excludes this one there (CARD-1415).
         if (OperatingSystem.IsWindows())
-            Skip.Test("CARD-1415: the remote snapshot arm needs POSIX runner paths; the local arm above passed.");
+            Skip.Test("CARD-1415: the remote snapshot arm needs POSIX runner paths; C1213_SourceLandingKeepsLegacyIdentity covers the local arm.");
+        using var repo = new ScratchGitRepo("c1213-remote-snapshot"); await repo.CommitFileAsync("seed.txt", "seed");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync(); await using var db = CreateContext(schema);
+        var (_, companion, opId, sha) = await SeedC1213PublicationAsync(db, repo);
         await repo.AddBareOriginAsync();
         var origin = (await repo.GitReadAsync("remote", "get-url", "origin")).Trim();
         var remoteRoot = Directory.CreateTempSubdirectory("c1213-snapshot-recipient").FullName;
@@ -210,6 +209,23 @@ public partial class AgentTaskDispatchBaseGuardTests
         }
         finally { ReadOnlyDirectory.Delete(remoteRoot); }
 
+    }
+
+    // A succeeded CARD-1213 source with a landed publication and a CARD-1214 companion card.
+    private static async Task<(Card SourceCard, Card Companion, Guid OperationId, string Sha)> SeedC1213PublicationAsync(AppDbContext db, ScratchGitRepo repo)
+    {
+        var sourceCard = await SeedCardAsync(db, "CARD-1213");
+        var companion = new Card { Id = Guid.NewGuid(), BoardId = sourceCard.BoardId, BoardColumnId = sourceCard.BoardColumnId, Identifier = "CARD-1214", Title = "companion", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.Cards.Add(companion);
+        var source = await SeedQueuedWorktreeTaskAsync(db, repo.Path, sourceCard.Id, null);
+        source.Status = AgentTaskStatus.Succeeded;
+        var sha = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        var opId = Guid.NewGuid(); var common = Path.Combine(repo.Path, ".git");
+        var publication = new AgentTaskLanding { Id = opId, TaskId = source.Id, SchemaVersion = 1, Publication = LandPublicationOutcome.Landed,
+            RepositoryPath = repo.Path, CommonDirectory = common, WorktreePath = repo.Path, GitDirectory = common, SourceFullRef = "refs/heads/source", TargetFullRef = "refs/heads/master", DestinationFullRef = "refs/heads/master", OriginalSourceSha = sha, TargetBeforeSha = sha, VerifiedSourceSha = sha, ObservedRemoteTargetSha = sha,
+            RemoteFingerprint = new string('a', 64), RemoteConfirmedAt = DateTime.UtcNow, VerifiedAt = DateTime.UtcNow, SourcePinned = true, TargetPinned = true, VerificationSkipReason = "exact_remote_containment", ConfirmationMethod = "push-endpoint-read-fetch-ancestry", RecoveryRefPrefix = $"refs/antiphon/land/{source.Id:N}/{opId:N}" };
+        new AgentTaskLandingState().HasPublication(publication).ShouldBeTrue(); db.AgentTaskLandings.Add(publication); await db.SaveChangesAsync();
+        return (sourceCard, companion, opId, sha);
     }
 
     private sealed class C1213RaceWorktrees(IWorktreeManager inner, Func<Task> create) : IWorktreeManager
