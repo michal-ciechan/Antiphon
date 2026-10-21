@@ -1163,6 +1163,146 @@ function Test-C487_PrerequisiteSettle {
         -Detail ('exit=' + $run.ExitCode + ' record=' + $recordPassed + ' state=' + $statePassed + ' summary=' + $summaryPassed + ' path=' + $summaryPath)
 }
 
+function Write-C1396ReadChild {
+    param([string]$Path)
+    $text = @'
+#requires -Version 5.1
+param(
+    [string]$CommonPath,
+    [string]$LockPath,
+    [string]$ResultPath
+)
+$ErrorActionPreference = 'Stop'
+try {
+    . $CommonPath
+    $record = Read-NightlyLockRecord -LockPath $LockPath
+    $seen = ''
+    if ($null -ne $record) { $seen = [string]$record.runId }
+    $out = [ordered]@{ Seen = $seen; Error = '' }
+    [System.IO.File]::WriteAllText($ResultPath, ($out | ConvertTo-Json -Compress))
+    exit 0
+} catch {
+    $err = [ordered]@{ Seen = ''; Error = [string]$_.Exception.Message }
+    try { [System.IO.File]::WriteAllText($ResultPath, ($err | ConvertTo-Json -Compress)) } catch { }
+    exit 1
+}
+'@
+    [System.IO.File]::WriteAllText($Path, $text.Replace("`r`n", "`n"))
+}
+
+function Test-C1396_WriteHeldLockReadable {
+    # Owner mode is FileAccess.Write + FileShare.Read, the handle Enter keeps.
+    # Windows refuses File.ReadAllText (FileShare.Read) against that handle.
+    # This Linux host allows it, so a green result here does not prove Windows.
+    $fx = New-RunFx
+    Reset-C1389HeldLock
+    $lockPath = Join-Path $fx.State 'run.lock'
+    $payload = '{"pid":1,"runId":"held-run","parentPid":0}'
+    [System.IO.File]::WriteAllText($lockPath, $payload)
+    $holder = [System.IO.File]::Open(
+        $lockPath,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Write,
+        [System.IO.FileShare]::Read)
+    $child = $null
+    try {
+        $record = Read-NightlyLockRecord -LockPath $lockPath
+        $seen = ''
+        if ($null -ne $record) { $seen = [string]$record.runId }
+        Assert-C487 -Cond ($seen -eq 'held-run') -Name 'C1396 Write-held lock reads in-process' -Detail $seen
+        $noneRefused = $false
+        try {
+            $exclusive = [System.IO.File]::Open(
+                $lockPath,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None)
+            $exclusive.Dispose()
+        } catch {
+            $noneRefused = $true
+        }
+        Assert-C487 -Cond $noneRefused -Name 'C1396 Write-held lock still refuses FileShare.None' -Detail ('refused=' + $noneRefused)
+        $fixture = Join-Path $fx.Root 'held'
+        New-Item -ItemType Directory -Path $fixture -Force | Out-Null
+        $childPath = Join-Path $fixture 'read-child.ps1'
+        $resultPath = Join-Path $fixture 'read.json'
+        Write-C1396ReadChild -Path $childPath
+        $common = Join-Path $PSScriptRoot (Join-Path 'lib' 'nightly-common.ps1')
+        $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
+        $arg = '-NoProfile -NonInteractive -File "' + $childPath + '" -CommonPath "' + $common + '" -LockPath "' + $lockPath + '" -ResultPath "' + $resultPath + '"'
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $pwsh
+        $psi.Arguments = $arg
+        $psi.WorkingDirectory = $fixture
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $child = [System.Diagnostics.Process]::Start($psi)
+        [void](Wait-C1389File -Path $resultPath -Seconds 30)
+        $hop = Read-C1389JsonFile -Path $resultPath
+        $childSeen = ''
+        $childError = ''
+        if ($null -ne $hop) { $childSeen = [string]$hop.Seen; $childError = [string]$hop.Error }
+        $detail = ('seen=' + $childSeen + ' error=' + $childError)
+        Assert-C487 -Cond ($childSeen -eq 'held-run') -Name 'C1396 Write-held lock reads from a second process' -Detail $detail
+    } finally {
+        if ($null -ne $child -and -not $child.HasExited) {
+            try { [void]$child.WaitForExit(15000) } catch { }
+        }
+        if ($null -ne $child -and -not $child.HasExited) {
+            try { $child.Kill() } catch { }
+        }
+        try { $holder.Dispose() } catch { }
+    }
+}
+
+function Test-C1396_SharedReopenLogged {
+    $fx = New-RunFx
+    Reset-C1389HeldLock
+    $script:NightlySeams = @{
+        IsProcessAlive = { param($ProcessId) return $false }
+        GetBootId = { return '157' }
+        GetHostId = { return 'host-current' }
+        GetParentProcess = { param($ProcessId) return [pscustomobject]@{ Id = 0; StartTimeUtc = $null } }
+        TracePath = $fx.Trace
+    }
+    Write-C1386Plant -Fx $fx -OwnerPid 424431 -ParentPid 424432 -RunId 'stale-run' -BootId '157' -HostId 'host-current'
+    function script:Open-NightlySharedLockStream {
+        param([string]$LockPath)
+        throw (New-Object System.IO.IOException('shared reopen refused'))
+    }
+    $captured = @(Enter-NightlyExclusiveLock -StateRoot $fx.State -RunId 'reopen-run' 6>&1)
+    $result = $null
+    $lines = @()
+    foreach ($item in $captured) {
+        if ($item -is [System.Management.Automation.InformationRecord]) { $lines += [string]$item }
+        elseif ($null -ne $item) { $result = $item }
+    }
+    $ok = $false
+    $reason = ''
+    $owns = $false
+    if ($null -ne $result) {
+        $ok = [bool]$result.Ok
+        $reason = [string]$result.Reason
+        $owns = [bool]$result.OwnsLock
+    }
+    $detail = ('ok=' + $ok + ' reason=' + $reason + ' owns=' + $owns)
+    Assert-C487 -Cond ($ok -and ($reason -eq 'reclaimed') -and $owns) -Name 'C1396 Reopen failure keeps reclaim ownership' -Detail $detail
+    $streamMissing = $null -eq $script:NightlyLockStream
+    Assert-C487 -Cond $streamMissing -Name 'C1396 Reopen failure keeps no shared handle' -Detail ('streamMissing=' + $streamMissing)
+    $kept = Test-C1386RunIdKept -Fx $fx -RunId 'reopen-run'
+    Assert-C487 -Cond $kept -Name 'C1396 Reopen failure keeps the published run id' -Detail (Get-C1386LockText $fx)
+    $hostLine = $false
+    foreach ($line in $lines) {
+        if ($line -match 'reclaim-shared-reopen-failed') { $hostLine = $true }
+    }
+    Assert-C487 -Cond $hostLine -Name 'C1396 Reopen failure logs reclaim-shared-reopen-failed' -Detail ($lines -join ' | ')
+    $trace = ''
+    if (Test-Path -LiteralPath $fx.Trace) { $trace = [System.IO.File]::ReadAllText($fx.Trace) }
+    $traced = $trace -match 'reclaim-shared-reopen-failed'
+    Assert-C487 -Cond $traced -Name 'C1396 Reopen failure traces reclaim-shared-reopen-failed' -Detail $trace
+    Reset-C1389HeldLock
+}
+
 $cases = Get-C487CaseFunctions -Prefix 'C487_G0'
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -CommandType Function -ErrorAction SilentlyContinue

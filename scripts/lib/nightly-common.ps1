@@ -864,6 +864,15 @@ function Restore-NightlyLockBytes {
     } catch { }
 }
 
+function Open-NightlySharedLockStream {
+    param([string]$LockPath)
+    return [System.IO.File]::Open(
+        $LockPath,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Write,
+        [System.IO.FileShare]::Read)
+}
+
 function Enter-NightlyReclaimedLock {
     param(
         [string]$StateRoot,
@@ -923,11 +932,7 @@ function Enter-NightlyReclaimedLock {
         try { $exclusive.Dispose() } catch { }
         $shared = $null
         try {
-            $shared = [System.IO.File]::Open(
-                $LockPath,
-                [System.IO.FileMode]::Open,
-                [System.IO.FileAccess]::Write,
-                [System.IO.FileShare]::Read)
+            $shared = Open-NightlySharedLockStream -LockPath $LockPath
         } catch {
             $shared = $null
         }
