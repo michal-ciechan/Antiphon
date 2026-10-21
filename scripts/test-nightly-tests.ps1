@@ -1740,252 +1740,164 @@ function Test-C1397_RcAntiphonLaunchGroups {
     Assert-C487 -Cond $ok -Name 'C1397 rc antiphon launch groups are far below 1346 and assign every class once' -Detail $detail
 }
 
-function Test-C1404_RcCostBalancedGroups {
-    # The class-count packer puts several heavy land classes in one OR group.
-    # A multi-class group must stay at or under 120 required nodes and 120
-    # weight units (Slow=4, Land/Delivery/Check double). One class over the
-    # cap still launches alone. Light rc suites stay a single launch.
+function Test-C1410_MeasuredCostGroups {
+    # CARD-1410 (supersedes the CARD-1404 120-node cap case). The real
+    # Antiphon.Tests listing (scripts/fixtures/nightly/c1410-antiphon-listing.txt,
+    # 19012 nodes) is packed by estimated serial seconds: measured rows from
+    # nightly-class-costs.json, else 1.5 s per node, Slow 15 s, Land-type Slow
+    # 60 s, and a type naming Land, Delivery or Check anywhere doubles. Every
+    # launch must stay under watchdogs.antiphon, a multi-class or multi-method
+    # launch under the 15-minute target, every required node launched once.
     $detail = ''
     $ok = $false
     try {
         $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
-        $cap = 120
-        $app = 'Antiphon.Tests.Application'
+        $target = 900.0
+        $watchdogSeconds = 3600.0
+        $listing = Join-Path $repo (Join-Path 'scripts' (Join-Path 'fixtures' (Join-Path 'nightly' 'c1410-antiphon-listing.txt')))
         $nodes = New-Object System.Collections.Generic.List[object]
-        function Add-C1404Class {
-            param($Nodes, [string]$Ns, [string]$Type, [int]$Count, [string[]]$Categories)
-            $cats = @($Categories)
-            for ($i = 0; $i -lt $Count; $i++) {
-                $method = 'N' + $i
-                $className = $Ns + '.' + $Type
-                [void]$Nodes.Add([pscustomobject]@{
-                    ClassName = $className
-                    Type = $Type
-                    Method = $method
-                    Uid = ($className + '.' + $method)
-                    Categories = $cats
-                })
+        foreach ($line in [System.IO.File]::ReadAllLines($listing)) {
+            if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith('#')) { continue }
+            $fields = $line.Split('|')
+            $className = $fields[0]
+            $cats = @()
+            if ($fields[1] -ceq 'S') { $cats = @('Slow') }
+            $paren = $className.IndexOf('(')
+            $head = $(if ($paren -ge 0) { $className.Substring(0, $paren) } else { $className })
+            $dot = $head.LastIndexOf('.')
+            $type = $className.Substring($dot + 1)
+            $i = 0
+            foreach ($entry in $fields[2].Split(',')) {
+                $eq = $entry.IndexOf('=')
+                if ($eq -ge 0) { $method = $entry.Substring(0, $eq); $cases = [int]$entry.Substring($eq + 1) }
+                else { $method = 'M' + $i.ToString('0000'); $cases = [int]$entry }
+                $i++
+                for ($k = 0; $k -lt $cases; $k++) {
+                    [void]$nodes.Add([pscustomobject]@{ ClassName = $className; Type = $type; Method = $method; Uid = ($className + '.' + $method + '.' + $k); Categories = $cats })
+                }
             }
         }
-        function Get-C1404Unit {
-            param($Node, [string]$Type)
-            $unit = 1
-            foreach ($category in @($Node.Categories)) {
-                if ([string]$category -ceq 'Slow') { $unit = 4; break }
+        $realCount = $nodes.Count
+        # Suffix hazard: an oversized class whose method Run prefixes RunLater.
+        foreach ($method in @('Run', 'RunLater', 'Alpha', 'Beta')) {
+            for ($k = 0; $k -lt 20; $k++) {
+                [void]$nodes.Add([pscustomobject]@{ ClassName = 'Antiphon.Tests.C1410.C1410SplitTests'; Type = 'C1410SplitTests'; Method = $method; Uid = ('c1410.' + $method + '.' + $k); Categories = @('Slow') })
             }
-            if ($Type.StartsWith('Land', [StringComparison]::Ordinal) -or
-                $Type.StartsWith('Delivery', [StringComparison]::Ordinal) -or
-                $Type.StartsWith('Check', [StringComparison]::Ordinal)) { $unit = $unit * 2 }
-            return $unit
         }
-        for ($n = 0; $n -lt 100; $n++) {
-            Add-C1404Class -Nodes $nodes -Ns $app -Type ('C1404Ordinary{0}' -f $n.ToString('0000')) -Count 1 -Categories @()
-        }
-        Add-C1404Class -Nodes $nodes -Ns $app -Type 'CheckSweepTests' -Count 70 -Categories @()
-        Add-C1404Class -Nodes $nodes -Ns $app -Type 'DeliveryWatchdogTests' -Count 86 -Categories @('Slow')
-        for ($n = 0; $n -lt 20; $n++) {
-            Add-C1404Class -Nodes $nodes -Ns $app -Type ('LandBatch{0}' -f $n.ToString('00')) -Count 80 -Categories @()
-        }
-        Add-C1404Class -Nodes $nodes -Ns $app -Type 'LandPrefixTests' -Count 30 -Categories @()
-        Add-C1404Class -Nodes $nodes -Ns $app -Type 'LandPrefixTestsExtra' -Count 30 -Categories @()
-        Add-C1404Class -Nodes $nodes -Ns 'Antiphon.Tests.Scripts' -Type 'PartialCostTests' -Count 3 -Categories @()
         $nodeArray = @($nodes.ToArray())
-        $partial = @($nodeArray | Where-Object { $_.Type -ceq 'PartialCostTests' })
-        $partial[$partial.Count - 1].Method = 'DropOne'
-        $partial[$partial.Count - 1].Uid = 'Antiphon.Tests.Scripts.PartialCostTests.DropOne'
-        $partial[0].Method = 'KeepOne'
-        $partial[0].Uid = 'Antiphon.Tests.Scripts.PartialCostTests.KeepOne'
-        $partial[1].Method = 'KeepTwo'
-        $partial[1].Uid = 'Antiphon.Tests.Scripts.PartialCostTests.KeepTwo'
         $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'rc' -SuiteId 'antiphon' -Platform 'windows')
-        $exclusions += [pscustomobject]@{
-            Suite = 'antiphon'
-            Class = 'PartialCostTests'
-            Methods = @('DropOne')
-            Reason = 'cost fixture'
-            Owner = 'CARD-1404'
-        }
         $all = @([pscustomobject]@{ id = 'all'; classes = @() })
         $plan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions $exclusions -ProfileAware $true -Native $true)
         $nightlyEx = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'nightly' -SuiteId 'antiphon' -Platform 'windows')
         $nightlyPlan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions $nightlyEx -ProfileAware $false -Native $true)
         $emptyPlan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions @() -ProfileAware $true -Native $true)
-        $classChunks = @($plan | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.exactFilter) })
-        $exactChunks = @($plan | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.exactFilter) })
-        $required = @($nodeArray | Where-Object { -not (Test-NightlyDiscoveryExcluded -Node $_ -ProfileExclusions $exclusions -ProfileAware) })
+
+        # Independent estimate: per-class measured rows, else the node model.
+        $measured = @{}
+        $costDoc = [System.IO.File]::ReadAllText((Join-Path $repo (Join-Path 'scripts' (Join-Path 'lib' 'nightly-class-costs.json')))) | ConvertFrom-Json
+        foreach ($row in @($costDoc.classes.PSObject.Properties)) { $measured[[string]$row.Name] = [double]$row.Value.seconds / [int]$row.Value.nodes }
         $byBare = @{}
-        foreach ($node in $required) {
+        $required = New-Object System.Collections.Generic.List[object]
+        foreach ($node in $nodeArray) {
+            if (Test-NightlyDiscoveryExcluded -Node $node -ProfileExclusions $exclusions -ProfileAware) { continue }
+            [void]$required.Add($node)
             $bare = Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)
             if (-not $byBare.ContainsKey($bare)) { $byBare[$bare] = New-Object System.Collections.Generic.List[object] }
             [void]$byBare[$bare].Add($node)
         }
-        $maxNodes = 0
-        $maxWeight = 0
-        $maxMultiNodes = 0
-        $maxMultiWeight = 0
-        $seenClass = @{}
-        $dup = 0
-        $invalid = New-Object System.Collections.Generic.List[string]
-        $unsafeOr = $false
-        $typesByNs = @{}
-        foreach ($node in $nodeArray) {
-            $bare = Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)
-            $dot = $bare.LastIndexOf('.')
-            $ns = $bare.Substring(0, $dot)
-            $type = $bare.Substring($dot + 1)
-            if (-not $typesByNs.ContainsKey($ns)) { $typesByNs[$ns] = @{} }
-            $typesByNs[$ns][$type] = $true
-        }
-        foreach ($chunk in $classChunks) {
-            $sumNodes = 0
-            $sumWeight = 0
-            foreach ($className in @($chunk.classes)) {
-                $key = [string]$className
-                if ($seenClass.ContainsKey($key)) { $dup++ } else { $seenClass[$key] = $true }
-                $rows = $byBare[$key]
-                if ($null -eq $rows) { continue }
-                $type = $key.Substring($key.LastIndexOf('.') + 1)
-                foreach ($node in $rows) {
-                    $sumNodes++
-                    $sumWeight += Get-C1404Unit -Node $node -Type $type
-                }
-            }
-            if ($sumNodes -gt $maxNodes) { $maxNodes = $sumNodes }
-            if ($sumWeight -gt $maxWeight) { $maxWeight = $sumWeight }
-            if (@($chunk.classes).Count -ge 2) {
-                if ($sumNodes -gt $maxMultiNodes) { $maxMultiNodes = $sumNodes }
-                if ($sumWeight -gt $maxMultiWeight) { $maxMultiWeight = $sumWeight }
-            }
-            $gf = ''
-            if ($chunk.PSObject.Properties.Name -contains 'groupFilter') { $gf = [string]$chunk.groupFilter }
-            if (-not [string]::IsNullOrWhiteSpace($gf)) {
-                $bare0 = [string]@($chunk.classes)[0]
-                $dot = $bare0.LastIndexOf('.')
-                $ns = $bare0.Substring(0, $dot)
-                foreach ($className in @($chunk.classes)) {
-                    $type = ([string]$className).Substring($ns.Length + 1)
-                    foreach ($other in @($typesByNs[$ns].Keys)) {
-                        if ($other.Length -gt $type.Length -and $other.StartsWith($type, [StringComparison]::Ordinal)) { $unsafeOr = $true }
-                    }
-                }
-            }
-            try {
-                $argv = @(Get-NightlyNativeExecutionArguments -TrxPath (Join-Path $ResultsDirectory 'c1404.trx') -DiagnosticDirectory $ResultsDirectory -Classes @($chunk.classes) -ExactFilter '' -GroupFilter $gf)
-                $joined = $argv -join ' '
-                if ($joined.Contains('(') -and [string]::IsNullOrWhiteSpace($gf)) { [void]$invalid.Add('paren-on-class-filter') }
-            } catch {
-                [void]$invalid.Add([string]$_.Exception.Message)
-            }
+        function Get-C1410Seconds {
+            param($Node, [string]$Bare)
+            if ($measured.ContainsKey($Bare)) { return [double]$measured[$Bare] }
+            $type = $Bare.Substring($Bare.LastIndexOf('.') + 1)
+            $slow = (@($Node.Categories) -ccontains 'Slow')
+            $unit = 1.5
+            if ($slow) { $unit = $(if ($type.Contains('Land')) { 60.0 } else { 15.0 }) }
+            if ($type.Contains('Land') -or $type.Contains('Delivery') -or $type.Contains('Check')) { $unit = $unit * 2 }
+            return $unit
         }
         $covered = @{}
+        $maxSeconds = 0.0
+        $maxId = ''
+        $overTarget = New-Object System.Collections.Generic.List[string]
+        $invalid = New-Object System.Collections.Generic.List[string]
+        $splitIds = @{}
         foreach ($chunk in $plan) {
-            if (-not [string]::IsNullOrWhiteSpace([string]$chunk.exactFilter)) {
-                foreach ($node in $required) {
-                    $bare = Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)
-                    $dot = $bare.LastIndexOf('.')
-                    $filter = '/*/{0}/{1}/{2}' -f $bare.Substring(0, $dot), $bare.Substring($dot + 1), $node.Method
-                    if ([string]$chunk.exactFilter -ceq $filter) {
-                        $uid = [string]$node.Uid
-                        if (-not $covered.ContainsKey($uid)) { $covered[$uid] = 0 }
-                        $covered[$uid] = [int]$covered[$uid] + 1
-                    }
+            $gf = ''
+            $mf = ''
+            if ($chunk.PSObject.Properties.Name -contains 'groupFilter') { $gf = [string]$chunk.groupFilter }
+            if ($chunk.PSObject.Properties.Name -contains 'methodFilter') { $mf = [string]$chunk.methodFilter }
+            $ef = [string]$chunk.exactFilter
+            try {
+                [void]@(Get-NightlyNativeExecutionArguments -TrxPath (Join-Path $ResultsDirectory 'c1410.trx') -DiagnosticDirectory $ResultsDirectory -Classes @($chunk.classes) -ExactFilter $ef -GroupFilter $gf -MethodFilter $mf)
+            } catch { [void]$invalid.Add([string]$chunk.id + ':' + [string]$_.Exception.Message) }
+            # What the TUnit filter selects: whole classes, an exact method,
+            # or every method starting with a (Name*) operand.
+            $hits = New-Object System.Collections.Generic.List[object]
+            if ($ef) {
+                $method = $ef.Substring($ef.LastIndexOf('/') + 1)
+                foreach ($node in $byBare[[string]@($chunk.classes)[0]]) { if ([string]$node.Method -ceq $method) { [void]$hits.Add($node) } }
+            } elseif ($mf) {
+                $ops = @(foreach ($m in [regex]::Matches($mf, '\(([A-Za-z_][A-Za-z0-9_]*)\*\)')) { $m.Groups[1].Value })
+                foreach ($node in $byBare[[string]@($chunk.classes)[0]]) {
+                    foreach ($op in $ops) { if (([string]$node.Method).StartsWith($op, [StringComparison]::Ordinal)) { [void]$hits.Add($node); break } }
                 }
             } else {
-                $have = @{}
-                foreach ($className in @($chunk.classes)) { $have[[string]$className] = $true }
-                foreach ($node in $required) {
-                    $bare = Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)
-                    if ($have.ContainsKey($bare)) {
-                        $uid = [string]$node.Uid
-                        if (-not $covered.ContainsKey($uid)) { $covered[$uid] = 0 }
-                        $covered[$uid] = [int]$covered[$uid] + 1
-                    }
-                }
+                foreach ($className in @($chunk.classes)) { foreach ($node in @($byBare[[string]$className])) { [void]$hits.Add($node) } }
             }
+            $seconds = 0.0
+            $methods = @{}
+            foreach ($node in $hits) {
+                $bare = Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)
+                $seconds += Get-C1410Seconds -Node $node -Bare $bare
+                $methods[[string]$node.Method] = $true
+                $uid = [string]$node.Uid
+                if (-not $covered.ContainsKey($uid)) { $covered[$uid] = 0 }
+                $covered[$uid] = [int]$covered[$uid] + 1
+            }
+            if ($seconds -gt $maxSeconds) { $maxSeconds = $seconds; $maxId = [string]$chunk.id + '(' + (@($chunk.classes) -join ';') + ')' }
+            $single = (@($chunk.classes).Count -eq 1 -and (($ef -or $mf) -and $methods.Count -eq 1 -or -not ($ef -or $mf)))
+            if ($seconds -gt ($target + 0.01) -and -not $single) { [void]$overTarget.Add([string]$chunk.id) }
+            if ($ef -or $mf) { $splitIds[[string]@($chunk.classes)[0]] = 1 + $(if ($splitIds.ContainsKey([string]@($chunk.classes)[0])) { [int]$splitIds[[string]@($chunk.classes)[0]] } else { 0 }) }
         }
         $missing = 0
         $double = 0
         foreach ($node in $required) {
-            $uid = [string]$node.Uid
             $hits = 0
-            if ($covered.ContainsKey($uid)) { $hits = [int]$covered[$uid] }
+            if ($covered.ContainsKey([string]$node.Uid)) { $hits = [int]$covered[[string]$node.Uid] }
             if ($hits -eq 0) { $missing++ } elseif ($hits -gt 1) { $double++ }
         }
-        $exactText = (@($exactChunks | ForEach-Object { [string]$_.exactFilter }) -join ' ')
-        $alone = @('Antiphon.Tests.Application.DeliveryWatchdogTests', 'Antiphon.Tests.Application.CheckSweepTests')
-        for ($n = 0; $n -lt 20; $n++) { $alone += ('Antiphon.Tests.Application.LandBatch{0}' -f $n.ToString('00')) }
-        $notAlone = 0
-        foreach ($name in $alone) {
-            $hit = @($classChunks | Where-Object { @($_.classes) -contains $name })
-            if ($hit.Count -ne 1 -or @($hit[0].classes).Count -ne 1) { $notAlone++ }
-        }
+        $extra = $covered.Count - ($required.Count - $missing)
+        $family = (Test-NightlyHeavyFamilyType -TypeName 'AgentTaskLandPublicationTests') -and (Test-NightlyHeavyFamilyType -TypeName 'AgentTaskDeliveryWatchdogTests') -and (Test-NightlyHeavyFamilyType -TypeName 'AgentTaskCheckSweepTests') -and -not (Test-NightlyHeavyFamilyType -TypeName 'AgentTaskReplyIntegrationTests')
+        $runAlone = @($plan | Where-Object { [string]$_.exactFilter -ceq '/*/Antiphon.Tests.C1410/C1410SplitTests/Run' })
+        $runOr = @($plan | Where-Object { ($_.PSObject.Properties.Name -contains 'methodFilter') -and ([string]$_.methodFilter).Contains('(Run*)') })
         $rejected = $false
         try {
-            [void]@(Get-NightlyNativeExecutionArguments -TrxPath (Join-Path $ResultsDirectory 'c1404-bad.trx') -DiagnosticDirectory $ResultsDirectory -Classes @('Antiphon.Tests.Application.LandPrefixTests', 'Antiphon.Tests.Application.LandPrefixTestsExtra') -GroupFilter '/*/Antiphon.Tests.Application/(LandPrefixTests*)|(LandPrefixTestsExtra*)/*')
-        } catch {
-            if ([string]$_.Exception.Message -ceq 'invalid-group-filter') { $rejected = $true }
-        }
+            [void]@(Get-NightlyNativeExecutionArguments -TrxPath (Join-Path $ResultsDirectory 'c1410-bad.trx') -DiagnosticDirectory $ResultsDirectory -Classes @('Antiphon.Tests.C1410.C1410SplitTests') -MethodFilter '/*/Antiphon.Tests.C1410/C1410SplitTests/(Run*)|(RunLater*)')
+        } catch { if ([string]$_.Exception.Message -ceq 'invalid-method-filter') { $rejected = $true } }
         $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'antiphon' -Fallback 3600000
-        $nightlyOk = ($nightlyEx.Count -eq 0 -and @($nightlyPlan).Count -eq 1 -and [string]$nightlyPlan[0].id -eq 'all' -and @($nightlyPlan[0].classes).Count -eq 0)
-        $emptyOk = (@($emptyPlan).Count -eq 1 -and [string]$emptyPlan[0].id -eq 'all' -and @($emptyPlan[0].classes).Count -eq 0)
-        $suiteText = New-Object System.Collections.Generic.List[string]
-        $suiteShapes = @(
-            @{ Id = 'session-runner'; Classes = 8; Methods = 3; Launches = 1; MaxNodes = 24 },
-            @{ Id = 'pty-host'; Classes = 10; Methods = 20; Launches = 2; MaxNodes = 120 },
-            @{ Id = 'agents-pty'; Classes = 8; Methods = 3; Launches = 1; MaxNodes = 24 },
-            @{ Id = 'e2e'; Classes = 8; Methods = 3; Launches = 1; MaxNodes = 24 },
-            @{ Id = 'markdown-pdf'; Classes = 8; Methods = 3; Launches = 1; MaxNodes = 24 }
-        )
-        foreach ($shape in $suiteShapes) {
-            $sid = [string]$shape.Id
-            $suiteNodes = New-Object System.Collections.Generic.List[object]
-            $suiteNs = 'Antiphon.Tests.C1404' + $sid
-            $prefix = 'C1404' + $sid.Substring(0, 1).ToUpperInvariant()
-            for ($n = 0; $n -lt [int]$shape.Classes; $n++) {
-                Add-C1404Class -Nodes $suiteNodes -Ns $suiteNs -Type ('{0}{1}' -f $prefix, $n.ToString('00')) -Count ([int]$shape.Methods) -Categories @()
-            }
-            $suiteEx = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'rc' -SuiteId $sid -Platform 'windows')
-            $suitePlan = @(Resolve-NightlySuiteChunks -DiscoveryNodes @($suiteNodes.ToArray()) -Chunks $all -Exclusions $suiteEx -ProfileAware $true -Native $true)
-            $suiteClass = @($suitePlan | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.exactFilter) })
-            $suiteMax = 0
-            $suiteSeen = @{}
-            $suiteDup = 0
-            foreach ($chunk in $suiteClass) {
-                foreach ($className in @($chunk.classes)) {
-                    $key = [string]$className
-                    if ($suiteSeen.ContainsKey($key)) { $suiteDup++ } else { $suiteSeen[$key] = $true }
-                }
-                $count = @($chunk.classes).Count * [int]$shape.Methods
-                if ($count -gt $suiteMax) { $suiteMax = $count }
-            }
-            if ($suiteEx.Count -eq 0) { [void]$suiteText.Add($sid + ':no-exclusions') }
-            elseif ($suiteClass.Count -ne [int]$shape.Launches -or $suiteMax -ne [int]$shape.MaxNodes -or $suiteDup -ne 0 -or $suiteSeen.Count -ne [int]$shape.Classes) {
-                [void]$suiteText.Add($sid + ':' + $suiteClass.Count + '/' + $suiteMax + '/classes=' + $suiteSeen.Count)
-            } else {
-                [void]$suiteText.Add($sid + ':' + $suiteClass.Count + '/' + $suiteMax)
-            }
-        }
+        $nightlyOk = ($nightlyEx.Count -eq 0 -and @($nightlyPlan).Count -eq 1 -and [string]$nightlyPlan[0].id -eq 'all')
+        $emptyOk = (@($emptyPlan).Count -eq 1 -and [string]$emptyPlan[0].id -eq 'all')
+        $launches = @($plan).Count
         $reasons = New-Object System.Collections.Generic.List[string]
-        if ($script:NightlyLaunchGroupNodeCap -ne 120) { [void]$reasons.Add('cap-constant') }
-        if ($script:NightlyLaunchSlowNodeWeight -ne 4 -or $script:NightlyLaunchHeavyFamilyWeight -ne 2) { [void]$reasons.Add('weight-constant') }
-        if ($maxMultiNodes -gt $cap) { [void]$reasons.Add('node-cap') }
-        if ($maxMultiWeight -gt $cap) { [void]$reasons.Add('weight-cap') }
-        if ($notAlone -ne 0) { [void]$reasons.Add('heavy-alone') }
-        if ($missing -ne 0 -or $double -ne 0 -or $dup -ne 0) { [void]$reasons.Add('census') }
-        if ($exactChunks.Count -ne 2 -or -not $exactText.Contains('KeepOne') -or -not $exactText.Contains('KeepTwo') -or $exactText.Contains('DropOne')) { [void]$reasons.Add('exact') }
-        if ($seenClass.ContainsKey('Antiphon.Tests.Scripts.PartialCostTests')) { [void]$reasons.Add('partial-grouped') }
-        if ($unsafeOr -or -not $rejected -or $invalid.Count -ne 0) { [void]$reasons.Add('suffix') }
+        if ($realCount -ne 19012) { [void]$reasons.Add('listing') }
+        if ($launches -lt 60 -or $launches -gt 180) { [void]$reasons.Add('launch-count') }
+        if ($maxSeconds -ge $watchdogSeconds) { [void]$reasons.Add('watchdog-budget') }
+        if ($overTarget.Count -ne 0) { [void]$reasons.Add('target') }
+        if ($missing -ne 0 -or $double -ne 0 -or $extra -ne 0) { [void]$reasons.Add('census') }
+        if ($invalid.Count -ne 0 -or -not $rejected -or $runAlone.Count -ne 1 -or $runOr.Count -ne 0) { [void]$reasons.Add('suffix') }
+        foreach ($big in @('Antiphon.Tests.Scripts.RemoteScriptContractTests', 'Antiphon.Tests.Application.DelegationDispatchRecoveryBoundaryTests', 'Antiphon.Tests.Application.AttentionServiceTests', 'Antiphon.Tests.Application.AgentTaskLandPublicationTests')) {
+            if (-not $splitIds.ContainsKey($big) -or [int]$splitIds[$big] -lt 2) { [void]$reasons.Add('split:' + $big.Substring($big.LastIndexOf('.') + 1)) }
+        }
+        if (-not $family) { [void]$reasons.Add('family-anywhere') }
         if (-not $nightlyOk -or -not $emptyOk -or $watchdog -ne 3600000) { [void]$reasons.Add('nightly-watchdog') }
-        if ($classChunks.Count -lt 40 -or $classChunks.Count -gt 150) { [void]$reasons.Add('launch-count') }
-        foreach ($row in $suiteText) { if ($row -match 'no-exclusions|/') { if ($row -notmatch ':\d+/\d+$') { [void]$reasons.Add('suite') } } }
         $ok = ($reasons.Count -eq 0)
-        $detail = 'launches=' + $classChunks.Count + ' exact=' + $exactChunks.Count + ' total=' + @($plan).Count + ' maxNodes=' + $maxNodes + ' maxWeight=' + $maxWeight + ' maxMultiNodes=' + $maxMultiNodes + ' maxMultiWeight=' + $maxMultiWeight + ' missing=' + $missing + ' double=' + $double + ' dup=' + $dup + ' notAlone=' + $notAlone + ' watchdog=' + $watchdog + ' suites=' + ($suiteText -join ',') + ' reasons=' + ($reasons -join ',')
+        $detail = 'launches=' + $launches + ' maxEstimatedSeconds=' + [Math]::Round($maxSeconds, 1) + ' maxLaunch=' + $maxId + ' overTarget=' + $overTarget.Count + ' required=' + $required.Count + ' missing=' + $missing + ' double=' + $double + ' extra=' + $extra + ' splitClasses=' + $splitIds.Count + ' invalid=' + ($invalid -join ',') + ' watchdog=' + $watchdog + ' reasons=' + ($reasons -join ',')
         Write-Host $detail
     } catch {
         $detail = [string]$_.Exception.Message + ' at ' + [string]$_.InvocationInfo.PositionMessage
         $ok = $false
     }
-    Assert-C487 -Cond $ok -Name 'C1404 rc launch groups stay within the node cap and assign every node once' -Detail $detail
+    Assert-C487 -Cond $ok -Name 'C1410 rc launch groups pack by measured cost under the watchdog and assign every node once' -Detail $detail
 }
 
 if ($Case) {
