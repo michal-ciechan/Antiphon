@@ -713,20 +713,32 @@ order; all 81 PCs are mandatory post-land obligations. No PC-green claim.
 
 ### Checkpoints
 
-The table is the closed ordinary scope for Code and ordinary Review. One native
-Linux row, one isolated test build, one exact CARD-0403 class-and-method selector.
+The table is the closed ordinary scope for Code and ordinary Review. CP-1 is the
+original native Linux row. CP-2 is the CARD-1399 neighbour row. Each row is one
+isolated test build and one exact CARD-0403 class-and-method selector.
 The method names are globally distinct within the three selected classes; the
 class/method cross-product therefore selects exactly the roster above. Parentheses
 and trailing stars are intentional discovery compatibility, not permission for
 extra methods. In Markdown the literal OR pipes are escaped; the importer must
-remove those escapes. Fresh TRX must show exactly 14 named methods/results,
-14 passed, zero failed/skipped. Five methods are new; the nine existing methods
-have no argument expansion. Internal vectors and subprocess calls do not raise
-Min. Any added argument expansion requires an explicit roster/count amendment.
+remove those escapes. Fresh TRX for CP-1 must show exactly 15 named methods/results,
+15 passed, zero failed/skipped. Five methods were new at TestDesign and the nine
+existing methods have no argument expansion; CARD-1399 adds
+`C1371_Post_removal_count_drift_does_not_abort` to that filter. Internal vectors
+and subprocess calls do not raise Min. Any added argument expansion requires an
+explicit roster/count amendment.
+
+CARD-1399 CP-2 is the narrow neighbour row for that follow-up: the four C1361
+census methods, both C1371 methods, and
+`C1197_Post_removal_compare_accepts_temp_churn_and_refuses_bound_work`.
+`volumesRemoved` shares the post-removal saved-record compare. `ownedRemoved`
+alone and `volumesRemoved` alone each keep walked rows. A resumed `stopped`
+journal with `ownedRemoved` false still refuses Drift. `stopped` and `started`
+keep the byte compare.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1361-r2/` | census-status-and-count-drift | `/*/*/(RollingVolumeRecycleScriptTests*)\|(RemoteScriptContractTests*)\|(DockerStackDocumentationTests*)/(C1361_Wrapper_census_tolerates_open_status_changes_between_list_and_detail*)\|(C1361_Wrapper_census_tolerates_open_status_changes_between_passes*)\|(C1361_Host_census_tolerates_open_status_changes_between_list_and_detail*)\|(C1361_Host_census_tolerates_open_status_changes_between_passes*)\|(C1371_Census_distinguishes_cross_read_count_drift_from_malformed_counts*)\|(C1317_Census_tolerates_a_task_that_settles_without_a_land*)\|(C1319_Census_tolerates_a_pass0_settled_task_that_leaves_before_pass1*)\|(C1324_Census_tolerates_a_no_land_task_that_appears_in_pass1*)\|(C1326_Census_refuses_a_land_timestamp_or_land_pending_appearance*)\|(C1353_Host_census_passes_off_runner_lands_and_waits_for_bound_lands*)\|(C1353_Wrapper_waits_for_a_bound_land_then_proceeds*)\|(C1087_Host_census_filters_and_names_cause*)\|(Recycle_census_preflight_is_documented*)\|(Lands_proceed_during_rollout_is_documented*)` | V-1, V-2, V-3, V-4, V-5, R-1, R-2, R-3, R-4, R-5, R-6, R-7, R-8 | all 14 listed, 0 failed/skipped; exact roster in fresh TRX | 14 | 18 |
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1361-r2/` | census-status-and-count-drift | `/*/*/(RollingVolumeRecycleScriptTests*)\|(RemoteScriptContractTests*)\|(DockerStackDocumentationTests*)/(C1361_Wrapper_census_tolerates_open_status_changes_between_list_and_detail*)\|(C1361_Wrapper_census_tolerates_open_status_changes_between_passes*)\|(C1361_Host_census_tolerates_open_status_changes_between_list_and_detail*)\|(C1361_Host_census_tolerates_open_status_changes_between_passes*)\|(C1371_Census_distinguishes_cross_read_count_drift_from_malformed_counts*)\|(C1371_Post_removal_count_drift_does_not_abort*)\|(C1317_Census_tolerates_a_task_that_settles_without_a_land*)\|(C1319_Census_tolerates_a_pass0_settled_task_that_leaves_before_pass1*)\|(C1324_Census_tolerates_a_no_land_task_that_appears_in_pass1*)\|(C1326_Census_refuses_a_land_timestamp_or_land_pending_appearance*)\|(C1353_Host_census_passes_off_runner_lands_and_waits_for_bound_lands*)\|(C1353_Wrapper_waits_for_a_bound_land_then_proceeds*)\|(C1087_Host_census_filters_and_names_cause*)\|(Recycle_census_preflight_is_documented*)\|(Lands_proceed_during_rollout_is_documented*)` | V-1, V-2, V-3, V-4, V-5, R-1, R-2, R-3, R-4, R-5, R-6, R-7, R-8 | all 15 listed, 0 failed/skipped; exact roster in fresh TRX | 15 | 18 |
+| CP-2 | all | `tests/Antiphon.Tests -> bin-c1399/` | census-removal-markers | `/*/*/(RollingVolumeRecycleScriptTests*)\|(RemoteScriptContractTests*)/(C1361_Wrapper_census_tolerates_open_status_changes_between_list_and_detail*)\|(C1361_Wrapper_census_tolerates_open_status_changes_between_passes*)\|(C1361_Host_census_tolerates_open_status_changes_between_list_and_detail*)\|(C1361_Host_census_tolerates_open_status_changes_between_passes*)\|(C1371_Census_distinguishes_cross_read_count_drift_from_malformed_counts*)\|(C1371_Post_removal_count_drift_does_not_abort*)\|(C1197_Post_removal_compare_accepts_temp_churn_and_refuses_bound_work*)` | V-5 | all 7 listed, 0 failed/skipped | 7 | 12 |
 
 Use repository SDK 10.0.204 (global.json roll-forward policy), net9.0 and native
 bash/jq/pwsh/node. Run the checkpoint tool against the committed S1-S3 group:
