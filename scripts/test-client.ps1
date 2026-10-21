@@ -79,6 +79,18 @@ if (-not (Test-Path $vitest)) {
     exit 1
 }
 
+$typecheckScript = Join-Path $PSScriptRoot 'typecheck-client.ps1'
+$shell = 'pwsh'
+if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) { $shell = 'powershell' }
+& $shell -NoProfile -NonInteractive -File $typecheckScript
+$typecheckCode = $LASTEXITCODE
+if ($null -eq $typecheckCode -or $typecheckCode -ne 0) {
+    if ($null -eq $typecheckCode) { $typecheckCode = 1 }
+    Write-Output ""
+    Write-Output "CLIENT TESTS EXIT CODE: $typecheckCode  (FAIL - typecheck failed; vitest was not started)"
+    exit $typecheckCode
+}
+
 Push-Location $clientDir
 try {
     $vitestArgs = @('run')
