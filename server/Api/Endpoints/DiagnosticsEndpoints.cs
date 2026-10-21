@@ -14,7 +14,7 @@ public static class DiagnosticsEndpoints
         var diagnostics = app.MapGroup("/api/diagnostics").WithTags("Diagnostics");
 
         diagnostics.MapGet("/session-state", (SessionStateStore states, SessionStateCommandMetrics commands,
-            AgentSessionRuntime runtime, AppDbContext db) =>
+            DbCommandMetrics dbCommands, AgentSessionRuntime runtime, AppDbContext db) =>
         {
             using var process = Process.GetCurrentProcess();
             // Only these sanitized flags leave the process; never serialize the connection string.
@@ -26,6 +26,8 @@ public static class DiagnosticsEndpoints
                 managedBytes = GC.GetTotalMemory(false), gen0 = GC.CollectionCount(0), gen1 = GC.CollectionCount(1), gen2 = GC.CollectionCount(2),
                 liveSessions = runtime.ListLiveSessions().Count, unknownSessions = runtime.ListUnknownSessions().Count,
                 cache = states.GetMetrics(), efReadAttempts = commands.Snapshot(),
+                // CARD-1403 S0: every command by allowlisted call-site tag; never SQL or parameters.
+                dbCommands = dbCommands.Read(),
                 driverVersion = typeof(NpgsqlConnection).Assembly.GetName().Version?.ToString(),
                 providerVersion = typeof(NpgsqlDbContextOptionsBuilderExtensions).Assembly.GetName().Version?.ToString(),
                 pool = new { flags.Pooling, flags.NoResetOnClose, flags.MaxAutoPrepare, flags.Multiplexing }

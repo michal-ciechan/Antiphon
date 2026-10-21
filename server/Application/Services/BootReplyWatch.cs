@@ -76,6 +76,9 @@ internal static class BootReplyWatch
             ? resumed
             : session.StartedAt;
 
+    /// <summary>CARD-1403 S0: the call-site tag the reply-existence command carries.</summary>
+    internal const string ReplyExistsTag = "rt.boot-reply.exists";
+
     /// <summary>
     /// Cheap EXISTS: has the model produced anything on this session since
     /// <paramref name="clock"/>? The sweep's self-heal must ask this BEFORE loading rows — every
@@ -85,7 +88,7 @@ internal static class BootReplyWatch
     /// </summary>
     internal static Task<bool> HasModelReplySinceAsync(
         AppDbContext db, Guid sessionId, DateTime clock, CancellationToken ct) =>
-        db.TranscriptEntries.AsNoTracking().AnyAsync(
+        db.TranscriptEntries.AsNoTracking().TagWith(ReplyExistsTag).AnyAsync(
             t => t.AgentSessionId == sessionId
                 && (t.Timestamp ?? t.CreatedAt) >= clock
                 && !db.SessionQueuedMessages.Any(m => m.AgentSessionId == sessionId && m.RulesRefreshKey != null
