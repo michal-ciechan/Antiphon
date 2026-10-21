@@ -210,10 +210,8 @@ public partial class AdvisoryChangePolicyTests
             var common = await git.CommonDirectoryAsync(DelegateScriptRunner.RepoRoot, CancellationToken.None);
             var original = Path.Combine(common, "antiphon", "code-evidence", "04228bff");
             var producerIndex = Path.Combine(original, "producer-pack-index.json");
-            // The pack is untracked local evidence kept by the CARD-1281 Code task, so a fresh
-            // clone never has it (CARD-1415). Skip there, before any schema or directory exists.
-            if (!File.Exists(producerIndex))
-                Skip.Test("CARD-1415: the CARD-1281 producer pack (git common dir antiphon/code-evidence/04228bff) is untracked and absent on this clone.");
+            // CARD-1425: these tests must run on every clone; a missing pack is a failure, not a skip.
+            File.Exists(producerIndex).ShouldBeTrue("CARD-1425: no producer pack and no fixture");
             var w = new CorrectionWorld { _schema = await TestDbFixture.CreateIsolatedSchemaAsync(),
                 Root = Path.Combine(Path.GetTempPath(), "c1281-correction-" + Guid.NewGuid().ToString("N")) };
             Directory.CreateDirectory(w.Root);
