@@ -1303,7 +1303,7 @@ public sealed class AgentSessionRuntime
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
             // FK safety: only persist for sessions the DB actually knows about (skips test/transient ids).
-            var session = await db.AgentSessions.Where(s => s.Id == sessionId)
+            var session = await db.AgentSessions.TagWith("rt.ingest.session").Where(s => s.Id == sessionId)
                 .Select(s => new { s.StartedAt }).FirstOrDefaultAsync(ct);
             if (session is null)
                 return PersistResult.Empty with { RecoveryFenceRejection = expectedRecovery is null ? null : "ownership_changed_at_commit" };
@@ -1333,6 +1333,7 @@ public sealed class AgentSessionRuntime
             var seenSeqs = incomingSeqs.Count == 0
                 ? []
                 : (await db.TranscriptEntries
+                        .TagWith("rt.ingest.sequence")
                         .Where(t => t.AgentSessionId == sessionId && incomingSeqs.Contains(t.Sequence))
                         .Select(t => t.Sequence)
                         .ToListAsync(ct))
@@ -1343,6 +1344,7 @@ public sealed class AgentSessionRuntime
             // queries (reply dispatcher, queue idle checks, UI ordering) keep working across
             // relaunches without schema changes.
             var maxSeq = await db.TranscriptEntries
+                .TagWith("rt.ingest.max-sequence")
                 .Where(t => t.AgentSessionId == sessionId)
                 .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
 

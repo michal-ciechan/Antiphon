@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -5414,12 +5415,27 @@ public sealed partial class SessionMessageQueueService
             SELECT "Id" FROM "AgentSessions" WHERE "Id" = {sessionId} FOR UPDATE
             """, ct);
 
-    internal static async Task<bool> IsWorkingAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>
-        (await IsWorkingBatchAsync(db, [sessionId], ct))[sessionId];
+    internal static async Task<bool> IsWorkingAsync(AppDbContext db, Guid sessionId, CancellationToken ct,
+        [CallerFilePath] string callerFile = "", [CallerMemberName] string callerMember = "") =>
+        (await IsWorkingBatchAsync(db, [sessionId], ct, callerFile, callerMember))[sessionId];
 
     internal static Task<IReadOnlyDictionary<Guid, bool>> IsWorkingBatchAsync(
-        AppDbContext db, IReadOnlyCollection<Guid> sessionIds, CancellationToken ct) =>
-        TranscriptWorkingStateQuery.ReadAsync(db, sessionIds, ct);
+        AppDbContext db, IReadOnlyCollection<Guid> sessionIds, CancellationToken ct,
+        [CallerFilePath] string callerFile = "", [CallerMemberName] string callerMember = "") =>
+        TranscriptWorkingStateQuery.ReadAsync(db, sessionIds, ct, FallbackCaller(callerFile, callerMember));
+
+    /// <summary>
+    /// CARD-1403 S0: the static working read's call site as a tag-safe <c>file.member</c> suffix, so
+    /// the diagnostics counter attributes the cache-bypassing reads (D-5) without a SQL text.
+    /// </summary>
+    internal static string FallbackCaller(string file, string member)
+    {
+        var name = file[(file.LastIndexOfAny(['/', '\\']) + 1)..];
+        if (name.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)) name = name[..^3];
+        var source = DbCommandMetrics.TagSegment(name);
+        var caller = DbCommandMetrics.TagSegment(member);
+        return source[..Math.Min(source.Length, 20)] + "." + caller[..Math.Min(caller.Length, 20)];
+    }
 
     /// <param name="maxAttempts">
     /// The parking threshold, passed in rather than read here so the flag is decided by the SAME

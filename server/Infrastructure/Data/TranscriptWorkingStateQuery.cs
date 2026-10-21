@@ -55,8 +55,12 @@ internal static class TranscriptWorkingStateQuery
         ) AS end_ts ON true
         """;
 
+    /// <param name="caller">
+    /// CARD-1403 S0: an optional call-site suffix, so the tag becomes
+    /// <c>session-state.fallback.&lt;caller&gt;</c>; prefix counters still see every fallback read.
+    /// </param>
     internal static async Task<IReadOnlyDictionary<Guid, bool>> ReadAsync(
-        AppDbContext db, IReadOnlyCollection<Guid> sessionIds, CancellationToken ct)
+        AppDbContext db, IReadOnlyCollection<Guid> sessionIds, CancellationToken ct, string? caller = null)
     {
         if (sessionIds.Count == 0) return new Dictionary<Guid, bool>();
 
@@ -67,7 +71,8 @@ internal static class TranscriptWorkingStateQuery
         {
             Value = sessionIds.ToArray()
         };
-        var rows = await db.Database.SqlQueryRaw<WorkingStateRow>(Sql, ids).TagWith("session-state.fallback").ToListAsync(ct);
+        var tag = caller is null ? "session-state.fallback" : "session-state.fallback." + caller;
+        var rows = await db.Database.SqlQueryRaw<WorkingStateRow>(Sql, ids).TagWith(tag).ToListAsync(ct);
         // Deliberately retain ToDictionary's rejection of duplicate requested IDs.
         return rows.ToDictionary(row => row.SessionId, row => row.Working);
     }
