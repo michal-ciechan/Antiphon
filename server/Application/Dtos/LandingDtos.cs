@@ -98,6 +98,9 @@ public enum LandInspectionScope { Full, IdentityAndStatus, IdentityOnly }
 public sealed class LandingGitProfile
 {
     private long _processes, _worktreeLists, _registrationHits, _canonicalHits, _inspections, _remote, _gitTicks;
+    // CARD-1432 S4 (R4): processes per `subcommand[ sub-argument]`.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> _histogram = new(StringComparer.Ordinal);
+    private const int HistogramEntries = 40;
 
     public long Processes => Interlocked.Read(ref _processes);
     public long WorktreeLists => Interlocked.Read(ref _worktreeLists);
@@ -115,6 +118,8 @@ public sealed class LandingGitProfile
         Interlocked.Add(ref _inspections, other.Inspections);
         Interlocked.Add(ref _remote, other.RemoteRoundTrips);
         Interlocked.Add(ref _gitTicks, Interlocked.Read(ref other._gitTicks));
+        foreach (var (key, count) in other._histogram)
+            _histogram.AddOrUpdate(key, count, (_, mine) => mine + count);
     }
 
     public void Record(IReadOnlyList<string> arguments, TimeSpan elapsed)
@@ -125,6 +130,7 @@ public sealed class LandingGitProfile
         var command = index < arguments.Count ? arguments[index] : "";
         if (command == "worktree" && index + 1 < arguments.Count && arguments[index + 1] == "list") Interlocked.Increment(ref _worktreeLists);
         if (command is "ls-remote" or "fetch" or "push") Interlocked.Increment(ref _remote);
+        _histogram.AddOrUpdate(HistogramKey(arguments, index), 1, (_, n) => n + 1);
     }
 
     /// <summary>Index of the git subcommand after leading global options such as <c>-c key=value</c> or <c>-C path</c>.</summary>
@@ -140,10 +146,36 @@ public sealed class LandingGitProfile
     public void CanonicalHit() => Interlocked.Increment(ref _canonicalHits);
     public void Inspection() => Interlocked.Increment(ref _inspections);
 
-    // CARD-1432 S4 red-witness placeholders; the histogram lands in the next commit.
-    public IReadOnlyDictionary<string, long> Histogram => new Dictionary<string, long>();
-    public string DescribeHistogram() => "{}";
+    public IReadOnlyDictionary<string, long> Histogram => new Dictionary<string, long>(_histogram, StringComparer.Ordinal);
+
+    /// <summary>
+    /// The key is the subcommand, plus its verb for <c>worktree</c> and <c>remote</c>, plus its first argument for
+    /// <c>config</c>, <c>show-ref</c>, <c>update-ref</c>, <c>ls-files</c> and <c>merge-base</c> when that argument is
+    /// an option. Ref names, paths and object ids never become keys, so the key set stays bounded.
+    /// </summary>
+    private static string HistogramKey(IReadOnlyList<string> arguments, int index)
+    {
+        if (index >= arguments.Count) return "";
+        var command = arguments[index];
+        if (index + 1 >= arguments.Count) return command;
+        var next = arguments[index + 1];
+        return command switch
+        {
+            "worktree" or "remote" => command + " " + next,
+            "config" or "show-ref" or "update-ref" or "ls-files" or "merge-base" when next.StartsWith('-') => command + " " + next,
+            _ => command,
+        };
+    }
+
+    /// <summary><c>{key=n, ...}</c> sorted by key, at most 40 entries; the rest are summed as <c>other=n</c>.</summary>
+    public string DescribeHistogram()
+    {
+        var entries = _histogram.OrderBy(p => p.Key, StringComparer.Ordinal).ToList();
+        var shown = entries.Take(HistogramEntries).Select(p => $"{p.Key}={p.Value}");
+        if (entries.Count > HistogramEntries) shown = shown.Append($"other={entries.Skip(HistogramEntries).Sum(p => p.Value)}");
+        return "{" + string.Join(", ", shown) + "}";
+    }
 
     public string Describe() => string.Create(System.Globalization.CultureInfo.InvariantCulture,
-        $"processes={Processes} worktreeList={WorktreeLists} registrationHits={RegistrationHits} canonicalHits={CanonicalHits} inspections={Inspections} remote={RemoteRoundTrips} gitSeconds={GitSeconds:F2}");
+        $"processes={Processes} worktreeList={WorktreeLists} registrationHits={RegistrationHits} canonicalHits={CanonicalHits} inspections={Inspections} remote={RemoteRoundTrips} gitSeconds={GitSeconds:F2} histogram={DescribeHistogram()}");
 }

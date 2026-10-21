@@ -83,6 +83,7 @@ public class LandingGit : ILandingGit
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         ConfigureProcess(start);
+        ServerGitProcess.DisableAutoMaintenance(start);
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         var mutating = arguments.Any(a => a is "rebase" or "merge" or "push" or "fetch" or "update-ref"
             or "add" or "remove" or "commit" or "checkout" or "checkout-index" or "restore" or "reset");
@@ -719,6 +720,7 @@ public class LandingGit : ILandingGit
         start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         ConfigureProcess(start);
+        ServerGitProcess.DisableAutoMaintenance(start);
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var child = StartProcess(start);
         if (child is null) throw new IOException("git_start_failed");

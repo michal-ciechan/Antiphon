@@ -238,6 +238,7 @@ public class GitWorkspaceService
             psi.ArgumentList.Add("show");
             psi.ArgumentList.Add($"{gitRef}:./{relativePath}");
             psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+            ServerGitProcess.DisableAutoMaintenance(psi);
             using var lease = await _gate.EnterAsync(ct);
             process = Process.Start(psi);
             if (process is null)
@@ -1151,6 +1152,7 @@ public class GitWorkspaceService
             foreach (var a in args)
                 psi.ArgumentList.Add(a);
             psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+            ServerGitProcess.DisableAutoMaintenance(psi);
             // Only this prerequisite needs a diagnostic for Git's explicit negative result.
             if (args is ["rev-parse", "--is-inside-work-tree"])
                 psi.Environment["LC_ALL"] = "C";

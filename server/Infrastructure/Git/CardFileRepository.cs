@@ -340,6 +340,7 @@ public sealed class CardFileRepository(
             };
             if (arguments.FirstOrDefault() == "check-ignore") psi.Environment.Remove("GIT_LITERAL_PATHSPECS");
             else psi.Environment["GIT_LITERAL_PATHSPECS"] = "1";
+            ServerGitProcess.DisableAutoMaintenance(psi);
             foreach (var argument in arguments)
                 psi.ArgumentList.Add(argument);
 
