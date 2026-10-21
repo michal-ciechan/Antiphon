@@ -26,7 +26,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [NotInParallel("AgentQueue")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public class DelegationScopeHoldTests
 {
     [Test]

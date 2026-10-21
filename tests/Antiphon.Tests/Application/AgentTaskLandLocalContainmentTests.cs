@@ -8,7 +8,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class AgentTaskLandLocalContainmentTests
 {
     [Test]

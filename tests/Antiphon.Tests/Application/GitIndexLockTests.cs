@@ -108,7 +108,7 @@ public sealed class GitIndexLockTests
 }
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class GitIndexLockPathTests
 {
     [Test]

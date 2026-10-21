@@ -22,7 +22,7 @@ namespace Antiphon.Tests.Application;
 /// asserted as zero requests and zero publication mutations, not just a code.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class InterimVerificationLandGuardTests
 {
     [Test]

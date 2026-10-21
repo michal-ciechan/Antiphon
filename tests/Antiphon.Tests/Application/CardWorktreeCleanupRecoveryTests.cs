@@ -16,7 +16,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>CARD-1033 S1. Local Execute, cohort and settling gates. Mirror and scheduler vectors stay later slices.</summary>
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class CardWorktreeCleanupRecoveryTests
 {
     private static readonly string[] ExecuteVectors =

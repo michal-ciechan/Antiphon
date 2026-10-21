@@ -22,7 +22,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>CARD-0505 V-7. Scoped pipeline projection over the durable dispatch policy.</summary>
 [Category("Integration")]
 [NotInParallel("card-0505-advisory-lock")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public class DispatchConcurrencyPipelineTests
 {
     [Test]

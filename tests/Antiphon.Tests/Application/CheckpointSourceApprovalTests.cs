@@ -18,7 +18,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [Category("Slow")]
 [Category("C835")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class CheckpointSourceApprovalTests
 {
     [Test]

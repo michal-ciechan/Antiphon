@@ -20,7 +20,7 @@ namespace Antiphon.Tests.Application;
 /// <see cref="LandingSafetyHarness"/>; the clock is fake so the budget is advanced, never slept.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class AgentTaskLandDispatchYieldTests
 {
     [Test]
