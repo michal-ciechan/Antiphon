@@ -20,11 +20,25 @@ red at 2ecc3f0da with "The probe process could not be started." from the start
 seam). Fix: S2. Windows UNC entries skip the existence check (advisory: an
 unreachable share must not block the probe before its timeout).
 
+Repair (Review ddd0512c D2): relative entries (`.`, `bin`, `./.`) passed
+Directory.Exists against the server's current directory and reached the child,
+which resolves them against its own working directory. Every entry that is not
+`Path.IsPathFullyQualified` is now dropped before the UNC and existence checks,
+so a PATH of only relative entries falls through to the original value and the
+ceiling refuses it. Witnesses (red at 4af5868ae, one unlisted run, 2 failed / 3
+passed): `Inherited_path_over_the_ceiling_drops_relative_entries` ("should not
+contain '.'") and the `only-relative-entries` case of the nothing-bounded test
+("The probe process could not be started."). Fix: S3. Advisories: A1 trims
+quotes/padding on Windows only; A2 the code comment notes the existence check
+runs before the probe timeout (mapped drive on Windows); A3 the CARD-1414 tests
+inject the inherited value through `RunnerProcessProbeSeams.InheritedEnvironmentVariable`
+instead of changing the process-wide PATH.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1414-probe/` | probe-class | `/*/Antiphon.Tests.AgentTui/RunnerProcessProbeTests/*` | V-1 (PATH bounded, probe runs), V-2 (non-PATH oversized refused), V-3 (nothing bounded still refused), whole affected class | all class cases pass, 0 failed (OS-specific cases may skip) | 31 | 12 |
+| CP-1 | S3 | `tests/Antiphon.Tests -> bin-c1414-probe/` | probe-class | `/*/Antiphon.Tests.AgentTui/RunnerProcessProbeTests/*` | V-1 (PATH bounded, probe runs), V-2 (non-PATH oversized refused), V-3 (nothing bounded still refused, incl. only-relative), V-4 (relative entries dropped), whole affected class | all class cases pass, 0 failed (OS-specific cases may skip) | 33 | 12 |
 
 ### Cost
 
@@ -32,4 +46,5 @@ Ordinary floor: one Antiphon.Tests build plus one class run, about 12 minutes.
 PCs pending for Mutation: PC-1 (remove the PATH bounding -> V-1 red), PC-2
 (apply the bounding to every bootstrap variable -> V-2 red), PC-3 (skip the
 missing-directory filter -> V-1 red), PC-4 (return the empty bounded value
-instead of the original -> V-3 red).
+instead of the original -> V-3 red), PC-5 (drop the
+`Path.IsPathFullyQualified` skip -> V-4 and V-3 only-relative red).
