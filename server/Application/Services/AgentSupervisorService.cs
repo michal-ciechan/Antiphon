@@ -221,6 +221,14 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             {
                 return await TryHandleCapacityWaitAsync(agent, state, ct) ?? false;
             }
+            catch (ConflictException ex) when (ex.Code is HerdrSupervisionStateService.HeldCode
+                or StandingContinuityState.HeldCode)
+            {
+                // Same observation as the ordinary restart path: a hold that lands
+                // during the handoff is not a crash and must not climb the ladder.
+                await _herdrSupervision.ObserveAsync(agent.Id, false, false, ct);
+                return false;
+            }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 return await RecordStartFailureInFreshScopeAsync(agent.Id, ex, now,
@@ -382,7 +390,8 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                     HoldRevision = held.Hold.Revision,
                     BlockedAt = UtcNow(),
                 }, ct);
-                refreshed.NextRestartAt = UtcNow() + Backoff(refreshed.RestartBackoffFailures);
+                // The wait stays WaitingForHold until the grant. A backoff deadline
+                // here would refuse that grant (CARD-0412).
                 refreshed.LastAttemptAt = now;
                 refreshed.UpdatedAt = UtcNow();
                 await _db.SaveChangesAsync(ct);
@@ -452,8 +461,6 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
     {
         if (_capacityRecovery is null || !_capacityRecovery.IsEnabled)
             return null;
-        if (state.NextRestartAt is { } retryAt && UtcNow() < retryAt)
-            return false;
 
         var wait = await _db.CapacityRecoveryWaits.FirstOrDefaultAsync(
             w => w.AgentId == agent.Id

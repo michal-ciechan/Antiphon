@@ -100,7 +100,9 @@ public partial class StandingRestartEscalationTests
                     }
                     else state.ContinuityHeldAt.ShouldBeNull();
                     state.NextRestartAt.ShouldNotBeNull();
-                    state.NextRestartAt!.Value.ShouldBe(now.AddSeconds(modelDisabled ? 80 : 160), TimeSpan.FromMilliseconds(1));
+                    // ModelDisabled registers the capacity wait and leaves the prior due
+                    // instant. Only an infrastructure failure pushes the crash-ladder backoff.
+                    state.NextRestartAt!.Value.ShouldBe(now.AddSeconds(modelDisabled ? -1 : 160), TimeSpan.FromMilliseconds(1));
                     state.RestartBackoffFailures.ShouldBe(modelDisabled ? 4 : 5);
                     state.ContinuityResumeFailures.ShouldBe(4);
                     state.AutomaticFreshConsumed.ShouldBeFalse();
@@ -116,9 +118,10 @@ public partial class StandingRestartEscalationTests
                     else
                         (await verify.AgentIncidents.CountAsync(i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.StartFailure)).ShouldBe(1);
                 }
-                // The repeated-resume hold bypass cannot make the failed fresh attempt due now.
+                // Infrastructure backoff is still in the future. A model hold leaves the prior
+                // due instant; the capacity wait keeps Start from running while that hold is up.
                 await h.Supervisor().TickAsync(default);
-                probes.ShouldBe(modelDisabled ? 2 : 3, "a tick before the deadline must only probe, never attempt Start");
+                probes.ShouldBe(modelDisabled ? 2 : 3, "the next tick must only probe, never attempt Start");
                 fresh.Started.ShouldBeFalse();
                 if (!modelDisabled && !capacity)
                 {
