@@ -92,10 +92,11 @@ function Invoke-Snapshot {
     foreach ($arg in @('-NoProfile', '-File', $scriptPath) + @($Arguments)) {
         [void]$psi.ArgumentList.Add($arg)
     }
-    $separator = [System.IO.Path]::PathSeparator
     $pathKey = 'PATH'
     if (-not $psi.Environment.ContainsKey('PATH') -and $psi.Environment.ContainsKey('Path')) { $pathKey = 'Path' }
-    $psi.Environment[$pathKey] = $Fixture.Bin + $separator + $psi.Environment[$pathKey]
+    # Only the fixture binaries are visible. A later docker/age on PATH would make
+    # Get-Command return every match and the script would invoke none of them.
+    $psi.Environment[$pathKey] = $Fixture.Bin
     $psi.Environment['CARD1405_TOOL_MARKER'] = $Fixture.Marker
     if ($ExtraEnv) {
         foreach ($key in @($ExtraEnv.Keys)) { $psi.Environment[[string]$key] = [string]$ExtraEnv[$key] }
@@ -154,6 +155,7 @@ function Test-WhatIfPlan {
         Assert-NoSecret $plan $fx 'WhatIfPlan'
         Assert-NoDocker $plan 'WhatIfPlan'
         Assert-DestUntouched $fx 'WhatIfPlan'
+        Assert-True (Test-Path -LiteralPath $fx.Stage) 'WhatIfPlan keeps staging' $fx.Stage
         Remove-Item -LiteralPath $fx.Marker -Force -ErrorAction SilentlyContinue
         $ref = Invoke-Snapshot -Fixture $fx -Arguments @(
             '-WhatIf', '-RecipientRef', 'CARD1405_RECIPIENT_REF', '-Destination', $fx.Dest,
@@ -274,9 +276,425 @@ function Test-Retention {
     Assert-True ($zero.Ok -eq $false -and @($zero.Drop).Count -eq 0) 'retention refuses retain below 1' $zero.Reason
 }
 
+function Install-SnapshotFake {
+    param($Fixture)
+    $unix = -not ($env:OS -eq 'Windows_NT')
+    if (-not $unix) {
+        throw 'CARD-1405 snapshot fakes run on the Linux witness host'
+    }
+    $docker = @'
+#!/bin/sh
+printf '%s\n' "$0 $*" >> "$CARD1405_TOOL_MARKER"
+scenario="${CARD1405_SCENARIO:-}"
+state="${CARD1405_DOCKER_STATE:-/tmp/card1405-docker-state}"
+bytes="${CARD1405_DUMP_BYTES:-0}"
+table="${CARD1405_TABLE_DATA:-0}"
+cmd="$1"
+shift
+target=""
+name_format=0
+for arg in "$@"; do
+    target="$arg"
+    if [ "$arg" = "{{.Name}}" ]; then
+        name_format=1
+    fi
+done
+source_json='{"Id":"0123abcd9f0123456789abcdef0123456789abcd0123456789abcdef012345","Name":"/antiphon-postgres","Config":{"Labels":{}},"Mounts":[{"Name":"antiphon_pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres"]}}}}'
+alias_json='{"Id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","Name":"/snapshot-alias","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"Mounts":[{"Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres","snapshot-alias"]}}}}'
+unlabelled_json='{"Id":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","Name":"/antiphon-postgres-drill","Config":{"Labels":{}},"Mounts":[{"Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
+mount_json='{"Id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"Mounts":[{"Name":"antiphon_pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
+clean_json='{"Id":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"Mounts":[{"Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
+server2_json='{"Id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","Name":"/antiphon-server2-postgres-postgres-1","Config":{"Labels":{}},"Mounts":[{"Name":"antiphon-server2-postgres_pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["postgres"]}}}}'
+emit() {
+    if [ "$name_format" = "1" ]; then
+        printf '/%s\n' "$2"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+list_line() {
+    case "$scenario" in
+        clean|prefix|alias|unlabelled|mount|production-name|database)
+            printf '%s\n' '3000; 0 12345 TABLE DATA public cards antiphon'
+            return
+            ;;
+    esac
+    if [ "$table" = "1" ]; then
+        printf '%s\n' '3000; 0 12345 TABLE DATA public cards antiphon'
+    else
+        printf '%s\n' '; Archive created at 2026-10-21'
+    fi
+}
+case "$cmd" in
+    inspect)
+        if [ "$target" = "antiphon-postgres" ]; then
+            emit "$source_json" "antiphon-postgres"
+            exit 0
+        fi
+        if [ "$target" = "antiphon-server2-postgres-postgres-1" ]; then
+            if [ "$scenario" = "production-name" ]; then
+                emit "$server2_json" "antiphon-server2-postgres-postgres-1"
+                exit 0
+            fi
+            exit 1
+        fi
+        case "$scenario" in
+            prefix)
+                emit "$source_json" "antiphon-postgres"
+                exit 0
+                ;;
+            alias)
+                emit "$alias_json" "snapshot-alias"
+                exit 0
+                ;;
+            unlabelled)
+                emit "$unlabelled_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            mount)
+                emit "$mount_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            production-name)
+                emit "$server2_json" "antiphon-server2-postgres-postgres-1"
+                exit 0
+                ;;
+            database)
+                emit "$unlabelled_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            clean)
+                if [ ! -f "$state" ]; then
+                    exit 1
+                fi
+                emit "$clean_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            *)
+                exit 1
+                ;;
+        esac
+        ;;
+    run)
+        run_joined=" $*"
+        case "$run_joined" in
+            *'--list'*)
+                list_line
+                exit 0
+                ;;
+            *' -d '*)
+                if [ -n "$state" ]; then
+                    : > "$state"
+                fi
+                exit 0
+                ;;
+        esac
+        exit 0
+        ;;
+    exec)
+        exec_joined=" $*"
+        case "$exec_joined" in
+            *'pg_restore'*)
+                list_line
+                exit 0
+                ;;
+            *' wc '*|*' wc')
+                printf '%s\n' "$bytes /tmp/antiphon-snapshot.dump"
+                exit 0
+                ;;
+        esac
+        exit 0
+        ;;
+    cp)
+        if [ "$scenario" = "publish" ]; then
+            /bin/dd if=/dev/zero of="$target" bs="$bytes" count=1 status=none 2>/dev/null || exit 1
+        fi
+        exit 0
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+'@
+    $age = @'
+#!/bin/sh
+printf '%s\n' "$0 $*" >> "$CARD1405_TOOL_MARKER"
+out=""
+prev=""
+for arg in "$@"; do
+    if [ "$prev" = "-o" ]; then
+        out="$arg"
+    fi
+    prev="$arg"
+done
+bytes="${CARD1405_PLAIN_BYTES:-16}"
+if [ -n "$out" ]; then
+    /bin/dd if=/dev/zero of="$out" bs="$bytes" count=1 status=none 2>/dev/null || exit 1
+fi
+exit 0
+'@
+    $encoding = New-Object System.Text.UTF8Encoding $false
+    $dockerPath = Join-Path $Fixture.Bin 'docker'
+    $agePath = Join-Path $Fixture.Bin 'age'
+    [System.IO.File]::WriteAllText($dockerPath, $docker.Replace("`r`n", "`n"), $encoding)
+    [System.IO.File]::WriteAllText($agePath, $age.Replace("`r`n", "`n"), $encoding)
+    & chmod +x $dockerPath $agePath
+}
+
+function Invoke-DrillCase {
+    param($Fixture, [string]$Scenario, [string[]]$Extra, [string]$PlainBytes = '32')
+    Remove-Item -LiteralPath $Fixture.Marker -Force -ErrorAction SilentlyContinue
+    $cipher = Join-Path $Fixture.Dest 'antiphon-20261021T120000Z.dump.age'
+    Set-Content -LiteralPath $cipher -Value 'cipher' -Encoding ASCII
+    $arguments = @(
+        '-Execute', '-RestoreDrill', '-IdentityFile', $Fixture.Identity,
+        '-Destination', $Fixture.Dest, '-SyncRoot', $Fixture.Sync, '-StagingPath', $Fixture.Stage
+    ) + @($Extra)
+    return Invoke-Snapshot -Fixture $Fixture -Arguments $arguments -ExtraEnv @{
+        CARD1405_SCENARIO = $Scenario
+        CARD1405_DOCKER_STATE = (Join-Path $Fixture.Root 'docker-state')
+        CARD1405_DUMP_BYTES = '1048576'
+        CARD1405_TABLE_DATA = '1'
+        CARD1405_PLAIN_BYTES = $PlainBytes
+    }
+}
+
+function Assert-DrillRefused {
+    param($Result, $Fixture, [string]$Guard, [string]$Name)
+    Assert-True ($Result.Exit -eq 9) "$Name exits 9" "exit=$($Result.Exit) $($Result.Out)"
+    Assert-True ($Result.Out -match 'reason=drill-refused') "$Name reason" $Result.Out
+    Assert-True ($Result.Out -match ('guard=' + [regex]::Escape($Guard))) "$Name guard" $Result.Out
+    Assert-True ($Result.Tools -notmatch 'pg_restore') "$Name does not restore" $Result.Tools
+    Assert-True ($Result.Tools -notmatch 'createdb') "$Name does not create a database" $Result.Tools
+    Assert-True ($Result.Tools -notmatch 'rm -f') "$Name does not remove a container" $Result.Tools
+    Assert-NoSecret $Result $Fixture $Name
+}
+
+function Test-DrillRefusesIdPrefix {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'DrillRefusesIdPrefix script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $result = Invoke-DrillCase $fx 'prefix' @('-ScratchContainer', '0123abcd9f')
+        Assert-DrillRefused $result $fx 'id-prefix' 'id prefix'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-DrillRefusesAlias {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'DrillRefusesAlias script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $result = Invoke-DrillCase $fx 'alias' @('-ScratchContainer', 'snapshot-alias')
+        Assert-DrillRefused $result $fx 'alias' 'alias'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-DrillRefusesUnlabelled {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'DrillRefusesUnlabelled script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $result = Invoke-DrillCase $fx 'unlabelled' @('-ScratchContainer', 'antiphon-postgres-drill')
+        Assert-DrillRefused $result $fx 'unlabelled' 'unlabelled'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-DrillRefusesSourceMount {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'DrillRefusesSourceMount script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $result = Invoke-DrillCase $fx 'mount' @(
+            '-ScratchContainer', 'antiphon-postgres-drill',
+            '-ScratchVolume', 'antiphon-postgres-drill-pgdata'
+        )
+        Assert-DrillRefused $result $fx 'production-mount' 'source mount'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-DrillRefusesProductionLikeName {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'DrillRefusesProductionLikeName script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $lower = Invoke-DrillCase $fx 'production-name' @('-ScratchContainer', 'antiphon-server2-postgres-postgres-1')
+        Assert-DrillRefused $lower $fx 'production-name' 'server2 name'
+        $upper = Invoke-DrillCase $fx 'production-name' @('-ScratchContainer', 'ANTIPHON-SERVER2-POSTGRES-POSTGRES-1')
+        Assert-DrillRefused $upper $fx 'production-name' 'server2 name case'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-DrillRefusesScratchDatabase {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'DrillRefusesScratchDatabase script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $exact = Invoke-DrillCase $fx 'database' @('-ScratchDatabase', 'antiphon')
+        Assert-DrillRefused $exact $fx 'database' 'scratch database antiphon'
+        $cased = Invoke-DrillCase $fx 'database' @('-ScratchDatabase', 'Antiphon')
+        Assert-DrillRefused $cased $fx 'database' 'scratch database Antiphon'
+        $source = Invoke-DrillCase $fx 'database' @('-Database', 'CustomDb', '-ScratchDatabase', 'customdb')
+        Assert-DrillRefused $source $fx 'database' 'scratch database matches source'
+    } finally { Remove-Fixture $fx }
+}
+
+function Invoke-PublishCase {
+    param($Fixture, [string]$Bytes, [string]$TableData)
+    Remove-Item -LiteralPath $Fixture.Marker -Force -ErrorAction SilentlyContinue
+    return Invoke-Snapshot -Fixture $Fixture -Arguments @(
+        '-Execute', '-RecipientFile', $Fixture.Recipient,
+        '-Destination', $Fixture.Dest, '-SyncRoot', $Fixture.Sync, '-StagingPath', $Fixture.Stage
+    ) -ExtraEnv @{
+        CARD1405_SCENARIO = 'publish'
+        CARD1405_DOCKER_STATE = (Join-Path $Fixture.Root 'docker-state')
+        CARD1405_DUMP_BYTES = $Bytes
+        CARD1405_TABLE_DATA = $TableData
+        CARD1405_PLAIN_BYTES = '32'
+    }
+}
+
+function Assert-PublishRejected {
+    param($Result, $Fixture, [string]$Name)
+    Assert-True ($Result.Exit -eq 5) "$Name exits 5" "exit=$($Result.Exit) $($Result.Out)"
+    Assert-True ($Result.Out -match 'reason=verify-failed') "$Name reason" $Result.Out
+    $dumps = @(Get-ChildItem -LiteralPath $Fixture.Dest -Filter '*.dump.age' -ErrorAction SilentlyContinue)
+    $status = Test-Path -LiteralPath (Join-Path $Fixture.Dest 'snapshot-status.json')
+    Assert-True ($dumps.Count -eq 0 -and -not $status) "$Name publishes nothing" "dumps=$($dumps.Count) status=$status"
+    Assert-NoSecret $Result $Fixture $Name
+}
+
+function Test-PublishRejectsTinyDump {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'PublishRejectsTinyDump script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $result = Invoke-PublishCase $fx '100' '1'
+        Assert-PublishRejected $result $fx 'tiny dump'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-PublishRejectsMissingTableData {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'PublishRejectsMissingTableData script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $result = Invoke-PublishCase $fx '1048576' '0'
+        Assert-PublishRejected $result $fx 'missing table data'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-RetentionIgnoresConflictCopy {
+    if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'RetentionIgnoresConflictCopy script exists' $scriptPath; return }
+    . $scriptPath
+    $valid = @(1..16 | ForEach-Object { 'antiphon-202610{0:d2}T000000Z.dump.age' -f $_ })
+    $newest = 'antiphon-20261016T000000Z.dump.age'
+    $conflict = 'antiphon-20261001T000000Z (conflicted copy).dump.age'
+    $kept = Get-SnapshotPruneSet -Names @($valid + $conflict) -Retain 14 -NewName $newest -Verified $true
+    Assert-True ($kept.Ok -eq $true) 'conflict copy stays ok' $kept.Reason
+    $drop = @($kept.Drop)
+    Assert-True ($drop.Count -eq 2) 'conflict copy is not a retained slot' ("count=$($drop.Count) " + ($drop -join ','))
+    Assert-True ($drop -notcontains $conflict) 'conflict copy is not deleted' ($drop -join ',')
+    Assert-True ($drop -notcontains $newest) 'conflict run keeps the new file' ($drop -join ',')
+    Assert-True ($drop -contains 'antiphon-20261001T000000Z.dump.age') 'conflict run drops the oldest valid' ($drop -join ',')
+    Assert-True ($drop -contains 'antiphon-20261002T000000Z.dump.age') 'conflict run drops the next oldest' ($drop -join ',')
+    if (-not (Get-Command Update-SnapshotRetention -ErrorAction SilentlyContinue)) {
+        Write-Fail 'retention on disk' 'Update-SnapshotRetention missing'
+        return
+    }
+    $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('card1405-retain-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    try {
+        foreach ($name in @($valid + $conflict)) {
+            Set-Content -LiteralPath (Join-Path $dir $name) -Value 'x' -Encoding ASCII
+        }
+        $applied = Update-SnapshotRetention -DestDir $dir -Keep 14 -NewName $newest
+        Assert-True ($applied.Ok -eq $true) 'conflict copy does not fail prune' $applied.Reason
+        Assert-True (Test-Path -LiteralPath (Join-Path $dir $conflict)) 'conflict file remains' $conflict
+        Assert-True (Test-Path -LiteralPath (Join-Path $dir $newest)) 'new snapshot remains' $newest
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $dir 'antiphon-20261001T000000Z.dump.age'))) 'oldest valid removed' 'still present'
+        $left = @(Get-ChildItem -LiteralPath $dir -File | Where-Object { $_.Name -match '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump\.age$' })
+        Assert-True ($left.Count -eq 14) 'fourteen valid snapshots remain' "count=$($left.Count)"
+    } finally {
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-StagingHygiene {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'StagingHygiene script exists' $scriptPath; return }
+        $stale = Join-Path $fx.Stage 'leftover.dump'
+        Set-Content -LiteralPath $stale -Value 'PLAINTEXT-STALE-1405' -Encoding ASCII
+        $result = Invoke-Snapshot -Fixture $fx -Arguments @(
+            '-Execute', '-RecipientFile', $fx.Recipient,
+            '-Destination', $fx.Dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage
+        )
+        Assert-True (-not (Test-Path -LiteralPath $fx.Stage)) 'execute removes staging' $fx.Stage
+        $blob = $result.Out + "`n" + $result.Err
+        Assert-True ($blob.IndexOf('PLAINTEXT-STALE-1405', [StringComparison]::Ordinal) -lt 0) 'execute hides stale plaintext' 'plaintext leaked'
+        Assert-NoSecret $result $fx 'execute staging'
+    } finally { Remove-Fixture $fx }
+    . $scriptPath
+    if (-not (Get-Command Initialize-SnapshotStaging -ErrorAction SilentlyContinue)) {
+        Write-Fail 'staging initializer' 'Initialize-SnapshotStaging missing'
+        return
+    }
+    $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('card1405-stage-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    try {
+        Set-Content -LiteralPath (Join-Path $dir 'old.dump') -Value 'x' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $dir 'keep.dump.age') -Value 'y' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $dir 'notes.txt') -Value 'z' -Encoding ASCII
+        $ok = Initialize-SnapshotStaging $dir
+        Assert-True ($ok -eq $true) 'staging mode applied' "ok=$ok"
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $dir 'old.dump'))) 'plaintext swept' 'old.dump remains'
+        Assert-True (Test-Path -LiteralPath (Join-Path $dir 'keep.dump.age')) 'ciphertext kept' 'keep.dump.age missing'
+        Assert-True (Test-Path -LiteralPath (Join-Path $dir 'notes.txt')) 'unrelated file kept' 'notes.txt missing'
+        if ($env:OS -ne 'Windows_NT') {
+            $mode = (& stat -c %a -- $dir).Trim()
+            Assert-True ($mode -eq '700') 'staging is 0700' $mode
+        }
+    } finally {
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-DrillRemovesScratch {
+    $id = 'c' * 64
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'DrillRemovesScratch script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $removed = Invoke-DrillCase $fx 'clean' @(
+            '-ScratchContainer', 'antiphon-postgres-drill',
+            '-ScratchVolume', 'antiphon-postgres-drill-pgdata'
+        ) '1048576'
+        Assert-True ($removed.Exit -eq 0) 'drill remove exits 0' "exit=$($removed.Exit) $($removed.Out)"
+        Assert-True ($removed.Tools -match 'antiphon.snapshot-drill=1') 'drill labels the scratch container' $removed.Tools
+        Assert-True ($removed.Tools -match ('rm -f ' + $id)) 'drill removes the scratch container id' $removed.Tools
+        Assert-True ($removed.Tools -match 'volume rm antiphon-postgres-drill-pgdata') 'drill removes the scratch volume' $removed.Tools
+        Assert-NoSecret $removed $fx 'drill remove'
+    } finally { Remove-Fixture $fx }
+    $kept = New-Fixture
+    try {
+        Install-SnapshotFake $kept
+        $leave = Invoke-DrillCase $kept 'clean' @('-KeepScratch') '1048576'
+        Assert-True ($leave.Exit -eq 0) 'KeepScratch exits 0' "exit=$($leave.Exit) $($leave.Out)"
+        Assert-True ($leave.Tools -match 'antiphon.snapshot-drill=1') 'KeepScratch still labels' $leave.Tools
+        Assert-True ($leave.Tools -notmatch ('rm -f ' + $id)) 'KeepScratch leaves the container' $leave.Tools
+        Assert-True ($leave.Tools -notmatch 'volume rm') 'KeepScratch leaves the volume' $leave.Tools
+        Assert-NoSecret $leave $kept 'KeepScratch'
+    } finally { Remove-Fixture $kept }
+}
+
 $all = @(
     'WhatIfPlan', 'MissingRecipient', 'RecipientInsideDestination',
-    'DrillRefusesProduction', 'DrillPlan', 'Retention'
+    'DrillRefusesProduction', 'DrillPlan', 'Retention',
+    'DrillRefusesIdPrefix', 'DrillRefusesAlias', 'DrillRefusesUnlabelled',
+    'DrillRefusesSourceMount', 'DrillRefusesProductionLikeName', 'DrillRefusesScratchDatabase',
+    'PublishRejectsTinyDump', 'PublishRejectsMissingTableData',
+    'RetentionIgnoresConflictCopy', 'StagingHygiene', 'DrillRemovesScratch'
 )
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
