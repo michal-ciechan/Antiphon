@@ -100,13 +100,32 @@ public sealed class BootReplyWatchdogService
         if (live.Count == 0)
             return 0;
 
+        // CARD-1403 S1: one reply EXISTS for every unarmed session, not one per session per tick.
+        // A failed batch costs this tick the per-session form, never the sweep.
+        IReadOnlySet<Guid>? answered = null;
+        var unarmed = live.Where(s => s.BootPromptSequence is null || s.BootReplyDueAt is null)
+            .Select(s => (s.Id, BootReplyWatch.LaunchClock(s))).ToList();
+        if (unarmed.Count > 0)
+        {
+            try
+            {
+                answered = await BootReplyWatch.HasModelReplySinceBatchAsync(db, unarmed, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                _logger.LogWarning(
+                    ex, "Boot-reply batch reply check failed for {Count} sessions; this tick checks each one alone",
+                    unarmed.Count);
+            }
+        }
+
         var acted = 0;
         foreach (var session in live)
         {
             ct.ThrowIfCancellationRequested();
             try
             {
-                if (await EvaluateAsync(db, session, now, deadline, ct))
+                if (await EvaluateAsync(db, session, now, deadline, answered, ct))
                     acted++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
@@ -125,6 +144,7 @@ public sealed class BootReplyWatchdogService
         AgentSession session,
         DateTime now,
         int deadlineMinutes,
+        IReadOnlySet<Guid>? answered,
         CancellationToken ct)
     {
         // Self-heal: a session whose watch was never armed (a launch path that types outside the
@@ -137,10 +157,10 @@ public sealed class BootReplyWatchdogService
         // sweep cost ~10k rows / 4.4MB in steady state.
         if (session.BootPromptSequence is null || session.BootReplyDueAt is null)
         {
-            if (await BootReplyWatch.HasModelReplySinceAsync(
+            if (answered?.Contains(session.Id) ?? await BootReplyWatch.HasModelReplySinceAsync(
                     db, session.Id, BootReplyWatch.LaunchClock(session), ct))
                 return false;
-            if (await BootReplyWatch.TryArmAsync(db, session.Id, deadlineMinutes, ct) is null)
+            if (await BootReplyWatch.TryArmAsync(db, session.Id, deadlineMinutes, ct, replyChecked: true) is null)
                 return false;
             await db.SaveChangesAsync(ct);
         }
