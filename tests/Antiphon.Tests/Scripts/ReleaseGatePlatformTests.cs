@@ -20,4 +20,12 @@ public sealed class ReleaseGatePlatformTests
             "C1323 linux-launches-only-portable-cases", "C1323 windows-retains-delivery-cases",
             "C1323 linux-summary-is-diagnostic", "C1323 linux-state-is-diagnostic",
             "C1323 linux-leaves-green-files-identical", "C1323 unknown-platform-launches-nothing");
+
+    [Test]
+    public Task C1415_SkipExclusions() =>
+        ScriptHarness.RunHarnessCaseAsync("test-rc-platform.ps1", "C1323", "C1415_SkipExclusions", 9,
+            "C1323 c1415-four-method-scoped-rows", "C1323 c1415-excluded-methods-exist",
+            "C1323 c1415-windows-excludes-exactly", "C1323 c1415-windows-launches-only-required",
+            "C1323 c1415-windows-census-complete", "C1323 c1415-linux-excludes-exactly",
+            "C1323 c1415-launched-skips-stay-incomplete");
 }
