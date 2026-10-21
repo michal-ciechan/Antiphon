@@ -28,12 +28,12 @@ Windows qualification.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1-S7 | `tests/Antiphon.Tests -> bin-c1415r/` | advisory-pack-free | `/*/*/AdvisoryChangePolicyTests/(C1281_AdvisoryDoesNotRerun*)\|(C1281_SeparateDocsIdentity*)\|(C1281_NarrativeBoundary*)\|(C1281_CommentEquivalence*)\|(C1281_HistoryPreserved*)` | S1 | 5 passed, 0 failed/skipped | 5 | 3 |
-| CP-2 | S1-S7 | CP-1 | codex-high-literal | `/*/*/AgentTuiLaunchResolverTests/*` | S2 | 14 passed, 0 failed/skipped | 14 | 2 |
-| CP-3 | S1-S7 | CP-1 | c1213-arms | `/*/*/AgentTaskDispatchBaseGuardTests/(C1213*)` | S3, S6 | 7 passed (local and remote arms run on Linux), 0 failed/skipped | 7 | 3 |
+| CP-2 | S1-S7 | CP-1 | codex-high-literal | `/*/*/AgentTuiLaunchResolverTests/*` | S2 | >= 14 executed (whole class), 0 failed/skipped | 14 | 2 |
+| CP-3 | S1-S7 | CP-1 | c1213-arms | `/*/*/AgentTaskDispatchBaseGuardTests/(C1213*)` | S3, S6 | 6 passed (local and remote arms run on Linux), 0 failed/skipped | 6 | 3 |
 | CP-4 | S1-S7 | CP-1 | keep-six-classes | `/*/*/(KeepSixReminderTests*)\|(KeepSixSettingsTests*)\|(KeepSixShortfallTests*)/*` | S4 | 22 passed, 0 failed/skipped | 22 | 2 |
-| CP-5 | S1-S7 | CP-1 | dispatch-failure | `/*/*/AgentTaskDispatchFailureTests/*` | S5 | 14 passed on Linux, 0 failed/skipped | 14 | 2 |
+| CP-5 | S1-S7 | CP-1 | dispatch-failure | `/*/*/AgentTaskDispatchFailureTests/*` | S5 | >= 14 executed on Linux (whole class), 0 failed/skipped | 14 | 2 |
 | CP-6 | S1-S7 | CP-1 | release-gate-platform | `/*/*/ReleaseGatePlatformTests/*` | S7 | 3 passed (C1323 x2, C1415_SkipExclusions), 0 failed/skipped | 3 | 6 |
-| CP-7 | S1-S7 | CP-1 | pipeline-speed-runnable | `/*/*/PipelineSpeedIntegrationTests/(C1281_AdmissionHolds*)\|(C1281_B1Schema*)\|(C1281_B2*)\|(C1281_B3*)\|(C1281_WiredDeliveryRecovery*)\|(C1281_WiredRoundtripDelivery*)\|(C1288*)\|(C1289*)\|(C1303*)` | S6 | every method but the 4 pack-dependent ones passed, 0 failed/skipped | 19 | 12 |
+| CP-7 | S1-S7 | CP-1 | pipeline-speed-runnable | `/*/*/PipelineSpeedIntegrationTests/(C1281_AdmissionHolds*)\|(C1281_B1Schema*)\|(C1281_B2*)\|(C1281_B3*)\|(C1281_WiredDeliveryRecovery*)\|(C1281_WiredRoundtripDelivery*)\|(C1288*)\|(C1289*)\|(C1303*)` | S6 | 35 passed (19 methods, the 4 pack-dependent ones left out), 0 failed/skipped | 35 | 12 |
 
 Not in the receipt (documented by-design skips, run separately as a diagnostic): the 9 pack-dependent
 identities, `/*/*/AdvisoryChangePolicyTests/(C1303_R12*)|(C1281_ReceiptCorrection*)|(C1281_IncompleteNeverClean*)`
