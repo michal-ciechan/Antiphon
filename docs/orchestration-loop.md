@@ -2129,17 +2129,22 @@ or `directory.packages.props`. Editing an unrelated script leaves that digest
 unchanged, so a docs-only skip still applies. `-Check` and `-Update` refuse an
 EmbeddedResource, Content, None, Compile, or AdditionalFiles include that can
 select `docs/**/*.md` or the root `README.md`. Matching is case-insensitive and
-happens after one `%XX` hex decode. An include in an imported `.props` or
-`.targets` file is resolved from each importing project's directory. The nearest
-`Directory.Build.props` and `Directory.Build.targets` above a project count as
-imported. `$(MSBuildThisFileDirectory)` is that file's directory and
-`$(MSBuildProjectDirectory)` is the importing project. An `Import` path that
-still contains an unknown property is not followed. The failure names the
-definition file and the include. Regenerating the manifest does not approve
-that include. An unknown `$(...)` is refused only when the include text contains
-the exact spellings `docs` and `.md`, or `README`, so `$(DocsDir)*.md` stays
-accepted. `Import`, `ReadLinesFromFile`, `Copy`, and property functions that
-read files are not inspected. Any other definition-file edit still changes the
+happens after one `%XX` hex decode. Every such include is resolved from the
+definition file's own directory and from each importing project's directory,
+including through another import. The nearest `Directory.Build.props` and
+`Directory.Build.targets` above a project count as imported. An `Import`
+`Project` path that starts with `$(MSBuildThisFileDirectory)` or
+`$(MSBuildProjectDirectory)` is expanded from that property and is not prefixed
+with the importing file's folder again. `$(MSBuildThisFileDirectory)` in an
+include is that file's directory. `$(MSBuildProjectDirectory)` is the directory
+being checked. An `Import` `Project` path that still contains an unknown
+`$(...)` is refused and is not followed. The failure names the definition file
+and the include, or the import path when the import cannot be resolved.
+Regenerating the manifest does not approve that include. An unknown `$(...)`
+in an item include is refused only when the include text contains the exact
+spellings `docs` and `.md`, or `README`, so `$(DocsDir)*.md` stays accepted.
+`Import`, `ReadLinesFromFile`, `Copy`, and property functions that read files
+are not inspected. Any other definition-file edit still changes the
 digest, so the skip stops until the manifest is regenerated.
 
 The fingerprint is SHA-256 over ordinal-sorted `git ls-tree -r -z <candidate>`
