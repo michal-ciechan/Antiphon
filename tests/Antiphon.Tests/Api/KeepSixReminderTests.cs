@@ -20,7 +20,9 @@ namespace Antiphon.Tests.Api;
 /// CARD-1320 S3. The reminder is one WhenIdle system note. The server does not create a task.
 /// </summary>
 [Category("Integration")]
-[NotInParallel("KeepSixReminder")]
+// One key across KeepSixReminder/Settings/Shortfall: they share the PerTestSession factory
+// and its keep-six rows, so a sibling row must not change between setup and RunAsync (CARD-1415).
+[NotInParallel("KeepSix")]
 [ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
 public class KeepSixReminderTests
 {
