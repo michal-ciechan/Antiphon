@@ -1375,6 +1375,169 @@ $NightlySeams = @{
         -Detail ('ci=' + $sawCi + ' build=' + $sawBuild + ' later=' + $sawLater + ' exit=' + $result.ExitCode + ' pass=' + $result.testsPassed + ' summaryPass=' + $(if ($summary) { [string]$summary.testsPassed } else { 'missing' }) + ' reasons=' + $(if ($summary) { @($summary.reasons) -join ',' } else { '' }))
 }
 
+function Test-C1391_ClassMatch {
+    # Qualified bare names only. A shared short name must not assign the other namespace.
+    $appSuffix = 'Antiphon.Tests.Application.Widget(Factory)'
+    $agentsSuffix = 'Antiphon.Tests.Agents.Widget(Factory)'
+    $requiredApp = 'Antiphon.Tests.Application.Widget'
+    $requiredAgents = 'Antiphon.Tests.Agents.Widget'
+    $sameNs = Test-NightlyClassAssigned -ClassName $appSuffix -TypeName '' -RequiredClasses @($requiredApp)
+    $otherNs = Test-NightlyClassAssigned -ClassName $agentsSuffix -TypeName '' -RequiredClasses @($requiredApp)
+    $unqualified = Test-NightlyClassAssigned -ClassName $appSuffix -TypeName '' -RequiredClasses @('Widget')
+    $present = Test-NightlyRequiredClassesPresent -TerminalRows @([pscustomobject]@{ ClassName = $appSuffix }) -RequiredClasses @($requiredApp, $requiredAgents)
+    $missing = @($present.Missing)
+    $agentsMissing = $missing -ccontains $requiredAgents
+    $appMissing = $missing -ccontains $requiredApp
+    $ok = ((-not $otherNs) -and (-not $unqualified) -and $sameNs -and (-not $present.Ok) -and $agentsMissing -and (-not $appMissing))
+    Assert-C487 -Cond $ok -Name 'C1391 class match uses the qualified bare name' `
+        -Detail ('sameNs=' + $sameNs + ' otherNs=' + $otherNs + ' unqualified=' + $unqualified + ' ok=' + $present.Ok + ' missing=' + ($missing -join ','))
+}
+
+function Write-C1391LintSeams {
+    param([string]$Path, [string]$TracePath, [string]$RecordPath)
+    $template = @'
+$NightlySeams = @{
+    TracePath = '__TRACE__'
+    Git = {
+        param($WorkingDirectory, $Arguments)
+        return @{ ExitCode = 0; Output = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }
+    }
+    StartProcess = {
+        param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+        $encoded = @()
+        foreach ($item in @($ArgumentList)) {
+            $encoded += (ConvertTo-Json -InputObject ([string]$item) -Compress)
+        }
+        $line = '{"file":' + (ConvertTo-Json -InputObject ([string]$FilePath) -Compress) + ',"args":[' + ($encoded -join ',') + ']}'
+        Add-Content -LiteralPath '__RECORD__' -Value $line -Encoding ASCII
+        $joined = (@($ArgumentList) -join ' ')
+        $code = 0
+        if ($joined -match '(^| )run lint($| )') { $code = 2 }
+        return @{ ExitCode = $code; TimedOut = $false; Pid = 2; ChildrenExited = $true; LogText = '' }
+    }
+    DockerInfo = { return @{ exitCode = 0; version = 'fake'; detail = 'ok' } }
+    DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
+}
+'@
+    $text = $template.Replace('__TRACE__', $TracePath).Replace('__RECORD__', $RecordPath)
+    Set-Content -LiteralPath $Path -Value $text -Encoding ASCII
+}
+
+function Test-C1391ReasonPresent {
+    param($Result, [string]$Reason)
+    if ($null -eq $Result -or $null -eq $Result.reasons) { return $false }
+    foreach ($item in @($Result.reasons)) {
+        if ([string]$item -ceq $Reason) { return $true }
+    }
+    return $false
+}
+
+function Get-C1391LaunchText {
+    param([string]$RecordPath)
+    if (-not (Test-Path -LiteralPath $RecordPath)) { return '' }
+    $parts = @()
+    foreach ($line in @(Get-Content -LiteralPath $RecordPath)) {
+        if (-not [string]::IsNullOrWhiteSpace($line)) { $parts += $line }
+    }
+    return ($parts -join "`n")
+}
+
+function Test-C1391_LintGate {
+    # Nightly keeps dotnet and the client suite after lint fails. Every other profile stops.
+    $savedPath = $env:PATH
+    $nightlyFx = New-C1341NpmFixture
+    Write-C1391LintSeams -Path $nightlyFx.Seams -TracePath $nightlyFx.Trace -RecordPath $nightlyFx.Record
+    $env:PATH = $nightlyFx.LauncherDir + [System.IO.Path]::PathSeparator + $savedPath
+    $nightly = $null
+    try {
+        $nightly = Invoke-E -Fx $nightlyFx -Extra @{ Suites = @('client'); Profile = 'nightly' }
+    } finally {
+        $env:PATH = $savedPath
+    }
+    $nightlyLaunch = Get-C1391LaunchText -RecordPath $nightlyFx.Record
+    $nightlySln = $nightlyLaunch -match 'Antiphon\.sln'
+    $nightlySuite = $nightlyLaunch -match 'test-client\.ps1'
+    $nightlyReason = Test-C1391ReasonPresent -Result $nightly -Reason 'client-lint-failed'
+    $nightlyPrereq = Test-C1391ReasonPresent -Result $nightly -Reason 'prerequisite-failed:client lint'
+    $nightlyOk = ($null -ne $nightly -and [int]$nightly.ExitCode -ne 0 -and -not [bool]$nightly.testsPassed -and -not [bool]$nightly.coverageComplete -and $nightlyReason -and -not $nightlyPrereq -and $nightlySln -and $nightlySuite)
+
+    $rcFx = New-C1341NpmFixture
+    Write-C1391LintSeams -Path $rcFx.Seams -TracePath $rcFx.Trace -RecordPath $rcFx.Record
+    $env:PATH = $rcFx.LauncherDir + [System.IO.Path]::PathSeparator + $savedPath
+    $rc = $null
+    try {
+        $rc = Invoke-E -Fx $rcFx -Extra @{ Suites = @('client'); Profile = 'rc' }
+    } finally {
+        $env:PATH = $savedPath
+    }
+    $rcLaunch = Get-C1391LaunchText -RecordPath $rcFx.Record
+    $rcSln = $rcLaunch -match 'Antiphon\.sln'
+    $rcSuite = $rcLaunch -match 'test-client\.ps1'
+    $rcReason = Test-C1391ReasonPresent -Result $rc -Reason 'prerequisite-failed:client lint'
+    $rcNightlyReason = Test-C1391ReasonPresent -Result $rc -Reason 'client-lint-failed'
+    $rcOk = ($null -ne $rc -and [int]$rc.ExitCode -ne 0 -and -not [bool]$rc.testsPassed -and $rcReason -and -not $rcNightlyReason -and -not $rcSln -and -not $rcSuite)
+    Assert-C487 -Cond ($nightlyOk -and $rcOk) -Name 'C1391 nightly lint continues and rc lint stops' `
+        -Detail ('nightly=' + $nightlyOk + ' exit=' + $(if ($nightly) { [string]$nightly.ExitCode } else { 'missing' }) + ' reason=' + $nightlyReason + ' prereq=' + $nightlyPrereq + ' sln=' + $nightlySln + ' suite=' + $nightlySuite + ' reasons=' + $(if ($nightly) { @($nightly.reasons) -join ',' } else { '' }) + ' rc=' + $rcOk + ' rcExit=' + $(if ($rc) { [string]$rc.ExitCode } else { 'missing' }) + ' rcReason=' + $rcReason + ' rcSln=' + $rcSln + ' rcSuite=' + $rcSuite + ' rcReasons=' + $(if ($rc) { @($rc.reasons) -join ',' } else { '' }))
+}
+
+function Test-C1391_SplicedRecord {
+    $header = "Version: '1.44.0.0'`nVersion: 2.2.2`n"
+    $first = New-C1044DiscoveryRecord -Uid 'uid-a' -TypeName 'Alpha' -Method 'One'
+    $second = New-C1044DiscoveryRecord -Uid 'uid-b' -TypeName 'Beta' -Method 'Two'
+    $path = Write-C1044Diagnostic -Name 'c1391-two-discovery' -Text ($header + $first + $second)
+    $nodes = @()
+    $errorText = ''
+    try { $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery).Nodes) }
+    catch { $errorText = $_.Exception.Message }
+    $alpha = @($nodes | Where-Object { $_.Uid -ceq 'uid-a' -and $_.Type -ceq 'Alpha' })
+    $beta = @($nodes | Where-Object { $_.Uid -ceq 'uid-b' -and $_.Type -ceq 'Beta' })
+    $discoveryOk = ($errorText -eq '' -and $nodes.Count -eq 2 -and $alpha.Count -eq 1 -and $beta.Count -eq 1)
+
+    $passedA = $first.Replace('DiscoveredTestNodeStateProperty', 'PassedTestNodeStateProperty')
+    $passedB = $second.Replace('DiscoveredTestNodeStateProperty', 'PassedTestNodeStateProperty')
+    $path = Write-C1044Diagnostic -Name 'c1391-two-passed' -Text ($header + $passedA + $passedB)
+    $exec = @()
+    $execError = ''
+    try { $exec = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution).Nodes) }
+    catch { $execError = $_.Exception.Message }
+    $passedLeft = @($exec | Where-Object { $_.Uid -ceq 'uid-a' -and $_.Outcome -ceq 'Passed' })
+    $passedRight = @($exec | Where-Object { $_.Uid -ceq 'uid-b' -and $_.Outcome -ceq 'Passed' })
+    $execOk = ($execError -eq '' -and $exec.Count -eq 2 -and $passedLeft.Count -eq 1 -and $passedRight.Count -eq 1)
+
+    $truncated = 'TestNodeUpdateMessage { TestNode = TestNode { Uid = TestNodeUid { Value = truncated }'
+    $path = Write-C1044Diagnostic -Name 'c1391-splice' -Text ($header + $truncated + $first)
+    $spliced = @()
+    $spliceError = ''
+    try { $spliced = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery).Nodes) }
+    catch { $spliceError = $_.Exception.Message }
+    $borrowed = @($spliced | Where-Object { $_.Uid -ceq 'truncated' -or $_.Type -ceq 'Alpha' })
+    $spliceOk = ($spliceError -match 'truncated diagnostic record|malformed discovery record' -and $spliced.Count -eq 0 -and $borrowed.Count -eq 0)
+    Assert-C487 -Cond ($discoveryOk -and $execOk -and $spliceOk) -Name 'C1391 same-line records split and a truncated splice does not borrow' `
+        -Detail ('discovery=' + $discoveryOk + ' discErr=' + $errorText + ' nodes=' + $nodes.Count + ' exec=' + $execOk + ' execErr=' + $execError + ' execNodes=' + $exec.Count + ' splice=' + $spliceOk + ' spliceErr=' + $spliceError + ' spliceNodes=' + $spliced.Count)
+}
+
+function Test-C1391_OddTypeName {
+    $open = New-C1044DiscoveryRecord -Uid 'odd-open' -TypeName 'X(Fac' -Method 'Runs'
+    Assert-C1044Rejects -Name 'C1391 unbalanced X(Fac refuses' -Text (Get-C1044DiscoveryText -Records @($open)) -Pattern 'truncated diagnostic record'
+    $comma = New-C1044DiscoveryRecord -Uid 'odd-comma' -TypeName ',' -Method 'Runs'
+    Assert-C1044Rejects -Name 'C1391 lone comma refuses' -Text (Get-C1044DiscoveryText -Records @($comma)) -Pattern 'truncated diagnostic record'
+    $balanced = 'X(Fac)'
+    $generic = 'Outer+Inner`1(FactoryA, FactoryB)'
+    $records = @(
+        (New-C1044DiscoveryRecord -Uid 'balanced-uid' -TypeName $balanced -Method 'Runs'),
+        (New-C1044DiscoveryRecord -Uid 'generic-uid' -TypeName $generic -Method 'Runs')
+    )
+    $path = Write-C1044Diagnostic -Name 'c1391-odd-balanced' -Text (Get-C1044DiscoveryText -Records $records)
+    $nodes = @()
+    $errorText = ''
+    try { $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery).Nodes) }
+    catch { $errorText = $_.Exception.Message }
+    $balancedNode = @($nodes | Where-Object { $_.Uid -ceq 'balanced-uid' })
+    $genericNode = @($nodes | Where-Object { $_.Uid -ceq 'generic-uid' })
+    $ok = ($nodes.Count -eq 2 -and $balancedNode.Count -eq 1 -and $balancedNode[0].Type -ceq $balanced -and $genericNode.Count -eq 1 -and $genericNode[0].Type -ceq $generic)
+    Assert-C487 -Cond $ok -Name 'C1391 balanced fixture TypeName still parses' -Detail $errorText
+}
+
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
