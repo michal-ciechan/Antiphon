@@ -32,7 +32,7 @@ Windows qualification.
 | CP-3 | S1-S7 | CP-1 | c1213-arms | `/*/*/AgentTaskDispatchBaseGuardTests/(C1213*)` | S3, S6 | 6 passed (local and remote arms run on Linux), 0 failed/skipped | 6 | 3 |
 | CP-4 | S1-S7 | CP-1 | keep-six-classes | `/*/*/(KeepSixReminderTests*)\|(KeepSixSettingsTests*)\|(KeepSixShortfallTests*)/*` | S4 | 22 passed, 0 failed/skipped | 22 | 2 |
 | CP-5 | S1-S7 | CP-1 | dispatch-failure | `/*/*/AgentTaskDispatchFailureTests/*` | S5 | >= 14 executed on Linux (whole class), 0 failed/skipped | 14 | 2 |
-| CP-6 | S1-S7 | CP-1 | release-gate-platform | `/*/*/ReleaseGatePlatformTests/*` | S7 | 3 passed (C1323 x2, C1415_SkipExclusions), 0 failed/skipped | 3 | 6 |
+| CP-6 | S1-S7 | CP-1 | release-gate-platform | `/*/*/ReleaseGatePlatformTests/(C1323_PlatformPolicy*)\|(C1415_SkipExclusions*)` | S7 | 2 passed, 0 failed/skipped | 2 | 4 |
 | CP-7 | S1-S7 | CP-1 | pipeline-speed-runnable | `/*/*/PipelineSpeedIntegrationTests/(C1281_AdmissionHolds*)\|(C1281_B1Schema*)\|(C1281_B2*)\|(C1281_B3*)\|(C1281_WiredDeliveryRecovery*)\|(C1281_WiredRoundtripDelivery*)\|(C1288*)\|(C1289*)\|(C1303*)` | S6 | 35 passed (19 methods, the 4 pack-dependent ones left out), 0 failed/skipped | 35 | 12 |
 
 Not in the receipt (documented by-design skips, run separately as a diagnostic): the 9 pack-dependent
@@ -46,3 +46,7 @@ hash check, `scripts/test-nightly-tests.ps1 -Case C1397_RcAntiphonLaunchGroups` 
 `-Case C1404_RcCostBalancedGroups` (both resolve the shipped rc antiphon exclusions for Windows).
 
 No PCs; Mutation has none to bind.
+
+`ReleaseGatePlatformTests.C1323_PlatformExecution` is left out of CP-6: it is red on this Linux
+runner at the task base `b634811f` as well (`windows-retains-delivery-cases - legacy-sibling`,
+`windows-summary-remains-full`, missing `state-linux/last-run.json`), run 20261021-193326-2645 CP-6.
