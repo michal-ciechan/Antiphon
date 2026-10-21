@@ -732,8 +732,11 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 .FirstOrDefaultAsync(ct);
             if (incident is null)
                 return;
-            var already = await _db.Alerts.AsNoTracking().AnyAsync(a => a.AgentId == agentId
-                && a.Detail != null && a.Detail.Contains("StandingAutomaticFreshStarted"), ct);
+            // Alerts stay for the retention window. Match this reservation's incident only,
+            // so a later episode still notifies and a replay of this one does not.
+            var dedupKey = $"supervisor:StandingAutomaticFreshStarted:{agentId:N}:{incident.Id:N}";
+            var already = await _db.Alerts.AsNoTracking().AnyAsync(
+                a => a.AgentId == agentId && a.DedupKey == dedupKey, ct);
             if (already)
                 return;
             await _alerts.RaiseAsync(
@@ -742,7 +745,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                     Source: "supervisor",
                     Title: "StandingAutomaticFreshStarted: agent supervision",
                     Detail: incident.Message,
-                    DedupKey: $"supervisor:StandingAutomaticFreshStarted:{agentId:N}:{incident.Id:N}",
+                    DedupKey: dedupKey,
                     AgentId: agentId,
                     SessionId: incident.SessionId),
                 ct);
