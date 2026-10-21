@@ -1908,6 +1908,186 @@ function Test-C1410_MeasuredCostGroups {
     Assert-C487 -Cond $ok -Name 'C1410 rc launch groups pack by measured cost under the watchdog and assign every node once' -Detail $detail
 }
 
+function New-C1419Launch {
+    param([string]$Root, [string]$Name, [string]$Class, [string[]]$Methods, [string]$ExtraClass = '')
+    $dir = Join-Path $Root $Name
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $rows = @()
+    $exec = @()
+    foreach ($m in @($Methods)) {
+        $rows += @{ Id = [guid]::NewGuid().ToString(); ClassName = ('Ns.' + $Class); MethodName = $m; Outcome = 'Passed' }
+        $exec += @{ uid = ($Class + '.' + $m); state = 'Passed'; type = $Class; method = $m; namespace = 'Ns'; className = ('Ns.' + $Class) }
+    }
+    if ($ExtraClass) {
+        $rows += @{ Id = [guid]::NewGuid().ToString(); ClassName = ('Ns.' + $ExtraClass); MethodName = 'One'; Outcome = 'Passed' }
+    }
+    $trx = Join-Path $dir 'launch.trx'
+    Write-C487Trx -Path $trx -Rows $rows
+    $execPath = Join-Path $dir 'launch.execution.json'
+    Write-C487Execution -Path $execPath -Nodes $exec
+    return [pscustomobject]@{ Trx = $trx; Exec = $execPath; Class = $Class; Dir = $dir }
+}
+
+function Invoke-C1419Verdict {
+    param($Launch, [string]$Discovery, [string]$RunDirectory, $Index = $null, $Exclusions = $null, [switch]$Aware)
+    $sha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    $call = @{
+        TrxPath = $Launch.Trx; DiscoveryPath = $Discovery; ExecutionDiagnosticPath = $Launch.Exec
+        RunDirectory = $RunDirectory; NotBeforeUtc = ([datetime]::UtcNow.AddMinutes(-5)); ProcessExit = 0
+        Sha = $sha; ExpectedSha = $sha; GitRef = 'origin/master'; ExpectedRef = 'origin/master'
+        PolicyHash = 'p'; ExpectedPolicyHash = 'p'; RequiredClasses = @('Ns.' + $Launch.Class)
+        ProfileExclusions = $Exclusions; ProfileAware = [bool]$Aware
+    }
+    if ($null -ne $Index) { $call.DiscoveryIndex = $Index }
+    return (ConvertTo-NightlyNativeSuiteVerdict @call)
+}
+
+function Get-C1419VerdictText {
+    param($Verdict)
+    $digest = ''
+    $required = ''
+    $excluded = ''
+    if ($Verdict.census) {
+        $digest = [string]$Verdict.census.Digest
+        $required = [string]$Verdict.census.RequiredCount
+        $excluded = [string]$Verdict.census.ExcludedCount
+    }
+    return ('cov={0} pass={1} req={2} exc={3} digest={4} nodes={5} reasons={6}' -f $Verdict.coverageComplete, $Verdict.testsPassed, $required, $excluded, $digest, @($Verdict.discoveryNodes).Count, (@($Verdict.reasons) -join ';'))
+}
+
+function Test-C1419_DiscoveryParsedOncePerSuite {
+    # CARD-1419: every launch of a suite is judged against the same discovery.
+    # The verdict re-read and re-censused all of it after each launch; a suite
+    # now parses each distinct discovery once and reconciles only the launch's
+    # own classes, with every verdict unchanged.
+    $script:C1419Reads = 0
+    $c1419ReadDiscovery = ${function:Read-NightlyDiscoveryDocument}
+    function Read-NightlyDiscoveryDocument {
+        param([string]$Path)
+        $script:C1419Reads++
+        return (& $c1419ReadDiscovery -Path $Path)
+    }
+    $root = Join-Path $ResultsDirectory ('c1419-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+    $nodes = @()
+    foreach ($c in @('ClassA', 'ClassB', 'ClassC')) {
+        foreach ($m in @('One', 'Two')) {
+            $nodes += @{ uid = ($c + '.' + $m); type = $c; method = $m; namespace = 'Ns'; state = 'Discovered' }
+        }
+    }
+    $disc = Join-Path $root 'suite.discovery.json'
+    Write-C487Discovery -Path $disc -Nodes $nodes
+
+    $launches = @(
+        (New-C1419Launch -Root $root -Name 'a' -Class 'ClassA' -Methods @('One', 'Two')),
+        (New-C1419Launch -Root $root -Name 'b' -Class 'ClassB' -Methods @('One', 'Two')),
+        (New-C1419Launch -Root $root -Name 'c' -Class 'ClassC' -Methods @('One', 'Two')),
+        (New-C1419Launch -Root $root -Name 'd' -Class 'ClassB' -Methods @('One')),
+        (New-C1419Launch -Root $root -Name 'e' -Class 'ClassC' -Methods @('One', 'Two') -ExtraClass 'ClassA')
+    )
+
+    # Shared path (the rc profile shape): one parse for five launches, each verdict
+    # equal to the one an unindexed call computes.
+    $same = $true
+    $text = @()
+    $indexedReads = 0
+    $indexed = @()
+    try {
+        $index = New-NightlyDiscoveryIndex
+        foreach ($l in $launches) {
+            $before = $script:C1419Reads
+            $v = Invoke-C1419Verdict -Launch $l -Discovery $disc -RunDirectory $root -Index $index
+            $indexedReads += ($script:C1419Reads - $before)
+            $plain = Invoke-C1419Verdict -Launch $l -Discovery $disc -RunDirectory $root
+            $vt = Get-C1419VerdictText -Verdict $v
+            $pt = Get-C1419VerdictText -Verdict $plain
+            if ($vt -cne $pt) { $same = $false }
+            $text += ($l.Dir + ' ' + $vt)
+            $indexed += $v
+        }
+        Assert-C487 -Cond ($indexedReads -eq 1) -Name 'C1419 one discovery parse for five launches on a shared path' -Detail ('reads=' + $indexedReads)
+        Assert-C487 -Cond $same -Name 'C1419 indexed verdicts equal unindexed verdicts' -Detail ($text -join ' || ')
+        $clean = @($indexed[0], $indexed[1], $indexed[2] | Where-Object { [bool]$_.coverageComplete -and [bool]$_.testsPassed -and @($_.reasons).Count -eq 0 })
+        $missing = (@($indexed[3].reasons) -join ';')
+        $extra = (@($indexed[4].reasons) -join ';')
+        Assert-C487 -Cond ($clean.Count -eq 3 -and (-not [bool]$indexed[3].coverageComplete) -and $missing -ceq 'missing-expanded-row ClassB.Two' -and (-not [bool]$indexed[4].coverageComplete) -and $extra -match 'extra-class-in-chunk Ns\.ClassA\.One') `
+            -Name 'C1419 launch verdicts reconcile only their own classes' -Detail ($text -join ' || ')
+
+        # The same bytes at a new path per launch (the per-chunk discovery shape).
+        $copyIndex = New-NightlyDiscoveryIndex
+        $before = $script:C1419Reads
+        foreach ($l in $launches[0..2]) {
+            $copy = Join-Path $l.Dir 'launch.discovery.json'
+            Copy-Item -LiteralPath $disc -Destination $copy -Force
+            [void](Invoke-C1419Verdict -Launch $l -Discovery $copy -RunDirectory $root -Index $copyIndex)
+        }
+        Assert-C487 -Cond (($script:C1419Reads - $before) -eq 1) -Name 'C1419 identical discovery bytes at three paths parse once' -Detail ('reads=' + ($script:C1419Reads - $before))
+
+        # Profile lane: the exclusion census and its required set come from the index.
+        $hold = @([pscustomobject]@{ Class = 'ClassC'; Methods = @('Two'); Reason = 'held'; Owner = 'C1419' })
+        $profileIndex = New-NightlyDiscoveryIndex
+        $held = New-C1419Launch -Root $root -Name 'held' -Class 'ClassC' -Methods @('One')
+        $before = $script:C1419Reads
+        $pv = @()
+        foreach ($l in @($launches[0], $held, $launches[1])) {
+            $pv += Invoke-C1419Verdict -Launch $l -Discovery $disc -RunDirectory $root -Index $profileIndex -Exclusions $hold -Aware
+        }
+        $profileReads = $script:C1419Reads - $before
+        $pPlain = Invoke-C1419Verdict -Launch $held -Discovery $disc -RunDirectory $root -Exclusions $hold -Aware
+        $pText = Get-C1419VerdictText -Verdict $pv[1]
+        $pOk = ($profileReads -eq 1 -and $pText -ceq (Get-C1419VerdictText -Verdict $pPlain) -and [bool]$pv[1].coverageComplete -and
+            [int]$pv[1].census.RequiredCount -eq 5 -and [int]$pv[1].census.ExcludedCount -eq 1)
+        Assert-C487 -Cond $pOk -Name 'C1419 profile exclusions census once and match the unindexed verdict' -Detail ('reads=' + $profileReads + ' ' + $pText)
+
+        # A rewritten discovery is new bytes: the index parses it again.
+        $nodes += @{ uid = 'ClassD.One'; type = 'ClassD'; method = 'One'; namespace = 'Ns'; state = 'Discovered' }
+        Write-C487Discovery -Path $disc -Nodes $nodes
+        $before = $script:C1419Reads
+        $after = Invoke-C1419Verdict -Launch $launches[0] -Discovery $disc -RunDirectory $root -Index $index
+        $rewriteReads = $script:C1419Reads - $before
+        Assert-C487 -Cond ($rewriteReads -eq 1 -and [int]$after.census.RequiredCount -eq 7 -and [bool]$after.coverageComplete) `
+            -Name 'C1419 rewritten discovery is parsed again' -Detail ('reads=' + $rewriteReads + ' ' + (Get-C1419VerdictText -Verdict $after))
+    } catch {
+        Assert-C487 -Cond $false -Name 'C1419 indexed native verdicts' -Detail ([string]$_.Exception.Message + ' at ' + [string]$_.InvocationInfo.PositionMessage)
+    }
+
+    # The suite loop makes one index before its launch loop and gives it to every verdict.
+    $siteOk = $false
+    $siteDetail = ''
+    try {
+        $ast = (Get-Command Invoke-AntiphonNightlyTests -CommandType Function).ScriptBlock.Ast
+        $calls = @($ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.CommandAst] -and $a.GetCommandName() -eq 'ConvertTo-NightlyNativeSuiteVerdict' }, $true))
+        $argName = ''
+        if ($calls.Count -eq 1) {
+            $els = @($calls[0].CommandElements)
+            for ($i = 0; $i -lt $els.Count - 1; $i++) {
+                if ($els[$i] -is [System.Management.Automation.Language.CommandParameterAst] -and $els[$i].ParameterName -eq 'DiscoveryIndex' -and
+                    $els[$i + 1] -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                    $argName = $els[$i + 1].VariablePath.UserPath
+                }
+            }
+        }
+        $makers = @($ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $a.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and $a.Left.VariablePath.UserPath -eq $argName -and
+            @($a.Right.FindAll({ param($b) $b -is [System.Management.Automation.Language.CommandAst] -and $b.GetCommandName() -eq 'New-NightlyDiscoveryIndex' }, $true)).Count -gt 0 }, $true))
+        $loop = $null
+        if ($calls.Count -eq 1) {
+            $p = $calls[0].Parent
+            while ($p) {
+                if ($p -is [System.Management.Automation.Language.ForEachStatementAst] -and $p.Variable.VariablePath.UserPath -eq 'chunk') { $loop = $p; break }
+                $p = $p.Parent
+            }
+        }
+        $insideLoop = @($makers | Where-Object { $null -ne $loop -and $_.Extent.StartOffset -ge $loop.Extent.StartOffset -and $_.Extent.EndOffset -le $loop.Extent.EndOffset })
+        $beforeLoop = @($makers | Where-Object { $null -ne $loop -and $_.Extent.EndOffset -le $loop.Extent.StartOffset })
+        $siteOk = ($calls.Count -eq 1 -and $argName -and $null -ne $loop -and $makers.Count -eq 1 -and $beforeLoop.Count -eq 1 -and $insideLoop.Count -eq 0)
+        $siteDetail = ('calls=' + $calls.Count + ' arg=' + $argName + ' loop=' + ($null -ne $loop) + ' makers=' + $makers.Count + ' before=' + $beforeLoop.Count + ' inside=' + $insideLoop.Count)
+    } catch {
+        $siteDetail = [string]$_.Exception.Message
+    }
+    Assert-C487 -Cond $siteOk -Name 'C1419 suite loop builds one discovery index before its launches' -Detail $siteDetail
+}
+
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
