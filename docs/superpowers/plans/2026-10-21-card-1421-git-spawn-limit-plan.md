@@ -147,6 +147,7 @@ One `Antiphon.Tests` build, the roster row, one repeated subset row and one mixe
   107 classes move.
 - **CP-2 names `GitIndexLockPathTests`.** In `GitIndexLockTests.cs` the limiter sits on `GitIndexLockPathTests`. `GitIndexLockTests` is a unit class with no limiter, so the planned `(GitIndexLockTests*)` operand would not have run the git class.
 - **CP-2 has its own build, `bin-c1421-repeat/`.** The checkpoint tool refuses to reuse a build for a row with a different repeat count (`reused build ... has a different repeat`).
+- **D-1 bisect claim corrected.** Setting `ANTIPHON_TEST_GIT_SPAWN_LIMIT=1` serialises the git lane only. The strict lane and the git lane are separate limiters, so a strict class still runs beside a git-lane class. The override does not reproduce the base ordering. CP-2 rerun `20261021-222525-c7aa` (strict lane) still read `held` in 1 of 3 C688 ordinals.
 - **Git hooks count as git.** `LandingGitTests`, `CardFileGitFailureAcceptanceTests` and `GitWorkspaceServiceIndexLockTests` install `#!/bin/sh` git hooks. `git` itself starts those hooks, and `LandingGit`'s budget kill ends them with it. They are treated as git children, not test-started processes.
 
 ## Follow-ups (file as cards, not in this card)
