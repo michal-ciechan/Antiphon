@@ -182,6 +182,10 @@ public partial class AgentTaskDispatchBaseGuardTests
         task.WorktreeBranch = "feat/card-1214-mutation-" + task.Id.ToString("N")[..8];
         await Should.ThrowAsync<ConflictException>(() => service.ValidateVerificationAsync(task, lease, default));
         }
+        // The remote arm drives RemoteVerificationWorkspace, which admits only POSIX runner paths
+        // (the remote runner is Linux-only), against real temp directories (CARD-1415).
+        if (OperatingSystem.IsWindows())
+            Skip.Test("CARD-1415: the remote snapshot arm needs POSIX runner paths; the local arm above passed.");
         await repo.AddBareOriginAsync();
         var origin = (await repo.GitReadAsync("remote", "get-url", "origin")).Trim();
         var remoteRoot = Directory.CreateTempSubdirectory("c1213-snapshot-recipient").FullName;
