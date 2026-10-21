@@ -144,6 +144,23 @@ internal class TestDbOperations
             $"DROP DATABASE IF EXISTS {databaseName} WITH (FORCE)").ConfigureAwait(false);
     }
 
+    /// <summary>CARD-1420: plain-SQL dump (schema + data) of the owned container's shared database.</summary>
+    public virtual Task<byte[]> CaptureSnapshotAsync(OwnedTestDbContainer container, string databaseName) =>
+        throw new NotImplementedException();
+
+    /// <summary>CARD-1420: replays a snapshot into the owned container's empty shared database.</summary>
+    public virtual Task RestoreSnapshotAsync(OwnedTestDbContainer container, string databaseName, byte[] sql) =>
+        throw new NotImplementedException();
+
+    public virtual Task<IReadOnlyList<string>> ReadAppliedMigrationsAsync(string connectionString) =>
+        throw new NotImplementedException();
+
+    public virtual IReadOnlyList<string> GetAssemblyMigrations() => throw new NotImplementedException();
+
+    /// <summary>CARD-1420: drops and recreates the shared database after a failed restore.</summary>
+    public virtual Task ResetSharedDatabaseAsync(string maintenanceConnectionString) =>
+        throw new NotImplementedException();
+
     public virtual async ValueTask DisposeOwnedAsync(OwnedTestDbContainer container)
     {
         if (container.Real is not null)
@@ -158,25 +175,36 @@ internal sealed class TestDbFixtureLifecycle
 
     private readonly object _gate = new();
     private readonly TestDbOperations _ops;
+    private readonly TestSchemaCache _cache;
     private readonly SemaphoreSlim _cloneLock = new(1, 1);
     private Task<TestDbReadyState>? _task;
     private Task? _disposeTask;
     private bool _disposeStarted;
     private TestDbReadyState? _ready;
 
-    public TestDbFixtureLifecycle(TestDbOperations? operations = null)
+    /// <summary>
+    /// CARD-1420 D-7: the default lifecycle reads the schema cache from the environment; injected
+    /// operations without a cache keep the migrate path.
+    /// </summary>
+    public TestDbFixtureLifecycle(TestDbOperations? operations = null, TestSchemaCache? cache = null)
     {
         _ops = operations ?? new TestDbOperations();
+        _cache = cache ?? (operations is null ? TestSchemaCache.FromEnvironment() : TestSchemaCache.Disabled);
     }
 
     public int Create;
     public int Start;
     public int Migrate;
     public int Protect;
+    public int Restore;
+    public int Capture;
+    public int CacheFallback;
+    public int ResetSharedDatabase;
     public int DisposeOwned;
     public int Drop;
     public int TeardownDispose;
     public string? ContainerId { get; private set; }
+    public string? SchemaSource { get; private set; }
     public ConcurrentBag<string> ClearedPools { get; } = [];
     public SynchronizationContext? BootstrapContext { get; private set; }
 
