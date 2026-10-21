@@ -291,6 +291,163 @@ function Test-C1407Field {
     return $false
 }
 
+function Test-C1407Suffix {
+    param([string]$Line, [string]$Suffix)
+    foreach ($part in @($Line.Split([char]9))) {
+        if ($part.EndsWith($Suffix)) { return $true }
+    }
+    return $false
+}
+
+function Test-C1407Contains {
+    param([string]$Line, [string]$Text)
+    foreach ($part in @($Line.Split([char]9))) {
+        if ($part.Contains($Text)) { return $true }
+    }
+    return $false
+}
+
+function Get-C1407SafeText {
+    param([string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return '' }
+    if ($Text.Contains('SENTINEL-1407-ARGV')) { return 'omitted-because-sentinel' }
+    if ($Text.Contains('AGE-IDENTITY-BODY-1407')) { return 'omitted-because-identity-body' }
+    if ($Text.Contains('identity-sentinel-1407')) { return 'omitted-because-identity-path' }
+    if ($Text.Length -gt 400) { return $Text.Substring(0, 400) }
+    return $Text
+}
+
+function Invoke-C1407WindowRun {
+    param(
+        [string]$PendingJson = '{"items":[]}',
+        [switch]$WithFixture,
+        [string]$FixtureJson = '{"items":[]}',
+        [string[]]$ExtraArgs = @(),
+        [string]$SourceCount = '3',
+        [string]$TargetCount = '3',
+        [string]$FailMaintenance = '',
+        [switch]$SkipApi,
+        [switch]$SkipTcp
+    )
+    $result = @{
+        ExitCode = 99
+        Text     = ''
+        Lines    = @()
+        Stdin    = @()
+        Ready    = $false
+        Error    = ''
+    }
+    $fake = $null
+    $api = $null
+    $tcp = $null
+    $snap = $null
+    $drill = $null
+    $secret = $null
+    $recipient = $null
+    $dumpDir = $null
+    $prevTrace = $env:C1407_TRACE
+    $prevStdin = $env:C1407_STDIN
+    $prevSource = $env:C1407_SOURCE_COUNT
+    $prevTarget = $env:C1407_TARGET_COUNT
+    $prevFail = $env:C1407_FAIL_MAINTENANCE
+    try {
+        $fake = New-C1407SmartFake
+        $env:C1407_TRACE = $fake.Trace
+        $env:C1407_STDIN = $fake.Stdin
+        $env:C1407_SOURCE_COUNT = $SourceCount
+        $env:C1407_TARGET_COUNT = $TargetCount
+        if ($FailMaintenance -eq '1') { $env:C1407_FAIL_MAINTENANCE = '1' }
+        else { Remove-Item Env:C1407_FAIL_MAINTENANCE -ErrorAction SilentlyContinue }
+        if (-not $SkipTcp) {
+            $tcp = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 5432)
+            $tcp.Server.SetSocketOption(
+                [System.Net.Sockets.SocketOptionLevel]::Socket,
+                [System.Net.Sockets.SocketOptionName]::ReuseAddress,
+                $true)
+            $tcp.Start()
+        }
+        $sha = '0123456789abcdef0123456789abcdef01234567'
+        $apiBase = $script:ClosedApi
+        if (-not $SkipApi) {
+            $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+            $probe.Start()
+            $port = $probe.LocalEndpoint.Port
+            $probe.Stop()
+            $api = Start-C1407Api -Port $port -Sha $sha -PendingJson $PendingJson
+            if (-not (Wait-C1407Api $api)) {
+                $result.Error = 'api did not become ready'
+                return [pscustomobject]$result
+            }
+            $apiBase = 'http://127.0.0.1:{0}' -f $port
+        }
+        $snap = New-C1407File -Body 'snapshot-reference'
+        $drill = New-C1407Drill
+        $secret = New-C1407File -Body ('Password=' + 'SENTINEL-1407-ARGV')
+        $recipient = New-C1407File -Body 'age1recipient'
+        $dumpDir = Join-Path ([System.IO.Path]::GetTempPath()) ('c1407-dump-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dumpDir -Force | Out-Null
+        $identity = Join-Path $dumpDir 'identity-sentinel-1407'
+        [System.IO.File]::WriteAllText($identity, 'AGE-IDENTITY-BODY-1407')
+        $fixture = $null
+        if ($WithFixture) {
+            $fixture = Join-Path $dumpDir 'land.json'
+            [System.IO.File]::WriteAllText($fixture, $FixtureJson)
+        }
+        $window = New-C1407WindowArgs -ApiBase $apiBase -Sha $sha -Snapshot $snap -Drill $drill `
+            -Secret $secret -DumpDirectory $dumpDir -Recipient $recipient -Identity $identity `
+            -PendingFixture $fixture -CommandHost (Join-Path $fake.Dir 'pwsh')
+        if ($ExtraArgs -and $ExtraArgs.Count -gt 0) { $window += $ExtraArgs }
+        $ran = Invoke-C1407Cutover -Fake $fake -Arguments $window
+        $result.ExitCode = $ran.ExitCode
+        $result.Text = $ran.Text
+        $result.Lines = @(Read-C1407ArgvLines $fake)
+        $bodies = @()
+        foreach ($file in @(Get-ChildItem -LiteralPath $fake.Stdin -File -ErrorAction SilentlyContinue)) {
+            $bodies += [pscustomobject]@{
+                Name = $file.Name
+                Body = [System.IO.File]::ReadAllText($file.FullName)
+            }
+        }
+        $result.Stdin = $bodies
+        $result.Ready = $true
+    } catch {
+        $result.Error = $_.Exception.Message
+    } finally {
+        if ($tcp) { try { $tcp.Stop() } catch {} }
+        Stop-C1407Api $api
+        if ($null -eq $prevTrace) { Remove-Item Env:C1407_TRACE -ErrorAction SilentlyContinue } else { $env:C1407_TRACE = $prevTrace }
+        if ($null -eq $prevStdin) { Remove-Item Env:C1407_STDIN -ErrorAction SilentlyContinue } else { $env:C1407_STDIN = $prevStdin }
+        if ($null -eq $prevSource) { Remove-Item Env:C1407_SOURCE_COUNT -ErrorAction SilentlyContinue } else { $env:C1407_SOURCE_COUNT = $prevSource }
+        if ($null -eq $prevTarget) { Remove-Item Env:C1407_TARGET_COUNT -ErrorAction SilentlyContinue } else { $env:C1407_TARGET_COUNT = $prevTarget }
+        if ($null -eq $prevFail) { Remove-Item Env:C1407_FAIL_MAINTENANCE -ErrorAction SilentlyContinue } else { $env:C1407_FAIL_MAINTENANCE = $prevFail }
+        Remove-C1407Tree $(if ($fake) { $fake.Dir } else { $null })
+        Remove-C1407Tree $snap
+        Remove-C1407Tree $drill
+        Remove-C1407Tree $secret
+        Remove-C1407Tree $recipient
+        Remove-C1407Tree $dumpDir
+    }
+    return [pscustomobject]$result
+}
+
+function Test-C1407HoldReleased {
+    param($Lines)
+    $items = @($Lines)
+    $holdAt = -1
+    $clearAt = -1
+    $stopAt = -1
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        $line = [string]$items[$i]
+        $keep = Test-C1407Suffix -Line $line -Suffix 'keep-six.ps1'
+        if ($keep -and (Test-C1407Field -Line $line -Token '-Hold') -and $holdAt -lt 0) { $holdAt = $i }
+        if ($keep -and (Test-C1407Field -Line $line -Token '-ClearHold')) { $clearAt = $i }
+        if ((Test-C1407Suffix -Line $line -Suffix 'restart-apphost.ps1') -and (Test-C1407Field -Line $line -Token '-StopOnly')) {
+            $stopAt = $i
+        }
+    }
+    return ($holdAt -ge 0 -and $clearAt -gt $holdAt -and $stopAt -lt 0)
+}
+
 function Invoke-C1407Cutover {
     param(
         [string[]]$Arguments = @(),
@@ -385,13 +542,21 @@ function Test-W1 {
             'count(*)',
             'ExpectedServerSha',
             'desktop volume',
-            'user-secrets'
+            'user-secrets',
+            'maintenance mode is entered',
+            '-AcceptDataLossRollback'
         )
         $missing = @($needles | Where-Object { $plain.Text -notmatch [regex]::Escape($_) })
         $clean = [string]::IsNullOrWhiteSpace($plain.Trace) -and [string]::IsNullOrWhiteSpace($again.Trace)
         $noSecret = ($plain.Text -notmatch 'Password=') -and ($plain.Text -notmatch 'Host=')
+        $phase1 = $plain.Text.IndexOf('PHASE 1 Quiesce', [System.StringComparison]::Ordinal)
+        $phase2 = $plain.Text.IndexOf('PHASE 2 Final dump and restore', [System.StringComparison]::Ordinal)
+        $phase6 = $plain.Text.IndexOf('PHASE 6 Rollback', [System.StringComparison]::Ordinal)
+        $maintAt = $plain.Text.IndexOf('maintenance mode is entered', [System.StringComparison]::Ordinal)
+        $lossAt = $plain.Text.IndexOf('-AcceptDataLossRollback', [System.StringComparison]::Ordinal)
+        $placed = ($maintAt -gt $phase1) -and ($maintAt -lt $phase2) -and ($lossAt -gt $phase6)
         $ok = ($plain.ExitCode -eq 0) -and ($again.ExitCode -eq 0) -and
-            ($null -eq $order) -and ($missing.Count -eq 0) -and $clean -and $noSecret -and
+            ($null -eq $order) -and ($missing.Count -eq 0) -and $clean -and $noSecret -and $placed -and
             ($plain.Text -match 'does not POST') -and
             ($plain.Text -match 'does not call docker') -and
             ($plain.Text -match 'does not call dotnet user-secrets set')
@@ -477,31 +642,42 @@ function Test-W5 {
     else { Write-Fail 'W-5' ($hits -join ', ') }
 }
 
-function Test-W6 {
-    $fake = New-C1407FakeBin
-    $snap = New-C1407File -Body 'snapshot-reference'
-    $drill = New-C1407Drill
-    $pending = New-C1407File -Body '{"items":[{"id":"land-1"}]}'
-    try {
-        $r = Invoke-C1407Cutover -Fake $fake -Arguments @(
-            '-Execute', '-ConfirmWindow', '-ApiBase', $script:ClosedApi,
-            '-SnapshotReference', $snap, '-DrillRecord', $drill,
-            '-LandPendingFixture', $pending
-        )
-        $ok = ($r.ExitCode -ne 0) -and
-            ($r.Text -match 'landPending') -and
-            ($r.Text -match 'StopOnly was not run') -and
-            [string]::IsNullOrWhiteSpace($r.Trace)
-        if ($ok) { Write-Pass 'W-6' }
-        else { Write-Fail 'W-6' ("exit=$($r.ExitCode) trace=$($r.Trace) $($r.Text)") }
-    } catch {
-        Write-Fail 'W-6' $_.Exception.Message
-    } finally {
-        Remove-C1407Tree $fake.Dir
-        Remove-C1407Tree $snap
-        Remove-C1407Tree $drill
-        Remove-C1407Tree $pending
+function Test-C1407LandRefusal {
+    param($Run, [string]$Label)
+    $reason = 'REFUSED: landPending is not empty. StopOnly was not run.'
+    if (-not $Run.Ready) { return "$Label not-ready $($Run.Error)" }
+    if ($Run.ExitCode -eq 0) { return "$Label exit=0" }
+    if ($Run.Text.IndexOf($reason, [System.StringComparison]::Ordinal) -lt 0) {
+        return "$Label missing-reason $(Get-C1407SafeText $Run.Text)"
     }
+    if (-not (Test-C1407HoldReleased $Run.Lines)) { return "$Label hold-not-released" }
+    return $null
+}
+
+function Test-W6 {
+    $reasons = @()
+    $live = Invoke-C1407WindowRun -PendingJson '{"items":[{"id":"land-1"}]}'
+    $liveReason = Test-C1407LandRefusal -Run $live -Label 'live'
+    if ($liveReason) { $reasons += $liveReason }
+    $filled = Invoke-C1407WindowRun -PendingJson '{"items":[]}' -WithFixture -FixtureJson '{"items":[{"id":"land-1"}]}'
+    $filledReason = Test-C1407LandRefusal -Run $filled -Label 'fixture'
+    if ($filledReason) { $reasons += $filledReason }
+    $empty = Invoke-C1407WindowRun -PendingJson '{"items":[{"id":"land-1"}]}' -WithFixture -FixtureJson '{"items":[]}'
+    if (-not $empty.Ready) { $reasons += "empty not-ready $($empty.Error)" }
+    elseif ($empty.Text.IndexOf('PHASE 1 landPending is empty.', [System.StringComparison]::Ordinal) -lt 0) {
+        $reasons += "empty missing-pass $(Get-C1407SafeText $empty.Text)"
+    } else {
+        $sawStop = $false
+        foreach ($line in @($empty.Lines)) {
+            if ((Test-C1407Suffix -Line $line -Suffix 'restart-apphost.ps1') -and (Test-C1407Field -Line $line -Token '-StopOnly')) {
+                $sawStop = $true
+            }
+        }
+        if (-not $sawStop) { $reasons += 'empty did not reach StopOnly' }
+        if ($empty.ExitCode -ne 0) { $reasons += "empty exit=$($empty.ExitCode) $(Get-C1407SafeText $empty.Text)" }
+    }
+    if ($reasons.Count -eq 0) { Write-Pass 'W-6' }
+    else { Write-Fail 'W-6' ($reasons -join ' || ') }
 }
 
 function Test-W7 {
@@ -524,7 +700,8 @@ function Test-W8 {
     $files = @(
         (Join-Path $here 'cutover-postgres-server2.ps1'),
         (Join-Path $here 'test-cutover-postgres-server2.ps1'),
-        (Join-Path $here 'restart-apphost.ps1')
+        (Join-Path $here 'restart-apphost.ps1'),
+        (Join-Path $here 'keep-six.ps1')
     )
     $reasons = @()
     foreach ($f in $files) {
@@ -596,99 +773,196 @@ function Test-W10 {
     }
 }
 
-function Test-W11 {
+function Test-C1407SecretPath {
+    param($Run)
     $sentinel = 'SENTINEL-1407-ARGV'
-    $secretBody = 'Password=' + $sentinel
-    $sha = '0123456789abcdef0123456789abcdef01234567'
-    $fake = $null
-    $api = $null
-    $tcp = $null
-    $snap = $null
-    $drill = $null
-    $secret = $null
-    $recipient = $null
-    $identity = $null
-    $dumpDir = $null
-    $prevTrace = $env:C1407_TRACE
-    $prevStdin = $env:C1407_STDIN
-    $prevSource = $env:C1407_SOURCE_COUNT
-    $prevTarget = $env:C1407_TARGET_COUNT
-    try {
-        $fake = New-C1407SmartFake
-        $env:C1407_TRACE = $fake.Trace
-        $env:C1407_STDIN = $fake.Stdin
-        $env:C1407_SOURCE_COUNT = '3'
-        $env:C1407_TARGET_COUNT = '3'
-        $tcp = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 5432)
-        $tcp.Start()
-        $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
-        $probe.Start()
-        $port = $probe.LocalEndpoint.Port
-        $probe.Stop()
-        $api = Start-C1407Api -Port $port -Sha $sha -PendingJson '{"items":[]}'
-        if (-not (Wait-C1407Api $api)) {
-            Write-Fail 'W-11' 'api did not become ready'
-            return
+    $identityToken = 'identity-sentinel-1407'
+    $identityBody = 'AGE-IDENTITY-BODY-1407'
+    $reasons = @()
+    if (-not $Run.Ready) { return @('not-ready') }
+    $sawSet = $false
+    $sawAgeR = $false
+    $sawScpAge = $false
+    $sawPlainScp = $false
+    $sawDecrypt = $false
+    $enterAt = -1
+    $stopAt = -1
+    $restartAt = -1
+    $clearAt = -1
+    $trace = @($Run.Lines)
+    for ($i = 0; $i -lt $trace.Count; $i++) {
+        $line = [string]$trace[$i]
+        $parts = @($line.Split([char]9))
+        if ($parts.Count -ge 1 -and $parts[0] -eq 'dotnet' -and (@($parts) -contains 'user-secrets') -and (@($parts) -contains 'set')) {
+            $sawSet = $true
         }
-        $snap = New-C1407File -Body 'snapshot-reference'
-        $drill = New-C1407Drill
-        $secret = New-C1407File -Body $secretBody
-        $recipient = New-C1407File -Body 'age1recipient'
-        $identity = New-C1407File -Body 'AGE-IDENTITY-BODY-1407'
-        $dumpDir = Join-Path ([System.IO.Path]::GetTempPath()) ('c1407-dump-' + [guid]::NewGuid().ToString('N'))
-        New-Item -ItemType Directory -Path $dumpDir -Force | Out-Null
-        $window = New-C1407WindowArgs -ApiBase ('http://127.0.0.1:{0}' -f $port) -Sha $sha `
-            -Snapshot $snap -Drill $drill -Secret $secret -DumpDirectory $dumpDir `
-            -Recipient $recipient -Identity $identity -CommandHost (Join-Path $fake.Dir 'pwsh')
-        $r = Invoke-C1407Cutover -Fake $fake -Arguments $window
-        $lines = @(Read-C1407ArgvLines $fake)
-        $reasons = @()
-        $sawSet = $false
-        foreach ($line in $lines) {
-            $parts = @($line.Split([char]9))
-            if ($parts.Count -ge 1 -and $parts[0] -eq 'dotnet' -and (@($parts) -contains 'user-secrets') -and (@($parts) -contains 'set')) {
-                $sawSet = $true
-            }
+        if ($parts.Count -ge 1 -and $parts[0] -eq 'age') {
             foreach ($part in $parts) {
-                if ($part.Contains($sentinel)) { $reasons += 'argv-has-sentinel'; break }
+                if ($part -eq '-R' -or $part.StartsWith('-R')) { $sawAgeR = $true }
             }
         }
-        if (-not $sawSet) { $reasons += 'dotnet-set-not-called' }
-        if ($r.Text.Contains($sentinel)) { $reasons += 'stdout-has-sentinel' }
-        $stdinFiles = @(Get-ChildItem -LiteralPath $fake.Stdin -File -ErrorAction SilentlyContinue)
-        foreach ($file in $stdinFiles) {
-            $body = [System.IO.File]::ReadAllText($file.FullName)
-            if (-not $body.Contains($sentinel)) { continue }
-            if ($file.Name -notlike 'dotnet.*') { $reasons += 'other-stdin-has-sentinel'; break }
+        if ($parts.Count -ge 1 -and $parts[0] -eq 'scp') {
+            foreach ($part in $parts) {
+                if ($part.EndsWith('.age')) { $sawScpAge = $true }
+                if ($part.EndsWith('.dump')) { $sawPlainScp = $true }
+            }
         }
-        $unique = @($reasons | Select-Object -Unique)
-        if ($unique.Count -eq 0 -and $r.ExitCode -eq 0) { Write-Pass 'W-11' }
+        if ((Test-C1407Contains -Line $line -Text 'age -d -i -')) { $sawDecrypt = $true }
+        if ((Test-C1407Suffix -Line $line -Suffix 'set-apphost-maintenance.ps1') -and -not (Test-C1407Field -Line $line -Token '-Clear')) {
+            if ($enterAt -lt 0) { $enterAt = $i }
+        }
+        if ((Test-C1407Suffix -Line $line -Suffix 'restart-apphost.ps1') -and (Test-C1407Field -Line $line -Token '-StopOnly')) {
+            if ($stopAt -lt 0) { $stopAt = $i }
+        }
+        if ((Test-C1407Suffix -Line $line -Suffix 'restart-apphost.ps1') -and (Test-C1407Field -Line $line -Token '-ExpectedServerSha')) {
+            if ($restartAt -lt 0) { $restartAt = $i }
+        }
+        if ((Test-C1407Suffix -Line $line -Suffix 'set-apphost-maintenance.ps1') -and (Test-C1407Field -Line $line -Token '-Clear')) {
+            $clearAt = $i
+        }
+        foreach ($part in $parts) {
+            if ($part.Contains($sentinel)) { $reasons += 'argv-has-sentinel' }
+            if ($part.Contains($identityToken)) { $reasons += 'argv-has-identity-path' }
+        }
+    }
+    if (-not $sawSet) { $reasons += 'dotnet-set-not-called' }
+    if (-not $sawAgeR) { $reasons += 'age-recipient-missing' }
+    if (-not $sawScpAge -or $sawPlainScp) { $reasons += 'scp-not-age-only' }
+    if (-not $sawDecrypt) { $reasons += 'ssh-decrypt-missing' }
+    if ($enterAt -lt 0 -or $stopAt -le $enterAt -or $restartAt -le $stopAt -or $clearAt -le $restartAt) {
+        $reasons += 'maintenance-order'
+    }
+    if ($Run.Text.Contains($sentinel)) { $reasons += 'stdout-has-sentinel' }
+    if ($Run.Text.Contains($identityToken)) { $reasons += 'stdout-has-identity-path' }
+    if ($Run.Text.Contains($identityBody)) { $reasons += 'stdout-has-identity-body' }
+    $sawDotnetStdin = $false
+    $sawSshIdentity = $false
+    foreach ($file in @($Run.Stdin)) {
+        $body = [string]$file.Body
+        if ($body.Contains($sentinel) -and $file.Name -notlike 'dotnet.*') { $reasons += 'other-stdin-has-sentinel' }
+        if ($body.Contains($identityToken)) { $reasons += 'stdin-has-identity-path' }
+        if ($file.Name -like 'dotnet.*' -and $body.Contains($sentinel)) { $sawDotnetStdin = $true }
+        if ($file.Name -like 'ssh.*' -and $body.Contains($identityBody)) { $sawSshIdentity = $true }
+    }
+    if (-not $sawDotnetStdin) { $reasons += 'dotnet-stdin-missing-sentinel' }
+    if (-not $sawSshIdentity) { $reasons += 'ssh-stdin-missing-identity' }
+    return @($reasons | Select-Object -Unique)
+}
+
+function Test-W11 {
+    $run = Invoke-C1407WindowRun
+    $reasons = @(Test-C1407SecretPath $run)
+    if ($run.ExitCode -ne 0) { $reasons += 'exit-nonzero' }
+    if ($reasons.Count -eq 0) { Write-Pass 'W-11' }
+    else { Write-Fail 'W-11' ('exit={0} reasons={1} text={2}' -f $run.ExitCode, ($reasons -join ','), (Get-C1407SafeText $run.Text)) }
+}
+
+function Test-W12 {
+    $fake = New-C1407FakeBin
+    try {
+        $confirm = Invoke-C1407Cutover -Fake $fake -Arguments @('-Execute', '-Confirm', '-ApiBase', $script:ClosedApi)
+        $con = Invoke-C1407Cutover -Fake $fake -Arguments @('-Execute', '-Con', '-ApiBase', $script:ClosedApi)
+        $full = Invoke-C1407Cutover -Fake $fake -Arguments @('-Execute', '-ConfirmWindow', '-ApiBase', $script:ClosedApi)
+        $confirmOk = ($confirm.ExitCode -ne 0) -and
+            ($confirm.Text.IndexOf('REFUSED: -Execute requires -ConfirmWindow.', [System.StringComparison]::Ordinal) -ge 0) -and
+            [string]::IsNullOrWhiteSpace($confirm.Trace) -and
+            ($confirm.Text.IndexOf('snapshot reference', [System.StringComparison]::Ordinal) -lt 0)
+        $conOk = ($con.ExitCode -ne 0) -and
+            [string]::IsNullOrWhiteSpace($con.Trace) -and
+            ($con.Text.IndexOf('snapshot reference', [System.StringComparison]::Ordinal) -lt 0) -and
+            ($con.Text.IndexOf('ambiguous', [System.StringComparison]::Ordinal) -ge 0)
+        $fullOk = ($full.ExitCode -ne 0) -and
+            ($full.Text.IndexOf('snapshot reference', [System.StringComparison]::Ordinal) -ge 0) -and
+            ($full.Text.IndexOf('requires -ConfirmWindow', [System.StringComparison]::Ordinal) -lt 0) -and
+            [string]::IsNullOrWhiteSpace($full.Trace)
+        if ($confirmOk -and $conOk -and $fullOk) { Write-Pass 'W-12' }
         else {
-            $safe = $r.Text
-            if ($safe.Contains($sentinel)) { $safe = 'omitted-because-sentinel' }
-            elseif ($safe.Length -gt 500) { $safe = $safe.Substring(0, 500) }
-            Write-Fail 'W-11' ('exit={0} reasons={1} text={2}' -f $r.ExitCode, ($unique -join ','), $safe)
+            Write-Fail 'W-12' ("confirm=$($confirm.ExitCode) con=$($con.ExitCode) full=$($full.ExitCode) $(Get-C1407SafeText $confirm.Text) $(Get-C1407SafeText $con.Text) $(Get-C1407SafeText $full.Text)")
         }
     } catch {
-        Write-Fail 'W-11' $_.Exception.Message
+        Write-Fail 'W-12' $_.Exception.Message
     } finally {
-        if ($tcp) { try { $tcp.Stop() } catch {} }
-        Stop-C1407Api $api
-        if ($null -eq $prevTrace) { Remove-Item Env:C1407_TRACE -ErrorAction SilentlyContinue } else { $env:C1407_TRACE = $prevTrace }
-        if ($null -eq $prevStdin) { Remove-Item Env:C1407_STDIN -ErrorAction SilentlyContinue } else { $env:C1407_STDIN = $prevStdin }
-        if ($null -eq $prevSource) { Remove-Item Env:C1407_SOURCE_COUNT -ErrorAction SilentlyContinue } else { $env:C1407_SOURCE_COUNT = $prevSource }
-        if ($null -eq $prevTarget) { Remove-Item Env:C1407_TARGET_COUNT -ErrorAction SilentlyContinue } else { $env:C1407_TARGET_COUNT = $prevTarget }
-        Remove-C1407Tree $(if ($fake) { $fake.Dir } else { $null })
-        Remove-C1407Tree $snap
-        Remove-C1407Tree $drill
-        Remove-C1407Tree $secret
-        Remove-C1407Tree $recipient
-        Remove-C1407Tree $identity
-        Remove-C1407Tree $dumpDir
+        Remove-C1407Tree $fake.Dir
     }
 }
 
-$all = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11')
+function Test-C1407RollbackProceeds {
+    param($Run, [string]$Label)
+    if (-not $Run.Ready) { return "$Label not-ready" }
+    if ($Run.ExitCode -ne 0) { return "$Label exit=$($Run.ExitCode) $(Get-C1407SafeText $Run.Text)" }
+    $sawRemove = $false
+    $sawRestart = $false
+    $sawClear = $false
+    foreach ($line in @($Run.Lines)) {
+        $parts = @($line.Split([char]9))
+        if ($parts.Count -ge 1 -and $parts[0] -eq 'dotnet' -and (@($parts) -contains 'remove')) { $sawRemove = $true }
+        if ((Test-C1407Field -Line $line -Token '-ExpectedServerSha')) { $sawRestart = $true }
+        if ((Test-C1407Suffix -Line $line -Suffix 'set-apphost-maintenance.ps1') -and (Test-C1407Field -Line $line -Token '-Clear')) {
+            $sawClear = $true
+        }
+        foreach ($part in $parts) {
+            if ($part.Contains('SENTINEL-1407-ARGV')) { return "$Label argv-has-sentinel" }
+        }
+    }
+    if (-not $sawRemove -or -not $sawRestart -or -not $sawClear) { return "$Label missing-proceed" }
+    if ($Run.Text.IndexOf('untouched desktop volume', [System.StringComparison]::Ordinal) -lt 0) {
+        return "$Label missing-exit-check"
+    }
+    return $null
+}
+
+function Test-W13 {
+    $reasons = @()
+    $refused = Invoke-C1407WindowRun -SkipApi -SkipTcp -SourceCount '3' -TargetCount '9' -ExtraArgs @('-Rollback')
+    if (-not $refused.Ready) { $reasons += "refuse not-ready $($refused.Error)" }
+    else {
+        $named = 'REFUSED: stop gate 6: the new database has rows the old desktop volume lacks.'
+        if ($refused.ExitCode -eq 0 -or $refused.Text.IndexOf($named, [System.StringComparison]::Ordinal) -lt 0) {
+            $reasons += "refuse exit=$($refused.ExitCode) $(Get-C1407SafeText $refused.Text)"
+        }
+        foreach ($line in @($refused.Lines)) {
+            $parts = @($line.Split([char]9))
+            if ($parts.Count -ge 1 -and $parts[0] -eq 'dotnet') { $reasons += 'refuse called-dotnet' }
+            if (Test-C1407Field -Line $line -Token '-ExpectedServerSha') { $reasons += 'refuse restarted' }
+            if (Test-C1407Suffix -Line $line -Suffix 'set-apphost-maintenance.ps1') { $reasons += 'refuse entered-maintenance' }
+        }
+    }
+    $accepted = Invoke-C1407WindowRun -SkipApi -SkipTcp -SourceCount '3' -TargetCount '9' -ExtraArgs @('-Rollback', '-AcceptDataLossRollback')
+    $acceptedReason = Test-C1407RollbackProceeds -Run $accepted -Label 'accept'
+    if ($acceptedReason) { $reasons += $acceptedReason }
+    elseif ($accepted.Text.IndexOf('-AcceptDataLossRollback accepted', [System.StringComparison]::Ordinal) -lt 0) {
+        $reasons += 'accept missing-switch-text'
+    }
+    $equal = Invoke-C1407WindowRun -SkipApi -SkipTcp -SourceCount '4' -TargetCount '4' -ExtraArgs @('-Rollback')
+    $equalReason = Test-C1407RollbackProceeds -Run $equal -Label 'equal'
+    if ($equalReason) { $reasons += $equalReason }
+    if ($reasons.Count -eq 0) { Write-Pass 'W-13' }
+    else { Write-Fail 'W-13' ($reasons -join ' || ') }
+}
+
+function Test-W14 {
+    $run = Invoke-C1407WindowRun -FailMaintenance '1'
+    $reasons = @()
+    if (-not $run.Ready) { $reasons += "not-ready $($run.Error)" }
+    else {
+        $named = 'REFUSED: AppHost maintenance enter exit check failed.'
+        if ($run.ExitCode -eq 0 -or $run.Text.IndexOf($named, [System.StringComparison]::Ordinal) -lt 0) {
+            $reasons += "exit=$($run.ExitCode) $(Get-C1407SafeText $run.Text)"
+        }
+        $sawEnter = $false
+        foreach ($line in @($run.Lines)) {
+            if (Test-C1407Suffix -Line $line -Suffix 'set-apphost-maintenance.ps1') { $sawEnter = $true }
+            if ((Test-C1407Suffix -Line $line -Suffix 'restart-apphost.ps1') -and (Test-C1407Field -Line $line -Token '-StopOnly')) {
+                $reasons += 'reached-stoponly'
+            }
+        }
+        if (-not $sawEnter) { $reasons += 'maintenance-not-called' }
+    }
+    if ($reasons.Count -eq 0) { Write-Pass 'W-14' }
+    else { Write-Fail 'W-14' ($reasons -join ' || ') }
+}
+
+$all = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13', 'W14')
 if ($Case) {
     $name = $Case
     if ($name -match '^W-([0-9]+)$') { $name = 'W' + $Matches[1] }

@@ -12,12 +12,13 @@
     data directory, and never passes a worktree override to the restart script.
     ASCII-only: it may run under Windows PowerShell 5.1.
 #>
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [switch]$WhatIf,
     [switch]$Execute,
     [switch]$ConfirmWindow,
     [switch]$Rollback,
+    [switch]$AcceptDataLossRollback,
     [switch]$AcceptDrillTime,
     [switch]$TailnetOnlyConfirmed,
     [string]$SnapshotReference,
@@ -42,6 +43,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
+if ([string]::IsNullOrWhiteSpace($CommandHost)) { $CommandHost = 'pwsh' }
 
 $script:KeyTables = @(
     'TranscriptEntries',
@@ -57,6 +59,21 @@ function Fail-Cutover {
     exit $Code
 }
 
+function Test-ExactNamedSwitch {
+    param([string]$Name)
+    foreach ($token in @([Environment]::GetCommandLineArgs())) {
+        $text = [string]$token
+        if ($text.StartsWith('--')) { $text = $text.Substring(1) }
+        if ($text.StartsWith('-')) { $text = $text.Substring(1) }
+        elseif ($text.StartsWith('/')) { $text = $text.Substring(1) }
+        else { continue }
+        $colon = $text.IndexOf(':')
+        if ($colon -ge 0) { $text = $text.Substring(0, $colon) }
+        if ($text.Equals($Name, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
 function Test-CutoverSha {
     param([string]$Value)
     return ($Value -match '^[0-9a-fA-F]{40}$' -or $Value -match '^[0-9a-fA-F]{64}$')
@@ -67,7 +84,7 @@ function Show-CutoverWhatIf {
     Write-Host '  EXIT CHECK 0: verified snapshot reference exists, passed drill record, latency median at or under 20 ms, and the drill time gate.'
     Write-Host '  STOP GATE 0: refuse without a verified snapshot reference and a passed drill record, when latency is above 20 ms, when the drill misses the time gate, or when the new listener is reachable off the tailnet. No production writer has moved.'
     Write-Host 'PHASE 1 Quiesce'
-    Write-Host '  EXIT CHECK 1: dispatch hold is recorded, landPending is empty, repository preview has no uncertain child, and StopOnly leaves AppHost ports free while 17204 and antiphon-postgres stay up.'
+    Write-Host '  EXIT CHECK 1: maintenance mode is entered before the hold and StopOnly, dispatch hold is recorded, landPending is empty, repository preview has no uncertain child, and StopOnly leaves AppHost ports free while 17204 and antiphon-postgres stay up.'
     Write-Host '  STOP GATE 1: landPending is not empty, the repository preview shows an uncertain child, StopOnly would relaunch, or port 17204 or 17280 was touched. Leave the old database in place.'
     Write-Host 'PHASE 2 Final dump and restore'
     Write-Host '  EXIT CHECK 2: pg_dump -Fc sees no other session, and pg_restore exits 0.'
@@ -76,14 +93,14 @@ function Show-CutoverWhatIf {
     Write-Host '  EXIT CHECK 3: count(*) per user table, sequences, extensions, migration ids, and key-table minimum and maximum primary keys match.'
     Write-Host '  STOP GATE 3: any mismatch. Do not repoint.'
     Write-Host 'PHASE 4 Repoint and restart'
-    Write-Host '  EXIT CHECK 4: desktop postgres is stopped, antiphon_pgdata remains listed, the user-secrets key is present with its value not displayed, and restart-apphost.ps1 -ExpectedServerSha exits 0.'
+    Write-Host '  EXIT CHECK 4: desktop postgres is stopped, antiphon_pgdata remains listed, the user-secrets key is set from stdin with its value not displayed, maintenance is lifted, and restart-apphost.ps1 -ExpectedServerSha exits 0.'
     Write-Host '  STOP GATE 4: compose offers to remove the data directory, restart exit is 3, or the SHA mismatches. Exit 5 keeps the restart lock. Go to phase 6 if the secret was already changed.'
     Write-Host 'PHASE 5 Post-checks'
     Write-Host '  EXIT CHECK 5: health is 200, the version SHA equals the rc tip and advertises land-v2, pool flags match, and server2 shows a desktop client.'
     Write-Host '  STOP GATE 5: a post-check fails. The operator runs phase 6. The script does not restart itself again.'
     Write-Host 'PHASE 6 Rollback'
-    Write-Host '  EXIT CHECK 6: desktop postgres is started again and AppHost is restarted with -ExpectedServerSha against the untouched desktop volume.'
-    Write-Host '  STOP GATE 6: if the new database has rows the old desktop volume lacks, the script stops and the operator chooses. Neither data directory is removed.'
+    Write-Host '  EXIT CHECK 6: desktop postgres is started again, row counts are compared, and AppHost is restarted with -ExpectedServerSha against the untouched desktop volume. Maintenance is lifted after that restart.'
+    Write-Host '  STOP GATE 6: if the new database has rows the old desktop volume lacks, the script stops unless -AcceptDataLossRollback was passed. Neither data directory is removed.'
     Write-Host 'WHATIF: does not POST, does not call docker, and does not call dotnet user-secrets set.'
     Write-Host 'REFUSE: without a verified snapshot reference and a passed drill record the window does not start.'
 }
@@ -129,22 +146,54 @@ function Assert-CutoverPhase0Files {
     }
 }
 
-function Assert-CutoverLandFixture {
-    if ([string]::IsNullOrWhiteSpace($LandPendingFixture)) { return }
-    if (-not (Test-Path -LiteralPath $LandPendingFixture -PathType Leaf)) {
-        Fail-Cutover 'REFUSED: landPending fixture is missing. StopOnly was not run.'
+function Get-CutoverLandPendingCount {
+    if (-not [string]::IsNullOrWhiteSpace($LandPendingFixture)) {
+        if (-not (Test-Path -LiteralPath $LandPendingFixture -PathType Leaf)) { return -1 }
+        try {
+            $doc = Get-Content -LiteralPath $LandPendingFixture -Raw -ErrorAction Stop | ConvertFrom-Json
+        } catch {
+            return -2
+        }
+        $count = 0
+        if ($null -ne $doc.items) { $count = @($doc.items).Count }
+        return $count
     }
-    try {
-        $doc = Get-Content -LiteralPath $LandPendingFixture -Raw -ErrorAction Stop | ConvertFrom-Json
-    } catch {
-        Fail-Cutover 'REFUSED: landPending fixture could not be read. StopOnly was not run.'
+    $pendingUri = '/api/agent-tasks?projectId=' + [uri]::EscapeDataString($ProjectId) + '&landPending=true'
+    $pending = Invoke-CutoverGet $pendingUri
+    $pendingCount = 0
+    if ($null -ne $pending.items) { $pendingCount = @($pending.items).Count }
+    return $pendingCount
+}
+
+function Invoke-CutoverMaintenance {
+    param([switch]$Clear)
+    $path = Join-Path $Repository 'scripts/set-apphost-maintenance.ps1'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        Fail-Cutover 'REFUSED: maintenance script is missing.'
     }
-    $count = 0
-    if ($null -ne $doc.items) { $count = @($doc.items).Count }
-    if ($count -ne 0) {
-        Fail-Cutover 'REFUSED: landPending is not empty. StopOnly was not run.'
+    $maintArgs = @('-NoProfile', '-File', $path)
+    if ($Clear) { $maintArgs += '-Clear' }
+    & $script:CommandHost @maintArgs | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        $which = 'enter'
+        if ($Clear) { $which = 'clear' }
+        Fail-Cutover ('REFUSED: AppHost maintenance ' + $which + ' exit check failed.')
     }
-    Fail-Cutover 'REFUSED: landPending fixture cannot start the operator window. StopOnly was not run.'
+    if ($Clear) { Write-Host 'Maintenance lifted. Watchdog may run again.' }
+    else { Write-Host 'Maintenance entered before quiesce. Watchdog will not restart AppHost.' }
+}
+
+function Clear-CutoverMaintenanceQuiet {
+    $path = Join-Path $Repository 'scripts/set-apphost-maintenance.ps1'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return 1 }
+    & $script:CommandHost -NoProfile -File $path -Clear | Out-Null
+    return $LASTEXITCODE
+}
+
+function Clear-CutoverHold {
+    $hold = Join-Path $Repository 'scripts/keep-six.ps1'
+    & $script:CommandHost -NoProfile -File $hold -ClearHold -Agent $HoldAgent | Out-Null
+    return $LASTEXITCODE
 }
 
 function Assert-CutoverOperatorInputs {
@@ -225,14 +274,17 @@ function Set-CutoverConnectionSecret {
         Fail-Cutover 'REFUSED: connection secret file must be one non-empty line. Value not displayed.'
     }
     Write-Host 'Setting ConnectionStrings:DefaultConnection from the secret file. Value not displayed.'
+    # stdin JSON merges keys into the existing user-secrets store. The value is not an argument.
+    $json = ConvertTo-Json -InputObject @{ 'ConnectionStrings:DefaultConnection' = $raw } -Compress
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        & dotnet user-secrets set 'ConnectionStrings:DefaultConnection' $raw --id 'aspire-antiphon-apphost' --project $project | Out-Null
+        $json | & dotnet user-secrets set --id 'aspire-antiphon-apphost' --project $project | Out-Null
         $code = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previous
         $raw = $null
+        $json = $null
     }
     if ($code -ne 0) {
         Fail-Cutover 'REFUSED: user-secrets set failed. Value not displayed.'
@@ -299,22 +351,133 @@ function Invoke-CutoverVerify {
     }
 }
 
+function Get-CutoverCountMap {
+    param([string]$Target)
+    $tables = Invoke-CutoverPsql -Target $Target -Sql "SELECT format('%I.%I', n.nspname, c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' ORDER BY 1"
+    if ($null -eq $tables) { return $null }
+    $map = @{}
+    foreach ($name in @($tables -split "`n")) {
+        $ident = $name.Trim()
+        if ([string]::IsNullOrWhiteSpace($ident)) { continue }
+        if ($ident -notmatch '^[A-Za-z0-9_."]+$') { return $null }
+        $countText = Invoke-CutoverPsql -Target $Target -Sql ('SELECT count(*) FROM ' + $ident)
+        if ($null -eq $countText) { return $null }
+        $parsed = 0
+        if (-not [int]::TryParse($countText.Trim(), [ref]$parsed)) { return $null }
+        $map[$ident] = $parsed
+    }
+    return $map
+}
+
+function Test-CutoverNewHasExtraRows {
+    $source = Get-CutoverCountMap -Target 'source'
+    $target = Get-CutoverCountMap -Target 'target'
+    if ($null -eq $source -or $null -eq $target) { return $null }
+    foreach ($key in @($target.Keys)) {
+        $old = 0
+        if ($source.ContainsKey($key)) { $old = [int]$source[$key] }
+        if ([int]$target[$key] -gt $old) { return $true }
+    }
+    return $false
+}
+
+function Invoke-CutoverPipeDumpToAge {
+    param([string]$Encrypted)
+    $dump = New-Object System.Diagnostics.Process
+    $age = New-Object System.Diagnostics.Process
+    $dumpStarted = $false
+    $ageStarted = $false
+    try {
+        $dump.StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $dump.StartInfo.FileName = 'docker'
+        $dump.StartInfo.Arguments = 'exec antiphon-postgres pg_dump -U antiphon -d antiphon -Fc --no-owner --no-acl'
+        $dump.StartInfo.UseShellExecute = $false
+        $dump.StartInfo.RedirectStandardOutput = $true
+        $dump.StartInfo.RedirectStandardError = $true
+        $age.StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $age.StartInfo.FileName = 'age'
+        $age.StartInfo.Arguments = '-R "' + $AgeRecipientFile + '" -o "' + $Encrypted + '"'
+        $age.StartInfo.UseShellExecute = $false
+        $age.StartInfo.RedirectStandardInput = $true
+        $age.StartInfo.RedirectStandardOutput = $true
+        $age.StartInfo.RedirectStandardError = $true
+        if (-not $dump.Start()) { return $false }
+        $dumpStarted = $true
+        if (-not $age.Start()) { return $false }
+        $ageStarted = $true
+        $copy = $dump.StandardOutput.BaseStream.CopyToAsync($age.StandardInput.BaseStream)
+        $dumpErr = $dump.StandardError.ReadToEndAsync()
+        $ageErr = $age.StandardError.ReadToEndAsync()
+        $ageOut = $age.StandardOutput.ReadToEndAsync()
+        $dump.WaitForExit()
+        $copy.Wait()
+        $age.StandardInput.Close()
+        $age.WaitForExit()
+        $null = $dumpErr.Result
+        $null = $ageErr.Result
+        $null = $ageOut.Result
+        if ($dump.ExitCode -ne 0 -or $age.ExitCode -ne 0) { return $false }
+        return $true
+    } catch {
+        return $false
+    } finally {
+        if ($dumpStarted) {
+            try { if (-not $dump.HasExited) { $dump.Kill() } } catch {}
+        }
+        if ($ageStarted) {
+            try { if (-not $age.HasExited) { $age.Kill() } } catch {}
+        }
+    }
+}
+
+function Invoke-CutoverCopyAndRestore {
+    param([string]$Encrypted)
+    $remoteName = Split-Path -Leaf $Encrypted
+    $remoteAge = $Server2ComposeDir.TrimEnd('/') + '/' + $remoteName
+    & scp $Encrypted ($Server2SshHost + ':' + $remoteAge)
+    if ($LASTEXITCODE -ne 0) { return 7 }
+    $remote = "cd '$Server2ComposeDir' && age -d -i - './$remoteName' | docker compose -p antiphon-server2-postgres exec -T postgres pg_restore -U antiphon -d antiphon --no-owner --no-acl; rc=`$?; rm -f './$remoteName'; exit `$rc"
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        Get-Content -LiteralPath $AgeIdentityFile -Raw -ErrorAction Stop | & ssh $Server2SshHost $remote 2>&1 | Out-Null
+        $code = $LASTEXITCODE
+    } catch {
+        $code = 1
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    & ssh $Server2SshHost ("rm -f '" + $remoteAge + "'") | Out-Null
+    return $code
+}
+
 function Invoke-CutoverRollback {
     Assert-CutoverOperatorInputs
     $compose = Join-Path $Repository 'docker-compose.dev.yml'
     Write-Host 'PHASE 6: starting desktop postgres. The data directory is not removed.'
     & docker compose -f $compose start postgres
     if ($LASTEXITCODE -ne 0) { Fail-Cutover 'REFUSED: desktop postgres did not start.' }
+    $extra = Test-CutoverNewHasExtraRows
+    if ($null -eq $extra) {
+        Fail-Cutover 'REFUSED: stop gate 6: row comparison failed. Neither data directory is removed.'
+    }
+    if ($extra -and -not $AcceptDataLossRollback) {
+        Fail-Cutover 'REFUSED: stop gate 6: the new database has rows the old desktop volume lacks. Pass -AcceptDataLossRollback to roll back. Neither data directory is removed.'
+    }
+    if ($extra) {
+        Write-Host 'PHASE 6: -AcceptDataLossRollback accepted. Rows that exist only on the new database will be left behind.'
+    }
+    Invoke-CutoverMaintenance
     Set-CutoverConnectionSecret -Remove
     $code = Invoke-CutoverRestart -ExpectedSha $RcTip
     if ($code -ne 0) { Fail-Cutover ('REFUSED: rollback restart exited ' + $code + '. Do not start a second copy if the lock is held.') }
-    Write-Host 'PHASE 6 exit check: AppHost restarted against the untouched desktop volume.'
+    Invoke-CutoverMaintenance -Clear
+    Write-Host 'PHASE 6 exit check: AppHost restarted against the untouched desktop volume. Maintenance lifted.'
     exit 0
 }
 
 function Invoke-CutoverWindow {
     Assert-CutoverPhase0Files
-    Assert-CutoverLandFixture
     Assert-CutoverOperatorInputs
 
     $version = Invoke-CutoverGet '/api/version'
@@ -352,27 +515,44 @@ function Invoke-CutoverWindow {
         Fail-Cutover 'REFUSED: tailnet 5432 did not accept a desktop connect. StopOnly was not run.'
     }
 
-    $preview = Join-Path $Repository 'scripts/recover-repository-children.ps1'
-    & $script:CommandHost -NoProfile -File $preview -Repository $Repository | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        Fail-Cutover 'REFUSED: repository preview is not clear. StopOnly was not run.'
-    }
+    Invoke-CutoverMaintenance
     $hold = Join-Path $Repository 'scripts/keep-six.ps1'
     & $script:CommandHost -NoProfile -File $hold -Hold -Agent $HoldAgent -Reason $HoldReason -Until $HoldUntil | Out-Null
     if ($LASTEXITCODE -ne 0) {
+        Clear-CutoverMaintenanceQuiet | Out-Null
         Fail-Cutover 'REFUSED: dispatch hold was not recorded. StopOnly was not run.'
     }
-    $pendingUri = '/api/agent-tasks?projectId=' + [uri]::EscapeDataString($ProjectId) + '&landPending=true'
-    $pending = Invoke-CutoverGet $pendingUri
-    $pendingCount = 0
-    if ($null -ne $pending.items) { $pendingCount = @($pending.items).Count }
+    $pendingCount = Get-CutoverLandPendingCount
+    if ($pendingCount -lt 0) {
+        Clear-CutoverHold | Out-Null
+        Clear-CutoverMaintenanceQuiet | Out-Null
+        if ($pendingCount -eq -1) {
+            Fail-Cutover 'REFUSED: landPending fixture is missing. StopOnly was not run.'
+        }
+        Fail-Cutover 'REFUSED: landPending fixture could not be read. StopOnly was not run.'
+    }
     if ($pendingCount -ne 0) {
+        $released = Clear-CutoverHold
+        Clear-CutoverMaintenanceQuiet | Out-Null
+        if ($released -ne 0) {
+            Fail-Cutover 'REFUSED: landPending is not empty, and the keep-six hold could not be released. StopOnly was not run.'
+        }
         Fail-Cutover 'REFUSED: landPending is not empty. StopOnly was not run.'
     }
     Write-Host 'PHASE 1 landPending is empty.'
 
+    $preview = Join-Path $Repository 'scripts/recover-repository-children.ps1'
+    & $script:CommandHost -NoProfile -File $preview -Repository $Repository | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Clear-CutoverHold | Out-Null
+        Clear-CutoverMaintenanceQuiet | Out-Null
+        Fail-Cutover 'REFUSED: repository preview is not clear. StopOnly was not run.'
+    }
+
     $stopCode = Invoke-CutoverRestart -StopOnly
     if ($stopCode -ne 0) {
+        Clear-CutoverHold | Out-Null
+        Clear-CutoverMaintenanceQuiet | Out-Null
         Fail-Cutover ('REFUSED: StopOnly exited ' + $stopCode + '. The old database stays in place.')
     }
     Write-Host 'PHASE 1 StopOnly exited 0. Relaunch was not requested by this script.'
@@ -381,28 +561,29 @@ function Invoke-CutoverWindow {
     if ($sessions -ne '0') {
         Write-Host 'STOP GATE 2: another session is connected. Start AppHost again on the old string. The secret was not changed.'
         $abandon = Invoke-CutoverRestart -ExpectedSha $RcTip
+        if ($abandon -eq 0) { Clear-CutoverMaintenanceQuiet | Out-Null }
         Fail-Cutover ('REFUSED: dump refused because another session is connected. Restart exit ' + $abandon + '.')
     }
     $stamp = [datetime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
-    $dump = Join-Path $DumpDirectory ('antiphon-cutover-' + $stamp + '.dump')
-    $encrypted = $dump + '.age'
-    & docker exec antiphon-postgres pg_dump -U antiphon -d antiphon -Fc --no-owner --no-acl -f /tmp/antiphon-cutover.dump
-    if ($LASTEXITCODE -ne 0) { Fail-Cutover 'REFUSED: pg_dump -Fc failed. The secret was not changed.' }
-    & docker cp antiphon-postgres:/tmp/antiphon-cutover.dump $dump
-    if ($LASTEXITCODE -ne 0) { Fail-Cutover 'REFUSED: copy of the dump out of the container failed. The secret was not changed.' }
-    & docker exec antiphon-postgres rm -f /tmp/antiphon-cutover.dump | Out-Null
-    & age -r $AgeRecipientFile -o $encrypted $dump
-    if ($LASTEXITCODE -ne 0) { Fail-Cutover 'REFUSED: age encrypt failed. The secret was not changed.' }
-    $remoteName = Split-Path -Leaf $dump
-    & scp $dump ($Server2SshHost + ':' + $Server2ComposeDir.TrimEnd('/') + '/' + $remoteName)
-    if ($LASTEXITCODE -ne 0) { Fail-Cutover 'REFUSED: copy to server2 failed. The secret was not changed.' }
-    $remoteDump = $Server2ComposeDir.TrimEnd('/') + '/' + $remoteName
-    $restore = "cd '$Server2ComposeDir' && docker compose -p antiphon-server2-postgres cp '$remoteDump' postgres:/tmp/antiphon-cutover.dump && docker compose -p antiphon-server2-postgres exec -T postgres pg_restore -U antiphon -d antiphon --no-owner --no-acl /tmp/antiphon-cutover.dump && docker compose -p antiphon-server2-postgres exec -T postgres rm -f /tmp/antiphon-cutover.dump && rm -f '$remoteDump'"
-    & ssh $Server2SshHost $restore
-    if ($LASTEXITCODE -ne 0) {
-        Fail-Cutover 'REFUSED: pg_restore exited non-zero. AppHost stays down. The secret was not changed. Start AppHost on the old string after confirming the secret file was not applied.'
+    $plain = Join-Path $DumpDirectory ('antiphon-cutover-' + $stamp + '.dump')
+    $encrypted = Join-Path $DumpDirectory ('antiphon-cutover-' + $stamp + '.dump.age')
+    try {
+        $piped = $false
+        try { $piped = Invoke-CutoverPipeDumpToAge -Encrypted $encrypted } catch { $piped = $false }
+        if (-not $piped) {
+            Fail-Cutover 'REFUSED: pg_dump -Fc or age encrypt failed. The secret was not changed.'
+        }
+        $restoreCode = Invoke-CutoverCopyAndRestore -Encrypted $encrypted
+        if ($restoreCode -eq 7) { Fail-Cutover 'REFUSED: copy to server2 failed. The secret was not changed.' }
+        if ($restoreCode -ne 0) {
+            Fail-Cutover 'REFUSED: pg_restore exited non-zero. AppHost stays down. The secret was not changed. Start AppHost on the old string after confirming the secret file was not applied.'
+        }
+        Write-Host 'PHASE 2 pg_restore exited 0. Encrypted witness kept beside the dump.'
+    } finally {
+        if (Test-Path -LiteralPath $plain) {
+            Remove-Item -LiteralPath $plain -Force -ErrorAction SilentlyContinue
+        }
     }
-    Write-Host 'PHASE 2 pg_restore exited 0. Encrypted witness kept beside the dump.'
 
     Invoke-CutoverVerify
     Write-Host 'PHASE 3 exit check passed. Row text was not printed.'
@@ -425,6 +606,7 @@ function Invoke-CutoverWindow {
         Write-Host 'STOP GATE 4: restart did not exit 0 after the secret changed. Exit 5 keeps the restart lock. Operator runs phase 6.'
         Fail-Cutover ('REFUSED: restart exited ' + $up + '. Do not start a second copy.')
     }
+    Invoke-CutoverMaintenance -Clear
     Write-Host 'PHASE 4 restart exited 0.'
 
     try {
@@ -459,7 +641,7 @@ if (-not $Execute) {
 if ($WhatIf) {
     Fail-Cutover 'REFUSED: -Execute and -WhatIf together are ambiguous. Nothing was changed.' 2
 }
-if (-not $ConfirmWindow) {
+if (-not $ConfirmWindow -or -not (Test-ExactNamedSwitch 'ConfirmWindow')) {
     Fail-Cutover 'REFUSED: -Execute requires -ConfirmWindow. Nothing was changed.' 2
 }
 if ($Rollback) {

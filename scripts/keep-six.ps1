@@ -9,12 +9,14 @@
 #   keep-six.ps1 -Hold -Agent <guid> -Reason <text> -Until <iso8601>
 #       POST /api/orchestrators/{agent}/keep-six/hold. Reason is 1 to 200 characters.
 #       Until is in the future and at most 7 days ahead.
+#   keep-six.ps1 -ClearHold -Agent <guid>
+#       DELETE /api/orchestrators/{agent}/keep-six/hold.
 #   keep-six.ps1 -Ack -Agent <guid>
 #       POST /api/orchestrators/{agent}/keep-six/ack. The pending reminder stays pending.
 #
-# -Hold and -Ack are the only verbs. Hold and ack send X-Antiphon-Task-Token from
-# ANTIPHON_TASK_TOKEN. The token is a header only. It is never written to stdout or stderr.
-# This script does not create a task.
+# -Hold, -ClearHold, and -Ack are the verbs. Hold, clear, and ack send
+# X-Antiphon-Task-Token from ANTIPHON_TASK_TOKEN. The token is a header only.
+# It is never written to stdout or stderr. This script does not create a task.
 [CmdletBinding(DefaultParameterSetName = 'Status')]
 param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Hold')]
@@ -23,8 +25,12 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Ack')]
     [switch]$Ack,
 
+    [Parameter(Mandatory = $true, ParameterSetName = 'ClearHold')]
+    [switch]$ClearHold,
+
     [Parameter(Mandatory = $true, ParameterSetName = 'Hold')]
     [Parameter(Mandatory = $true, ParameterSetName = 'Ack')]
+    [Parameter(Mandatory = $true, ParameterSetName = 'ClearHold')]
     [string]$Agent,
 
     [Parameter(Mandatory = $true, ParameterSetName = 'Hold')]
@@ -56,7 +62,7 @@ $token = $env:ANTIPHON_TASK_TOKEN
 $headers = @{}
 if ($PSCmdlet.ParameterSetName -ne 'Status') {
     if ([string]::IsNullOrWhiteSpace($token)) {
-        Fail-Local 'ANTIPHON_TASK_TOKEN is required for hold and ack.'
+        Fail-Local 'ANTIPHON_TASK_TOKEN is required for hold, clear, and ack.'
     }
     $headers['X-Antiphon-Task-Token'] = $token
 }
@@ -98,6 +104,11 @@ if (-not (Test-GuidText $Agent)) {
 
 if ($PSCmdlet.ParameterSetName -eq 'Ack') {
     Write-Json (Invoke-Api 'POST' ("/api/orchestrators/$Agent/keep-six/ack") $null)
+    exit 0
+}
+
+if ($PSCmdlet.ParameterSetName -eq 'ClearHold') {
+    Write-Json (Invoke-Api 'DELETE' ("/api/orchestrators/$Agent/keep-six/hold") $null)
     exit 0
 }
 
