@@ -172,6 +172,13 @@ public sealed partial class PipelineSpeedIntegrationTests
             scope.ServiceProvider.GetRequiredService<ReviewEvidenceCorrectionService>().ShouldNotBeNull();
             factory.SessionRunner.LaunchAttempts.ShouldBeEmpty();
         }
+    }
+
+    // Split from C1281_WiredRoundtrip so the pack-free delivery half still runs on a clone
+    // without the CARD-1281 producer pack (CARD-1415).
+    [Test]
+    public async Task C1281_WiredRoundtripDelivery()
+    {
         foreach (var busy in new[] { false, true })
         {
             await using var rig = await C544DeliveryRig.CreateAsync(busy);
