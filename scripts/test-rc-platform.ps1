@@ -336,10 +336,71 @@ function Test-C1323_PlatformExecution {
     Assert-C1323 ($linux.coverageScope -ceq 'PlatformDiagnostic' -and $linux.reasons -contains 'windows-rc-obligations-outstanding') 'diagnostic-return-value'
 }
 
+function Test-C1415_SkipExclusions {
+    # CARD-1415: the shipped rc policy excludes exactly the by-design skipped identities, so a
+    # Windows rc launch never runs them and its census stays complete; siblings stay required.
+    . "$PSScriptRoot/lib/nightly-tests-impl.ps1"
+    $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
+    $ns = 'Antiphon.Tests.Application'
+    $methods = [ordered]@{
+        AdvisoryChangePolicyTests = @('C1303_R12_LandRefusesUnavailableCorrectedEvidence', 'C1281_ReceiptCorrection', 'C1281_IncompleteNeverClean', 'C1281_AdvisoryDoesNotRerun')
+        PipelineSpeedIntegrationTests = @('C1281_B1Authorization', 'C1281_B1ReceiptImport', 'C1281_B1CorrectionTransaction', 'C1281_WiredRoundtrip', 'C1281_WiredRoundtripDelivery')
+        AgentTaskDispatchBaseGuardTests = @('C1213_RemoteSourceLandingKeepsLegacyIdentity', 'C1213_SourceLandingKeepsLegacyIdentity')
+        AgentTaskDispatchFailureTests = @('a_git_timeout_fails_one_task_not_the_tick', 'A_failing_dispatch_does_not_block_the_queue')
+    }
+    $nodes = @()
+    foreach ($class in $methods.Keys) {
+        foreach ($m in $methods[$class]) {
+            # C1303 R12 is argument-expanded: three UIDs, one method segment.
+            $cases = if ($m -ceq 'C1303_R12_LandRefusesUnavailableCorrectedEvidence') { @('missing-blob', 'missing-bundle', 'changed-blob') } else { @('') }
+            foreach ($c in $cases) {
+                $nodes += [pscustomobject]@{ Uid = "$class.$m($c)"; ClassName = "$ns.$class"; Type = $class; Method = $m; Categories = @('Integration'); State = 'Discovered' }
+            }
+        }
+    }
+    $pack = @($nodes | Where-Object { $_.Method -cin @('C1303_R12_LandRefusesUnavailableCorrectedEvidence', 'C1281_ReceiptCorrection', 'C1281_IncompleteNeverClean', 'C1281_B1Authorization', 'C1281_B1ReceiptImport', 'C1281_B1CorrectionTransaction', 'C1281_WiredRoundtrip') } | ForEach-Object Uid)
+    $windowsOnly = @($nodes | Where-Object { $_.Method -cin @('C1213_RemoteSourceLandingKeepsLegacyIdentity', 'a_git_timeout_fails_one_task_not_the_tick') } | ForEach-Object Uid)
+    $rows = @($shipped.Object.profiles.rc.exclusions | Where-Object owner -ceq 'CARD-1415')
+    Assert-C1323 ($rows.Count -eq 4 -and @($rows | Where-Object { [string]::IsNullOrWhiteSpace($_.reason) -or $_.suite -cne 'antiphon' -or @($_.methods).Count -eq 0 }).Count -eq 0) 'c1415-four-method-scoped-rows' ($rows | ConvertTo-Json -Depth 4 -Compress)
+    $missing = @()
+    foreach ($row in $rows) {
+        foreach ($m in @($row.methods)) {
+            $hit = @(Get-ChildItem -Path "$repoRoot/tests/Antiphon.Tests/Application" -Filter "$($row.class)*.cs" -File | Select-String -SimpleMatch "Task $m(")
+            if ($hit.Count -eq 0) { $missing += "$($row.class).$m" }
+        }
+    }
+    Assert-C1323 ($missing.Count -eq 0) 'c1415-excluded-methods-exist' ($missing -join ',')
+    foreach ($platform in @('windows', 'linux')) {
+        $exclusions = @(Get-NightlyProfileExclusions $shipped.Object 'rc' 'antiphon' -Platform $platform)
+        $expected = if ($platform -eq 'windows') { @($pack + $windowsOnly) } else { $pack }
+        $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $exclusions -ProfileAware
+        $excluded = @($census.Excluded | ForEach-Object { $_.uid })
+        Assert-C1323 ((Same-C1323Set $excluded $expected) -and @($census.Excluded | Where-Object owner -cne 'CARD-1415').Count -eq 0) "c1415-$platform-excludes-exactly" ($excluded -join ',')
+        $plan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodes -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $exclusions -ProfileAware $true -Native $true)
+        $launched = @()
+        foreach ($group in $plan) {
+            if ([string]::IsNullOrWhiteSpace([string]$group.exactFilter)) {
+                $launched += @($nodes | Where-Object { @($group.classes) -ccontains $_.ClassName } | ForEach-Object Uid)
+            } else { $launched += @($group.nodes | ForEach-Object Uid) }
+        }
+        $required = @($nodes.Uid | Where-Object { $expected -cnotcontains $_ })
+        Assert-C1323 (Same-C1323Set $launched $required) "c1415-$platform-launches-only-required" ($launched -join ',')
+        # The executor reports only launched cases; all passing leaves no skipped row.
+        $terminal = @($launched | ForEach-Object { [pscustomobject]@{ Identity = $_; Outcome = 'Passed' } })
+        $verdict = ConvertTo-NightlyCoverageVerdict -TerminalRows $terminal -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash
+        Assert-C1323 ($verdict.coverageComplete -and $verdict.testsPassed -and $verdict.skipped -eq 0) "c1415-$platform-census-complete" ($verdict | ConvertTo-Json -Compress)
+    }
+    # Control: the same identities run and skipped (no exclusion) leave the census incomplete.
+    $skipped = @($nodes | ForEach-Object { [pscustomobject]@{ Identity = $_.Uid; Outcome = $(if (@($pack + $windowsOnly) -ccontains $_.Uid) { 'Skipped' } else { 'Passed' }) } })
+    $control = ConvertTo-NightlyCoverageVerdict -TerminalRows $skipped -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash
+    Assert-C1323 (-not $control.coverageComplete -and $control.skipped -eq 11) 'c1415-launched-skips-stay-incomplete' ($control | ConvertTo-Json -Compress)
+}
+
 try {
     switch ($Case) {
         'C1323_PlatformPolicy' { Test-C1323_PlatformPolicy }
         'C1323_PlatformExecution' { Test-C1323_PlatformExecution }
+        'C1415_SkipExclusions' { Test-C1415_SkipExclusions }
         default { throw "unknown case: $Case" }
     }
 } catch {
