@@ -22,17 +22,17 @@ No separate Plan or TestDesign artifact was on `origin/master`. This file is the
 
 ### D-1 — Incremental typecheck without turning emit back on
 
-Set `"incremental": true` on `client/tsconfig.app.json` and `client/tsconfig.node.json`. Keep `"noEmit": true` and the existing `tsBuildInfoFile` under `client/node_modules/.tmp`. Do not set `composite` (it requires declaration emit and fights `noEmit`). Leave the gate command as `node .../tsc -b --pretty false` so `npm run build`'s `tsc -b` uses the same setting.
+Set `"incremental": true` on `client/tsconfig.app.json` and `client/tsconfig.node.json`. Keep `"noEmit": true` and the existing `tsBuildInfoFile` under `client/node_modules/.tmp`. Do not set `composite` (it requires declaration emit and fights `noEmit`). The gate runs `tsc -p` once per project (`tsconfig.app.json`, then `tsconfig.node.json`) with `--pretty false --noEmit --incremental` and that project's `tsBuildInfoFile`. `tsc -b` decides from modification times, so an edit whose mtime was preserved looked up to date. `npm run build` keeps its own `tsc -b`.
 
-Measured on this worktree: the first `tsc -b` after the setting wrote the tsbuildinfo files in 26.2 s (exit 0). The next `tsc -b` was 0.3 s and reported both projects up to date. `tsc --noEmit --incremental -p` did not short-circuit (about 7-12 s on a repeat). `tsc -b` with incremental returns 1 for a source diagnostic such as TS2322; the same diagnostic without incremental returns 2. `typecheck-client.ps1` maps that source-diagnostic 1 back to 2. A compiler failure that is not a `file(line,col): error TS` diagnostic stays 1. The `-Project` witness path is `tsc --noEmit -p` and already exits 2.
+`tsc -p --noEmit --incremental` returns 2 for a source diagnostic. A compiler failure that is not a `file(line,col): error TS` diagnostic stays 1. The `-Project` witness path is `tsc --noEmit -p` and already exits 2. A warm typecheck of both projects was measured at 9.2 s on 2026-10-21.
 
 ### D-2 — ESLint cache under an ignored path
 
 The production lint command, working directory `client/`, becomes:
 
-`node $eslint . --max-warnings 0 --cache --cache-location <client/node_modules/.tmp/eslintcache>`
+`node $eslint . --max-warnings 0 --cache --cache-strategy content --cache-location <client/node_modules/.tmp/eslintcache>`
 
-`node_modules/` and `**/.tmp/` are already gitignored. Do not write `.eslintcache` in `client/`. Keep `--max-warnings 0`. Propagate ESLint's exit code unchanged. The `-Path` fixture invocation stays uncached so the one-file witness does not share the client cache.
+`node_modules/` and `**/.tmp/` are already gitignored. Do not write `.eslintcache` in `client/`. Keep `--max-warnings 0`. Propagate ESLint's exit code unchanged. The `-Path` fixture invocation stays uncached so the one-file witness does not share the client cache. `--cache-strategy content` keys the cache on file bytes. The default `metadata` strategy (size + mtime) treats a same-size edit with a restored mtime as a hit. A warm lint is about 2.5 s.
 
 ### D-3 — One npm ci lock
 
@@ -47,7 +47,9 @@ The production lint command, working directory `client/`, becomes:
 - Before the switches exist on executable lines of `test-client.ps1`, exit 1 and say the wrapper did not reject the fixture error before Vitest. Do not start `test-client.ps1` (that would typecheck, lint, and run Vitest).
 - After they exist, run `test-client.ps1 -TypecheckProject tests/fixtures/card1387-typecheck/tsconfig.json` and require process exit 2, `TS2353`, `CLIENT TESTS EXIT CODE: 2`, `vitest was not started`, no `CLIENT LINT EXIT CODE`, and no `vitest.mjs` or `Test Files`.
 - Then run `test-client.ps1 -TypecheckProject tests/fixtures/card1398-typecheck-ok/tsconfig.json -LintPath tests/fixtures/card1393-lint/bad.test.ts` and require process exit 1, `no-control-regex`, `CLIENT TESTS EXIT CODE: 1`, `vitest was not started`, a passing typecheck line, and no `vitest.mjs` or `Test Files`.
-- Require `incremental` and `noEmit` in both client tsconfigs, `--cache` with `node_modules/.tmp` in `lint-client.ps1`, and two overlapping `Invoke-WithClientNpmCiLock` holders whose critical sections do not overlap.
+- Require `incremental` and `noEmit` in both client tsconfigs, `--cache` with `--cache-strategy content` and `node_modules/.tmp` in `lint-client.ps1`, and two overlapping `Invoke-WithClientNpmCiLock` holders whose critical sections do not overlap.
+- After a warm `lint-client.ps1`, replace `const success` in `client/src/theme.ts` with the same-length `var   success`, restore that file's mtime, and require `test-client.ps1` to exit 1 with `no-var` before Vitest.
+- Give `client/vite.config.ts` the same stale-mtime typecheck witness as `theme.ts`: an older mtime than `tsconfig.node.tsbuildinfo` still exits 2 before Vitest.
 
 The ok fixture is outside `client/` so `tsc -b` and `eslint .` do not see it.
 
@@ -57,7 +59,7 @@ No `Antiphon.Tests` build, no Unit lane, no Vitest suite, no `npm run build`. CP
 
 ### D-6 — Replace the stale scoped-run figure with the measured warm time
 
-In Preserved Gotcha #19, replace `~15-35 s` with the single measured warm `scripts/test-client.ps1 attentionVisuals.test` wall time: **17.9 s**, exit 0, one file (`attentionVisuals.test.ts`, 31 tests) on 2026-10-21 after the incremental typecheck and eslint cache were warm. State that typecheck is incremental, lint uses the ignored ESLint cache, and `npm ci` takes the lock. Do not widen `TestClientFilterTests`'s 180 s budget. The 17.9 s run fits it.
+In Preserved Gotcha #19, replace `~15-35 s` with the single measured warm `scripts/test-client.ps1 attentionVisuals.test` wall time: **16.8 s**, exit 0, one file (`attentionVisuals.test.ts`, 31 tests) on 2026-10-21 after the incremental `tsc -p` per project and the content-strategy eslint cache were warm. State that typecheck is incremental, lint uses `--cache-strategy content` under the ignored ESLint cache, and `npm ci` takes the lock. Do not widen `TestClientFilterTests`'s 180 s budget. The 16.8 s run fits it.
 
 ### D-7 — Master only
 
@@ -82,14 +84,14 @@ TestDesign was skipped. This table is the closed checkpoint list.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---:|
 | CP-1 | S1 | n/a | gate-red | `pwsh -NoProfile -File scripts/test-client-gate-exit.ps1 -Case Wrapper` | V-1 witness | nonzero harness exit; the wrapper did not reject the fixture error before Vitest. No Vitest summary | n/a | 2 |
-| CP-2 | S2 | n/a | gate-wrapper | `pwsh -NoProfile -File scripts/test-client-gate-exit.ps1 -Case Wrapper` | V-1, V-2 | harness exit 0; type error exits 2 with TS2353 before Vitest; lint error exits 1 with no-control-regex before Vitest; incremental and noEmit stay set; eslint cache path is under node_modules/.tmp; npm ci lock sections do not overlap | n/a | 6 |
+| CP-2 | S2 | n/a | gate-wrapper | `pwsh -NoProfile -File scripts/test-client-gate-exit.ps1 -Case Wrapper` | V-1, V-2 | harness exit 0; type error exits 2 with TS2353 before Vitest; lint error exits 1 with no-control-regex before Vitest; same-size restored-mtime lint error exits 1 with no-var before Vitest; node-project stale-mtime type error exits 2 before Vitest; incremental and noEmit stay set; eslint cache path is under node_modules/.tmp and uses content strategy; npm ci lock sections do not overlap | n/a | 6 |
 
 CP-1's nonzero exit is the witness, not a defect to fix inside S1. No row builds a .NET project. `Min` is `n/a` because these are command rows. No PC rows. Mutation has nothing to plant until a later pass finds a missing control.
 
 | Id | Behaviour | Proof |
 |---|---|---|
-| V-1 | A type error and a lint error each make `test-client.ps1` exit nonzero before Vitest. | CP-2's two invocations above. CP-1 is the same command while the switches are absent. |
-| V-2 | The typecheck is incremental, lint caches under an ignored path, and npm ci is serialized. | CP-2's static checks and the lock overlap. The warm scoped-run seconds are the D-6 measurement, reported beside CP-2, not as a second row. |
+| V-1 | A type error and a lint error each make `test-client.ps1` exit nonzero before Vitest, including a same-size lint edit whose mtime was restored and a node-project type edit older than its tsbuildinfo. | CP-2. CP-1 is the same command while the switches are absent. |
+| V-2 | The typecheck is `tsc -p` per project, lint caches by content under an ignored path, and npm ci is serialized. | CP-2's static checks and the lock overlap. The warm scoped-run seconds are the D-6 measurement (16.8 s), reported beside CP-2, not as a second row. |
 
 ## Cost
 

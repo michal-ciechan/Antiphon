@@ -1,8 +1,10 @@
 # Lints the client the release gate lints, without running Vitest.
 #
 # CARD-1393. Production command, working directory client/:
-#   node client/node_modules/eslint/bin/eslint.js . --max-warnings 0 --cache --cache-location node_modules/.tmp/eslintcache
+#   node client/node_modules/eslint/bin/eslint.js . --max-warnings 0 --cache --cache-strategy content --cache-location node_modules/.tmp/eslintcache
 # The cache file stays under client/node_modules/.tmp, which is gitignored (CARD-1398).
+# --cache-strategy content keys the cache on file bytes. The default metadata
+# strategy (size + mtime) treats a same-size edit with a restored mtime as a hit.
 # -Path <file> runs from that file's directory:
 #   node client/node_modules/eslint/bin/eslint.js <file> --max-warnings 0
 #
@@ -70,7 +72,7 @@ else {
     }
     Push-Location $clientDir
     try {
-        & node $eslint . --max-warnings 0 --cache --cache-location $eslintCache 2>&1 | Tee-Object -FilePath $logFile
+        & node $eslint . --max-warnings 0 --cache --cache-strategy content --cache-location $eslintCache 2>&1 | Tee-Object -FilePath $logFile
         $code = $LASTEXITCODE
     }
     finally {
