@@ -103,7 +103,11 @@ emit_sql() {
   if printf '%s' "$sql" | grep -F -q 'client_addr'; then
     printf '%s\n' '1'
   elif printf '%s' "$sql" | grep -F -q 'pg_stat_activity'; then
-    printf '%s\n' '0'
+    if [ "$name" = "docker" ] && [ -n "$C1407_SOURCE_SESSIONS" ]; then
+      printf '%s\n' "$C1407_SOURCE_SESSIONS"
+    else
+      printf '%s\n' '0'
+    fi
   elif printf '%s' "$sql" | grep -F -q 'pg_class'; then
     printf '%s\n' 'public.Sample'
   elif printf '%s' "$sql" | grep -F -q 'indisprimary'; then
@@ -125,6 +129,17 @@ emit_sql() {
 case "$name" in
   docker)
     joined=$(printf '%s ' "$@")
+    if [ -n "$C1407_FOREIGN_MARKER" ] && [ ! -f "$C1407_FOREIGN_MARKER" ]; then
+      mkdir -p "$(dirname "$C1407_FOREIGN_MARKER")"
+      printf '%s\n' 'down-on-purpose foreign' > "$C1407_FOREIGN_MARKER"
+    fi
+    if [ "$C1407_FAIL_COMPOSE_START" = "1" ]; then
+      for arg in "$@"; do
+        if [ "$arg" = "start" ]; then
+          exit 1
+        fi
+      done
+    fi
     if [ "$C1407_FAIL_DUMP" = "1" ] && printf '%s' "$joined" | grep -F -q 'pg_dump'; then
       exit 1
     fi
@@ -155,6 +170,25 @@ case "$name" in
     exit 0
     ;;
   pwsh)
+    restart_script=0
+    stop_only=0
+    sha_restart=0
+    for arg in "$@"; do
+      case "$arg" in
+        *restart-apphost.ps1*) restart_script=1 ;;
+        -StopOnly) stop_only=1 ;;
+        -ExpectedServerSha) sha_restart=1 ;;
+      esac
+    done
+    if [ "$restart_script" = 1 ] && [ -n "$C1407_RESTART_STDOUT" ]; then
+      printf '%s\n' "$C1407_RESTART_STDOUT"
+    fi
+    if [ "$stop_only" = 1 ] && [ -n "$C1407_STOPONLY_EXIT" ]; then
+      exit "$C1407_STOPONLY_EXIT"
+    fi
+    if [ "$sha_restart" = 1 ] && [ -n "$C1407_SHA_RESTART_EXIT" ]; then
+      exit "$C1407_SHA_RESTART_EXIT"
+    fi
     if [ "$C1407_FAIL_RESTART" = "1" ]; then
       for arg in "$@"; do
         if [ "$arg" = "-ExpectedServerSha" ]; then
@@ -178,12 +212,18 @@ esac
 }
 
 function Start-C1407Api {
-    param([int]$Port, [string]$Sha, [string]$PendingJson, [int]$LandPendingStatus = 200)
+    param(
+        [int]$Port,
+        [string]$Sha,
+        [string]$PendingJson,
+        [int]$LandPendingStatus = 200,
+        [string]$MarkerOnSessionState = ''
+    )
     $log = Join-Path ([System.IO.Path]::GetTempPath()) ('c1407-api-' + [guid]::NewGuid().ToString('N') + '.log')
     '' | Set-Content -LiteralPath $log -Encoding ascii
     $state = [hashtable]::Synchronized(@{ Stop = $false })
     $sb = {
-        param($Port, $Sha, $PendingJson, $LandPendingStatus, $State, $Log)
+        param($Port, $Sha, $PendingJson, $LandPendingStatus, $State, $Log, $MarkerOnSessionState)
         try {
             $listener = [System.Net.HttpListener]::new()
             $listener.Prefixes.Add(('http://127.0.0.1:{0}/' -f $Port))
@@ -202,6 +242,13 @@ function Start-C1407Api {
                 if ($path -eq '/api/version') {
                     $body = '{"version":"' + $Sha + '","capabilities":["land-v2"]}'
                 } elseif ($path -eq '/api/diagnostics/session-state') {
+                    if (-not [string]::IsNullOrWhiteSpace($MarkerOnSessionState)) {
+                        $markerParent = Split-Path -Parent $MarkerOnSessionState
+                        if (-not [string]::IsNullOrWhiteSpace($markerParent)) {
+                            [System.IO.Directory]::CreateDirectory($markerParent) | Out-Null
+                        }
+                        [System.IO.File]::WriteAllText($MarkerOnSessionState, "down-on-purpose foreign")
+                    }
                     $body = '{"pool":{"Pooling":true,"NoResetOnClose":true,"MaxAutoPrepare":0,"Multiplexing":false}}'
                 } elseif ($path -eq '/health') {
                     $body = 'ok'
@@ -227,7 +274,7 @@ function Start-C1407Api {
     $rs.Open()
     $ps = [powershell]::Create()
     $ps.Runspace = $rs
-    [void]$ps.AddScript($sb).AddArgument($Port).AddArgument($Sha).AddArgument($PendingJson).AddArgument($LandPendingStatus).AddArgument($state).AddArgument($log)
+    [void]$ps.AddScript($sb).AddArgument($Port).AddArgument($Sha).AddArgument($PendingJson).AddArgument($LandPendingStatus).AddArgument($state).AddArgument($log).AddArgument($MarkerOnSessionState)
     $handle = $ps.BeginInvoke()
     return [pscustomobject]@{ Runspace = $rs; PowerShell = $ps; Handle = $handle; Port = $Port; State = $state; Log = $log }
 }
@@ -270,9 +317,11 @@ function New-C1407WindowArgs {
         [string]$Recipient,
         [string]$Identity,
         [string]$PendingFixture,
-        [string]$CommandHost
+        [string]$CommandHost,
+        [string]$Repository = ''
     )
-    $repo = Split-Path $here -Parent
+    $repo = $Repository
+    if ([string]::IsNullOrWhiteSpace($repo)) { $repo = Split-Path $here -Parent }
     $windowArgs = @(
         '-Execute', '-ConfirmWindow',
         '-ApiBase', $ApiBase,
@@ -355,7 +404,15 @@ function Invoke-C1407WindowRun {
         [string]$FailSecret = '',
         [string]$FailRestart = '',
         [switch]$SkipApi,
-        [switch]$SkipTcp
+        [switch]$SkipTcp,
+        [string]$Repository = '',
+        [string]$RestartStdout = '',
+        [string]$StopOnlyExit = '',
+        [string]$ShaRestartExit = '',
+        [string]$SourceSessions = '',
+        [string]$MarkerOnSessionState = '',
+        [string]$ForeignMarker = '',
+        [string]$FailComposeStart = ''
     )
     $result = @{
         ExitCode = 99
@@ -381,6 +438,12 @@ function Invoke-C1407WindowRun {
     $prevDump = $env:C1407_FAIL_DUMP
     $prevSecret = $env:C1407_FAIL_SECRET
     $prevRestart = $env:C1407_FAIL_RESTART
+    $prevStdout = $env:C1407_RESTART_STDOUT
+    $prevStopExit = $env:C1407_STOPONLY_EXIT
+    $prevShaExit = $env:C1407_SHA_RESTART_EXIT
+    $prevSessions = $env:C1407_SOURCE_SESSIONS
+    $prevForeign = $env:C1407_FOREIGN_MARKER
+    $prevComposeStart = $env:C1407_FAIL_COMPOSE_START
     try {
         $fake = New-C1407SmartFake
         $env:C1407_TRACE = $fake.Trace
@@ -392,6 +455,18 @@ function Invoke-C1407WindowRun {
         if ($FailDump -eq '1') { $env:C1407_FAIL_DUMP = '1' } else { Remove-Item Env:C1407_FAIL_DUMP -ErrorAction SilentlyContinue }
         if ($FailSecret -eq '1') { $env:C1407_FAIL_SECRET = '1' } else { Remove-Item Env:C1407_FAIL_SECRET -ErrorAction SilentlyContinue }
         if ($FailRestart -eq '1') { $env:C1407_FAIL_RESTART = '1' } else { Remove-Item Env:C1407_FAIL_RESTART -ErrorAction SilentlyContinue }
+        if (-not [string]::IsNullOrWhiteSpace($RestartStdout)) { $env:C1407_RESTART_STDOUT = $RestartStdout }
+        else { Remove-Item Env:C1407_RESTART_STDOUT -ErrorAction SilentlyContinue }
+        if (-not [string]::IsNullOrWhiteSpace($StopOnlyExit)) { $env:C1407_STOPONLY_EXIT = $StopOnlyExit }
+        else { Remove-Item Env:C1407_STOPONLY_EXIT -ErrorAction SilentlyContinue }
+        if (-not [string]::IsNullOrWhiteSpace($ShaRestartExit)) { $env:C1407_SHA_RESTART_EXIT = $ShaRestartExit }
+        else { Remove-Item Env:C1407_SHA_RESTART_EXIT -ErrorAction SilentlyContinue }
+        if (-not [string]::IsNullOrWhiteSpace($SourceSessions)) { $env:C1407_SOURCE_SESSIONS = $SourceSessions }
+        else { Remove-Item Env:C1407_SOURCE_SESSIONS -ErrorAction SilentlyContinue }
+        if (-not [string]::IsNullOrWhiteSpace($ForeignMarker)) { $env:C1407_FOREIGN_MARKER = $ForeignMarker }
+        else { Remove-Item Env:C1407_FOREIGN_MARKER -ErrorAction SilentlyContinue }
+        if ($FailComposeStart -eq '1') { $env:C1407_FAIL_COMPOSE_START = '1' }
+        else { Remove-Item Env:C1407_FAIL_COMPOSE_START -ErrorAction SilentlyContinue }
         if (-not $SkipTcp) {
             $tcp = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 5432)
             $tcp.Server.SetSocketOption(
@@ -407,7 +482,7 @@ function Invoke-C1407WindowRun {
             $probe.Start()
             $port = $probe.LocalEndpoint.Port
             $probe.Stop()
-            $api = Start-C1407Api -Port $port -Sha $sha -PendingJson $PendingJson -LandPendingStatus $LandPendingStatus
+            $api = Start-C1407Api -Port $port -Sha $sha -PendingJson $PendingJson -LandPendingStatus $LandPendingStatus -MarkerOnSessionState $MarkerOnSessionState
             if (-not (Wait-C1407Api $api)) {
                 $result.Error = 'api did not become ready'
                 return [pscustomobject]$result
@@ -429,7 +504,7 @@ function Invoke-C1407WindowRun {
         }
         $window = New-C1407WindowArgs -ApiBase $apiBase -Sha $sha -Snapshot $snap -Drill $drill `
             -Secret $secret -DumpDirectory $dumpDir -Recipient $recipient -Identity $identity `
-            -PendingFixture $fixture -CommandHost (Join-Path $fake.Dir 'pwsh')
+            -PendingFixture $fixture -CommandHost (Join-Path $fake.Dir 'pwsh') -Repository $Repository
         if ($ExtraArgs -and $ExtraArgs.Count -gt 0) { $window += $ExtraArgs }
         $ran = Invoke-C1407Cutover -Fake $fake -Arguments $window
         $result.ExitCode = $ran.ExitCode
@@ -457,6 +532,12 @@ function Invoke-C1407WindowRun {
         if ($null -eq $prevDump) { Remove-Item Env:C1407_FAIL_DUMP -ErrorAction SilentlyContinue } else { $env:C1407_FAIL_DUMP = $prevDump }
         if ($null -eq $prevSecret) { Remove-Item Env:C1407_FAIL_SECRET -ErrorAction SilentlyContinue } else { $env:C1407_FAIL_SECRET = $prevSecret }
         if ($null -eq $prevRestart) { Remove-Item Env:C1407_FAIL_RESTART -ErrorAction SilentlyContinue } else { $env:C1407_FAIL_RESTART = $prevRestart }
+        if ($null -eq $prevStdout) { Remove-Item Env:C1407_RESTART_STDOUT -ErrorAction SilentlyContinue } else { $env:C1407_RESTART_STDOUT = $prevStdout }
+        if ($null -eq $prevStopExit) { Remove-Item Env:C1407_STOPONLY_EXIT -ErrorAction SilentlyContinue } else { $env:C1407_STOPONLY_EXIT = $prevStopExit }
+        if ($null -eq $prevShaExit) { Remove-Item Env:C1407_SHA_RESTART_EXIT -ErrorAction SilentlyContinue } else { $env:C1407_SHA_RESTART_EXIT = $prevShaExit }
+        if ($null -eq $prevSessions) { Remove-Item Env:C1407_SOURCE_SESSIONS -ErrorAction SilentlyContinue } else { $env:C1407_SOURCE_SESSIONS = $prevSessions }
+        if ($null -eq $prevForeign) { Remove-Item Env:C1407_FOREIGN_MARKER -ErrorAction SilentlyContinue } else { $env:C1407_FOREIGN_MARKER = $prevForeign }
+        if ($null -eq $prevComposeStart) { Remove-Item Env:C1407_FAIL_COMPOSE_START -ErrorAction SilentlyContinue } else { $env:C1407_FAIL_COMPOSE_START = $prevComposeStart }
         Remove-C1407Tree $(if ($fake) { $fake.Dir } else { $null })
         Remove-C1407Tree $snap
         Remove-C1407Tree $drill
@@ -1145,22 +1226,36 @@ function Test-C1407ForeignMarker {
     return @($reasons)
 }
 
+function New-C1407TempRepo {
+    $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('c1407-repo-' + [guid]::NewGuid().ToString('N'))
+    $scripts = Join-Path $dir 'scripts'
+    New-Item -ItemType Directory -Path $scripts -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $dir 'logs') -Force | Out-Null
+    foreach ($name in @('restart-apphost.ps1', 'set-apphost-maintenance.ps1', 'keep-six.ps1', 'recover-repository-children.ps1')) {
+        Set-Content -LiteralPath (Join-Path $scripts $name) -Value "# fixture`n" -Encoding ascii
+    }
+    Set-Content -LiteralPath (Join-Path $dir 'docker-compose.dev.yml') -Value "services: {}`n" -Encoding ascii
+    $csprojDir = Join-Path $dir 'Antiphon.AppHost'
+    New-Item -ItemType Directory -Path $csprojDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $csprojDir 'Antiphon.AppHost.csproj') -Value "<Project></Project>`n" -Encoding ascii
+    return $dir
+}
+
 function Test-W20 {
-    $repo = Split-Path $here -Parent
+    $repo = New-C1407TempRepo
     $marker = Join-Path (Join-Path $repo 'logs') 'apphost.down-on-purpose'
     $reason = 'REFUSED: maintenance marker already exists at logs/apphost.down-on-purpose. This run did not enter it. The operator must clear the marker before the window can start.'
-    New-Item -ItemType Directory -Force (Split-Path -Parent $marker) | Out-Null
     Set-Content -LiteralPath $marker -Value 'down-on-purpose pre-existing' -Encoding ascii
     $reasons = @()
     try {
-        $window = Invoke-C1407WindowRun
+        $window = Invoke-C1407WindowRun -Repository $repo
         $reasons += @(Test-C1407ForeignMarker -Run $window -Label 'window' -Reason $reason -Marker $marker)
-        $rollback = Invoke-C1407WindowRun -ExtraArgs @('-Rollback')
+        $rollback = Invoke-C1407WindowRun -Repository $repo -ExtraArgs @('-Rollback')
         $reasons += @(Test-C1407ForeignMarker -Run $rollback -Label 'rollback' -Reason $reason -Marker $marker)
     } catch {
         $reasons += $_.Exception.Message
     } finally {
-        Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+        Remove-C1407Tree $repo
     }
     $reasons = @($reasons | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     if ($reasons.Count -eq 0) { Write-Pass 'W-20' }
@@ -1180,7 +1275,245 @@ function Test-W21 {
     else { Write-Fail 'W-21' ($reasons -join ' || ') }
 }
 
-$all = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21')
+function Test-C1407RestartIndex {
+    param($Lines, [string]$Token)
+    $items = @($Lines)
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        $line = [string]$items[$i]
+        if ((Test-C1407Suffix -Line $line -Suffix 'restart-apphost.ps1') -and (Test-C1407Field -Line $line -Token $Token)) {
+            return $i
+        }
+    }
+    return -1
+}
+
+function Test-W22 {
+    $token = 'RESTART-STDOUT-1407'
+    $run = Invoke-C1407WindowRun -RestartStdout $token
+    $reasons = @()
+    if (-not $run.Ready) { $reasons += "not-ready $($run.Error)" }
+    else {
+        if ($run.ExitCode -ne 0) { $reasons += "exit=$($run.ExitCode)" }
+        $stopOnly = 'REFUSED: StopOnly exited'
+        $restart = 'REFUSED: restart exited'
+        if ($run.Text.IndexOf($stopOnly, [System.StringComparison]::Ordinal) -ge 0) { $reasons += 'refused-stoponly' }
+        if ($run.Text.IndexOf($restart, [System.StringComparison]::Ordinal) -ge 0) { $reasons += 'refused-restart' }
+        if ($run.Text.IndexOf('PHASE 4 restart exited 0.', [System.StringComparison]::Ordinal) -lt 0) {
+            $reasons += 'missing-phase4'
+        }
+        if ((Test-C1407RestartIndex -Lines $run.Lines -Token '-StopOnly') -lt 0) { $reasons += 'missing-stoponly' }
+        if ((Test-C1407RestartIndex -Lines $run.Lines -Token '-ExpectedServerSha') -lt 0) { $reasons += 'missing-restart' }
+        if ($run.Text.IndexOf($token, [System.StringComparison]::Ordinal) -lt 0) { $reasons += 'stdout-not-shown' }
+        if ($run.Text.Contains('SENTINEL-1407-ARGV')) { $reasons += 'printed-sentinel' }
+    }
+    if ($reasons.Count -eq 0) { Write-Pass 'W-22' }
+    else { Write-Fail 'W-22' (($reasons -join ' || ') + ' ' + (Get-C1407SafeText $run.Text)) }
+}
+
+function Test-W23 {
+    $token = 'RESTART-STDOUT-1407'
+    $reasons = @()
+    $stop = Invoke-C1407WindowRun -RestartStdout $token -StopOnlyExit '4'
+    if (-not $stop.Ready) { $reasons += "stop not-ready $($stop.Error)" }
+    else {
+        $named = 'REFUSED: StopOnly exited 4. The old database stays in place.'
+        $polluted = 'REFUSED: StopOnly exited RESTART-STDOUT-1407'
+        if ($stop.ExitCode -ne 3 -or $stop.Text.IndexOf($named, [System.StringComparison]::Ordinal) -lt 0) {
+            $reasons += "stop exit=$($stop.ExitCode)"
+        }
+        if ($stop.Text.IndexOf($polluted, [System.StringComparison]::Ordinal) -ge 0) { $reasons += 'stop-polluted' }
+        if ($stop.Text.Contains('SENTINEL-1407-ARGV')) { $reasons += 'stop-sentinel' }
+    }
+    $later = Invoke-C1407WindowRun -RestartStdout $token -ShaRestartExit '5'
+    if (-not $later.Ready) { $reasons += "later not-ready $($later.Error)" }
+    else {
+        $named = 'REFUSED: restart exited 5. Do not start a second copy.'
+        $polluted = 'REFUSED: restart exited RESTART-STDOUT-1407'
+        if ($later.ExitCode -ne 3 -or $later.Text.IndexOf($named, [System.StringComparison]::Ordinal) -lt 0) {
+            $reasons += "later exit=$($later.ExitCode)"
+        }
+        if ($later.Text.IndexOf($polluted, [System.StringComparison]::Ordinal) -ge 0) { $reasons += 'later-polluted' }
+        $kept = 'RECOVERY: the connection secret was already changed. This run does not restart on the old string.'
+        if ($later.Text.IndexOf($kept, [System.StringComparison]::Ordinal) -lt 0) { $reasons += 'later-missing-recovery' }
+        if ($later.Text.Contains('SENTINEL-1407-ARGV')) { $reasons += 'later-sentinel' }
+    }
+    if ($reasons.Count -eq 0) { Write-Pass 'W-23' }
+    else { Write-Fail 'W-23' (($reasons -join ' || ') + ' ' + (Get-C1407SafeText $stop.Text) + ' ' + (Get-C1407SafeText $later.Text)) }
+}
+
+function Test-W24 {
+    $token = 'RESTART-STDOUT-1407'
+    $reasons = @()
+    $ok = Invoke-C1407WindowRun -RestartStdout $token -SourceSessions '1'
+    if (-not $ok.Ready) { $reasons += "ok not-ready $($ok.Error)" }
+    else {
+        $named = 'REFUSED: dump refused because another session is connected. Restart exit 0.'
+        $polluted = 'Restart exit RESTART-STDOUT-1407'
+        if ($ok.ExitCode -ne 3 -or $ok.Text.IndexOf($named, [System.StringComparison]::Ordinal) -lt 0) {
+            $reasons += "ok exit=$($ok.ExitCode)"
+        }
+        if ($ok.Text.IndexOf($polluted, [System.StringComparison]::Ordinal) -ge 0) { $reasons += 'ok-polluted' }
+        if ($ok.Text.IndexOf('AppHost is still down.', [System.StringComparison]::Ordinal) -ge 0) { $reasons += 'ok-treated-as-down' }
+        $stopAt = Test-C1407RestartIndex -Lines $ok.Lines -Token '-StopOnly'
+        $oldAt = Test-C1407RestartIndex -Lines $ok.Lines -Token '-ExpectedServerSha'
+        $clearAt = -1
+        $items = @($ok.Lines)
+        for ($i = 0; $i -lt $items.Count; $i++) {
+            $line = [string]$items[$i]
+            if ((Test-C1407Suffix -Line $line -Suffix 'set-apphost-maintenance.ps1') -and (Test-C1407Field -Line $line -Token '-Clear')) {
+                $clearAt = $i
+            }
+        }
+        if ($stopAt -lt 0 -or $oldAt -le $stopAt -or $clearAt -le $oldAt) { $reasons += "ok-order stop=$stopAt old=$oldAt clear=$clearAt" }
+    }
+    $bad = Invoke-C1407WindowRun -RestartStdout $token -SourceSessions '1' -ShaRestartExit '5'
+    if (-not $bad.Ready) { $reasons += "bad not-ready $($bad.Error)" }
+    else {
+        $named = 'REFUSED: dump refused because another session is connected. Restart exit 5.'
+        $polluted = 'Restart exit RESTART-STDOUT-1407'
+        if ($bad.ExitCode -ne 3 -or $bad.Text.IndexOf($named, [System.StringComparison]::Ordinal) -lt 0) {
+            $reasons += "bad exit=$($bad.ExitCode)"
+        }
+        if ($bad.Text.IndexOf($polluted, [System.StringComparison]::Ordinal) -ge 0) { $reasons += 'bad-polluted' }
+        if ($bad.Text.IndexOf('RECOVERY: AppHost is still down.', [System.StringComparison]::Ordinal) -lt 0) {
+            $reasons += 'bad-missing-down'
+        }
+        $sawClear = $false
+        foreach ($line in @($bad.Lines)) {
+            if ((Test-C1407Suffix -Line $line -Suffix 'set-apphost-maintenance.ps1') -and (Test-C1407Field -Line $line -Token '-Clear')) {
+                $sawClear = $true
+            }
+        }
+        if (-not $sawClear) { $reasons += 'bad-not-cleared' }
+    }
+    $stopped = Invoke-C1407WindowRun -FailSecret '1'
+    if (-not $stopped.Ready) { $reasons += "stopped not-ready $($stopped.Error)" }
+    else {
+        $startAt = -1
+        $restartAt = -1
+        $items = @($stopped.Lines)
+        for ($i = 0; $i -lt $items.Count; $i++) {
+            $line = [string]$items[$i]
+            if ($startAt -lt 0 -and (Test-C1407Field -Line $line -Token 'start') -and (Test-C1407Field -Line $line -Token 'postgres')) {
+                $startAt = $i
+            }
+            if ((Test-C1407Suffix -Line $line -Suffix 'restart-apphost.ps1') -and (Test-C1407Field -Line $line -Token '-ExpectedServerSha')) {
+                $restartAt = $i
+            }
+        }
+        if ($startAt -lt 0 -or $restartAt -le $startAt) { $reasons += "stopped-order start=$startAt restart=$restartAt" }
+        $instruction = 'RECOVERY: restarted AppHost on the old connection string before lifting maintenance.'
+        if ($stopped.Text.IndexOf($instruction, [System.StringComparison]::Ordinal) -lt 0) { $reasons += 'stopped-missing-recovery' }
+        if ($stopped.ExitCode -ne 3) { $reasons += "stopped exit=$($stopped.ExitCode)" }
+    }
+    $down = Invoke-C1407WindowRun -FailSecret '1' -FailComposeStart '1'
+    if (-not $down.Ready) { $reasons += "down not-ready $($down.Error)" }
+    else {
+        if ((Test-C1407RestartIndex -Lines $down.Lines -Token '-ExpectedServerSha') -ge 0) { $reasons += 'down-restarted' }
+        $instruction = 'RECOVERY: desktop postgres did not start. Run docker compose -f docker-compose.dev.yml start postgres, then restart-apphost.ps1 -ExpectedServerSha. The secret was not changed.'
+        if ($down.Text.IndexOf($instruction, [System.StringComparison]::Ordinal) -lt 0) { $reasons += 'down-missing-instruction' }
+        if ($down.Text.IndexOf('REFUSED: user-secrets set failed.', [System.StringComparison]::Ordinal) -lt 0) { $reasons += 'down-lost-refusal' }
+        $sawClear = $false
+        foreach ($line in @($down.Lines)) {
+            if ((Test-C1407Suffix -Line $line -Suffix 'set-apphost-maintenance.ps1') -and (Test-C1407Field -Line $line -Token '-Clear')) {
+                $sawClear = $true
+            }
+        }
+        if (-not $sawClear) { $reasons += 'down-not-cleared' }
+        if ($down.ExitCode -ne 3) { $reasons += "down exit=$($down.ExitCode)" }
+    }
+    if ($reasons.Count -eq 0) { Write-Pass 'W-24' }
+    else { Write-Fail 'W-24' ($reasons -join ' || ') }
+}
+
+function Test-W25 {
+    $token = 'RESTART-STDOUT-1407'
+    $reasons = @()
+    $ok = Invoke-C1407WindowRun -SkipApi -SkipTcp -RestartStdout $token -ExtraArgs @('-Rollback') -SourceCount '4' -TargetCount '4'
+    if (-not $ok.Ready) { $reasons += "ok not-ready $($ok.Error)" }
+    else {
+        if ($ok.ExitCode -ne 0) { $reasons += "ok exit=$($ok.ExitCode)" }
+        if ($ok.Text.IndexOf('untouched desktop volume', [System.StringComparison]::Ordinal) -lt 0) { $reasons += 'ok-missing-exit' }
+        if ($ok.Text.IndexOf('REFUSED: rollback restart exited', [System.StringComparison]::Ordinal) -ge 0) { $reasons += 'ok-refused' }
+        if ($ok.Text.IndexOf($token, [System.StringComparison]::Ordinal) -lt 0) { $reasons += 'ok-stdout-hidden' }
+        $proceed = Test-C1407RollbackProceeds -Run $ok -Label 'ok'
+        if ($proceed) { $reasons += $proceed }
+    }
+    $bad = Invoke-C1407WindowRun -SkipApi -SkipTcp -RestartStdout $token -ShaRestartExit '5' -ExtraArgs @('-Rollback') -SourceCount '4' -TargetCount '4'
+    if (-not $bad.Ready) { $reasons += "bad not-ready $($bad.Error)" }
+    else {
+        $named = 'REFUSED: rollback restart exited 5. Do not start a second copy if the lock is held.'
+        $polluted = 'REFUSED: rollback restart exited RESTART-STDOUT-1407'
+        if ($bad.ExitCode -ne 3 -or $bad.Text.IndexOf($named, [System.StringComparison]::Ordinal) -lt 0) {
+            $reasons += "bad exit=$($bad.ExitCode)"
+        }
+        if ($bad.Text.IndexOf($polluted, [System.StringComparison]::Ordinal) -ge 0) { $reasons += 'bad-polluted' }
+        $sawClear = $false
+        foreach ($line in @($bad.Lines)) {
+            if ((Test-C1407Suffix -Line $line -Suffix 'set-apphost-maintenance.ps1') -and (Test-C1407Field -Line $line -Token '-Clear')) {
+                $sawClear = $true
+            }
+        }
+        if (-not $sawClear) { $reasons += 'bad-not-cleared' }
+    }
+    if ($reasons.Count -eq 0) { Write-Pass 'W-25' }
+    else { Write-Fail 'W-25' ($reasons -join ' || ') }
+}
+
+function Test-W26 {
+    $reason = 'REFUSED: maintenance marker already exists at logs/apphost.down-on-purpose. This run did not enter it. The operator must clear the marker before the window can start.'
+    $reasons = @()
+    $windowRepo = New-C1407TempRepo
+    $rollbackRepo = New-C1407TempRepo
+    try {
+        $windowMarker = Join-Path (Join-Path $windowRepo 'logs') 'apphost.down-on-purpose'
+        $window = Invoke-C1407WindowRun -Repository $windowRepo -MarkerOnSessionState $windowMarker
+        if (-not $window.Ready) { $reasons += "window not-ready $($window.Error)" }
+        else {
+            if ($window.ExitCode -ne 3) { $reasons += "window exit=$($window.ExitCode)" }
+            if ($window.Text.IndexOf($reason, [System.StringComparison]::Ordinal) -lt 0) { $reasons += 'window-missing-reason' }
+            foreach ($line in @($window.Lines)) {
+                if (Test-C1407Suffix -Line $line -Suffix 'set-apphost-maintenance.ps1') { $reasons += 'window-called-maintenance' }
+                if (Test-C1407Field -Line $line -Token '-ClearHold') { $reasons += 'window-cleared-hold' }
+                if (Test-C1407Field -Line $line -Token '-StopOnly') { $reasons += 'window-reached-stoponly' }
+            }
+            if (-not (Test-Path -LiteralPath $windowMarker)) { $reasons += 'window-removed-marker' }
+            $body = ''
+            if (Test-Path -LiteralPath $windowMarker) { $body = [System.IO.File]::ReadAllText($windowMarker) }
+            if ($body.IndexOf('foreign', [System.StringComparison]::Ordinal) -lt 0) { $reasons += 'window-marker-not-foreign' }
+        }
+        $rollbackMarker = Join-Path (Join-Path $rollbackRepo 'logs') 'apphost.down-on-purpose'
+        $rollback = Invoke-C1407WindowRun -SkipApi -SkipTcp -Repository $rollbackRepo -ForeignMarker $rollbackMarker -ExtraArgs @('-Rollback') -SourceCount '4' -TargetCount '4'
+        if (-not $rollback.Ready) { $reasons += "rollback not-ready $($rollback.Error)" }
+        else {
+            if ($rollback.ExitCode -ne 3) { $reasons += "rollback exit=$($rollback.ExitCode)" }
+            if ($rollback.Text.IndexOf($reason, [System.StringComparison]::Ordinal) -lt 0) { $reasons += 'rollback-missing-reason' }
+            $sawDocker = $false
+            foreach ($line in @($rollback.Lines)) {
+                if (Test-C1407Suffix -Line $line -Suffix 'set-apphost-maintenance.ps1') { $reasons += 'rollback-called-maintenance' }
+                if (Test-C1407Field -Line $line -Token '-Clear') { $reasons += 'rollback-cleared' }
+                if (Test-C1407Field -Line $line -Token '-ExpectedServerSha') { $reasons += 'rollback-restarted' }
+                $parts = @($line.Split([char]9))
+                if ($parts.Count -ge 1 -and $parts[0] -eq 'docker') { $sawDocker = $true }
+            }
+            if (-not $sawDocker) { $reasons += 'rollback-never-started' }
+            if (-not (Test-Path -LiteralPath $rollbackMarker)) { $reasons += 'rollback-removed-marker' }
+            $body = ''
+            if (Test-Path -LiteralPath $rollbackMarker) { $body = [System.IO.File]::ReadAllText($rollbackMarker) }
+            if ($body.IndexOf('foreign', [System.StringComparison]::Ordinal) -lt 0) { $reasons += 'rollback-marker-not-foreign' }
+        }
+    } catch {
+        $reasons += $_.Exception.Message
+    } finally {
+        Remove-C1407Tree $windowRepo
+        Remove-C1407Tree $rollbackRepo
+    }
+    $reasons = @($reasons | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($reasons.Count -eq 0) { Write-Pass 'W-26' }
+    else { Write-Fail 'W-26' ($reasons -join ' || ') }
+}
+
+$all = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26')
 if ($Case) {
     $name = $Case
     if ($name -match '^W-([0-9]+)$') { $name = 'W' + $Matches[1] }
