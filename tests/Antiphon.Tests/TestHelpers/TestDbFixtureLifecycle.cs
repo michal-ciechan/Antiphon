@@ -340,10 +340,7 @@ internal sealed class TestDbFixtureLifecycle
             var shared = _ops.GetConnectionString(container);
             var maintenance = DeriveMaintenance(shared);
 
-            await _ops.MigrateAsync(shared).ConfigureAwait(false);
-            Interlocked.Increment(ref Migrate);
-            await _ops.AfterMigrateAsync().ConfigureAwait(false);
-            ThrowIfProbeFault("after-migrate");
+            await PrepareSharedSchemaAsync(container, shared, maintenance).ConfigureAwait(false);
 
             _ops.ClearPool(shared);
             ClearedPools.Add(shared);
@@ -384,6 +381,107 @@ internal sealed class TestDbFixtureLifecycle
                 throw new AggregateException(ex, cleanup);
             throw;
         }
+    }
+
+    /// <summary>
+    /// CARD-1420 D-6: restore the shared database from the schema cache on a hit, otherwise migrate
+    /// and publish a snapshot. A failed restore resets the database and migrates; a failed capture
+    /// is logged and ignored. One stderr line per bootstrap names the outcome.
+    /// </summary>
+    private async Task PrepareSharedSchemaAsync(OwnedTestDbContainer container, string shared, string maintenance)
+    {
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        if (!_cache.IsEnabled)
+        {
+            await MigrateSharedAsync(shared).ConfigureAwait(false);
+            ReportSchemaSource("off", "-", timer);
+            return;
+        }
+
+        string key, serverSha;
+        try
+        {
+            (key, serverSha) = TestSchemaCache.ComputeDefaultKey();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            Console.Error.WriteLine($"C1420 schema-cache key unavailable: {ex.GetType().Name}: {ex.Message}");
+            await MigrateSharedAsync(shared).ConfigureAwait(false);
+            ReportSchemaSource("off", "-", timer);
+            return;
+        }
+
+        if (_cache.TryRead(key, out var snapshot) && snapshot is not null)
+        {
+            string? failure = null;
+            try
+            {
+                var expected = _ops.GetAssemblyMigrations();
+                if (!snapshot.MigrationIds.SequenceEqual(expected, StringComparer.Ordinal))
+                    throw new InvalidOperationException("snapshot migrations differ from the assembly migrations");
+                await _ops.RestoreSnapshotAsync(container, TestDbFixture.SharedDatabaseName, snapshot.Sql)
+                    .ConfigureAwait(false);
+                var applied = await _ops.ReadAppliedMigrationsAsync(shared).ConfigureAwait(false);
+                if (!applied.SequenceEqual(expected, StringComparer.Ordinal))
+                    throw new InvalidOperationException(
+                        $"restored history has {applied.Count} migrations, assembly has {expected.Count}");
+            }
+            catch (Exception ex)
+            {
+                failure = ex.GetType().Name + ": " + ex.Message;
+            }
+
+            if (failure is null)
+            {
+                Interlocked.Increment(ref Restore);
+                _cache.Touch(key);
+                ReportSchemaSource("hit", key, timer);
+                return;
+            }
+
+            Console.Error.WriteLine($"C1420 schema-cache restore failed key={key}: {failure}");
+            Interlocked.Increment(ref CacheFallback);
+            _cache.Discard(key);
+            _ops.ClearPool(shared);
+            await _ops.ResetSharedDatabaseAsync(maintenance).ConfigureAwait(false);
+            Interlocked.Increment(ref ResetSharedDatabase);
+            await MigrateSharedAsync(shared).ConfigureAwait(false);
+            ReportSchemaSource("fallback", key, timer);
+            return;
+        }
+
+        await MigrateSharedAsync(shared).ConfigureAwait(false);
+        try
+        {
+            var sql = await _ops.CaptureSnapshotAsync(container, TestDbFixture.SharedDatabaseName).ConfigureAwait(false);
+            var applied = await _ops.ReadAppliedMigrationsAsync(shared).ConfigureAwait(false);
+            if (!applied.SequenceEqual(_ops.GetAssemblyMigrations(), StringComparer.Ordinal))
+                throw new InvalidOperationException("migrated history differs from the assembly migrations");
+            Interlocked.Increment(ref Capture);
+            if (_cache.Publish(key, new TestSchemaSnapshot(sql, [.. applied], serverSha, TestDbOperations.PostgresImage)))
+                _cache.Prune(DateTimeOffset.UtcNow);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"C1420 schema-cache capture failed key={key}: {ex.GetType().Name}: {ex.Message}");
+        }
+
+        ReportSchemaSource("miss", key, timer);
+    }
+
+    private async Task MigrateSharedAsync(string shared)
+    {
+        await _ops.MigrateAsync(shared).ConfigureAwait(false);
+        Interlocked.Increment(ref Migrate);
+        await _ops.AfterMigrateAsync().ConfigureAwait(false);
+        ThrowIfProbeFault("after-migrate");
+    }
+
+    private void ReportSchemaSource(string source, string key, System.Diagnostics.Stopwatch timer)
+    {
+        SchemaSource = source;
+        Console.Error.WriteLine(
+            $"C1420 schema-cache {source} key={key} ms={timer.ElapsedMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
     }
 
     internal static DbContextOptions<AppDbContext> BuildOptions(string connectionString) =>
