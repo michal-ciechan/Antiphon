@@ -474,12 +474,13 @@ public sealed class AgentSessionRuntime
             return;
         }
 
-        // Before the first real re-arm, a prompt saved at or before this wait is the launch
-        // prompt drained after cancel. Once a re-arm is remembered, a follow-up saved in the
-        // same burst as a TurnEnd still re-arms: processing that TurnEnd moves PhaseStartedAt
-        // past the follow-up's CreatedAt.
-        if (RunAttemptStateMachine.RearmPromptSequence(attempt) == 0
-            && row.CreatedAt <= attempt.PhaseStartedAt)
+        // Drop only the launch prompt: its sequence is at or below the ceiling recorded
+        // when StartAsync entered AwaitingInput. A provisional slash arm does not remember
+        // a re-arm sequence, and the interrupt or TurnEnd that ends it moves PhaseStartedAt
+        // to the processing clock. A follow-up saved in that same burst is above the ceiling
+        // and still re-arms. An attempt with no ceiling keeps the save-clock drop until a
+        // real re-arm is remembered.
+        if (IsLaunchPrompt(attempt, row))
             return;
         if (attempt.Phase == RunPhase.StreamingTurn && row.CreatedAt <= attempt.LastEventAt)
             return;
@@ -544,6 +545,15 @@ public sealed class AgentSessionRuntime
         RunAttemptStateMachine.Transition(attempt, RunPhase.AwaitingInput, UtcNow());
         await db.SaveChangesAsync(ct);
         await PublishInterruptedAttemptAsync(card, sessionId, attempt);
+    }
+
+    private static bool IsLaunchPrompt(RunAttempt attempt, TranscriptEntry row)
+    {
+        if (RunAttemptStateMachine.TryGetLaunchPromptCeiling(attempt, out var ceiling))
+            return row.Sequence <= ceiling;
+
+        return RunAttemptStateMachine.RearmPromptSequence(attempt) == 0
+            && row.CreatedAt <= attempt.PhaseStartedAt;
     }
 
     private static bool IsCommandHousekeeping(

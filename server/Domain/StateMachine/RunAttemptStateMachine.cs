@@ -63,6 +63,10 @@ public static class RunAttemptStateMachine
     // A later TurnEnd or interrupt belongs to this turn only when its sequence is higher.
     internal const string RearmPromptSequenceKey = "RearmPromptSequence";
 
+    // Highest transcript sequence already stored when a cancelled launch entered
+    // AwaitingInput. Prompts at or below it are the launch turn, not a follow-up.
+    internal const string LaunchPromptCeilingKey = "LaunchPromptCeiling";
+
     public static bool HasAwaitingInputDuration(RunAttempt attempt) =>
         ReadDurations(attempt.PhaseDurationsJson).ContainsKey(RunPhase.AwaitingInput.ToString());
 
@@ -109,6 +113,22 @@ public static class RunAttemptStateMachine
 
     public static void RememberRearmPrompt(RunAttempt attempt, long sequence) =>
         WriteDurations(attempt, durations => { durations[RearmPromptSequenceKey] = sequence; });
+
+    public static bool TryGetLaunchPromptCeiling(RunAttempt attempt, out long sequence)
+    {
+        var durations = ReadDurations(attempt.PhaseDurationsJson);
+        if (!durations.TryGetValue(LaunchPromptCeilingKey, out var stored))
+        {
+            sequence = 0;
+            return false;
+        }
+
+        sequence = (long)stored;
+        return true;
+    }
+
+    public static void RememberLaunchPromptCeiling(RunAttempt attempt, long sequence) =>
+        WriteDurations(attempt, durations => { durations[LaunchPromptCeilingKey] = sequence; });
 
     public static void RestoreProvisionalAwaitingInput(RunAttempt attempt)
     {

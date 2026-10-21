@@ -285,6 +285,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     // Retain the Running session and unfinished attempt without leaving it in
                     // the stall scanner's StreamingTurn set. A timestamp refresh alone would
                     // only postpone the automatic kill of a session waiting for operator input.
+                    // The ceiling is the launch turn. A later follow-up has a higher sequence
+                    // even when ending a provisional arm moves PhaseStartedAt past its CreatedAt.
+                    var launchCeiling = await _db.TranscriptEntries.AsNoTracking()
+                        .Where(t => t.AgentSessionId == session.Id)
+                        .MaxAsync(t => (long?)t.Sequence, ct) ?? 0L;
+                    RunAttemptStateMachine.RememberLaunchPromptCeiling(attempt, launchCeiling);
                     RunAttemptStateMachine.Transition(attempt, RunPhase.AwaitingInput, UtcNow());
                     _logger.LogInformation(
                         "Agent turn interrupted for session {SessionId}; retaining run attempt {RunAttemptId}",
