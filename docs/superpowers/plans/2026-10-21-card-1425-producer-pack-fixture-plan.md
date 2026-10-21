@@ -106,11 +106,17 @@ afterwards.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1425/` | advisory-pack-cases | `/*/*/AdvisoryChangePolicyTests/(C1303_R12_LandRefusesUnavailableCorrectedEvidence*)\|(C1281_ReceiptCorrection*)\|(C1281_IncompleteNeverClean*)` | V-1, V-3 | 5 passed (3 R12 cases + 2), 0 failed/skipped | 5 | 6 | lane: server2 (default) |
-| CP-2 | S2 | CP-1 | pipeline-pack-methods | `/*/*/PipelineSpeedIntegrationTests/(C1281_B1Authorization*)\|(C1281_B1ReceiptImport*)\|(C1281_B1CorrectionTransaction*)\|(C1281_WiredRoundtrip*)\|(C1281_B1Schema*)` | V-1, V-3, R-1 | 6 passed (4 pack methods + `C1281_WiredRoundtripDelivery` matched by the `C1281_WiredRoundtrip*` prefix + `C1281_B1Schema`), 0 failed/skipped | 6 | 12 | lane: server2 (default) |
-| CP-3 | S2 | CP-1 | fixture-pin | `/*/*/AdvisoryChangePolicyTests/(C1425_ProducerPackFixtureIsDeterministic*)\|(C1281_AdvisoryDoesNotRerun*)` | V-2, R-1 | 2 passed, 0 failed/skipped | 2 | 2 | lane: server2 (default) |
-| CP-4 | S3 | CP-1 | release-gate-platform | `/*/*/ReleaseGatePlatformTests/(C1415_SkipExclusions*)` | V-4 | 1 passed, 0 failed/skipped | 1 | 3 | lane: server2 (default) |
-| CP-5 | S3 | `tests/Antiphon.Tests -> bin-c1425w/` | windows-pack-cases | `/*/*/(AdvisoryChangePolicyTests*)\|(PipelineSpeedIntegrationTests*)/(C1303_R12_LandRefusesUnavailableCorrectedEvidence*)\|(C1281_ReceiptCorrection*)\|(C1281_IncompleteNeverClean*)\|(C1281_B1Authorization*)\|(C1281_B1ReceiptImport*)\|(C1281_B1CorrectionTransaction*)\|(C1281_WiredRoundtrip*)\|(C1425_ProducerPackFixtureIsDeterministic*)` | V-1, V-2 | 13 passed (11 pack cases + `C1281_WiredRoundtripDelivery` + fixture pin; digest equals the Linux pin), 0 failed/skipped | 13 | 15 | lane: Windows (`-Platform Windows` dispatch; Review or a dedicated check, not the Linux Code task) |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1425/` | advisory-pack-cases | `/*/*/AdvisoryChangePolicyTests/(C1303_R12_LandRefusesUnavailableCorrectedEvidence*)\|(C1281_ReceiptCorrection*)\|(C1281_IncompleteNeverClean*)` | V-1, V-3 | 5 passed (3 R12 cases + 2), 0 failed/skipped | 5 | 6 | n/a |
+| CP-2 | S2 | CP-1 | pipeline-pack-methods | `/*/*/PipelineSpeedIntegrationTests/(C1281_B1Authorization*)\|(C1281_B1ReceiptImport*)\|(C1281_B1CorrectionTransaction*)\|(C1281_WiredRoundtrip*)\|(C1281_B1Schema*)` | V-1, V-3, R-1 | 6 passed (4 pack methods + `C1281_WiredRoundtripDelivery` matched by the `C1281_WiredRoundtrip*` prefix + `C1281_B1Schema`), 0 failed/skipped | 6 | 12 | n/a |
+| CP-3 | S2 | CP-1 | fixture-pin | `/*/*/AdvisoryChangePolicyTests/(C1425_ProducerPackFixtureIsDeterministic*)\|(C1281_AdvisoryDoesNotRerun*)` | V-2, R-1 | 2 passed, 0 failed/skipped | 2 | 2 | n/a |
+| CP-4 | S3 | CP-1 | release-gate-platform | `/*/*/ReleaseGatePlatformTests/(C1415_SkipExclusions*)` | V-4 | 1 passed, 0 failed/skipped | 1 | 3 | n/a |
+| CP-5 | S3 | `tests/Antiphon.Tests -> bin-c1425w/` | windows-pack-cases | `/*/*/(AdvisoryChangePolicyTests*)\|(PipelineSpeedIntegrationTests*)/(C1303_R12_LandRefusesUnavailableCorrectedEvidence*)\|(C1281_ReceiptCorrection*)\|(C1281_IncompleteNeverClean*)\|(C1281_B1Authorization*)\|(C1281_B1ReceiptImport*)\|(C1281_B1CorrectionTransaction*)\|(C1281_WiredRoundtrip*)\|(C1425_ProducerPackFixtureIsDeterministic*)` | V-1, V-2 | 11 passed (9 pack cases + `C1281_WiredRoundtripDelivery` + fixture pin; digest equals the Linux pin), 0 failed/skipped | 11 | 15 | n/a |
+
+Lanes (moved out of the Environment column, which takes only `NAME=value` entries): CP-1..CP-4 run on
+server2 (default lane); CP-5 runs on a Windows-platform dispatch (`-Platform Windows`; Review or a
+dedicated check, not the Linux Code task). Code amendment (CARD-1425 Code task 12653d93): CP-5 Expect/Min
+corrected from 13 to 11; the producer pack is nine cases (5 advisory + 4 pipeline methods), the earlier
+"11" was the old two-platform skip-control count. The CP-5 filter is unchanged; on Linux it ran 11, all passed.
 
 CP-4 depends on `pwsh` and the C1323 harness; per memory `release-gate-harness-linux-pitfalls`,
 `C1323_PlatformExecution` is an inherited Linux red and is deliberately not selected.
