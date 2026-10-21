@@ -483,6 +483,204 @@ function Test-C545_ResultLine {
     }
 }
 
+function Write-C1386Seams {
+    param(
+        $Fx,
+        [int[]]$AlivePids,
+        [string]$BootId,
+        [string]$HostId
+    )
+    $aliveLiteral = '@()'
+    $ids = @($AlivePids)
+    if ($ids.Count -gt 0) {
+        $nums = @()
+        foreach ($n in $ids) { $nums += [string][int]$n }
+        $aliveLiteral = '@(' + ($nums -join ',') + ')'
+    }
+    $bootText = ([string]$BootId).Replace("'", "''")
+    $hostText = ([string]$HostId).Replace("'", "''")
+    $extra = @"
+`$NightlySeams.IsProcessAlive = {
+    param(`$ProcessId)
+    `$alive = $aliveLiteral
+    foreach (`$id in `$alive) {
+        if ([int]`$id -eq [int]`$ProcessId) { return `$true }
+    }
+    return `$false
+}
+`$NightlySeams.GetBootId = { return '$bootText' }
+`$NightlySeams.GetHostId = { return '$hostText' }
+"@
+    Write-C487Seams -Path $Fx.Seams -TracePath $Fx.Trace -Extra ([scriptblock]::Create($extra))
+}
+
+function Write-C1386Plant {
+    param(
+        $Fx,
+        [int]$OwnerPid,
+        [string]$RunId,
+        [int]$ParentPid = 0,
+        [switch]$OmitParent,
+        [string]$BootId,
+        [string]$HostId,
+        [string]$ProcessStartedAt = '2020-01-01T00:00:00.0000000Z'
+    )
+    $rec = [ordered]@{
+        pid = $OwnerPid
+        processStartedAt = $ProcessStartedAt
+        startedAt = '2020-01-01T00:00:00.0000000Z'
+        runId = $RunId
+    }
+    if (-not $OmitParent) {
+        $rec.parentPid = $ParentPid
+        $rec.parentStartedAt = '2020-01-01T00:00:00.0000000Z'
+    }
+    if ($PSBoundParameters.ContainsKey('BootId')) { $rec.bootId = $BootId }
+    if ($PSBoundParameters.ContainsKey('HostId')) { $rec.hostId = $HostId }
+    $lockPath = Join-Path $Fx.State 'run.lock'
+    [System.IO.File]::WriteAllText($lockPath, ($rec | ConvertTo-Json -Compress))
+}
+
+function Invoke-C1386FxRun {
+    param($Fx)
+    try {
+        return Invoke-FxRun -Fx $Fx
+    } catch {
+        return [pscustomobject]@{ ExitCode = 1; Phase = 'error'; Refusal = [string]$_.Exception.Message; RunId = '' }
+    }
+}
+
+function Get-C1386Phase {
+    param($Result)
+    if ($null -eq $Result) { return '' }
+    return [string]$Result.Phase
+}
+
+function Get-C1386Refusal {
+    param($Result)
+    if ($null -eq $Result) { return '' }
+    return [string]$Result.Refusal
+}
+
+function Get-C1386LockText {
+    param($Fx)
+    $lockPath = Join-Path $Fx.State 'run.lock'
+    if (-not (Test-Path -LiteralPath $lockPath)) { return '' }
+    return [System.IO.File]::ReadAllText($lockPath)
+}
+
+function Get-C1386ReclaimReason {
+    param($Fx)
+    $path = Join-Path $Fx.State 'lock-reclaim.json'
+    if (-not (Test-Path -LiteralPath $path)) { return '' }
+    try {
+        $parsed = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        return [string]$parsed.reason
+    } catch {
+        return ''
+    }
+}
+
+function Test-C1386RunIdGone {
+    param($Fx, [string]$RunId)
+    $text = Get-C1386LockText -Fx $Fx
+    if ([string]::IsNullOrEmpty($text)) { return $true }
+    return ($text -notmatch [regex]::Escape($RunId))
+}
+
+function Test-C1386RunIdKept {
+    param($Fx, [string]$RunId)
+    $text = Get-C1386LockText -Fx $Fx
+    if ([string]::IsNullOrEmpty($text)) { return $false }
+    return ($text -match [regex]::Escape($RunId))
+}
+
+function Test-C1386NoReclaim {
+    param($Fx)
+    return -not (Test-Path -LiteralPath (Join-Path $Fx.State 'lock-reclaim.json'))
+}
+
+function Test-C1386_DeadOwnerReclaimed {
+    $boot = 'boot-current'
+    $hostId = 'host-current'
+
+    $legacy = New-RunFx
+    Write-C1386Seams -Fx $legacy -AlivePids @() -BootId $boot -HostId $hostId
+    Write-C1386Plant -Fx $legacy -OwnerPid 424201 -ParentPid 424202 -RunId 'legacy-run'
+    $legacyResult = Invoke-C1386FxRun -Fx $legacy
+    $legacyDetail = ('phase={0} refusal={1} reason={2}' -f (Get-C1386Phase $legacyResult), (Get-C1386Refusal $legacyResult), (Get-C1386ReclaimReason $legacy))
+    Assert-C487 -Cond ((Get-C1386Phase $legacyResult) -ne 'lock' -and [string]::IsNullOrWhiteSpace((Get-C1386Refusal $legacyResult))) -Name 'C1386 DeadOwner legacy leaves lock phase' -Detail $legacyDetail
+    Assert-C487 -Cond ((Get-C1386ReclaimReason $legacy) -eq 'dead-owner-legacy') -Name 'C1386 DeadOwner legacy records dead-owner-legacy' -Detail $legacyDetail
+    Assert-C487 -Cond (Test-C1386RunIdGone -Fx $legacy -RunId 'legacy-run') -Name 'C1386 DeadOwner legacy replaces run id' -Detail (Get-C1386LockText $legacy)
+
+    $same = New-RunFx
+    Write-C1386Seams -Fx $same -AlivePids @() -BootId $boot -HostId $hostId
+    Write-C1386Plant -Fx $same -OwnerPid 424203 -ParentPid 424204 -RunId 'same-boot-run' -BootId $boot -HostId $hostId
+    $sameResult = Invoke-C1386FxRun -Fx $same
+    $sameReason = Get-C1386ReclaimReason $same
+    $sameOk = ((Get-C1386Phase $sameResult) -ne 'lock' -and [string]::IsNullOrWhiteSpace((Get-C1386Refusal $sameResult)) -and $sameReason -eq 'dead-owner-same-boot' -and (Test-C1386RunIdGone -Fx $same -RunId 'same-boot-run'))
+    Assert-C487 -Cond $sameOk -Name 'C1386 DeadOwner same-boot records dead-owner-same-boot' -Detail ('phase={0} refusal={1} reason={2}' -f (Get-C1386Phase $sameResult), (Get-C1386Refusal $sameResult), $sameReason)
+
+    $reboot = New-RunFx
+    Write-C1386Seams -Fx $reboot -AlivePids @(424205) -BootId $boot -HostId $hostId
+    Write-C1386Plant -Fx $reboot -OwnerPid 424205 -ParentPid 424206 -RunId 'reboot-run' -BootId 'boot-previous' -HostId $hostId
+    $rebootResult = Invoke-C1386FxRun -Fx $reboot
+    $rebootReason = Get-C1386ReclaimReason $reboot
+    $reclaimed = ((Get-C1386Phase $rebootResult) -ne 'lock' -and [string]::IsNullOrWhiteSpace((Get-C1386Refusal $rebootResult)) -and (Test-C1386RunIdGone -Fx $reboot -RunId 'reboot-run'))
+    Assert-C487 -Cond $reclaimed -Name 'C1386 DeadOwner reboot reclaims recycled pid' -Detail ('phase={0} refusal={1} reason={2}' -f (Get-C1386Phase $rebootResult), (Get-C1386Refusal $rebootResult), $rebootReason)
+    Assert-C487 -Cond ($rebootReason -eq 'dead-owner-rebooted') -Name 'C1386 DeadOwner reboot records dead-owner-rebooted' -Detail ('phase={0} refusal={1} reason={2}' -f (Get-C1386Phase $rebootResult), (Get-C1386Refusal $rebootResult), $rebootReason)
+}
+
+function Test-C1386_LiveOwnerRefused {
+    $boot = 'boot-current'
+    $hostId = 'host-current'
+
+    $fx = New-RunFx
+    Write-C1386Seams -Fx $fx -AlivePids @(424207) -BootId $boot -HostId $hostId
+    Write-C1386Plant -Fx $fx -OwnerPid 424207 -ParentPid 424208 -RunId 'live-run' -BootId $boot -HostId $hostId
+    $r = Invoke-C1386FxRun -Fx $fx
+    $detail = ('phase={0} refusal={1}' -f (Get-C1386Phase $r), (Get-C1386Refusal $r))
+    Assert-C487 -Cond ((Get-C1386Refusal $r) -eq 'live-owner' -and (Get-C1386Phase $r) -eq 'lock') -Name 'C1386 LiveOwner refusal is live-owner' -Detail $detail
+    Assert-C487 -Cond (Test-C1386RunIdKept -Fx $fx -RunId 'live-run') -Name 'C1386 LiveOwner keeps planted run id' -Detail (Get-C1386LockText $fx)
+    Assert-C487 -Cond (Test-C1386NoReclaim -Fx $fx) -Name 'C1386 LiveOwner writes no reclaim record' -Detail $detail
+
+    $fx2 = New-RunFx
+    Write-C1386Seams -Fx $fx2 -AlivePids @(424209) -BootId $boot -HostId $hostId
+    Write-C1386Plant -Fx $fx2 -OwnerPid 424209 -ParentPid 424210 -RunId 'live-start-run' -BootId $boot -HostId $hostId -ProcessStartedAt '2001-01-01T00:00:00.0000000Z'
+    $r2 = Invoke-C1386FxRun -Fx $fx2
+    $kept = (Get-C1386Refusal $r2) -eq 'live-owner' -and (Get-C1386Phase $r2) -eq 'lock' -and (Test-C1386RunIdKept -Fx $fx2 -RunId 'live-start-run') -and (Test-C1386NoReclaim -Fx $fx2)
+    Assert-C487 -Cond $kept -Name 'C1386 LiveOwner start mismatch stays live-owner' -Detail ('phase={0} refusal={1} lock={2}' -f (Get-C1386Phase $r2), (Get-C1386Refusal $r2), (Get-C1386LockText $fx2))
+}
+
+function Test-C1386_AmbiguousOwnerRefused {
+    $boot = 'boot-current'
+    $hostId = 'host-current'
+
+    $parentAlive = New-RunFx
+    Write-C1386Seams -Fx $parentAlive -AlivePids @(424211) -BootId $boot -HostId $hostId
+    Write-C1386Plant -Fx $parentAlive -OwnerPid 424210 -ParentPid 424211 -RunId 'parent-alive-run' -BootId $boot -HostId $hostId
+    $parentResult = Invoke-C1386FxRun -Fx $parentAlive
+    $parentDetail = ('phase={0} refusal={1}' -f (Get-C1386Phase $parentResult), (Get-C1386Refusal $parentResult))
+    Assert-C487 -Cond ((Get-C1386Refusal $parentResult) -eq 'lock-held' -and (Get-C1386Phase $parentResult) -eq 'lock') -Name 'C1386 Ambiguous parent-alive refuses lock-held' -Detail $parentDetail
+    Assert-C487 -Cond ((Test-C1386RunIdKept -Fx $parentAlive -RunId 'parent-alive-run') -and (Test-C1386NoReclaim -Fx $parentAlive)) -Name 'C1386 Ambiguous parent-alive keeps the lock' -Detail (Get-C1386LockText $parentAlive)
+
+    $foreign = New-RunFx
+    Write-C1386Seams -Fx $foreign -AlivePids @() -BootId $boot -HostId $hostId
+    Write-C1386Plant -Fx $foreign -OwnerPid 424212 -ParentPid 424213 -RunId 'foreign-host-run' -BootId $boot -HostId 'host-other'
+    $foreignResult = Invoke-C1386FxRun -Fx $foreign
+    $foreignDetail = ('phase={0} refusal={1}' -f (Get-C1386Phase $foreignResult), (Get-C1386Refusal $foreignResult))
+    Assert-C487 -Cond ((Get-C1386Refusal $foreignResult) -eq 'lock-held' -and (Get-C1386Phase $foreignResult) -eq 'lock') -Name 'C1386 Ambiguous foreign-host refuses lock-held' -Detail $foreignDetail
+    Assert-C487 -Cond ((Test-C1386RunIdKept -Fx $foreign -RunId 'foreign-host-run') -and (Test-C1386NoReclaim -Fx $foreign)) -Name 'C1386 Ambiguous foreign-host keeps the lock' -Detail (Get-C1386LockText $foreign)
+
+    $missing = New-RunFx
+    Write-C1386Seams -Fx $missing -AlivePids @() -BootId $boot -HostId $hostId
+    Write-C1386Plant -Fx $missing -OwnerPid 424214 -RunId 'missing-parent-run' -OmitParent -BootId $boot -HostId $hostId
+    $missingResult = Invoke-C1386FxRun -Fx $missing
+    $missingDetail = ('phase={0} refusal={1}' -f (Get-C1386Phase $missingResult), (Get-C1386Refusal $missingResult))
+    Assert-C487 -Cond ((Get-C1386Refusal $missingResult) -eq 'lock-held' -and (Get-C1386Phase $missingResult) -eq 'lock') -Name 'C1386 Ambiguous missing-parent refuses lock-held' -Detail $missingDetail
+    Assert-C487 -Cond ((Test-C1386RunIdKept -Fx $missing -RunId 'missing-parent-run') -and (Test-C1386NoReclaim -Fx $missing)) -Name 'C1386 Ambiguous missing-parent keeps the lock' -Detail (Get-C1386LockText $missing)
+}
+
 $cases = Get-C487CaseFunctions -Prefix 'C487_G0'
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -CommandType Function -ErrorAction SilentlyContinue
