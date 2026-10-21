@@ -10,8 +10,8 @@ namespace Antiphon.Tests.TestHelpers;
 /// that mixes git with any other child stays on the strict lane. Classify by what is spawned,
 /// never by name. Assembly-local like <see cref="ProcessSpawnLimit"/>; it is not shared across
 /// test projects. Width is <c>Clamp(ProcessorCount / 2, 2, 4)</c>;
-/// <c>ANTIPHON_TEST_GIT_SPAWN_LIMIT</c> (1-8) overrides it, and <c>1</c> restores serial order
-/// for bisecting a suspected flake.
+/// <c>ANTIPHON_TEST_GIT_SPAWN_LIMIT</c> (1-8) overrides it. <c>1</c> serialises this lane for
+/// bisecting, but it still runs beside the strict lane, so it is not the pre-CARD-1421 order.
 /// </summary>
 public sealed class GitProcessSpawnLimit : IParallelLimit
 {
