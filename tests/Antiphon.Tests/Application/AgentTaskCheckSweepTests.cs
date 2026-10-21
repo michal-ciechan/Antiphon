@@ -725,6 +725,10 @@ public class AgentTaskCheckSweepTests
             createdAt: DateTime.UtcNow.AddMinutes(-2));
         await harness.SettleAsync(seed.Task.Id);
         await harness.SeedCompletionNoteAsync(seed.CallerSessionId, seed.Task.RootTaskId);
+        // CARD-0696 (64ec5aad5): the flush admits only a live caller before it touches input
+        // state (SessionMessageQueueService.cs:2206-2208, IsLiveOrUnknownAsync), so the runner
+        // must report the caller Running for the superseded-check cancel to be reached.
+        harness.Runner.LiveSessions.Add(seed.CallerSessionId);
 
         await harness.Messages.FlushIfIdleAsync(seed.CallerSessionId, CancellationToken.None);
 
@@ -1570,8 +1574,13 @@ public class AgentTaskCheckSweepTests
             throw new NotSupportedException("a check never kills a session");
         }
 
+        /// <summary>Sessions List reports Running; every other session reads as not live.</summary>
+        public HashSet<Guid> LiveSessions { get; } = [];
+
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
+            Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>(LiveSessions
+                .Select(id => new SessionRunnerSessionDto(id, null, DateTime.UtcNow, "Running", null, AgentExitReason.Unknown, 0))
+                .ToList());
 
         public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotSupportedException("a check does not read the runner");
