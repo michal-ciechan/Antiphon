@@ -558,7 +558,7 @@ public sealed class AgentSessionCancelledTurnTests
         public Task PersistAsync(LiveAttempt session, string? text) =>
             PersistAsync(session, text, TranscriptKinds.UserPrompt, null);
 
-        public async Task PersistAsync(LiveAttempt session, string? text, string kind, string? stopReason)
+        public async Task PersistAsync(LiveAttempt session, string? text, string kind, string? stopReason = null)
         {
             var role = kind == TranscriptKinds.AssistantText ? "assistant"
                 : kind == TranscriptKinds.UserPrompt ? "user"
