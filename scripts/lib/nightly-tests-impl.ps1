@@ -120,109 +120,199 @@ function Test-NightlyClassGroupFilter {
     return $true
 }
 
-# CARD-1404. An ordinary required node weighs 1. Slow weighs 4. Land*,
-# Delivery* and Check* double that. 120 stays near ten minutes of serial
-# land-lane work, under watchdogs.antiphon (3600000). A class already over
-# the cap still launches, alone; the packer does not split it into methods.
-$script:NightlyLaunchGroupNodeCap = 120
-$script:NightlyLaunchSlowNodeWeight = 4
-$script:NightlyLaunchHeavyFamilyWeight = 2
+# CARD-1410. Launch groups pack by estimated serial seconds. A class with a
+# row in nightly-class-costs.json (refreshed from TRX) uses it; any other
+# class uses the node model below, calibrated so the real listing estimates
+# 5-8 h serial (CARD-0856 measured the whole Windows run at about 270 min).
+# An ordinary node is 0.5 s and Slow 1.5 s (measured Slow classes ran at
+# 1.7-5.4 s per node). Slow in a Land or Delivery type is 4 s. A type naming
+# Land, Delivery or Check anywhere doubles its nodes. The two-minute land
+# nodes of Windows group 27 are a measured row. A group targets 15 minutes;
+# a class estimated over 40 minutes is split into exact-method chunks of at
+# most the target, so no launch nears watchdogs.antiphon.
+$script:NightlyLaunchNodeSeconds = 0.5
+$script:NightlyLaunchSlowNodeSeconds = 1.5
+$script:NightlyLaunchLaneSlowNodeSeconds = 4
+$script:NightlyLaunchHeavyFamilyFactor = 2
+$script:NightlyLaunchTargetSeconds = 900
+$script:NightlyLaunchLoneClassBudgetSeconds = 2400
+$script:NightlyLaunchMaxGroupOperands = 30
+$script:NightlyClassCostPath = Join-Path $PSScriptRoot 'nightly-class-costs.json'
+$script:NightlyClassCostTable = $null
+
+function Get-NightlyClassCostTable {
+    # Bare class identity -> measured seconds per node.
+    if ($null -ne $script:NightlyClassCostTable) { return $script:NightlyClassCostTable }
+    $table = @{}
+    if (Test-Path -LiteralPath $script:NightlyClassCostPath) {
+        $doc = [System.IO.File]::ReadAllText($script:NightlyClassCostPath) | ConvertFrom-Json
+        if ([string]$doc.format -cne 'antiphon-nightly-class-costs-v1') { throw 'class-cost-format' }
+        foreach ($row in @($doc.classes.PSObject.Properties)) {
+            $nodes = [int]$row.Value.nodes
+            $seconds = [double]$row.Value.seconds
+            if ($nodes -lt 1 -or $seconds -le 0) { throw ('class-cost-row ' + [string]$row.Name) }
+            $table[[string]$row.Name] = $seconds / $nodes
+        }
+    }
+    $script:NightlyClassCostTable = $table
+    return $table
+}
 
 function Test-NightlyHeavyFamilyType {
     param([string]$TypeName)
     if ([string]::IsNullOrEmpty($TypeName)) { return $false }
-    foreach ($prefix in @('Land', 'Delivery', 'Check')) {
-        if ($TypeName.StartsWith($prefix, [StringComparison]::Ordinal)) { return $true }
+    foreach ($family in @('Land', 'Delivery', 'Check')) {
+        if ($TypeName.IndexOf($family, [StringComparison]::Ordinal) -ge 0) { return $true }
     }
     return $false
 }
 
+function Get-NightlyLaunchNodeSeconds {
+    param($Node, [bool]$Heavy, $MeasuredPerNode, [bool]$Lane = $false)
+    if ($null -ne $MeasuredPerNode) { return [double]$MeasuredPerNode }
+    $unit = [double]$script:NightlyLaunchNodeSeconds
+    foreach ($category in @($Node.Categories)) {
+        if ([string]$category -ceq 'Slow') {
+            $unit = $(if ($Lane) { [double]$script:NightlyLaunchLaneSlowNodeSeconds } else { [double]$script:NightlyLaunchSlowNodeSeconds })
+            break
+        }
+    }
+    if ($Heavy) { $unit = $unit * [double]$script:NightlyLaunchHeavyFamilyFactor }
+    return $unit
+}
+
 function Get-NightlyLaunchClassCost {
-    param([object[]]$Nodes, [string]$TypeName)
-    $count = 0
-    $weight = 0
+    param([object[]]$Nodes, [string]$TypeName, [string]$Bare = '')
     $heavy = Test-NightlyHeavyFamilyType -TypeName $TypeName
+    $lane = (-not [string]::IsNullOrEmpty($TypeName)) -and ($TypeName.IndexOf('Land', [StringComparison]::Ordinal) -ge 0 -or $TypeName.IndexOf('Delivery', [StringComparison]::Ordinal) -ge 0)
+    $table = Get-NightlyClassCostTable
+    $measured = $null
+    if (-not [string]::IsNullOrEmpty($Bare) -and $table.ContainsKey($Bare)) { $measured = [double]$table[$Bare] }
+    $count = 0
+    $seconds = 0.0
     foreach ($node in @($Nodes)) {
         if ($null -eq $node) { continue }
         $count++
-        $unit = 1
-        foreach ($category in @($node.Categories)) {
-            if ([string]$category -ceq 'Slow') { $unit = [int]$script:NightlyLaunchSlowNodeWeight; break }
-        }
-        if ($heavy) { $unit = $unit * [int]$script:NightlyLaunchHeavyFamilyWeight }
-        $weight += $unit
+        $seconds += Get-NightlyLaunchNodeSeconds -Node $node -Heavy $heavy -MeasuredPerNode $measured -Lane $lane
     }
     if ($count -eq 0) {
         $count = 1
-        $weight = $(if ($heavy) { [int]$script:NightlyLaunchHeavyFamilyWeight } else { 1 })
+        $seconds = Get-NightlyLaunchNodeSeconds -Node $null -Heavy $heavy -MeasuredPerNode $measured -Lane $lane
     }
-    return [pscustomobject]@{ NodeCount = $count; Weight = $weight }
+    return [pscustomobject]@{ NodeCount = $count; Seconds = $seconds; MeasuredPerNode = $measured; Heavy = $heavy }
 }
 
-function Get-NightlyPackedItemNodes {
+function Get-NightlyPackedItemSeconds {
     param($Item)
-    if ($Item.PSObject.Properties.Name -contains 'NodeCount') { return [int]$Item.NodeCount }
-    return 1
+    if ($Item.PSObject.Properties.Name -contains 'Seconds') { return [double]$Item.Seconds }
+    return [double]$script:NightlyLaunchNodeSeconds
 }
 
-function Get-NightlyPackedItemWeight {
-    param($Item)
-    if ($Item.PSObject.Properties.Name -contains 'Weight') { return [int]$Item.Weight }
-    return 1
-}
-
-function Split-NightlyClassGroupsAtSize {
-    param($ByNamespace, $Unsafe, [int]$MaxSize, [int]$MaxNodes, [int]$MaxWeight)
-    $groups = New-Object System.Collections.ArrayList
-    foreach ($ns in (@($ByNamespace.Keys) | Sort-Object)) {
-        $singles = New-Object System.Collections.ArrayList
-        $pool = New-Object System.Collections.ArrayList
-        foreach ($item in @($ByNamespace[$ns] | Sort-Object Type, Bare)) {
-            $key = $ns + '|' + [string]$item.Type
-            if ($Unsafe.Contains($key)) { [void]$singles.Add($item) }
-            else { [void]$pool.Add($item) }
-        }
-        $bins = New-Object System.Collections.ArrayList
-        foreach ($item in $pool) {
-            $placed = $false
-            $addNodes = Get-NightlyPackedItemNodes $item
-            $addWeight = Get-NightlyPackedItemWeight $item
+function Split-NightlyItemsBySeconds {
+    # First fit, largest first. An item at or over the target stays alone.
+    param([object[]]$Items, [double]$TargetSeconds, [int]$MaxOperands)
+    $bins = New-Object System.Collections.ArrayList
+    foreach ($item in @($Items | Sort-Object @{ Expression = { Get-NightlyPackedItemSeconds $_ }; Descending = $true }, @{ Expression = { [string]$_.Key } })) {
+        $add = Get-NightlyPackedItemSeconds $item
+        $placed = $false
+        if ($add -lt $TargetSeconds) {
             foreach ($bin in @($bins)) {
-                if ($bin.Count -ge $MaxSize) { continue }
-                if ($bin.Count -gt 0) {
-                    $haveNodes = 0
-                    $haveWeight = 0
-                    foreach ($have in @($bin)) {
-                        $haveNodes += Get-NightlyPackedItemNodes $have
-                        $haveWeight += Get-NightlyPackedItemWeight $have
-                    }
-                    if (($haveNodes + $addNodes) -gt $MaxNodes) { continue }
-                    if (($haveWeight + $addWeight) -gt $MaxWeight) { continue }
-                }
-                [void]$bin.Add($item)
+                if ($bin.Closed -or $bin.Items.Count -ge $MaxOperands) { continue }
+                if (($bin.Seconds + $add) -gt $TargetSeconds) { continue }
+                [void]$bin.Items.Add($item)
+                $bin.Seconds += $add
                 $placed = $true
                 break
             }
-            if (-not $placed) {
-                $bin = New-Object System.Collections.ArrayList
-                [void]$bin.Add($item)
-                [void]$bins.Add($bin)
-            }
         }
-        foreach ($bin in @($bins)) { [void]$groups.Add($bin) }
-        foreach ($item in @($singles)) {
-            $alone = New-Object System.Collections.ArrayList
-            [void]$alone.Add($item)
-            [void]$groups.Add($alone)
+        if (-not $placed) {
+            $bin = [pscustomobject]@{ Items = (New-Object System.Collections.ArrayList); Seconds = $add; Closed = ($add -ge $TargetSeconds) }
+            [void]$bin.Items.Add($item)
+            [void]$bins.Add($bin)
         }
     }
-    return [pscustomobject]@{ Groups = $groups }
+    return @($bins.ToArray())
+}
+
+function Get-NightlyPrefixUnsafeNames {
+    # A name that prefixes another name cannot be a (Name*) OR operand.
+    param([string[]]$Names)
+    $unsafe = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $distinct = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($name in @($Names)) { [void]$distinct.Add([string]$name) }
+    $sorted = [string[]]@($distinct)
+    [Array]::Sort($sorted, [StringComparer]::Ordinal)
+    for ($i = 0; $i -lt $sorted.Count; $i++) {
+        for ($j = $i + 1; $j -lt $sorted.Count; $j++) {
+            if (-not $sorted[$j].StartsWith($sorted[$i], [StringComparison]::Ordinal)) { break }
+            if ($sorted[$j].Length -gt $sorted[$i].Length) { [void]$unsafe.Add($sorted[$i]); break }
+        }
+    }
+    return ,$unsafe
+}
+
+function New-NightlyMethodGroupFilter {
+    param([string]$Namespace, [string]$TypeName, [string[]]$Methods)
+    $parts = foreach ($method in @($Methods | Sort-Object)) { '(' + $method + '*)' }
+    return ('/*/' + $Namespace + '/' + $TypeName + '/' + ($parts -join '|'))
+}
+
+function Test-NightlyMethodGroupFilter {
+    param([string[]]$Classes, [string]$MethodFilter)
+    if ([string]::IsNullOrWhiteSpace($MethodFilter) -or @($Classes).Count -ne 1) { return $false }
+    $matched = [regex]::Match($MethodFilter, '^/\*/([A-Za-z_][A-Za-z0-9_.]*)/([A-Za-z_][A-Za-z0-9_]*)/(\([A-Za-z_][A-Za-z0-9_]*\*\)(\|\([A-Za-z_][A-Za-z0-9_]*\*\))+)$')
+    if (-not $matched.Success) { return $false }
+    $parts = Get-NightlyBareTypeParts -ClassName ([string]@($Classes)[0])
+    if ($null -eq $parts -or $parts.Namespace -cne $matched.Groups[1].Value -or $parts.Type -cne $matched.Groups[2].Value) { return $false }
+    $operands = @(foreach ($op in [regex]::Matches($matched.Groups[3].Value, '\(([A-Za-z_][A-Za-z0-9_]*)\*\)')) { $op.Groups[1].Value })
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($op in $operands) { if (-not $seen.Add([string]$op)) { return $false } }
+    return ((Get-NightlyPrefixUnsafeNames -Names $operands).Count -eq 0)
+}
+
+function Split-NightlyOversizedClass {
+    # CARD-1410: exact-method chunks. Methods that prefix a sibling launch
+    # alone on the plain exact form; the rest pack into (Name*) OR groups.
+    param($Parts, [object[]]$Nodes, [string[]]$UniverseMethods, [string]$SourceId, [ref]$Index)
+    $unsafe = Get-NightlyPrefixUnsafeNames -Names $UniverseMethods
+    $items = New-Object System.Collections.ArrayList
+    foreach ($method in @($Nodes | Group-Object { [string]$_.Method })) {
+        $methodNodes = @($method.Group)
+        $cost = Get-NightlyLaunchClassCost -Nodes $methodNodes -TypeName $Parts.Type -Bare $Parts.Bare
+        [void]$items.Add([pscustomobject]@{ Key = [string]$method.Name; Method = [string]$method.Name; Nodes = $methodNodes; Seconds = [double]$cost.Seconds; Unsafe = $unsafe.Contains([string]$method.Name) })
+    }
+    $bins = @(Split-NightlyItemsBySeconds -Items @($items | Where-Object { -not $_.Unsafe }) -TargetSeconds ([double]$script:NightlyLaunchTargetSeconds) -MaxOperands ([int]$script:NightlyLaunchMaxGroupOperands))
+    foreach ($item in @($items | Where-Object { $_.Unsafe } | Sort-Object Method)) {
+        $alone = [pscustomobject]@{ Items = (New-Object System.Collections.ArrayList); Seconds = [double]$item.Seconds; Closed = $true }
+        [void]$alone.Items.Add($item)
+        $bins += $alone
+    }
+    foreach ($bin in $bins) {
+        $methods = @($bin.Items | ForEach-Object { [string]$_.Method } | Sort-Object)
+        $chunkNodes = @($bin.Items | ForEach-Object { $_.Nodes } | ForEach-Object { $_ })
+        $exactFilter = ''
+        $methodFilter = ''
+        if ($methods.Count -eq 1) { $exactFilter = '/*/{0}/{1}/{2}' -f $Parts.Namespace, $Parts.Type, $methods[0] }
+        else { $methodFilter = New-NightlyMethodGroupFilter -Namespace $Parts.Namespace -TypeName $Parts.Type -Methods $methods }
+        $Index.Value = [int]$Index.Value + 1
+        [pscustomobject]@{
+            id = ('{0}-split-{1}' -f $SourceId, $Index.Value)
+            classes = @($Parts.Bare)
+            exactFilter = $exactFilter
+            groupFilter = ''
+            methodFilter = $methodFilter
+            nodes = $chunkNodes
+            nodeCount = $chunkNodes.Count
+            seconds = [Math]::Round([double]$bin.Seconds, 1)
+        }
+    }
 }
 
 function ConvertTo-NightlyProfileLaunchGroups {
     param([object[]]$Leaves, [object[]]$DiscoveryNodes)
     $exact = New-Object System.Collections.ArrayList
     $classItems = New-Object System.Collections.ArrayList
+    $oversized = New-Object System.Collections.ArrayList
     $nodesByBare = @{}
     foreach ($node in @($DiscoveryNodes)) {
         if ($null -eq $node) { continue }
@@ -239,6 +329,9 @@ function ConvertTo-NightlyProfileLaunchGroups {
         $mark = $id.IndexOf('-profile-')
         if ($mark -gt 0) { $sourceId = $id.Substring(0, $mark) }
         if (-not [string]::IsNullOrWhiteSpace([string]$leaf.exactFilter)) {
+            $leafParts = Get-NightlyBareTypeParts -ClassName ([string]@($leaf.classes)[0])
+            $leafCost = Get-NightlyLaunchClassCost -Nodes @($leaf.nodes) -TypeName $(if ($leafParts) { $leafParts.Type } else { '' }) -Bare $(if ($leafParts) { $leafParts.Bare } else { '' })
+            Add-Member -InputObject $leaf -NotePropertyName seconds -NotePropertyValue ([Math]::Round([double]$leafCost.Seconds, 1)) -Force
             [void]$exact.Add($leaf)
             continue
         }
@@ -246,9 +339,14 @@ function ConvertTo-NightlyProfileLaunchGroups {
         if ($null -eq $parts) { throw 'profile-discovery-namespace-required' }
         $known = @()
         if ($nodesByBare.ContainsKey($parts.Bare)) { $known = @($nodesByBare[$parts.Bare].ToArray()) }
-        $cost = Get-NightlyLaunchClassCost -Nodes $known -TypeName $parts.Type
+        $cost = Get-NightlyLaunchClassCost -Nodes $known -TypeName $parts.Type -Bare $parts.Bare
+        Add-Member -InputObject $parts -NotePropertyName Key -NotePropertyValue ([string]$parts.Bare)
         Add-Member -InputObject $parts -NotePropertyName NodeCount -NotePropertyValue ([int]$cost.NodeCount)
-        Add-Member -InputObject $parts -NotePropertyName Weight -NotePropertyValue ([int]$cost.Weight)
+        Add-Member -InputObject $parts -NotePropertyName Seconds -NotePropertyValue ([double]$cost.Seconds)
+        if ($known.Count -gt 0 -and [double]$cost.Seconds -gt [double]$script:NightlyLaunchLoneClassBudgetSeconds) {
+            [void]$oversized.Add([pscustomobject]@{ Parts = $parts; Nodes = $known })
+            continue
+        }
         [void]$classItems.Add($parts)
     }
 
@@ -259,78 +357,41 @@ function ConvertTo-NightlyProfileLaunchGroups {
             $byNs[$item.Namespace] = New-Object System.Collections.ArrayList
         }
         [void]$byNs[$item.Namespace].Add($item)
-        if (-not $universe.ContainsKey($item.Namespace)) {
-            $universe[$item.Namespace] = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        }
-        [void]$universe[$item.Namespace].Add([string]$item.Type)
     }
     foreach ($node in @($DiscoveryNodes)) {
         $parts = Get-NightlyBareTypeParts -ClassName ([string]$node.ClassName)
         if ($null -eq $parts) { continue }
         if (-not $universe.ContainsKey($parts.Namespace)) {
-            $universe[$parts.Namespace] = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            $universe[$parts.Namespace] = New-Object System.Collections.Generic.List[string]
         }
-        [void]$universe[$parts.Namespace].Add([string]$parts.Type)
+        $universe[$parts.Namespace].Add([string]$parts.Type)
     }
-
-    $unsafe = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($ns in @($universe.Keys)) {
-        $names = @($universe[$ns] | Sort-Object { $_.Length }, { $_ })
-        for ($i = 0; $i -lt $names.Count; $i++) {
-            for ($j = $i + 1; $j -lt $names.Count; $j++) {
-                if (Test-NightlyTypeNamePrefixes -Left $names[$i] -Right $names[$j]) {
-                    [void]$unsafe.Add($ns + '|' + $names[$i])
-                    break
-                }
-            }
+    foreach ($item in @($classItems)) {
+        if (-not $universe.ContainsKey($item.Namespace)) {
+            $universe[$item.Namespace] = New-Object System.Collections.Generic.List[string]
         }
-    }
-
-    $n = $classItems.Count
-    $selected = $null
-    if ($n -gt 0) {
-        $desired = 50
-        $minSize = 1
-        $maxSize = $n
-        if ($n -ge 40) {
-            $minSize = [Math]::Max(1, [int]([Math]::Floor($n / 60.0)))
-            $maxSize = [Math]::Max($minSize, [int]([Math]::Ceiling($n / 40.0)))
-        } else {
-            $maxSize = [Math]::Max(1, [Math]::Min(30, $n))
-            $minSize = $maxSize
-            $desired = [Math]::Max(1, [int]([Math]::Ceiling($n / [double]$maxSize)))
-        }
-        $bestScore = [int]::MaxValue
-        $cap = [int]$script:NightlyLaunchGroupNodeCap
-        foreach ($size in ($minSize..$maxSize)) {
-            $candidate = Split-NightlyClassGroupsAtSize -ByNamespace $byNs -Unsafe $unsafe -MaxSize $size -MaxNodes $cap -MaxWeight $cap
-            $count = @($candidate.Groups).Count
-            $inRange = ($n -lt 40) -or ($count -ge 40 -and $count -le 60)
-            $distance = [Math]::Abs($count - $desired)
-            $score = if ($inRange) { $distance } else { 1000 + $distance }
-            if ($score -lt $bestScore) {
-                $bestScore = $score
-                $selected = $candidate.Groups
-            }
-        }
+        $universe[$item.Namespace].Add([string]$item.Type)
     }
 
     $groups = New-Object System.Collections.ArrayList
     $index = 0
-    if ($null -ne $selected) {
-        foreach ($bin in @($selected)) {
-            $items = @($bin)
+    foreach ($ns in (@($byNs.Keys) | Sort-Object)) {
+        $unsafe = Get-NightlyPrefixUnsafeNames -Names @($universe[$ns].ToArray())
+        $pool = @($byNs[$ns] | Where-Object { -not $unsafe.Contains([string]$_.Type) })
+        $bins = @(Split-NightlyItemsBySeconds -Items $pool -TargetSeconds ([double]$script:NightlyLaunchTargetSeconds) -MaxOperands ([int]$script:NightlyLaunchMaxGroupOperands))
+        foreach ($item in @($byNs[$ns] | Where-Object { $unsafe.Contains([string]$_.Type) } | Sort-Object Bare)) {
+            $alone = [pscustomobject]@{ Items = (New-Object System.Collections.ArrayList); Seconds = [double]$item.Seconds; Closed = $true }
+            [void]$alone.Items.Add($item)
+            $bins += $alone
+        }
+        foreach ($bin in $bins) {
+            $items = @($bin.Items)
             if ($items.Count -eq 0) { continue }
             $index++
-            $ns = [string]$items[0].Namespace
             $types = @($items | ForEach-Object { [string]$_.Type })
             $bares = @($items | ForEach-Object { [string]$_.Bare } | Sort-Object)
             $sumNodes = 0
-            $sumWeight = 0
-            foreach ($item in $items) {
-                $sumNodes += Get-NightlyPackedItemNodes $item
-                $sumWeight += Get-NightlyPackedItemWeight $item
-            }
+            foreach ($item in $items) { $sumNodes += [int]$item.NodeCount }
             $filter = ''
             if ($types.Count -ge 2) { $filter = New-NightlyClassGroupFilter -Namespace $ns -TypeNames $types }
             [void]$groups.Add([pscustomobject]@{
@@ -338,10 +399,18 @@ function ConvertTo-NightlyProfileLaunchGroups {
                 classes = $bares
                 exactFilter = ''
                 groupFilter = $filter
+                methodFilter = ''
                 nodes = @()
                 nodeCount = $sumNodes
-                weight = $sumWeight
+                seconds = [Math]::Round([double]$bin.Seconds, 1)
             })
+        }
+    }
+    $splitIndex = 0
+    foreach ($big in @($oversized | Sort-Object { [string]$_.Parts.Bare })) {
+        $universeMethods = @($big.Nodes | ForEach-Object { [string]$_.Method })
+        foreach ($chunk in @(Split-NightlyOversizedClass -Parts $big.Parts -Nodes $big.Nodes -UniverseMethods $universeMethods -SourceId $sourceId -Index ([ref]$splitIndex))) {
+            [void]$groups.Add($chunk)
         }
     }
     foreach ($leaf in @($exact)) { [void]$groups.Add($leaf) }
@@ -483,7 +552,8 @@ function Get-NightlyNativeExecutionArguments {
         [string]$DiagnosticDirectory,
         [string[]]$Classes,
         [string]$ExactFilter = '',
-        [string]$GroupFilter = ''
+        [string]$GroupFilter = '',
+        [string]$MethodFilter = ''
     )
     if ([string]::IsNullOrWhiteSpace($TrxPath)) { throw 'missing trx path' }
     if ([string]::IsNullOrWhiteSpace($DiagnosticDirectory)) { throw 'missing diagnostic directory' }
@@ -501,13 +571,19 @@ function Get-NightlyNativeExecutionArguments {
         '--diagnostic',
         '--diagnostic-output-directory', $DiagnosticDirectory
     )
-    if (-not [string]::IsNullOrWhiteSpace($ExactFilter) -and -not [string]::IsNullOrWhiteSpace($GroupFilter)) {
+    $filterCount = @(@($ExactFilter, $GroupFilter, $MethodFilter) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
+    if ($filterCount -gt 1) {
         throw 'ambiguous-chunk-filter'
     }
     if ($ExactFilter) {
         if ($ExactFilter -notmatch '^/\*/[A-Za-z_][A-Za-z0-9_.]*/[A-Za-z_][A-Za-z0-9_]*/[A-Za-z_][A-Za-z0-9_]*$') { throw 'invalid-exact-filter' }
         $nativeArgs += '--treenode-filter'
         $nativeArgs += $ExactFilter
+    } elseif (-not [string]::IsNullOrWhiteSpace($MethodFilter)) {
+        # CARD-1410: /*/Namespace/Type/(MethodA*)|(MethodB*) . A prefix operand is refused.
+        if (-not (Test-NightlyMethodGroupFilter -Classes $Classes -MethodFilter $MethodFilter)) { throw 'invalid-method-filter' }
+        $nativeArgs += '--treenode-filter'
+        $nativeArgs += $MethodFilter
     } elseif (-not [string]::IsNullOrWhiteSpace($GroupFilter)) {
         # CARD-0403: /*/Namespace/(ClassA*)|(ClassB*)/* . A prefix operand is refused.
         if (-not (Test-NightlyClassGroupFilter -Classes $Classes -GroupFilter $GroupFilter)) { throw 'invalid-group-filter' }
@@ -983,7 +1059,9 @@ function Invoke-AntiphonNightlyTests {
                         if ($chunk.classes -and @($chunk.classes).Count -gt 0) { $chunkClasses = @($chunk.classes) }
                         $groupFilter = ''
                         if ($chunk.PSObject.Properties.Name -contains 'groupFilter') { $groupFilter = [string]$chunk.groupFilter }
-                        $args = @(Get-NightlyNativeExecutionArguments -TrxPath $trxPath -DiagnosticDirectory $execDiagDir -Classes $chunkClasses -ExactFilter ([string]$chunk.exactFilter) -GroupFilter $groupFilter)
+                        $methodFilter = ''
+                        if ($chunk.PSObject.Properties.Name -contains 'methodFilter') { $methodFilter = [string]$chunk.methodFilter }
+                        $args = @(Get-NightlyNativeExecutionArguments -TrxPath $trxPath -DiagnosticDirectory $execDiagDir -Classes $chunkClasses -ExactFilter ([string]$chunk.exactFilter) -GroupFilter $groupFilter -MethodFilter $methodFilter)
                         $run = Invoke-NightlyOwnedProcess -FilePath $exe -ArgumentList $args -WorkingDirectory $RepoRoot `
                             -TimeoutMilliseconds (Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key $suiteId -Fallback 3600000) `
                             -Environment $envMap -LogPath $logPath
@@ -1026,9 +1104,9 @@ function Invoke-AntiphonNightlyTests {
                         $discPath = Join-Path $LogRoot ('{0}-{1}.discovery.json' -f $suiteId, $chunk.id)
                         if ($profileDiscovery) {
                             $discPath = $profileDiscoveryPath
-                            if ($chunk.exactFilter) {
+                            if ($chunk.exactFilter -or (($chunk.PSObject.Properties.Name -contains 'methodFilter') -and $chunk.methodFilter)) {
                                 # The full discovery remains the suite union authority;
-                                # the leaf verdict checks just this method's expansion.
+                                # the leaf verdict checks just this chunk's method expansions.
                                 $discPath = Join-Path $LogRoot ('{0}-{1}-selection.discovery.json' -f $suiteId, $chunk.id)
                                 $leaf = ConvertTo-NightlyDiscoveryDocument -Nodes $chunk.nodes -AssemblyHash $profileDiscovery.assemblyHash
                                 Write-NightlyDiscoveryDocument -Path $discPath -Document $leaf

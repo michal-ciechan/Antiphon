@@ -1744,9 +1744,10 @@ function Test-C1410_MeasuredCostGroups {
     # CARD-1410 (supersedes the CARD-1404 120-node cap case). The real
     # Antiphon.Tests listing (scripts/fixtures/nightly/c1410-antiphon-listing.txt,
     # 19012 nodes) is packed by estimated serial seconds: measured rows from
-    # nightly-class-costs.json, else 1.5 s per node, Slow 15 s, Land-type Slow
-    # 60 s, and a type naming Land, Delivery or Check anywhere doubles. Every
-    # launch must stay under watchdogs.antiphon, a multi-class or multi-method
+    # nightly-class-costs.json, else 0.5 s per node, Slow 1.5 s, Slow in a
+    # Land or Delivery type 4 s, and a type naming Land, Delivery or Check
+    # anywhere doubles. The suite estimates 5-8 h in 60-100 launches; every
+    # launch stays under watchdogs.antiphon, a multi-class or multi-method
     # launch under the 15-minute target, every required node launched once.
     $detail = ''
     $ok = $false
@@ -1778,10 +1779,11 @@ function Test-C1410_MeasuredCostGroups {
             }
         }
         $realCount = $nodes.Count
-        # Suffix hazard: an oversized class whose method Run prefixes RunLater.
-        foreach ($method in @('Run', 'RunLater', 'Alpha', 'Beta')) {
-            for ($k = 0; $k -lt 20; $k++) {
-                [void]$nodes.Add([pscustomobject]@{ ClassName = 'Antiphon.Tests.C1410.C1410SplitTests'; Type = 'C1410SplitTests'; Method = $method; Uid = ('c1410.' + $method + '.' + $k); Categories = @('Slow') })
+        # Suffix hazard: an oversized land class whose method Run prefixes RunLater.
+        $synthetic = 'Antiphon.Tests.C1410.C1410LandSplitTests'
+        foreach ($shape in @(@('Run', 80), @('RunLater', 80), @('Alpha', 30), @('Beta', 30), @('Gamma', 30), @('Delta', 30), @('Epsilon', 30), @('Zeta', 30))) {
+            for ($k = 0; $k -lt [int]$shape[1]; $k++) {
+                [void]$nodes.Add([pscustomobject]@{ ClassName = $synthetic; Type = 'C1410LandSplitTests'; Method = [string]$shape[0]; Uid = ('c1410.' + [string]$shape[0] + '.' + $k); Categories = @('Slow') })
             }
         }
         $nodeArray = @($nodes.ToArray())
@@ -1810,12 +1812,14 @@ function Test-C1410_MeasuredCostGroups {
             if ($measured.ContainsKey($Bare)) { return [double]$measured[$Bare] }
             $type = $Bare.Substring($Bare.LastIndexOf('.') + 1)
             $slow = (@($Node.Categories) -ccontains 'Slow')
-            $unit = 1.5
-            if ($slow) { $unit = $(if ($type.Contains('Land')) { 60.0 } else { 15.0 }) }
+            $unit = 0.5
+            if ($slow) { $unit = $(if ($type.Contains('Land') -or $type.Contains('Delivery')) { 4.0 } else { 1.5 }) }
             if ($type.Contains('Land') -or $type.Contains('Delivery') -or $type.Contains('Check')) { $unit = $unit * 2 }
             return $unit
         }
         $covered = @{}
+        $suiteSeconds = 0.0
+        $methodGroups = 0
         $maxSeconds = 0.0
         $maxId = ''
         $overTarget = New-Object System.Collections.Generic.List[string]
@@ -1848,7 +1852,9 @@ function Test-C1410_MeasuredCostGroups {
             $methods = @{}
             foreach ($node in $hits) {
                 $bare = Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)
-                $seconds += Get-C1410Seconds -Node $node -Bare $bare
+                $unit = Get-C1410Seconds -Node $node -Bare $bare
+                $seconds += $unit
+                if ($bare -cne $synthetic) { $suiteSeconds += $unit }
                 $methods[[string]$node.Method] = $true
                 $uid = [string]$node.Uid
                 if (-not $covered.ContainsKey($uid)) { $covered[$uid] = 0 }
@@ -1857,6 +1863,7 @@ function Test-C1410_MeasuredCostGroups {
             if ($seconds -gt $maxSeconds) { $maxSeconds = $seconds; $maxId = [string]$chunk.id + '(' + (@($chunk.classes) -join ';') + ')' }
             $single = (@($chunk.classes).Count -eq 1 -and (($ef -or $mf) -and $methods.Count -eq 1 -or -not ($ef -or $mf)))
             if ($seconds -gt ($target + 0.01) -and -not $single) { [void]$overTarget.Add([string]$chunk.id) }
+            if ($mf) { $methodGroups++ }
             if ($ef -or $mf) { $splitIds[[string]@($chunk.classes)[0]] = 1 + $(if ($splitIds.ContainsKey([string]@($chunk.classes)[0])) { [int]$splitIds[[string]@($chunk.classes)[0]] } else { 0 }) }
         }
         $missing = 0
@@ -1868,11 +1875,11 @@ function Test-C1410_MeasuredCostGroups {
         }
         $extra = $covered.Count - ($required.Count - $missing)
         $family = (Test-NightlyHeavyFamilyType -TypeName 'AgentTaskLandPublicationTests') -and (Test-NightlyHeavyFamilyType -TypeName 'AgentTaskDeliveryWatchdogTests') -and (Test-NightlyHeavyFamilyType -TypeName 'AgentTaskCheckSweepTests') -and -not (Test-NightlyHeavyFamilyType -TypeName 'AgentTaskReplyIntegrationTests')
-        $runAlone = @($plan | Where-Object { [string]$_.exactFilter -ceq '/*/Antiphon.Tests.C1410/C1410SplitTests/Run' })
+        $runAlone = @($plan | Where-Object { [string]$_.exactFilter -ceq '/*/Antiphon.Tests.C1410/C1410LandSplitTests/Run' })
         $runOr = @($plan | Where-Object { ($_.PSObject.Properties.Name -contains 'methodFilter') -and ([string]$_.methodFilter).Contains('(Run*)') })
         $rejected = $false
         try {
-            [void]@(Get-NightlyNativeExecutionArguments -TrxPath (Join-Path $ResultsDirectory 'c1410-bad.trx') -DiagnosticDirectory $ResultsDirectory -Classes @('Antiphon.Tests.C1410.C1410SplitTests') -MethodFilter '/*/Antiphon.Tests.C1410/C1410SplitTests/(Run*)|(RunLater*)')
+            [void]@(Get-NightlyNativeExecutionArguments -TrxPath (Join-Path $ResultsDirectory 'c1410-bad.trx') -DiagnosticDirectory $ResultsDirectory -Classes @($synthetic) -MethodFilter '/*/Antiphon.Tests.C1410/C1410LandSplitTests/(Run*)|(RunLater*)')
         } catch { if ([string]$_.Exception.Message -ceq 'invalid-method-filter') { $rejected = $true } }
         $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'antiphon' -Fallback 3600000
         $nightlyOk = ($nightlyEx.Count -eq 0 -and @($nightlyPlan).Count -eq 1 -and [string]$nightlyPlan[0].id -eq 'all')
@@ -1880,18 +1887,19 @@ function Test-C1410_MeasuredCostGroups {
         $launches = @($plan).Count
         $reasons = New-Object System.Collections.Generic.List[string]
         if ($realCount -ne 19012) { [void]$reasons.Add('listing') }
-        if ($launches -lt 60 -or $launches -gt 180) { [void]$reasons.Add('launch-count') }
+        if ($launches -lt 60 -or $launches -gt 100) { [void]$reasons.Add('launch-count') }
+        if ($suiteSeconds -lt 18000 -or $suiteSeconds -gt 28800) { [void]$reasons.Add('suite-hours') }
         if ($maxSeconds -ge $watchdogSeconds) { [void]$reasons.Add('watchdog-budget') }
         if ($overTarget.Count -ne 0) { [void]$reasons.Add('target') }
         if ($missing -ne 0 -or $double -ne 0 -or $extra -ne 0) { [void]$reasons.Add('census') }
-        if ($invalid.Count -ne 0 -or -not $rejected -or $runAlone.Count -ne 1 -or $runOr.Count -ne 0) { [void]$reasons.Add('suffix') }
-        foreach ($big in @('Antiphon.Tests.Scripts.RemoteScriptContractTests', 'Antiphon.Tests.Application.DelegationDispatchRecoveryBoundaryTests', 'Antiphon.Tests.Application.AttentionServiceTests', 'Antiphon.Tests.Application.AgentTaskLandPublicationTests')) {
+        if ($invalid.Count -ne 0 -or -not $rejected -or $runAlone.Count -ne 1 -or $runOr.Count -ne 0 -or $methodGroups -lt 1) { [void]$reasons.Add('suffix') }
+        foreach ($big in @('Antiphon.Tests.Scripts.RemoteScriptContractTests', 'Antiphon.Tests.Application.DelegationDispatchRecoveryBoundaryTests', $synthetic)) {
             if (-not $splitIds.ContainsKey($big) -or [int]$splitIds[$big] -lt 2) { [void]$reasons.Add('split:' + $big.Substring($big.LastIndexOf('.') + 1)) }
         }
         if (-not $family) { [void]$reasons.Add('family-anywhere') }
         if (-not $nightlyOk -or -not $emptyOk -or $watchdog -ne 3600000) { [void]$reasons.Add('nightly-watchdog') }
         $ok = ($reasons.Count -eq 0)
-        $detail = 'launches=' + $launches + ' maxEstimatedSeconds=' + [Math]::Round($maxSeconds, 1) + ' maxLaunch=' + $maxId + ' overTarget=' + $overTarget.Count + ' required=' + $required.Count + ' missing=' + $missing + ' double=' + $double + ' extra=' + $extra + ' splitClasses=' + $splitIds.Count + ' invalid=' + ($invalid -join ',') + ' watchdog=' + $watchdog + ' reasons=' + ($reasons -join ',')
+        $detail = 'launches=' + $launches + ' suiteHours=' + [Math]::Round($suiteSeconds / 3600, 2) + ' methodGroups=' + $methodGroups + ' maxEstimatedSeconds=' + [Math]::Round($maxSeconds, 1) + ' maxLaunch=' + $maxId + ' overTarget=' + $overTarget.Count + ' required=' + $required.Count + ' missing=' + $missing + ' double=' + $double + ' extra=' + $extra + ' splitClasses=' + $splitIds.Count + ' invalid=' + ($invalid -join ',') + ' watchdog=' + $watchdog + ' reasons=' + ($reasons -join ',')
         Write-Host $detail
     } catch {
         $detail = [string]$_.Exception.Message + ' at ' + [string]$_.InvocationInfo.PositionMessage
