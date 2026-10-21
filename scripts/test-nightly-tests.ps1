@@ -1690,7 +1690,7 @@ function Test-C1397_RcAntiphonLaunchGroups {
         $fixtureArg = [string]$argvByClass['Antiphon.Tests.Agents.C1397FixtureTests']
         $prefixOk = ($prefixArg.Contains('/*/Antiphon.Tests.Application/C1397PrefixTests/*') -and -not $prefixArg.Contains('(C1397PrefixTests*)'))
         $heldOk = ($heldArg.Contains('/*/Antiphon.Tests.Application/C1397HeldTests/*') -and -not $heldArg.Contains('(C1397HeldTests*)'))
-        $fixtureOk = ($fixtureArg.Contains('/C1397FixtureTests/') -and -not $fixtureArg.Contains('('))
+        $fixtureOk = ($fixtureArg.Contains('C1397FixtureTests') -and -not $fixtureArg.Contains('C1397Factory'))
         $unsafeOr = $false
         foreach ($chunk in $orChunks) {
             $bare0 = Get-NightlyBareClassIdentity -Name ([string]@($chunk.classes)[0])
@@ -1732,6 +1732,7 @@ function Test-C1397_RcAntiphonLaunchGroups {
         if (-not $nightlyOk -or -not $emptyOk -or -not $guardOk -or $watchdog -ne 3600000) { [void]$reasons.Add('nightly-watchdog') }
         $ok = ($reasons.Count -eq 0)
         $detail = 'classLaunches=' + $classChunks.Count + ' exact=' + $exactChunks.Count + ' total=' + @($plan).Count + ' leaves=' + @($leaves).Count + ' or=' + $orChunks.Count + ' maxOr=' + $maxOr + ' invalid=' + $invalid.Count + ' dup=' + $dup + ' watchdog=' + $watchdog + ' reasons=' + ($reasons -join ',')
+        Write-Host $detail
     } catch {
         $detail = [string]$_.Exception.Message
         $ok = $false
