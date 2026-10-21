@@ -19,8 +19,8 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// PR 5 of the Telegram bot agents plan: <c>Agent.SystemPromptAppend</c> flows into
-/// <c>--append-system-prompt</c> on every interactive ClaudeCode launch (fresh, resume, and the
-/// resume→fresh fallback), and the launch notes (bootstrap / restart) are delivered through the
+/// <c>--append-system-prompt</c> on every interactive ClaudeCode launch (fresh and resume; CARD-0466
+/// removed the resume→fresh fallback), and the launch notes (bootstrap / restart) are delivered through the
 /// verified queue path with the right body per branch. Launches run through the REAL
 /// AgentControlService → AgentSessionLaunchQueue → AgentSessionService chain; the adapter factory
 /// hands out FakeAgentProtocolAdapters that self-register in the runtime so note delivery reaches
@@ -317,47 +317,35 @@ public class AgentSystemPromptLaunchTests
     }
 
     [Test]
-    public async Task Resume_not_found_fallback_delivers_fresh_bootstrap()
+    public async Task Resume_not_found_holds_continuity_without_a_fresh_bootstrap()
     {
         await using var h = await CreateHarnessAsync(alwaysOn: true);
         await SetPreambleAsync(h, Template);
         await EndSessionAsync(h, SessionStatus.Stopped);
         await h.Runtime.DisposeSessionAsync(h.SessionId);
 
-        // First adapter (the --resume attempt) dies with Claude's session-not-found message; the
-        // fallback relaunch (same session row, fresh conversation) must BOOTSTRAP, not restart-note.
+        // The --resume attempt dies with Claude's session-not-found message. CARD-0466 (344125472)
+        // removed the same-ID fresh relaunch: the failure classifies ContinuityUnavailable and
+        // holds the agent NativeSessionMissing (AgentSessionService.cs:475-477), so no replacement
+        // conversation is created and nothing is bootstrapped.
         Factory(h).ConfigureNext.Enqueue(a =>
             a.ThrowOnStart = new InvalidOperationException(
                 "No conversation found with session ID: " + h.SessionId));
 
         await StartAsync(h, fresh: false);
 
-        var factory = Factory(h);
-        factory.Created.Count.ShouldBe(2, "resume attempt + fresh fallback");
-        factory.Created[1].StartedArgs.ShouldContain("--session-id");
-        factory.Created[1].StartedArgs.ShouldNotContain("--resume");
-        factory.Created[1].SubmittedBodies.ShouldBe(
-            [ChannelPreamble.WithSessionTag(ChannelPreamble.BootstrapBody, h.SessionId)]);
-    }
-
-    [Test]
-    public async Task Fallback_with_stale_mid_turn_transcript_still_delivers_bootstrap()
-    {
-        await using var h = await CreateHarnessAsync(alwaysOn: true);
-        await SetPreambleAsync(h, Template);
-        // The reused session row carries activity after its last TurnEnd — IsWorkingAsync reads
-        // true, which would strand a WhenIdle note forever. This pins the Now-mode rationale.
-        await h.MarkWorkingAsync();
-        await EndSessionAsync(h, SessionStatus.Stopped);
-        await h.Runtime.DisposeSessionAsync(h.SessionId);
-        Factory(h).ConfigureNext.Enqueue(a =>
-            a.ThrowOnStart = new InvalidOperationException(
-                "No conversation found with session ID: " + h.SessionId));
-
-        await StartAsync(h, fresh: false);
-
-        Factory(h).Created[1].SubmittedBodies.ShouldBe(
-            [ChannelPreamble.WithSessionTag(ChannelPreamble.BootstrapBody, h.SessionId)]);
+        var attempt = Factory(h).Created.ShouldHaveSingleItem("one resume attempt, no fresh fallback");
+        attempt.StartedArgs.ShouldContain("--resume");
+        attempt.SubmittedBodies.ShouldBeEmpty();
+        await using var db = CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+        session.Status.ShouldBe(SessionStatus.Failed);
+        session.RestartFailureKind.ShouldBe(RestartFailureKind.ContinuityUnavailable);
+        var state = await db.AgentSupervisionStates.SingleAsync(s => s.AgentId == h.AgentId);
+        state.ContinuityReason.ShouldBe(StandingContinuityReason.NativeSessionMissing);
+        state.ContinuitySessionId.ShouldBe(h.SessionId);
+        (await db.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
+            && i.Kind == AgentIncidentKind.StandingContinuityHeld)).ShouldBe(1);
     }
 
     // CARD-0233 S4: a Mode.Now launch note typed into a composer that was already answering a
