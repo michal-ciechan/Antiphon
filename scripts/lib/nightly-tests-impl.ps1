@@ -56,10 +56,215 @@ function Get-NightlyProfileExecutionChunks {
     }
 }
 
+function Get-NightlyBareTypeParts {
+    param([string]$ClassName)
+    $bare = Get-NightlyBareClassIdentity -Name $ClassName
+    if ([string]::IsNullOrWhiteSpace($bare)) { return $null }
+    $dot = $bare.LastIndexOf('.')
+    if ($dot -lt 1) { return $null }
+    return [pscustomobject]@{
+        Bare = $bare
+        Namespace = $bare.Substring(0, $dot)
+        Type = $bare.Substring($dot + 1)
+    }
+}
+
+function Test-NightlyTypeNamePrefixes {
+    param([string]$Left, [string]$Right)
+    if ([string]::IsNullOrEmpty($Left) -or [string]::IsNullOrEmpty($Right)) { return $false }
+    if ($Left.Length -ge $Right.Length) { return $false }
+    return $Right.StartsWith($Left, [StringComparison]::Ordinal)
+}
+
+function New-NightlyClassGroupFilter {
+    param([string]$Namespace, [string[]]$TypeNames)
+    $ordered = @($TypeNames | Sort-Object)
+    $parts = foreach ($type in $ordered) { '(' + $type + '*)' }
+    return ('/*/' + $Namespace + '/' + ($parts -join '|') + '/*')
+}
+
+function Test-NightlyClassGroupFilter {
+    param([string[]]$Classes, [string]$GroupFilter)
+    if ([string]::IsNullOrWhiteSpace($GroupFilter)) { return $false }
+    $matched = [regex]::Match($GroupFilter, '^/\*/([A-Za-z_][A-Za-z0-9_.]*)/(\([A-Za-z_][A-Za-z0-9_]*\*\)(\|\([A-Za-z_][A-Za-z0-9_]*\*\))*)/\*$')
+    if (-not $matched.Success) { return $false }
+    $ns = $matched.Groups[1].Value
+    $body = $matched.Groups[2].Value
+    $operands = @()
+    foreach ($op in [regex]::Matches($body, '\(([A-Za-z_][A-Za-z0-9_]*)\*\)')) {
+        $operands += $op.Groups[1].Value
+    }
+    $classList = @($Classes)
+    if ($operands.Count -lt 2 -or $classList.Count -ne $operands.Count) { return $false }
+    $seen = @{}
+    foreach ($op in $operands) {
+        if ($seen.ContainsKey($op)) { return $false }
+        $seen[$op] = $true
+    }
+    for ($i = 0; $i -lt $operands.Count; $i++) {
+        for ($j = $i + 1; $j -lt $operands.Count; $j++) {
+            if (Test-NightlyTypeNamePrefixes -Left $operands[$i] -Right $operands[$j]) { return $false }
+            if (Test-NightlyTypeNamePrefixes -Left $operands[$j] -Right $operands[$i]) { return $false }
+        }
+    }
+    $have = @{}
+    foreach ($c in $classList) {
+        $parts = Get-NightlyBareTypeParts -ClassName ([string]$c)
+        if ($null -eq $parts -or $parts.Namespace -cne $ns) { return $false }
+        if (-not $have.ContainsKey($parts.Type)) { $have[$parts.Type] = 0 }
+        $have[$parts.Type] = [int]$have[$parts.Type] + 1
+    }
+    foreach ($op in $operands) {
+        if (-not $have.ContainsKey($op) -or [int]$have[$op] -ne 1) { return $false }
+    }
+    return $true
+}
+
+function Split-NightlyClassGroupsAtSize {
+    param($ByNamespace, $Unsafe, [int]$MaxSize)
+    $groups = New-Object System.Collections.ArrayList
+    foreach ($ns in (@($ByNamespace.Keys) | Sort-Object)) {
+        $singles = New-Object System.Collections.ArrayList
+        $pool = New-Object System.Collections.ArrayList
+        foreach ($item in @($ByNamespace[$ns] | Sort-Object Type, Bare)) {
+            $key = $ns + '|' + [string]$item.Type
+            if ($Unsafe.Contains($key)) { [void]$singles.Add($item) }
+            else { [void]$pool.Add($item) }
+        }
+        $bins = New-Object System.Collections.ArrayList
+        foreach ($item in $pool) {
+            $placed = $false
+            foreach ($bin in @($bins)) {
+                if ($bin.Count -ge $MaxSize) { continue }
+                [void]$bin.Add($item)
+                $placed = $true
+                break
+            }
+            if (-not $placed) {
+                $bin = New-Object System.Collections.ArrayList
+                [void]$bin.Add($item)
+                [void]$bins.Add($bin)
+            }
+        }
+        foreach ($bin in @($bins)) { [void]$groups.Add($bin) }
+        foreach ($item in @($singles)) {
+            $alone = New-Object System.Collections.ArrayList
+            [void]$alone.Add($item)
+            [void]$groups.Add($alone)
+        }
+    }
+    return [pscustomobject]@{ Groups = $groups }
+}
+
+function ConvertTo-NightlyProfileLaunchGroups {
+    param([object[]]$Leaves, [object[]]$DiscoveryNodes)
+    $exact = New-Object System.Collections.ArrayList
+    $classItems = New-Object System.Collections.ArrayList
+    $sourceId = 'all'
+    foreach ($leaf in @($Leaves)) {
+        $id = [string]$leaf.id
+        $mark = $id.IndexOf('-profile-')
+        if ($mark -gt 0) { $sourceId = $id.Substring(0, $mark) }
+        if (-not [string]::IsNullOrWhiteSpace([string]$leaf.exactFilter)) {
+            [void]$exact.Add($leaf)
+            continue
+        }
+        $parts = Get-NightlyBareTypeParts -ClassName ([string]@($leaf.classes)[0])
+        if ($null -eq $parts) { throw 'profile-discovery-namespace-required' }
+        [void]$classItems.Add($parts)
+    }
+
+    $byNs = @{}
+    $universe = @{}
+    foreach ($item in @($classItems)) {
+        if (-not $byNs.ContainsKey($item.Namespace)) {
+            $byNs[$item.Namespace] = New-Object System.Collections.ArrayList
+        }
+        [void]$byNs[$item.Namespace].Add($item)
+        if (-not $universe.ContainsKey($item.Namespace)) {
+            $universe[$item.Namespace] = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        }
+        [void]$universe[$item.Namespace].Add([string]$item.Type)
+    }
+    foreach ($node in @($DiscoveryNodes)) {
+        $parts = Get-NightlyBareTypeParts -ClassName ([string]$node.ClassName)
+        if ($null -eq $parts) { continue }
+        if (-not $universe.ContainsKey($parts.Namespace)) {
+            $universe[$parts.Namespace] = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        }
+        [void]$universe[$parts.Namespace].Add([string]$parts.Type)
+    }
+
+    $unsafe = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($ns in @($universe.Keys)) {
+        $names = @($universe[$ns] | Sort-Object { $_.Length }, { $_ })
+        for ($i = 0; $i -lt $names.Count; $i++) {
+            for ($j = $i + 1; $j -lt $names.Count; $j++) {
+                if (Test-NightlyTypeNamePrefixes -Left $names[$i] -Right $names[$j]) {
+                    [void]$unsafe.Add($ns + '|' + $names[$i])
+                    break
+                }
+            }
+        }
+    }
+
+    $n = $classItems.Count
+    $selected = $null
+    if ($n -gt 0) {
+        $desired = 50
+        $minSize = 1
+        $maxSize = $n
+        if ($n -ge 40) {
+            $minSize = [Math]::Max(1, [int]([Math]::Floor($n / 60.0)))
+            $maxSize = [Math]::Max($minSize, [int]([Math]::Ceiling($n / 40.0)))
+        } else {
+            $maxSize = [Math]::Max(1, [Math]::Min(30, $n))
+            $minSize = $maxSize
+            $desired = [Math]::Max(1, [int]([Math]::Ceiling($n / [double]$maxSize)))
+        }
+        $bestScore = [int]::MaxValue
+        foreach ($size in ($minSize..$maxSize)) {
+            $candidate = Split-NightlyClassGroupsAtSize -ByNamespace $byNs -Unsafe $unsafe -MaxSize $size
+            $count = @($candidate.Groups).Count
+            $inRange = ($n -lt 40) -or ($count -ge 40 -and $count -le 60)
+            $distance = [Math]::Abs($count - $desired)
+            $score = if ($inRange) { $distance } else { 1000 + $distance }
+            if ($score -lt $bestScore) {
+                $bestScore = $score
+                $selected = $candidate.Groups
+            }
+        }
+    }
+
+    $groups = New-Object System.Collections.ArrayList
+    $index = 0
+    if ($null -ne $selected) {
+        foreach ($bin in @($selected)) {
+            $items = @($bin)
+            if ($items.Count -eq 0) { continue }
+            $index++
+            $ns = [string]$items[0].Namespace
+            $types = @($items | ForEach-Object { [string]$_.Type })
+            $bares = @($items | ForEach-Object { [string]$_.Bare } | Sort-Object)
+            $filter = ''
+            if ($types.Count -ge 2) { $filter = New-NightlyClassGroupFilter -Namespace $ns -TypeNames $types }
+            [void]$groups.Add([pscustomobject]@{
+                id = ('{0}-group-{1}' -f $sourceId, $index)
+                classes = $bares
+                exactFilter = ''
+                groupFilter = $filter
+                nodes = @()
+            })
+        }
+    }
+    foreach ($leaf in @($exact)) { [void]$groups.Add($leaf) }
+    return @($groups.ToArray())
+}
+
 function Get-NightlyProfileLaunchPlan {
-    # Profile leaves stay one class, or one exact method, per chunk.
     param([object[]]$DiscoveryNodes, [object[]]$Chunks, [object[]]$Exclusions)
-    return @(Get-NightlyProfileExecutionChunks -DiscoveryNodes $DiscoveryNodes -Chunks $Chunks -Exclusions $Exclusions)
+    $leaves = @(Get-NightlyProfileExecutionChunks -DiscoveryNodes $DiscoveryNodes -Chunks $Chunks -Exclusions $Exclusions)
+    return @(ConvertTo-NightlyProfileLaunchGroups -Leaves $leaves -DiscoveryNodes $DiscoveryNodes)
 }
 
 function Resolve-NightlySuiteChunks {
@@ -217,8 +422,10 @@ function Get-NightlyNativeExecutionArguments {
         $nativeArgs += '--treenode-filter'
         $nativeArgs += $ExactFilter
     } elseif (-not [string]::IsNullOrWhiteSpace($GroupFilter)) {
-        # CARD-1397 groups replace this refusal with a suffix-safe CARD-0403 filter.
-        throw 'invalid-group-filter'
+        # CARD-0403: /*/Namespace/(ClassA*)|(ClassB*)/* . A prefix operand is refused.
+        if (-not (Test-NightlyClassGroupFilter -Classes $Classes -GroupFilter $GroupFilter)) { throw 'invalid-group-filter' }
+        $nativeArgs += '--treenode-filter'
+        $nativeArgs += $GroupFilter
     } elseif ($Classes -and @($Classes).Count -gt 0) {
         if (@($Classes).Count -ne 1) { throw 'multiple classes require split exact roster chunks' }
         $class = Get-NightlyBareClassIdentity -Name ([string]$Classes[0])
