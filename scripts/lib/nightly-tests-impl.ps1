@@ -917,6 +917,8 @@ function Invoke-AntiphonNightlyTests {
                 $suiteDiscoveryNodes = @()
                 $profileDiscovery = $null
                 $suiteCensus = $null
+                # CARD-1419: one discovery parse and census per suite, shared by every launch verdict.
+                $suiteDiscoveryIndex = New-NightlyDiscoveryIndex
                 if ($isNative -and $profileAware -and $profileExclusions.Count -gt 0) {
                     $exe = Join-Path $RepoRoot ('tests\{0}\bin\Debug\net9.0\{0}.exe' -f $suite.assembly)
                     $profileDiscoveryPath = Join-Path $LogRoot ($suiteId + '-profile.discovery.json')
@@ -924,8 +926,9 @@ function Invoke-AntiphonNightlyTests {
                         -DiagnosticDirectory (Join-Path $LogRoot ($suiteId + '-profile-discovery')) `
                         -LogPath (Join-Path $LogRoot ($suiteId + '-profile-discovery.log')) -WorkingDirectory $RepoRoot `
                         -Environment (Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId $suiteId)
-                    $suiteDiscoveryNodes = @((Read-NightlyDiscoveryDocument $profileDiscoveryPath).Nodes)
-                    $suiteCensus = Get-NightlyDiscoveryCensus $suiteDiscoveryNodes $profileExclusions -ProfileAware
+                    $suiteDiscoveryEntry = Get-NightlyDiscoveryIndexEntry -Index $suiteDiscoveryIndex -Path $profileDiscoveryPath
+                    $suiteDiscoveryNodes = @($suiteDiscoveryEntry.Document.Nodes)
+                    $suiteCensus = (Get-NightlyDiscoveryIndexView -Entry $suiteDiscoveryEntry -ProfileExclusions $profileExclusions -ProfileAware).Census
                     if (-not $suiteCensus.Ok) { throw 'profile-discovery-census-incomplete' }
                     $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $suiteDiscoveryNodes -Chunks $chunks -Exclusions $profileExclusions -ProfileAware:$profileAware -Native:$isNative)
                     if ($chunks.Count -eq 0) { throw 'zero-required-uid' }
@@ -1053,7 +1056,7 @@ function Invoke-AntiphonNightlyTests {
                             -RunDirectory $LogRoot -NotBeforeUtc $startedAt -ProcessExit ([int]$run.ExitCode) `
                             -Sha $Sha -ExpectedSha $Sha -GitRef $GitRef -ExpectedRef $GitRef `
                             -PolicyHash $policyHash -ExpectedPolicyHash $policyHash -RequiredClasses $required `
-                            -ProfileExclusions $profileExclusions -ProfileAware:$profileAware
+                            -ProfileExclusions $profileExclusions -ProfileAware:$profileAware -DiscoveryIndex $suiteDiscoveryIndex
                         if ($nativeVerdict.discoveryNodes -and @($nativeVerdict.discoveryNodes).Count -gt 0 -and $suiteDiscoveryNodes.Count -eq 0) {
                             $suiteDiscoveryNodes = @($nativeVerdict.discoveryNodes)
                         }
