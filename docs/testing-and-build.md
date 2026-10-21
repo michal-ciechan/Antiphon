@@ -1072,7 +1072,14 @@ alone no longer excludes a case - only a declared exclusion row with a reason an
 an owner does. Owner: [release gates](release-gates.md).
 Producer-owned `StateRoot` defaults to `C:\Antiphon\nightly` (Windows backslash
 paths). Lock acquisition is atomic (`FileMode.CreateNew`); a live owner is never
-replaced by age. `last-run.json` is the last attempt; `last-complete-green.json`
+replaced by age. A reader of `run.lock` opens with `FileShare.ReadWrite` so
+Windows can read it while the owner holds `FileAccess.Write` and `FileShare.Read`.
+`dead-owner-rebooted` applies only when both boot ids are registry `BootId`
+decimals. A Linux boot-id UUID change stays `lock-held`, and a lock whose
+`bootId` is still a `LastBootUpTime` string stays `lock-held` across one Windows
+reboot; both need the stale `run.lock` removed by hand. If the shared reopen
+after a reclaim publish fails, the winner still owns the lock and the run logs
+`reclaim-shared-reopen-failed`. `last-run.json` is the last attempt; `last-complete-green.json`
 advances only for scheduled master runs with `coverageComplete`, `testsPassed`
 and `reportDelivered`. Unchanged-SHA skipping is removed.
 
