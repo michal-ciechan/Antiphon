@@ -702,6 +702,121 @@ function Test-C487_PrerequisiteSettle {
         -Detail ('exit=' + $run.ExitCode + ' record=' + $recordPassed + ' state=' + $statePassed + ' summary=' + $summaryPassed + ' path=' + $summaryPath)
 }
 
+function Write-C1396ReadChild {
+    param([string]$Path)
+    $text = @'
+#requires -Version 5.1
+param(
+    [string]$CommonPath,
+    [string]$LockPath,
+    [string]$ResultPath
+)
+$ErrorActionPreference = 'Stop'
+try {
+    . $CommonPath
+    $record = Read-NightlyLockRecord -LockPath $LockPath
+    $seen = ''
+    if ($null -ne $record) { $seen = [string]$record.runId }
+    $out = [ordered]@{ Seen = $seen; Error = '' }
+    [System.IO.File]::WriteAllText($ResultPath, ($out | ConvertTo-Json -Compress))
+    exit 0
+} catch {
+    $err = [ordered]@{ Seen = ''; Error = [string]$_.Exception.Message }
+    try { [System.IO.File]::WriteAllText($ResultPath, ($err | ConvertTo-Json -Compress)) } catch { }
+    exit 1
+}
+'@
+    [System.IO.File]::WriteAllText($Path, $text.Replace("`r`n", "`n"))
+}
+
+function Get-C1396ReaderShare {
+    # The reader's own open call, read from its AST. Linux does not refuse
+    # FileShare.Read against a write-held handle, so this is the row that can
+    # go red here; the two reads below are the Windows proof.
+    $ast = (Get-Command -Name Read-NightlyLockRecord -CommandType Function).ScriptBlock.Ast
+    $calls = @($ast.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst]
+    }, $true))
+    $readAll = $false
+    $share = ''
+    foreach ($call in $calls) {
+        $member = [string]$call.Member.Extent.Text
+        $target = [string]$call.Expression.Extent.Text
+        if ($target -ne '[System.IO.File]') { continue }
+        if ($member -eq 'ReadAllText' -or $member -eq 'ReadAllBytes' -or $member -eq 'ReadAllLines') { $readAll = $true }
+        if ($member -eq 'Open' -and $call.Arguments.Count -eq 4) { $share = [string]$call.Arguments[3].Extent.Text }
+    }
+    return [pscustomobject]@{ ReadAll = $readAll; Share = $share }
+}
+
+function Test-C1396_WriteHeldLockReadable {
+    # CARD-1396 rc backport: the reader only. Owner mode is FileAccess.Write +
+    # FileShare.Read, the handle Enter keeps. Windows refuses File.ReadAllText
+    # (FileShare.Read) against that handle; this Linux host allows it.
+    $fx = New-RunFx
+    $lockPath = Join-Path $fx.State 'run.lock'
+    $payload = '{"pid":1,"runId":"held-run","parentPid":0}'
+    [System.IO.File]::WriteAllText($lockPath, $payload)
+    $shape = Get-C1396ReaderShare
+    $shapeOk = (-not $shape.ReadAll) -and ($shape.Share -eq '[System.IO.FileShare]::ReadWrite')
+    Assert-C487 -Cond $shapeOk -Name 'C1396 Reader opens the lock with FileShare.ReadWrite' -Detail ('readAll=' + $shape.ReadAll + ' share=' + $shape.Share)
+    $holder = [System.IO.File]::Open(
+        $lockPath,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Write,
+        [System.IO.FileShare]::Read)
+    $child = $null
+    try {
+        $record = Read-NightlyLockRecord -LockPath $lockPath
+        $seen = ''
+        if ($null -ne $record) { $seen = [string]$record.runId }
+        Assert-C487 -Cond ($seen -eq 'held-run') -Name 'C1396 Write-held lock reads in-process' -Detail $seen
+        $noneRefused = $false
+        try {
+            $exclusive = [System.IO.File]::Open(
+                $lockPath,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None)
+            $exclusive.Dispose()
+        } catch {
+            $noneRefused = $true
+        }
+        Assert-C487 -Cond $noneRefused -Name 'C1396 Write-held lock still refuses FileShare.None' -Detail ('refused=' + $noneRefused)
+        $fixture = Join-Path $fx.Root 'held'
+        New-Item -ItemType Directory -Path $fixture -Force | Out-Null
+        $childPath = Join-Path $fixture 'read-child.ps1'
+        $resultPath = Join-Path $fixture 'read.json'
+        Write-C1396ReadChild -Path $childPath
+        $common = Join-Path $PSScriptRoot (Join-Path 'lib' 'nightly-common.ps1')
+        $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
+        $arg = '-NoProfile -NonInteractive -File "' + $childPath + '" -CommonPath "' + $common + '" -LockPath "' + $lockPath + '" -ResultPath "' + $resultPath + '"'
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $pwsh
+        $psi.Arguments = $arg
+        $psi.WorkingDirectory = $fixture
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $child = [System.Diagnostics.Process]::Start($psi)
+        [void]$child.WaitForExit(30000)
+        $childSeen = ''
+        $childError = 'no result'
+        if (Test-Path -LiteralPath $resultPath) {
+            $hop = [System.IO.File]::ReadAllText($resultPath) | ConvertFrom-Json
+            $childSeen = [string]$hop.Seen
+            $childError = [string]$hop.Error
+        }
+        $detail = ('seen=' + $childSeen + ' error=' + $childError)
+        Assert-C487 -Cond ($childSeen -eq 'held-run') -Name 'C1396 Write-held lock reads from a second process' -Detail $detail
+    } finally {
+        if ($null -ne $child -and -not $child.HasExited) {
+            try { $child.Kill() } catch { }
+        }
+        try { $holder.Dispose() } catch { }
+    }
+}
+
 $cases = Get-C487CaseFunctions -Prefix 'C487_G0'
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -CommandType Function -ErrorAction SilentlyContinue

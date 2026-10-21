@@ -5,6 +5,7 @@ namespace Antiphon.Tests.Scripts;
 
 /// <summary>
 /// CARD-1386. Each method runs one Test-C1386_* case of scripts/test-nightly-run.ps1.
+/// CARD-1396 adds the write-held run.lock read case.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -45,5 +46,16 @@ public sealed class NightlyDeadOwnerLockTests
                 "C1386 Ambiguous foreign-host keeps the lock",
                 "C1386 Ambiguous missing-parent refuses lock-held",
                 "C1386 Ambiguous missing-parent keeps the lock"
+            ]);
+
+    [Test]
+    public Task C1396_WriteHeldLockReadable() =>
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C1396",
+            nameof(C1396_WriteHeldLockReadable), 4,
+            [
+                "C1396 Reader opens the lock with FileShare.ReadWrite",
+                "C1396 Write-held lock reads in-process",
+                "C1396 Write-held lock still refuses FileShare.None",
+                "C1396 Write-held lock reads from a second process"
             ]);
 }
