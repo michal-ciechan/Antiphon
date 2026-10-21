@@ -191,6 +191,12 @@ public sealed class TestSchemaCacheTests
         Directory.Exists(oldBad).ShouldBeFalse();
         Directory.Exists(Path.Combine(temp.Path, recent[8])).ShouldBeFalse();
         Directory.Exists(Path.Combine(temp.Path, stale)).ShouldBeFalse();
+
+        // Under the count bound, an entry untouched for longer than StaleAfter still goes.
+        SetTouched(temp.Path, recent[7], Now.AddDays(-15));
+        cache.Prune(Now);
+        Directory.Exists(Path.Combine(temp.Path, recent[7])).ShouldBeFalse();
+        Directory.GetDirectories(temp.Path).Length.ShouldBe(TestSchemaCache.KeepEntries - 1 + 2);
     }
 
     private static string KeyFor(string seed) =>
