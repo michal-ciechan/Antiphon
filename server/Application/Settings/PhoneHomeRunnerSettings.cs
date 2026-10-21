@@ -53,6 +53,17 @@ public sealed class PhoneHomeRunnerSettings
     public int LeaseSeconds { get; set; } = PhoneHomeProtocol.DefaultLeaseSeconds;
 
     /// <summary>
+    /// CARD-1424 D-2/D-8: after an ambiguous failed desktop capabilities probe (deadline, limiter,
+    /// circuit, transport), the desktop row keeps its last good answer while that answer is at most
+    /// this old. A definite failure (refused, HTTP status, bad body) goes stale at once. <c>0</c> is
+    /// the rollback: every failure is stale, as before. Read whether or not <see cref="Enabled"/> is set.
+    /// </summary>
+    public int DesktopCapabilitiesGraceSeconds { get; set; } = 180;
+
+    /// <summary>CARD-1424 D-5: within one failure streak with an unchanged reason, at most one Warning per this many seconds.</summary>
+    public int DesktopCapabilitiesFailureLogSeconds { get; set; } = 60;
+
+    /// <summary>
     /// CARD-0633 D-2: after a catch-up List fails or times out, the recovery pump waits this long
     /// (on the live connection's clock) before asking again. The runner stays dispatch-ineligible
     /// meanwhile; without the delay a fast-failing List would be re-sent every 50 ms.
