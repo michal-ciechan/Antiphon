@@ -244,7 +244,7 @@ Lane: server2 (default runner). One build is shared by every row.
 | CP-2 | S3 | CP-1 | store | `/*/*/TestSchemaCacheTests/*` | V-1 | all listed, 0 failed | 8 | 1 | |
 | CP-3 | S3 | CP-1 | lifecycle-cache | `/*/*/TestDbFixtureSchemaCacheLifecycleTests/*` | V-2, V-7 | all listed, 0 failed (8 results after the CP-7 repair) | 8 | 1 | |
 | CP-4 | S3 | CP-1 | lifecycle-regress | `/*/*/TestDbFixtureLifecycleTests/*` | V-3 | all listed, 0 failed | 33 | 1 | |
-| CP-5 | S3 | CP-1 | lazy-init-regress | `/*/*/TestDbFixtureLazyInitializationTests/(A_*)|(Mixed_*)` | V-3 | parent probes only, 0 failed, 0 skipped | 7 | 6 | |
+| CP-5 | S3 | CP-1 | lazy-init-regress | `/*/*/TestDbFixtureLazyInitializationTests/(A_*)\|(Mixed_*)` | V-3 | parent probes only, 0 failed, 0 skipped | 7 | 6 | |
 | CP-6 | S3 | CP-1 | snapshot | `/*/*/TestSchemaSnapshotTests/*` | V-4 | all listed, 0 failed | 3 | 4 | |
 | CP-7 | S3 | CP-1 | isolation-on-cache | `/*/*/TestDbFixtureIsolationTests/*` | V-5 | all listed, 0 failed; stderr shows `schema-cache hit` or `miss` | 6 | 2 | |
 | CP-8 | S3 | CP-1 | measure-after | `/*/*/AgentTaskCheckInterpreterTests/the_board_hides_interpretation_rows_unless_they_are_asked_for` | V-6 | 1 executed, 0 failed; stderr shows `schema-cache hit` (CP-7 populated the key with the same build); record TRX start → test start | 1 | 1 | |
