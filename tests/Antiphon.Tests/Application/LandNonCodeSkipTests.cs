@@ -258,6 +258,19 @@ public sealed class LandNonCodeSkipTests
     }
 
     [Test]
+    public async Task C1385_UnrelatedScriptChangeStillSkips()
+    {
+        await using var h = await CreateAsync();
+        await h.AddDocsOnlySourceAsync();
+        await h.Fixture.PushIndependentAsync("unrelated-script", "scripts/unrelated-card-1385.ps1", "# unrelated script\n");
+        await LandAndAssertAsync(h, build: false);
+        var command = (await h.OperationAsync())!.VerificationCommand;
+        command.ShouldNotBeNull();
+        command.ShouldContain("Skipped(non-code)");
+        command.ShouldContain("graph=");
+    }
+
+    [Test]
     public async Task C1380_AlreadyPresentDoesNotPromiseANewBuildEvenWhenForced()
     {
         await using var h = new LandingSafetyHarness();

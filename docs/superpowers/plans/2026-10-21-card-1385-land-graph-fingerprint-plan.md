@@ -84,7 +84,7 @@ No whole-Unit run. Do not retarget `OnlyDocumentation` cases (`C1380_NonAllowlis
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1385-red/` | unrelated-script-red | `/*/*/LandNonCodeSkipTests/C1385_UnrelatedScriptChangeStillSkips` | V-1 | exactly 1 executed, 1 failed | 1 | 10 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1385-red/` | unrelated-script-red | `/*/*/LandNonCodeSkipTests/(C1385_UnrelatedScriptChangeStillSkips*)` | V-1 | exactly 1 executed, 1 failed | 1 | 10 |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1385/` | unrelated-script-green | `/*/*/LandNonCodeSkipTests/C1385_UnrelatedScriptChangeStillSkips` | V-1 | exactly 1 executed, 0 failed/skipped | 1 | 10 |
 | CP-3 | S2 | CP-2 | registry-green | `/*/*/LandNonCodeSkipTests/C1385_RegistryMatchesNarrowGraph` | V-2 | exactly 1 executed, 0 failed/skipped | 1 | 2 |
 | CP-4 | S2 | CP-2 | docs-skip-green | `/*/*/LandNonCodeSkipTests/C1380_DocsOnlyRebasedLandRecordsNonCodeSkip` | V-3 | exactly 1 executed, 0 failed/skipped | 1 | 4 |
