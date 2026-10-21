@@ -18,7 +18,7 @@ namespace Antiphon.Tests.Api;
 /// CARD-1320 S1. The keep-six toggle is off until a Human PUT, and a missing row is not stored.
 /// </summary>
 [Category("Integration")]
-[NotInParallel("KeepSixSettings")]
+[NotInParallel("KeepSix")]
 [ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
 public class KeepSixSettingsTests
 {
