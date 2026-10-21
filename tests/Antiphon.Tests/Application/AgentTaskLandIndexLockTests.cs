@@ -8,7 +8,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<GitProcessSpawnLimit>]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class AgentTaskLandIndexLockTests
 {
     [Test]

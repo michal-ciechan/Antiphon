@@ -143,7 +143,8 @@ One `Antiphon.Tests` build, the roster row, one repeated subset row and one mixe
   - `DispatcherSiblingInspectionSchedulingTests` (`.BriefRecovery.cs`, `.Delivery.cs`: `BridgeQueueHarness`, a Raw `/bin/sh` agent).
   - `PipelineSpeedIntegrationTests` (`.Http.cs`: `C544DeliveryRig`, an `AntiphonWebAppFactory`).
   - `DeliverableBundleServiceTests` (the renderer browser-launch seam, exercised with a fake `fake-browser.sh`).
-  108 classes move.
+  - `AgentTaskLandIndexLockTests` (returned after CP-2 run `20261021-215501-51ab`). Its stale-lock assertions read `GitIndexLock.CensusGitProcesses`, a census of every `git` process on the host. A git process that exits mid-census can get `StartUtc = null`, which `HasHolder` counts as a holder. That is the likely reason `C688_AdmissionProbesLandWorktreeAndMainCheckoutWithoutListing` read `git_index_lock_held` in 1 of 3 ordinals. The class is in the strict roster now. Strict only lowers the overlap: git-lane classes can still run beside it (F-4).
+  107 classes move.
 - **CP-2 names `GitIndexLockPathTests`.** In `GitIndexLockTests.cs` the limiter sits on `GitIndexLockPathTests`. `GitIndexLockTests` is a unit class with no limiter, so the planned `(GitIndexLockTests*)` operand would not have run the git class.
 - **CP-2 has its own build, `bin-c1421-repeat/`.** The checkpoint tool refuses to reuse a build for a row with a different repeat count (`reused build ... has a different repeat`).
 - **Git hooks count as git.** `LandingGitTests`, `CardFileGitFailureAcceptanceTests` and `GitWorkspaceServiceIndexLockTests` install `#!/bin/sh` git hooks. `git` itself starts those hooks, and `LandingGit`'s budget kill ends them with it. They are treated as git children, not test-started processes.
@@ -153,6 +154,8 @@ One `Antiphon.Tests` build, the roster row, one repeated subset row and one mixe
 - **F-1:** move `AgentTaskLandActiveSourceClaimTests` (git + `cmd /c mklink /J`) to the git lane after a Windows reparse-point concurrency check. This is the largest single gain, about 28 minutes serial.
 - **F-2:** trace `tools/Antiphon.Checkpoints` spawns for the three `Checkpoints/*` git candidates (D-5).
 - **F-3:** classify the 14 limited files where the census found no spawn signal (for example `LandingAdmissionControlTests`, `OutputDistillationApplyRaceTests`, `BuildSlotClientTests`). They may not need any limiter. Re-measure lane occupancy from the next full Windows rc run.
+
+- **F-4:** make the stale-lock census race-free. `GitIndexLock.CensusGitProcesses` can count a git process that exits mid-census as a holder (`StartUtc = null`). Either skip exited processes in production, or let `AgentTaskLandIndexLockTests` inject a fixture-scoped census. Until then, any concurrent git on the host, the git lane included, can flip its stale assertions to held.
 
 ## Appendix A: classes that move to `GitProcessSpawnLimit` (114 files)
 
