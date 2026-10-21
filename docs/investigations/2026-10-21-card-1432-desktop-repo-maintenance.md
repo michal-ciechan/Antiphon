@@ -11,12 +11,13 @@ delete more than less."
 |---|---|---|
 | `refs/antiphon/land` | 13,859 | 2,640 |
 | `refs/antiphon/progress` | 8,150 | 373 |
-| All refs (`for-each-ref`) | 28,979 | 9,983 |
+| All refs (`for-each-ref`) | 28,979 | 9,983 after the sweep; 10,024 at 00:02 with new task refs. `for-each-ref` took 0.2 s, against 0.49 s after pack-refs and 10.4 s originally. |
 | Registered worktrees | 1,158 | 1,153 (4 stale `locked initializing` registrations unlocked and pruned) |
-| Loose objects | 72,661 (443.8 MiB) | AFTER_LOOSE |
-| Packs | 118 (151.2 MiB) | AFTER_PACKS |
-| `.git/objects` on disk | 596.8 MiB | AFTER_DISK |
-| `git gc` wall time | | GC_SECONDS s (of which about 8.5 min ran before `repack` started) |
+| Loose objects | 72,661 (443.8 MiB) | 268 (1.5 MiB), all written during the run |
+| Packs | 118 (151.2 MiB) | 2 (81.7 MiB: a 76.9 MB main pack and a 4.95 MB cruft pack) |
+| `.git/objects` on disk | 596.8 MiB | 84.6 MiB |
+| Commit-graph | 2026-09-24 | rewritten 2026-10-22 00:02:41 |
+| `git gc` wall time | | about 58.5 min (23:04:10 to 00:02:41 +01:00) |
 
 Auto gc had stopped because a gc was killed on **2026-09-25 12:17:15 +01:00**. It left a zero-byte
 `.git/objects/maintenance.lock` and a `.git/gc.pid` (PID 64836, `DESKTOP-KTLKPIF`, no longer running). Since
@@ -26,7 +27,8 @@ automatic gc after that kill was a silent no-op. A stale `gc.pid` alone would no
 ignores one older than 12 hours. Both files were removed before the manual gc. The oldest loose objects and the
 newest commit-graph (2026-09-24) agree with that date.
 
-All repository mutations ran while this task held the server's two OS locks: `.git/antiphon/landing.lock` (the
+The ref sweep, the worktree prune and the start of gc ran while this task held the server's two OS locks. The
+locks were released at 23:45:05, mid-gc, on the orchestrator's refinement; see §4. The locks are `.git/antiphon/landing.lock` (the
 repository mutation lease, `RepositoryMutationLease.cs:54`, opened with `FileShare.None`) and
 `.git/antiphon/land-execution.lock` (`LandExecutionLease.cs:11`). It opened the same files exclusively, so the
 server saw a busy lease and deferred. There were no Queued, Held or Running land requests at either start. No git
@@ -150,16 +152,24 @@ redirect.
   did not use `--prune=now`, because worktrees are written concurrently. The 4,768 already-packed loose
   duplicates were removed. Unreachable objects younger than two weeks went into a cruft pack, not deleted.
   About 8.5 minutes passed before `repack` started: pack-refs, reflog expiry across about 1,150 worktree HEAD
-  reflogs, rerere and worktree prune. The lease was held for the whole run.
-
-GC_RESULT
+  reflogs, rerere and worktree prune. Then came `repack -d -l --cruft` (delta search about 1,250 CPU-s at
+  1 GB working set; writing began at 23:35), then `prune --expire 2.weeks.ago` (about 23:50 to 00:00), then the
+  commit-graph.
+- **Lease cost.** This task held both locks from 23:03:45 until 23:45:05, about 41 min. That blocked every land
+  and new worktree cut, and one land sat Held. On the orchestrator's refinement, the lock-holding script process
+  was stopped. gc kept running and finished on its own, and the Held land started at 23:45:45. With the default
+  prune grace, gc does not need the lease. **Future gc runs should not hold the repository mutation lease**: hold
+  it only for the ref sweep (41.5 s) and the worktree prune, and keep gc out of it. A full gc on this repository
+  takes about an hour while the 1,150 worktrees exist, mostly reflog expiry and reachability over their indexes,
+  so it should also not run inline in a land or a cut.
 
 ## Recommendation: scheduled maintenance (for the Plan stage)
 
 R1. **Hangfire recurring job `RepositoryMaintenance`** on the main instance. Hangfire is the scheduler for work
 inside Antiphon. It runs nightly, plus on demand from an ops route, for each canonical repository. It takes the
-repository mutation lease with `TryAcquireAsync`. If the lease is busy it skips and retries hourly, and it
-always yields to queued lands and dispatch waiters. It runs:
+repository mutation lease with `TryAcquireAsync` **only for steps 1-3**, which take about a minute. If the lease
+is busy it skips and retries hourly, and it always yields to queued lands and dispatch waiters. Step 4 runs
+outside the lease, because default prune grace makes it safe alongside concurrent writers. It runs:
   1. Stale-lock repair: `objects/maintenance.lock`, `gc.pid` or `gc.log` older than 12 h whose PID is not alive
      on this host is removed and recorded as an attention item.
   2. Terminal-ref sweep, using the rule in §2, as one `update-ref --stdin` transaction.
