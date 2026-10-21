@@ -34,6 +34,17 @@ retry, reuse or dispatch, and those paths start no CLI probe. Existing launcher 
 and authentication rules remain in force. The [CARD-0959 plan](superpowers/plans/2026-10-03-card-0959-runner-codex-version-plan.md)
 defines reporting-only rollout; future compatibility enforcement belongs to CARD-1023.
 
+The process probe behind these diagnostics hands its child a bounded environment: the declared
+values plus a short bootstrap list inherited from the host (`PATH` and the platform's home, user,
+shell, temp and locale variables), at most 256 entries of at most 4000 characters each, which is
+also the per-value bound the output redactor allocates for. An inherited `PATH` over that ceiling
+is bounded on an entry boundary instead of refusing the probe (CARD-1414; a developer Windows user
+PATH is routinely longer): empty, duplicate and non-existent entries are dropped first, then the
+list is cut before the first whole entry that no longer fits, in the original order, under the
+probe deadline. A `PATH` within the ceiling is passed verbatim. Every other inherited variable and
+every declared value keeps the hard ceiling, so a secret-sized value still refuses before start
+with "The bounded child environment is unavailable."
+
 ## UI
 
 1. Open **Settings → AI Agent TUI**.

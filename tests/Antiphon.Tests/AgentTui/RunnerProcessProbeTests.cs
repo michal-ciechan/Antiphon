@@ -162,6 +162,88 @@ public sealed class RunnerProcessProbeTests
         }
     }
 
+    /// <summary>
+    /// CARD-1414: the bounding is a pure prefix cut. Under the ceiling the value is verbatim and
+    /// the filesystem is never consulted; over it, empty, quoted-whitespace, duplicate and missing
+    /// entries are dropped and the cut lands before the first whole entry that no longer fits.
+    /// </summary>
+    [Test]
+    public void Inherited_path_bounding_drops_empty_duplicate_and_missing_entries_before_cutting_on_a_boundary()
+    {
+        var separator = Path.PathSeparator;
+        var existing = new HashSet<string>(StringComparer.Ordinal) { "/a", "/bb", "/ccc", "/dddd" };
+        var value = string.Join(separator, new[] { "/a", "", " \"/bb\" ", "/missing", "/a", "/ccc", "/dddd", "/bb" });
+        var consulted = new List<string>();
+        bool Exists(string entry)
+        {
+            consulted.Add(entry);
+            return existing.Contains(entry);
+        }
+
+        RunnerProcessProbe.BoundInheritedPathList(value, value.Length, Exists).ShouldBe(value);
+        consulted.ShouldBeEmpty();
+
+        var bounded = RunnerProcessProbe.BoundInheritedPathList(value, 14, Exists);
+
+        bounded.ShouldBe(string.Join(separator, new[] { "/a", "/bb", "/ccc" }));
+        bounded.Length.ShouldBe(11);
+        consulted.ShouldBe(new[] { "/a", "/bb", "/missing", "/ccc", "/dddd" });
+    }
+
+    /// <summary>
+    /// CARD-1414: an existence check on a dead network PATH entry can block, so the bounding runs
+    /// under the probe deadline like every other blocking path inspection and a stuck check ends
+    /// the probe as timed out before any start.
+    /// </summary>
+    [Test]
+    public async Task Inherited_path_bounding_observes_the_probe_deadline()
+    {
+        var previous = Environment.GetEnvironmentVariable("PATH");
+        using var release = new ManualResetEventSlim(false);
+        var startCalls = 0;
+        var probe = CreateProbe(
+            new RunnerProcessReaper(),
+            timeoutSeconds: 1,
+            seams: new RunnerProcessProbeSeams
+            {
+                PathEntryExists = _ =>
+                {
+                    release.Wait(TimeSpan.FromSeconds(30));
+                    return true;
+                },
+                StartProcessAsync = (_, _) =>
+                {
+                    startCalls++;
+                    return Task.FromResult(false);
+                }
+            });
+        try
+        {
+            var slow = Enumerable.Range(0, 40)
+                .Select(index => Path.Combine(Path.GetTempPath(), $"slow-{index:D2}-" + new string('s', 100)));
+            Environment.SetEnvironmentVariable(
+                "PATH",
+                string.Join(Path.PathSeparator, new[] { previous ?? string.Empty }.Concat(slow)));
+            var elapsed = Stopwatch.StartNew();
+            var result = await probe.RunAsync(
+                new RunnerProcessRequest("unused", [], null, new Dictionary<string, string>(), SecretValues: []),
+                CancellationToken.None);
+            elapsed.Stop();
+
+            result.Started.ShouldBeFalse();
+            result.TimedOut.ShouldBeTrue();
+            result.Cancelled.ShouldBeFalse();
+            result.CleanupConfirmed.ShouldBeTrue();
+            startCalls.ShouldBe(0);
+            elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            release.Set();
+            Environment.SetEnvironmentVariable("PATH", previous);
+        }
+    }
+
     [Test]
     public async Task Probe_preserves_argument_boundaries_without_shell_interpretation()
     {

@@ -16,6 +16,12 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
     private const int MaximumArgumentLength = 2000;
     private const int MaximumEnvironmentEntries = 256;
     private const int MaximumEnvironmentValueLength = 4000;
+    // CARD-1414: the inherited PATH is the one host value that routinely passes the ceiling (a
+    // developer Windows user PATH was 4645 characters on the qualification desktop), so it is
+    // bounded on an entry boundary instead of refusing the probe. Every other inherited value and
+    // every declared request value keeps the hard ceiling, which is also the per-value bound the
+    // exact-match secret automaton allocates for; the ceiling itself is not raised.
+    private const string PathListVariableName = "PATH";
     private const int MaximumSecretValues = MaximumEnvironmentEntries;
     // Supports 64 maximum-length secrets or all 256 entries averaging 1 KiB
     // while independently bounding the exact-match automaton allocation.
@@ -41,6 +47,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
     private readonly Func<string, CancellationToken, Task<RunnerPathCheck>> _checkFileAsync;
     private readonly Func<string, CancellationToken, Task<RunnerPathCheck>> _checkDirectoryAsync;
     private readonly Func<RunnerProcessStartGuard, CancellationToken, Task<bool>> _startProcessAsync;
+    private readonly Func<string, bool> _pathEntryExists;
     private readonly Action? _startCommitted;
 
     public RunnerProcessProbe(IOptions<AgentTuiSettings> settings)
@@ -85,6 +92,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         _checkFileAsync = seams?.CheckFileAsync ?? DefaultCheckFileAsync;
         _checkDirectoryAsync = seams?.CheckDirectoryAsync ?? DefaultCheckDirectoryAsync;
         _startProcessAsync = seams?.StartProcessAsync ?? DefaultStartProcessAsync;
+        _pathEntryExists = seams?.PathEntryExists ?? Directory.Exists;
         _startCommitted = seams?.StartCommitted;
     }
 
@@ -230,9 +238,34 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         var childEnvironment = new Dictionary<string, string>(EnvironmentNameComparer());
         foreach (var name in BootstrapEnvironmentNames())
         {
-            var value = Environment.GetEnvironmentVariable(name);
-            if (value is not null)
-                childEnvironment[name] = value;
+            var inherited = Environment.GetEnvironmentVariable(name);
+            if (inherited is null)
+                continue;
+            if (IsPathListVariable(name) && inherited.Length > MaximumEnvironmentValueLength)
+            {
+                // Existence checks can block on a dead network entry, so the bounding runs under
+                // the probe deadline like every other blocking path inspection.
+                var pathList = inherited;
+                try
+                {
+                    inherited = await Task.Run(
+                            () => BoundInheritedPathList(
+                                pathList,
+                                MaximumEnvironmentValueLength,
+                                _pathEntryExists),
+                            CancellationToken.None)
+                        .WaitAsync(linked.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    var boundingCancelled = cancellationToken.IsCancellationRequested;
+                    return InterruptedBeforeStart(
+                        timedOut: !boundingCancelled,
+                        cancelled: boundingCancelled,
+                        cleanupConfirmed: true);
+                }
+            }
+            childEnvironment[name] = inherited;
         }
         foreach (var entry in request.Environment)
             childEnvironment[entry.Key] = entry.Value;
@@ -786,6 +819,44 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         ? ["PATH", "PATHEXT", "SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP", "USERPROFILE"]
         : ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE"];
 
+    private static bool IsPathListVariable(string name) =>
+        EnvironmentNameComparer().Equals(name, PathListVariableName);
+
+    /// <summary>
+    /// CARD-1414: bounds an inherited PATH list to the value ceiling on an entry boundary. A value
+    /// within the ceiling is returned verbatim without touching the filesystem. Over it, empty,
+    /// duplicate and non-existent entries are dropped first, then the list is cut before the first
+    /// entry that no longer fits, in the original order, so the child never sees a partial entry
+    /// and earlier (higher-precedence) directories are never shadowed by a later survivor.
+    /// </summary>
+    internal static string BoundInheritedPathList(
+        string value,
+        int maximumLength,
+        Func<string, bool> directoryExists)
+    {
+        if (value.Length <= maximumLength)
+            return value;
+
+        var seen = new HashSet<string>(PathEntryComparer());
+        var builder = new StringBuilder(maximumLength);
+        foreach (var rawEntry in value.Split(Path.PathSeparator))
+        {
+            var entry = rawEntry.Trim().Trim('"');
+            if (entry.Length == 0 || !seen.Add(entry) || !directoryExists(entry))
+                continue;
+            var separatorLength = builder.Length == 0 ? 0 : 1;
+            if (builder.Length + separatorLength + entry.Length > maximumLength)
+                break;
+            if (separatorLength == 1)
+                builder.Append(Path.PathSeparator);
+            builder.Append(entry);
+        }
+        return builder.ToString();
+    }
+
+    private static StringComparer PathEntryComparer() =>
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
     private static string[] ExecutableExtensions(string executable)
     {
         if (Path.HasExtension(executable))
@@ -1105,5 +1176,6 @@ internal sealed class RunnerProcessProbeSeams
     internal Func<string, CancellationToken, Task<RunnerPathCheck>>? CheckFileAsync { get; init; }
     internal Func<string, CancellationToken, Task<RunnerPathCheck>>? CheckDirectoryAsync { get; init; }
     internal Func<RunnerProcessStartGuard, CancellationToken, Task<bool>>? StartProcessAsync { get; init; }
+    internal Func<string, bool>? PathEntryExists { get; init; }
     internal Action? StartCommitted { get; init; }
 }
