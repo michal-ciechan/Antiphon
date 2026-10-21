@@ -42,6 +42,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
     private readonly Func<string, CancellationToken, Task<RunnerPathCheck>> _checkDirectoryAsync;
     private readonly Func<RunnerProcessStartGuard, CancellationToken, Task<bool>> _startProcessAsync;
     private readonly Action? _startCommitted;
+    private readonly Func<string, string?> _inheritedEnvironmentVariable;
 
     public RunnerProcessProbe(IOptions<AgentTuiSettings> settings)
         : this(settings, new RunnerProcessReaper())
@@ -86,6 +87,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         _checkDirectoryAsync = seams?.CheckDirectoryAsync ?? DefaultCheckDirectoryAsync;
         _startProcessAsync = seams?.StartProcessAsync ?? DefaultStartProcessAsync;
         _startCommitted = seams?.StartCommitted;
+        _inheritedEnvironmentVariable = seams?.InheritedEnvironmentVariable ?? Environment.GetEnvironmentVariable;
     }
 
     public Task<RunnerPathCheck> CheckExecutableAsync(
@@ -230,7 +232,7 @@ public sealed partial class RunnerProcessProbe : IRunnerProcessProbe
         var childEnvironment = new Dictionary<string, string>(EnvironmentNameComparer());
         foreach (var name in BootstrapEnvironmentNames())
         {
-            var value = Environment.GetEnvironmentVariable(name);
+            var value = _inheritedEnvironmentVariable(name);
             if (value is not null && string.Equals(name, "PATH", StringComparison.Ordinal))
                 value = BoundInheritedPath(value);
             if (value is not null)
@@ -1141,4 +1143,5 @@ internal sealed class RunnerProcessProbeSeams
     internal Func<string, CancellationToken, Task<RunnerPathCheck>>? CheckDirectoryAsync { get; init; }
     internal Func<RunnerProcessStartGuard, CancellationToken, Task<bool>>? StartProcessAsync { get; init; }
     internal Action? StartCommitted { get; init; }
+    internal Func<string, string?>? InheritedEnvironmentVariable { get; init; }
 }
