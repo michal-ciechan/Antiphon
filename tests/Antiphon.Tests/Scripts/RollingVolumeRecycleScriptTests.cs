@@ -1714,6 +1714,11 @@ public sealed class RollingVolumeRecycleScriptTests
     public async Task C1371_Census_distinguishes_cross_read_count_drift_from_malformed_counts()
         => await C1361CensusProbes.Counts();
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1371_Post_removal_count_drift_does_not_abort()
+        => await C1361CensusProbes.PostRemoval();
+
     private static string C1317ShellFunction(string text, string name)
     {
         var lines = text.Replace("\r\n", "\n").Split('\n');
