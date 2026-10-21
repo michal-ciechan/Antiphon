@@ -377,7 +377,7 @@ public sealed class AgentSessionRuntime
         var services = scope.ServiceProvider;
         var sessionId = action.AgentSessionId;
         var kind = row?.Kind;
-        var route = action.TurnBoundary || kind == TranscriptKinds.AssistantText;
+        var route = RoutesReplies(action, row);
         switch (action.Phase)
         {
             case 0 when row is not null:
@@ -403,9 +403,8 @@ public sealed class AgentSessionRuntime
                 if (services.GetService<GrokRulesRefreshService>() is { } rules)
                     await rules.ReconcileAsync(sessionId, ct);
                 break;
-            case 4 when route:
-                if (services.GetService<ChannelReplyDispatcher>() is { } channel)
-                    await channel.OnTranscriptActionAsync(sessionId, action.Sequence, ct);
+            case SessionRuntimeActionCoordinator.ChannelReplyPhase when route:
+                await ExecuteChannelReplyAsync(services, sessionId, action.Sequence, ct);
                 break;
             case 5 when route:
                 if (services.GetService<ReviewReplyDispatcher>() is { } review)
@@ -418,6 +417,23 @@ public sealed class AgentSessionRuntime
                 }
                 break;
         }
+    }
+
+    /// <summary>Whether this action routes its turn to the channel, review and task replies.</summary>
+    internal static bool RoutesReplies(SessionRuntimeAction action, TranscriptEntry? row) =>
+        action.TurnBoundary || row?.Kind == TranscriptKinds.AssistantText;
+
+    internal async Task ExecuteActionChannelReplyAsync(Guid sessionId, long sequence, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        await ExecuteChannelReplyAsync(scope.ServiceProvider, sessionId, sequence, ct);
+    }
+
+    private static async Task ExecuteChannelReplyAsync(
+        IServiceProvider services, Guid sessionId, long sequence, CancellationToken ct)
+    {
+        if (services.GetService<ChannelReplyDispatcher>() is { } channel)
+            await channel.OnTranscriptActionAsync(sessionId, sequence, ct);
     }
 
     internal async Task<SessionQueueTurnEndResult> ExecuteActionQueueAsync(SessionRuntimeAction action,
