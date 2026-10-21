@@ -134,14 +134,75 @@ public sealed class RunnerProcessProbeTests
     }
 
     /// <summary>
+    /// CARD-1414 repair (Review ddd0512c D2): the bounding kept relative entries such as "." and
+    /// "bin" because Directory.Exists resolved them against the server's current directory, while
+    /// the child resolves them against its own working directory; the child then searched its
+    /// working directory, which the pre-CARD-1414 ceiling refused before start. A relative entry
+    /// never reaches the child's bounded PATH.
+    /// </summary>
+    [Test]
+    public async Task Inherited_path_over_the_ceiling_drops_relative_entries()
+    {
+        const int ceiling = 4000;
+        var scratch = CreateScratch();
+        try
+        {
+            var dotDot = "." + Path.DirectorySeparatorChar + ".";
+            var relative = new[] { ".", "bin", dotDot };
+            Directory.Exists(".").ShouldBeTrue();
+            Directory.Exists(dotDot).ShouldBeTrue();
+            var keep = new List<string>();
+            for (var index = 0; index < 40; index++)
+            {
+                var directory = Path.Combine(scratch, $"keep-{index:D2}-" + new string('k', 120));
+                Directory.CreateDirectory(directory);
+                keep.Add(directory);
+            }
+            // The relative entries sit between real entries at the front, well inside the ceiling,
+            // so only the relative-entry rule can drop them.
+            var composed = new List<string>
+            {
+                keep[0], relative[0], keep[1], relative[1], keep[2], relative[2]
+            };
+            composed.AddRange(keep.Skip(3));
+            var longPath = string.Join(Path.PathSeparator, composed);
+            longPath.Length.ShouldBeGreaterThan(ceiling);
+
+            var script = WriteHelper(scratch);
+            var probe = CreateProbe(
+                new RunnerProcessReaper(),
+                seams: new RunnerProcessProbeSeams { InheritedEnvironmentVariable = InheritedWith("PATH", longPath) });
+            var result = await probe.RunAsync(Request(script, ["path"]), CancellationToken.None);
+
+            result.Error.ShouldBeNull();
+            result.ExitCode.ShouldBe(0);
+            var lines = result.StandardOutput.ReplaceLineEndings("\n").TrimEnd('\n').Split('\n');
+            lines.Length.ShouldBe(2);
+            var childEntries = lines[1].Split(Path.PathSeparator);
+            childEntries.ShouldContain(keep[0]);
+            childEntries.ShouldContain(keep[2]);
+            foreach (var entry in relative)
+                childEntries.ShouldNotContain(entry);
+            childEntries.ShouldAllBe(entry => Path.IsPathFullyQualified(entry));
+        }
+        finally
+        {
+            DeleteScratchBestEffort(scratch);
+        }
+    }
+
+    /// <summary>
     /// CARD-1414 repair: when nothing of an over-ceiling inherited PATH survives the bounding
     /// (every entry missing, or the first surviving entry is itself past the ceiling), the child
     /// must not start with an empty PATH, which on POSIX searches the working directory. The
-    /// probe keeps the hard refusal the unbounded ceiling gave before CARD-1414.
+    /// probe keeps the hard refusal the unbounded ceiling gave before CARD-1414. A PATH of only
+    /// relative entries is the same shape (Review ddd0512c D2): every one of them would resolve
+    /// against the child's working directory, so none survives the bounding.
     /// </summary>
     [Test]
     [Arguments("all-missing")]
     [Arguments("only-entry-over-ceiling")]
+    [Arguments("only-relative-entries")]
     public async Task Inherited_path_with_nothing_bounded_is_still_refused_before_start(string shape)
     {
         const int ceiling = 4000;
@@ -155,6 +216,20 @@ public sealed class RunnerProcessProbeTests
                     Path.PathSeparator,
                     Enumerable.Range(0, 40)
                         .Select(index => Path.Combine(scratch, $"missing-{index:D2}-" + new string('m', 120))));
+            }
+            else if (shape == "only-relative-entries")
+            {
+                // ".", "./.", "././." ... each exists relative to any current directory, so only
+                // the relative-entry rule can drop them.
+                var entries = new List<string> { "bin" };
+                var dots = ".";
+                while (string.Join(Path.PathSeparator, entries).Length <= ceiling)
+                {
+                    entries.Add(dots);
+                    dots += Path.DirectorySeparatorChar + ".";
+                }
+                Directory.Exists(dots).ShouldBeTrue();
+                longPath = string.Join(Path.PathSeparator, entries);
             }
             else
             {
