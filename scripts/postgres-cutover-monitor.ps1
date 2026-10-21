@@ -26,17 +26,24 @@
 
     Failure count: GET /api/agent-tasks?projectId=<id>&since=<window start> (the list refuses any other key
     with 400). Failed tasks are items with status Failed. List items (AgentTaskSummaryDto) carry no land
-    outcome, so every item with a land attempt (landAttempt > 0, landRequestedAt or landStartedAt set) is
-    read from GET /api/agent-tasks/{id}, at most -MaxLandDetailRequests of them; a failed land is a detail
-    whose landing.phase or landing.publication is Refused or whose landRequest.state is NeedsResolution.
+    outcome, so every item with a land attempt (landAttempt > 0, landRequestedAt or landStartedAt set) and
+    every Succeeded worktree task (a refusal before the attempt counter moved leaves no other hint) is read
+    from GET /api/agent-tasks/{id}, at most -MaxLandDetailRequests of them. A failed land is a detail whose
+    landing.phase or landing.publication is Refused, whose landRequest.state is NeedsResolution, whose
+    landRequest.terminalFailureCode is set without a publication (a land that threw), or that has a
+    LandRefused event at or after the window start (refusals that never move the landing op to Refused).
+    Known gaps, equal in Baseline and Watch: a land that fails in the window on a task completed before it
+    is not listed, and an unresolved NeedsResolution counts in every window whatever its age.
     A list or detail that cannot be read, or more candidates than the cap, is INVALID unless a rollback
     trigger already fired: never a silent zero.
 
-    Read-only: GET requests and TCP handshakes only. It never writes to the database, restarts anything or
-    changes a setting. The only files it writes are its JSON baseline and result (default
+    Read-only: GET requests and TCP handshakes only. It sends no delegation token: the task detail GET writes
+    poll bookkeeping only for a token-bearing caller, so never add auth headers. It never writes to the
+    database, restarts anything or changes a setting. The only files it writes are its JSON baseline and result (default
     .antiphon/postgres-cutover/, which is gitignored). It takes no credentials. Diagnostics properties whose
     name or value looks like a credential (password, token, dsn, connection string) are dropped, and URL
-    userinfo and secret-looking query values are masked in every printed line, error and recorded JSON.
+    userinfo (to the last @) and secret-looking query and fragment values (key names compared after
+    percent-decoding) are masked in every printed line, error and recorded JSON.
 
     Seams for tests, so no server or database is needed:
       -HttpGet      { param([string]$Url) } returns @{ StatusCode = 200; Body = '<text>'; ElapsedMs = <optional> }
@@ -122,15 +129,33 @@ function Test-CutoverSecretValue {
     return ($Value -match '(?i)(^|[;\s])(password|passwd|pwd|user id|uid|secret|token)\s*=')
 }
 
-# Masks URL userinfo and secret-looking key=value pairs (query strings, connection strings) in any text
-# before it is printed, recorded or returned. The request itself always uses the unmasked URL.
+# A key=value name that carries a secret, compared after percent-decoding: .NET sends access%5Ftoken as access_token.
+function Test-CutoverSecretKey {
+    param([string]$Key)
+    $decoded = $Key
+    try { $decoded = [uri]::UnescapeDataString($Key) } catch { $decoded = $Key }
+    return ($decoded -match '(?i)token|key|password|passwd|pwd|secret|sig|signature|auth|credential')
+}
+
+# Masks URL userinfo and secret-looking key=value pairs (query strings, fragments, connection strings) in any
+# text before it is printed, recorded or returned, including exception messages that embed a URL. Userinfo
+# runs to the LAST '@' before the path, query or fragment, so a literal '@' in a password stays masked. A '#'
+# starts a new pair, as in a fragment. The request itself always uses the unmasked URL.
 function Hide-CutoverText {
     param([string]$Text)
     if (-not $Text) { return $Text }
-    $t = [regex]::Replace($Text, '(?i)\b([a-z][a-z0-9+.\-]*://)[^/?#@\s"''<>]+@', '$1<redacted>@')
-    $key = '[a-z0-9_.\-]*(?:token|key|password|passwd|pwd|secret|sig|signature|auth|credential)[a-z0-9_.\-]*'
-    $t = [regex]::Replace($t, '(?i)((?:^|[?&;"''\s]|\\u0026)' + $key + '\s*=\s*)[^&;\s"''\\<>]+', '$1<redacted>')
-    return $t
+    $t = [regex]::Replace($Text, '(?i)\b([a-z][a-z0-9+.\-]*://)[^/?#\s"''<>]*@', '$1<redacted>@')
+    $pair = '(?i)(?<lead>(?:^|[?&;#"''\s]|\\u0026)(?<key>(?:[a-z0-9_.\-]|%[0-9a-f]{2})+)\s*=\s*)(?<val>[^&;\s"''\\<>]+)'
+    $evaluator = [System.Text.RegularExpressions.MatchEvaluator]{
+        param($m)
+        if (Test-CutoverSecretKey -Key $m.Groups['key'].Value) { return $m.Groups['lead'].Value + '<redacted>' }
+        # A plain value ends at '#'; what follows is a fragment whose own pairs are masked the same way.
+        $val = $m.Groups['val'].Value
+        $hash = $val.IndexOf('#')
+        if ($hash -lt 0) { return $m.Value }
+        return $m.Groups['lead'].Value + $val.Substring(0, $hash) + (Hide-CutoverText -Text $val.Substring($hash))
+    }
+    return [regex]::Replace($t, $pair, $evaluator)
 }
 
 function Hide-CutoverSecrets {
@@ -160,29 +185,58 @@ function Hide-CutoverSecrets {
     return $Object
 }
 
-# A list item (AgentTaskSummaryDto) with a land attempt. Only these need the detail read.
+# A list item (AgentTaskSummaryDto) that may carry a land outcome. Only these need the detail read: a land
+# attempt or pending land, or a Succeeded worktree task. The last is the only land-eligible shape a refusal
+# made before the attempt counter moved (landing_protocol_unavailable) leaves behind, because ClearPending
+# clears landRequestedAt and landStartedAt and landAttempt stays 0 (LandApproval.RequestStatusEligible).
 function Test-CutoverLandCandidate {
     param($Item)
     if ($null -eq $Item) { return $false }
     $attempt = Get-CutoverProperty -Object $Item -Name 'landAttempt'
     if ($null -ne $attempt -and [int]$attempt -gt 0) { return $true }
     if ($null -ne (Get-CutoverProperty -Object $Item -Name 'landRequestedAt')) { return $true }
-    return ($null -ne (Get-CutoverProperty -Object $Item -Name 'landStartedAt'))
+    if ($null -ne (Get-CutoverProperty -Object $Item -Name 'landStartedAt')) { return $true }
+    return ([string](Get-CutoverProperty -Object $Item -Name 'workspace') -eq 'Worktree' -and [string](Get-CutoverProperty -Object $Item -Name 'status') -eq 'Succeeded')
 }
 
-# A task detail (AgentTaskDetailDto) whose land failed: landing.phase or landing.publication Refused, or
-# landRequest.state NeedsResolution.
+# A JSON date as UTC: ConvertFrom-Json gives a [datetime] in PowerShell 7 and a string in 5.1. $null if unreadable.
+function ConvertTo-CutoverUtc {
+    param($Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [datetime]) {
+        if ($Value.Kind -eq [System.DateTimeKind]::Unspecified) { return [datetime]::SpecifyKind($Value, [System.DateTimeKind]::Utc) }
+        return $Value.ToUniversalTime()
+    }
+    $parsed = [datetime]::MinValue
+    $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
+    if ([datetime]::TryParse([string]$Value, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$parsed)) { return $parsed }
+    return $null
+}
+
+# A task detail (AgentTaskDetailDto) whose land failed: landing.phase or landing.publication Refused,
+# landRequest.state NeedsResolution, a landRequest.terminalFailureCode (a land that threw; PersistFailureAsync)
+# unless the landing published, or a LandRefused event at or after the window start. The last two cover
+# refusals that never move the landing op to Refused. An event time that cannot be read counts.
 function Test-CutoverLandFailed {
-    param($Detail)
+    param($Detail, [datetime]$WindowStartUtc = [datetime]::MinValue)
     $landing = Get-CutoverProperty -Object $Detail -Name 'landing'
     $request = Get-CutoverProperty -Object $Detail -Name 'landRequest'
+    $publication = [string](Get-CutoverProperty -Object $landing -Name 'publication')
     if ([string](Get-CutoverProperty -Object $landing -Name 'phase') -eq 'Refused') { return $true }
-    if ([string](Get-CutoverProperty -Object $landing -Name 'publication') -eq 'Refused') { return $true }
-    return ([string](Get-CutoverProperty -Object $request -Name 'state') -eq 'NeedsResolution')
+    if ($publication -eq 'Refused') { return $true }
+    if ([string](Get-CutoverProperty -Object $request -Name 'state') -eq 'NeedsResolution') { return $true }
+    # A failure code after publication (landing_interrupted_after_publication) ends in a Landed event: it landed.
+    if ([string](Get-CutoverProperty -Object $request -Name 'terminalFailureCode') -and $publication -ne 'Landed' -and $publication -ne 'AlreadyPresent') { return $true }
+    foreach ($e in @(Get-CutoverProperty -Object $Detail -Name 'events')) {
+        if ($null -eq $e -or [string](Get-CutoverProperty -Object $e -Name 'type') -ne 'LandRefused') { continue }
+        $at = ConvertTo-CutoverUtc -Value (Get-CutoverProperty -Object $e -Name 'at')
+        if ($null -eq $at -or $at -ge $WindowStartUtc) { return $true }
+    }
+    return $false
 }
 
 function Get-CutoverFailureCount {
-    param([object[]]$Items, [object[]]$Details = @())
+    param([object[]]$Items, [object[]]$Details = @(), [datetime]$WindowStartUtc = [datetime]::MinValue)
     $tasks = 0
     $lands = 0
     foreach ($it in @($Items)) {
@@ -190,7 +244,7 @@ function Get-CutoverFailureCount {
         if ([string](Get-CutoverProperty -Object $it -Name 'status') -eq 'Failed') { $tasks++ }
     }
     foreach ($d in @($Details)) {
-        if ($null -ne $d -and (Test-CutoverLandFailed -Detail $d)) { $lands++ }
+        if ($null -ne $d -and (Test-CutoverLandFailed -Detail $d -WindowStartUtc $WindowStartUtc)) { $lands++ }
     }
     return [pscustomobject]@{ FailedTasks = $tasks; FailedLands = $lands; Total = ($tasks + $lands) }
 }
@@ -304,7 +358,8 @@ function Invoke-CutoverHttpGet {
         $sw.Stop()
         $code = 0
         try { if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } } catch { $code = 0 }
-        return [pscustomobject]@{ Ok = $false; StatusCode = $code; Body = ''; ElapsedMs = $sw.Elapsed.TotalMilliseconds; Error = [string]$_.Exception.Message }
+        # The message can embed the URL (a [uri] conversion error quotes it whole), so it is masked here.
+        return [pscustomobject]@{ Ok = $false; StatusCode = $code; Body = ''; ElapsedMs = $sw.Elapsed.TotalMilliseconds; Error = (Hide-CutoverText -Text ([string]$_.Exception.Message)) }
     }
 }
 
@@ -474,13 +529,13 @@ function Get-CutoverVersionSha {
 
 # Collects the shared Baseline/Watch observations: pipeline samples, window failures, pool flags, health, version.
 function Get-CutoverObservation {
-    param($Urls, [int]$SampleCount, [scriptblock]$HttpGet, [int]$TimeoutSec, [int]$MaxLandDetailRequests = 50)
+    param($Urls, [int]$SampleCount, [scriptblock]$HttpGet, [int]$TimeoutSec, [int]$MaxLandDetailRequests = 50, [datetime]$WindowStartUtc = [datetime]::MinValue)
     $pipeline = Measure-CutoverPipeline -Url $Urls.Pipeline -Count $SampleCount -HttpGet $HttpGet -TimeoutSec $TimeoutSec
     $list = Read-CutoverTaskList -Response (Invoke-CutoverHttpGet -Url $Urls.Tasks -HttpGet $HttpGet -TimeoutSec $TimeoutSec)
     $items = @($list.Items)
     $lands = [pscustomobject]@{ Ok = $false; Candidates = 0; Details = @(); Reason = 'task list not read' }
     if ($list.Ok) { $lands = Read-CutoverLandDetails -Items $items -DetailPrefix $Urls.TaskDetailPrefix -MaxRequests $MaxLandDetailRequests -HttpGet $HttpGet -TimeoutSec $TimeoutSec }
-    $failures = Get-CutoverFailureCount -Items $items -Details @($lands.Details)
+    $failures = Get-CutoverFailureCount -Items $items -Details @($lands.Details) -WindowStartUtc $WindowStartUtc
     $unread = @()
     if (-not $list.Ok) { $unread += $list.Reason } elseif (-not $lands.Ok) { $unread += $lands.Reason }
     $health = Invoke-CutoverHttpGet -Url $Urls.Health -HttpGet $HttpGet -TimeoutSec $TimeoutSec
@@ -633,7 +688,7 @@ function Invoke-CutoverMonitorCore {
         if ($Mode -eq 'Plan' -or $Mode -eq 'Baseline' -or $Mode -eq 'Watch') {
             [void]$lines.Add('PLAN would GET ' + $urls.Pipeline + ' x' + $SampleCount + ' and take the median')
             [void]$lines.Add('PLAN would GET ' + $urls.Tasks + ' and count Failed tasks; an unreadable list is INVALID')
-            [void]$lines.Add('PLAN would GET ' + $urls.TaskDetailPrefix + '{id} for each listed task with a land attempt (at most ' + $MaxLandDetailRequests + ') and count failed lands')
+            [void]$lines.Add('PLAN would GET ' + $urls.TaskDetailPrefix + '{id} for each listed task with a land attempt or a Succeeded worktree task (at most ' + $MaxLandDetailRequests + ') and count failed lands')
             [void]$lines.Add('PLAN would GET ' + $urls.Health + ', ' + $urls.Version + ' and ' + $urls.Diagnostics + ' (pool flags, credentials dropped)')
             if (-not $ProjectId) { [void]$lines.Add('NOTE no -ProjectId: the pipeline sample would be fleet-wide, not the Antiphon project (D-11 wants the project scope)') }
         }
@@ -718,7 +773,7 @@ function Invoke-CutoverMonitorCore {
     }
     if (-not $ProjectId -and -not $PipelineUrl) { [void]$lines.Add('NOTE no -ProjectId: the pipeline sample is fleet-wide, not the Antiphon project (D-11 wants the project scope)') }
 
-    $obs = Get-CutoverObservation -Urls $urls -SampleCount $SampleCount -HttpGet $HttpGet -TimeoutSec $HttpTimeoutSec -MaxLandDetailRequests $MaxLandDetailRequests
+    $obs = Get-CutoverObservation -Urls $urls -SampleCount $SampleCount -HttpGet $HttpGet -TimeoutSec $HttpTimeoutSec -MaxLandDetailRequests $MaxLandDetailRequests -WindowStartUtc $windowStart
     $result.pipeline = $obs.pipeline
     $result.failures = $obs.failures
     $result.health = $obs.health
