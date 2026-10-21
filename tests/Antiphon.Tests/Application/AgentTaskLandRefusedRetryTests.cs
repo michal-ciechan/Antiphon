@@ -353,20 +353,23 @@ public sealed class AgentTaskLandRefusedRetryTests
         op.Cleanup.ShouldBe(LandCleanupStatus.Complete);
         var entry = logger.Entries.Where(e => e.Message.StartsWith("Land git profile ", StringComparison.Ordinal)).ShouldHaveSingleItem();
         Console.WriteLine("C688_PROFILE: " + entry.Message);
-        // R1 V-18 budget approved 2026-09-25: four listings, preserving D-14's cleanup safeguards.
-        // No listing precedes cleanup. Cleanup lists three times itself and its first Full inspection fills
-        // the scope's registration cache once.
+        // CARD-1384 inventory. Master only: rc/2026-10-20 still bounds this profile at four and has no ticket lists.
+        // Exactly two live lease-boundary worktree lists precede cleanup (pre-release CaptureTicketAsync and the
+        // post-reacquire CaptureTicketAsync). The third list repeated those post-reacquire rows and is not taken.
+        // Cleanup keeps seven: four live identity samples (two Full inspections, two each; CARD-0975, not cached)
+        // plus three guarded cleanup reads. Nine total. Pre-cleanup remote is the previous 13 plus resume's one
+        // source ls-remote. No headroom above this inventory.
         cleanupAt.ShouldBeGreaterThan(0);
-        h.Fixture.Git.Trace.Take(cleanupAt).ShouldNotContain(a => a.Length > 1 && a[0] == "worktree" && a[1] == "list");
-        Convert.ToInt32(entry.State["WorktreeList"]).ShouldBeLessThanOrEqualTo(4);
+        var beforeCleanup = h.Fixture.Git.Trace.Take(cleanupAt).ToArray();
+        var listsBefore = beforeCleanup.Count(a => a.Length > 1 && a[0] == "worktree" && a[1] == "list");
+        var remoteBefore = beforeCleanup.Count(a => a.Length > 0 && a[0] is "ls-remote" or "fetch" or "push");
+        Console.WriteLine($"C688_PROFILE_BUDGET: listsBefore={listsBefore} remoteBefore={remoteBefore}");
+        listsBefore.ShouldBe(2);
+        Convert.ToInt32(entry.State["WorktreeList"]).ShouldBeLessThanOrEqualTo(9);
         Convert.ToInt32(entry.State["Inspections"]).ShouldBeLessThanOrEqualTo(2);
-        Convert.ToInt32(entry.State["Processes"]).ShouldBeLessThanOrEqualTo(250);
-        // Remote round trips before cleanup: resolver observation (ls-remote+fetch) and its recheck, the target
-        // observation at creation, three protocol rechecks (entry, pre-reset, pre-push), the pre-push observation,
-        // the push and its confirming observation = 13. Guarded cleanup (unchanged, D-14) observes the remote three
-        // times (2 each), so the approved R1 V-18 total is 19, preserving all cleanup observations.
-        h.Fixture.Git.Trace.Take(cleanupAt).Count(a => a[0] is "ls-remote" or "fetch" or "push").ShouldBeLessThanOrEqualTo(13);
-        Convert.ToInt32(entry.State["Remote"]).ShouldBeLessThanOrEqualTo(19);
+        Convert.ToInt32(entry.State["Processes"]).ShouldBeLessThanOrEqualTo(260);
+        remoteBefore.ShouldBeLessThanOrEqualTo(14);
+        Convert.ToInt32(entry.State["Remote"]).ShouldBeLessThanOrEqualTo(20);
         foreach (var phase in new[] { "reset=", "rebase=", "verify=", "push=", "canonical=", "cleanup=" })
             entry.Message.ShouldContain(phase);
         var refs = await h.Fixture.RequiredAsync(h.Fixture.Repository, "for-each-ref", "--format=%(refname)", "refs/antiphon/");

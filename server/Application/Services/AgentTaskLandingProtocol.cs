@@ -313,7 +313,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     // Another repository land may have reset the shared land worktree since this op prepared.
                     var land = await VerifiedLandWorktreeAsync(op, op.RebasedSourceSha!, ct);
                     if (deferVerification && request is not null)
-                        return new(op, null, []) { Verification = await CaptureTicketAsync(op, request, ct) };
+                        return new(op, null, []) { Verification = (await CaptureTicketAsync(op, request, ct)).Ticket };
                     var verification = await verifier.VerifyAsync(land, op.VerificationFilter,
                         new(op.TaskId, op.Id, request?.Id, CommonDirectory: common), ct);
                     Require(verification.Passed, "verification_failed");
@@ -580,19 +580,20 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         return await PrepareLandWorktreeAsync(op, sha, ct);
     }
 
-    private async Task<PreparedLandingVerification> CaptureTicketAsync(AgentTaskLanding op, AgentTaskLandRequest request,
-        CancellationToken ct)
+    private async Task<(PreparedLandingVerification Ticket, IReadOnlyList<LandingRegistration> Registrations)> CaptureTicketAsync(
+        AgentTaskLanding op, AgentTaskLandRequest request, CancellationToken ct)
     {
         var admin = await git.RunAsync(op.LandWorktreePath!, ["rev-parse", "--absolute-git-dir"], ct);
         Require(admin.Succeeded, "land_worktree_identity_changed");
         var registrations = await git.LiveRegistrationsAsync(op.RepositoryPath, ct);
-        return new(new(op.TaskId, request.Id, request.Attempt, op.Id, op.RebasedSourceSha!, op.LandWorktreePath!,
+        return (new(new(op.TaskId, request.Id, request.Attempt, op.Id, op.RebasedSourceSha!, op.LandWorktreePath!,
                 op.WorktreePath, op.SourceFullRef, op.TargetFullRef),
             op.RepositoryPath, op.CommonDirectory, admin.Output.Trim(), op.TargetBeforeSha, Destination(op),
             op.VerificationFilter, request.ExpectedSourceSha, request.ReviewEvidenceId, request.RecoveryMode,
             request.RecoverySourceTaskId, op.RecoveryRefPrefix,
             registrations.Where(r => r.Branch == op.SourceFullRef).Select(r => r.Path).Order(StringComparer.Ordinal).ToArray(),
-            Directory.Exists(op.WorktreePath) ? await git.CanonicalDirectoryAsync(op.WorktreePath, ct) : null);
+            Directory.Exists(op.WorktreePath) ? await git.CanonicalDirectoryAsync(op.WorktreePath, ct) : null),
+            registrations);
     }
 
     private async Task ValidateTicketAsync(AgentTask task, AgentTaskLanding op, AgentTaskLandRequest request,
@@ -602,7 +603,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             && task.CurrentLandRequestId == request.Id && task.ActiveLandingId == op.Id
             && task.LandAttempt == request.Attempt && LandApproval.RequestStatusEligible(task, request)
             && op.Active && op.Phase == LandPhase.Prepared, "verification_ticket_changed");
-        var current = await CaptureTicketAsync(op, request, ct);
+        var (current, registrations) = await CaptureTicketAsync(op, request, ct);
         Require(current.Identity == ticket.Identity && current.Repository == ticket.Repository && current.Common == ticket.Common
             && current.LandGitDirectory == ticket.LandGitDirectory && current.TargetBeforeSha == ticket.TargetBeforeSha
             && current.Destination == ticket.Destination && current.Filter == ticket.Filter
@@ -612,7 +613,10 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             && current.SourceRegistrations.SequenceEqual(ticket.SourceRegistrations), "verification_ticket_changed");
         Require(await git.CommonDirectoryAsync(ticket.Identity.WorktreePath, ct) == ticket.Common,
             "land_worktree_identity_changed");
-        var registrations = await git.LiveRegistrationsAsync(ticket.Repository, ct);
+        // CARD-1384: these rows are the post-reacquire live list just parsed for the
+        // comparison above. Nothing since that list mutates registrations, so a second
+        // LiveRegistrationsAsync would only repeat it. The pre-release capture stays a
+        // separate live sample because R is released between the two captures.
         var land = registrations.Where(r => SamePath(r.Path, ticket.Identity.WorktreePath)).ToArray();
         // The persistent land checkout is deliberately locked against pruning. Resume
         // must retain that protection, not mistake it for an index/sequencer lock.
