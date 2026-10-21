@@ -294,6 +294,8 @@ export type AgentIncidentKind =
   | 'PolicyRefreshed'
   | 'PolicyRefreshFailed'
   | 'PolicyDriftNotified'
+  | 'StandingAutomaticFreshStarted'
+  | 'StandingAutomaticFreshRefused'
 
 export type AlertSeverity = 'Info' | 'Warning' | 'Error' | 'Critical'
 
