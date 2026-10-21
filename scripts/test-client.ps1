@@ -47,14 +47,17 @@ $logDir = Join-Path $repoRoot 'logs'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
 $logFile = Join-Path $logDir 'client-tests.log'
 $vitest = Join-Path (Join-Path (Join-Path $clientDir 'node_modules') 'vitest') 'vitest.mjs'
+$tsc = Join-Path (Join-Path (Join-Path $clientDir 'node_modules') 'typescript') (Join-Path 'bin' 'tsc')
+$eslint = Join-Path (Join-Path (Join-Path $clientDir 'node_modules') 'eslint') (Join-Path 'bin' 'eslint.js')
 
 # A fresh linked worktree gets a client/ with no node_modules, and this used to print "run npm ci"
 # and exit 1. That reads as a failing client suite to anyone capturing the output, and it is a dead
 # end for an agent that cannot type the command itself - it cost CARD-0417's review (task f42b6b25)
 # the client evidence entirely. So install once, here, and then re-check. A suite that still cannot
 # run fails just as loudly as before; it is only the install that is no longer somebody else's job.
-if (-not (Test-Path $vitest)) {
-    Write-Output "vitest is not installed at $vitest - installing client dependencies first."
+# Typecheck and lint share this one install (CARD-1393).
+if (-not (Test-Path $vitest) -or -not (Test-Path -LiteralPath $tsc) -or -not (Test-Path -LiteralPath $eslint)) {
+    Write-Output "client dependencies are not installed - installing once for vitest, tsc and eslint."
     # npm.cmd, not the npm.ps1 shim: the shim re-parses the calling line's SOURCE TEXT for its
     # arguments (the CARD-0307 trap that silently ate this script's vitest filter).
     $npmExe = if (Get-Command npm.cmd -ErrorAction SilentlyContinue) { 'npm.cmd' } else { 'npm' }
@@ -89,6 +92,16 @@ if ($null -eq $typecheckCode -or $typecheckCode -ne 0) {
     Write-Output ""
     Write-Output "CLIENT TESTS EXIT CODE: $typecheckCode  (FAIL - typecheck failed; vitest was not started)"
     exit $typecheckCode
+}
+
+$lintScript = Join-Path $PSScriptRoot 'lint-client.ps1'
+& $shell -NoProfile -NonInteractive -File $lintScript
+$lintCode = $LASTEXITCODE
+if ($null -eq $lintCode -or $lintCode -ne 0) {
+    if ($null -eq $lintCode) { $lintCode = 1 }
+    Write-Output ""
+    Write-Output "CLIENT TESTS EXIT CODE: $lintCode  (FAIL - lint failed; vitest was not started)"
+    exit $lintCode
 }
 
 Push-Location $clientDir
