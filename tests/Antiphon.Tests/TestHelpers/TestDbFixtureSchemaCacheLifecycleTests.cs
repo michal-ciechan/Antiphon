@@ -39,6 +39,29 @@ public sealed class TestDbFixtureSchemaCacheLifecycleTests
         await lifecycle.DisposeAsync();
     }
 
+    /// <summary>
+    /// A hit runs no EF migrate, so the first in-process MigrateAsync would pay the cold model-differ
+    /// build (1.9-4.7 s measured on server2). The hit warms it while psql restores, not after.
+    /// </summary>
+    [Test]
+    public async Task Cache_hit_warms_the_migrator_while_restoring()
+    {
+        using var root = new TempRoot();
+        var cache = new TestSchemaCache(root.Path);
+        Seed(cache);
+        var ops = new ControlledTestDbOperations { OverlapWarmWithRestore = true };
+        var lifecycle = new TestDbFixtureLifecycle(ops, cache);
+
+        await lifecycle.EnsureReadyAsync().WaitAsync(Bound);
+
+        lifecycle.SchemaSource.ShouldBe("hit");
+        ops.WarmCalls.ShouldBe(1);
+        lifecycle.Restore.ShouldBe(1);
+        lifecycle.Migrate.ShouldBe(0);
+        lifecycle.CacheFallback.ShouldBe(0);
+        await lifecycle.DisposeAsync();
+    }
+
     [Test]
     public async Task Cache_miss_migrates_captures_and_publishes()
     {
@@ -54,6 +77,7 @@ public sealed class TestDbFixtureSchemaCacheLifecycleTests
         lifecycle.Restore.ShouldBe(0);
         lifecycle.Protect.ShouldBe(1);
         lifecycle.SchemaSource.ShouldBe("miss");
+        ops.WarmCalls.ShouldBe(0, "a migrating bootstrap warms the migrator itself");
         cache.TryRead(TestSchemaCache.ComputeDefaultKey().Key, out var published).ShouldBeTrue();
         published!.Sql.ShouldBe(ControlledTestDbOperations.CapturedSql);
         published.MigrationIds.ShouldBe(ControlledTestDbOperations.Migrations);
@@ -65,6 +89,7 @@ public sealed class TestDbFixtureSchemaCacheLifecycleTests
     [Test]
     [Arguments("restore-throws")]
     [Arguments("history-mismatch")]
+    [Arguments("warm-throws")]
     public async Task Failed_restore_resets_and_migrates(string fault)
     {
         using var root = new TempRoot();
