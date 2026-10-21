@@ -1,6 +1,6 @@
 # CARD-1389: one owner for a reclaimed run.lock
 
-Master-only. Read against `origin/master` `dcb461ce03c9bd8ea7d0edebfc637af33917776b` (the CARD-1386 reclaim is in that tree). Card read from the Antiphon board on 2026-10-21. The three gaps are still present. This branch does not backport. Verification checkpoints are the next stage.
+Master-only. Read against `origin/master` `dcb461ce03c9bd8ea7d0edebfc637af33917776b` (the CARD-1386 reclaim is in that tree). Card read from the Antiphon board on 2026-10-21. The three gaps are still present. This branch does not backport. The closed command rows are in ### Checkpoints.
 
 `GET /api/runner-defaults` returned revision 2. `GET /api/session-runners` returned an eligible Windows runner, an eligible Linux runner, and one draining runner that is not accepting work. Re-read at dispatch. Omit `-Runner`. Pin `-Platform Linux`: the double-reclaim proof is the Linux unlink of an open lock, and Windows `FileShare.Read` already makes that second delete fail.
 
@@ -63,3 +63,16 @@ The C# filter for each method is `/*/*/NightlyReclaimRaceTests/<Method>*`. `expe
   In-process. Do not set the `GetBootId` seam. Override `Test-NightlyWindows` to true and `Test-NightlyLinux` to false. First `Get-ItemProperty` returns `BootId` 157. Later calls throw. `Get-CimInstance` returns `LastBootUpTime` `2026-01-02T03:04:05Z`. A call counter on `Get-ItemProperty` must be at least 2; a zero count fails as `stub-not-hit`, which is not the product red. The second boot id is empty or `157`. Plant pid `424299`, boot id `157`, host id `host-current`, seam that pid alive, seam `GetHostId` = `host-current`, no `GetBootId`. `Enter-NightlyExclusiveLock` returns `Reason=live-owner`, the planted run id remains, and `lock-reclaim.json` is absent. Intended red on current master, from the stubbed run on this host: the second id was `2026-01-02T03:04:05.0000000Z` and the live lock was reclaimed with reason `dead-owner-rebooted`.
 
 Do not assert the later fake test phase. Assert the function result, `run.lock`, and `lock-reclaim.json` only.
+
+### Checkpoints
+
+Command rows. The tool records `buildSource=notApplicable`. CP-1 alone, against the test-only commit, is the red witness: `C1389 Record winner newRunId remains` fails and the harness exit is 1. The green run is CP-1 through CP-6 together, against the production commit, all exit 0. No Unit lane. `Expect` is the green rule.
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-1 | S1 | n/a | loser-record | `pwsh -NoProfile -File scripts/test-nightly-run.ps1 -Case C1389_LoserReclaimRecord` | witness | 2 passed, 0 failed, exit 0 | n/a | 4 |
+| CP-2 | S1 | n/a | double-reclaim | `pwsh -NoProfile -File scripts/test-nightly-run.ps1 -Case C1389_DoubleReclaim` | race | 2 passed, 0 failed, exit 0 | n/a | 6 |
+| CP-3 | S1 | n/a | boot-source | `pwsh -NoProfile -File scripts/test-nightly-run.ps1 -Case C1389_BootSourcePinned` | boot | 3 passed, 0 failed, exit 0 | n/a | 4 |
+| CP-4 | S1 | n/a | dead-owner | `pwsh -NoProfile -File scripts/test-nightly-run.ps1 -Case C1386_DeadOwnerReclaimed` | C1386 | 6 passed, 0 failed, exit 0 | n/a | 6 |
+| CP-5 | S1 | n/a | live-owner | `pwsh -NoProfile -File scripts/test-nightly-run.ps1 -Case C1386_LiveOwnerRefused` | C1386 | 4 passed, 0 failed, exit 0 | n/a | 4 |
+| CP-6 | S1 | n/a | ambiguous-owner | `pwsh -NoProfile -File scripts/test-nightly-run.ps1 -Case C1386_AmbiguousOwnerRefused` | C1386 | 6 passed, 0 failed, exit 0 | n/a | 4 |
