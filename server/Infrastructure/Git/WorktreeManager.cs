@@ -1172,6 +1172,7 @@ public sealed class WorktreeManager : IWorktreeManager
             CreateNoWindow = true
         };
 
+        ServerGitProcess.DisableAutoMaintenance(psi);
         foreach (var argument in arguments)
             psi.ArgumentList.Add(argument);
 

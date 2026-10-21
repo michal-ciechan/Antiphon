@@ -146,6 +146,7 @@ public sealed class DelegationWorkspaceResolver
             };
             psi.ArgumentList.Add("rev-parse");
             psi.ArgumentList.Add("--show-toplevel");
+            ServerGitProcess.DisableAutoMaintenance(psi);
 
             using var process = Process.Start(psi);
             if (process is null)

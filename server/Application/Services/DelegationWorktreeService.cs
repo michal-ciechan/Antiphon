@@ -917,6 +917,7 @@ public sealed class DelegationWorktreeService
             RedirectStandardError = true,
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
+        ServerGitProcess.DisableAutoMaintenance(psi);
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start git.");

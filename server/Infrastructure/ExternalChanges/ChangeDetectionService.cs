@@ -367,6 +367,7 @@ public class ChangeDetectionService : BackgroundService
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        ServerGitProcess.DisableAutoMaintenance(psi);
 
         _logger.LogDebug("Running git {Arguments} in {WorkingDirectory}", arguments, workingDirectory);
 

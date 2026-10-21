@@ -49,7 +49,8 @@ public sealed class LandingGitProfileTests
         profile.CanonicalHit();
         profile.Inspection();
         profile.Describe().ShouldBe(
-            "processes=2 worktreeList=1 registrationHits=2 canonicalHits=3 inspections=1 remote=1 gitSeconds=2.50");
+            "processes=2 worktreeList=1 registrationHits=2 canonicalHits=3 inspections=1 remote=1 gitSeconds=2.50"
+            + " histogram={ls-remote=1, worktree list=1}");
     }
 
     [Test]

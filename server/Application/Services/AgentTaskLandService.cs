@@ -512,11 +512,11 @@ public sealed class AgentTaskLandService
                 "Land git profile task={TaskId} request={RequestId} outcome={Outcome} wallSeconds={WallSeconds} processes={Processes} "
                 + "worktreeList={WorktreeList} registrationHits={RegistrationHits} canonicalHits={CanonicalHits} "
                 + "inspections={Inspections} remote={Remote} gitSeconds={GitSeconds} "
-                + "reset={Reset} rebase={Rebase} verify={Verify} push={Push} canonical={Canonical} cleanup={Cleanup}",
+                + "reset={Reset} rebase={Rebase} verify={Verify} push={Push} canonical={Canonical} cleanup={Cleanup} histogram={Histogram}",
                 task.Id, request.Id, terminal is null ? outcome : $"{outcome}/{terminal.Type}",
                 Math.Round(wall.Elapsed.TotalSeconds, 2), profile.Processes, profile.WorktreeLists, profile.RegistrationHits,
                 profile.CanonicalHits, profile.Inspections, profile.RemoteRoundTrips, Math.Round(profile.GitSeconds, 2),
-                phases.Reset, phases.Rebase, phases.Verify, phases.Push, phases.Canonical, phases.Cleanup);
+                phases.Reset, phases.Rebase, phases.Verify, phases.Push, phases.Canonical, phases.Cleanup, profile.DescribeHistogram());
         }
     }
 
