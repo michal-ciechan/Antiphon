@@ -10,7 +10,10 @@
 #   whose critical sections do not overlap.
 #   After a warm typecheck, a type error whose mtime is older than the
 #   tsbuildinfo must still exit nonzero before Vitest. That is content,
-#   not the buildinfo's modification time.
+#   not the buildinfo's modification time. The node project gets the same
+#   witness on vite.config.ts.
+#   After a warm lint, a same-size lint error whose mtime is restored must
+#   still exit 1 before Vitest. The cache key is file content.
 #
 # ASCII-only. Same PowerShell 5.1-safe shape as test-client.ps1.
 # This harness does not take a build slot. A checkpoint command row already holds one.
@@ -195,7 +198,133 @@ function Test-StaleMtimeTypeErrorStopsBeforeVitest {
     }
 }
 
+function Find-ByteIndex {
+    param([byte[]]$Haystack, [byte[]]$Needle, [int]$Start)
+    if ($null -eq $Haystack -or $null -eq $Needle -or $Needle.Length -eq 0) { return -1 }
+    $last = $Haystack.Length - $Needle.Length
+    for ($i = $Start; $i -le $last; $i++) {
+        $match = $true
+        for ($j = 0; $j -lt $Needle.Length; $j++) {
+            if ($Haystack[$i + $j] -ne $Needle[$j]) { $match = $false; break }
+        }
+        if ($match) { return $i }
+    }
+    return -1
+}
+
+function Test-StaleMtimeLintErrorStopsBeforeVitest {
+    $warm = Invoke-ScriptFile -Path $lintScript -Arguments @()
+    Write-Output $warm.Text
+    if ($warm.ExitCode -ne 0) {
+        Fail-Wrapper ("warm lint exit={0}" -f $warm.ExitCode) ''
+    }
+
+    $theme = Join-Path (Join-Path (Join-Path $repoRoot 'client') 'src') 'theme.ts'
+    if (-not (Test-Path -LiteralPath $theme)) {
+        Fail-Wrapper 'theme.ts is missing' ''
+    }
+
+    $original = [System.IO.File]::ReadAllBytes($theme)
+    $originalTime = [System.IO.File]::GetLastWriteTimeUtc($theme)
+    $needle = [System.Text.Encoding]::ASCII.GetBytes('const success')
+    $replacement = [System.Text.Encoding]::ASCII.GetBytes('var   success')
+    if ($needle.Length -ne $replacement.Length) {
+        Fail-Wrapper 'lint mutation is not same-size' ''
+    }
+    $at = Find-ByteIndex -Haystack $original -Needle $needle -Start 0
+    if ($at -lt 0) {
+        Fail-Wrapper 'theme.ts has no const success to turn into a same-size lint error' ''
+    }
+    if ((Find-ByteIndex -Haystack $original -Needle $needle -Start ($at + 1)) -ge 0) {
+        Fail-Wrapper 'theme.ts has more than one const success' ''
+    }
+    $mutated = New-Object byte[] $original.Length
+    [System.Buffer]::BlockCopy($original, 0, $mutated, 0, $original.Length)
+    [System.Buffer]::BlockCopy($replacement, 0, $mutated, $at, $replacement.Length)
+
+    $staleExit = $null
+    $staleText = ''
+    try {
+        [System.IO.File]::WriteAllBytes($theme, $mutated)
+        [System.IO.File]::SetLastWriteTimeUtc($theme, $originalTime)
+        $seen = [System.IO.File]::GetLastWriteTimeUtc($theme)
+        if ($seen.Ticks -ne $originalTime.Ticks -or $mutated.Length -ne $original.Length) {
+            $staleText = "could not restore theme.ts size and mtime (seen=$seen original=$originalTime bytes=$($mutated.Length)/$($original.Length))"
+        }
+        else {
+            $stale = Invoke-ScriptFile -Path $testClient -Arguments @('attentionVisuals.test')
+            $staleExit = $stale.ExitCode
+            $staleText = $stale.Text
+        }
+    }
+    finally {
+        [System.IO.File]::WriteAllBytes($theme, $original)
+        [System.IO.File]::SetLastWriteTimeUtc($theme, $originalTime)
+    }
+
+    Write-Output $staleText
+    if ($staleText.IndexOf('could not restore theme.ts') -ge 0) {
+        Fail-Wrapper $staleText ''
+    }
+    $printed = Get-ClientTestsExit -Text $staleText
+    if ($staleExit -ne 1 -or $printed -ne 1 -or $staleText.IndexOf('no-var') -lt 0 -or $staleText.IndexOf('CLIENT TYPECHECK EXIT CODE: 0') -lt 0 -or $staleText.IndexOf('vitest was not started') -lt 0 -or -not (Test-VitestStayedDown -Text $staleText)) {
+        Fail-Wrapper ("stale mtime lint exit={0} printed={1}" -f $staleExit, $printed) ''
+    }
+    if ($lintJoined.IndexOf('--cache-strategy content') -lt 0) {
+        Fail-Wrapper 'lint-client.ps1 does not use eslint cache strategy content' ''
+    }
+}
+
+function Test-StaleMtimeNodeTypeErrorStopsBeforeVitest {
+    $source = Join-Path (Join-Path $repoRoot 'client') 'vite.config.ts'
+    $info = Join-Path (Join-Path (Join-Path (Join-Path $repoRoot 'client') 'node_modules') '.tmp') 'tsconfig.node.tsbuildinfo'
+    if (-not (Test-Path -LiteralPath $source) -or -not (Test-Path -LiteralPath $info)) {
+        Fail-Wrapper 'warm typecheck did not write tsconfig.node.tsbuildinfo' ''
+    }
+
+    $original = [System.IO.File]::ReadAllBytes($source)
+    $originalTime = [System.IO.File]::GetLastWriteTimeUtc($source)
+    $infoTime = [System.IO.File]::GetLastWriteTimeUtc($info)
+    $rewound = $infoTime.AddMinutes(-2)
+    $suffix = [System.Text.Encoding]::ASCII.GetBytes("`nexport const card1398NodeStaleWitness: number = 'stale';`n")
+    $mutated = New-Object byte[] ($original.Length + $suffix.Length)
+    [System.Buffer]::BlockCopy($original, 0, $mutated, 0, $original.Length)
+    [System.Buffer]::BlockCopy($suffix, 0, $mutated, $original.Length, $suffix.Length)
+
+    $staleExit = $null
+    $staleText = ''
+    $seen = $rewound
+    try {
+        [System.IO.File]::WriteAllBytes($source, $mutated)
+        [System.IO.File]::SetLastWriteTimeUtc($source, $rewound)
+        $seen = [System.IO.File]::GetLastWriteTimeUtc($source)
+        if ($seen -ge $infoTime) {
+            $staleText = "could not set vite.config.ts mtime before the tsbuildinfo (source=$seen info=$infoTime)"
+        }
+        else {
+            $stale = Invoke-ScriptFile -Path $testClient -Arguments @('attentionVisuals.test')
+            $staleExit = $stale.ExitCode
+            $staleText = $stale.Text
+        }
+    }
+    finally {
+        [System.IO.File]::WriteAllBytes($source, $original)
+        [System.IO.File]::SetLastWriteTimeUtc($source, $originalTime)
+    }
+
+    Write-Output $staleText
+    if ($staleText.IndexOf('could not set vite.config.ts mtime') -ge 0) {
+        Fail-Wrapper $staleText ''
+    }
+    $printed = Get-ClientTestsExit -Text $staleText
+    if ($staleExit -ne 2 -or $printed -ne 2 -or $staleText.IndexOf('error TS') -lt 0 -or $staleText.IndexOf('vitest was not started') -lt 0 -or -not (Test-VitestStayedDown -Text $staleText)) {
+        Fail-Wrapper ("stale mtime node typecheck exit={0} printed={1} source={2} info={3}" -f $staleExit, $printed, $seen, $infoTime) ''
+    }
+}
+
+Test-StaleMtimeLintErrorStopsBeforeVitest
 Test-StaleMtimeTypeErrorStopsBeforeVitest
+Test-StaleMtimeNodeTypeErrorStopsBeforeVitest
 
 $stampRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('card1398-lock-' + [guid]::NewGuid().ToString('n'))
 New-Item -ItemType Directory -Path $stampRoot | Out-Null
