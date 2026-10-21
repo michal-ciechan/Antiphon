@@ -8,6 +8,9 @@
 #   and a no-control-regex fixture) and require each exit before Vitest.
 #   Also require incremental/noEmit, the ignored eslint cache, and a lock
 #   whose critical sections do not overlap.
+#   After a warm typecheck, a type error whose mtime is older than the
+#   tsbuildinfo must still exit nonzero before Vitest. That is content,
+#   not the buildinfo's modification time.
 #
 # ASCII-only. Same PowerShell 5.1-safe shape as test-client.ps1.
 # This harness does not take a build slot. A checkpoint command row already holds one.
@@ -139,56 +142,126 @@ if ($lintRun.ExitCode -ne 1 -or $lintPrinted -ne 1 -or $lintRun.Text.IndexOf('no
 
 if (-not (Test-Path -LiteralPath $libScript)) { Fail-Wrapper 'scripts/lib/client-npm-install.ps1 is missing' '' }
 
+function Test-StaleMtimeTypeErrorStopsBeforeVitest {
+    $warm = Invoke-ScriptFile -Path $typecheckScript -Arguments @()
+    Write-Output $warm.Text
+    if ($warm.ExitCode -ne 0) {
+        Fail-Wrapper ("warm typecheck exit={0}" -f $warm.ExitCode) ''
+    }
+
+    $theme = Join-Path (Join-Path (Join-Path $repoRoot 'client') 'src') 'theme.ts'
+    $info = Join-Path (Join-Path (Join-Path (Join-Path $repoRoot 'client') 'node_modules') '.tmp') 'tsconfig.app.tsbuildinfo'
+    if (-not (Test-Path -LiteralPath $theme) -or -not (Test-Path -LiteralPath $info)) {
+        Fail-Wrapper 'warm typecheck did not write tsconfig.app.tsbuildinfo' ''
+    }
+
+    $original = [System.IO.File]::ReadAllBytes($theme)
+    $originalTime = [System.IO.File]::GetLastWriteTimeUtc($theme)
+    $infoTime = [System.IO.File]::GetLastWriteTimeUtc($info)
+    $rewound = $infoTime.AddMinutes(-2)
+    $suffix = [System.Text.Encoding]::ASCII.GetBytes("`nexport const card1398StaleWitness: number = 'stale';`n")
+    $mutated = New-Object byte[] ($original.Length + $suffix.Length)
+    [System.Buffer]::BlockCopy($original, 0, $mutated, 0, $original.Length)
+    [System.Buffer]::BlockCopy($suffix, 0, $mutated, $original.Length, $suffix.Length)
+
+    $staleExit = $null
+    $staleText = ''
+    $seen = $rewound
+    try {
+        [System.IO.File]::WriteAllBytes($theme, $mutated)
+        [System.IO.File]::SetLastWriteTimeUtc($theme, $rewound)
+        $seen = [System.IO.File]::GetLastWriteTimeUtc($theme)
+        if ($seen -ge $infoTime) {
+            $staleText = "could not set theme.ts mtime before the tsbuildinfo (theme=$seen info=$infoTime)"
+        }
+        else {
+            $stale = Invoke-ScriptFile -Path $testClient -Arguments @('attentionVisuals.test')
+            $staleExit = $stale.ExitCode
+            $staleText = $stale.Text
+        }
+    }
+    finally {
+        [System.IO.File]::WriteAllBytes($theme, $original)
+        [System.IO.File]::SetLastWriteTimeUtc($theme, $originalTime)
+    }
+
+    Write-Output $staleText
+    if ($staleText.IndexOf('could not set theme.ts mtime') -ge 0) {
+        Fail-Wrapper $staleText ''
+    }
+    $printed = Get-ClientTestsExit -Text $staleText
+    if ($staleExit -ne 2 -or $printed -ne 2 -or $staleText.IndexOf('error TS') -lt 0 -or $staleText.IndexOf('vitest was not started') -lt 0 -or -not (Test-VitestStayedDown -Text $staleText)) {
+        Fail-Wrapper ("stale mtime typecheck exit={0} printed={1} theme={2} info={3}" -f $staleExit, $printed, $seen, $infoTime) ''
+    }
+}
+
+Test-StaleMtimeTypeErrorStopsBeforeVitest
+
 $stampRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('card1398-lock-' + [guid]::NewGuid().ToString('n'))
 New-Item -ItemType Directory -Path $stampRoot | Out-Null
-$childPath = Join-Path $stampRoot 'child.ps1'
-$childBody = @'
+$lockFailure = ''
+$procA = $null
+$procB = $null
+try {
+    $childPath = Join-Path $stampRoot 'child.ps1'
+    $childBody = @'
 $ErrorActionPreference = 'Continue'
 $env:CARD1398_ID = [string]$args[0]
 . $env:CARD1398_LIB
 $lockCode = Invoke-WithClientNpmCiLock -RepoRoot $env:CARD1398_ROOT -Action {
+    Write-Output 'CARD1398-LOCK-OUTPUT'
     $startPath = Join-Path $env:CARD1398_DIR ($env:CARD1398_ID + '.start')
     $endPath = Join-Path $env:CARD1398_DIR ($env:CARD1398_ID + '.end')
     [System.IO.File]::WriteAllText($startPath, [string][DateTime]::UtcNow.Ticks)
     Start-Sleep -Seconds 2
     [System.IO.File]::WriteAllText($endPath, [string][DateTime]::UtcNow.Ticks)
 }
-if ($lockCode -ne 0) { exit $lockCode }
+if ($lockCode -isnot [int] -or $lockCode -ne 0) { exit 3 }
 exit 0
 '@
-[System.IO.File]::WriteAllText($childPath, $childBody.Replace("`r`n", "`n"))
-$env:CARD1398_LIB = $libScript
-$env:CARD1398_ROOT = $stampRoot
-$env:CARD1398_DIR = $stampRoot
-$outA = Join-Path $stampRoot 'a.out'
-$errA = Join-Path $stampRoot 'a.err'
-$outB = Join-Path $stampRoot 'b.out'
-$errB = Join-Path $stampRoot 'b.err'
-$procA = Start-Process -FilePath (Get-ScriptHost) -ArgumentList @('-NoProfile', '-NonInteractive', '-File', $childPath, 'A') -PassThru -NoNewWindow -RedirectStandardOutput $outA -RedirectStandardError $errA
-$procB = Start-Process -FilePath (Get-ScriptHost) -ArgumentList @('-NoProfile', '-NonInteractive', '-File', $childPath, 'B') -PassThru -NoNewWindow -RedirectStandardOutput $outB -RedirectStandardError $errB
-$waited = Wait-Process -Id $procA.Id, $procB.Id -Timeout 30 -PassThru -ErrorAction SilentlyContinue
-if ($null -eq $waited -or @($waited).Count -lt 2) {
-    foreach ($proc in @($procA, $procB)) {
-        if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+    [System.IO.File]::WriteAllText($childPath, $childBody.Replace("`r`n", "`n"))
+    $env:CARD1398_LIB = $libScript
+    $env:CARD1398_ROOT = $stampRoot
+    $env:CARD1398_DIR = $stampRoot
+    $outA = Join-Path $stampRoot 'a.out'
+    $errA = Join-Path $stampRoot 'a.err'
+    $outB = Join-Path $stampRoot 'b.out'
+    $errB = Join-Path $stampRoot 'b.err'
+    $procA = Start-Process -FilePath (Get-ScriptHost) -ArgumentList @('-NoProfile', '-NonInteractive', '-File', $childPath, 'A') -PassThru -NoNewWindow -RedirectStandardOutput $outA -RedirectStandardError $errA
+    $procB = Start-Process -FilePath (Get-ScriptHost) -ArgumentList @('-NoProfile', '-NonInteractive', '-File', $childPath, 'B') -PassThru -NoNewWindow -RedirectStandardOutput $outB -RedirectStandardError $errB
+    $waited = Wait-Process -Id $procA.Id, $procB.Id -Timeout 30 -PassThru -ErrorAction SilentlyContinue
+    if ($null -eq $waited -or @($waited).Count -lt 2) {
+        $lockFailure = 'npm ci lock holders did not finish'
     }
-    Fail-Wrapper 'npm ci lock holders did not finish' ''
+    else {
+        $startAPath = Join-Path $stampRoot 'A.start'
+        $endAPath = Join-Path $stampRoot 'A.end'
+        $startBPath = Join-Path $stampRoot 'B.start'
+        $endBPath = Join-Path $stampRoot 'B.end'
+        if (-not (Test-Path -LiteralPath $startAPath) -or -not (Test-Path -LiteralPath $endAPath) -or -not (Test-Path -LiteralPath $startBPath) -or -not (Test-Path -LiteralPath $endBPath)) {
+            $lockFailure = 'npm ci lock did not record both critical sections'
+        }
+        else {
+            $startA = [int64]([System.IO.File]::ReadAllText($startAPath).Trim())
+            $endA = [int64]([System.IO.File]::ReadAllText($endAPath).Trim())
+            $startB = [int64]([System.IO.File]::ReadAllText($startBPath).Trim())
+            $endB = [int64]([System.IO.File]::ReadAllText($endBPath).Trim())
+            $separated = ($endA -le $startB) -or ($endB -le $startA)
+            if (-not $separated -or $procA.ExitCode -ne 0 -or $procB.ExitCode -ne 0) {
+                $lockFailure = ("npm ci lock overlapped A={0}-{1} B={2}-{3} exit={4},{5}" -f $startA, $endA, $startB, $endB, $procA.ExitCode, $procB.ExitCode)
+            }
+        }
+    }
 }
-$startAPath = Join-Path $stampRoot 'A.start'
-$endAPath = Join-Path $stampRoot 'A.end'
-$startBPath = Join-Path $stampRoot 'B.start'
-$endBPath = Join-Path $stampRoot 'B.end'
-if (-not (Test-Path -LiteralPath $startAPath) -or -not (Test-Path -LiteralPath $endAPath) -or -not (Test-Path -LiteralPath $startBPath) -or -not (Test-Path -LiteralPath $endBPath)) {
-    Fail-Wrapper 'npm ci lock did not record both critical sections' ''
+finally {
+    foreach ($proc in @($procA, $procB)) {
+        if ($null -ne $proc -and -not $proc.HasExited) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Remove-Item -LiteralPath $stampRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
-$startA = [int64]([System.IO.File]::ReadAllText($startAPath).Trim())
-$endA = [int64]([System.IO.File]::ReadAllText($endAPath).Trim())
-$startB = [int64]([System.IO.File]::ReadAllText($startBPath).Trim())
-$endB = [int64]([System.IO.File]::ReadAllText($endBPath).Trim())
-$separated = ($endA -le $startB) -or ($endB -le $startA)
-if (-not $separated -or $procA.ExitCode -ne 0 -or $procB.ExitCode -ne 0) {
-    Fail-Wrapper ("npm ci lock overlapped A={0}-{1} B={2}-{3} exit={4},{5}" -f $startA, $endA, $startB, $endB, $procA.ExitCode, $procB.ExitCode) ''
-}
-Remove-Item -LiteralPath $stampRoot -Recurse -Force -ErrorAction SilentlyContinue
+if (-not [string]::IsNullOrWhiteSpace($lockFailure)) { Fail-Wrapper $lockFailure '' }
 
 Write-Output 'PASS Wrapper'
 exit 0
