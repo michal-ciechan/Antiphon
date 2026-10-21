@@ -329,6 +329,88 @@ public sealed class LandNonCodeSkipTests
     }
 
     [Test]
+    public async Task C1390_UpdateRefusesDocsMarkdownInput()
+    {
+        var root = await InitAuditRepositoryAsync("""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <EmbeddedResource Include="docs/**/*.md" />
+              </ItemGroup>
+            </Project>
+            """);
+        try
+        {
+            var ran = await RunAuditAsync(root, "en-US", "-Update");
+            ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
+            ran.Stderr.ShouldContain("cannot approve it");
+            ran.Stderr.ShouldContain("docs/**/*.md");
+            File.Exists(AuditManifest(root)).ShouldBeFalse();
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task C1390_MissingNulFailsUnderNonInvariantCulture()
+    {
+        var root = await InitAuditRepositoryAsync("<Project Sdk=\"Microsoft.NET.Sdk\"></Project>\n");
+        try
+        {
+            var updated = await RunAuditAsync(root, "en-US", "-Update");
+            updated.Code.ShouldBe(0, updated.Stdout + updated.Stderr);
+            var tree = await GitBytesAsync(root, "ls-tree", "-r", "-z", "HEAD");
+            tree.Length.ShouldBeGreaterThan(0);
+            tree[^1].ShouldBe((byte)0);
+            var stripped = Path.Combine(root, "tree-without-nul.bin");
+            await File.WriteAllBytesAsync(stripped, tree[..^1]);
+            var bin = Path.Combine(root, "bin");
+            Directory.CreateDirectory(bin);
+            var realGit = WhichGit();
+            if (OperatingSystem.IsWindows())
+            {
+                await File.WriteAllTextAsync(Path.Combine(bin, "git.cmd"),
+                    "@echo off\r\n" +
+                    "if /I \"%~1\"==\"ls-tree\" (\r\n" +
+                    "  pwsh -NoProfile -NonInteractive -Command \"$b=[System.IO.File]::ReadAllBytes('" + stripped.Replace("'", "''") + "'); [Console]::OpenStandardOutput().Write($b,0,$b.Length)\"\r\n" +
+                    "  exit /b 0\r\n" +
+                    ")\r\n" +
+                    "\"" + realGit + "\" %*\r\n");
+            }
+            else
+            {
+                await File.WriteAllTextAsync(Path.Combine(bin, "git"),
+                    "#!/bin/sh\n" +
+                    "if [ \"$1\" = \"ls-tree\" ]; then\n" +
+                    "  cat \"" + stripped + "\"\n" +
+                    "  exit 0\n" +
+                    "fi\n" +
+                    "exec \"" + realGit + "\" \"$@\"\n");
+                File.SetUnixFileMode(Path.Combine(bin, "git"), UnixFileMode.UserRead | UnixFileMode.UserExecute);
+            }
+            var path = bin + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
+            var ran = await RunAuditAsync(root, "en-US", new Dictionary<string, string?> { ["PATH"] = path }, "-Check");
+            ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
+            ran.Stderr.ShouldContain("missing its trailing NUL");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task C1390_MalformedManifestForcesTheBuild()
+    {
+        await using var h = await CreateAsync();
+        await h.AddDocsOnlySourceAsync();
+        using (LandVerificationBuildGraph.UseManifestText("not-a-digest\n1\n"))
+            await LandAndAssertAsync(h, build: true);
+        (await h.OperationAsync())!.VerificationCommand.ShouldNotBeNull().ShouldContain("unrecognized-build-graph");
+    }
+
+    [Test]
     public async Task C1380_AlreadyPresentDoesNotPromiseANewBuildEvenWhenForced()
     {
         await using var h = new LandingSafetyHarness();
@@ -428,5 +510,110 @@ public sealed class LandNonCodeSkipTests
         await process.WaitForExitAsync();
         process.ExitCode.ShouldBe(0, stderr);
         return stdout;
+    }
+
+    private static string AuditManifest(string root) => Path.Combine(root, "server", "Application", "Services",
+        "LandVerificationBuildGraph.manifest.txt");
+
+    private static async Task<string> InitAuditRepositoryAsync(string project)
+    {
+        var root = Directory.CreateTempSubdirectory("c1390-audit-").FullName;
+        Directory.CreateDirectory(Path.Combine(root, "server", "Application", "Services"));
+        Directory.CreateDirectory(Path.Combine(root, "scripts"));
+        await File.WriteAllTextAsync(Path.Combine(root, "server", "App.csproj"), project);
+        File.Copy(
+            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "audit-land-verification-graph.ps1"),
+            Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
+        await GitAsync(root, "init", "-b", "master");
+        await GitAsync(root, "config", "user.email", "c1390@example.invalid");
+        await GitAsync(root, "config", "user.name", "CARD-1390");
+        await GitAsync(root, "add", "--", "server/App.csproj", "scripts/audit-land-verification-graph.ps1");
+        await GitAsync(root, "commit", "-m", "fixture");
+        return root;
+    }
+
+    private static string WhichGit()
+    {
+        var path = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var candidate = Path.Combine(dir, "git");
+            if (File.Exists(candidate)) return candidate;
+        }
+        throw new InvalidOperationException("git was not found on PATH.");
+    }
+
+    private static Task<(int Code, string Stdout, string Stderr)> RunAuditAsync(string root, string culture, params string[] args) =>
+        RunAuditAsync(root, culture, environment: null, args);
+
+    private static async Task<(int Code, string Stdout, string Stderr)> RunAuditAsync(
+        string root, string culture, IReadOnlyDictionary<string, string?>? environment, params string[] args)
+    {
+        var script = Path.Combine(root, "scripts", "audit-land-verification-graph.ps1");
+        var quotedArgs = string.Join(' ', args.Select(arg => "'" + arg.Replace("'", "''") + "'"));
+        var command =
+            "$c = [System.Globalization.CultureInfo]::GetCultureInfo('" + culture + "'); " +
+            "[System.Threading.Thread]::CurrentThread.CurrentCulture = $c; " +
+            "[System.Threading.Thread]::CurrentThread.CurrentUICulture = $c; " +
+            "& '" + script.Replace("'", "''") + "' " + quotedArgs;
+        var start = new ProcessStartInfo("pwsh")
+        {
+            WorkingDirectory = root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-NonInteractive");
+        start.ArgumentList.Add("-Command");
+        start.ArgumentList.Add(command);
+        if (environment is not null)
+        {
+            foreach (var (name, value) in environment)
+                start.Environment[name] = value;
+        }
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await process.WaitForExitAsync(timeout.Token);
+        return (process.ExitCode, await stdout, await stderr);
+    }
+
+    private static async Task GitAsync(string root, params string[] args)
+    {
+        var start = GitStart(root, args);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("git did not start.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await process.WaitForExitAsync(timeout.Token);
+        process.ExitCode.ShouldBe(0, await stdout + await stderr);
+    }
+
+    private static async Task<byte[]> GitBytesAsync(string root, params string[] args)
+    {
+        var start = GitStart(root, args);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("git did not start.");
+        using var body = new MemoryStream();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await process.StandardOutput.BaseStream.CopyToAsync(body);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await process.WaitForExitAsync(timeout.Token);
+        process.ExitCode.ShouldBe(0, await stderr);
+        return body.ToArray();
+    }
+
+    private static ProcessStartInfo GitStart(string root, params string[] args)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        return start;
     }
 }

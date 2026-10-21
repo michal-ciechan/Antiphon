@@ -66,5 +66,24 @@ internal sealed class LandVerificationBuildGraph
         }
     }
 
+    /// <summary>
+    /// CARD-1390 test seam. The text is not consulted yet, so a malformed manifest still
+    /// leaves the embedded digest in force and a docs-only land can skip.
+    /// </summary>
+    internal static IDisposable UseManifestText(string text)
+    {
+        _ = text;
+        return EmptyManifestScope.Instance;
+    }
+
+    private sealed class EmptyManifestScope : IDisposable
+    {
+        internal static readonly EmptyManifestScope Instance = new();
+
+        public void Dispose()
+        {
+        }
+    }
+
     private readonly record struct Manifest(string? Digest, int? Count);
 }
