@@ -82,6 +82,10 @@ public class AgentTaskDispatchFailureTests
     [Timeout(30_000)]
     public async Task a_git_timeout_fails_one_task_not_the_tick(CancellationToken ct)
     {
+        // On the Windows qualification host the sh post-checkout hook did not hold git worktree add
+        // past the 1 s timeout (CARD-1415), so the timeout boundary is only proven off Windows.
+        if (OperatingSystem.IsWindows())
+            Skip.Test("CARD-1415: the #!/bin/sh sleep hook does not delay git worktree add under Git for Windows.");
         using var slow = new ScratchGitRepo("card0220-slow");
         using var healthy = new ScratchGitRepo("card0220-ok");
         await slow.CommitFileAsync("README.md", "slow\n");
