@@ -586,6 +586,7 @@ public sealed class OrchestratorWorkspaceFactGatherer
             };
             psi.ArgumentList.Add("rev-parse");
             psi.ArgumentList.Add("--show-toplevel");
+            ServerGitProcess.DisableAutoMaintenance(psi);
             using var process = Process.Start(psi);
             if (process is null)
                 return null;

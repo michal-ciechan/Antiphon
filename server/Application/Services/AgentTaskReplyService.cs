@@ -2203,6 +2203,7 @@ public sealed class AgentTaskReplyService
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
+            ServerGitProcess.DisableAutoMaintenance(process.StartInfo);
             if (!process.Start())
                 return null;
 

@@ -346,6 +346,7 @@ public class GitService : IGitService
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        ServerGitProcess.DisableAutoMaintenance(psi);
 
         _logger.LogDebug("Running git {Arguments} in {WorkingDirectory}", arguments, workingDirectory);
 
@@ -405,6 +406,7 @@ public class GitService : IGitService
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        ServerGitProcess.DisableAutoMaintenance(psi);
 
         _logger.LogDebug("Running git {Arguments} in {WorkingDirectory}", arguments, workingDirectory);
 
