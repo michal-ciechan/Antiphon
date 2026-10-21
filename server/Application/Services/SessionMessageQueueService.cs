@@ -1618,7 +1618,8 @@ public sealed partial class SessionMessageQueueService
                 var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
                 if (session is null || session.StartedAt != action.AcceptedGeneration) return lateConfirmed.ToResult();
                 if (await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == sessionId
-                        && a.Id != action.Id && a.Phase < SessionRuntimeActionCoordinator.QueuePhase, ct)
+                        && a.Id != action.Id && a.Phase < SessionRuntimeActionCoordinator.QueuePhase
+                        && a.TriggerKind != SessionRuntimeActionCoordinator.ChannelReplyDebt, ct)
                     || (session.Status == SessionStatus.Running && session.GrokRulesState != GrokRulesState.Failed
                         && await ReadWorkingAsync(db, sessionId, ct)))
                     return lateConfirmed.ToResult() with { Deferred = true };
