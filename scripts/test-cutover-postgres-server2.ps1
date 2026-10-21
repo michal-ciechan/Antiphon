@@ -62,6 +62,235 @@ function Read-C1407Trace {
     return (Get-Content -LiteralPath $Fake.Trace -Raw -ErrorAction SilentlyContinue)
 }
 
+function New-C1407SmartFake {
+    $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('c1407-smart-' + [guid]::NewGuid().ToString('N'))
+    $stdin = Join-Path $dir 'stdin'
+    New-Item -ItemType Directory -Path $stdin -Force | Out-Null
+    $trace = Join-Path $dir 'trace.txt'
+    '' | Set-Content -LiteralPath $trace -Encoding ascii
+    $body = @'
+#!/bin/sh
+name=$(basename "$0")
+trace="$C1407_TRACE"
+stdin_dir="$C1407_STDIN"
+if [ -z "$trace" ] || [ -z "$stdin_dir" ]; then
+  echo "c1407 fake is missing its trace paths" >&2
+  exit 99
+fi
+line=$name
+for arg in "$@"; do
+  flat=$(printf '%s' "$arg" | tr '\n\t' '  ')
+  line=$(printf '%s\t%s' "$line" "$flat")
+done
+printf '%s\n' "$line" >> "$trace"
+stdin_file="$stdin_dir/$name.$$.in"
+if [ -p /dev/stdin ]; then
+  cat > "$stdin_file"
+fi
+if [ "$name" = "pwsh" ] && [ "$C1407_FAIL_MAINTENANCE" = "1" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      *set-apphost-maintenance.ps1*) exit 1 ;;
+    esac
+  done
+fi
+sql=""
+if [ -f "$stdin_file" ]; then
+  sql=$(tr '\n' ' ' < "$stdin_file")
+fi
+emit_sql() {
+  count="$1"
+  if printf '%s' "$sql" | grep -F -q 'client_addr'; then
+    printf '%s\n' '1'
+  elif printf '%s' "$sql" | grep -F -q 'pg_stat_activity'; then
+    printf '%s\n' '0'
+  elif printf '%s' "$sql" | grep -F -q 'pg_class'; then
+    printf '%s\n' 'public.Sample'
+  elif printf '%s' "$sql" | grep -F -q 'indisprimary'; then
+    printf '%s\n' 'Id'
+  elif printf '%s' "$sql" | grep -F -q 'min('; then
+    printf '%s\n' "$count 1 $count"
+  elif printf '%s' "$sql" | grep -F -q 'count(*)'; then
+    printf '%s\n' "$count"
+  elif printf '%s' "$sql" | grep -F -q 'pg_sequences'; then
+    printf '%s\n' 'public.sample_seq 1 true'
+  elif printf '%s' "$sql" | grep -F -q 'pg_extension'; then
+    printf '%s\n' 'plpgsql 1.0'
+  elif printf '%s' "$sql" | grep -F -q 'MigrationId'; then
+    printf '%s\n' '20261021000000_Init'
+  else
+    printf '\n'
+  fi
+}
+case "$name" in
+  docker)
+    joined=$(printf '%s ' "$@")
+    if printf '%s' "$joined" | grep -F -q 'psql'; then
+      emit_sql "${C1407_SOURCE_COUNT:-3}"
+    elif printf '%s' "$joined" | grep -F -q 'volume ls'; then
+      printf '%s\n' 'antiphon_pgdata'
+    elif printf '%s' "$joined" | grep -F -q 'inspect'; then
+      printf '%s\n' 'exited'
+    fi
+    exit 0
+    ;;
+  ssh)
+    joined=$(printf '%s ' "$@")
+    if printf '%s' "$joined" | grep -F -q 'psql'; then
+      emit_sql "${C1407_TARGET_COUNT:-3}"
+    fi
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+'@
+    foreach ($name in @('docker', 'dotnet', 'ssh', 'scp', 'age', 'curl', 'wget', 'pwsh')) {
+        $path = Join-Path $dir $name
+        Set-Content -LiteralPath $path -Value $body -Encoding ascii
+        & chmod +x $path
+    }
+    return [pscustomobject]@{ Dir = $dir; Trace = $trace; Stdin = $stdin }
+}
+
+function Start-C1407Api {
+    param([int]$Port, [string]$Sha, [string]$PendingJson)
+    $log = Join-Path ([System.IO.Path]::GetTempPath()) ('c1407-api-' + [guid]::NewGuid().ToString('N') + '.log')
+    '' | Set-Content -LiteralPath $log -Encoding ascii
+    $state = [hashtable]::Synchronized(@{ Stop = $false })
+    $sb = {
+        param($Port, $Sha, $PendingJson, $State, $Log)
+        try {
+            $listener = [System.Net.HttpListener]::new()
+            $listener.Prefixes.Add(('http://127.0.0.1:{0}/' -f $Port))
+            $listener.Start()
+            while ($listener.IsListening) {
+                $ctx = $listener.GetContext()
+                if ($State.Stop) {
+                    $ctx.Response.StatusCode = 200
+                    $ctx.Response.Close()
+                    break
+                }
+                $path = $ctx.Request.Url.AbsolutePath
+                $query = [string]$ctx.Request.Url.Query
+                $body = '{}'
+                $code = 200
+                if ($path -eq '/api/version') {
+                    $body = '{"version":"' + $Sha + '","capabilities":["land-v2"]}'
+                } elseif ($path -eq '/api/diagnostics/session-state') {
+                    $body = '{"pool":{"Pooling":true,"NoResetOnClose":true,"MaxAutoPrepare":0,"Multiplexing":false}}'
+                } elseif ($path -eq '/health') {
+                    $body = 'ok'
+                } elseif ($path -eq '/api/agent-tasks' -and $query.Contains('landPending=true')) {
+                    $body = $PendingJson
+                } else {
+                    $code = 404
+                }
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+                $ctx.Response.StatusCode = $code
+                $ctx.Response.ContentType = 'application/json'
+                $ctx.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+                $ctx.Response.Close()
+            }
+            $listener.Stop()
+            $listener.Close()
+        } catch {
+            Set-Content -LiteralPath $Log -Value $_.Exception.Message -Encoding ascii
+        }
+    }
+    $rs = [runspacefactory]::CreateRunspace()
+    $rs.Open()
+    $ps = [powershell]::Create()
+    $ps.Runspace = $rs
+    [void]$ps.AddScript($sb).AddArgument($Port).AddArgument($Sha).AddArgument($PendingJson).AddArgument($state).AddArgument($log)
+    $handle = $ps.BeginInvoke()
+    return [pscustomobject]@{ Runspace = $rs; PowerShell = $ps; Handle = $handle; Port = $Port; State = $state; Log = $log }
+}
+
+function Stop-C1407Api {
+    param($Api)
+    if (-not $Api) { return }
+    try { $Api.State.Stop = $true } catch {}
+    try {
+        Invoke-WebRequest -Uri ('http://127.0.0.1:{0}/stop' -f $Api.Port) -TimeoutSec 2 -UseBasicParsing | Out-Null
+    } catch {}
+    try { $Api.PowerShell.Stop() } catch {}
+    try { $Api.Runspace.Close() } catch {}
+    try { $Api.PowerShell.Dispose() } catch {}
+    Remove-C1407Tree $Api.Log
+}
+
+function Wait-C1407Api {
+    param($Api)
+    $ready = $false
+    for ($i = 0; $i -lt 50; $i++) {
+        try {
+            $probe = Invoke-WebRequest -Uri ('http://127.0.0.1:{0}/api/version' -f $Api.Port) -TimeoutSec 2 -UseBasicParsing
+            if ([int]$probe.StatusCode -eq 200) { $ready = $true; break }
+        } catch {
+            Start-Sleep -Milliseconds 100
+        }
+    }
+    return $ready
+}
+
+function New-C1407WindowArgs {
+    param(
+        [string]$ApiBase,
+        [string]$Sha,
+        [string]$Snapshot,
+        [string]$Drill,
+        [string]$Secret,
+        [string]$DumpDirectory,
+        [string]$Recipient,
+        [string]$Identity,
+        [string]$PendingFixture,
+        [string]$CommandHost
+    )
+    $repo = Split-Path $here -Parent
+    $windowArgs = @(
+        '-Execute', '-ConfirmWindow',
+        '-ApiBase', $ApiBase,
+        '-SnapshotReference', $Snapshot,
+        '-DrillRecord', $Drill,
+        '-ConnectionSecretFile', $Secret,
+        '-RcTip', $Sha,
+        '-Repository', $repo,
+        '-ProjectId', '00000000-0000-0000-0000-0000000001407',
+        '-DumpDirectory', $DumpDirectory,
+        '-AgeRecipientFile', $Recipient,
+        '-AgeIdentityFile', $Identity,
+        '-Server2SshHost', 'server2',
+        '-Server2ComposeDir', '/tmp/c1407-compose',
+        '-TailnetAddress', '127.0.0.1',
+        '-TailnetOnlyConfirmed',
+        '-HoldAgent', '11111111-1111-1111-1111-111111111111',
+        '-HoldReason', 'cutover window test',
+        '-HoldUntil', '2099-01-01T00:00:00Z',
+        '-CommandHost', $CommandHost
+    )
+    if (-not [string]::IsNullOrWhiteSpace($PendingFixture)) {
+        $windowArgs += @('-LandPendingFixture', $PendingFixture)
+    }
+    return $windowArgs
+}
+
+function Read-C1407ArgvLines {
+    param($Fake)
+    if (-not $Fake -or -not (Test-Path -LiteralPath $Fake.Trace)) { return @() }
+    return @(Get-Content -LiteralPath $Fake.Trace -ErrorAction SilentlyContinue)
+}
+
+function Test-C1407Field {
+    param([string]$Line, [string]$Token)
+    $parts = @($Line.Split([char]9))
+    foreach ($part in $parts) {
+        if ($part -eq $Token) { return $true }
+    }
+    return $false
+}
+
 function Invoke-C1407Cutover {
     param(
         [string[]]$Arguments = @(),
@@ -367,7 +596,99 @@ function Test-W10 {
     }
 }
 
-$all = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10')
+function Test-W11 {
+    $sentinel = 'SENTINEL-1407-ARGV'
+    $secretBody = 'Password=' + $sentinel
+    $sha = '0123456789abcdef0123456789abcdef01234567'
+    $fake = $null
+    $api = $null
+    $tcp = $null
+    $snap = $null
+    $drill = $null
+    $secret = $null
+    $recipient = $null
+    $identity = $null
+    $dumpDir = $null
+    $prevTrace = $env:C1407_TRACE
+    $prevStdin = $env:C1407_STDIN
+    $prevSource = $env:C1407_SOURCE_COUNT
+    $prevTarget = $env:C1407_TARGET_COUNT
+    try {
+        $fake = New-C1407SmartFake
+        $env:C1407_TRACE = $fake.Trace
+        $env:C1407_STDIN = $fake.Stdin
+        $env:C1407_SOURCE_COUNT = '3'
+        $env:C1407_TARGET_COUNT = '3'
+        $tcp = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 5432)
+        $tcp.Start()
+        $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        $probe.Start()
+        $port = $probe.LocalEndpoint.Port
+        $probe.Stop()
+        $api = Start-C1407Api -Port $port -Sha $sha -PendingJson '{"items":[]}'
+        if (-not (Wait-C1407Api $api)) {
+            Write-Fail 'W-11' 'api did not become ready'
+            return
+        }
+        $snap = New-C1407File -Body 'snapshot-reference'
+        $drill = New-C1407Drill
+        $secret = New-C1407File -Body $secretBody
+        $recipient = New-C1407File -Body 'age1recipient'
+        $identity = New-C1407File -Body 'AGE-IDENTITY-BODY-1407'
+        $dumpDir = Join-Path ([System.IO.Path]::GetTempPath()) ('c1407-dump-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dumpDir -Force | Out-Null
+        $window = New-C1407WindowArgs -ApiBase ('http://127.0.0.1:{0}' -f $port) -Sha $sha `
+            -Snapshot $snap -Drill $drill -Secret $secret -DumpDirectory $dumpDir `
+            -Recipient $recipient -Identity $identity -CommandHost (Join-Path $fake.Dir 'pwsh')
+        $r = Invoke-C1407Cutover -Fake $fake -Arguments $window
+        $lines = @(Read-C1407ArgvLines $fake)
+        $reasons = @()
+        $sawSet = $false
+        foreach ($line in $lines) {
+            $parts = @($line.Split([char]9))
+            if ($parts.Count -ge 1 -and $parts[0] -eq 'dotnet' -and (@($parts) -contains 'user-secrets') -and (@($parts) -contains 'set')) {
+                $sawSet = $true
+            }
+            foreach ($part in $parts) {
+                if ($part.Contains($sentinel)) { $reasons += 'argv-has-sentinel'; break }
+            }
+        }
+        if (-not $sawSet) { $reasons += 'dotnet-set-not-called' }
+        if ($r.Text.Contains($sentinel)) { $reasons += 'stdout-has-sentinel' }
+        $stdinFiles = @(Get-ChildItem -LiteralPath $fake.Stdin -File -ErrorAction SilentlyContinue)
+        foreach ($file in $stdinFiles) {
+            $body = [System.IO.File]::ReadAllText($file.FullName)
+            if (-not $body.Contains($sentinel)) { continue }
+            if ($file.Name -notlike 'dotnet.*') { $reasons += 'other-stdin-has-sentinel'; break }
+        }
+        $unique = @($reasons | Select-Object -Unique)
+        if ($unique.Count -eq 0 -and $r.ExitCode -eq 0) { Write-Pass 'W-11' }
+        else {
+            $safe = $r.Text
+            if ($safe.Contains($sentinel)) { $safe = 'omitted-because-sentinel' }
+            elseif ($safe.Length -gt 500) { $safe = $safe.Substring(0, 500) }
+            Write-Fail 'W-11' ('exit={0} reasons={1} text={2}' -f $r.ExitCode, ($unique -join ','), $safe)
+        }
+    } catch {
+        Write-Fail 'W-11' $_.Exception.Message
+    } finally {
+        if ($tcp) { try { $tcp.Stop() } catch {} }
+        Stop-C1407Api $api
+        if ($null -eq $prevTrace) { Remove-Item Env:C1407_TRACE -ErrorAction SilentlyContinue } else { $env:C1407_TRACE = $prevTrace }
+        if ($null -eq $prevStdin) { Remove-Item Env:C1407_STDIN -ErrorAction SilentlyContinue } else { $env:C1407_STDIN = $prevStdin }
+        if ($null -eq $prevSource) { Remove-Item Env:C1407_SOURCE_COUNT -ErrorAction SilentlyContinue } else { $env:C1407_SOURCE_COUNT = $prevSource }
+        if ($null -eq $prevTarget) { Remove-Item Env:C1407_TARGET_COUNT -ErrorAction SilentlyContinue } else { $env:C1407_TARGET_COUNT = $prevTarget }
+        Remove-C1407Tree $(if ($fake) { $fake.Dir } else { $null })
+        Remove-C1407Tree $snap
+        Remove-C1407Tree $drill
+        Remove-C1407Tree $secret
+        Remove-C1407Tree $recipient
+        Remove-C1407Tree $identity
+        Remove-C1407Tree $dumpDir
+    }
+}
+
+$all = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11')
 if ($Case) {
     $name = $Case
     if ($name -match '^W-([0-9]+)$') { $name = 'W' + $Matches[1] }

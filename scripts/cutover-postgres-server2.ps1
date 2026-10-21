@@ -36,7 +36,8 @@ param(
     [string]$HoldAgent,
     [string]$HoldReason,
     [string]$HoldUntil,
-    [string]$ApiBase = 'http://localhost:17202'
+    [string]$ApiBase = 'http://localhost:17202',
+    [string]$CommandHost = 'pwsh'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -199,7 +200,7 @@ function Invoke-CutoverRestart {
     if (-not [string]::IsNullOrWhiteSpace($ExpectedSha)) {
         $restartArgs += @('-ExpectedServerSha', $ExpectedSha)
     }
-    & pwsh @restartArgs
+    & $script:CommandHost @restartArgs
     return $LASTEXITCODE
 }
 
@@ -352,12 +353,12 @@ function Invoke-CutoverWindow {
     }
 
     $preview = Join-Path $Repository 'scripts/recover-repository-children.ps1'
-    & pwsh -NoProfile -File $preview -Repository $Repository | Out-Null
+    & $script:CommandHost -NoProfile -File $preview -Repository $Repository | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Fail-Cutover 'REFUSED: repository preview is not clear. StopOnly was not run.'
     }
     $hold = Join-Path $Repository 'scripts/keep-six.ps1'
-    & pwsh -NoProfile -File $hold -Hold -Agent $HoldAgent -Reason $HoldReason -Until $HoldUntil | Out-Null
+    & $script:CommandHost -NoProfile -File $hold -Hold -Agent $HoldAgent -Reason $HoldReason -Until $HoldUntil | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Fail-Cutover 'REFUSED: dispatch hold was not recorded. StopOnly was not run.'
     }
