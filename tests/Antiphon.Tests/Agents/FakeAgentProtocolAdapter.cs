@@ -313,8 +313,18 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         return new AdapterGenerationKill(KillResult, cause);
     }
 
-    public Task SendPromptAsync(string prompt, CancellationToken ct)
+    /// <summary>
+    /// Runs at the start of <see cref="SendPromptAsync"/>, before the prompt is recorded.
+    /// Cancelled-turn tests persist the launch UserPrompt here, while StartAsync is still
+    /// before the input wait.
+    /// </summary>
+    public Func<string, CancellationToken, Task>? OnPrompt { get; set; }
+
+    public async Task SendPromptAsync(string prompt, CancellationToken ct)
     {
+        if (OnPrompt is { } onPrompt)
+            await onPrompt(prompt, ct);
+
         // Injected delivery failure. Recorded in Prompts BEFORE throwing, because that is what
         // really happens: VerifiedPromptSubmitter types the body and only then fails to find
         // composer evidence for it (CARD-0056: a 15-char "/remote-control" that never surfaced).
@@ -345,7 +355,6 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
                 }
             }, CancellationToken.None);
         }
-        return Task.CompletedTask;
     }
 
     public async Task<bool> WaitForFirstPromptOutputAsync(TimeSpan timeout, CancellationToken ct)
