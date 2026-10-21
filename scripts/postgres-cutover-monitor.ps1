@@ -19,14 +19,24 @@
                  or when the window's failures exceed the baseline count by more than -FailureSlack.
     Every mode is a dry plan until -Execute is given.
 
-    Exit codes: 0 OK, 1 WARN, 2 ROLLBACK, 3 ABORT, 4 INVALID (bad input, missing baseline, nothing measured).
+    Exit codes: 0 OK, 1 WARN, 2 ROLLBACK, 3 ABORT, 4 INVALID (bad input, missing or old baseline, nothing
+    measured, a failure count that could not be read, or an unexpected error).
     WARN means: sample errors in the window, failures above baseline within the slack, health not 200, or a
     version SHA that differs from the baseline. None of those is a rollback trigger.
 
+    Failure count: GET /api/agent-tasks?projectId=<id>&since=<window start> (the list refuses any other key
+    with 400). Failed tasks are items with status Failed. List items (AgentTaskSummaryDto) carry no land
+    outcome, so every item with a land attempt (landAttempt > 0, landRequestedAt or landStartedAt set) is
+    read from GET /api/agent-tasks/{id}, at most -MaxLandDetailRequests of them; a failed land is a detail
+    whose landing.phase or landing.publication is Refused or whose landRequest.state is NeedsResolution.
+    A list or detail that cannot be read, or more candidates than the cap, is INVALID unless a rollback
+    trigger already fired: never a silent zero.
+
     Read-only: GET requests and TCP handshakes only. It never writes to the database, restarts anything or
     changes a setting. The only files it writes are its JSON baseline and result (default
-    .antiphon/postgres-cutover/, which is gitignored). It takes no credentials, and property names that look
-    like credentials are dropped from recorded diagnostics.
+    .antiphon/postgres-cutover/, which is gitignored). It takes no credentials. Diagnostics properties whose
+    name or value looks like a credential (password, token, dsn, connection string) are dropped, and URL
+    userinfo and secret-looking query values are masked in every printed line, error and recorded JSON.
 
     Seams for tests, so no server or database is needed:
       -HttpGet      { param([string]$Url) } returns @{ StatusCode = 200; Body = '<text>'; ElapsedMs = <optional> }
@@ -66,6 +76,7 @@ param(
     [int]$FailureSlack = 2,
     [double]$ConnectAbortMs = 20,
     [int]$HttpTimeoutSec = 60,
+    [int]$MaxLandDetailRequests = 50,
     [scriptblock]$HttpGet,
     [scriptblock]$TcpConnectMs,
     [scriptblock]$Now
@@ -100,13 +111,33 @@ function Get-CutoverProperty {
 
 function Test-CutoverSecretName {
     param([string]$Name)
-    return ($Name -match '(?i)password|passwd|secret|token|connectionstring|authorization|apikey|credential')
+    return ($Name -match '(?i)password|passwd|pwd|secret|token|connectionstring|connstr|dsn|authorization|apikey|api_key|credential')
+}
+
+# A value shaped like a credential whatever its property is called: a URL or DSN with userinfo, or a
+# connection-string pair such as Password= / Pwd=.
+function Test-CutoverSecretValue {
+    param([string]$Value)
+    if ($Value -match '(?i)[a-z][a-z0-9+.\-]*://[^/?#@\s]+@') { return $true }
+    return ($Value -match '(?i)(^|[;\s])(password|passwd|pwd|user id|uid|secret|token)\s*=')
+}
+
+# Masks URL userinfo and secret-looking key=value pairs (query strings, connection strings) in any text
+# before it is printed, recorded or returned. The request itself always uses the unmasked URL.
+function Hide-CutoverText {
+    param([string]$Text)
+    if (-not $Text) { return $Text }
+    $t = [regex]::Replace($Text, '(?i)\b([a-z][a-z0-9+.\-]*://)[^/?#@\s"''<>]+@', '$1<redacted>@')
+    $key = '[a-z0-9_.\-]*(?:token|key|password|passwd|pwd|secret|sig|signature|auth|credential)[a-z0-9_.\-]*'
+    $t = [regex]::Replace($t, '(?i)((?:^|[?&;"''\s]|\\u0026)' + $key + '\s*=\s*)[^&;\s"''\\<>]+', '$1<redacted>')
+    return $t
 }
 
 function Hide-CutoverSecrets {
     param($Object, [int]$Depth = 0)
     if ($null -eq $Object -or $Depth -gt 12) { return $Object }
-    if ($Object -is [string] -or $Object -is [bool] -or $Object -is [int] -or $Object -is [long] -or $Object -is [double] -or $Object -is [decimal] -or $Object -is [datetime] -or $Object -is [guid]) { return $Object }
+    if ($Object -is [string]) { if (Test-CutoverSecretValue -Value $Object) { return '<redacted>' } else { return $Object } }
+    if ($Object -is [bool] -or $Object -is [int] -or $Object -is [long] -or $Object -is [double] -or $Object -is [decimal] -or $Object -is [datetime] -or $Object -is [guid]) { return $Object }
     if ($Object -is [System.Collections.IDictionary]) {
         $out = [ordered]@{}
         foreach ($k in $Object.Keys) {
@@ -129,24 +160,37 @@ function Hide-CutoverSecrets {
     return $Object
 }
 
+# A list item (AgentTaskSummaryDto) with a land attempt. Only these need the detail read.
+function Test-CutoverLandCandidate {
+    param($Item)
+    if ($null -eq $Item) { return $false }
+    $attempt = Get-CutoverProperty -Object $Item -Name 'landAttempt'
+    if ($null -ne $attempt -and [int]$attempt -gt 0) { return $true }
+    if ($null -ne (Get-CutoverProperty -Object $Item -Name 'landRequestedAt')) { return $true }
+    return ($null -ne (Get-CutoverProperty -Object $Item -Name 'landStartedAt'))
+}
+
+# A task detail (AgentTaskDetailDto) whose land failed: landing.phase or landing.publication Refused, or
+# landRequest.state NeedsResolution.
+function Test-CutoverLandFailed {
+    param($Detail)
+    $landing = Get-CutoverProperty -Object $Detail -Name 'landing'
+    $request = Get-CutoverProperty -Object $Detail -Name 'landRequest'
+    if ([string](Get-CutoverProperty -Object $landing -Name 'phase') -eq 'Refused') { return $true }
+    if ([string](Get-CutoverProperty -Object $landing -Name 'publication') -eq 'Refused') { return $true }
+    return ([string](Get-CutoverProperty -Object $request -Name 'state') -eq 'NeedsResolution')
+}
+
 function Get-CutoverFailureCount {
-    param([object[]]$Items)
+    param([object[]]$Items, [object[]]$Details = @())
     $tasks = 0
     $lands = 0
     foreach ($it in @($Items)) {
         if ($null -eq $it) { continue }
-        $status = [string](Get-CutoverProperty -Object $it -Name 'status')
-        if ($status -eq 'Failed') { $tasks++ }
-        $landing = Get-CutoverProperty -Object $it -Name 'landing'
-        $request = Get-CutoverProperty -Object $it -Name 'landRequest'
-        $landFailed = $false
-        foreach ($name in @('outcome', 'status', 'result', 'state')) {
-            $v = [string](Get-CutoverProperty -Object $landing -Name $name)
-            if ($v -eq 'LandRefused' -or $v -eq 'Failed') { $landFailed = $true }
-        }
-        $rs = [string](Get-CutoverProperty -Object $request -Name 'status')
-        if ($rs -eq 'Failed' -or $rs -eq 'NeedsResolution') { $landFailed = $true }
-        if ($landFailed) { $lands++ }
+        if ([string](Get-CutoverProperty -Object $it -Name 'status') -eq 'Failed') { $tasks++ }
+    }
+    foreach ($d in @($Details)) {
+        if ($null -ne $d -and (Test-CutoverLandFailed -Detail $d)) { $lands++ }
     }
     return [pscustomobject]@{ FailedTasks = $tasks; FailedLands = $lands; Total = ($tasks + $lands) }
 }
@@ -281,7 +325,7 @@ function Measure-CutoverPipeline {
             $samples += [math]::Round([double]$r.ElapsedMs, 2)
         } else {
             $errors++
-            if ($errorText.Count -lt 3) { $errorText += ('status=' + $r.StatusCode + ' ' + $r.Error) }
+            if ($errorText.Count -lt 3) { $errorText += (Hide-CutoverText -Text ('status=' + $r.StatusCode + ' ' + $r.Error)) }
         }
     }
     $min = $null
@@ -292,7 +336,7 @@ function Measure-CutoverPipeline {
         $max = [double]$m.Maximum
     }
     return [pscustomobject]@{
-        url = $Url
+        url = (Hide-CutoverText -Text $Url)
         requested = $Count
         succeeded = $samples.Count
         errors = $errors
@@ -368,9 +412,11 @@ function Resolve-CutoverUrls {
     if (-not $tasks) {
         $tasks = $base + '/api/agent-tasks?'
         if ($projQuery) { $tasks += $projQuery + '&' }
-        $tasks += 'updatedSince=' + [uri]::EscapeDataString($WindowStartUtc.ToUniversalTime().ToString('o'))
+        # 'since' is the list's window key (AgentTaskScope.SupportedListQueryKeys); any other key is a 400.
+        $tasks += 'since=' + [uri]::EscapeDataString($WindowStartUtc.ToUniversalTime().ToString('o'))
     }
     return [pscustomobject]@{
+        TaskDetailPrefix = $base + '/api/agent-tasks/'
         Pipeline = $pipeline
         Tasks = $tasks
         Health = $base + '/health'
@@ -379,13 +425,42 @@ function Resolve-CutoverUrls {
     }
 }
 
-function Get-CutoverTaskItems {
-    param($Parsed)
-    if ($null -eq $Parsed) { return @() }
-    $items = Get-CutoverProperty -Object $Parsed -Name 'items'
-    if ($null -ne $items) { return @($items) }
-    if ($Parsed -is [System.Collections.IEnumerable] -and -not ($Parsed -is [string])) { return @($Parsed) }
-    return @()
+# The list envelope { scope, items, excluded }. Anything else is unreadable, never an empty list.
+function Read-CutoverTaskList {
+    param($Response)
+    if (-not $Response.Ok -or $Response.StatusCode -ne 200) {
+        return [pscustomobject]@{ Ok = $false; Items = @(); Reason = ('task list returned status ' + $Response.StatusCode + ' ' + $Response.Error).Trim() }
+    }
+    $parsed = ConvertFrom-CutoverJsonBody -Body $Response.Body
+    if ($null -eq $parsed -or -not ($parsed.PSObject.BaseObject -is [System.Management.Automation.PSCustomObject])) {
+        return [pscustomobject]@{ Ok = $false; Items = @(); Reason = 'task list body is not a JSON object' }
+    }
+    $prop = $parsed.PSObject.Properties['items']
+    if (-not $prop -or $null -eq $prop.Value) {
+        return [pscustomobject]@{ Ok = $false; Items = @(); Reason = 'task list body has no items array' }
+    }
+    return [pscustomobject]@{ Ok = $true; Items = @($prop.Value); Reason = '' }
+}
+
+# Reads AgentTaskDetailDto for every land candidate, bounded by $MaxRequests. Incomplete is never zero.
+function Read-CutoverLandDetails {
+    param([object[]]$Items, [string]$DetailPrefix, [int]$MaxRequests, [scriptblock]$HttpGet, [int]$TimeoutSec)
+    $candidates = @(@($Items) | Where-Object { Test-CutoverLandCandidate -Item $_ })
+    $details = New-Object System.Collections.ArrayList
+    if ($candidates.Count -gt $MaxRequests) {
+        return [pscustomobject]@{ Ok = $false; Candidates = $candidates.Count; Details = @(); Reason = ('{0} tasks with a land attempt exceed -MaxLandDetailRequests {1}; failed lands not counted' -f $candidates.Count, $MaxRequests) }
+    }
+    foreach ($c in $candidates) {
+        $id = [string](Get-CutoverProperty -Object $c -Name 'id')
+        $r = Invoke-CutoverHttpGet -Url ($DetailPrefix + [uri]::EscapeDataString($id)) -HttpGet $HttpGet -TimeoutSec $TimeoutSec
+        $parsed = $null
+        if ($r.Ok -and $r.StatusCode -eq 200) { $parsed = ConvertFrom-CutoverJsonBody -Body $r.Body }
+        if ($null -eq $parsed -or $null -eq (Get-CutoverProperty -Object $parsed -Name 'summary')) {
+            return [pscustomobject]@{ Ok = $false; Candidates = $candidates.Count; Details = @($details.ToArray()); Reason = ('task detail ' + $id + ' could not be read (status ' + $r.StatusCode + ' ' + $r.Error + ')').Trim() }
+        }
+        [void]$details.Add($parsed)
+    }
+    return [pscustomobject]@{ Ok = $true; Candidates = $candidates.Count; Details = @($details.ToArray()); Reason = '' }
 }
 
 function Get-CutoverVersionSha {
@@ -399,13 +474,15 @@ function Get-CutoverVersionSha {
 
 # Collects the shared Baseline/Watch observations: pipeline samples, window failures, pool flags, health, version.
 function Get-CutoverObservation {
-    param($Urls, [int]$SampleCount, [scriptblock]$HttpGet, [int]$TimeoutSec)
+    param($Urls, [int]$SampleCount, [scriptblock]$HttpGet, [int]$TimeoutSec, [int]$MaxLandDetailRequests = 50)
     $pipeline = Measure-CutoverPipeline -Url $Urls.Pipeline -Count $SampleCount -HttpGet $HttpGet -TimeoutSec $TimeoutSec
-    $taskResp = Invoke-CutoverHttpGet -Url $Urls.Tasks -HttpGet $HttpGet -TimeoutSec $TimeoutSec
-    $items = @()
-    $taskListOk = ($taskResp.Ok -and $taskResp.StatusCode -eq 200)
-    if ($taskListOk) { $items = Get-CutoverTaskItems -Parsed (ConvertFrom-CutoverJsonBody -Body $taskResp.Body) }
-    $failures = Get-CutoverFailureCount -Items $items
+    $list = Read-CutoverTaskList -Response (Invoke-CutoverHttpGet -Url $Urls.Tasks -HttpGet $HttpGet -TimeoutSec $TimeoutSec)
+    $items = @($list.Items)
+    $lands = [pscustomobject]@{ Ok = $false; Candidates = 0; Details = @(); Reason = 'task list not read' }
+    if ($list.Ok) { $lands = Read-CutoverLandDetails -Items $items -DetailPrefix $Urls.TaskDetailPrefix -MaxRequests $MaxLandDetailRequests -HttpGet $HttpGet -TimeoutSec $TimeoutSec }
+    $failures = Get-CutoverFailureCount -Items $items -Details @($lands.Details)
+    $unread = @()
+    if (-not $list.Ok) { $unread += $list.Reason } elseif (-not $lands.Ok) { $unread += $lands.Reason }
     $health = Invoke-CutoverHttpGet -Url $Urls.Health -HttpGet $HttpGet -TimeoutSec $TimeoutSec
     $version = Invoke-CutoverHttpGet -Url $Urls.Version -HttpGet $HttpGet -TimeoutSec $TimeoutSec
     $versionParsed = ConvertFrom-CutoverJsonBody -Body $version.Body
@@ -423,16 +500,21 @@ function Get-CutoverObservation {
     return [pscustomobject]@{
         pipeline = $pipeline
         failures = [ordered]@{
-            url = $Urls.Tasks
-            listOk = $taskListOk
+            url = (Hide-CutoverText -Text $Urls.Tasks)
+            listOk = $list.Ok
             listed = @($items).Count
+            landCandidates = $lands.Candidates
+            landDetailsRead = @($lands.Details).Count
+            landsOk = $lands.Ok
+            complete = ($list.Ok -and $lands.Ok)
+            unreadable = @($unread)
             failedTasks = $failures.FailedTasks
             failedLands = $failures.FailedLands
             total = $failures.Total
         }
-        health = [ordered]@{ url = $Urls.Health; statusCode = $health.StatusCode; ok = ($health.Ok -and $health.StatusCode -eq 200) }
+        health = [ordered]@{ url = (Hide-CutoverText -Text $Urls.Health); statusCode = $health.StatusCode; ok = ($health.Ok -and $health.StatusCode -eq 200) }
         version = [ordered]@{
-            url = $Urls.Version
+            url = (Hide-CutoverText -Text $Urls.Version)
             statusCode = $version.StatusCode
             sha = (Get-CutoverVersionSha -Parsed $versionParsed)
             capabilities = $caps
@@ -446,12 +528,14 @@ function Write-CutoverJson {
     param([string]$Path, $Object)
     $dir = Split-Path -Parent $Path
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    $json = $Object | ConvertTo-Json -Depth 12
+    $json = Hide-CutoverText -Text ($Object | ConvertTo-Json -Depth 12)
     [System.IO.File]::WriteAllText($Path, $json + [Environment]::NewLine)
 }
 
 # ---- entry point --------------------------------------------------------------------------------
 
+# Same parameters as Invoke-CutoverMonitorCore. Every returned line goes through Hide-CutoverText, and an
+# unexpected error is INVALID (exit 4), never the WARN code 1 that an uncaught throw would give.
 function Invoke-PostgresCutoverMonitor {
     [CmdletBinding()]
     param(
@@ -476,6 +560,48 @@ function Invoke-PostgresCutoverMonitor {
         [int]$FailureSlack = 2,
         [double]$ConnectAbortMs = 20,
         [int]$HttpTimeoutSec = 60,
+        [int]$MaxLandDetailRequests = 50,
+        [scriptblock]$HttpGet,
+        [scriptblock]$TcpConnectMs,
+        [scriptblock]$Now
+    )
+    $ErrorActionPreference = 'Stop'
+    try {
+        $o = Invoke-CutoverMonitorCore @PSBoundParameters
+    } catch {
+        $msg = Hide-CutoverText -Text ([string]$_.Exception.Message)
+        $lines = @(('INVALID unexpected error: ' + $msg), ('CUTOVER-MONITOR mode=' + $Mode + ' verdict=INVALID exit=4'))
+        return [pscustomobject]@{ ExitCode = 4; Verdict = 'INVALID'; Lines = $lines; Result = $null; ResultPath = '' }
+    }
+    $masked = @(@($o.Lines) | ForEach-Object { Hide-CutoverText -Text ([string]$_) })
+    return [pscustomobject]@{ ExitCode = $o.ExitCode; Verdict = $o.Verdict; Lines = $masked; Result = $o.Result; ResultPath = $o.ResultPath }
+}
+
+function Invoke-CutoverMonitorCore {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('Plan', 'Baseline', 'PreWindow', 'Watch')]
+        [string]$Mode = 'Plan',
+        [switch]$Execute,
+        [string]$ServerBaseUrl = 'http://localhost:17202',
+        [string]$ProjectId = '',
+        [string]$PipelineUrl = '',
+        [string]$TaskListUrl = '',
+        [string]$Server2Host = '',
+        [int]$Server2Port = 5432,
+        [string]$LanHost = '',
+        [int]$SampleCount = 20,
+        [int]$ConnectSampleCount = 20,
+        [int]$WindowMinutes = 30,
+        [string]$WindowStartUtc = '',
+        [string]$BaselinePath = '',
+        [string]$ResultPath = '',
+        [double]$MedianFloorMs = 1000,
+        [double]$MedianRatio = 3,
+        [int]$FailureSlack = 2,
+        [double]$ConnectAbortMs = 20,
+        [int]$HttpTimeoutSec = 60,
+        [int]$MaxLandDetailRequests = 50,
         [scriptblock]$HttpGet,
         [scriptblock]$TcpConnectMs,
         [scriptblock]$Now
@@ -506,7 +632,8 @@ function Invoke-PostgresCutoverMonitor {
         [void]$lines.Add('PLAN mode=' + $shown + ' dry run; pass -Execute with -Mode Baseline, PreWindow or Watch to measure')
         if ($Mode -eq 'Plan' -or $Mode -eq 'Baseline' -or $Mode -eq 'Watch') {
             [void]$lines.Add('PLAN would GET ' + $urls.Pipeline + ' x' + $SampleCount + ' and take the median')
-            [void]$lines.Add('PLAN would GET ' + $urls.Tasks + ' and count Failed tasks plus failed lands')
+            [void]$lines.Add('PLAN would GET ' + $urls.Tasks + ' and count Failed tasks; an unreadable list is INVALID')
+            [void]$lines.Add('PLAN would GET ' + $urls.TaskDetailPrefix + '{id} for each listed task with a land attempt (at most ' + $MaxLandDetailRequests + ') and count failed lands')
             [void]$lines.Add('PLAN would GET ' + $urls.Health + ', ' + $urls.Version + ' and ' + $urls.Diagnostics + ' (pool flags, credentials dropped)')
             if (-not $ProjectId) { [void]$lines.Add('NOTE no -ProjectId: the pipeline sample would be fleet-wide, not the Antiphon project (D-11 wants the project scope)') }
         }
@@ -530,10 +657,11 @@ function Invoke-PostgresCutoverMonitor {
     }
 
     $result = [ordered]@{
-        schema = 1
+        # schema 2: failures read with since= and lands from task detail; Watch refuses an older baseline.
+        schema = 2
         mode = $Mode
         recordedAtUtc = $nowUtc.ToString('o')
-        server = $ServerBaseUrl
+        server = (Hide-CutoverText -Text $ServerBaseUrl)
         projectId = $ProjectId
         window = [ordered]@{ startUtc = $windowStart.ToString('o'); endUtc = $nowUtc.ToString('o'); minutes = $WindowMinutes }
         thresholds = $thresholds
@@ -572,15 +700,25 @@ function Invoke-PostgresCutoverMonitor {
         }
         $baseline = ConvertFrom-CutoverJsonBody -Body (Get-Content -LiteralPath $BaselinePath -Raw)
         $baselineMedian = Get-CutoverProperty -Object (Get-CutoverProperty -Object $baseline -Name 'pipeline') -Name 'medianMs'
-        if ($null -eq $baseline -or $null -eq $baselineMedian) {
-            [void]$lines.Add('INVALID baseline at ' + $BaselinePath + ' has no pipeline.medianMs')
+        $bad = ''
+        $parsedMedian = [double]::NaN
+        if ($null -ne $baselineMedian) { [void][double]::TryParse([string]$baselineMedian, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsedMedian) }
+        $schema = Get-CutoverProperty -Object $baseline -Name 'schema'
+        $baselineComplete = Get-CutoverProperty -Object (Get-CutoverProperty -Object $baseline -Name 'failures') -Name 'complete'
+        if ($null -eq $baseline -or $null -eq $baselineMedian) { $bad = 'has no pipeline.medianMs' }
+        elseif ([double]::IsNaN($parsedMedian) -or [double]::IsInfinity($parsedMedian) -or $parsedMedian -lt 0) { $bad = ('has a pipeline.medianMs that is not a finite number (' + $baselineMedian + '); the latency trigger cannot be evaluated') }
+        elseif ($null -eq $schema -or [int]$schema -lt 2) { $bad = 'is an older schema whose failure count was not read from the server; re-run -Mode Baseline -Execute' }
+        elseif ($baselineComplete -ne $true) { $bad = 'has an incomplete failure count; re-run -Mode Baseline -Execute' }
+        if ($bad) {
+            [void]$lines.Add('INVALID baseline at ' + $BaselinePath + ' ' + $bad)
             [void]$lines.Add('CUTOVER-MONITOR mode=Watch verdict=INVALID exit=4')
             return [pscustomobject]@{ ExitCode = 4; Verdict = 'INVALID'; Lines = @($lines.ToArray()); Result = $null; ResultPath = $ResultPath }
         }
+        $baselineMedian = $parsedMedian
     }
     if (-not $ProjectId -and -not $PipelineUrl) { [void]$lines.Add('NOTE no -ProjectId: the pipeline sample is fleet-wide, not the Antiphon project (D-11 wants the project scope)') }
 
-    $obs = Get-CutoverObservation -Urls $urls -SampleCount $SampleCount -HttpGet $HttpGet -TimeoutSec $HttpTimeoutSec
+    $obs = Get-CutoverObservation -Urls $urls -SampleCount $SampleCount -HttpGet $HttpGet -TimeoutSec $HttpTimeoutSec -MaxLandDetailRequests $MaxLandDetailRequests
     $result.pipeline = $obs.pipeline
     $result.failures = $obs.failures
     $result.health = $obs.health
@@ -588,7 +726,8 @@ function Invoke-PostgresCutoverMonitor {
     $result.poolFlags = $obs.poolFlags
     $result.diagnosticsStatusCode = $obs.diagnosticsStatusCode
     [void]$lines.Add('MEASURED pipeline ' + $urls.Pipeline + ' medianMs=' + $obs.pipeline.medianMs + ' minMs=' + $obs.pipeline.minMs + ' maxMs=' + $obs.pipeline.maxMs + ' succeeded=' + $obs.pipeline.succeeded + ' errors=' + $obs.pipeline.errors)
-    [void]$lines.Add('MEASURED failures since ' + $windowStart.ToString('o') + ' failedTasks=' + $obs.failures.failedTasks + ' failedLands=' + $obs.failures.failedLands + ' total=' + $obs.failures.total + ' listed=' + $obs.failures.listed + ' listOk=' + $obs.failures.listOk)
+    [void]$lines.Add('MEASURED failures since ' + $windowStart.ToString('o') + ' failedTasks=' + $obs.failures.failedTasks + ' failedLands=' + $obs.failures.failedLands + ' total=' + $obs.failures.total + ' listed=' + $obs.failures.listed + ' listOk=' + $obs.failures.listOk + ' landCandidates=' + $obs.failures.landCandidates + ' landsOk=' + $obs.failures.landsOk)
+    foreach ($u in $obs.failures.unreadable) { [void]$lines.Add('UNREADABLE ' + $u) }
     [void]$lines.Add('MEASURED health=' + $obs.health.statusCode + ' versionSha=' + $obs.version.sha + ' diagnostics=' + $obs.diagnosticsStatusCode)
     foreach ($e in $obs.pipeline.errorText) { [void]$lines.Add('SAMPLE-ERROR ' + $e) }
 
@@ -601,8 +740,11 @@ function Invoke-PostgresCutoverMonitor {
         } else {
             if ($obs.pipeline.errors -gt 0) { $verdict = 'WARN'; $reasons += ($obs.pipeline.errors.ToString() + ' pipeline sample(s) failed') }
             if (-not $obs.health.ok) { $verdict = 'WARN'; $reasons += ('health returned ' + $obs.health.statusCode) }
-            if (-not $obs.failures.listOk) { $verdict = 'WARN'; $reasons += 'the task list could not be read; failures recorded as 0' }
             if (-not $obs.version.sha) { $verdict = 'WARN'; $reasons += 'version SHA could not be read' }
+            if (-not $obs.failures.complete) {
+                $verdict = 'INVALID'
+                $reasons += 'the failure count could not be read (' + (@($obs.failures.unreadable) -join '; ') + '); the baseline was not written'
+            }
         }
         $exit = Get-CutoverExitCode -Verdict $verdict
         $result.decision = [ordered]@{ reasons = @($reasons) }
@@ -624,7 +766,7 @@ function Invoke-PostgresCutoverMonitor {
     if ($null -ne $bf) { $baselineFailures = [int]$bf }
     $baselineSha = [string](Get-CutoverProperty -Object (Get-CutoverProperty -Object $baseline -Name 'version') -Name 'sha')
     $freshMedian = $obs.pipeline.medianMs
-    if ($null -eq $freshMedian) {
+    if ($null -eq $freshMedian -or [double]::IsNaN([double]$freshMedian) -or [double]::IsInfinity([double]$freshMedian)) {
         $result.decision = [ordered]@{ reasons = @('no pipeline sample succeeded; nothing to compare') }
         $result.verdict = 'INVALID'
         $result.exitCode = 4
@@ -634,23 +776,31 @@ function Invoke-PostgresCutoverMonitor {
         return [pscustomobject]@{ ExitCode = 4; Verdict = 'INVALID'; Lines = @($lines.ToArray()); Result = $result; ResultPath = $ResultPath }
     }
     $v = Get-CutoverVerdict -FreshMedianMs ([double]$freshMedian) -BaselineMedianMs ([double]$baselineMedian) -FreshFailures ([int]$obs.failures.total) -BaselineFailures $baselineFailures -SampleErrors ([int]$obs.pipeline.errors) -HealthCode ([int]$obs.health.statusCode) -FreshSha ([string]$obs.version.sha) -BaselineSha $baselineSha -MedianFloorMs $MedianFloorMs -MedianRatio $MedianRatio -FailureSlack $FailureSlack
+    $verdict = $v.Verdict
+    $exit = $v.ExitCode
+    $reasons = @($v.Reasons)
+    # D1: an unread failure count is never a silent zero. A rollback that already fired stands.
+    if (-not $obs.failures.complete) {
+        $reasons += ('the failure count could not be read (' + (@($obs.failures.unreadable) -join '; ') + '); the failure trigger was not evaluated')
+        if ($verdict -ne 'ROLLBACK') { $verdict = 'INVALID'; $exit = 4 }
+    }
     $result.baseline = [ordered]@{ path = $BaselinePath; medianMs = [double]$baselineMedian; failures = $baselineFailures; sha = $baselineSha }
     $result.decision = [ordered]@{
         aboveFloor = $v.AboveFloor
         aboveRatio = $v.AboveRatio
         ratioLineMs = $v.RatioLineMs
         failureDelta = $v.FailureDelta
-        reasons = @($v.Reasons)
+        reasons = @($reasons)
         notes = @($v.Notes)
     }
-    $result.verdict = $v.Verdict
-    $result.exitCode = $v.ExitCode
+    $result.verdict = $verdict
+    $result.exitCode = $exit
     Write-CutoverJson -Path $ResultPath -Object $result
     foreach ($n in $v.Notes) { [void]$lines.Add('NOTE ' + $n) }
-    foreach ($r in $v.Reasons) { [void]$lines.Add('REASON ' + $r) }
-    if ($v.Verdict -eq 'ROLLBACK') { [void]$lines.Add('ROLLBACK') }
-    [void]$lines.Add('CUTOVER-MONITOR mode=Watch verdict=' + $v.Verdict + ' exit=' + $v.ExitCode + ' medianMs=' + $freshMedian + ' baselineMedianMs=' + $baselineMedian + ' failures=' + $obs.failures.total + ' baselineFailures=' + $baselineFailures + ' result=' + $ResultPath)
-    return [pscustomobject]@{ ExitCode = $v.ExitCode; Verdict = $v.Verdict; Lines = @($lines.ToArray()); Result = $result; ResultPath = $ResultPath }
+    foreach ($r in $reasons) { [void]$lines.Add('REASON ' + $r) }
+    if ($verdict -eq 'ROLLBACK') { [void]$lines.Add('ROLLBACK') }
+    [void]$lines.Add('CUTOVER-MONITOR mode=Watch verdict=' + $verdict + ' exit=' + $exit + ' medianMs=' + $freshMedian + ' baselineMedianMs=' + $baselineMedian + ' failures=' + $obs.failures.total + ' baselineFailures=' + $baselineFailures + ' result=' + $ResultPath)
+    return [pscustomobject]@{ ExitCode = $exit; Verdict = $verdict; Lines = @($lines.ToArray()); Result = $result; ResultPath = $ResultPath }
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
