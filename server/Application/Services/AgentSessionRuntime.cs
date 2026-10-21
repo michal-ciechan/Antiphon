@@ -1302,12 +1302,6 @@ public sealed class AgentSessionRuntime
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-            // FK safety: only persist for sessions the DB actually knows about (skips test/transient ids).
-            var session = await db.AgentSessions.TagWith("rt.ingest.session").Where(s => s.Id == sessionId)
-                .Select(s => new { s.StartedAt }).FirstOrDefaultAsync(ct);
-            if (session is null)
-                return PersistResult.Empty with { RecoveryFenceRejection = expectedRecovery is null ? null : "ownership_changed_at_commit" };
-
             // Dedup by transcript line uuid, NOT by sequence: the runner tailer numbers entries per
             // tailer LIFETIME, restarting from 1 after a session relaunch or fork re-discovery. A
             // resumed session (same id, fresh tailer) therefore re-issues low sequences that collide
@@ -1316,37 +1310,37 @@ public sealed class AgentSessionRuntime
             // lines themselves, so they survive re-numbering, and history re-emitted on adoption
             // dedups cleanly. Entries without a uuid keep the old sequence-dedup.
             var incomingUuids = entries.Where(e => e.Uuid is not null).Select(e => e.Uuid!).ToHashSet();
-            var seenUuids = new HashSet<(string Uuid, string Kind)>();
+            var incomingSeqs = entries.Where(e => e.Uuid is null).Select(e => e.Sequence).ToHashSet();
             // A catch-up snapshot can contain the whole history. Bound each index probe without
             // changing the (UUID, kind) identity or event order; one DbContext is used serially.
             // Chunk emits no batches for an empty set, so null-UUID-only input needs no UUID read.
-            foreach (var uuidBatch in incomingUuids.Chunk(512))
+            var uuidBatches = incomingUuids.Chunk(512).ToArray();
+
+            // CARD-1403 S3: one command reads the session (FK safety: only persist for sessions the
+            // DB actually knows about, which skips test/transient ids), the first UUID chunk, the
+            // null-UUID sequences and the stored max. Each further UUID chunk is its own command.
+            var prelude = await TranscriptIngestPrelude.ReadAsync(
+                db, sessionId, uuidBatches.FirstOrDefault() ?? [], incomingSeqs, ct);
+            if (prelude.StartedAt is not DateTime startedAt)
+                return PersistResult.Empty with { RecoveryFenceRejection = expectedRecovery is null ? null : "ownership_changed_at_commit" };
+
+            var seenUuids = prelude.Identities;
+            foreach (var uuidBatch in uuidBatches.Skip(1))
             {
                 var existing = await db.TranscriptEntries
-                    .TagWith("session-state.identity")
+                    .TagWith(TranscriptIngestPrelude.IdentityTag)
                     .Where(t => t.AgentSessionId == sessionId && t.Uuid != null && uuidBatch.Contains(t.Uuid!))
                     .Select(t => new { t.Uuid, t.Kind })
                     .ToListAsync(ct);
                 seenUuids.UnionWith(existing.Select(x => (x.Uuid!, x.Kind)));
             }
-            var incomingSeqs = entries.Where(e => e.Uuid is null).Select(e => e.Sequence).ToHashSet();
-            var seenSeqs = incomingSeqs.Count == 0
-                ? []
-                : (await db.TranscriptEntries
-                        .TagWith("rt.ingest.sequence")
-                        .Where(t => t.AgentSessionId == sessionId && incomingSeqs.Contains(t.Sequence))
-                        .Select(t => t.Sequence)
-                        .ToListAsync(ct))
-                    .ToHashSet();
+            var seenSeqs = prelude.Sequences;
 
             // Stored sequences stay strictly monotonic per SESSION: a new tailer generation's
             // restarted numbering is rebased past the session's current max, so "latest turn"
             // queries (reply dispatcher, queue idle checks, UI ordering) keep working across
             // relaunches without schema changes.
-            var maxSeq = await db.TranscriptEntries
-                .TagWith("rt.ingest.max-sequence")
-                .Where(t => t.AgentSessionId == sessionId)
-                .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
+            var maxSeq = prelude.MaxSequence ?? 0;
 
             var now = SessionGeneration.Normalize(_timeProvider.GetUtcNow().UtcDateTime);
             var pending = new List<(TranscriptEntry Row, SessionRunnerTranscriptEvent Source)>();
@@ -1399,7 +1393,7 @@ public sealed class AgentSessionRuntime
                 pending.Add((row, originalEntries[sourceIndex]));
             }
 
-            await AdmitActionsAsync(db, sessionId, pending, session.StartedAt, ct);
+            await AdmitActionsAsync(db, sessionId, pending, startedAt, ct);
 
             // Checked recovery owns one SQL fence through every batch/fallback save. The
             // lifecycle's UPDATE/DELETE conflicts with this row lock even when it does not
@@ -1423,7 +1417,7 @@ public sealed class AgentSessionRuntime
             }
 
             if (pending.Count == 0)
-                return PersistResult.Empty with { AcceptedGeneration = session.StartedAt };
+                return PersistResult.Empty with { AcceptedGeneration = startedAt };
 
             // Closure rows only. Ordinary batches do not take the session row lock.
             // The lock is the same AgentSessions FOR UPDATE the overlay insert holds
@@ -1438,15 +1432,15 @@ public sealed class AgentSessionRuntime
             catch (DbUpdateException batchFailure)
             {
                 db.ChangeTracker.Clear();
-                var fallback = await PersistRowsIndividuallyAsync(db, sessionId, pending, batchFailure, session.StartedAt, ct);
+                var fallback = await PersistRowsIndividuallyAsync(db, sessionId, pending, batchFailure, startedAt, ct);
                 if (recoveryTransaction is not null) await recoveryTransaction.CommitAsync(ct);
-                return fallback with { AcceptedGeneration = session.StartedAt };
+                return fallback with { AcceptedGeneration = startedAt };
             }
 
             if (recoveryTransaction is not null) await recoveryTransaction.CommitAsync(ct);
             _persistFailures.TryRemove(sessionId, out _);
             return ResultFrom(pending.Select(p => p.Source), pending.Max(p => p.Row.Sequence))
-                with { CommittedRows = pending.Select(p => p.Row).ToArray(), AcceptedGeneration = session.StartedAt };
+                with { CommittedRows = pending.Select(p => p.Row).ToArray(), AcceptedGeneration = startedAt };
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
