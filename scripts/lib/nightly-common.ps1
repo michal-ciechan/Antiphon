@@ -540,8 +540,25 @@ function Get-NightlyLockPath {
 function Read-NightlyLockRecord {
     param([string]$LockPath)
     if (-not (Test-Path -LiteralPath $LockPath)) { return $null }
+    # File.ReadAllText uses FileShare.Read. Windows refuses that while the
+    # owner holds FileAccess.Write and FileShare.Read: the reader's share
+    # does not allow the existing writer (ERROR_SHARING_VIOLATION). Exit
+    # then leaves run.lock in place and a hop child sees missing-lock.
+    # FileShare.ReadWrite allows that writer. A FileShare.None holder,
+    # including the reclaim compare, still denies this read. This Linux
+    # host allows FileShare.Read against the same owner handle, so the
+    # Windows refusal is not reproduced here.
+    $stream = $null
+    $reader = $null
     try {
-        $raw = [System.IO.File]::ReadAllText($LockPath)
+        $stream = [System.IO.File]::Open(
+            $LockPath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::ReadWrite)
+        $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $true)
+        $stream = $null
+        $raw = $reader.ReadToEnd()
         if ($raw.Trim().StartsWith('{')) {
             return ($raw | ConvertFrom-Json)
         }
@@ -557,6 +574,13 @@ function Read-NightlyLockRecord {
         }
     } catch {
         return $null
+    } finally {
+        if ($null -ne $reader) {
+            try { $reader.Dispose() } catch { }
+        }
+        if ($null -ne $stream) {
+            try { $stream.Dispose() } catch { }
+        }
     }
 }
 
