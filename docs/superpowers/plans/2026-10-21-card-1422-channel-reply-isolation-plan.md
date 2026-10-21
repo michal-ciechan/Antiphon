@@ -52,15 +52,26 @@ PCs pending for SourceLanding Mutation (method-scoped):
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1422/` | catch-up | `/*/*/AgentTaskCatchUpSettlementTests/*` | V-1, V-3 | all listed, 0 failed | 6 | 3 |
 | CP-2 | S2 | CP-1 | coordinator | `/*/Antiphon.Tests.Application/(SessionRuntimeActionRecoveryTests*)\|(SessionRuntimeActionTests*)\|(SessionRuntimeActionRoutingTests*)\|(SessionRuntimeActionDeferralTests*)\|(SessionRuntimeActionTemporaryBlockTests*)/*` | V-2, V-4 | all listed, 0 failed | 20 | 10 |
-| CP-3 | S2 | CP-1 | channel | `/*/Antiphon.Tests.Application/(ChannelReplyDurabilityTests*)\|(ChannelReplyLateConfirmDispatchTests*)\|(AgentTaskMidTurnRefineTests*)/*` | V-4 | all listed, 0 failed | 36 | 8 |
+| CP-3 | S2 | CP-1 | channel | `/*/Antiphon.Tests.Application/(ChannelReplyDurabilityTests*)\|(ChannelReplyLateConfirmDispatchTests*)\|(AgentTaskMidTurnRefineTests*)/*` | V-4 | all listed; failures limited to the 8 inherited `AgentTaskMidTurnRefineTests` C0491/C1169 cases | 36 | 8 |
 | CP-4 | S2 | CP-1 | runtime | `/*/*/AgentSessionRuntimeTests/*` | V-4 | all listed, 0 failed (1 skipped by attribute) | 44 | 7 |
-| CP-5 | S2 | CP-1 | unit | `/*/*/*/*[Category=Unit]` | V-4 | all listed, 0 failed | 1000 | 4 |
+| CP-5 | S2 | CP-1 | unit | `/*/*/*/*[Category=Unit]` | V-4 | all listed; failures limited to inherited `DispatchBaseWarningRosterTests.C1155_RosterNamesEveryDispatchWarningE2EMethod` | 1000 | 10 |
 
 ### Unlisted
 
 One compile build (`bin-c1422c/`) and two smoke runs from it before the checkpoint
 (`AgentTaskCatchUpSettlementTests/*` 6/6, `SessionRuntimeActionRecoveryTests/C1422*` 1/1), to avoid
 spending the checkpoint on a broken test. The output was deleted.
+
+### Run 1 and rerun
+
+Run `20261021-200721-5b39` at `6830d0501`: CP-1 and CP-4 green. CP-3 red only in the 8
+`AgentTaskMidTurnRefineTests` C0491/C1169 cases, which fail identically at base `5faed6dbb`
+(unlisted base run). CP-2 red in one case, `C1259_shutdown_joins_and_restart_reconciles_submission(reconnect-cohort)`
+(10-second `UntilAsync` deadline while CP-2 and CP-3 overlapped). It does not reach the channel
+path and passes at base in isolation. CP-5 hit its 15-minute row deadline with output still
+progressing at minute 11. Its 4-minute estimate came from the stale 2026-09-10 profile, so it is
+corrected to 10 (deadline 30); no test timeout or assertion changes. C1155 failed in it and fails
+identically on the pre-fix build. Rerun once: CP-2 and CP-5.
 
 ### Cost
 
