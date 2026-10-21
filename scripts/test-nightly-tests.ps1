@@ -798,6 +798,31 @@ function Test-C1044_FixtureClassChunks {
         -Detail ('nodes=' + $nodes.Count + ' chunks=' + @($chunks).Count + ' invalid=' + ($invalid -join ',') + ' paren=' + $paren + ' agent=' + $sawAgent + ' lists=' + $sawLists + ' plain=' + $sawPlain + ' other=' + $sawOther + ' roster=' + $filterOk + ' rosterError=' + $rosterError + ' policy=' + $policy + ' cross=' + $cross.Ok + ' launched=' + $joined)
 }
 
+function Get-C1044ElseText {
+    param([string]$Path, [string]$Marker)
+    $text = [System.IO.File]::ReadAllText($Path)
+    $idx = $text.LastIndexOf('} else {')
+    if ($idx -lt 0) { return '' }
+    $end = $text.IndexOf('Write-C487Evidence', $idx)
+    if ($end -lt 0) { return '' }
+    $branch = $text.Substring($idx, $end - $idx)
+    if ($branch.IndexOf($Marker) -lt 0) { return '' }
+    return $branch
+}
+
+function Test-C1044_UnattendedCases {
+    # G087 already runs from the report harness default loop. These cases must
+    # run from the tests and run harness default loops, not only from -Case.
+    $testsElse = Get-C1044ElseText -Path $PSCommandPath -Marker "Get-C487CaseFunctions -Prefix 'C487_G0'"
+    $runElse = Get-C1044ElseText -Path (Join-Path $PSScriptRoot 'test-nightly-run.ps1') -Marker 'foreach ($fn in $cases)'
+    $missing = @()
+    foreach ($name in @('Test-C1044_FixtureTypeName', 'Test-C1044_FixtureClassChunks', 'Test-C487_PrerequisiteGate')) {
+        if ($testsElse.IndexOf($name) -lt 0) { $missing += $name }
+    }
+    if ($runElse.IndexOf('Test-C487_PrerequisiteSettle') -lt 0) { $missing += 'Test-C487_PrerequisiteSettle' }
+    Assert-C487 -Cond ($missing.Count -eq 0) -Name 'C1044 unattended harness loop runs fixture and prerequisite cases' -Detail ($missing -join ',')
+}
+
 function Test-C1044_ParserCompatibility {
     $root = Get-C487ProbeRoot
     $golden = [System.IO.File]::ReadAllText((Join-Path $root 'discovery.diag'))
