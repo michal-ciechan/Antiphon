@@ -1,6 +1,6 @@
 # CARD-1407 cutover script checkpoints
 
-Closed list for the Code stage. The design is CARD-1401 C2. This table is the two
+Closed list for the Code stage. The design is CARD-1401 C2. This table is the three
 rows this round runs. Lane is unpinned. No production database and no AppHost restart.
 
 ## Verification design
@@ -29,7 +29,8 @@ Operator-only, not performed by tests: a real `-ConfirmWindow` against productio
 |---|---|---|---|---|---|---|---|---|
 | CP-1 | all | n/a | cutover-whatif | `pwsh -NoProfile -File scripts/test-cutover-postgres-server2.ps1` | V-1, V-2, V-3, V-4, V-5, V-6, V-7, V-8, V-9, V-10, V-11, V-12, V-13 | exit 0 | n/a | 3 |
 | CP-2 | all | n/a | apphost-stop | `pwsh -NoProfile -File scripts/test-apphost-graceful-stop.ps1` | V-5, V-6 | exit 0 | n/a | 3 |
+| CP-3 | all | n/a | maintenance-exclusive | `pwsh -NoProfile -File scripts/test-set-apphost-maintenance.ps1` | exclusive maintenance enter | exit 0 | n/a | 1 |
 
 ### Cost
 
-Ordinary floor is 6 minutes.
+Ordinary floor is 7 minutes.

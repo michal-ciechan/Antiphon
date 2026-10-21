@@ -13,6 +13,11 @@
     work and are what the observer detects as an unintentional disable.
 .PARAMETER Clear
     Leave maintenance: re-enable the watchdog, then remove the marker.
+.PARAMETER EnterIfAbsent
+    Enter maintenance only when the marker is absent. The marker is created
+    with create-new semantics. If it already exists, this exits 2 and does
+    not disable the watchdog or remove the marker. The default enter path
+    is unchanged.
 .PARAMETER Root
     Repo root. Defaults to the parent of this script.
 .PARAMETER WatchdogTaskName
@@ -24,6 +29,7 @@
 [CmdletBinding()]
 param(
     [switch]$Clear,
+    [switch]$EnterIfAbsent,
     [string]$Root,
     [string]$WatchdogTaskName = 'Antiphon AppHost Watchdog'
 )
@@ -38,6 +44,48 @@ $observer = Join-Path $PSScriptRoot 'apphost-watchdog-state-observer.ps1'
 New-Item -ItemType Directory -Force $logDir | Out-Null
 
 function Write-Step($msg) { Write-Host "> $msg" }
+
+if ($Clear -and $EnterIfAbsent) {
+    Write-Host 'REFUSED: -Clear and -EnterIfAbsent cannot be combined.'
+    exit 2
+}
+
+if ($EnterIfAbsent) {
+    Write-Step "Entering AppHost maintenance only when the marker is absent."
+    try {
+        $stream = [System.IO.File]::Open(
+            $marker,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None)
+        try {
+            $bytes = [System.Text.Encoding]::ASCII.GetBytes('down-on-purpose ' + [DateTime]::UtcNow.ToString('o'))
+            $stream.Write($bytes, 0, $bytes.Length)
+        } finally {
+            $stream.Dispose()
+        }
+    } catch [System.IO.IOException] {
+        Write-Host '  Marker already present. This run did not enter maintenance.'
+        exit 2
+    }
+    Write-Host "  Wrote $marker"
+    if (-not (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue)) {
+        Write-Host '  Watchdog task cmdlet is not available; marker is in place.'
+    } else {
+        $task = Get-ScheduledTask -TaskName $WatchdogTaskName -ErrorAction SilentlyContinue
+        if ($task) {
+            Disable-ScheduledTask -TaskName $WatchdogTaskName | Out-Null
+            Write-Host '  Watchdog task disabled.'
+        } else {
+            Write-Host "  Watchdog task '$WatchdogTaskName' is not registered; marker is in place."
+        }
+    }
+    if (Test-Path -LiteralPath $observer) {
+        & $observer -TaskName $WatchdogTaskName -Root $Root | Out-Host
+    }
+    Write-Host 'Done. This script does not start or stop the AppHost.'
+    exit 0
+}
 
 if ($Clear) {
     Write-Step "Leaving AppHost maintenance (re-enable '$WatchdogTaskName', then remove marker)."

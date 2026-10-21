@@ -12,9 +12,12 @@
     data directory, and never passes a worktree override to the restart script.
     Start it with pwsh -File. A same-process call cannot see -ConfirmWindow.
     A real run that finds logs/apphost.down-on-purpose already present refuses
-    before it enters maintenance. After this run enters, every exit clears that
-    marker and the keep-six hold. A failure after StopOnly and before the
-    secret changes restarts AppHost on the old connection string first.
+    before it enters maintenance. A marker that appears before the exclusive
+    enter is not this run's, and this run does not clear it. After this run
+    enters, every exit clears that marker and the keep-six hold. A failure
+    after StopOnly and before the secret changes restarts AppHost on the old
+    connection string first. If desktop postgres was stopped, it is started
+    again before that restart.
     ASCII-only: it may run under Windows PowerShell 5.1.
 #>
 [CmdletBinding(PositionalBinding = $false)]
@@ -191,16 +194,50 @@ function Get-CutoverLandPendingCount {
     return $count
 }
 
+function Invoke-CutoverCommand {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$ArgumentList,
+        [switch]$Quiet
+    )
+    if ($ArgumentList.Count -lt 1) { return 1 }
+    $exe = [string]$ArgumentList[0]
+    $rest = @()
+    if ($ArgumentList.Count -gt 1) {
+        $rest = [string[]]$ArgumentList[1..($ArgumentList.Count - 1)]
+    }
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        if ($Quiet) {
+            & $exe @rest 2>&1 | Out-Null
+        } else {
+            & $exe @rest 2>&1 | Out-Host
+        }
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    if ($null -eq $code) { return 0 }
+    return [int]$code
+}
+
 function Invoke-CutoverMaintenance {
     param([switch]$Clear)
     $path = Join-Path $Repository 'scripts/set-apphost-maintenance.ps1'
+    if (-not $Clear) {
+        $marker = Get-CutoverMaintenanceMarkerPath
+        if (Test-Path -LiteralPath $marker) {
+            Fail-Cutover 'REFUSED: maintenance marker already exists at logs/apphost.down-on-purpose. This run did not enter it. The operator must clear the marker before the window can start.'
+        }
+    }
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         Fail-Cutover 'REFUSED: maintenance script is missing.'
     }
-    $maintArgs = @('-NoProfile', '-File', $path)
+    $maintArgs = @($script:CommandHost, '-NoProfile', '-File', $path)
     if ($Clear) { $maintArgs += '-Clear' }
-    & $script:CommandHost @maintArgs | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    else { $maintArgs += '-EnterIfAbsent' }
+    $code = Invoke-CutoverCommand -ArgumentList $maintArgs
+    if ($code -ne 0) {
         $which = 'enter'
         if ($Clear) { $which = 'clear' }
         Fail-Cutover ('REFUSED: AppHost maintenance ' + $which + ' exit check failed.')
@@ -212,14 +249,12 @@ function Invoke-CutoverMaintenance {
 function Clear-CutoverMaintenanceQuiet {
     $path = Join-Path $Repository 'scripts/set-apphost-maintenance.ps1'
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return 1 }
-    & $script:CommandHost -NoProfile -File $path -Clear | Out-Null
-    return $LASTEXITCODE
+    return (Invoke-CutoverCommand -ArgumentList @($script:CommandHost, '-NoProfile', '-File', $path, '-Clear'))
 }
 
 function Clear-CutoverHold {
     $hold = Join-Path $Repository 'scripts/keep-six.ps1'
-    & $script:CommandHost -NoProfile -File $hold -ClearHold -Agent $HoldAgent | Out-Null
-    return $LASTEXITCODE
+    return (Invoke-CutoverCommand -ArgumentList @($script:CommandHost, '-NoProfile', '-File', $hold, '-ClearHold', '-Agent', $HoldAgent))
 }
 
 function Reset-CutoverWindowState {
@@ -229,6 +264,7 @@ function Reset-CutoverWindowState {
     $script:CutoverSecretChanged = $false
     $script:CutoverOldStringRestartAttempted = $false
     $script:CutoverOldStringRestartSucceeded = $false
+    $script:CutoverDesktopPostgresStopped = $false
     $script:CutoverWindowSucceeded = $false
 }
 
@@ -270,24 +306,41 @@ function Complete-CutoverWindowExit {
         $restarted = [bool]$script:CutoverOldStringRestartAttempted
         $restartOk = [bool]$script:CutoverOldStringRestartSucceeded
         $success = [bool]$script:CutoverWindowSucceeded
+        $skippedRestart = $false
         if ($AllowOldStringRestart -and $stopped -and -not $secret -and -not $restarted) {
             $script:CutoverOldStringRestartAttempted = $true
-            $code = 1
-            try {
-                $output = Invoke-CutoverRestart -ExpectedSha $RcTip
-                if ($output -is [array]) { $code = [int]$output[-1] } else { $code = [int]$output }
-            } catch {
-                $code = 1
+            $postgresReady = $true
+            if ($script:CutoverDesktopPostgresStopped) {
+                $postgresReady = $false
+                $startCode = 1
+                try {
+                    $compose = Join-Path $Repository 'docker-compose.dev.yml'
+                    $startCode = Invoke-CutoverCommand -ArgumentList @('docker', 'compose', '-f', $compose, 'start', 'postgres')
+                } catch {
+                    $startCode = 1
+                }
+                if ($startCode -eq 0) { $postgresReady = $true }
             }
-            if ($code -eq 0) {
-                $script:CutoverOldStringRestartSucceeded = $true
-                Write-Host 'RECOVERY: restarted AppHost on the old connection string before lifting maintenance. The secret was not changed.'
+            if (-not $postgresReady) {
+                $skippedRestart = $true
+                Write-Host 'RECOVERY: desktop postgres did not start. Run docker compose -f docker-compose.dev.yml start postgres, then restart-apphost.ps1 -ExpectedServerSha. The secret was not changed.'
             } else {
-                Write-Host ('RECOVERY: AppHost is still down. The secret was not changed. Start AppHost on the old connection string with restart-apphost.ps1 -ExpectedServerSha. Restart exit ' + $code + '.')
+                $code = 1
+                try {
+                    $code = Invoke-CutoverRestart -ExpectedSha $RcTip
+                } catch {
+                    $code = 1
+                }
+                if ($code -eq 0) {
+                    $script:CutoverOldStringRestartSucceeded = $true
+                    Write-Host 'RECOVERY: restarted AppHost on the old connection string before lifting maintenance. The secret was not changed.'
+                } else {
+                    Write-Host ('RECOVERY: AppHost is still down. The secret was not changed. Start AppHost on the old connection string with restart-apphost.ps1 -ExpectedServerSha. Restart exit ' + $code + '.')
+                }
             }
         } elseif (-not $success -and $secret) {
             Write-Host 'RECOVERY: the connection secret was already changed. This run does not restart on the old string. Operator runs phase 6.'
-        } elseif ($AllowOldStringRestart -and -not $success -and $stopped -and -not $secret -and $restarted -and -not $restartOk) {
+        } elseif ($AllowOldStringRestart -and -not $success -and $stopped -and -not $secret -and $restarted -and -not $restartOk -and -not $skippedRestart) {
             Write-Host 'RECOVERY: AppHost is still down. The secret was not changed. Start AppHost on the old connection string with restart-apphost.ps1 -ExpectedServerSha.'
         } elseif ($AllowOldStringRestart -and -not $success -and $entered -and -not $stopped) {
             Write-Host 'RECOVERY: StopOnly did not complete. This run does not restart AppHost. Maintenance entered by this run will be lifted.'
@@ -362,13 +415,12 @@ function Invoke-CutoverGet {
 function Invoke-CutoverRestart {
     param([switch]$StopOnly, [string]$ExpectedSha)
     $restart = Join-Path $Repository 'scripts/restart-apphost.ps1'
-    $restartArgs = @('-NoProfile', '-File', $restart)
+    $restartArgs = @($script:CommandHost, '-NoProfile', '-File', $restart)
     if ($StopOnly) { $restartArgs += '-StopOnly' }
     if (-not [string]::IsNullOrWhiteSpace($ExpectedSha)) {
         $restartArgs += @('-ExpectedServerSha', $ExpectedSha)
     }
-    & $script:CommandHost @restartArgs
-    return $LASTEXITCODE
+    return (Invoke-CutoverCommand -ArgumentList $restartArgs)
 }
 
 function Set-CutoverConnectionSecret {
@@ -379,8 +431,8 @@ function Set-CutoverConnectionSecret {
     }
     if ($Remove) {
         Write-Host 'Removing ConnectionStrings:DefaultConnection. Value not displayed.'
-        & dotnet user-secrets remove 'ConnectionStrings:DefaultConnection' --id 'aspire-antiphon-apphost' --project $project | Out-Null
-        if ($LASTEXITCODE -ne 0) {
+        $removeCode = Invoke-CutoverCommand -Quiet -ArgumentList @('dotnet', 'user-secrets', 'remove', 'ConnectionStrings:DefaultConnection', '--id', 'aspire-antiphon-apphost', '--project', $project)
+        if ($removeCode -ne 0) {
             Write-Host 'ConnectionStrings:DefaultConnection was already absent or could not be removed. Value not displayed.'
         } else {
             Write-Host 'ConnectionStrings:DefaultConnection removed. Value not displayed.'
@@ -397,8 +449,9 @@ function Set-CutoverConnectionSecret {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $json | & dotnet user-secrets set --id 'aspire-antiphon-apphost' --project $project | Out-Null
+        $json | & dotnet user-secrets set --id 'aspire-antiphon-apphost' --project $project 2>&1 | Out-Null
         $code = $LASTEXITCODE
+        if ($null -eq $code) { $code = 1 } else { $code = [int]$code }
     } finally {
         $ErrorActionPreference = $previous
         $raw = $null
@@ -552,21 +605,22 @@ function Invoke-CutoverCopyAndRestore {
     param([string]$Encrypted)
     $remoteName = Split-Path -Leaf $Encrypted
     $remoteAge = $Server2ComposeDir.TrimEnd('/') + '/' + $remoteName
-    & scp $Encrypted ($Server2SshHost + ':' + $remoteAge)
-    if ($LASTEXITCODE -ne 0) { return 7 }
+    $copyCode = Invoke-CutoverCommand -ArgumentList @('scp', $Encrypted, ($Server2SshHost + ':' + $remoteAge))
+    if ($copyCode -ne 0) { return 7 }
     $remote = "cd '$Server2ComposeDir' && age -d -i - './$remoteName' | docker compose -p antiphon-server2-postgres exec -T postgres pg_restore -U antiphon -d antiphon --no-owner --no-acl; rc=`$?; rm -f './$remoteName'; exit `$rc"
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
         Get-Content -LiteralPath $AgeIdentityFile -Raw -ErrorAction Stop | & ssh $Server2SshHost $remote 2>&1 | Out-Null
         $code = $LASTEXITCODE
+        if ($null -eq $code) { $code = 1 } else { $code = [int]$code }
     } catch {
         $code = 1
     } finally {
         $ErrorActionPreference = $previous
     }
-    & ssh $Server2SshHost ("rm -f '" + $remoteAge + "'") | Out-Null
-    return $code
+    $null = Invoke-CutoverCommand -ArgumentList @('ssh', $Server2SshHost, ("rm -f '" + $remoteAge + "'"))
+    return [int]$code
 }
 
 function Invoke-CutoverRollback {
@@ -575,8 +629,8 @@ function Invoke-CutoverRollback {
     Assert-CutoverMaintenanceFree
     $compose = Join-Path $Repository 'docker-compose.dev.yml'
     Write-Host 'PHASE 6: starting desktop postgres. The data directory is not removed.'
-    & docker compose -f $compose start postgres
-    if ($LASTEXITCODE -ne 0) { Fail-Cutover 'REFUSED: desktop postgres did not start.' }
+    $startCode = Invoke-CutoverCommand -ArgumentList @('docker', 'compose', '-f', $compose, 'start', 'postgres')
+    if ($startCode -ne 0) { Fail-Cutover 'REFUSED: desktop postgres did not start.' }
     $extra = Test-CutoverNewHasExtraRows
     if ($null -eq $extra) {
         Fail-Cutover 'REFUSED: stop gate 6: row comparison failed. Neither data directory is removed.'
@@ -648,8 +702,8 @@ function Invoke-CutoverWindow {
     Invoke-CutoverMaintenance
     $script:CutoverEnteredMaintenance = $true
     $hold = Join-Path $Repository 'scripts/keep-six.ps1'
-    & $script:CommandHost -NoProfile -File $hold -Hold -Agent $HoldAgent -Reason $HoldReason -Until $HoldUntil | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    $holdCode = Invoke-CutoverCommand -ArgumentList @($script:CommandHost, '-NoProfile', '-File', $hold, '-Hold', '-Agent', $HoldAgent, '-Reason', $HoldReason, '-Until', $HoldUntil)
+    if ($holdCode -ne 0) {
         Clear-CutoverRecordedMaintenance | Out-Null
         Fail-Cutover 'REFUSED: dispatch hold was not recorded. StopOnly was not run.'
     }
@@ -674,8 +728,8 @@ function Invoke-CutoverWindow {
     Write-Host 'PHASE 1 landPending is empty.'
 
     $preview = Join-Path $Repository 'scripts/recover-repository-children.ps1'
-    & $script:CommandHost -NoProfile -File $preview -Repository $Repository | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    $previewCode = Invoke-CutoverCommand -ArgumentList @($script:CommandHost, '-NoProfile', '-File', $preview, '-Repository', $Repository)
+    if ($previewCode -ne 0) {
         Clear-CutoverRecordedHold | Out-Null
         Clear-CutoverRecordedMaintenance | Out-Null
         Fail-Cutover 'REFUSED: repository preview is not clear. StopOnly was not run.'
@@ -727,15 +781,24 @@ function Invoke-CutoverWindow {
 
     $compose = Join-Path $Repository 'docker-compose.dev.yml'
     $stopOut = & docker compose -f $compose stop postgres 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) { Fail-Cutover 'REFUSED: desktop postgres did not stop. The secret was not changed.' }
+    $stopCode = $LASTEXITCODE
+    if ($null -eq $stopCode) { $stopCode = 1 } else { $stopCode = [int]$stopCode }
+    if ($stopCode -ne 0) { Fail-Cutover 'REFUSED: desktop postgres did not stop. The secret was not changed.' }
+    $script:CutoverDesktopPostgresStopped = $true
     if ($stopOut -match '(?i)antiphon_pgdata' -and $stopOut -match '(?i)remove') {
         Fail-Cutover 'REFUSED: compose output named the data directory with a removal. The secret was not changed.'
     }
     $names = @(& docker volume ls --format '{{.Name}}')
+    $volumeCode = $LASTEXITCODE
+    if ($null -eq $volumeCode) { $volumeCode = 1 } else { $volumeCode = [int]$volumeCode }
+    if ($volumeCode -ne 0) { Fail-Cutover 'REFUSED: docker volume ls failed. The secret was not changed.' }
     if ($names -notcontains 'antiphon_pgdata') {
         Fail-Cutover 'REFUSED: antiphon_pgdata is not listed after the stop. The secret was not changed.'
     }
     $status = (& docker inspect -f '{{.State.Status}}' antiphon-postgres | Out-String).Trim()
+    $inspectCode = $LASTEXITCODE
+    if ($null -eq $inspectCode) { $inspectCode = 1 } else { $inspectCode = [int]$inspectCode }
+    if ($inspectCode -ne 0) { Fail-Cutover 'REFUSED: desktop postgres inspect failed. The secret was not changed.' }
     if ($status -ne 'exited') { Fail-Cutover 'REFUSED: desktop postgres is not exited. The secret was not changed.' }
     Set-CutoverConnectionSecret
     $script:CutoverSecretChanged = $true

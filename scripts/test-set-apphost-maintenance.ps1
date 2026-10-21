@@ -117,7 +117,7 @@ function Test-M4 {
         $run = Invoke-M1407 -Root $root -Arguments @('-Root', $root, '-EnterIfAbsent', '-Clear')
         $after = ''
         if (Test-Path -LiteralPath $marker) { $after = [System.IO.File]::ReadAllText($marker) }
-        $ok = ($run.ExitCode -eq 2) -and ($after -eq ($body + "`n") -or $after -eq $body)
+        $ok = ($run.ExitCode -eq 2) -and (($after -eq ($body + "`n")) -or ($after -eq $body))
         if ($ok) { Write-Pass 'M-4' }
         else { Write-Fail 'M-4' ("exit=$($run.ExitCode) after=$after") }
     } catch {
