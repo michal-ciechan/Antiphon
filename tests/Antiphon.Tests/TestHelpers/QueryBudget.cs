@@ -17,13 +17,17 @@ public sealed class QueryBudget(TimeSpan? delay = null, params string[] tagPrefi
 {
     private volatile Scope? _scope;
 
+    /// <summary>Per-command delay while a scope is open (D-3). Evidence only, never the assertion.</summary>
+    public TimeSpan? Delay { get; set; } = delay;
+
     public Scope Begin() => _scope = new Scope(this);
 
     private bool Counts(DbCommand command, out string tag)
     {
-        tag = LeadingTag(command.CommandText) ?? "untagged";
+        var seen = LeadingTag(command.CommandText) ?? "untagged";
+        tag = seen;
         if (_scope is null) return false;
-        return tagPrefixes.Length == 0 || tagPrefixes.Any(p => tag.StartsWith(p, StringComparison.Ordinal));
+        return tagPrefixes.Length == 0 || tagPrefixes.Any(p => seen.StartsWith(p, StringComparison.Ordinal));
     }
 
     private static string? LeadingTag(string sql) => DbCommandMetrics.LeadingTag(sql)
@@ -33,14 +37,14 @@ public sealed class QueryBudget(TimeSpan? delay = null, params string[] tagPrefi
     {
         if (!Counts(command, out var tag)) return;
         _scope?.Seen.Enqueue(tag);
-        if (delay is { } d) Thread.Sleep(d);
+        if (Delay is { } d) Thread.Sleep(d);
     }
 
     private async ValueTask HitAsync(DbCommand command, CancellationToken ct)
     {
         if (!Counts(command, out var tag)) return;
         _scope?.Seen.Enqueue(tag);
-        if (delay is { } d) await Task.Delay(d, ct);
+        if (Delay is { } d) await Task.Delay(d, ct);
     }
 
     public override InterceptionResult<DbDataReader> ReaderExecuting(DbCommand command, CommandEventData eventData,
