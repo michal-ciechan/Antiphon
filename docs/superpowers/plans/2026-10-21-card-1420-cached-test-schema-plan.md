@@ -231,6 +231,7 @@ witnesses are therefore separate, stated-reason runs. Each one uses a precise
 |---|---|---|---|
 | RW-1 | S1 red commit | `/*/*/TestSchemaCacheTests/*` | 8 executed, 8 failed, each with `NotImplementedException` |
 | RW-2 | S2 red commit | `/*/*/TestDbFixtureSchemaCacheLifecycleTests/*` | 6 executed, `Cache_hit_restores_without_migrating` fails on `Migrate` (expected 0, was 1); no result passes vacuously |
+| RW-4 | CP-7 repair red commit | `/*/*/TestDbFixtureSchemaCacheLifecycleTests/*` | 8 executed, 2 failed: `Cache_hit_warms_the_migrator_while_restoring` (SchemaSource `fallback`, not `hit`) and `Failed_restore_resets_and_migrates(warm-throws)` (ResetSharedDatabase 0, not 1) |
 | RW-3 | S3 red commit | `/*/*/TestSchemaSnapshotTests/Warm_cache_restore_matches_a_fresh_migration` | 1 executed, 1 failed on `Migrate == 0` (stderr shows `schema-cache fallback`) |
 
 ### Checkpoints
@@ -241,9 +242,9 @@ Lane: server2 (default runner). One build is shared by every row.
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S3 | `tests/Antiphon.Tests -> bin-c1420/` | measure-before | `/*/*/AgentTaskCheckInterpreterTests/the_board_hides_interpretation_rows_unless_they_are_asked_for` | V-6 | 1 executed, 0 failed; record TRX start → test start (migrate path) | 1 | 8 | ANTIPHON_TEST_SCHEMA_CACHE=off |
 | CP-2 | S3 | CP-1 | store | `/*/*/TestSchemaCacheTests/*` | V-1 | all listed, 0 failed | 8 | 1 | |
-| CP-3 | S3 | CP-1 | lifecycle-cache | `/*/*/TestDbFixtureSchemaCacheLifecycleTests/*` | V-2 | all listed, 0 failed | 6 | 1 | |
+| CP-3 | S3 | CP-1 | lifecycle-cache | `/*/*/TestDbFixtureSchemaCacheLifecycleTests/*` | V-2, V-7 | all listed, 0 failed (8 results after the CP-7 repair) | 8 | 1 | |
 | CP-4 | S3 | CP-1 | lifecycle-regress | `/*/*/TestDbFixtureLifecycleTests/*` | V-3 | all listed, 0 failed | 33 | 1 | |
-| CP-5 | S3 | CP-1 | lazy-init-regress | `/*/*/TestDbFixtureLazyInitializationTests/*` | V-3 | 0 failed (child-only methods may report skipped) | 6 | 6 | |
+| CP-5 | S3 | CP-1 | lazy-init-regress | `/*/*/TestDbFixtureLazyInitializationTests/(A_*)|(Mixed_*)` | V-3 | parent probes only, 0 failed, 0 skipped | 7 | 6 | |
 | CP-6 | S3 | CP-1 | snapshot | `/*/*/TestSchemaSnapshotTests/*` | V-4 | all listed, 0 failed | 3 | 4 | |
 | CP-7 | S3 | CP-1 | isolation-on-cache | `/*/*/TestDbFixtureIsolationTests/*` | V-5 | all listed, 0 failed; stderr shows `schema-cache hit` or `miss` | 6 | 2 | |
 | CP-8 | S3 | CP-1 | measure-after | `/*/*/AgentTaskCheckInterpreterTests/the_board_hides_interpretation_rows_unless_they_are_asked_for` | V-6 | 1 executed, 0 failed; stderr shows `schema-cache hit` (CP-7 populated the key with the same build); record TRX start → test start | 1 | 1 | |
@@ -255,6 +256,7 @@ Verification map:
 - V-3: existing lifecycle and C476 contracts unchanged (D-7)
 - V-4: restored store parity and safety (D-1, D-8, D-10)
 - V-5: real clones from a cache-built template
+- V-7: a hit warms the EF model differ concurrently with the restore, so the first in-process `MigrateAsync` stays a version check (CP-7 repair)
 - V-6: the per-launch saving, before and after on the same build and host
 
 **Measurement report.** The Code report gives the CP-1 and CP-8 figures, TRX `Times/@start` → first
@@ -264,7 +266,9 @@ and does not tune it inside this card.
 
 ### Unlisted
 
-- RW-1..RW-3 above (red witnesses, stated reason).
+- RW-1..RW-4 above (red witnesses, stated reason).
+- CP-5b (documented non-receipt row, not run): the three `Child_*` methods of `TestDbFixtureLazyInitializationTests` are the CARD-0476 probe children. They run inside the parent probes' child processes, with the probe environment, and CP-5's parents assert their outcomes. Run directly they always skip (`SkipTestException`), and a skipped row blocks a clean receipt, so CP-5 selects the parents only.
+- CP-7 repair diagnostics (Code task e05a8c49): throwaway `C1420DiagTests`/`C1420Diag2Tests` (never committed), runs of `TestDbFixtureIsolationTests` hit vs off, and RW-4 itself, each through `scripts/build-slot.ps1`.
 - Nothing else. `Antiphon.Tests` is not run in full; CP-4, CP-5 and CP-7 are the regression scope
   for the touched fixture.
 
