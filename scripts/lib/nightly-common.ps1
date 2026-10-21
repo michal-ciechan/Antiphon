@@ -540,8 +540,25 @@ function Get-NightlyLockPath {
 function Read-NightlyLockRecord {
     param([string]$LockPath)
     if (-not (Test-Path -LiteralPath $LockPath)) { return $null }
+    # File.ReadAllText uses FileShare.Read. Windows refuses that while the
+    # owner holds FileAccess.Write and FileShare.Read: the reader's share
+    # does not allow the existing writer (ERROR_SHARING_VIOLATION). Exit
+    # then leaves run.lock in place and a hop child sees missing-lock.
+    # FileShare.ReadWrite allows that writer. A FileShare.None holder,
+    # including the reclaim compare, still denies this read. This Linux
+    # host allows FileShare.Read against the same owner handle, so the
+    # Windows refusal is not reproduced here.
+    $stream = $null
+    $reader = $null
     try {
-        $raw = [System.IO.File]::ReadAllText($LockPath)
+        $stream = [System.IO.File]::Open(
+            $LockPath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::ReadWrite)
+        $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $true)
+        $stream = $null
+        $raw = $reader.ReadToEnd()
         if ($raw.Trim().StartsWith('{')) {
             return ($raw | ConvertFrom-Json)
         }
@@ -557,6 +574,13 @@ function Read-NightlyLockRecord {
         }
     } catch {
         return $null
+    } finally {
+        if ($null -ne $reader) {
+            try { $reader.Dispose() } catch { }
+        }
+        if ($null -ne $stream) {
+            try { $stream.Dispose() } catch { }
+        }
     }
 }
 
@@ -679,7 +703,11 @@ function Resolve-NightlyStaleLock {
     $bootBoth = (-not [string]::IsNullOrWhiteSpace($recordBoot)) -and (-not [string]::IsNullOrWhiteSpace($currentBoot))
     $hostBoth = (-not [string]::IsNullOrWhiteSpace($recordHost)) -and (-not [string]::IsNullOrWhiteSpace($currentHost))
     # A recycled pid after reboot is reclaimed before the live-owner check.
-    # Both ids must be registry BootId decimals. A LastBootUpTime string is ambiguous.
+    # dead-owner-rebooted requires both boot ids to be registry BootId decimals.
+    # CARD-1389 D-2 removed reclaim when a Linux boot_id UUID changes, so a
+    # stale run.lock after a Linux reboot stays lock-held until removed by hand.
+    # A lock written before that pin, whose bootId is a LastBootUpTime string,
+    # also stays lock-held across one Windows reboot and needs that removal.
     if ($hostBoth -and $bootBoth -and [string]::Equals($recordHost, $currentHost, [StringComparison]::Ordinal) -and -not [string]::Equals($recordBoot, $currentBoot, [StringComparison]::Ordinal)) {
         if ((Test-NightlyDecimalBootId -Value $recordBoot) -and (Test-NightlyDecimalBootId -Value $currentBoot)) {
             return [pscustomobject]@{ Action = 'reclaim'; Reason = 'dead-owner-rebooted' }
@@ -935,6 +963,16 @@ function Enter-NightlyReclaimedLock {
             $shared = Open-NightlySharedLockStream -LockPath $LockPath
         } catch {
             $shared = $null
+            # The published record stays ours. A live pid still refuses a
+            # contender, so ownership does not change when the shared handle
+            # cannot be retaken. The line is the only signal. A log failure
+            # must not replace that Ok result.
+            $detail = 'unreadable'
+            try { $detail = [string]$_.Exception.Message } catch { }
+            $detail = $detail.Replace("`r", ' ').Replace("`n", ' ')
+            $line = 'reclaim-shared-reopen-failed ' + $detail
+            try { Write-NightlyRunLine $line } catch { }
+            try { Write-NightlyTrace -Kind 'lock' -Message $line } catch { }
         }
         $script:NightlyLockStream = $shared
         $owned = $true
