@@ -22,7 +22,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [Category("Slow")]
 [NotInParallel("MessageQueue")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class ReviewEvidenceResettlementTests
 {
     private static readonly TimeSpan Guard = TimeSpan.FromSeconds(30);

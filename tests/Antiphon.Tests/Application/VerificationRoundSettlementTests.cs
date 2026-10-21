@@ -22,7 +22,7 @@ namespace Antiphon.Tests.Application;
 /// obligation commit, exact settlement-event identity, and obligation applicability.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class VerificationRoundSettlementTests
 {
     [Test]

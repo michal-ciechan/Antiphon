@@ -16,7 +16,7 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0726 V-8..V-13, V-27, V-28. The runner and journal alarm state machine.</summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class RunnerAlarmCoordinatorTests
 {
     private static readonly DateTimeOffset T0 = new(2026, 9, 26, 1, 2, 3, TimeSpan.Zero);

@@ -15,7 +15,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [Category("Slow")]
 [NotInParallel("MessageQueue")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class ReviewEvidenceSettlementTests
 {
     private const string Warning = "review_evidence_not_standalone";

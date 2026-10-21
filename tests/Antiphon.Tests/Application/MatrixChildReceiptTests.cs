@@ -15,7 +15,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
-[NotInParallel, ParallelLimiter<ProcessSpawnLimit>, Category("Integration")]
+[NotInParallel, ParallelLimiter<GitProcessSpawnLimit>, Category("Integration")]
 public sealed class MatrixChildReceiptTests
 {
     [Test]

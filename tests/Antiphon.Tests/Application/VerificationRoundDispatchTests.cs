@@ -19,7 +19,7 @@ namespace Antiphon.Tests.Application;
 /// A loss of eligibility while queued holds the task and launches nothing; a running task finishes.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class VerificationRoundDispatchTests
 {
     [Test]

@@ -21,7 +21,7 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0726 V-14, V-15, V-26, V-29, V-35. The alarm loop's timers and wakes.</summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class RunnerAlarmHostedServiceTests
 {
     [Test]

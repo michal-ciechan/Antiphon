@@ -20,7 +20,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class WorktreeDefaultContinuationTests
 {
     // The 120s budget is the continuation, not the first shared-database migration.
