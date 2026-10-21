@@ -751,6 +751,7 @@ public sealed class AgentSessionCancelledTurnTests
             db.SessionRuntimeActions.RemoveRange(pending);
             var generation = await db.AgentSessions.Where(s => s.Id == session.SessionId)
                 .Select(s => s.StartedAt).SingleAsync();
+            var projection = TranscriptUiProjection.Stored(row, row.Sequence);
             db.SessionRuntimeActions.Add(new SessionRuntimeAction
             {
                 Id = Guid.NewGuid(),
@@ -761,7 +762,9 @@ public sealed class AgentSessionCancelledTurnTests
                 ProducerSequence = row.Sequence,
                 TriggerKind = "transcript",
                 CreatedAt = now,
-                DueAt = now
+                DueAt = now,
+                UiProjectionVersion = 1,
+                UiProjectionDelta = TranscriptUiProjection.Capture(projection, row)
             });
             await db.SaveChangesAsync();
         }
