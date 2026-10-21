@@ -98,6 +98,18 @@ public sealed class LandVerificationLeaseWindowTests
         });
 
     [Test]
+    public async Task C1388_SourceTreeChangeRefusesResume() =>
+        await RefuseAsync("c1388-source", "verification_tracked_tree_changed", async world =>
+        {
+            var land = await LandPathAsync(world);
+            var source = await SourcePathAsync(world);
+            SameDirectory(land, source).ShouldBeFalse();
+            var owner = Path.Combine(source, "owner.md");
+            File.Exists(owner).ShouldBeTrue();
+            await File.AppendAllTextAsync(owner, "c1388 source\n");
+        });
+
+    [Test]
     public async Task C1388_LandWorktreeHeadChangeRefusesResume() =>
         await RefuseAsync("c1388-head", "land_worktree_changed", async world =>
         {
@@ -158,6 +170,15 @@ public sealed class LandVerificationLeaseWindowTests
         operation.Phase.ShouldBe(LandPhase.Prepared);
         operation.LandWorktreePath.ShouldNotBeNullOrWhiteSpace();
         return operation.LandWorktreePath;
+    }
+
+    private static async Task<string> SourcePathAsync(RepairSourceWorld world)
+    {
+        await using var db = world.CreateContext();
+        var operation = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == world.Owner.Id);
+        operation.Phase.ShouldBe(LandPhase.Prepared);
+        operation.WorktreePath.ShouldNotBeNullOrWhiteSpace();
+        return operation.WorktreePath;
     }
 
     private static bool SameDirectory(string left, string right) =>
