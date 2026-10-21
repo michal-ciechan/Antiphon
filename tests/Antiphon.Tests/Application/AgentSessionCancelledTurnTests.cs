@@ -303,7 +303,7 @@ public sealed class AgentSessionCancelledTurnTests
         public required MutableTimeProvider Clock { get; init; }
         public required AgentSessionRuntime Runtime { get; init; }
         public required SessionRuntimeActionCoordinator Actions { get; init; }
-        public required DbContextOptions<AppDbContext> Options { get; init; }
+        public required DbContextOptions<AppDbContext> DbOptions { get; init; }
         public required ServiceProvider Provider { get; init; }
         public required IsolatedTestSchema Schema { get; init; }
         public required AppDbContext Db { get; init; }
@@ -345,7 +345,7 @@ public sealed class AgentSessionCancelledTurnTests
                 Clock = clock,
                 Runtime = provider.GetRequiredService<AgentSessionRuntime>(),
                 Actions = provider.GetRequiredService<SessionRuntimeActionCoordinator>(),
-                Options = options,
+                DbOptions = options,
                 Provider = provider,
                 Schema = schema,
                 Db = new AppDbContext(options),
@@ -387,7 +387,7 @@ public sealed class AgentSessionCancelledTurnTests
                 new AgentLaunchSpec("fake-codex", AgentKind.Codex, "fake-only", [],
                     new Dictionary<string, string>(), Scratch, 120, 30),
                 CancellationToken.None);
-            await using var reloaded = new AppDbContext(Options);
+            await using var reloaded = new AppDbContext(DbOptions);
             var attempt = await reloaded.RunAttempts.SingleAsync(a => a.Id == result.RunAttemptId);
             attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
             return new LiveAttempt(result.SessionId, result.RunAttemptId, adapter,
@@ -414,7 +414,7 @@ public sealed class AgentSessionCancelledTurnTests
 
         public async Task<Reloaded> ReloadAsync(LiveAttempt session)
         {
-            await using var db = new AppDbContext(Options);
+            await using var db = new AppDbContext(DbOptions);
             return new Reloaded(
                 await db.AgentSessions.SingleAsync(s => s.Id == session.SessionId),
                 await db.RunAttempts.SingleAsync(a => a.Id == session.AttemptId));
@@ -422,7 +422,7 @@ public sealed class AgentSessionCancelledTurnTests
 
         public async Task<int> ScanAsync()
         {
-            await using var scanDb = new AppDbContext(Options);
+            await using var scanDb = new AppDbContext(DbOptions);
             var scan = new RunAttemptStallDetector(
                 scanDb, Runtime, Events, Settings, Clock, NullLogger<RunAttemptStallDetector>.Instance);
             return await scan.ScanAsync(CancellationToken.None);
