@@ -103,6 +103,8 @@ public class TestDbFixture
 			["start"] = Lifecycle.Start,
 			["migrate"] = Lifecycle.Migrate,
 			["protect"] = Lifecycle.Protect,
+			["restore"] = Lifecycle.Restore,
+			["schemaSource"] = Lifecycle.SchemaSource,
 			["disposeOwned"] = Lifecycle.DisposeOwned,
 			["teardownDispose"] = Lifecycle.TeardownDispose,
 			["containerId"] = Lifecycle.ContainerId,

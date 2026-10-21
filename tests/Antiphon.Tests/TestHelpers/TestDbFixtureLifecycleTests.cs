@@ -22,6 +22,16 @@ internal sealed class ControlledTestDbOperations : TestDbOperations
     public int ClearAll;
     public SynchronizationContext? BootstrapContext;
 
+    // CARD-1420: schema-cache seams. CacheFault is restore-throws, history-mismatch or capture-throws.
+    public static readonly string[] Migrations = ["20260101000000_First", "20260102000000_Second"];
+    public static readonly byte[] CapturedSql = System.Text.Encoding.UTF8.GetBytes("-- controlled capture\n");
+    public string? CacheFault;
+    public int MigrateCalls;
+    public int CaptureCalls;
+    public int RestoreCalls;
+    public int ResetCalls;
+    public byte[]? RestoredSql;
+
     public override Task<OwnedTestDbContainer> CreateAsync()
     {
         BootstrapContext ??= SynchronizationContext.Current;
@@ -52,6 +62,40 @@ internal sealed class ControlledTestDbOperations : TestDbOperations
         BootstrapContext ??= SynchronizationContext.Current;
         if (FaultAt == "migrate")
             throw new InvalidOperationException("C476-FAULT migrate");
+        Interlocked.Increment(ref MigrateCalls);
+        return Task.CompletedTask;
+    }
+
+    public override Task<byte[]> CaptureSnapshotAsync(OwnedTestDbContainer container, string databaseName)
+    {
+        Interlocked.Increment(ref CaptureCalls);
+        if (CacheFault == "capture-throws")
+            throw new InvalidOperationException("C1420-FAULT capture");
+        return Task.FromResult(CapturedSql);
+    }
+
+    public override Task RestoreSnapshotAsync(OwnedTestDbContainer container, string databaseName, byte[] sql)
+    {
+        Interlocked.Increment(ref RestoreCalls);
+        if (CacheFault == "restore-throws")
+            throw new InvalidOperationException("C1420-FAULT restore");
+        RestoredSql = sql;
+        return Task.CompletedTask;
+    }
+
+    public override Task<IReadOnlyList<string>> ReadAppliedMigrationsAsync(string connectionString)
+    {
+        IReadOnlyList<string> applied = CacheFault == "history-mismatch" && Volatile.Read(ref MigrateCalls) == 0
+            ? Migrations[..1]
+            : Migrations;
+        return Task.FromResult(applied);
+    }
+
+    public override IReadOnlyList<string> GetAssemblyMigrations() => Migrations;
+
+    public override Task ResetSharedDatabaseAsync(string maintenanceConnectionString)
+    {
+        Interlocked.Increment(ref ResetCalls);
         return Task.CompletedTask;
     }
 
