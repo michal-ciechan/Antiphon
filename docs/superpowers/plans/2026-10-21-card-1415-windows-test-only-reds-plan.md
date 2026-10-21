@@ -23,7 +23,7 @@ skips on a clone without the producer pack, so it runs alone and yields no clean
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-S5 | `tests/Antiphon.Tests -> bin-c1415-pack/` | advisory-pack-skip | `/*/*/AdvisoryChangePolicyTests/*` | S1 | 10 executed; 5 correction cases skipped with the CARD-1415 reason on a clone without the pack, 0 failed | 10 | 7 |
+| CP-1 | S1-S5 | `tests/Antiphon.Tests -> bin-c1415-pack/` | advisory-pack-skip | `/*/*/AdvisoryChangePolicyTests/*` | S1 | 5 executed and passed plus 5 correction cases skipped with the CARD-1415 reason on a clone without the pack (Min counts executed only), 0 failed | 5 | 7 |
 | CP-2 | S1-S5 | `tests/Antiphon.Tests -> bin-c1415/` | codex-high-literal | `/*/*/AgentTuiLaunchResolverTests/ModelTier_maps_against_the_resolved_profile_kind_and_omits_raw` | S2 | 1 passed, 0 failed/skipped | 1 | 6 |
 | CP-3 | S1-S5 | CP-2 | c1213-legacy-identity | `/*/*/AgentTaskDispatchBaseGuardTests/C1213_SourceLandingKeepsLegacyIdentity` | S3 | 1 passed on Linux (remote arm runs), 0 failed/skipped | 1 | 1 |
 | CP-4 | S1-S5 | CP-2 | keep-six-classes | `/*/*/(KeepSixReminderTests*)\|(KeepSixSettingsTests*)\|(KeepSixShortfallTests*)/*` | S4 | 22 passed, 0 failed/skipped | 22 | 2 |
