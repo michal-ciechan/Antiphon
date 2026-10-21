@@ -133,6 +133,20 @@ public sealed class DesktopCapabilitiesSnapshotTests
     }
 
     [Test]
+    public async Task A_thrown_refusal_is_classified_by_the_directory_and_goes_stale_immediately()
+    {
+        var (directory, runner, time, log) = Build();
+        runner.Answer(Windows);
+        (await directory.DescribeAsync(null, CancellationToken.None))!.Platform.ShouldBe("windows");
+
+        time.Advance(TimeSpan.FromSeconds(5));
+        runner.Throw(new HttpRequestException(HttpRequestError.ConnectionError, "x"));
+
+        AssertStale(await directory.DescribeAsync(null, CancellationToken.None));
+        log.Warnings.ShouldHaveSingleItem().ShouldContain("reason refused");
+    }
+
+    [Test]
     public async Task Failure_log_is_rate_limited_and_names_the_reason()
     {
         var (directory, runner, time, log) = Build();
@@ -205,7 +219,7 @@ public sealed class DesktopCapabilitiesSnapshotTests
         return (directory, runner, time, log);
     }
 
-    /// <summary>Answers the next probe from what the test set: capabilities, a classified failure, or a hang.</summary>
+    /// <summary>Answers the next probe from what the test set: capabilities, a classified failure, a thrown exception, or a hang.</summary>
     private sealed class ScriptedRunner : ISessionRunnerClient
     {
         private Func<CancellationToken, Task<RunnerCapabilitiesProbe>> _next =
@@ -216,6 +230,8 @@ public sealed class DesktopCapabilitiesSnapshotTests
 
         public void Fail(string reason, bool definite) =>
             _next = _ => Task.FromResult(new RunnerCapabilitiesProbe(null, reason, definite));
+
+        public void Throw(Exception ex) => _next = _ => Task.FromException<RunnerCapabilitiesProbe>(ex);
 
         public void Hang() =>
             _next = async ct =>
