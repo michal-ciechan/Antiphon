@@ -145,9 +145,17 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         }
         var current = await FindPersistentSessionAsync(agent, statuses: null, ct);
         var escalation = new StandingRestartEscalationPolicy(_settings, _delegation);
-        if (state.Suspended || state.LivenessLatchedAt is not null
-            || state.ContinuityHeldAt is not null && !escalation.CanReserve(agent, state, current, current?.AgentKind ?? agent.Kind))
+        if (state.Suspended || state.LivenessLatchedAt is not null)
             return await CompleteAsync(false);
+        if (state.ContinuityHeldAt is not null
+            && !escalation.CanReserve(agent, state, current, current?.AgentKind ?? agent.Kind))
+        {
+            var staged = await TryStageFreshHoldAlertAsync(state, ct);
+            var held = await CompleteAsync(false);
+            if (staged is not null)
+                await RaiseFreshHoldAlertAsync(staged, ct);
+            return held;
+        }
         if (Guid.TryParse(agent.PersistentSessionId, out var ownedId) && _launchQueue.Owns(ownedId))
             return await CompleteAsync(false);
 
@@ -533,6 +541,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         try
         {
             await _control.StartSupervisedFreshAsync(agent.Id, current!.Id, current.StartedAt, capacityActionKey, ct);
+            await TryRaiseFreshStartedAlertAsync(agent.Id, ct);
             return true;
         }
         catch (ConflictException ex) when (!ct.IsCancellationRequested && ex.Code is
@@ -580,9 +589,172 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
         await new StandingContinuityState(_db, _timeProvider).HoldAsync(agentId, current.Id,
             StandingContinuityReason.AutomaticFreshRefused,
             "Automatic fresh reservation was refused before commit; inspect pending input and work before explicit recovery.", ct);
+        var heldState = await _db.AgentSupervisionStates.SingleAsync(s => s.AgentId == agentId, ct);
+        var staged = await TryStageFreshHoldAlertAsync(heldState, ct);
         await transaction.CommitAsync(ct);
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
+        if (staged is not null)
+            await RaiseFreshHoldAlertAsync(staged, ct);
         return true;
+    }
+
+    private sealed record FreshHoldAlert(Guid AgentId, Guid? SessionId, string Detail, DateTime HeldAt);
+
+    /// <summary>
+    /// Stages one refused/exhausted fresh incident and the hold marker inside the open
+    /// supervision transaction. A failed write rolls back only that savepoint.
+    /// </summary>
+    private async Task<FreshHoldAlert?> TryStageFreshHoldAlertAsync(AgentSupervisionState state, CancellationToken ct)
+    {
+        if (state.ContinuityHeldAt is not { } heldAt || state.AutomaticFreshAlertedHoldAt == heldAt)
+            return null;
+        var refused = state.ContinuityReason == StandingContinuityReason.AutomaticFreshRefused;
+        var exhausted = state.AutomaticFreshConsumed
+            && state.ContinuityReason == StandingContinuityReason.RepeatedResumeFailure;
+        if (!refused && !exhausted)
+            return null;
+        var transaction = _db.Database.CurrentTransaction;
+        if (transaction is null || !transaction.SupportsSavepoints)
+        {
+            _logger.LogWarning("Agent {AgentId}: fresh-hold alert skipped; no savepoint in the supervision transaction", state.AgentId);
+            return null;
+        }
+
+        try
+        {
+            await transaction.CreateSavepointAsync("c510_fresh_alert", ct);
+            var queues = "none";
+            if (state.ContinuitySessionId is Guid sessionId)
+            {
+                var ids = await _db.SessionQueuedMessages.AsNoTracking()
+                    .Where(m => m.AgentSessionId == sessionId
+                        && m.Status == QueuedMessageStatus.Pending
+                        && m.RulesRefreshKey == null)
+                    .OrderBy(m => m.Sequence).ThenBy(m => m.Id)
+                    .Select(m => m.Id)
+                    .ToListAsync(ct);
+                if (ids.Count > 0)
+                    queues = string.Join(",", ids.Select(id => id.ToString("D")));
+            }
+
+            var session = state.ContinuitySessionId?.ToString("D") ?? "none";
+            var reason = state.ContinuityReason?.ToString() ?? "none";
+            var message = ColumnText.Clip(
+                $"StandingAutomaticFreshRefused agent {state.AgentId:D} session {session} queues {queues} reason {reason}; prior conversation retained.",
+                AgentIncident.MessageMaxLength);
+            _db.AgentIncidents.Add(new AgentIncident
+            {
+                Id = Guid.NewGuid(),
+                AgentId = state.AgentId,
+                SessionId = state.ContinuitySessionId,
+                Kind = AgentIncidentKind.StandingAutomaticFreshRefused,
+                Severity = AlertSeverity.Error,
+                Message = message,
+                CreatedAt = UtcNow(),
+            });
+            state.AutomaticFreshAlertedHoldAt = heldAt;
+            state.UpdatedAt = UtcNow();
+            await _db.SaveChangesAsync(ct);
+            return new FreshHoldAlert(state.AgentId, state.ContinuitySessionId, message, heldAt);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Agent {AgentId}: fresh-hold alert incident was not stored; the hold remains", state.AgentId);
+            await ForgetFreshHoldAlertAttemptAsync(transaction, state, ct);
+            return null;
+        }
+    }
+
+    private async Task ForgetFreshHoldAlertAttemptAsync(
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction,
+        AgentSupervisionState state, CancellationToken ct)
+    {
+        try
+        {
+            await transaction.RollbackToSavepointAsync("c510_fresh_alert", ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Agent {AgentId}: fresh-hold alert savepoint rollback failed", state.AgentId);
+        }
+
+        foreach (var entry in _db.ChangeTracker.Entries<AgentIncident>()
+            .Where(entry => entry.State == EntityState.Added).ToList())
+            entry.State = EntityState.Detached;
+        if (_db.Entry(state).State == EntityState.Detached)
+            return;
+        try
+        {
+            await _db.Entry(state).ReloadAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Agent {AgentId}: fresh-hold state reload failed", state.AgentId);
+        }
+    }
+
+    private async Task RaiseFreshHoldAlertAsync(FreshHoldAlert alert, CancellationToken ct)
+    {
+        try
+        {
+            await _alerts.RaiseAsync(
+                new AlertRaise(
+                    AlertSeverity.Error,
+                    Source: "supervisor",
+                    Title: "StandingAutomaticFreshRefused: agent supervision",
+                    Detail: alert.Detail,
+                    DedupKey: $"supervisor:StandingAutomaticFreshRefused:{alert.AgentId:N}:{alert.HeldAt:O}",
+                    AgentId: alert.AgentId,
+                    SessionId: alert.SessionId),
+                ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Agent {AgentId}: fresh-hold alert routing failed", alert.AgentId);
+        }
+    }
+
+    private async Task TryRaiseFreshStartedAlertAsync(Guid agentId, CancellationToken ct)
+    {
+        try
+        {
+            var incident = await _db.AgentIncidents.AsNoTracking()
+                .Where(i => i.AgentId == agentId && i.Kind == AgentIncidentKind.StandingAutomaticFreshStarted)
+                .OrderByDescending(i => i.CreatedAt).ThenByDescending(i => i.Id)
+                .FirstOrDefaultAsync(ct);
+            if (incident is null)
+                return;
+            var already = await _db.Alerts.AsNoTracking().AnyAsync(a => a.AgentId == agentId
+                && a.Detail != null && a.Detail.Contains("StandingAutomaticFreshStarted"), ct);
+            if (already)
+                return;
+            await _alerts.RaiseAsync(
+                new AlertRaise(
+                    AlertSeverity.Warning,
+                    Source: "supervisor",
+                    Title: "StandingAutomaticFreshStarted: agent supervision",
+                    Detail: incident.Message,
+                    DedupKey: $"supervisor:StandingAutomaticFreshStarted:{agentId:N}:{incident.Id:N}",
+                    AgentId: agentId,
+                    SessionId: incident.SessionId),
+                ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Agent {AgentId}: fresh-start alert routing failed", agentId);
+        }
     }
 
     private async Task<bool> TryHoldRepeatedResumeFailureAsync(

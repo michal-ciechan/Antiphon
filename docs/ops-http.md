@@ -448,11 +448,18 @@ Authorization failures are **403**, not conflicts: `handoff_principal_denied`,
 - **STANDING CONTINUITY HOLD IS A DECISION, NOT A FRESH (CARD-0466 / CARD-0561).** Start
   returns 409 `standing_continuity_held` while `supervision.continuityHeldAt` is set. Reasons:
   `NativeSessionMissing`, `TargetMissing`, `TargetIncompatible`, `OwnershipUnproven`,
-  `RepeatedResumeFailure`. Read `supervision.continuityResumeFailures` (non-infrastructure
-  supervised resume failures) and `continuityReason` / `continuityEvidence`. Acknowledge with
-  exactly one of `retryContinuity:true`, `resumeSessionId`, or `fresh:true`.
-  `Supervision:ResumeFailureHoldAttempts` (default 5, 0 disables) trips `RepeatedResumeFailure`;
-  it never auto-Freshes.
+  `RepeatedResumeFailure`, `AutomaticFreshRefused`. Read `supervision.continuityResumeFailures`
+  (non-infrastructure supervised resume failures) and `continuityReason` / `continuityEvidence`.
+  Acknowledge with exactly one of `retryContinuity:true`, `resumeSessionId`, or `fresh:true`.
+  `Supervision:ResumeFailureHoldAttempts` (default 5, 0 disables) trips `RepeatedResumeFailure`
+  and does not itself start a fresh conversation. `Supervision:AutomaticFreshAfterResumeFailures`
+  (default 3, 0 disables) may reserve one new conversation after that many admitted resume
+  failures. Untouched ordinary input moves with the reservation. Attempted or producer-bound
+  input stays put and holds `AutomaticFreshRefused` without spending the allowance. One Warning
+  alert, `StandingAutomaticFreshStarted`, follows a committed reservation ("fresh launch queued;
+  prior conversation retained"). One Error alert, `StandingAutomaticFreshRefused`, follows a
+  refused or exhausted hold and is not repeated for that same `continuityHeldAt`.
+  `FreshAfterResumeFailures` stays ignored.
 
 - **HERDR RETRY HOLD REQUIRES AN EXPLICIT ACKNOWLEDGEMENT (CARD-0388).** A held dead-agent
   Start returns 409 `herdr_supervision_held` before other launch guards or named-placement

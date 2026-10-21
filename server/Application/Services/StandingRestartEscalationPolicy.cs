@@ -7,6 +7,8 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>The bounded exception to strict standing resume; reservation rechecks this under locks.</summary>
 public sealed class StandingRestartEscalationPolicy(SupervisionSettings settings, DelegationSettings delegation)
 {
+    public int AutomaticFreshAfterResumeFailures => settings.AutomaticFreshAfterResumeFailures;
+
     public bool CanReserve(Agent agent, AgentSupervisionState state, AgentSession? current, AgentKind kind) =>
         settings.Enabled && settings.AutomaticFreshAfterResumeFailures > 0
         && state.AutomaticResumeFailures >= settings.AutomaticFreshAfterResumeFailures
