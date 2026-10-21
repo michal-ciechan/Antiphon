@@ -483,6 +483,27 @@ function Test-C545_ResultLine {
     }
 }
 
+function Test-C487_PrerequisiteSettle {
+    # A child that exits nonzero while summary.json still says testsPassed must
+    # not leave that success flag settled beside last-run.json.
+    $run = Invoke-C545ResultLineRun -Row 'npm-build-failed' -UtcNow '2026-09-17T23:35:00Z' -TestExit 2 -TestsPassed $true
+    $summary = $null
+    $summaryPath = ''
+    if ($run.Record) { $summaryPath = [string]$run.Record.summaryPath }
+    if (-not [string]::IsNullOrWhiteSpace($summaryPath) -and (Test-Path -LiteralPath $summaryPath)) {
+        $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    $recordPassed = $false
+    if ($run.Record) { $recordPassed = [bool]$run.Record.testsPassed }
+    $statePassed = $false
+    if ($run.State) { $statePassed = [bool]$run.State.testsPassed }
+    $summaryPassed = $true
+    if ($summary) { $summaryPassed = [bool]$summary.testsPassed }
+    Assert-C487 -Cond ($null -ne $run.Record -and -not $recordPassed -and -not $statePassed -and -not $summaryPassed) `
+        -Name 'C487 prerequisite settle summary testsPassed matches last-run' `
+        -Detail ('exit=' + $run.ExitCode + ' record=' + $recordPassed + ' state=' + $statePassed + ' summary=' + $summaryPassed + ' path=' + $summaryPath)
+}
+
 $cases = Get-C487CaseFunctions -Prefix 'C487_G0'
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -CommandType Function -ErrorAction SilentlyContinue

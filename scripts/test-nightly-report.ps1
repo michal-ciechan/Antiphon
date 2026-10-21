@@ -195,6 +195,7 @@ function Reset-Store {
     $script:state.ThrowAll = $false
     $script:state.CreatedCount = 0
     $script:state.ColumnsEmpty = $false
+    $script:state.Pages = $null
     foreach ($c in @($Cards)) { [void]$script:state.Cards.Add($c) }
 }
 
@@ -215,6 +216,7 @@ $script:state = [pscustomobject]@{
     ThrowAll      = $false
     CreatedCount  = 0
     ColumnsEmpty  = $false
+    Pages         = $null
 }
 $state = $script:state
 $script:shim = {
@@ -245,6 +247,19 @@ $script:shim = {
         $status = 'Backlog'
         $m = [regex]::Match($u, 'status=([^&]+)')
         if ($m.Success) { $status = [uri]::UnescapeDataString($m.Groups[1].Value) }
+        if ($null -ne $state.Pages -and $state.Pages.ContainsKey($status)) {
+            $token = ''
+            $tm = [regex]::Match($u, 'pageToken=([^&]+)')
+            if ($tm.Success) { $token = [uri]::UnescapeDataString($tm.Groups[1].Value) }
+            $chosen = $null
+            foreach ($p in @($state.Pages[$status])) {
+                if ([string]$p.token -eq $token) { $chosen = $p; break }
+            }
+            if ($null -eq $chosen) { throw ('no fixture page for ' + $status) }
+            $next = $null
+            if ($null -ne $chosen.nextPageToken) { $next = [string]$chosen.nextPageToken }
+            return [pscustomobject]@{ cards = @($chosen.cards); truncated = [bool]$chosen.truncated; nextPageToken = $next }
+        }
         $matched = @($state.Cards | Where-Object { [string]$_.status -eq $status })
         return [pscustomobject]@{ cards = @($matched); truncated = $false }
     }
@@ -605,7 +620,45 @@ function Test-C487_G086 {
     }
 }
 function Test-C487_G087 {
-    Assert-True $true 'G087 truncated census fails closed'
+    # Done is paged. The reopenable nightly card is on the second page, so a
+    # capped first page cannot stand in for the census.
+    $dir = New-TestDir
+    Save-Summary -Object (New-RedSummaryObject -LogDir $dir -ClientFailed 1) -Path (Join-Path $dir 'summary.json')
+    $older = New-FakeCard -Id '11111111-1111-1111-1111-111111111111' -Identifier 'CARD-0401' -Status 'Done' `
+        -TerminalReason '[nightly auto-close] green on 2026-09-01' -UpdatedAt ([datetime]::UtcNow.AddDays(-2).ToString('o'))
+    $newer = New-FakeCard -Id '22222222-2222-2222-2222-222222222222' -Identifier 'CARD-0402' -Status 'Done' `
+        -TerminalReason '[nightly auto-close] green on 2026-09-04' -UpdatedAt ([datetime]::UtcNow.AddHours(-1).ToString('o'))
+    Reset-Store -Cards @($older, $newer)
+    $script:state.Pages = @{
+        Done = @(
+            @{ token = ''; cards = @($older); truncated = $true; nextPageToken = 'done-2' },
+            @{ token = 'done-2'; cards = @($newer); truncated = $false; nextPageToken = $null }
+        )
+    }
+    $r = Invoke-Report @{ Summary = (Join-Path $dir 'summary.json') }
+    $reopens = @(Get-CallsMatching -Method POST -Pattern '/api/cards/22222222-2222-2222-2222-222222222222/reopen')
+    $doneGets = @($script:state.Calls | Where-Object { $_.Method -eq 'GET' -and $_.Uri -match 'status=Done' })
+    Assert-Eq $r.ExitCode 0 'G087 paged Done census exits 0'
+    Assert-Eq $r.Action 'reopened' 'G087 paged Done census reopens the later card'
+    Assert-Eq $reopens.Count 1 'G087 reopen targets the second page'
+    Assert-True ($doneGets.Count -ge 2) 'G087 Done census follows the next page' ([string]$doneGets.Count)
+
+    $dir2 = New-TestDir
+    Save-Summary -Object (New-RedSummaryObject -LogDir $dir2 -ClientFailed 1) -Path (Join-Path $dir2 'summary.json')
+    $unrelated = New-FakeCard -Id '33333333-3333-3333-3333-333333333333' -Identifier 'CARD-0403' -Status 'Done' -Labels @('other')
+    Reset-Store -Cards @()
+    $script:state.Pages = @{
+        Done = @(
+            @{ token = ''; cards = @($unrelated); truncated = $true; nextPageToken = $null }
+        )
+    }
+    $r2 = Invoke-Report @{ Summary = (Join-Path $dir2 'summary.json') }
+    $creates = @(Get-CallsMatching -Method POST -Pattern '/api/boards/.+/cards$')
+    Assert-Eq $r2.ExitCode 3 'G087 truncated Done page without a continuation exits 3'
+    Assert-Eq $r2.Action 'reporting-failed' 'G087 truncated Done page does not file'
+    Assert-Eq $creates.Count 0 'G087 truncated Done page does not create'
+    Assert-True ([string]$r2.Body -ne $null) 'G087 failure still returns a report body'
+    $script:state.Pages = $null
 }
 function Test-C487_G088 {
     foreach ($kind in @('content', 'close')) {

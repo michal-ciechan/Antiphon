@@ -707,6 +707,41 @@ function Test-C1044_DiscoveryReconciliation {
     }
 }
 
+function New-C1044DiscoveryRecord {
+    param([string]$Uid, [string]$TypeName, [string]$Method)
+    return ('TestNodeUpdateMessage { DisplayName = TestNode update, Description = This data is used to report a TestNode state change., Properties = [], ParentTestNodeUid = <null>, TestNode = TestNode { Uid = TestNodeUid { Value = ' + $Uid + ' }, DisplayName = ' + $Method + ', Properties = [ TestMethodIdentifierProperty { AssemblyFullName = Probe, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null, Namespace = Antiphon.Tests.Application, TypeName = ' + $TypeName + ', MethodName = ' + $Method + ', MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }, DiscoveredTestNodeStateProperty { Explanation =  } ] } }')
+}
+
+function Get-C1044DiscoveryText {
+    param([string[]]$Records)
+    return ("Version: '1.44.0.0'`nVersion: 2.2.2`n" + ($Records -join "`n"))
+}
+
+function Test-C1044_FixtureTypeName {
+    # TUnit 1.44 GetClassTypeName puts constructor fixtures in TypeName, and
+    # generic or nested classes add '+', a backtick, and comma-separated arguments.
+    $fixture = 'CardFilePolicyApiTests(CardFileSyncEndpointWebAppFactory)'
+    $generic = 'Outer+Inner`1(FactoryA, FactoryB)'
+    $records = @(
+        (New-C1044DiscoveryRecord -Uid 'fixture-uid' -TypeName $fixture -Method 'ListsFiles'),
+        (New-C1044DiscoveryRecord -Uid 'generic-uid' -TypeName $generic -Method 'Runs')
+    )
+    $path = Write-C1044Diagnostic -Name 'fixture-typename' -Text (Get-C1044DiscoveryText -Records $records)
+    $nodes = @()
+    $errorText = ''
+    try { $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery).Nodes) }
+    catch { $errorText = $_.Exception.Message }
+    $fixtureNode = @($nodes | Where-Object { $_.Uid -ceq 'fixture-uid' })
+    $genericNode = @($nodes | Where-Object { $_.Uid -ceq 'generic-uid' })
+    Assert-C487 -Cond ($nodes.Count -eq 2 -and $fixtureNode.Count -eq 1 -and $fixtureNode[0].Type -ceq $fixture -and $fixtureNode[0].Method -ceq 'ListsFiles' -and $genericNode.Count -eq 1 -and $genericNode[0].Type -ceq $generic) `
+        -Name 'C1044 fixture and generic TypeName accepted' -Detail $errorText
+
+    $malformed = Get-C1044DiscoveryText -Records ($records + @('TestNodeUpdateMessage { TestNode = TestNode { Uid = TestNodeUid { Value = truncated }'))
+    Assert-C1044Rejects -Name 'fixture file stateless record refuses' -Text $malformed -Pattern 'malformed discovery record: missing state'
+    $emptyType = New-C1044DiscoveryRecord -Uid 'empty-type' -TypeName '' -Method 'Plain'
+    Assert-C1044Rejects -Name 'empty TypeName still truncated' -Text (Get-C1044DiscoveryText -Records @($emptyType)) -Pattern 'truncated diagnostic record'
+}
+
 function Test-C1044_ParserCompatibility {
     $root = Get-C487ProbeRoot
     $golden = [System.IO.File]::ReadAllText((Join-Path $root 'discovery.diag'))
@@ -1181,6 +1216,76 @@ function Test-C487_G1341 {
         $details += ([string]$spec.Name + ' arg=' + $launcherArg + ' cwd=' + $cwd + ' bare=' + $bare)
     }
     Assert-C487 -Cond $ok -Name 'G1341 npm launch argv is the absolute launcher outside the client cwd' -Detail ($details -join ' | ')
+}
+
+function Test-C487_PrerequisiteGate {
+    # A failed npm build is a prerequisite. Later steps must not run, and the
+    # summary must not claim the tests passed.
+    $fx = New-C1341NpmFixture
+    $template = @'
+$NightlySeams = @{
+    TracePath = '__TRACE__'
+    Git = {
+        param($WorkingDirectory, $Arguments)
+        return @{ ExitCode = 0; Output = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }
+    }
+    StartProcess = {
+        param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
+        $encoded = @()
+        foreach ($item in @($ArgumentList)) {
+            $encoded += (ConvertTo-Json -InputObject ([string]$item) -Compress)
+        }
+        $line = '{"file":' + (ConvertTo-Json -InputObject ([string]$FilePath) -Compress) + ',"args":[' + ($encoded -join ',') + ']}'
+        Add-Content -LiteralPath '__RECORD__' -Value $line -Encoding ASCII
+        $joined = (@($ArgumentList) -join ' ')
+        $code = 0
+        if ($joined -match '(^| )run build($| )') { $code = 2 }
+        return @{ ExitCode = $code; TimedOut = $false; Pid = 2; ChildrenExited = $true; LogText = '' }
+    }
+    DockerInfo = { return @{ exitCode = 0; version = 'fake'; detail = 'ok' } }
+    DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
+}
+'@
+    $text = $template.Replace('__TRACE__', $fx.Trace).Replace('__RECORD__', $fx.Record)
+    Set-Content -LiteralPath $fx.Seams -Value $text -Encoding ASCII
+    $savedPath = $env:PATH
+    $env:PATH = $fx.LauncherDir + [System.IO.Path]::PathSeparator + $savedPath
+    $result = $null
+    try {
+        $result = Invoke-E -Fx $fx -Extra @{ Suites = @('client') }
+    } finally {
+        $env:PATH = $savedPath
+    }
+    $launches = @()
+    if (Test-Path -LiteralPath $fx.Record) {
+        foreach ($line in @(Get-Content -LiteralPath $fx.Record)) {
+            if (-not [string]::IsNullOrWhiteSpace($line)) { $launches += ($line | ConvertFrom-Json) }
+        }
+    }
+    $sawCi = $false
+    $sawBuild = $false
+    $sawLater = $false
+    foreach ($row in $launches) {
+        $joined = (@($row.args) -join ' ')
+        if ($joined -match '(^| )ci($| )') { $sawCi = $true }
+        if ($joined -match '(^| )run build($| )') { $sawBuild = $true }
+        if ($joined -match '(^| )run lint($| )') { $sawLater = $true }
+        if ($joined -match 'Antiphon\.sln') { $sawLater = $true }
+        if ($joined -match 'test-client\.ps1') { $sawLater = $true }
+    }
+    $summary = $null
+    if ($result -and $result.SummaryPath -and (Test-Path -LiteralPath $result.SummaryPath)) {
+        $summary = Get-Content -LiteralPath $result.SummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    $reason = $false
+    if ($summary -and $summary.reasons) {
+        foreach ($item in @($summary.reasons)) {
+            if ([string]$item -ceq 'prerequisite-failed:npm run build') { $reason = $true }
+        }
+    }
+    Assert-C487 -Cond ($sawCi -and $sawBuild -and -not $sawLater -and $null -ne $result -and [int]$result.ExitCode -ne 0 -and -not [bool]$result.testsPassed -and $null -ne $summary -and -not [bool]$summary.testsPassed -and -not [bool]$summary.coverageComplete -and $reason) `
+        -Name 'C487 prerequisite npm build stops the pipeline and summary testsPassed is false' `
+        -Detail ('ci=' + $sawCi + ' build=' + $sawBuild + ' later=' + $sawLater + ' exit=' + $result.ExitCode + ' pass=' + $result.testsPassed + ' summaryPass=' + $(if ($summary) { [string]$summary.testsPassed } else { 'missing' }) + ' reasons=' + $(if ($summary) { @($summary.reasons) -join ',' } else { '' }))
 }
 
 if ($Case) {
