@@ -73,6 +73,13 @@ progressing at minute 11. Its 4-minute estimate came from the stale 2026-09-10 p
 corrected to 10 (deadline 30); no test timeout or assertion changes. C1155 failed in it and fails
 identically on the pre-fix build. Rerun once: CP-2 and CP-5.
 
+Rerun `20261021-204539-caff` at `cebb0d887`: CP-2 91 executed, 90 passed, 1 failed, a different
+timing case, `C1259_saturation_keeps_ingestion_live_and_recovers_overflow(poison-page)` (10-second
+first-page wait while overlapping the Unit lane; ToolResult-only, no channel path).
+`reconnect-cohort` passed. An unlisted method-scoped isolated run of both C1259 methods from the same
+build passed 11/11. CP-5 hit its 30-minute deadline again: the Unit lane did not finish on this host
+in either run and was not compared at base. It remains unverified, not passed.
+
 ### Cost
 
 Ordinary floor about 30 minutes; one run of all five rows.
