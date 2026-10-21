@@ -334,7 +334,7 @@ public sealed class LandNonCodeSkipTests
         var root = await InitAuditRepositoryAsync("""
             <Project Sdk="Microsoft.NET.Sdk">
               <ItemGroup>
-                <EmbeddedResource Include="docs/**/*.md" />
+                <EmbeddedResource Include="../docs/**/*.md" />
               </ItemGroup>
             </Project>
             """);
@@ -543,6 +543,13 @@ public sealed class LandNonCodeSkipTests
         throw new InvalidOperationException("git was not found on PATH.");
     }
 
+    private static string RenderAuditArgument(string arg)
+    {
+        if (arg.Length > 1 && arg[0] == '-' && arg.IndexOfAny([' ', '\t', '\'', '"']) < 0)
+            return arg;
+        return "'" + arg.Replace("'", "''") + "'";
+    }
+
     private static Task<(int Code, string Stdout, string Stderr)> RunAuditAsync(string root, string culture, params string[] args) =>
         RunAuditAsync(root, culture, environment: null, args);
 
@@ -550,12 +557,13 @@ public sealed class LandNonCodeSkipTests
         string root, string culture, IReadOnlyDictionary<string, string?>? environment, params string[] args)
     {
         var script = Path.Combine(root, "scripts", "audit-land-verification-graph.ps1");
-        var quotedArgs = string.Join(' ', args.Select(arg => "'" + arg.Replace("'", "''") + "'"));
+        // A switch must stay unquoted. '-Update' is a positional string and the script rejects it.
+        var renderedArgs = string.Join(' ', args.Select(RenderAuditArgument));
         var command =
             "$c = [System.Globalization.CultureInfo]::GetCultureInfo('" + culture + "'); " +
             "[System.Threading.Thread]::CurrentThread.CurrentCulture = $c; " +
             "[System.Threading.Thread]::CurrentThread.CurrentUICulture = $c; " +
-            "& '" + script.Replace("'", "''") + "' " + quotedArgs;
+            "& '" + script.Replace("'", "''") + "' " + renderedArgs;
         var start = new ProcessStartInfo("pwsh")
         {
             WorkingDirectory = root,
