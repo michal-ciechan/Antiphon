@@ -1375,6 +1375,207 @@ $NightlySeams = @{
         -Detail ('ci=' + $sawCi + ' build=' + $sawBuild + ' later=' + $sawLater + ' exit=' + $result.ExitCode + ' pass=' + $result.testsPassed + ' summaryPass=' + $(if ($summary) { [string]$summary.testsPassed } else { 'missing' }) + ' reasons=' + $(if ($summary) { @($summary.reasons) -join ',' } else { '' }))
 }
 
+function Test-C1397_RcAntiphonLaunchGroups {
+    # RC antiphon discovery is one class launch per fully included class plus
+    # one exact launch per remaining method of a partial class. The measured
+    # shape is 1339 class launches and 7 exact launches (1346). Grouping must
+    # keep that census and cut the class launches to about 40-60.
+    $detail = ''
+    $ok = $false
+    try {
+        $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+        $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'rc' -SuiteId 'antiphon' -Platform 'windows')
+        $exclusions += [pscustomobject]@{
+            Suite = 'antiphon'
+            Class = 'C1397HeldTestsExtra'
+            Methods = @()
+            Reason = 'suffix hazard fixture'
+            Owner = 'CARD-1397'
+        }
+        $shapes = @(
+            @{ Ns = 'Antiphon.Tests.Application'; Count = 1100 },
+            @{ Ns = 'Antiphon.Tests.TestHelpers'; Count = 150 },
+            @{ Ns = 'Antiphon.Tests.Scripts'; Count = 50 },
+            @{ Ns = 'Antiphon.Tests.Agents'; Count = 39 }
+        )
+        $nodes = New-Object System.Collections.Generic.List[object]
+        $typesByNs = @{}
+        foreach ($shape in $shapes) {
+            $ns = [string]$shape.Ns
+            $letter = $ns.Substring($ns.LastIndexOf('.') + 1).Substring(0, 1)
+            if (-not $typesByNs.ContainsKey($ns)) { $typesByNs[$ns] = New-Object System.Collections.Generic.List[string] }
+            for ($n = 0; $n -lt [int]$shape.Count; $n++) {
+                $type = 'C1397{0}{1}Tests' -f $letter, $n.ToString('0000')
+                $className = $ns + '.' + $type
+                if ($ns -eq 'Antiphon.Tests.Application' -and $n -eq 0) {
+                    $type = 'C1397PrefixTests'
+                    $className = $ns + '.' + $type
+                } elseif ($ns -eq 'Antiphon.Tests.Application' -and $n -eq 1) {
+                    $type = 'C1397HeldTests'
+                    $className = $ns + '.' + $type
+                } elseif ($ns -eq 'Antiphon.Tests.Application' -and $n -eq 2) {
+                    $type = 'C1397PrefixTestsExtra'
+                    $className = $ns + '.' + $type
+                } elseif ($ns -eq 'Antiphon.Tests.Agents' -and $n -eq 0) {
+                    $type = 'C1397FixtureTests'
+                    $className = $ns + '.' + $type + '(C1397Factory)'
+                }
+                [void]$typesByNs[$ns].Add($type)
+                [void]$nodes.Add([pscustomobject]@{ ClassName = $className; Type = $type; Method = 'Run'; Uid = ($className + '.Run') })
+            }
+        }
+        [void]$typesByNs['Antiphon.Tests.Application'].Add('C1397HeldTestsExtra')
+        [void]$typesByNs['Antiphon.Tests.Application'].Add('Card0168InteractiveProbeTests')
+        [void]$typesByNs['Antiphon.Tests.Agents'].Add('ClaudeEffortPromptCanaryTests')
+        [void]$typesByNs['Antiphon.Tests.TestHelpers'].Add('TestDbFixtureLazyInitializationTests')
+        [void]$nodes.Add([pscustomobject]@{
+            ClassName = 'Antiphon.Tests.Application.C1397HeldTestsExtra'
+            Type = 'C1397HeldTestsExtra'
+            Method = 'Run'
+            Uid = 'held-extra'
+        })
+        [void]$nodes.Add([pscustomobject]@{
+            ClassName = 'Antiphon.Tests.Application.Card0168InteractiveProbeTests'
+            Type = 'Card0168InteractiveProbeTests'
+            Method = 'Run'
+            Uid = 'card0168'
+        })
+        [void]$nodes.Add([pscustomobject]@{
+            ClassName = 'Antiphon.Tests.Agents.ClaudeEffortPromptCanaryTests'
+            Type = 'ClaudeEffortPromptCanaryTests'
+            Method = 'Real_effort_picker_preserves_xhigh_and_reaches_an_empty_composer'
+            Uid = 'claude-effort'
+        })
+        $dbClass = 'Antiphon.Tests.TestHelpers.TestDbFixtureLazyInitializationTests'
+        $dbMethods = @(
+            'A_db_free_exact_method_selection_constructs_and_starts_no_database',
+            'A_class_filtered_child_skips_every_parent_probe',
+            'A_child_at_depth_two_refuses_before_any_work',
+            'Mixed_first_consumers_share_one_real_bootstrap',
+            'A_post_start_fault_cleans_up_the_owned_container',
+            'A_failing_worker_exits_1_without_running_tests',
+            'A_worker_child_exits_before_the_shared_store_warmup',
+            'Child_db_free_selection_touches_no_database',
+            'Child_mixed_consumers_initialize_once',
+            'Child_post_start_fault_is_terminal'
+        )
+        foreach ($method in $dbMethods) {
+            [void]$nodes.Add([pscustomobject]@{ ClassName = $dbClass; Type = 'TestDbFixtureLazyInitializationTests'; Method = $method; Uid = ('db-' + $method) })
+        }
+        $all = @([pscustomobject]@{ id = 'all'; classes = @() })
+        $nodeArray = @($nodes.ToArray())
+        $leaves = @(Get-NightlyProfileExecutionChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions $exclusions)
+        $plan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions $exclusions -ProfileAware $true -Native $true)
+        $nightlyEx = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'nightly' -SuiteId 'antiphon' -Platform 'windows')
+        $nightlyPlan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions $nightlyEx -ProfileAware $false -Native $true)
+        $emptyPlan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions @() -ProfileAware $true -Native $true)
+        $guardedPlan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions $exclusions -ProfileAware $false -Native $true)
+        $classChunks = @($plan | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.exactFilter) })
+        $exactChunks = @($plan | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.exactFilter) })
+        $orChunks = @()
+        foreach ($chunk in $classChunks) {
+            $gf = ''
+            if ($chunk.PSObject.Properties.Name -contains 'groupFilter') { $gf = [string]$chunk.groupFilter }
+            if (-not [string]::IsNullOrWhiteSpace($gf)) { $orChunks += $chunk }
+        }
+        $maxOr = 0
+        foreach ($chunk in $orChunks) {
+            $cnt = @($chunk.classes).Count
+            if ($cnt -gt $maxOr) { $maxOr = $cnt }
+        }
+        $leafClass = @($leaves | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.exactFilter) } | ForEach-Object { [string]@($_.classes)[0] } | Sort-Object)
+        $planClass = @()
+        foreach ($chunk in $classChunks) { foreach ($c in @($chunk.classes)) { $planClass += [string]$c } }
+        $planClass = @($planClass | Sort-Object)
+        $leafExact = @($leaves | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.exactFilter) } | ForEach-Object { [string]$_.exactFilter } | Sort-Object)
+        $planExact = @($exactChunks | ForEach-Object { [string]$_.exactFilter } | Sort-Object)
+        $classKey = ($planClass -join '|')
+        $leafKey = ($leafClass -join '|')
+        $exactKey = ($planExact -join '|')
+        $leafExactKey = ($leafExact -join '|')
+        $dup = 0
+        $seenClass = @{}
+        foreach ($c in $planClass) {
+            if ($seenClass.ContainsKey($c)) { $dup++ } else { $seenClass[$c] = $true }
+        }
+        $exactClass = @{}
+        foreach ($chunk in $exactChunks) { $exactClass[[string]@($chunk.classes)[0]] = $true }
+        $overlap = 0
+        foreach ($c in $planClass) { if ($exactClass.ContainsKey($c)) { $overlap++ } }
+        $invalid = @()
+        $argvByClass = @{}
+        foreach ($chunk in $plan) {
+            $gf = ''
+            if ($chunk.PSObject.Properties.Name -contains 'groupFilter') { $gf = [string]$chunk.groupFilter }
+            try {
+                $argv = @(Get-NightlyNativeExecutionArguments -TrxPath (Join-Path $ResultsDirectory 'c1397.trx') -DiagnosticDirectory $ResultsDirectory -Classes @($chunk.classes) -ExactFilter ([string]$chunk.exactFilter) -GroupFilter $gf)
+                $joined = $argv -join ' '
+                foreach ($c in @($chunk.classes)) { $argvByClass[[string]$c] = $joined }
+                if ($joined.Contains('(') -and [string]::IsNullOrWhiteSpace($gf)) { $invalid += 'paren-on-class-filter' }
+            } catch {
+                $invalid += [string]$_.Exception.Message
+            }
+        }
+        $rejected = $false
+        try {
+            [void]@(Get-NightlyNativeExecutionArguments -TrxPath (Join-Path $ResultsDirectory 'c1397-bad.trx') -DiagnosticDirectory $ResultsDirectory -Classes @('Antiphon.Tests.Application.C1397PrefixTests', 'Antiphon.Tests.Application.C1397PrefixTestsExtra') -GroupFilter '/*/Antiphon.Tests.Application/(C1397PrefixTests*)|(C1397PrefixTestsExtra*)/*')
+        } catch {
+            if ([string]$_.Exception.Message -ceq 'invalid-group-filter') { $rejected = $true }
+        }
+        $prefixArg = [string]$argvByClass['Antiphon.Tests.Application.C1397PrefixTests']
+        $heldArg = [string]$argvByClass['Antiphon.Tests.Application.C1397HeldTests']
+        $fixtureArg = [string]$argvByClass['Antiphon.Tests.Agents.C1397FixtureTests']
+        $prefixOk = ($prefixArg.Contains('/*/Antiphon.Tests.Application/C1397PrefixTests/*') -and -not $prefixArg.Contains('(C1397PrefixTests*)'))
+        $heldOk = ($heldArg.Contains('/*/Antiphon.Tests.Application/C1397HeldTests/*') -and -not $heldArg.Contains('(C1397HeldTests*)'))
+        $fixtureOk = ($fixtureArg.Contains('/C1397FixtureTests/') -and -not $fixtureArg.Contains('('))
+        $unsafeOr = $false
+        foreach ($chunk in $orChunks) {
+            $bare0 = Get-NightlyBareClassIdentity -Name ([string]@($chunk.classes)[0])
+            $dot = $bare0.LastIndexOf('.')
+            $ns = $bare0.Substring(0, $dot)
+            $types = @($typesByNs[$ns])
+            foreach ($c in @($chunk.classes)) {
+                $type = (Get-NightlyBareClassIdentity -Name ([string]$c)).Substring($ns.Length + 1)
+                foreach ($other in $types) {
+                    if ($other.Length -gt $type.Length -and $other.StartsWith($type, [StringComparison]::Ordinal)) { $unsafeOr = $true }
+                }
+            }
+        }
+        $excludedKept = @($dbMethods | Where-Object { $_ -like 'Child_*' })
+        $kept = @($dbMethods | Where-Object { $_ -notlike 'Child_*' })
+        $exactText = $planExact -join ' '
+        $childrenGone = $true
+        foreach ($method in $excludedKept) { if ($exactText.Contains($method)) { $childrenGone = $false } }
+        $siblingsKept = $true
+        foreach ($method in $kept) { if (-not $exactText.Contains($method)) { $siblingsKept = $false } }
+        $cardGone = -not $classKey.Contains('Card0168InteractiveProbeTests') -and -not $exactText.Contains('Card0168InteractiveProbeTests')
+        $effortGone = -not $classKey.Contains('ClaudeEffortPromptCanaryTests') -and -not $exactText.Contains('ClaudeEffortPromptCanaryTests')
+        $dbNotGrouped = -not $classKey.Contains('TestDbFixtureLazyInitializationTests')
+        $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'antiphon' -Fallback 3600000
+        $nightlyOk = ($nightlyEx.Count -eq 0 -and @($nightlyPlan).Count -eq 1 -and [string]$nightlyPlan[0].id -eq 'all' -and @($nightlyPlan[0].classes).Count -eq 0)
+        $emptyOk = (@($emptyPlan).Count -eq 1 -and [string]$emptyPlan[0].id -eq 'all' -and @($emptyPlan[0].classes).Count -eq 0)
+        $guardOk = (@($guardedPlan).Count -eq 1 -and [string]$guardedPlan[0].id -eq 'all' -and @($guardedPlan[0].classes).Count -eq 0)
+        $reasons = New-Object System.Collections.Generic.List[string]
+        if (@($leaves).Count -ne 1346) { [void]$reasons.Add('leaf-shape') }
+        if ($leafExact.Count -ne 7 -or $exactChunks.Count -ne 7) { [void]$reasons.Add('exact-count') }
+        if ($classChunks.Count -lt 40 -or $classChunks.Count -gt 60) { [void]$reasons.Add('class-launches') }
+        if ((@($plan).Count) -ge 100) { [void]$reasons.Add('total-launches') }
+        if ($classKey -cne $leafKey -or $dup -ne 0 -or $overlap -ne 0) { [void]$reasons.Add('class-census') }
+        if ($exactKey -cne $leafExactKey) { [void]$reasons.Add('exact-census') }
+        if (-not $childrenGone -or -not $siblingsKept -or -not $cardGone -or -not $effortGone -or -not $dbNotGrouped) { [void]$reasons.Add('exclusions') }
+        if (-not $prefixOk -or -not $heldOk -or -not $fixtureOk -or $unsafeOr) { [void]$reasons.Add('suffix') }
+        if ($orChunks.Count -lt 1 -or $maxOr -gt 40 -or $maxOr -lt 2) { [void]$reasons.Add('or-groups') }
+        if ($invalid.Count -ne 0 -or -not $rejected) { [void]$reasons.Add('filters') }
+        if (-not $nightlyOk -or -not $emptyOk -or -not $guardOk -or $watchdog -ne 3600000) { [void]$reasons.Add('nightly-watchdog') }
+        $ok = ($reasons.Count -eq 0)
+        $detail = 'classLaunches=' + $classChunks.Count + ' exact=' + $exactChunks.Count + ' total=' + @($plan).Count + ' leaves=' + @($leaves).Count + ' or=' + $orChunks.Count + ' maxOr=' + $maxOr + ' invalid=' + $invalid.Count + ' dup=' + $dup + ' watchdog=' + $watchdog + ' reasons=' + ($reasons -join ',')
+    } catch {
+        $detail = [string]$_.Exception.Message
+        $ok = $false
+    }
+    Assert-C487 -Cond $ok -Name 'C1397 rc antiphon launch groups are far below 1346 and assign every class once' -Detail $detail
+}
+
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
