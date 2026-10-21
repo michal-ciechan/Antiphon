@@ -1989,14 +1989,16 @@ function Test-C1404_RcCostBalancedGroups {
 }
 
 function New-C1419Launch {
-    param([string]$Root, [string]$Name, [string]$Class, [string[]]$Methods, [string]$ExtraClass = '')
+    param([string]$Root, [string]$Name, [string]$Class, [string[]]$Methods, [string]$ExtraClass = '', [string]$Type = '')
+    # TRX keeps the bare class; discovery and execution carry TUnit's type name.
+    if (-not $Type) { $Type = $Class }
     $dir = Join-Path $Root $Name
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
     $rows = @()
     $exec = @()
     foreach ($m in @($Methods)) {
         $rows += @{ Id = [guid]::NewGuid().ToString(); ClassName = ('Ns.' + $Class); MethodName = $m; Outcome = 'Passed' }
-        $exec += @{ uid = ($Class + '.' + $m); state = 'Passed'; type = $Class; method = $m; namespace = 'Ns'; className = ('Ns.' + $Class) }
+        $exec += @{ uid = ($Type + '.' + $m); state = 'Passed'; type = $Type; method = $m; namespace = 'Ns'; className = ('Ns.' + $Type) }
     }
     if ($ExtraClass) {
         $rows += @{ Id = [guid]::NewGuid().ToString(); ClassName = ('Ns.' + $ExtraClass); MethodName = 'One'; Outcome = 'Passed' }
@@ -2050,7 +2052,7 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
     $root = Join-Path $ResultsDirectory ('c1419-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $root -Force | Out-Null
     $nodes = @()
-    foreach ($c in @('ClassA', 'ClassB', 'ClassC')) {
+    foreach ($c in @('ClassA', 'ClassB', 'ClassC', 'ClassF(Factory)')) {
         foreach ($m in @('One', 'Two')) {
             $nodes += @{ uid = ($c + '.' + $m); type = $c; method = $m; namespace = 'Ns'; state = 'Discovered' }
         }
@@ -2063,10 +2065,12 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
         (New-C1419Launch -Root $root -Name 'b' -Class 'ClassB' -Methods @('One', 'Two')),
         (New-C1419Launch -Root $root -Name 'c' -Class 'ClassC' -Methods @('One', 'Two')),
         (New-C1419Launch -Root $root -Name 'd' -Class 'ClassB' -Methods @('One')),
-        (New-C1419Launch -Root $root -Name 'e' -Class 'ClassC' -Methods @('One', 'Two') -ExtraClass 'ClassA')
+        (New-C1419Launch -Root $root -Name 'e' -Class 'ClassC' -Methods @('One', 'Two') -ExtraClass 'ClassA'),
+        (New-C1419Launch -Root $root -Name 'f' -Class 'ClassF' -Methods @('One', 'Two') -Type 'ClassF(Factory)'),
+        (New-C1419Launch -Root $root -Name 'g' -Class 'ClassF' -Methods @('One') -Type 'ClassF(Factory)')
     )
 
-    # Shared path (the rc profile shape): one parse for five launches, each verdict
+    # Shared path (the rc profile shape): one parse for seven launches, each verdict
     # equal to the one an unindexed call computes.
     $same = $true
     $text = @()
@@ -2085,12 +2089,14 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
             $text += ($l.Dir + ' ' + $vt)
             $indexed += $v
         }
-        Assert-C487 -Cond ($indexedReads -eq 1) -Name 'C1419 one discovery parse for five launches on a shared path' -Detail ('reads=' + $indexedReads)
+        Assert-C487 -Cond ($indexedReads -eq 1) -Name 'C1419 one discovery parse for seven launches on a shared path' -Detail ('reads=' + $indexedReads)
         Assert-C487 -Cond $same -Name 'C1419 indexed verdicts equal unindexed verdicts' -Detail ($text -join ' || ')
-        $clean = @($indexed[0], $indexed[1], $indexed[2] | Where-Object { [bool]$_.coverageComplete -and [bool]$_.testsPassed -and @($_.reasons).Count -eq 0 })
+        $clean = @($indexed[0], $indexed[1], $indexed[2], $indexed[5] | Where-Object { [bool]$_.coverageComplete -and [bool]$_.testsPassed -and @($_.reasons).Count -eq 0 })
+        # A constructor-suffixed type is found from its bare chunk class name.
+        $suffixed = (@($indexed[6].reasons) -join ';')
         $missing = (@($indexed[3].reasons) -join ';')
         $extra = (@($indexed[4].reasons) -join ';')
-        Assert-C487 -Cond ($clean.Count -eq 3 -and (-not [bool]$indexed[3].coverageComplete) -and $missing -ceq 'missing-expanded-row ClassB.Two' -and (-not [bool]$indexed[4].coverageComplete) -and $extra -match 'extra-class-in-chunk Ns\.ClassA\.One') `
+        Assert-C487 -Cond ($clean.Count -eq 4 -and $suffixed -ceq 'missing-expanded-row ClassF(Factory).Two' -and (-not [bool]$indexed[3].coverageComplete) -and $missing -ceq 'missing-expanded-row ClassB.Two' -and (-not [bool]$indexed[4].coverageComplete) -and $extra -match 'extra-class-in-chunk Ns\.ClassA\.One') `
             -Name 'C1419 launch verdicts reconcile only their own classes' -Detail ($text -join ' || ')
 
         # The same bytes at a new path per launch (the per-chunk discovery shape).
@@ -2116,7 +2122,7 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
         $pPlain = Invoke-C1419Verdict -Launch $held -Discovery $disc -RunDirectory $root -Exclusions $hold -Aware
         $pText = Get-C1419VerdictText -Verdict $pv[1]
         $pOk = ($profileReads -eq 1 -and $pText -ceq (Get-C1419VerdictText -Verdict $pPlain) -and [bool]$pv[1].coverageComplete -and
-            [int]$pv[1].census.RequiredCount -eq 5 -and [int]$pv[1].census.ExcludedCount -eq 1)
+            [int]$pv[1].census.RequiredCount -eq 7 -and [int]$pv[1].census.ExcludedCount -eq 1)
         Assert-C487 -Cond $pOk -Name 'C1419 profile exclusions census once and match the unindexed verdict' -Detail ('reads=' + $profileReads + ' ' + $pText)
 
         # A rewritten discovery is new bytes: the index parses it again.
@@ -2125,7 +2131,7 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
         $before = $script:C1419Reads
         $after = Invoke-C1419Verdict -Launch $launches[0] -Discovery $disc -RunDirectory $root -Index $index
         $rewriteReads = $script:C1419Reads - $before
-        Assert-C487 -Cond ($rewriteReads -eq 1 -and [int]$after.census.RequiredCount -eq 7 -and [bool]$after.coverageComplete) `
+        Assert-C487 -Cond ($rewriteReads -eq 1 -and [int]$after.census.RequiredCount -eq 9 -and [bool]$after.coverageComplete) `
             -Name 'C1419 rewritten discovery is parsed again' -Detail ('reads=' + $rewriteReads + ' ' + (Get-C1419VerdictText -Verdict $after))
     } catch {
         Assert-C487 -Cond $false -Name 'C1419 indexed native verdicts' -Detail ([string]$_.Exception.Message + ' at ' + [string]$_.InvocationInfo.PositionMessage)
