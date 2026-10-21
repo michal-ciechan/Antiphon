@@ -113,21 +113,61 @@ public static class GitIndexLock
             + "Never remove a lock while a git process older than it is running.";
     }
 
-    public static IReadOnlyList<(int Pid, DateTime? StartUtc)> CensusGitProcesses()
+    /// <summary>CARD-1436: the processes one census inspects. The host source lists every git on the
+    /// machine; a test passes its own so the census sees only its fixture.</summary>
+    public interface IProcessSource
     {
-        Process[] processes;
-        try { processes = Process.GetProcessesByName("git"); }
+        IReadOnlyList<ICensusProcess> GitProcesses();
+    }
+
+    /// <summary>One git process as the census sees it; both reads may throw once the process is gone.</summary>
+    public interface ICensusProcess : IDisposable
+    {
+        int Id { get; }
+        DateTime StartTimeUtc { get; }
+        bool HasExited { get; }
+    }
+
+    public sealed class HostProcessSource : IProcessSource
+    {
+        public static readonly HostProcessSource Instance = new();
+
+        public IReadOnlyList<ICensusProcess> GitProcesses()
+            => [.. Process.GetProcessesByName("git").Select(process => new HostProcess(process))];
+    }
+
+    /// <summary>A <see cref="Process"/> the census owns and disposes.</summary>
+    public sealed class HostProcess(Process process) : ICensusProcess
+    {
+        public int Id => process.Id;
+        public DateTime StartTimeUtc => process.StartTime.ToUniversalTime();
+        public bool HasExited => process.HasExited;
+        public void Dispose() => process.Dispose();
+    }
+
+    public static IReadOnlyList<(int Pid, DateTime? StartUtc)> CensusGitProcesses()
+        => CensusGitProcesses(HostProcessSource.Instance);
+
+    /// <summary>A live git whose start time cannot be read stays a candidate holder (null start). A git
+    /// that exited between the listing and the read is not one (CARD-1436): a short-lived git anywhere on
+    /// the host must not make a stale lock read as held.</summary>
+    public static IReadOnlyList<(int Pid, DateTime? StartUtc)> CensusGitProcesses(IProcessSource source)
+    {
+        IReadOnlyList<ICensusProcess> processes;
+        try { processes = source.GitProcesses(); }
         catch { return []; }
-        var list = new List<(int Pid, DateTime? StartUtc)>(processes.Length);
+        var list = new List<(int Pid, DateTime? StartUtc)>(processes.Count);
         foreach (var process in processes)
         {
             try
             {
                 DateTime? start = null;
-                try { start = process.StartTime.ToUniversalTime(); }
+                try { start = process.StartTimeUtc; }
                 catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception
                     or UnauthorizedAccessException)
                 {
+                    if (Exited(process))
+                        continue;
                     start = null;
                 }
                 list.Add((process.Id, start));
@@ -138,6 +178,18 @@ public static class GitIndexLock
             }
         }
         return list;
+    }
+
+    /// <summary>True only when the process is known to be gone; an unanswerable probe keeps it live.</summary>
+    private static bool Exited(ICensusProcess process)
+    {
+        try { return process.HasExited; }
+        catch (InvalidOperationException) { return true; }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or UnauthorizedAccessException
+            or NotSupportedException)
+        {
+            return false;
+        }
     }
 
     public static bool PathsEqual(string? left, string? right)
