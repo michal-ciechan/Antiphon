@@ -20,6 +20,20 @@ public sealed class NightlyDiscoveryParserTests
         "C1044 producer publishes complete multiline inventory");
 
     [Test]
+    public Task C1044_FixtureTypeName() => RunCaseAsync(nameof(C1044_FixtureTypeName), 3,
+        "C1044 fixture and generic TypeName accepted",
+        "C1044 fixture file stateless record refuses",
+        "C1044 empty TypeName still truncated");
+
+    [Test]
+    public Task C1044_FixtureClassChunks() => RunCaseAsync(nameof(C1044_FixtureClassChunks), 1,
+        "C1044 fixture discovery rc chunks and exact roster have zero invalid-class-filter");
+
+    [Test]
+    public Task C1044_UnattendedCases() => RunCaseAsync(nameof(C1044_UnattendedCases), 1,
+        "C1044 unattended harness loop runs fixture and prerequisite cases");
+
+    [Test]
     public Task C1044_ParserCompatibility() => RunCaseAsync(nameof(C1044_ParserCompatibility), 17,
         "C1044 golden discovery inventory", "C1044 golden discovery metadata", "C1044 golden terminal inventory",
         "C1044 nonterminal updates filtered", "C1044 prefixed envelopes accepted", "C1044 multiline terminal inventory",

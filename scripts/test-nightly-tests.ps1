@@ -801,13 +801,19 @@ function Test-C1044_FixtureClassChunks {
 function Get-C1044ElseText {
     param([string]$Path, [string]$Marker)
     $text = [System.IO.File]::ReadAllText($Path)
-    $idx = $text.LastIndexOf('} else {')
-    if ($idx -lt 0) { return '' }
-    $end = $text.IndexOf('Write-C487Evidence', $idx)
-    if ($end -lt 0) { return '' }
-    $branch = $text.Substring($idx, $end - $idx)
-    if ($branch.IndexOf($Marker) -lt 0) { return '' }
-    return $branch
+    $cursor = 0
+    $found = ''
+    while ($cursor -lt $text.Length) {
+        $idx = $text.IndexOf('} else {', $cursor)
+        if ($idx -lt 0) { break }
+        $end = $text.IndexOf('Write-C487Evidence', $idx)
+        if ($end -gt $idx) {
+            $branch = $text.Substring($idx, $end - $idx)
+            if ($branch.IndexOf($Marker) -ge 0) { $found = $branch }
+        }
+        $cursor = $idx + 8
+    }
+    return $found
 }
 
 function Test-C1044_UnattendedCases {
@@ -1379,6 +1385,9 @@ if ($Case) {
     }
     Test-C487_G144
     Test-C487_G1341
+    Test-C1044_FixtureTypeName
+    Test-C1044_FixtureClassChunks
+    Test-C487_PrerequisiteGate
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'tests-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 80 })

@@ -710,6 +710,7 @@ if ($Case) {
 } else {
     foreach ($fn in $cases) { & $fn }
     foreach ($fn in (Get-C487CaseFunctions -Prefix 'C545_')) { & $fn }
+    Test-C487_PrerequisiteSettle
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'run-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 88 })
