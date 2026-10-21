@@ -613,6 +613,15 @@ function Invoke-AntiphonNightlyRunCore {
             $coverageComplete = $false
             $testsPassed = ($testExit -eq 0)
         }
+        # A nonzero test exit is the tests verdict. Rewrite a summary that still
+        # claims the tests passed so summary.json and last-run.json agree.
+        if ($testExit -ne 0 -and $null -ne $summary -and [bool]$summary.testsPassed) {
+            $summary.testsPassed = $false
+            if ($null -ne $summary.PSObject.Properties['succeeded']) {
+                $summary.succeeded = $false
+            }
+            Write-NightlyAtomicJson -Path $summaryPath -Object $summary
+        }
         if ($testExit -ne 0) { $testsPassed = $false }
 
         $reportExit = 0

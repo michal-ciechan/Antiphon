@@ -284,6 +284,70 @@ function ConvertTo-FlatArray {
     return @($Value)
 }
 
+function Get-NightlyCensusCards {
+    param([string]$ApiBase, [string]$BoardId, [string]$Status)
+    # A capped page cannot prove a status is empty or complete. Follow
+    # nextPageToken, and fail with the census message when the list stops short.
+    $cards = New-Object 'System.Collections.Generic.List[object]'
+    $ids = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $tokens = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $token = ''
+    $pageCap = 10000
+    for ($pageNumber = 0; $pageNumber -lt $pageCap; $pageNumber++) {
+        $uri = '{0}/api/cards?boardId={1}&status={2}' -f $ApiBase, $BoardId, $Status
+        if (-not [string]::IsNullOrEmpty($token)) {
+            $uri = $uri + '&pageToken=' + [uri]::EscapeDataString($token)
+        }
+        $page = Invoke-Antiphon -Method GET -Uri $uri
+        $batch = @()
+        if ($page -and $null -ne $page.cards) { $batch = @(ConvertTo-FlatArray $page.cards) }
+        elseif ($page -is [System.Array]) { $batch = @(ConvertTo-FlatArray $page) }
+
+        $truncated = $false
+        if ($page -and $null -ne $page.PSObject.Properties['truncated']) {
+            if ($page.truncated -isnot [bool]) {
+                throw ('truncated card census on status {0} cannot prove absence' -f $Status)
+            }
+            $truncated = $page.truncated
+        }
+        $hasNext = $false
+        $next = ''
+        if ($page -and $null -ne $page.PSObject.Properties['nextPageToken']) {
+            $hasNext = $true
+            if ($null -ne $page.nextPageToken) { $next = [string]$page.nextPageToken }
+        }
+        if ($truncated -and $batch.Count -eq 0) {
+            throw ('truncated card census on status {0} cannot prove absence' -f $Status)
+        }
+        foreach ($item in $batch) {
+            $id = ''
+            if ($null -ne $item -and $null -ne $item.id) { $id = [string]$item.id }
+            if (-not [string]::IsNullOrWhiteSpace($id)) {
+                $added = $ids.Add($id)
+                if (-not $added) {
+                    throw ('truncated card census on status {0} cannot prove absence' -f $Status)
+                }
+            }
+            $cards.Add($item)
+        }
+        if (-not $truncated) {
+            if ($hasNext -and -not [string]::IsNullOrWhiteSpace($next)) {
+                throw ('truncated card census on status {0} cannot prove absence' -f $Status)
+            }
+            return @($cards.ToArray())
+        }
+        if ([string]::IsNullOrWhiteSpace($next)) {
+            throw ('truncated card census on status {0} cannot prove absence' -f $Status)
+        }
+        $continued = $tokens.Add($next)
+        if (-not $continued) {
+            throw ('truncated card census on status {0} cannot prove absence' -f $Status)
+        }
+        $token = $next
+    }
+    throw ('truncated card census on status {0} cannot prove absence' -f $Status)
+}
+
 function Write-CardMdFile {
     param([string]$Path, [string]$Title, [string]$Body)
     $dir = Split-Path -Parent $Path
@@ -698,19 +762,10 @@ try {
     $openNightly = @()
     $doneNightly = @()
     foreach ($st in $statuses) {
-        $uri = '{0}/api/cards?boardId={1}&status={2}' -f $Api, $boardId, $st
-        $page = Invoke-Antiphon -Method GET -Uri $uri
-        $cards = @()
-        if ($page -and $null -ne $page.cards) { $cards = ConvertTo-FlatArray $page.cards }
-        elseif ($page -is [System.Array]) { $cards = ConvertTo-FlatArray $page }
-        $truncated = $false
-        if ($page -and $page.truncated) { $truncated = [bool]$page.truncated }
+        $cards = @(Get-NightlyCensusCards -ApiBase $Api -BoardId $boardId -Status $st)
         $matched = @($cards | Where-Object {
                 (Test-CardHasLabel -Card $_ -Label $script:laneLabel) -and ($null -eq $_.archivedAt -or $_.archivedAt -eq '')
             })
-        if ($truncated -and $matched.Count -eq 0) {
-            throw ('truncated card census on status {0} cannot prove absence' -f $st)
-        }
         if ($st -eq 'Done') { $doneNightly += $matched }
         else { $openNightly += $matched }
     }
