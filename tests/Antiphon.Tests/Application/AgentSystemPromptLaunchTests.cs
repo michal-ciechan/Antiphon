@@ -332,11 +332,13 @@ public class AgentSystemPromptLaunchTests
             a.ThrowOnStart = new InvalidOperationException(
                 "No conversation found with session ID: " + h.SessionId));
 
-        await StartAsync(h, fresh: false);
+        var resumed = await StartAsync(h, fresh: false);
 
+        // The fake throws before it records StartedArgs; the agent still pointing at the same
+        // session shows the one adapter was the resume of h.SessionId, not a replacement.
         var attempt = Factory(h).Created.ShouldHaveSingleItem("one resume attempt, no fresh fallback");
-        attempt.StartedArgs.ShouldContain("--resume");
         attempt.SubmittedBodies.ShouldBeEmpty();
+        resumed.PersistentSessionId.ShouldBe(h.SessionId.ToString("D"));
         await using var db = CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
         session.Status.ShouldBe(SessionStatus.Failed);
