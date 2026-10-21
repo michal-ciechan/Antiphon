@@ -34,7 +34,7 @@ function Invoke-WithClientNpmCiLock {
         }
         catch {
             if ((Get-Date).ToUniversalTime() -gt $deadline) {
-                Write-Output "timed out waiting for the client npm ci lock at $lockPath"
+                [Console]::Out.WriteLine("timed out waiting for the client npm ci lock at $lockPath")
                 return 1
             }
             Start-Sleep -Seconds 2
@@ -42,7 +42,9 @@ function Invoke-WithClientNpmCiLock {
     }
 
     try {
-        & $Action
+        # Stream the action. Its success output must not become this function's
+        # return value, or the caller reads npm's log as the exit code.
+        & $Action *>&1 | ForEach-Object { [Console]::Out.WriteLine([string]$_) }
         return 0
     }
     finally {
