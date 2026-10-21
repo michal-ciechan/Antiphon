@@ -64,6 +64,9 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Checkpoints.CheckpointRecoveryWindowsTests),
         typeof(Antiphon.Tests.Checkpoints.BuildSlotClientTests),
         typeof(Antiphon.Tests.Checkpoints.CheckpointSlotExecutorTests),
+        // CARD-1421: git-only, but asserts stale index locks against the host-wide git census,
+        // which any concurrent git exit can flip to held.
+        typeof(AgentTaskLandIndexLockTests),
     ];
 
     // CARD-1421 Appendix B: strict-roster classes whose only children are git, in fixture-owned repositories.
