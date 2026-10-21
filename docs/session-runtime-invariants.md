@@ -188,6 +188,14 @@ It runs no after-run hook and records no completion, failure, kill or disposal.
 turn this interrupted input wait into an automatic release. A one-time refresh of
 LastEventAt would only defer that kill. Card/worktree ownership stays attached;
 the phase does not enable parking or add an input-wait deadline.
+CARD-1382 re-arms that same attempt when a later UserPrompt cannot be a command echo.
+That prompt calls Transition to StreamingTurn, so the existing scanner can kill it after StallTimeoutMs.
+A trimmed slash prompt arms StreamingTurn without Transition and keeps PhaseStartedAt.
+The same-window command wrapper, or an echo that already sees that wrapper, restores AwaitingInput and sets LastEventAt back to PhaseStartedAt.
+Echo-before-wrapper and wrapper-before-echo both end on that unscanned input wait.
+An older wrapper outside this wait does not suppress a later slash-prefixed prompt.
+Parking stays disabled. Re-arm does not release the seat, stop the process, or add an input-wait deadline.
+The only kill remains the StreamingTurn scanner.
 
 OccupiesCapacity is true for any non-empty runner status other than Exited or Failed.
 OpenTaskId is the owner task: the latest Queued, Dispatched, Working or Blocked task bound to the session, so a live Blocked or Queued owner reads orphan=false (CARD-1124).

@@ -392,6 +392,8 @@ public sealed class AgentSessionRuntime
                         sessionId, kind, row.IsApiError == true, ct, row.Sequence, row.StopReason);
                 break;
             case 2 when kind == TranscriptKinds.UserPrompt || action.TriggerKind == "catchup":
+                if (row is not null && kind == TranscriptKinds.UserPrompt)
+                    await RearmInterruptedAttemptAsync(services, sessionId, row, ct);
                 if (services.GetService<SessionMessageQueueService>() is { } refinementQueue)
                     await refinementQueue.ConfirmSentRefinementsAsync(sessionId, ct);
                 break;
@@ -418,6 +420,95 @@ public sealed class AgentSessionRuntime
                 }
                 break;
         }
+    }
+
+    private async Task RearmInterruptedAttemptAsync(
+        IServiceProvider services, Guid sessionId, TranscriptEntry row, CancellationToken ct)
+    {
+        var db = services.GetRequiredService<AppDbContext>();
+        var running = await db.AgentSessions.AsNoTracking()
+            .AnyAsync(s => s.Id == sessionId && s.Status == SessionStatus.Running, ct);
+        if (!running)
+            return;
+
+        var attempt = await db.RunAttempts
+            .Include(a => a.Card)
+            .Where(a => a.AgentSessionId == sessionId && a.CompletedAt == null)
+            .OrderByDescending(a => a.AttemptNumber)
+            .ThenByDescending(a => a.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (attempt?.Card is not { } card
+            || attempt.Phase is not (RunPhase.AwaitingInput or RunPhase.StreamingTurn))
+            return;
+
+        var prompts = await db.TranscriptEntries.AsNoTracking()
+            .Where(e => e.AgentSessionId == sessionId
+                && e.CreatedAt >= attempt.PhaseStartedAt
+                && (e.Kind == TranscriptKinds.UserPrompt || e.Kind == TranscriptKinds.QueuedUserPrompt))
+            .Select(e => new { e.Kind, e.Text })
+            .ToListAsync(ct);
+        var names = prompts
+            .Select(p => TranscriptKinds.TryReadLocalCommandName(p.Kind, p.Text))
+            .OfType<string>()
+            .ToList();
+        var provisional = RunAttemptStateMachine.IsProvisionalStreamingTurn(attempt);
+        if (provisional
+            && prompts.Count > 0
+            && prompts.All(p => IsCommandHousekeeping(p.Kind, p.Text, names)))
+        {
+            RunAttemptStateMachine.RestoreProvisionalAwaitingInput(attempt);
+            await db.SaveChangesAsync(ct);
+            await PublishInterruptedAttemptAsync(card, sessionId, attempt);
+            return;
+        }
+
+        if (row.CreatedAt <= attempt.PhaseStartedAt)
+            return;
+        if (attempt.Phase == RunPhase.StreamingTurn && row.CreatedAt <= attempt.LastEventAt)
+            return;
+        if (IsCommandHousekeeping(row.Kind, row.Text, names)
+            || TranscriptKinds.IsInterruptPrompt(row.Kind, row.Text)
+            || TranscriptKinds.IsCompactionContinuationPrompt(row.Kind, row.Text)
+            || TranscriptKinds.IsTaskNotificationPrompt(row.Kind, row.Text))
+            return;
+
+        var now = UtcNow();
+        if (attempt.Phase == RunPhase.AwaitingInput)
+        {
+            if (row.Text?.Trim().StartsWith('/') == true)
+                RunAttemptStateMachine.ArmProvisionalStreamingTurn(attempt, now);
+            else
+                RunAttemptStateMachine.Transition(attempt, RunPhase.StreamingTurn, now);
+
+            await db.SaveChangesAsync(ct);
+            await PublishInterruptedAttemptAsync(card, sessionId, attempt);
+            return;
+        }
+
+        if (provisional)
+        {
+            attempt.LastEventAt = now;
+            await db.SaveChangesAsync(ct);
+        }
+    }
+
+    private static bool IsCommandHousekeeping(
+        string? kind, string? text, IReadOnlyCollection<string> names) =>
+        TranscriptKinds.IsLocalCommandRecord(kind, text)
+        || TranscriptKinds.IsRawLocalCommandEcho(kind, text, names);
+
+    private async Task PublishInterruptedAttemptAsync(Card card, Guid sessionId, RunAttempt attempt)
+    {
+        var payload = new
+        {
+            boardId = card.BoardId,
+            cardId = card.Id,
+            sessionId,
+            runAttemptId = attempt.Id,
+            phase = attempt.Phase.ToString()
+        };
+        await _eventBus.PublishToAllAsync("RunAttemptChanged", payload);
+        await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id });
     }
 
     internal async Task<SessionQueueTurnEndResult> ExecuteActionQueueAsync(SessionRuntimeAction action,

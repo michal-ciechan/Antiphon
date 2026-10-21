@@ -50,6 +50,45 @@ public static class RunAttemptStateMachine
             or RunPhase.Stalled
             or RunPhase.Canceled;
 
+    public static bool HasAwaitingInputDuration(RunAttempt attempt) =>
+        ReadDurations(attempt.PhaseDurationsJson).ContainsKey(RunPhase.AwaitingInput.ToString());
+
+    // Cancellation records StreamingTurn when it enters AwaitingInput. The provisional arm
+    // leaves that key and does not record AwaitingInput. A first streaming turn has neither.
+    public static bool IsProvisionalStreamingTurn(RunAttempt attempt)
+    {
+        if (attempt.Phase != RunPhase.StreamingTurn)
+            return false;
+
+        var durations = ReadDurations(attempt.PhaseDurationsJson);
+        return durations.ContainsKey(RunPhase.StreamingTurn.ToString())
+            && !durations.ContainsKey(RunPhase.AwaitingInput.ToString());
+    }
+
+    public static void ArmProvisionalStreamingTurn(RunAttempt attempt, DateTime utcNow)
+    {
+        if (attempt.Phase != RunPhase.AwaitingInput)
+        {
+            throw new InvalidOperationException(
+                $"Provisional streaming arm requires {RunPhase.AwaitingInput}, not {attempt.Phase}.");
+        }
+
+        attempt.Phase = RunPhase.StreamingTurn;
+        attempt.LastEventAt = utcNow;
+    }
+
+    public static void RestoreProvisionalAwaitingInput(RunAttempt attempt)
+    {
+        if (!IsProvisionalStreamingTurn(attempt))
+        {
+            throw new InvalidOperationException(
+                "Provisional input-wait restore requires a streaming turn that has not closed AwaitingInput.");
+        }
+
+        attempt.Phase = RunPhase.AwaitingInput;
+        attempt.LastEventAt = attempt.PhaseStartedAt;
+    }
+
     private static void RecordDuration(RunAttempt attempt, DateTime utcNow)
     {
         var elapsedMs = Math.Max(0, (utcNow - attempt.PhaseStartedAt).TotalMilliseconds);
