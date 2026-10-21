@@ -262,7 +262,31 @@ internal static class C1361CensusProbes
                 removed.Sleeps.ShouldBe(2, "the stable retry is still attempted before acceptance");
                 removed.Error.ShouldNotContain("Malformed");
                 if (host)
+                {
                     removed.Snapshot!["open"]!["tasks"]!.AsObject().Count.ShouldBe(7, "walked rows are kept");
+
+                    // Each removal marker has to be enough on its own. phase=stopped is not.
+                    var ownedOnly = await Probe(true, IncidentRequests(), removed: true,
+                        record: """{"phase":"stopped","ownedRemoved":true}""");
+                    ownedOnly.Error.ShouldBe("", "ownedRemoved alone must keep rows, not " + ownedOnly.Error);
+                    ownedOnly.Code.ShouldBe(0);
+                    ownedOnly.Sleeps.ShouldBe(2, "ownedRemoved alone still retries before acceptance");
+                    ownedOnly.Snapshot!["open"]!["tasks"]!.AsObject().Count.ShouldBe(7, "ownedRemoved alone keeps walked rows");
+
+                    var phaseOnly = await Probe(true, IncidentRequests(), removed: true,
+                        record: """{"phase":"volumesRemoved","ownedRemoved":false}""");
+                    phaseOnly.Error.ShouldBe("", "volumesRemoved alone must keep rows, not " + phaseOnly.Error);
+                    phaseOnly.Code.ShouldBe(0);
+                    phaseOnly.Sleeps.ShouldBe(2, "volumesRemoved alone still retries before acceptance");
+                    phaseOnly.Snapshot!["open"]!["tasks"]!.AsObject().Count.ShouldBe(7, "volumesRemoved alone keeps walked rows");
+
+                    var stopped = await Probe(true, IncidentRequests(), removed: true,
+                        record: """{"phase":"stopped","ownedRemoved":false}""");
+                    stopped.Error.ShouldStartWith(
+                        "RecycleTaskCensusUnknown cause=Drift field=excluded.byProject.count project=" + Project + " expected=5 observed=6");
+                    stopped.Code.ShouldBe(2);
+                    stopped.Sleeps.ShouldBe(2, "a resumed stopped journal still refuses drift");
+                }
 
                 var before = await Probe(host, IncidentRequests(), removed: false);
                 before.Error.ShouldStartWith(
@@ -316,11 +340,13 @@ internal static class C1361CensusProbes
     }
 
     private static async Task<(string Error, int Code, int Sleeps, JsonNode? Snapshot)> Probe(
-        bool host, JsonObject requests, bool removed, bool wait = true)
+        bool host, JsonObject requests, bool removed, bool wait = true, string? record = null)
     {
         using var scratch = new Scratch();
         File.WriteAllText(Path.Combine(scratch.Root, "requests.json"), requests.ToJsonString());
-        if (removed && host)
+        if (host && record is not null)
+            File.WriteAllText(Path.Combine(scratch.Root, "record.json"), record);
+        else if (removed && host)
             File.WriteAllText(Path.Combine(scratch.Root, "record.json"),
                 """{"phase":"containersRemoved","ownedRemoved":true}""");
         if (removed && !host)

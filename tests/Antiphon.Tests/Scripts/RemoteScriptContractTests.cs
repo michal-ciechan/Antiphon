@@ -1475,10 +1475,10 @@ public sealed class RemoteScriptContractTests
             Fact(output, fact).ShouldBe("1", fact + "\n" + output);
     }
 
-    // CARD-1197. containersRemoved and removing share the recreating/verified compare.
-    // The scratch script is that function plus journal and census JSON. No docker, ssh, or sudo.
-    // A temp-only open set is accepted. A new open task on server2, or a new land row for it,
-    // is refused. stopped and started keep the byte compare.
+    // CARD-1197 / CARD-1399. containersRemoved, removing, volumesRemoved, recreating and verified
+    // share the relaxed compare. The scratch script is that function plus journal and census JSON.
+    // No docker, ssh, or sudo. A temp-only open set is accepted. A new open task on server2, or a
+    // new land row for it, is refused. stopped and started keep the byte compare.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1197_Post_removal_compare_accepts_temp_churn_and_refuses_bound_work()
@@ -1510,7 +1510,7 @@ public sealed class RemoteScriptContractTests
             printf '%s\n' "$temp" > "$root/temp.json"
             printf '%s\n' "$bound" > "$root/bound.json"
             printf '%s\n' "$land" > "$root/land.json"
-            for phase in containersRemoved removing stopped started; do
+            for phase in containersRemoved removing volumesRemoved stopped started; do
               jq -nc --arg phase "$phase" --argjson tasks "$saved" '{schema:1,phase:$phase,tasks:$tasks}' > "$root/journal-$phase.json"
             done
             fail=0
@@ -1531,6 +1531,10 @@ public sealed class RemoteScriptContractTests
             probe b-bound containersRemoved bound.json refuse
             probe c-land containersRemoved land.json refuse
             probe d-removing removing temp.json accept
+            probe f-volumes volumesRemoved temp.json accept
+            probe f-volumes-bound volumesRemoved bound.json refuse
+            probe f-volumes-land volumesRemoved land.json refuse
+            probe same-volumes volumesRemoved saved.json accept
             probe e-stopped stopped temp.json refuse
             probe e-started started temp.json refuse
             probe same-removed containersRemoved saved.json accept
@@ -1541,12 +1545,12 @@ public sealed class RemoteScriptContractTests
         output.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, output);
         foreach (var name in new[]
         {
-            "a-temp", "b-bound", "c-land", "d-removing", "e-stopped", "e-started",
-            "same-removed", "same-stopped", "same-started", "c1197-compare"
+            "a-temp", "b-bound", "c-land", "d-removing", "f-volumes", "f-volumes-bound", "f-volumes-land",
+            "e-stopped", "e-started", "same-removed", "same-volumes", "same-stopped", "same-started", "c1197-compare"
         })
             output.IndexOf("PASS " + name, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, output);
         const string gate =
-            "if [ \"$phase\" != \"containersRemoved\" ] && [ \"$phase\" != \"removing\" ] && [ \"$phase\" != \"recreating\" ] && [ \"$phase\" != \"verified\" ]; then";
+            "if [ \"$phase\" != \"containersRemoved\" ] && [ \"$phase\" != \"removing\" ] && [ \"$phase\" != \"volumesRemoved\" ] && [ \"$phase\" != \"recreating\" ] && [ \"$phase\" != \"verified\" ]; then";
         match.IndexOf(gate, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, "post-removal phases share the relaxed compare");
         match.IndexOf("select(.value.runnerId==$runner)", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0,
             "a new open task bound to the recycled runner is still refused");
