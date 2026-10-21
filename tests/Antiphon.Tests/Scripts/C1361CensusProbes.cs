@@ -247,6 +247,92 @@ internal static class C1361CensusProbes
         failures.ShouldBeEmpty(string.Join("\n", failures));
     }
 
+    // The incident: six collected rows, then the nested scope advertises five.
+    // After container removal that churn must not refuse the census. Before removal it stays Drift.
+    internal static async Task PostRemoval()
+    {
+        var failures = new List<string>();
+        foreach (var host in new[] { false, true })
+        {
+            try
+            {
+                var removed = await Probe(host, IncidentRequests(), removed: true);
+                removed.Error.ShouldBe("", (host ? "host" : "wrapper") + " post-removal must continue, not " + removed.Error);
+                removed.Code.ShouldBe(0);
+                removed.Sleeps.ShouldBe(2, "the stable retry is still attempted before acceptance");
+                removed.Error.ShouldNotContain("Malformed");
+                if (host)
+                    removed.Snapshot!["open"]!["tasks"]!.AsObject().Count.ShouldBe(7, "walked rows are kept");
+
+                var before = await Probe(host, IncidentRequests(), removed: false);
+                before.Error.ShouldStartWith(
+                    "RecycleTaskCensusUnknown cause=Drift field=excluded.byProject.count project=" + Project + " expected=5 observed=6");
+                before.Code.ShouldBe(2);
+                before.Sleeps.ShouldBe(2);
+                before.Error.ShouldNotContain("Malformed");
+
+                var malformed = IncidentRequests();
+                malformed[PathFor(Project)]![0]!["excluded"]!["byProject"]![0]!["count"] = 0;
+                malformed[PathFor(Project)]![0]!["excluded"]!["total"] = 0;
+                var bad = await Probe(host, malformed, removed: false, wait: false);
+                bad.Error.ShouldStartWith("RecycleTaskCensusUnknown cause=Malformed field=excluded.byProject.count");
+                bad.Sleeps.ShouldBe(0);
+
+                var bound = IncidentRequests();
+                bound[PathFor(Project)]![0]!["items"]![0]!["runnerId"] = "server2";
+                var held = await Probe(host, bound, removed: true, wait: false);
+                held.Error.ShouldStartWith("RecycleBoundTasks");
+                held.Code.ShouldBe(host ? 4 : 2);
+                held.Sleeps.ShouldBe(0, "a bound row refuses before count drift is classified");
+            }
+            catch (Exception e) { failures.Add((host ? "host: " : "wrapper: ") + e.Message); }
+        }
+        failures.ShouldBeEmpty(string.Join("\n", failures));
+    }
+
+    private static JsonObject IncidentRequests()
+    {
+        var requests = new JsonObject
+        {
+            [PathFor(Project, "land")] = new JsonArray(Envelope(Project)),
+            [PathFor(OtherProject, "land")] = new JsonArray(Envelope(OtherProject))
+        };
+        JsonObject Scope(string project, int count, (string Project, int Count) excluded)
+        {
+            var rows = Enumerable.Range(1, count).Select(i =>
+            {
+                var row = Row();
+                row["id"] = project[..8] + "-1111-1111-1111-" + i.ToString("D12");
+                row["projectId"] = project;
+                row["scopeSource"] = "Task";
+                requests["/api/agent-tasks/" + row["id"]] = new JsonArray(Detail(row));
+                return row;
+            }).ToArray();
+            return Exclude(Envelope(project, rows), excluded);
+        }
+        requests[PathFor(Project)] = new JsonArray(Scope(Project, 6, (OtherProject, 1)));
+        requests[PathFor(OtherProject)] = new JsonArray(Scope(OtherProject, 1, (Project, 5)));
+        return requests;
+    }
+
+    private static async Task<(string Error, int Code, int Sleeps, JsonNode? Snapshot)> Probe(
+        bool host, JsonObject requests, bool removed, bool wait = true)
+    {
+        using var scratch = new Scratch();
+        File.WriteAllText(Path.Combine(scratch.Root, "requests.json"), requests.ToJsonString());
+        if (removed && host)
+            File.WriteAllText(Path.Combine(scratch.Root, "record.json"),
+                """{"phase":"containersRemoved","ownedRemoved":true}""");
+        if (removed && !host)
+            File.WriteAllText(Path.Combine(scratch.Root, "resume"), "1");
+        var body = host ? HostProgram(scratch.Root, wait && !removed) : WrapperProgram(scratch.Root, false, wait);
+        var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
+        run.Exit.ShouldBe(0, "fixture: " + run.Output);
+        var result = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "result.json")))!;
+        return (result["error"]!.GetValue<string>(), result["code"]!.GetValue<int>(),
+            result["sleeps"]!.GetValue<int>(), result["snapshot"]);
+    }
+
     private static async Task Check(bool host, Vector vector)
     {
         using var scratch = new Scratch();
@@ -313,6 +399,8 @@ internal static class C1361CensusProbes
             return ($values[[Math]::Min($index,$values.Count-1)] | ConvertTo-Json -Depth 30 -Compress | ConvertFrom-Json)
         }
         $errorText=''; $snapshot=$null; $code=0
+        $ResumeRecycle=$null
+        if (Test-Path -LiteralPath "$root/resume") { $ResumeRecycle='c100800000000000000000000000000000001' }
         $LandWaitMinutes=30
         try { $value={{(wait ? "Wait-RecycleTaskCensus" : "Assert-RecycleTaskCensus")}} -RunnerId server2 -ProjectId '{{Project}}' {{(report ? "-Report" : "")}}; $snapshot=$script:recycleReceipt.snapshot }
         catch { $errorText=$_.Exception.Message; $code=2 }
@@ -330,6 +418,8 @@ internal static class C1361CensusProbes
             set -u
             root='{{root}}'; CASE_DIR="$root"; CASE=probe
             C1008_RUNNER=server2; C1008_PROJECT_ID={{Project}}
+            C1008_RECORD=''
+            if [ -f "$root/record.json" ]; then C1008_RECORD="$(cat "$root/record.json")"; fi
             declare -A positions=()
             reads='[]'; sleeps=0
             sleep() { [ "$1" = 30 ] || return 99; sleeps=$((sleeps+1)); }
