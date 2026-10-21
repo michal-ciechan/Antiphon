@@ -22,7 +22,9 @@ internal sealed class ControlledTestDbOperations : TestDbOperations
     public int ClearAll;
     public SynchronizationContext? BootstrapContext;
 
-    // CARD-1420: schema-cache seams. CacheFault is restore-throws, history-mismatch or capture-throws.
+    // CARD-1420: schema-cache seams. CacheFault is restore-throws, history-mismatch, capture-throws or
+    // warm-throws. OverlapWarmWithRestore makes restore and the migrator warm-up wait for each other,
+    // so a hit reaches ready only when the two run concurrently.
     public static readonly string[] Migrations = ["20260101000000_First", "20260102000000_Second"];
     public static readonly byte[] CapturedSql = System.Text.Encoding.UTF8.GetBytes("-- controlled capture\n");
     public string? CacheFault;
@@ -31,6 +33,11 @@ internal sealed class ControlledTestDbOperations : TestDbOperations
     public int RestoreCalls;
     public int ResetCalls;
     public byte[]? RestoredSql;
+    public int WarmCalls;
+    public bool OverlapWarmWithRestore;
+    private static readonly TimeSpan OverlapBound = TimeSpan.FromSeconds(5);
+    private readonly TaskCompletionSource _warmStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _restoreFinished = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public override Task<OwnedTestDbContainer> CreateAsync()
     {
@@ -74,13 +81,25 @@ internal sealed class ControlledTestDbOperations : TestDbOperations
         return Task.FromResult(CapturedSql);
     }
 
-    public override Task RestoreSnapshotAsync(OwnedTestDbContainer container, string databaseName, byte[] sql)
+    public override async Task RestoreSnapshotAsync(OwnedTestDbContainer container, string databaseName, byte[] sql)
     {
         Interlocked.Increment(ref RestoreCalls);
         if (CacheFault == "restore-throws")
             throw new InvalidOperationException("C1420-FAULT restore");
+        if (OverlapWarmWithRestore)
+            await _warmStarted.Task.WaitAsync(OverlapBound).ConfigureAwait(false);
         RestoredSql = sql;
-        return Task.CompletedTask;
+        _restoreFinished.TrySetResult();
+    }
+
+    public override async Task WarmMigratorAsync(string connectionString)
+    {
+        Interlocked.Increment(ref WarmCalls);
+        _warmStarted.TrySetResult();
+        if (CacheFault == "warm-throws")
+            throw new InvalidOperationException("C1420-FAULT warm");
+        if (OverlapWarmWithRestore)
+            await _restoreFinished.Task.WaitAsync(OverlapBound).ConfigureAwait(false);
     }
 
     public override Task<IReadOnlyList<string>> ReadAppliedMigrationsAsync(string connectionString)
