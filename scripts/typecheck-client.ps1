@@ -1,7 +1,10 @@
 # Typechecks the client the release build typechecks, without running Vite.
 #
-# CARD-1387. Production command, working directory client/:
-#   node client/node_modules/typescript/bin/tsc -b --pretty false
+# CARD-1387. Production command, working directory client/, once per project
+# (tsconfig.app.json, then tsconfig.node.json):
+#   node .../tsc -p <project> --pretty false --noEmit --incremental --tsBuildInfoFile node_modules/.tmp/<project>.tsbuildinfo
+# The tsbuildinfo stores a content hash per input. tsc -b would decide from
+# modification times and hide an edit whose mtime was preserved (CARD-1398).
 # client/tsconfig.app.json and tsconfig.node.json set incremental and noEmit,
 # with tsBuildInfoFile under client/node_modules/.tmp (CARD-1394).
 # -Project <tsconfig> runs from the repo root:
@@ -47,16 +50,22 @@ if (-not [string]::IsNullOrWhiteSpace($Project)) {
 else {
     Push-Location $clientDir
     try {
-        & node $tsc -b --pretty false 2>&1 | Tee-Object -FilePath $logFile
+        # Content hashes, not mtimes. tsc -b treats an older mtime as up to date.
+        & node $tsc -p tsconfig.app.json --pretty false --noEmit --incremental --tsBuildInfoFile node_modules/.tmp/tsconfig.app.tsbuildinfo 2>&1 | Tee-Object -FilePath $logFile
         $code = $LASTEXITCODE
+        if ($null -eq $code) { $code = 1 }
+        & node $tsc -p tsconfig.node.json --pretty false --noEmit --incremental --tsBuildInfoFile node_modules/.tmp/tsconfig.node.tsbuildinfo 2>&1 | Tee-Object -FilePath $logFile -Append
+        $nodeCode = $LASTEXITCODE
+        if ($null -eq $nodeCode) { $nodeCode = 1 }
+        if ($nodeCode -ne 0 -and ($code -eq 0 -or $nodeCode -gt $code)) { $code = $nodeCode }
     }
     finally {
         Pop-Location
     }
-    # tsc -b with incremental and noEmit returns 1 for a source diagnostic.
-    # Without incremental the same diagnostic returns 2. Keep that historical
-    # gate code (CARD-1394). A compiler failure that is not a source diagnostic
-    # stays 1.
+    # tsc -p --noEmit --incremental returns 2 for a source diagnostic.
+    # tsc -b incremental returned 1 for the same diagnostic. If the log shows
+    # a file(line,col) diagnostic, keep the historical gate code of 2
+    # (CARD-1394). A compiler failure that is not a source diagnostic stays 1.
     if ($code -eq 1 -and (Test-Path -LiteralPath $logFile)) {
         $logged = [System.IO.File]::ReadAllText($logFile)
         if ($logged -match '\(\d+,\d+\): error TS') { $code = 2 }
