@@ -560,6 +560,284 @@ function Read-NightlyLockRecord {
     }
 }
 
+function Get-NightlySeamText {
+    param($Delegate)
+    if (-not $Delegate) { return '' }
+    $items = @($Delegate.Invoke())
+    if ($items.Count -lt 1 -or $null -eq $items[0]) { return '' }
+    return ([string]$items[0]).Trim()
+}
+
+function Test-NightlyWindows {
+    return [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
+}
+
+function Test-NightlyLinux {
+    return [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)
+}
+
+function Get-NightlyBootId {
+    if ($script:NightlySeams -and $script:NightlySeams.GetBootId) {
+        return (Get-NightlySeamText -Delegate $script:NightlySeams.GetBootId)
+    }
+    if (Test-NightlyWindows) {
+        try {
+            $item = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters' -Name 'BootId' -ErrorAction Stop
+            if ($null -ne $item -and $null -ne $item.BootId) {
+                return ([int64]$item.BootId).ToString([System.Globalization.CultureInfo]::InvariantCulture)
+            }
+        } catch { }
+        try {
+            $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+            if ($null -ne $os -and $null -ne $os.LastBootUpTime) {
+                return ([datetime]$os.LastBootUpTime).ToUniversalTime().ToString('o')
+            }
+        } catch { }
+        return ''
+    }
+    if (Test-NightlyLinux) {
+        try {
+            $path = '/proc/sys/kernel/random/boot_id'
+            if (Test-Path -LiteralPath $path) {
+                return ([System.IO.File]::ReadAllText($path)).Trim()
+            }
+        } catch { }
+    }
+    return ''
+}
+
+function Get-NightlyHostId {
+    if ($script:NightlySeams -and $script:NightlySeams.GetHostId) {
+        return (Get-NightlySeamText -Delegate $script:NightlySeams.GetHostId)
+    }
+    if (Test-NightlyWindows) {
+        try {
+            $item = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Cryptography' -Name 'MachineGuid' -ErrorAction Stop
+            if ($null -ne $item -and -not [string]::IsNullOrWhiteSpace([string]$item.MachineGuid)) {
+                return ([string]$item.MachineGuid).Trim()
+            }
+        } catch { }
+        return ''
+    }
+    if (Test-NightlyLinux) {
+        foreach ($path in @('/etc/machine-id', '/var/lib/dbus/machine-id')) {
+            try {
+                if (Test-Path -LiteralPath $path) {
+                    $text = ([System.IO.File]::ReadAllText($path)).Trim()
+                    if (-not [string]::IsNullOrWhiteSpace($text)) { return $text }
+                }
+            } catch { }
+        }
+    }
+    return ''
+}
+
+function Get-NightlyLockFieldText {
+    param($Record, [string]$Name)
+    if ($null -eq $Record) { return '' }
+    $prop = $Record.PSObject.Properties[$Name]
+    if ($null -eq $prop -or $null -eq $prop.Value) { return '' }
+    $value = $prop.Value
+    if ($value -is [datetime]) {
+        return $value.ToUniversalTime().ToString('o')
+    }
+    return ([string]$value).Trim()
+}
+
+function Get-NightlyLockFieldPid {
+    param($Record, [string]$Name)
+    $text = Get-NightlyLockFieldText -Record $Record -Name $Name
+    if ([string]::IsNullOrWhiteSpace($text)) { return 0 }
+    $n = 0
+    if ([int]::TryParse($text, [ref]$n)) { return $n }
+    return 0
+}
+
+function Get-NightlyLockOptionalPid {
+    param($Record, [string]$Name)
+    if ($null -eq $Record) { return '' }
+    $prop = $Record.PSObject.Properties[$Name]
+    if ($null -eq $prop -or $null -eq $prop.Value) { return '' }
+    $text = [string]$prop.Value
+    if ([string]::IsNullOrWhiteSpace($text)) { return '' }
+    $n = 0
+    if ([int]::TryParse($text, [ref]$n)) { return $n }
+    return ''
+}
+
+function Resolve-NightlyStaleLock {
+    param($Existing, [string]$RunId, [string]$BootId, [string]$HostId)
+    if ($null -eq $Existing) {
+        return [pscustomobject]@{ Action = 'refuse'; Reason = 'lock-held' }
+    }
+    $recordBoot = Get-NightlyLockFieldText -Record $Existing -Name 'bootId'
+    $recordHost = Get-NightlyLockFieldText -Record $Existing -Name 'hostId'
+    $currentBoot = ''
+    $currentHost = ''
+    if (-not [string]::IsNullOrWhiteSpace($BootId)) { $currentBoot = $BootId.Trim() }
+    if (-not [string]::IsNullOrWhiteSpace($HostId)) { $currentHost = $HostId.Trim() }
+    $bootBoth = (-not [string]::IsNullOrWhiteSpace($recordBoot)) -and (-not [string]::IsNullOrWhiteSpace($currentBoot))
+    $hostBoth = (-not [string]::IsNullOrWhiteSpace($recordHost)) -and (-not [string]::IsNullOrWhiteSpace($currentHost))
+    # A recycled pid after reboot is reclaimed before the live-owner check.
+    if ($hostBoth -and $bootBoth -and [string]::Equals($recordHost, $currentHost, [StringComparison]::Ordinal) -and -not [string]::Equals($recordBoot, $currentBoot, [StringComparison]::Ordinal)) {
+        return [pscustomobject]@{ Action = 'reclaim'; Reason = 'dead-owner-rebooted' }
+    }
+    $ownerPid = Get-NightlyLockFieldPid -Record $Existing -Name 'pid'
+    $ownerAlive = $false
+    if ($ownerPid -gt 0) {
+        $ownerAlive = Test-NightlyProcessAlive -ProcessId $ownerPid
+    }
+    if ($ownerAlive) {
+        $samePid = ($ownerPid -eq $PID)
+        $recordRun = Get-NightlyLockFieldText -Record $Existing -Name 'runId'
+        $sameRun = [string]::Equals($recordRun, $RunId, [StringComparison]::OrdinalIgnoreCase)
+        if ($samePid -and $sameRun) {
+            return [pscustomobject]@{ Action = 'reacquire'; Reason = 'acquired' }
+        }
+        return [pscustomobject]@{ Action = 'refuse'; Reason = 'live-owner' }
+    }
+    if ($ownerPid -le 0) {
+        return [pscustomobject]@{ Action = 'refuse'; Reason = 'lock-held' }
+    }
+    if (($hostBoth -and -not [string]::Equals($recordHost, $currentHost, [StringComparison]::Ordinal)) -or ((-not [string]::IsNullOrWhiteSpace($recordHost)) -and [string]::IsNullOrWhiteSpace($currentHost))) {
+        return [pscustomobject]@{ Action = 'refuse'; Reason = 'lock-held' }
+    }
+    if ((-not [string]::IsNullOrWhiteSpace($recordBoot)) -and [string]::IsNullOrWhiteSpace($currentBoot)) {
+        return [pscustomobject]@{ Action = 'refuse'; Reason = 'lock-held' }
+    }
+    $parentPid = Get-NightlyLockFieldPid -Record $Existing -Name 'parentPid'
+    $parentAlive = $false
+    if ($parentPid -gt 0) {
+        $parentAlive = Test-NightlyProcessAlive -ProcessId $parentPid
+    }
+    if ($parentPid -le 0 -or $parentAlive) {
+        return [pscustomobject]@{ Action = 'refuse'; Reason = 'lock-held' }
+    }
+    if ($bootBoth -and $hostBoth -and [string]::Equals($recordBoot, $currentBoot, [StringComparison]::Ordinal) -and [string]::Equals($recordHost, $currentHost, [StringComparison]::Ordinal)) {
+        return [pscustomobject]@{ Action = 'reclaim'; Reason = 'dead-owner-same-boot' }
+    }
+    if ([string]::IsNullOrWhiteSpace($recordBoot) -and [string]::IsNullOrWhiteSpace($recordHost)) {
+        return [pscustomobject]@{ Action = 'reclaim'; Reason = 'dead-owner-legacy' }
+    }
+    return [pscustomobject]@{ Action = 'refuse'; Reason = 'lock-held' }
+}
+
+function New-NightlyLockRecord {
+    param(
+        [string]$RunId,
+        [string]$BootId,
+        [string]$HostId,
+        $Parent
+    )
+    $processStart = Get-NightlyProcessStartUtc -ProcessId $PID
+    $processText = ''
+    if ($processStart) { $processText = ([datetime]$processStart).ToUniversalTime().ToString('o') }
+    $parentId = 0
+    $parentStart = $null
+    if ($Parent) {
+        $parentId = [int]$Parent.Id
+        if ($Parent.StartTimeUtc) { $parentStart = ([datetime]$Parent.StartTimeUtc).ToUniversalTime().ToString('o') }
+    }
+    $bootText = ''
+    $hostText = ''
+    if (-not [string]::IsNullOrWhiteSpace($BootId)) { $bootText = $BootId.Trim() }
+    if (-not [string]::IsNullOrWhiteSpace($HostId)) { $hostText = $HostId.Trim() }
+    return [ordered]@{
+        pid = $PID
+        processStartedAt = $processText
+        startedAt = (Get-NightlyUtcNow).ToString('o')
+        runId = $RunId
+        parentPid = $parentId
+        parentStartedAt = $parentStart
+        bootId = $bootText
+        hostId = $hostText
+    }
+}
+
+function Write-NightlyLockReclaim {
+    param(
+        [string]$StateRoot,
+        [string]$Reason,
+        $Existing,
+        [string]$NewRunId,
+        [string]$BootId,
+        [string]$HostId
+    )
+    $bootText = ''
+    $hostText = ''
+    if (-not [string]::IsNullOrWhiteSpace($BootId)) { $bootText = $BootId.Trim() }
+    if (-not [string]::IsNullOrWhiteSpace($HostId)) { $hostText = $HostId.Trim() }
+    $body = [ordered]@{
+        reason = $Reason
+        at = (Get-NightlyUtcNow).ToString('o')
+        previousPid = (Get-NightlyLockOptionalPid -Record $Existing -Name 'pid')
+        previousParentPid = (Get-NightlyLockOptionalPid -Record $Existing -Name 'parentPid')
+        previousRunId = (Get-NightlyLockFieldText -Record $Existing -Name 'runId')
+        previousProcessStartedAt = (Get-NightlyLockFieldText -Record $Existing -Name 'processStartedAt')
+        previousBootId = (Get-NightlyLockFieldText -Record $Existing -Name 'bootId')
+        previousHostId = (Get-NightlyLockFieldText -Record $Existing -Name 'hostId')
+        newRunId = $NewRunId
+        bootId = $bootText
+        hostId = $hostText
+    }
+    Write-NightlyAtomicJson -Path (Join-Path $StateRoot 'lock-reclaim.json') -Object $body
+    Write-NightlyRunLine ('{0} {1}' -f $Reason, (Get-NightlyLockFieldText -Record $Existing -Name 'runId'))
+}
+
+function Enter-NightlyReclaimedLock {
+    param(
+        [string]$StateRoot,
+        [string]$LockPath,
+        $Existing,
+        [string]$RunId,
+        [string]$Reason,
+        [string]$BootId,
+        [string]$HostId,
+        $Parent
+    )
+    try {
+        Write-NightlyLockReclaim -StateRoot $StateRoot -Reason $Reason -Existing $Existing -NewRunId $RunId -BootId $BootId -HostId $HostId
+    } catch {
+        return [pscustomobject]@{ Ok = $false; Reason = 'lock-held'; OwnsLock = $false; Record = $Existing }
+    }
+    try {
+        if (Test-Path -LiteralPath $LockPath) {
+            Remove-Item -LiteralPath $LockPath -Force -ErrorAction Stop
+        }
+    } catch { }
+    $record = New-NightlyLockRecord -RunId $RunId -BootId $BootId -HostId $HostId -Parent $Parent
+    $owned = $false
+    $stream = $null
+    try {
+        $payload = ($record | ConvertTo-Json -Compress)
+        $bytes = [System.Text.Encoding]::ASCII.GetBytes($payload)
+        $stream = [System.IO.File]::Open(
+            $LockPath,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::Read)
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush()
+        $script:NightlyLockStream = $stream
+        $owned = $true
+        $script:NightlyOwnedLock = $true
+        return [pscustomobject]@{ Ok = $true; Reason = 'reclaimed'; OwnsLock = $true; Record = [pscustomobject]$record }
+    } catch [System.IO.IOException] {
+        $raced = Read-NightlyLockRecord -LockPath $LockPath
+        $racedPid = Get-NightlyLockFieldPid -Record $raced -Name 'pid'
+        $alive = $false
+        if ($racedPid -gt 0) { $alive = Test-NightlyProcessAlive -ProcessId $racedPid }
+        if ($alive) {
+            return [pscustomobject]@{ Ok = $false; Reason = 'live-owner'; OwnsLock = $false; Record = $raced }
+        }
+        return [pscustomobject]@{ Ok = $false; Reason = 'lock-held'; OwnsLock = $false; Record = $raced }
+    } finally {
+        if (-not $owned -and $null -ne $stream) {
+            try { $stream.Dispose() } catch { }
+        }
+    }
+}
+
 function Enter-NightlyExclusiveLock {
     param(
         [Parameter(Mandatory = $true)][string]$StateRoot,
@@ -601,14 +879,9 @@ function Enter-NightlyExclusiveLock {
         return [pscustomobject]@{ Ok = $true; Reason = 'hop'; OwnsLock = $false; Record = $existing }
     }
 
-    $record = [ordered]@{
-        pid = $PID
-        processStartedAt = $( $processStart = Get-NightlyProcessStartUtc -ProcessId $PID; if ($processStart) { ([datetime]$processStart).ToUniversalTime().ToString('o') } else { '' } )
-        startedAt = (Get-NightlyUtcNow).ToString('o')
-        runId = $RunId
-        parentPid = [int]$parent.Id
-        parentStartedAt = $(if ($parent.StartTimeUtc) { ([datetime]$parent.StartTimeUtc).ToUniversalTime().ToString('o') } else { $null })
-    }
+    $bootId = Get-NightlyBootId
+    $hostId = Get-NightlyHostId
+    $record = New-NightlyLockRecord -RunId $RunId -BootId $bootId -HostId $hostId -Parent $parent
     $payload = ($record | ConvertTo-Json -Compress)
     $bytes = [System.Text.Encoding]::ASCII.GetBytes($payload)
     try {
@@ -624,25 +897,21 @@ function Enter-NightlyExclusiveLock {
         return [pscustomobject]@{ Ok = $true; Reason = 'acquired'; OwnsLock = $true; Record = [pscustomobject]$record }
     } catch [System.IO.IOException] {
         $existing = Read-NightlyLockRecord -LockPath $lockPath
-        $alive = $false
-        if ($existing -and [int]$existing.pid -gt 0) {
-            $alive = Test-NightlyProcessAlive -ProcessId ([int]$existing.pid)
+        $decision = Resolve-NightlyStaleLock -Existing $existing -RunId $RunId -BootId $bootId -HostId $hostId
+        if ($decision.Action -eq 'reacquire') {
+            $script:NightlyOwnedLock = $true
+            return [pscustomobject]@{ Ok = $true; Reason = 'acquired'; OwnsLock = $true; Record = $existing }
         }
-        if ($alive) {
-            $samePid = [int]$existing.pid -eq $PID
-            $sameRun = [string]::Equals([string]$existing.runId, $RunId, [StringComparison]::OrdinalIgnoreCase)
-            if ($samePid -and $sameRun -and [string]::IsNullOrWhiteSpace($ContinueRunId)) {
-                $script:NightlyOwnedLock = $true
-                return [pscustomobject]@{ Ok = $true; Reason = 'acquired'; OwnsLock = $true; Record = $existing }
-            }
-            return [pscustomobject]@{ Ok = $false; Reason = 'live-owner'; OwnsLock = $false; Record = $existing }
+        if ($decision.Action -eq 'reclaim') {
+            return Enter-NightlyReclaimedLock -StateRoot $StateRoot -LockPath $lockPath -Existing $existing -RunId $RunId -Reason $decision.Reason -BootId $bootId -HostId $hostId -Parent $parent
         }
-        return [pscustomobject]@{ Ok = $false; Reason = 'lock-held'; OwnsLock = $false; Record = $existing }
+        return [pscustomobject]@{ Ok = $false; Reason = $decision.Reason; OwnsLock = $false; Record = $existing }
     }
 }
 
 function Exit-NightlyExclusiveLock {
     param([string]$StateRoot, [string]$RunId)
+    # lock-reclaim.json is the durable reason the per-task lock was replaced.
     if (-not $script:NightlyOwnedLock) { return }
     $lockPath = Get-NightlyLockPath -StateRoot $StateRoot
     $existing = Read-NightlyLockRecord -LockPath $lockPath
