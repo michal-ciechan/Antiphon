@@ -187,6 +187,37 @@ public partial class AdvisoryChangePolicyTests
         }
     }
 
+    [Test]
+    public async Task C1425_ProducerPackFixtureIsDeterministic()
+    {
+        var roots = new[] { "a", "b" }.Select(n => Path.Combine(Path.GetTempPath(), $"c1425-pack-{n}-" + Guid.NewGuid().ToString("N"))).ToArray();
+        try
+        {
+            var packs = new List<C1281ProducerPackFixture.Pack>();
+            foreach (var root in roots) { Directory.CreateDirectory(root); packs.Add(await C1281ProducerPackFixture.WriteAsync(root)); }
+            var indexes = await Task.WhenAll(packs.Select(p => File.ReadAllBytesAsync(Path.Combine(p.ProducerRoot, "producer-pack-index.json"))));
+            indexes[1].ShouldBe(indexes[0], "byte-identical-inventory");
+            C1281ProducerPackFixture.Sha256(indexes[0]).ShouldBe(C1281ProducerPackFixture.InventoryDigest, "pinned-fixture-inventory");
+            Encoding.UTF8.GetString(indexes[0]).ShouldBe(packs[0].InventoryJson);
+            foreach (var pack in packs)
+            {
+                var head = await ScratchGitRepo.GitInAsync(pack.SelectionRepository, "rev-parse", "HEAD");
+                head.Ok.ShouldBeTrue(head.StdErr);
+                head.StdOut.Trim().ShouldBe(pack.SourceCommit, "selection-commit-is-inventory-source");
+            }
+            packs[1].SourceCommit.ShouldBe(packs[0].SourceCommit, "identical-selection-commit");
+            using var inventory = JsonDocument.Parse(indexes[0]);
+            inventory.RootElement.GetProperty("sourceCommit").GetString().ShouldBe(packs[0].SourceCommit);
+            foreach (var entry in inventory.RootElement.GetProperty("files").EnumerateArray())
+            {
+                var bytes = await File.ReadAllBytesAsync(Path.Combine(packs[0].ProducerRoot, entry.GetProperty("relativePath").GetString()!));
+                bytes.LongLength.ShouldBe(entry.GetProperty("bytes").GetInt64());
+                C1281ProducerPackFixture.Sha256(bytes).ShouldBe(entry.GetProperty("sha256").GetString(), "inventory-entry-digest");
+            }
+        }
+        finally { foreach (var root in roots) GitFixtureCleanup.Delete(root); }
+    }
+
     internal sealed class CorrectionWorld : IAsyncDisposable
     {
         private IsolatedTestSchema _schema = null!;
@@ -196,6 +227,7 @@ public partial class AdvisoryChangePolicyTests
         public string Root { get; private set; } = "";
         public string ProducerRoot { get; private set; } = "";
         public string Repository { get; private set; } = "";
+        public string SelectionRepository { get; private set; } = "";
         public AgentTask Review { get; private set; } = null!;
         public ReviewEvidenceCorrectionRequest Request { get; private set; } = null!;
         public WebApplication App => _app;
@@ -207,31 +239,20 @@ public partial class AdvisoryChangePolicyTests
         public static async Task<CorrectionWorld> CreateAsync(string? defect = null, Action<IServiceCollection>? configure = null)
         {
             var git = new LandingGit();
-            var common = await git.CommonDirectoryAsync(DelegateScriptRunner.RepoRoot, CancellationToken.None);
-            var original = Path.Combine(common, "antiphon", "code-evidence", "04228bff");
-            var producerIndex = Path.Combine(original, "producer-pack-index.json");
-            // CARD-1425: these tests must run on every clone; a missing pack is a failure, not a skip.
-            File.Exists(producerIndex).ShouldBeTrue("CARD-1425: no producer pack and no fixture");
             var w = new CorrectionWorld { _schema = await TestDbFixture.CreateIsolatedSchemaAsync(),
                 Root = Path.Combine(Path.GetTempPath(), "c1281-correction-" + Guid.NewGuid().ToString("N")) };
             Directory.CreateDirectory(w.Root);
             w.Configure = configure;
             w.Repository = DelegateScriptRunner.RepoRoot;
-            var inventory = await File.ReadAllTextAsync(producerIndex);
-            Digest(inventory).ShouldBe("5afb848873bdd8d653a3587654445d239b88cc31ea59f664dbf23efd78b98661",
-                "authentic-producer-inventory");
-            // The positive is the unedited actual producer pack. Negative arms edit only this
-            // private parser fixture, never the retained producer or production code.
-            w.ProducerRoot = Path.Combine(w.Root, "input");
-            Directory.CreateDirectory(w.ProducerRoot);
+            // CARD-1425: a deterministic in-test producer pack that owns its selection commit, so
+            // these tests run on every clone. The positive is the unedited fixture; negative arms
+            // edit only this private copy, never production code.
+            var pack = await C1281ProducerPackFixture.WriteAsync(w.Root);
+            w.ProducerRoot = pack.ProducerRoot;
+            w.SelectionRepository = pack.SelectionRepository;
+            var inventory = pack.InventoryJson;
+            Digest(inventory).ShouldBe(C1281ProducerPackFixture.InventoryDigest, "pinned-fixture-inventory");
             var node = JsonNode.Parse(inventory)!;
-            foreach (var item in node["files"]!.AsArray())
-            {
-                var relative = item!["relativePath"]!.GetValue<string>();
-                var destination = Path.Combine(w.ProducerRoot, relative);
-                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                File.Copy(Path.Combine(original, relative), destination);
-            }
             if (defect is not null)
             {
                 var run = node["cleanCheckpointRun"]!.GetValue<string>();
@@ -257,16 +278,15 @@ public partial class AdvisoryChangePolicyTests
                     node["files"]!.AsArray().Remove(entry);
                 }
                 inventory = node.ToJsonString();
+                await File.WriteAllTextAsync(Path.Combine(w.ProducerRoot, "producer-pack-index.json"), inventory);
             }
-            await File.WriteAllTextAsync(Path.Combine(w.ProducerRoot, "producer-pack-index.json"), inventory);
             using var index = JsonDocument.Parse(inventory);
             var source = index.RootElement.GetProperty("sourceCommit").GetString()!;
             var worktree = index.RootElement.GetProperty("sourceWorktree").GetString()!;
-            var selectionPath = "docs/superpowers/plans/2026-10-15-card-1281-cheap-slices-checkpoints.md";
-            var plan = await git.RunAsync(w.Repository, ["show", source + ":" + selectionPath], CancellationToken.None);
+            var selectionPath = C1281ProducerPackFixture.SelectionPath;
+            var plan = await git.RunAsync(w.SelectionRepository, ["show", source + ":" + selectionPath], CancellationToken.None);
             plan.Succeeded.ShouldBeTrue();
-            var selection = new ReviewCorrectionSelection(selectionPath, source,
-                "## Shared bindings B-1/B-2/B-3 (TestDesign, 2026-10-15, task 598a38d5)",
+            var selection = new ReviewCorrectionSelection(selectionPath, source, C1281ProducerPackFixture.SelectionSection,
                 Digest(plan.Output), ["CP-14", "CP-15", "CP-16"]);
             var subject = TaskRow(worktree, worktree, "feat/card-task-04228bff", AgentTaskRole.Code);
             w.Review = TaskRow(w.Root, worktree, "feat/review-fixture", AgentTaskRole.Review);
@@ -323,7 +343,7 @@ public partial class AdvisoryChangePolicyTests
                 StorageRoot = Path.Combine(Root, "retained"),
                 ValidatorScript = Path.Combine(Repository, "scripts", "validate-checkpoint-receipt.ps1"),
                 Producers = [new(Request.ProducerIdentity, Path.Combine(ProducerRoot, "producer-pack-index.json"),
-                    Request.BundleDigest, Request.RepositoryPath, Repository)] }));
+                    Request.BundleDigest, Request.RepositoryPath, SelectionRepository)] }));
             services.AddSingleton<TimeProvider>(TimeProvider.System);
             services.AddSingleton<LandDeliveryBoundary>();
             services.AddScoped<ICheckpointReceiptValidator, CheckpointReceiptValidator>();
@@ -334,7 +354,7 @@ public partial class AdvisoryChangePolicyTests
         public async ValueTask DisposeAsync()
         {
             _client?.Dispose(); if (_app is not null) await _app.DisposeAsync();
-            await _schema.DisposeAsync(); Directory.Delete(Root, true);
+            await _schema.DisposeAsync(); GitFixtureCleanup.Delete(Root);
         }
     }
 }

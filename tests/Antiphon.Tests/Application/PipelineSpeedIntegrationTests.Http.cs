@@ -174,8 +174,6 @@ public sealed partial class PipelineSpeedIntegrationTests
         }
     }
 
-    // Split from C1281_WiredRoundtrip so the pack-free delivery half still runs on a clone
-    // without the CARD-1281 producer pack (CARD-1415).
     [Test]
     public async Task C1281_WiredRoundtripDelivery()
     {
@@ -318,7 +316,7 @@ public sealed partial class PipelineSpeedIntegrationTests
                     settings.ValidatorScript = Path.Combine(correction.Repository, "scripts", "validate-checkpoint-receipt.ps1");
                     settings.Producers = [new(correction.Request.ProducerIdentity,
                         Path.Combine(correction.ProducerRoot, "producer-pack-index.json"), correction.Request.BundleDigest,
-                        correction.Request.RepositoryPath, correction.Repository)];
+                        correction.Request.RepositoryPath, correction.SelectionRepository)];
                 });
         }
     }
