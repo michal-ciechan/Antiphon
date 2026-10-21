@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -196,6 +197,150 @@ public sealed class AgentSessionCancelledTurnTests
     }
 
     [Test]
+    public async Task C1382_Rearm_saved_turn_end_before_processing_survives_idle()
+    {
+        await using var world = await EchoWorld.OpenAsync();
+        var session = await world.StartCancelledAsync();
+        world.Clock.Advance(TimeSpan.FromMinutes(1));
+        await world.PersistAsync(session, "Continue after interruption");
+        world.Clock.Advance(TimeSpan.FromSeconds(2));
+        await world.PersistAsync(session, "The follow-up is complete.", TranscriptKinds.AssistantText);
+        await world.PersistAsync(session, null, TranscriptKinds.TurnEnd, TranscriptKinds.StopReasons.EndTurn);
+        world.Clock.Advance(TimeSpan.FromMilliseconds(50));
+        await world.DrainAsync(session);
+
+        var ended = await world.ReloadAsync(session);
+        ended.Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+        ended.Attempt.CompletedAt.ShouldBeNull();
+        ended.Session.Status.ShouldBe(SessionStatus.Running);
+        await AssertUnscannedAsync(world, session);
+    }
+
+    [Test]
+    public async Task C1382_Rearm_saved_interrupt_before_processing_returns_to_input()
+    {
+        await using var world = await EchoWorld.OpenAsync();
+        var session = await world.StartCancelledAsync();
+        world.Clock.Advance(TimeSpan.FromMinutes(1));
+        await world.PersistAsync(session, "Continue after interruption");
+        world.Clock.Advance(TimeSpan.FromSeconds(2));
+        await world.PersistAsync(session, "[Request interrupted by user]");
+        world.Clock.Advance(TimeSpan.FromMilliseconds(50));
+        await world.DrainAsync(session);
+
+        (await world.ReloadAsync(session)).Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+        await AssertUnscannedAsync(world, session);
+    }
+
+    [Test]
+    public async Task C1382_Rearm_follow_up_saved_before_turn_end_still_arms()
+    {
+        await using var world = await EchoWorld.OpenAsync();
+        var session = await world.StartCancelledAsync();
+        world.Clock.Advance(TimeSpan.FromMinutes(1));
+        await world.PersistAsync(session, "Continue after interruption");
+        world.Clock.Advance(TimeSpan.FromSeconds(2));
+        await world.PersistAsync(session, null, TranscriptKinds.TurnEnd, TranscriptKinds.StopReasons.EndTurn);
+        world.Clock.Advance(TimeSpan.FromSeconds(1));
+        await world.PersistAsync(session, "Ask the next question");
+        world.Clock.Advance(TimeSpan.FromMilliseconds(50));
+        world.Events.Clear();
+        await world.DrainAsync(session);
+
+        PhaseChanges(world).ShouldBe(
+        [
+            nameof(RunPhase.StreamingTurn),
+            nameof(RunPhase.AwaitingInput),
+            nameof(RunPhase.StreamingTurn)
+        ]);
+        (await world.ReloadAsync(session)).Attempt.Phase.ShouldBe(RunPhase.StreamingTurn);
+
+        world.Clock.Advance(TimeSpan.FromSeconds(1));
+        await world.PersistAsync(session, null, TranscriptKinds.TurnEnd, TranscriptKinds.StopReasons.EndTurn);
+        await world.DrainAsync(session);
+        (await world.ReloadAsync(session)).Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+        await AssertUnscannedAsync(world, session);
+    }
+
+    [Test]
+    public async Task C1382_Rearm_previous_turn_end_does_not_end_current_turn()
+    {
+        await using var world = await EchoWorld.OpenAsync();
+        var session = await world.StartCancelledAsync();
+        await ArmRealPromptAsync(world, session);
+        world.Clock.Advance(TimeSpan.FromSeconds(1));
+        await world.PersistAsync(session, null, TranscriptKinds.TurnEnd, TranscriptKinds.StopReasons.EndTurn);
+        await world.DrainAsync(session);
+        var previousEnd = await world.LatestTurnEndSequenceAsync(session);
+        (await world.ReloadAsync(session)).Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+
+        await ArmRealPromptAsync(world, session);
+        var armed = await world.ReloadAsync(session);
+        armed.Attempt.Phase.ShouldBe(RunPhase.StreamingTurn);
+        var armedAt = armed.Attempt.PhaseStartedAt;
+
+        // The previous turn's row keeps its sequence and is persisted again after this
+        // re-arm, so its save clock is newer than PhaseStartedAt.
+        world.Clock.Advance(TimeSpan.FromSeconds(1));
+        await world.ReplayTurnEndAsync(session, previousEnd);
+        await world.DrainAsync(session);
+        var held = await world.ReloadAsync(session);
+        held.Attempt.Phase.ShouldBe(RunPhase.StreamingTurn);
+        held.Attempt.PhaseStartedAt.ShouldBe(armedAt);
+        held.Session.Status.ShouldBe(SessionStatus.Running);
+
+        world.Clock.Advance(TimeSpan.FromSeconds(1));
+        await world.PersistAsync(session, null, TranscriptKinds.TurnEnd, TranscriptKinds.StopReasons.EndTurn);
+        await world.DrainAsync(session);
+        (await world.ReloadAsync(session)).Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+        await AssertUnscannedAsync(world, session);
+    }
+
+    [Test]
+    public async Task C1382_Rearm_non_end_turn_stop_returns_to_awaiting_input()
+    {
+        await using var world = await EchoWorld.OpenAsync();
+        var sessions = new List<LiveAttempt>();
+        foreach (var reason in new string?[] { "max_tokens", "error", "stop_sequence", "refusal", null })
+        {
+            var session = await world.StartCancelledAsync();
+            sessions.Add(session);
+            await ArmRealPromptAsync(world, session);
+            world.Clock.Advance(TimeSpan.FromSeconds(1));
+            await world.PersistAsync(session, null, TranscriptKinds.TurnEnd, reason);
+            await world.DrainAsync(session);
+            var ended = await world.ReloadAsync(session);
+            ended.Attempt.Phase.ShouldBe(RunPhase.AwaitingInput, reason ?? "null");
+            ended.Attempt.CompletedAt.ShouldBeNull();
+            ended.Session.Status.ShouldBe(SessionStatus.Running);
+        }
+
+        await AssertUnscannedAsync(world, sessions.ToArray());
+    }
+
+    [Test]
+    public async Task C1382_Rearm_pre_deploy_slash_prompt_is_not_killed()
+    {
+        await using var world = await EchoWorld.OpenAsync();
+        var session = await world.StartCancelledAsync();
+        (await world.ReloadAsync(session)).Attempt.PhaseDurationsJson.ShouldContain("OpenInputWait");
+        await world.RemoveOpenInputWaitAsync(session);
+        (await world.ReloadAsync(session)).Attempt.PhaseDurationsJson.ShouldNotContain("OpenInputWait");
+
+        world.Clock.Advance(TimeSpan.FromMinutes(1));
+        await world.PersistAsync(session, "/status");
+        await world.DrainAsync(session);
+        await world.PersistAsync(session, "<command-name>/status</command-name>");
+        await world.DrainAsync(session);
+
+        var restored = await world.ReloadAsync(session);
+        restored.Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+        restored.Attempt.PhaseStartedAt.ShouldBe(session.PhaseStartedAt);
+        restored.Session.Status.ShouldBe(SessionStatus.Running);
+        await AssertUnscannedAsync(world, session);
+    }
+
+    [Test]
     public async Task C1382_Order_real_prompt_only_and_wrapper_only()
     {
         await using var world = await EchoWorld.OpenAsync();
@@ -262,6 +407,12 @@ public sealed class AgentSessionCancelledTurnTests
         armed.Attempt.PhaseDurationsJson.ShouldContain("\"AwaitingInput\"");
         return at;
     }
+
+    private static List<string> PhaseChanges(EchoWorld world) =>
+        world.Events.PublishedEvents
+            .Where(e => e.EventName == "RunAttemptChanged")
+            .Select(e => e.Payload.GetType().GetProperty("phase")?.GetValue(e.Payload) as string ?? "")
+            .ToList();
 
     private static async Task AssertUnscannedAsync(EchoWorld world, params LiveAttempt[] sessions)
     {
@@ -578,6 +729,53 @@ public sealed class AgentSessionCancelledTurnTests
 
         public Task DrainAsync(LiveAttempt session) =>
             Actions.DrainPageAsync(session.SessionId, CancellationToken.None);
+
+        public async Task<long> LatestTurnEndSequenceAsync(LiveAttempt session)
+        {
+            await using var db = new AppDbContext(DbOptions);
+            return await db.TranscriptEntries
+                .Where(t => t.AgentSessionId == session.SessionId && t.Kind == TranscriptKinds.TurnEnd)
+                .MaxAsync(t => t.Sequence);
+        }
+
+        public async Task ReplayTurnEndAsync(LiveAttempt session, long sequence)
+        {
+            await using var db = new AppDbContext(DbOptions);
+            var row = await db.TranscriptEntries.SingleAsync(t =>
+                t.AgentSessionId == session.SessionId && t.Sequence == sequence && t.Kind == TranscriptKinds.TurnEnd);
+            var now = Clock.GetUtcNow().UtcDateTime;
+            row.CreatedAt = now;
+            var pending = await db.SessionRuntimeActions
+                .Where(a => a.AgentSessionId == session.SessionId && a.Sequence == sequence && a.TriggerKind == "transcript")
+                .ToListAsync();
+            db.SessionRuntimeActions.RemoveRange(pending);
+            var generation = await db.AgentSessions.Where(s => s.Id == session.SessionId)
+                .Select(s => s.StartedAt).SingleAsync();
+            db.SessionRuntimeActions.Add(new SessionRuntimeAction
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = session.SessionId,
+                TranscriptEntryId = row.Id,
+                AcceptedGeneration = generation,
+                Sequence = row.Sequence,
+                ProducerSequence = row.Sequence,
+                TriggerKind = "transcript",
+                CreatedAt = now,
+                DueAt = now
+            });
+            await db.SaveChangesAsync();
+        }
+
+        public async Task RemoveOpenInputWaitAsync(LiveAttempt session)
+        {
+            await using var db = new AppDbContext(DbOptions);
+            var attempt = await db.RunAttempts.SingleAsync(a => a.Id == session.AttemptId);
+            var durations = JsonSerializer.Deserialize<Dictionary<string, double>>(attempt.PhaseDurationsJson)
+                ?? new Dictionary<string, double>();
+            durations.Remove("OpenInputWait");
+            attempt.PhaseDurationsJson = JsonSerializer.Serialize(durations);
+            await db.SaveChangesAsync();
+        }
 
         public async Task<Reloaded> ReloadAsync(LiveAttempt session)
         {
