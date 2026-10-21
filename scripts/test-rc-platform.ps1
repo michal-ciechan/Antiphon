@@ -339,6 +339,8 @@ function Test-C1323_PlatformExecution {
 function Test-C1415_SkipExclusions {
     # CARD-1415: the shipped rc policy excludes exactly the by-design skipped identities, so a
     # Windows rc launch never runs them and its census stays complete; siblings stay required.
+    # CARD-1425: the CARD-1281 producer-pack cases run from an in-test fixture, so they are
+    # required on every platform and only the two Windows-only rows remain.
     . "$PSScriptRoot/lib/nightly-tests-impl.ps1"
     $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
     $ns = 'Antiphon.Tests.Application'
@@ -361,7 +363,7 @@ function Test-C1415_SkipExclusions {
     $pack = @($nodes | Where-Object { $_.Method -cin @('C1303_R12_LandRefusesUnavailableCorrectedEvidence', 'C1281_ReceiptCorrection', 'C1281_IncompleteNeverClean', 'C1281_B1Authorization', 'C1281_B1ReceiptImport', 'C1281_B1CorrectionTransaction', 'C1281_WiredRoundtrip') } | ForEach-Object Uid)
     $windowsOnly = @($nodes | Where-Object { $_.Method -cin @('C1213_RemoteSourceLandingKeepsLegacyIdentity', 'a_git_timeout_fails_one_task_not_the_tick') } | ForEach-Object Uid)
     $rows = @($shipped.Object.profiles.rc.exclusions | Where-Object owner -ceq 'CARD-1415')
-    Assert-C1323 ($rows.Count -eq 4 -and @($rows | Where-Object { [string]::IsNullOrWhiteSpace($_.reason) -or $_.suite -cne 'antiphon' -or @($_.methods).Count -eq 0 }).Count -eq 0) 'c1415-four-method-scoped-rows' ($rows | ConvertTo-Json -Depth 4 -Compress)
+    Assert-C1323 ($rows.Count -eq 2 -and @($rows | Where-Object platform -cne 'windows').Count -eq 0 -and @($rows | Where-Object { [string]::IsNullOrWhiteSpace($_.reason) -or $_.suite -cne 'antiphon' -or @($_.methods).Count -eq 0 }).Count -eq 0) 'c1415-two-method-scoped-rows' ($rows | ConvertTo-Json -Depth 4 -Compress)
     $missing = @()
     foreach ($row in $rows) {
         foreach ($m in @($row.methods)) {
@@ -370,9 +372,10 @@ function Test-C1415_SkipExclusions {
         }
     }
     Assert-C1323 ($missing.Count -eq 0) 'c1415-excluded-methods-exist' ($missing -join ',')
+    $packLaunched = @()
     foreach ($platform in @('windows', 'linux')) {
         $exclusions = @(Get-NightlyProfileExclusions $shipped.Object 'rc' 'antiphon' -Platform $platform)
-        $expected = if ($platform -eq 'windows') { @($pack + $windowsOnly) } else { $pack }
+        $expected = if ($platform -eq 'windows') { $windowsOnly } else { @() }
         $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $exclusions -ProfileAware
         $excluded = @($census.Excluded | ForEach-Object { $_.uid })
         Assert-C1323 ((Same-C1323Set $excluded $expected) -and @($census.Excluded | Where-Object owner -cne 'CARD-1415').Count -eq 0) "c1415-$platform-excludes-exactly" ($excluded -join ',')
@@ -385,15 +388,18 @@ function Test-C1415_SkipExclusions {
         }
         $required = @($nodes.Uid | Where-Object { $expected -cnotcontains $_ })
         Assert-C1323 (Same-C1323Set $launched $required) "c1415-$platform-launches-only-required" ($launched -join ',')
+        $packLaunched += @($pack | Where-Object { $launched -ccontains $_ } | ForEach-Object { "$platform/$_" })
         # The executor reports only launched cases; all passing leaves no skipped row.
         $terminal = @($launched | ForEach-Object { [pscustomobject]@{ Identity = $_; Outcome = 'Passed' } })
         $verdict = ConvertTo-NightlyCoverageVerdict -TerminalRows $terminal -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash
         Assert-C1323 ($verdict.coverageComplete -and $verdict.testsPassed -and $verdict.skipped -eq 0) "c1415-$platform-census-complete" ($verdict | ConvertTo-Json -Compress)
     }
+    # CARD-1425: all nine producer-pack cases are launched on both platforms.
+    Assert-C1323 ($pack.Count -eq 9 -and $packLaunched.Count -eq 18) 'c1425-pack-methods-required' ($packLaunched -join ',')
     # Control: the same identities run and skipped (no exclusion) leave the census incomplete.
-    $skipped = @($nodes | ForEach-Object { [pscustomobject]@{ Identity = $_.Uid; Outcome = $(if (@($pack + $windowsOnly) -ccontains $_.Uid) { 'Skipped' } else { 'Passed' }) } })
+    $skipped = @($nodes | ForEach-Object { [pscustomobject]@{ Identity = $_.Uid; Outcome = $(if ($windowsOnly -ccontains $_.Uid) { 'Skipped' } else { 'Passed' }) } })
     $control = ConvertTo-NightlyCoverageVerdict -TerminalRows $skipped -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash
-    Assert-C1323 (-not $control.coverageComplete -and $control.skipped -eq 11) 'c1415-launched-skips-stay-incomplete' ($control | ConvertTo-Json -Compress)
+    Assert-C1323 (-not $control.coverageComplete -and $control.skipped -eq 2) 'c1415-launched-skips-stay-incomplete' ($control | ConvertTo-Json -Compress)
 }
 
 try {

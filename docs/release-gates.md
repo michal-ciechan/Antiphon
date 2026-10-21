@@ -156,16 +156,17 @@ Linux because their fixture requires Windows ConPTY/native FakeGrok. These count
 describe the required roster, not an execution receipt. Linux results do not discharge
 any Windows obligation; there is no cross-host receipt merger or new profile.
 
-CARD-1415 adds four method-scoped `antiphon` rows for cases that skip by design, because a
-launched skip leaves the census incomplete. On every platform: the five
-`AdvisoryChangePolicyTests` correction cases and the four `PipelineSpeedIntegrationTests`
-methods that build or call them (`C1281_B1Authorization`, `C1281_B1ReceiptImport`,
-`C1281_B1CorrectionTransaction`, `C1281_WiredRoundtrip`), which need the untracked CARD-1281 producer
-pack until a tracked fixture replaces it. On Windows only: `C1213_RemoteSourceLandingKeepsLegacyIdentity`
-(POSIX runner paths) and `a_git_timeout_fails_one_task_not_the_tick` (the sh hook does not delay
-`git worktree add` under Git for Windows). Their siblings `C1213_SourceLandingKeepsLegacyIdentity`
-and `C1281_WiredRoundtripDelivery` stay required. `test-rc-platform.ps1 -Case C1415_SkipExclusions`
-checks the shipped rows.
+CARD-1415 keeps two Windows-only, method-scoped `antiphon` rows for cases that skip by design
+there, because a launched skip leaves the census incomplete:
+`C1213_RemoteSourceLandingKeepsLegacyIdentity` (POSIX runner paths) and
+`a_git_timeout_fails_one_task_not_the_tick` (the sh hook does not delay `git worktree add` under
+Git for Windows). Their sibling `C1213_SourceLandingKeepsLegacyIdentity` stays required. Since
+CARD-1425 the nine CARD-1281 producer-pack cases (five `AdvisoryChangePolicyTests` correction cases
+and `C1281_B1Authorization`, `C1281_B1ReceiptImport`, `C1281_B1CorrectionTransaction`,
+`C1281_WiredRoundtrip` in `PipelineSpeedIntegrationTests`) run from the deterministic in-test
+`C1281ProducerPackFixture`, whose inventory digest is pinned, and are required on every platform.
+`test-rc-platform.ps1 -Case C1415_SkipExclusions` checks the shipped rows and that the pack cases
+are launched on both platforms.
 
 The default/full `verify-dev-stack.ps1` smoke belongs on the Windows Aspire desktop:
 its `antiphon-postgres` check concerns that desktop stack, not an isolated runner
