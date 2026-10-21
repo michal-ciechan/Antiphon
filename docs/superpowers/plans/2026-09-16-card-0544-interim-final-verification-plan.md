@@ -1521,3 +1521,597 @@ TestDesign for the amended dormant scope; CARD-0545 is a separate future commiss
 next: test-design
 handoff: Finish TD-F1 PCs using the shared CARD-0481 Completion outbox and rendering contract; retain all IDs, assign the 13 TD-F2 notification controls and S5 to CARD-0545, expand completion regression/guard coverage and recost. Hand off only dormant CARD-0544 Code; Interim activation remains blocked on CARD-0545 qualification and S6.
 artifact: docs/superpowers/plans/2026-09-16-card-0544-interim-final-verification-plan.md
+
+## Verification design - D-9/D-10 completion
+
+TestDesign task **cd2866b8**, 2026-09-16; inspected **0c99f7e6**. This appendix
+finishes verification for the landed design; it does not revise D-1..D-10. It
+supersedes the historical TestDesign's unresolved-seam disposition, delivery DL-2,
+execution inventory and Cost. All original V/R and G/PC IDs remain in the document.
+The earlier inspection is attributed to task 1193e4ae; the additional body reads
+below are this dispatch's own inspection.
+
+**Code-ready scope is dormant CARD-0544 S1-S4 only.** Ship
+`InterimVerificationSettings.Enabled=false`, retain FullOnly card defaults and
+existing final-review latches. CARD-0545 owns the 13 transferred controls and S5.
+CARD-0544 S6 remains a later explicit commission, conditional on accepted CARD-0545
+qualification. Offline readiness fixtures confer no production permission. Names
+beginning C544 remain tests for Code to implement; no test or PC passed in this
+document-only task. Code and independent Review run the full ordinary floor.
+
+### Inspection
+
+| Additional test/fixture bodies read | Boundaries -> V/R IDs or exclusion |
+|---|---|
+| AgentTaskLandNotificationPersistenceTests, AgentTaskLandNotificationRecoveryTests and AgentTaskLandReceiptTests: complete bodies, including migration replay, terminal save cuts, recovered destination/digest mismatches, false receipts, stopped callers and retention | Existing non-Completion immutable Body, unique event/queue identities, true transaction rollback and receipt floors -> V-13..17, R-9..13. Keep the historical spilled-land-note refusal. |
+| ReceiptFailureDeliveryTests: VerifyCallerFailureAsync, VerifyDeliveryAsync, both interceptors and CreateProvider; CheckNoteDeliveryHandoffTests: Handoff, whole-note/brief assertions and both dispatched busy/eligible tests | Real producer/queue/recipient chain, lost insert/ACK, retained adapter across provider recreation, caller Stopped/Failed after receipt -> V-14, R-10. An interceptor exception plus recreation is not an abrupt process crash. |
+| AgentTaskReplyIntegrationTests: initial liveness/release tests, NewDeliveryFactory, AttachTerminal, SeedParentHistoryAsync, AssertParentReceivedNoteAsync, CreateService, SeedDispatchedTaskAsync, SeedFollowUpTaskAsync, SeedSessionAsync, SeedTurnAsync and TestScopeFactory; AgentTaskSettlementRaceTests: BuildHarness, FlushingSessionStopper and SeedSharedTaskAsync | Settlement through OnTurnEndAsync, observable parent history and release ownership -> V-13/14. Helpers default to Docs/Shared and the shared DB; do not copy those defaults into version-1 Code/Review tests. |
+| BridgeQueueHarness: complete graph/options, OnSubmitted, transcript/working/generation helpers, runner and disposal; TestDbFixture and DelegationTestServices: complete bodies | Own DB clone, real services, terminal substitute, pre-attempt transcript floor -> V-13..17. BridgeQueueHarness.DisposeAsync deletes rows/files, so it cannot represent just a server restart. |
+| OutputDistillationProducerTests, OutputDistillationDeliveryTests (including DeliveryFixture), OutputDistillationApplyRaceTests, OutputDistillationDeadlineTests, OutputDistillationCleanupTests, PolledCompletionNoteShrinkTests and OutputDistillationHarness: complete bodies | Apply/Shadow/off, original deadline, poll/apply/send races, canonical raw storage, headers, UTF-8 ceilings and same-root batch -> V-15/16, R-11/12. Several helpers hard-code the shared database or directly settle the model task; record those substitutes. |
+| DataRetentionServiceTests: transcript/queue tests through A_swept_parked_row_is_pruned_after_the_queued_message_retention_window, C508 intent/session/transcript/task-tree and notification-tree tests, CreateService and seeding/cleanup helpers; AgentReportStoreTests and ReportWorkspace: complete bodies | Independent queue/transcript/session/task/file custody and exact raw-byte hash versus normalized digest -> V-17, R-13. ReportWorkspace intentionally uses a persistent owned Git root; a temp-root report would fail custody before the intended assertion. |
+| DispatchBaseNotificationTests: lost-ACK, retry, payload/destination, states, NewIntent/seed helpers and CreateProvider | Shared scanner compatibility and no alternate caller -> V-14/17, R-10. Full class remains regression coverage; no claim that its projection-only tests prove recipient delivery. |
+| SessionMessageQueueSpillTests: inline/spill, channel batch, file-write failure, Now-mode bodies and ObservableHarnessAsync; SessionMessageQueueWedgedHeadTests: fixture, generation capture/refund, same/changed/legacy generation, replayed marker and failed Enter-only charge bodies | Completion must fail closed on failed spill publication while ordinary UI/channel fallback retains its existing contract; retry must use the original generation/composer rules -> V-15/16, R-12. |
+| SessionMessageQueuePtyIntegrationTests: Queued_message_submits_through_the_real_runtime_runner_pty_path, Batched_multiline_body_passes_composer_delivery_verification_and_submits_once, BuildProviderWithVerification, StartSwallowingFakeAsync, SeedIdleClaudeSessionAsync, transcript readers/pump and cleanup; PostLandMutationDeliveryWorker: complete body | Real local runner/ConPTY/FakeClaude transcript capstone and owned child crash pattern -> V-14/16. FakeClaude is not a real provider/model and the pump substitutes runner-to-server ingestion. |
+| Production AgentTaskReplyService settlement/event construction, PersistDeliverThenReleaseAsync, TaskAlreadyPersistedAsync and DeliverToParentAsync; notification service/scanner, CompletionNoteWorkHostedService, CompletionNoteStamp, HasCompletionNoteAsync; queue apply/poll/batch/attempt code, DataRetentionService and AgentReportStore | Concrete D-9 seams for all new controls. Status-only fallback, root-level stamps and current task Result are insufficient settlement identities. |
+
+Missing setup, explicitly assigned to Code:
+
+1. Add `tests/Antiphon.Tests/TestHelpers/VerificationRoundCompletionFixture.cs`
+   using the inspected BridgeQueueHarness/DeliveryFixture/ReportWorkspace patterns.
+   Pass one `CreateIsolatedSchemaAsync` connection to **every** producer, scanner,
+   queue, report-store consumer, observer and child. Keep the clone, owned files,
+   destination identity and adapter outside the recreatable service provider.
+   Register the real reply service, TaskCompletionNotification, notification
+   service/hosted scanner, CompletionNoteWorkHostedService, queue, report store,
+   distiller and `AddDelegationWorktreeGraph`, plus the new readiness/policy graph.
+   Use real version-1 Code/Worktree and Review/ReadOnly task profiles. Give Code
+   attributable fixture progress so CompletedWithoutProgress cannot mask a test.
+2. Seed a marked report and invoke OnTurnEndAsync; do not seed the expected
+   Completion obligation, settlement event, StageOutcome or positive receipt.
+   Fault tests may alter a committed row or insert adversarial receipt evidence,
+   but delivery acceptance always comes from actual submission. Selectively seed
+   legacy/other-kind rows only for negative compatibility tests. The canceled
+   report token currently has no separate normal terminal settlement: cancellation
+   before a report owes no invented report. If Code exposes a reported-canceled
+   path, add it to the same applicability and atomicity rows before Review.
+3. Intercept task/outcome/event/notification saves and transaction commit separately.
+   A fault after SaveChanges inside a transaction must be observed through another
+   connection before rollback/retry; tracker entries alone do not establish atomicity.
+   Reuse LandDeliveryBoundary for before-enqueue, queue-inserted, dropped completion
+   wakeup, queue-before-typing, queue-before-verdict and receipt-before-save. Add
+   fixture-local save/commit and file-publication barriers for the remaining cuts.
+   Barriers select task/notification IDs and fire once; no timing-only race.
+4. Add `tests/Antiphon.Tests/TestHelpers/VerificationRoundCompletionCrashWorker.cs`
+   following PostLandMutationDeliveryWorker. Launch an inherited local child with
+   the owned connection/root and exact cut ID; wait for its durable ready marker,
+   terminate that owned child, await exit and both output drains, then restart the
+   production services over retained state. Do not call graceful Stop/Dispose to
+   simulate abrupt loss. Native receipt comes from the child-written JSONL, not a
+   queue row copied to TranscriptEntries. No external executor or production runner.
+5. Queue time uses System or a real-time offset; direct deadline predicates can use
+   FakeTimeProvider with controlled timer advancement. Persist the original request
+   deadline even when the completion queue insert has not happened. Distiller replies
+   are controlled model outputs through the real RequestAsync/apply path; restarting
+   recovery never starts a replacement model call. A report-store fault must leave
+   the raw snapshot available even if the canonical file was never written.
+6. The new S/Q/H methods below use the original exact class/file aliases and one
+   `[Test]` method per name, with named internal rows rather than `[Arguments]`.
+   Q/child/native cases carry the assembly ProcessSpawnLimit; queue cases use the
+   MessageQueue serialization group. Global shared-store regression fixtures retain
+   their existing serialization. Build/stage FakeClaude and the local runner for the
+   native capstone. A missing native prerequisite is pending acceptance, not a pass.
+7. H extends the trusted qualification receipt fixture with accepted Windows-hop
+   outage/recovery, independent Windmill outage/recovery, authorized recipient
+   evidence and watchdog-loss detection qualification. These are consumer-contract
+   fixtures only. Do not implement CARD-0545's deferred adapter methods or populate a
+   production receipt using test data. No second outbox, scanner or TTL is introduced.
+
+### Delivery inventory
+
+DL-1 and DL-3 retain the earlier producer-to-recipient requirements. DL-4 retains
+local native/job/clock parsing on CARD-0544; its independent-outage portion moves to
+CARD-0545. **All DL-5 and notification/outage V-10 cases move to CARD-0545**, including
+busy/eligible recipients and every persistence cut. V-11/S5 moves with them. DL-6
+remains CARD-0544's fail-closed readiness consumer, strengthened by V-18 below.
+
+DL-2 is now the following concrete chain. Durable identity throughout is
+`(settlement SourceEventId, notification.Id, task.Id, snapshotted ParentSessionId,
+normalized raw-result ContentDigest)`; retain the independent exact UTF-8 raw hash,
+StageOutcome ID, profile version and selected artifact revision as evidence. An
+identical result in a later settlement has a new event/obligation. RootTaskId is
+the conversation/batching key, never the deduplication authority.
+
+| Path / producer -> destination | Persistence, recovery and recipient evidence |
+|---|---|
+| DL-2a: AgentTaskReplyService -> Completion outbox | Save terminal task/result, the exact retained settlement event, StageOutcome where applicable and CompletionSnapshotJson in one transaction. Notification Body is immutable raw fallback. Pre-commit loss leaves none of that settlement durable; retry produces one obligation. A post-commit crash leaves a discoverable obligation. S.C544_CompletionObligationAtomic/CompletionEventIdentity/CompletionPersistedFallback. |
+| DL-2b: immediate ReconcileAsync and AgentTaskLandNotificationHostedService -> session queue | Both use the same notification ID as SourceLandNotificationId, the snapshotted destination/header, raw digest and task root key. Recover before-insert loss, rejected insert, lost ACK, failed outbox link and dropped wakeup. Discover and validate an existing keyed row before gating new input on caller availability. Queue insertion and stamps are not receipt. Q.C544_CompletionRecovery/CompletionQueueIdentity/CompletionStoppedReceipt and V-14's full cut matrix. |
+| DL-2c: raw/distiller/authenticated poll -> pending queue rendering -> caller | Only Completion is newly eligible for these keyed rendering paths. Before first input persist logical note, exact composed wire text/hash, member IDs, spill identity, attempt floor and generation together. Apply/poll may replace only a never-attempted pending note. On restart use an accepted rendering, otherwise raw at the original deadline; no new model call. Q.C544_CompletionReceipt and the V-15/16 methods carry each variant through the actual queue. |
+| DL-2d: report store/spill writer -> recipient workspace -> pointer UserPrompt | Whole composed spill and exact raw report remain independently identified. Failed publication permits zero completion typing. Confirm a pointer only with its complete committed wire UserPrompt plus the exact referenced file/hash at the recipient. Regenerate a lost raw report from the immutable settlement snapshot through AgentReportStore before publishing a new reference. Missing required file evidence remains unresolved. Q.C544_CompletionSpillPublication/CompletionPointerContent/CompletionReportReference/CompletionMissingFile. |
+| DL-2e: recipient transcript/catch-up -> notification receipt -> retention | Catch up the original caller even after Stopped/Failed. Confirm only a complete committed wire UserPrompt beyond the attempt floor; preserve receipt/event identity after queue pruning. Crash before receipt save reuses the original evidence and cannot retype. Unresolved queue, transcript, session, snapshot, raw report and spill survive pruning. Q.C544_CompletionRecovery, V-17 and PC-144..154/158. |
+
+Delivery matrix M is **12 rows**: busy/eligible x Raw/Distilled/Polled x Inline/Spill.
+Busy means a prior ended turn followed by actual AssistantText with no TurnEnd;
+eligible means prior history already ended. First assert zero typing while busy;
+then finish that turn and let the real worker/queue deliver. An eligible recipient
+must progress without a new artificial TurnEnd. For every row independently read
+the complete destination UserPrompt, timestamp/sequence, queue floor/generation,
+rendering and file identities. For a batch, compare the whole composed prompt,
+not just one member contained in it. Flattened newline receipt is a separate
+positive normalization case; ID-only, head-only and head/tail splice are negative.
+
+Q.C544_CompletionRecovery runs M at each of these **eight post-commit cuts**
+(96 checked rows): (1) obligation committed before Reconcile; (2) queue insert
+rejected; (3) queue committed but ACK lost; (4) queue committed but outbox link save
+fails; (5) link committed but wakeup lost; (6) wire/attempt committed before typing;
+(7) whole prompt observed before queue verdict save; (8) queue verdict committed
+before notification receipt save. Each recovers twice. Cuts 1 and 8 also use abrupt
+child loss in Q.C544_CompletionCrashProcess (4 rows: both recipient states at each
+cut); cuts 2..7 use faults plus provider recreation. File publication/attempt commit
+cuts and distiller apply/poll races are V-15/16. Atomic pre-commit cuts are S's job.
+Controls distinguish these substitutes; a caught exception alone proves no crash.
+
+The final receipt assertion is always **one matching complete UserPrompt in the
+snapshotted caller after the attempt floor**, with exact spill/raw-report readback
+where required. An accepted request, queue insert, task terminal event, polling,
+distiller ledger, Sent, screen or transport ACK must never satisfy it. Before
+submission each notification must have null ConfirmedAt/ConfirmingPromptSequence.
+Summary receipt proves the summary/header/pointer reached the caller, not that the
+full report was read or that its instructions were obeyed. BridgeQueueHarness's
+adapter proves service composition with controlled terminal evidence; the native
+capstone proves local ConPTY/FakeClaude bytes and JSONL. Neither qualifies a real
+provider, Windmill independence, live recipient adapter or S5/S6. Test-design Review
+must reject producer-only or transport-only acceptance.
+
+### Proves it works now
+
+V-1..9 and V-12 keep their earlier behavioral assertions. V-4 now uses DL-2a..e;
+TD-F1 is resolved by D-9, not excluded. V-10 on CARD-0544 is only N's production-job
+adapter/local evaluator contract. R-8/V-11 operational receipt remain required on
+CARD-0545. Every method in the PC tables is also an ordinary unmutated V/R test.
+
+- V-13: atomic completion identity | isolated PostgreSQL + real OnTurnEndAsync |
+  all S methods in PC-102..112 plus S.C544_CompletionMigration | Code/Review x
+  Interim/Final x Succeeded/Failed = eight settlements, with/without stage outcome
+  where legal; exact raw/profile/evidence/header snapshot. Fail before intent insert,
+  after SaveChanges before commit and after commit before reconcile. Pre-commit
+  faults leave no terminal result/event/outcome/obligation through a fresh connection.
+  Retrying the same report boundary makes one settlement; explicit Continue/Retry
+  then a new marked turn makes two even for equal text. Add another Completed event
+  during merge-back so a latest-event query fails the exact-event assertion. Migration
+  upgrades from its immediately preceding migration, preserves old rows with null
+  completion JSON and unchanged enum ordinals, then reruns without replay/backfill.
+- V-14: durable recipient recovery | real reply/outbox/scanner/queue |
+  Q.C544_CompletionReceipt, CompletionRecovery, CompletionCrashProcess and all Q
+  methods PC-113..127 | M and eight cuts above, optional checks and distiller absent,
+  stable queue key across restarts, wrong destination/digest independently for both
+  linked/unlinked rows and caller Running/Stopped/Failed. Missing/deleted/null caller
+  never redirects. An old root stamp does not suppress a new settlement. Poison one
+  row before and one after a page boundary; later valid rows still reach recipients.
+  Enqueue failure leaves committed result/outcome intact and existing release custody
+  complete. No sourced-result scan can produce a second ordinary completion.
+- V-15: rendering identity and finite optional work | production distiller/apply,
+  authenticated task poll, queue and actual report files | Q methods PC-128..143 and
+  PC-159/160 | M plus Apply/Shadow/off; absent/closed/full worker, rejected/empty model
+  output; deadline D-1 microsecond, D and D+1 microsecond using PostgreSQL precision;
+  restart before and after accepted apply. Race apply-first/claim-first and poll-first/
+  claim-first under barriers. Poll the old exact report, a later different report,
+  and from a foreign caller; only the matching authenticated old-result poll may
+  shrink that still-unattempted note. Header/profile/evidence/next/final obligation
+  survive raw, distilled, polled, fallback, inline and spill. Retry uses committed
+  wire even after task Result, card policy, current HEAD or current outcome changes.
+- V-16: composed bytes and transcript matching | queue, local runner/ConPTY and
+  receipt service | Q methods PC-138..149/160 and
+  Q.C544_CompletionNativeReceipt | batch same-root two members with distinct settlement
+  IDs; different root, origin and noncontiguous member stay separate. Test composed
+  UTF-8 ceiling B-1/B/B+1 on inbox and modern profiles with multibyte text, LF and CRLF
+  raw text. Every batch member keeps its own logical note plus common wire/membership.
+  Fault first and second member persistence: no partial freeze or typing. File write,
+  rename/publication and attempt-transaction failure leave zero completion input;
+  restart may use only committed rendering. Native method runs busy/eligible x raw
+  inline/distilled spill (4 rows) through settlement, outbox and real queue to owned
+  FakeClaude JSONL, and independently reads transcript and pointed file. No live
+  provider or production runner. The full existing native queue class also runs.
+- V-17: receipt/evidence custody | production reconciliation and retention sweeps |
+  Q methods PC-150..154/158 and S.C544_CompletionMigration | old unresolved Pending,
+  Sent, parked, Truncated and explicitly Canceled rows; expired task/session/transcript
+  windows; unrelated eligible controls still prune. Preserve event/snapshot and
+  receipt identity even when confirmed queue history prunes. Raw files survive
+  worktree removal/provider recreation and later same-task results; same normalized
+  digest with different exact bytes cannot overwrite the old raw file. A confirmed
+  obligation must not resurrect when queue/transcript disappear. No new TTL or
+  silent auto-cancel. Invalid snapshot version and wire hash fail closed.
+- V-18: qualification remains an activation prerequisite | real trusted-file reader |
+  H.C544_QualificationWindowsOutage, QualificationWindmillOutage,
+  QualificationWatchdogLoss plus H.C544_DisabledByDefault/QualificationReceipt and
+  D.C544_QueueReadinessLoss | from an otherwise valid fixture, omit or mark unaccepted
+  each qualification independently; include failure and distinct correlated recovery
+  receipt IDs. Reject missing watchdog-loss/freshness qualification. A fresh monitor
+  and scheduled green cannot rescue any missing acceptance. Final remains available;
+  fixture readiness never flips the shipped disabled setting or card defaults.
+
+### Guards the regression
+
+- R-9: terminal completion escapes its obligation or binds a merge-back event |
+  S.C544_CompletionObligationAtomic/CompletionEventIdentity/CompletionPersistedFallback |
+  fresh-context rollback and exact event/outcome/notification join, not status alone.
+- R-10: committed completion is stranded, redirected or duplicated |
+  Q.C544_CompletionRecovery/CompletionCrashProcess and PC-113..127 methods |
+  unconfirmed before input; same notification/queue IDs and one complete caller
+  prompt after each recovery, including caller stop and disabled optional work.
+- R-11: a late result, policy edit, poll or distillation changes an old completion |
+  S.C544_CompletionSnapshotFacts and Q methods PC-128..137 |
+  immutable profile/raw/header, original deadline, no new model, no post-claim edit.
+- R-12: individual body containment or a pointer falsely certifies the whole batch |
+  Q methods PC-138..149/160 and CompletionNativeReceipt |
+  committed whole wire, all member identities and exact file readback after the floor;
+  invalid evidence stays unconfirmed without retyping an already received prompt.
+- R-13: pruning erases an unresolved obligation or reopens a confirmed one |
+  Q methods PC-150..154/158 | independent retention predicates preserve the named
+  evidence, ordinary unrelated history still prunes, repeated scanners do not resend.
+- R-14: deferred qualification silently becomes permission to enable |
+  H methods PC-155..157 plus existing PC-22/26/35 | missing or unaccepted independent
+  outage/recovery/recipient/watchdog evidence is unready; deployment remains dormant.
+
+### Guard inventory
+
+The original **G-1..101 -> PC-1..101** mappings remain unchanged. The following
+ownership ledger annotates every transferred row; none is dropped, renumbered,
+passed or assigned "none". Their exact type is NightlyVerificationContractTests in
+`tests/Antiphon.Tests/Scripts/NightlyVerificationContractTests.cs`. CARD-0545 must
+finish its concrete adapter/entrypoint design before its own Code; these controls
+are deliberately **outside this dormant Code handoff**, not executable claims here.
+
+| Preserved guard/control | Preserved exact method | Accountable owner / prerequisite |
+|---|---|---|
+| G-78 / PC-78 | C544_IndependentOutage | CARD-0545; independent Windows-hop and Windmill outage detector |
+| G-79 / PC-79 | C544_NotificationIntent | CARD-0545; off-host intent before enqueue |
+| G-80 / PC-80 | C544_NotificationRetry | CARD-0545; retry with original notification identity |
+| G-81 / PC-81 | C544_RecipientEvidence | CARD-0545; recipient observation, never transport acceptance |
+| G-82 / PC-82 | C544_ReceiptNotificationIdentity | CARD-0545; notification correlation |
+| G-83 / PC-83 | C544_ReceiptRunIdentity | CARD-0545; run/outage correlation |
+| G-84 / PC-84 | C544_NotificationCrash | CARD-0545; enqueue/observation crash recovery |
+| G-85 / PC-85 | C544_RecoveryNotification | CARD-0545; distinct correlated recovery receipt |
+| G-86 / PC-86 | C544_AuthorizedDestination | CARD-0545; authorized destination only |
+| G-95 / PC-95 | C544_ReceiptDestination | CARD-0545; production destination readback |
+| G-96 / PC-96 | C544_ReceiptWholeBody | CARD-0545; complete produced payload |
+| G-97 / PC-97 | C544_ReceiptAttemptFloor | CARD-0545; current-attempt observation |
+| G-98 / PC-98 | C544_IndependentState | CARD-0545; durable off-host restart recovery |
+
+G/PC-77, 87, 92, 93 and 94 stay here. PC-94 checks the local evaluator's refusal
+when reportDelivered=false; it does not validate the deferred receipt producer.
+The CARD-0545 owner is tracking card `b1c1ed0b-2608-40e7-99f5-f6587e9ed416`.
+
+Every additional G-n below maps only to PC-n. D-9 is the reference unless D-10 is
+explicitly named. Guards with separate bypass paths (including retention, receipt
+floors, apply versus shrink, destination versus digest) have separate controls.
+
+| Guard | Safety-critical invariant | Positive control |
+|---|---|---|
+| G-102 | Settlement/result/event/outcome cannot commit without its Completion obligation, including earlier helper saves | PC-102 |
+| G-103 | SourceEventId is the exact settlement event, never the latest later Completed | PC-103 |
+| G-104 | Concurrency fallback verifies the committed event/obligation identity, not terminal status alone | PC-104 |
+| G-105 | Snapshot retains exact raw bytes/hash independently of normalized ContentDigest | PC-105 |
+| G-106 | Recovery reads immutable admitted profile/evidence/display facts rather than current mutable task/card data | PC-106 |
+| G-107 | Re-entry of one settlement retains one event/obligation | PC-107 |
+| G-108 | A new explicit Retry/Continue settlement creates a distinct obligation even with equal result/root | PC-108 |
+| G-109 | Only new version-1 Code/Review profiles enter the Completion producer; no historical replay | PC-109 |
+| G-110 | Question/Blocked nonterminal notes cannot create terminal Completion obligations | PC-110 |
+| G-111 | An event owned by another notification producer cannot also mint Completion | PC-111 |
+| G-112 | Non-session reply snapshots owe no session enqueue | PC-112 |
+| G-113 | Missing original destination remains owed; no replacement caller is invented | PC-113 |
+| G-114 | Keyed distillation admits Completion only; other notification kinds retain immutable Body | PC-114 |
+| G-115 | Keyed poll shrinking admits Completion only | PC-115 |
+| G-116 | Kind-aware hold cleanup releases eligible Completion without releasing other keyed kinds | PC-116 |
+| G-117 | Recovered queue destination matches the snapshot, whether the row was linked or rediscovered | PC-117 |
+| G-118 | Recovered queue raw digest matches the snapshot, independently of body/destination equality | PC-118 |
+| G-119 | A missing previously linked queue row is unresolved, never silently replaced | PC-119 |
+| G-120 | Caller Stopped/Failed gates new input but cannot prevent existing-row receipt catch-up | PC-120 |
+| G-121 | A root/task enqueue stamp is not authority to stop unresolved Completion reconciliation | PC-121 |
+| G-122 | Mandatory notification recovery runs without checks or a distiller worker | PC-122 |
+| G-123 | Immediate and recovered enqueue share the unique notification key after lost ACK | PC-123 |
+| G-124 | Recovery repairs check-suppression stamps without declaring receipt | PC-124 |
+| G-125 | Failed enqueue preserves bounded retry/backoff, including the due-time gate | PC-125 |
+| G-126 | One corrupt completion cannot starve later scanner rows/pages | PC-126 |
+| G-127 | Post-commit notification failure preserves terminal result and release ownership | PC-127 |
+| G-128 | Restart never extends the original distillation deadline | PC-128 |
+| G-129 | Restart does not commission another model call for the old obligation | PC-129 |
+| G-130 | An old obligation's distillation cannot borrow a resumed task's different raw report | PC-130 |
+| G-131 | Distillation cannot replace an attempted/claimed completion | PC-131 |
+| G-132 | Poll shrinking cannot replace an attempted/claimed completion | PC-132 |
+| G-133 | Poll shrinking requires the authenticated matching raw-result digest | PC-133 |
+| G-134 | Every authorized rendering preserves the immutable mandatory header/profile/evidence/handoff | PC-134 |
+| G-135 | Rendering and queue attempt/floor commit atomically before any completion bytes | PC-135 |
+| G-136 | Pre-typing rendering validation rejects a payload inconsistent with the snapshot | PC-136 |
+| G-137 | A retry uses the already committed wire payload rather than recomposing | PC-137 |
+| G-138 | A batch member retains its own logical completion note | PC-138 |
+| G-139 | Every batch member persists the same complete wire/membership atomically | PC-139 |
+| G-140 | Failed completion spill publication permits zero typing | PC-140 |
+| G-141 | Pointer receipt validates the exact referenced content/hash | PC-141 |
+| G-142 | A regenerated raw-report reference resolves to the old snapshot, never current task Result | PC-142 |
+| G-143 | Missing/unreadable required report or spill evidence leaves delivery unresolved | PC-143 |
+| G-144 | Only recipient UserPrompt evidence can confirm completion | PC-144 |
+| G-145 | Receipt requires the whole committed wire body, not matching IDs or fragments | PC-145 |
+| G-146 | Sequence receipt must be strictly beyond the queue attempt baseline | PC-146 |
+| G-147 | Null-sequence receipt obeys the attempt-time floor and existing tolerance | PC-147 |
+| G-148 | Enter-only completion retry is confined to the generation that took the typing | PC-148 |
+| G-149 | Late transcript confirmation precedes retyping/recomposition | PC-149 |
+| G-150 | Unresolved keyed completion queue rows survive pruning | PC-150 |
+| G-151 | Unresolved completion protects the destination's whole transcript | PC-151 |
+| G-152 | Completion task tree, event and semantic snapshot survive pruning, including confirmed history | PC-152 |
+| G-153 | Unresolved referenced raw-report and spill files survive lifecycle cleanup | PC-153 |
+| G-154 | Confirmed receipt/event identity prevents resurrection after queue pruning | PC-154 |
+| G-155 | D-10: Windows-hop outage and recovery acceptance is required by the readiness consumer | PC-155 |
+| G-156 | D-10: independent Windmill outage and recovery acceptance is separately required | PC-156 |
+| G-157 | D-10: qualification includes detection of watchdog loss/stale heartbeat | PC-157 |
+| G-158 | Unresolved completion protects the snapshotted destination session independently of mutable task links | PC-158 |
+| G-159 | Unsupported/malformed completion snapshot versions fail closed | PC-159 |
+| G-160 | Committed wire text must agree with its persisted exact hash before receipt | PC-160 |
+
+### Positive controls
+
+Retain original PC-1..101 except the following executable D-9 clarifications.
+PC-70's old direct-enqueue omission is superseded: notification scanning would
+correctly repair it, so it is not a decisive mutation of the new design.
+
+| Control | Compiling production defect | Exact method | Required intended red assertion |
+|---|---|---|---|
+| PC-70 | TaskCompletionNotification: construct a raw fallback without the final-obligation/profile header, keeping valid task/event/digest identity | VerificationRoundDeliveryTests.C544_CompletionReceipt | Independently read caller UserPrompt/logical spill lacks the exact snapshotted mandatory header; equality to the expected admitted profile/header must fail |
+| PC-71 | AgentTaskLandNotificationService.ReconcileAsync: in the Completion enqueue/link arm set State=Confirmed and ConfirmedAt=now before any transcript observation | VerificationRoundDeliveryTests.C544_CompletionRecovery | Immediately after enqueue with submission held, ConfirmedAt.ShouldBeNull and ConfirmingPromptSequence.ShouldBeNull; fail here, before eventual receipt checks |
+
+All rows below specify production changes, not changes to expected test text.
+S/Q/H expand to the exact classes/files defined in the original alias table. The
+exact method column is fully expanded to remove command ambiguity. Start from a
+passing unmutated method and an otherwise-valid fixture; isolate one invalid field
+at a time. PC red must be the named behavioral assertion, never build/discovery or
+fixture failure. Each method executes once and reports its internal row inventory.
+
+| Control | Compiling production defect | Exact method | Required intended red assertion |
+|---|---|---|---|
+| PC-102 | Commit terminal task/event/outcome before inserting the Completion obligation | VerificationRoundSettlementTests.C544_CompletionObligationAtomic | At the rejected obligation insert, a fresh connection must see zero committed terminal settlements/outcomes; terminal state escaping the transaction fails |
+| PC-103 | Select the latest Completed event after merge-back instead of retaining the report-settlement event ID | VerificationRoundSettlementTests.C544_CompletionEventIdentity | notification.SourceEventId.ShouldBe(reportSettlementEventId), with a later merge-back Completed present |
+| PC-104 | TaskAlreadyPersistedAsync returns true on Status/CompletedAt alone | VerificationRoundSettlementTests.C544_CompletionPersistedFallback | A terminal row with a different event or missing/wrong obligation must not be accepted as this settlement; acceptedFallback.ShouldBeFalse |
+| PC-105 | Store normalized report text as RawReport and hash that instead of the original UTF-8 bytes | VerificationRoundSettlementTests.C544_CompletionRawIdentity | RawReport UTF-8 bytes and exact hash equal the submitted CRLF/trailing-space/non-ASCII report; normalized-equivalent reports retain different raw hashes |
+| PC-106 | Reconciliation formats profile/evidence/display facts from the current task/card instead of CompletionSnapshotJson | VerificationRoundSettlementTests.C544_CompletionSnapshotFacts | After independently changing each mutable fact, recovered logical note and recipient header equal the original admitted snapshot |
+| PC-107 | Re-entered settlement creates a fresh event and obligation instead of returning the persisted pair | VerificationRoundSettlementTests.C544_CompletionSameSettlement | After duplicate marked-turn callbacks and provider recreation, settlement-event count and Completion obligation count both equal one |
+| PC-108 | Deduplicate a new settlement by root/result digest and reuse its predecessor's notification | VerificationRoundSettlementTests.C544_CompletionNewSettlement | Explicit Retry and Continue rows with equal text each produce distinct SourceEventId/notification IDs and each reaches its caller once |
+| PC-109 | Remove the version-1 profile requirement from Completion producer eligibility | VerificationRoundSettlementTests.C544_CompletionProfileEligibility | New legacy/null-profile Code/Review settlements and historical terminal rows produce zero Completion obligations; valid version-1 Code/Review controls do produce them |
+| PC-110 | Include Blocked/question reports in terminal Completion production | VerificationRoundSettlementTests.C544_CompletionTerminalOnly | A marked question remains nonterminal with zero Completion obligations; later terminal report has exactly one |
+| PC-111 | Call the Completion producer even when the event already owns DeliveryFailure | VerificationRoundSettlementTests.C544_CompletionProducerExclusion | Real settlement returns without a uniqueness exception and the event has exactly its one intended notification kind; capture product exception and assert ShouldBeNull |
+| PC-112 | Give a snapshotted non-session reply kind initial Queued state instead of NotRequired | VerificationRoundSettlementTests.C544_CompletionNonSession | With a valid parent ID also present, ReplyKind=None/non-session produces zero session input and a NotRequired obligation |
+| PC-113 | On missing snapshotted caller, substitute the task's current ParentSessionId | VerificationRoundDeliveryTests.C544_CompletionDestinationMissing | After changing the task to another live caller, original missing/deleted/null destination stays unresolved and both callers have zero new inputs |
+| PC-114 | Allow every SourceLandNotificationId kind through TryApplyDistillationAsync's kind gate | VerificationRoundDeliveryTests.C544_CompletionDistillationKind | An otherwise eligible non-Completion keyed note's Body and hold remain unchanged; a Completion control applies and is received |
+| PC-115 | Remove the non-Completion kind exclusion from authenticated poll shrinking | VerificationRoundDeliveryTests.C544_CompletionPollKind | Matching authorized poll cannot change any other keyed kind's Body/digest; Completion control shrinks and is received |
+| PC-116 | Release all keyed holds during completion cleanup instead of only Completion | VerificationRoundDeliveryTests.C544_CompletionHoldKind | Expired Completion hold clears, while an otherwise identical non-Completion hold remains unchanged |
+| PC-117 | Omit recovered queued-message destination equality | VerificationRoundDeliveryTests.C544_CompletionQueueDestination | For linked and rediscovered rows independently, wrong destination with valid digest/whole prompt leaves ConfirmedAt null and creates zero replacement rows |
+| PC-118 | Omit recovered queued-message ContentDigest equality | VerificationRoundDeliveryTests.C544_CompletionQueueDigest | For linked and rediscovered rows independently, wrong digest with valid destination/body/whole prompt leaves ConfirmedAt null |
+| PC-119 | Clear QueueMessageId when its row is absent, allowing enqueue again | VerificationRoundDeliveryTests.C544_CompletionMissingLinkedRow | After deleting the linked row, repeated reconciliation creates zero queue rows/inputs and retains the unresolved link identity |
+| PC-120 | Return for Stopped/Failed caller before existing keyed-row discovery and receipt reconciliation | VerificationRoundDeliveryTests.C544_CompletionStoppedReceipt | A previously submitted complete prompt confirms the same obligation after caller stop/failure; no new input is sent |
+| PC-121 | Return early when CompletionNoteEnqueuedAt/root stamp is non-null | VerificationRoundDeliveryTests.C544_CompletionStampIsNotReceipt | A later equal-text settlement with an old root stamp still receives its own complete prompt and confirms its own event |
+| PC-122 | Exclude Completion from AgentTaskLandNotificationHostedService's mandatory scan | VerificationRoundDeliveryTests.C544_CompletionMandatoryScanner | With immediate wakeup dropped and optional checks/distiller absent, boot and periodic scans each deliver the owed complete prompt |
+| PC-123 | Enqueue recovered Completion without SourceLandNotificationId | VerificationRoundDeliveryTests.C544_CompletionQueueIdentity | Queue row's key equals notification.Id; concurrent immediate/recovery and lost-ACK retries leave exactly one keyed row and one received prompt |
+| PC-124 | Skip completion/root check-suppression stamp repair after rediscovering a committed row | VerificationRoundDeliveryTests.C544_CompletionStampRepair | Fresh-context stamps become populated, ConfirmedAt remains null while input is held, and later whole-prompt receipt confirms |
+| PC-125 | Remove the future NextAttemptAt gate for an unresolved, unlinked Completion | VerificationRoundDeliveryTests.C544_CompletionRetryBackoff | A scan one microsecond before due adds no attempt; due equality attempts once; successive delays remain 5/10/20/40/80/160/300/300 seconds |
+| PC-126 | Break the scanner page loop on one row's reconcile exception | VerificationRoundDeliveryTests.C544_CompletionScannerIsolation | A later valid row in the same page and a row across the page boundary both produce complete recipient prompts despite the poisoned row |
+| PC-127 | Return before release custody when post-commit completion enqueue fails | VerificationRoundDeliveryTests.C544_CompletionReleaseAfterEnqueueFailure | Committed result/event/outcome remain intact and worker release ends killed, warm-pooled or standing-owned as the fixture specifies; no unowned live process/lease remains |
+| PC-128 | Set a new distillation deadline when recovery recreates the queue row | VerificationRoundDeliveryTests.C544_CompletionOriginalDeadline | At the original deadline, raw fallback is received without waiting a restarted interval; stored deadline equals the original request value |
+| PC-129 | Start another distiller RequestAsync while recovering the same completion | VerificationRoundDeliveryTests.C544_CompletionRestartNoModel | Replacement-model-call count after restart is zero; accepted rendering replays, otherwise original-deadline raw fallback reaches the caller |
+| PC-130 | Build old completion's distiller input from current task.Result | VerificationRoundDeliveryTests.C544_CompletionDistillerSourceIdentity | After a later different settlement, recorded model input for the first obligation contains its original exact raw report/digest, never the new result |
+| PC-131 | Remove delivery-attempt/status claim exclusion from TryApplyDistillationAsync | VerificationRoundDeliveryTests.C544_CompletionApplyClaim | After claim-first barrier, late apply is refused and pending attempted row Body plus frozen rendering remain unchanged; apply-first control delivers accepted summary |
+| PC-132 | Remove DeliveryAttempts==0 from poll-shrink eligibility | VerificationRoundDeliveryTests.C544_CompletionPollClaim | Claim-first late poll leaves attempted row Body and frozen wire unchanged; poll-first control shrinks before first input |
+| PC-133 | Ignore report digest equality when applying a valid caller's poll shrink | VerificationRoundDeliveryTests.C544_CompletionPollDigest | A poll of a later different result leaves the old obligation Body unchanged; matching old-result poll is the positive row |
+| PC-134 | Omit the profile/next/final-obligation header from the distilled and polled builders | VerificationRoundDeliveryTests.C544_CompletionRenderingHeader | Each valid summary/poll branch must apply and deliver its expected snapshotted mandatory header, including spill readback; refusal to deliver is also a failed positive row |
+| PC-135 | Save queue attempt/floor before the transaction that saves CompletionDeliveryJson | VerificationRoundDeliveryTests.C544_CompletionAttemptAtomic | Inject delivery-record persistence failure: fresh context has zero claimed attempts and no partial delivery record; terminal inputs remain empty |
+| PC-136 | Skip validation that a candidate rendering preserves the semantic snapshot | VerificationRoundDeliveryTests.C544_CompletionRenderingValidation | Replace a mandatory profile/header field and recompute a valid wire hash: the invalid rendering produces zero inputs and no confirmed receipt |
+| PC-137 | Recompose wire on retry from current task/policy instead of frozen CompletionDeliveryJson | VerificationRoundDeliveryTests.C544_CompletionFrozenReplay | After current task/policy/result changes, actual retried input and receipt equal the original committed WireText/hash |
+| PC-138 | Store the batch head's logical note for every member | VerificationRoundDeliveryTests.C544_CompletionBatchLogicalNotes | Each member's LogicalNote equals its own expected note; distinct settlement two's note must not equal settlement one's |
+| PC-139 | Persist the common wire/membership only for the batch head | VerificationRoundDeliveryTests.C544_CompletionBatchWireIdentity | Every member has identical whole WireText/hash and ordered member IDs before typing; fault on member two rolls all attempt/rendering state back |
+| PC-140 | On completion spill publication failure use the ordinary raw-body fallback | VerificationRoundDeliveryTests.C544_CompletionSpillPublication | File-write/rename failure yields zero completion inputs and no attempted/confirmed receipt; ordinary UI/channel fallback regression still passes |
+| PC-141 | Omit referenced spill content-hash comparison in completion receipt | VerificationRoundDeliveryTests.C544_CompletionPointerContent | Complete matching pointer UserPrompt plus an existing file with one changed byte leaves ConfirmedAt null; exact restored file permits confirmation |
+| PC-142 | Regenerate a missing canonical raw report from current task.Result | VerificationRoundDeliveryTests.C544_CompletionReportReference | Readback bytes/hash equal the old immutable snapshot after newer settlement and worktree removal; received pointer resolves to that exact old report |
+| PC-143 | Treat a missing/unreadable required report or spill file as receipt-satisfied | VerificationRoundDeliveryTests.C544_CompletionMissingFile | Otherwise valid complete pointer evidence leaves ConfirmedAt null until required file evidence is available and exact |
+| PC-144 | Include QueuedUserPrompt in the notification's accepted transcript kinds | VerificationRoundDeliveryTests.C544_CompletionUserPromptOnly | Exact wire in QueuedUserPrompt/AssistantText/screen-only evidence leaves ConfirmedAt and ConfirmingPromptSequence null; actual UserPrompt control confirms |
+| PC-145 | Drop PromptSubmissionMatch.IsCompleteIn from completion receipt | VerificationRoundDeliveryTests.C544_CompletionWholeWire | Matching ID/head, head-tail splice and one member of a batch all leave ConfirmedAt null; complete normalized whole wire confirms |
+| PC-146 | Change transcript sequence > attempt floor to >= | VerificationRoundDeliveryTests.C544_CompletionSequenceFloor | Exact wire at floor or below is rejected; actual matching UserPrompt at floor+1 confirms |
+| PC-147 | Remove timestamp floor filtering for a null-sequence-baseline attempt | VerificationRoundDeliveryTests.C544_CompletionTimeFloor | Exact wire with null timestamp or one microsecond before the configured time floor remains unconfirmed; equality/after-floor controls confirm |
+| PC-148 | Treat a changed retained process generation as unchanged for Completion Enter-only recovery | VerificationRoundDeliveryTests.C544_CompletionGeneration | Same generation with matching composer sends only Enter; changed generation cannot finish the old composer's attempt with Enter-only and must use the current owned generation's safe frozen-body path |
+| PC-149 | Skip late-confirmation lookup for Completion before retry input | VerificationRoundDeliveryTests.C544_CompletionLateConfirm | With whole prompt already received and composer empty, reconciliation adds zero terminal inputs and retains exactly one matching UserPrompt |
+| PC-150 | Omit unresolved Completion from queued-message retention protection | VerificationRoundDeliveryTests.C544_CompletionQueueRetention | Expired unresolved Sent/Pending/parked/Truncated/Canceled queue rows remain present; unrelated eligible queue row is pruned |
+| PC-151 | Omit unresolved Completion from transcript retention protection | VerificationRoundDeliveryTests.C544_CompletionTranscriptRetention | Expired original caller transcript, including complete receipt candidate/floor history, survives a sweep; unrelated transcript prunes |
+| PC-152 | Omit Completion from protected task-tree/event retention | VerificationRoundDeliveryTests.C544_CompletionSnapshotRetention | Captured sweep exception.ShouldBeNull and fresh task/event/snapshot rows remain, for unresolved and confirmed history; FK violations from the product sweep count as this assertion's red, never fixture setup failure |
+| PC-153 | During lifecycle cleanup delete a raw/spill path still referenced by an unresolved Completion | VerificationRoundDeliveryTests.C544_CompletionFileRetention | Both referenced files exist with unchanged exact bytes after sweeps, worktree removal and recreation; File.Exists.ShouldBeTrue for each |
+| PC-154 | On a Confirmed obligation clear QueueMessageId and reset State to Queued during reconcile | VerificationRoundDeliveryTests.C544_CompletionConfirmedNoReplay | After allowed queue/transcript pruning, repeated scanner/reconcile creates zero new queue rows/inputs and retains original Confirmed receipt/event identity |
+| PC-155 | Ignore Windows-hop outage/recovery acceptance in the trusted qualification reader | InterimVerificationReadinessTests.C544_QualificationWindowsOutage | Otherwise valid receipt with omitted/unaccepted Windows failure or recovery evidence is unready; fully accepted control is ready only under explicit test settings |
+| PC-156 | Ignore independent Windmill outage/recovery acceptance in the qualification reader | InterimVerificationReadinessTests.C544_QualificationWindmillOutage | Otherwise valid receipt missing independent Windmill failure/recovery acceptance is unready despite Windows evidence and fresh monitor |
+| PC-157 | Ignore watchdog-loss/stale-heartbeat qualification in the readiness reader | InterimVerificationReadinessTests.C544_QualificationWatchdogLoss | Otherwise valid outage/recovery receipt without accepted watchdog-loss detection remains unready |
+| PC-158 | Omit unresolved Completion destinations from PruneSessions protection | VerificationRoundDeliveryTests.C544_CompletionSessionRetention | Expired original destination survives after mutable task ParentSessionId changes and no standing-agent link protects it; unrelated session prunes |
+| PC-159 | Interpret unsupported completion snapshot versions as version 1 | VerificationRoundDeliveryTests.C544_CompletionSnapshotVersion | Unsupported version and malformed required data each remain unresolved with zero new inputs; supported complete snapshot recovers |
+| PC-160 | Ignore stored exact WireHash when reading CompletionDeliveryJson for receipt | VerificationRoundDeliveryTests.C544_CompletionWireHash | Otherwise correct full UserPrompt with wire text/hash disagreement cannot confirm; corrected durable hash allows normal receipt |
+
+For PC-144..147 and PC-160, block actual submission after a real producer/attempt
+commit, add just the adversarial evidence, invoke real reconciliation and assert
+unconfirmed **before** releasing submission. Then receive an actual complete prompt
+as the positive row. Timestamp cases use the production tolerance in the floor,
+not a different test-only tolerance. PC-148 uses the existing generation fixture
+and tests null, same and changed generations; it never sends to a stale process.
+PC-149 starts with actual submitted transcript evidence retained across recreation,
+not a hand-authored successful receipt. Receipt floor tests and pointer validation
+are independent, so each invalid row has all other fields valid.
+
+The mutations above are bounded edits at the named production guard: for example
+PC-153 inserts deletion of the already parsed referenced paths in the real cleanup
+path, rather than deleting fixtures from the test. It compiles against the actual
+snapshot type landed by Code. Mutation must record the concrete source diff and
+the named intended assertion for each control; an alternate assertion needs
+ordinary Review justification, not credit for any failure. Race tests must assert
+their barrier was reached and intended interleaving ran. Do not count a timeout,
+zero discovery, process-start failure or missing DB/file fixture as a killed PC.
+
+### Out of scope
+
+- CARD-0545 owns G/PC-78..86 and 95..98, DL-5, DL-4's independent outage path and
+  V-11/S5. Their existing specifications and the explicit owner ledger remain
+  binding. Choosing/building the independent deployment, real recipient adapter,
+  live notification and watchdog-loss production controls is not dormant S1-S4.
+  Local H/N contract fixtures cannot complete those obligations.
+- S6 activation is a later explicit CARD-0544 commission after accepted CARD-0545
+  qualification. This dispatch and Code do not deploy, enable policy, opt cards in,
+  message a live recipient or populate production readiness files.
+- The new Completion producer covers newly profiled Code/Review terminal reports.
+  Historical/manual/legacy, ordinary question/Blocked and events owned by another
+  notification producer are compatibility/refusal cases, not backfill candidates.
+  No new automatic cancellation, destination replacement, outbox, scanner or TTL.
+- The cancellation-token path before a terminal report is excluded from the eight
+  terminal settlement rows because it has no terminal report/event to deliver.
+  It remains a zero-obligation assertion in C544_CompletionTerminalOnly. If actual
+  Code changes this contract, expand the same tests and guard inventory before land.
+- Do not multiply all malformed fields together: a first refusal masks later
+  guards. Use one-invalid-field rows plus the explicit policy, settlement, M/cut,
+  batch, deadline and state intersections above. Distilled/polled x spill uses a
+  low owned fixture threshold/long mandatory header so those paths are exercised
+  without depending on an unrealistically long successful model summary.
+- Abrupt process loss runs at the atomic-obligation and final receipt handoffs;
+  each intervening handoff has deterministic faults and recreated providers, with
+  retained store/terminal evidence. These prove recovery logic, not OS durability
+  under machine power loss. Native ConPTY/FakeClaude is the bounded transport
+  capstone, not proof of real provider behavior or production qualification.
+- No full assembly or unrelated CARD-0487 PC repetition is added to the local
+  floor. Full affected classes and Unit remain mandatory; a newly changed shared
+  helper adds its consumers and cost. SourceLanding mutation is later, isolated
+  and post-land, never a substitute for ordinary Code/Review execution.
+
+### Cost
+
+**Estimated, not measured.** No build or test was run in this documentation task.
+This replaces the earlier 530.5-minute local total; it is not added on top of it.
+Authoring/repair time is excluded. Assume one foreground owner, isolated PostgreSQL
+clone, persistent owned report root, local Git/pwsh, staged FakeClaude/runner and no
+overlapping Antiphon.Agents.Pty.Tests. A required skip remains incomplete evidence.
+
+The complete ordinary execution inventory is the earlier named full-class list,
+with N narrowed to its ten retained controls, plus these **full existing classes**:
+
+- AgentTaskReplyIntegrationTests, AgentTaskSettlementRaceTests,
+  AgentTaskLandNotificationPersistenceTests, AgentTaskLandNotificationRecoveryTests,
+  AgentTaskLandReceiptTests, ReceiptFailureDeliveryTests and DispatchBaseNotificationTests.
+- OutputDistillationProducerTests, OutputDistillationDeliveryTests,
+  OutputDistillationApplyRaceTests, OutputDistillationDeadlineTests,
+  OutputDistillationCleanupTests and PolledCompletionNoteShrinkTests.
+- DataRetentionServiceTests, AgentReportStoreTests, SessionMessageQueueServiceTests,
+  SessionMessageQueueDeliveryVerificationTests, SessionMessageQueueInterruptedAttemptTests,
+  SessionMessageQueueSpillTests, SessionMessageQueueWedgedHeadTests and
+  SessionMessageQueuePtyIntegrationTests.
+
+Further bodies read for these queue regressions: InterruptedAttemptTests complete;
+ServiceTests' hold/SendNow tests, CreateHarnessAsync, transcript/queue helpers and
+disposal; DeliveryVerificationTests' initial composer/ack/watchdog tests,
+ObservableHarnessAsync, swallowed/stale-body/screen-only tests and null-baseline
+timestamp/late-confirm tests. Boundaries map to V-15/16 and R-12. Existing degraded
+screen-only queue verdicts must remain compatible but cannot confirm Completion.
+
+Run the earlier build, full Unit, full script and three-file client commands.
+For each named integration class use the exact filter `/*/*/ClassName/*` with the
+isolated built output and a distinct TRX directory. N's ten local methods are
+C544_ScriptExitPropagation, C544_ScheduledIdentity, C544_LondonDates,
+C544_ProductionJobAdapter, C544_ScheduleHealth, C544_DailyValidity,
+C544_CoverageRequired, C544_GreenRequired, C544_ReportReceiptRequired and
+C544_SelectionHash. The original PC table is authoritative for their exact names;
+the name audit below must match it before Code runs. Do not implement the thirteen
+deferred N methods as ignored/passing stubs. Full `test-nightly-health.ps1` means all
+implemented local harness cases, with a separate thirteen-control deferral ledger.
+
+There are **158 distinct local C544 backend methods**: 101 original minus 13
+transferred plus 59 new controls plus the original eight supplemental methods plus
+C544_CompletionMigration, C544_CompletionCrashProcess and
+C544_CompletionNativeReceipt. The UI floor remains three named cases. Discovery
+must execute all 158; matrix row counts (including 96 recovery rows, four abrupt
+crash rows and four native rows) are reported separately, not counted as discovered
+methods. Existing-class counts must be recorded from fresh candidate TRX, not
+invented here. Ordinary Review repeats this same full floor at the reviewed SHA.
+
+| Ordinary Code V/R floor (also repeated by independent Review) | Minutes |
+|---|---:|
+| Setup/build: isolated bin-c544 output, DB clone, client dependencies, owned report root, local runner/FakeClaude stage | 22 |
+| Full Unit lane, including RP/I/B and existing formatter/instruction contracts | 8 |
+| Retained admission/card/dispatch/land/CLI classes, excluding separately priced S/Q delivery and native work | 38 |
+| S completion identity/transaction/migration methods and existing reply/settlement/retention regressions | 24 |
+| Real-Git V-7 capstones | 6 |
+| Full Q controlled delivery/recovery matrix, barriers and abrupt crash child, excluding native capstone | 40 |
+| Shared notification, check-handoff and non-native queue regression classes | 26 |
+| Full distillation, poll and report-store classes | 24 |
+| Full existing native queue class plus Q.C544_CompletionNativeReceipt | 12 |
+| Local N wrappers, NightlyScriptsTests and full offline nightly-health harness | 5 |
+| Three client files and structured report | 3 |
+| **Code setup + ordinary V/R** | **208** |
+
+Ordinary execution alone is **186 minutes**, plus setup/build **22 = 208**.
+Independent ordinary Review is another **208 minutes**. Run classes sequentially
+and keep source frozen while each run executes. Commit before a long run; retain
+SHA, exact filters, discovered/executed/failed/skipped counts and row inventory.
+Confirm inherited failures with the exact failing methods at the base revision.
+
+Every PC cycle is method-scoped and includes a compiling defect, intended red,
+restoration/rebuild and that same exact method green. Example for PC-102, after
+building each corresponding mutation/restoration to its isolated output:
+
+~~~powershell
+dotnet run --project tests/Antiphon.Tests --no-build --property:OutputPath=bin-c544/ -- --treenode-filter '/*/*/VerificationRoundSettlementTests/C544_CompletionObligationAtomic' --report-trx --report-trx-filename pc102.trx --results-directory .antiphon/c544-pc102-red
+~~~
+
+Use a separate green result directory after restoring/rebuilding; substitute each
+row's exact class/method for the other controls. Execute/await in the foreground.
+No whole-class PC cycles and no swallowed failures. Record break/red/restore/green
+per ID after land. Code implements and runs ordinary V/R; independent ordinary
+Review assesses that evidence before land. All PC outcomes remain pending until
+Mutation runs them. Clean isolated build outputs per the testing owner afterward.
+
+| Mutation PC floor | Local controls | Minutes per complete cycle | Minutes |
+|---|---:|---:|---:|
+| Unit parser/instruction/brief RP/I/B | 9 | 2 | 18 |
+| Readiness H (12 retained + 3 added) | 15 | 2.5 | 37.5 |
+| DB P/C/D/S/L (51 retained + 11 added) | 62 | 4 | 248 |
+| CLI request | 1 | 3 | 3 |
+| Producer-to-session Q (5 retained + 45 added) | 50 | 6 | 300 |
+| Local N (23 original - 13 transferred) | 10 | 1.5 | 15 |
+| Mutation setup/build at landed revision | - | - | 20 |
+| Discovery, restoration inventory and final evidence | - | - | 15 |
+| **Mutation floor** | **147** | - | **656.5** |
+
+PC cycles total **621.5 minutes**; with **20** setup/build and **15** evidence,
+Mutation is **656.5**. Thus the dormant verification floor is **208 + 656.5 =
+864.5 minutes**, or **1,072.5 minutes including independent Review**. The 59 new
+cycles add **321.5** minutes; moving 13 old cycles transfers **19.5** historical
+estimated minutes to CARD-0545. Two ordinary stages increase by **240** minutes.
+Total local increase over 530.5 is therefore **321.5 - 19.5 + 240 = 542** minutes.
+These numbers are planning estimates; record actuals and recost additional helper
+consumers before execution instead of silently reducing the floor.
+
+The transferred 19.5-minute PC estimate is not a budget for CARD-0545's new
+independent facility, adapter or watchdog-loss controls; its TestDesign must cost
+those concrete controls and its Code/Review separately. Retain the prior S5 lower
+bound: two unattended full runs at 120-360 minutes each, 30 minutes deployment/
+readback, 60 receipt/recovery and 15 artifact = **345-825 active minutes**, plus
+up to **24 hours** waiting for the scheduled run. Retain later S6 **60 minutes**.
+Including only these already-priced deferred obligations gives a lower bound of
+**1,497-1,977 active minutes** (1,072.5 + 19.5 + 345-825 + 60), before CARD-0545's
+additional implementation/review/controls. It is not an activation cost cap.
+
+Savings for this implementation are **zero minutes of required ordinary or PC
+coverage removed**, **zero measured runtime/dollar savings**, and **zero permitted
+Interim runs before qualification/S6**. The 13-control transfer moves ownership;
+it does not eliminate verification. Dormant FullOnly implementation and the new
+recovery guarantees require the complete local floor. A later pilot may measure
+cumulative-selection savings under S6; none are assumed to fund this work.
+
+Handoff audit: inspected bodies/fixtures above; **total guards=160, mapped=160,
+missing=0, duplicate PC mappings=0**. Local scope is **147 guards/147 distinct
+executable PC specifications**; the **13** transferred IDs each retain an explicit
+CARD-0545 owner, method and prerequisite, and are not claimed executable/passed in
+this scope. Original G/PC-1..101 remain present; PC-70/71 have the D-9 executable
+clarifications above. Numeric local and deferred cost boundaries are explicit.
+Code must implement the named fixtures/tests; no unimplemented test is evidence.
+There is no unresolved local architectural choice and no permission to activate.
+
+--- next stage ---
+next: code
+handoff: Implement dormant CARD-0544 S1-S4 and the appended D-9/D-10 verification design. Run the 158 local C544 backend methods plus full affected suites; preserve all 160 G/PC IDs and CARD-0545's 13-control ledger. Keep Enabled=false and FullOnly defaults. CARD-0545 qualification/S5 and a later explicit CARD-0544 S6 are required before activation.
+artifact: docs/superpowers/plans/2026-09-16-card-0544-interim-final-verification-plan.md
