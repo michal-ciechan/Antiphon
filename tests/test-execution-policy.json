@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "3c286edef107030e4f7d46057cc8dd18776ca291668f98c4ccffb547b0459239",
+  "policyHash": "2d6ee9af7d4daaf3df0472ebdd2fe0fc7bc20589369cecdcb416f0ddd17443aa",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -582,6 +582,8 @@
           "class": "PipelineSpeedIntegrationTests",
           "methods": [
             "C1281_B1Authorization",
+            "C1281_B1ReceiptImport",
+            "C1281_B1CorrectionTransaction",
             "C1281_WiredRoundtrip"
           ],
           "reason": "Needs the untracked CARD-1281 producer pack (git common dir antiphon/code-evidence/04228bff, pinned by SHA-256); skips on every clone without it until a tracked fixture exists. C1281_WiredRoundtripDelivery stays required.",
