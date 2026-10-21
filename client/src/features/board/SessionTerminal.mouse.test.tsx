@@ -1,4 +1,4 @@
-import { Terminal, type ITerminalOptions } from '@xterm/xterm'
+import { Terminal, type ITerminalInitOnlyOptions, type ITerminalOptions } from '@xterm/xterm'
 import { cleanup } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { AgentSessionSummaryDto } from '../../api/boards'
@@ -45,7 +45,9 @@ const runningSession: AgentSessionSummaryDto = {
   cwd: '/test', createdAt: '2026-01-01T00:00:00Z', startedAt: '2026-01-01T00:00:00Z',
   lastSeenAt: '2026-01-01T00:00:01Z', endedAt: null, exitCode: null, failureReason: null,
 }
-const layout: ITerminalOptions = {
+// cols/rows are constructor-only (ITerminalInitOnlyOptions). @xterm/xterm 6.0.0
+// does not put them on ITerminalOptions, and tsc -b typechecks this file.
+const layout: ITerminalOptions & ITerminalInitOnlyOptions = {
   cols: 20, rows: 6, lineHeight: 1, letterSpacing: 0,
   smoothScrollDuration: 0, allowProposedApi: true,
 }
