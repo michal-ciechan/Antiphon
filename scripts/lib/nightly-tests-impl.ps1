@@ -28,22 +28,28 @@ function Get-NightlyProfileExecutionChunks {
         $assigned = @($DiscoveryNodes | Where-Object {
             Test-NightlyClassAssigned -ClassName $_.ClassName -TypeName $_.Type -RequiredClasses @($chunk.classes)
         })
-        foreach ($group in @($assigned | Group-Object ClassName)) {
+        $tagged = foreach ($node in $assigned) {
+            [pscustomobject]@{ Node = $node; Bare = (Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)) }
+        }
+        foreach ($group in @($tagged | Group-Object Bare)) {
             $required = @($group.Group | Where-Object {
-                -not (Test-NightlyDiscoveryExcluded $_ $Exclusions -ProfileAware)
+                -not (Test-NightlyDiscoveryExcluded $_.Node $Exclusions -ProfileAware)
             })
             if ($required.Count -eq 0) { continue }
-            if ($required.Count -eq $group.Count) {
-                [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($group.Name); exactFilter = ''; nodes = @() }
+            $bare = [string]$group.Name
+            if ($required.Count -eq @($group.Group).Count) {
+                [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($bare); exactFilter = ''; nodes = @() }
             } else {
                 # Preserve sibling methods without launching the excluded method.
                 # Exact leaves avoid the combined-filter discovery hint ambiguity.
-                foreach ($method in @($required | Group-Object Method)) {
-                    $node = $method.Group[0]
-                    $dot = $group.Name.LastIndexOf('.')
+                # The filter type is the bare metadata name: TUnit does not put
+                # constructor arguments on the treenode path.
+                foreach ($method in @($required | Group-Object { $_.Node.Method })) {
+                    $node = @($method.Group)[0].Node
+                    $dot = $bare.LastIndexOf('.')
                     if ($dot -lt 1) { throw 'profile-discovery-namespace-required' }
-                    $filter = '/*/{0}/{1}/{2}' -f $group.Name.Substring(0, $dot), $group.Name.Substring($dot + 1), $node.Method
-                    [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($group.Name); exactFilter = $filter; nodes = @($method.Group) }
+                    $filter = '/*/{0}/{1}/{2}' -f $bare.Substring(0, $dot), $bare.Substring($dot + 1), $node.Method
+                    [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($bare); exactFilter = $filter; nodes = @($method.Group | ForEach-Object { $_.Node }) }
                 }
             }
         }
@@ -186,7 +192,7 @@ function Get-NightlyNativeExecutionArguments {
         $nativeArgs += $ExactFilter
     } elseif ($Classes -and @($Classes).Count -gt 0) {
         if (@($Classes).Count -ne 1) { throw 'multiple classes require split exact roster chunks' }
-        $class = [string]$Classes[0]
+        $class = Get-NightlyBareClassIdentity -Name ([string]$Classes[0])
         if ($class -notmatch '^[A-Za-z_][A-Za-z0-9_.]*$') { throw 'invalid-class-filter' }
         $dot = $class.LastIndexOf('.')
         $namespace = if ($dot -lt 0) { '*' } else { $class.Substring(0, $dot) }
