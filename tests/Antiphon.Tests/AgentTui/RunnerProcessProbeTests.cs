@@ -68,11 +68,13 @@ public sealed class RunnerProcessProbeTests
                 : StringComparer.Ordinal;
             var inherited = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
                 .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
-                .Select(entry => entry.Trim().Trim('"'))
+                .Select(entry => OperatingSystem.IsWindows() ? entry.Trim().Trim('"') : entry)
                 .Where(entry => entry.Length > 0)
                 .Distinct(comparer)
                 .ToList();
-            var existing = inherited.Where(Directory.Exists).ToList();
+            var existing = inherited
+                .Where(entry => Path.IsPathFullyQualified(entry) && Directory.Exists(entry))
+                .ToList();
             var keep = new List<string>();
             for (var index = 0; index < 40; index++)
             {
