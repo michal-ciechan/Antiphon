@@ -29,6 +29,10 @@ public class LandingGit : ILandingGit
     /// <summary>Test seam for the one call that creates the git child.</summary>
     protected virtual Process? StartProcess(ProcessStartInfo start) => Process.Start(start);
 
+    /// <summary>CARD-1436: the git processes the index-lock census inspects. The host list by default;
+    /// a test fixture narrows it to its own children.</summary>
+    protected virtual GitIndexLock.IProcessSource GitProcesses => GitIndexLock.HostProcessSource.Instance;
+
     public virtual async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         => await ExecuteAsync(repository, arguments, null, new LandingGitRunOptions(), ct);
 
@@ -923,7 +927,7 @@ public class LandingGit : ILandingGit
             var path = result.Output.Trim();
             if (!result.Succeeded || path.Length == 0)
                 return new(path, false, null, null, [], GitIndexLock.PathErrorReason);
-            var census = GitIndexLock.CensusGitProcesses();
+            var census = GitIndexLock.CensusGitProcesses(GitProcesses);
             var observed = GitIndexLock.Observe(path, DateTime.UtcNow, census);
             return new(observed.Path, observed.Present, observed.LastWriteUtc, observed.Length,
                 observed.CandidateHolders, null);
