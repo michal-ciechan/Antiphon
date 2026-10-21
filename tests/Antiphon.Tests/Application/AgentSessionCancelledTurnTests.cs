@@ -118,6 +118,167 @@ public sealed class AgentSessionCancelledTurnTests
         wrapperFirst.Adapter.KillCount.ShouldBe(0);
     }
 
+    [Test]
+    public async Task C1382_Rearm_completed_follow_up_survives_idle()
+    {
+        await using var world = await EchoWorld.OpenAsync();
+        var session = await world.StartCancelledAsync();
+        await ArmRealPromptAsync(world, session);
+
+        world.Clock.Advance(TimeSpan.FromSeconds(1));
+        await world.PersistAsync(session, "The follow-up is complete.", TranscriptKinds.AssistantText);
+        await world.DrainAsync(session);
+        (await world.ReloadAsync(session)).Attempt.Phase.ShouldBe(RunPhase.StreamingTurn);
+
+        await world.PersistAsync(session, null, TranscriptKinds.TurnEnd, TranscriptKinds.StopReasons.EndTurn);
+        await world.DrainAsync(session);
+        var ended = await world.ReloadAsync(session);
+        ended.Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+        ended.Attempt.CompletedAt.ShouldBeNull();
+        ended.Session.Status.ShouldBe(SessionStatus.Running);
+
+        await AssertUnscannedAsync(world, session);
+    }
+
+    [Test]
+    public async Task C1382_Rearm_second_interrupt_returns_to_awaiting_input()
+    {
+        await using var world = await EchoWorld.OpenAsync();
+        var cancelled = await world.StartCancelledAsync();
+        await ArmRealPromptAsync(world, cancelled);
+        world.Clock.Advance(TimeSpan.FromMinutes(1));
+        await world.PersistAsync(cancelled, null, TranscriptKinds.TurnEnd, TranscriptKinds.StopReasons.Cancelled);
+        await world.DrainAsync(cancelled);
+        (await world.ReloadAsync(cancelled)).Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+
+        var marker = await world.StartCancelledAsync();
+        await ArmRealPromptAsync(world, marker);
+        world.Clock.Advance(TimeSpan.FromMinutes(1));
+        await world.PersistAsync(marker, "[Request interrupted by user]");
+        await world.DrainAsync(marker);
+        (await world.ReloadAsync(marker)).Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+
+        await AssertUnscannedAsync(world, cancelled, marker);
+    }
+
+    [Test]
+    public async Task C1382_Rearm_echo_after_second_interrupt_restores_input_wait()
+    {
+        await using var world = await EchoWorld.OpenAsync();
+        var session = await world.StartCancelledAsync();
+        await ArmRealPromptAsync(world, session);
+        world.Clock.Advance(TimeSpan.FromMinutes(1));
+        await world.PersistAsync(session, null, TranscriptKinds.TurnEnd, TranscriptKinds.StopReasons.Cancelled);
+        await world.DrainAsync(session);
+        var waiting = await world.ReloadAsync(session);
+        waiting.Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+        var waitAt = waiting.Attempt.PhaseStartedAt;
+        var durations = waiting.Attempt.PhaseDurationsJson;
+
+        world.Clock.Advance(TimeSpan.FromMinutes(1));
+        await world.PersistAsync(session, "/status");
+        await world.DrainAsync(session);
+        var armed = await world.ReloadAsync(session);
+        armed.Attempt.Phase.ShouldBe(RunPhase.StreamingTurn);
+        armed.Attempt.PhaseStartedAt.ShouldBe(waitAt);
+        armed.Attempt.PhaseDurationsJson.ShouldContain("\"AwaitingInput\"");
+
+        await world.PersistAsync(session, "<command-name>/status</command-name>");
+        await world.DrainAsync(session);
+        var restored = await world.ReloadAsync(session);
+        restored.Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+        restored.Attempt.PhaseStartedAt.ShouldBe(waitAt);
+        restored.Attempt.LastEventAt.ShouldBe(waitAt);
+        restored.Attempt.PhaseDurationsJson.ShouldBe(durations);
+        restored.Session.Status.ShouldBe(SessionStatus.Running);
+
+        await AssertUnscannedAsync(world, session);
+    }
+
+    [Test]
+    public async Task C1382_Order_real_prompt_only_and_wrapper_only()
+    {
+        await using var world = await EchoWorld.OpenAsync();
+        var real = await world.StartCancelledAsync();
+        var wrapper = await world.StartCancelledAsync();
+
+        world.Clock.Advance(TimeSpan.FromMinutes(1));
+        await world.PersistAsync(wrapper, "<command-name>/status</command-name>");
+        await world.DrainAsync(wrapper);
+        var wrapped = await world.ReloadAsync(wrapper);
+        wrapped.Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+        wrapped.Attempt.LastEventAt.ShouldBe(wrapper.InputWaitAt);
+        wrapped.Attempt.PhaseStartedAt.ShouldBe(wrapper.PhaseStartedAt);
+
+        await ArmRealPromptAsync(world, real);
+        world.Clock.Advance(TimeSpan.FromMinutes(10));
+        (await world.ScanAsync()).ShouldBe(1);
+        real.Adapter.KillCount.ShouldBe(1);
+        real.Adapter.Disposed.ShouldBeTrue();
+        wrapper.Adapter.KillCount.ShouldBe(0);
+        wrapper.Adapter.Disposed.ShouldBeFalse();
+        var stillWaiting = await world.ReloadAsync(wrapper);
+        stillWaiting.Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+        stillWaiting.Session.Status.ShouldBe(SessionStatus.Running);
+        stillWaiting.Session.EndedAt.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task C1382_Echo_text_does_not_postpone_stall_after_real_prompt()
+    {
+        await using var world = await EchoWorld.OpenAsync();
+        var session = await world.StartCancelledAsync();
+        var promptAt = await ArmRealPromptAsync(world, session);
+
+        for (var i = 0; i < 4; i++)
+        {
+            world.Clock.Advance(TimeSpan.FromMinutes(1));
+            await world.PersistAsync(session, "/status");
+            await world.DrainAsync(session);
+            await world.PersistAsync(session, "<command-name>/status</command-name>");
+            await world.DrainAsync(session);
+            await world.PersistAsync(session, "/status", TranscriptKinds.AssistantText);
+            await world.DrainAsync(session);
+        }
+
+        var echoed = await world.ReloadAsync(session);
+        echoed.Attempt.Phase.ShouldBe(RunPhase.StreamingTurn);
+        echoed.Attempt.LastEventAt.ShouldBe(promptAt);
+        world.Clock.Advance(TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(1));
+        (await world.ScanAsync()).ShouldBe(1);
+        session.Adapter.KillCount.ShouldBe(1);
+        session.Adapter.Disposed.ShouldBeTrue();
+    }
+
+    private static async Task<DateTime> ArmRealPromptAsync(EchoWorld world, LiveAttempt session)
+    {
+        world.Clock.Advance(TimeSpan.FromMinutes(1));
+        var at = world.Clock.GetUtcNow().UtcDateTime;
+        await world.PersistAsync(session, "Continue after interruption");
+        await world.DrainAsync(session);
+        var armed = await world.ReloadAsync(session);
+        armed.Attempt.Phase.ShouldBe(RunPhase.StreamingTurn);
+        armed.Attempt.LastEventAt.ShouldBe(at);
+        armed.Attempt.PhaseDurationsJson.ShouldContain("\"AwaitingInput\"");
+        return at;
+    }
+
+    private static async Task AssertUnscannedAsync(EchoWorld world, params LiveAttempt[] sessions)
+    {
+        world.Clock.Advance(TimeSpan.FromMinutes(10));
+        (await world.ScanAsync()).ShouldBe(0);
+        foreach (var session in sessions)
+        {
+            session.Adapter.KillCount.ShouldBe(0);
+            session.Adapter.Disposed.ShouldBeFalse();
+            var reloaded = await world.ReloadAsync(session);
+            reloaded.Session.Status.ShouldBe(SessionStatus.Running);
+            reloaded.Session.EndedAt.ShouldBeNull();
+            reloaded.Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+            reloaded.Attempt.CompletedAt.ShouldBeNull();
+        }
+    }
+
     private static async Task CheckStartAsync(
         bool completed, string? stopReason, RunPhase expectedPhase, bool scanAfterInterruption = false)
     {
@@ -394,13 +555,19 @@ public sealed class AgentSessionCancelledTurnTests
                 attempt.LastEventAt, attempt.PhaseStartedAt, attempt.PhaseDurationsJson);
         }
 
-        public async Task PersistAsync(LiveAttempt session, string text)
+        public Task PersistAsync(LiveAttempt session, string? text) =>
+            PersistAsync(session, text, TranscriptKinds.UserPrompt, null);
+
+        public async Task PersistAsync(LiveAttempt session, string? text, string kind, string? stopReason)
         {
+            var role = kind == TranscriptKinds.AssistantText ? "assistant"
+                : kind == TranscriptKinds.UserPrompt ? "user"
+                : null;
             var stored = await Runtime.PersistTranscriptAsync(session.SessionId,
             [
                 new SessionRunnerTranscriptEvent(session.SessionId, Interlocked.Increment(ref _sequence),
-                    TranscriptKinds.UserPrompt, Guid.NewGuid().ToString("D"), null, Clock.GetUtcNow(),
-                    "user", text, null, null, null, null, null)
+                    kind, Guid.NewGuid().ToString("D"), null, Clock.GetUtcNow(),
+                    role, text, null, null, null, null, stopReason)
             ], CancellationToken.None);
             if (stored.LastStoredSeq is null)
             {
