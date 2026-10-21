@@ -35,12 +35,18 @@ $script:C1408LandById = @{}
 # camelCase, nulls written, enums as names. It has no landing or landRequest field; those are only on the
 # detail DTO (AgentTaskDetailDto.Landing / LandRequest). -Land sets the detail the fake serves:
 # Refused (landing.phase and publication Refused), NeedsResolution (landRequest.state), Landed (Complete).
+#   Exception: a land that threw (AgentTaskLandService.PersistFailureAsync): landing mid-flight and Unconfirmed,
+#     landRequest Completed with terminalFailureCode, a LandRefused event; ClearPending left landAttempt 1.
+#   PreProtocol: RefuseAsync('landing_protocol_unavailable') before the attempt counter moved: no landing, request
+#     Completed without a failure code, a LandRefused event, and a list item with no land hint at all.
+#   OldRefusal: a LandRefused event before the window, then a later land that landed.
 function New-C1408Task {
-    param([string]$Status = 'Succeeded', [ValidateSet('', 'Refused', 'NeedsResolution', 'Landed')][string]$Land = '')
+    param([string]$Status = 'Succeeded', [ValidateSet('', 'Refused', 'NeedsResolution', 'Landed', 'Exception', 'PreProtocol', 'OldRefusal')][string]$Land = '',
+        [string]$Workspace = 'Worktree')
     $id = [guid]::NewGuid().ToString()
     $item = [ordered]@{
         id = $id; rootTaskId = $id; parentTaskId = $null; depth = 0; title = 'c1408 fake'; kind = 'Worker'; role = 'Code'
-        agentKind = 'ClaudeCode'; modelLevel = 'High'; escalatedFrom = $null; status = $Status; workspace = 'Worktree'
+        agentKind = 'ClaudeCode'; modelLevel = 'High'; escalatedFrom = $null; status = $Status; workspace = $Workspace
         workingDirectory = '/work/repos/antiphon'; repoPath = '/work/repos/antiphon'; worktreePath = $null; worktreeBranch = $null
         scope = $null; observedScope = $null; agentId = $null; agentName = $null; agentSessionId = $null; attempt = 1
         createdAt = '2026-10-21T09:40:00Z'; dispatchedAt = '2026-10-21T09:40:01Z'; completedAt = '2026-10-21T09:50:00Z'; readAt = $null
@@ -55,15 +61,85 @@ function New-C1408Task {
     if ($Land) {
         $item.landAttempt = 1
         $landing = $null
+        $events = @()
         $request = [ordered]@{ id = [guid]::NewGuid().ToString(); state = 'Completed'; requestedAt = '2026-10-21T09:51:00Z'; startedAt = '2026-10-21T09:51:01Z'; attempt = 1; terminalFailureCode = $null }
         switch ($Land) {
             'Refused' { $landing = [ordered]@{ operationId = [guid]::NewGuid().ToString(); phase = 'Refused'; mode = 'Fresh'; publication = 'Refused'; cleanup = 'NotStarted'; sourceSha = 'aaaa'; reason = 'conflict' } }
             'NeedsResolution' { $request.state = 'NeedsResolution'; $item.landRequestedAt = '2026-10-21T09:51:00Z' }
             'Landed' { $landing = [ordered]@{ operationId = [guid]::NewGuid().ToString(); phase = 'Complete'; mode = 'Fresh'; publication = 'Landed'; cleanup = 'Complete'; sourceSha = 'aaaa'; reason = $null } }
+            'Exception' {
+                $op = [guid]::NewGuid().ToString()
+                $landing = New-C1408Landing -OperationId $op -Phase 'Prepared' -Publication 'Unconfirmed' -Cleanup 'NotStarted'
+                $request = New-C1408LandRequest -Attempt 1 -TerminalFailureCode 'landing_timeout' -FailureExceptionType 'Npgsql.NpgsqlException' -LandingOperationId $op
+                $events = @(
+                    (New-C1408Event -Type 'LandRequested' -Detail 'land requested' -At '2026-10-21T09:50:30Z'),
+                    (New-C1408Event -Type 'Warning' -Detail 'Landing not confirmed; no cleanup authorized by this result. landing_timeout' -At '2026-10-21T09:52:00Z'),
+                    (New-C1408Event -Type 'LandRefused' -Detail 'land failed: landing_timeout' -At '2026-10-21T09:52:00Z' -LandingOperationId $op -Publication 'Unconfirmed' -Cleanup 'NotStarted'))
+            }
+            'PreProtocol' {
+                $item.landAttempt = 0
+                $request = New-C1408LandRequest -Attempt 0
+                $events = @(
+                    (New-C1408Event -Type 'LandRequested' -Detail 'land requested' -At '2026-10-21T09:50:30Z'),
+                    (New-C1408Event -Type 'Warning' -Detail 'Landing not confirmed; no cleanup authorized by this result. landing_protocol_unavailable' -At '2026-10-21T09:50:31Z'),
+                    (New-C1408Event -Type 'LandRefused' -Detail 'land refused: landing_protocol_unavailable' -At '2026-10-21T09:50:31Z'))
+            }
+            'OldRefusal' {
+                $op = [guid]::NewGuid().ToString()
+                $landing = New-C1408Landing -OperationId $op -Phase 'Complete' -Publication 'Landed' -Cleanup 'Complete'
+                $request = New-C1408LandRequest -Attempt 1 -LandingOperationId $op
+                $events = @(
+                    (New-C1408Event -Type 'LandRefused' -Detail 'land refused: conflict' -At '2026-10-21T09:00:00Z'),
+                    (New-C1408Event -Type 'Landed' -Detail 'landed' -At '2026-10-21T09:51:00Z' -LandingOperationId $op -Publication 'Landed' -Cleanup 'Complete'))
+            }
         }
-        $script:C1408LandById[$id] = @{ landing = $landing; landRequest = $request }
+        $script:C1408LandById[$id] = @{ landing = $landing; landRequest = $request; events = $events }
     }
     return $item
+}
+
+# AgentTaskEventDto (server/Application/Dtos/AgentTaskDtos.cs), camelCase, enum names.
+function New-C1408Event {
+    param([string]$Type, [string]$Detail, [string]$At, [string]$LandingOperationId = $null, [string]$Publication = $null, [string]$Cleanup = $null)
+    # [string] parameters hold an empty string, never null; the server writes null.
+    $e = [ordered]@{ type = $Type; modelLevel = $null; detail = $Detail; at = $At; landingOperationId = $null; landingPublication = $null; landingCleanup = $null; landingMode = $null }
+    if ($LandingOperationId) { $e.landingOperationId = $LandingOperationId; $e.landingMode = 'Fresh' }
+    if ($Publication) { $e.landingPublication = $Publication }
+    if ($Cleanup) { $e.landingCleanup = $Cleanup }
+    return $e
+}
+
+# LandingEvidenceDto (server/Application/Dtos/LandingEvidenceDto.cs).
+function New-C1408Landing {
+    param([string]$OperationId, [string]$Phase, [string]$Publication, [string]$Cleanup)
+    return [ordered]@{
+        operationId = $OperationId; phase = $Phase; mode = 'Fresh'; publication = $Publication; cleanup = $Cleanup; sourceSha = 'aaaa'; verifiedSha = $null
+        remoteSha = $null; remoteConfirmedAt = $null; destinationRef = 'refs/heads/master'; reason = $null; reviewedSha = $null; preparationInputSha = $null
+        sourceRemoteSha = $null; approvalLandRequestId = $null; reviewEvidenceId = $null; schemaVersion = 1; cleanupAttemptId = $null; cleanupCapture = $null
+        recoveryMode = 'None'; recoveryOwnerStatus = $null; recoverySourceTaskId = $null; recoverySourceFullRef = $null; recoveryOwnerRemoteBeforeSha = $null
+        recoveryOwnerRemoteAfterSha = $null; recoveryRelationship = $null; recoveryPatchesContained = $null; recoveryUncontainedPatches = $null
+    }
+}
+
+# LandRequestStatusDto (server/Application/Dtos/LandRequestStatusDto.cs) after CompleteRequest: state Completed.
+function New-C1408LandRequest {
+    param([int]$Attempt, [string]$TerminalFailureCode = $null, [string]$FailureExceptionType = $null, [string]$LandingOperationId = $null)
+    $r = [ordered]@{
+        id = [guid]::NewGuid().ToString(); state = 'Completed'; requestedAt = '2026-10-21T09:50:30Z'; startedAt = $(if ($Attempt -gt 0) { '2026-10-21T09:50:31Z' } else { $null })
+        lastEvaluatedAt = '2026-10-21T09:52:00Z'; lastProgressAt = '2026-10-21T09:52:00Z'; ageSeconds = 90.0; noProgressSeconds = 0.0; attempt = $Attempt
+        holdReasonCode = $null; holdDetail = $null; holdingTaskId = $null; holdingTaskStatus = $null; heldSince = $null; holdEpisode = 0
+        landingOperationId = $LandingOperationId; terminalEventId = [guid]::NewGuid().ToString(); reconciliationError = $null; notifications = @()
+        schemaVersion = 1; expectedSourceSha = $null; reviewEvidenceId = $null; approvalKind = 'ExplicitCaller'; sourceResolutionState = 'None'
+        localBeforeSha = $null; remoteSourceSha = $null; candidateSourceSha = $null; resolvedSourceSha = $null; sourceRelationship = 'Unknown'; sourceRefusalReason = $null
+        terminalFailureCode = $TerminalFailureCode; failureDiagnosticId = $null; failureExceptionType = $FailureExceptionType
+        sourceDiagnosticCommand = $null; sourceDiagnosticExitCode = $null; sourceDiagnosticCode = $null; sourceDiagnosticExceptionType = $null
+        recoveryMode = 'None'; recoveryOwnerStatus = $null; recoverySourceTaskId = $null; recoverySourceFullRef = $null; recoveryOwnerRemoteBeforeSha = $null
+        recoveryOwnerRemoteAfterSha = $null; recoveryRelationship = $null; recoveryPatchesContained = $null; recoveryUncontainedPatches = $null; supersedesRequestId = $null
+    }
+    # [string] parameters hold an empty string, never null; the server writes null.
+    foreach ($k in @('terminalFailureCode', 'failureExceptionType', 'landingOperationId')) { if (-not $r[$k]) { $r[$k] = $null } }
+    if ($TerminalFailureCode) { $r.failureDiagnosticId = [guid]::NewGuid().ToString() }
+    return $r
 }
 
 # The server's list refusal (AgentTaskScope.SupportedListQueryKeys, AgentTaskEndpoints.RejectUnknownListQueryKeys).
@@ -76,6 +152,7 @@ function New-C1408FakeHttp {
         [int]$ListStatus = 200, [string]$ListBody = '', [int]$DetailStatus = 200, [string]$DiagBody = '')
     if (-not $Counter) { $Counter = @{ calls = 0 } }
     if (-not $Counter.ContainsKey('details')) { $Counter.details = 0 }
+    if (-not $Counter.ContainsKey('detailIds')) { $Counter.detailIds = New-Object System.Collections.ArrayList }
     if (-not $Counter.ContainsKey('listUrls')) { $Counter.listUrls = New-Object System.Collections.ArrayList }
     if (-not $DiagBody) { $DiagBody = '{"pool":{"NoResetOnClose":true,"MaxPoolSize":100,"connectionString":"Host=x;Password=hunter2"},"password":"hunter2"}' }
     $state = @{ i = 0; Pipeline = $PipelineMs; Items = $Items; Sha = $VersionSha; Health = $HealthCode; Counter = $Counter; ListStatus = $ListStatus; ListBody = $ListBody; DetailStatus = $DetailStatus; Diag = $DiagBody; Keys = $script:C1408ListKeys; Lands = $script:C1408LandById }
@@ -106,11 +183,12 @@ function New-C1408FakeHttp {
             $s.Counter.details++
             if ($s.DetailStatus -ne 200) { return @{ StatusCode = $s.DetailStatus; Body = '{"title":"failed"}' } }
             $id = $Matches['id']
+            [void]$s.Counter.detailIds.Add($id)
             $summary = @($s.Items | Where-Object { $_.id -eq $id }) | Select-Object -First 1
             if ($null -eq $summary) { return @{ StatusCode = 404; Body = '{"title":"not found"}' } }
             $land = $s.Lands[$id]
             $detail = [ordered]@{ summary = $summary; goal = 'g'; result = $null; failureReason = $null; events = @(); landing = $null; landRequest = $null }
-            if ($land) { $detail.landing = $land.landing; $detail.landRequest = $land.landRequest }
+            if ($land) { $detail.landing = $land.landing; $detail.landRequest = $land.landRequest; if ($land.events) { $detail.events = @($land.events) } }
             return @{ StatusCode = 200; Body = ($detail | ConvertTo-Json -Depth 8) }
         }
         if ($Url -like '*/api/diagnostics/session-state*') {
@@ -294,7 +372,7 @@ function Test-C1408_FailedLandsFromTaskDetail {
     $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100)
     $refused = New-C1408Task -Status 'Succeeded' -Land 'Refused'
     Assert-C1408 -Cond (-not $refused.Contains('landing') -and -not $refused.Contains('landRequest') -and $refused.Contains('landAttempt')) -Name 'fake list item has the summary shape: no landing/landRequest, has landAttempt'
-    $items = @($refused, (New-C1408Task -Status 'Blocked' -Land 'NeedsResolution'), (New-C1408Task -Status 'Succeeded' -Land 'Refused'), (New-C1408Task -Status 'Succeeded' -Land 'Landed'), (New-C1408Task -Status 'Succeeded'), (New-C1408Task -Status 'Succeeded'))
+    $items = @($refused, (New-C1408Task -Status 'Blocked' -Land 'NeedsResolution'), (New-C1408Task -Status 'Succeeded' -Land 'Refused'), (New-C1408Task -Status 'Succeeded' -Land 'Landed'), (New-C1408Task -Status 'Succeeded' -Workspace 'Shared'), (New-C1408Task -Status 'Succeeded' -Workspace 'Shared'))
     $c = @{ calls = 0 }
     $w = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -Items $items -Counter $c
     $f = (Get-Content -LiteralPath $w.ResultPath -Raw | ConvertFrom-Json).failures
@@ -357,6 +435,79 @@ function Test-C1408_AdvisoryGuards {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# D1 (Review 2f1f73a5): a land that threw, or was refused before the attempt counter moved, ends in a
+# LandRefused event without a Refused landing op. Both are counted; a LandRefused before the window is not.
+function Test-C1408_LandRefusedWithoutRefusedOp {
+    $root = New-C1408Scratch
+    $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100)
+    $exc = New-C1408Task -Status 'Succeeded' -Land 'Exception'
+    $pre = New-C1408Task -Status 'Succeeded' -Land 'PreProtocol'
+    $old = New-C1408Task -Status 'Succeeded' -Land 'OldRefusal'
+    Assert-C1408 -Cond ([int]$pre.landAttempt -eq 0 -and $null -eq $pre.landRequestedAt -and $null -eq $pre.landStartedAt) -Name 'pre-protocol refusal leaves the list item with no land hint (server ClearPending)'
+    $c1 = @{ calls = 0 }
+    $wExc = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -Items @($exc) -Counter $c1 -Name 'wexc'
+    $fExc = (Get-Content -LiteralPath $wExc.ResultPath -Raw | ConvertFrom-Json).failures
+    Assert-C1408 -Cond ([int]$fExc.failedLands -eq 1) -Name 'an exception-ended land (terminalFailureCode, LandRefused, landing Unconfirmed) is counted' -Detail ($fExc | ConvertTo-Json -Compress)
+    $c2 = @{ calls = 0 }
+    $wPre = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -Items @($pre) -Counter $c2 -Name 'wpre'
+    $fPre = (Get-Content -LiteralPath $wPre.ResultPath -Raw | ConvertFrom-Json).failures
+    Assert-C1408 -Cond (@($c2.detailIds) -contains $pre.id) -Name 'a Succeeded worktree task with no land hint is read from task detail' -Detail ('detailIds=' + (@($c2.detailIds) -join ','))
+    Assert-C1408 -Cond ([int]$fPre.failedLands -eq 1) -Name 'a pre-protocol refusal (LandRefused in the window, no failure code) is counted' -Detail ($fPre | ConvertTo-Json -Compress)
+    $wOld = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -Items @($old) -Name 'wold'
+    $fOld = (Get-Content -LiteralPath $wOld.ResultPath -Raw | ConvertFrom-Json).failures
+    Assert-C1408 -Cond ([int]$fOld.failedLands -eq 0 -and $wOld.ExitCode -eq 0) -Name 'a LandRefused before the window followed by a landed land is not counted' -Detail ('exit=' + $wOld.ExitCode + ' ' + ($fOld | ConvertTo-Json -Compress))
+    $wAll = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -Items @($exc, $pre, $old, (New-C1408Task -Status 'Succeeded' -Land 'Exception')) -Name 'wall'
+    Assert-C1408 -Cond ($wAll.ExitCode -eq 2 -and $wAll.Verdict -eq 'ROLLBACK') -Name 'three LandRefused-only lands vs baseline 0 exit 2 ROLLBACK' -Detail ('exit=' + $wAll.ExitCode + ' ' + ($wAll.Lines -join ' | '))
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# D2 (Review 2f1f73a5): a literal '@' in the password, a percent-encoded key and a fragment pair never leak
+# through stdout, stderr, the recorded JSON or the request's exception text.
+function Test-C1408_MaskingBypassForms {
+    $root = New-C1408Scratch
+    $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100)
+    $forms = @(
+        @{ Name = 'literal @ in the password'; Server = 'http://admin:p@SENTAT1408@fake.invalid'; Pipe = ''; Sentinel = 'SENTAT1408' },
+        @{ Name = 'percent-encoded key'; Server = 'http://fake.invalid'; Pipe = 'http://fake.invalid/api/agent-tasks/pipeline?projectId=p1&access%5Ftoken=SENTPCT1408'; Sentinel = 'SENTPCT1408' },
+        @{ Name = 'fragment pair'; Server = 'http://fake.invalid'; Pipe = 'http://fake.invalid/api/agent-tasks/pipeline?projectId=p1#access_token=SENTFRAG1408&token=SENTFRAG1408'; Sentinel = 'SENTFRAG1408' }
+    )
+    $n = 0
+    foreach ($form in $forms) {
+        $n++
+        $dir = Join-Path $root ('form' + $n)
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $bp = Join-Path $dir 'baseline.json'
+        Copy-Item -LiteralPath $b.BaselinePath -Destination $bp
+        $url = $form.Pipe
+        if (-not $url) { $url = $form.Server + '/api/agent-tasks/pipeline?projectId=p1' }
+        # The seam does what a real request does first: convert the text to [uri]. Its error, or a
+        # request error naming the URI .NET would send (percent-decoded, fragment kept), is the exception text.
+        $exText = ''
+        try { $u = [uri]$url; $exText = 'request failed for ' + $u.AbsoluteUri + ' original ' + $u.OriginalString } catch { $exText = [string]$_.Exception.Message }
+        Assert-C1408 -Cond ($exText -match $form.Sentinel -and (Hide-CutoverText -Text $exText) -notmatch $form.Sentinel) -Name ('exception text is masked: ' + $form.Name) -Detail (Hide-CutoverText -Text $exText)
+        $pipeArg = ''
+        if ($form.Pipe) { $pipeArg = "-PipelineUrl '" + $form.Pipe + "'" }
+        $errOut = Join-Path $dir 'child.err'
+        $cmd = @'
+$seam = { param([string]$Url); $u = [uri]$Url; throw ('request failed for ' + $u.AbsoluteUri + ' original ' + $u.OriginalString) }
+& '__MON__' -Mode Plan -ServerBaseUrl '__SRV__' __PIPE__ -ProjectId 'p1' -BaselinePath '__BP__'
+& '__MON__' -Mode Baseline -Execute -ServerBaseUrl '__SRV__' __PIPE__ -ProjectId 'p1' -BaselinePath '__DIR__/child-baseline.json' -ResultPath '__DIR__/b-result.json' -SampleCount 2 -HttpGet $seam
+& '__MON__' -Mode Watch -Execute -ServerBaseUrl '__SRV__' __PIPE__ -ProjectId 'p1' -BaselinePath '__BP__' -ResultPath '__DIR__/w-result.json' -SampleCount 2 -HttpGet $seam
+exit $LASTEXITCODE
+'@
+        $cmd = $cmd.Replace('__MON__', $monitor).Replace('__SRV__', $form.Server).Replace('__PIPE__', $pipeArg).Replace('__BP__', $bp).Replace('__DIR__', $dir)
+        $out = @(& pwsh -NoProfile -NonInteractive -Command $cmd 2> $errOut | ForEach-Object { [string]$_ })
+        $err = ''
+        if (Test-Path -LiteralPath $errOut) { $err = [string](Get-Content -LiteralPath $errOut -Raw) }
+        $leaks = @($out | Where-Object { $_ -match $form.Sentinel })
+        Assert-C1408 -Cond ($out.Count -gt 0 -and $leaks.Count -eq 0 -and $err -notmatch $form.Sentinel) -Name ('stdout and stderr carry no sentinel: ' + $form.Name) -Detail (($leaks -join ' | ') + ' ERR ' + $err)
+        $json = ''
+        foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*-result.json')) { $json += (Get-Content -LiteralPath $f.FullName -Raw) }
+        Assert-C1408 -Cond ($json -match 'request failed|Cannot convert' -and $json -notmatch $form.Sentinel) -Name ('recorded json carries the request error without the sentinel: ' + $form.Name) -Detail ([regex]::Match($json, '.{0,60}' + $form.Sentinel + '.{0,20}').Value)
+    }
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $cases = @(
     'C1408_RollbackAboveFloorAndRatio',
     'C1408_FloorHoldsUnderOneSecond',
@@ -368,7 +519,9 @@ $cases = @(
     'C1408_TaskListUnreadableIsNeverOk',
     'C1408_FailedLandsFromTaskDetail',
     'C1408_UrlSecretsNeverPrinted',
-    'C1408_AdvisoryGuards'
+    'C1408_AdvisoryGuards',
+    'C1408_LandRefusedWithoutRefusedOp',
+    'C1408_MaskingBypassForms'
 )
 
 if (-not (Test-Path -LiteralPath $monitor)) {
