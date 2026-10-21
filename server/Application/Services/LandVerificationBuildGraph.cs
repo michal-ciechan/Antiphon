@@ -1,27 +1,25 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-1380 S2: audited graph inventory, not a candidate-supplied allowlist. The digest covers
-/// the ordinal-sorted, NUL-terminated ls-tree records selected below (mode, blob ID and path).
-/// Audited at a935ec8973a074a8b075ed313fffc87ba63b3189: 292 entries. Projects embed bundle
-/// Markdown and docs JSON, but no docs Markdown or root README in the verification build.
-/// Re-audited at fbbb0ee2f1f0c8e5cdddaa5f982b249e886dc34d after the S2 re-pick:
-/// the same 292 entries, with five newer-master PowerShell changes for RC candidate identity,
-/// its fixture, bounded-reader timing and the desktop smoke guard; no new documentation inputs.
-/// Re-audited at bfcb02e8758febf088c2c1f97b3f401e417f0a77 on master 706d99b8a6eb624ddb1bda535b015205b2c0d50e:
-/// the same 292 entries; only scripts/validate-checkpoint-receipt.ps1 changed since the prior
-/// audit, adding a failed-report verdict check. Imports/resources/entrypoints still consume
-/// no docs Markdown or root README in the verification build.
-/// Re-audited prospective landing tree 762b21785a3ded2bb5c75aac0b2854b03da60ff3
-/// on master e8bd995b0481e838c0110217dc4f680fe4de8374: the same 292 entries;
-/// only .gitattributes changed since the prior audit (CARD-1383's Slow registry merge rule).
-/// The Slow registry text file and tools/**/*.cs are outside this inventory; the rule adds
-/// no build imports/resources/entrypoints or documentation inputs.
-/// Re-audit imports/resources/entrypoints before changing this digest; drift means build.
+/// CARD-1385: dotnet-build definition files only. The digest is the embedded manifest
+/// written by scripts/audit-land-verification-graph.ps1. A missing or unreadable manifest
+/// does not match, so the land builds. Loading it never throws from type initialization.
 /// </summary>
 internal sealed class LandVerificationBuildGraph
 {
-    internal const string Fingerprint = "AE2F82A463CD2527B57BF4EE83BBCA269D7FE4101D779EAE3947A113A3FA74A5";
+    private const string ManifestResource = "Antiphon.Server.LandVerificationBuildGraph.manifest.txt";
+
+    private static readonly Lazy<Manifest> Loaded = new(ReadManifest);
+
+    /// <summary>Manifest digest, or empty when the manifest is missing, short, or not uppercase hex.</summary>
+    internal static string Fingerprint => Loaded.Value.Digest ?? "";
+
+    /// <summary>Manifest count, or null when the manifest cannot be read.</summary>
+    internal static int? AuditedCount => Loaded.Value.Count;
 
     internal bool Includes(string path)
     {
@@ -29,10 +27,44 @@ internal sealed class LandVerificationBuildGraph
         var extension = Path.GetExtension(path).ToLowerInvariant();
         return extension.EndsWith("proj", StringComparison.Ordinal)
             || extension is ".props" or ".targets" or ".sln" or ".slnx" or ".slnf" or ".rsp"
-                or ".ps1" or ".sh" or ".cmd" or ".bat" or ".py"
             || name.StartsWith("Directory.Build.", StringComparison.OrdinalIgnoreCase)
             || name.ToLowerInvariant() is "global.json" or "nuget.config" or "packages.lock.json"
-                or "packages.config" or "package.json" or "package-lock.json" or "yarn.lock"
-                or "pnpm-lock.yaml" or ".gitmodules" or ".gitattributes" or "dotnet-tools.json";
+                or "packages.config" or "directory.packages.props";
     }
+
+    /// <summary>Ordinal-sorted, NUL-terminated SHA-256 of the selected ls-tree rows.</summary>
+    internal static string FingerprintOf(IReadOnlyList<string> rows)
+    {
+        var ordered = rows.ToArray();
+        Array.Sort(ordered, StringComparer.Ordinal);
+        var payload = string.Join('\0', ordered) + '\0';
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
+    }
+
+    private static Manifest ReadManifest()
+    {
+        try
+        {
+            using var stream = typeof(LandVerificationBuildGraph).Assembly.GetManifestResourceStream(ManifestResource);
+            if (stream is null) return new(null, null);
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            var digest = reader.ReadLine();
+            var countLine = reader.ReadLine();
+            if (reader.ReadLine() is not null) return new(null, null);
+            if (digest is null || digest.Length != 64
+                || !digest.All(static c => c is >= '0' and <= '9' or >= 'A' and <= 'F'))
+                return new(null, null);
+            if (countLine is null
+                || !int.TryParse(countLine, NumberStyles.None, CultureInfo.InvariantCulture, out var count)
+                || count < 0)
+                return new(null, null);
+            return new(digest, count);
+        }
+        catch (Exception)
+        {
+            return new(null, null);
+        }
+    }
+
+    private readonly record struct Manifest(string? Digest, int? Count);
 }

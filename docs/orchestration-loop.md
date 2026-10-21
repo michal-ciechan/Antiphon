@@ -2120,16 +2120,25 @@ links, submodules, malformed output and failed reads build. Bundle Markdown and
 docs JSON are build inputs. Review, approval, source checks, publication CAS,
 confirmation and cleanup remain required; this is not an advisory-review exemption.
 
-The candidate must also match the audited 292-entry build-graph inventory in
-`LandVerificationBuildGraph`: project formats, props/targets, solution formats,
-response files, `Directory.Build.*`, SDK/NuGet/package configuration and locks,
-Git attributes/submodules, tool manifests and executable script entrypoints.
+The candidate must also match the audited dotnet-build definition inventory in
+`LandVerificationBuildGraph`. A path is included when its lowercased extension
+ends with `proj` or is `.props`, `.targets`, `.sln`, `.slnx`, `.slnf`, or `.rsp`,
+when the file name starts with `Directory.Build.`, or when the lowercased file
+name is `global.json`, `nuget.config`, `packages.lock.json`, `packages.config`,
+or `directory.packages.props`. Editing an unrelated script leaves that digest
+unchanged, so a docs-only skip still applies. A path that can read `docs/**/*.md`
+or the root `README.md` does so through a definition file, and that edit changes
+the digest, so the skip stops until the manifest is regenerated.
+
 The fingerprint is SHA-256 over ordinal-sorted `git ls-tree -r -z <candidate>`
-records selected by that inventory, each terminated by NUL (mode, object ID, path).
-It is compiled into the policy, never accepted from the candidate. New, removed or
-changed graph inputs force a build until the imports/resources/entrypoints and
-documentation allowlist are re-audited and the fingerprint explicitly reviewed.
-Unknown repositories build. No MSBuild evaluation is run to decide a skip.
+records selected by that inventory, each terminated by NUL (mode, type, object ID, path).
+`scripts/audit-land-verification-graph.ps1` writes
+`server/Application/Services/LandVerificationBuildGraph.manifest.txt`: the uppercase
+digest, then the selected count. That embedded manifest is the audited fingerprint,
+never a hand-edited constant and never accepted from the candidate. A missing,
+short, or non-hex manifest, a digest or count mismatch, an unreadable tree, and a
+definition-file change force a build. Unknown repositories build. No MSBuild
+evaluation is run to decide a skip.
 
 A skip records `Stage=Verify`, `Outcome=Skipped`, `Detail=non-code`, with
 `VerificationPassed=false`. The landing's `VerificationCommand` records
