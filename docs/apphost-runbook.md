@@ -52,7 +52,13 @@ exits before `dev-aspire.ps1` and releases the restart lock, because no launch
 child is left behind. Exit 3 stays a refusal and kills nothing. `-StopOnly
 -WhatIf` prints the stop and does not POST, take the restart lock, or launch.
 Postgres on 17280 and the session runner on 17204 stay up. The cutover script
-is the caller. An ordinary restart remains the command above.
+is the caller. Start that window with
+`pwsh -File scripts/cutover-postgres-server2.ps1`. A same-process call does not
+see `-ConfirmWindow` on the process command line and refuses. Default `-WhatIf`
+changes nothing. `-Execute -ConfirmWindow` is the real window. If
+`logs/apphost.down-on-purpose` already exists, the window refuses before it
+enters maintenance; the operator clears that marker first. An ordinary restart
+remains the command above.
 
 Before that force-kill, and only after the restart lock is held and SHA admission
 has passed, the script POSTs `http://localhost:17202/api/operator/shutdown` with
