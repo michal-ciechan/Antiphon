@@ -1200,6 +1200,25 @@ resets `ContinuityResumeFailures`; a supervised resume runs `Clear` but leaves t
 `FreshAfterResumeFailures` is deprecated
 and ignored, with a startup warning when configured.
 
+`Supervision:AutomaticFreshAfterResumeFailures` (default 3; 0 disables) is the one
+bounded exception. After that many distinct admitted resume failures, an eligible
+Claude or Grok standing agent reserves one new conversation. Untouched pending
+ordinary input moves with its queue id, body and source order. Attempted or
+producer-bound pending input stays on the source row: continuity is held with
+reason `AutomaticFreshRefused`, the automatic schedule is cancelled, and the
+unused allowance is kept. A consumed allowance that later holds for
+`RepeatedResumeFailure` is the exhausted episode. The successful reservation
+writes one Warning `StandingAutomaticFreshStarted` incident in that transaction
+(agent, old and new session, qualifying count, threshold, reason and queue ids;
+no message body). After commit, one Warning alert is raised through the existing
+alert service. The acceptance copy is "fresh launch queued; prior conversation
+retained". A refused or exhausted hold writes one Error
+`StandingAutomaticFreshRefused` incident and sets `AutomaticFreshAlertedHoldAt`
+equal to that `ContinuityHeldAt` before commit, then raises one Error alert.
+Later ticks and a recreated process do not notify that same hold again. A failed
+alert or audit write is logged and does not kill or schedule another restart.
+Fullness at or above 100% stays diagnostic and does not reserve a conversation.
+
 Standing Claude/Grok Start resumes the current conversation strictly. Missing native
 history, an incompatible target, unproven ownership, or repeated resume failure preserves history and requires a
 durable continuity decision. Attention survives incident pruning and AlwaysOn off.

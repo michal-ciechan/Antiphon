@@ -815,6 +815,21 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 {
                     intent.AutomaticFreshConsumed = true;
                     intent.NextRestartAt = null;
+                    var queues = pending.Count == 0
+                        ? "none"
+                        : string.Join(",", pending.Select(message => message.Id.ToString("D")));
+                    _db.AgentIncidents.Add(new AgentIncident
+                    {
+                        Id = Guid.NewGuid(),
+                        AgentId = agent.Id,
+                        SessionId = accepted.Id,
+                        Kind = AgentIncidentKind.StandingAutomaticFreshStarted,
+                        Severity = AlertSeverity.Warning,
+                        CreatedAt = UtcNow(),
+                        Message = ColumnText.Clip(
+                            $"StandingAutomaticFreshStarted agent {agent.Id:D} old {supervisedFresh.SessionId:D} new {accepted.Id:D} count {intent.AutomaticResumeFailures} threshold {_restartEscalation.AutomaticFreshAfterResumeFailures} reason repeated-resume queues {queues}; fresh launch queued; prior conversation retained.",
+                            AgentIncident.MessageMaxLength),
+                    });
                 }
                 if (!automatic)
                 {
