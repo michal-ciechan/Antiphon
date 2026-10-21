@@ -133,7 +133,7 @@ function Resolve-SnapshotReferencePath {
 function Get-SnapshotBareName {
     param([string]$Value)
     if ([string]::IsNullOrWhiteSpace($Value)) { return '' }
-    return $Value.Trim().TrimStart('/')
+    return $Value.Trim().TrimStart('/').TrimEnd('/')
 }
 
 function Test-SnapshotNameMatch {
@@ -255,23 +255,66 @@ function Protect-SnapshotStaging {
     return $true
 }
 
-function Initialize-SnapshotStaging {
+function Test-SnapshotContainsLink {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $cursor = [System.IO.Path]::GetFullPath($Path)
+    while (-not [string]::IsNullOrWhiteSpace($cursor)) {
+        if (Test-Path -LiteralPath $cursor) {
+            $item = Get-Item -LiteralPath $cursor -Force -ErrorAction SilentlyContinue
+            if ($item -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { return $true }
+        }
+        $parent = [System.IO.Path]::GetDirectoryName($cursor)
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $cursor) { break }
+        $cursor = $parent
+    }
+    return $false
+}
+
+function Clear-SnapshotOwnedFiles {
+    param([string]$Root)
+    if ([string]::IsNullOrWhiteSpace($Root) -or -not (Test-Path -LiteralPath $Root -PathType Container)) { return }
+    $rootItem = Get-Item -LiteralPath $Root -Force
+    if ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { return }
+    $filePattern = '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump(\.age)?$|^antiphon-drill-plain\.dump$'
+    foreach ($dir in @(Get-ChildItem -LiteralPath $Root -Force -Directory -ErrorAction SilentlyContinue)) {
+        if ($dir.Name -notmatch '^run-[0-9a-f]{32}$') { continue }
+        if ($dir.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
+        foreach ($file in @(Get-ChildItem -LiteralPath $dir.FullName -Force -File -ErrorAction SilentlyContinue)) {
+            if ($file.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
+            if ($file.Name -match $filePattern) {
+                Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+function Initialize-SnapshotStaging {
+    param([string]$Path)
+    $script:SnapshotRunStaging = ''
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    if (Test-SnapshotContainsLink $Path) { return $false }
     if (-not (Test-Path -LiteralPath $Path)) {
         New-Item -ItemType Directory -Path $Path | Out-Null
     }
-    foreach ($file in @(Get-ChildItem -LiteralPath $Path -Force -File -ErrorAction SilentlyContinue)) {
-        if ($file.Extension.Equals('.dump', [StringComparison]::OrdinalIgnoreCase)) {
-            Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue
-        }
+    if (Test-SnapshotContainsLink $Path) { return $false }
+    Clear-SnapshotOwnedFiles $Path
+    $run = Join-Path $Path ('run-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $run | Out-Null
+    if (-not (Protect-SnapshotStaging $run)) {
+        Remove-Item -LiteralPath $run -Force -ErrorAction SilentlyContinue
+        return $false
     }
-    return (Protect-SnapshotStaging $Path)
+    $script:SnapshotRunStaging = $run
+    return $true
 }
 
 function Remove-SnapshotStaging {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return $true }
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { return $false }
+    if ($item.Name -notmatch '^run-[0-9a-f]{32}$') { return $false }
     Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
     return -not (Test-Path -LiteralPath $Path)
 }
@@ -291,6 +334,8 @@ function Get-SnapshotReasonCode {
         'missing-age' { return 3 }
         'missing-sync-root' { return 3 }
         'staging-inside-sync' { return 3 }
+        'staging-inside-destination' { return 3 }
+        'staging-link' { return 3 }
         'staging-mode' { return 3 }
         'staging-cleanup' { return 3 }
         'missing-docker' { return 4 }
@@ -450,12 +495,12 @@ function Invoke-SnapshotPublish {
 
 function Get-SnapshotContainerFact {
     param([string]$Docker, [string]$Name)
-    $missing = [pscustomobject]@{ Found = $false; Parse = $false; Id = ''; Name = ''; Label = ''; Mounts = @(); Aliases = @() }
+    $missing = [pscustomobject]@{ Found = $false; Parse = $false; Id = ''; Name = ''; Label = ''; Mounts = @(); Aliases = @(); Env = @() }
     if ([string]::IsNullOrWhiteSpace($Name)) { return $missing }
     $result = Invoke-SnapshotNative $Docker @('inspect', '--format', '{{json .}}', $Name)
     if ($result.Exit -ne 0) { return $missing }
     $text = (($result.Lines -join "`n").Trim())
-    $bad = [pscustomobject]@{ Found = $true; Parse = $false; Id = ''; Name = ''; Label = ''; Mounts = @(); Aliases = @() }
+    $bad = [pscustomobject]@{ Found = $true; Parse = $false; Id = ''; Name = ''; Label = ''; Mounts = @(); Aliases = @(); Env = @() }
     if ([string]::IsNullOrWhiteSpace($text)) { return $bad }
     try { $info = $text | ConvertFrom-Json } catch { return $bad }
     if ($info -is [System.Array]) { $info = $info[0] }
@@ -479,13 +524,19 @@ function Get-SnapshotContainerFact {
             }
         }
     }
+    $envList = New-Object System.Collections.Generic.List[string]
+    if ($info.Config -and $info.Config.Env) {
+        foreach ($entry in @($info.Config.Env)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$entry)) { [void]$envList.Add([string]$entry) }
+        }
+    }
     $id = ''
     if ($info.Id) { $id = [string]$info.Id }
     $bare = ''
     if ($info.Name) { $bare = Get-SnapshotBareName ([string]$info.Name) }
     return [pscustomobject]@{
         Found = $true; Parse = $true; Id = $id; Name = $bare; Label = $label
-        Mounts = $mounts.ToArray(); Aliases = $aliases.ToArray()
+        Mounts = $mounts.ToArray(); Aliases = $aliases.ToArray(); Env = $envList.ToArray()
     }
 }
 
@@ -505,8 +556,18 @@ function Get-SnapshotProductionIds {
     return $ids.ToArray()
 }
 
+function Test-SnapshotRemoteEnv {
+    param([string[]]$Entries)
+    foreach ($entry in @($Entries)) {
+        if ([string]::IsNullOrWhiteSpace($entry)) { continue }
+        if ($entry -match '^(?i)PGHOST=(.*)$' -and -not [string]::IsNullOrWhiteSpace($Matches[1])) { return $true }
+        if ($entry -match '^(?i)PGPORT=(.*)$' -and -not [string]::IsNullOrWhiteSpace($Matches[1])) { return $true }
+    }
+    return $false
+}
+
 function Test-SnapshotReuseGuard {
-    param($Fact, [string]$SourceId, [string]$SourceName, [string]$SourceVolume, [string[]]$ProductionIds)
+    param($Fact, [string]$SourceId, [string]$SourceName, [string]$SourceVolume, [string[]]$ProductionIds, [string[]]$SourceMounts)
     if (-not $Fact.Found -or -not $Fact.Parse) { return 'inspect' }
     if (Test-SnapshotSameId $Fact.Id $SourceId) { return 'source-id' }
     if (Test-SnapshotIdPrefixHit $Fact.Id $ProductionIds) { return 'id-prefix' }
@@ -517,11 +578,127 @@ function Test-SnapshotReuseGuard {
         if (Test-SnapshotNameMatch $alias $names) { return 'alias' }
     }
     if ($Fact.Label -ne '1') { return 'unlabelled' }
-    $volumes = @($script:SnapshotProductionVolumes) + @($SourceVolume)
+    $listed = @($script:SnapshotProductionVolumes) + @($SourceVolume)
     foreach ($mount in @($Fact.Mounts)) {
-        if (Test-SnapshotNameMatch $mount $volumes) { return 'production-mount' }
+        if (Test-SnapshotNameMatch $mount $listed) { return 'production-mount' }
+        if (Test-SnapshotNameMatch $mount $SourceMounts) { return 'source-mount' }
     }
+    if (Test-SnapshotRemoteEnv $Fact.Env) { return 'pghost' }
     return 'ok'
+}
+
+function Get-SnapshotProtectedMounts {
+    param([string]$Docker, $SourceFact, [string]$SourceContainer)
+    $mounts = New-Object System.Collections.Generic.List[string]
+    if ($SourceFact -and $SourceFact.Mounts) {
+        foreach ($name in @($SourceFact.Mounts)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$name)) { [void]$mounts.Add([string]$name) }
+        }
+    }
+    foreach ($name in @($script:SnapshotProductionContainers)) {
+        if (Test-SnapshotNameMatch $name @($SourceContainer)) { continue }
+        $other = Get-SnapshotContainerFact $Docker $name
+        if ($other.Found -and $other.Parse) {
+            foreach ($mount in @($other.Mounts)) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$mount)) { [void]$mounts.Add([string]$mount) }
+            }
+        }
+    }
+    return $mounts
+}
+
+function Get-SnapshotVolumeFact {
+    param([string]$Docker, [string]$Name)
+    $missing = [pscustomobject]@{ Found = $false; Parse = $false; Name = ''; Label = '' }
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $missing }
+    $result = Invoke-SnapshotNative $Docker @('volume', 'inspect', '--format', '{{json .}}', $Name)
+    if ($result.Exit -ne 0) { return $missing }
+    $text = (($result.Lines -join "`n").Trim())
+    $bad = [pscustomobject]@{ Found = $true; Parse = $false; Name = ''; Label = '' }
+    if ([string]::IsNullOrWhiteSpace($text)) { return $bad }
+    try { $info = $text | ConvertFrom-Json } catch { return $bad }
+    if ($info -is [System.Array]) { $info = $info[0] }
+    $label = ''
+    if ($info.Labels) {
+        $prop = $info.Labels.PSObject.Properties[$script:SnapshotDrillLabel]
+        if ($prop) { $label = [string]$prop.Value }
+    }
+    $volumeName = $Name
+    if ($info.Name) { $volumeName = [string]$info.Name }
+    return [pscustomobject]@{ Found = $true; Parse = $true; Name = $volumeName; Label = $label }
+}
+
+function Get-SnapshotVolumeUsers {
+    param([string]$Docker, [string]$Volume)
+    $ids = New-Object System.Collections.Generic.List[string]
+    $result = Invoke-SnapshotNative $Docker @('ps', '-a', '--no-trunc', '--filter', ('volume=' + $Volume), '--format', '{{.ID}}')
+    if ($result.Exit -ne 0) {
+        return [pscustomobject]@{ Ok = $false; Ids = $ids }
+    }
+    foreach ($line in @($result.Lines)) {
+        $trim = ([string]$line).Trim()
+        if ($trim -match '^[0-9a-fA-F]{12,64}$') { [void]$ids.Add($trim) }
+    }
+    return [pscustomobject]@{ Ok = $true; Ids = $ids }
+}
+
+function Test-SnapshotVolumeGate {
+    param(
+        [string]$Docker,
+        [string]$Volume,
+        [string]$SourceVolume,
+        $SourceMounts,
+        [string]$AllowedId,
+        [bool]$AllowAbsent
+    )
+    $denied = @($script:SnapshotProductionVolumes) + @($SourceVolume)
+    if (Test-SnapshotNameMatch $Volume $denied) { return 'production-volume' }
+    if (Test-SnapshotNameMatch $Volume @($SourceMounts)) { return 'source-mount' }
+    $users = Get-SnapshotVolumeUsers $Docker $Volume
+    if (-not $users.Ok) { return 'inspect' }
+    foreach ($user in @($users.Ids)) {
+        if ([string]::IsNullOrWhiteSpace([string]$user)) { continue }
+        if (-not [string]::IsNullOrWhiteSpace($AllowedId) -and (Test-SnapshotSameId ([string]$user) $AllowedId)) { continue }
+        return 'foreign-mount'
+    }
+    $fact = Get-SnapshotVolumeFact $Docker $Volume
+    if (-not $fact.Found) {
+        if ($AllowAbsent) { return 'absent' }
+        return 'volume-mismatch'
+    }
+    if (-not $fact.Parse) { return 'inspect' }
+    if ($fact.Label -ne '1') { return 'unlabelled-volume' }
+    return 'ok'
+}
+
+function Write-SnapshotVolumeWarning {
+    param([string]$Volume)
+    Write-Output ('warning: scratch volume left in place volume=' + $Volume)
+}
+
+function Remove-SnapshotCreatedVolume {
+    param(
+        [string]$Docker,
+        [string]$Volume,
+        [string]$SourceVolume,
+        $SourceMounts
+    )
+    $denied = @($script:SnapshotProductionVolumes) + @($SourceVolume) + @($SourceMounts)
+    if (Test-SnapshotNameMatch $Volume $denied) {
+        Write-SnapshotVolumeWarning $Volume
+        return
+    }
+    $fact = Get-SnapshotVolumeFact $Docker $Volume
+    if (-not $fact.Found -or -not $fact.Parse -or $fact.Label -ne '1') {
+        Write-SnapshotVolumeWarning $Volume
+        return
+    }
+    $users = Get-SnapshotVolumeUsers $Docker $Volume
+    if (-not $users.Ok -or @($users.Ids).Count -gt 0) {
+        Write-SnapshotVolumeWarning $Volume
+        return
+    }
+    Invoke-SnapshotNative $Docker @('volume', 'rm', $Volume) | Out-Null
 }
 
 function Remove-SnapshotDrillContainer {
@@ -530,20 +707,35 @@ function Remove-SnapshotDrillContainer {
         [string]$DrillContainer,
         [string]$DrillVolume,
         [string]$SourceId,
-        [string]$SourceVolume
+        [string]$SourceVolume,
+        [string]$ExpectedId,
+        $SourceMounts
     )
-    $fact = Get-SnapshotContainerFact $Docker $DrillContainer
-    $removed = $false
-    if ($fact.Found -and $fact.Parse -and $fact.Label -eq '1' -and -not (Test-SnapshotSameId $fact.Id $SourceId)) {
-        if (-not (Test-SnapshotNameMatch $fact.Name $script:SnapshotProductionContainers)) {
-            Invoke-SnapshotNative $Docker @('rm', '-f', $fact.Id) | Out-Null
-            $removed = $true
-        }
+    if ([string]::IsNullOrWhiteSpace($ExpectedId)) {
+        Write-Output 'warning: scratch container left in place'
+        return
     }
-    $denied = @($script:SnapshotProductionVolumes) + @($SourceVolume)
-    if ($removed -and -not (Test-SnapshotNameMatch $DrillVolume $denied)) {
-        Invoke-SnapshotNative $Docker @('volume', 'rm', $DrillVolume) | Out-Null
+    $fact = Get-SnapshotContainerFact $Docker $ExpectedId
+    $same = $fact.Found -and $fact.Parse -and (Test-SnapshotSameId $fact.Id $ExpectedId) -and $fact.Label -eq '1'
+    $safeName = -not (Test-SnapshotNameMatch $fact.Name $script:SnapshotProductionContainers)
+    $notSource = -not (Test-SnapshotSameId $fact.Id $SourceId)
+    if (-not $same -or -not $safeName -or -not $notSource) {
+        Write-Output 'warning: scratch container left in place'
+        return
     }
+    $mounts = @($fact.Mounts)
+    Invoke-SnapshotNative $Docker @('rm', '-f', $fact.Id) | Out-Null
+    $mounted = $false
+    foreach ($mount in $mounts) {
+        if (Test-SnapshotNameMatch $DrillVolume @($mount)) { $mounted = $true }
+    }
+    $vol = Get-SnapshotVolumeFact $Docker $DrillVolume
+    $denied = @($script:SnapshotProductionVolumes) + @($SourceVolume) + @($SourceMounts)
+    if (-not $mounted -or -not $vol.Found -or -not $vol.Parse -or $vol.Label -ne '1' -or (Test-SnapshotNameMatch $DrillVolume $denied)) {
+        Write-SnapshotVolumeWarning $DrillVolume
+        return
+    }
+    Invoke-SnapshotNative $Docker @('volume', 'rm', $DrillVolume) | Out-Null
 }
 
 function Invoke-SnapshotDrill {
@@ -564,7 +756,10 @@ function Invoke-SnapshotDrill {
         [bool]$Keep
     )
     $owned = $false
+    $volumeCreated = $false
     $sourceId = ''
+    $targetId = ''
+    $protectedMounts = @()
     $plain = Join-Path $Stage 'antiphon-drill-plain.dump'
     try {
         if (Test-SnapshotNameMatch $DrillDatabase @($SourceDatabase, 'antiphon')) {
@@ -575,6 +770,7 @@ function Invoke-SnapshotDrill {
             return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=source-unknown' }
         }
         $sourceId = $source.Id
+        $protectedMounts = @(Get-SnapshotProtectedMounts $Docker $source $SourceContainer)
         $productionIds = @(Get-SnapshotProductionIds $Docker $SourceContainer $source)
         if (Test-SnapshotIdPrefixHit $DrillContainer $productionIds) {
             return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=id-prefix' }
@@ -583,17 +779,41 @@ function Invoke-SnapshotDrill {
         if ($existing.Found -and -not $existing.Parse) {
             return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=inspect' }
         }
-        $targetId = ''
         if ($existing.Found) {
             if (Test-SnapshotIdPrefixHit $DrillContainer (@($existing.Id) + $productionIds)) {
                 return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=id-prefix' }
             }
-            $guard = Test-SnapshotReuseGuard $existing $sourceId $source.Name $SourceVolume $productionIds
+            $guard = Test-SnapshotReuseGuard $existing $sourceId $source.Name $SourceVolume $productionIds $protectedMounts
             if ($guard -ne 'ok') {
                 return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = ('guard=' + $guard) }
             }
+            $gate = Test-SnapshotVolumeGate $Docker $DrillVolume $SourceVolume $protectedMounts $existing.Id $false
+            if ($gate -ne 'ok') {
+                return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = ('guard=' + $gate) }
+            }
+            $mounted = $false
+            foreach ($mount in @($existing.Mounts)) {
+                if (Test-SnapshotNameMatch $DrillVolume @($mount)) { $mounted = $true }
+            }
+            if (-not $mounted) {
+                return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=volume-mismatch' }
+            }
             $targetId = $existing.Id
         } else {
+            $gate = Test-SnapshotVolumeGate $Docker $DrillVolume $SourceVolume $protectedMounts '' $true
+            if ($gate -eq 'absent') {
+                $made = Invoke-SnapshotNative $Docker @('volume', 'create', '--label', ($script:SnapshotDrillLabel + '=1'), $DrillVolume)
+                if ($made.Exit -ne 0) {
+                    return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' }
+                }
+                $check = Get-SnapshotVolumeFact $Docker $DrillVolume
+                if (-not $check.Found -or -not $check.Parse -or $check.Label -ne '1') {
+                    return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' }
+                }
+                $volumeCreated = $true
+            } elseif ($gate -ne 'ok') {
+                return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = ('guard=' + $gate) }
+            }
             $started = Invoke-SnapshotNative $Docker @(
                 'run', '-d', '--name', $DrillContainer,
                 '--label', ($script:SnapshotDrillLabel + '=1'),
@@ -607,10 +827,11 @@ function Invoke-SnapshotDrill {
                 return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' }
             }
             $created = Get-SnapshotContainerFact $Docker $DrillContainer
-            $guard = Test-SnapshotReuseGuard $created $sourceId $source.Name $SourceVolume $productionIds
+            $guard = Test-SnapshotReuseGuard $created $sourceId $source.Name $SourceVolume $productionIds $protectedMounts
             if ($guard -ne 'ok') {
                 if ($created.Found -and $created.Parse -and $created.Label -eq '1' -and -not (Test-SnapshotSameId $created.Id $sourceId)) {
                     $owned = $true
+                    $targetId = $created.Id
                 }
                 return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = ('guard=' + $guard) }
             }
@@ -667,7 +888,9 @@ function Invoke-SnapshotDrill {
     } finally {
         Remove-SnapshotPartial @($plain)
         if ($owned -and -not $Keep) {
-            Remove-SnapshotDrillContainer $Docker $DrillContainer $DrillVolume $sourceId $SourceVolume
+            Remove-SnapshotDrillContainer $Docker $DrillContainer $DrillVolume $sourceId $SourceVolume $targetId $protectedMounts
+        } elseif ($volumeCreated -and -not $owned) {
+            Remove-SnapshotCreatedVolume $Docker $DrillVolume $SourceVolume $protectedMounts
         }
     }
 }
@@ -687,6 +910,12 @@ function Invoke-PostgresSnapshot {
     if ([string]::IsNullOrWhiteSpace($dest)) { $dest = Join-Path $sync 'antiphon-postgres' }
     $stage = $StagingPath
     if ([string]::IsNullOrWhiteSpace($stage)) { $stage = Join-Path ([System.IO.Path]::GetTempPath()) 'antiphon-postgres-snapshot-staging' }
+    $Container = Get-SnapshotBareName $Container
+    $Database = Get-SnapshotBareName $Database
+    $ScratchContainer = Get-SnapshotBareName $ScratchContainer
+    $ScratchDatabase = Get-SnapshotBareName $ScratchDatabase
+    $ScratchVolume = Get-SnapshotBareName $ScratchVolume
+    $SourceVolume = Get-SnapshotBareName $SourceVolume
 
     $namesOk = (Test-SnapshotToken $Container) -and (Test-SnapshotToken $Database) -and
         (Test-SnapshotToken $ScratchContainer) -and (Test-SnapshotToken $ScratchDatabase) -and
@@ -702,8 +931,14 @@ function Invoke-PostgresSnapshot {
     if (-not (Test-Path -LiteralPath $sync -PathType Container)) {
         return Write-SnapshotResult $planOnly 'missing-sync-root' ''
     }
+    if (Test-SnapshotContainsLink $stage) {
+        return Write-SnapshotResult $planOnly 'staging-link' ''
+    }
     if (Test-SnapshotPathInside $sync $stage) {
         return Write-SnapshotResult $planOnly 'staging-inside-sync' ''
+    }
+    if (Test-SnapshotPathInside $dest $stage) {
+        return Write-SnapshotResult $planOnly 'staging-inside-destination' ''
     }
 
     if ($RestoreDrill) {
@@ -727,11 +962,13 @@ function Invoke-PostgresSnapshot {
         if (-not $ageCmd) { return Write-SnapshotResult $false 'missing-age' '' }
         if (-not $dockerCmd) { return Write-SnapshotResult $false 'missing-docker' '' }
         if (-not (Initialize-SnapshotStaging $stage)) { return Write-SnapshotResult $false 'staging-mode' '' }
+        $run = [string]$script:SnapshotRunStaging
+        if ([string]::IsNullOrWhiteSpace($run)) { return Write-SnapshotResult $false 'staging-mode' '' }
         try {
-            $drilled = Invoke-SnapshotDrill $stage $dest $identity $ScratchContainer $ScratchDatabase $ScratchVolume $ScratchImage $dockerCmd.Source $ageCmd.Source $Container $Database $SourceVolume $MinimumDumpBytes ([bool]$KeepScratch)
+            $drilled = Invoke-SnapshotDrill $run $dest $identity $ScratchContainer $ScratchDatabase $ScratchVolume $ScratchImage $dockerCmd.Source $ageCmd.Source $Container $Database $SourceVolume $MinimumDumpBytes ([bool]$KeepScratch)
             return Write-SnapshotResult $false $drilled.Reason $drilled.Detail
         } finally {
-            [void](Remove-SnapshotStaging $stage)
+            [void](Remove-SnapshotStaging $run)
         }
     }
 
@@ -757,11 +994,13 @@ function Invoke-PostgresSnapshot {
     if (-not $ageCmd) { return Write-SnapshotResult $false 'missing-age' '' }
     if (-not $dockerCmd) { return Write-SnapshotResult $false 'missing-docker' '' }
     if (-not (Initialize-SnapshotStaging $stage)) { return Write-SnapshotResult $false 'staging-mode' '' }
+    $run = [string]$script:SnapshotRunStaging
+    if ([string]::IsNullOrWhiteSpace($run)) { return Write-SnapshotResult $false 'staging-mode' '' }
     try {
-        $published = Invoke-SnapshotPublish $Container $Database $stage $dest $recipient $Retain $dockerCmd.Source $ageCmd.Source $MinimumDumpBytes
+        $published = Invoke-SnapshotPublish $Container $Database $run $dest $recipient $Retain $dockerCmd.Source $ageCmd.Source $MinimumDumpBytes
         return Write-SnapshotResult $false $published.Reason $published.Detail
     } finally {
-        [void](Remove-SnapshotStaging $stage)
+        [void](Remove-SnapshotStaging $run)
     }
 }
 

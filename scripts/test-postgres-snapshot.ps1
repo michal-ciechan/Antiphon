@@ -472,9 +472,14 @@ case "$cmd" in
                     printf '%s\n' '{"Name":"windmill_db","Labels":{}}'
                     exit 0
                 fi
-                if [ -f "$vol_file" ] && grep -qx -- "$target" "$vol_file"; then
-                    printf '{"Name":"%s","Labels":{"antiphon.snapshot-drill":"1"}}\n' "$target"
-                    exit 0
+                # PATH is only the fixture bin, so this match stays in the shell.
+                if [ -f "$vol_file" ]; then
+                    while IFS= read -r line || [ -n "$line" ]; do
+                        if [ "$line" = "$target" ]; then
+                            printf '{"Name":"%s","Labels":{"antiphon.snapshot-drill":"1"}}\n' "$target"
+                            exit 0
+                        fi
+                    done < "$vol_file"
                 fi
                 exit 1
                 ;;
@@ -730,12 +735,21 @@ function Test-StagingHygiene {
     try {
         if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'StagingHygiene script exists' $scriptPath; return }
         $stale = Join-Path $fx.Stage 'leftover.dump'
+        $notes = Join-Path $fx.Stage 'notes.txt'
+        $backup = Join-Path $fx.Stage 'dev-backup-20261020.dump'
         Set-Content -LiteralPath $stale -Value 'PLAINTEXT-STALE-1405' -Encoding ASCII
+        Set-Content -LiteralPath $notes -Value 'operator notes' -Encoding ASCII
+        Set-Content -LiteralPath $backup -Value 'operator dump' -Encoding ASCII
         $result = Invoke-Snapshot -Fixture $fx -Arguments @(
             '-Execute', '-RecipientFile', $fx.Recipient,
             '-Destination', $fx.Dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage
         )
-        Assert-True (-not (Test-Path -LiteralPath $fx.Stage)) 'execute removes staging' $fx.Stage
+        Assert-True (Test-Path -LiteralPath $fx.Stage) 'execute keeps the staging root' $fx.Stage
+        Assert-True (Test-Path -LiteralPath $stale) 'execute keeps an unrelated dump' $stale
+        Assert-True (Test-Path -LiteralPath $notes) 'execute keeps notes' $notes
+        Assert-True (Test-Path -LiteralPath $backup) 'execute keeps dev-backup' $backup
+        $runs = @(Get-ChildItem -LiteralPath $fx.Stage -Force -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^run-' })
+        Assert-True ($runs.Count -eq 0) 'execute removes its run directory' ("count=$($runs.Count)")
         $blob = $result.Out + "`n" + $result.Err
         Assert-True ($blob.IndexOf('PLAINTEXT-STALE-1405', [StringComparison]::Ordinal) -lt 0) 'execute hides stale plaintext' 'plaintext leaked'
         Assert-NoSecret $result $fx 'execute staging'
@@ -748,17 +762,31 @@ function Test-StagingHygiene {
     $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('card1405-stage-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $dir | Out-Null
     try {
+        if ($env:OS -ne 'Windows_NT') { & chmod 0755 -- $dir }
         Set-Content -LiteralPath (Join-Path $dir 'old.dump') -Value 'x' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $dir 'keep.dump.age') -Value 'y' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $dir 'notes.txt') -Value 'z' -Encoding ASCII
+        $priorName = 'run-' + ('ab' * 16)
+        $prior = Join-Path $dir $priorName
+        New-Item -ItemType Directory -Path $prior | Out-Null
+        Set-Content -LiteralPath (Join-Path $prior 'antiphon-20261021T010101Z.dump') -Value 'owned' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $prior 'notes.txt') -Value 'keep' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $prior 'dev-backup-20261020.dump') -Value 'keep' -Encoding ASCII
         $ok = Initialize-SnapshotStaging $dir
         Assert-True ($ok -eq $true) 'staging mode applied' "ok=$ok"
-        Assert-True (-not (Test-Path -LiteralPath (Join-Path $dir 'old.dump'))) 'plaintext swept' 'old.dump remains'
+        Assert-True (Test-Path -LiteralPath (Join-Path $dir 'old.dump')) 'root dump kept' 'old.dump missing'
         Assert-True (Test-Path -LiteralPath (Join-Path $dir 'keep.dump.age')) 'ciphertext kept' 'keep.dump.age missing'
         Assert-True (Test-Path -LiteralPath (Join-Path $dir 'notes.txt')) 'unrelated file kept' 'notes.txt missing'
-        if ($env:OS -ne 'Windows_NT') {
-            $mode = (& stat -c %a -- $dir).Trim()
-            Assert-True ($mode -eq '700') 'staging is 0700' $mode
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $prior 'antiphon-20261021T010101Z.dump'))) 'owned plaintext swept' 'owned dump remains'
+        Assert-True (Test-Path -LiteralPath (Join-Path $prior 'notes.txt')) 'notes inside a run directory kept' 'run notes missing'
+        Assert-True (Test-Path -LiteralPath (Join-Path $prior 'dev-backup-20261020.dump')) 'dev-backup inside a run directory kept' 'run backup missing'
+        $created = @(Get-ChildItem -LiteralPath $dir -Force -Directory | Where-Object { $_.Name -match '^run-[0-9a-f]{32}$' -and $_.Name -ne $priorName })
+        Assert-True ($created.Count -eq 1) 'staging opens one run directory' ("count=$($created.Count)")
+        if ($env:OS -ne 'Windows_NT' -and $created.Count -eq 1) {
+            $mode = (& stat -c %a -- $created[0].FullName).Trim()
+            Assert-True ($mode -eq '700') 'run directory is 0700' $mode
+            $parent = (& stat -c %a -- $dir).Trim()
+            Assert-True ($parent -eq '755') 'staging root mode is unchanged' $parent
         }
     } finally {
         Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
@@ -924,6 +952,7 @@ function Test-DrillRemovesScratch {
             '-ScratchVolume', 'antiphon-postgres-drill-pgdata'
         ) '1048576'
         Assert-True ($removed.Exit -eq 0) 'drill remove exits 0' "exit=$($removed.Exit) $($removed.Out)"
+        Assert-True ($removed.Tools -match 'volume create --label antiphon.snapshot-drill=1 antiphon-postgres-drill-pgdata') 'drill creates the labelled scratch volume' $removed.Tools
         Assert-True ($removed.Tools -match 'antiphon.snapshot-drill=1') 'drill labels the scratch container' $removed.Tools
         Assert-True ($removed.Tools -match ('rm -f ' + $id)) 'drill removes the scratch container id' $removed.Tools
         Assert-True ($removed.Tools -match 'volume rm antiphon-postgres-drill-pgdata') 'drill removes the scratch volume' $removed.Tools
