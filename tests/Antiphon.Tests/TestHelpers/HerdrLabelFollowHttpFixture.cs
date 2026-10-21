@@ -155,7 +155,12 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
             });
     }
 
-    public async Task RecreateAsync(bool runner = false)
+    /// <summary>
+    /// Simulated crash of the server side (and optionally the runner): every volatile instance is
+    /// discarded and joined, then both sides rebuild only from the isolated DB and sidecar files.
+    /// The recreated server is the production Program host; its sweep timer runs only when asked.
+    /// </summary>
+    public async Task RecreateAsync(bool runner = false, bool enabled = false)
     {
         await StopServerAsync();
         foreach (var db in _contexts) await db.DisposeAsync(); _contexts.Clear();
@@ -170,10 +175,11 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
             Runtime.List().Single(s => s.SessionId == SessionId).Status.ShouldBe("Running");
         }
         BuildHarness();
-        await StartServerAsync(enabled: false);
+        StartServer(enabled);
     }
 
-    public async Task StartServerAsync(bool enabled)
+    /// <summary>Boots production Program with its real follow registration against this fixture's DB, runner client and clock.</summary>
+    public void StartServer(bool enabled)
     {
         Server.ShouldBeNull();
         Server = new(_store.ConnectionString, Client, Bus, Clock, enabled);
@@ -183,7 +189,17 @@ internal sealed class HerdrLabelFollowHttpFixture : IAsyncDisposable
     public async Task StopServerAsync()
     {
         DetailClient?.Dispose(); DetailClient = null;
-        if (Server is not null) { await Server.DisposeAsync(); Server = null; }
+        if (Server is not null) { var server = Server; Server = null; await server.DisposeAsync(); }
+    }
+
+    public static async Task WaitAsync(Func<Task<bool>> condition, string because, TimeSpan? limit = null)
+    {
+        using var deadline = new CancellationTokenSource(limit ?? TimeSpan.FromSeconds(10));
+        while (!await condition())
+        {
+            if (deadline.IsCancellationRequested) throw new ShouldAssertException("Timed out waiting: " + because);
+            await Task.Delay(20);
+        }
     }
 
     public async Task<string?> DetailLabelAsync(string name)
