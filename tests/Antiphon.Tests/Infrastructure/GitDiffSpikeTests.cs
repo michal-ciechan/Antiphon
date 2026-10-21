@@ -19,7 +19,7 @@ namespace Antiphon.Tests.Infrastructure;
 /// </summary>
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public class GitDiffSpikeTests
 {
     private static readonly Guid TestWorkflowId = Guid.Parse("11111111-2222-3333-4444-555555555555");

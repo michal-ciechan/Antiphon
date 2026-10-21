@@ -10,7 +10,7 @@ namespace Antiphon.Tests.Infrastructure;
 
 /// <summary>CARD-0726 V-4. A journal fence names the common directory; a busy lock does not.</summary>
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class RepositoryFenceObserverTests
 {
     [Test]
