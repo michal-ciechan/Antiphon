@@ -37,3 +37,18 @@ The checkpoint tool adds `UseAppHost=false` on Linux. One build; CP-2 reuses it.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S3 | `tests/Antiphon.Tests -> bin-rcbp/` | c1396-reader | `/*/*/NightlyDeadOwnerLockTests/C1396_WriteHeldLockReadable` | V-1 | all listed, 0 failed/skipped | 1 | 15 |
 | CP-2 | S3 | CP-1 | c1400-docs | `/*/*/LandNonCodeSkipTests/(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-2 | all listed, 0 failed/skipped | 12 | 5 |
+
+## Evidence
+
+S3 cherry-picks applied with no conflicts. Patch-id (`git patch-id --stable`) equals master for each: `8856d4cb1`->`ab68fa6e05f0ee1a918587d958e32b072005604a` (29c112e5), `0fde552f4`->`6916cd8c11efbe382cf6410da77a252cbe966565` (1b9acac4), `cfcb9955d`->`c81cc3e6bd3ddafc3a7bb78eea671d05e32fee0e` (2c0d8095), `83cd564b4`->`795ee168e52f7de8bd325e8a93087dd11d10dbb7` (9944f5ed). The S2 `Read-NightlyLockRecord` body equals master's byte for byte.
+
+V-3: `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` at `795ee168e` printed `digest=F240D0F1DBF9AA627A0A3637B52318B8030181B60F20E677C6E3DE2D2285B72F count=57`.
+
+Checkpoint run `20261021-205200-4860` at `795ee168e52f7de8bd325e8a93087dd11d10dbb7`, verdict GREEN exit=0, one build, unlisted none:
+
+```
+CHECKPOINT CP-1 commit=795ee168e52f7de8bd325e8a93087dd11d10dbb7 build=ok filter=/*/*/NightlyDeadOwnerLockTests/C1396_WriteHeldLockReadable executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-0f30ca55/.antiphon/checkpoints/20261021-205200-4860/rows/CP-1/run.trx slot=granted waited=45s dirty=0 source=795ee168e52f7de8bd325e8a93087dd11d10dbb7 sourceState=clean buildSource=verified
+CHECKPOINT CP-2 commit=795ee168e52f7de8bd325e8a93087dd11d10dbb7 build=reused filter=/*/*/LandNonCodeSkipTests/(C1400_*)|(C1390_*)|(C1385_RegistryMatchesNarrowGraph*) executed=14 passed=14 failed=0 skipped=0 trx=/work/worktrees/task-0f30ca55/.antiphon/checkpoints/20261021-205200-4860/rows/CP-2/run.trx slot=granted waited=60s dirty=0 source=795ee168e52f7de8bd325e8a93087dd11d10dbb7 sourceState=clean buildSource=verified
+```
+
+CP-2 roster: 11 `C1400_*`, `C1390_UpdateRefusesDocsMarkdownInput`, `C1390_MissingNulFailsUnderNonInvariantCulture`, `C1390_MalformedManifestForcesTheBuild`, `C1385_RegistryMatchesNarrowGraph`.
