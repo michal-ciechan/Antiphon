@@ -145,22 +145,128 @@ internal class TestDbOperations
             $"DROP DATABASE IF EXISTS {databaseName} WITH (FORCE)").ConfigureAwait(false);
     }
 
-    /// <summary>CARD-1420: plain-SQL dump (schema + data) of the owned container's shared database.</summary>
-    public virtual Task<byte[]> CaptureSnapshotAsync(OwnedTestDbContainer container, string databaseName) =>
-        throw new NotImplementedException();
+    /// <summary>
+    /// CARD-1420: plain-SQL dump (schema + data) of the owned container's shared database, taken by
+    /// the container's own pg_dump. D-8: only an owned handle and only <c>antiphon_test</c>.
+    /// </summary>
+    public virtual async Task<byte[]> CaptureSnapshotAsync(OwnedTestDbContainer container, string databaseName)
+    {
+        var real = RequireOwnedSharedTarget(container, databaseName);
+        var path = $"/tmp/c1420-capture-{Guid.NewGuid():N}.sql";
+        try
+        {
+            var dump = await real.ExecAsync(
+            [
+                "pg_dump", "-U", DatabaseUser, "-d", TestDbFixture.SharedDatabaseName,
+                "--no-owner", "--no-privileges", "-f", path
+            ]).ConfigureAwait(false);
+            ThrowIfExecFailed("pg_dump", dump);
+            return await real.ReadFileAsync(path).ConfigureAwait(false);
+        }
+        finally
+        {
+            await RemoveContainerFileAsync(real, path).ConfigureAwait(false);
+        }
+    }
 
-    /// <summary>CARD-1420: replays a snapshot into the owned container's empty shared database.</summary>
-    public virtual Task RestoreSnapshotAsync(OwnedTestDbContainer container, string databaseName, byte[] sql) =>
-        throw new NotImplementedException();
+    /// <summary>
+    /// CARD-1420: replays a snapshot into the owned container's shared database with psql
+    /// <c>ON_ERROR_STOP=1 --single-transaction</c>; a non-zero exit or any error line fails it.
+    /// </summary>
+    public virtual async Task RestoreSnapshotAsync(OwnedTestDbContainer container, string databaseName, byte[] sql)
+    {
+        var real = RequireOwnedSharedTarget(container, databaseName);
+        var path = $"/tmp/c1420-restore-{Guid.NewGuid():N}.sql";
+        await real.CopyAsync(sql, path).ConfigureAwait(false);
+        try
+        {
+            var restore = await real.ExecAsync(
+            [
+                "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "--single-transaction",
+                "-U", DatabaseUser, "-d", TestDbFixture.SharedDatabaseName, "-f", path
+            ]).ConfigureAwait(false);
+            ThrowIfExecFailed("psql", restore);
+        }
+        finally
+        {
+            await RemoveContainerFileAsync(real, path).ConfigureAwait(false);
+        }
+    }
 
-    public virtual Task<IReadOnlyList<string>> ReadAppliedMigrationsAsync(string connectionString) =>
-        throw new NotImplementedException();
+    public virtual async Task<IReadOnlyList<string>> ReadAppliedMigrationsAsync(string connectionString)
+    {
+        var unpooled = new NpgsqlConnectionStringBuilder(connectionString) { Pooling = false }.ConnectionString;
+        await using var connection = new NpgsqlConnection(unpooled);
+        await connection.OpenAsync().ConfigureAwait(false);
+        await using var command = new NpgsqlCommand(
+            "SELECT \"MigrationId\" FROM \"__EFMigrationsHistory\" ORDER BY \"MigrationId\"",
+            connection);
+        await using var reader = await command.ExecuteReaderAsync().ConfigureAwait(false);
+        var applied = new List<string>();
+        while (await reader.ReadAsync().ConfigureAwait(false))
+            applied.Add(reader.GetString(0));
+        return applied;
+    }
 
-    public virtual IReadOnlyList<string> GetAssemblyMigrations() => throw new NotImplementedException();
+    /// <summary>The migrations assembly's ordered migration IDs (reflection only, no connection).</summary>
+    public virtual IReadOnlyList<string> GetAssemblyMigrations() => AssemblyMigrations.Value;
 
-    /// <summary>CARD-1420: drops and recreates the shared database after a failed restore.</summary>
-    public virtual Task ResetSharedDatabaseAsync(string maintenanceConnectionString) =>
-        throw new NotImplementedException();
+    /// <summary>CARD-1420: drops and recreates the owned container's shared database after a failed restore.</summary>
+    public virtual async Task ResetSharedDatabaseAsync(string maintenanceConnectionString)
+    {
+        await using var maintenance = new NpgsqlConnection(maintenanceConnectionString);
+        await maintenance.OpenAsync().ConfigureAwait(false);
+        await TestDbFixtureLifecycle.ExecuteNonQueryAsync(
+            maintenance,
+            $"DROP DATABASE IF EXISTS {TestDbFixture.SharedDatabaseName} WITH (FORCE)").ConfigureAwait(false);
+        await TestDbFixtureLifecycle.ExecuteNonQueryAsync(
+            maintenance,
+            $"CREATE DATABASE {TestDbFixture.SharedDatabaseName}").ConfigureAwait(false);
+    }
+
+    private static readonly Lazy<IReadOnlyList<string>> AssemblyMigrations = new(() =>
+    {
+        using var context = new AppDbContext(TestDbFixtureLifecycle.BuildOptions(
+            "Host=127.0.0.1;Database=antiphon_test;Username=test;Password=test"));
+        return context.Database.GetMigrations().ToArray();
+    });
+
+    private static PostgreSqlContainer RequireOwnedSharedTarget(OwnedTestDbContainer container, string databaseName)
+    {
+        if (!string.Equals(databaseName, TestDbFixture.SharedDatabaseName, StringComparison.Ordinal))
+            throw new ArgumentException(
+                $"Schema snapshots target only {TestDbFixture.SharedDatabaseName}, not '{databaseName}'.",
+                nameof(databaseName));
+        return container.Real
+            ?? throw new InvalidOperationException("Owned container has no Testcontainers handle.");
+    }
+
+    private static void ThrowIfExecFailed(string tool, DotNet.Testcontainers.Containers.ExecResult result)
+    {
+        var errors = (result.Stderr ?? "")
+            .Split('\n')
+            .Where(line => line.Contains("ERROR:", StringComparison.Ordinal)
+                || line.Contains("FATAL:", StringComparison.Ordinal)
+                || line.Contains("PANIC:", StringComparison.Ordinal))
+            .ToArray();
+        if (result.ExitCode != 0 || errors.Length > 0)
+        {
+            var detail = errors.Length > 0 ? string.Join(" | ", errors.Take(5)) : (result.Stderr ?? "").Trim();
+            throw new InvalidOperationException($"{tool} exited {result.ExitCode}: {detail}");
+        }
+    }
+
+    private static async Task RemoveContainerFileAsync(PostgreSqlContainer real, string path)
+    {
+        try
+        {
+            await real.ExecAsync(["rm", "-f", path]).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // Best-effort: the file lives in this process's own container, which teardown removes.
+        }
+    }
 
     public virtual async ValueTask DisposeOwnedAsync(OwnedTestDbContainer container)
     {
