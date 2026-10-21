@@ -354,16 +354,22 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     /// the caller's conservative branch is the only correct answer to both: guessing modern here
     /// would size bodies for a pty that may be stripping every paste marker.
     /// </summary>
-    public async Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct)
+    public async Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) =>
+        (await ProbeCapabilitiesAsync(ct)).Capabilities;
+
+    /// <summary>CARD-1424 D-7: the same read, with the failure classified by <see cref="RunnerCapabilitiesFailure"/>.</summary>
+    public async Task<RunnerCapabilitiesProbe> ProbeCapabilitiesAsync(CancellationToken ct)
     {
         try
         {
-            return await ReadJsonAsync<RunnerCapabilitiesDto>("capabilities", ResilienceOperations.RunnerCapabilities, ct);
+            return RunnerCapabilitiesProbe.From(
+                await ReadJsonAsync<RunnerCapabilitiesDto>("capabilities", ResilienceOperations.RunnerCapabilities, ct));
         }
         catch (Exception ex) when (ex is HttpRequestException or NotSupportedException or JsonException
                                        or TaskCanceledException && !ct.IsCancellationRequested)
         {
-            return null;
+            var (reason, definite) = RunnerCapabilitiesFailure.Classify(ex);
+            return new RunnerCapabilitiesProbe(null, reason, definite);
         }
     }
 
