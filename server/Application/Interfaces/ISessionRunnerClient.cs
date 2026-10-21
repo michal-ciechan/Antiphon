@@ -34,6 +34,13 @@ public interface ISessionRunnerClient
     Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) =>
         Task.FromResult<RunnerCapabilitiesDto?>(null);
 
+    /// <summary>
+    /// CARD-1424 D-7: <see cref="GetCapabilitiesAsync"/> plus why it failed. The default reports
+    /// <see cref="RunnerCapabilitiesProbe.NoAnswer"/> (ambiguous) on null. Caller cancellation propagates.
+    /// </summary>
+    async Task<RunnerCapabilitiesProbe> ProbeCapabilitiesAsync(CancellationToken ct) =>
+        RunnerCapabilitiesProbe.From(await GetCapabilitiesAsync(ct));
+
     /// <summary>Old clients have no descriptor-specific CLI evidence. Caller cancellation propagates.</summary>
     Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct) =>
         Task.FromResult<RunnerCodexCliVersionDto?>(null);
