@@ -25,12 +25,13 @@ internal sealed class TestDbReadyState
 internal class TestDbOperations
 {
     internal const string PostgresImage = "postgres:16-alpine";
+    internal const string DatabaseUser = "test";
 
     public virtual Task<OwnedTestDbContainer> CreateAsync()
     {
         var container = new PostgreSqlBuilder(PostgresImage)
             .WithDatabase(TestDbFixture.SharedDatabaseName)
-            .WithUsername("test")
+            .WithUsername(DatabaseUser)
             .WithPassword("test")
             .Build();
         return Task.FromResult(new OwnedTestDbContainer { Real = container });
