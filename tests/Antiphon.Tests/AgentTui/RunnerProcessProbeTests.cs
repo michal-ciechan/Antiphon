@@ -113,7 +113,14 @@ public sealed class RunnerProcessProbeTests
 
             result.Error.ShouldBeNull();
             result.ExitCode.ShouldBe(0);
-            var childPath = result.StandardOutput.ReplaceLineEndings("\n").TrimEnd('\n');
+            var lines = result.StandardOutput.ReplaceLineEndings("\n").TrimEnd('\n').Split('\n');
+            lines.Length.ShouldBe(2);
+            var childPath = lines[1];
+            // pwsh prepends its own $PSHOME to its process PATH when the inherited list lacks
+            // it; that entry is the child's doing, not the probe's, so it is discounted here.
+            var psHomePrefix = lines[0] + Path.PathSeparator;
+            if (!expected.Contains(lines[0], comparer) && childPath.StartsWith(psHomePrefix, StringComparison.Ordinal))
+                childPath = childPath[psHomePrefix.Length..];
             childPath.Length.ShouldBeLessThanOrEqualTo(ceiling);
             childPath.Split(Path.PathSeparator).ShouldBe(expected);
         }
@@ -1340,6 +1347,7 @@ public sealed class RunnerProcessProbeTests
                 exit 0
             }
             if ($mode -eq 'path') {
+                [Console]::Out.WriteLine($PSHOME)
                 [Console]::Out.Write([Environment]::GetEnvironmentVariable('PATH'))
                 exit 0
             }
