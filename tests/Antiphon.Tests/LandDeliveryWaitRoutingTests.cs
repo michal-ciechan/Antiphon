@@ -37,9 +37,12 @@ public sealed class LandDeliveryWaitRoutingTests
         land.ShouldNotContain("queue inserted crash cut");
         land.ShouldNotContain("native prompt persisted before receipt/verdict save");
         dispatchFixture.ShouldContain("public Task WaitForBoundaryAsync(string boundary) => UntilProtocolAsync(");
-        // C540: the inline queue-cut wait renews and keeps its key-retention assertion; the enqueue-failure wait stays plain.
-        NearestWait(dispatchTests, "every dispatch warning must retain its notification key before the insert barrier").ShouldBe("UntilProtocolAsync(");
+        dispatchFixture.ShouldContain("public Task WaitForDispatchBoundaryAsync(string boundary) => UntilDispatchAsync(");
+        // C540: the inline queue-cut wait renews on protocol-git plus dispatch markers and keeps its key-retention assertion; the enqueue-failure wait stays plain.
+        NearestWait(dispatchTests, "every dispatch warning must retain its notification key before the insert barrier").ShouldBe("UntilDispatchAsync(");
         NearestWait(dispatchTests, "two owned enqueue failures").ShouldBe("UntilAsync(");
+        // CARD-1359: the other crash cuts call the dispatch-aware boundary helper (DispatchBaseWarningDeliveryE2ETests.cs:139).
+        dispatchTests.ShouldContain("else await f.WaitForDispatchBoundaryAsync(boundary);");
     }
 
     private static string NearestWait(string text, string evidence)
@@ -48,6 +51,8 @@ public sealed class LandDeliveryWaitRoutingTests
         at.ShouldBeGreaterThanOrEqualTo(0, evidence);
         var plain = text.LastIndexOf("UntilAsync(", at, StringComparison.Ordinal);
         var protocol = text.LastIndexOf("UntilProtocolAsync(", at, StringComparison.Ordinal);
+        var dispatch = text.LastIndexOf("UntilDispatchAsync(", at, StringComparison.Ordinal);
+        if (dispatch > plain && dispatch > protocol) return "UntilDispatchAsync(";
         return protocol > plain ? "UntilProtocolAsync(" : "UntilAsync(";
     }
 
