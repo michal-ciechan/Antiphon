@@ -206,15 +206,20 @@ public partial class AdvisoryChangePolicyTests
 
         public static async Task<CorrectionWorld> CreateAsync(string? defect = null, Action<IServiceCollection>? configure = null)
         {
+            var git = new LandingGit();
+            var common = await git.CommonDirectoryAsync(DelegateScriptRunner.RepoRoot, CancellationToken.None);
+            var original = Path.Combine(common, "antiphon", "code-evidence", "04228bff");
+            var producerIndex = Path.Combine(original, "producer-pack-index.json");
+            // The pack is untracked local evidence kept by the CARD-1281 Code task, so a fresh
+            // clone never has it (CARD-1415). Skip there, before any schema or directory exists.
+            if (!File.Exists(producerIndex))
+                Skip.Test("CARD-1415: the CARD-1281 producer pack (git common dir antiphon/code-evidence/04228bff) is untracked and absent on this clone.");
             var w = new CorrectionWorld { _schema = await TestDbFixture.CreateIsolatedSchemaAsync(),
                 Root = Path.Combine(Path.GetTempPath(), "c1281-correction-" + Guid.NewGuid().ToString("N")) };
             Directory.CreateDirectory(w.Root);
             w.Configure = configure;
             w.Repository = DelegateScriptRunner.RepoRoot;
-            var git = new LandingGit();
-            var common = await git.CommonDirectoryAsync(w.Repository, CancellationToken.None);
-            var original = Path.Combine(common, "antiphon", "code-evidence", "04228bff");
-            var inventory = await File.ReadAllTextAsync(Path.Combine(original, "producer-pack-index.json"));
+            var inventory = await File.ReadAllTextAsync(producerIndex);
             Digest(inventory).ShouldBe("5afb848873bdd8d653a3587654445d239b88cc31ea59f664dbf23efd78b98661",
                 "authentic-producer-inventory");
             // The positive is the unedited actual producer pack. Negative arms edit only this
