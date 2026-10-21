@@ -14,6 +14,12 @@ $lib = Join-Path $here 'lib'
 . (Join-Path $lib 'nightly-run-impl.ps1')
 . (Join-Path $lib 'c487-harness.ps1')
 
+# Linux runners set TMPDIR and leave TEMP empty. New-C487Root joins TEMP.
+if ([string]::IsNullOrWhiteSpace($env:TEMP)) {
+    if (-not [string]::IsNullOrWhiteSpace($env:TMPDIR)) { $env:TEMP = $env:TMPDIR }
+    else { $env:TEMP = '/tmp' }
+}
+
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
 $runPs1 = Join-Path $here 'nightly-run.ps1'
 
@@ -679,6 +685,302 @@ function Test-C1386_AmbiguousOwnerRefused {
     $missingDetail = ('phase={0} refusal={1}' -f (Get-C1386Phase $missingResult), (Get-C1386Refusal $missingResult))
     Assert-C487 -Cond ((Get-C1386Refusal $missingResult) -eq 'lock-held' -and (Get-C1386Phase $missingResult) -eq 'lock') -Name 'C1386 Ambiguous missing-parent refuses lock-held' -Detail $missingDetail
     Assert-C487 -Cond ((Test-C1386RunIdKept -Fx $missing -RunId 'missing-parent-run') -and (Test-C1386NoReclaim -Fx $missing)) -Name 'C1386 Ambiguous missing-parent keeps the lock' -Detail (Get-C1386LockText $missing)
+}
+
+function Get-C1389ReclaimNewRunId {
+    param($Fx)
+    $path = Join-Path $Fx.State 'lock-reclaim.json'
+    if (-not (Test-Path -LiteralPath $path)) { return '' }
+    try {
+        $parsed = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        return [string]$parsed.newRunId
+    } catch {
+        return ''
+    }
+}
+
+function Install-C1389RemoveShadow {
+    param([string]$LockPath)
+    $script:C1389LockFull = [System.IO.Path]::GetFullPath($LockPath)
+    $script:C1389RemoveCount = 0
+    function script:Remove-Item {
+        [CmdletBinding()]
+        param(
+            [Parameter(ValueFromPipeline = $true)]
+            [Alias('PSPath')]
+            [string[]]$LiteralPath,
+            [string[]]$Path,
+            [switch]$Force,
+            [switch]$Recurse
+        )
+        $targets = @()
+        if ($PSBoundParameters.ContainsKey('LiteralPath')) { $targets = @($LiteralPath) }
+        elseif ($PSBoundParameters.ContainsKey('Path')) { $targets = @($Path) }
+        foreach ($target in $targets) {
+            $full = [string]$target
+            try { $full = [System.IO.Path]::GetFullPath([string]$target) } catch { }
+            if ($full -eq $script:C1389LockFull) {
+                $script:C1389RemoveCount++
+                if ($script:C1389RemoveCount -gt 1) {
+                    throw 'shadowed lock remove refused'
+                }
+            }
+            $ea = 'Continue'
+            if ($PSBoundParameters.ContainsKey('ErrorAction')) { $ea = [string]$PSBoundParameters['ErrorAction'] }
+            if ($Force -and $Recurse) {
+                Microsoft.PowerShell.Management\Remove-Item -LiteralPath $target -Force -Recurse -ErrorAction $ea
+            } elseif ($Force) {
+                Microsoft.PowerShell.Management\Remove-Item -LiteralPath $target -Force -ErrorAction $ea
+            } elseif ($Recurse) {
+                Microsoft.PowerShell.Management\Remove-Item -LiteralPath $target -Recurse -ErrorAction $ea
+            } else {
+                Microsoft.PowerShell.Management\Remove-Item -LiteralPath $target -ErrorAction $ea
+            }
+        }
+    }
+}
+
+function Test-C1389_LoserReclaimRecord {
+    $winnerRun = 'winner-run'
+    $loserRun = 'loser-run'
+    $fx = New-RunFx
+    Write-C1386Plant -Fx $fx -OwnerPid 424298 -ParentPid 424290 -RunId 'stale-run' -BootId 'boot-current' -HostId 'host-current'
+    $lockPath = Join-Path $fx.State 'run.lock'
+    $snapshot = Read-NightlyLockRecord -LockPath $lockPath
+    Install-C1389RemoveShadow -LockPath $lockPath
+    $parent = [pscustomobject]@{ Id = 0; StartTimeUtc = $null }
+    $first = Enter-NightlyReclaimedLock -StateRoot $fx.State -LockPath $lockPath -Existing $snapshot -RunId $winnerRun -Reason 'dead-owner-legacy' -BootId 'boot-current' -HostId 'host-current' -Parent $parent
+    $second = Enter-NightlyReclaimedLock -StateRoot $fx.State -LockPath $lockPath -Existing $snapshot -RunId $loserRun -Reason 'dead-owner-legacy' -BootId 'boot-current' -HostId 'host-current' -Parent $parent
+    if ($script:NightlyLockStream) {
+        try { $script:NightlyLockStream.Dispose() } catch { }
+        $script:NightlyLockStream = $null
+    }
+    $lockText = ''
+    try { $lockText = Get-C1386LockText -Fx $fx } catch { $lockText = [string]$_.Exception.Message }
+    $newRunId = Get-C1389ReclaimNewRunId -Fx $fx
+    $lockRun = ''
+    try {
+        if (-not [string]::IsNullOrWhiteSpace($lockText) -and $lockText.Trim().StartsWith('{')) {
+            $lockRun = [string](($lockText | ConvertFrom-Json).runId)
+        }
+    } catch { }
+    $secondOk = $false
+    $secondReason = ''
+    $firstOk = $false
+    $firstReason = ''
+    if ($null -ne $second) { $secondOk = [bool]$second.Ok; $secondReason = [string]$second.Reason }
+    if ($null -ne $first) { $firstOk = [bool]$first.Ok; $firstReason = [string]$first.Reason }
+    $detail = ('winner=' + $winnerRun + ' loser=' + $loserRun + ' firstOk=' + $firstOk + ' firstReason=' + $firstReason + ' secondOk=' + $secondOk + ' secondReason=' + $secondReason + ' newRunId=' + $newRunId + ' lockRun=' + $lockRun)
+    $loserOut = ((-not $secondOk) -and ($lockRun -eq $winnerRun))
+    Assert-C487 -Cond $loserOut -Name 'C1389 Record loser does not own the lock' -Detail $detail
+    Assert-C487 -Cond ($newRunId -eq $winnerRun) -Name 'C1389 Record winner newRunId remains' -Detail $detail
+}
+
+function Write-C1389RaceChild {
+    param([string]$Path)
+    $text = @'
+#requires -Version 5.1
+param(
+    [string]$CommonPath,
+    [string]$StateRoot,
+    [string]$LockPath,
+    [string]$SnapshotPath,
+    [string]$RunId,
+    [string]$Reason,
+    [string]$BootId,
+    [string]$HostId,
+    [string]$ResultPath,
+    [string]$ReleasePath
+)
+$ErrorActionPreference = 'Stop'
+try {
+    . $CommonPath
+    $snapshot = Get-Content -LiteralPath $SnapshotPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $parent = [pscustomobject]@{ Id = 0; StartTimeUtc = $null }
+    $result = Enter-NightlyReclaimedLock -StateRoot $StateRoot -LockPath $LockPath -Existing $snapshot -RunId $RunId -Reason $Reason -BootId $BootId -HostId $HostId -Parent $parent
+    $out = [ordered]@{ Ok = [bool]$result.Ok; Reason = [string]$result.Reason; RunId = $RunId }
+    [System.IO.File]::WriteAllText($ResultPath, ($out | ConvertTo-Json -Compress))
+    if ($result.Ok) {
+        $deadline = (Get-Date).AddSeconds(40)
+        while (-not (Test-Path -LiteralPath $ReleasePath) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 50
+        }
+    }
+    exit 0
+} catch {
+    $err = [ordered]@{ Ok = $false; Reason = 'child-error'; RunId = $RunId; Error = [string]$_.Exception.Message }
+    try { [System.IO.File]::WriteAllText($ResultPath, ($err | ConvertTo-Json -Compress)) } catch { }
+    exit 1
+}
+'@
+    [System.IO.File]::WriteAllText($Path, $text.Replace("`r`n", "`n"))
+}
+
+function Start-C1389RaceChild {
+    param(
+        [string]$ChildPath,
+        [string]$CommonPath,
+        [string]$StateRoot,
+        [string]$LockPath,
+        [string]$SnapshotPath,
+        [string]$RunId,
+        [string]$ResultPath,
+        [string]$ReleasePath
+    )
+    $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
+    $arg = '-NoProfile -NonInteractive -File "' + $ChildPath + '" -CommonPath "' + $CommonPath + '" -StateRoot "' + $StateRoot + '" -LockPath "' + $LockPath + '" -SnapshotPath "' + $SnapshotPath + '" -RunId "' + $RunId + '" -Reason dead-owner-legacy -BootId boot-current -HostId host-current -ResultPath "' + $ResultPath + '" -ReleasePath "' + $ReleasePath + '"'
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $pwsh
+    $psi.Arguments = $arg
+    $psi.WorkingDirectory = (Split-Path -Parent $ChildPath)
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    return [System.Diagnostics.Process]::Start($psi)
+}
+
+function Wait-C1389File {
+    param([string]$Path, [int]$Seconds)
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while (-not (Test-Path -LiteralPath $Path) -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 50
+    }
+    return (Test-Path -LiteralPath $Path)
+}
+
+function Read-C1389JsonFile {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    try {
+        return (Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json)
+    } catch {
+        return $null
+    }
+}
+
+function Test-C1389_DoubleReclaim {
+    $fixture = Join-Path $ResultsDirectory ('c1389-race-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $fixture -Force | Out-Null
+    $state = Join-Path $fixture 'state'
+    New-Item -ItemType Directory -Path $state -Force | Out-Null
+    $lockPath = Join-Path $state 'run.lock'
+    $snapshotPath = Join-Path $fixture 'snapshot.json'
+    $childPath = Join-Path $fixture 'reclaim-child.ps1'
+    $releasePath = Join-Path $fixture 'release'
+    $resultA = Join-Path $fixture 'a.json'
+    $resultB = Join-Path $fixture 'b.json'
+    $rec = [ordered]@{
+        pid = 424301
+        processStartedAt = '2020-01-01T00:00:00.0000000Z'
+        startedAt = '2020-01-01T00:00:00.0000000Z'
+        runId = 'stale-run'
+        parentPid = 424302
+        parentStartedAt = '2020-01-01T00:00:00.0000000Z'
+        bootId = 'boot-current'
+        hostId = 'host-current'
+    }
+    $json = $rec | ConvertTo-Json -Compress
+    [System.IO.File]::WriteAllText($lockPath, $json)
+    [System.IO.File]::WriteAllText($snapshotPath, $json)
+    Write-C1389RaceChild -Path $childPath
+    $common = Join-Path $PSScriptRoot (Join-Path 'lib' 'nightly-common.ps1')
+    $procA = $null
+    $procB = $null
+    try {
+        $procA = Start-C1389RaceChild -ChildPath $childPath -CommonPath $common -StateRoot $state -LockPath $lockPath -SnapshotPath $snapshotPath -RunId 'A-run' -ResultPath $resultA -ReleasePath $releasePath
+        [void](Wait-C1389File -Path $resultA -Seconds 30)
+        $procB = Start-C1389RaceChild -ChildPath $childPath -CommonPath $common -StateRoot $state -LockPath $lockPath -SnapshotPath $snapshotPath -RunId 'B-run' -ResultPath $resultB -ReleasePath $releasePath
+        [void](Wait-C1389File -Path $resultB -Seconds 30)
+    } finally {
+        if (-not (Test-Path -LiteralPath $releasePath)) {
+            [System.IO.File]::WriteAllText($releasePath, 'go')
+        }
+        foreach ($proc in @($procA, $procB)) {
+            if ($null -ne $proc -and -not $proc.HasExited) {
+                try { [void]$proc.WaitForExit(15000) } catch { }
+            }
+            if ($null -ne $proc -and -not $proc.HasExited) {
+                try { $proc.Kill() } catch { }
+            }
+        }
+    }
+    $a = Read-C1389JsonFile -Path $resultA
+    $b = Read-C1389JsonFile -Path $resultB
+    $aOk = $false
+    $bOk = $false
+    $aReason = ''
+    $bReason = ''
+    if ($null -ne $a) { $aOk = [bool]$a.Ok; $aReason = [string]$a.Reason }
+    if ($null -ne $b) { $bOk = [bool]$b.Ok; $bReason = [string]$b.Reason }
+    $owners = @()
+    if ($aOk) { $owners += 'A-run' }
+    if ($bOk) { $owners += 'B-run' }
+    $lockText = ''
+    try {
+        if (Test-Path -LiteralPath $lockPath) { $lockText = [System.IO.File]::ReadAllText($lockPath) }
+    } catch {
+        $lockText = [string]$_.Exception.Message
+    }
+    $lockRun = ''
+    try {
+        if (-not [string]::IsNullOrWhiteSpace($lockText) -and $lockText.Trim().StartsWith('{')) {
+            $lockRun = [string](($lockText | ConvertFrom-Json).runId)
+        }
+    } catch { }
+    $owner = ''
+    if ($owners.Count -eq 1) { $owner = [string]$owners[0] }
+    $detail = ('A-run ok=' + $aOk + ' reason=' + $aReason + ' B-run ok=' + $bOk + ' reason=' + $bReason + ' lockRun=' + $lockRun)
+    Assert-C487 -Cond ($owners.Count -eq 1) -Name 'C1389 Race one attempt owns the lock' -Detail $detail
+    Assert-C487 -Cond (($owners.Count -eq 1) -and ($lockRun -eq $owner)) -Name 'C1389 Race lock run id is that owner' -Detail $detail
+}
+
+function Test-C1389_BootSourcePinned {
+    $script:C1389ItemPropertyCalls = 0
+    function script:Test-NightlyWindows { return $true }
+    function script:Test-NightlyLinux { return $false }
+    function script:Get-ItemProperty {
+        [CmdletBinding()]
+        param(
+            [Parameter(Position = 0)]
+            [string]$Path,
+            [string]$Name
+        )
+        $script:C1389ItemPropertyCalls++
+        if ($script:C1389ItemPropertyCalls -eq 1) {
+            return [pscustomobject]@{ BootId = 157 }
+        }
+        throw 'registry BootId unreadable'
+    }
+    function script:Get-CimInstance {
+        [CmdletBinding()]
+        param(
+            [Parameter(Position = 0)]
+            [string]$ClassName,
+            [string]$Filter,
+            [string]$Query
+        )
+        $stamp = [datetime]::SpecifyKind([datetime]'2026-01-02T03:04:05', [DateTimeKind]::Utc)
+        return [pscustomobject]@{ LastBootUpTime = $stamp }
+    }
+    $firstBoot = [string](Get-NightlyBootId)
+    $secondBoot = [string](Get-NightlyBootId)
+    $count = [int]$script:C1389ItemPropertyCalls
+    $single = (($count -ge 2) -and (($secondBoot -eq '') -or ($secondBoot -eq '157')))
+    $bootDetail = ('count=' + $count + ' first=' + $firstBoot + ' second=' + $secondBoot)
+    if ($count -eq 0) { $bootDetail = 'stub-not-hit' }
+    Assert-C487 -Cond $single -Name 'C1389 Boot registry failure keeps a single source' -Detail $bootDetail
+
+    $fx = New-RunFx
+    $script:NightlySeams = @{
+        IsProcessAlive = { param($ProcessId) return ([int]$ProcessId -eq 424299) }
+        GetHostId = { return 'host-current' }
+    }
+    Write-C1386Plant -Fx $fx -OwnerPid 424299 -ParentPid 424300 -RunId 'planted-run' -BootId '157' -HostId 'host-current'
+    $result = Enter-NightlyExclusiveLock -StateRoot $fx.State -RunId 'thief-run'
+    $reason = ''
+    if ($null -ne $result) { $reason = [string]$result.Reason }
+    Assert-C487 -Cond ($reason -eq 'live-owner') -Name 'C1389 Boot live owner stays live-owner' -Detail ('reason=' + $reason + ' second=' + $secondBoot)
+    $kept = (Test-C1386RunIdKept -Fx $fx -RunId 'planted-run') -and (Test-C1386NoReclaim -Fx $fx)
+    Assert-C487 -Cond $kept -Name 'C1389 Boot live owner writes no reclaim record' -Detail (Get-C1386LockText $fx)
 }
 
 function Test-C487_PrerequisiteSettle {
