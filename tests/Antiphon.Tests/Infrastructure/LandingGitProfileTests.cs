@@ -103,4 +103,71 @@ public sealed class LandingGitProfileTests
         Antiphon.Server.Infrastructure.Git.LandingGit.ChangesRegistrations(command.Split('|'), out var drops).ShouldBe(invalidates);
         drops.ShouldBe(topology);
     }
+
+    [Test]
+    public void C1432_histogram_counts_subcommands_after_global_options()
+    {
+        var profile = new LandingGitProfile();
+        profile.Record(["-c", "gc.auto=0", "worktree", "list", "--porcelain", "-z"], TimeSpan.FromTicks(1));
+        profile.Record(["worktree", "list", "--porcelain"], TimeSpan.FromTicks(1));
+        profile.Record(["-C", "/repo", "show-ref", "--verify", "refs/heads/x"], TimeSpan.FromTicks(1));
+        profile.Record(["config", "--get", "core.autocrlf"], TimeSpan.FromTicks(1));
+        profile.Record(["update-ref", "--stdin"], TimeSpan.FromTicks(1));
+        profile.Record(["rev-parse", "--verify", "HEAD"], TimeSpan.FromTicks(1));
+        profile.Record(["rev-parse", "HEAD"], TimeSpan.FromTicks(1));
+        profile.Record(["merge-base", "--is-ancestor", "a", "b"], TimeSpan.FromTicks(1));
+        profile.Record(["fetch", "--no-tags", "origin"], TimeSpan.FromTicks(1));
+
+        Pairs(profile.Histogram).ShouldBe([
+            "config --get=1",
+            "fetch=1",
+            "merge-base --is-ancestor=1",
+            "rev-parse=2",
+            "show-ref --verify=1",
+            "update-ref --stdin=1",
+            "worktree list=2",
+        ]);
+        profile.Describe().ShouldEndWith(
+            " histogram={config --get=1, fetch=1, merge-base --is-ancestor=1, rev-parse=2, show-ref --verify=1, update-ref --stdin=1, worktree list=2}");
+    }
+
+    [Test]
+    public void C1432_histogram_merges_in_add()
+    {
+        var first = new LandingGitProfile();
+        first.Record(["status", "--porcelain"], TimeSpan.FromTicks(1));
+        first.Record(["worktree", "remove", "/x"], TimeSpan.FromTicks(1));
+        var second = new LandingGitProfile();
+        second.Record(["status"], TimeSpan.FromTicks(1));
+        second.Record(["ls-files", "-v", "-z"], TimeSpan.FromTicks(1));
+
+        first.Add(second);
+
+        Pairs(first.Histogram).ShouldBe([
+            "ls-files -v=1",
+            "status=2",
+            "worktree remove=1",
+        ]);
+        second.Histogram.Count.ShouldBe(2, "Add does not change its argument");
+    }
+
+    [Test]
+    public void C1432_histogram_caps_entries()
+    {
+        var profile = new LandingGitProfile();
+        for (var i = 0; i < 45; i++)
+            for (var n = 0; n <= i % 3; n++)
+                profile.Record([$"cmd{i:D2}"], TimeSpan.FromTicks(1));
+
+        var rendered = profile.DescribeHistogram();
+        rendered.ShouldStartWith("{cmd00=1, cmd01=2, cmd02=3, ");
+        var entries = rendered.Trim('{', '}').Split(", ");
+        entries.Length.ShouldBe(41, "40 entries plus other");
+        entries[39].ShouldBe("cmd39=1");
+        // cmd40..cmd44 carry 2+3+1+2+3 processes.
+        entries[40].ShouldBe("other=11");
+    }
+
+    private static string[] Pairs(IReadOnlyDictionary<string, long> histogram) =>
+        histogram.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key}={p.Value}").ToArray();
 }
