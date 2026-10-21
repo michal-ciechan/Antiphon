@@ -132,6 +132,70 @@ public sealed class RunnerProcessProbeTests
     }
 
     /// <summary>
+    /// CARD-1414 repair: when nothing of an over-ceiling inherited PATH survives the bounding
+    /// (every entry missing, or the first surviving entry is itself past the ceiling), the child
+    /// must not start with an empty PATH, which on POSIX searches the working directory. The
+    /// probe keeps the hard refusal the unbounded ceiling gave before CARD-1414.
+    /// </summary>
+    [Test]
+    [Arguments("all-missing")]
+    [Arguments("only-entry-over-ceiling")]
+    public async Task Inherited_path_with_nothing_bounded_is_still_refused_before_start(string shape)
+    {
+        const int ceiling = 4000;
+        var previous = Environment.GetEnvironmentVariable("PATH");
+        var scratch = CreateScratch();
+        var startCalls = 0;
+        var probe = CreateProbe(
+            new RunnerProcessReaper(),
+            seams: new RunnerProcessProbeSeams
+            {
+                StartProcessAsync = (_, _) =>
+                {
+                    startCalls++;
+                    return Task.FromResult(false);
+                }
+            });
+        try
+        {
+            string longPath;
+            if (shape == "all-missing")
+            {
+                longPath = string.Join(
+                    Path.PathSeparator,
+                    Enumerable.Range(0, 40)
+                        .Select(index => Path.Combine(scratch, $"missing-{index:D2}-" + new string('m', 120))));
+            }
+            else
+            {
+                // One real directory spelled past the ceiling: it exists, so only the length cut
+                // can drop it.
+                var spelled = new StringBuilder(scratch);
+                while (spelled.Length <= ceiling)
+                    spelled.Append(Path.DirectorySeparatorChar).Append('.');
+                Directory.Exists(spelled.ToString()).ShouldBeTrue();
+                longPath = spelled.ToString();
+            }
+            longPath.Length.ShouldBeGreaterThan(ceiling);
+
+            Environment.SetEnvironmentVariable("PATH", longPath);
+            var result = await probe.RunAsync(
+                new RunnerProcessRequest("unused", [], null, new Dictionary<string, string>(), SecretValues: []),
+                CancellationToken.None);
+
+            result.Started.ShouldBeFalse();
+            result.StandardOutput.ShouldBeEmpty();
+            result.Error.ShouldBe("The bounded child environment is unavailable.");
+            startCalls.ShouldBe(0);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", previous);
+            DeleteScratchBestEffort(scratch);
+        }
+    }
+
+    /// <summary>
     /// CARD-1414: only the inherited PATH list is bounded. Every other inherited value keeps the
     /// hard ceiling, which is also the per-value bound the output redactor allocates for.
     /// </summary>
