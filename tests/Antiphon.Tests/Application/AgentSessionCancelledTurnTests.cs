@@ -287,6 +287,56 @@ public sealed class AgentSessionCancelledTurnTests
     }
 
     [Test]
+    public async Task C1382_Rearm_same_burst_follow_up_after_provisional_slash_arm_still_rearms()
+    {
+        // A slash with no command wrapper only arms provisionally and records no re-arm
+        // sequence. The interrupt or TurnEnd saved in that same burst returns the attempt
+        // to AwaitingInput and moves PhaseStartedAt. The follow-up saved beside them must
+        // still enter StreamingTurn.
+        await using var world = await EchoWorld.OpenAsync();
+        var interrupted = await world.StartCancelledAsync();
+        var ended = await world.StartCancelledAsync();
+        world.Clock.Advance(TimeSpan.FromMinutes(1));
+
+        await world.PersistAsync(interrupted, "/explain the remaining work");
+        await world.PersistAsync(interrupted, "[Request interrupted by user]");
+        await world.PersistAsync(interrupted, "Ask the next question");
+        world.Events.Clear();
+        await world.DrainAsync(interrupted);
+        var interruptPhases = PhaseChanges(world);
+
+        await world.PersistAsync(ended, "/explain the remaining work");
+        await world.PersistAsync(ended, null, TranscriptKinds.TurnEnd, TranscriptKinds.StopReasons.EndTurn);
+        await world.PersistAsync(ended, "Ask the next question");
+        world.Events.Clear();
+        await world.DrainAsync(ended);
+        var endPhases = PhaseChanges(world);
+
+        var afterInterrupt = await world.ReloadAsync(interrupted);
+        var afterEnd = await world.ReloadAsync(ended);
+        $"{afterInterrupt.Attempt.Phase}/{afterEnd.Attempt.Phase}".ShouldBe(
+            $"{RunPhase.StreamingTurn}/{RunPhase.StreamingTurn}");
+        afterInterrupt.Attempt.PhaseDurationsJson.ShouldContain("\"AwaitingInput\"");
+        afterEnd.Attempt.PhaseDurationsJson.ShouldContain("\"AwaitingInput\"");
+        afterInterrupt.Attempt.PhaseDurationsJson.ShouldNotContain("OpenInputWait");
+        afterEnd.Attempt.PhaseDurationsJson.ShouldNotContain("OpenInputWait");
+        afterInterrupt.Session.Status.ShouldBe(SessionStatus.Running);
+        afterEnd.Session.Status.ShouldBe(SessionStatus.Running);
+        interruptPhases.ShouldBe(
+        [
+            nameof(RunPhase.StreamingTurn),
+            nameof(RunPhase.AwaitingInput),
+            nameof(RunPhase.StreamingTurn)
+        ]);
+        endPhases.ShouldBe(
+        [
+            nameof(RunPhase.StreamingTurn),
+            nameof(RunPhase.AwaitingInput),
+            nameof(RunPhase.StreamingTurn)
+        ]);
+    }
+
+    [Test]
     public async Task C1382_Rearm_non_end_turn_stop_returns_to_awaiting_input()
     {
         await using var world = await EchoWorld.OpenAsync();
