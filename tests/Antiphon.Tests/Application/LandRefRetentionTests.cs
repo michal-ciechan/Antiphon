@@ -44,10 +44,11 @@ public sealed class LandRefRetentionTests
         ];
         foreach (var name in own.Concat(foreign)) h.Git.SetPin(name, sha);
         List<string>? beforeDelete = null;
-        h.Git.BeforeCommand = (_, args) =>
+        h.Git.BeforeCommand = async (_, args) =>
         {
             if (args is ["update-ref", "--stdin"]) beforeDelete = h.Git.Refs.Keys.ToList();
-            return Task.FromResult<LandingGitResult?>(null);
+            await Task.CompletedTask;
+            return null;
         };
 
         (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
