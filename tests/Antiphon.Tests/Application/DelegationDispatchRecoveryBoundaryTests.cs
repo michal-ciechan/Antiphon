@@ -47,14 +47,16 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     [Arguments("repeated-blocked-tick", 17)]
     // Measured 65. Reuses the pending row (no second insert). Ceiling was 85.
     [Arguments("running-recovery-existing-brief", 65)]
-    // Measured 60, including the one brief insert and the awaited send. Ceiling was 95.
-    [Arguments("running-recovery-missing-brief", 60)]
+    // Historical 60 (one brief insert and awaited send) + CARD-0266's canceled-typing
+    // composer-safety SELECT before sending the next brief = exactly 61.
+    [Arguments("running-recovery-missing-brief", 61)]
     // Measured 6. The delivered session drops out of pass 1c: selects only, no write.
     [Arguments("repeated-discovery-after-delivery", 6)]
     // Measured 12. One Blocked event; under the design ceiling of 65.
     [Arguments("running-recovery-readiness-hold", 12)]
-    // Measured 60, including the awaited repair insert. Ceiling was 100.
-    [Arguments("watchdog-first-recovery", 60)]
+    // Historical 60 (awaited repair insert/send) + CARD-0266's canceled-typing
+    // composer-safety SELECT = exactly 61; cancellation alone does not clear typed input.
+    [Arguments("watchdog-first-recovery", 61)]
     // Two scans are equal. Measured 5 on the second scan. Delta 0.
     [Arguments("empty-healthy-scan", 5)]
     public async Task C1149_C1150_Statement_budgets(string action, int expected)
