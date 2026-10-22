@@ -1229,6 +1229,10 @@ public sealed class AgentTaskReplyService
         // handed the retained body back as the settled body; the handoff, the deliverable pointer
         // and the report file keep their values below, and the record says the turn added nothing.
         var retainedTokenOnly = IsTokenOnlyAfterRetainedReport(task, verdict, body);
+        // CARD-1486 S2 (D-3): an unmarked turn the classifier Blocked with the retained marked report
+        // (the only unmarked arm that returns Marked) keeps every retained field the same way.
+        var retainedUnmarked = verdict.Length == 0 && status == AgentTaskStatus.Blocked
+            && evidence == AgentTaskReportEvidence.Marked && RetainedReportStands(task);
 
         // CARD-0657 D-5. Never publish Succeeded for an unconfirmed canonical checkout: Blocked
         // keeps the report, the session and the workspace, and is not a no-progress accusation.
@@ -1267,7 +1271,7 @@ public sealed class AgentTaskReplyService
             task.CostPricingVersion = DelegationCost.PricingVersion;
         }
 
-        if (!retainedTokenOnly)
+        if (!retainedTokenOnly && !retainedUnmarked)
         {
             // The delegate was told to spill a long report to a file. Note it if it did — and if it
             // ignored the instruction, write the file ourselves so the excerpt has somewhere to point.
@@ -1296,6 +1300,8 @@ public sealed class AgentTaskReplyService
         // CARD-1472: a token-only turn is recorded as adding nothing, never as a report of N characters.
         var reported = retainedTokenOnly
             ? RetainedReportStandsDetail(verdict, settledBody.Length)
+            : retainedUnmarked
+            ? UnmarkedAfterAskRetainedDetail(turn.Boundary?.Sequence, body.Length, settledBody.Length)
             : DescribeReported(
                 settledBody.Length, turn, evidence, string.IsNullOrEmpty(verdict) ? null : verdict);
 
@@ -1341,7 +1347,7 @@ public sealed class AgentTaskReplyService
         // the task, an incident on the agent's timeline, and a line the CALLER reads above the
         // report itself.
         string? callerWarning = remoteBlockWarning;
-        if (retainedTokenOnly)
+        if (retainedTokenOnly || retainedUnmarked)
             callerWarning = callerWarning is null ? reported : $"{callerWarning}\n\n{reported}";
         if (remoteBlock is null
             && remote.Result is { State: RemoteSettlementSyncState.Pending } pendingSync
@@ -4042,6 +4048,12 @@ public sealed class AgentTaskReplyService
                 return null;
         }
 
+        // CARD-1486 S2 (D-3): on an attempt a Reply reopened, an unmarked turn after the ask is not a
+        // new report when the row holds a marked one. Block with the retained report instead of
+        // publishing the acknowledgement as Succeeded; SettleAsync then changes no retained field.
+        if (RetainedReportStands(task))
+            return (AgentTaskStatus.Blocked, AgentTaskReportEvidence.Marked, task.Result!, null);
+
         var evidence = turn.FinalMessageMissing
             ? AgentTaskReportEvidence.FinalMessageMissing
             : AgentTaskReportEvidence.UnmarkedAfterNudge;
@@ -4216,6 +4228,20 @@ public sealed class AgentTaskReplyService
     private static string RetainedReportStandsDetail(string verdict, int retainedChars) =>
         $"Turn ended with only the closing report line (verdict: {verdict}) and no report body; "
         + $"the retained report ({retainedChars:N0} characters) stands and was not replaced.";
+
+    /// <summary>
+    /// CARD-1486 D-3. A Reply reopened this attempt (Requeue clears <c>RepliedAtSequence</c>, so it
+    /// is attempt-scoped) and the row holds a marked report. An unmarked turn then cannot replace it.
+    /// </summary>
+    internal static bool RetainedReportStands(AgentTask task) =>
+        task.RepliedAtSequence is not null
+        && task.ReportEvidence == AgentTaskReportEvidence.Marked
+        && !string.IsNullOrWhiteSpace(task.Result);
+
+    private static string UnmarkedAfterAskRetainedDetail(long? boundarySequence, int unmarkedChars, int retainedChars) =>
+        $"Turn {(boundarySequence is long sequence ? $"#{sequence}" : "with no boundary identity")} ended unmarked "
+        + $"({unmarkedChars:N0} characters) after the one closing-line ask; the retained report (marked, "
+        + $"{retainedChars:N0} characters) stands and was not replaced. Read that turn in the transcript.";
 
     /// <summary>
     /// CARD-0248 gates after the one closing-line ask, shared by the unmarked arm and the
