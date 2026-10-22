@@ -854,7 +854,7 @@ public sealed class LandNonCodeSkipTests
         const string safe = """
             <Project>
               <ItemGroup>
-                <PackageVersion Include="Shouldly" Version="4.0.0" />
+                <PackageReference Include="Shouldly" Version="4.0.0" />
               </ItemGroup>
             </Project>
             """;
@@ -932,7 +932,7 @@ public sealed class LandNonCodeSkipTests
             ["server/App.csproj.user"] = """
                 <Project>
                   <PropertyGroup>
-                    <ActiveDebugProfile>http</ActiveDebugProfile>
+                    <Nullable>enable</Nullable>
                   </PropertyGroup>
                 </Project>
                 """,
@@ -1054,7 +1054,7 @@ public sealed class LandNonCodeSkipTests
             ["Directory.Build.targets"] = """
                 <Project>
                   <PropertyGroup>
-                    <_CleanFile>$(IntermediateOutputPath)$(CleanFile)</_CleanFile>
+                    <_AntiphonCleanFileChars>$([System.IO.File]::ReadAllText('$(IntermediateOutputPath)$(CleanFile)').Length)</_AntiphonCleanFileChars>
                   </PropertyGroup>
                 </Project>
                 """,

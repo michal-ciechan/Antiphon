@@ -39,6 +39,23 @@
 # IntermediateOutputPath is refused because a redirected extension directory
 # cannot be evaluated; reading one of them inside another property is not
 # setting it.
+# CARD-1409 (Review 31c77116): the audit is default-deny. A definition file may
+# set only an allow-listed property name, seeded from the tracked definition
+# files (the plan keeps the inventory), wherever the PropertyGroup sits and
+# including a task Output PropertyName; declare only an allow-listed item type,
+# each under a rule: a path item (Compile, Content, None, EmbeddedResource,
+# AdditionalFiles, EditorConfigFiles, GlobalAnalyzerConfigFiles and the
+# repository's own target-time items) must stay inside the repository and never
+# select docs markdown or the root README.md, a ProjectReference must resolve to
+# a tracked *proj from every directory it is evaluated from, and a package-style
+# item (PackageReference, FrameworkReference, InternalsVisibleTo) is a bare
+# name; and hold under <Project> only PropertyGroup, ItemGroup, Import, Target
+# and an allow-listed <Sdk>. The Project Sdk attribute is allow-listed too. An
+# include that carries @( or %( refuses. A tracked .rsp file is parsed: each
+# non-comment line is one switch among -nodeReuse, -maxcpucount, -verbosity and
+# -nologo with a checked value; -p:, -property:, @file and every other switch
+# refuse. Anything the audit cannot classify refuses by name. Target task
+# parameters and item metadata are not evaluated.
 # ASCII-only: must parse under Windows PowerShell 5.1.
 #
 # Usage:
@@ -75,6 +92,53 @@ if ([string]::IsNullOrWhiteSpace($PSScriptRoot)) {
 }
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $ManifestPath = [System.IO.Path]::Combine($RepoRoot, 'server', 'Application', 'Services', 'LandVerificationBuildGraph.manifest.txt')
+
+# CARD-1409 (Review 31c77116): the allow-lists. Every entry is used by a tracked
+# definition file; the plan's inventory lists where. A new name is a reviewed edit here.
+$AllowedProjectSdks = @('Microsoft.NET.Sdk', 'Microsoft.NET.Sdk.Web')
+$AllowedSdkElements = @('Aspire.AppHost.Sdk')
+$AllowedProjectChildren = @('PropertyGroup', 'ItemGroup', 'Import', 'Target', 'Sdk')
+$AllowedProperties = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+foreach ($allowedProperty in @(
+    '_AntiphonCleanFileChars', '_AntiphonRepeatAdditional', '_AntiphonRepeatFile', '_CustodyChildOutputDir',
+    '_F5PtyHostNativeDir', '_FakeClaudeOutputDir', '_FakeGrokOutputDir', '_GitHeadSha', '_GitHeadShaTrimmed',
+    '_GitRevParseExitCode', '_LandFakeGrokDir', '_PtyHostNativeDir', '_StagedHelperDest', '_StagedHelperDir',
+    '_StagedHelperGlob', '_StagedHelperShared', 'AntiphonCleanFileMaxBytes', 'AntiphonMessagingVersion',
+    'AssemblyName', 'Authors', 'ConcurrentGarbageCollection', 'DefaultItemExcludes', 'Description',
+    'EnableMicrosoftTestingPlatformRunner', 'EnablePublicApiAnalyzers', 'FakeBrowserOutputDir',
+    'FakeBrowserTargetPath', 'ImplicitUsings', 'InvariantGlobalization', 'IsAspireHost', 'IsPackable',
+    'IsTestProject', 'Nullable', 'OutputType', 'PackageId', 'PackageLicenseExpression', 'PackageProjectUrl',
+    'PackageReadmeFile', 'PackageTags', 'PackAsTool', 'PublishRepositoryUrl', 'RepositoryUrl', 'RollForward',
+    'RootNamespace', 'ServerGarbageCollection', 'SourceControlInformationFeatureSupported', 'SourceRevisionId',
+    'TargetFramework', 'ToolCommandName', 'UseAppHost', 'UsePublishedPackages', 'UserSecretsId', 'Version',
+    'WarningsAsErrors')) {
+    [void]$AllowedProperties.Add($allowedProperty)
+}
+# Item type -> rule. path: resolved like a file include and refused when it leaves the repository
+# or selects docs markdown or the root README.md. project: a tracked *proj. name: a bare identifier.
+$ItemRules = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([System.StringComparer]::OrdinalIgnoreCase)
+foreach ($pathItem in @(
+    'Compile', 'EmbeddedResource', 'Content', 'None', 'AdditionalFiles', 'EditorConfigFiles',
+    'GlobalAnalyzerConfigFiles', '_AntiphonRepeatLine', '_StagedHelperFiles', '_StagedHelperTarget',
+    'CustodyChildOutput', 'FakeBrowserFile', 'FakeClaudeOutput', 'FakeGrokOutput', 'LandFakeGrokOutput',
+    'StagedHelper', '_CustodyChildTargetPath', '_FakeClaudeTargetPath', '_FakeGrokTargetPath',
+    '_LandFakeGrokTarget')) {
+    $ItemRules[$pathItem] = 'path'
+}
+$ItemRules['ProjectReference'] = 'project'
+foreach ($nameItem in @('PackageReference', 'FrameworkReference', 'InternalsVisibleTo')) {
+    $ItemRules[$nameItem] = 'name'
+}
+
+function Test-AllowedName($Allowed, [string]$Name, [bool]$IgnoreCase) {
+    foreach ($candidate in $Allowed) {
+        if ($IgnoreCase) {
+            if ([string]$candidate -ieq $Name) { return $true }
+        }
+        elseif ([string]::Equals([string]$candidate, $Name, [System.StringComparison]::Ordinal)) { return $true }
+    }
+    return $false
+}
 
 function Test-DefinitionPath([string]$Path) {
     $name = [System.IO.Path]::GetFileName($Path)
@@ -134,6 +198,11 @@ function Test-ProjectXml([string]$Path) {
     if ($extension -eq '.props' -or $extension -eq '.targets') { return $true }
     if (Test-ProjectUserFile $Path) { return $true }
     return $false
+}
+
+# CARD-1409 (Review 31c77116 R1): MSBuild reads Directory.Build.rsp as command-line switches; every tracked .rsp is parsed.
+function Test-ResponseFile([string]$Path) {
+    return [System.IO.Path]::GetExtension($Path).ToLowerInvariant() -eq '.rsp'
 }
 
 function Test-FullObjectId([string]$Value) {
@@ -533,6 +602,175 @@ function Format-IntermediateRedirectRefusal([string]$Path, [string]$Name) {
     return 'definition file redirects the intermediate directory, which the audit cannot evaluate; -Update cannot approve it: ' + $Path + ' ' + $Name
 }
 
+function Format-PropertyRefusal([string]$Path, [string]$Name) {
+    return 'definition file sets a property the audit does not allow; -Update cannot approve it: ' + $Path + ' ' + $Name
+}
+
+function Format-ItemTypeRefusal([string]$Path, [string]$Item) {
+    return 'definition file declares an item type the audit does not allow; -Update cannot approve it: ' + $Path + ' ' + $Item
+}
+
+function Format-UnclassifiedIncludeRefusal([string]$Path, [string]$Item, [string]$Include) {
+    return 'definition file item include cannot be classified; -Update cannot approve it: ' + $Path + ' ' + $Item + ' Include=' + $Include
+}
+
+function Format-ProjectReferenceRefusal([string]$Path, [string]$Item, [string]$Include, [string]$Resolved) {
+    return 'definition file project reference is not a tracked project file; -Update cannot approve it: ' + $Path + ' ' + $Item + ' Include=' + $Include + ' -> ' + $Resolved
+}
+
+function Format-ElementRefusal([string]$Path, [string]$Element) {
+    return 'definition file contains an element the audit does not classify; -Update cannot approve it: ' + $Path + ' ' + $Element
+}
+
+function Format-SdkRefusal([string]$Path, [string]$Sdk) {
+    return 'definition file uses an SDK the audit does not allow; -Update cannot approve it: ' + $Path + ' Sdk=' + $Sdk
+}
+
+function Format-ResponseFileRefusal([string]$Path, [string]$Line) {
+    return 'response file switch the audit does not allow; -Update cannot approve it: ' + $Path + ' ' + $Line
+}
+
+# CARD-1409 (Review 31c77116): the root must be <Project> with an allow-listed Sdk attribute, and its
+# children must be PropertyGroup, ItemGroup, Import, Target or an allow-listed <Sdk> element.
+function Assert-ClassifiedStructure($Doc, [string]$Path) {
+    $root = $Doc.DocumentElement
+    if ($null -eq $root) { Exit-Audit 1 (Format-ElementRefusal $Path '(none)') }
+    if (-not [string]::Equals([string]$root.LocalName, 'Project', [System.StringComparison]::Ordinal)) {
+        Exit-Audit 1 (Format-ElementRefusal $Path ([string]$root.LocalName))
+    }
+    $sdkAttribute = [string]$root.GetAttribute('Sdk')
+    if (-not [string]::IsNullOrWhiteSpace($sdkAttribute)) {
+        foreach ($part in $sdkAttribute.Split(';')) {
+            $name = $part.Trim()
+            if ($name.Length -eq 0) { continue }
+            if (-not (Test-AllowedName $AllowedProjectSdks $name $true)) { Exit-Audit 1 (Format-SdkRefusal $Path $sdkAttribute) }
+        }
+    }
+    foreach ($child in $root.ChildNodes) {
+        if ($child.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
+        $local = [string]$child.LocalName
+        if (-not (Test-AllowedName $AllowedProjectChildren $local $false)) { Exit-Audit 1 (Format-ElementRefusal $Path $local) }
+        if ($local -eq 'Sdk') {
+            $sdkName = ([string]$child.GetAttribute('Name')).Trim()
+            if (-not (Test-AllowedName $AllowedSdkElements $sdkName $true)) { Exit-Audit 1 (Format-SdkRefusal $Path $sdkName) }
+        }
+    }
+}
+
+# CARD-1409 (Review 31c77116 R2): every PropertyGroup child, wherever the group sits, and every task
+# Output PropertyName must be an allow-listed property; an Output ItemName must be an allow-listed item type.
+function Assert-AllowedProperties($Doc, [string]$Path) {
+    foreach ($group in $Doc.GetElementsByTagName('PropertyGroup')) {
+        foreach ($child in $group.ChildNodes) {
+            if ($child.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
+            $name = [string]$child.LocalName
+            if (-not $AllowedProperties.Contains($name)) { Exit-Audit 1 (Format-PropertyRefusal $Path $name) }
+        }
+    }
+    foreach ($output in $Doc.GetElementsByTagName('Output')) {
+        $propertyName = ([string]$output.GetAttribute('PropertyName')).Trim()
+        if ($propertyName.Length -gt 0 -and -not $AllowedProperties.Contains($propertyName)) {
+            Exit-Audit 1 (Format-PropertyRefusal $Path $propertyName)
+        }
+        $itemName = ([string]$output.GetAttribute('ItemName')).Trim()
+        if ($itemName.Length -gt 0 -and -not $ItemRules.ContainsKey($itemName)) {
+            Exit-Audit 1 (Format-ItemTypeRefusal $Path $itemName)
+        }
+    }
+}
+
+# CARD-1409 (Review 31c77116 R3): every ItemGroup child, wherever the group sits, must be an allow-listed item type.
+function Assert-AllowedItemTypes($Doc, [string]$Path) {
+    foreach ($group in $Doc.GetElementsByTagName('ItemGroup')) {
+        foreach ($child in $group.ChildNodes) {
+            if ($child.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
+            $name = [string]$child.LocalName
+            if (-not $ItemRules.ContainsKey($name)) { Exit-Audit 1 (Format-ItemTypeRefusal $Path $name) }
+        }
+    }
+}
+
+# A package-style include is a bare identifier: no path separator, property, wildcard, parent segment or drive.
+function Test-ItemNameIsPathLike([string]$Segment) {
+    $decoded = ConvertFrom-PercentEncoding $Segment
+    if ($null -eq $decoded) { return $true }
+    foreach ($needle in @('/', '\', '$(', '*', '?', '..', ':')) {
+        if ($decoded.IndexOf($needle) -ge 0) { return $true }
+    }
+    return $false
+}
+
+# CARD-1409 (Review 31c77116): one ';'-separated include part under its item type's rule, resolved from
+# every directory the item is evaluated from. Every refusal names the file, the item type and the part.
+function Assert-ItemIncludeAllowed([string]$Root, [string]$Path, [string]$Item, [string]$Rule, [string]$Segment, $Directories, $Known) {
+    if (($Segment.IndexOf('@(') -ge 0) -or ($Segment.IndexOf('%(') -ge 0)) {
+        Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment)
+    }
+    if ($Rule -eq 'name') {
+        if (Test-ItemNameIsPathLike $Segment) { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
+        return
+    }
+    foreach ($directory in $Directories) {
+        $resolved = [string](Resolve-IncludePattern $Root $Path ([string]$directory) $Segment)
+        if ($Rule -eq 'project') {
+            $unclassified = ($resolved -eq 'escape') -or ($resolved -eq 'forbidden-property') -or ($resolved -eq 'outside') -or ($resolved -eq 'unresolved')
+            if ($unclassified -or ($resolved.IndexOf('*') -ge 0) -or ($resolved.IndexOf('?') -ge 0)) {
+                Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment)
+            }
+            if ((-not (Test-ProjFile $resolved)) -or (-not $Known.ContainsKey($resolved))) {
+                Exit-Audit 1 (Format-ProjectReferenceRefusal $Path $Item $Segment $resolved)
+            }
+            continue
+        }
+        if ($resolved -eq 'forbidden-property' -or $resolved -eq 'escape') {
+            Exit-Audit 1 (Format-ApprovalRefusal $Path $Item $Segment)
+        }
+        if ($resolved -eq 'outside') {
+            Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment)
+        }
+        if ($resolved -eq 'unresolved') { continue }
+        if ((Test-PatternMatchesReadme $resolved) -or (Test-PatternSelectsDocsMarkdown $resolved)) {
+            Exit-Audit 1 (Format-ApprovalRefusal $Path $Item $Segment)
+        }
+    }
+}
+
+# CARD-1409 (Review 31c77116 R1): one response-file line is one switch. Comments start with '#'.
+function Test-ResponseSwitchAllowed([string]$Line) {
+    if (-not ($Line.StartsWith('-') -or $Line.StartsWith('/'))) { return $false }
+    $body = $Line.Substring(1)
+    $colon = $body.IndexOf(':')
+    if ($colon -lt 0) {
+        $name = $body
+        $value = $null
+    }
+    else {
+        $name = $body.Substring(0, $colon)
+        $value = $body.Substring($colon + 1)
+    }
+    switch ($name.ToLowerInvariant()) {
+        'nodereuse' { return (($value -eq 'true') -or ($value -eq 'false')) }
+        'nr' { return (($value -eq 'true') -or ($value -eq 'false')) }
+        'maxcpucount' { return (($null -eq $value) -or ($value -match '^[1-9][0-9]{0,3}$')) }
+        'm' { return (($null -eq $value) -or ($value -match '^[1-9][0-9]{0,3}$')) }
+        'verbosity' { return (@('q', 'quiet', 'm', 'minimal', 'n', 'normal', 'd', 'detailed', 'diag', 'diagnostic') -contains $value) }
+        'v' { return (@('q', 'quiet', 'm', 'minimal', 'n', 'normal', 'd', 'detailed', 'diag', 'diagnostic') -contains $value) }
+        'nologo' { return ($null -eq $value) }
+    }
+    return $false
+}
+
+function Assert-ResponseFileAllowed([string]$Path, [string]$Content) {
+    $text = $Content
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+    foreach ($raw in $text.Split([char]10)) {
+        $line = $raw.Trim()
+        if ($line.Length -eq 0) { continue }
+        if ($line.StartsWith('#')) { continue }
+        if (-not (Test-ResponseSwitchAllowed $line)) { Exit-Audit 1 (Format-ResponseFileRefusal $Path $line) }
+    }
+}
+
 function Get-GitBytes([string]$Root, [string]$Arguments) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = 'git'
@@ -567,13 +805,19 @@ function Get-GitBytes([string]$Root, [string]$Arguments) {
 }
 
 function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows) {
-    $names = @('EmbeddedResource', 'Content', 'None', 'Compile', 'AdditionalFiles')
     $utf = New-Object System.Text.UTF8Encoding $false
     $known = @{}
     foreach ($row in $Rows) {
         $tab = $row.IndexOf([char]9)
         $meta = $row.Substring(0, $tab).Split(' ')
         $path = $row.Substring($tab + 1)
+        # CARD-1409 (Review 31c77116 R1): a tracked response file is parsed, not only hashed.
+        if (Test-ResponseFile $path) {
+            $responseBytes = Get-GitBytes $Root ('cat-file blob ' + $meta[2])
+            if ($null -eq $responseBytes) { Exit-Audit 2 'git cat-file failed' }
+            Assert-ResponseFileAllowed $path ($utf.GetString($responseBytes))
+            continue
+        }
         if (-not (Test-ProjectXml $path)) { continue }
         $bytes = Get-GitBytes $Root ('cat-file blob ' + $meta[2])
         if ($null -eq $bytes) { Exit-Audit 2 'git cat-file failed' }
@@ -590,6 +834,10 @@ function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows) {
         if ($null -ne $redirect) {
             Exit-Audit 1 (Format-IntermediateRedirectRefusal $path ([string]$redirect))
         }
+        # CARD-1409 (Review 31c77116): default-deny over the structure, the property names and the item types.
+        Assert-ClassifiedStructure $doc $path
+        Assert-AllowedProperties $doc $path
+        Assert-AllowedItemTypes $doc $path
         $known[$path] = $doc
     }
     $bases = Get-ImportedProjectDirectories $Root $known
@@ -602,23 +850,17 @@ function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows) {
                 if (-not $directories.Contains([string]$dir)) { [void]$directories.Add([string]$dir) }
             }
         }
-        foreach ($node in $doc.GetElementsByTagName('*')) {
-            $local = [string]$node.LocalName
-            $watched = $false
-            foreach ($name in $names) {
-                if ($local.Equals($name, [System.StringComparison]::OrdinalIgnoreCase)) { $watched = $true }
-            }
-            if (-not $watched) { continue }
-            $include = $node.GetAttribute('Include')
-            if ([string]::IsNullOrWhiteSpace($include)) { continue }
-            foreach ($segment in $include.Split(';')) {
-                $segment = $segment.Trim()
-                if ($segment.Length -eq 0) { continue }
-                foreach ($directory in $directories) {
-                    $resolved = Resolve-IncludePattern $Root ([string]$path) ([string]$directory) $segment
-                    if (Test-ResolvedIncludeRefused ([string]$resolved)) {
-                        Exit-Audit 1 (Format-ApprovalRefusal ([string]$path) $local $segment)
-                    }
+        foreach ($group in $doc.GetElementsByTagName('ItemGroup')) {
+            foreach ($node in $group.ChildNodes) {
+                if ($node.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
+                $local = [string]$node.LocalName
+                $rule = [string]$ItemRules[$local]
+                $include = $node.GetAttribute('Include')
+                if ([string]::IsNullOrWhiteSpace($include)) { continue }
+                foreach ($segment in $include.Split(';')) {
+                    $segment = $segment.Trim()
+                    if ($segment.Length -eq 0) { continue }
+                    Assert-ItemIncludeAllowed $Root ([string]$path) $local $rule $segment $directories $known
                 }
             }
         }
