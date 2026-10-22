@@ -147,6 +147,15 @@ new mutation lease and read scope are acquired. The protocol reloads durable
 authority and validates the immutable candidate ticket, checkout identities,
 tracked cleanliness, locks, sequencers, pins, source, approval and destination.
 It refuses changed candidates instead of resetting them under an old result.
+CARD-1463: the tracked-cleanliness, lock and sequencer refusals
+(`verification_tracked_tree_changed`, `verification_sequencer_changed`, the
+index-lock codes) apply to the land worktree. The task worktree is probed with the
+same read-only inventory (`GIT_OPTIONAL_LOCKS=0`, the CARD-1449 C688 list), but a
+finding there is guarded-cleanup residue under CARD-0688 D-2/D-12, never a
+refusal: the land publishes and cleanup ends `Refused` with `source_dirty`,
+`source_branch_mismatch`, `active_sequencer` or the index-lock code. A task
+coordinate, active-operation pointer or status moved during the window refuses as
+`task_coordinates_changed`, judged before the lease and pending-operation checks.
 The existing remote target observation, push CAS, confirmation and bounded
 target-race reprepare path remain authoritative. Completed artifacts do not
 make a restarted Prepared operation verified.

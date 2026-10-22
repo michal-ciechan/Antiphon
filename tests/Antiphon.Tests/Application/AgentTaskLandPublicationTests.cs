@@ -530,8 +530,9 @@ public sealed partial class AgentTaskLandPublicationTests
         // read-only git, and exactly this inventory: the admission index-lock probe (D-10), the one
         // git-directory read (D-2), then the post-window ticket validation in the source checkout
         // (index-lock probe, sequencer probe, tracked-tree status). Nothing mutates it and nothing
-        // else inspects it. The source status still runs without --no-optional-locks; that is a
-        // separate card, not a reason to widen this list.
+        // else inspects it. CARD-1463: those three source probes are observations, never refusals
+        // (the tree is cleanup residue, D-2/D-12), and every LandingGit child already runs with
+        // GIT_OPTIONAL_LOCKS=0, so the status argv stays as listed; this list is not widened.
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
         await h.AddSourceAsync();
