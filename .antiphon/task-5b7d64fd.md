@@ -8,8 +8,24 @@ derived timeout 60 min).
 
 Commits:
 - `e41eb41bb1c6caee2d77f9674af32837624b49df` test(CARD-1464): shared helper + conversions + plan.
-- this report commit (the tested tip; the closed checkpoint run binds it, CHECKPOINT lines are in
-  the final message to the caller).
+- `3f94e0e4ca298837b46fa76899dfe6db6bbd3f43` first report commit; checkpoint run `20261022-122438-fb40`
+  (full-class filters) bound it: CP-1 67 run / 66 passed (inherited red below), CP-2 19 / 17
+  (two crash-worker Legacy cases, overlap flake), CP-3 123 / 123, all `slot=granted`,
+  `sourceState=clean buildSource=verified`; receipt invalid `cleanup_refused` (the crash-worker child
+  wrote `bin-c1464/.antiphon/acceptance/card-0079/crash-*` inside the build output).
+- the plan-amendment + report commit after it is the tested tip: exclusions with evidence are in the
+  plan; the second run's CHECKPOINT lines are in the final message to the caller.
+
+## Red classification after run 1
+
+- `C478_CompletionReplayAfterPartialEnqueueRetention`: inherited. Detached worktree at base
+  `08765c68c`, build-slot run of the three red methods: total 4, failed 1 (this one, same assertion
+  `SessionQueuedMessages ... should be 0 but was 1`), Legacy x3 passed. Census row 49. It runs with
+  `busy: false`, so it never reaches the converted helper. Not fixed here (group H; needs its own card).
+- `Legacy_captured_note_survives_worker_death`, `Legacy_produced_note_survives_pre_enqueue_worker_death(False)`:
+  the same filter on the HEAD-source build `bin-c1464red/` (tests identical to `e41eb41bb`): total 4,
+  failed 1 (the inherited one), Legacy x3 passed. Red only while CP-1 and CP-2 overlapped
+  (25 s crash-worker poll window); repetition 1 of 3.
 
 ## Red witness at base 08765c68c (build-slot, `bin-c1464red/`, Linux)
 
