@@ -144,6 +144,41 @@ public sealed class ProviderEndpointApiTests
     }
 
     [Test]
+    public async Task C0167_save_refuses_the_urls_the_launch_refuses()
+    {
+        // Review e4b591eb D2: these five saved with 200 and were then refused at every launch by the
+        // S1 validator (port zero; a quote, a backslash, U+00A0 or U+0085 in the path). The save path
+        // now runs S1's rules after its own, under S1's codes; S2's pinned 422s above are untouched.
+        using var client = _factory.CreateClient();
+        var project = await CreateProjectAsync(client);
+        var id = project.GetProperty("id").GetGuid();
+
+        var refused = new (string Url, string Code)[]
+        {
+            ("http://127.0.0.1:0", "provider_endpoint_base_url_port"),
+            ("https://proxy.example.com/v1\"x", "provider_endpoint_base_url_characters"),
+            ("https://proxy.example.com/a\\b", "provider_endpoint_base_url_characters"),
+            ("https://proxy.example.com/a\u00A0b", "provider_endpoint_base_url_characters"),
+            ("https://proxy.example.com/a\u0085b", "provider_endpoint_base_url_characters"),
+        };
+        foreach (var (url, code) in refused)
+        {
+            var response = await client.PutAsJsonAsync($"/api/projects/{id:D}", UpdateBody(project,
+                providerEndpoints: new Dictionary<string, object> { ["ClaudeCode"] = new { baseUrl = url, apiKeyName = "claude-key-0167" } }));
+            response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity, url);
+            var problem = await ReadJsonAsync(response);
+            problem.GetProperty("code").GetString().ShouldBe(code, url);
+            problem.GetProperty("errors").TryGetProperty("providerEndpoints.ClaudeCode.baseUrl", out _)
+                .ShouldBeTrue($"the error names the field ({url})");
+            problem.GetRawText().ShouldNotContain("proxy.example.com", Case.Sensitive, "a refused URL is never echoed");
+        }
+
+        // Nothing refused was stored, so no later launch can be refused for a URL the save accepted.
+        var fetched = await ReadJsonAsync(await client.GetAsync($"/api/projects/{id:D}"));
+        fetched.GetProperty("providerEndpoints").EnumerateObject().Count().ShouldBe(0);
+    }
+
+    [Test]
     public async Task C0167_project_endpoint_warns_on_unknown_key_name_and_accepts()
     {
         using var client = _factory.CreateClient();
