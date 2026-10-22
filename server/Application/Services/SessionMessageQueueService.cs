@@ -4236,6 +4236,19 @@ public sealed partial class SessionMessageQueueService
 
             if (UtcNow() >= deadline)
             {
+                if (pointerAttempt is not null)
+                {
+                    // A redraw/Working/empty composer is not a pointer receipt. Preserve
+                    // uncertainty unless the same complete idle body still permits the
+                    // bounded no-submit recovery; never take the generic screen fallback.
+                    var pointer = await ObservePointerAsync(sessionId, body, pointerAttempt, ct);
+                    if (pointer.Receipt.Complete)
+                        return DeliveryOutcome.Confirmed(DeliveryConfirmedBy.Transcript);
+                    if (pointer.Receipt.Identity)
+                        return DeliveryOutcome.Of(DeliveryVerdict.Truncated, pointer.Receipt.Text);
+                    return DeliveryOutcome.Of(pointer.CompleteComposer && !sawPositiveSubmit
+                        ? DeliveryVerdict.NoSubmitOutput : DeliveryVerdict.NoComposerEvidence);
+                }
                 if (fullInline)
                     return DeliveryOutcome.Of(DeliveryVerdict.NoTranscriptRecord);
                 if (!observable)
@@ -4292,7 +4305,7 @@ public sealed partial class SessionMessageQueueService
 
             // Full-inline Check evidence must survive a dropped live transcript stream on
             // warm sessions too. CatchUp preserves native file order and never re-enters flush.
-            if ((fullInline || !observable) && UtcNow() - lastPull >= pullEvery)
+            if ((pointerAttempt is not null || fullInline || !observable) && UtcNow() - lastPull >= pullEvery)
             {
                 await _runtime.CatchUpTranscriptAsync(sessionId, ct);
                 lastPull = UtcNow();
