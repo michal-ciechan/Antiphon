@@ -62,6 +62,9 @@
 # per part, so the other parts of the same value are still classified. CARD-1409 repair 8 (Review d43d1e4a):
 # with the two directory properties only (imports, values, name items, Pkg* ids), the text is split on ';'
 # first and a directory property at the start of each part is that directory, as MSBuild expands then splits.
+# CARD-1409 repair 9 (Review 4ecdb753): MSBuild escapes % $ @ ; ' ( ) * ? in $(MSBuildProjectDirectory) and not
+# in $(MSBuildThisFileDirectory), so a tracked definition path holding one refuses by name (char=<c>) before any
+# file is read; every spliced directory and every import or reference target is such a path.
 # CARD-1409: an Import Project path that still contains $(, @( or %( after the
 # two known properties are expanded is refused and is not followed; there is no
 # allow-list. An Import with an attribute other than Project, Condition or Label
