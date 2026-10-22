@@ -2108,7 +2108,11 @@ write leaves it unusable; the next attempt creates a new generation and retains
 the old one. Foreign markers, unmarked existing roots and linked paths are
 retained with a `land_artifacts cold` diagnostic and a fresh owned temporary
 fallback. There is no recursive cache janitor. Setting reuse to `false` selects
-owned cold outputs for diagnosis.
+owned cold outputs for diagnosis. `Landing:BuildSlotMemoryFloorFallbackMinutes` and
+`Landing:BuildSlotMemoryFloorFallbackMaxCpuCount` (CARD-1461, default off) bound the verifier's
+wait behind the runner's memory floor with an unleased capped build; the rule and the line it
+prints are in the desktop land verifier paragraph under Build slots in
+[testing-and-build.md](testing-and-build.md).
 
 Build and selected tests share the same artifacts and build slot. Each selected
 test invocation writes to a fresh owned results directory; only its exact TRX
