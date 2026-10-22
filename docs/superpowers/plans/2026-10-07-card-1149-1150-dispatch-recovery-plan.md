@@ -273,6 +273,16 @@ and settlement-sync behavior unchanged.
 
 ### D-6. No migration, no steady-state statement increase, no new release timer
 
+**2026-10-22 CARD-1522 amendment:** the table below preserves the original
+acceptance and historical graph. The [budget repair amendment](2026-10-22-card-1522-budget-repair.md)
+now requires exact 19/19/19 for held/live/first-dead ticks (CARD-0097's enabled
+routing sweep), 44 for initial refusal (that sweep plus CARD-1285's credential
+write), 17 for repeated blocked ticks (the sweep), and 61 for missing-brief and
+watchdog recovery where CARD-0266's composer-safety read is present. The grace
+scan remains exactly 4, existing-brief recovery 65, and other measured controls
+remain unchanged. These intentional later commands do not authorize unrelated
+reads or a change from exact equality to a ceiling.
+
 Use existing task state/reason, events, session clocks and queue evidence. No new
 entity, persisted attempt counter, schema/index migration, recurring job or
 separate per-tick read is approved. Candidate enrichment belongs in the existing
