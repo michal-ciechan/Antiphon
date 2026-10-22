@@ -5963,12 +5963,25 @@ public sealed partial class AgentTaskDispatcher
         // Pool delegates have no board-derived scope: null is intentionally global-only.
         // CARD-0260: the inherited-env snapshot is the other half of that honesty — a warm
         // process retains whatever LLM routing it launched with.
+        // CARD-0167 S3 repair (Review e4b591eb D1): so is the provider-endpoint projection. The
+        // stamp records WHICH projection this process gets, from the same project column the launch
+        // reads for the same identity (ProjectProviderEndpointsAsync and the ApiKeyEnvResolver both
+        // ParseMap the task project's row; both launch paths project nothing without that
+        // resolver), for the kind the session launches as. The warm-pool predicate compares this
+        // stamp, never a re-read of the current map, with what a later task would launch with, so
+        // an endpoint set, cleared or changed after this launch means a fresh process. Names, the
+        // URL and the {{key:NAME}} placeholder only; the resolved value is never stored.
         if (agent.IsPoolDelegate)
         {
             agent.PoolProjectId = claimed.ProjectId;
             agent.LaunchEnvJson = string.IsNullOrWhiteSpace(claimed.InheritedLaunchEnvJson)
                 ? "{}"
                 : claimed.InheritedLaunchEnvJson;
+            agent.PoolProviderProjectionJson = ProviderEndpointLayers.PoolFingerprint(
+                program.Kind,
+                _apiKeyEnvResolver is null ? null : await ProjectProviderEndpointsAsync(claimed.ProjectId, ct),
+                agent.ProviderEndpointMode,
+                ProviderEndpoint.Parse(agent.ProviderEndpointJson));
         }
 
         var cwd = claimed.WorktreePath ?? claimed.WorkingDirectory;
@@ -8277,12 +8290,17 @@ public sealed partial class AgentTaskDispatcher
         InheritedEnvMatchesPool(agent, task, projectEndpoints, _settings.LlmEnvInheritance.Names);
 
     /// <summary>
-    /// CARD-0167 S3: the pure predicate behind the warm-pool match. A process launched under a
-    /// project endpoint carries projected names its LaunchEnvJson never had, so both sides include
-    /// their projection on the inherit-list names: the candidate's (its mode and own endpoint
-    /// around its stored env) against what this task would launch with (the project's entry for
-    /// the task's kind under the task's inherited snapshot). Placeholders compare as NAMES; nothing
-    /// is resolved here.
+    /// CARD-0167 S3: the pure predicate behind the warm-pool match, in two halves. CARD-0260's:
+    /// the candidate's stored inherit-list snapshot against the task's, on the inherit-list names.
+    /// Then (repair of Review e4b591eb D1) the provider-endpoint projection the candidate's process
+    /// was LAUNCHED with (<see cref="Agent.PoolProviderProjectionJson"/>, stamped at its cold
+    /// launch) against the projection this task would launch with NOW (the project's entry for the
+    /// task's kind, as a fresh pool row in Inherit mode would get it). The current map is read for
+    /// the task side only: a process launched with no endpoint never serves a task that expects
+    /// one, a process launched through F never serves a task after F is cleared or changed, and a
+    /// row that predates the stamp reads as launched with nothing. The comparison is Ordinal on
+    /// the canonical fingerprint, so a Codex endpoint that differs only in its <c>-c</c> argv tail
+    /// is a mismatch too. Placeholders compare as NAMES; nothing is resolved here.
     /// </summary>
     internal static bool InheritedEnvMatchesPool(
         Agent agent,
@@ -8290,19 +8308,17 @@ public sealed partial class AgentTaskDispatcher
         IReadOnlyDictionary<AgentKind, ProviderEndpoint>? projectEndpoints,
         IReadOnlyList<string> names)
     {
-        var agentSide = ProviderEndpointLayers.PoolView(
-            agent.Kind,
-            AgentLaunchEnv.Parse(agent.LaunchEnvJson),
-            projectEndpoints,
-            agent.ProviderEndpointMode,
-            ProviderEndpoint.Parse(agent.ProviderEndpointJson));
-        var taskSide = ProviderEndpointLayers.PoolView(
-            task.AgentKind,
-            AgentLaunchEnv.Parse(task.InheritedLaunchEnvJson),
-            projectEndpoints,
-            ProviderEndpointMode.Inherit,
-            agentEndpoint: null);
-        return AgentLaunchEnv.ProjectionsEqual(agentSide, taskSide, names);
+        if (!AgentLaunchEnv.ProjectionsEqual(
+                AgentLaunchEnv.Parse(agent.LaunchEnvJson),
+                AgentLaunchEnv.Parse(task.InheritedLaunchEnvJson),
+                names))
+        {
+            return false;
+        }
+
+        var taskWouldGet = ProviderEndpointLayers.PoolFingerprint(
+            task.AgentKind, projectEndpoints, ProviderEndpointMode.Inherit, agentEndpoint: null);
+        return string.Equals(agent.PoolProviderProjectionJson, taskWouldGet, StringComparison.Ordinal);
     }
 
     /// <summary>The project's per-kind endpoints for the warm-pool predicate; none for a global-only task.</summary>

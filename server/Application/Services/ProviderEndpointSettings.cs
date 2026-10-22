@@ -80,6 +80,11 @@ public static class ProviderEndpointSettings
     /// Absolute http/https, no userinfo, no query, no fragment, no placeholder, at most
     /// <see cref="MaxBaseUrlLength"/> characters; the trailing slash is trimmed. A loopback host is
     /// fine (local key proxies are the norm). The refused value is never part of the message.
+    /// <para>Review e4b591eb D2: after these rules (whose codes and messages the S2 API tests pin),
+    /// the launch path's own rules run (<see cref="ProviderEndpoint.ValidateBaseUrl"/>: Unicode
+    /// whitespace and C1 controls, quotes and backslashes, the port range), under their own
+    /// <c>provider_endpoint_base_url_*</c> codes. The save path therefore refuses everything the
+    /// launch path refuses, so a stored URL cannot be refused at every launch after a 200.</para>
     /// </summary>
     public static string ValidateBaseUrl(string? value, string field)
     {
@@ -106,7 +111,7 @@ public static class ProviderEndpointSettings
         var normalised = trimmed.TrimEnd('/');
         if (!Uri.TryCreate(normalised, UriKind.Absolute, out _))
             throw new ValidationException(field, "A base URL must be an absolute http or https URL.", InvalidUrlCode);
-        return normalised;
+        return ProviderEndpoint.ValidateBaseUrl(normalised, field);
     }
 
     /// <summary>
