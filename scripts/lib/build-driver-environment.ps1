@@ -33,6 +33,14 @@ function Enter-AntiphonBuildDriverEnvironment {
 function Exit-AntiphonBuildDriverEnvironment {
     param([hashtable]$Restore)
     if ($Restore) {
-        foreach ($name in $Restore.Keys) { [Environment]::SetEnvironmentVariable($name, $Restore[$name]) }
+        foreach ($name in $Restore.Keys) {
+            # PowerShell converts an untyped null to an empty string for this API.
+            # Preserve absence as well as the caller's explicit empty value.
+            if ($null -eq $Restore[$name]) {
+                [Environment]::SetEnvironmentVariable($name, [NullString]::Value)
+            } else {
+                [Environment]::SetEnvironmentVariable($name, $Restore[$name])
+            }
+        }
     }
 }
