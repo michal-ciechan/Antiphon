@@ -531,14 +531,21 @@ function Invoke-C1423MaskingForms {
         try { $u = [uri]$url; $exText = 'request failed for ' + $u.AbsoluteUri + ' original ' + $u.OriginalString } catch { $exText = [string]$_.Exception.Message }
         Assert-C1408 -Cond ($exText -match $form.Sentinel -and (Hide-CutoverText -Text $exText) -notmatch $form.Sentinel) -Name ('exception text is masked: ' + $form.Name) -Detail (Hide-CutoverText -Text $exText)
         $p = Invoke-PostgresCutoverMonitor -Mode Plan -ServerBaseUrl $form.Server -PipelineUrl $form.Pipe -ProjectId 'p1' -BaselinePath $bp -Now $script:FixedNow
-        $http = New-C1408FakeHttp
+        # An optional Diag body puts the form's sentinel on the pool-diagnostics surface (Hide-CutoverSecrets, then the JSON).
+        $diag = ''
+        if ($form.ContainsKey('Diag')) { $diag = [string]$form.Diag }
+        $http = New-C1408FakeHttp -DiagBody $diag
         $b = Invoke-PostgresCutoverMonitor -Mode Baseline -Execute -ServerBaseUrl $form.Server -PipelineUrl $form.Pipe -ProjectId 'p1' -BaselinePath (Join-Path $dir 'in-baseline.json') -ResultPath (Join-Path $dir 'in-b-result.json') -SampleCount 2 -HttpGet $http -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
         $w = Invoke-PostgresCutoverMonitor -Mode Watch -Execute -ServerBaseUrl $form.Server -PipelineUrl $form.Pipe -ProjectId 'p1' -BaselinePath $bp -ResultPath (Join-Path $dir 'in-w-result.json') -SampleCount 2 -HttpGet $http -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
         $lines = @($p.Lines) + @($b.Lines) + @($w.Lines)
         Assert-C1408 -Cond ($b.ExitCode -eq 0 -and $w.ExitCode -eq 0) -Name ('the request still routes and measures: ' + $form.Name) -Detail ('b=' + $b.ExitCode + ' w=' + $w.ExitCode + ' ' + ($lines -join ' | '))
         Assert-C1408 -Cond (@($lines | Where-Object { $_ -match $form.Sentinel }).Count -eq 0) -Name ('no sentinel in Plan, Baseline or Watch lines: ' + $form.Name) -Detail (@($lines | Where-Object { $_ -match $form.Sentinel }) -join ' | ')
+        $inJson = ''
+        foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter 'in-*.json')) { $inJson += (Get-Content -LiteralPath $f.FullName -Raw) }
+        Assert-C1408 -Cond ($inJson.Length -gt 0 -and $inJson -notmatch $form.Sentinel) -Name ('no sentinel in the in-process baseline and result json, pool flags included: ' + $form.Name) -Detail ([regex]::Match($inJson, '.{0,60}' + $form.Sentinel + '.{0,20}').Value)
+        # The child command quotes the URLs with single quotes, so an apostrophe inside a URL is doubled.
         $pipeArg = ''
-        if ($form.Pipe) { $pipeArg = "-PipelineUrl '" + $form.Pipe + "'" }
+        if ($form.Pipe) { $pipeArg = "-PipelineUrl '" + $form.Pipe.Replace("'", "''") + "'" }
         $errOut = Join-Path $dir 'child.err'
         $cmd = @'
 $seam = { param([string]$Url); $u = [uri]$Url; throw ('request failed for ' + $u.AbsoluteUri + ' original ' + $u.OriginalString) }
@@ -547,7 +554,7 @@ $seam = { param([string]$Url); $u = [uri]$Url; throw ('request failed for ' + $u
 & '__MON__' -Mode Watch -Execute -ServerBaseUrl '__SRV__' __PIPE__ -ProjectId 'p1' -BaselinePath '__BP__' -ResultPath '__DIR__/w-result.json' -SampleCount 2 -HttpGet $seam
 exit $LASTEXITCODE
 '@
-        $cmd = $cmd.Replace('__MON__', $monitor).Replace('__SRV__', $form.Server).Replace('__PIPE__', $pipeArg).Replace('__BP__', $bp).Replace('__DIR__', $dir)
+        $cmd = $cmd.Replace('__MON__', $monitor).Replace('__SRV__', $form.Server.Replace("'", "''")).Replace('__PIPE__', $pipeArg).Replace('__BP__', $bp).Replace('__DIR__', $dir)
         $out = @(& pwsh -NoProfile -NonInteractive -Command $cmd 2> $errOut | ForEach-Object { [string]$_ })
         $err = ''
         if (Test-Path -LiteralPath $errOut) { $err = [string](Get-Content -LiteralPath $errOut -Raw) }
@@ -566,8 +573,6 @@ function Test-C1423_SlashInUserinfoMasked {
     $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100)
     $masked = Hide-CutoverText -Text 'http://u:1234/SENTSLASH1423@h/api/x'
     Assert-C1408 -Cond ($masked -eq 'http://<redacted>@h/api/x') -Name 'userinfo with a slash in the password is masked to the last @' -Detail $masked
-    $plain = 'PLAN would GET http://fake.invalid/health and mail ops@fake.invalid'
-    Assert-C1408 -Cond ((Hide-CutoverText -Text $plain) -eq $plain) -Name 'a URL followed by whitespace and a later @ is left intact' -Detail (Hide-CutoverText -Text $plain)
     Invoke-C1423MaskingForms -Root $root -BaselinePath $b.BaselinePath -Forms @(
         @{ Name = 'slash in the password'; Server = 'http://u:12/SENTSLASH1423@fake.invalid'; Pipe = ''; Sentinel = 'SENTSLASH1423' }
     )
@@ -632,6 +637,126 @@ function Test-C1423_BlockedPreWindowLandThrewCountsEqually {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# DEF-1 (CARD-1423 Final Review 3a27a954): .NET keeps ' " space < and > as part of the password (the first stays raw in
+# AbsoluteUri; the others are escaped there and raw in OriginalString), but the old userinfo class [^\s"'<>]*@ stopped
+# at them, so such a password printed raw in PLAN lines, the result JSON server and url fields and the recorded request
+# error. One case per character over the Invoke-C1423MaskingForms surfaces plus the pool-diagnostics JSON surface.
+function Invoke-C1423UserinfoCharacter {
+    param([string]$Label, [string]$Char, [string]$Sentinel)
+    $root = New-C1408Scratch
+    $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100)
+    $server = 'http://u:' + $Sentinel + $Char + 'q@fake.invalid'
+    $masked = Hide-CutoverText -Text ('PLAN would GET ' + $server + '/health x3')
+    Assert-C1408 -Cond ($masked -eq 'PLAN would GET http://<redacted>@fake.invalid/health x3') -Name ('userinfo with ' + $Label + ' in the password is masked to the last @ on the line') -Detail $masked
+    Assert-C1408 -Cond (Test-CutoverSecretValue -Value $server) -Name ('a pool string value with ' + $Label + ' in its userinfo is a secret value') -Detail $server
+    $diag = '{"pool":{"NoResetOnClose":true,"Endpoint":' + (ConvertTo-Json -InputObject $server -Compress) + '}}'
+    Invoke-C1423MaskingForms -Root $root -BaselinePath $b.BaselinePath -Forms @(
+        @{ Name = ($Label + ' in the password'); Server = $server; Pipe = ''; Sentinel = $Sentinel; Diag = $diag }
+    )
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+function Test-C1423_ApostropheInUserinfoMasked { Invoke-C1423UserinfoCharacter -Label 'an apostrophe' -Char "'" -Sentinel 'SENTAPOS1423' }
+
+function Test-C1423_DoubleQuoteInUserinfoMasked { Invoke-C1423UserinfoCharacter -Label 'a double quote' -Char '"' -Sentinel 'SENTDQ1423' }
+
+function Test-C1423_SpaceInUserinfoMasked {
+    Invoke-C1423UserinfoCharacter -Label 'a space' -Char ' ' -Sentinel 'SENTSP1423'
+    # D-1 after DEF-1: a newline is the only terminator, so a later @ on the same line is masked too (over-masking accepted).
+    $plain = 'PLAN would GET http://fake.invalid/health and mail ops@fake.invalid'
+    Assert-C1408 -Cond ((Hide-CutoverText -Text $plain) -eq 'PLAN would GET http://<redacted>@fake.invalid') -Name 'a URL followed by whitespace and a later @ on the same line is masked to that @ (newline is the only terminator)' -Detail (Hide-CutoverText -Text $plain)
+    $twoLines = "PLAN would GET http://fake.invalid/health`nmail ops@fake.invalid"
+    Assert-C1408 -Cond ((Hide-CutoverText -Text $twoLines) -eq $twoLines) -Name 'an @ on a later line does not extend the userinfo' -Detail (Hide-CutoverText -Text $twoLines)
+}
+
+function Test-C1423_LessThanInUserinfoMasked { Invoke-C1423UserinfoCharacter -Label 'a less-than sign' -Char '<' -Sentinel 'SENTLT1423' }
+
+function Test-C1423_GreaterThanInUserinfoMasked { Invoke-C1423UserinfoCharacter -Label 'a greater-than sign' -Char '>' -Sentinel 'SENTGT1423' }
+
+# DEF-1 alongside: a quoted connection-string value (Password="..." or Password='...') was missed because the pair value
+# could not start with a quote. Raw in the query, inside an encoded value, and alone in a line.
+function Test-C1423_QuotedConnectionStringPasswordMasked {
+    $root = New-C1408Scratch
+    $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100)
+    $dq = Hide-CutoverText -Text 'Host=x;Password="SENTDQP1423";Port=1'
+    Assert-C1408 -Cond ($dq -eq 'Host=x;Password=<redacted>;Port=1') -Name 'a double-quoted Password= value is masked whole and its neighbours kept' -Detail $dq
+    $sq = Hide-CutoverText -Text "Host=x;Password='SENTSQP1423';Port=1"
+    Assert-C1408 -Cond ($sq -eq 'Host=x;Password=<redacted>;Port=1') -Name 'a single-quoted Password= value is masked whole and its neighbours kept' -Detail $sq
+    $spaced = Hide-CutoverText -Text 'Host=x;Password="SENTSPQ1423 and more";Port=1'
+    Assert-C1408 -Cond ($spaced -eq 'Host=x;Password=<redacted>;Port=1') -Name 'a quoted Password= value containing spaces is masked whole' -Detail $spaced
+    $plainQuoted = 'Host=x;Database="app db";Port=1'
+    Assert-C1408 -Cond ((Hide-CutoverText -Text $plainQuoted) -eq $plainQuoted) -Name 'a quoted value of a plain key is kept' -Detail (Hide-CutoverText -Text $plainQuoted)
+    Invoke-C1423MaskingForms -Root $root -BaselinePath $b.BaselinePath -Forms @(
+        @{ Name = 'double-quoted Password= raw in the query'; Server = 'http://fake.invalid'; Pipe = 'http://fake.invalid/api/agent-tasks/pipeline?projectId=p1&cs=Host=x;Password="SENTDQRAW1423"'; Sentinel = 'SENTDQRAW1423' },
+        @{ Name = 'single-quoted Password= raw in the query'; Server = 'http://fake.invalid'; Pipe = "http://fake.invalid/api/agent-tasks/pipeline?projectId=p1&cs=Host=x;Password='SENTSQRAW1423'"; Sentinel = 'SENTSQRAW1423' },
+        @{ Name = 'double-quoted Password= inside an encoded value'; Server = 'http://fake.invalid'; Pipe = 'http://fake.invalid/api/agent-tasks/pipeline?projectId=p1&cs=Host%3Dx%3BPassword%3D%22SENTDQENC1423%22'; Sentinel = 'SENTDQENC1423' },
+        @{ Name = 'single-quoted Password= inside an encoded value'; Server = 'http://fake.invalid'; Pipe = 'http://fake.invalid/api/agent-tasks/pipeline?projectId=p1&cs=Host%3Dx%3BPassword%3D%27SENTSQENC1423%27'; Sentinel = 'SENTSQENC1423' }
+    )
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# DEF-1 alongside: the server reads '+' in a query value as a space, exactly as it reads %20, so x=y+token%3DS reaches it
+# as x=y token=S; %20 was masked and '+' was not.
+function Test-C1423_PlusAsSpaceInEncodedValueMasked {
+    $root = New-C1408Scratch
+    $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100)
+    $percent = Hide-CutoverText -Text 'http://fake.invalid/p?projectId=p1&x=y%20token%3DSENTPCT1423&z=1'
+    Assert-C1408 -Cond ($percent -notmatch 'SENTPCT1423' -and $percent -match 'projectId=p1' -and $percent -match '&z=1') -Name 'a %20 before an encoded secret pair is masked (the form the plus must match)' -Detail $percent
+    $plus = Hide-CutoverText -Text 'http://fake.invalid/p?projectId=p1&x=y+token%3DSENTPLUS1423&z=1'
+    Assert-C1408 -Cond ($plus -notmatch 'SENTPLUS1423' -and $plus -match 'projectId=p1' -and $plus -match '&z=1') -Name 'a plus before an encoded secret pair is masked like %20 and the neighbours kept' -Detail $plus
+    $rawPlus = Hide-CutoverText -Text 'http://fake.invalid/p?projectId=p1&x=y+token=SENTPLUSRAW1423&z=1'
+    Assert-C1408 -Cond ($rawPlus -notmatch 'SENTPLUSRAW1423' -and $rawPlus -match 'projectId=p1' -and $rawPlus -match '&z=1') -Name 'a plus before a raw secret pair inside a plain value is masked too' -Detail $rawPlus
+    $benign = 'http://fake.invalid/p?projectId=p1&q=a+b%20c&z=1'
+    Assert-C1408 -Cond ((Hide-CutoverText -Text $benign) -eq $benign) -Name 'a benign value with a plus and a %20 is kept' -Detail (Hide-CutoverText -Text $benign)
+    Invoke-C1423MaskingForms -Root $root -BaselinePath $b.BaselinePath -Forms @(
+        @{ Name = 'plus as a space before an encoded secret pair'; Server = 'http://fake.invalid'; Pipe = 'http://fake.invalid/api/agent-tasks/pipeline?projectId=p1&x=y+token%3DSENTPLUS1423'; Sentinel = 'SENTPLUS1423' }
+    )
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# DEF-1 alongside: the decode loop stopped after four rounds and kept a value encoded five times; any plain value that
+# still changes under decoding after the bound is now masked whole.
+function Test-C1423_FiveTimesEncodedValueMasked {
+    $root = New-C1408Scratch
+    $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100)
+    $levels = @()
+    $v = 'y&token=SENTFIVE1423'
+    for ($i = 1; $i -le 6; $i++) { $v = [uri]::EscapeDataString($v); $levels += $v }
+    for ($i = 0; $i -lt $levels.Count; $i++) {
+        $url = 'http://fake.invalid/p?projectId=p1&x=' + $levels[$i] + '&z=1'
+        $masked = Hide-CutoverText -Text $url
+        Assert-C1408 -Cond ($masked -notmatch 'SENTFIVE1423' -and $masked -match 'projectId=p1' -and $masked -match '&z=1') -Name ('a secret pair encoded ' + ($i + 1) + 'x inside a plain value is masked and the neighbours kept') -Detail $masked
+    }
+    $deepBenign = 'http://fake.invalid/p?projectId=p1&redirect=%252Fhome%253Ftab%253D1&z=1'
+    Assert-C1408 -Cond ((Hide-CutoverText -Text $deepBenign) -eq $deepBenign) -Name 'a benign value encoded twice is kept' -Detail (Hide-CutoverText -Text $deepBenign)
+    Invoke-C1423MaskingForms -Root $root -BaselinePath $b.BaselinePath -Forms @(
+        @{ Name = 'secret pair encoded five times inside a plain value'; Server = 'http://fake.invalid'; Pipe = ('http://fake.invalid/api/agent-tasks/pipeline?projectId=p1&x=' + $levels[4]); Sentinel = 'SENTFIVE1423' }
+    )
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# DEF-1 readability witness: with a credentialed server URL whose password carries the DEF-1 characters, the D-11
+# rollback reason, the ROLLBACK and CUTOVER-MONITOR verdict lines, the MEASURED numbers and the request-error prefix
+# stay readable while the userinfo is masked. A guard the Review confirmed today, kept green through the repair.
+function Test-C1423_VerdictLinesReadableWithMaskedUserinfo {
+    $root = New-C1408Scratch
+    $server = 'http://u:SENTREAD1423 x''y"<z>@fake.invalid'
+    $bp = Join-Path $root 'baseline.json'
+    $b = Invoke-PostgresCutoverMonitor -Mode Baseline -Execute -ServerBaseUrl $server -ProjectId 'p1' -BaselinePath $bp -ResultPath (Join-Path $root 'b-result.json') -SampleCount 20 -HttpGet (New-C1408FakeHttp -PipelineMs (Get-C1408Twenty -Median 100)) -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
+    $w = Invoke-PostgresCutoverMonitor -Mode Watch -Execute -ServerBaseUrl $server -ProjectId 'p1' -BaselinePath $bp -ResultPath (Join-Path $root 'w-result.json') -SampleCount 20 -HttpGet (New-C1408FakeHttp -PipelineMs (Get-C1408Twenty -Median 5000)) -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
+    $lines = @($b.Lines) + @($w.Lines)
+    Assert-C1408 -Cond ($b.ExitCode -eq 0 -and $w.ExitCode -eq 2 -and $w.Verdict -eq 'ROLLBACK') -Name 'the credentialed watch still decides ROLLBACK (exit 2)' -Detail ('b=' + $b.ExitCode + ' w=' + $w.ExitCode + ' ' + ($lines -join ' | '))
+    Assert-C1408 -Cond (@($lines | Where-Object { $_ -match 'SENTREAD1423' }).Count -eq 0) -Name 'no sentinel in the Baseline or Watch lines' -Detail (@($lines | Where-Object { $_ -match 'SENTREAD1423' }) -join ' | ')
+    Assert-C1408 -Cond (@($w.Lines | Where-Object { $_ -eq 'REASON median 5000 ms is above the 1000 ms floor and above 3x the baseline median 100 ms (300 ms)' }).Count -eq 1) -Name 'the D-11 rollback reason keeps its numbers' -Detail (@($w.Lines | Where-Object { $_ -like 'REASON*' }) -join ' | ')
+    Assert-C1408 -Cond (@($w.Lines | Where-Object { $_ -eq 'ROLLBACK' }).Count -eq 1 -and @($w.Lines | Where-Object { $_ -like 'CUTOVER-MONITOR mode=Watch verdict=ROLLBACK exit=2 medianMs=5000 baselineMedianMs=100 failures=0 baselineFailures=0 result=*' }).Count -eq 1) -Name 'the ROLLBACK and verdict lines keep their numbers' -Detail (@($w.Lines | Where-Object { $_ -like 'CUTOVER-MONITOR*' }) -join ' | ')
+    Assert-C1408 -Cond (@($w.Lines | Where-Object { $_ -match '^MEASURED pipeline http://<redacted>@fake\.invalid/api/agent-tasks/pipeline\?projectId=p1 medianMs=5000 minMs=4999 maxMs=5001 succeeded=20 errors=0$' }).Count -eq 1) -Name 'the MEASURED pipeline line keeps its host, path and numbers beside the masked userinfo' -Detail (@($w.Lines | Where-Object { $_ -like 'MEASURED pipeline*' }) -join ' | ')
+    $json = Get-Content -LiteralPath (Join-Path $root 'w-result.json') -Raw
+    Assert-C1408 -Cond ($json -notmatch 'SENTREAD1423' -and $json -match '"server": "http://<redacted>@fake\.invalid"' -and $json -match '"medianMs": 5000') -Name 'the recorded json keeps the host and the median beside the masked server' -Detail ([regex]::Match($json, '.{0,60}(SENTREAD1423|"server").{0,40}').Value)
+    $r = Invoke-CutoverHttpGet -Url ($server + '/api/x') -HttpGet { param([string]$Url); $u = [uri]$Url; throw ('request failed for ' + $u.AbsoluteUri + ' original ' + $u.OriginalString) }
+    Assert-C1408 -Cond ($r.Ok -eq $false -and $r.Error -notmatch 'SENTREAD1423' -and $r.Error -like 'request failed for http://<redacted>@fake.invalid/api/x*') -Name 'a request error keeps its message and host beside the masked userinfo' -Detail $r.Error
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $cases = @(
     'C1408_RollbackAboveFloorAndRatio',
     'C1408_FloorHoldsUnderOneSecond',
@@ -649,7 +774,16 @@ $cases = @(
     'C1423_SlashInUserinfoMasked',
     'C1423_EncodedValueSecretsMasked',
     'C1423_DetailCapNamesTheWindow',
-    'C1423_BlockedPreWindowLandThrewCountsEqually'
+    'C1423_BlockedPreWindowLandThrewCountsEqually',
+    'C1423_ApostropheInUserinfoMasked',
+    'C1423_DoubleQuoteInUserinfoMasked',
+    'C1423_SpaceInUserinfoMasked',
+    'C1423_LessThanInUserinfoMasked',
+    'C1423_GreaterThanInUserinfoMasked',
+    'C1423_QuotedConnectionStringPasswordMasked',
+    'C1423_PlusAsSpaceInEncodedValueMasked',
+    'C1423_FiveTimesEncodedValueMasked',
+    'C1423_VerdictLinesReadableWithMaskedUserinfo'
 )
 
 if (-not (Test-Path -LiteralPath $monitor)) {
