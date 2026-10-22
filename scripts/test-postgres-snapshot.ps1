@@ -323,6 +323,11 @@ labelled_source_json='{"Id":"343434343434343434343434343434343434343434343434343
 mismatch_json='{"Id":"5656565656565656565656565656565656565656565656565656565656565656","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"Mounts":[{"Name":"scratcha","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
 pghost_json='{"Id":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"},"Env":["PGHOST=db.internal","PGPORT=5432"]},"Mounts":[{"Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
 own_running_json='{"Id":"7878787878787878787878787878787878787878787878787878787878787878","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"Mounts":[{"Name":"custom_pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
+pghostaddr_json='{"Id":"9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"},"Env":["PGHOSTADDR=10.0.0.5"]},"HostConfig":{"NetworkMode":"none"},"Mounts":[{"Type":"volume","Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{}}}'
+pgenv_json='{"Id":"9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"},"Env":["PATH=/usr/bin","PGSERVICE=production"]},"HostConfig":{"NetworkMode":"none"},"Mounts":[{"Type":"volume","Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{}}}'
+bind_json='{"Id":"9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"HostConfig":{"NetworkMode":"none"},"Mounts":[{"Type":"volume","Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"},{"Type":"bind","Source":"/var/lib/docker/volumes/antiphon_pgdata/_data","Destination":"/mnt/live"}],"NetworkSettings":{"Networks":{}}}'
+hostnet_json='{"Id":"9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"HostConfig":{"NetworkMode":"host"},"Mounts":[{"Type":"volume","Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"host":{"Aliases":[]}}}}'
+sharednet_json='{"Id":"9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"HostConfig":{"NetworkMode":"container:0123abcd9f0123456789abcdef0123456789abcd0123456789abcdef012345"},"Mounts":[{"Type":"volume","Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{}}}'
 emit() {
     if [ "$name_format" = "1" ]; then
         printf '/%s\n' "$2"
@@ -414,6 +419,27 @@ case "$cmd" in
                 emit "$mismatch_json" "antiphon-postgres-drill"
                 exit 0
                 ;;
+            pghostaddr)
+                emit "$pghostaddr_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            pgenv)
+                emit "$pgenv_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            bind)
+                emit "$bind_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            hostnet)
+                emit "$hostnet_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            sharednet)
+                emit "$sharednet_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+
             pghost)
                 emit "$pghost_json" "antiphon-postgres-drill"
                 exit 0
@@ -540,11 +566,14 @@ exit 0
 }
 
 function Invoke-DrillCase {
-    param($Fixture, [string]$Scenario, [string[]]$Extra, [string]$PlainBytes = '32')
+    param($Fixture, [string]$Scenario, [string[]]$Extra, [string]$PlainBytes = '32', [string[]]$Volumes = @())
     Remove-Item -LiteralPath $Fixture.Marker -Force -ErrorAction SilentlyContinue
     $dockerState = Join-Path $Fixture.Root 'docker-state'
     Remove-Item -LiteralPath $dockerState -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath ($dockerState + '.volumes') -Force -ErrorAction SilentlyContinue
+    foreach ($seed in @($Volumes)) {
+        if (-not [string]::IsNullOrWhiteSpace($seed)) { Add-Content -LiteralPath ($dockerState + '.volumes') -Value $seed -Encoding ASCII }
+    }
     $cipher = Join-Path $Fixture.Dest 'antiphon-20261021T120000Z.dump.age'
     Set-Content -LiteralPath $cipher -Value 'cipher' -Encoding ASCII
     $arguments = @(
@@ -970,6 +999,31 @@ function Test-DrillRemovesScratch {
     } finally { Remove-Fixture $kept }
 }
 
+function Test-DrillRefusesTaintedReuse {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'DrillRefusesTaintedReuse script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $volume = 'antiphon-postgres-drill-pgdata'
+        $common = @('-ScratchContainer', 'antiphon-postgres-drill', '-ScratchVolume', $volume)
+        $hostaddr = Invoke-DrillCase $fx 'pghostaddr' $common '1048576' @($volume)
+        Assert-DrillRefused $hostaddr $fx 'pghost' 'pghostaddr'
+        Assert-True ($hostaddr.Tools -notmatch 'volume rm') 'pghostaddr leaves volumes' $hostaddr.Tools
+        $pgenv = Invoke-DrillCase $fx 'pgenv' $common '1048576' @($volume)
+        Assert-DrillRefused $pgenv $fx 'pg-env' 'pg env'
+        Assert-True ($pgenv.Tools -notmatch 'volume rm') 'pg env leaves volumes' $pgenv.Tools
+        $bind = Invoke-DrillCase $fx 'bind' $common '1048576' @($volume)
+        Assert-DrillRefused $bind $fx 'bind-mount' 'bind mount'
+        Assert-True ($bind.Tools -notmatch 'volume rm') 'bind mount leaves volumes' $bind.Tools
+        $hostnet = Invoke-DrillCase $fx 'hostnet' $common '1048576' @($volume)
+        Assert-DrillRefused $hostnet $fx 'host-network' 'host network'
+        Assert-True ($hostnet.Tools -notmatch 'volume rm') 'host network leaves volumes' $hostnet.Tools
+        $shared = Invoke-DrillCase $fx 'sharednet' $common '1048576' @($volume)
+        Assert-DrillRefused $shared $fx 'shared-network' 'shared network'
+        Assert-True ($shared.Tools -notmatch 'volume rm') 'shared network leaves volumes' $shared.Tools
+    } finally { Remove-Fixture $fx }
+}
+
 $all = @(
     'WhatIfPlan', 'MissingRecipient', 'RecipientInsideDestination',
     'DrillRefusesProduction', 'DrillPlan', 'Retention',
@@ -978,7 +1032,8 @@ $all = @(
     'DrillRefusesOwnVolume', 'DrillRefusesForeignVolume', 'DrillRefusesVolumeMismatch', 'DrillRefusesPgHost',
     'PublishRejectsTinyDump', 'PublishRejectsMissingTableData',
     'RetentionIgnoresConflictCopy', 'StagingHygiene', 'StagingPreservesOperatorFiles',
-    'StagingRefusesLink', 'StagingOutsideDestination', 'DrillRemovesScratch'
+    'StagingRefusesLink', 'StagingOutsideDestination', 'DrillRemovesScratch',
+    'DrillRefusesTaintedReuse'
 )
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
