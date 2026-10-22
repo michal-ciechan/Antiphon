@@ -561,7 +561,7 @@ public sealed partial class AgentTaskLandPublicationTests
             "rev-parse --path-format=absolute --git-path index.lock", // CARD-1379 ValidateTicketAsync: index lock
             "rev-parse --absolute-git-dir", // CARD-1379 ValidateTicketAsync: sequencer probe
             "status --porcelain=v1 -z --untracked-files=no", // CARD-1379 ValidateTicketAsync: tracked tree
-        }, string.Join(" | ", inSource));
+        }, Shouldly.Case.Sensitive, string.Join(" | ", inSource));
         inSource.ShouldAllBe(c => c.StartsWith("rev-parse ", StringComparison.Ordinal) || c.StartsWith("status ", StringComparison.Ordinal),
             "only read-only queries may touch the task worktree before cleanup");
         var profile = logger.Entries.Single(e => e.Message.StartsWith("Land git profile ", StringComparison.Ordinal));
