@@ -33,6 +33,7 @@ public sealed class WorktreeIgnoredContentClassifierTests
     [Arguments(".antiphon/task-ab12cd34.md")]
     [Arguments(".antiphon/c665-checkpoints/CP-1-x/run.trx")]
     [Arguments(".antiphon/results/unit.trx")]
+    [Arguments(".antiphon/inbox/photo.png")] // CARD-1446 S4b: an unlisted spill is evidence
     public void Default_evidence_paths_are_evidence(string path)
     {
         var result = Defaults().Classify([path]);
@@ -46,7 +47,6 @@ public sealed class WorktreeIgnoredContentClassifierTests
     [Arguments("server/appsettings.Development.json")]
     [Arguments("x.user")]
     [Arguments(".antiphon/report.md")]
-    [Arguments(".antiphon/inbox/photo.png")]
     [Arguments(".antiphon/deliverables/ab12cd34/x.md")]
     [Arguments("logs/a.log")]
     public void Default_protected_paths_are_protected(string path)
@@ -76,9 +76,10 @@ public sealed class WorktreeIgnoredContentClassifierTests
         result.Evidence.ShouldBeEmpty();
     }
 
-    // Review 5b79328d item 2: a `.antiphon` segment anywhere is protected unless one of the explicit
-    // `.antiphon` patterns names it, so a nested spill tree under a build directory is not disposable
-    // (and nested report spills are not evidence) just because its ancestor is.
+    // Review 5b79328d item 2: a `.antiphon` segment anywhere is never disposable just because its
+    // ancestor is; only a pattern that itself names `.antiphon` may release it. CARD-1446 S4b: the
+    // default `**/.antiphon/**` names it, so a nested spill is evidence (retained by copy, then
+    // deleted with the tree); a nested protected name still wins.
     [Test]
     [Arguments("server/bin-x/.antiphon/other.json")]
     [Arguments("server/bin-x/.antiphon/inbox/1e3f.md")]
@@ -86,9 +87,26 @@ public sealed class WorktreeIgnoredContentClassifierTests
     [Arguments("server/bin-x/.antiphon/task-ab12cd34.md")]
     [Arguments("client/node_modules/pkg/.antiphon/c665-checkpoints/run.trx")]
     [Arguments("server/obj/.Antiphon/x")]
-    public void Nested_antiphon_segment_is_protected(string path)
+    public void Nested_antiphon_segment_is_evidence_not_disposable(string path)
     {
-        var result = Defaults().Classify([path, "server/bin-x/a.dll"]);
+        var result = Defaults().Classify([path, "server/bin-x/a.dll", "server/bin-x/.antiphon/report.md"]);
+        Same(result.Evidence, path);
+        Same(result.Disposable, "server/bin-x/a.dll");
+        Same(result.Protected, "server/bin-x/.antiphon/report.md");
+    }
+
+    // Without the catch-all a nested `.antiphon` segment is still protected (the pre-CARD-1446 contract).
+    [Test]
+    [Arguments("server/bin-x/.antiphon/other.json")]
+    [Arguments("server/bin-x/.antiphon/inbox/1e3f.md")]
+    [Arguments("server/obj/.Antiphon/x")]
+    public void Nested_antiphon_segment_is_protected_without_the_catch_all(string path)
+    {
+        var classifier = new WorktreeIgnoredContentClassifier(Options.Create(new WorktreeCleanupSettings
+        {
+            RetainedIgnored = [".antiphon/task-????????.md", ".antiphon/**/*.trx", ".antiphon/*checkpoints*/**"],
+        }));
+        var result = classifier.Classify([path, "server/bin-x/a.dll"]);
         Same(result.Protected, path);
         Same(result.Disposable, "server/bin-x/a.dll");
         result.Evidence.ShouldBeEmpty();
@@ -111,7 +129,8 @@ public sealed class WorktreeIgnoredContentClassifierTests
         result.Protected.ShouldBeEmpty();
     }
 
-    // Only a pattern that itself names a `.antiphon` segment grants a nested one.
+    // Only a pattern that itself names a `.antiphon` segment grants a nested one; the explicit disposable
+    // pattern wins over the default evidence catch-all, which takes the rest (CARD-1446 S4b).
     [Test]
     public void Configured_antiphon_pattern_is_explicit()
     {
@@ -121,7 +140,16 @@ public sealed class WorktreeIgnoredContentClassifierTests
         }));
         var result = classifier.Classify(["bin-x/.antiphon/scratch/a.txt", "bin-x/.antiphon/other.txt", "bin-x/a.dll"]);
         Same(result.Disposable, "bin-x/.antiphon/scratch/a.txt", "bin-x/a.dll");
-        Same(result.Protected, "bin-x/.antiphon/other.txt");
+        Same(result.Evidence, "bin-x/.antiphon/other.txt");
+        result.Protected.ShouldBeEmpty();
+
+        var withoutCatchAll = new WorktreeIgnoredContentClassifier(Options.Create(new WorktreeCleanupSettings
+        {
+            DisposableIgnored = ["**/bin-*/**", "**/bin-*/.antiphon/scratch/**"],
+            RetainedIgnored = [],
+        })).Classify(["bin-x/.antiphon/scratch/a.txt", "bin-x/.antiphon/other.txt", "bin-x/a.dll"]);
+        Same(withoutCatchAll.Disposable, "bin-x/.antiphon/scratch/a.txt", "bin-x/a.dll");
+        Same(withoutCatchAll.Protected, "bin-x/.antiphon/other.txt");
     }
 
     [Test]

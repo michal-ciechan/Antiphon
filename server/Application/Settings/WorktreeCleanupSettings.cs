@@ -16,9 +16,14 @@ public sealed class WorktreeCleanupSettings
         ".antiphon/inbox/*.md", ".antiphon/task-*-brief.md", ".antiphon/task-*-refinement-*.md",
     ];
 
+    /// <summary>
+    /// CARD-1446 D-4 (S4b): <c>**/.antiphon/**</c> makes every unlisted <c>.antiphon</c> spill evidence
+    /// (retained by copy, then deleted with the tree) instead of protected (tree kept forever). Protected
+    /// names still win first, and the explicit <c>.antiphon</c> disposable patterns win over this catch-all.
+    /// </summary>
     public static IReadOnlyList<string> DefaultRetainedIgnored { get; } =
     [
-        ".antiphon/task-????????.md", ".antiphon/**/*.trx", ".antiphon/*checkpoints*/**",
+        ".antiphon/task-????????.md", ".antiphon/**/*.trx", ".antiphon/*checkpoints*/**", "**/.antiphon/**",
     ];
 
     /// <summary>
