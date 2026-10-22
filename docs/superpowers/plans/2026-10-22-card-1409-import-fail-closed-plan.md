@@ -103,7 +103,7 @@ No R-n. No positive controls. Mutation has nothing new to plant beyond the refus
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S28 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_*)` | V-1 V-2 V-3 V-4 V-5 V-7 V-8 V-9 V-10 V-11 V-12 V-13 V-14 V-15 V-16 V-17 V-18 V-19 V-20 V-21 V-22 V-23 V-24 V-25 V-26 V-27 V-28 V-29 V-30 V-31 | exactly 84 executed, 0 failed/skipped | 84 | 15 |
+| CP-1 | S31 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_*)` | V-1 V-2 V-3 V-4 V-5 V-7 V-8 V-9 V-10 V-11 V-12 V-13 V-14 V-15 V-16 V-17 V-18 V-19 V-20 V-21 V-22 V-23 V-24 V-25 V-26 V-27 V-28 V-29 V-30 V-31 V-32 | exactly 85 executed, 0 failed/skipped | 85 | 15 |
 
 ### Cost
 
@@ -376,6 +376,32 @@ Final Review d43d1e4a (report `.antiphon/task-d43d1e4a.md` on `feat/card-task-d4
 | V-31 | A later `;`-part that starts with `$(MSBuildThisFileDirectory)` or `$(MSBuildProjectDirectory)/` is expanded from that directory: a property value naming `docs/guide.md` that way refuses on the real test project tree and on a fixture, an import part that way is followed (a missing target names `-> eng/missing.props`, a tracked one is approved), and a later part with any other property reference is skipped in a value and refuses in an import, as at `fd20e8dcc`. | `C1409_LaterPartDirectoryPropertyIsExpanded` |
 
 V-7 remains the acceptance witness for D-41. No new PC rows: the per-part expansion is one branch of the pipeline Review already named; existing land PCs stay pending for SourceLanding Mutation.
+
+## Repair 9: a definition path with a character MSBuild escapes (Review 4ecdb753)
+
+Final Review 4ecdb753 (report `.antiphon/task-4ecdb753.md` on `feat/card-task-4ecdb753`, commit `fd2bae323`) confirmed R2 closed and found R3, a fail-open against `fd20e8dcc` that repair 6 introduced and repair 8 left reachable: in `Resolve-ItemPathText` (`-DirectoryPropertiesOnly`) the spliced text of `$(MSBuildProjectDirectory)` is percent-decoded with the value, but MSBuild stores that property escaped and decodes it once at use. A project at `server/a%2Fb/App.csproj` (a folder literally named `a%2Fb`) with `<PackageReadmeFile>$(MSBuildProjectDirectory)/../../docs/guide.md</PackageReadmeFile>` (also the `x.json;...` later-part form and the `a%2fb` spelling) is approved at `e6ac1c606` while `fd20e8dcc` refuses it; real MSBuild selects the root `docs/guide.md`, the audit reads `server/a/b/../../docs/guide.md`. `$(MSBuildThisFileDirectory)` is not escaped by MSBuild. Branch `feat/card-task-d8dc3f5c`, start ref `e6ac1c606b26ad49b446b1f5ed0a21e920c2ef8a`; this task lands as its own owner and the whole CARD-1409 chain lands with it, master first, then the rc port.
+
+**D-42 — A definition path may not hold a character MSBuild escapes.** Every directory the audit splices (a file's own directory for `$(MSBuildThisFileDirectory)`, the project directory for `$(MSBuildProjectDirectory)` and a relative path, every importing project directory) is the directory of a tracked definition path, and every import or project-reference target is a tracked definition path. A tracked definition path that contains any of `%`, `$`, `@`, `;`, `'`, `(`, `)`, `*`, `?` (the characters MSBuild escapes in `$(MSBuildProjectDirectory)` and leaves as written in `$(MSBuildThisFileDirectory)`) refuses by name before any file is read: `definition file path holds a character MSBuild escapes ...; -Update cannot approve it: <path> char=<c>`. The audit does not re-implement MSBuild escaping. No tracked definition path holds one (all 57 match `[A-Za-z0-9._/-]`), so `-Check` is unchanged.
+
+**D-43 — Witnesses.** `C1409_DefinitionPathWithEscapedCharacterRefuses`: `server/a%2Fb/App.csproj` with `PackageReadmeFile` `$(MSBuildProjectDirectory)/../../docs/guide.md` and `x.json;$(MSBuildProjectDirectory)/../../docs/guide.md`, and `server/a%2fb/App.csproj` with the first form, refuse naming the path and `char=%`; `server/a$(Description)b/` and `server/a@(None)b/` with the first form refuse naming `char=$` and `char=@` (both approved at the tip, refused at `fd20e8dcc`, sweep below); an imported `eng/a%2Fb/shared.props` refuses by its path. Controls: a real `server/ab/c/App.csproj` with `$(MSBuildProjectDirectory)/../../docs/guide.md` (`server/docs/guide.md`) is approved with `count=1`, and the `$(MSBuildThisFileDirectory)../../docs/guide.md` form in `server/a%2Fb/` refuses, both as at `fd20e8dcc`. Each outcome was confirmed with the `fd20e8dcc` and `e6ac1c606` scripts on scratch fixtures before the witness was written.
+
+**D-44 — Acceptance.** `-Check` on the real repository prints `F240D0F1DBF9AA627A0A3637B52318B8030181B60F20E677C6E3DE2D2285B72F` count=57 (V-7); the ordinary edits of D-27 pass `-Update` with count=57 in a scratch worktree; the script stays ASCII-only and parses under Windows PowerShell 5.1 rules. CP-1 expects 85: 29 `C1409_*`, 10 `C1400_*`, 3 `C1390_*`, `C1385_RegistryMatchesNarrowGraph`, 42 `C1380_*`. A differential sweep of definition-path character classes (`%`, `;`, `$`, `@`, `(`, `)`, `'`, `*`, `?`, `,`, space, `[`, `]`, non-ASCII, trailing dot and space) over directory-splice shapes (values, items, imports, an imported file, a `Directory.Build.props`) runs against the `fd20e8dcc`, `e6ac1c606` and fixed scripts; any shape `fd20e8dcc` refuses and the fix approves is fixed in this round. The out-of-contract residue of D-35 is unchanged.
+
+### Repair 9 slices
+
+**S29 — Red witness.** `C1409_DefinitionPathWithEscapedCharacterRefuses`; this section; CP-1 moved to S31 expecting 85. One unlisted red run at the witness commit (reason: red proof before the fix; counts in the report).
+
+**S30 — Fix.** `scripts/audit-land-verification-graph.ps1` D-42 (ASCII; parses under Windows PowerShell 5.1). The differential sweep of D-44 at the fix commit (scratch fixtures, no build).
+
+**S31 — Wording.** `docs/orchestration-loop.md`, the script header; CP-1 after S31 expecting 85.
+
+### Repair 9 verification design
+
+| ID | Behaviour | Witness |
+|---|---|---|
+| V-32 | A tracked definition path holding a character MSBuild escapes in `$(MSBuildProjectDirectory)` refuses by name, so an escaped project directory is never decoded as a separator: the three R3 shapes and the `$(`/`@(` folder shapes refuse, an imported file in such a folder refuses, and a real `server/ab/c/` folder and the `$(MSBuildThisFileDirectory)` form keep their `fd20e8dcc` outcomes. | `C1409_DefinitionPathWithEscapedCharacterRefuses` |
+
+V-7 remains the acceptance witness for D-44. No new PC rows: the refusal is one predicate over the tracked definition path; existing land PCs stay pending for SourceLanding Mutation.
 
 ### Inventory (tracked definition files at `9eab17ecfb73cf3f968ce8abba8141282a6a81c9`)
 
