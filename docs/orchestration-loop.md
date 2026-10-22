@@ -2169,13 +2169,34 @@ refused by its path whatever it contains, and a definition file that sets
 cannot be evaluated; reading one of those properties inside another property,
 as `Directory.Build.targets` does, is not setting it (CARD-1409, Review 8989ece8
 F1). The inventory already digests a tracked `obj/` `.props` or `.targets`, so
-no manifest covers such a tree and a docs-only land builds. The failure names the definition
-file and the include, or the import path when the import cannot be resolved.
+no manifest covers such a tree and a docs-only land builds. Beyond those
+named refusals the audit is default-deny (CARD-1409, Review 31c77116): a
+definition file may set only an allow-listed property name, wherever the
+`PropertyGroup` sits and including a task `Output` `PropertyName`; declare only
+an allow-listed item type, each under a rule (a path item such as `Compile`,
+`Content`, `None`, `EmbeddedResource`, `AdditionalFiles`, `EditorConfigFiles`,
+`GlobalAnalyzerConfigFiles` or one of the repository's own target-time items
+must stay inside the repository and never select docs markdown or the root
+README; a `ProjectReference` must resolve to a tracked `*proj` from every
+directory it is evaluated from; `PackageReference`, `FrameworkReference` and
+`InternalsVisibleTo` are bare names; an include carrying `@(` or `%(` refuses);
+and hold under `<Project>` only `PropertyGroup`, `ItemGroup`, `Import`, `Target`
+and an allow-listed `<Sdk>`, with an allow-listed `Sdk` attribute. Every
+tracked `.rsp` is parsed: each non-comment line is one of `-nodeReuse`,
+`-maxcpucount`, `-verbosity` or `-nologo` with a checked value, and `-p:`,
+`-property:`, `@file` and any other switch refuse. The lists are seeded from
+the tracked definition files and kept in the script and in the CARD-1409 plan's
+inventory; anything outside them refuses naming the file and the construct, so
+a new property, item type, SDK or switch is a reviewed edit of the script,
+never a silent acceptance. The failure names the definition
+file, the construct and the include, or the import path when the import cannot be resolved.
 Regenerating the manifest does not approve that include. An unknown `$(...)`
 in an item include is refused only when the include text contains the exact
 spellings `docs` and `.md`, or `README`, so `$(DocsDir)*.md` stays accepted.
-An `Import` is followed as described above; `ReadLinesFromFile`, `Copy`, and
-property functions that read files are not inspected. Any other definition-file edit still changes the
+An `Import` is followed as described above. Target bodies are not evaluated: a
+task parameter (`Exec`, `Copy`, `ReadLinesFromFile`), item metadata and a
+property value can name any file and the audit refuses no task (CARD-1409 plan
+D-18). Any other definition-file edit still changes the
 digest, so the skip stops until the manifest is regenerated.
 
 The fingerprint is SHA-256 over ordinal-sorted `git ls-tree -r -z <candidate>`

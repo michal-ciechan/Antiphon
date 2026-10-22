@@ -30,6 +30,10 @@ internal sealed class LandVerificationBuildGraph
     // CARD-1409 (Review 8989ece8 F1): a tracked obj/ .props or .targets, which Microsoft.Common.props/.targets
     // import by wildcard, is included by its extension; the audit script refuses it, so no manifest ever
     // covers such a tree and a docs-only land builds.
+    // CARD-1409 (Review 31c77116): the audit script is default-deny inside the files this inventory selects
+    // (allow-listed property names, item types, Project children, SDKs and .rsp switches). The inventory
+    // itself is unchanged: .rsp was already selected, and EditorConfigFiles and GlobalAnalyzerConfigFiles
+    // are item types inside project XML, not files.
     internal bool Includes(string path)
     {
         var name = Path.GetFileName(path);
