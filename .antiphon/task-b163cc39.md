@@ -195,3 +195,12 @@ candidate once (null cursor key), subsequent runs only changed verdicts; the run
 runs while `candidates`/`held` counters keep the full count, and `POST .../worktree-residue/preview` still lists every
 row. `Retention:WorktreeResidueHeldRowRetentionDays=0` disables pruning (plan Rollback); the dedupe has no switch because
 it loses no verdict.
+
+## Addendum (after the green run): master moved to `e5e19c1d3`
+
+CARD-0167 S2 `20261022074212_AddProviderEndpoints` landed on master during this task. `20261022095749` still sorts after
+it, and `git merge-tree --write-tree origin/master HEAD` is clean at `e5e19c1d3` (the two `AppDbContextModelSnapshot.cs`
+hunks, `ProviderEndpoints` and `LastOutcomeKey`, merge without overlap). Disclosure: my migration's `.Designer.cs` was
+generated from the earlier master model and therefore does not contain the `ProviderEndpoints` entity; `Database.Migrate()`
+runs only `Up`/`Down`, and the next `dotnet ef migrations add` diffs against the merged snapshot, not against Designers, so
+this is cosmetic. If a later task wants Designers consistent, regenerate it on the landed master.
