@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -13,7 +14,6 @@ using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Shouldly;
@@ -30,17 +30,27 @@ internal sealed class TranscriptHotPathFixture : IAsyncDisposable
     public Guid[] SessionIds { get; } = Enumerable.Range(0, 130).Select(_ => Guid.NewGuid()).ToArray();
     public string ConnectionString => _schema.ConnectionString;
     public AgentSessionRuntime Runtime { get; }
+    public RecordingLogger<AgentSessionRuntime> Log { get; } = new();
 
     private TranscriptHotPathFixture(IsolatedTestSchema schema)
     {
         _schema = schema;
         var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(TimeProvider.System);
         services.AddDbContext<AppDbContext>(b => Configure(b));
+        // CARD-1440: since CARD-1259 S2 ingestion requires the state store and admits every row as a
+        // SessionRuntimeAction, so the fixture carries the same set as BridgeQueueHarness.
+        services.AddSingleton(Options.Create(new SessionStateSettings()));
+        services.AddSingleton<SessionStateCommandMetrics>();
+        services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+        services.AddSingleton<SessionStateStore>();
+        services.AddSingleton<SessionRuntimeActionCoordinator>();
         _provider = services.BuildServiceProvider();
         Runtime = new AgentSessionRuntime(new MockEventBus(),
             Options.Create(new AgentSessionSettings { SessionLogPath = _logPath }),
             _provider.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System,
-            NullLogger<AgentSessionRuntime>.Instance);
+            Log, states: _provider.GetRequiredService<SessionStateStore>());
     }
 
     public static async Task<TranscriptHotPathFixture> CreateAsync(bool large = false)
@@ -126,8 +136,19 @@ internal sealed class TranscriptHotPathFixture : IAsyncDisposable
             DateTimeOffset.Parse("2026-01-01T00:00:00Z"), "assistant", "synthetic", null, null,
             null, null, null)).ToArray();
         await Runtime.PersistTranscriptAsync(SessionIds[0], entries);
-        Runtime.TryGetTranscriptPersistFailure(SessionIds[0], out _).ShouldBeFalse();
+        // The failure record keeps only the SQL state or exception type; the logged chain says why.
+        var failed = Runtime.TryGetTranscriptPersistFailure(SessionIds[0], out var failure);
+        failed.ShouldBeFalse(failed ? $"persist failure {failure.Detail}: {LoggedExceptions()}" : null);
         return Capture.Membership.ToArray();
+    }
+
+    private string LoggedExceptions() => string.Join(" | ", Log.Entries
+        .Where(e => e.Exception is not null)
+        .Select(e => e.Message + " :: " + string.Join(" -> ", Chain(e.Exception!).Select(x => $"{x.GetType().Name}: {x.Message}"))));
+
+    private static IEnumerable<Exception> Chain(Exception e)
+    {
+        for (Exception? x = e; x is not null; x = x.InnerException) yield return x;
     }
 
     public async Task<IReadOnlyList<CapturedTranscriptCommand>> WorkingAsync(int count)
