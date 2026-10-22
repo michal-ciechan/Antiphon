@@ -207,7 +207,14 @@ public sealed class LandGraphEvaluationTests
         run.Lines.ShouldContain($"refused: App/App.csproj None {repo.Full("docs/guide.md")}", run.Text);
         run.Lines.ShouldContain($"refused: App/App.csproj AntiphonCustomItem {repo.Full("docs/sub/deep.md")}", run.Text);
         run.Lines.ShouldContain($"refused: App/App.csproj EmbeddedResource {repo.Full("README.md")}", run.Text);
-        run.Lines.Count(l => l.StartsWith("refused: ", StringComparison.Ordinal)).ShouldBe(3, run.Text);
+        // The SDK's default None glob walks through both links too: link/guide.md, link/sub/deep.md, top.md.
+        foreach (var target in new[] { "docs/guide.md", "docs/sub/deep.md", "README.md" })
+        {
+            run.Lines.ShouldContain(l => l.StartsWith("refused: ", StringComparison.Ordinal)
+                                         && l.EndsWith($"Microsoft.NET.Sdk.DefaultItems.props None {repo.Full(target)}", StringComparison.Ordinal),
+                run.Text);
+        }
+        run.Lines.Count(l => l.StartsWith("refused: ", StringComparison.Ordinal)).ShouldBe(6, run.Text);
         run.Lines.ShouldNotContain("approved", run.Text);
         repo.AssertUntouched();
     }
