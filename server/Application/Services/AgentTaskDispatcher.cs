@@ -323,7 +323,12 @@ public sealed partial class AgentTaskDispatcher
         /// <summary>CARD-0672 D-3: runner-bound rows held because their runner is full or not eligible.</summary>
         int HeldOnRunner = 0);
 
-    internal enum DispatchOneResult { Dispatched, HeldOnLease, HeldForAgent, HeldForRemotePrep, NotClaimed, HeldOnParallel }
+    internal enum DispatchOneResult
+    {
+        Dispatched, HeldOnLease, HeldForAgent, HeldForRemotePrep, NotClaimed, HeldOnParallel,
+        /// <summary>CARD-1428 D-3: the claim's revalidation under the lease found the sibling observation stale.</summary>
+        SiblingObservationStale,
+    }
 
     private enum HoldKind
     {
@@ -854,7 +859,8 @@ public sealed partial class AgentTaskDispatcher
                 var fallback = await _siblingInspection.ConfiguredDefaultAsync(task, intentBudget, ct);
                 if (task.RepoPath is null) continue;
                 siblingIntent = CardSiblingInspectionIntent.From(task, fallback);
-                var siblingGuard = _siblingInspections.Take(siblingIntent);
+                // CARD-1428 D-4: a read does not consume the result; a lease refusal below reuses it.
+                var siblingGuard = _siblingInspections.Peek(siblingIntent);
                 if (siblingGuard is null)
                 {
                     heldThisTick.Add((task.Id, HoldKind.SiblingInspectionPending));
@@ -865,6 +871,9 @@ public sealed partial class AgentTaskDispatcher
                 }
                 if (siblingGuard.Hold is { } heldSibling)
                 {
+                    // Only a fresh observation lifts a sibling-land hold, so this result is consumed
+                    // as before; retention (CARD-1428) is for a result the lease refused to act on.
+                    _siblingInspections.Invalidate(task.Id);
                     heldThisTick.Add((task.Id, HoldKind.SiblingLanding));
                     if (await TraceHeldAsync(task, heldSibling.HoldDetail, lastHeld, ct))
                     {
@@ -878,6 +887,7 @@ public sealed partial class AgentTaskDispatcher
 
                 if (!siblingGuard.PendingKnown)
                 {
+                    _siblingInspections.Invalidate(task.Id);
                     heldThisTick.Add((task.Id, HoldKind.SiblingLanding));
                     await TraceHeldAsync(task, DispatchHoldDetails.SiblingIntegrationUnknown, lastHeld, ct);
                     continue;
@@ -943,6 +953,23 @@ public sealed partial class AgentTaskDispatcher
                 }
 
                 var outcome = await DispatchOneAsync(task, ct, siblingObservation, siblingIntent);
+                // CARD-1428 D-4: a result is reused only by a task that is still pre-claim. An outcome
+                // that left the queue, committed the claim, lost the row or found the observation
+                // stale releases it; a lease refusal keeps it for the next attempt.
+                if (siblingIntent is not null && outcome is (DispatchOneResult.Dispatched or DispatchOneResult.HeldForRemotePrep
+                        or DispatchOneResult.NotClaimed or DispatchOneResult.SiblingObservationStale))
+                    _siblingInspections!.Invalidate(task.Id);
+                if (outcome == DispatchOneResult.SiblingObservationStale)
+                {
+                    // CARD-1428 D-3: the same intent is re-inspected at once, and the task's lease
+                    // waiter keeps its turn across this tick (CARD-1427 D-2).
+                    heldThisTick.Add((task.Id, HoldKind.SiblingInspectionPending));
+                    await TraceHeldAsync(task, DispatchHoldDetails.SiblingInspectionPending, lastHeld, ct);
+                    if (!_siblingInspections!.TryEnqueue(siblingIntent!))
+                        await TraceHeldAsync(task, DispatchHoldDetails.SiblingInspectionCapacity, lastHeld, ct);
+                    continue;
+                }
+
                 if (outcome == DispatchOneResult.HeldOnLease)
                 {
                     var leaseDetail = await DescribeLeaseHoldAsync(task, ct);
@@ -1064,11 +1091,13 @@ public sealed partial class AgentTaskDispatcher
                 // exists. Terminalize it with the rules code before failing the task — the
                 // generic catch would leave Starting and mislabel the reason as occurring
                 // before a session existed.
+                if (siblingIntent is not null) _siblingInspections?.Invalidate(task.Id);
                 await FailClaimedGrokRulesDispatchAsync(task, ex, ct);
                 failures++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
+                if (siblingIntent is not null) _siblingInspections?.Invalidate(task.Id);
                 _logger.LogWarning(ex, "Failed to dispatch task {ShortId}",
                     DelegationReportFormatter.Short(task.Id));
                 await FailAndNotifyAsync(
@@ -5513,8 +5542,9 @@ public sealed partial class AgentTaskDispatcher
             { valid = false; }
             if (!valid)
             {
+                // CARD-1428 D-3: the tick re-inspects the same intent and keeps the lease waiter.
                 await transaction.RollbackAsync(ct);
-                return DispatchOneResult.NotClaimed;
+                return DispatchOneResult.SiblingObservationStale;
             }
         }
 

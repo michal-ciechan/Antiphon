@@ -119,7 +119,10 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                 (await read.AgentTaskLandRequests.SingleAsync()).ExpectedSourceSha
                     .ShouldBe((await f.Repo.GitReadAsync("rev-parse", "master")).Trim());
         }
-        f.Queue.Outstanding.ShouldBe(0, "consumed authority cannot survive its rejected claim");
+        // CARD-1428 D-3/D-4: the rejected claim released the observation it consumed. A claim that
+        // found it stale re-enqueued the same intent at once; a claim that lost the row enqueued nothing.
+        f.Queue.Outstanding.ShouldBe(field is "status" or "task ID" ? 0 : 1,
+            "consumed authority cannot survive its rejected claim");
         if (field is "status" or "task ID")
         {
             await f.ObserveAsync();
@@ -138,6 +141,9 @@ public partial class DispatcherSiblingInspectionSchedulingTests
         {
             // Reassignment can be ineligible for dispatch; the current intent still has to be
             // independently inspectable and cannot retrieve the old worker's observation.
+            // CARD-1428 D-3: the stale claim re-enqueued its own, stale intent; that owned worker
+            // skips (changed intent) or re-observes (changed inventory) before the next look.
+            await f.Queue.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(15));
             if (field == "runner")
             {
                 await using var reassignmentRead = f.Read();
@@ -145,14 +151,16 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                 f.Queue.TryEnqueue(CardSiblingInspectionIntent.From(reassigned, "master")).ShouldBeTrue();
                 await f.Queue.WhenIdleAsync();
             }
-            else await f.ObserveAsync();
+            // Same intent, changed inventory: the D-3 re-inspection is the replacement observation
+            // (a sibling-land hold, which a tick consumes as before).
+            else if (field is not ("new request" or "request state" or "reviewed source")) await f.ObserveAsync();
             f.Queue.Outstanding.ShouldBe(1);
             if (field is not ("card" or "repository")) f.Git.Calls.Count.ShouldBeGreaterThan(probes);
             await using var read = f.Read();
             var current = await read.AgentTasks.SingleAsync(t => t.Id == f.Task.Id);
             current.AgentSessionId.ShouldBeNull();
             var fallback = field == "effective fallback" ? "other-target" : "master";
-            f.Queue.Take(CardSiblingInspectionIntent.From(current, fallback)).ShouldNotBeNull()
+            f.Queue.Peek(CardSiblingInspectionIntent.From(current, fallback)).ShouldNotBeNull()
                 .Metadata.ShouldNotBeNull("replacement observation came from its own database scope");
         }
     }
@@ -180,6 +188,9 @@ public partial class DispatcherSiblingInspectionSchedulingTests
             if (scenario == "ref missing") await fixture.Repo.GitAsync("branch", "-D", "start-here");
             fixture.Git.Before = (args, token) =>
             {
+                // The claim's own fence commands only: CARD-1428 D-3 re-enqueues the stale intent
+                // from the tick, and that owned worker's inspection runs with Active > 0.
+                if (fixture.Queue.Active > 0) return Task.FromResult<LandingGitResult?>(null);
                 fenceCommands.Add(args.ToArray());
                 if (args[0] == "rev-parse" && args.Any(a => a.EndsWith("^{commit}", StringComparison.Ordinal)))
                 {
@@ -226,7 +237,7 @@ public partial class DispatcherSiblingInspectionSchedulingTests
             row.AgentSessionId.ShouldBeNull(); row.WorktreePath.ShouldBeNull();
             fenceCommands.ShouldNotContain(a => a[0] == "cherry" || a[0] == "for-each-ref" || a[0] == "merge-base");
             (await read.AgentTaskDispatchWarningIntents.CountAsync()).ShouldBe(0);
-            f.Queue.Outstanding.ShouldBe(0);
+            f.Queue.Outstanding.ShouldBe(1, "CARD-1428 D-3: the stale claim re-enqueued the same intent");
         }
     }
 
@@ -324,8 +335,14 @@ public partial class DispatcherSiblingInspectionSchedulingTests
         }
         if (scenario == "expiry")
         {
-            f.Clock.Advance(TimeSpan.FromSeconds(30));
+            // CARD-1428 D-5: a result outlives the old 30 s limit and expires at the retention cap.
+            var intent = CardSiblingInspectionIntent.From(f.Task, "master");
             var before = f.Git.Calls.Count;
+            f.Clock.Advance(TimeSpan.FromSeconds(30));
+            f.Queue.Peek(intent).ShouldNotBeNull("a 30 s old result is still valid");
+            f.Git.Calls.Count.ShouldBe(before, "no re-inspection inside the cap");
+            f.Clock.Advance(SiblingInspectionResults.RetainedResultMaxAge);
+            f.Queue.Peek(intent).ShouldBeNull("evicted at the cap");
             await f.ObserveAsync();
             f.Git.Calls.Count.ShouldBeGreaterThan(before);
             await using var check = f.Read();
@@ -339,9 +356,11 @@ public partial class DispatcherSiblingInspectionSchedulingTests
         if (scenario == "error")
         {
             var intent = CardSiblingInspectionIntent.From(f.Task, "master");
-            var error = f.Queue.Take(intent).ShouldNotBeNull();
+            var error = f.Queue.Peek(intent).ShouldNotBeNull();
             error.Reason.ShouldBe("git_inspection_error");
             error.Warnings.ShouldNotBeEmpty();
+            // The hold an unknown-integration result causes consumes it (CARD-1428 retains a go result).
+            f.Queue.Invalidate(f.Task.Id);
             f.Queue.Outstanding.ShouldBe(0);
             f.Git.Fail = false;
             await f.ObserveAsync();
@@ -350,8 +369,12 @@ public partial class DispatcherSiblingInspectionSchedulingTests
         {
             await f.TickAsync(); // consumes the original 32 holds; the full queue cannot admit #33 yet
             f.Queue.Outstanding.ShouldBe(0);
+            // CARD-1428 D-6: the capacity is in-flight work; hold the workers so the tick sees it full.
+            f.Git.Block = true;
             await f.TickAsync();
             f.Queue.Attempted(ids.Last()).ShouldBeTrue("the unattempted task must precede held requeues");
+            f.Queue.InFlight.ShouldBe(32);
+            f.Git.Block = false; f.Git.Release.TrySetResult();
             await f.Queue.WhenIdleAsync();
             f.Queue.Outstanding.ShouldBe(32);
         }

@@ -49,10 +49,14 @@ internal sealed class FakeRepositoryLease : IRepositoryMutationLease
 /// <summary>
 /// CARD-1427 V-4 / CARD-1428 V-7: refuses the first <paramref name="refusals"/> acquisitions
 /// (the lease is "occupied by a land"), then delegates to the real lease so a claim can cut.
+/// <paramref name="onGranted"/> runs once, on the first granted acquisition, before the claim
+/// reads the row: the place to move a frozen ref between the observation and the locked claim.
 /// </summary>
-internal sealed class RefusingRepositoryLease(IRepositoryMutationLease inner, int refusals) : IRepositoryMutationLease
+internal sealed class RefusingRepositoryLease(IRepositoryMutationLease inner, int refusals, Func<Task>? onGranted = null)
+    : IRepositoryMutationLease
 {
     private int _refused;
+    private int _granted;
 
     /// <summary>How many acquisitions were refused so far.</summary>
     public int Refused => Volatile.Read(ref _refused);
@@ -60,14 +64,16 @@ internal sealed class RefusingRepositoryLease(IRepositoryMutationLease inner, in
     public Task<RepositoryLease?> TryAcquireAsync(string repository, CancellationToken ct) =>
         TryAcquireAsync(repository, new RepositoryLeaseOwnerTag(null, "untagged"), ct);
 
-    public Task<RepositoryLease?> TryAcquireAsync(string repository, RepositoryLeaseOwnerTag owner, CancellationToken ct)
+    public async Task<RepositoryLease?> TryAcquireAsync(string repository, RepositoryLeaseOwnerTag owner, CancellationToken ct)
     {
         if (Volatile.Read(ref _refused) < refusals)
         {
             Interlocked.Increment(ref _refused);
-            return Task.FromResult<RepositoryLease?>(null);
+            return null;
         }
-        return inner.TryAcquireAsync(repository, owner, ct);
+        if (onGranted is not null && Interlocked.Exchange(ref _granted, 1) == 0)
+            await onGranted();
+        return await inner.TryAcquireAsync(repository, owner, ct);
     }
 
     public bool Owns(RepositoryLease lease, string commonDirectory) => inner.Owns(lease, commonDirectory);

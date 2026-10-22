@@ -74,7 +74,11 @@ public sealed class CardSiblingInspectionQueue(IServiceScopeFactory scopes, Time
         }
     }
 
-    public SiblingBaseGuard? Take(CardSiblingInspectionIntent intent) => _results.Peek(intent);
+    /// <summary>CARD-1428 D-4: the retained result for this intent, not consumed by the read.</summary>
+    public SiblingBaseGuard? Peek(CardSiblingInspectionIntent intent) => _results.Peek(intent);
+
+    /// <summary>CARD-1428 D-4: the task's result is no longer reusable (claimed, left the queue, stale at claim, or a hold it caused).</summary>
+    public void Invalidate(Guid taskId) => _results.Invalidate(taskId);
 
     public async Task WhenIdleAsync(CancellationToken ct = default) =>
         await Task.WhenAll(_results.Completions()).WaitAsync(ct);
