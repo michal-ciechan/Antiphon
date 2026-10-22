@@ -41,6 +41,7 @@ function New-Fixture {
     $bin = Join-Path $root 'bin'
     $marker = Join-Path $root 'tool-called'
     New-Item -ItemType Directory -Path $sync, $dest, $stage, $bin -Force | Out-Null
+    if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $stage }
     $canary = 'CANARY-RECIPIENT-VALUE-1405'
     $identityCanary = 'CANARY-IDENTITY-VALUE-1405'
     $recipient = Join-Path $root 'recipient.txt'
@@ -800,7 +801,7 @@ function Test-StagingHygiene {
     $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('card1405-stage-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $dir | Out-Null
     try {
-        if ($env:OS -ne 'Windows_NT') { & chmod 0755 -- $dir }
+        if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $dir }
         Set-Content -LiteralPath (Join-Path $dir 'old.dump') -Value 'x' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $dir 'keep.dump.age') -Value 'y' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $dir 'notes.txt') -Value 'z' -Encoding ASCII
@@ -824,7 +825,7 @@ function Test-StagingHygiene {
             $mode = (& stat -c %a -- $created[0].FullName).Trim()
             Assert-True ($mode -eq '700') 'run directory is 0700' $mode
             $parent = (& stat -c %a -- $dir).Trim()
-            Assert-True ($parent -eq '755') 'staging root mode is unchanged' $parent
+            Assert-True ($parent -eq '700') 'staging root mode is unchanged' $parent
         }
     } finally {
         Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
@@ -1080,6 +1081,58 @@ function Test-DockerDaemonPinned {
     } finally { Remove-Fixture $fx }
 }
 
+function Test-StagingRefusesForeignRoot {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'StagingRefusesForeignRoot script exists' $scriptPath; return }
+        $common = @('-Execute', '-RecipientFile', $fx.Recipient, '-Destination', $fx.Dest, '-SyncRoot', $fx.Sync)
+        $foreign = Invoke-Snapshot -Fixture $fx -Arguments ($common + @('-StagingPath', '/usr/share'))
+        Assert-True ($foreign.Exit -eq 3) 'root-owned staging exits 3' "exit=$($foreign.Exit) $($foreign.Out)"
+        Assert-True ($foreign.Out -match 'reason=staging-owner') 'root-owned staging reason' $foreign.Out
+        Assert-NoDocker $foreign 'root-owned staging'
+        Assert-NoSecret $foreign $fx 'root-owned staging'
+        $runs = @(Get-ChildItem -LiteralPath '/usr/share' -Force -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^run-[0-9a-f]{32}$' })
+        Assert-True ($runs.Count -eq 0) 'root-owned staging opens no run directory' "count=$($runs.Count)"
+        Remove-Item -LiteralPath $fx.Marker -Force -ErrorAction SilentlyContinue
+        $loose = Join-Path $fx.Root 'loose'
+        New-Item -ItemType Directory -Path $loose | Out-Null
+        & chmod 0755 -- $loose
+        $mode = Invoke-Snapshot -Fixture $fx -Arguments ($common + @('-StagingPath', $loose))
+        Assert-True ($mode.Exit -eq 3) 'group-readable staging exits 3' "exit=$($mode.Exit) $($mode.Out)"
+        Assert-True ($mode.Out -match 'reason=staging-mode') 'group-readable staging reason' $mode.Out
+        Assert-NoDocker $mode 'group-readable staging'
+        Assert-True ((& stat -c %a -- $loose).Trim() -eq '755') 'group-readable staging mode is unchanged' 'mode changed'
+        $looseRuns = @(Get-ChildItem -LiteralPath $loose -Force -Directory -ErrorAction SilentlyContinue)
+        Assert-True ($looseRuns.Count -eq 0) 'group-readable staging opens no run directory' "count=$($looseRuns.Count)"
+        Remove-Item -LiteralPath $fx.Marker -Force -ErrorAction SilentlyContinue
+        $open = Join-Path $fx.Root 'open'
+        $under = Join-Path $open 'stage'
+        New-Item -ItemType Directory -Path $under -Force | Out-Null
+        & chmod 0777 -- $open
+        & chmod 0700 -- $under
+        $parent = Invoke-Snapshot -Fixture $fx -Arguments ($common + @('-StagingPath', $under))
+        Assert-True ($parent.Exit -eq 3) 'world-writable parent exits 3' "exit=$($parent.Exit) $($parent.Out)"
+        Assert-True ($parent.Out -match 'reason=staging-parent') 'world-writable parent reason' $parent.Out
+        Assert-NoDocker $parent 'world-writable parent'
+        Remove-Item -LiteralPath $fx.Marker -Force -ErrorAction SilentlyContinue
+        $sticky = Join-Path $fx.Root 'sticky'
+        $underSticky = Join-Path $sticky 'stage'
+        New-Item -ItemType Directory -Path $underSticky -Force | Out-Null
+        & chmod 1777 -- $sticky
+        & chmod 0700 -- $underSticky
+        $stickyRun = Invoke-Snapshot -Fixture $fx -Arguments ($common + @('-StagingPath', $underSticky))
+        Assert-True ($stickyRun.Out -notmatch 'reason=staging-') 'sticky parent passes the staging checks' $stickyRun.Out
+        Remove-Item -LiteralPath $fx.Marker -Force -ErrorAction SilentlyContinue
+        $fresh = Join-Path $fx.Root 'fresh'
+        $created = Invoke-Snapshot -Fixture $fx -Arguments ($common + @('-StagingPath', $fresh))
+        Assert-True ($created.Out -notmatch 'reason=staging-') 'absent staging root passes the staging checks' $created.Out
+        Assert-True (Test-Path -LiteralPath $fresh -PathType Container) 'absent staging root is created' $fresh
+        if (Test-Path -LiteralPath $fresh) {
+            Assert-True ((& stat -c %a -- $fresh).Trim() -eq '700') 'created staging root is 0700' (& stat -c %a -- $fresh)
+        }
+    } finally { Remove-Fixture $fx }
+}
+
 $all = @(
     'WhatIfPlan', 'MissingRecipient', 'RecipientInsideDestination',
     'DrillRefusesProduction', 'DrillPlan', 'Retention',
@@ -1089,7 +1142,7 @@ $all = @(
     'PublishRejectsTinyDump', 'PublishRejectsMissingTableData',
     'RetentionIgnoresConflictCopy', 'StagingHygiene', 'StagingPreservesOperatorFiles',
     'StagingRefusesLink', 'StagingOutsideDestination', 'DrillRemovesScratch',
-    'DrillRefusesTaintedReuse', 'DockerDaemonPinned'
+    'DrillRefusesTaintedReuse', 'DockerDaemonPinned', 'StagingRefusesForeignRoot'
 )
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
