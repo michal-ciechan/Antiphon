@@ -55,6 +55,9 @@ import { ProjectDeleteDialog } from './ProjectDeleteDialog'
 import { ProjectReadinessPanel } from './ProjectReadinessPanel'
 import { ProjectSetupModal } from './ProjectSetupModal'
 import { ApiKeysSection } from './ApiKeysSection'
+import { ProjectProviderEndpoints } from './ProviderEndpointFields'
+import { buildProviderEndpointMap, draftsFromMap, type ProviderEndpointDrafts } from './providerEndpointModel'
+import { useAgentTuiRunnerTypes } from '../../api/agentTui'
 import { PendingRead } from './PendingRead'
 import { pendingReadLabel } from './routingSettingsModel'
 import { envToText, parseEnvironmentText } from '../../shared/environmentText'
@@ -116,6 +119,10 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
   const [commitOnSettleEdited, setCommitOnSettleEdited] = useState(false)
   const [formWorkerWorkspace, setFormWorkerWorkspace] = useState('Inherit')
   const [workerWorkspaceEdited, setWorkerWorkspaceEdited] = useState(false)
+  const runnerTypes = useAgentTuiRunnerTypes()
+  const [formProviderEndpoints, setFormProviderEndpoints] = useState<ProviderEndpointDrafts>({})
+  const [providerEndpointsEdited, setProviderEndpointsEdited] = useState(false)
+  const [providerEndpointErrors, setProviderEndpointErrors] = useState<Record<string, string>>({})
   const [formError, setFormError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -165,6 +172,9 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
     setCommitOnSettleEdited(false)
     setFormWorkerWorkspace(project.defaultWorkerWorkspace ?? 'Inherit')
     setWorkerWorkspaceEdited(false)
+    setFormProviderEndpoints(draftsFromMap(project.providerEndpoints))
+    setProviderEndpointsEdited(false)
+    setProviderEndpointErrors({})
     setFormError(null)
     setTestResult(null)
     setEditModalOpen(true)
@@ -193,6 +203,12 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
   const handleSave = async () => {
     if (!editingProject) return
     setFormError(null)
+    // CARD-0167: sent only when edited, so a save never rewrites endpoints the form did not touch.
+    const providerEndpoints = buildProviderEndpointMap(formProviderEndpoints, runnerTypes.data ?? [])
+    if (providerEndpointsEdited) {
+      setProviderEndpointErrors(providerEndpoints.errors)
+      if (Object.keys(providerEndpoints.errors).length > 0) return
+    }
     const parsedDefaultEnv = parseEnvironmentText(formDefaultLaunchEnvText)
     if (parsedDefaultEnv.warnings.length > 0) {
       notifications.show({
@@ -201,7 +217,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
       })
     }
     try {
-      await updateMutation.mutateAsync({
+      const saved = await updateMutation.mutateAsync({
         id: editingProject.id,
         data: {
           name: formName,
@@ -215,8 +231,12 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
           defaultLaunchEnv: parsedDefaultEnv.env,
           ...(commitOnSettleEdited ? { commitOnSettle: formCommitOnSettle } : {}),
           ...(workerWorkspaceEdited ? { defaultWorkerWorkspace: formWorkerWorkspace as 'Shared' | 'Worktree' | 'Inherit' } : {}),
+          ...(providerEndpointsEdited ? { providerEndpoints: providerEndpoints.map } : {}),
         },
       })
+      if (saved?.warnings && saved.warnings.length > 0) {
+        notifications.show({ color: 'yellow', message: saved.warnings.join(' '), autoClose: 10_000 })
+      }
       setEditModalOpen(false)
     } catch (err: unknown) {
       if (err && typeof err === 'object' && 'body' in err) {
@@ -566,6 +586,16 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
           />
           {editingProject && (
             <>
+              <Divider label="LLM endpoint" labelPosition="center" />
+              <ProjectProviderEndpoints
+                projectId={editingProject.id}
+                drafts={formProviderEndpoints}
+                onChange={(drafts) => {
+                  setFormProviderEndpoints(drafts)
+                  setProviderEndpointsEdited(true)
+                }}
+                errors={providerEndpointErrors}
+              />
               <Divider label="Project API keys" labelPosition="center" />
               <ApiKeysSection projectId={editingProject.id} />
             </>

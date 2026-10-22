@@ -29,6 +29,18 @@ function writePath(name: string, projectId?: string): string {
   return projectId ? `/projects/${projectId}/api-keys/${encodedName}` : `/api-keys/${encodedName}`
 }
 
+/**
+ * Every key in the installation, metadata only (`GET /api/api-keys`); each row carries its scope.
+ * The provider endpoint key-name picker reads names from here (CARD-0167).
+ */
+export function useAllApiKeys(enabled = true) {
+  return useQuery({
+    queryKey: [...apiKeyKeys.all, 'all'] as const,
+    queryFn: () => apiGet<ApiKeyDto[]>('/api-keys'),
+    enabled,
+  })
+}
+
 export function useApiKeys(projectId?: string) {
   return useQuery({
     queryKey: apiKeyKeys.scope(projectId),

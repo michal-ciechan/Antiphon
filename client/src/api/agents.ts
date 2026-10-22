@@ -1,6 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiDelete, apiGet, apiPatch, apiPost } from './client'
 import { boardKeys, type AgentKind, type AgentSessionSummaryDto, type CardImportance, type CardUrgency } from './boards'
+import type { ProviderEndpointDto } from './projects'
+
+/**
+ * CARD-0167. Inherit uses the project endpoint for the agent's kind; Endpoint uses the agent's own;
+ * Direct exempts this agent from the project endpoint.
+ */
+export type ProviderEndpointMode = 'Inherit' | 'Endpoint' | 'Direct'
 
 export type { ContextFullnessState } from './boards'
 
@@ -339,6 +346,12 @@ export interface AgentDetailDto extends AgentSummaryDto {
    * the reply-style block) stamped with versions.
    */
   attachedBundleKeys?: string[] | null
+  /** CARD-0167. Absent on an older server, which means Inherit. */
+  providerEndpointMode?: ProviderEndpointMode
+  /** CARD-0167. The agent's own endpoint in Endpoint mode, null otherwise. URL and key NAME only. */
+  providerEndpoint?: ProviderEndpointDto | null
+  /** CARD-0167 D-8: save-time advisories, e.g. an endpoint key name not stored in any scope yet. */
+  warnings?: string[]
 }
 
 /**
@@ -395,6 +408,9 @@ export interface CreateAgentRequest {
   /** CARD-0384. Omit/null/blank = unpinned. */
   herdrWorkspaceLabel?: string | null
   herdrTabLabel?: string | null
+  /** CARD-0167. Omit/null = Inherit. Endpoint mode needs providerEndpoint. */
+  providerEndpointMode?: ProviderEndpointMode | null
+  providerEndpoint?: ProviderEndpointDto | null
 }
 
 export interface UpdateAgentRequest {
@@ -451,6 +467,12 @@ export interface UpdateAgentRequest {
    */
   herdrWorkspaceLabel?: string | null
   herdrTabLabel?: string | null
+  /**
+   * CARD-0167. Both omitted = leave unchanged. A mode other than Endpoint drops the agent's own
+   * endpoint and must be sent with providerEndpoint null (an endpoint beside it is 422).
+   */
+  providerEndpointMode?: ProviderEndpointMode | null
+  providerEndpoint?: ProviderEndpointDto | null
 }
 
 export interface DraftAgentRequest {
