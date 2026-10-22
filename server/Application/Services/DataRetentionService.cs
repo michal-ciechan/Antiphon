@@ -592,6 +592,13 @@ public sealed class DataRetentionService
         return protectedIds;
     }
 
+    /// <summary>
+    /// CARD-1446 D-5 (S5). Deletes <c>WorktreeResidueRunCandidates</c> rows with Outcome <c>Held</c> or
+    /// <c>Preview</c> whose <c>EvaluatedAt</c> is past <see cref="RetentionSettings.WorktreeResidueHeldRowRetentionDays"/>.
+    /// Run headers and action rows are never touched. S5-test skeleton: deletes nothing yet.
+    /// </summary>
+    public Task<int> PruneWorktreeResidueHeldRowsAsync(CancellationToken ct) => Task.FromResult(0);
+
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 
     private async Task<HashSet<Guid>> LoadOutboundTaskIdsAsync(CancellationToken ct)

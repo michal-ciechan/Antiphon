@@ -72,4 +72,11 @@ public sealed class WorktreeResidueCandidateCursor
 
     /// <summary>CARD-1033 D-4. Digest of a permanent safety refusal. Null until that refusal is stored.</summary>
     public string? EvidenceDigest { get; set; }
+
+    /// <summary>
+    /// CARD-1446 D-5. <c>&lt;Lane&gt;|&lt;Outcome&gt;|&lt;ReasonCode&gt;</c> of the last non-preview evaluation of this
+    /// candidate. A <c>Held</c> candidate row is written only when the key changes; action rows are always written
+    /// and preview runs neither read nor write it. Null before the first evaluation after the column existed.
+    /// </summary>
+    public string? LastOutcomeKey { get; set; }
 }
