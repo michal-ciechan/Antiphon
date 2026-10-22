@@ -215,7 +215,8 @@ public sealed class LandGraphEvaluationTests
                                          && l.EndsWith($"Microsoft.NET.Sdk.DefaultItems.props None {repo.Full(target)}", StringComparison.Ordinal),
                 run.Text);
         }
-        run.Lines.Count(l => l.StartsWith("refused: ", StringComparison.Ordinal)).ShouldBe(6, run.Text);
+        run.Lines.Count(l => l.StartsWith("refused: ", StringComparison.Ordinal)
+                             && !l.Contains(" glob ", StringComparison.Ordinal)).ShouldBe(6, run.Text);
         run.Lines.ShouldNotContain("approved", run.Text);
         repo.AssertUntouched();
     }
@@ -268,6 +269,130 @@ public sealed class LandGraphEvaluationTests
         repo.AssertUntouched();
     }
 
+    // V-5: future documentation is unsafe even when a glob matches no files today; excludes
+    // do not prove reachability safe. JSON-only and project-local source globs remain allowed.
+    [Test]
+    [Timeout(300_000)]
+    public async Task C1483_S2_GlobReachabilityRefuses()
+    {
+        foreach (var (pattern, exclude, expected) in new[]
+                 {
+                     ("../docs/new/*.md", "", 1),
+                     ("../docs/**/*.json", "", 0),
+                     ("../*", "", 1),
+                     ("../docs/**/*.m?", "", 1),
+                     ("../docs/**/guide", "", 1),
+                     ("../docs/**/*.MD", "../docs/**", 1),
+                     ("../**/guide.md", "", 1),
+                     ("Sub/**/*.cs", "", 0),
+                     ("../docs-sibling/*.md", "", 0),
+                 })
+        {
+            await using var repo = await AuditRepo.CreateAsync(new()
+            {
+                ["App/App.csproj"] = SdkProject($"""
+                    <ItemGroup><None Include="{pattern}" Exclude="{exclude}" /></ItemGroup>
+                    """),
+            });
+            var run = await repo.RunToolAsync();
+            run.ExitCode.ShouldBe(expected, $"{pattern}: {run.Text}");
+            if (expected == 1)
+            {
+                run.Lines.ShouldContain(l => l.StartsWith("refused: App/App.csproj glob ", StringComparison.Ordinal)
+                                             && l.Contains(pattern, StringComparison.Ordinal), run.Text);
+                run.Lines.ShouldNotContain("approved", run.Text);
+            }
+            else
+                run.Lines.ShouldContain("approved", run.Text);
+            repo.AssertUntouched();
+        }
+    }
+
+    // V-6: only the solution and its evaluated references belong to the land build. Reference
+    // cycles terminate, and a conditionally absent reference must not pull in a docs project.
+    [Test]
+    [Timeout(300_000)]
+    public async Task C1483_S2_SolutionClosureScopesProjects()
+    {
+        foreach (var reference in new[] { "none", "false-condition", "transitive-cycle" })
+        {
+            await using var repo = await AuditRepo.CreateAsync(new()
+            {
+                ["docs/guide.md"] = "# guide\n",
+                ["docs/Hidden.csproj"] = SdkProject(""),
+                ["App/App.csproj"] = SdkProject(reference == "none" ? "" : $"""
+                    <ItemGroup><ProjectReference Include="../Library/Library.csproj" Condition="'{reference}' != 'false-condition'" /></ItemGroup>
+                    """),
+                ["Library/Library.csproj"] = SdkProject("""
+                    <ItemGroup>
+                      <ProjectReference Include="../docs/Hidden.csproj" />
+                      <ProjectReference Include="../App/App.csproj" />
+                    </ItemGroup>
+                    """),
+            }, solutionProjects: ["App/App.csproj"]);
+            var run = await repo.RunToolAsync();
+            if (reference == "transitive-cycle")
+            {
+                run.ExitCode.ShouldBe(1, run.Text);
+                run.Text.ShouldContain(repo.Full("docs/guide.md"), run.Text);
+                run.Lines.ShouldNotContain("not-built: docs/Hidden.csproj", run.Text);
+                run.Lines.ShouldNotContain("not-built: Library/Library.csproj", run.Text);
+                run.Lines.ShouldNotContain("approved", run.Text);
+            }
+            else
+            {
+                run.ExitCode.ShouldBe(0, run.Text);
+                run.Lines.ShouldContain("not-built: docs/Hidden.csproj", run.Text);
+                run.Lines.ShouldContain("not-built: Library/Library.csproj", run.Text);
+                run.Lines.ShouldNotContain("not-built: App/App.csproj", run.Text);
+                run.Lines.ShouldContain("approved", run.Text);
+            }
+            repo.AssertUntouched();
+        }
+    }
+
+    // V-7: actual resolved imports must be trusted definitions. A wildcard remains unsafe even
+    // when its only current match is tracked; a linked tracked props cannot hide an untracked import.
+    [Test]
+    [Timeout(300_000)]
+    public async Task C1483_S2_ImportOutsideTrackedSetRefuses()
+    {
+        foreach (var kind in new[] { "untracked", "docs", "wildcard", "non-definition", "tracked", "duplicate", "linked" })
+        {
+            var path = kind switch
+            {
+                "docs" => "docs/import.md",
+                "non-definition" => "build/import.xml",
+                _ => "build/import.props",
+            };
+            var import = kind == "wildcard" ? "build/*.props" : path;
+            var files = new Dictionary<string, string>
+            {
+                ["App/App.csproj"] = SdkProject($"""
+                    <Import Project="../{import}" />
+                    {(kind == "duplicate" ? $"<Import Project=\"../{import}\" />" : "")}
+                    """),
+            };
+            if (kind is not ("untracked" or "linked")) files[path] = "<Project />";
+            await using var repo = await AuditRepo.CreateAsync(files,
+                links: kind == "linked" ? new() { [path] = "../external.props" } : null,
+                untrackedFiles: kind is "untracked" or "linked"
+                    ? new() { [kind == "linked" ? "external.props" : path] = "<Project />" } : null);
+            var run = await repo.RunToolAsync();
+            var allowed = kind is "tracked" or "duplicate";
+            run.ExitCode.ShouldBe(allowed ? 0 : 1, $"{kind}: {run.Text}");
+            if (allowed)
+                run.Lines.ShouldContain("approved", run.Text);
+            else
+            {
+                run.Lines.ShouldContain(l => l.StartsWith("refused: App/App.csproj import ", StringComparison.Ordinal)
+                                             && l.Contains(import, StringComparison.Ordinal), $"{kind}: {run.Text}");
+                run.Lines.ShouldNotContain("approved", run.Text);
+            }
+            repo.AssertUntouched();
+        }
+    }
+
     private static string SdkProject(string body) => $"""
         <Project Sdk="Microsoft.NET.Sdk">
           <PropertyGroup>
@@ -317,7 +442,8 @@ public sealed class LandGraphEvaluationTests
         /// <param name="projectTypes">Solution type GUID per project (default the C# GUID).</param>
         /// <param name="links">Link path to relative target, created as symbolic links (a junction on a Windows host that refuses them) and committed.</param>
         public static async Task<AuditRepo> CreateAsync(Dictionary<string, string> files,
-            Dictionary<string, string>? projectTypes = null, Dictionary<string, string>? links = null)
+            Dictionary<string, string>? projectTypes = null, Dictionary<string, string>? links = null,
+            string[]? solutionProjects = null, Dictionary<string, string>? untrackedFiles = null)
         {
             var root = Path.Combine(Path.GetTempPath(), "c1483-" + Guid.NewGuid().ToString("N")[..12]);
             Directory.CreateDirectory(root);
@@ -333,11 +459,17 @@ public sealed class LandGraphEvaluationTests
                 await CreateLinkAsync(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)), target);
 
             await File.WriteAllTextAsync(Path.Combine(root, "Antiphon.sln"),
-                Solution(files.Keys.Where(k => k.EndsWith(".csproj", StringComparison.Ordinal)), projectTypes ?? []));
+                Solution(solutionProjects ?? files.Keys.Where(k => k.EndsWith(".csproj", StringComparison.Ordinal)).ToArray(), projectTypes ?? []));
             await GitAsync(root, "init", "-q");
             await GitAsync(root, "add", "-A");
             await GitAsync(root, "-c", "user.name=c1483", "-c", "user.email=c1483@antiphon.test",
                 "commit", "-q", "-m", "fixture");
+            foreach (var (relative, content) in untrackedFiles ?? [])
+            {
+                var path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                await File.WriteAllTextAsync(path, content);
+            }
             return new AuditRepo(root);
         }
 
