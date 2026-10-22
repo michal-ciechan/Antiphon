@@ -36,6 +36,8 @@ internal sealed class BuildInputPolicy
     public IEnumerable<string> TrackedProjects => _tracked.Where(p =>
         Path.GetExtension(p).EndsWith("proj", StringComparison.OrdinalIgnoreCase));
 
+    public IReadOnlySet<string> TrackedPaths => _tracked;
+
     public void Check(Project project, ISet<string> refusals)
     {
         if (!TrustedDefinition(project.FullPath, allowDocs: true))
@@ -155,7 +157,7 @@ internal sealed class BuildInputPolicy
 
     // Same definition inventory as LandVerificationBuildGraph.Includes; do not trust an arbitrary
     // tracked XML/text file merely because MSBuild successfully parsed it as a project.
-    private static bool Definition(string path)
+    internal static bool Definition(string path)
     {
         var name = Path.GetFileName(path);
         var extension = Path.GetExtension(path).ToLowerInvariant();
