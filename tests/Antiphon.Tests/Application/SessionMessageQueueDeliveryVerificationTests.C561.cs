@@ -24,7 +24,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         await using var h = await BlindHarnessAsync(clock);
         var t0 = clock.GetUtcNow().UtcDateTime;
         await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1, clock), default);
-        await h.InsertTurnAsync("earlier prompt", "earlier answer");
+        await h.InsertStoreVisibleTurnAsync("earlier prompt", "earlier answer");
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
         if (channelBound)
             await h.BindChannelAsync();
@@ -63,7 +63,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         await using var h = await BlindHarnessAsync(clock);
         var t0 = clock.GetUtcNow().UtcDateTime;
         await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1, clock), default);
-        await h.InsertTurnAsync("earlier prompt", "earlier answer");
+        await h.InsertStoreVisibleTurnAsync("earlier prompt", "earlier answer");
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
         clock.Advance(TimeSpan.FromSeconds(31));
         var id = await h.SeedPendingMessageAsync(
@@ -93,7 +93,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         await using var h = await BlindHarnessAsync(clock);
         var t0 = clock.GetUtcNow().UtcDateTime;
         await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1, clock), default);
-        await h.InsertTurnAsync("earlier prompt", "earlier answer");
+        await h.InsertStoreVisibleTurnAsync("earlier prompt", "earlier answer");
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
         var id = await h.SeedPendingMessageAsync(
             "the brief that must persist", deliveryAttempts: 1, baselineSequence: floor,
@@ -118,7 +118,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         await using var h = await BlindHarnessAsync(clock);
         var t0 = clock.GetUtcNow().UtcDateTime;
         await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1, clock), default);
-        await h.InsertTurnAsync("earlier prompt", "earlier answer");
+        await h.InsertStoreVisibleTurnAsync("earlier prompt", "earlier answer");
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
         var a = await h.SeedPendingMessageAsync(
             "first", deliveryAttempts: 1, baselineSequence: floor,
@@ -150,7 +150,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         await using var h = await BlindHarnessAsync(clock);
         var t0 = clock.GetUtcNow().UtcDateTime;
         await h.Runtime.ObserveTranscriptAsync(PoisonToolCall(h.SessionId, 1, clock), default);
-        await h.InsertTurnAsync("earlier prompt", "earlier answer");
+        await h.InsertStoreVisibleTurnAsync("earlier prompt", "earlier answer");
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
         var id = await h.SeedPendingMessageAsync(
             "the brief that must persist", deliveryAttempts: 1, baselineSequence: floor,
