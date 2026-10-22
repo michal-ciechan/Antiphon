@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
@@ -655,7 +655,7 @@ public sealed partial class SessionMessageQueueService
                         }
                     }
 
-                    await HandleDeliveryFailureAsync(sessionId, null, outcome.Verdict, ct, capturedGeneration);
+                    await HandleDeliveryFailureAsync(sessionId, null, outcome.Verdict, ct, capturedGeneration, pointerConsumed: outcome.PointerConsumed);
                     throw new ConflictException(
                         "Message delivery could not be verified — the terminal did not accept it "
                         + $"({Describe(outcome.Verdict)}). See the agent's incidents.");
@@ -1097,7 +1097,8 @@ public sealed partial class SessionMessageQueueService
             await db.SaveChangesAsync(ct);
 
             var capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
-            outcome = await DeliverAsync(sessionId, nowBody, ct, nowBaseline);
+            outcome = await DeliverAsync(sessionId, nowBody, ct, nowBaseline,
+                pointerAttempt: PointerFor(session.AgentKind, row, capturedGeneration));
             if (outcome.SpillWriteFailedBeforeInput)
             {
                 if (!await TryCommitTaskInputFallbackAsync(db, sessionId, row, ct))
@@ -1156,7 +1157,7 @@ public sealed partial class SessionMessageQueueService
             }
             else
             {
-                await HandleDeliveryFailureAsync(sessionId, [row.Id], outcome.Verdict, ct, capturedGeneration);
+                await HandleDeliveryFailureAsync(sessionId, [row.Id], outcome.Verdict, ct, capturedGeneration, pointerConsumed: outcome.PointerConsumed);
                 await using var verifyScope = _scopeFactory.CreateAsyncScope();
                 var verifyDb = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
                 var persisted = await verifyDb.SessionQueuedMessages
@@ -1488,6 +1489,10 @@ public sealed partial class SessionMessageQueueService
                 return confirmed;
             }
 
+            if (await RecoverPointerAsync(db, sessionId, [message],
+                await CeilingsForSessionAsync(db, sessionId, ct), ct) is not null)
+                return await GetQueueAsync(sessionId, ct);
+
             var baseline = await CaptureTranscriptBaselineAsync(db, sessionId, ct);
             ChannelPromptCorrelation.PrepareFirstAttempt(message);
             var sendNowBody = await SpillQueueBodyAsync(
@@ -1519,7 +1524,8 @@ public sealed partial class SessionMessageQueueService
             try
             {
                 outcome = await DeliverAsync(sessionId, sendNowBody, ct, baseline,
-                    firstInputDeadlineAt: FirstInputDeadline([message]));
+                    firstInputDeadlineAt: FirstInputDeadline([message]),
+                    pointerAttempt: PointerFor(await TryGetSessionKindAsync(sessionId, ct), message));
             }
             catch (OptionalBriefExpiredException)
             {
@@ -1563,7 +1569,7 @@ public sealed partial class SessionMessageQueueService
             }
             if (outcome.Verdict != DeliveryVerdict.Delivered)
             {
-                await HandleDeliveryFailureAsync(sessionId, [message.Id], outcome.Verdict, ct, capturedGeneration);
+                await HandleDeliveryFailureAsync(sessionId, [message.Id], outcome.Verdict, ct, capturedGeneration, pointerConsumed: outcome.PointerConsumed);
                 throw new ConflictException(
                     "Message delivery could not be verified — the terminal did not accept it "
                     + $"({Describe(outcome.Verdict)}). The message has been returned to the queue.");
@@ -2053,13 +2059,17 @@ public sealed partial class SessionMessageQueueService
         DateTime sessionGeneration,
         CancellationToken ct)
     {
+        var kind = await TryGetSessionKindAsync(sessionId, ct);
         var deliverableIds = deliverable.Select(m => m.Id).ToHashSet();
         var heldBack = pending
             .Where(m => !deliverableIds.Contains(m.Id))
-            .Where(m => m.DeliveryAttempts > 0 && !DeliveryGenerationChanged(m, sessionGeneration))
+            .Where(m => (m.DeliveryAttempts > 0 || (IsCodexPointer(kind, m) && m.LastDeliveryStartedAt != null))
+                && !DeliveryGenerationChanged(m, sessionGeneration))
             .ToList();
         if (heldBack.Count == 0)
             return false;
+
+        if (heldBack.Any(m => IsCodexPointer(kind, m))) return true;
 
         if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } snapshot)
         {
@@ -2092,23 +2102,28 @@ public sealed partial class SessionMessageQueueService
     {
         var canceled = await db.SessionQueuedMessages.AsNoTracking()
             .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Canceled
-                && m.DeliveryAttempts > 0 && m.SentAt == null)
+                && (m.DeliveryAttempts > 0 || m.LastDeliveryStartedAt != null) && m.SentAt == null)
             // Stored timestamps have the same microsecond precision as the normalized token.
             // Keep legacy rows without generation evidence, but bound known old generations.
             .Where(m => m.LastDeliveryGeneration == generation
                 || (m.LastDeliveryGeneration == null
                     && (m.LastDeliveryStartedAt == null || m.LastDeliveryStartedAt >= generation)))
             .ToListAsync(ct);
+        var kind = await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId).Select(s => s.AgentKind).FirstAsync(ct);
+        var bufferedPointer = false;
         var unrecorded = new List<(Guid Id, string Body)>();
         foreach (var message in canceled.Where(m => !DeliveryGenerationChanged(m, generation)))
-            if (!await TryFindAnyUserPromptAboveAsync(db, sessionId, message, ct))
+            if ((message.DeliveryAttempts > 0 || IsCodexPointer(kind, message))
+                && !await TryFindAnyUserPromptAboveAsync(db, sessionId, message, ct))
+            {
                 unrecorded.Add((message.Id, message.Body));
+                bufferedPointer |= IsCodexPointer(kind, message);
+            }
         if (unrecorded.Count == 0)
             return false;
 
-        var kind = await db.AgentSessions.AsNoTracking()
-            .Where(s => s.Id == sessionId).Select(s => s.AgentKind).FirstAsync(ct);
-        return await TypedBodiesBlockComposerAsync(sessionId, kind, unrecorded, "canceled message", ct);
+        return await TypedBodiesBlockComposerAsync(sessionId, kind, unrecorded, "canceled message", ct, bufferedPointer);
     }
 
     private Task<bool> TryFindAnyUserPromptAboveAsync(
@@ -2347,7 +2362,8 @@ public sealed partial class SessionMessageQueueService
         // CARD-0330: a completion note the distiller is still improving is not in the flush's
         // head run. SendNow ignores holds; a HoldUntil in the past is not a hold.
         var nowUtc = UtcNow();
-        pending = pending.Where(m => m.HoldUntil is null || m.HoldUntil <= nowUtc).ToList();
+        pending = pending.Where(m => m.HoldUntil is null || m.HoldUntil <= nowUtc
+            || (IsCodexPointer(rulesSession.AgentKind, m) && m.LastDeliveryStartedAt != null)).ToList();
         if (pending.Count == 0)
             return FlushResult.Nothing;
 
@@ -2367,6 +2383,7 @@ public sealed partial class SessionMessageQueueService
         // truncated park stays parked: identity-without-completeness is not Sent.
         var deliverable = pending
             .Where(m => m.DeliveryAttempts < MaxAttempts)
+            .Where(m => m.HoldUntil is null || m.HoldUntil <= nowUtc)
             .Where(m => m.MaintenanceKind != RemoteControlMaintenanceKind.LegacyUnclassified)
             .Where(m => m.DeferredFromRunAttemptId == null
                 || m.MaintenanceAcceptedStartedAt is not { } deferredG
@@ -2548,6 +2565,7 @@ public sealed partial class SessionMessageQueueService
         // run could push 100k into a TUI in a single paste. The overflow simply rides the next
         // turn-end, which the queue already does naturally.
         var batches = _bridgeSettings.BatchingEnabled
+            && !IsCodexPointer(rulesSession.AgentKind, head)
             && head.SpecialistInputPolicyJson is null
             && head.ConversationKey is not null
             && head.Origin is QueuedMessageOrigin.Channel or QueuedMessageOrigin.Delegation;
@@ -2561,6 +2579,7 @@ public sealed partial class SessionMessageQueueService
 
             foreach (var m in pending.Skip(1))
             {
+                if (IsCodexPointer(rulesSession.AgentKind, m)) break;
                 // A shared channel spill is already one immutable delivery. Retyping a retry
                 // must not batch its pointers into a second spill or overwrite the owned file.
                 if (head.Origin == QueuedMessageOrigin.Channel
@@ -2628,6 +2647,9 @@ public sealed partial class SessionMessageQueueService
         // CARD-0340 S3 / CARD-0342: a previously typed body still standing in the composer gets
         // Enter only in the process that took the typing, with the whole head visible (CARD-0501).
         // A new generation proves the old composer gone even when history shows the same body.
+        if (await RecoverPointerAsync(db, sessionId, run, ceilings, ct) is { } pointerRecovery)
+            return pointerRecovery;
+
         if (run.Any(m => m.DeliveryAttempts > 0)
             && run.Where(m => m.DeliveryAttempts > 0)
                 .All(m => !DeliveryGenerationChanged(m, sessionGeneration)))
@@ -2702,7 +2724,8 @@ public sealed partial class SessionMessageQueueService
             if (await CancelJustClaimedExpiredBriefsAsync(db, run, ct)) return FlushResult.Nothing;
             using var observation = new RuntimePhase(_logger, _timeProvider, sessionId, "queue.delivery-confirm");
             capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
-            outcome = await DeliverAsync(sessionId, body, ct, baseline, ceilings, FirstInputDeadline(run));
+            outcome = await DeliverAsync(sessionId, body, ct, baseline, ceilings, FirstInputDeadline(run),
+                pointerAttempt: PointerFor(rulesSession.AgentKind, head, sessionGeneration));
         }
         catch (OptionalBriefExpiredException)
         {
@@ -2801,7 +2824,7 @@ public sealed partial class SessionMessageQueueService
             return FlushResult.Failed;
         }
 
-        await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct, capturedGeneration);
+        await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct, capturedGeneration, pointerConsumed: outcome.PointerConsumed);
         return FlushResult.Failed;
     }
 
@@ -2950,7 +2973,9 @@ public sealed partial class SessionMessageQueueService
     private async Task<LateConfirmCounts> LateConfirmAttemptedMessagesAsync(
         AppDbContext db, Guid sessionId, IReadOnlyList<SessionQueuedMessage> pending, CancellationToken ct)
     {
-        if (!_verification.TranscriptConfirmEnabled)
+        var kind = await TryGetSessionKindAsync(sessionId, ct);
+        var currentGeneration = kind == AgentKind.Codex ? await CaptureSessionGenerationAsync(sessionId, ct) : null;
+        if (!_verification.TranscriptConfirmEnabled && !pending.Any(m => IsCodexPointer(kind, m)))
             return LateConfirmCounts.Empty;
 
         var confirmed = 0;
@@ -2961,13 +2986,20 @@ public sealed partial class SessionMessageQueueService
             Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds));
         foreach (var m in pending)
         {
-            if (m.DeliveryAttempts == 0)
+            var pointer = IsCodexPointer(kind, m);
+            if ((!_verification.TranscriptConfirmEnabled && !pointer)
+                || (m.DeliveryAttempts == 0 && !(pointer && m.LastDeliveryStartedAt != null)))
                 continue;
             if (!PromptSubmissionMatch.RequiresTextMatch(m.Body))
                 continue;
 
             TranscriptConfirm match;
-            if (m.LastDeliveryBaselineSequence is { } floor)
+            if (pointer)
+            {
+                if (currentGeneration is not { } generation || DeliveryGenerationChanged(m, generation)) continue;
+                match = await ReadPointerReceiptAsync(sessionId, m.Body, PointerFor(kind, m, generation)!, ct);
+            }
+            else if (m.LastDeliveryBaselineSequence is { } floor)
             {
                 match = await TryFindConfirmingRecordAsync(db, sessionId, m.Body, floor, ct);
             }
@@ -3252,6 +3284,8 @@ public sealed partial class SessionMessageQueueService
             && remaining.Any(m => DeliveryGenerationChanged(m, current));
         if (!generationChanged && !atCap)
         {
+            if (await RecoverPointerAsync(db, sessionId, remaining, ceilings, ct) is { } pointerRecovery)
+                return pointerRecovery;
             var body = ReconstructRunBody(remaining);
             if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } snapshot)
             {
@@ -3315,6 +3349,19 @@ public sealed partial class SessionMessageQueueService
 
         var submitBaseline = await SettlePostEvidenceAsync(sessionId, ct);
         var capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
+        var pointerAttempt = PointerFor(kind, head, capturedGeneration);
+        if (pointerAttempt is not null)
+        {
+            await _runtime.CatchUpTranscriptAsync(sessionId, ct);
+            var late = await LateConfirmAttemptedMessagesAsync(db, sessionId, run, ct);
+            if (late.Handled > 0) return late.Confirmed > 0 ? FlushResult.LateConfirmed : FlushResult.Failed;
+            if (!(await ObservePointerAsync(sessionId, body, pointerAttempt, ct)).CompleteComposer)
+            {
+                await DeferPointersAsync(db, sessionId, run, ct);
+                return FlushResult.Nothing;
+            }
+            PointerMilestone(sessionId, pointerAttempt, "enter-only");
+        }
         try
         {
             await _runtime.SendInputAsync(sessionId, "\r", ct);
@@ -3334,7 +3381,8 @@ public sealed partial class SessionMessageQueueService
         {
             outcome = await WaitForTranscriptConfirmAsync(
                 sessionId, body, baseline, submitBaseline.Sequence, before.RenderedScreen, kind,
-                ct, ceilings, unobservableFrom, firstInputDeadlineAt: FirstInputDeadline(run));
+                ct, ceilings, unobservableFrom, firstInputDeadlineAt: FirstInputDeadline(run), pointerAttempt: pointerAttempt);
+            outcome = outcome with { PointerConsumed = pointerAttempt is not null };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -3395,7 +3443,7 @@ public sealed partial class SessionMessageQueueService
                 await chargeBoundary.ReachedAsync(
                     "queue-enter-only-charged", head.ExecutionTaskId ?? Guid.Empty, head.Id, ct);
         await HandleDeliveryFailureAsync(sessionId, ids, outcome.Verdict, ct, capturedGeneration,
-            enterOnlyRecovery: true);
+            enterOnlyRecovery: true, pointerConsumed: outcome.PointerConsumed);
         return FlushResult.Failed;
     }
 
@@ -3560,7 +3608,7 @@ public sealed partial class SessionMessageQueueService
 
     private readonly record struct DeliveryOutcome(
         DeliveryVerdict Verdict, string? RecordText = null, string ConfirmedBy = DeliveryConfirmedBy.None,
-        string? UnavailabilityCode = null, bool SpillWriteFailedBeforeInput = false)
+        string? UnavailabilityCode = null, bool SpillWriteFailedBeforeInput = false, bool PointerConsumed = false)
     {
         public static DeliveryOutcome Delivered { get; } = new(DeliveryVerdict.Delivered);
         public static DeliveryOutcome Of(DeliveryVerdict verdict, string? recordText = null) =>
@@ -3648,7 +3696,7 @@ public sealed partial class SessionMessageQueueService
 
     private static string Describe(DeliveryVerdict verdict) => verdict switch
     {
-        DeliveryVerdict.NoComposerEvidence => "the typed message never appeared in the composer",
+        DeliveryVerdict.NoComposerEvidence => "required composer evidence was not observed",
         DeliveryVerdict.NoSubmitOutput => "the submitting Enter produced no output",
         DeliveryVerdict.NoTranscriptRecord => "the submitted prompt never became a transcript record",
         DeliveryVerdict.Truncated => "the submitted prompt reached the transcript truncated",
@@ -3754,8 +3802,9 @@ public sealed partial class SessionMessageQueueService
         PtyDeliveryCeilings? ceilings = null, DateTime? firstInputDeadlineAt = null,
         // CARD-0650 D-7: the watchdog's direct send disables both overlay arms (S6 proactive Esc,
         // S5 Esc-and-retype). Every existing caller keeps the default.
-        bool overlayRecovery = true)
+        bool overlayRecovery = true, PointerAttempt? pointerAttempt = null)
     {
+        if (pointerAttempt is not null) overlayRecovery = false;
         // Line endings are normalized to LF before anything touches the PTY. Measured against real
         // Claude (probe runs 2026-07-31): a \n in written input is ALWAYS a literal newline in the
         // composer, while a \r MID-body acts as Enter and SUBMITS the fragment before it — and
@@ -3871,7 +3920,7 @@ public sealed partial class SessionMessageQueueService
         // FIRST matching UserPrompt, with the screen-only verdict retained only as the deadline
         // fallback (bind-failed sessions still degrade-Delivered rather than hard-failing).
         var fullInline = await RequiresCompleteSpecialistPromptAsync(sessionId, trimmed, ct);
-        var baseline = fullInline || (verify && _verification.TranscriptConfirmEnabled)
+        var baseline = pointerAttempt is not null || fullInline || (verify && _verification.TranscriptConfirmEnabled)
             ? stampedBaseline ?? await CaptureTranscriptBaselineAsync(sessionId, ct)
             : default;
         var confirmTranscript = fullInline || (verify && _verification.TranscriptConfirmEnabled);
@@ -3947,6 +3996,7 @@ public sealed partial class SessionMessageQueueService
 
         var payload = Antiphon.Agents.Pty.PtyInputEncoding.WrapIfMultiline(trimmed);
         if (firstInputDeadlineAt <= UtcNow()) throw new OptionalBriefExpiredException();
+        if (pointerAttempt is not null) PointerMilestone(sessionId, pointerAttempt, "write-start", trimmed.Length);
         try
         {
             await _runtime.SendInputAsync(sessionId, payload, ct);
@@ -3972,6 +4022,11 @@ public sealed partial class SessionMessageQueueService
 
         try
         {
+            if (pointerAttempt is not null)
+            {
+                PointerMilestone(sessionId, pointerAttempt, "write-return", trimmed.Length);
+                return await SubmitConsumedPointerAsync(sessionId, trimmed, pointerAttempt, ceilings, firstInputDeadlineAt, ct);
+            }
             if (verify && !await WaitForComposerEvidenceAsync(sessionId, before.RenderedScreen, trimmed, ct))
             {
                 // CARD-0137 S5: reactive overlay recovery. One-shot, idle-gated Esc-and-retype.
@@ -4077,7 +4132,7 @@ public sealed partial class SessionMessageQueueService
         Guid sessionId, string body, TranscriptBaseline baseline, long? sequenceBeforeSubmit,
         string screenBeforeSubmit, AgentKind? kind, CancellationToken ct,
         PtyDeliveryCeilings? ceilings = null, DateTime? unobservableConfirmFrom = null,
-        DateTime? firstInputDeadlineAt = null)
+        DateTime? firstInputDeadlineAt = null, PointerAttempt? pointerAttempt = null)
     {
         var strong = PromptSubmissionMatch.RequiresTextMatch(body);
         var fullInline = await RequiresCompleteSpecialistPromptAsync(sessionId, body, ct);
@@ -4101,7 +4156,9 @@ public sealed partial class SessionMessageQueueService
 
         while (true)
         {
-            var match = observable
+            var match = pointerAttempt is not null
+                ? await ReadPointerReceiptAsync(sessionId, body, pointerAttempt, ct)
+                : observable
                 ? await TryFindConfirmingRecordAsync(sessionId, body, baseline.MaxSequence, ct)
                 : await TryFindUnobservableConfirmingRecordAsync(
                     sessionId, body, unobservableConfirmFrom ?? DateTime.MinValue, ct);
@@ -4125,6 +4182,7 @@ public sealed partial class SessionMessageQueueService
                     sessionId, observable ? baseline.MaxSequence : 0, entersSent,
                     strong ? "text" : "weak",
                     observable ? "" : ", unobservable-baseline");
+                if (pointerAttempt is not null) PointerMilestone(sessionId, pointerAttempt, "complete-receipt");
                 return DeliveryOutcome.Confirmed(DeliveryConfirmedBy.Transcript);
             }
 
@@ -4250,6 +4308,13 @@ public sealed partial class SessionMessageQueueService
                 && (observable || !sawPositiveSubmit);
             if (mayReEnter)
             {
+                if (pointerAttempt is not null
+                    && !(await ObservePointerAsync(sessionId, body, pointerAttempt, ct)).CompleteComposer)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(_verification.PollIntervalMs), _timeProvider, ct);
+                    continue;
+                }
+                if (pointerAttempt is not null) PointerMilestone(sessionId, pointerAttempt, "re-enter");
                 // CARD-0161 B4: withhold re-press Enter while herdr reports blocked (CARD-0141
                 // hazard — a keystroke into a permission picker). entersSent not incremented.
                 // Shared by the unobservable loop by construction (CARD-0164 decision 11).
@@ -4881,7 +4946,7 @@ public sealed partial class SessionMessageQueueService
     // be replaced with the row's current generation here, even though new Enter-only calls capture it.
     internal async Task HandleDeliveryFailureAsync(
         Guid sessionId, IReadOnlyList<Guid>? messageIds, DeliveryVerdict verdict, CancellationToken ct,
-        DateTime? capturedGeneration = null, bool enterOnlyRecovery = false)
+        DateTime? capturedGeneration = null, bool enterOnlyRecovery = false, bool pointerConsumed = false)
     {
         CompletionDeliveryFailed();
         if (messageIds is { Count: > 0 })
@@ -4959,8 +5024,20 @@ public sealed partial class SessionMessageQueueService
                     .Where(m => !lateConfirmed.Contains(m.Id) && !lateTruncated.Contains(m.Id))
                     .ToList();
 
+                var pointerSession = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId, ct);
+                var pointers = messages.Where(m => IsCodexPointer(pointerSession.AgentKind, m)).ToList();
+                if (pointers.Count > 0 && (verdict == DeliveryVerdict.NoComposerEvidence
+                    || (verdict == DeliveryVerdict.NoSubmitOutput && (!pointerConsumed
+                        || capturedGeneration is not { } accepted
+                        || !SessionGeneration.Equal(accepted, pointerSession.StartedAt)
+                        || await ReadWorkingAsync(db, sessionId, ct)))))
+                {
+                    await DeferPointersAsync(db, sessionId, pointers, ct);
+                    return;
+                }
+
                 if (verdict == DeliveryVerdict.NoSubmitOutput
-                    && await TryHandleBootWedgeAsync(sessionId, messages, agent, db, scope, ct))
+                    && await TryHandleBootWedgeAsync(sessionId, messages, agent, db, scope, ct, pointerConsumed))
                 {
                     await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
                     return;
@@ -5260,7 +5337,7 @@ public sealed partial class SessionMessageQueueService
         Agent? agent,
         AppDbContext db,
         IServiceScope scope,
-        CancellationToken ct)
+        CancellationToken ct, bool pointerConsumed = false)
     {
         if (messages.Count == 0
             || messages.Any(m => m.Origin != QueuedMessageOrigin.Delegation
@@ -5271,6 +5348,9 @@ public sealed partial class SessionMessageQueueService
         var session = await db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct);
         if (session is not { Status: SessionStatus.Running })
             return false;
+        var scopedPointer = messages.Any(m => IsCodexPointer(session.AgentKind, m));
+        if (scopedPointer && (!pointerConsumed || messages.Any(m => DeliveryGenerationChanged(m,
+                SessionGeneration.Normalize(session.StartedAt))))) return false;
         if (ProviderContractCatalog.For(session.AgentKind).DeliveryVerification.State
             != AgentTuiCapabilityState.Supported)
         {
@@ -5305,7 +5385,8 @@ public sealed partial class SessionMessageQueueService
         if (agent is not null && !already)
         {
             var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
-            var detail = "TUI stopped painting; brief still in composer"
+            var detail = "No submission was confirmed within the submit window"
+                + (scopedPointer ? " after complete pointer consumption" : "; brief still in composer")
                 + (mcpVisible ? "; MCP boot line still visible" : "")
                 + ".";
             await supervisor.RecordIncidentAsync(

@@ -52,7 +52,7 @@ public class SessionMessageQueueBootWedgeTests
         incident.Message.ShouldContain("brief still in composer");
         // CARD-0312 P3: the generalisation must leave Codex byte-identical. The MCP-boot clause is
         // a Codex SCREEN fact and stays Codex-only, so the message shape is exactly what it was.
-        incident.Message.ShouldBe("TUI stopped painting; brief still in composer.");
+        incident.Message.ShouldBe("No submission was confirmed within the submit window; brief still in composer.");
 
         var oldRow = await db.SessionQueuedMessages.SingleAsync(
             m => m.AgentSessionId == h.SessionId);
@@ -284,7 +284,7 @@ public class SessionMessageQueueBootWedgeTests
         h.Adapter.Killed.ShouldBeTrue();
     }
 
-    private static Task<BridgeQueueHarness> CreateBootWedgeHarnessAsync() =>
+    internal static Task<BridgeQueueHarness> CreateBootWedgeHarnessAsync() =>
         BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = false,
@@ -311,7 +311,7 @@ public class SessionMessageQueueBootWedgeTests
             .ExecuteUpdateAsync(u => u.SetProperty(s => s.AgentKind, kind));
     }
 
-    private static async Task<Guid> SeedDispatchedTaskAsync(
+    internal static async Task<Guid> SeedDispatchedTaskAsync(
         BridgeQueueHarness h, int relaunchCount = 0, AgentKind kind = AgentKind.Codex)
     {
         var id = Guid.NewGuid();

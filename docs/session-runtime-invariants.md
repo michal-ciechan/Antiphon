@@ -1,5 +1,15 @@
 # Session runtime invariants
 
+CARD-1521: a queued Delegation Codex task-brief pointer requires the complete
+normalized pointer in the current bottom composer before any submitting Enter.
+Recheck after the existing settle window. A complete UserPrompt beyond the original
+attempt baseline and in its accepted generation remains delivery authority.
+Partial/ambiguous consumption retains the typed attempt and holds later input,
+including canceled/capped rows; it is not a refunded pre-type attempt or proof of
+a boot wedge. Reconcile receipts first, then allow Enter-only recovery only from
+a complete idle composer. A positively changed generation can take the ordinary
+first-write path. Other providers and ordinary messages retain their existing rules.
+
 ## Deferred transcript effects (CARD-1259)
 
 Transcript ingestion commits each stored row and its `SessionRuntimeAction` in the
