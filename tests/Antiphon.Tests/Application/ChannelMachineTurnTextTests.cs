@@ -515,6 +515,25 @@ public class ChannelMachineTurnTextTests
         }).Succeeded.ShouldBeTrue();
     }
 
+    // CARD-1434: the debt give-up bounds are validated; the time bound cannot outlive the TTL backstop.
+    [Test]
+    public void C1434_give_up_minutes_above_the_ttl_is_refused()
+    {
+        var validator = new ChannelBridgeSettingsValidator();
+        validator.Validate(null, new ChannelBridgeSettings()).Succeeded.ShouldBeTrue("the defaults validate");
+        validator.Validate(null, new ChannelBridgeSettings { ReplyDebtGiveUpMinutes = 31 }).Failed
+            .ShouldBeTrue("the give-up time bound cannot exceed PendingReplyTtlMinutes (30)");
+        validator.Validate(null, new ChannelBridgeSettings { PendingReplyTtlMinutes = 15, ReplyDebtGiveUpMinutes = 15 })
+            .Succeeded.ShouldBeTrue("equal to the TTL is allowed");
+        validator.Validate(null, new ChannelBridgeSettings { ReplyDebtGiveUpMinutes = 0 }).Succeeded
+            .ShouldBeTrue("0 disables the time bound");
+        validator.Validate(null, new ChannelBridgeSettings { ReplyDebtGiveUpMinutes = -1 }).Failed.ShouldBeTrue();
+        validator.Validate(null, new ChannelBridgeSettings { ReplyDebtGiveUpAttempts = 0 }).Succeeded
+            .ShouldBeTrue("0 disables the attempt bound");
+        validator.Validate(null, new ChannelBridgeSettings { ReplyDebtGiveUpAttempts = 1001 }).Failed.ShouldBeTrue();
+        validator.Validate(null, new ChannelBridgeSettings { ReplyDebtGiveUpAttempts = -1 }).Failed.ShouldBeTrue();
+    }
+
     [Test]
     public async Task An_operator_typed_plain_text_turn_sends_nothing_and_raises_no_incident()
     {

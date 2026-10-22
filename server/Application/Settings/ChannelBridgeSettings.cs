@@ -31,6 +31,21 @@ public sealed class ChannelBridgeSettings
     public int PendingReplyTtlMinutes { get; set; } = 30;
 
     /// <summary>
+    /// CARD-1434: a channel debt row (a reply whose publication keeps failing) is abandoned once it
+    /// has failed this many attempts; its open correlations are settled with a Critical
+    /// <c>ChannelReplyLost</c> (<c>PublishFailed</c>) and later replies to that chat flow. 0 disables
+    /// the attempt bound; <see cref="PendingReplyTtlMinutes"/> remains the backstop.
+    /// </summary>
+    public int ReplyDebtGiveUpAttempts { get; set; } = 20;
+
+    /// <summary>
+    /// CARD-1434: a channel debt row that has failed at least once is abandoned once this many
+    /// minutes have passed since it was created (the time it first waited or failed). 0 disables
+    /// the time bound; must not exceed <see cref="PendingReplyTtlMinutes"/>.
+    /// </summary>
+    public int ReplyDebtGiveUpMinutes { get; set; } = 10;
+
+    /// <summary>
     /// Max raw bytes for a single reply attachment. Attachments ride the Kafka message base64-encoded
     /// under the bus-wide 20 MB message cap, so the raw ceiling is 3/4 of that minus envelope slack.
     /// Larger files are skipped with a note in the reply text.

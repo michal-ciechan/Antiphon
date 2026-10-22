@@ -498,6 +498,67 @@ public class SessionRuntimeActionRecoveryTests
         (await verify.SessionRuntimeActions.CountAsync(a => a.AgentSessionId == h.SessionId)).ShouldBe(0);
     }
 
+    // CARD-1434: a reply whose publication keeps failing is not retried until the TTL misreports
+    // it. At the give-up bound the debt is abandoned: its correlation is settled with a Critical
+    // ChannelReplyLost (PublishFailed) incident, the row is removed and later replies to that
+    // chat flow.
+    [Test]
+    public async Task C1434_exhausted_channel_debt_is_reported_lost_and_later_replies_flow()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var producer = new RecordingProducer { Failing = true };
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
+            ConfigureServices = s => s.AddSingleton<IAntiphonMessagingProducer>(producer)
+        });
+        const string destination = "exhausted-recipient";
+        const string first = "[Telegram Family] First question";
+        const string second = "[Telegram Family] Second question";
+        var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
+        var settings = h.Provider.GetRequiredService<IOptions<ChannelBridgeSettings>>().Value;
+        var owed = await h.SeedChannelCorrelationAsync(first, "telegram:" + destination);
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 1, "UserPrompt", first), Entry(h, 2, "AssistantText", "first answer"), Entry(h, 3, "TurnEnd", null)]);
+        await actions.DrainPageAsync(h.SessionId, default);
+        producer.Failures.ShouldBeGreaterThan(0, "the real producer must be reached");
+        producer.Sent.ShouldBeEmpty();
+        await using (var db = h.CreateObserverContext())
+        {
+            var debt = await db.SessionRuntimeActions.AsNoTracking().Where(a => a.AgentSessionId == h.SessionId).ToListAsync();
+            debt.ShouldHaveSingleItem().TriggerKind.ShouldBe(SessionRuntimeActionCoordinator.ChannelReplyDebt);
+            // The row has failed as often as the policy allows and its retry is due.
+            await db.SessionRuntimeActions.ExecuteUpdateAsync(u => u
+                .SetProperty(a => a.Attempts, settings.ReplyDebtGiveUpAttempts)
+                .SetProperty(a => a.DueAt, DateTime.UtcNow.AddSeconds(-1)));
+        }
+
+        await actions.DrainPageAsync(h.SessionId, default);
+        await using (var db = h.CreateObserverContext())
+        {
+            var incident = (await db.AgentIncidents
+                    .Where(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost).ToListAsync())
+                .ShouldHaveSingleItem("an abandoned reply is reported once, never dropped silently");
+            incident.FailureReason.ShouldBe("PublishFailed");
+            incident.Severity.ShouldBe(AlertSeverity.Critical);
+            incident.SessionId.ShouldBe(h.SessionId);
+            (await db.SessionQueuedMessages.SingleAsync(m => m.Id == owed)).ChannelReplySettledAt
+                .ShouldNotBeNull("abandoning settles the correlation so the TTL sweep cannot report it again");
+            (await db.SessionRuntimeActions.CountAsync(a => a.AgentSessionId == h.SessionId)).ShouldBe(0, "the debt row is removed");
+        }
+
+        producer.Failing = false;
+        await h.SeedChannelCorrelationAsync(second, "telegram:" + destination);
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 4, "UserPrompt", second), Entry(h, 5, "AssistantText", "second answer"), Entry(h, 6, "TurnEnd", null)]);
+        await actions.DrainPageAsync(h.SessionId, default);
+        producer.Sent.Select(r => r.Text).ShouldBe(["second answer"], "later replies to the chat flow once the dead debt is abandoned");
+        producer.Sent.ShouldAllBe(r => r.ConversationId == destination);
+        await using var verify = h.CreateObserverContext();
+        (await verify.SessionRuntimeActions.CountAsync(a => a.AgentSessionId == h.SessionId)).ShouldBe(0);
+    }
+
     [Test]
     public async Task C1259_queue_prune_holds_the_transcript_mutation_lease()
     {
