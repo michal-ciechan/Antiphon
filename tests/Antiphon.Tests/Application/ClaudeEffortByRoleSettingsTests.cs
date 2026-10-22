@@ -129,6 +129,12 @@ public sealed class ClaudeEffortByRoleSettingsTests
             $"Delegation:ClaudeEffortByRole has unknown role 'Reviewer'. Use {roles}.");
         yield return () => new("undefined-numeric-role", "999", "high",
             $"Delegation:ClaudeEffortByRole has unknown role '999'. Use {roles}.");
+        // CARD-1481 repair: Enum.TryParse takes a defined number or a comma list; neither is a role
+        // name, and both would be silently ignored by the name lookup at launch.
+        yield return () => new("defined-numeric-role", "2", "high",
+            $"Delegation:ClaudeEffortByRole has unknown role '2'. Use {roles}.");
+        yield return () => new("comma-separated-roles", "Plan,Code", "high",
+            $"Delegation:ClaudeEffortByRole has unknown role 'Plan,Code'. Use {roles}.");
         yield return () => new("unknown-value", "Code", "ultra",
             $"Delegation:ClaudeEffortByRole:Code is 'ultra', {NotAnEffort}");
         yield return () => new("empty-value", "Review", "",
