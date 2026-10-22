@@ -42,7 +42,7 @@
     database, restarts anything or changes a setting. The only files it writes are its JSON baseline and result (default
     .antiphon/postgres-cutover/, which is gitignored). It takes no credentials. Diagnostics properties whose
     name or value looks like a credential (password, token, dsn, connection string) are dropped, and URL
-    userinfo (to the last @) and secret-looking query and fragment values (key names compared after
+    userinfo (from :// to the last @ before whitespace) and secret-looking query and fragment values (key names compared after
     percent-decoding) are masked in every printed line, error and recorded JSON.
 
     Seams for tests, so no server or database is needed:
@@ -121,11 +121,11 @@ function Test-CutoverSecretName {
     return ($Name -match '(?i)password|passwd|pwd|secret|token|connectionstring|connstr|dsn|authorization|apikey|api_key|credential')
 }
 
-# A value shaped like a credential whatever its property is called: a URL or DSN with userinfo, or a
-# connection-string pair such as Password= / Pwd=.
+# A value shaped like a credential whatever its property is called: a URL or DSN with userinfo (to the last '@'
+# before whitespace, as Hide-CutoverText masks it), or a connection-string pair such as Password= / Pwd=.
 function Test-CutoverSecretValue {
     param([string]$Value)
-    if ($Value -match '(?i)[a-z][a-z0-9+.\-]*://[^/?#@\s]+@') { return $true }
+    if ($Value -match '(?i)[a-z][a-z0-9+.\-]*://[^\s"''<>]*@') { return $true }
     return ($Value -match '(?i)(^|[;\s])(password|passwd|pwd|user id|uid|secret|token)\s*=')
 }
 
@@ -139,12 +139,14 @@ function Test-CutoverSecretKey {
 
 # Masks URL userinfo and secret-looking key=value pairs (query strings, fragments, connection strings) in any
 # text before it is printed, recorded or returned, including exception messages that embed a URL. Userinfo
-# runs to the LAST '@' before the path, query or fragment, so a literal '@' in a password stays masked. A '#'
-# starts a new pair, as in a fragment. The request itself always uses the unmasked URL.
+# runs from '://' to the LAST '@' before whitespace, a quote or an angle bracket, so a literal '@' or '/' in a
+# password stays masked (CARD-1423 A1: .NET reads http://u:1234/S3@h/ as host u, port 1234 and path /S3@h/, so
+# nothing is sent, but a value meant as userinfo would print as path text; a path '@' is over-masked instead). A
+# '#' starts a new pair, as in a fragment. The request itself always uses the unmasked URL.
 function Hide-CutoverText {
     param([string]$Text)
     if (-not $Text) { return $Text }
-    $t = [regex]::Replace($Text, '(?i)\b([a-z][a-z0-9+.\-]*://)[^/?#\s"''<>]*@', '$1<redacted>@')
+    $t = [regex]::Replace($Text, '(?i)\b([a-z][a-z0-9+.\-]*://)[^\s"''<>]*@', '$1<redacted>@')
     $pair = '(?i)(?<lead>(?:^|[?&;#"''\s]|\\u0026)(?<key>(?:[a-z0-9_.\-]|%[0-9a-f]{2})+)\s*=\s*)(?<val>[^&;\s"''\\<>]+)'
     $evaluator = [System.Text.RegularExpressions.MatchEvaluator]{
         param($m)
