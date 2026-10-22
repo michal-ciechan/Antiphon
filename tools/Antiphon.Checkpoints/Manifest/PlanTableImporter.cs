@@ -233,7 +233,15 @@ public static class PlanTableImporter
                         && string.Equals(prior.AfterKey, afterKey, StringComparison.Ordinal)
                         && prior.Repeat == row.Repeat);
                     if (equivalent.BuildId is not null)
-                        warnings.Add($"{id}: Build '{buildId}' duplicates '{equivalent.BuildId}' from {equivalent.RowId} (same project '{normalizedProject}', After '{afterKey}', Repeat {row.Repeat}); write '{equivalent.RowId}' in the Build cell to reuse it and save one build");
+                    {
+                        // A CP-n reuse reference only accepts CP-<digits>; for any other row id
+                        // recommend the earlier build's own '<project> -> bin-x/' cell.
+                        var earlier = manifest.Builds.First(b => b.Id == equivalent.BuildId);
+                        var reuseCell = Regex.IsMatch(equivalent.RowId, @"^CP-\d+$", RegexOptions.IgnoreCase)
+                            ? equivalent.RowId
+                            : $"{earlier.Project} -> {earlier.OutputPath}";
+                        warnings.Add($"{id}: Build '{buildId}' duplicates '{equivalent.BuildId}' from {equivalent.RowId} (same project '{normalizedProject}', After '{afterKey}', Repeat {row.Repeat}); write '{reuseCell}' in the Build cell to reuse it and save one build");
+                    }
                     definedBuilds.Add((buildId, normalizedProject, afterKey, row.Repeat, id));
                 }
 
