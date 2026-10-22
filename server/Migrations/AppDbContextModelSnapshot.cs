@@ -129,6 +129,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid?>("PoolProjectId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("PoolProviderProjectionJson")
+                        .HasColumnType("text");
+
                     b.Property<Guid?>("PoolReservedForRootTaskId")
                         .HasColumnType("uuid");
 
