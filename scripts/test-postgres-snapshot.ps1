@@ -1317,6 +1317,158 @@ function Test-MissingAge {
     } finally { Remove-Fixture $fx }
 }
 
+# CARD-1413 D-2: Windows DACL evaluation for the staging root, its parents and
+# each run directory. On Linux this case proves the decision logic through the
+# reader seam (plain SID strings and access masks, the shape the Get-Acl
+# adapter produces); the adapter itself and directory creation with a DACL
+# run only in the live section, which executes on Windows.
+function Test-WindowsAclRules {
+    if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'WindowsAclRules script exists' $scriptPath; return }
+    . $scriptPath
+    foreach ($fn in @('Test-SnapshotWindowsRules', 'Test-SnapshotWindowsStagingRoot', 'Test-SnapshotWindowsOwnedDirectory', 'New-SnapshotPrivateDirectory')) {
+        if (-not (Get-Command $fn -ErrorAction SilentlyContinue)) { Write-Fail 'windows acl function' "$fn missing"; return }
+    }
+    $me = 'S-1-5-21-1111111111-2222222222-3333333333-1001'
+    $other = 'S-1-5-21-1111111111-2222222222-3333333333-1002'
+    $system = 'S-1-5-18'
+    $admins = 'S-1-5-32-544'
+    $users = 'S-1-5-32-545'
+    $everyone = 'S-1-1-0'
+    $authenticated = 'S-1-5-11'
+    $trusted = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+    $full = 2032127          # FileSystemRights.FullControl 0x1F01FF
+    $rx = 1179817            # ReadAndExecute 0x1200A9
+    $modify = 1245631        # Modify 0x1301BF
+    $delete = 65536          # DELETE 0x10000
+    $deleteChild = 64        # FILE_DELETE_CHILD 0x40
+    $writeDac = 262144       # WRITE_DAC 0x40000
+    $takeOwner = 524288      # WRITE_OWNER 0x80000
+    $appendData = 4          # FILE_APPEND_DATA (create subdirectory)
+    $genericAll = 268435456  # GENERIC_ALL 0x10000000
+    function New-AclRule {
+        param([string]$Sid, [int64]$Rights, [bool]$InheritOnly = $false, [string]$Type = 'Allow', [bool]$Inherited = $false)
+        return [pscustomobject]@{ Sid = $Sid; Type = $Type; Rights = $Rights; InheritOnly = $InheritOnly; Inherited = $Inherited }
+    }
+    $profile = @((New-AclRule $system $full $false 'Allow' $true), (New-AclRule $admins $full $false 'Allow' $true), (New-AclRule $me $full $false 'Allow' $true))
+    Assert-True (Test-SnapshotWindowsRules @((New-AclRule $me $full)) $me $true) 'caller-only DACL is strict ok' 'refused'
+    Assert-True (Test-SnapshotWindowsRules $profile $me $true) 'profile default DACL is strict ok' 'refused'
+    Assert-True (-not (Test-SnapshotWindowsRules ($profile + @((New-AclRule $users $rx $false 'Allow' $true))) $me $true)) 'inherited Users read is strict refused' 'accepted'
+    Assert-True (Test-SnapshotWindowsRules ($profile + @((New-AclRule $users $rx $false 'Allow' $true))) $me $false) 'inherited Users read on a parent is allowed' 'refused'
+    Assert-True (-not (Test-SnapshotWindowsRules ($profile + @((New-AclRule $everyone $delete))) $me $false)) 'Everyone Delete on a parent is refused' 'accepted'
+    Assert-True (-not (Test-SnapshotWindowsRules ($profile + @((New-AclRule $users $deleteChild))) $me $false)) 'Users DeleteChild on a parent is refused' 'accepted'
+    Assert-True (-not (Test-SnapshotWindowsRules ($profile + @((New-AclRule $everyone $writeDac))) $me $false)) 'Everyone ChangePermissions on a parent is refused' 'accepted'
+    Assert-True (-not (Test-SnapshotWindowsRules ($profile + @((New-AclRule $authenticated $takeOwner))) $me $false)) 'Authenticated Users TakeOwnership on a parent is refused' 'accepted'
+    Assert-True (-not (Test-SnapshotWindowsRules ($profile + @((New-AclRule $other $full $false 'Allow' $true))) $me $false)) 'another account FullControl on a parent is refused' 'accepted'
+    Assert-True (-not (Test-SnapshotWindowsRules ($profile + @((New-AclRule $users $genericAll))) $me $false)) 'generic all on a parent is refused' 'accepted'
+    $driveStyle = $profile + @((New-AclRule $authenticated $modify $true), (New-AclRule $authenticated $appendData), (New-AclRule $users $rx))
+    Assert-True (Test-SnapshotWindowsRules $driveStyle $me $false) 'drive-root style create and inherit-only modify on a parent are allowed' 'refused'
+    Assert-True (-not (Test-SnapshotWindowsRules $driveStyle $me $true)) 'drive-root style DACL on the root is strict refused' 'accepted'
+    Assert-True (Test-SnapshotWindowsRules @((New-AclRule $me $full), (New-AclRule $everyone $full $false 'Deny')) $me $true) 'a Deny entry grants nothing' 'refused'
+    Assert-True (-not (Test-SnapshotWindowsRules @((New-AclRule $me $full)) '' $true)) 'an unknown caller is refused' 'accepted'
+    Assert-True (-not (Test-SnapshotWindowsRules $null $me $true)) 'an unreadable DACL is refused' 'accepted'
+    Assert-True (-not (Test-SnapshotWindowsRules @((New-AclRule $other $full)) $me $true)) 'another account alone is strict refused' 'accepted'
+    Assert-True (-not (Test-SnapshotWindowsRules @((New-AclRule '' $full)) $me $true)) 'an entry without a SID is refused' 'accepted'
+
+    $sep = [string][System.IO.Path]::DirectorySeparatorChar
+    $root = ($sep + 'fakewin') + $sep + 'Users' + $sep + 'me' + $sep + 'AppData' + $sep + 'Local' + $sep + 'antiphon' + $sep + 'postgres-snapshot-staging'
+    $chain = New-Object System.Collections.Generic.List[string]
+    $cursor = [System.IO.Path]::GetFullPath($root)
+    while (-not [string]::IsNullOrWhiteSpace($cursor)) {
+        [void]$chain.Add($cursor)
+        $parent = [System.IO.Path]::GetDirectoryName($cursor)
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $cursor) { break }
+        $cursor = $parent
+    }
+    $last = $chain.Count - 1
+    Assert-True ($chain.Count -ge 4) 'fake chain has parents' ("count=$($chain.Count)")
+    function New-AclChain {
+        param([string]$RootOwner, $RootRules)
+        $map = @{}
+        for ($i = 0; $i -le $last; $i++) {
+            if ($i -eq 0) {
+                $map[$chain[$i]] = @{ Owner = $RootOwner; Rules = $RootRules }
+            } elseif ($i -eq $last) {
+                $map[$chain[$i]] = @{ Owner = $trusted; Rules = $driveStyle }
+            } elseif ($i -eq ($last - 1)) {
+                $map[$chain[$i]] = @{ Owner = $system; Rules = ($profile + @((New-AclRule $users $rx $false 'Allow' $true), (New-AclRule $everyone $rx))) }
+            } else {
+                $map[$chain[$i]] = @{ Owner = $me; Rules = $profile }
+            }
+        }
+        return $map
+    }
+    function New-AclReader {
+        param($Map)
+        return { param([string]$Path) if ($Map.ContainsKey($Path)) { return [pscustomobject]$Map[$Path] } return $null }.GetNewClosure()
+    }
+    $callerOnly = @((New-AclRule $me $full))
+    $ok = New-AclChain $me $callerOnly
+    $okState = Test-SnapshotWindowsStagingRoot -Path $root -CallerSid $me -Reader (New-AclReader $ok) -Elevated $false
+    Assert-True ($okState -eq '') 'profile chain passes the Windows staging checks' $okState
+    $loose = New-AclChain $me ($profile + @((New-AclRule $users $rx $false 'Allow' $true)))
+    $looseState = Test-SnapshotWindowsStagingRoot -Path $root -CallerSid $me -Reader (New-AclReader $loose) -Elevated $false
+    Assert-True ($looseState -eq 'staging-mode') 'inherited Users read on the root is staging-mode' $looseState
+    $foreign = New-AclChain $other $callerOnly
+    $foreignState = Test-SnapshotWindowsStagingRoot -Path $root -CallerSid $me -Reader (New-AclReader $foreign) -Elevated $false
+    Assert-True ($foreignState -eq 'staging-owner') 'root owned by another account is staging-owner' $foreignState
+    $openParent = New-AclChain $me $callerOnly
+    $openParent[$chain[3]] = @{ Owner = $me; Rules = ($profile + @((New-AclRule $everyone $delete))) }
+    $openState = Test-SnapshotWindowsStagingRoot -Path $root -CallerSid $me -Reader (New-AclReader $openParent) -Elevated $false
+    Assert-True ($openState -eq 'staging-parent') 'Everyone Delete on a parent is staging-parent' $openState
+    $foreignParent = New-AclChain $me $callerOnly
+    $foreignParent[$chain[2]] = @{ Owner = $other; Rules = $profile }
+    $foreignParentState = Test-SnapshotWindowsStagingRoot -Path $root -CallerSid $me -Reader (New-AclReader $foreignParent) -Elevated $false
+    Assert-True ($foreignParentState -eq 'staging-owner') 'parent owned by another account is staging-owner' $foreignParentState
+    $inheritOnlyParent = New-AclChain $me $callerOnly
+    $inheritOnlyParent[$chain[1]] = @{ Owner = $me; Rules = ($profile + @((New-AclRule $authenticated $modify $true), (New-AclRule $authenticated $appendData))) }
+    $inheritOnlyState = Test-SnapshotWindowsStagingRoot -Path $root -CallerSid $me -Reader (New-AclReader $inheritOnlyParent) -Elevated $false
+    Assert-True ($inheritOnlyState -eq '') 'inherit-only modify and create on a parent pass' $inheritOnlyState
+    $elevated = New-AclChain $admins $callerOnly
+    $elevatedState = Test-SnapshotWindowsStagingRoot -Path $root -CallerSid $me -Reader (New-AclReader $elevated) -Elevated $true
+    Assert-True ($elevatedState -eq '') 'Administrators-owned root passes when elevated' $elevatedState
+    $notElevatedState = Test-SnapshotWindowsStagingRoot -Path $root -CallerSid $me -Reader (New-AclReader $elevated) -Elevated $false
+    Assert-True ($notElevatedState -eq 'staging-owner') 'Administrators-owned root is staging-owner when not elevated' $notElevatedState
+    $unreadable = New-AclChain $me $callerOnly
+    $unreadable.Remove($chain[0])
+    $unreadableState = Test-SnapshotWindowsStagingRoot -Path $root -CallerSid $me -Reader (New-AclReader $unreadable) -Elevated $false
+    Assert-True ($unreadableState -eq 'staging-owner') 'unreadable root security is staging-owner' $unreadableState
+    $run = Join-Path $root ('run-' + ('ab' * 16))
+    $runMap = @{}
+    $runMap[[System.IO.Path]::GetFullPath($run)] = @{ Owner = $me; Rules = $callerOnly }
+    Assert-True (Test-SnapshotWindowsOwnedDirectory -Path $run -CallerSid $me -Reader (New-AclReader $runMap) -Elevated $false) 'caller-only run directory is owned' 'refused'
+    $runMap[[System.IO.Path]::GetFullPath($run)] = @{ Owner = $me; Rules = ($callerOnly + @((New-AclRule $users $rx $false 'Allow' $true))) }
+    Assert-True (-not (Test-SnapshotWindowsOwnedDirectory -Path $run -CallerSid $me -Reader (New-AclReader $runMap) -Elevated $false)) 'Users read on a run directory is not owned' 'accepted'
+    $runMap[[System.IO.Path]::GetFullPath($run)] = @{ Owner = $other; Rules = $callerOnly }
+    Assert-True (-not (Test-SnapshotWindowsOwnedDirectory -Path $run -CallerSid $me -Reader (New-AclReader $runMap) -Elevated $false)) 'run directory owned by another account is not owned' 'accepted'
+
+    if ($env:OS -eq 'Windows_NT') {
+        $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('card1413-acl-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        try {
+            $private = Join-Path $dir 'private'
+            $made = New-SnapshotPrivateDirectory $private
+            Assert-True ($made -eq $true) 'live: private directory is created' "made=$made"
+            $acl = Get-Acl -LiteralPath $private
+            $caller = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+            $names = @($rules | ForEach-Object { $_.IdentityReference.Value })
+            $foreignRules = @($names | Where-Object { $_ -ne $caller })
+            Assert-True ($acl.AreAccessRulesProtected) 'live: private directory DACL is protected' 'inherits'
+            Assert-True ($foreignRules.Count -eq 0 -and $rules.Count -ge 1) 'live: private directory names only the caller' ($names -join ',')
+            Assert-True (Test-SnapshotWindowsOwnedDirectory $private) 'live: private directory is owned' 'refused'
+            $usersSid = New-Object System.Security.Principal.SecurityIdentifier($users)
+            $grant = New-Object System.Security.AccessControl.FileSystemAccessRule($usersSid, [System.Security.AccessControl.FileSystemRights]::ReadAndExecute, 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+            $acl.AddAccessRule($grant)
+            Set-Acl -LiteralPath $private -AclObject $acl
+            Assert-True (-not (Test-SnapshotWindowsOwnedDirectory $private)) 'live: Users read on a run directory is refused' 'accepted'
+            $liveState = Test-SnapshotStagingRoot $private
+            Assert-True ($liveState -eq 'staging-mode') 'live: Users read on the staging root is staging-mode' $liveState
+        } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    } else {
+        Write-Host 'SKIP WindowsAclRules live section (Get-Acl, DACL at creation): Windows only; the decision logic above ran here'
+    }
+}
+
 $all = @(
     'WhatIfPlan', 'MissingRecipient', 'RecipientInsideDestination',
     'DrillRefusesProduction', 'DrillPlan', 'Retention',
@@ -1328,7 +1480,7 @@ $all = @(
     'StagingRefusesLink', 'StagingOutsideDestination', 'DrillRemovesScratch',
     'DrillRefusesTaintedReuse', 'DrillReusesImageEnvScratch', 'DockerDaemonPinned', 'StagingRefusesForeignRoot',
     'StagingSkipsLiveRun', 'DrillPicksExactSnapshot',
-    'PublishRejectsEncryptFailure', 'MissingAge'
+    'PublishRejectsEncryptFailure', 'MissingAge', 'WindowsAclRules'
 )
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
