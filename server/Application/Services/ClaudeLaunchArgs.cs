@@ -42,4 +42,39 @@ public static class ClaudeLaunchArgs
         AgentModelLevel.Low => "low",
         _ => "high",
     };
+
+    /// <summary>Every value claude 2.1.251 accepts for <see cref="EffortFlag"/>, in ladder order.</summary>
+    public static readonly IReadOnlyList<string> CliEfforts = ["low", "medium", "high", "xhigh", "max"];
+
+    /// <summary>The catalog, as the validator and the launch error spell it.</summary>
+    public const string CatalogSentence = "low, medium, high, xhigh or max";
+
+    /// <summary>
+    /// The catalog constant for an operator-supplied effort (trimmed, case-insensitive), or null when
+    /// the CLI would not accept it. The CONSTANT, never the operator's string, is what reaches argv.
+    /// </summary>
+    public static string? Canonical(string? value)
+    {
+        var trimmed = value?.Trim();
+        return trimmed is null
+            ? null
+            : CliEfforts.FirstOrDefault(effort => string.Equals(effort, trimmed, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// The effort a delegate TASK launches at (task 8333e231): the role's entry in
+    /// <see cref="Settings.DelegationSettings.ClaudeEffortByRole"/> when there is one, else the tier's
+    /// (<see cref="Effort(AgentModelLevel)"/>). An entry the CLI would not accept throws naming the
+    /// setting: the validator refuses it at startup, and this is the last line before argv.
+    /// </summary>
+    public static string Effort(AgentModelLevel level, AgentTaskRole role, IReadOnlyDictionary<string, string>? byRole)
+        => Effort(level);
+
+    /// <summary>
+    /// True when the role's override would launch at a different effort than the tier's — the case a
+    /// warm process, which cannot change its <c>--effort</c>, cannot serve. An entry the validator
+    /// would refuse is not a reason to decline reuse.
+    /// </summary>
+    public static bool RoleOverrideDiffersFromTier(AgentModelLevel level, AgentTaskRole role, IReadOnlyDictionary<string, string>? byRole)
+        => false;
 }
