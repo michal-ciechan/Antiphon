@@ -4,6 +4,7 @@ using System.Text.Json;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
@@ -216,6 +217,54 @@ public sealed class LandGraphEvaluationTests
         }
         run.Lines.Count(l => l.StartsWith("refused: ", StringComparison.Ordinal)).ShouldBe(6, run.Text);
         run.Lines.ShouldNotContain("approved", run.Text);
+        repo.AssertUntouched();
+    }
+
+    // Review 8e9f68b4 D-1: on Linux FileInfo.LinkTarget is null when readlink fails (EACCES), the same as
+    // for a plain path, so a link inside an unreadable directory must fail the evaluation, never approve.
+    [Test]
+    [Timeout(300_000)]
+    public async Task C1483_S1_UnreadableLinkComponentDenies()
+    {
+        if (OperatingSystem.IsWindows())
+            throw new SkipTestException("CARD-1483: Unix mode 000 has no Windows equivalent");
+        await using var repo = await AuditRepo.CreateAsync(new()
+        {
+            ["docs/guide.md"] = "# guide\n",
+            ["App/Program.cs"] = "System.Console.WriteLine();\n",
+            ["App/App.csproj"] = SdkProject("""
+                <ItemGroup>
+                  <EmbeddedResource Include="locked/lk/guide.md" />
+                </ItemGroup>
+                """),
+        }, links: new() { ["App/locked/lk"] = "../../docs" });
+        var locked = repo.Full("App/locked");
+        var mode = File.GetUnixFileMode(locked);
+        File.SetUnixFileMode(locked, UnixFileMode.None);
+        try
+        {
+            // Root (or CAP_DAC_OVERRIDE) reads a mode 000 directory anyway: a successful listing is the probe.
+            try
+            {
+                _ = Directory.GetFileSystemEntries(locked);
+                throw new SkipTestException("CARD-1483: this user reads a mode 000 directory (root), so readlink cannot fail");
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+
+            var run = await repo.RunToolAsync();
+
+            run.ExitCode.ShouldBe(2, run.Text);
+            run.Lines.ShouldContain(l => l.StartsWith("evaluation-failed: ", StringComparison.Ordinal)
+                                         && l.Contains(Path.Combine(locked, "lk"), StringComparison.Ordinal), run.Text);
+            run.Lines.ShouldNotContain("approved", run.Text);
+        }
+        finally
+        {
+            File.SetUnixFileMode(locked, mode);
+        }
+
         repo.AssertUntouched();
     }
 
