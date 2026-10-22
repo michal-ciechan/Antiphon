@@ -12,7 +12,7 @@ namespace Antiphon.Tests.Application;
 
 // Native Windows rows must fail visibly when selected on the wrong host.
 [Category("Integration")]
-[ParallelLimiter<GitProcessSpawnLimit>]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class AgentTaskLandHalfResetWindowsTests
 {
     [Test]
