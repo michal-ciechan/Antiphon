@@ -36,4 +36,21 @@ public static class DispatchModelAlias
     public static Task<string> AfterRequeueAsync(
         AppDbContext db, AgentTask task, AgentModelLevel level, CancellationToken ct) =>
         ForTaskAsync(db, task, level, task.Ephemeral ? null : task.AgentId, ct);
+
+    /// <summary>
+    /// CARD-1496: the model a list-governed task keeps on its standing agent wherever the walk
+    /// sends it on <paramref name="kind"/>: the agent's <see cref="Agent.ModelId"/> when it
+    /// normalizes (the <see cref="ForTaskAsync"/> rule), else null. Null for an ephemeral agent,
+    /// which the requeue retires.
+    /// </summary>
+    public static async Task<string?> StandingAgentModelAsync(
+        AppDbContext db, AgentTask task, AgentKind kind, CancellationToken ct)
+    {
+        if (task.Ephemeral || task.AgentId is not Guid id) return null;
+        var modelId = await db.Agents.AsNoTracking()
+            .Where(a => a.Id == id)
+            .Select(a => a.ModelId)
+            .FirstOrDefaultAsync(ct);
+        return ModelAlias.Normalize(kind, modelId);
+    }
 }

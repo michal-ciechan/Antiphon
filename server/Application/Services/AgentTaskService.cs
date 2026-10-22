@@ -3013,9 +3013,16 @@ public sealed class AgentTaskService
         // explicit task then parks behind it. A held dispatch alias is the same 409 model_disabled
         // create and escalation return, before anything changes. A list-governed task keeps
         // today's path: the tick re-walks it to an unheld candidate.
-        if (_modelAvailability is not null && !ComplexityRoutingService.IsListGoverned(task))
-            await _modelAvailability.RequireAsync(
-                task.AgentKind, await DispatchModelAlias.AfterRequeueAsync(_db, task, task.ModelLevel, ct), ct);
+        // CARD-1496: a list-governed task on a standing agent launches on the agent's model
+        // wherever the re-walk sends it, so a held agent model refuses the same way.
+        if (_modelAvailability is not null)
+        {
+            if (!ComplexityRoutingService.IsListGoverned(task))
+                await _modelAvailability.RequireAsync(
+                    task.AgentKind, await DispatchModelAlias.AfterRequeueAsync(_db, task, task.ModelLevel, ct), ct);
+            else if (await DispatchModelAlias.StandingAgentModelAsync(_db, task, task.AgentKind, ct) is { } agentModel)
+                await _modelAvailability.RequireAsync(task.AgentKind, agentModel, ct);
+        }
 
         var repeatOf = await FindLaunchFailureRepeatAsync(
             task.CardId, task.Goal, task.Kind, task.Role, task.AgentKind, ct);
@@ -3184,6 +3191,17 @@ public sealed class AgentTaskService
             {
                 return await BlockOnWallAsync(task, walk, ct, cascadeExhausted: false, reroutedCount,
                     DefaultRunnerRoutingPolicy.RunnerKindBlockedReason(task.RunnerId!, chosen.Kind, chosen.Alias));
+            }
+
+            // CARD-1496: the walk skips held candidates by tier alias, but a standing agent
+            // launches its own model on any candidate. A held agent model is Blocked for a human
+            // instead of requeued onto the hold.
+            if (_modelAvailability is not null
+                && await DispatchModelAlias.StandingAgentModelAsync(_db, task, chosen.Kind, ct) is { } agentModel
+                && await _modelAvailability.GetActiveHoldAsync(chosen.Kind, agentModel, ct) is { } hold)
+            {
+                return await BlockOnWallAsync(task, walk, ct, cascadeExhausted: false, reroutedCount,
+                    HeldStandingAgentModelReason(walledAlias, chosen, agentModel, hold));
             }
 
             return await RequeueOnWallAsync(task, walk, chosen, walledAlias, errorText, ct);
@@ -3394,6 +3412,15 @@ public sealed class AgentTaskService
             DelegationReportFormatter.Short(task.Id), walledAlias, chosen.Alias, task.Attempt);
         return new WallRerouteDecision(WallRerouteKind.Rerouted, chosen.Alias, task.Attempt);
     }
+
+    private static string HeldStandingAgentModelReason(
+        string walledAlias, RoutingCandidates.Candidate chosen, string agentModel, ModelAvailabilityHold hold) =>
+        HeldStandingAgentModelPrefix
+        + $"{walledAlias} hit a usage wall and the chain chose {chosen.Kind} {chosen.Alias}, but this task's "
+        + $"standing agent launches {agentModel}, which is held "
+        + (hold.DisabledUntil is { } until ? $"until {until:yyyy-MM-ddTHH:mm:ss}Z" : "with no end time")
+        + ". Not rerouted. A human must decide: retry after the hold lapses, or cancel and re-dispatch "
+        + "without the standing agent.";
 
     private async Task<WallRerouteDecision> BlockOnWallAsync(
         AgentTask task,
