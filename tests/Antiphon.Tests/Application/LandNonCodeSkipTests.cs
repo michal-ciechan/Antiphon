@@ -723,6 +723,57 @@ public sealed class LandNonCodeSkipTests
                 </Project>
                 """,
         }, "server/App.csproj Import Project=../eng/docs.items", "-> eng/docs.items");
+    }
+
+    // CARD-1409 repair (Review 23aedc52 D2): a wildcard Import is refused outright. Land digests only
+    // definition files, so a later non-definition match of an accepted wildcard would never be re-audited.
+    [Test]
+    public async Task C1409_WildcardImportRefuses()
+    {
+        const string safe = """
+            <Project>
+              <ItemGroup>
+                <None Include="notes.txt" />
+              </ItemGroup>
+            </Project>
+            """;
+        const string items = """
+            <Project>
+              <ItemGroup>
+                <Content Include="../docs/**/*.md" />
+              </ItemGroup>
+            </Project>
+            """;
+        // Matches nothing and was accepted (the former C1409_EmptyWildcardImportIsAccepted).
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../eng/*.props" />
+                </Project>
+                """,
+        }, "wildcard", "server/App.csproj Import Project=../eng/*.props");
+        // Matches one tracked, harmless .props and was accepted and followed.
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["eng/shared.props"] = safe,
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../eng/*.props" />
+                </Project>
+                """,
+        }, "wildcard", "server/App.csproj Import Project=../eng/*.props");
+        // A ? wildcard is a wildcard too.
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["eng/shared.props"] = safe,
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../eng/shared.?rops" />
+                </Project>
+                """,
+        }, "wildcard", "server/App.csproj Import Project=../eng/shared.?rops");
+        // The uninspected wildcard match formerly in C1409_UninspectedImportTargetRefuses refuses as a wildcard.
         await AssertUpdateRefusesAsync(new Dictionary<string, string>
         {
             ["eng/docs.items"] = items,
@@ -731,31 +782,192 @@ public sealed class LandNonCodeSkipTests
                   <Import Project="../eng/*.items" />
                 </Project>
                 """,
-        }, "server/App.csproj Import Project=../eng/*.items", "-> eng/docs.items");
+        }, "wildcard", "server/App.csproj Import Project=../eng/*.items");
     }
 
+    // CARD-1409 repair (Review 23aedc52 D1): MSBuild splits an Import Project on ';' into several imports.
     [Test]
-    public async Task C1409_EmptyWildcardImportIsAccepted()
+    public async Task C1409_SemicolonImportAuditsEveryPart()
     {
-        var root = await InitAuditTreeAsync(new Dictionary<string, string>
+        // Before the repair the whole text is one wildcard pattern that matches nothing, so the tracked
+        // eng/docs.items part is never inspected and -Update exits 0.
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
         {
+            ["eng/docs.items"] = """
+                <Project>
+                  <ItemGroup>
+                    <Content Include="../docs/**/*.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+            ["eng/shared.props"] = """
+                <Project>
+                  <ItemGroup>
+                    <None Include="notes.txt" />
+                  </ItemGroup>
+                </Project>
+                """,
             ["server/App.csproj"] = """
                 <Project Sdk="Microsoft.NET.Sdk">
-                  <Import Project="../eng/*.props" />
+                  <Import Project="../eng/docs.items;../eng/*.props" />
+                </Project>
+                """,
+        }, "server/App.csproj Import Project=../eng/docs.items;../eng/*.props", "-> eng/docs.items");
+        // Every part is followed: the second part's include is harmless from eng/x and selects docs/**/*.md
+        // from the importing root project. Before the repair the list was one garbled missing path.
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["eng/a.props"] = """
+                <Project>
+                  <ItemGroup>
+                    <None Include="notes.txt" />
+                  </ItemGroup>
+                </Project>
+                """,
+            ["eng/x/docs.props"] = """
+                <Project>
+                  <ItemGroup>
+                    <Content Include="docs/**/*.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+            ["App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="eng/a.props;eng/x/docs.props" />
+                </Project>
+                """,
+        }, "eng/x/docs.props Content Include=docs/**/*.md");
+    }
+
+    // CARD-1409 repair (Review 23aedc52 D3): the nearest Directory.Packages.props is imported into every
+    // project and its includes resolve from the project folder, like Directory.Build.props.
+    [Test]
+    public async Task C1409_DirectoryPackagesPropsIsImportedByTheNearestProject()
+    {
+        const string docs = """
+            <Project>
+              <ItemGroup>
+                <None Include="../docs/**/*.md" />
+              </ItemGroup>
+            </Project>
+            """;
+        const string safe = """
+            <Project>
+              <ItemGroup>
+                <PackageVersion Include="Shouldly" Version="4.0.0" />
+              </ItemGroup>
+            </Project>
+            """;
+        // From its own root directory ../docs is outside the repository; from server/ it is docs/**/*.md.
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["Directory.Packages.props"] = docs,
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                </Project>
+                """,
+        }, "Directory.Packages.props None Include=../docs/**/*.md");
+        // Only the nearest file is imported: server/Directory.Packages.props shadows the root one.
+        var nearest = await InitAuditTreeAsync(new Dictionary<string, string>
+        {
+            ["Directory.Packages.props"] = docs,
+            ["server/Directory.Packages.props"] = safe,
+            ["server/sub/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
                 </Project>
                 """,
         });
         try
         {
-            var ran = await RunAuditAsync(root, "en-US", "-Update");
+            var ran = await RunAuditAsync(nearest, "en-US", "-Update");
             ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
-            ran.Stdout.ShouldContain("count=1");
-            File.Exists(AuditManifest(root)).ShouldBeTrue();
+            ran.Stdout.ShouldContain("count=3");
+            File.Exists(AuditManifest(nearest)).ShouldBeTrue();
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            Directory.Delete(nearest, recursive: true);
         }
+    }
+
+    // CARD-1409 repair (Review 23aedc52 D4): a tracked <project>.user file is imported by its project, so the
+    // audit parses it, follows its imports and counts it in the hashed inventory.
+    [Test]
+    public async Task C1409_ProjectUserFileIsAuditedAndImported()
+    {
+        const string project = """
+            <Project Sdk="Microsoft.NET.Sdk">
+            </Project>
+            """;
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = project,
+            ["server/App.csproj.user"] = """
+                <Project>
+                  <ItemGroup>
+                    <Content Include="../docs/**/*.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "server/App.csproj.user Content Include=../docs/**/*.md");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["eng/docs.items"] = """
+                <Project>
+                  <ItemGroup>
+                    <Content Include="../docs/**/*.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+            ["server/App.csproj"] = project,
+            ["server/App.csproj.user"] = """
+                <Project>
+                  <Import Project="../eng/docs.items" />
+                </Project>
+                """,
+        }, "server/App.csproj.user Import Project=../eng/docs.items", "-> eng/docs.items");
+        var harmless = await InitAuditTreeAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = project,
+            ["server/App.csproj.user"] = """
+                <Project>
+                  <PropertyGroup>
+                    <ActiveDebugProfile>http</ActiveDebugProfile>
+                  </PropertyGroup>
+                </Project>
+                """,
+        });
+        try
+        {
+            var ran = await RunAuditAsync(harmless, "en-US", "-Update");
+            ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
+            ran.Stdout.ShouldContain("count=2");
+            File.Exists(AuditManifest(harmless)).ShouldBeTrue();
+        }
+        finally
+        {
+            Directory.Delete(harmless, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task C1409_ProjectUserFileIsInTheHashedInventory()
+    {
+        var graph = new LandVerificationBuildGraph();
+        graph.Includes("server/Antiphon.Server.csproj.user").ShouldBeTrue();
+        graph.Includes("tests/Example/Example.vbproj.user").ShouldBeTrue();
+        graph.Includes("tests/Example/Example.CSPROJ.USER").ShouldBeTrue();
+        graph.Includes("server/settings.user").ShouldBeFalse();
+        graph.Includes("Antiphon.sln.user").ShouldBeFalse();
+        graph.Includes("server/Antiphon.Server.csproj.user.bak").ShouldBeFalse();
+
+        // A tracked .user file already on the target drifts the digest, so a docs-only land builds.
+        await using var h = await CreateAsync();
+        await h.AddDocsOnlySourceAsync();
+        await h.Fixture.PushIndependentAsync("user-file", "server/Antiphon.Server.csproj.user",
+            "<Project><ItemGroup><EmbeddedResource Include=\"../docs/**/*.md\" /></ItemGroup></Project>");
+        await LandAndAssertAsync(h, build: true);
+        (await h.OperationAsync())!.VerificationCommand.ShouldNotBeNull().ShouldContain("unrecognized-build-graph");
     }
 
     [Test]
