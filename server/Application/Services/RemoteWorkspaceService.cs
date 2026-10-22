@@ -38,6 +38,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     private readonly IRepositoryMutationLease? _leases;
     private readonly IWorkspaceReservationJournal? _reservations;
     private readonly IRunnerMirrorPublisher _mirrorPublisher;
+    private readonly RepositoryLeaseWaiters? _leaseWaiters;
     private readonly int _remotePrepPushBudgetMinutes;
 
     public RemoteWorkspaceService(
@@ -48,7 +49,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         IRepositoryMutationLease? leases = null,
         IWorkspaceReservationJournal? reservations = null,
         IOptions<DelegationSettings>? settings = null,
-        IRunnerMirrorPublisher? mirrorPublisher = null)
+        IRunnerMirrorPublisher? mirrorPublisher = null,
+        RepositoryLeaseWaiters? leaseWaiters = null)
     {
         _runners = runners;
         _git = git;
@@ -57,6 +59,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         _leases = leases;
         _reservations = reservations;
         _mirrorPublisher = mirrorPublisher ?? new PhoneHomeRunnerMirrorPublisher(runners);
+        _leaseWaiters = leaseWaiters;
         var configured = settings?.Value ?? new DelegationSettings();
         SyncBudget = TimeSpan.FromSeconds(configured.RunnerSyncBudgetSeconds);
         _remotePrepPushBudgetMinutes = configured.RemotePrepPushBudgetMinutes;
