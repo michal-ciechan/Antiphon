@@ -86,6 +86,10 @@ ANTIPHON_ORCHESTRATOR_INSTRUCTIONS, also GET /api/orchestrator-instructions. Rea
 start, after compaction and on a settings-changed note; it outranks numbers here and in the docs.
 Never edit it.
 
+Operator standing operating rules: docs/orchestration-loop.md#standing-operating-rules. Failures get
+a Debug task; keep the in-flight target on the landing host; an Interim Review never approves a land;
+one red witness plus one narrow green; a master land is not activation; rc ports are reviewed cherry-picks.
+
 Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.
 
 Model-tier names are **not AgentKind values**. `-Kind` selects `ClaudeCode`, `Grok`,

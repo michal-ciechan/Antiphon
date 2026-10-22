@@ -596,6 +596,21 @@ renders a row only when that row is enabled or held. A reminder names the shortf
 up to that shortfall under the same pipeline rules, or declare a hold with
 `scripts/keep-six.ps1`. The server does not dispatch.
 
+<a id="standing-operating-rules"></a>
+### Standing operating rules (operator, 2026-10-22; CARD-1469)
+
+The operator's standing rules for every orchestrator seat, in full. The `orchestrator` bundle, AGENTS.md and the antiphon-orchestrator and antiphon-delegate skills point here and restate nothing; numbers that the generated instructions file owns (caps, host budgets, pins, the keep-six target) are referenced, never copied.
+
+1. **Failures get a Debug task.** A failed dispatch, launch or infrastructure failure (`[task ... failed]` with a launch or save error, `Agent process did not become ready`, `Process exited`, `Dispatch failed before a session existed`) gets a Debug delegate immediately, briefed with the exact error text, times, task ids and what else was in flight; one retry is allowed as first aid so the in-flight target holds, but a retry is never the whole response. Search the board before filing the fix card; when the operator asks for Codex Astra debug tasks, dispatch them with `-Kind Codex -Level Frontier` and raise the Debug role cap through `scripts/dispatch-concurrency.ps1 set` with the operator's words as the reason.
+2. **Keep the in-flight target on the landing host.** The target counts tasks running on server2 that land onto master (section 9 of the generated instructions carries the live number; the operator said 7 on 2026-10-22), and desktop-only Windows work such as qualification monitors or CP-6 style runs is extra. Refill to the target after every completion; when the project cap is lower, raise it through `scripts/dispatch-concurrency.ps1 set` with the operator's words as the reason rather than exceeding it with `-IgnoreConcurrencyLimit`.
+3. **An Interim Review cannot approve a land.** When the plan's closed checkpoint list holds a row that cannot finish on the loaded host (a whole Unit lane), have the Code owner amend the plan first, descoping the row with the reason and the minimal-testing rule below and recording inherited reds as documented non-receipt rows, so that scope Full is reachable before the Final Review is commissioned.
+4. **Review verdict policy, no whack-a-mole.** `found` is for a regression, a new reachable fail-open or a test that cannot fail. After two rounds of example-by-example repairs, change the design (default-deny, one canonical pipeline or normaliser, a table with a witness per row) and tell the Review to report a new bypass class with one witness, never more examples of a closed class.
+5. **Verify the card binding.** Read the card title before binding a task to a card identifier (a task was once bound to the wrong card from memory); when no card fits, file the card first.
+6. **Settle a blocked task with a complete report.** Use `-Reply 'Accepted. The report is final. Stop now and do not take another turn.'`
+7. **Master lands are not activation.** AppHost and server2 run the rc tip, so a land never needs a restart by itself; restart only when the rc tip changed (the post-land server activation check in section 0).
+8. **Minimal testing.** One red witness plus one narrow green per task, with the rc roster as the gate; no whole-Unit or whole-lane runs from Code or Review.
+9. **rc ports.** Bug and test fixes for code already on the rc line go to master and to the rc line (a reviewed cherry-pick that makes a new rc tip); feature work is master-only. Check that the rc carries the prerequisite chain before porting (CARD-0856 found the rc lacked 27 CARD-1427/1428/1432 commits).
+
 ### Post-land miss retrospective (CARD-0811)
 
 Rule 6's post-land sibling. A defect that a Clean Review approved and that was found only in the
