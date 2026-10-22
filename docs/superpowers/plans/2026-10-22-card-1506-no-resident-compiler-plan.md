@@ -90,3 +90,10 @@ both take build slots and isolated output. No repetition after green.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | all | n/a | build-driver-environment | `pwsh -NoProfile -File scripts/test-build-driver-environment.ps1` | V-1, V-2, R-1, R-2 | 6 child scenarios and 4 direct cases, 0 failed (S1 intentionally red on Windows settings) | n/a | 2 |
+
+The shared definition-file fingerprint is left at its base value to avoid
+conflicting with concurrent target-wide fingerprint refreshes. A mismatching
+fingerprint safely forces verification builds; regenerate it on the integrated
+target with `scripts/audit-land-verification-graph.ps1 -Update`. The intermediate
+fingerprint-only commit is canceled by a later ordinary commit, not rewritten.
+Unbound controls: `docs/superpowers/mutations/2026-10-22-card-1506-no-resident-compiler-candidate.md`.
