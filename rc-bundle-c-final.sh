@@ -22,7 +22,7 @@ pick() {
   assert_source "$s"
   local -a drop=()
   while IFS= read -r p; do
-    case "$p" in docs/superpowers/plans/*|docs/superpowers/mutations/*|.antiphon/task-*.md) drop+=("$p");; esac
+    case "$p" in docs/superpowers/plans/*|docs/superpowers/mutations/*|docs/superpowers/reports/*|.antiphon/task-*.md) drop+=("$p");; esac
   done < <(git diff-tree --no-commit-id --name-only -r "$s")
   base=$(git rev-parse HEAD)
   if git cherry-pick -x "$s"; then
@@ -44,7 +44,7 @@ skip_docs() {
   local s=$1 p
   assert_source "$s"
   while IFS= read -r p; do
-    case "$p" in docs/superpowers/plans/*|docs/superpowers/mutations/*|.antiphon/task-*.md) ;;
+    case "$p" in docs/superpowers/plans/*|docs/superpowers/mutations/*|docs/superpowers/reports/*|.antiphon/task-*.md) ;;
       *) echo "STOP $s is not plan/report-only: $p"; exit 1;;
     esac
   done < <(git diff-tree --no-commit-id --name-only -r "$s")
@@ -144,9 +144,9 @@ pick 82083a4043c1cf41b863d1aafadf8e16e6dc5a9a
 pick c4af6e8c7f679fe2327401404d2e81f7277700e4
 pick 9c4143a0dd980b54f0b2916578176553dac5921a
 pick f6cf651292a64ba4f7e7edfd9b845697503b8963
-pick 9223cac4fd5d3b4a545c2c806ad9db48587a0dd9
+skip_docs 9223cac4fd5d3b4a545c2c806ad9db48587a0dd9
 pick 565ce3cb987314326392aa0caa99dd4eb79a465d
-pick 5ffed3091a204c08f87421693d9bbb43e1692f82
+skip_docs 5ffed3091a204c08f87421693d9bbb43e1692f82
 
 # CARD-1519 / CARD-1457: retain CARD-1232's exact missing allowlist context.
 # Only this path from the prerequisite is ported; no CARD-1232 runtime/test code.
