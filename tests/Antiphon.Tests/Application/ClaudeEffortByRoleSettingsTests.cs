@@ -94,8 +94,8 @@ public sealed class ClaudeEffortByRoleSettingsTests
     {
         ClaudeLaunchArgs.CliEfforts.ShouldBe(new[] { "low", "medium", "high", "xhigh", "max" });
         foreach (var effort in ClaudeLaunchArgs.CliEfforts)
-            ClaudeEffortIntent.IsEffort(effort).ShouldBeTrue(effort);
-        ClaudeEffortIntent.IsEffort("ultra").ShouldBeFalse();
+            ClaudeEffortPrompt.IsEffort(effort).ShouldBeTrue(effort);
+        ClaudeEffortPrompt.IsEffort("ultra").ShouldBeFalse();
         ClaudeLaunchArgs.Canonical("ultra").ShouldBeNull();
         ClaudeLaunchArgs.Canonical(null).ShouldBeNull();
     }
