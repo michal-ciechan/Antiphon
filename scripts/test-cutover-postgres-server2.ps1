@@ -6,7 +6,9 @@
 
     No production database, no server2 socket, no AppHost restart.
     HTTP is pointed at a closed loopback port. External commands are
-    shadowed by a PATH fake that records a call and fails.
+    shadowed by a PATH fake that records a call and fails. Window cases
+    use an ephemeral loopback -TailnetPort and a temporary -Repository
+    (CARD-1417), so nothing binds 5432 or reads this checkout's marker.
     ASCII-only for pwsh 7 and Windows PowerShell 5.1.
 #>
 param([string]$Case = '')
@@ -344,7 +346,8 @@ function New-C1407WindowArgs {
         [string]$Identity,
         [string]$PendingFixture,
         [string]$CommandHost,
-        [string]$Repository = ''
+        [string]$Repository = '',
+        [int]$TailnetPort = 0
     )
     $repo = $Repository
     if ([string]::IsNullOrWhiteSpace($repo)) { $repo = Split-Path $here -Parent }
@@ -371,6 +374,9 @@ function New-C1407WindowArgs {
     )
     if (-not [string]::IsNullOrWhiteSpace($PendingFixture)) {
         $windowArgs += @('-LandPendingFixture', $PendingFixture)
+    }
+    if ($TailnetPort -gt 0) {
+        $windowArgs += @('-TailnetPort', [string]$TailnetPort)
     }
     return $windowArgs
 }
@@ -444,16 +450,19 @@ function Invoke-C1407WindowRun {
         [string]$MaintenanceExit = ''
     )
     $result = @{
-        ExitCode = 99
-        Text     = ''
-        Lines    = @()
-        Stdin    = @()
-        Ready    = $false
-        Error    = ''
+        ExitCode    = 99
+        Text        = ''
+        Lines       = @()
+        Stdin       = @()
+        Ready       = $false
+        Error       = ''
+        TailnetPort = 0
+        Repository  = ''
     }
     $fake = $null
     $api = $null
     $tcp = $null
+    $ownRepo = $null
     $snap = $null
     $drill = $null
     $secret = $null
@@ -505,14 +514,21 @@ function Invoke-C1407WindowRun {
         else { Remove-Item Env:C1407_ENTER_MARKER -ErrorAction SilentlyContinue }
         if (-not [string]::IsNullOrWhiteSpace($MaintenanceExit)) { $env:C1407_MAINTENANCE_EXIT = $MaintenanceExit }
         else { Remove-Item Env:C1407_MAINTENANCE_EXIT -ErrorAction SilentlyContinue }
+        # CARD-1417 A-4: an ephemeral loopback port, never 5432, and a temporary repository
+        # so no case reads or binds anything the real checkout or a real Postgres owns.
+        $tailnetPort = 0
         if (-not $SkipTcp) {
-            $tcp = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 5432)
-            $tcp.Server.SetSocketOption(
-                [System.Net.Sockets.SocketOptionLevel]::Socket,
-                [System.Net.Sockets.SocketOptionName]::ReuseAddress,
-                $true)
+            $tcp = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
             $tcp.Start()
+            $tailnetPort = ([System.Net.IPEndPoint]$tcp.LocalEndpoint).Port
         }
+        $result.TailnetPort = $tailnetPort
+        $repoUsed = $Repository
+        if ([string]::IsNullOrWhiteSpace($repoUsed)) {
+            $ownRepo = New-C1407TempRepo
+            $repoUsed = $ownRepo
+        }
+        $result.Repository = $repoUsed
         $sha = '0123456789abcdef0123456789abcdef01234567'
         $apiBase = $script:ClosedApi
         if (-not $SkipApi) {
@@ -542,7 +558,7 @@ function Invoke-C1407WindowRun {
         }
         $window = New-C1407WindowArgs -ApiBase $apiBase -Sha $sha -Snapshot $snap -Drill $drill `
             -Secret $secret -DumpDirectory $dumpDir -Recipient $recipient -Identity $identity `
-            -PendingFixture $fixture -CommandHost (Join-Path $fake.Dir 'pwsh') -Repository $Repository
+            -PendingFixture $fixture -CommandHost (Join-Path $fake.Dir 'pwsh') -Repository $repoUsed -TailnetPort $tailnetPort
         if ($ExtraArgs -and $ExtraArgs.Count -gt 0) { $window += $ExtraArgs }
         $ran = Invoke-C1407Cutover -Fake $fake -Arguments $window
         $result.ExitCode = $ran.ExitCode
@@ -585,6 +601,7 @@ function Invoke-C1407WindowRun {
         Remove-C1407Tree $secret
         Remove-C1407Tree $recipient
         Remove-C1407Tree $dumpDir
+        Remove-C1407Tree $ownRepo
     }
     return [pscustomobject]$result
 }
@@ -1695,6 +1712,7 @@ function Test-W30 {
             $port = [int]$m.Groups[1].Value
             if ($port -eq 5432) { $reasons += 'window port-5432' }
             if ($port -lt 1024) { $reasons += "window port-privileged $port" }
+            if ($port -ne [int]$run.TailnetPort) { $reasons += "window port-mismatch script=$port harness=$($run.TailnetPort)" }
         }
         $repo = $null
         foreach ($line in @($run.Lines)) {

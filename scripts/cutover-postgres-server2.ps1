@@ -10,7 +10,12 @@
 
     The script never prints a password or a connection string, never removes a
     data directory, and never passes a worktree override to the restart script.
-    Start it with pwsh -File. A same-process call cannot see -ConfirmWindow.
+    Start it with pwsh -File. A same-process call cannot see -ConfirmWindow,
+    and a value such as -HoldReason /ConfirmWindow never opens the window.
+    -TailnetPort (default 5432) is the listener the phase 0 connect probes;
+    tests point it at a loopback port. A failed keep-six -ClearHold at exit
+    prints a RECOVERY line naming the agent. An enter that wrote the marker
+    and then failed names the marker; exit 2 means it already existed.
     A real run that finds logs/apphost.down-on-purpose already present refuses
     before it enters maintenance. A marker that appears before the exclusive
     enter is not this run's, and this run does not clear it. After this run
@@ -42,6 +47,8 @@ param(
     [string]$Server2SshHost = 'server2',
     [string]$Server2ComposeDir,
     [string]$TailnetAddress,
+    [ValidateRange(1, 65535)]
+    [int]$TailnetPort = 5432,
     [string]$HoldAgent,
     [string]$HoldReason,
     [string]$HoldUntil,
@@ -67,17 +74,46 @@ function Fail-Cutover {
     exit $Code
 }
 
+# CARD-1417 A-1: the names this script binds, split by whether they consume the next token.
+$script:CutoverSwitchParameters = @()
+$script:CutoverValueParameters = @()
+foreach ($entry in $MyInvocation.MyCommand.Parameters.GetEnumerator()) {
+    if ($entry.Value.SwitchParameter) { $script:CutoverSwitchParameters += [string]$entry.Key }
+    else { $script:CutoverValueParameters += [string]$entry.Key }
+}
+
+function Test-CutoverValueParameterName {
+    # True when the dash token names (exactly, or as a unique prefix the binder accepts)
+    # a parameter that takes the following token as its value.
+    param([string]$Token)
+    if ([string]::IsNullOrEmpty($Token)) { return $false }
+    $all = @($script:CutoverValueParameters) + @($script:CutoverSwitchParameters)
+    foreach ($name in $all) {
+        if ($name.Equals($Token, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return (@($script:CutoverValueParameters) -contains $name)
+        }
+    }
+    $candidates = @($all | Where-Object { $_.StartsWith($Token, [System.StringComparison]::OrdinalIgnoreCase) })
+    if ($candidates.Count -ne 1) { return $false }
+    return (@($script:CutoverValueParameters) -contains $candidates[0])
+}
+
 function Test-ExactNamedSwitch {
+    # Only a dash token counts. A token that is the value of the previous value-taking
+    # parameter is skipped, so -HoldReason /ConfirmWindow cannot open the window.
     param([string]$Name)
+    $skipValue = $false
     foreach ($token in @([Environment]::GetCommandLineArgs())) {
         $text = [string]$token
+        if ($skipValue) { $skipValue = $false; continue }
+        if (-not $text.StartsWith('-')) { continue }
         if ($text.StartsWith('--')) { $text = $text.Substring(1) }
-        if ($text.StartsWith('-')) { $text = $text.Substring(1) }
-        elseif ($text.StartsWith('/')) { $text = $text.Substring(1) }
-        else { continue }
+        $text = $text.Substring(1)
         $colon = $text.IndexOf(':')
-        if ($colon -ge 0) { $text = $text.Substring(0, $colon) }
+        $carriesValue = ($colon -ge 0)
+        if ($carriesValue) { $text = $text.Substring(0, $colon) }
         if ($text.Equals($Name, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+        if (-not $carriesValue -and (Test-CutoverValueParameterName $text)) { $skipValue = $true }
     }
     return $false
 }
@@ -224,8 +260,8 @@ function Invoke-CutoverCommand {
 function Invoke-CutoverMaintenance {
     param([switch]$Clear)
     $path = Join-Path $Repository 'scripts/set-apphost-maintenance.ps1'
+    $marker = Get-CutoverMaintenanceMarkerPath
     if (-not $Clear) {
-        $marker = Get-CutoverMaintenanceMarkerPath
         if (Test-Path -LiteralPath $marker) {
             Fail-Cutover 'REFUSED: maintenance marker already exists at logs/apphost.down-on-purpose. This run did not enter it. The operator must clear the marker before the window can start.'
         }
@@ -238,9 +274,18 @@ function Invoke-CutoverMaintenance {
     else { $maintArgs += '-EnterIfAbsent' }
     $code = Invoke-CutoverCommand -ArgumentList $maintArgs
     if ($code -ne 0) {
-        $which = 'enter'
-        if ($Clear) { $which = 'clear' }
-        Fail-Cutover ('REFUSED: AppHost maintenance ' + $which + ' exit check failed.')
+        if ($Clear) {
+            Fail-Cutover 'REFUSED: AppHost maintenance clear exit check failed.'
+        }
+        # CARD-1417 A-3: -EnterIfAbsent exits 2 only when the marker already existed (create-new
+        # semantics). Any other failure happened after this run wrote the marker, or before it.
+        if ($code -eq 2) {
+            Fail-Cutover 'REFUSED: AppHost maintenance enter exit check failed. Exit 2: the marker logs/apphost.down-on-purpose already existed. This run did not enter it and does not clear it. The operator must clear the marker before the window can start.'
+        }
+        if (Test-Path -LiteralPath $marker) {
+            Fail-Cutover ('REFUSED: AppHost maintenance enter exit check failed. Exit ' + $code + ': the marker logs/apphost.down-on-purpose was written by this run before the failure and is left in place. Check the watchdog task, then clear it with scripts/set-apphost-maintenance.ps1 -Clear before retrying.')
+        }
+        Fail-Cutover ('REFUSED: AppHost maintenance enter exit check failed. Exit ' + $code + ': the marker logs/apphost.down-on-purpose is absent. Nothing was entered.')
     }
     if ($Clear) { Write-Host 'Maintenance lifted. Watchdog may run again.' }
     else { Write-Host 'Maintenance entered before quiesce. Watchdog will not restart AppHost.' }
@@ -348,7 +393,13 @@ function Complete-CutoverWindowExit {
             Write-Host 'RECOVERY: rollback did not finish. Do not start a second copy if the restart lock is held. Maintenance entered by this run will be lifted.'
         }
         if ($held) {
-            try { Clear-CutoverRecordedHold | Out-Null } catch {
+            try {
+                # CARD-1417 A-2: a non-zero clear is reported, never swallowed.
+                $holdCode = Clear-CutoverRecordedHold
+                if ($holdCode -ne 0) {
+                    Write-Host ('RECOVERY: keep-six -ClearHold exited ' + $holdCode + '. The dispatch hold for agent ' + $HoldAgent + ' is still recorded. Clear it with scripts/keep-six.ps1 -ClearHold -Agent ' + $HoldAgent + '.')
+                }
+            } catch {
                 Write-Host 'RECOVERY: keep-six -ClearHold failed. The original error still stands.'
             }
         }
@@ -690,14 +741,15 @@ function Invoke-CutoverWindow {
 
     $client = New-Object System.Net.Sockets.TcpClient
     try {
-        $wait = $client.BeginConnect($TailnetAddress, 5432, $null, $null)
+        $wait = $client.BeginConnect($TailnetAddress, $TailnetPort, $null, $null)
         $opened = $wait.AsyncWaitHandle.WaitOne(3000, $false) -and $client.Connected
     } finally {
         $client.Close()
     }
     if (-not $opened) {
-        Fail-Cutover 'REFUSED: tailnet 5432 did not accept a desktop connect. StopOnly was not run.'
+        Fail-Cutover ('REFUSED: tailnet ' + $TailnetPort + ' did not accept a desktop connect. StopOnly was not run.')
     }
+    Write-Host ('PHASE 0 tailnet ' + $TailnetPort + ' accepted a desktop connect.')
 
     Invoke-CutoverMaintenance
     $script:CutoverEnteredMaintenance = $true
