@@ -12,7 +12,19 @@ Test-only change: `CheckCompactionFixture.cs`, `CheckCompactionCrashWorker.cs`, 
 - `74d562b8fae2a34ed76f2007538d7c38dc449a85`: S1 compile fix. The sed had rewritten the `Request` helper's string parameter.
 - `dbf1345e4825f37b50e18bc5fac80e71b5d2fc6a`: S1 witness repair. The failure message awaited stderr, so the witness blocked until the child exited.
 - `4c4db690b5987a43f1913f66b730948d02112f88`: S2, the fix and the plan.
-- This report commit. The receipt run starts at this tip.
+- `adedcfdbc06fcae1c7654a19bc42821568b5a5b7`: report v1.
+- `e14737f69d47cad5fb18ac72e50404843b3c0111`: S2 repair. The busy produce case ends the turn before the scanner starts again, in the original order.
+- This report commit (v2). The receipt run starts at this tip.
+
+## Checkpoint run 1 (`20261022-152908-dd89`, at `adedcfdb`, superseded)
+
+- CP-1: 3 of 3 passed.
+- CP-3: 9 of 9 passed.
+- CP-2: 15 of 20 passed. `Legacy_produced_note_survives_pre_enqueue_worker_death(True)` failed 0/5, deterministically. The new timeout diagnostic showed the cause in every case: the notification was `AwaitingReceipt`, the queued row was `Pending` with 0 attempts, and 12 scans had run.
+  - Cause: S2 had moved the readiness wait ahead of the busy `TurnEnd`. The `TurnEnd` the parent writes after the scanner's first scan is never noticed by the child's queue. The original test wrote it 500 ms after spawn, before the child attached, so `busy=True` never exercised a scan while Working.
+  - Fixed in `e14737f6` by restoring the original order.
+  - Open for the caller: `busy=True` cannot prove delivery after a Working scan in this harness. That is a coverage gap, not a regression.
+- No `/tmp/antiphon-c79-crash-*` roots, no `.antiphon/acceptance` under the outputs, and no orphan children were left after the run. The outputs were kept only because a red run keeps them (`still-present`); they were deleted by hand.
 
 ## S1 red evidence
 
