@@ -177,7 +177,8 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
             sp.GetRequiredService<RemoteWorkspaceService>(),
             sp.GetRequiredService<IEventBus>(),
             DebtClock,
-            sp.GetRequiredService<ILogger<SettlementSyncRecoveryService>>()));
+            sp.GetRequiredService<ILogger<SettlementSyncRecoveryService>>(),
+            sp.GetRequiredService<IOptions<DelegationSettings>>()));
         services.AddScoped<AgentTaskDispatcher>();
         services.AddScoped<AgentReviewCheckpointService>();
         services.AddScoped<AgentFilesService>();
