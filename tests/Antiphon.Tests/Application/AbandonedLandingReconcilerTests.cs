@@ -179,6 +179,8 @@ public sealed class AbandonedLandingReconcilerTests
     {
         Id = Guid.NewGuid(), TaskId = taskId, SchemaVersion = schema, Active = true, Phase = phase,
         Publication = publication, RemoteConfirmedAt = remoteConfirmedAt, LastReason = lastReason,
+        // CK_AgentTaskLandings_V2Approval: a schema-2/3 row carries its approval and reviewed source.
+        ApprovalLandRequestId = Guid.NewGuid(), ReviewedSourceSha = new string('a', 40), ApprovalKind = LandApprovalKind.ExplicitCaller,
         PushExitCode = pushExitCode, PushStartedAt = pushExitCode is null ? null : updatedAt,
         RepositoryPath = "/repo", WorktreePath = "/trees/x", LandWorktreePath = "/trees/land/x",
         CommonDirectory = "/repo/.git", GitDirectory = "/repo/.git", SourceFullRef = "refs/heads/feat/x",
