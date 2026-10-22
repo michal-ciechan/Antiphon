@@ -811,6 +811,7 @@ function Test-StagingHygiene {
         Set-Content -LiteralPath (Join-Path $prior 'antiphon-20261021T010101Z.dump') -Value 'owned' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $prior 'notes.txt') -Value 'keep' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $prior 'dev-backup-20261020.dump') -Value 'keep' -Encoding ASCII
+        (Get-Item -LiteralPath $prior -Force).LastWriteTimeUtc = [datetime]::UtcNow.AddHours(-8)
         $ok = Initialize-SnapshotStaging $dir
         Assert-True ($ok -eq $true) 'staging mode applied' "ok=$ok"
         Assert-True (Test-Path -LiteralPath (Join-Path $dir 'old.dump')) 'root dump kept' 'old.dump missing'
@@ -1133,6 +1134,65 @@ function Test-StagingRefusesForeignRoot {
     } finally { Remove-Fixture $fx }
 }
 
+function Test-StagingSkipsLiveRun {
+    if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'StagingSkipsLiveRun script exists' $scriptPath; return }
+    . $scriptPath
+    if (-not (Get-Command Initialize-SnapshotStaging -ErrorAction SilentlyContinue)) {
+        Write-Fail 'live staging initializer' 'Initialize-SnapshotStaging missing'
+        return
+    }
+    $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('card1413-live-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $dir }
+    $old = [datetime]::UtcNow.AddHours(-8)
+    $dumpName = 'antiphon-20261021T010101Z.dump'
+    $lock = $null
+    try {
+        $stale = Join-Path $dir ('run-' + ('aa' * 16))
+        New-Item -ItemType Directory -Path $stale | Out-Null
+        Set-Content -LiteralPath (Join-Path $stale $dumpName) -Value 'stale' -Encoding ASCII
+        (Get-Item -LiteralPath $stale -Force).LastWriteTimeUtc = $old
+        $live = Join-Path $dir ('run-' + ('bb' * 16))
+        New-Item -ItemType Directory -Path $live | Out-Null
+        Set-Content -LiteralPath (Join-Path $live $dumpName) -Value 'live' -Encoding ASCII
+        $lock = [System.IO.File]::Open((Join-Path $live 'run.lock'), [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        (Get-Item -LiteralPath $live -Force).LastWriteTimeUtc = $old
+        $fresh = Join-Path $dir ('run-' + ('cc' * 16))
+        New-Item -ItemType Directory -Path $fresh | Out-Null
+        Set-Content -LiteralPath (Join-Path $fresh $dumpName) -Value 'fresh' -Encoding ASCII
+        $mixed = Join-Path $dir ('run-' + ('dd' * 16))
+        New-Item -ItemType Directory -Path $mixed | Out-Null
+        Set-Content -LiteralPath (Join-Path $mixed $dumpName) -Value 'mixed' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $mixed 'notes.txt') -Value 'keep' -Encoding ASCII
+        (Get-Item -LiteralPath $mixed -Force).LastWriteTimeUtc = $old
+        $ok = Initialize-SnapshotStaging $dir
+        Assert-True ($ok -eq $true) 'live staging opens' "ok=$ok"
+        Assert-True (-not (Test-Path -LiteralPath $stale)) 'old empty run directory is removed' $stale
+        Assert-True (Test-Path -LiteralPath (Join-Path $live $dumpName)) 'locked run keeps its plaintext' 'live dump swept'
+        Assert-True (Test-Path -LiteralPath (Join-Path $live 'run.lock')) 'locked run keeps its lock' 'live lock removed'
+        Assert-True (Test-Path -LiteralPath (Join-Path $fresh $dumpName)) 'fresh run keeps its plaintext' 'fresh dump swept'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $mixed $dumpName))) 'old run plaintext is swept' 'mixed dump remains'
+        Assert-True (Test-Path -LiteralPath (Join-Path $mixed 'notes.txt')) 'old run notes are kept' 'mixed notes removed'
+        Assert-True (Test-Path -LiteralPath $mixed) 'old run directory with notes is kept' $mixed
+        $run = [string]$script:SnapshotRunStaging
+        Assert-True (-not [string]::IsNullOrWhiteSpace($run) -and (Test-Path -LiteralPath $run)) 'live staging opens a run directory' $run
+        $lockPath = Join-Path $run 'run.lock'
+        Assert-True (Test-Path -LiteralPath $lockPath) 'own run holds a lock file' $lockPath
+        $probe = ''
+        if (Test-Path -LiteralPath $lockPath) {
+            $pwsh = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
+            $probeScript = "try { `$f = [System.IO.File]::Open('$lockPath', 'Open', 'ReadWrite', 'None'); `$f.Dispose(); 'free' } catch { 'held' }"
+            $probe = ((& $pwsh -NoProfile -Command $probeScript) | Out-String).Trim()
+        }
+        Assert-True ($probe -eq 'held') 'own run lock is held against another process' $probe
+        $removed = Remove-SnapshotStaging $run
+        Assert-True ($removed -eq $true -and -not (Test-Path -LiteralPath $run)) 'own run directory is removed with its lock' "removed=$removed"
+    } finally {
+        if ($lock) { $lock.Dispose() }
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 $all = @(
     'WhatIfPlan', 'MissingRecipient', 'RecipientInsideDestination',
     'DrillRefusesProduction', 'DrillPlan', 'Retention',
@@ -1142,7 +1202,8 @@ $all = @(
     'PublishRejectsTinyDump', 'PublishRejectsMissingTableData',
     'RetentionIgnoresConflictCopy', 'StagingHygiene', 'StagingPreservesOperatorFiles',
     'StagingRefusesLink', 'StagingOutsideDestination', 'DrillRemovesScratch',
-    'DrillRefusesTaintedReuse', 'DockerDaemonPinned', 'StagingRefusesForeignRoot'
+    'DrillRefusesTaintedReuse', 'DockerDaemonPinned', 'StagingRefusesForeignRoot',
+    'StagingSkipsLiveRun'
 )
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
