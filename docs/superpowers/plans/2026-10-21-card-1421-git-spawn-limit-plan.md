@@ -122,13 +122,13 @@ Minimal by brief. The new tests are the roster and limit tests. They can go red:
 
 ### Checkpoints
 
-| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
-|---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1421-lanes/` | rosters | `/*/*/ProcessSpawnLimitTests/*` | V-1, V-2 | all pass, 0 failed | 7 | 8 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1421-repeat/` | git-lane-repeat | `/*/*/(LandingGitTests*)\|(GitIndexLockPathTests*)\|(AgentTaskLandIndexLockTests*)\|(GitWorkspaceServiceIndexLockTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(CardFilePrivacyConcurrencyTests*)\|(AgentTaskLandConcurrencyTests*)/*` | V-3, run with checkpoint-tool `--repeat 3` and qualified with `--expected-repeat 3` | 0 failed in every ordinal | 150 | 25 |
-| CP-3 | S2 | CP-1 (-NoBuild) | pty-beside-git | `/*/*/(SessionMessageQueuePtyIntegrationTests*)\|(GatedCommitServiceTests*)\|(AgentTaskWorktreeBaseResolverTests*)/*` | V-4 | 0 failed | 60 | 12 |
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Repeat |
+|---|---|---|---|---|---|---|---:|---:|---:|
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1421-lanes/` | rosters | `/*/*/ProcessSpawnLimitTests/*` | V-1, V-2 | all pass, 0 failed | 7 | 8 | |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1421-repeat/` | git-lane-repeat | `/*/*/(LandingGitTests*)\|(GitIndexLockPathTests*)\|(AgentTaskLandIndexLockTests*)\|(GitWorkspaceServiceIndexLockTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(CardFilePrivacyConcurrencyTests*)\|(AgentTaskLandConcurrencyTests*)/*` | V-3, run with checkpoint-tool `--repeat 3` and qualified with `--expected-repeat 3` | 0 failed in every ordinal | 150 | 25 | 3 |
+| CP-3 | S2 | CP-1 (-NoBuild) | pty-beside-git | `/*/*/(SessionMessageQueuePtyIntegrationTests*)\|(GatedCommitServiceTests*)\|(AgentTaskWorktreeBaseResolverTests*)/*` | V-4 | 0 failed | 60 | 12 | |
 
-Run S1-S2 as one checkpoint-tool run (`--after S2`). CP-2 needs its own build output if the tool requires one per repeat N (testing guide, Repeat proof). In that case give it `bin-c1421-repeat/`. `Min` is a floor taken from source row counts: confirm `executed=` in each CHECKPOINT line. S3 is docs-only and needs no checkpoint.
+Run S1-S2 as one checkpoint-tool run (`--after S2`). CP-2 needs its own build output because the tool requires one per repeat N (testing guide, Repeat proof); it has `bin-c1421-repeat/`, and the table's `Repeat` column carries its 3 so one `run --plan` executes CP-1 once and CP-2 three times. `Min` is a floor taken from source row counts: confirm `executed=` in each CHECKPOINT line. S3 is docs-only and needs no checkpoint.
 
 ### Cost
 
@@ -143,12 +143,19 @@ One `Antiphon.Tests` build, the roster row, one repeated subset row and one mixe
   - `DispatcherSiblingInspectionSchedulingTests` (`.BriefRecovery.cs`, `.Delivery.cs`: `BridgeQueueHarness`, a Raw `/bin/sh` agent).
   - `PipelineSpeedIntegrationTests` (`.Http.cs`: `C544DeliveryRig`, an `AntiphonWebAppFactory`).
   - `DeliverableBundleServiceTests` (the renderer browser-launch seam, exercised with a fake `fake-browser.sh`).
-  - `AgentTaskLandIndexLockTests` (returned after CP-2 run `20261021-215501-51ab`). Its stale-lock assertions read `GitIndexLock.CensusGitProcesses`, a census of every `git` process on the host. A git process that exits mid-census can get `StartUtc = null`, which `HasHolder` counts as a holder. That is the likely reason `C688_AdmissionProbesLandWorktreeAndMainCheckoutWithoutListing` read `git_index_lock_held` in 1 of 3 ordinals. The class is in the strict roster now. Strict only lowers the overlap: git-lane classes can still run beside it (F-4).
-  107 classes move.
+  - `AgentTaskLandIndexLockTests` (returned after CP-2 run `20261021-215501-51ab`). Its stale-lock assertions read `GitIndexLock.CensusGitProcesses`, a census of every `git` process on the host. A git process that exits mid-census can get `StartUtc = null`, which `HasHolder` counts as a holder. That is the likely reason `C688_AdmissionProbesLandWorktreeAndMainCheckoutWithoutListing` read `git_index_lock_held` in 1 of 3 ordinals. The class is in the strict roster now. Strict only lowers the overlap: git-lane classes can still run beside it (F-4, since closed by CARD-1436).
+  104 classes move (107 at the end of task 40c93127; the repair below returned three more).
 - **CP-2 names `GitIndexLockPathTests`.** In `GitIndexLockTests.cs` the limiter sits on `GitIndexLockPathTests`. `GitIndexLockTests` is a unit class with no limiter, so the planned `(GitIndexLockTests*)` operand would not have run the git class.
 - **CP-2 has its own build, `bin-c1421-repeat/`.** The checkpoint tool refuses to reuse a build for a row with a different repeat count (`reused build ... has a different repeat`).
 - **D-1 bisect claim corrected.** Setting `ANTIPHON_TEST_GIT_SPAWN_LIMIT=1` serialises the git lane only. The strict lane and the git lane are separate limiters, so a strict class still runs beside a git-lane class. The override does not reproduce the base ordering. CP-2 rerun `20261021-222525-c7aa` (strict lane) still read `held` in 1 of 3 C688 ordinals.
 - **Git hooks count as git.** `LandingGitTests`, `CardFileGitFailureAcceptanceTests` and `GitWorkspaceServiceIndexLockTests` install `#!/bin/sh` git hooks. `git` itself starts those hooks, and `LandingGit`'s budget kill ends them with it. They are treated as git children, not test-started processes.
+
+## Repair amendments (task 4721be7c, Review b529639c D-1)
+
+- **Three more Appendix-A classes stay strict.** `WorktreeGuardedCleanupTests`, `AgentTaskLandHalfResetWindowsTests` and `AgentTaskLandHoldVisibilityTests` call `DirectoryLink.TryCreate` (`tests/Antiphon.Tests/TestHelpers/DirectoryLink.cs`). On Windows that runs `Scripts/Fixtures/directory-link.ps1` through `DirectoryLinkCommand.RunAsync` and `ScriptHarnessProcess`, so the class starts pwsh beside git. The census read `git` only. They carry `[ParallelLimiter<ProcessSpawnLimit>]` again and sit in `StrictClasses`. 104 classes move. `AgentTaskLandIndexLockTests` is not moved.
+- **Guard test.** `ProcessSpawnLimitTests.Git_lane_classes_do_not_reach_the_pwsh_backed_link_helpers` reflects over every type that carries `[ParallelLimiter<GitProcessSpawnLimit>]`, its nested types (async state machines, lambda closures, local functions, partial-class siblings compile into the same type), their field, parameter, return and local types and the members their IL names, and fails with one line per reference to `DirectoryLink`, `DirectoryLinkCommand` or `ScriptHarnessProcess`. Red at `a535b5d055ef358efe4fcb8373949be0efccee6e` with 13 references across the three classes; green once they returned to the strict lane. It is a direct-reference guard: a helper that reaches those types through a further test helper is not traced.
+- **Checkpoints rerun at the final tip.** CP-1 and CP-2 (`--repeat 3`, now the table's `Repeat` column) run again on server2; CP-3 is not rerun (the repair brief asks for CP-1 and CP-2 only). The CP-2 selection is unchanged from task 40c93127, which already ran it twice at 3; this third run is the code-change rerun the repair brief requires.
+- **Landing note.** This plan file was landed on master as `a0e95fadb` (the Plan stage copy, identical to this branch's `e716f79e0`), so `git merge-tree --write-tree origin/master HEAD` reports an add/add conflict on it. A commit-by-commit replay (what landing does) applies cleanly because the base copies are identical; this branch's amended plan is the version to keep.
 
 ## Follow-ups (file as cards, not in this card)
 
@@ -156,7 +163,7 @@ One `Antiphon.Tests` build, the roster row, one repeated subset row and one mixe
 - **F-2:** trace `tools/Antiphon.Checkpoints` spawns for the three `Checkpoints/*` git candidates (D-5).
 - **F-3:** classify the 14 limited files where the census found no spawn signal (for example `LandingAdmissionControlTests`, `OutputDistillationApplyRaceTests`, `BuildSlotClientTests`). They may not need any limiter. Re-measure lane occupancy from the next full Windows rc run.
 
-- **F-4:** make the stale-lock census race-free. `GitIndexLock.CensusGitProcesses` can count a git process that exits mid-census as a holder (`StartUtc = null`). Either skip exited processes in production, or let `AgentTaskLandIndexLockTests` inject a fixture-scoped census. Until then, any concurrent git on the host, the git lane included, can flip its stale assertions to held.
+- **F-4 (closed by CARD-1436, master `76cd76fadc8cac31fbdf6fcf2304400f6ed32f0a`):** `GitIndexLock.CensusGitProcesses` no longer counts a git that exits mid-census (an unreadable start time plus `HasExited` drops it; a live git with an unreadable start still counts), and `LandingGit` takes the census through an `IProcessSource` seam so a fixture can scope it to its own children. A live git older than the lock still counts as a holder, so `AgentTaskLandIndexLockTests` stays on the strict lane.
 
 ## Appendix A: classes that move to `GitProcessSpawnLimit` (114 files)
 
