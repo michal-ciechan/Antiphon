@@ -1549,6 +1549,413 @@ public sealed class LandNonCodeSkipTests
         }
     }
 
+    // CARD-1409 repair 4 (Review 937bb1c9 F1): a docs glob is classified by what it resolves to, not by
+    // sample names. Every wildcard pattern whose first segment can be docs/ refuses, a pattern is expanded
+    // against the tracked tree and a non-docs markdown or text match outside the allow-list refuses too.
+    [Test]
+    public async Task C1409_DocsGlobRefusesByResolvedPath()
+    {
+        foreach (var glob in new[] { "../docs/guide.*", "../docs/g*", "../docs/*guide*", "../docs/guide.m?", "../docs/**/guide*", "../docs/s*/**/*.md", "../docs/future/*.md", "../**/*.md" })
+        {
+            await AssertUpdateRefusesAsync(new Dictionary<string, string>
+            {
+                ["docs/guide.md"] = "# guide",
+                ["docs/sub/s.md"] = "# s",
+                ["server/App.csproj"] = $"""
+                    <Project Sdk="Microsoft.NET.Sdk">
+                      <ItemGroup>
+                        <EmbeddedResource Include="{glob}" />
+                      </ItemGroup>
+                    </Project>
+                    """,
+            }, "includes docs markdown", "server/App.csproj EmbeddedResource Include=" + glob);
+        }
+
+        // A glob outside docs/ that selects a tracked markdown file the allow-list does not name refuses by the match.
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/fixtures/notes.md"] = "# notes",
+            ["server/fixtures/a.jsonl"] = "{}",
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <Content Include="fixtures/**" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "markdown or text document", "server/App.csproj Content Include=fixtures/** -> server/fixtures/notes.md");
+
+        // The real repository's embedded markdown, its sibling allow-list files and a fixture glob with no document stay approved.
+        var allowed = await InitAuditTreeAsync(new Dictionary<string, string>
+        {
+            ["server/Bundles/a.md"] = "# a",
+            ["server/Bundles/README.md"] = "# readme",
+            ["server/Fixtures/x.jsonl"] = "{}",
+            ["server/slow-tests-allowlist.txt"] = "",
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <EmbeddedResource Include="Bundles\*.md" Exclude="Bundles\README.md" />
+                    <Content Include="Fixtures\*" />
+                    <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
+                  </ItemGroup>
+                </Project>
+                """,
+        });
+        try
+        {
+            var ran = await RunAuditAsync(allowed, "en-US", "-Update");
+            ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
+            ran.Stdout.ShouldContain("count=1");
+        }
+        finally
+        {
+            Directory.Delete(allowed, recursive: true);
+        }
+    }
+
+    // CARD-1409 repair 4 (Review 937bb1c9 F1, real repository): widening the card-0449 captures include of
+    // tests/Antiphon.Tests/Antiphon.Tests.csproj to '...card-0449-claude-effort-dialog-*' selects the
+    // readiness plan markdown and refuses; the unchanged file passes in the same scratch tree.
+    [Test]
+    public async Task C1409_RealTestProjectWidenedToPlanGlobRefuses()
+    {
+        var repo = DelegateScriptRunner.RepoRoot;
+        const string projectPath = "tests/Antiphon.Tests/Antiphon.Tests.csproj";
+        const string captures = "../../docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-captures.json";
+        const string widened = "../../docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-*";
+        var real = await File.ReadAllTextAsync(Path.Combine(repo, projectPath.Replace('/', Path.DirectorySeparatorChar)));
+        real.ShouldContain(captures);
+        var files = new Dictionary<string, string>
+        {
+            ["Directory.Build.props"] = await File.ReadAllTextAsync(Path.Combine(repo, "Directory.Build.props")),
+            ["Directory.Build.targets"] = await File.ReadAllTextAsync(Path.Combine(repo, "Directory.Build.targets")),
+            ["Directory.Build.rsp"] = await File.ReadAllTextAsync(Path.Combine(repo, "Directory.Build.rsp")),
+            ["tests/Shared/CheckpointRepeat.targets"] = await File.ReadAllTextAsync(Path.Combine(repo, "tests", "Shared", "CheckpointRepeat.targets")),
+            ["docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-captures.json"] = "{}",
+            ["docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-readiness-plan.md"] = "# plan",
+        };
+        foreach (System.Text.RegularExpressions.Match reference in System.Text.RegularExpressions.Regex.Matches(real, "<ProjectReference Include=\"([^\"]+)\""))
+        {
+            var relative = reference.Groups[1].Value.Replace('\\', '/');
+            var stack = new List<string> { "tests", "Antiphon.Tests" };
+            foreach (var part in relative.Split('/'))
+            {
+                if (part == "..") stack.RemoveAt(stack.Count - 1);
+                else if (part != ".") stack.Add(part);
+            }
+            files[string.Join('/', stack)] = """<Project Sdk="Microsoft.NET.Sdk"></Project>""";
+        }
+
+        var graph = new LandVerificationBuildGraph();
+        files[projectPath] = real;
+        var expectedCount = files.Keys.Count(graph.Includes);
+        var control = await InitAuditTreeAsync(files);
+        try
+        {
+            var ran = await RunAuditAsync(control, "en-US", "-Update");
+            ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
+            ran.Stdout.ShouldContain("count=" + expectedCount.ToString(CultureInfo.InvariantCulture));
+        }
+        finally
+        {
+            Directory.Delete(control, recursive: true);
+        }
+
+        files[projectPath] = real.Replace(captures, widened, StringComparison.Ordinal);
+        await AssertUpdateRefusesAsync(files, "includes docs markdown",
+            projectPath + " EmbeddedResource Include=" + widened,
+            "docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-readiness-plan.md");
+    }
+
+    // CARD-1409 repair 4 (Review 937bb1c9 F2): a $(...) in a file-item include is expanded from the
+    // definition files' own property values and the result is classified; a property the audit cannot
+    // resolve refuses by name, and a build-output or package-cache root is accepted only without a '..' tail.
+    [Test]
+    public async Task C1409_PropertyDrivenIncludeIsResolved()
+    {
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["docs/guide.md"] = "# guide",
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <Description>../docs/**/*.md</Description>
+                  </PropertyGroup>
+                  <ItemGroup>
+                    <EmbeddedResource Include="$(Description)" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "includes docs markdown", "server/App.csproj EmbeddedResource Include=$(Description)");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["docs/guide.md"] = "# guide",
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <RootNamespace>../do</RootNamespace>
+                  </PropertyGroup>
+                  <ItemGroup>
+                    <EmbeddedResource Include="$(RootNamespace)cs/*.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "includes docs markdown", "server/App.csproj EmbeddedResource Include=$(RootNamespace)cs/*.md");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["docs/guide.md"] = "# guide",
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <EmbeddedResource Include="$(MSBuildStartupDirectory)/docs/**" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "cannot resolve", "server/App.csproj EmbeddedResource Include=$(MSBuildStartupDirectory)/docs/** $(MSBuildStartupDirectory)");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Target Name="Gen">
+                    <ItemGroup>
+                      <Compile Include="$(IntermediateOutputPath)../../docs/guide.md" />
+                    </ItemGroup>
+                  </Target>
+                </Project>
+                """,
+        }, "cannot be classified", "server/App.csproj Compile Include=$(IntermediateOutputPath)../../docs/guide.md");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <Content Include="$(PkgSome_Package)\build\a.dll" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "cannot resolve", "server/App.csproj Content Include=$(PkgSome_Package)\\build\\a.dll $(PkgSome_Package)");
+
+        // The real repository's shapes: an intermediate-output file, a GeneratePathProperty package root, an
+        // MSBuild task output transform with a metadata glob, and GetDirectoryName over a task output property.
+        var allowed = await InitAuditTreeAsync(new Dictionary<string, string>
+        {
+            ["lib/Lib.csproj"] = """<Project Sdk="Microsoft.NET.Sdk"></Project>""",
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <PackageReference Include="Some.Package" Version="1.0.0" GeneratePathProperty="true" />
+                    <Content Include="$(PkgSome_Package)\runtimes\win-x64\native\a.dll" />
+                    <StagedHelper Include="$(MSBuildThisFileDirectory)../lib/Lib.csproj" Folder="lib" Glob="**\*" />
+                  </ItemGroup>
+                  <Target Name="Stage">
+                    <MSBuild Projects="@(StagedHelper)" Targets="GetTargetPath">
+                      <Output TaskParameter="TargetOutputs" ItemName="_StagedHelperTarget" />
+                    </MSBuild>
+                    <MSBuild Projects="../lib/Lib.csproj" Targets="GetTargetPath">
+                      <Output TaskParameter="TargetOutputs" PropertyName="FakeBrowserTargetPath" />
+                    </MSBuild>
+                    <PropertyGroup>
+                      <_StagedHelperDir>@(_StagedHelperTarget->'%(RootDir)%(Directory)')</_StagedHelperDir>
+                      <_StagedHelperGlob>%(StagedHelper.Glob)</_StagedHelperGlob>
+                      <FakeBrowserOutputDir>$([System.IO.Path]::GetDirectoryName('$(FakeBrowserTargetPath)'))</FakeBrowserOutputDir>
+                      <_AntiphonRepeatFile>$(IntermediateOutputPath)CheckpointRepeat.g.cs</_AntiphonRepeatFile>
+                    </PropertyGroup>
+                    <ItemGroup>
+                      <_StagedHelperFiles Include="$(_StagedHelperDir)$(_StagedHelperGlob)" />
+                      <FakeBrowserFile Include="$(FakeBrowserOutputDir)/Antiphon.MarkdownPdf.FakeBrowser.*" />
+                      <Compile Include="$(_AntiphonRepeatFile)" />
+                    </ItemGroup>
+                  </Target>
+                </Project>
+                """,
+        });
+        try
+        {
+            var ran = await RunAuditAsync(allowed, "en-US", "-Update");
+            ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
+            ran.Stdout.ShouldContain("count=2");
+        }
+        finally
+        {
+            Directory.Delete(allowed, recursive: true);
+        }
+    }
+
+    // CARD-1409 repair 4 (Review 937bb1c9 F3): item metadata names are allow-listed per item type; a
+    // ProjectReference global-property metadata (AdditionalProperties, Properties) and any unknown name refuse.
+    [Test]
+    public async Task C1409_ReferenceMetadataIsAllowListed()
+    {
+        const string lib = """<Project Sdk="Microsoft.NET.Sdk"></Project>""";
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["lib/Lib.csproj"] = lib,
+            ["docs/build.md"] = "# build",
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <ProjectReference Include="../lib/Lib.csproj" AdditionalProperties="CustomAfterMicrosoftCommonTargets=$(MSBuildThisFileDirectory)../docs/build.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "metadata the audit does not allow", "server/App.csproj ProjectReference Include=../lib/Lib.csproj AdditionalProperties");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["lib/Lib.csproj"] = lib,
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <ProjectReference Include="../lib/Lib.csproj">
+                      <Properties>CustomAfterMicrosoftCommonTargets=../docs/build.md</Properties>
+                    </ProjectReference>
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "metadata the audit does not allow", "server/App.csproj ProjectReference Include=../lib/Lib.csproj Properties");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <PackageReference Include="Shouldly" Version="4.3.0" SetConfiguration="Configuration=Docs" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "metadata the audit does not allow", "server/App.csproj PackageReference Include=Shouldly SetConfiguration");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <Compile Include="A.cs" DependentUpon="../docs/x.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "metadata the audit does not allow", "server/App.csproj Compile Include=A.cs DependentUpon");
+
+        var allowed = await InitAuditTreeAsync(new Dictionary<string, string>
+        {
+            ["lib/Lib.csproj"] = lib,
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <ProjectReference Include="../lib/Lib.csproj" Aliases="global,lib" ReferenceOutputAssembly="false" Private="false" />
+                    <PackageReference Include="Shouldly" Version="4.3.0" PrivateAssets="all" ExcludeAssets="runtime">
+                      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+                    </PackageReference>
+                    <Compile Include="../lib/Shared.cs" Link="Shared.cs" />
+                    <Content Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" Link="cfg/appsettings.json" />
+                    <EmbeddedResource Include="Runtime/x.json" LogicalName="X.json" />
+                    <None Include="icon.png" Pack="true" PackagePath="" />
+                    <Content Update="Runtime/y.json">
+                      <TargetPath>y.json</TargetPath>
+                    </Content>
+                  </ItemGroup>
+                </Project>
+                """,
+        });
+        try
+        {
+            var ran = await RunAuditAsync(allowed, "en-US", "-Update");
+            ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
+            ran.Stdout.ShouldContain("count=2");
+        }
+        finally
+        {
+            Directory.Delete(allowed, recursive: true);
+        }
+    }
+
+    // CARD-1409 repair 4 (Review 937bb1c9, disclosed D-18 items closed cheaply): a property whose value is a
+    // docs path, or that reads a file from anywhere but the build output through a property function, refuses.
+    [Test]
+    public async Task C1409_PropertyValueNamingDocsRefuses()
+    {
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["docs/guide.md"] = "# guide",
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <Description>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../docs/guide.md'))</Description>
+                  </PropertyGroup>
+                </Project>
+                """,
+        }, "property value", "server/App.csproj Description", "ReadAllText");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["docs/guide.md"] = "# guide",
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <PackageReadmeFile>../docs/guide.md</PackageReadmeFile>
+                  </PropertyGroup>
+                </Project>
+                """,
+        }, "property value", "server/App.csproj PackageReadmeFile", "docs/guide.md");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["Directory.Build.props"] = """
+                <Project>
+                  <PropertyGroup>
+                    <Description>$([System.IO.Directory]::GetFileSystemEntries('docs'))</Description>
+                  </PropertyGroup>
+                </Project>
+                """,
+            ["server/App.csproj"] = """<Project Sdk="Microsoft.NET.Sdk"></Project>""",
+        }, "property value", "Directory.Build.props Description", "GetFileSystemEntries");
+
+        // The real repository's shapes: a ledger read under the intermediate directory, a package readme beside
+        // its project, a description with a slash, and a self-referencing exclude list stay approved.
+        var allowed = await InitAuditTreeAsync(new Dictionary<string, string>
+        {
+            ["Directory.Build.props"] = """
+                <Project>
+                  <PropertyGroup>
+                    <DefaultItemExcludes>$(DefaultItemExcludes);workspace/**;bin-*/**</DefaultItemExcludes>
+                  </PropertyGroup>
+                </Project>
+                """,
+            ["Directory.Build.targets"] = """
+                <Project>
+                  <Target Name="Ledger" BeforeTargets="Build">
+                    <PropertyGroup>
+                      <_AntiphonCleanFileChars>$([System.IO.File]::ReadAllText('$(IntermediateOutputPath)$(CleanFile)').Length)</_AntiphonCleanFileChars>
+                    </PropertyGroup>
+                  </Target>
+                </Project>
+                """,
+            ["src/Pack.props"] = """
+                <Project>
+                  <PropertyGroup>
+                    <PackageReadmeFile>README.md</PackageReadmeFile>
+                    <Description>Typed Kafka producer/consumer client for the bridge.</Description>
+                  </PropertyGroup>
+                  <ItemGroup>
+                    <None Include="README.md" Pack="true" PackagePath="" />
+                  </ItemGroup>
+                </Project>
+                """,
+            ["src/Lib/README.md"] = "# lib",
+            ["src/Lib/Lib.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../Pack.props" />
+                </Project>
+                """,
+        });
+        try
+        {
+            var ran = await RunAuditAsync(allowed, "en-US", "-Update");
+            ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
+            ran.Stdout.ShouldContain("count=4");
+        }
+        finally
+        {
+            Directory.Delete(allowed, recursive: true);
+        }
+    }
+
     [Test]
     public async Task C1409_ProjectUserFileIsInTheHashedInventory()
     {
