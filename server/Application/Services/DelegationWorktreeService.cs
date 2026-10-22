@@ -412,7 +412,7 @@ public sealed class DelegationWorktreeService
         // A retry owns its earlier checkout. Its recorded base is historical evidence and
         // must not be replaced by a newer same-card selection or an expired source ref.
         var adopted = (await _worktrees.ListAsync(repoPath, ct))
-            .FirstOrDefault(w => w.CardId == identifier && Directory.Exists(w.Path));
+            .FirstOrDefault(w => w.CardId == identifier && !w.CreationIncomplete && Directory.Exists(w.Path));
         if (adopted is not null)
         {
             if (!_leases.AllowsWorktree(lease, adopted.Path, adopted.Branch))
@@ -447,6 +447,14 @@ public sealed class DelegationWorktreeService
             // (CARD-0220 heal failure names the commands tried) instead of replacing it.
             var existing = (await _worktrees.ListAsync(repoPath, ct))
                 .FirstOrDefault(w => w.CardId == identifier && Directory.Exists(w.Path));
+            // CARD-1448: an interrupted add the manager could not recover is never this task's checkout.
+            if (existing is { CreationIncomplete: true })
+            {
+                throw new ConflictException(
+                    $"Worktree for task {DelegationReportFormatter.Short(task.Id)} is an incomplete creation "
+                    + $"(interrupted worktree add) and is not adopted. {ex.Message}",
+                    ex);
+            }
             if (existing is null)
             {
                 throw new ConflictException(
