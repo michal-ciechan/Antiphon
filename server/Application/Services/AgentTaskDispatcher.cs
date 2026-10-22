@@ -6912,7 +6912,8 @@ public sealed partial class AgentTaskDispatcher
         Agent agent,
         AgentSession session,
         IReadOnlyList<string>? attachedBundleKeys = null,
-        IReadOnlyDictionary<string, string>? projectDefaultEnv = null)
+        IReadOnlyDictionary<string, string>? projectDefaultEnv = null,
+        IReadOnlyDictionary<AgentKind, ProviderEndpoint>? projectProviderEndpoints = null)
     {
         var extraArgs = ComposeDelegateArgs(task, agent, session, attachedBundleKeys, out var grokRulesPayload);
         var kind = session.AgentKind;
@@ -6943,6 +6944,12 @@ public sealed partial class AgentTaskDispatcher
                 LaunchEnvOverride: AgentLaunchEnv.Parse(task.LaunchEnvOverrideJson),
                 ProjectDefaultEnv: projectDefaultEnv,
                 InheritedEnv: AgentLaunchEnv.Parse(task.InheritedLaunchEnvJson),
+                // CARD-0167 S3: the project's per-kind endpoints (rank 3b) beside the project default
+                // they share an identity with, and the agent's mode and own endpoint (rank 5b) read
+                // off the row like AgentEnv. A pool delegate's row is Inherit with none of its own.
+                ProjectProviderEndpoints: projectProviderEndpoints,
+                AgentProviderEndpointMode: agent.ProviderEndpointMode,
+                AgentProviderEndpoint: ProviderEndpoint.Parse(agent.ProviderEndpointJson),
                 TierModelAlias: TierAliasFor(kind, task.ModelLevel)));
     }
 
@@ -6968,7 +6975,10 @@ public sealed partial class AgentTaskDispatcher
             var defaults = _apiKeyEnvResolver is not null
                 ? await _apiKeyEnvResolver.GetProjectDefaultEnvAsync(projectId, ct)
                 : null;
-            return BuildLaunchSpec(task, agent, session, attachedBundleKeys, defaults);
+            var endpoints = _apiKeyEnvResolver is not null
+                ? await _apiKeyEnvResolver.GetProjectProviderEndpointsAsync(projectId, ct)
+                : null;
+            return BuildLaunchSpec(task, agent, session, attachedBundleKeys, defaults, endpoints);
         }
 
         // CARD-0182 D2 / CARD-0140 D4: an exact ModelId wins, so the tier alias is omitted and
@@ -8017,6 +8027,10 @@ public sealed partial class AgentTaskDispatcher
             return ReuseOutcome.SpawnFresh;
         }
 
+        // CARD-0167 S3: the project's endpoints, read once, so the warm-pool predicate can compare
+        // each candidate's projection with what this task would launch with.
+        var projectEndpoints = await ProjectProviderEndpointsAsync(claimed.ProjectId, ct);
+
         Agent? agent = null;
 
         if (claimed.AgentId is Guid pinnedId)
@@ -8073,7 +8087,7 @@ public sealed partial class AgentTaskDispatcher
                 return ReuseOutcome.SpawnFresh;
             }
 
-            if (!InheritedEnvMatchesPool(pinned, claimed))
+            if (!InheritedEnvMatchesPool(pinned, claimed, projectEndpoints))
             {
                 _logger.LogInformation(
                     "Task {ShortId} is pinned to warm delegate '{Agent}' whose inherited env does not match this task — relaunching it",
@@ -8121,7 +8135,7 @@ public sealed partial class AgentTaskDispatcher
                 .Where(a => SameDirectory(a.WorkingDirectory, claimed.WorkingDirectory))
                 .Where(a => claimed.Workspace != WorkspaceMode.Shared
                     || !IsWorktreeWorkingDirectory(a.WorkingDirectory))
-                .Where(a => InheritedEnvMatchesPool(a, claimed))
+                .Where(a => InheritedEnvMatchesPool(a, claimed, projectEndpoints))
                 .Where(a => a.PoolReservedForRootTaskId == claimed.RootTaskId
                     || a.PoolIdleSince <= reservationCutoff)
                 .ToList();
@@ -8258,23 +8272,53 @@ public sealed partial class AgentTaskDispatcher
         return true;
     }
 
-    private bool InheritedEnvMatchesPool(Agent agent, AgentTask task) =>
-        InheritedEnvMatchesPool(agent, task, projectEndpoints: null, _settings.LlmEnvInheritance.Names);
+    private bool InheritedEnvMatchesPool(
+        Agent agent, AgentTask task, IReadOnlyDictionary<AgentKind, ProviderEndpoint>? projectEndpoints) =>
+        InheritedEnvMatchesPool(agent, task, projectEndpoints, _settings.LlmEnvInheritance.Names);
 
     /// <summary>
-    /// CARD-0167 S3: the pure predicate behind the warm-pool match, with the project's provider
-    /// endpoints in hand so the agent side can include its own projection.
+    /// CARD-0167 S3: the pure predicate behind the warm-pool match. A process launched under a
+    /// project endpoint carries projected names its LaunchEnvJson never had, so both sides include
+    /// their projection on the inherit-list names: the candidate's (its mode and own endpoint
+    /// around its stored env) against what this task would launch with (the project's entry for
+    /// the task's kind under the task's inherited snapshot). Placeholders compare as NAMES; nothing
+    /// is resolved here.
     /// </summary>
     internal static bool InheritedEnvMatchesPool(
         Agent agent,
         AgentTask task,
         IReadOnlyDictionary<AgentKind, ProviderEndpoint>? projectEndpoints,
-        IReadOnlyList<string> names) =>
-        // Skeleton (test-first commit): the projection is not yet part of the comparison.
-        AgentLaunchEnv.ProjectionsEqual(
+        IReadOnlyList<string> names)
+    {
+        var agentSide = ProviderEndpointLayers.PoolView(
+            agent.Kind,
             AgentLaunchEnv.Parse(agent.LaunchEnvJson),
+            projectEndpoints,
+            agent.ProviderEndpointMode,
+            ProviderEndpoint.Parse(agent.ProviderEndpointJson));
+        var taskSide = ProviderEndpointLayers.PoolView(
+            task.AgentKind,
             AgentLaunchEnv.Parse(task.InheritedLaunchEnvJson),
-            names);
+            projectEndpoints,
+            ProviderEndpointMode.Inherit,
+            agentEndpoint: null);
+        return AgentLaunchEnv.ProjectionsEqual(agentSide, taskSide, names);
+    }
+
+    /// <summary>The project's per-kind endpoints for the warm-pool predicate; none for a global-only task.</summary>
+    private async Task<IReadOnlyDictionary<AgentKind, ProviderEndpoint>> ProjectProviderEndpointsAsync(
+        Guid? projectId, CancellationToken ct)
+    {
+        if (projectId is not { } id)
+            return ProviderEndpoint.NoEndpoints;
+
+        var json = await _db.Projects
+            .AsNoTracking()
+            .Where(p => p.Id == id)
+            .Select(p => p.ProviderEndpointsJson)
+            .FirstOrDefaultAsync(ct);
+        return ProviderEndpoint.ParseMap(json);
+    }
 
     /// <summary>
     /// Standing agents keep the env the operator configured. When that disagrees with the

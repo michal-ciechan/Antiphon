@@ -112,6 +112,15 @@ public sealed class AgentRegistry
         var args = new List<string>(def.ArgsTemplate);
         if (options.ExtraArgs is not null)
             args.AddRange(options.ExtraArgs);
+        // CARD-0167 S3: the kind-selected provider endpoint (plan ranks 3b/5b, applied to env below).
+        // Its Codex -c pairs go after the caller's ExtraArgs and before the tier's --model, as on
+        // the profile path. No agent is in hand here, so a caller that omits the mode is Inherit.
+        var endpoints = ProviderEndpointLayers.Select(
+            kind,
+            options.ProjectProviderEndpoints,
+            options.AgentProviderEndpointMode ?? ProviderEndpointMode.Inherit,
+            options.AgentProviderEndpoint);
+        args.AddRange(endpoints.Args);
         // CARD-0182 D2: the profile-less path (pool delegates, legacy fallback). Registry
         // definitions are Antiphon's own and accept --model; a blank profile field never
         // reaches here because there is no revision to read.
@@ -137,6 +146,13 @@ public sealed class AgentRegistry
                 env[k] = v;
         }
 
+        // CARD-0167 S3 rank 3b: the project's typed endpoint outranks its generic box.
+        if (endpoints.Project is { } projectEndpoint)
+        {
+            foreach (var (k, v) in projectEndpoint.Env)
+                env[k] = v;
+        }
+
         if (options.InheritedEnv is not null)
         {
             foreach (var (k, v) in options.InheritedEnv)
@@ -146,6 +162,14 @@ public sealed class AgentRegistry
         if (options.AgentEnv is not null)
         {
             foreach (var (k, v) in options.AgentEnv)
+                env[k] = v;
+        }
+
+        // CARD-0167 S3 rank 5b: the agent's typed endpoint outranks its own box; the override and
+        // ExtraEnv below still win.
+        if (endpoints.Agent is { } agentEndpoint)
+        {
+            foreach (var (k, v) in agentEndpoint.Env)
                 env[k] = v;
         }
 

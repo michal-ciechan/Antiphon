@@ -1652,6 +1652,11 @@ public sealed class CardService : IScheduledCardActions
                 LaunchEnvOverride: request.LaunchEnvOverride,
                 ProjectDefaultEnv: _apiKeyEnvResolver is not null
                     ? await _apiKeyEnvResolver.GetProjectDefaultEnvAsync(card.Board.ProjectId, ct)
+                    : null,
+                // CARD-0167 S3: the card's project names the endpoint map too (rank 3b). No agent is
+                // in hand here, so the agent ranks stay at their Inherit default.
+                ProjectProviderEndpoints: _apiKeyEnvResolver is not null
+                    ? await _apiKeyEnvResolver.GetProjectProviderEndpointsAsync(card.Board.ProjectId, ct)
                     : null));
             // This is a direct registry resolve with no agent, so it is where the spec is finalized
             // and where API keys have to be resolved (CARD-0106 S2). The card's board names the
