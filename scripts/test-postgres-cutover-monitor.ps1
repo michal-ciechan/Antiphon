@@ -587,6 +587,22 @@ function Test-C1423_EncodedValueSecretsMasked {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# A3 (CARD-1423): the detail cap only bites with -WindowMinutes around 8 hours or more; the INVALID reason and the
+# help say so and name the remedy. The cap itself (INVALID, never a partial count) is unchanged.
+function Test-C1423_DetailCapNamesTheWindow {
+    $root = New-C1408Scratch
+    $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100)
+    $wCap = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -Items @((New-C1408Task -Land 'Landed'), (New-C1408Task -Land 'Landed'), (New-C1408Task -Land 'Landed')) -MaxLandDetails 2 -Name 'wcap'
+    Assert-C1408 -Cond ($wCap.ExitCode -eq 4 -and $wCap.Verdict -eq 'INVALID') -Name 'more land candidates than the cap still exits 4 INVALID' -Detail ('exit=' + $wCap.ExitCode)
+    $unreadable = @($wCap.Lines | Where-Object { $_ -like 'UNREADABLE*' })
+    Assert-C1408 -Cond ($unreadable.Count -eq 1 -and $unreadable[0] -match '3 tasks with a land attempt exceed -MaxLandDetailRequests 2' -and $unreadable[0] -match '-WindowMinutes' -and $unreadable[0] -match '(?i)8 hours') -Name 'the UNREADABLE line names the cap, -WindowMinutes and when the cap bites' -Detail ($unreadable -join ' | ')
+    $recorded = @((Get-Content -LiteralPath $wCap.ResultPath -Raw | ConvertFrom-Json).failures.unreadable)
+    Assert-C1408 -Cond ($recorded.Count -eq 1 -and [string]$recorded[0] -match '-WindowMinutes') -Name 'the recorded failures.unreadable carries the same remedy' -Detail ($recorded -join ' | ')
+    $src = Get-Content -LiteralPath $monitor -Raw
+    Assert-C1408 -Cond ($src -match '(?is)Detail cap:.*?-MaxLandDetailRequests.*?-WindowMinutes around 8 hours or more') -Name 'the help documents when -MaxLandDetailRequests bites' -Detail 'no "Detail cap:" paragraph naming -WindowMinutes around 8 hours or more'
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $cases = @(
     'C1408_RollbackAboveFloorAndRatio',
     'C1408_FloorHoldsUnderOneSecond',
@@ -602,7 +618,8 @@ $cases = @(
     'C1408_LandRefusedWithoutRefusedOp',
     'C1408_MaskingBypassForms',
     'C1423_SlashInUserinfoMasked',
-    'C1423_EncodedValueSecretsMasked'
+    'C1423_EncodedValueSecretsMasked',
+    'C1423_DetailCapNamesTheWindow'
 )
 
 if (-not (Test-Path -LiteralPath $monitor)) {
