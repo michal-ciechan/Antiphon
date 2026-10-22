@@ -1879,7 +1879,8 @@ function Test-C1410_MeasuredCostGroups {
     # 19012 nodes) is packed by estimated serial seconds: measured rows from
     # nightly-class-costs.json, else 0.5 s per node, Slow 1.5 s, Slow in a
     # Land or Delivery type 4 s, and a type naming Land, Delivery or Check
-    # anywhere doubles. The suite estimates 5-8 h in 60-100 launches; every
+    # anywhere doubles. With CARD-1404 group-10 prices, this fixed fixture
+    # estimates 9-10 h in 60-100 launches (not a measured wall-clock SLA); every
     # launch stays under watchdogs.antiphon, a multi-class or multi-method
     # launch under the 15-minute target, every required node launched once.
     $detail = ''
@@ -2021,7 +2022,7 @@ function Test-C1410_MeasuredCostGroups {
         $reasons = New-Object System.Collections.Generic.List[string]
         if ($realCount -ne 19012) { [void]$reasons.Add('listing') }
         if ($launches -lt 60 -or $launches -gt 100) { [void]$reasons.Add('launch-count') }
-        if ($suiteSeconds -lt 18000 -or $suiteSeconds -gt 28800) { [void]$reasons.Add('suite-hours') }
+        if ($suiteSeconds -lt 32400 -or $suiteSeconds -gt 36000) { [void]$reasons.Add('suite-hours') }
         if ($maxSeconds -ge $watchdogSeconds) { [void]$reasons.Add('watchdog-budget') }
         if ($overTarget.Count -ne 0) { [void]$reasons.Add('target') }
         if ($missing -ne 0 -or $double -ne 0 -or $extra -ne 0) { [void]$reasons.Add('census') }

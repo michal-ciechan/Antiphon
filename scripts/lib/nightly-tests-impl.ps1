@@ -122,8 +122,9 @@ function Test-NightlyClassGroupFilter {
 
 # CARD-1410. Launch groups pack by estimated serial seconds. A class with a
 # row in nightly-class-costs.json (refreshed from TRX) uses it; any other
-# class uses the node model below, calibrated so the real listing estimates
-# 5-8 h serial (CARD-0856 measured the whole Windows run at about 270 min).
+# class uses the node model below. With CARD-1404 group-10 prices the recorded
+# listing estimates about 9.6 h serial, not a measured wall-clock SLA
+# (CARD-0856 measured an earlier whole Windows run at about 270 min).
 # An ordinary node is 0.5 s and Slow 1.5 s (measured Slow classes ran at
 # 1.7-5.4 s per node). Slow in a Land or Delivery type is 4 s. A type naming
 # Land, Delivery or Check anywhere doubles its nodes. The two-minute land
