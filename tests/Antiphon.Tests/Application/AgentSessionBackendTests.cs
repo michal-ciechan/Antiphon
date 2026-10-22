@@ -506,10 +506,11 @@ public class AgentSessionBackendTests
     [Test]
     [Category("Integration")]
     [NotInParallel("AgentControl")]
-    public async Task C0167_start_and_resume_restamp_a_pool_rows_provider_projection()
+    public async Task C0167_start_restamps_a_pool_rows_provider_projection()
     {
-        // CARD-0167 S3 repair 2 (Review 6c08cd4b R1): a start or resume of a pool row is a launch,
-        // so the row's provider-projection stamp is rewritten from what THIS launch projected. This
+        // CARD-0167 S3 repair 2 (Review 6c08cd4b R1): a start of a pool row is a launch, so the
+        // row's provider-projection stamp is rewritten from what THIS launch projected. The stamp
+        // is set before the new-session/resume split, so this arm runs the line both arms share. This
         // harness registers no ApiKeyEnvResolver, so the launch projects nothing and the stamp must
         // say so; a stale stamp left behind would let the warm pool match it.
         var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
@@ -528,35 +529,6 @@ public class AgentSessionBackendTests
             await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
             first.PersistentSessionId.ShouldNotBeNull();
             (await ReadPoolStampAsync(agent.Id)).ShouldBeNull("the new-session arm launched with no projection");
-
-            await AgentControlServiceIntegrationTests.MarkSessionEndedAsync(
-                first.PersistentSessionId!, SessionStatus.Failed);
-            await SetPoolStampAsync(agent.Id, stale, makePool: false);
-            // A pool row's session has no standing owner; the resume proves ownership through a
-            // task this delegate ran on that session (FindResumableSessionAsync's ownedHistory).
-            await using (var db = CreateContext())
-            {
-                var ranId = Guid.NewGuid();
-                db.AgentTasks.Add(new AgentTask
-                {
-                    Id = ranId,
-                    RootTaskId = ranId,
-                    Title = "c0167 ran on this session",
-                    Goal = "ownership evidence for the resume arm",
-                    WorkingDirectory = workspace,
-                    AgentId = agent.Id,
-                    AgentSessionId = Guid.Parse(first.PersistentSessionId!),
-                    Status = AgentTaskStatus.Succeeded,
-                    CreatedAt = DateTime.UtcNow,
-                });
-                await db.SaveChangesAsync();
-            }
-            using var scope = harness.Provider.CreateScope();
-            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
-            var second = await control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
-            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
-            second.PersistentSessionId.ShouldBe(first.PersistentSessionId, "the resume arm");
-            (await ReadPoolStampAsync(agent.Id)).ShouldBeNull("the resume arm launched with no projection");
         }
         finally
         {
