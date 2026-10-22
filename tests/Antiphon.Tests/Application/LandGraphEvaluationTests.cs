@@ -411,6 +411,7 @@ public sealed class LandGraphEvaluationTests
         private static async Task CreateLinkAsync(string path, string target)
         {
             var parent = Path.GetDirectoryName(path)!;
+            Directory.CreateDirectory(parent);
             var isDirectory = Directory.Exists(Path.Combine(parent, target));
             try
             {
