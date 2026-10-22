@@ -10,7 +10,9 @@ V-8 has six cases: both card metadata witnesses, CARD-1504 task Properties,
 in-target property value, TargetFramework, and imported-props target parameters.
 V-9 covers exact pins, formatting, significant attribute/property whitespace,
 changed/stale/missing/duplicate/malformed pins, duplicate targets, wrong owner,
-non-built definitions and continued evaluated-item refusal after a valid pin.
+non-built and unusually named definitions, untracked pin files and continued
+evaluated-item refusal after a valid pin. Whitespace-only properties have both
+an acceptance case and a changed-value refusal.
 V-10 has three OS condition spellings, each missing/exact/changed/moved.
 The complete affected LandGraphEvaluationTests class is 20 results (10 inherited,
 six V-8, one V-9, three V-10). No ordinary R-n rows.
@@ -29,7 +31,11 @@ No production land wiring changes until S5; restart: none.
 Unlisted execution: build the checkpoint tool through the slot gate, then run
 CP-3 on the committed red tests before the fix. Run the final CP-3 once on the
 committed implementation/report tip. Generate the manifest only with the audit
-script's -Update. All deliberate mutants remain SourceLanding Mutation work.
+script's -Update. Retain final checkpoint outputs for one slot-gated manual
+real-tree tool invocation, proving all twelve reviewed pins match and S2 still
+approves the repository; then remove those owned outputs. This manual invocation
+is bounded to one solution evaluation (120 seconds), not a suite or build.
+All deliberate mutants remain SourceLanding Mutation work.
 
 ### Checkpoints
 

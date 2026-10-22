@@ -55,6 +55,8 @@ public sealed partial class LandGraphEvaluationTests
     {
         const string target = """<Target Name="Pinned"><PropertyGroup><X>a  b</X></PropertyGroup><Message Text="safe  words" /></Target>""";
         var pin = Pin("App/App.csproj", "Pinned", target);
+        var spaceOnly = target.Replace("a  b", " ");
+        var spacePin = Pin("App/App.csproj", "Pinned", spaceOnly);
         var cases = new (string Name, string Body, string? Pins, bool Pass, string Diagnostic)[]
         {
             ("missing", target, null, false, "missing pin"),
@@ -64,6 +66,9 @@ public sealed partial class LandGraphEvaluationTests
             ("attribute-space", target.Replace("safe  words", "safe words"), pin, false, "changed pin"),
             ("property-space", target.Replace("a  b", "a b"), pin, false, "changed pin"),
             ("empty-property", target.Replace("a  b", " "), pin, false, "changed pin"),
+            ("space-only-exact", spaceOnly, spacePin, true, ""),
+            ("space-only-removed", target.Replace("a  b", ""), spacePin, false, "changed pin"),
+            ("injected-task", target.Replace("<Message", "<MSBuild Projects=\"App.csproj\" Properties=\"CustomBeforeMicrosoftCommonTargets=../docs/evil.md\" /><Message"), pin, false, "changed pin"),
             ("stale", "", pin, false, "stale pin"),
             ("duplicate-row", target, pin + pin, false, "duplicate pin"),
             ("malformed-row", target, "App/App.csproj\tPinned\tnot-a-hash\n", false, "invalid pin"),
@@ -108,6 +113,27 @@ public sealed partial class LandGraphEvaluationTests
         itemRun.Text.ShouldContain(" None ");
         itemRun.Lines.ShouldNotContain("approved", itemRun.Text);
         item.AssertUntouched();
+
+        await using var untracked = await AuditRepo.CreateAsync(new()
+        {
+            ["App/App.csproj"] = SdkProject(target),
+        }, untrackedFiles: new() { [PinsFile] = pin });
+        var untrackedRun = await untracked.RunToolAsync();
+        untrackedRun.ExitCode.ShouldBe(1, untrackedRun.Text);
+        untrackedRun.Text.ShouldContain("untracked pins file");
+        untrackedRun.Lines.ShouldNotContain("approved", untrackedRun.Text);
+        untracked.AssertUntouched();
+
+        // Definition names accepted by the import policy must not evade the scan via an unusual suffix.
+        await using var custom = await AuditRepo.CreateAsync(new()
+        {
+            ["App/App.csproj"] = SdkProject("""<Import Project="../Directory.Build.custom" />"""),
+            ["Directory.Build.custom"] = $"<Project>{target}</Project>",
+        });
+        var customRun = await custom.RunToolAsync();
+        customRun.ExitCode.ShouldBe(1, customRun.Text);
+        customRun.Text.ShouldContain("Directory.Build.custom Target Pinned (missing pin)");
+        custom.AssertUntouched();
     }
 
     // V-10: pin both the active and inactive OS branches, at their structural element identity.
