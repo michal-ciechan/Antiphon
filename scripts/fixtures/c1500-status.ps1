@@ -138,10 +138,13 @@ function Test-C1500_WindowsSharedReadAndPs51 {
     try {
         foreach ($hostName in @('powershell','pwsh')) {
             $hostPath = (Get-Command $hostName -CommandType Application -ErrorAction Stop).Source
+            $version = & $hostPath -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+            $versionOk = ($LASTEXITCODE -eq 0) -and (($hostName -eq 'powershell' -and $version -match '^5\.1\.') -or
+                ($hostName -eq 'pwsh' -and ([version]$version).Major -ge 7))
             $json = & $hostPath -NoProfile -File $entry -CandidateId $fx.CandidateId -RunId $fx.RunId -StateRoot $fx.StateRoot -CoordinationRoot $fx.CoordinationRoot -ReleaseRoot $fx.ReleaseRoot
             $exitCode = $LASTEXITCODE
             $r = $json | ConvertFrom-Json
-            Assert-C487 ($exitCode -eq 0 -and $r.observationComplete -and $r.inputs.nativeLock.status -ceq 'ok' -and
+            Assert-C487 ($versionOk -and $exitCode -eq 0 -and $r.observationComplete -and $r.inputs.nativeLock.status -ceq 'ok' -and
                 $r.locks.native.ownerObservation.status -ceq 'alive' -and $r.state.sha -ceq $ShaA) ('C1500 ' + $hostName + '-shared-read')
         }
     } finally { $stream.Dispose() }
