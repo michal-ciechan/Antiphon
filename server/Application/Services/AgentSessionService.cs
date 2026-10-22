@@ -3583,7 +3583,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         catch (ConflictException)
         {
             var orphanedWorktree = (await _worktreeManager.ListAsync(repoPath, ct))
-                .FirstOrDefault(w => w.CardId == card.Identifier && Directory.Exists(w.Path));
+                .FirstOrDefault(w => w.CardId == card.Identifier && !w.CreationIncomplete && Directory.Exists(w.Path));
             if (orphanedWorktree is null)
                 throw;
 
