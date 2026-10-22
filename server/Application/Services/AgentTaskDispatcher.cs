@@ -520,6 +520,9 @@ public sealed partial class AgentTaskDispatcher
             .Where(t => t.Status == AgentTaskStatus.Queued)
             .OrderBy(t => t.CreatedAt)
             .ToListAsync(ct);
+        // Partial ready passes still read the complete queue. Reconcile that snapshot before
+        // selecting a batch (including an empty one), so unrelated workers/results survive.
+        _siblingInspections?.Reconcile(queued.Select(t => t.Id).ToHashSet());
         if (ready is not null)
             queued = ready.Select(id => queued.FirstOrDefault(t => t.Id == id))
                 .OfType<AgentTask>().Take(8).ToList();
@@ -653,7 +656,6 @@ public sealed partial class AgentTaskDispatcher
         // CARD-0672 D-2: the waiter key per repository, resolved once per tick.
         var waiterKeys = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        _siblingInspections?.Reconcile(queued.Select(t => t.Id).ToHashSet());
         foreach (var task in ready is null
                      ? queued.OrderBy(t => _siblingInspections?.Attempted(t.Id) == true)
                      : queued.AsEnumerable())
