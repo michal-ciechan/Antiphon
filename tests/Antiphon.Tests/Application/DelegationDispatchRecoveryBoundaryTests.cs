@@ -22,24 +22,29 @@ namespace Antiphon.Tests.Application;
 public partial class DelegationDispatchRecoveryBoundaryTests
 {
     [Test]
-    [Arguments("held-dispatched-tick", 18)]
-    [Arguments("working-live-tick", 18)]
+    // CARD-0097 enabled the shared harness's routing-blocked recovery sweep:
+    // one empty-result SELECT raises each historical 18-command tick to exactly 19.
+    [Arguments("held-dispatched-tick", 19)]
+    [Arguments("working-live-tick", 19)]
     // BuildService, one Starting session inside the 90s grace, empty runner,
     // launch ownership absent and census alerts off. Measured roster is the live
     // AgentSessions select, the FOR UPDATE, the reload, and the Agents select.
     // The investigation's 8 is not this graph; the plan's exact 8 has to be
     // revised before Code treats it as acceptance for this fixture.
     [Arguments("inside-grace-absent-scan", 4)]
-    [Arguments("first-dead-session-observation", 18)]
-    // Measured 42. The plan's 45 was the pre-measure figure; the design ceiling is 55.
-    [Arguments("initial-refused-dispatch", 42)]
+    // CARD-0097 adds the same sweep SELECT (18 + 1); first-observation grace adds no recovery SQL.
+    [Arguments("first-dead-session-observation", 19)]
+    // Historical 42 + CARD-0097's routing sweep SELECT + CARD-1285's required
+    // TokenHash UPDATE before the refusing launch sink = exactly 44.
+    [Arguments("initial-refused-dispatch", 44)]
     // Measured 5. The plan's 6 counted a commit or alert this interceptor does not see.
     // Live select, FOR UPDATE, reload, the close UPDATE, then the Agents select. No AgentTasks query.
     [Arguments("runner-unknown-close-scan", 5)]
     // No-parent 19 and with-parent 21 are asserted in the measure. Ceilings were 40 and 48.
     [Arguments("due-absent-hold", 19)]
-    // Measured 16, under the design ceiling of 18. The blocked task is not a delivery suspect.
-    [Arguments("repeated-blocked-tick", 16)]
+    // Historical 16 + CARD-0097's routing sweep SELECT = exactly 17.
+    // The blocked task is not a delivery suspect; there is no repeated recovery transition.
+    [Arguments("repeated-blocked-tick", 17)]
     // Measured 65. Reuses the pending row (no second insert). Ceiling was 85.
     [Arguments("running-recovery-existing-brief", 65)]
     // Measured 60, including the one brief insert and the awaited send. Ceiling was 95.
