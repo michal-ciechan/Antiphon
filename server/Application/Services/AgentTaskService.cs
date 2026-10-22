@@ -3124,6 +3124,13 @@ public sealed class AgentTaskService
         return await SummaryOfAsync(task, ct);
     }
 
+    /// <summary>
+    /// CARD-1496: Block reason when a wall reroute would requeue a chain task onto a standing
+    /// agent whose model is held. Not <see cref="ComplexityRoutingService.RoutingExhaustedPrefix"/>:
+    /// the routing-blocked resume would requeue it onto the same held agent model.
+    /// </summary>
+    public const string HeldStandingAgentModelPrefix = "held standing agent model: ";
+
     /// <summary>What <see cref="RerouteOnWallAsync"/> did with a usage-wall on a chain task.</summary>
     public enum WallRerouteKind
     {
