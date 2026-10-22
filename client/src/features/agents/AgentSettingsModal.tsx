@@ -24,6 +24,7 @@ import type {
   AgentReplyStyle,
   AgentSummaryDto,
   PolicyRefreshMode,
+  ProviderEndpointMode,
   SessionBackend,
 } from '../../api/agents'
 import {
@@ -38,6 +39,13 @@ import {
 import { useBoards } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
 import { envToText, parseEnvironmentText } from '../../shared/environmentText'
+import { AgentProviderEndpoint } from '../settings/ProviderEndpointFields'
+import {
+  EMPTY_PROVIDER_ENDPOINT_DRAFT,
+  draftFromEndpoint,
+  endpointFromDraft,
+  type ProviderEndpointDraft,
+} from '../settings/providerEndpointModel'
 import { AgentTuiSelection } from './AgentTuiSelection'
 import { useRemoteControlSupport } from './useRemoteControlSupport'
 import { ReplyStyleControl } from './ReplyStyleControl'
@@ -87,6 +95,10 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   const [seededBundlesFor, setSeededBundlesFor] = useState<string | null>(null)
   const [loadingPreset, setLoadingPreset] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [providerEndpointMode, setProviderEndpointMode] = useState<ProviderEndpointMode>('Inherit')
+  const [providerEndpointDraft, setProviderEndpointDraft] = useState<ProviderEndpointDraft>(EMPTY_PROVIDER_ENDPOINT_DRAFT)
+  const [providerEndpointEdited, setProviderEndpointEdited] = useState(false)
+  const [providerEndpointError, setProviderEndpointError] = useState<string | null>(null)
 
   // The composed bundle list lives on the DETAIL dto (it is derived, not stored), and this modal is
   // opened from the summary in the agents list. Only fetched while the modal is open.
@@ -138,6 +150,7 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
     setSeededWorkspaceLabel(agent.herdrWorkspaceLabel ?? null)
     setSeededTabLabel(agent.herdrTabLabel ?? null)
     setConfirmingDelete(false)
+    setProviderEndpointEdited(false)
     setSeededBundlesFor(null)
   }, [agent, opened])
 
@@ -147,6 +160,11 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
   useEffect(() => {
     if (!opened || !detail.data || detail.data.id === seededBundlesFor) return
     setBundleKeys(detail.data.attachedBundleKeys ?? [])
+    // CARD-0167: the endpoint lives on the DETAIL dto too; seeded once for the same reason.
+    setProviderEndpointMode(detail.data.providerEndpointMode ?? 'Inherit')
+    setProviderEndpointDraft(draftFromEndpoint(detail.data.providerEndpoint))
+    setProviderEndpointEdited(false)
+    setProviderEndpointError(null)
     setSeededBundlesFor(detail.data.id)
   }, [opened, detail.data, seededBundlesFor])
 
@@ -167,8 +185,28 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
     [boards.data],
   )
 
+  const agentProjectId = useMemo(
+    () => (boards.data ?? []).find((board) => board.id === agent?.boardId)?.projectId ?? null,
+    [boards.data, agent?.boardId],
+  )
+
   const handleSave = () => {
     if (!agent || !name.trim() || !workingDirectory.trim()) return
+
+    // CARD-0167: sent only when the operator changed it, so a save before the detail read lands
+    // cannot reset a stored endpoint. Any mode but Endpoint sends providerEndpoint null.
+    let providerEndpointChange = {}
+    if (providerEndpointEdited) {
+      if (providerEndpointMode === 'Endpoint') {
+        const { endpoint, error } = endpointFromDraft(providerEndpointDraft, 'Agent', agent.kind === 'Codex')
+        const message = error ?? (endpoint ? null : 'Agent endpoint needs a base URL.')
+        setProviderEndpointError(message)
+        if (message) return
+        providerEndpointChange = { providerEndpointMode, providerEndpoint: endpoint }
+      } else {
+        providerEndpointChange = { providerEndpointMode, providerEndpoint: null }
+      }
+    }
 
     const parsedLaunchEnv = parseEnvironmentText(launchEnvText)
     if (parsedLaunchEnv.warnings.length > 0) {
@@ -210,10 +248,14 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           ? { herdrWorkspaceLabel: herdrWorkspaceLabel.trim() }
           : {}),
         ...(tabChanged ? { herdrTabLabel: herdrTabLabel.trim() } : {}),
+        ...providerEndpointChange,
       },
       {
-        onSuccess: () => {
+        onSuccess: (saved) => {
           notifications.show({ color: 'green', message: 'Agent updated' })
+          if (saved?.warnings && saved.warnings.length > 0) {
+            notifications.show({ color: 'yellow', message: saved.warnings.join(' '), autoClose: 10_000 })
+          }
           onClose()
         },
         onError: (error) => {
@@ -371,6 +413,21 @@ export function AgentSettingsModal({ agent, opened, onClose, onDeleted }: AgentS
           allowNegative={false}
           value={autoCompactContextPercent ?? ''}
           onChange={(value) => setAutoCompactContextPercent(typeof value === 'number' ? value : null)}
+        />
+        <AgentProviderEndpoint
+          kind={agent?.kind ?? 'ClaudeCode'}
+          projectId={agentProjectId}
+          mode={providerEndpointMode}
+          onModeChange={(mode) => {
+            setProviderEndpointMode(mode)
+            setProviderEndpointEdited(true)
+          }}
+          draft={providerEndpointDraft}
+          onChange={(draft) => {
+            setProviderEndpointDraft(draft)
+            setProviderEndpointEdited(true)
+          }}
+          error={providerEndpointError}
         />
         <Textarea
           label="Launch environment (KEY=value per line)"

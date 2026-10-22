@@ -4,6 +4,18 @@ import { apiGet, apiPost, apiPut, apiDelete } from './client'
 
 // --- Project types ---
 
+/**
+ * CARD-0167: one provider endpoint, the trusted LLM proxy a kind's agents use. A URL and a key
+ * NAME from the API-key store; never a key value, which stays write-only on the server.
+ */
+export interface ProviderEndpointDto {
+  baseUrl: string
+  apiKeyName?: string | null
+}
+
+/** Keyed by AgentKind name (ClaudeCode, Grok, Codex). */
+export type ProviderEndpointMap = Record<string, ProviderEndpointDto>
+
 export interface ProjectDto {
   repositoryVisibility?: RepositoryVisibility
   cardFileWarnings?: string[]
@@ -23,6 +35,10 @@ export interface ProjectDto {
   defaultWorkerWorkspace?: 'Shared' | 'Worktree' | null
   globalDefaultWorkerWorkspace?: 'Shared' | 'Worktree'
   effectiveWorkerWorkspace?: 'Shared' | 'Worktree'
+  /** CARD-0167. Per-kind provider endpoints; absent on an older server. */
+  providerEndpoints?: ProviderEndpointMap
+  /** CARD-0167 D-8: save-time advisories, e.g. an endpoint key name not stored in any scope yet. */
+  warnings?: string[]
 }
 
 export interface CreateProjectRequest {
@@ -37,6 +53,8 @@ export interface CreateProjectRequest {
   defaultLaunchEnv?: Record<string, string> | null
   commitOnSettle?: string | null
   defaultWorkerWorkspace?: 'Shared' | 'Worktree' | 'Inherit' | null
+  /** CARD-0167. Omit/null = leave unchanged; an empty map clears every endpoint. */
+  providerEndpoints?: Record<string, ProviderEndpointDto | null> | null
 }
 
 export interface UpdateProjectRequest {
@@ -51,6 +69,8 @@ export interface UpdateProjectRequest {
   defaultLaunchEnv?: Record<string, string> | null
   commitOnSettle?: string | null
   defaultWorkerWorkspace?: 'Shared' | 'Worktree' | 'Inherit' | null
+  /** CARD-0167. Omit/null = leave unchanged; an empty map clears every endpoint. */
+  providerEndpoints?: Record<string, ProviderEndpointDto | null> | null
 }
 
 export interface TestGitConnectivityResult {

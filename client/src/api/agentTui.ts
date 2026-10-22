@@ -40,6 +40,19 @@ export interface AgentTuiRunnerTypeDto {
   curatedModels: AgentTuiModelDto[]
   capabilities: AgentTuiCapabilityDto[]
   guidance: string
+  /** CARD-0167 S4. What a provider endpoint setting projects for this kind. Absent on an older server. */
+  providerEndpoint?: AgentTuiProviderEndpointDescriptorDto
+}
+
+/**
+ * CARD-0167 S4: names only. environmentNames are the variables a setting sets (the key variable
+ * included); argumentTemplate is the argv it appends with the base URL as the literal '<url>'.
+ */
+export interface AgentTuiProviderEndpointDescriptorDto {
+  supported: boolean
+  keyRequired: boolean
+  environmentNames: string[]
+  argumentTemplate: string[]
 }
 
 export interface AgentTuiSecretMetadataDto {
