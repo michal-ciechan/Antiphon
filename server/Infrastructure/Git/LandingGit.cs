@@ -81,9 +81,7 @@ public class LandingGit : ILandingGit
         ConfigureProcess(start);
         ServerGitProcess.DisableAutoMaintenance(start);
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        var mutating = arguments.Any(a => a is "rebase" or "merge" or "push" or "fetch" or "update-ref"
-            or "add" or "remove" or "commit" or "checkout" or "checkout-index" or "restore" or "reset");
-        var journal = mutating ? await RepositoryChildJournal.BeginAsync(repository, options.Child, ct) : null;
+        var journal = IsMutating(arguments) ? await RepositoryChildJournal.BeginAsync(repository, options.Child, ct) : null;
         Process? child;
         try { child = StartProcess(start); }
         catch (Exception ex) when (journal is not null && CreatedNoChild(ex))
@@ -141,6 +139,11 @@ public class LandingGit : ILandingGit
     /// True only for a start failure that definitely created no child: CreateProcess (Windows) or
     /// exec (Unix, whose failed child has already exited) refusing the executable or its directory.
     /// </summary>
+    /// <summary>A subcommand that may write the repository. Its child carries a standing
+    /// <see cref="RepositoryChildJournal"/> record from before <c>Process.Start</c> until its exact handle exited.</summary>
+    internal static bool IsMutating(IReadOnlyList<string> arguments) => arguments.Any(a => a is "rebase" or "merge" or "push" or "fetch" or "update-ref"
+        or "add" or "remove" or "commit" or "checkout" or "checkout-index" or "restore" or "reset");
+
     internal static bool CreatedNoChild(Exception ex) => ex is System.ComponentModel.Win32Exception win32
         && (OperatingSystem.IsWindows()
             ? win32.NativeErrorCode is 2 or 3 or 5 or 193 or 267 // FILE/PATH_NOT_FOUND, ACCESS_DENIED, BAD_EXE_FORMAT, DIRECTORY
@@ -719,8 +722,19 @@ public class LandingGit : ILandingGit
         ConfigureProcess(start);
         ServerGitProcess.DisableAutoMaintenance(start);
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        using var child = StartProcess(start);
-        if (child is null) throw new IOException("git_start_failed");
+        // CARD-1432 D2 (Review 9e126982): the update-ref --stdin deletion batch is a mutating child like
+        // every other update-ref, so it carries the same standing journal record (begin, started,
+        // exited, not-started) as ExecuteProcessAsync. A server death mid-batch then stays visible
+        // to the lease fence and recover-repository-children.ps1.
+        var journal = IsMutating(arguments) ? await RepositoryChildJournal.BeginAsync(path, tag: null, ct) : null;
+        Process? started;
+        try { started = StartProcess(start); }
+        catch (Exception ex) when (journal is not null && CreatedNoChild(ex))
+        {
+            journal.NotStarted();
+            throw;
+        }
+        using var child = started ?? throw new IOException("git_start_failed");
         using var output = new MemoryStream();
         var write = Task.Run(async () =>
         {
@@ -732,6 +746,12 @@ public class LandingGit : ILandingGit
         var error = child.StandardError.ReadToEndAsync(budget.Token);
         try
         {
+            if (journal is not null)
+            {
+                var identified = TryReadStartIdentity(child, out var startTicks);
+                if (!identified && !child.HasExited) throw new InvalidOperationException("owned_child_identity_unavailable");
+                await journal.StartedAsync(child.Id, identified ? startTicks : null, ct);
+            }
             await Task.WhenAll(write, copy, error);
             await child.WaitForExitAsync(budget.Token);
         }
@@ -739,8 +759,13 @@ public class LandingGit : ILandingGit
         {
             if (!child.HasExited) child.Kill(entireProcessTree: true);
             await child.WaitForExitAsync(CancellationToken.None);
+            // Descendants may retain the redirected handles after the root exits; the record
+            // fences admission until both streams drain. The original failure is the one reported.
+            try { await Task.WhenAll(copy, error); } catch { }
+            journal?.Exited(child);
             throw;
         }
+        journal?.Exited(child);
         return (child.ExitCode, output.ToArray());
     }
 
