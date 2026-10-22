@@ -4225,6 +4225,14 @@ public sealed class AgentTaskReplyService
     internal static bool IsTokenOnlyAfterRetainedReport(AgentTask task, string verdict, string body) =>
         verdict.Length > 0 && string.IsNullOrWhiteSpace(body) && !string.IsNullOrWhiteSpace(task.Result);
 
+    /// <summary>
+    /// CARD-1486 D-4: <paramref name="text"/> is this task's closing line and nothing more, on a task
+    /// whose row holds a report (<see cref="IsTokenOnlyAfterRetainedReport"/>).
+    /// </summary>
+    private static bool AddsNothingToRetainedReport(AgentTask task, string? text) =>
+        DelegationReportFormatter.TryReadReportVerdict(task.Id, text, out var verdict, out var body)
+        && IsTokenOnlyAfterRetainedReport(task, verdict, body);
+
     private static string RetainedReportStandsDetail(string verdict, int retainedChars) =>
         $"Turn ended with only the closing report line (verdict: {verdict}) and no report body; "
         + $"the retained report ({retainedChars:N0} characters) stands and was not replaced.";
@@ -4498,14 +4506,19 @@ public sealed class AgentTaskReplyService
         if (await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct))
             return;
 
-        var tokenTexts = await db.TranscriptEntries.AsNoTracking()
+        // CARD-1486 S3 (D-4): only this attempt's answers stop the deadline. The report a Reply
+        // reopened predates RepliedAtSequence, and a turn that adds nothing to a retained report
+        // (the CARD-1472 token-only predicate) is not an answer to the ask either.
+        var tokenQuery = db.TranscriptEntries.AsNoTracking()
             .Where(e => e.AgentSessionId == sessionId
                 && e.Kind == TranscriptKinds.AssistantText
                 && e.Text != null
-                && e.Text.Contains("[antiphon-report:"))
-            .Select(e => e.Text!)
-            .ToListAsync(ct);
-        if (tokenTexts.Any(text => DelegationReportFormatter.TryFindReportToken(task.Id, text, out _)))
+                && e.Text.Contains("[antiphon-report:"));
+        if (task.RepliedAtSequence is long replyWatermark)
+            tokenQuery = tokenQuery.Where(e => e.Sequence > replyWatermark);
+        var tokenTexts = await tokenQuery.Select(e => e.Text!).ToListAsync(ct);
+        if (tokenTexts.Any(text => DelegationReportFormatter.TryFindReportToken(task.Id, text, out _)
+                && !AddsNothingToRetainedReport(task, text)))
             return;
 
         var turn = await ExtractMarkedTurnAsync(db, sessionId, task, ct);
@@ -4522,16 +4535,25 @@ public sealed class AgentTaskReplyService
             && boundary.Sequence != nudgedSeq)
             return;
 
-        var body = turn.Report ?? string.Empty;
+        // CARD-1486 S3 (D-4): the waiting turn cannot replace a report that stands. The Block keeps
+        // the retained Result and evidence class, and the caller gets the retained report.
+        var keepRetained = RetainedReportStands(task) || AddsNothingToRetainedReport(task, turn.Report);
+        var body = keepRetained ? task.Result! : turn.Report ?? string.Empty;
         var shortId = DelegationReportFormatter.Short(task.Id);
         task.Status = AgentTaskStatus.Blocked;
-        task.ReportEvidence = AgentTaskReportEvidence.UnmarkedWaiting;
-        task.Result = body;
+        if (!keepRetained)
+        {
+            task.ReportEvidence = AgentTaskReportEvidence.UnmarkedWaiting;
+            task.Result = body;
+        }
         task.CompletedAt = now;
         task.ConcurrencyToken = Guid.NewGuid();
         db.AgentTaskEvents.Add(NewEvent(
             task.Id, AgentTaskEventType.Blocked,
-            "Turn ended without `[antiphon-report:…]`; asked once and the session stayed idle. Waiting on a human.",
+            keepRetained
+                ? "Turn ended without a new report after the one closing-line ask and the session stayed idle; "
+                  + $"the retained report ({body.Length:N0} characters) stands and was not replaced. Waiting on a human."
+                : "Turn ended without `[antiphon-report:…]`; asked once and the session stayed idle. Waiting on a human.",
             now));
         await db.SaveChangesAsync(ct);
 
@@ -4554,8 +4576,8 @@ public sealed class AgentTaskReplyService
         await db.SaveChangesAsync(ct);
 
         _logger.LogInformation(
-            "Task {ShortId} blocked as UnmarkedWaiting after {Minutes}m idle past the closing-line nudge",
-            shortId, _settings.UnmarkedWaitingMinutes);
+            "Task {ShortId} blocked after {Minutes}m idle past the closing-line nudge (retained report kept: {KeptRetained})",
+            shortId, _settings.UnmarkedWaitingMinutes, keepRetained);
 
         await DeliverToParentAsync(task, body, ct, git: gitHeader);
         await PublishAsync(task, ct);
