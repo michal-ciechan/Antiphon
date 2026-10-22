@@ -125,7 +125,8 @@ internal sealed class DispatcherAdmissionFixture : IAsyncDisposable
     {
         Id = id, DefinitionName = "claude", AgentKind = AgentKind.ClaudeCode,
         Status = SessionStatus.Running, Cwd = _workspace, RunnerId = runner,
-        RunnerStoreId = Host.StoreId, Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now,
+        RunnerStoreId = Host.StoreId, RunnerCwd = "/work/c1519-occupant",
+        Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now,
     };
 
     public async Task StartHeldAsync()
@@ -152,6 +153,12 @@ internal sealed class DispatcherAdmissionFixture : IAsyncDisposable
             WorkingDirectory = _workspace, RunnerId = "sentinel-runner", Status = AgentTaskStatus.Dispatched,
             AgentSessionId = SentinelSession, DispatchedAt = now.AddHours(-1), CreatedAt = now.AddHours(-1),
             ReplyTo = AgentTaskReplyTo.None, ConcurrencyToken = Guid.NewGuid(),
+        });
+        db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        {
+            Id = Guid.NewGuid(), AgentSessionId = SentinelSession, ExecutionTaskId = id,
+            Body = "watchdog sentinel brief", Status = QueuedMessageStatus.Pending,
+            Origin = QueuedMessageOrigin.Delegation, Sequence = 1, CreatedAt = now.AddHours(-1),
         });
         await db.SaveChangesAsync();
         Clock.Advance(TimeSpan.FromSeconds(5));
