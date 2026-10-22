@@ -121,6 +121,16 @@ and opens a fresh bounded budget while retaining the lifetime attempt count. Def
 30 seconds apart). Size refusal is terminal for unchanged bytes. Preparation has its own
 three-attempt cap and the original obligation's `PendingReplyTtlMinutes` age bound.
 
+A reply whose direct publication keeps failing is owed as channel debt per destination
+(CARD-1434): replies to other chats flow, and replies to the same chat keep transcript order.
+The debt is abandoned after `ChannelBridge:ReplyDebtGiveUpAttempts` (default 20; 0 disables)
+failed attempts, or `ChannelBridge:ReplyDebtGiveUpMinutes` (default 10; 0 disables; at most
+`PendingReplyTtlMinutes`) after the row was created once it has failed at least once. Its open
+correlations then settle with a Critical `ChannelReplyLost` (`PublishFailed`) incident and alert,
+a best-effort notice goes to the originating chat, and later replies to that chat flow.
+`PendingReplyTtlMinutes` (default 30) remains the backstop. A late-confirmed publication that
+waits for an earlier owed reply to the same chat, or that fails, is the same debt (CARD-1433).
+
 Failed and PublishUncertain outcomes commit a Critical `ChannelReplyLost` incident, Alert
 and durable episode stamp with the delivery transition. TTL/unroutable loss commits source
 settlement with its loss evidence, even when the owning agent is missing. Failed releases
