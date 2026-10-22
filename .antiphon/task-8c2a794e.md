@@ -10,7 +10,9 @@ Start ref 81937b7e5 (73a4fdd8 tip). Branch feat/card-task-8c2a794e, fast-forward
 - 79604e7b9d5f5753e3a97e35384b08d9cde2eb5a fix: control start stamps after the reservation reload; attach witness seeds through the harness scope.
 - e1500036e53b44d2951760f66ba9ecefdc5908d8 report v2 + plan note; run 20261022-123425-e9e0: CP-1 37/37, CP-2 12/12, CP-3 62/62, CP-4 25/25 green; CP-5 42/43 (resume arm of the control witness held on standing_continuity: a pool session has no standing owner).
 - 90232b4f24c0cf68383659fee18063244e536b6d test: the resume arm seeds the task row that proves pool-session ownership.
-- this commit: report v3; the receipt run `--rows CP-1,CP-2,CP-3,CP-4,CP-5` verifies this tip.
+- 2527e096a56709b6d48d0d389ab6726a0e2ce122 report v3; run 20261022-125646-23ef: CP-1..CP-4 green (37/12/62/25); CP-5 42/43, the resume arm still held on standing_continuity (ownership/continuity check refuses the seeded pool session before the stamp).
+- next commit: resume arm dropped (budget); the witness is renamed C0167_start_restamps_a_pool_rows_provider_projection and covers the new-session arm, which runs the stamp line both arms share. The resume arm is NOT witnessed.
+- report v4 commit: the receipt run `--rows CP-1,CP-2,CP-3,CP-4,CP-5` verifies that tip.
 
 Read-only checks at e1500036e: scripts/check-evidence-diff.ps1 81937b7e5..HEAD violations=0 (also a38e1e1bd..HEAD violations=0). `git merge-tree --write-tree origin/master HEAD` (origin/master 711409c41) conflicts add/add only on the carried S2 files (ProviderEndpointSettings.cs, ProviderEndpointApiTests.cs); a scratch `git rebase --onto origin/master a38e1e1bd` exits 0 and drops the carry 25ae6869 as already upstream (13 commits remain), which is what the land service does.
 
