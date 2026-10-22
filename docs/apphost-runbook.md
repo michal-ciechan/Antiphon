@@ -61,8 +61,13 @@ enters maintenance; the operator clears that marker first. An enter that wrote t
 marker and then failed names the marker and leaves it in place, and exit 2 means it
 already existed (CARD-1417). A failed `keep-six -ClearHold` at window exit prints a
 RECOVERY line naming the agent. `-TailnetPort` (default 5432) is the listener the
-phase 0 probe connects to; a parameter value never opens the window. An ordinary restart
-remains the command above.
+phase 0 probe connects to. The window gate reads only the process command-line tokens after
+pwsh's own `-File scripts/cutover-postgres-server2.ps1` pair: the exact `-ConfirmWindow` token
+there opens it. An abbreviation (`-Conf`), a parameter value (`-HoldReason /ConfirmWindow`,
+`-HoldReason: -ConfirmWindow`), or a `-ConfirmWindow` placed before that pair (`-WorkingDirectory`,
+`-CustomPipeName`) or inside `-Command` text does not, and a start without that pair (`-Command`,
+`-EncodedCommand`, an implicit script path, an in-process call) refuses `-Execute` with exit 2
+(Review c25ee080 D-1). An ordinary restart remains the command above.
 
 Before that force-kill, and only after the restart lock is held and SHA admission
 has passed, the script POSTs `http://localhost:17202/api/operator/shutdown` with
