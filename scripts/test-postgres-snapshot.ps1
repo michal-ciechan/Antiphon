@@ -522,7 +522,7 @@ case "$cmd" in
         exit 0
         ;;
     context)
-        printf '%s\n' "${CARD1405_DOCKER_ENDPOINT:-unix:///var/run/docker.sock}"
+        printf '%s\n' "${CARD1405_DOCKER_ENDPOINT-unix:///var/run/docker.sock}"
         exit 0
         ;;
 
@@ -1065,15 +1065,18 @@ function Test-DockerDaemonPinned {
         $allowed = Invoke-DrillCase $fx 'clean' ($common + @('-AllowRemoteDocker')) '1048576' @() @{ DOCKER_HOST = 'tcp://10.0.0.9:2375' }
         Assert-True ($allowed.Exit -eq 0) 'AllowRemoteDocker passes' "exit=$($allowed.Exit) $($allowed.Out)"
         Assert-True ($allowed.Out -match 'warning: remote docker') 'AllowRemoteDocker warns' $allowed.Out
+        $before = @(Get-ChildItem -LiteralPath $fx.Dest -Filter '*.dump.age' -ErrorAction SilentlyContinue).Count
         $publish = Invoke-PublishCase $fx '1048576' '1' @{ DOCKER_HOST = 'tcp://10.0.0.9:2375' }
         Assert-True ($publish.Exit -eq 4) 'publish tcp DOCKER_HOST exits 4' "exit=$($publish.Exit) $($publish.Out)"
         Assert-True ($publish.Out -match 'reason=docker-host') 'publish tcp DOCKER_HOST reason' $publish.Out
         Assert-NoDocker $publish 'publish tcp DOCKER_HOST'
-        Assert-DestUntouched $fx 'publish tcp DOCKER_HOST'
+        $afterHost = @(Get-ChildItem -LiteralPath $fx.Dest -Filter '*.dump.age' -ErrorAction SilentlyContinue).Count
+        Assert-True ($afterHost -eq $before -and -not (Test-Path -LiteralPath (Join-Path $fx.Dest 'snapshot-status.json'))) 'publish tcp DOCKER_HOST publishes nothing' "before=$before after=$afterHost"
         $publishContext = Invoke-PublishCase $fx '1048576' '1' @{ CARD1405_DOCKER_ENDPOINT = 'tcp://10.0.0.9:2376' }
         Assert-True ($publishContext.Exit -eq 4 -and $publishContext.Out -match 'reason=docker-context') 'publish tcp context exits 4' "exit=$($publishContext.Exit) $($publishContext.Out)"
         Assert-True ($publishContext.Tools -notmatch 'pg_dump') 'publish tcp context dumps nothing' $publishContext.Tools
-        Assert-DestUntouched $fx 'publish tcp context'
+        $afterContext = @(Get-ChildItem -LiteralPath $fx.Dest -Filter '*.dump.age' -ErrorAction SilentlyContinue).Count
+        Assert-True ($afterContext -eq $before -and -not (Test-Path -LiteralPath (Join-Path $fx.Dest 'snapshot-status.json'))) 'publish tcp context publishes nothing' "before=$before after=$afterContext"
     } finally { Remove-Fixture $fx }
 }
 
