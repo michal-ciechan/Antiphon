@@ -43,7 +43,8 @@
     .antiphon/postgres-cutover/, which is gitignored). It takes no credentials. Diagnostics properties whose
     name or value looks like a credential (password, token, dsn, connection string) are dropped, and URL
     userinfo (from :// to the last @ before whitespace) and secret-looking query and fragment values (key names compared after
-    percent-decoding) are masked in every printed line, error and recorded JSON.
+    percent-decoding; a plain value that percent-decodes to a secret pair or a userinfo URL is masked whole) are
+    masked in every printed line, error and recorded JSON.
 
     Seams for tests, so no server or database is needed:
       -HttpGet      { param([string]$Url) } returns @{ StatusCode = 200; Body = '<text>'; ElapsedMs = <optional> }
@@ -137,6 +138,23 @@ function Test-CutoverSecretKey {
     return ($decoded -match '(?i)token|key|password|passwd|pwd|secret|sig|signature|auth|credential')
 }
 
+# A plain (non-secret-keyed) value whose percent-decoding reveals a secret (CARD-1423 A2): x=y%26token%3DS reaches
+# the server as x=y&token=S, and next=http%3A%2F%2Fu%3Ap%40h as a URL with userinfo. Decoding repeats while the
+# text changes, so a double-encoded pair is found too; a value that decodes to nothing secret is kept.
+function Test-CutoverEncodedSecret {
+    param([string]$Value)
+    $current = $Value
+    for ($i = 0; $i -lt 4; $i++) {
+        if ($current -notmatch '%[0-9a-fA-F]{2}') { return $false }
+        $decoded = $current
+        try { $decoded = [uri]::UnescapeDataString($current) } catch { return $true }
+        if ($decoded -eq $current) { return $false }
+        if ((Hide-CutoverText -Text $decoded) -ne $decoded) { return $true }
+        $current = $decoded
+    }
+    return $false
+}
+
 # Masks URL userinfo and secret-looking key=value pairs (query strings, fragments, connection strings) in any
 # text before it is printed, recorded or returned, including exception messages that embed a URL. Userinfo
 # runs from '://' to the LAST '@' before whitespace, a quote or an angle bracket, so a literal '@' or '/' in a
@@ -153,9 +171,12 @@ function Hide-CutoverText {
         if (Test-CutoverSecretKey -Key $m.Groups['key'].Value) { return $m.Groups['lead'].Value + '<redacted>' }
         # A plain value ends at '#'; what follows is a fragment whose own pairs are masked the same way.
         $val = $m.Groups['val'].Value
+        $rest = ''
         $hash = $val.IndexOf('#')
-        if ($hash -lt 0) { return $m.Value }
-        return $m.Groups['lead'].Value + $val.Substring(0, $hash) + (Hide-CutoverText -Text $val.Substring($hash))
+        if ($hash -ge 0) { $rest = Hide-CutoverText -Text $val.Substring($hash); $val = $val.Substring(0, $hash) }
+        # A plain value that percent-decodes to a secret (an embedded pair, a URL with userinfo) is one whole.
+        if (Test-CutoverEncodedSecret -Value $val) { $val = '<redacted>' }
+        return $m.Groups['lead'].Value + $val + $rest
     }
     return [regex]::Replace($t, $pair, $evaluator)
 }
