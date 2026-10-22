@@ -70,5 +70,5 @@ Review c26b14f3. Unlisted red run at `7d15e1b2e70e2c7e58be70925bd641d520765bd9`,
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
-|---|---|---|---|---|---|---:|---:|
+|---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1400/` | c1400-docs | `/*/*/LandNonCodeSkipTests/(C1400_*)\|(C1390_UpdateRefusesDocsMarkdownInput*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-1 V-2 V-3 V-4 V-5 V-6 V-7 V-8 V-9 V-10 V-11 | exactly 12 executed, 0 failed/skipped | 12 | 20 |

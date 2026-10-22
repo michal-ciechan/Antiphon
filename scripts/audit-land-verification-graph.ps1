@@ -12,11 +12,19 @@
 # or $(MSBuildProjectDirectory) is expanded from that property and is not
 # prefixed with the importing file's folder again. $(MSBuildThisFileDirectory)
 # in an include is that file's directory. $(MSBuildProjectDirectory) is the
-# directory being checked. An Import Project path that still contains an
-# unknown $(...) is refused and is not followed. An unknown $(...) in an item
-# include is refused only when the text contains the exact spellings docs and
-# .md, or README, so $(DocsDir)*.md stays accepted. Import, ReadLinesFromFile,
-# Copy, and property functions that read files are not inspected.
+# directory being checked. An unknown $(...) in an item include is refused only
+# when the text contains the exact spellings docs and .md, or README, so
+# $(DocsDir)*.md stays accepted.
+# CARD-1409: an Import Project path that still contains $(, @( or %( after the
+# two known properties are expanded is refused and is not followed; there is no
+# allow-list. An Import with an attribute other than Project, Condition or Label
+# is refused; Condition is not evaluated. A non-wildcard import target must be
+# tracked at HEAD inside the repository as a *proj, .props or .targets file; an
+# empty Project, a path outside the repository, a path absent from HEAD or a
+# tracked file with another extension is refused. A wildcard Import is matched
+# against every tracked path; a match with another extension is refused, and a
+# wildcard that matches nothing is accepted. ReadLinesFromFile, Copy, and
+# property functions that read files are not inspected.
 # ASCII-only: must parse under Windows PowerShell 5.1.
 #
 # Usage:
