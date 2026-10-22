@@ -33,9 +33,17 @@ internal static class SolutionAudit
         var context = EvaluationContext.Create(EvaluationContext.SharingPolicy.Shared);
         var refusals = new SortedSet<string>(StringComparer.Ordinal);
         var evaluated = 0;
+        var realRepo = RealPath(repo);
+        var realDirectories = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        foreach (var entry in parsed.ProjectsInOrder.Where(p => p.ProjectType == SolutionProjectType.KnownToBeMSBuildFormat))
+        foreach (var entry in parsed.ProjectsInOrder)
         {
+            if (entry.ProjectType == SolutionProjectType.SolutionFolder) continue;
+            // The solution build also builds an entry of any other type it can load as a project
+            // (a .dcproj, an .esproj); one the audit does not evaluate is a failed evaluation, never a pass.
+            if (entry.ProjectType != SolutionProjectType.KnownToBeMSBuildFormat)
+                return Program.Fail($"{solution} entry {entry.RelativePath} has project type {entry.ProjectType}, which the audit does not evaluate");
+
             var globals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["Configuration"] = SolutionConfiguration,
@@ -69,7 +77,8 @@ internal static class SolutionAudit
                 errors.ThrowIfAny(projectPath);
                 foreach (var item in project.AllEvaluatedItems)
                 {
-                    var fullPath = SkippablePath(repo, item.GetMetadataValue("FullPath"));
+                    var fullPath = SkippablePath(repo, realRepo, item.GetMetadataValue("FullPath"),
+                        Path.Combine(project.DirectoryPath, item.EvaluatedInclude), Real);
                     if (fullPath is null) continue;
                     var definedIn = item.Xml?.ContainingProject?.FullPath ?? project.FullPath;
                     refusals.Add($"refused: {Display(repo, definedIn)} {item.ItemType} {fullPath}");
@@ -93,6 +102,16 @@ internal static class SolutionAudit
             }
         }
 
+        // The real path of a file through the cached real path of its directory: items share few directories.
+        string Real(string path)
+        {
+            var parent = Path.GetDirectoryName(path);
+            if (parent is null) return RealPath(path);
+            if (!realDirectories.TryGetValue(parent, out var realParent))
+                realDirectories[parent] = realParent = RealPath(parent);
+            return Walk(realParent, [Path.GetFileName(path)]);
+        }
+
         if (evaluated == 0)
             return Program.Fail($"{solution} names no MSBuild project");
 
@@ -107,23 +126,89 @@ internal static class SolutionAudit
         return Program.Approved;
     }
 
-    /// <summary>The normalised path when it is skippable (D-3), otherwise null.</summary>
-    internal static string? SkippablePath(string repo, string fullPath)
+    /// <summary>
+    /// The skippable path (D-3) the item reads, otherwise null. MSBuild reports a lexical FullPath, but the
+    /// build opens the path through any links in it, so the lexical path, its real path and the real path
+    /// of the include as written (where <c>link/..</c> leaves the link target) are all checked; a link
+    /// match is shown under <paramref name="repo"/>.
+    /// </summary>
+    internal static string? SkippablePath(string repo, string realRepo, string fullPath, string rawPath, Func<string, string> real)
     {
         if (string.IsNullOrEmpty(fullPath)) return null;
         // MSBuild treats '\' as a separator on every OS; so does this rule (default-deny).
         if (Path.DirectorySeparatorChar == '/')
+        {
             fullPath = fullPath.Replace('\\', '/');
+            rawPath = rawPath.Replace('\\', '/');
+        }
         var normalised = Path.TrimEndingDirectorySeparator(Path.GetFullPath(fullPath));
-        var readme = Path.Combine(repo, "README.md");
-        var docs = Path.Combine(repo, "docs") + Path.DirectorySeparatorChar;
-        if (string.Equals(normalised, readme, StringComparison.OrdinalIgnoreCase))
-            return normalised;
-        return normalised.StartsWith(docs, StringComparison.OrdinalIgnoreCase)
-               && normalised.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
-            ? normalised
-            : null;
+        return Skippable(repo, normalised, repo)
+               ?? Skippable(realRepo, real(normalised), repo)
+               ?? Skippable(realRepo, real(rawPath), repo);
     }
+
+    private static string? Skippable(string root, string path, string display)
+    {
+        var readme = Path.Combine(root, "README.md");
+        var docs = Path.Combine(root, "docs") + Path.DirectorySeparatorChar;
+        var skippable = string.Equals(path, readme, StringComparison.OrdinalIgnoreCase)
+                        || (path.StartsWith(docs, StringComparison.OrdinalIgnoreCase)
+                            && path.EndsWith(".md", StringComparison.OrdinalIgnoreCase));
+        return skippable ? Path.Join(display, path[root.Length..]) : null;
+    }
+
+    private const int MaxLinks = 40;
+
+    /// <summary>
+    /// realpath: walks an absolute path from its root and replaces every existing symbolic link or
+    /// junction by its target before the next component, so <c>..</c> after a link leaves the target.
+    /// Missing components are kept as written. Windows folds <c>..</c> lexically before the file system
+    /// sees it, so there this only over-approximates (another candidate, never fewer refusals).
+    /// </summary>
+    internal static string RealPath(string path)
+    {
+        path = Path.Combine(Environment.CurrentDirectory, path);
+        var root = Path.GetPathRoot(path)!;
+        return Walk(Path.GetFullPath(root), Components(path[root.Length..]));
+    }
+
+    private static string Walk(string current, IEnumerable<string> components)
+    {
+        var pending = new List<string>(components);
+        var links = 0;
+        for (var i = 0; i < pending.Count; i++)
+        {
+            var component = pending[i];
+            if (component is "" or ".") continue;
+            if (component == "..")
+            {
+                current = Path.GetDirectoryName(current) ?? current;
+                continue;
+            }
+
+            var next = Path.Combine(current, component);
+            var target = new FileInfo(next).LinkTarget;
+            if (target is null)
+            {
+                current = next;
+                continue;
+            }
+
+            if (++links > MaxLinks)
+                throw new IOException($"{next}: more than {MaxLinks} links");
+            // The target replaces the link and is walked itself: it may hold links or '..'.
+            var resolved = Path.Combine(current, target);
+            var root = Path.GetPathRoot(resolved)!;
+            pending.RemoveRange(0, i + 1);
+            pending.InsertRange(0, Components(resolved[root.Length..]));
+            current = Path.GetFullPath(root);
+            i = -1;
+        }
+
+        return Path.TrimEndingDirectorySeparator(current);
+    }
+
+    private static string[] Components(string relative) => relative.Split(['/', '\\']);
 
     private static string Display(string repo, string path)
     {
