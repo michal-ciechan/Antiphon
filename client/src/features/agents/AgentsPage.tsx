@@ -21,8 +21,9 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core'
+import { useLongPress } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   TbAlertCircle,
   TbDotsVertical,
@@ -443,6 +444,25 @@ export const AgentCard = memo(function AgentCard({
   // CARD-0105: the terminal icon's context menu, anchored at the pointer. Null while closed, so a
   // closed card renders no menu and an open one re-renders only itself.
   const [cardMenu, setCardMenu] = useState<{ x: number; y: number } | null>(null)
+  const terminalRef = useRef<HTMLButtonElement>(null)
+  // A long-press opens the menu; the click the browser synthesises afterwards must not also open
+  // the terminal. One-shot: the next click on the icon clears it.
+  const swallowClick = useRef(false)
+  const iconAnchor = () => {
+    const rect = terminalRef.current?.getBoundingClientRect()
+    return { x: rect?.left ?? 0, y: rect?.bottom ?? 0 }
+  }
+  const closeMenu = () => {
+    setCardMenu(null)
+    terminalRef.current?.focus()
+  }
+  const longPress = useLongPress(
+    () => {
+      swallowClick.current = true
+      setCardMenu(iconAnchor())
+    },
+    { threshold: 500 },
+  )
   return (
     <Box pos="relative">
       <UnstyledButton
@@ -496,15 +516,32 @@ export const AgentCard = memo(function AgentCard({
         withArrow
       >
         <ActionIcon
+          ref={terminalRef}
           variant="subtle"
           color={agent.liveSession?.status === 'Running' ? 'green' : agent.liveSession ? 'yellow' : 'gray'}
           aria-label={`Terminal ${agent.name}`}
-          onClick={() => onOpenTerminal(agent)}
-          onContextMenu={(event) => {
-            // Own the right-click: the browser's menu must not open on top of ours.
-            event.preventDefault()
-            setCardMenu({ x: event.clientX, y: event.clientY })
+          onClick={() => {
+            if (swallowClick.current) {
+              swallowClick.current = false
+              return
+            }
+            onOpenTerminal(agent)
           }}
+          onContextMenu={(event) => {
+            // Own the right-click: the browser's menu must not open on top of ours. A contextmenu
+            // a browser synthesises from the keyboard carries (0,0); anchor that one at the icon.
+            event.preventDefault()
+            setCardMenu(event.clientX || event.clientY ? { x: event.clientX, y: event.clientY } : iconAnchor())
+          }}
+          onKeyDown={(event) => {
+            if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
+              // Handled here, so a browser that also synthesises contextmenu from these keys
+              // does not open the menu twice.
+              event.preventDefault()
+              setCardMenu(iconAnchor())
+            }
+          }}
+          {...longPress}
           pos="absolute"
           top={8}
           right={36}
@@ -513,7 +550,7 @@ export const AgentCard = memo(function AgentCard({
         </ActionIcon>
       </Tooltip>
       {cardMenu && (
-        <Menu opened onClose={() => setCardMenu(null)} position="bottom-start" withinPortal shadow="md">
+        <Menu opened onClose={closeMenu} position="bottom-start" withinPortal shadow="md">
           <Menu.Target>
             <Box
               pos="fixed"

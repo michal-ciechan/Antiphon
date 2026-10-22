@@ -6,7 +6,7 @@ import type { ProjectReadinessDto } from '../../api/projectSetup'
 import type { AgentTuiProfileDto } from '../../api/agentTui'
 import type { AgentSessionSummaryDto, BoardDetailDto, BoardSummaryDto } from '../../api/boards'
 import { fireEvent } from '@testing-library/react'
-import { pasteInto, renderWithProviders, screen, settleQueries, userEvent, waitFor, within } from '../../test/utils'
+import { act, pasteInto, renderWithProviders, screen, settleQueries, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { AgentCard, AgentsPage } from './AgentsPage'
 
@@ -1085,5 +1085,44 @@ describe('AgentsPage', () => {
     // The dedicated Menu key reaches the same menu.
     fireEvent.keyDown(icon, { key: 'ContextMenu' })
     expect(await screen.findByRole('menu', { name: 'Terminal menu Frontend Claude' })).toBeInTheDocument()
+  })
+
+  it('C0105 long-press on the terminal icon opens the menu and swallows the follow-up click', async () => {
+    server.use(...agentHandlers())
+
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
+    const icon = screen.getByRole('button', { name: 'Terminal Frontend Claude' })
+
+    // fireEvent only under fake timers: userEvent's own delays would wait on the fake clock.
+    vi.useFakeTimers()
+    try {
+      fireEvent.touchStart(icon)
+      act(() => {
+        vi.advanceTimersByTime(499)
+      })
+      expect(screen.queryByRole('menu')).toBeNull()
+      act(() => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(screen.getByRole('menu', { name: 'Terminal menu Frontend Claude' })).toBeInTheDocument()
+
+      fireEvent.touchEnd(icon)
+      // The click the browser synthesises after the touch is swallowed: no CLI modal.
+      fireEvent.click(icon)
+      expect(screen.queryByRole('dialog')).toBeNull()
+      act(() => {
+        vi.runOnlyPendingTimers()
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    // Closing the menu and clicking again is an ordinary left-click: the swallow was one-shot.
+    await userEvent.click(document.body)
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+    await userEvent.click(icon)
+    await settleQueries(queryClient)
+    expect(await screen.findByRole('button', { name: 'Start agent' })).toBeInTheDocument()
   })
 })
