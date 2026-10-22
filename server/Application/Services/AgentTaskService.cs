@@ -3009,6 +3009,14 @@ public sealed class AgentTaskService
             finally { gate.Release(); }
         }
 
+        // CARD-1490: the requeue below stops a live session before the tick sees the hold, and an
+        // explicit task then parks behind it. A held dispatch alias is the same 409 model_disabled
+        // create and escalation return, before anything changes. A list-governed task keeps
+        // today's path: the tick re-walks it to an unheld candidate.
+        if (_modelAvailability is not null && !ComplexityRoutingService.IsListGoverned(task))
+            await _modelAvailability.RequireAsync(
+                task.AgentKind, await DispatchModelAlias.AfterRequeueAsync(_db, task, task.ModelLevel, ct), ct);
+
         var repeatOf = await FindLaunchFailureRepeatAsync(
             task.CardId, task.Goal, task.Kind, task.Role, task.AgentKind, ct);
         if (repeatOf is not null)
@@ -3203,9 +3211,11 @@ public sealed class AgentTaskService
 
         // CARD-1490: an escalation is an explicit pick of the next tier. A held target is the same
         // 409 model_disabled create returns, BEFORE the session is killed or the row changes —
-        // requeueing onto the hold would stop working delegates and park the task behind it.
+        // requeueing onto the hold would stop working delegates and park the task behind it. The
+        // alias is the one the tick will launch (a pinned agent's ModelId, a specialist's alias).
         if (_modelAvailability is not null)
-            await _modelAvailability.RequireAsync(task.AgentKind, ModelLevelAliases.For(task.AgentKind, target.Value), ct);
+            await _modelAvailability.RequireAsync(
+                task.AgentKind, await DispatchModelAlias.AfterRequeueAsync(_db, task, target.Value, ct), ct);
 
         task.EscalatedFrom = from;
         task.ModelLevel = target.Value;

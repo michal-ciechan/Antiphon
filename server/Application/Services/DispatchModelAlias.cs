@@ -1,4 +1,7 @@
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -7,4 +10,30 @@ public static class DispatchModelAlias
 {
     public static string Resolve(AgentKind kind, AgentModelLevel level, string? modelId) =>
         ModelAlias.Normalize(kind, modelId) ?? ModelLevelAliases.For(kind, level);
+
+    /// <summary>
+    /// Canonical alias a queued task launches at <paramref name="level"/> on <paramref name="agentId"/>.
+    /// A specialist's recorded alias wins; then a standing agent's exact <see cref="Agent.ModelId"/>
+    /// when it normalizes; otherwise the tier ladder. The dispatcher tick checks this alias against
+    /// the holds.
+    /// </summary>
+    public static async Task<string> ForTaskAsync(
+        AppDbContext db, AgentTask task, AgentModelLevel level, Guid? agentId, CancellationToken ct)
+    {
+        if (task.SpecialistModelAlias is { } snapshot) return snapshot;
+        if (agentId is not Guid id) return Resolve(task.AgentKind, level, null);
+        var modelId = await db.Agents.AsNoTracking()
+            .Where(a => a.Id == id)
+            .Select(a => a.ModelId)
+            .FirstOrDefaultAsync(ct);
+        return Resolve(task.AgentKind, level, modelId);
+    }
+
+    /// <summary>
+    /// CARD-1490: the alias the tick will check once a retry or escalation requeues the task at
+    /// <paramref name="level"/>. The requeue keeps a pinned agent and retires an ephemeral one.
+    /// </summary>
+    public static Task<string> AfterRequeueAsync(
+        AppDbContext db, AgentTask task, AgentModelLevel level, CancellationToken ct) =>
+        ForTaskAsync(db, task, level, task.Ephemeral ? null : task.AgentId, ct);
 }

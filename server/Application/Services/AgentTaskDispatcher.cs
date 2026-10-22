@@ -755,7 +755,7 @@ public sealed partial class AgentTaskDispatcher
             // task Queued with a model-hold event.
             if (_modelAvailability is not null)
             {
-                var alias = await ResolveDispatchAliasAsync(task, ct);
+                var alias = await DispatchModelAlias.ForTaskAsync(_db, task, task.ModelLevel, task.AgentId, ct);
                 var modelHeld = await _modelAvailability.IsHeldAsync(task.AgentKind, alias, ct);
 
                 if (modelHeld)
@@ -2137,7 +2137,7 @@ public sealed partial class AgentTaskDispatcher
             // behind the hold. Leave it running; the clock fires again once the hold clears.
             if (_modelAvailability is not null
                 && await _modelAvailability.IsHeldAsync(
-                    task.AgentKind, ModelLevelAliases.For(task.AgentKind, policy.EscalateTo!.Value), ct))
+                    task.AgentKind, await DispatchModelAlias.AfterRequeueAsync(_db, task, policy.EscalateTo!.Value, ct), ct))
                 continue;
 
             try
@@ -7131,25 +7131,6 @@ public sealed partial class AgentTaskDispatcher
         }
 
         return extraArgs;
-    }
-
-    /// <summary>
-    /// Canonical alias this queued task would launch. A standing agent's exact
-    /// <see cref="Agent.ModelId"/> wins when it normalizes; otherwise the tier ladder.
-    /// </summary>
-    private async Task<string> ResolveDispatchAliasAsync(AgentTask task, CancellationToken ct)
-    {
-        if (task.SpecialistModelAlias is { } snapshot) return snapshot;
-        if (task.AgentId is Guid agentId)
-        {
-            var agent = await _db.Agents.AsNoTracking()
-                .Where(a => a.Id == agentId)
-                .Select(a => new { a.ModelId, a.ModelLevel })
-                .FirstOrDefaultAsync(ct);
-            return DispatchModelAlias.Resolve(task.AgentKind, task.ModelLevel, agent?.ModelId);
-        }
-
-        return DispatchModelAlias.Resolve(task.AgentKind, task.ModelLevel, null);
     }
 
     private static string ShippedModelDisplay(AgentTask task, Agent agent, DelegateProgram program)
