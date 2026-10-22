@@ -1127,6 +1127,11 @@ public sealed class WorktreeManager : IWorktreeManager
             return; // The add never registered: the ordinary path/branch checks decide.
         var refName = "refs/heads/" + branch;
         var tip = await RunGitAsync(repoPath, ["rev-parse", "--verify", "--quiet", refName], ct, throwOnError: false);
+        if (intent is { SchemaVersion: 2, CreationId: not null, InitialSha: not null }
+            && PathsEqual(intent.RepoPath, repoPath) && intent.Branch == branch
+            && matching.Length == 1 && !matching[0].Locked && matching[0].Branch == refName && tip.ExitCode == 0
+            && await TryHealCompletedCreationAsync(repoPath, worktreePath, intent, ct))
+            return;
         if (intent is not { SchemaVersion: 2, CreationId: not null, InitialSha: not null }
             || !PathsEqual(intent.RepoPath, repoPath) || intent.Branch != branch
             || matching.Length != 1 || !matching[0].Locked || matching[0].LockReason != "initializing"
@@ -1165,6 +1170,43 @@ public sealed class WorktreeManager : IWorktreeManager
         if (delete.ExitCode != 0)
             throw new ConflictException($"Interrupted worktree creation branch {branch} moved during recovery; branch kept.");
         await DeleteMetadataForPathAsync(worktreeRoot, worktreePath, ct);
+    }
+
+    /// <summary>
+    /// CARD-1502: the process died between <c>git worktree add</c> returning and the final save, so a
+    /// complete checkout still carries an incomplete intent. Mark it complete (removing nothing) only
+    /// when its registration is unlocked on the intent's branch, it is this repository's linked
+    /// worktree, HEAD is that branch and resolves, the index exists and the branch tip is at or
+    /// ahead of InitialSha. Otherwise false, and the caller refuses as before.
+    /// </summary>
+    private async Task<bool> TryHealCompletedCreationAsync(
+        string repoPath, string worktreePath, WorktreeMetadata intent, CancellationToken ct)
+    {
+        var refName = "refs/heads/" + intent.Branch;
+        if (!File.Exists(Path.Combine(worktreePath, ".git")))
+            return false;
+        var admin = await RunGitAsync(worktreePath, ["rev-parse", "--absolute-git-dir"], ct, throwOnError: false);
+        var common = await RunGitAsync(repoPath, ["rev-parse", "--path-format=absolute", "--git-common-dir"], ct, throwOnError: false);
+        var head = await RunGitAsync(worktreePath, ["symbolic-ref", "-q", "HEAD"], ct, throwOnError: false);
+        var resolves = await RunGitAsync(worktreePath, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], ct, throwOnError: false);
+        var ahead = await RunGitAsync(repoPath, ["merge-base", "--is-ancestor", intent.InitialSha!, refName], ct, throwOnError: false);
+        if (admin.ExitCode != 0 || common.ExitCode != 0 || head.ExitCode != 0 || resolves.ExitCode != 0 || ahead.ExitCode != 0)
+            return false;
+        var adminDir = admin.Stdout.Trim();
+        var gitdirFile = Path.Combine(adminDir, "gitdir");
+        if (!IsPathUnderRoot(adminDir, Path.Combine(common.Stdout.Trim(), "worktrees"))
+            || !File.Exists(gitdirFile)
+            || !PathsEqual((await File.ReadAllTextAsync(gitdirFile, ct)).Trim(), Path.Combine(worktreePath, ".git"))
+            || head.Stdout.Trim() != refName
+            || File.Exists(Path.Combine(adminDir, "locked"))
+            || !File.Exists(Path.Combine(adminDir, "index")))
+            return false;
+
+        await SaveMetadataAsync(intent with { CreationComplete = true, GitDirectory = adminDir }, ct);
+        _logger.LogWarning(
+            "Healed worktree creation {CreationId} at {Path}: the checkout of {Branch} is complete, only its final save was missing",
+            intent.CreationId, worktreePath, intent.Branch);
+        return true;
     }
 
     private async Task RollbackFailedAddAsync(WorktreeMetadata intent, bool branchExistedBefore)
