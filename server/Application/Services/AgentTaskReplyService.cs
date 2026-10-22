@@ -1556,6 +1556,9 @@ public sealed class AgentTaskReplyService
             reviewRepair: stageRecording?.Repair,
             afterPersist: async token =>
             {
+                // CARD-1474: before the parent hears the report and before the turn-end flush.
+                await RetireObsoleteClosingNudgeAsync(services, db, task, token);
+
                 if (turn.FinalMessageMissing && task.AgentSessionId is Guid missingFrom)
                 {
                     await RecordFinalMessageMissingAsync(
@@ -4273,6 +4276,56 @@ public sealed class AgentTaskReplyService
             _logger.LogWarning(
                 ex, "Could not deliver task {ShortId} waiting note to parent session {SessionId}",
                 shortId, parentSession);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1474: a settled report makes the one closing-line ask, and the parent's waiting note
+    /// for it, obsolete. Only rows bound to this task's recorded identity are touched, and only
+    /// while still Pending and never typed, through the queue's under-lock re-check, so a write
+    /// the flush has already claimed keeps its single owner. The nudge id and its Warning event
+    /// stay on the record. Best-effort: a failure here never undoes the settlement.
+    /// </summary>
+    private async Task RetireObsoleteClosingNudgeAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, CancellationToken ct)
+    {
+        if (services.GetService<SessionMessageQueueService>() is not { } queue)
+            return;
+        var shortId = DelegationReportFormatter.Short(task.Id);
+        try
+        {
+            if (task.ReportNudgeMessageId is Guid nudgeId && task.AgentSessionId is Guid sessionId
+                && await queue.CancelPendingIfUntypedAsync(sessionId, nudgeId, ct))
+            {
+                _logger.LogInformation(
+                    "Task {ShortId}: settled report retired the never-typed closing-line nudge {MessageId}",
+                    shortId, nudgeId);
+            }
+
+            if (task.ReplyTo != AgentTaskReplyTo.Session || task.ParentSessionId is not Guid parentSession)
+                return;
+            var waitKey = $"task-wait:{task.Id:N}";
+            var waitNotes = await db.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.AgentSessionId == parentSession
+                    && m.ConversationKey == waitKey
+                    && m.SourceTaskId == task.Id
+                    && m.Status == QueuedMessageStatus.Pending
+                    && m.DeliveryAttempts == 0)
+                .Select(m => m.Id)
+                .ToListAsync(ct);
+            foreach (var noteId in waitNotes)
+            {
+                if (await queue.CancelPendingIfUntypedAsync(parentSession, noteId, ct))
+                {
+                    _logger.LogInformation(
+                        "Task {ShortId}: settled report retired the parent's waiting note {MessageId}",
+                        shortId, noteId);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Task {ShortId}: could not retire the obsolete closing-line nudge", shortId);
         }
     }
 
