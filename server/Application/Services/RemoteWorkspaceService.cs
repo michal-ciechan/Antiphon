@@ -404,9 +404,37 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         AgentTask task, IReadOnlyCollection<string>? reportedTips, CancellationToken ct) =>
         SyncCoreAsync(task, reportedTips, inspectMirror: true, ct);
 
+    /// <summary>
+    /// CARD-1479. The fairness waiter <see cref="WhileLeaseBusyAsync"/> registers outlives this
+    /// attempt only while the attempt is still waiting for the lease
+    /// (<c>runner_sync_lease_waiting</c>). Every other exit drops it: the early eligibility
+    /// refusals above the lease, success, refusal, the spent budget, a timeout, an exception and
+    /// the caller's own cancellation, so no land ever yields to a sync that is not coming back.
+    /// The durable <paramref name="singleAttempt"/> recovery never registers and is left alone.
+    /// </summary>
     private async Task<RemoteSettlementSyncResult> SyncCoreAsync(
         AgentTask task, IReadOnlyCollection<string>? reportedTips, bool inspectMirror, CancellationToken ct,
         bool singleAttempt = false)
+    {
+        if (singleAttempt || _leaseWaiters is null)
+            return await SyncEligibleAsync(task, reportedTips, inspectMirror, ct, singleAttempt);
+        var waiting = false;
+        try
+        {
+            var result = await SyncEligibleAsync(task, reportedTips, inspectMirror, ct, singleAttempt);
+            waiting = result.Reason == RemoteSettlementSyncReasons.LeaseWaiting;
+            return result;
+        }
+        finally
+        {
+            if (!waiting)
+                _leaseWaiters.Clear(task.Id);
+        }
+    }
+
+    private async Task<RemoteSettlementSyncResult> SyncEligibleAsync(
+        AgentTask task, IReadOnlyCollection<string>? reportedTips, bool inspectMirror, CancellationToken ct,
+        bool singleAttempt)
     {
         if (!IsEligible(task))
             return RemoteSettlementSyncResult.NotApplicable;
@@ -516,7 +544,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         // Observe (and, if absent locally, fetch) the exact ref BEFORE taking the lease: the
         // observation takes its own lease for the fetch, and nested acquisition is not reentrant.
         var (observed, observeSpent) = await WhileLeaseBusyAsync(
-            task.Id,
+            task.Id, baseline.CanonicalCommonDirectory,
             () => _progressGit!.ObserveExactRefAsync(repo, fullRef, fingerprint, task.Id, ct),
             o => o.State == ProgressRemoteState.Unavailable && o.Reason == "repository_lease_busy",
             ct, caller, singleAttempt);
@@ -554,7 +582,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                     MirrorInspection: mirror.Refusal);
             if (mirror?.Pushed == true)
             {
-                var (afterPublish, spent) = await WhileLeaseBusyAsync(task.Id,
+                var (afterPublish, spent) = await WhileLeaseBusyAsync(task.Id, baseline.CanonicalCommonDirectory,
                     () => _progressGit!.ObserveExactRefAsync(repo, fullRef, fingerprint, task.Id, ct),
                     o => o.State == ProgressRemoteState.Unavailable && o.Reason == "repository_lease_busy",
                     ct, caller, singleAttempt);
@@ -649,7 +677,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         }
 
         var (acquired, acquireSpent) = await WhileLeaseBusyAsync(
-            task.Id,
+            task.Id, baseline.CanonicalCommonDirectory,
             () => _leases!.TryAcquireAsync(
                 repo, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.WorktreeSettlement), ct),
             held => held is null,
@@ -744,10 +772,18 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// Still busy when the wait ends, the last busy answer is returned with
     /// <c>Spent</c> true only once that cumulative wait has reached the budget; the budget-linked
     /// <paramref name="ct"/> running out also ends the wait. The caller's own cancellation propagates.
+    /// <para>CARD-1479: a refused ordinary sync is a real waiter in the CARD-0672 D-2 turnstile
+    /// (<see cref="RepositoryLeaseWaiters"/>), keyed by the validated <paramref name="common"/>
+    /// directory, so the next land admission on that repository yields to it. Its
+    /// <c>Since</c> is the cumulative wait's first-busy time; a repeat registration keeps it. Not
+    /// verification-compatible: a sync has no preflight, so a live verification window still
+    /// refuses it. The registration ends when this acquire succeeds, or with the attempt
+    /// (<see cref="SyncCoreAsync"/>). A <paramref name="singleAttempt"/> never registers: a
+    /// backing-off debt is not runnable demand.</para>
     /// </summary>
     private async Task<(T Result, bool Spent)> WhileLeaseBusyAsync<T>(
-        Guid taskId, Func<Task<T>> attempt, Func<T, bool> busy, CancellationToken ct, CancellationToken caller,
-        bool singleAttempt = false)
+        Guid taskId, string common, Func<Task<T>> attempt, Func<T, bool> busy, CancellationToken ct,
+        CancellationToken caller, bool singleAttempt = false)
     {
         var result = await attempt();
         if (!busy(result))
@@ -755,6 +791,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         if (singleAttempt) return (result, true);
 
         var since = LeaseWaits.FirstBusy(taskId, Clock.GetUtcNow());
+        _leaseWaiters?.Register(common, taskId, RepositoryLeasePurposes.WorktreeSettlement, since);
         bool Spent() => Clock.GetUtcNow() - since >= SyncBudget;
         var left = SyncBudget - (Clock.GetUtcNow() - since);
         var slice = left < LeaseWaitSlice ? left : LeaseWaitSlice;
@@ -782,6 +819,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                 return (result, Spent() || (ct.IsCancellationRequested && !caller.IsCancellationRequested));
             }
         }
+        // Acquired after waiting: the sync no longer asks a land to stand aside for it.
+        _leaseWaiters?.Clear(taskId);
         return (result, false);
     }
 
