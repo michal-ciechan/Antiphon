@@ -258,4 +258,12 @@ slice group, four builds.
 
 ### Runs
 
-(recorded by the Code stage)
+Code task bd490132 (branch `feat/card-task-bd490132`, runner mirror on server2, Linux). Each
+run is `tools/Antiphon.Checkpoints start --plan <this> --rows ... --expected-source-sha <sha>`
+then `wait`; evidence under `.antiphon/checkpoints/<run>/` (gitignored).
+
+| Run | Rows | Commit | Outcome |
+|---|---|---|---|
+| 20261022-015820-4622 | CP-1, CP-2 | `bc3acff74ee380c1eb608b17759d527e150f50f2` (S1/S2 witnesses, no fix) | RED as designed: CP-1 `producer.Sent` was `[]` (B held behind A); CP-2 `SubmittedBodies` was `[]` (phase-9 head not due). |
+| 20261022-021011-5464 | CP-1, CP-2 | `4788cdf4826448e7f82b02db4b4b1755e0811731` (S1+S2 fixed) | GREEN: 1/1 and 1/1, clean, buildSource=verified. |
+| 20261022-022752-0b56 | CP-3 | `d659be6079f6e92a03aa1d412c49ce7a7a145cfa` (S3 witness, no fix) | RED as designed: no `ChannelReplyLost` incident (0 of 1). |
