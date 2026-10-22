@@ -177,6 +177,23 @@ ExtraArgs are not expanded. CARD-0341's herdr expansion remains a second pass on
 `--project $env:X_LLM_PROJECT` profile arg reaches the wrapper as the project name whichever pane
 it lands in.
 
+## LLM endpoint settings (CARD-0167)
+
+Project settings offer an **LLM endpoint** group per supported kind (ClaudeCode, Grok, Codex).
+Enter the base URL and select an API key **name** from global/project metadata; the UI never reads
+or renders the value. Codex requires a name. The read-only projected names and arguments come from
+`GET /api/agent-tui/runner-types` (`providerEndpoint.supported`, `keyRequired`, `environmentNames`,
+`argumentTemplate`), not a client-maintained variable list.
+
+Agent settings offer **Inherit project endpoint**, **Own endpoint**, and **Direct (no endpoint)**.
+Own endpoint replaces the project selection; Direct suppresses the typed setting but does not
+remove values in generic launch env. Clearing all project groups submits `{}`; switching an agent
+to Inherit/Direct clears its own endpoint. Changes take effect on the next launch. Rotation writes
+the existing key name in the key store; replace a running/warm process to pick up the new value.
+See [agent-credentials.md](agent-credentials.md#provider-endpoint-operations-card-0167) for custody,
+rank order, validation, save warnings and runner refusals, and [agent-kinds.md §7](agent-kinds.md#7-pointing-a-cli-at-a-different-api-endpoint)
+for the operator-owned canaries.
+
 ## Key custody
 
 - Default key ring (Windows): `%LOCALAPPDATA%\Antiphon\DataProtection-Keys`
@@ -205,6 +222,9 @@ it lands in.
 - `POST …/profiles/{id}/validate`, `GET /api/agent-tui/validation-runs/{runId}`
 - `GET /metrics/agent-tui` (root route, not under `/api`)
 - Agent create/update accepts `tuiProfileId` + `modelId` (plus `launchEnv`, `sessionBackend`)
+- Project create/update accepts `providerEndpoints`, a complete kind-to-`{baseUrl, apiKeyName}` map;
+  agent create/update accepts `providerEndpointMode` and `providerEndpoint`. Read DTOs include the
+  same settings and name-only missing-key `warnings`. Null project map leaves it unchanged; `{}` clears.
 - Named secrets that several profiles share live in the separate API-key store —
   `/api/api-keys` and `/api/projects/{projectId}/api-keys`, referenced as `{{key:NAME}}`
   ([agent-credentials.md](agent-credentials.md))

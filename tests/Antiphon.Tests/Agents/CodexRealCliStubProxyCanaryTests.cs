@@ -1,13 +1,18 @@
 using Antiphon.FakeLlmApi;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.Pty;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
-using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Agents;
 
@@ -244,18 +249,82 @@ public class CodexRealCliStubProxyCanaryTests
     }
 
     /// <summary>
-    /// CARD-0168 S6 deferred cell. B-agent Codex goes through
-    /// <c>AgentControlService.StartAsync</c>, which constructs extraArgs internally and cannot
-    /// take the five <c>-c</c> overrides. CARD-0167's acceptance criterion is this test going
-    /// green — do not implement it here.
+    /// CARD-0167 S6: project endpoint -> AgentControlService -> real runner adapter -> stub.
+    /// Operator-only: isolated synthetic home/key; no operator auth is read or copied.
     /// </summary>
     [Test]
-    public async Task B_agent_path_deferred_until_CARD_0167()
+    [Timeout(PerTestBudgetSeconds * 1000)]
+    public async Task B_agent_launch_projects_project_endpoint_and_hits_stub(CancellationToken cancellationToken)
     {
-        await Task.CompletedTask;
-        throw new SkipTestException(
-            "B-agent Codex is deferred until CARD-0167 lands first-class -c argument injection " +
-            "through AgentControlService. Acceptance criterion for CARD-0167: this test goes green " +
-            "against FakeLlmApi via RealCliStubEnv.ForCodex with the same nonce oracle as A-tier.");
+        RealCliStubGate.SkipIfNotEligible(AgentKind.Codex);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var root = Directory.CreateTempSubdirectory("c0167-codex-agent-").FullName;
+        try
+        {
+            var nonce = $"STUBCANARY-{Guid.NewGuid():N}";
+            var syntheticKey = $"stub-codex-{Guid.NewGuid():N}";
+            await using var stub = await FakeLlmApiServer.StartAsync(new FakeLlmApiOptions { Codex = true });
+            stub.Script.SetDefault(StubEndpointKeys.CodexResponses, new ScriptedTextTurn("STUBREPLY"));
+            var overlay = RealCliStubEnv.ForCodex(stub.BaseUrl, syntheticKey, Path.Combine(root, "synthetic-home"));
+            var (app, prefix) = HeadedCodexGate.BuildLaunch(HeadedCodexGate.ResolveOrThrow());
+            var settings = new AgentRegistrySettings
+            {
+                DefaultDefinition = "codex-canary",
+                Definitions = { ["codex-canary"] = new AgentDefinition
+                {
+                    Kind = "Codex", Exe = app,
+                    ArgsTemplate = [.. prefix, "--dangerously-bypass-approvals-and-sandbox"],
+                } },
+            };
+            await using var runner = new DirectSessionRunnerClient(
+                Path.Combine(root, "runner-logs"), ptyBackend: "modern", codexTranscript: true);
+            // Refuse before real process creation unless the production endpoint projection is complete.
+            runner.BeforeStart = () =>
+            {
+                var request = runner.StartRequests.Last();
+                ProviderEndpointCanaryHarness.AssertProjection(
+                    AgentKind.Codex, stub.BaseUrl, syntheticKey, request.Env, request.Args);
+                request.Env["CODEX_HOME"].ShouldBe(overlay.Env["CODEX_HOME"]);
+                var expected = overlay.Args.Where(arg => arg != "-c")
+                    .Select(arg => arg.Replace("model_providers.stub.", "model_providers.antiphon.", StringComparison.Ordinal)
+                        .Replace("model_provider=stub", "model_provider=antiphon", StringComparison.Ordinal)
+                        .Replace("name=\"Stub\"", "name=\"Antiphon endpoint\"", StringComparison.Ordinal));
+                foreach (var arg in expected)
+                    request.Args.ShouldContain(arg);
+            };
+            await using var harness = ProviderEndpointCanaryHarness.Build(root, schema.ConnectionString,
+                AgentKind.Codex, [], services =>
+                {
+                    services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(
+                        new ProviderEndpointCanaryHarness.RegistryOptions(settings));
+                    services.AddSingleton<ISessionRunnerClient>(runner);
+                    services.AddSingleton<IAgentProtocolAdapterFactory>(
+                        new AgentProtocolAdapterFactory(Options.Create(settings), runner));
+                });
+            var runtime = harness.Provider.GetRequiredService<AgentSessionRuntime>();
+            RealCliStubBServerHarness.StartEventBridge(runner, runtime);
+            var (agentId, _) = await ProviderEndpointCanaryHarness.SeedAsync(
+                schema.ConnectionString, root, AgentKind.Codex, stub.BaseUrl, syntheticKey,
+                new Dictionary<string, string> { ["CODEX_HOME"] = overlay.Env["CODEX_HOME"] }, cancellationToken);
+            var started = await harness.Control.StartAsync(agentId,
+                new StartAgentRequest(Fresh: true, Prompt: $"Reply with exactly {nonce}"), cancellationToken);
+            started.PersistentSessionId.ShouldNotBeNull();
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(90), cancellationToken);
+            var chat = await stub.Requests.WaitForAsync(r => r.Method == "POST" && r.Path == "/v1/responses"
+                && r.Body.Contains(nonce, StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+            chat.ShouldNotBeNull("the real agent turn must reach the stub with its nonce");
+            (chat!.Headers.TryGetValue("Authorization", out var bearer)
+                && bearer.SequenceEqual(new[] { $"Bearer {syntheticKey}" })).ShouldBeTrue("synthetic bearer on chat");
+            stub.Requests.All.Any(r => r.Method == "GET" && r.Path == "/v1/models"
+                && r.Headers.TryGetValue("Authorization", out var key)
+                && key.SequenceEqual(new[] { $"Bearer {syntheticKey}" })).ShouldBeTrue("synthetic bearer on models");
+            stub.Requests.All.ShouldAllBe(r => r.ListenPort == stub.ListenPort);
+            await runtime.CatchUpTranscriptAsync(Guid.Parse(started.PersistentSessionId!), cancellationToken);
+            await harness.Control.StopAsync(agentId, cancellationToken);
+        }
+        finally
+        {
+            RealCliStubBServerHarness.TryDelete(root);
+        }
     }
 }

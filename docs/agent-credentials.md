@@ -1,7 +1,7 @@
 # Agent credentials and the launch environment
 
-Every agent session is a child process, and everything it knows about who it is and how to reach a
-model arrives as **environment variables on that process**. This document is the reference for
+Every agent session is a child process. Credentials arrive as **environment variables on that
+process**; Codex endpoint routing also uses generated launch arguments. This document is the reference for
 where those values come from, which layer wins when two disagree, and where a secret is allowed to
 live.
 
@@ -16,10 +16,11 @@ machinery underneath.
 | Merge order and kind defaults | `server/Application/Services/AgentTuiLaunchResolver.cs` |
 | `{{key:NAME}}` syntax, where it is legal, the tripwire | `server/Application/Services/ApiKeyPlaceholder.cs` |
 | Key lookup, scoping, failure messages | `server/Application/Services/ApiKeyEnvResolver.cs` |
+| Provider endpoint selection and projection | `server/Application/Services/ProviderEndpointLayers.cs`, `ProviderEndpointProjection.cs` |
 | Env name/value validation and the `ANTIPHON_*` refusal | `server/Application/Services/AgentLaunchEnv.cs` |
 | Key-ring location and protection modes | `server/Application/Settings/AgentTuiSettings.cs` |
 
-## 1. Four places a credential can live
+## 1. Four credential stores and an endpoint reference
 
 They are not interchangeable. Pick by what the credential is *for*.
 
@@ -28,6 +29,7 @@ They are not interchangeable. Pick by what the credential is *for*.
 | **Wrapper-managed auth** | nothing in Antiphon — `claude.exe` / `grok.exe` is already logged in as the Windows user, or a wrapper script owns the keys | n/a | **the default, and the right answer for normal operation** |
 | **API keys** (`ApiKey` entity, `/api/api-keys`) | a named, Data-Protection-encrypted value, global or per project | `{{key:NAME}}` inside any env **value** | a secret several agents reference, under whatever variable name each one needs |
 | **Profile managed secrets** (`AgentTuiSecret`, `/api/agent-tui/profiles/{id}/secrets/{name}`) | a Data-Protection-encrypted value whose **name *is* the environment variable name** | exported directly on any session launched from that profile | a credential that authenticates the runner program under one profile |
+| **Provider endpoint setting** (`Project.ProviderEndpointsJson`, agent `ProviderEndpointMode` / `ProviderEndpointJson`) | URL and API key **name** only; no credential value or second secret store | projects kind-specific env and Codex arguments; the existing `ApiKey` store resolves the key reference last | a project-wide ClaudeCode, Grok or Codex proxy, or one agent's override |
 | **LLM providers** (`LlmProvider`, `/api/settings/providers`) | the key for **Antiphon's own** model calls (drafting, the check interpreter, summarisation) — *not* agent sessions | server-side only, never returned to the frontend | configuring the server's own LLM access |
 
 The last row is the one people conflate. `Llm:Providers:anthropic:ApiKey` has nothing to do with an
@@ -74,8 +76,10 @@ an already committed claim or Starting session after a save failure (CARD-1301).
 | 1 | Profile revision non-secret env | TUI profile revision |
 | 2 | Profile managed secrets | `PUT /api/agent-tui/profiles/{id}/secrets/{name}` |
 | 3 | Project default env | `Project.DefaultLaunchEnvJson` |
+| 3b | Project provider endpoint | `Project.ProviderEndpointsJson`, selected by resolved kind in `Inherit` mode |
 | 4 | Inherited caller env | task `InheritedLaunchEnvJson` (CARD-0260: snapshot of the caller's LLM-routing names at create) |
 | 5 | **The agent's own launch env** | `Agent.LaunchEnvJson` (agent PATCH `launchEnv`) |
+| 5b | Agent provider endpoint | `Agent.ProviderEndpointJson` in `Endpoint` mode; replaces the project endpoint selection |
 | 6 | Launch-time override | task `envOverride` / `delegate.ps1 -EnvOverride` |
 | 7 | `ExtraEnv` — Antiphon's `ANTIPHON_*` orchestration identity | code |
 
@@ -85,6 +89,13 @@ about *this agent*; inherited env outranks the project default because the calle
 is more specific than the blanket; a project default outranks the shared profile because it is a
 credential/endpoint fact about this project's agents; none of them outrank `ExtraEnv`, which
 carries Antiphon's own identity plumbing. An explicit `-EnvOverride` still wins over inherited.
+
+These ranks apply to both managed-profile and legacy registry launches. `Inherit` selects the
+project's endpoint for the resolved kind; `Endpoint` selects only the agent's own endpoint, so a
+project's credential cannot follow a URL-only agent override to another host. `Direct` suppresses
+the typed endpoint entirely. It removes no generic env entries: a URL/key in a profile, inherited
+env or `launchEnv` still applies. Codex's five generated `-c` pairs follow `ExtraArgs` and count
+against the existing command-line budget; an environment override cannot replace their base URL.
 
 `delegate.ps1` also snapshots its live `X_LLM_PROJECT` and `X_LLM_KEY` process variables into the
 inherited layer by default; this is the one caller environment the server cannot reconstruct from
@@ -148,6 +159,47 @@ PUT    /api/projects/{projectId}/api-keys/{name}
 ```
 
 Values are **write-only** — nothing reads a key back out over HTTP.
+
+### Provider endpoint operations (CARD-0167)
+
+The **LLM endpoint** groups in project settings and agent settings take a base URL and an API key
+name, never a key value. The project map supports `ClaudeCode`, `Grok` and `Codex`; Codex requires
+a name, while Claude/Grok may use a key-injecting proxy with no name. API shape:
+
+```json
+{"providerEndpoints":{"Codex":{"baseUrl":"http://127.0.0.1:8088","apiKeyName":"proxy-codex"}}}
+```
+
+This is a sentinel configuration example, not a running endpoint. Only an operator provisions a
+real credential through the approved vault/write-only key-store flow; never paste a value into a
+brief, terminal command, launch argument, log or report. Never inspect `auth.json` or an operator's
+Codex home to obtain a credential. The setting does not change OAuth/subscription stores.
+
+| Operation | Procedure |
+|---|---|
+| Set | Provision the named key with `PUT /api/api-keys/{name}` or `PUT /api/projects/{projectId}/api-keys/{name}` through the approved secret flow. PATCH `/api/projects/{id}` with `providerEndpoints` (the complete replacement map), or use project settings. For one agent PATCH `/api/agents/{id}` with `providerEndpointMode: Endpoint` and `providerEndpoint: { baseUrl, apiKeyName }`. |
+| Rotate | Rotation changes the key store under the same name. The next fresh launch resolves the new value. A running or warm process retains its old value until replaced; rotation alone does not invalidate its routing stamp. |
+| Clear | PATCH the project with `providerEndpoints: {}` to clear all entries (remove just one kind by sending the remaining map). PATCH the agent with `providerEndpointMode: Inherit` and `providerEndpoint: null` to clear its own endpoint; it then inherits the project again. Use `Direct` to suppress that inheritance. Neither operation removes generic env. |
+| Inspect | GET the project/agent for URL, mode and name; GET `/api/agent-tui/runner-types` for `providerEndpoint` descriptors. Key-list routes return metadata, never values. Resolver diagnostics name the host and key name, never a full URL path or resolved value. |
+
+Omitted/null project maps leave the map unchanged. Omitted/null agent fields together also leave
+the setting unchanged; an explicit mode change clears an own endpoint when entering Inherit/Direct.
+Keys remain case-sensitive and project-scoped keys win over a global key of the same name.
+Saving an unknown name succeeds with a `warnings` entry; launch then refuses `api_key_not_found`
+until the key exists. Deleting a referenced key is not a clear operation.
+
+URLs must be absolute HTTP(S), at most 2,000 characters, without userinfo, query, fragment,
+whitespace, control characters, quotes, backslashes or invalid ports. Trailing slashes normalize;
+loopback is allowed. Neither field accepts a `{{key:` marker. Save-time failures are 422;
+unsupported kinds use `provider_endpoint_unsupported_kind`, and missing Codex names use
+`provider_endpoint_key_required`. No save/launch reachability probe runs: the CLI reports a
+connection/wire failure on use. Runner-bound Claude/Codex credential projections still refuse
+with `phone_home_env_refused`; choosing this setting does not authorize metered runner credentials.
+Warm-pool routing checks compare the process's launch-time projection stamp to the current map;
+setting, changing or clearing routing does not retrofit a live process.
+
+See [agent-kinds.md §7](agent-kinds.md#7-pointing-a-cli-at-a-different-api-endpoint) for the exact
+projection table and the operator-owned canary procedure.
 
 ## 4. Validation limits
 

@@ -619,11 +619,35 @@ test helper and must never write into the user's normal Codex home.
 
 ## 7. Pointing a CLI at a different API endpoint
 
-Whenever you need a real CLI to talk to something other than its vendor — a stub, a proxy, a
-gateway — **use `RealCliStubEnv` (`src/Antiphon.FakeLlmApi/RealCliStubEnv.cs`) rather than
-hand-rolling the environment.** It is the only sanctioned builder, and it exists because the safety
-decisions (Grok's mandatory chat-proxy var, Codex's five `-c` args, Claude's isolated config dir)
-are exactly the things a hand-rolled overlay gets wrong in the direction that costs money.
+Production redirects use the provider endpoint setting in the project's or agent's **LLM endpoint**
+group (CARD-0167). `ProviderEndpointProjection` generates the kind-specific launch shape from a
+URL and a key name; the existing encrypted API-key store supplies the value. No key value is stored
+on the endpoint. Set, rotate, clear, scope and merge ranks 3b/5b are documented in
+[agent-credentials.md](agent-credentials.md#provider-endpoint-operations-card-0167).
+
+The following names match `ProviderEndpointProjection.Describe`. Key variables are optional for
+Claude/Grok when no name is set; Codex requires a name. Grok always sets both routing variables:
+`GROK_XAI_API_BASE_URL` alone redirects only the credential lookup, not chat. Codex appends `/v1`
+when absent and emits five `-c` pairs with provider id `antiphon`, name `"Antiphon endpoint"`,
+`env_key="OPENAI_API_KEY"` and `wire_api="responses"`. `OPENAI_BASE_URL` is not a Codex redirect.
+
+<!-- provider-endpoint-names:start -->
+| Kind | Environment names | Argument keys |
+|---|---|---|
+| `ClaudeCode` | `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY` | none |
+| `Grok` | `GROK_CLI_CHAT_PROXY_BASE_URL`, `GROK_XAI_API_BASE_URL`, `GROK_CODE_XAI_API_KEY` | none |
+| `Codex` | `OPENAI_API_KEY` | `model_providers.antiphon.name`, `model_providers.antiphon.base_url`, `model_providers.antiphon.env_key`, `model_providers.antiphon.wire_api`, `model_provider` |
+<!-- provider-endpoint-names:end -->
+
+OpenCode/Raw do not support this setting. A gkp wrapper still needs its wrapper-specific generic
+env; the typed Grok setting does not supply `GROK_BASE_URL` or `X_LLM_PROJECT`. `Direct` suppresses
+typed endpoint inheritance, but leaves generic env intact. Runner-bound Claude/Codex key
+projections remain subject to `phone_home_env_refused`.
+
+RealCliStubEnv remains the test builder (`src/Antiphon.FakeLlmApi/RealCliStubEnv.cs`). Use it for
+real-CLI stub tests: it owns Grok's mandatory chat redirect and isolated Claude/Codex configuration.
+The provider-setting canary instead exercises the production projection, cross-checks its launch
+against this builder before spawning, and takes only isolated-home setup from the test overlay.
 
 ```csharp
 var overlay = RealCliStubEnv.ForGrok(stub.BaseUrl, syntheticKey);
@@ -639,10 +663,49 @@ run the real binaries against it; they are `[Explicit]` and gated on
 on the chat path *and* the injected key must arrive on the credential path — because either alone
 would pass while real turns leaked to the vendor.
 
-For a *production* redirect (a proxy in front of an agent) the same variables go through the normal
-env layers: a profile revision's env, the project default env, the agent's own launch env, or a
-per-task `envOverride` — with the secret itself referenced as `{{key:NAME}}` rather than pasted.
-See [agent-credentials.md](agent-credentials.md).
+### Operator-owned acceptance
+
+The automated sentinel variant is
+`ProviderEndpointSentinelCanaryTests.C0167_agent_launch_resolves_project_key_and_clear_removes_projection`
+(ClaudeCode and Codex). It uses an isolated database, a synthetic key store and capturing adapters
+to check `AgentControlService.StartAsync`, key scope, projected argv/env, then clear and fresh launch.
+It launches no CLI, calls no provider and proves no transcript delivery.
+
+For the real Codex-to-local-stub acceptance, the operator runs this exact method on Windows with
+the real Codex executable available. It creates a throwaway home and synthetic key, uses the
+project setting through `AgentControlService`, and requires the nonce on `/v1/responses` plus the
+synthetic bearer on `/v1/models`. It stays `[Explicit]`; a skip or compile-only result is not a pass.
+
+```powershell
+$env:ANTIPHON_REAL_CLI_STUB_TESTS = '1'
+try {
+  pwsh -NoProfile -File scripts/build-slot.ps1 -Label c0167-operator-canary -- dotnet run --project tests/Antiphon.Tests --property:OutputPath=bin-c0167operator/ -- --treenode-filter '/*/*/CodexRealCliStubProxyCanaryTests/B_agent_launch_projects_project_endpoint_and_hits_stub' --report-trx --results-directory .antiphon/c0167-operator
+} finally {
+  Remove-Item Env:ANTIPHON_REAL_CLI_STUB_TESTS -ErrorAction SilentlyContinue
+}
+```
+
+Keep the fresh TRX and source SHA, require one executed/passed test with no skips, and remove the
+owned `bin-c0167operator/` outputs after the run. Never inspect or copy an operator's Codex home
+or `auth.json`; only the test-created synthetic home belongs to this canary.
+
+Real proxy/key acceptance is separately **operator-owned** and is not run by delegates:
+
+1. Select a disposable project and a local desktop Claude agent on its board. Confirm no generic
+   profile/project/agent/inherited/launch override supplies `ANTHROPIC_BASE_URL`, and select Inherit.
+   Record the original URL/name/mode configuration, never credential values.
+2. Through the approved credential flow, provision a project key name for the already-running
+   trusted proxy. Set that project's ClaudeCode endpoint in the UI (or PATCH the complete map).
+   Read it back and check only URL/name. Do not send a real key in shell arguments or logs.
+3. Start fresh with a unique prompt token, then pull `/api/sessions/{id}/transcript` and require a
+   complete matching `UserPrompt`; a Running status or screen redraw is insufficient. Confirm the
+   trusted proxy received that turn using names/nonce-only operator telemetry.
+4. Stop that test session, clear the project's entry, and start fresh. Through approved names-only
+   launch diagnostics, verify `ANTHROPIC_BASE_URL` is absent; do not dump the environment. Restore
+   the original configuration and stop the test agent. If names-only diagnostics are unavailable,
+   leave this check pending; an absent log line is not proof of absence.
+
+Record these two acceptances separately. A sentinel pass does not discharge either live acceptance.
 
 ## 8. What is deliberately not supported
 
@@ -765,7 +828,7 @@ health episode. A committed caller note keeps its durable queue identity through
 
 ### Preserved Gotcha #66
 
-- **A mechanism is only a redirect once the stub has seen the request** (CARD-0168): never trust an unverified base-URL variable name. The test oracle for every real-CLI stub-proxy canary is stub receipt of a per-run nonce via `RealCliStubEnv.ForClaude`/`ForGrok`/`ForCodex` — never the CLI's own exit code or output, and never a hand-rolled stub env dictionary. **`GROK_XAI_API_BASE_URL` is a false safety** — it redirects only `GET /api-key`; chat still hits real xAI. Canonical Grok chat redirect is `GROK_CLI_CHAT_PROXY_BASE_URL`. Opt-in: `ANTIPHON_REAL_CLI_STUB_TESTS=1` (distinct from `ANTIPHON_HEADED_TESTS` / `ANTIPHON_CODEX_HEADED_TESTS`); category `RealCliStubProxy`. Isolated `CLAUDE_CONFIG_DIR` must be seeded (`RealCliStubClaudeConfig.SeedOnboarding`) or interactive Claude parks on first-run dialogs. B-agent Codex is deferred until CARD-0167 (five `-c` args through `AgentControlService`); A-tier `codex exec` and B-runner `RunnerLaunchRequest` already prove the mechanism. Interactive Grok also `GET /billing`.
+- **A mechanism is only a redirect once the stub has seen the request** (CARD-0168): never trust an unverified base-URL variable name. The test oracle for every real-CLI stub-proxy canary is stub receipt of a per-run nonce via `RealCliStubEnv.ForClaude`/`ForGrok`/`ForCodex` — never the CLI's own exit code or output, and never a hand-rolled stub env dictionary. **`GROK_XAI_API_BASE_URL` is a false safety** — it redirects only `GET /api-key`; chat still hits real xAI. Canonical Grok chat redirect is `GROK_CLI_CHAT_PROXY_BASE_URL`. Opt-in: `ANTIPHON_REAL_CLI_STUB_TESTS=1` (distinct from `ANTIPHON_HEADED_TESTS` / `ANTIPHON_CODEX_HEADED_TESTS`); category `RealCliStubProxy`. Isolated `CLAUDE_CONFIG_DIR` must be seeded (`RealCliStubClaudeConfig.SeedOnboarding`) or interactive Claude parks on first-run dialogs. CARD-0167 adds the explicit B-agent Codex project-setting canary through `AgentControlService`; its operator run remains separate acceptance. A-tier `codex exec` and B-runner `RunnerLaunchRequest` cover the direct mechanism. Interactive Grok also `GET /billing`.
 
 ### Preserved Gotcha #67
 
