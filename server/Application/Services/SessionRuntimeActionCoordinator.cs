@@ -320,29 +320,32 @@ public sealed class SessionRuntimeActionCoordinator(
     private async Task ExecuteChannelReplyPhaseAsync(AgentSessionRuntime runtime, AppDbContext db,
         SessionRuntimeAction action, CancellationToken ct)
     {
-        var route = await runtime.ResolveActionChannelRouteAsync(action.AgentSessionId, action.Sequence, ct);
-        if (route is null)
-        {
-            await runtime.ExecuteActionChannelReplyAsync(action.AgentSessionId, action.Sequence, ct);
-            return;
-        }
-        var key = route.ConversationKey;
-        var owed = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == action.AgentSessionId
-                && a.TriggerKind == ChannelReplyDebt && a.Sequence < action.Sequence
-                && (key == null || a.ConversationKey == null || a.ConversationKey == key))
-            .MaxAsync(a => (DateTime?)a.DueAt, ct);
-        var now = clock.GetUtcNow().UtcDateTime;
+        // Everything the dispatcher does for this phase, route resolution included, sits inside
+        // one failure envelope: a throw anywhere here becomes debt (the CARD-1422 rule), never a
+        // retained action that holds the turn's later phases. A resolver failure leaves the key
+        // null, so the debt waits for and holds every destination until it runs.
+        string? key = null;
+        DateTime? owed = null;
         Exception? failure = null;
-        if (owed is null)
+        try
         {
-            try
+            var route = await runtime.ResolveActionChannelRouteAsync(action.AgentSessionId, action.Sequence, ct);
+            key = route?.ConversationKey;
+            if (route is not null)
+                owed = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == action.AgentSessionId
+                        && a.TriggerKind == ChannelReplyDebt && a.Sequence < action.Sequence
+                        && (key == null || a.ConversationKey == null || a.ConversationKey == key))
+                    .MaxAsync(a => (DateTime?)a.DueAt, ct);
+            if (owed is null)
             {
+                // No route: nothing publishes from this trigger, so a completed dispatch owes nothing.
                 await runtime.ExecuteActionChannelReplyAsync(action.AgentSessionId, action.Sequence, ct);
                 return;
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception ex) { failure = ex; }
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) { failure = ex; }
+        var now = clock.GetUtcNow().UtcDateTime;
         if (await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == action.AgentSessionId
             && a.Sequence == action.Sequence && a.TriggerKind == ChannelReplyDebt, ct)) return;
         db.SessionRuntimeActions.Add(new SessionRuntimeAction { Id = Guid.NewGuid(),
