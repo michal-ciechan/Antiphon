@@ -535,8 +535,13 @@ function ConvertFrom-HexByte([string]$Hex) {
     return $n
 }
 
+# CARD-1409 repair 6 (Review c64987ea F1, plan D-33): MSBuild's unescape, read from a scratch 'dotnet msbuild
+# -getItem' run. Two hex digits after '%', in either case, become one character of that code (%C3%A9 is two
+# characters); anything else after '%' stays literal; %252E becomes the literal %2E. Returns $null for %00,
+# which MSBuild keeps as a NUL character and the audit refuses by name. Called from Resolve-ItemPathText
+# only, so every path text is decoded exactly once, after expansion and after the ';' split, as MSBuild does.
 function ConvertFrom-PercentEncoding([string]$Value) {
-    $bytes = New-Object 'System.Collections.Generic.List[byte]'
+    $sb = New-Object System.Text.StringBuilder
     $i = 0
     while ($i -lt $Value.Length) {
         $c = $Value[$i]
@@ -544,16 +549,15 @@ function ConvertFrom-PercentEncoding([string]$Value) {
             $n = ConvertFrom-HexByte $Value.Substring($i + 1, 2)
             if ($n -ge 0) {
                 if ($n -eq 0) { return $null }
-                [void]$bytes.Add([byte]$n)
+                [void]$sb.Append([char]$n)
                 $i = $i + 3
                 continue
             }
         }
-        $encoded = [System.Text.Encoding]::UTF8.GetBytes([string]$c)
-        foreach ($b in $encoded) { [void]$bytes.Add([byte]$b) }
+        [void]$sb.Append($c)
         $i = $i + 1
     }
-    return [System.Text.Encoding]::UTF8.GetString($bytes.ToArray())
+    return $sb.ToString()
 }
 
 # CARD-1409 repair 4 (Review 937bb1c9 F2): the census of every parsed definition file, filled before any
@@ -617,9 +621,10 @@ function Register-DefinitionFacts($Doc, [string]$Path) {
                 $generate = ''
                 if ($metadata.ContainsKey('GeneratePathProperty')) { $generate = [string]$metadata['GeneratePathProperty'] }
                 if ($generate -ieq 'true') {
-                    foreach ($id in $include.Split(';')) {
-                        $trimmed = $id.Trim()
-                        if ($trimmed.Length -gt 0) { [void]$script:PackagePathProperties.Add('Pkg' + $trimmed.Replace('.', '_')) }
+                    # D-33: the id is item text, split and decoded once by the pipeline before it names a property.
+                    foreach ($id in (Resolve-ItemPathText $include '' '' $true)) {
+                        if (([string]$id.Kind -ne 'repo') -or [bool]$id.Anchored) { continue }
+                        [void]$script:PackagePathProperties.Add('Pkg' + ([string]$id.Text).Replace('.', '_'))
                     }
                 }
             }
@@ -652,9 +657,10 @@ function Get-FileDirectoryPrefix([string]$Path) {
     return $base + '/'
 }
 
-# Expands one text (an include part or a property value) into every value it can take: candidates
-# tagged repo (a path inside the tree), output (rooted at a build output or intermediate directory) or
-# package (rooted at a restored package folder). $FileDir is what $(MSBuildThisFileDirectory) means in
+# Expands one text (an include or a property value) into every value it can take: candidates tagged repo
+# (a path inside the tree), output (rooted at a build output or intermediate directory) or package (rooted
+# at a restored package folder). The text and every spliced value stay in their escaped form; the pipeline
+# (Resolve-ItemPathText, D-33) splits and decodes afterwards. $FileDir is what $(MSBuildThisFileDirectory) means in
 # the file holding the text. Returns $null, with $script:UnresolvedReference set, when a reference cannot be
 # resolved statically: a property no tracked file defines, a non-MSBuild task output, a property function
 # other than GetDirectoryName over an MSBuild task output, an item transform other than
@@ -777,6 +783,132 @@ function Get-PropertyCandidates([string]$Name, [string]$FileDir, [string]$Projec
     return ,$values
 }
 
+# CARD-1409 repair 6 (Review c64987ea F1, plan D-33): the one pipeline that turns item or import text into
+# path specs, in MSBuild's order, which a scratch 'dotnet msbuild -getItem' run confirmed: expand properties
+# and metadata (values are spliced in their escaped form, as MSBuild stores them), split the expanded text
+# on ';' (an escaped %3B is not a separator; a ';' inside an expanded value is), decode %XX once per part,
+# and only then compare through ConvertTo-CanonicalPath. A decoded '$(' '@(' '%(' is literal text, never a
+# reference. A root (a directory property, an output or package root) belongs to the first part of its
+# expanded text; later parts are ordinary project-relative paths. With $DirectoryPropertiesOnly the
+# expansion knows $(MSBuildThisFileDirectory) and $(MSBuildProjectDirectory) at the start of the text and
+# nothing else (imports, D-1; literal property values, D-25; name items; Pkg* ids): a part that still carries
+# a reference is returned with Kind unresolved for the consumer to refuse or skip. Returns $null with
+# $script:UnresolvedReference set when the full expansion cannot resolve a reference; otherwise a list of
+# specs with Kind (repo, output, package, unresolved, or nul for a part that decodes to a NUL character),
+# Text (decoded), Anchored and Source (the escaped part, for messages).
+function Resolve-ItemPathText([string]$Text, [string]$FileDir, [string]$ProjectDir, [bool]$DirectoryPropertiesOnly) {
+    if ($DirectoryPropertiesOnly) {
+        $candidates = New-Object 'System.Collections.Generic.List[object]'
+        $fileText = $FileDir
+        if ([string]::IsNullOrEmpty($fileText)) { $fileText = './' }
+        $projectText = $ProjectDir
+        if ([string]::IsNullOrEmpty($projectText)) { $projectText = '.' }
+        $leading = '^(?i)\$\(\s*MSBuild(ThisFile|Project)Directory\s*\)'
+        $anchored = $Text -match $leading
+        $expanded = $Text
+        if ($anchored) {
+            $root = $fileText
+            if ($Text -match '^(?i)\$\(\s*MSBuildProjectDirectory\s*\)') { $root = $projectText }
+            $expanded = $root + [regex]::Replace($Text, $leading, '')
+        }
+        [void]$candidates.Add((New-Candidate 'repo' $expanded $anchored))
+    }
+    else {
+        $candidates = Expand-Candidates $Text $FileDir $ProjectDir 0
+        if ($null -eq $candidates) { return $null }
+    }
+    $specs = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($candidate in $candidates) {
+        $parts = ([string]$candidate.Text).Split(';')
+        for ($i = 0; $i -lt $parts.Length; $i++) {
+            $part = $parts[$i].Trim()
+            if ($part.Length -eq 0) { continue }
+            $kind = 'repo'
+            $anchoredPart = $false
+            if ($i -eq 0) {
+                $kind = [string]$candidate.Kind
+                $anchoredPart = [bool]$candidate.Anchored
+            }
+            if ($DirectoryPropertiesOnly -and (($part.IndexOf('$(') -ge 0) -or ($part.IndexOf('@(') -ge 0) -or ($part.IndexOf('%(') -ge 0))) {
+                $kind = 'unresolved'
+            }
+            $decoded = ConvertFrom-PercentEncoding $part
+            if ($null -eq $decoded) { $kind = 'nul'; $decoded = $part }
+            [void]$specs.Add(@{ Kind = $kind; Text = $decoded; Anchored = $anchoredPart; Source = $part })
+        }
+    }
+    return ,$specs
+}
+
+function Measure-WildcardCharacters([string]$Text) {
+    $n = 0
+    foreach ($c in $Text.ToCharArray()) {
+        if (($c -eq '*') -or ($c -eq '?')) { $n = $n + 1 }
+    }
+    return $n
+}
+
+# CARD-1409 repair 4 and 6: the tail of a path rooted at an output or package root (an include's text after
+# the root, or a file-reading function's argument after it) is a build product only while it stays under
+# the root: a drive letter or a '..' segment is unclassified, and a divergent segment (D-28) refuses naming
+# it. $Tail is decoded text. Returns $null, or a hashtable with Problem 'unclassified' or 'segment' (with Canonical).
+function Get-OutputTailProblem([string]$Tail) {
+    $text = $Tail.Replace('\', '/')
+    if ($text -match '^[A-Za-z]:') { return @{ Problem = 'unclassified' } }
+    foreach ($part in $text.Split('/')) {
+        if ($part -eq '..') { return @{ Problem = 'unclassified' } }
+    }
+    $canonical = ConvertTo-CanonicalPath $text
+    if (Test-CanonicalRefused $canonical) { return @{ Problem = 'segment'; Canonical = $canonical } }
+    return $null
+}
+
+# A property a tracked definition file may set or fill: allow-listed (D-13), defined in the census, one of the
+# two directory properties, an output or package root, or a task output. Any other name is the SDK's own.
+function Test-PropertyIsTrackable([string]$Name) {
+    if (($Name -ieq 'MSBuildThisFileDirectory') -or ($Name -ieq 'MSBuildProjectDirectory')) { return $true }
+    if ($AllowedProperties.Contains($Name)) { return $true }
+    if ($script:PropertyDefinitions.ContainsKey($Name)) { return $true }
+    if (Test-AllowedName $OutputRootProperties $Name $true) { return $true }
+    if ($script:PackagePathProperties.Contains($Name)) { return $true }
+    if ($script:TaskPropertyOutputs.ContainsKey($Name)) { return $true }
+    return $false
+}
+
+# CARD-1409 repair 6 (D-33): in the tail of a file-reading function argument, a $(Name) no tracked definition
+# file may set, such as the SDK's $(CleanFile) in the real Directory.Build.targets, is replaced by one opaque
+# segment so the pipeline expands what the tracked files do define and refuses what it cannot resolve.
+function Convert-SdkOwnedReferences([string]$Text) {
+    $sb = New-Object System.Text.StringBuilder
+    $position = 0
+    foreach ($m in [regex]::Matches($Text, '\$\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)')) {
+        [void]$sb.Append($Text.Substring($position, $m.Index - $position))
+        if (Test-PropertyIsTrackable $m.Groups[1].Value) { [void]$sb.Append($m.Value) }
+        else { [void]$sb.Append('sdk-owned') }
+        $position = $m.Index + $m.Length
+    }
+    [void]$sb.Append($Text.Substring($position))
+    return $sb.ToString()
+}
+
+# The tail of a file-reading function argument after its output root, through the pipeline: a reference the
+# audit cannot resolve, a NUL escape, a second root, a drive letter, a '..' segment or a divergent segment
+# is a problem. Each ';'-piece is held to the rule. Returns $null or the detail text for the message.
+function Get-ExpandedTailProblem([string]$Tail, [string]$FileDir, [string]$ProjectDir) {
+    if ($Tail.Length -eq 0) { return $null }
+    $specs = Resolve-ItemPathText $Tail $FileDir $ProjectDir $false
+    if ($null -eq $specs) { return ('cannot resolve ' + $script:UnresolvedReference) }
+    foreach ($spec in $specs) {
+        if ([string]$spec.Kind -eq 'nul') { return 'decodes to a NUL character' }
+        if (([string]$spec.Kind -ne 'repo') -or [bool]$spec.Anchored) { return 'has a second root' }
+        $problem = Get-OutputTailProblem ([string]$spec.Text)
+        if ($null -eq $problem) { continue }
+        if ([string]$problem.Problem -eq 'segment') { return (Format-SegmentDetail $problem.Canonical) }
+        return 'climbs out of the output root'
+    }
+    return $null
+}
+
 # Resolves one repo candidate, evaluated from $ProjectDirectory, to a canonical result (D-28): Status ok
 # with the repository-relative pattern, outside, escape, or refused with the segment. A drive-letter or
 # rooted path is converted to a repository path first, so the drive colon is the only colon that may pass.
@@ -810,53 +942,38 @@ function Find-NearestDirectoryBuild($Known, [string]$ProjectDirectory, [string]$
     }
 }
 
-# CARD-1409: resolves one ';'-separated part of an Import Project attribute to a tracked,
-# parsed project path or refuses. $ProjectAttr is the whole attribute text for messages.
-function Resolve-ImportPart([string]$Root, [string]$FromFile, [string]$ProjectDirectory, [string]$ProjectAttr, [string]$Part, $Known) {
-    $decoded = ConvertFrom-PercentEncoding $Part
-    if ($null -eq $decoded) {
-        Exit-Audit 1 (Format-ApprovalRefusal $FromFile 'Import' $ProjectAttr)
-    }
-    $text = $decoded.Replace('\', '/').Trim()
+# CARD-1409: resolves an Import Project attribute through the pipeline (D-7, D-33: the two directory
+# properties at the start, the ';' split after that expansion, one decode) to the tracked, parsed project
+# paths it names, or refuses naming the whole attribute text and the resolved part.
+function Resolve-ImportTargets([string]$Root, [string]$FromFile, [string]$ProjectDirectory, [string]$ProjectAttr, $Known) {
+    $targets = New-Object 'System.Collections.Generic.List[string]'
     $fromDir = Get-RepoDirectory $FromFile
-    if ([string]::IsNullOrEmpty($fromDir)) { $fileDir = './' }
-    else { $fileDir = $fromDir + '/' }
-    if ([string]::IsNullOrEmpty($ProjectDirectory)) { $projectDir = '.' }
-    else { $projectDir = $ProjectDirectory }
-    $startsAnchored = $text -match '^(?i)\$\(\s*MSBuild(ThisFile|Project)Directory\s*\)'
-    $text = [regex]::Replace($text, '(?i)\$\(\s*MSBuildThisFileDirectory\s*\)', (ConvertTo-RegexReplacement $fileDir))
-    $text = [regex]::Replace($text, '(?i)\$\(\s*MSBuildProjectDirectory\s*\)', (ConvertTo-RegexReplacement $projectDir))
-    if (($text.IndexOf('$(') -ge 0) -or ($text.IndexOf('@(') -ge 0) -or ($text.IndexOf('%(') -ge 0)) {
-        Exit-Audit 1 (Format-UnresolvedImportRefusal $FromFile $ProjectAttr)
+    $specs = Resolve-ItemPathText $ProjectAttr (Get-FileDirectoryPrefix $FromFile) $ProjectDirectory $true
+    if ($specs.Count -eq 0) {
+        Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr '(empty)')
     }
-    if (($text.IndexOf('*') -ge 0) -or ($text.IndexOf('?') -ge 0)) {
-        Exit-Audit 1 (Format-WildcardImportRefusal $FromFile $ProjectAttr)
-    }
-    if ($text -match '^[A-Za-z]:/' -or $text.StartsWith('/')) {
-        $relative = ConvertTo-RepoRelative $text $Root
-        if ($null -eq $relative) {
+    foreach ($spec in $specs) {
+        $kind = [string]$spec.Kind
+        if (($kind -eq 'unresolved') -or ($kind -eq 'nul')) {
+            Exit-Audit 1 (Format-UnresolvedImportRefusal $FromFile $ProjectAttr)
+        }
+        if (Test-PatternHasWildcard ([string]$spec.Text)) {
+            Exit-Audit 1 (Format-WildcardImportRefusal $FromFile $ProjectAttr)
+        }
+        $canonical = Resolve-CandidatePattern $Root $spec $fromDir $false
+        if (Test-CanonicalRefused $canonical) {
+            Exit-Audit 1 (Format-PathSegmentRefusal $FromFile ('Import Project=' + $ProjectAttr) $canonical)
+        }
+        if ([string]$canonical.Status -ne 'ok') {
             Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr 'outside the repository')
         }
-        $text = $relative
+        $norm = [string]$canonical.Path
+        if (-not $Known.ContainsKey($norm)) {
+            Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr $norm)
+        }
+        [void]$targets.Add($norm)
     }
-    elseif ($startsAnchored) {
-        if ($text.StartsWith('./')) { $text = $text.Substring(2) }
-    }
-    elseif (-not [string]::IsNullOrEmpty($fromDir)) {
-        $text = $fromDir + '/' + $text
-    }
-    $canonical = ConvertTo-CanonicalPath $text
-    if (Test-CanonicalRefused $canonical) {
-        Exit-Audit 1 (Format-PathSegmentRefusal $FromFile ('Import Project=' + $ProjectAttr) $canonical)
-    }
-    if ([string]$canonical.Status -ne 'ok') {
-        Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr 'outside the repository')
-    }
-    $norm = [string]$canonical.Path
-    if (-not $Known.ContainsKey($norm)) {
-        Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr $norm)
-    }
-    return $norm
+    return ,$targets
 }
 
 function Add-ImporterBase($Map, [string]$Path, [string]$ProjectDirectory) {
@@ -881,18 +998,9 @@ function Add-ImportQueue($Doc, [string]$FromFile, [string]$ProjectDirectory, $Qu
                 Exit-Audit 1 (Format-UnsupportedImportAttributeRefusal $FromFile $project $attributeName ([string]$attribute.Value))
             }
         }
-        # CARD-1409: MSBuild splits Project on ';' into several imports; every non-empty part is audited.
-        $parts = New-Object 'System.Collections.Generic.List[string]'
-        foreach ($part in ([string]$project).Split(';')) {
-            $trimmed = $part.Trim()
-            if ($trimmed.Length -gt 0) { [void]$parts.Add($trimmed) }
-        }
-        if ($parts.Count -eq 0) {
-            Exit-Audit 1 (Format-MissingImportRefusal $FromFile $project '(empty)')
-        }
-        foreach ($part in $parts) {
-            $target = Resolve-ImportPart $Root $FromFile $ProjectDirectory $project $part $Known
-            if ([string]::IsNullOrEmpty([string]$target)) { continue }
+        # CARD-1409: MSBuild splits Project on ';' into several imports, after expansion (D-7, D-33); the pipeline
+        # inside Resolve-ImportTargets does that split, and every non-empty part is audited as its own import.
+        foreach ($target in (Resolve-ImportTargets $Root $FromFile $ProjectDirectory ([string]$project) $Known)) {
             $Queue.Enqueue([string]$target)
         }
     }
@@ -1076,12 +1184,11 @@ function Assert-AllowedItemTypes($Doc, [string]$Path) {
     }
 }
 
-# A package-style include is a bare identifier: no path separator, property, wildcard, parent segment or drive.
-function Test-ItemNameIsPathLike([string]$Segment) {
-    $decoded = ConvertFrom-PercentEncoding $Segment
-    if ($null -eq $decoded) { return $true }
+# A package-style name is a bare identifier: after the pipeline's one decode (D-33) it carries no path
+# separator, reference text, wildcard, parent segment or drive.
+function Test-ItemNameIsPathLike([string]$Decoded) {
     foreach ($needle in @('/', '\', '$(', '*', '?', '..', ':')) {
-        if ($decoded.IndexOf($needle) -ge 0) { return $true }
+        if ($Decoded.IndexOf($needle) -ge 0) { return $true }
     }
     return $false
 }
@@ -1131,14 +1238,12 @@ function Assert-PathCandidateAllowed([string]$Root, [string]$Path, [string]$Item
     $detail = $Item + ' Include=' + $Segment
     $kind = [string]$Candidate.Kind
     if ($kind -eq 'output' -or $kind -eq 'package') {
-        $tail = ([string]$Candidate.Text).Replace('\', '/')
-        if ($tail -match '^[A-Za-z]:') { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
-        foreach ($part in $tail.Split('/')) {
-            if ($part -eq '..') { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
+        # CARD-1409 repair 5 (D-28) and 6 (D-33): the decoded tail is compared like every other path.
+        $problem = Get-OutputTailProblem ([string]$Candidate.Text)
+        if ($null -ne $problem) {
+            if ([string]$problem.Problem -eq 'segment') { Exit-Audit 1 (Format-PathSegmentRefusal $Path $detail $problem.Canonical) }
+            Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment)
         }
-        # CARD-1409 repair 5 (D-28): the tail is compared like every other path, so a divergent segment refuses.
-        $tailCanonical = ConvertTo-CanonicalPath $tail
-        if (Test-CanonicalRefused $tailCanonical) { Exit-Audit 1 (Format-PathSegmentRefusal $Path $detail $tailCanonical) }
         return
     }
     $canonical = Resolve-CandidatePattern $Root $Candidate $Directory
@@ -1193,41 +1298,43 @@ function Assert-PathCandidateAllowed([string]$Root, [string]$Path, [string]$Item
     }
 }
 
-# CARD-1409 (Review 31c77116): one ';'-separated include or update part under its item type's rule,
-# expanded (repair 4) and resolved from every directory the item is evaluated from. Every refusal names
-# the file, the item type and the part.
+# CARD-1409 (Review 31c77116): one include or update text under its item type's rule. The text runs through
+# the pipeline (D-33: expanded, split on ';', decoded once) and every spec is resolved from every directory
+# the item is evaluated from. Every refusal names the file, the item type and the attribute text.
 function Assert-ItemIncludeAllowed([string]$Root, [string]$Path, [string]$Item, [string]$Rule, [string]$Segment, $Directories, $Known, [string]$Exclude) {
     if (($Segment.IndexOf('@(') -ge 0) -or ($Segment.IndexOf('%(') -ge 0)) {
         Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment)
     }
     if ($Rule -eq 'text') { return }
+    $fileDir = Get-FileDirectoryPrefix $Path
     if ($Rule -eq 'name') {
-        if (Test-ItemNameIsPathLike $Segment) { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
+        foreach ($name in (Resolve-ItemPathText $Segment $fileDir '' $true)) {
+            if (([string]$name.Kind -ne 'repo') -or [bool]$name.Anchored -or (Test-ItemNameIsPathLike ([string]$name.Text))) {
+                Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment)
+            }
+        }
         return
     }
-    $decoded = ConvertFrom-PercentEncoding $Segment
-    if ($null -eq $decoded) { Exit-Audit 1 (Format-ApprovalRefusal $Path $Item $Segment) }
-    $fileDir = Get-FileDirectoryPrefix $Path
     foreach ($directory in $Directories) {
-        $candidates = Expand-Candidates $decoded $fileDir ([string]$directory) 0
+        $candidates = Resolve-ItemPathText $Segment $fileDir ([string]$directory) $false
         if ($null -eq $candidates) { Exit-Audit 1 (Format-UnresolvedPropertyRefusal $Path $Item $Segment $script:UnresolvedReference) }
+        # CARD-1409 repair 5 (D-29, O-3): an Exclude only subtracts, so a text the audit cannot resolve is dropped
+        # whole, and so is a part whose decoded text gained a wildcard character (D-33: MSBuild reads an escaped
+        # '*' or '?' literally, so the decoded glob would subtract more than the build does).
         $excludeCandidates = New-Object 'System.Collections.Generic.List[object]'
-        if (-not [string]::IsNullOrWhiteSpace($Exclude)) {
-            foreach ($excludePart in $Exclude.Split(';')) {
-                $excludeText = $excludePart.Trim()
-                if ($excludeText.Length -eq 0) { continue }
-                if (($excludeText.IndexOf('@(') -ge 0) -or ($excludeText.IndexOf('%(') -ge 0)) { continue }
-                $excludeDecoded = ConvertFrom-PercentEncoding $excludeText
-                if ($null -eq $excludeDecoded) { continue }
-                $expanded = Expand-Candidates $excludeDecoded $fileDir ([string]$directory) 0
-                if ($null -eq $expanded) { continue }
+        $excludeText = $Exclude.Trim()
+        if (($excludeText.Length -gt 0) -and ($excludeText.IndexOf('@(') -lt 0) -and ($excludeText.IndexOf('%(') -lt 0)) {
+            $expanded = Resolve-ItemPathText $excludeText $fileDir ([string]$directory) $false
+            if ($null -ne $expanded) {
                 foreach ($candidate in $expanded) {
-                    $candidate.Source = $excludeText
+                    if ([string]$candidate.Kind -eq 'nul') { continue }
+                    if ((Measure-WildcardCharacters ([string]$candidate.Text)) -ne (Measure-WildcardCharacters ([string]$candidate.Source))) { continue }
                     [void]$excludeCandidates.Add($candidate)
                 }
             }
         }
         foreach ($candidate in $candidates) {
+            if ([string]$candidate.Kind -eq 'nul') { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
             if ($Rule -eq 'project') {
                 if ([string]$candidate.Kind -ne 'repo') { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
                 $canonical = Resolve-CandidatePattern $Root $candidate ([string]$directory)
@@ -1246,12 +1353,13 @@ function Assert-ItemIncludeAllowed([string]$Root, [string]$Path, [string]$Item, 
 }
 
 # CARD-1409 repair 4 (Review 937bb1c9, D-18 items closed cheaply): a property value that reads the file
-# system through a property function must read under an output root, and a value part that is a literal
-# path (after the two directory properties) must not be a docs/ path, the root README.md, or a wildcard
-# that can reach them. Other references in a value are left alone: a value is not an input by itself,
-# and an include that uses it is expanded and classified where it is used.
+# system through a property function must read under an output root and may not climb out of it (D-33),
+# and a value part that is a literal path (after the two directory properties) must not be a docs/ path,
+# the root README.md, or a wildcard that can reach them. Other references in a value are left alone: a
+# value is not an input by itself, and an include that uses it is expanded and classified where it is used.
 function Assert-PropertyValuesAllowed([string]$Root, $Doc, [string]$Path, $Directories) {
     $fileDir = Get-FileDirectoryPrefix $Path
+    $projectDir = Get-RepoDirectory $Path
     $outputRooted = '^\$\(\s*(' + ($OutputRootProperties -join '|') + ')\s*\)'
     foreach ($group in $Doc.GetElementsByTagName('PropertyGroup')) {
         foreach ($child in $group.ChildNodes) {
@@ -1264,41 +1372,41 @@ function Assert-PropertyValuesAllowed([string]$Root, $Doc, [string]$Path, $Direc
                 if (-not (Test-AllowedName $FileReadingFunctions $function $true)) { continue }
                 $argument = $call.Groups[2].Value
                 if ($argument.Length -eq 0) { $argument = $call.Groups[3].Value.Trim() }
-                if (-not ($argument -match $outputRooted)) {
+                $rootMatch = [regex]::Match($argument, $outputRooted)
+                if (-not $rootMatch.Success) {
                     Exit-Audit 1 (Format-PropertyValueRefusal $Path $name ($function + '(' + $argument + ')'))
                 }
+                # CARD-1409 repair 6 (D-33): the tail after the root is path text like an output-rooted include's
+                # and goes through the pipeline; a property no tracked file may set is the SDK's own (opaque).
+                $problem = Get-ExpandedTailProblem (Convert-SdkOwnedReferences $argument.Substring($rootMatch.Length)) $fileDir $projectDir
+                if ($null -ne $problem) {
+                    Exit-Audit 1 (Format-PropertyValueRefusal $Path $name ($function + '(' + $argument + ') ' + $problem))
+                }
             }
-            foreach ($part in $value.Split(';')) {
-                $text = $part.Trim()
-                if ($text.Length -eq 0) { continue }
-                if (($text.IndexOf('@(') -ge 0) -or ($text.IndexOf('%(') -ge 0) -or ($text.IndexOf('$([') -ge 0)) { continue }
-                $stripped = [regex]::Replace($text, '(?i)\$\(\s*MSBuild(ThisFile|Project)Directory\s*\)', '')
-                if ($stripped.IndexOf('$(') -ge 0) { continue }
-                # A wildcard in a value is an exclude list or a glob some include expands where it is used,
-                # and a bare word (true, Exe, net10.0) is not a file reference; only a part with a path
-                # separator or a document extension is resolved, from the file's own directory. An include
-                # that uses the value is expanded from every importing project directory where it is used.
-                if (Test-PatternHasWildcard $stripped) { continue }
-                $normalizedPart = $stripped.Replace('\', '/')
-                if (($normalizedPart.IndexOf('/') -lt 0) -and -not (Test-DocumentPath $normalizedPart)) { continue }
-                $decoded = ConvertFrom-PercentEncoding $text
-                if ($null -eq $decoded) { continue }
-                $candidates = Expand-Candidates $decoded $fileDir (Get-RepoDirectory $Path) 0
-                if ($null -eq $candidates) { continue }
-                foreach ($candidate in $candidates) {
-                    if ([string]$candidate.Kind -ne 'repo') { continue }
-                    # CARD-1409 repair 5 (D-28): a value is free text, so it is read as the land host would
-                    # read it (folded) and refuses only when that reading is docs/ or the root README.
-                    $canonical = Resolve-CandidatePattern $Root $candidate (Get-RepoDirectory $Path) $true
-                    if (Test-CanonicalRefused $canonical) { Exit-Audit 1 (Format-PropertyValueRefusal $Path $name (Format-SegmentDetail $canonical)) }
-                    if ([string]$canonical.Status -ne 'ok') { continue }
-                    $pattern = [string]$canonical.Path
-                    $docs = (Test-PathUnderDocs $pattern) -or ($pattern -ieq 'README.md')
-                    if ($docs -and -not (Test-AllowedName $AllowedDocsInputs $pattern $true)) {
-                        $valueDetail = '-> ' + $pattern
-                        if ($null -ne $canonical.Divergent) { $valueDetail = $valueDetail + ' ' + (Format-SegmentDetail $canonical.Divergent) }
-                        Exit-Audit 1 (Format-PropertyValueRefusal $Path $name $valueDetail)
-                    }
+            if (($value.IndexOf('@(') -ge 0) -or ($value.IndexOf('%(') -ge 0) -or ($value.IndexOf('$([') -ge 0)) { continue }
+            # The pipeline splits the value on ';' and decodes each part once (D-33); a part that still carries a
+            # reference other than a leading directory property is left alone, as before.
+            foreach ($spec in (Resolve-ItemPathText $value $fileDir $projectDir $true)) {
+                if ([string]$spec.Kind -ne 'repo') { continue }
+                # A wildcard in a value is an exclude list or a glob some include expands where it is used (an
+                # escaped '*' is a literal character, so the escaped part decides), and a bare word (true, Exe,
+                # net10.0) is not a file reference; only a decoded part with a path separator or a document
+                # extension is resolved, from the file's own directory. An include that uses the value is
+                # expanded from every importing project directory where it is used.
+                if (Test-PatternHasWildcard ([string]$spec.Source)) { continue }
+                $decodedText = ([string]$spec.Text).Replace('\', '/')
+                if (($decodedText.IndexOf('/') -lt 0) -and -not (Test-DocumentPath $decodedText)) { continue }
+                # CARD-1409 repair 5 (D-28): a value is free text, so it is read as the land host would read it
+                # (folded) and refuses only when that reading is docs/ or the root README.
+                $canonical = Resolve-CandidatePattern $Root $spec $projectDir $true
+                if (Test-CanonicalRefused $canonical) { Exit-Audit 1 (Format-PropertyValueRefusal $Path $name (Format-SegmentDetail $canonical)) }
+                if ([string]$canonical.Status -ne 'ok') { continue }
+                $pattern = [string]$canonical.Path
+                $docs = (Test-PathUnderDocs $pattern) -or ($pattern -ieq 'README.md')
+                if ($docs -and -not (Test-AllowedName $AllowedDocsInputs $pattern $true)) {
+                    $valueDetail = '-> ' + $pattern
+                    if ($null -ne $canonical.Divergent) { $valueDetail = $valueDetail + ' ' + (Format-SegmentDetail $canonical.Divergent) }
+                    Exit-Audit 1 (Format-PropertyValueRefusal $Path $name $valueDetail)
                 }
             }
         }
@@ -1429,17 +1537,14 @@ function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows) {
                 $local = [string]$node.LocalName
                 $rule = [string]$ItemRules[$local]
                 Assert-ItemOperationsAllowed $node ([string]$path) $local (Get-IncludeLabel $node)
-                # Include and Update are classified; Remove only subtracts and is left alone.
+                # Include and Update are classified; Remove only subtracts and is left alone. The attribute text
+                # goes in whole: the pipeline splits it on ';' after expansion (D-33).
                 foreach ($attributeName in @('Include', 'Update')) {
-                    $include = $node.GetAttribute($attributeName)
+                    $include = ([string]$node.GetAttribute($attributeName)).Trim()
                     if ([string]::IsNullOrWhiteSpace($include)) { continue }
                     $exclude = ''
                     if ($attributeName -eq 'Include') { $exclude = [string]$node.GetAttribute('Exclude') }
-                    foreach ($segment in $include.Split(';')) {
-                        $segment = $segment.Trim()
-                        if ($segment.Length -eq 0) { continue }
-                        Assert-ItemIncludeAllowed $Root ([string]$path) $local $rule $segment $directories $known $exclude
-                    }
+                    Assert-ItemIncludeAllowed $Root ([string]$path) $local $rule $include $directories $known $exclude
                 }
             }
         }
