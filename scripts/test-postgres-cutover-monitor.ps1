@@ -603,6 +603,30 @@ function Test-C1423_DetailCapNamesTheWindow {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# A4 (CARD-1423): a Blocked task whose land threw before the window carries terminalFailureCode without a
+# publication, so the failure-code rule counts it in every window the list returns it in; Baseline and Watch count it
+# alike and the delta is unaffected. Documented in the header's known effects and plan D-6, not changed.
+function Test-C1423_BlockedPreWindowLandThrewCountsEqually {
+    $root = New-C1408Scratch
+    $blocked = New-C1408Task -Status 'Blocked' -Land 'Exception'
+    $land = $script:C1408LandById[$blocked.id]
+    # Every land event before the 09:30Z window start (FixedNow 10:00Z, 30 minutes).
+    foreach ($e in @($land.events)) { $e.at = '2026-10-21T08:52:00Z' }
+    $land.landRequest.requestedAt = '2026-10-21T08:50:30Z'
+    $land.landRequest.startedAt = '2026-10-21T08:50:31Z'
+    $land.landRequest.lastEvaluatedAt = '2026-10-21T08:52:00Z'
+    $land.landRequest.lastProgressAt = '2026-10-21T08:52:00Z'
+    $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100) -Items @($blocked)
+    $base = Get-Content -LiteralPath $b.BaselinePath -Raw | ConvertFrom-Json
+    Assert-C1408 -Cond ($b.Result.ExitCode -eq 0 -and [int]$base.failures.failedLands -eq 1 -and [int]$base.failures.failedTasks -eq 0) -Name 'baseline counts the pre-window land that threw on a Blocked task (failure-code rule)' -Detail ('exit=' + $b.Result.ExitCode + ' ' + ($base.failures | ConvertTo-Json -Compress))
+    $w = Invoke-C1408Watch -Root $root -BaselinePath $b.BaselinePath -PipelineMs (Get-C1408Twenty -Median 100) -Items @($blocked)
+    $f = (Get-Content -LiteralPath $w.ResultPath -Raw | ConvertFrom-Json).failures
+    Assert-C1408 -Cond ([int]$f.failedLands -eq 1 -and $w.ExitCode -eq 0 -and $w.Verdict -eq 'OK') -Name 'watch counts it equally, so the delta is 0 and the verdict OK' -Detail ('exit=' + $w.ExitCode + ' ' + ($f | ConvertTo-Json -Compress) + ' ' + ($w.Lines -join ' | '))
+    $src = Get-Content -LiteralPath $monitor -Raw
+    Assert-C1408 -Cond ($src -match '(?is)Known gaps, equal in Baseline and Watch:.*?Blocked task whose land threw before the window') -Name 'the header names the Blocked pre-window land as a known equal-in-both-windows effect' -Detail 'no known-gaps text naming a Blocked task whose land threw before the window'
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $cases = @(
     'C1408_RollbackAboveFloorAndRatio',
     'C1408_FloorHoldsUnderOneSecond',
@@ -619,7 +643,8 @@ $cases = @(
     'C1408_MaskingBypassForms',
     'C1423_SlashInUserinfoMasked',
     'C1423_EncodedValueSecretsMasked',
-    'C1423_DetailCapNamesTheWindow'
+    'C1423_DetailCapNamesTheWindow',
+    'C1423_BlockedPreWindowLandThrewCountsEqually'
 )
 
 if (-not (Test-Path -LiteralPath $monitor)) {
