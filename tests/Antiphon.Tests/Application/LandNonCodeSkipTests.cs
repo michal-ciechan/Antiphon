@@ -844,7 +844,15 @@ public sealed class LandNonCodeSkipTests
     [Test]
     public async Task C1409_DirectoryPackagesPropsIsImportedByTheNearestProject()
     {
-        const string docs = """
+        // CARD-1409 repair 3 (Review 31c77116): a relative include that leaves the repository from the file's own
+        // directory now refuses outright, so the import is witnessed through an Import the audit follows only when
+        // the file is reached: eng/docs.items is not project XML and refuses as an uninspected import target.
+        const string importsDocs = """
+            <Project>
+              <Import Project="eng/docs.items" />
+            </Project>
+            """;
+        const string docsItems = """
             <Project>
               <ItemGroup>
                 <None Include="../docs/**/*.md" />
@@ -858,24 +866,25 @@ public sealed class LandNonCodeSkipTests
               </ItemGroup>
             </Project>
             """;
-        // From its own root directory ../docs is outside the repository; from server/ it is docs/**/*.md.
+        const string project = """
+            <Project Sdk="Microsoft.NET.Sdk">
+            </Project>
+            """;
+        // The root file is the nearest Directory.Packages.props for server/App.csproj, so its import is followed.
         await AssertUpdateRefusesAsync(new Dictionary<string, string>
         {
-            ["Directory.Packages.props"] = docs,
-            ["server/App.csproj"] = """
-                <Project Sdk="Microsoft.NET.Sdk">
-                </Project>
-                """,
-        }, "Directory.Packages.props None Include=../docs/**/*.md");
-        // Only the nearest file is imported: server/Directory.Packages.props shadows the root one.
+            ["Directory.Packages.props"] = importsDocs,
+            ["eng/docs.items"] = docsItems,
+            ["server/App.csproj"] = project,
+        }, "Directory.Packages.props Import Project=eng/docs.items", "-> eng/docs.items");
+        // Only the nearest file is imported: server/Directory.Packages.props shadows the root one, whose import is
+        // never followed; the root file is still parsed against the allow-lists and counted.
         var nearest = await InitAuditTreeAsync(new Dictionary<string, string>
         {
-            ["Directory.Packages.props"] = docs,
+            ["Directory.Packages.props"] = importsDocs,
+            ["eng/docs.items"] = docsItems,
             ["server/Directory.Packages.props"] = safe,
-            ["server/sub/App.csproj"] = """
-                <Project Sdk="Microsoft.NET.Sdk">
-                </Project>
-                """,
+            ["server/sub/App.csproj"] = project,
         });
         try
         {
