@@ -1,8 +1,13 @@
+using System.Security.Cryptography;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 
@@ -420,7 +425,6 @@ public sealed partial class AgentTaskLandPublicationTests
     [Test]
     [Arguments(".antiphon/report.md")]
     [Arguments(".claude/settings.local.json")]
-    [Arguments(".antiphon/inbox/photo.png")]
     public async Task C448_V04_IgnoredFilesSurviveConfirmedPublication(string relative)
     {
         await using var h = new LandingSafetyHarness();
@@ -435,6 +439,75 @@ public sealed partial class AgentTaskLandPublicationTests
         op.Publication.ShouldBe(LandPublicationOutcome.AlreadyPresent);
         op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
         op.LastReason.ShouldBe("ignored_content_preserved");
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(h.Fixture.SeedSha);
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    // CARD-1446 D-4/S4b: unlisted .antiphon files are evidence; protected names above still win.
+    [Test]
+    public async Task C1512_ImageEvidenceIsRetainedBeforeCleanup()
+    {
+        await using var h = new LandingSafetyHarness();
+        var retainedRoot = Path.Combine(h.Fixture.Root, "retained-evidence");
+        h.ConfigureServices = services =>
+        {
+            services.Configure<WorktreeCleanupSettings>(settings => settings.RetainedEvidenceRoot = retainedRoot);
+            services.AddSingleton<IWorktreeEvidenceRetention, FileSystemEvidenceRetention>();
+        };
+        await h.InitializeAsync();
+        var relative = Path.Combine(".antiphon", "inbox", "photo.png");
+        var path = Path.Combine(h.Fixture.Source, relative);
+        byte[] bytes = [137, 80, 78, 71, 13, 10, 26, 10, 0, 255, 128, 1];
+        var hash = SHA256.HashData(bytes);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllBytesAsync(path, bytes);
+        Directory.Exists(retainedRoot).ShouldBeFalse();
+
+        string? retainedPath = null;
+        var observedBeforeRemoval = false;
+        h.Fixture.Git.BeforeUnregister = async _ =>
+        {
+            await using var observer = h.CreateContext();
+            var attempt = await observer.WorktreeCleanupAttempts.SingleAsync(a => a.TaskId == h.Fixture.TaskId);
+            retainedPath = Path.Combine(retainedRoot, h.Fixture.TaskId.ToString("N"), attempt.Id.ToString("N"), relative);
+            var retained = await File.ReadAllBytesAsync(retainedPath);
+            retained.ShouldBe(bytes, "retention must finish before unregistering and deleting the source tree");
+            SHA256.HashData(retained).ShouldBe(hash);
+            observedBeforeRemoval = true;
+        };
+
+        await h.RunAsync();
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Publication.ShouldBe(LandPublicationOutcome.AlreadyPresent);
+        op.RemoteConfirmedAt.ShouldNotBeNull();
+        op.ObservedRemoteTargetSha.ShouldBe(h.Fixture.SeedSha);
+        op.Cleanup.ShouldBe(LandCleanupStatus.Complete, op.LastReason);
+        op.LastReason.ShouldBeNull();
+        observedBeforeRemoval.ShouldBeTrue();
+        Directory.Exists(h.Fixture.Source).ShouldBeFalse();
+        h.Fixture.Git.RegistrationDrops.ShouldContain(h.Fixture.Source);
+        var surviving = await File.ReadAllBytesAsync(retainedPath.ShouldNotBeNull());
+        surviving.ShouldBe(bytes, "the retained image must survive completed cleanup");
+        SHA256.HashData(surviving).ShouldBe(hash);
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
+    [Test]
+    public async Task C1512_UnavailableImageRetentionPreservesSource()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync(); // The default harness deliberately refuses nonempty evidence.
+        var path = Path.Combine(h.Fixture.Source, ".antiphon", "inbox", "photo.png");
+        byte[] bytes = [137, 80, 78, 71, 13, 10, 26, 10, 0, 255, 128, 1];
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllBytesAsync(path, bytes);
+        await h.RunAsync();
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Publication.ShouldBe(LandPublicationOutcome.AlreadyPresent);
+        op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+        op.LastReason.ShouldBe("evidence_retention_unavailable");
+        (await File.ReadAllBytesAsync(path)).ShouldBe(bytes);
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove"));
         (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(h.Fixture.SeedSha);
         await h.Fixture.AssertRemoteSourceAsync();
     }
