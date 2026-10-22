@@ -1,15 +1,17 @@
 namespace Antiphon.Server.Domain.Enums;
 
 /// <summary>
-/// How an agent relates to its project's per-kind provider endpoint (CARD-0167 S2).
-/// <see cref="Inherit"/> (0, the backfill for every pre-existing row) uses the project's endpoint
-/// for the agent's kind when one is set; <see cref="Endpoint"/> uses the agent's own stored
-/// endpoint instead; <see cref="Direct"/> exempts the agent from the project endpoint and stores
-/// none of its own, which the generic launch-env box cannot express ("unset this").
+/// How one agent relates to its project's provider endpoint (CARD-0167). The generic launch-env box
+/// cannot express "unset", which is why <see cref="Direct"/> exists.
 /// </summary>
 public enum ProviderEndpointMode
 {
+    /// <summary>Use the project's endpoint for the agent's kind, if one is set.</summary>
     Inherit = 0,
+
+    /// <summary>Use the agent's own endpoint; it outranks the project's.</summary>
     Endpoint = 1,
+
+    /// <summary>Exempt this agent from the project endpoint; no endpoint is projected.</summary>
     Direct = 2,
 }
