@@ -354,12 +354,16 @@ public class SessionRuntimeActionRecoveryTests
         {
             (await db.SessionQueuedMessages.SingleAsync(m => m.Id == typed)).DeliveryVerdict
                 .ShouldBe(DeliveryVerdict.LateConfirmed);
+            // CARD-1433: the waiting publication is channel debt at its own sequence, not a
+            // retained queue-phase action, so later queue actions are not held behind it.
+            (await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == h.SessionId
+                && a.TriggerKind != SessionRuntimeActionCoordinator.ChannelReplyDebt))
+                .ShouldBeFalse("a waiting late-confirm publication is channel debt, not a retained action");
             var waiting = await db.SessionRuntimeActions.AsNoTracking().SingleAsync(a => a.AgentSessionId == h.SessionId
-                && a.TriggerKind != SessionRuntimeActionCoordinator.ChannelReplyDebt);
-            waiting.Sequence.ShouldBe(6);
-            waiting.Phase.ShouldBe(SessionRuntimeActionCoordinator.QueuePhase + 1, "only the publication phase waits");
+                && a.TriggerKind == SessionRuntimeActionCoordinator.ChannelReplyDebt && a.Sequence == 6);
             waiting.LateConfirmedChannelMessageIds.ShouldContain(typed);
-            waiting.FailureReason.ShouldBe(nameof(InvalidOperationException));
+            waiting.Attempts.ShouldBe(0, "it waits behind the earlier owed reply; it has not failed");
+            waiting.ConversationKey.ShouldBe("telegram:" + destination);
             await db.SessionRuntimeActions.ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, DateTime.UtcNow.AddSeconds(-1)));
         }
 
