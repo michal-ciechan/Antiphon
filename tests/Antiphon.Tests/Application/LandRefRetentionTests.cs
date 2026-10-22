@@ -49,6 +49,7 @@ public sealed class LandRefRetentionTests
                 || k.StartsWith($"refs/antiphon/progress/{task:N}/", StringComparison.Ordinal))
             .ShouldBeEmpty("land refs still present after a completed land of an unprotected task");
         foreach (var name in foreign) h.Git.Refs[name].ShouldBe(sha, "another task's refs are untouched");
+    }
 
     [Test]
     public async Task C1432_protected_task_keeps_recovery_pins_drops_observations()
