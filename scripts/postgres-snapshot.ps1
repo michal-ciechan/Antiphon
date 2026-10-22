@@ -1054,7 +1054,8 @@ function Invoke-SnapshotDrill {
             return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=inspect' }
         }
         $owned = $true
-        $newest = @(Get-ChildItem -LiteralPath $DestDir -Filter 'antiphon-*.dump.age' -File | Sort-Object Name -Descending)
+        $newest = @(Get-ChildItem -LiteralPath $DestDir -Filter 'antiphon-*.dump.age' -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match $script:SnapshotDumpPattern } | Sort-Object Name -Descending)
         if ($newest.Count -lt 1) { return [pscustomobject]@{ Code = 9; Reason = 'missing-snapshot'; Detail = '' } }
         $decoded = Invoke-SnapshotNative $Age @('-d', '-i', $IdentityPath, '-o', $plain, $newest[0].FullName)
         if ($decoded.Exit -ne 0 -or -not (Test-Path -LiteralPath $plain)) {
