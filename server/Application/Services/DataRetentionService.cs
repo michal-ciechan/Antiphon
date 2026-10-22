@@ -64,6 +64,7 @@ public sealed class DataRetentionService
         await PruneResolvedModalEpisodesAsync(ct);
         var tasks = await PruneTasksAsync(ct);
         var usage = await PruneSubscriptionUsageSamplesAsync(ct);
+        var residueRows = await PruneWorktreeResidueHeldRowsAsync(ct);
         var auditRecords = 0;
         if (_auditSettings.RetentionDays > 0)
         {
@@ -71,7 +72,7 @@ public sealed class DataRetentionService
             auditRecords = archive.ArchivedCount;
         }
 
-        return new DataRetentionSweepResult(transcripts, queued, sessions, tasks, auditRecords, usage);
+        return new DataRetentionSweepResult(transcripts, queued, sessions, tasks, auditRecords, usage, residueRows);
     }
 
     /// <summary>
@@ -595,9 +596,29 @@ public sealed class DataRetentionService
     /// <summary>
     /// CARD-1446 D-5 (S5). Deletes <c>WorktreeResidueRunCandidates</c> rows with Outcome <c>Held</c> or
     /// <c>Preview</c> whose <c>EvaluatedAt</c> is past <see cref="RetentionSettings.WorktreeResidueHeldRowRetentionDays"/>.
-    /// Run headers and action rows are never touched. S5-test skeleton: deletes nothing yet.
+    /// Run headers and action rows (<c>Queued</c>, <c>Refused</c>, <c>Partial</c>, <c>Removed</c>) are never
+    /// touched, so every queued cleanup request keeps its provenance. Nonpositive days disables the pass.
     /// </summary>
-    public Task<int> PruneWorktreeResidueHeldRowsAsync(CancellationToken ct) => Task.FromResult(0);
+    public async Task<int> PruneWorktreeResidueHeldRowsAsync(CancellationToken ct)
+    {
+        if (_settings.WorktreeResidueHeldRowRetentionDays <= 0)
+            return 0;
+
+        var cutoff = UtcNow().AddDays(-_settings.WorktreeResidueHeldRowRetentionDays);
+        var held = nameof(WorktreeResidueCandidateOutcome.Held);
+        var preview = nameof(WorktreeResidueCandidateOutcome.Preview);
+        var removed = await _db.WorktreeResidueRunCandidates
+            .Where(c => (c.Outcome == held || c.Outcome == preview) && c.EvaluatedAt < cutoff)
+            .ExecuteDeleteAsync(ct);
+        if (removed > 0)
+        {
+            _logger.LogInformation(
+                "Pruned {Count} worktree-residue Held/Preview candidate row(s) past retention; run headers and action rows kept",
+                removed);
+        }
+
+        return removed;
+    }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 
@@ -624,4 +645,4 @@ public sealed class DataRetentionService
 
 public sealed record DataRetentionSweepResult(
     int Transcripts, int QueuedMessages, int Sessions, int Tasks, int AuditRecords,
-    int SubscriptionUsageSamples = 0);
+    int SubscriptionUsageSamples = 0, int WorktreeResidueHeldRows = 0);
