@@ -334,6 +334,36 @@ public sealed class AgentSessionCancelledTurnTests
             nameof(RunPhase.AwaitingInput),
             nameof(RunPhase.StreamingTurn)
         ]);
+
+        // CARD-1402: both follow-ups are real turns, so each is killed at StallTimeoutMs from
+        // the burst that re-armed it, and not one second earlier.
+        await AssertStallKillAtTimeoutAsync(world, interrupted, ended);
+    }
+
+    [Test]
+    public async Task C1402_Rearm_follow_up_saved_before_cancel_returns_still_rearms()
+    {
+        // The cancelled TurnEnd and a follow-up are both stored while WaitForTurnCompleteAsync
+        // is still returning. The ceiling is that TurnEnd's own sequence, not the highest
+        // sequence stored at return, so the follow-up is a real re-arm whose stall is killed.
+        await using var world = await EchoWorld.OpenAsync();
+        var session = await world.StartCancelledAsync(persistLaunchPrompt: true, persistCancelledBurst: true);
+        var waiting = await world.ReloadAsync(session);
+        waiting.Attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+        (await world.CountPromptsAsync(session)).ShouldBe(2);
+        var cancelledEnd = await world.LatestTurnEndSequenceAsync(session);
+        (await world.LatestPromptSequenceAsync(session)).ShouldBeGreaterThan(cancelledEnd);
+
+        world.Events.Clear();
+        await world.DrainAsync(session);
+        var armed = await world.ReloadAsync(session);
+        armed.Attempt.Phase.ShouldBe(RunPhase.StreamingTurn);
+        armed.Attempt.LastEventAt.ShouldBe(waiting.Attempt.PhaseStartedAt);
+        armed.Attempt.PhaseDurationsJson.ShouldContain("\"AwaitingInput\"");
+        armed.Session.Status.ShouldBe(SessionStatus.Running);
+        PhaseChanges(world).ShouldBe([nameof(RunPhase.StreamingTurn)]);
+
+        await AssertStallKillAtTimeoutAsync(world, session);
     }
 
     [Test]
@@ -453,6 +483,29 @@ public sealed class AgentSessionCancelledTurnTests
             .Where(e => e.EventName == "RunAttemptChanged")
             .Select(e => e.Payload.GetType().GetProperty("phase")?.GetValue(e.Payload) as string ?? "")
             .ToList();
+
+    private static async Task AssertStallKillAtTimeoutAsync(EchoWorld world, params LiveAttempt[] sessions)
+    {
+        var stallTimeout = TimeSpan.FromMilliseconds(world.Settings.Value.StallTimeoutMs);
+        world.Clock.Advance(stallTimeout - TimeSpan.FromSeconds(1));
+        (await world.ScanAsync()).ShouldBe(0);
+        foreach (var session in sessions)
+        {
+            session.Adapter.KillCount.ShouldBe(0);
+            (await world.ReloadAsync(session)).Attempt.Phase.ShouldBe(RunPhase.StreamingTurn);
+        }
+
+        world.Clock.Advance(TimeSpan.FromSeconds(2));
+        (await world.ScanAsync()).ShouldBe(sessions.Length);
+        foreach (var session in sessions)
+        {
+            session.Adapter.KillCount.ShouldBe(1);
+            session.Adapter.Disposed.ShouldBeTrue();
+            var stalled = await world.ReloadAsync(session);
+            stalled.Attempt.Phase.ShouldBe(RunPhase.Stalled);
+            stalled.Session.Status.ShouldBe(SessionStatus.Failed);
+        }
+    }
 
     private static async Task AssertUnscannedAsync(EchoWorld world, params LiveAttempt[] sessions)
     {
@@ -708,7 +761,8 @@ public sealed class AgentSessionCancelledTurnTests
             };
         }
 
-        public async Task<LiveAttempt> StartCancelledAsync(bool persistLaunchPrompt = false)
+        public async Task<LiveAttempt> StartCancelledAsync(
+            bool persistLaunchPrompt = false, bool persistCancelledBurst = false)
         {
             var adapter = new FakeAgentProtocolAdapter
             {
@@ -719,6 +773,8 @@ public sealed class AgentSessionCancelledTurnTests
             };
             if (persistLaunchPrompt)
                 adapter.OnPrompt = (prompt, ct) => PersistLaunchPromptAsync(adapter, prompt, ct);
+            if (persistCancelledBurst)
+                adapter.OnTurnWait = ct => PersistCancelledBurstAsync(adapter, ct);
             var card = CreateCard(Scratch);
             Db.Add(card.Board.Project);
             await Db.SaveChangesAsync();
@@ -751,50 +807,70 @@ public sealed class AgentSessionCancelledTurnTests
         public Task PersistAsync(LiveAttempt session, string? text) =>
             PersistAsync(session, text, TranscriptKinds.UserPrompt, null);
 
-        public async Task PersistAsync(LiveAttempt session, string? text, string kind, string? stopReason = null)
+        public Task PersistAsync(LiveAttempt session, string? text, string kind, string? stopReason = null) =>
+            PersistAsync(session.SessionId, text, kind, stopReason, CancellationToken.None);
+
+        private async Task PersistAsync(
+            Guid sessionId, string? text, string kind, string? stopReason, CancellationToken ct)
         {
             var role = kind == TranscriptKinds.AssistantText ? "assistant"
                 : kind == TranscriptKinds.UserPrompt ? "user"
                 : null;
-            var stored = await Runtime.PersistTranscriptAsync(session.SessionId,
+            var stored = await Runtime.PersistTranscriptAsync(sessionId,
             [
-                new SessionRunnerTranscriptEvent(session.SessionId, Interlocked.Increment(ref _sequence),
+                new SessionRunnerTranscriptEvent(sessionId, Interlocked.Increment(ref _sequence),
                     kind, Guid.NewGuid().ToString("D"), null, Clock.GetUtcNow(),
                     role, text, null, null, null, null, stopReason)
-            ], CancellationToken.None);
+            ], ct);
             if (stored.LastStoredSeq is null)
             {
-                Runtime.TryGetTranscriptPersistFailure(session.SessionId, out var failure);
-                throw new InvalidOperationException(failure?.Detail ?? "transcript persist stored nothing");
+                Runtime.TryGetTranscriptPersistFailure(sessionId, out var failure);
+                throw new InvalidOperationException(failure?.Detail ?? $"transcript persist stored no {kind}");
             }
         }
 
         public Task DrainAsync(LiveAttempt session) =>
             Actions.DrainPageAsync(session.SessionId, CancellationToken.None);
 
-        private async Task PersistLaunchPromptAsync(
-            FakeAgentProtocolAdapter adapter, string prompt, CancellationToken ct)
+        private Task PersistLaunchPromptAsync(
+            FakeAgentProtocolAdapter adapter, string prompt, CancellationToken ct) =>
+            PersistAsync(StartedSessionId(adapter), prompt, TranscriptKinds.UserPrompt, null, ct);
+
+        // The cancelled TurnEnd and a follow-up saved after it, both stored while the adapter's
+        // turn wait is still returning: the CARD-1402 window between that TurnEnd and the
+        // ceiling query in StartAsync.
+        private async Task PersistCancelledBurstAsync(FakeAgentProtocolAdapter adapter, CancellationToken ct)
         {
-            var sessionId = adapter.StartedSessionId
-                ?? throw new InvalidOperationException("launch prompt arrived before the session id");
-            var stored = await Runtime.PersistTranscriptAsync(sessionId,
-            [
-                new SessionRunnerTranscriptEvent(sessionId, Interlocked.Increment(ref _sequence),
-                    TranscriptKinds.UserPrompt, Guid.NewGuid().ToString("D"), null, Clock.GetUtcNow(),
-                    "user", prompt, null, null, null, null, null)
-            ], ct);
-            if (stored.LastStoredSeq is null)
-            {
-                Runtime.TryGetTranscriptPersistFailure(sessionId, out var failure);
-                throw new InvalidOperationException(failure?.Detail ?? "launch prompt was not stored");
-            }
+            var sessionId = StartedSessionId(adapter);
+            await PersistAsync(sessionId, null, TranscriptKinds.TurnEnd, TranscriptKinds.StopReasons.Cancelled, ct);
+            await PersistAsync(sessionId, "Ask the next question", TranscriptKinds.UserPrompt, null, ct);
         }
+
+        private static Guid StartedSessionId(FakeAgentProtocolAdapter adapter) =>
+            adapter.StartedSessionId
+            ?? throw new InvalidOperationException("transcript rows arrived before the session id");
 
         public async Task<int> CountPromptsAsync(LiveAttempt session)
         {
             await using var db = new AppDbContext(DbOptions);
             return await db.TranscriptEntries.CountAsync(t =>
                 t.AgentSessionId == session.SessionId && t.Kind == TranscriptKinds.UserPrompt);
+        }
+
+        public async Task<long> LatestTurnEndSequenceAsync(LiveAttempt session)
+        {
+            await using var db = new AppDbContext(DbOptions);
+            return await db.TranscriptEntries
+                .Where(t => t.AgentSessionId == session.SessionId && t.Kind == TranscriptKinds.TurnEnd)
+                .MaxAsync(t => t.Sequence);
+        }
+
+        public async Task<long> LatestPromptSequenceAsync(LiveAttempt session)
+        {
+            await using var db = new AppDbContext(DbOptions);
+            return await db.TranscriptEntries
+                .Where(t => t.AgentSessionId == session.SessionId && t.Kind == TranscriptKinds.UserPrompt)
+                .MaxAsync(t => t.Sequence);
         }
 
         public async Task<DateTime> EarliestPromptCreatedAtAsync(LiveAttempt session)

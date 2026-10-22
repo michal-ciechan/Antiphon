@@ -17,7 +17,9 @@ Commit the launch-prompt witness red, then the filter. One checkpoint row. No Un
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1395-rearm/` | integration-rearm-follow-up | `/*/*/AgentSessionCancelledTurnTests/C1382_Rearm_*` | V-1 | all listed, 0 failed/skipped | 9 | 20 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1395-rearm/` | integration-rearm-follow-up | `/*/*/AgentSessionCancelledTurnTests/C1382_Rearm_*` | V-1 | all listed, 0 failed/skipped | 10 | 20 |
+
+CARD-1402 alignment: this filter selects the 10 `C1382_Rearm_*` methods of the class as landed (the nine from CARD-1382/1395 S1 plus the same-burst witness), so the row's roster and Min are 10. The Code report's 16/16 claim was the whole class (15 methods) plus one `RunAttemptStallDetectorTests` method, a selection this table never listed; it is an unlisted run, not this row's evidence.
 
 ### Cost
 
