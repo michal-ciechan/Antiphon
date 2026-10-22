@@ -403,7 +403,7 @@ public class WorktreeManagerGitIntegrationTests
         await Should.ThrowAsync<System.TimeoutException>(() => manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default));
 
         var path = Path.Combine(env.WorktreeRoot, "card-task-deadbeef");
-        File.ReadAllText(Path.Combine(InterruptedWorktreeCreation.AdminDirectory(path), "locked")).ShouldBe("initializing");
+        File.ReadAllText(Path.Combine(InterruptedWorktreeCreation.AdminDirectory(path), "locked")).Trim().ShouldBe("initializing");
         logger.Entries.ShouldContain(e => e.Level == LogLevel.Warning
             && e.Message.Contains("left a locked registration; rollback skipped"), "rollback-skip-warned");
     }
