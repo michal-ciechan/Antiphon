@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Git;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -180,6 +181,102 @@ public class WorktreeManagerGitIntegrationTests
         scan.Select(x => x.Branch).Order().ShouldBe(branches.Take(4).Order(), "scan-excludes-canary");
         scan.Where(x => !x.Registered).Select(x => x.Branch).Order().ShouldBe(branches.Take(2).Order(), "dangling-set");
         scan.Select(x => x.ShortId).Order().ShouldBe(new[] { "deadbeef", "cafebabe", "aabbccdd", "11223344" }.Order());
+    }
+
+    [Test]
+    public async Task C1448_ListMarksAnInterruptedCreationIncomplete()
+    {
+        // CARD-1448 D-1: the listing must say the creation never completed, or the dispatcher adopts it.
+        using var env = await GitTestEnvironment.CreateAsync();
+        var manager = BuildManager(env.WorktreeRoot);
+        var complete = await manager.CreateAsync(env.RepoPath, "task-cafebabe", "HEAD", default);
+        var interrupted = await manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default);
+        InterruptedWorktreeCreation.Simulate(env.WorktreeRoot, interrupted.Path);
+
+        var listed = await manager.ListAsync(env.RepoPath, default);
+        listed.Single(w => w.Path == interrupted.Path).CreationIncomplete.ShouldBeTrue("interrupted-creation-listed-incomplete");
+        listed.Single(w => w.Path == complete.Path).CreationIncomplete.ShouldBeFalse("complete-creation-listed-complete");
+    }
+
+    [Test]
+    public async Task C1448_InterruptedCreationIsRecreatedFresh()
+    {
+        // CARD-1448 D-2: an interrupted add (locked initializing, partial checkout, intent incomplete,
+        // branch still at InitialSha) is removed and added again: full, unlocked, complete, same branch at base.
+        using var env = await GitTestEnvironment.CreateAsync();
+        var manager = BuildManager(env.WorktreeRoot);
+        var baseSha = (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "HEAD")).Trim();
+        var first = await manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default);
+        InterruptedWorktreeCreation.Simulate(env.WorktreeRoot, first.Path);
+
+        var again = await manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default);
+
+        again.Path.ShouldBe(first.Path);
+        again.Branch.ShouldBe("feat/card-task-deadbeef");
+        File.Exists(Path.Combine(again.Path, "README.md")).ShouldBeTrue("full-checkout");
+        (await GitTestEnvironment.RunGitAsync(again.Path, "status", "--porcelain")).ShouldBeEmpty("clean-checkout");
+        (await manager.ScanDelegateWorktreesAsync(env.RepoPath, default)).Single().Locked.ShouldBeFalse("unlocked");
+        (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "refs/heads/feat/card-task-deadbeef")).Trim()
+            .ShouldBe(baseSha, "branch-at-base");
+        (await manager.ReadVerificationCreationAsync(again.Path, default)).ShouldNotBeNull("creation-complete");
+    }
+
+    [Test]
+    public async Task C1448_InterruptedCreationWithoutDirectoryIsRecreated()
+    {
+        // CARD-1448 D-2: the 273b3a0d shape - locked initializing registration, no directory at all.
+        using var env = await GitTestEnvironment.CreateAsync();
+        var manager = BuildManager(env.WorktreeRoot);
+        var first = await manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default);
+        InterruptedWorktreeCreation.Simulate(env.WorktreeRoot, first.Path);
+        Directory.Delete(first.Path, recursive: true);
+
+        var again = await manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default);
+
+        File.Exists(Path.Combine(again.Path, "README.md")).ShouldBeTrue("full-checkout");
+        (await manager.ScanDelegateWorktreesAsync(env.RepoPath, default)).Single().Locked.ShouldBeFalse("unlocked");
+        (await manager.ReadVerificationCreationAsync(again.Path, default)).ShouldNotBeNull("creation-complete");
+    }
+
+    [Test]
+    public async Task C1448_OtherLockReasonRemovesNothing()
+    {
+        using var env = await GitTestEnvironment.CreateAsync();
+        var manager = BuildManager(env.WorktreeRoot);
+        var baseSha = (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "HEAD")).Trim();
+        var first = await manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default);
+        var admin = InterruptedWorktreeCreation.Simulate(env.WorktreeRoot, first.Path, "operator hold");
+
+        await Should.ThrowAsync<ConflictException>(() => manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default));
+
+        Directory.Exists(first.Path).ShouldBeTrue("directory-kept");
+        File.Exists(Path.Combine(first.Path, "README.md")).ShouldBeFalse("checkout-untouched");
+        File.ReadAllText(Path.Combine(admin, "locked")).ShouldBe("operator hold");
+        (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "refs/heads/feat/card-task-deadbeef")).Trim()
+            .ShouldBe(baseSha, "branch-kept");
+        (await manager.ReadVerificationCreationAsync(first.Path, default)).ShouldBeNull("intent-kept-incomplete");
+    }
+
+    [Test]
+    public async Task C1448_MovedBranchRemovesNothing()
+    {
+        using var env = await GitTestEnvironment.CreateAsync();
+        var manager = BuildManager(env.WorktreeRoot);
+        var first = await manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default);
+        var admin = InterruptedWorktreeCreation.Simulate(env.WorktreeRoot, first.Path);
+        await File.WriteAllTextAsync(Path.Combine(env.RepoPath, "work.md"), "work\n");
+        await GitTestEnvironment.RunGitAsync(env.RepoPath, "add", "work.md");
+        await GitTestEnvironment.RunGitAsync(env.RepoPath, "commit", "-m", "work");
+        var moved = (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "HEAD")).Trim();
+        await GitTestEnvironment.RunGitAsync(env.RepoPath, "update-ref", "refs/heads/feat/card-task-deadbeef", moved);
+
+        await Should.ThrowAsync<ConflictException>(() => manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default));
+
+        Directory.Exists(first.Path).ShouldBeTrue("directory-kept");
+        File.ReadAllText(Path.Combine(admin, "locked")).ShouldBe("initializing");
+        (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "refs/heads/feat/card-task-deadbeef")).Trim()
+            .ShouldBe(moved, "moved-branch-kept");
+        (await manager.ReadVerificationCreationAsync(first.Path, default)).ShouldBeNull("intent-kept-incomplete");
     }
 
     [Test]
