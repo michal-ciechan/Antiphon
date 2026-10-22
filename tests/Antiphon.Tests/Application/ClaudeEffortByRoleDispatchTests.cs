@@ -98,24 +98,30 @@ public sealed class ClaudeEffortByRoleDispatchTests
     [Test]
     public async Task a_role_override_that_differs_from_the_tier_declines_warm_reuse()
     {
-        using var workspace = new TempWorkspace();
-        var (warm, _) = await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.High);
+        // Two independent directories, each with its own warm Claude delegate at Medium: a Shared
+        // task waits behind another task in the same directory, so the two ticks must not share one.
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Docs"] = "xhigh" };
 
-        // Override active and different from High's own effort: the warm process launched at the
-        // tier's `high` cannot serve a Code task that must run at `xhigh`.
-        var overridden = await SeedQueuedTaskAsync(workspace.Path, AgentTaskRole.Code, AgentModelLevel.High);
-        await CreateDispatcher(CodeAtXhigh).TickAsync(CancellationToken.None);
+        // Control first: no override, the warm delegate is reused exactly as today.
+        using var plainWorkspace = new TempWorkspace();
+        var (plainWarm, _) = await SeedWarmAgentAsync(plainWorkspace.Path, AgentModelLevel.Medium);
+        var plain = await SeedQueuedTaskAsync(plainWorkspace.Path, AgentTaskRole.Docs, AgentModelLevel.Medium);
+        await CreateDispatcher(Empty).TickAsync(CancellationToken.None);
         await using var db = CreateContext();
+        var reused = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == plain.Id);
+        reused.AgentId.ShouldBe(plainWarm);
+        (await db.Agents.AsNoTracking().SingleAsync(a => a.Id == plainWarm)).Status.ShouldBe(AgentStatus.Running);
+
+        // Override active and different from Medium's own effort: the warm process launched at the
+        // tier's `medium` cannot serve a Docs task that must run at `xhigh`.
+        using var overriddenWorkspace = new TempWorkspace();
+        var (warm, _) = await SeedWarmAgentAsync(overriddenWorkspace.Path, AgentModelLevel.Medium);
+        var overridden = await SeedQueuedTaskAsync(overriddenWorkspace.Path, AgentTaskRole.Docs, AgentModelLevel.Medium);
+        await CreateDispatcher(map).TickAsync(CancellationToken.None);
         var declined = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == overridden.Id);
         declined.AgentId.ShouldNotBe(warm, "an overridden task needs a fresh process to carry its --effort");
         var retained = await db.Agents.AsNoTracking().SingleAsync(a => a.Id == warm);
         retained.Status.ShouldBe(AgentStatus.Idle, "the warm delegate is left for a task it can serve");
-
-        // Control: the same task shape with no override reuses the warm delegate exactly as today.
-        var plain = await SeedQueuedTaskAsync(workspace.Path, AgentTaskRole.Code, AgentModelLevel.High);
-        await CreateDispatcher(Empty).TickAsync(CancellationToken.None);
-        var reused = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == plain.Id);
-        reused.AgentId.ShouldBe(warm);
     }
 
     // ---- escalation text -----------------------------------------------------------------------
