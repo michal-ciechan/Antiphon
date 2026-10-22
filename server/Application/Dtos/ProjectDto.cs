@@ -32,6 +32,16 @@ public record ProjectDto(
     public bool DispatchHonorsWorkspaceDefault { get; init; }
     public Guid? DefaultPipelineDefinitionId { get; init; }
     public PipelineResolutionDto? Pipeline { get; init; }
+    /// <summary>
+    /// CARD-0167 S2. Per-kind provider endpoints keyed by <c>AgentKind</c> name; empty when none is
+    /// set. URL and key NAME only, echoed exactly as written.
+    /// </summary>
+    public IReadOnlyDictionary<string, ProviderEndpointDto> ProviderEndpoints { get; init; } = ProviderEndpointDto.EmptyMap;
+    /// <summary>
+    /// Save-time advisories (CARD-0167 D-8): a provider endpoint naming a key that resolves nowhere
+    /// is accepted and listed here by name. Populated on create and update responses.
+    /// </summary>
+    public IReadOnlyList<string> Warnings { get; init; } = [];
 }
 
 /// <summary>

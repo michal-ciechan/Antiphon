@@ -132,6 +132,12 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid?>("PoolReservedForRootTaskId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("ProviderEndpointJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<int>("ProviderEndpointMode")
+                        .HasColumnType("integer");
+
                     b.Property<bool>("RemoteControlEnabled")
                         .HasColumnType("boolean");
 
@@ -7152,6 +7158,12 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<DateTime?>("OrchestratorWorkspaceAcknowledgedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProviderEndpointsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}");
 
                     b.Property<string>("RepositoryVisibility")
                         .IsRequired()
