@@ -1,4 +1,6 @@
+using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Antiphon.E2E.Fixtures;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +16,14 @@ namespace Antiphon.E2E;
 [Category("OptIn")]
 public class AgentE2ETests
 {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter() },
+    };
+
     private readonly AntiphonAppFixture _appFixture = new();
     private readonly PlaywrightFixture _playwrightFixture = new();
     private readonly List<string> _tempRoots = [];
@@ -136,6 +146,85 @@ public class AgentE2ETests
             await PlaywrightFixture.CaptureOnCompletionAsync(page, passed);
             await context.DisposeAsync();
         }
+    }
+
+    // CARD-0105: the terminal icon's context menu (right-click, Shift+F10) reaches the same
+    // destinations as the kebab. The agent and its board are seeded through the API; the create
+    // dialog is covered by the test above.
+    [Test]
+    public async Task Agents_page_terminal_icon_context_menu_reaches_settings()
+    {
+        const string suffix = "contextmenu";
+        var agentName = $"E2E Agent {suffix}";
+        var workingDirectory = CreateWorkingDirectory(suffix);
+        var boardId = await SeedBoardAsync(suffix);
+        var seed = await _appFixture.HttpClient.PostAsJsonAsync("/api/agents", new
+        {
+            name = agentName,
+            workingDirectory,
+            boardId,
+        }, JsonOptions);
+        seed.EnsureSuccessStatusCode();
+
+        var (page, context) = await _playwrightFixture.NewPageAsync();
+        var passed = false;
+        try
+        {
+            var response = await page.GotoAsync($"{_appFixture.PlaywrightAddress}/agents");
+            response.ShouldNotBeNull();
+            response!.Status.ShouldBeLessThan(500);
+            await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+            await Expect(page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = $"Agent {agentName}" }))
+                .ToBeVisibleAsync(new LocatorAssertionsToBeVisibleOptions { Timeout = 10_000 });
+
+            var icon = page.GetByRole(AriaRole.Button, new PageGetByRoleOptions { Name = $"Terminal {agentName}" });
+            var menu = page.GetByRole(AriaRole.Menu, new PageGetByRoleOptions { Name = $"Terminal menu {agentName}" });
+
+            await icon.ClickAsync(new LocatorClickOptions { Button = MouseButton.Right });
+            await Expect(menu).ToBeVisibleAsync();
+            await Expect(menu.GetByRole(AriaRole.Menuitem)).ToHaveTextAsync(
+                new[] { "Open terminal", "Open files view", "Open board", "Edit settings" });
+
+            await menu.GetByRole(AriaRole.Menuitem, new LocatorGetByRoleOptions { Name = "Edit settings" }).ClickAsync();
+            var settingsDialog = page.GetByRole(AriaRole.Dialog);
+            await Expect(settingsDialog.GetByRole(AriaRole.Textbox, new LocatorGetByRoleOptions { Name = "Details" }))
+                .ToBeVisibleAsync();
+            await Expect(menu).ToBeHiddenAsync();
+            await page.Keyboard.PressAsync("Escape");
+            await Expect(settingsDialog).ToBeHiddenAsync();
+
+            await icon.FocusAsync();
+            await page.Keyboard.PressAsync("Shift+F10");
+            await Expect(menu).ToBeVisibleAsync();
+            await page.Keyboard.PressAsync("Escape");
+            await Expect(menu).ToBeHiddenAsync();
+            await Expect(icon).ToBeFocusedAsync();
+
+            passed = true;
+        }
+        finally
+        {
+            await PlaywrightFixture.CaptureOnCompletionAsync(page, passed);
+            await context.DisposeAsync();
+        }
+    }
+
+    private async Task<Guid> SeedBoardAsync(string suffix)
+    {
+        var project = await _appFixture.HttpClient.PostAsJsonAsync("/api/projects", new
+        {
+            name = $"E2E Project {suffix}",
+            gitRepositoryUrl = "https://github.com/example/e2e-contextmenu.git",
+            baseBranch = "main",
+            gitHubIntegrationEnabled = false,
+            notificationsEnabled = false,
+        }, JsonOptions);
+        project.EnsureSuccessStatusCode();
+        var projectId = (await project.Content.ReadFromJsonAsync<JsonElement>(JsonOptions)).GetProperty("id").GetGuid();
+        var board = await _appFixture.HttpClient.PostAsJsonAsync(
+            "/api/boards", new { projectId, name = $"E2E Board {suffix}" }, JsonOptions);
+        board.EnsureSuccessStatusCode();
+        return (await board.Content.ReadFromJsonAsync<JsonElement>(JsonOptions)).GetProperty("id").GetGuid();
     }
 
     private async Task AssertCardAssignedAsync(Guid cardId)
