@@ -66,6 +66,7 @@ public static class BuildSlotRoutes
                 : Problem(StatusCodes.Status404NotFound, BuildSlotProblemTypes.Unknown, $"no lease {leaseId}"));
 
         app.MapGet("/build-slots", (BuildSlotBroker broker) => Results.Ok(broker.List()));
+        app.MapGet("/build-slots/metrics", (BuildSlotBroker broker) => Results.Ok(broker.Metrics()));
         return app;
     }
 

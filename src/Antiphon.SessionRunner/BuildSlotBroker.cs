@@ -30,6 +30,7 @@ public sealed class BuildSlotBroker
     private readonly object _gate = new();
     private readonly List<Lease> _leases = [];
     private readonly List<Waiter> _waiters = [];
+    private readonly BuildSlotMetricsRecorder _metrics;
 
     public BuildSlotBroker(
         IOptions<BuildSlotSettings> settings,
@@ -43,6 +44,7 @@ public sealed class BuildSlotBroker
         _memory = memory;
         _time = time;
         _logger = logger;
+        _metrics = new BuildSlotMetricsRecorder(UtcNow);
     }
 
     /// <summary>True only for a grant; <paramref name="outcome"/> says what to tell the wrapper.</summary>
@@ -95,6 +97,7 @@ public sealed class BuildSlotBroker
             var free = _settings.MaxConcurrent - _leases.Count;
             if (position > free)
             {
+                _metrics.Refused(now, memoryFloor: false);
                 outcome = new BuildSlotOutcome.Busy(new BuildSlotBusy(_leases.Count, _settings.MaxConcurrent, position, _settings.RetryAfterMs));
                 return false;
             }
@@ -102,6 +105,7 @@ public sealed class BuildSlotBroker
             if (_memory.AvailableBytes is { } available && _settings.MinAvailableMemoryMb > 0
                 && available / (1024 * 1024) < _settings.MinAvailableMemoryMb)
             {
+                _metrics.Refused(now, memoryFloor: true);
                 outcome = new BuildSlotOutcome.MemoryFloor(new BuildSlotMemoryFloor(
                     available / (1024 * 1024), _settings.MinAvailableMemoryMb, position, _settings.RetryAfterMs));
                 return false;
@@ -111,6 +115,7 @@ public sealed class BuildSlotBroker
             var lease = new Lease(Guid.NewGuid(), request.Pid, start.Value, label, request.SessionId, request.TaskId,
                 now, now.AddMinutes(_settings.LeaseTtlMinutes)) { LastRenewedAtUtc = now };
             _leases.Add(lease);
+            _metrics.Granted(now, now - waiter.SinceUtc);
             _logger.LogInformation(
                 "Build slot lease {LeaseId} granted to {Label} (pid {Pid}, session {SessionId}, task {TaskId}) after {WaitedSeconds:0}s; {Occupied}/{Budget} occupied",
                 lease.Id, label, request.Pid, request.SessionId, request.TaskId, (now - waiter.SinceUtc).TotalSeconds,
@@ -128,9 +133,11 @@ public sealed class BuildSlotBroker
             var lease = _leases.FirstOrDefault(l => l.Id == leaseId);
             if (lease is null)
                 return false;
+            var now = UtcNow;
             _leases.Remove(lease);
+            _metrics.Released(now, now - lease.GrantedAtUtc);
             _logger.LogInformation("Build slot lease {LeaseId} released by {Label} (pid {Pid}) after {HeldSeconds:0}s",
-                lease.Id, lease.Label, lease.Pid, (UtcNow - lease.GrantedAtUtc).TotalSeconds);
+                lease.Id, lease.Label, lease.Pid, (now - lease.GrantedAtUtc).TotalSeconds);
             return true;
         }
     }
@@ -173,6 +180,13 @@ public sealed class BuildSlotBroker
         }
     }
 
+    /// <summary>CARD-1489: the lifecycle metrics. A read: it neither sweeps nor prunes, so admission state is unchanged.</summary>
+    public BuildSlotMetrics Metrics()
+    {
+        lock (_gate)
+            return _metrics.Snapshot(UtcNow);
+    }
+
     private int SweepLocked(DateTime now)
     {
         var reaped = 0;
@@ -189,6 +203,7 @@ public sealed class BuildSlotBroker
                 continue;
             _leases.Remove(lease);
             reaped++;
+            _metrics.Reaped(now, now - lease.GrantedAtUtc);
             _logger.LogWarning("Build slot lease {LeaseId} held by {Label} (pid {Pid}) reaped: {Reason}; held {HeldSeconds:0}s",
                 lease.Id, lease.Label, lease.Pid, reason, (now - lease.GrantedAtUtc).TotalSeconds);
         }
@@ -197,6 +212,7 @@ public sealed class BuildSlotBroker
         foreach (var waiter in _waiters.Where(w => now - w.LastSeenUtc > silence).ToList())
         {
             _waiters.Remove(waiter);
+            _metrics.WaiterDropped(now);
             _logger.LogInformation("Build slot waiter {Label} (pid {Pid}) dropped: silent for {SilentSeconds:0}s",
                 waiter.Label, waiter.Pid, (now - waiter.LastSeenUtc).TotalSeconds);
         }
