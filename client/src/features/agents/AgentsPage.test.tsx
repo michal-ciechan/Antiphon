@@ -1054,4 +1054,36 @@ describe('AgentsPage', () => {
     expect(screen.getByLabelText('Details')).toBeInTheDocument()
     expect(screen.queryByRole('menu')).toBeNull()
   })
+
+  it('C0105 keyboard Shift+F10 opens the menu and Escape returns focus to the terminal icon', async () => {
+    server.use(...agentHandlers())
+
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
+
+    const icon = screen.getByRole('button', { name: 'Terminal Frontend Claude' })
+    icon.focus()
+    await userEvent.keyboard('{Shift>}{F10}{/Shift}')
+
+    const menu = await screen.findByRole('menu', { name: 'Terminal menu Frontend Claude' })
+    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Open terminal',
+      'Open files view',
+      'Open board',
+      'Edit settings',
+    ])
+    // jsdom reports an all-zero rect for the icon, so "0,0" proves the anchor came from the icon
+    // and not from a pointer position.
+    expect(screen.getByTestId('card-menu-anchor')).toHaveAttribute('data-anchor', '0,0')
+
+    // Mantine's focus trap moves focus into the menu; Escape is handled there.
+    await waitFor(() => expect(menu.contains(document.activeElement)).toBe(true))
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+    expect(document.activeElement).toBe(icon)
+
+    // The dedicated Menu key reaches the same menu.
+    fireEvent.keyDown(icon, { key: 'ContextMenu' })
+    expect(await screen.findByRole('menu', { name: 'Terminal menu Frontend Claude' })).toBeInTheDocument()
+  })
 })
