@@ -123,6 +123,12 @@ outages, notifications, attempts and receipts as JSON for the qualification arti
 
 ## Windows side
 
+Local rc status and manual emergency recovery are documented in
+[Inspecting and stopping a qualification](release-gates.md#inspecting-and-stopping-a-qualification).
+Scheduled-nightly outage alerts, per-suite timeouts and that local read-only
+inspection are separate mechanisms. This watchdog does not stop a qualification,
+clear its Windows locks or infer a hang from its recorded phase timestamp.
+
 `scripts/nightly-health.ps1` is the local readiness evaluator, registered as
 `u/lndcobra/antiphon_nightly_readiness` (desktop tag, every 30 minutes). With
 `-ReadinessConfigPath C:\Antiphon\nightly\readiness-config.json` (fields `expectedScriptHash`,

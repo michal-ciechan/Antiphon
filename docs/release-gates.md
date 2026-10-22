@@ -111,6 +111,91 @@ queue. The master schedule keeps its existing missed-run and readiness consequen
 is never killed to make master green. Assembly-local `ParallelLimiter<ProcessSpawnLimit>`
 limiters are per test project and are **not** cross-process locks; this file is.
 
+## Inspecting and stopping a qualification
+
+The repository provides a read-only observer. Populate every variable from the
+specific launch record; do not select the newest directory or infer the state root
+from the candidate. Run on the **execution host**: PID observations on copied state
+describe the wrong host. No automatic stop command is supplied; that remains a
+separate supervisor-ownership follow-up (CARD-1500 scope decision D-1).
+
+```powershell
+pwsh -NoProfile -File scripts/rc-qualification-status.ps1 `
+    -CandidateId $candidateId -RunId $runId `
+    -StateRoot $stateRoot -CoordinationRoot $coordinationRoot `
+    -ReleaseRoot $releaseRoot
+```
+
+`ReleaseRoot` is optional; when supplied it reads only the selected
+`candidates/<candidateId>/candidate.json`. `-PassThru` returns the JSON-shaped object
+to an in-process caller. The other four inputs are required and nonblank. The
+observer reads only `last-run.json`, `run.lock`, `native-run.lock` and that optional
+journal, with a 1 MiB limit per record. It rejects linked/reparse paths and ancestors.
+Each `inputs` entry reports its literal path and `ok`, `missing`, `malformed`,
+`unreadable`, `unsupported-path` or `changed` outcome (`not-requested` for an omitted
+journal root). Changed file identity/length/write-time during a read is incomplete.
+These are independent snapshots, not an atomic filesystem transaction; concurrent
+same-account writers are outside a diagnostic reader's authority.
+
+`state` contains recorded identity, phase and timestamps, nullable exits and actual
+boolean coverage/test/report flags. An early blank `sha` can use `expectedSha`.
+`lastActivityAt` is a recorded transition, **not a continuous heartbeat**; its age
+does not prove a hang or supply an ETA. `ownerObservation` distinguishes `alive`
+(matching PID and start), `absent` (definitive PID not found), `reused` (different
+start), and `unknown` (invalid identity or inaccessible probe). `alive` describes
+only the recorded owner, never the supervisor tree. An unrelated shared lock stays
+visible as `other-run`; it is not this run's liveness. Missing candidate journals
+do not hide direct diagnostic runs. `identityMismatches` names contradictions.
+Exit **0** means a coherent observation, including a recorded failed run; **2**
+means invalid inputs or an incomplete/contradictory observation. Neither exit,
+`observationComplete`, nor an absent owner grants release credit or cleanup authority.
+
+Manual emergency stop and stale shared-lock recovery:
+
+1. **Identify and preserve.** Obtain candidate, full SHA, run ID, exact state,
+   coordination and checkout paths, and supervisor PID/start/script from launch
+   evidence. Run the observer on that host. Preserve exact state and lock bytes and
+   a restricted local process inventory under the operator's evidence root. Keep
+   command lines and credentials private. If launch identity is incomplete, stop
+   this procedure and collect evidence; do not guess a supervisor from a lock PID.
+2. **Prove the tree.** Use `Get-CimInstance Win32_Process` and creation times to trace
+   the recorded nightly lock owner through its wrapper/build-slot ancestors to the
+   launch-record supervisor. Check candidate/run/checkout arguments at the nightly
+   hop, creation order and descendant membership. A script name, path substring,
+   cached PID or heartbeat alone is insufficient. Reused PID, missing ancestry,
+   inaccessible identity or an unrelated child aborts the stop. Never kill all
+   `pwsh`, `dotnet`, `conhost`, runners, or processes under a shared root.
+3. **Stop the verified supervisor tree.** With exclusive operational control of this
+   launch, reobserve supervisor PID/start immediately before the explicit command:
+   `taskkill /PID $verifiedSupervisorPid /T /F`. Abort if the generation changed.
+   This manual command is not an atomic ownership API. Never substitute the native
+   lock owner's PID for the supervisor. Bound the subsequent census to **30 seconds**,
+   checking every previously observed identity and any remaining candidate/run
+   descendants. Timeout, unknown identity, surviving child or incomplete census
+   means incomplete stop: retain locks. Do not repeat a kill against a reused PID.
+   The command's exit code alone proves nothing.
+4. **Clear only a proven stale shared lock.** This step also applies after an
+   independently established owner exit. Prove the owner generation and this run's
+   children are gone; retain unknown/reused identities for investigation. Serialize
+   recovery with all other operators and hold new native starts through existing
+   launch owners for this short window. Without that exclusive hold, abort cleanup.
+   Re-read the exact `native-run.lock` identity and bytes against the preserved copy.
+   Foreign run, changed file, malformed record or live/unknown owner aborts cleanup.
+   Move only that exact file with
+   `Move-Item -LiteralPath $nativeLockPath -Destination $uniqueEvidencePath`, using a
+   **nonexisting destination on the same volume**, without `-Force`, recursion or
+   wildcards. Keep the moved file as the receipt; verify its bytes against the
+   preserved copy and verify the original path is absent before releasing the hold.
+   The operational hold is essential: unchecked read/delete is not compare-and-swap.
+   Failure retains evidence and does not authorize retry against a different lock.
+   `Enter-ReleaseGateNativeLock` intentionally does not auto-reclaim stale locks.
+5. **Record before any separately intended restart.** Keep stop time, reason,
+   identities, before/after observations and retained lock path. Do not rewrite
+   `last-run.json`, green files, journals or reports to manufacture a terminal
+   result. `run.lock` has distinct existing reclaim rules; never delete both lock
+   files as a pair. A later qualification is a new attempt with a new identity.
+   Do not use `release-cut.ps1` as a diagnostic restart: it publishes on green.
+
 ## The RC coverage profile
 
 `tests/test-execution-policy.json` is schema **v4**. It retains the v3 project
