@@ -64,6 +64,11 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             throw new Application.Exceptions.ConflictException("Mutation snapshots cannot be landed.", "verification_publication_forbidden");
         AgentTaskLanding? op = task.ActiveLandingId is Guid id
             ? await db.AgentTaskLandings.SingleAsync(o => o.Id == id && o.TaskId == task.Id, ct) : null;
+        // CARD-1463: a ticketed re-entry whose owner no longer points at the ticket's operation still records
+        // its refusal on that operation, as the single-pass protocol did when the pointer moved mid-verification.
+        if (ticket is not null && op is null)
+            op = await db.AgentTaskLandings.SingleOrDefaultAsync(
+                o => o.Id == ticket.Identity.OperationId && o.TaskId == task.Id, ct);
         AgentTaskLanding? previousToReplace = null;
         try
         {
@@ -71,11 +76,19 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 throw new LandingRefusal("source_coordinates_missing");
             var coordinates = new LandSourceCoordinates(task.Id, task.RepoPath, task.WorktreePath,
                 FullRef(task.WorktreeBranch), FullRef(task.MergeTargetRef ?? "master"));
+            if (ticket is not null)
+            {
+                // CARD-1463: the owner row is judged against the ticket's operation first, as the in-lease
+                // RecheckSourceAsync did before the window existed, so a task moved during verification refuses
+                // as task_coordinates_changed rather than as a lease or pending-operation mismatch measured
+                // against the moved coordinates.
+                Require(op is not null && request is not null, "verification_ticket_changed");
+                await RequireTaskIdentityAsync(op!, ct);
+            }
             var common = await git.CommonDirectoryAsync(coordinates.RepositoryPath, ct);
             Require(leases.Owns(lease, common), "repository_lease_required");
             if (ticket is not null)
             {
-                Require(op is not null && request is not null, "verification_ticket_changed");
                 await db.Entry(op!).ReloadAsync(ct);
                 await db.Entry(request!).ReloadAsync(ct);
                 await ValidateTicketAsync(task, op!, request!, ticket, ct);
@@ -626,17 +639,54 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         LandVerificationArtifacts.RequireNoLinks(protection);
         Require((await File.ReadAllTextAsync(protection, ct)).Trim() == Infrastructure.Git.LandWorkspace.LockReason,
             "land_worktree_identity_changed");
-        foreach (var path in ticket.SourceCanonical is null
-                     ? new[] { ticket.Identity.WorktreePath }
-                     : new[] { ticket.Identity.WorktreePath, ticket.Identity.SourcePath })
+        // The land worktree is the candidate: a lock, a sequencer or tracked dirt there refuses the resume.
+        var candidate = ticket.Identity.WorktreePath;
+        await RequireNoIndexLockAsync(candidate, ct);
+        Require(!await git.HasActiveSequencerAsync(candidate, ct), "verification_sequencer_changed");
+        var status = await git.RunAsync(candidate, ["status", "--porcelain=v1", "-z", "--untracked-files=no"], ct);
+        Require(status.Succeeded && status.Output.Length == 0, "verification_tracked_tree_changed");
+        if (ticket.SourceCanonical is not null)
         {
-            await RequireNoIndexLockAsync(path, ct);
-            Require(!await git.HasActiveSequencerAsync(path, ct), "verification_sequencer_changed");
-            var status = await git.RunAsync(path, ["status", "--porcelain=v1", "-z", "--untracked-files=no"], ct);
-            Require(status.Succeeded && status.Output.Length == 0, "verification_tracked_tree_changed");
+            // CARD-1463 (CARD-0688 D-2/D-12): the task worktree is a live checkout whose tree is guarded-cleanup
+            // residue, never a landing precondition. The same three probes run there read-only (every LandingGit
+            // child carries GIT_OPTIONAL_LOCKS=0, so the status refreshes no index and takes no lock) and a
+            // finding is logged; cleanup re-inspects the tree and records it Refused with its own reason.
+            var residue = await ObserveSourceResidueAsync(ticket.Identity.SourcePath, ct);
+            if (residue is not null)
+                try { logger?.LogInformation(
+                    "Land {OperationId} task worktree {Path} holds {Residue} after the verification window; publication proceeds and guarded cleanup keeps the tree",
+                    op.Id, ticket.Identity.SourcePath, residue); } catch (Exception) { }
         }
-        var head = await git.RunAsync(ticket.Identity.WorktreePath, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
+        var head = await git.RunAsync(candidate, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
         Require(head.Succeeded && head.Output.Trim() == ticket.Identity.CandidateSha, "land_worktree_changed");
+    }
+
+    /// <summary>CARD-1463: the post-window look at the task worktree. Read-only, the CARD-1449 C688 inventory
+    /// (index-lock probe, sequencer probe, tracked-tree status) and never a refusal: the reason names what guarded
+    /// cleanup will find there.</summary>
+    private async Task<string?> ObserveSourceResidueAsync(string source, CancellationToken ct)
+    {
+        if (await TryIndexLockRefusalAsync(source, ct) is { } held) return held.Code;
+        if (await git.HasActiveSequencerAsync(source, ct)) return "active_sequencer";
+        var status = await git.RunAsync(source, ["status", "--porcelain=v1", "-z", "--untracked-files=no"], ct);
+        return !status.Succeeded ? "status_error" : status.Output.Length == 0 ? null : "source_dirty";
+    }
+
+    /// <summary>The DB half of the source identity recheck (I-1): the owner still points at this operation, is in
+    /// a landable status and names the operation's coordinates. CARD-1463: also the first check of a ticketed
+    /// re-entry, so a task moved during the verification window refuses as task_coordinates_changed.</summary>
+    private async Task RequireTaskIdentityAsync(AgentTaskLanding op, CancellationToken ct)
+    {
+        var currentTask = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == op.TaskId, ct);
+        Require(currentTask is not null && currentTask.ActiveLandingId == op.Id
+            && (op.RecoveryMode == LandRecoveryMode.None
+                ? currentTask.Status == AgentTaskStatus.Succeeded
+                : currentTask.Role == AgentTaskRole.Code
+                    && LandApproval.RecoveryStatusEligible(currentTask.Status))
+            && currentTask.RepoPath is not null && SamePath(currentTask.RepoPath, op.RepositoryPath)
+            && currentTask.WorktreePath is not null && SamePath(currentTask.WorktreePath, op.WorktreePath)
+            && currentTask.WorktreeBranch is not null && FullRef(currentTask.WorktreeBranch) == op.SourceFullRef
+            && FullRef(currentTask.MergeTargetRef ?? "master") == op.TargetFullRef, "task_coordinates_changed");
     }
 
     private async Task ConfirmAsync(AgentTaskLanding op, LandingRemoteObservation remote,
@@ -792,16 +842,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     /// <summary>Immutable owner/coordinates and recovery pins; safe before a saved push is reconciled.</summary>
     private async Task RecheckSourceIdentityAndPinsAsync(AgentTaskLanding op, CancellationToken ct)
     {
-        var currentTask = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == op.TaskId, ct);
-        Require(currentTask is not null && currentTask.ActiveLandingId == op.Id
-            && (op.RecoveryMode == LandRecoveryMode.None
-                ? currentTask.Status == AgentTaskStatus.Succeeded
-                : currentTask.Role == AgentTaskRole.Code
-                    && LandApproval.RecoveryStatusEligible(currentTask.Status))
-            && currentTask.RepoPath is not null && SamePath(currentTask.RepoPath, op.RepositoryPath)
-            && currentTask.WorktreePath is not null && SamePath(currentTask.WorktreePath, op.WorktreePath)
-            && currentTask.WorktreeBranch is not null && FullRef(currentTask.WorktreeBranch) == op.SourceFullRef
-            && FullRef(currentTask.MergeTargetRef ?? "master") == op.TargetFullRef, "task_coordinates_changed");
+        await RequireTaskIdentityAsync(op, ct);
         var pins = new List<(string Name, string Sha)>();
         if (op.SourcePinned) pins.Add(("source", op.OriginalSourceSha));
         if (op.TargetPinned) pins.Add(("target-before", op.TargetBeforeSha));
