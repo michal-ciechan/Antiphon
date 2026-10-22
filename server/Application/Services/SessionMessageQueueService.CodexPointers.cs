@@ -1,4 +1,5 @@
 using Antiphon.Agents.Pty;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -29,6 +30,9 @@ public sealed partial class SessionMessageQueueService
 
     private async Task<TranscriptConfirm> ReadPointerReceiptAsync(Guid sessionId, string body, PointerAttempt attempt, CancellationToken ct)
     {
+        if (attempt.Generation is not { } acceptedGeneration
+            || await CaptureSessionGenerationAsync(sessionId, ct) is not { } currentGeneration
+            || !SessionGeneration.Equal(acceptedGeneration, currentGeneration)) return TranscriptConfirm.None;
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var from = attempt.Started - TimeSpan.FromSeconds(Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds));
