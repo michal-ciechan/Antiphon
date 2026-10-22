@@ -712,6 +712,13 @@ public sealed class DelegationSettings
     public int RunnerSyncDebtAttentionMinutes { get; set; } = 30;
 
     /// <summary>
+    /// CARD-1446 D-2. A Pending sync-debt row that has already been claimed this many times is Held
+    /// <c>settlement_sync_attempts_exhausted</c> at its next due claim, before Git runs. With the
+    /// 1/2/4/5-minute backoff, 48 is about 3 h 50 min of retries. 0 disables the cap. Default 48.
+    /// </summary>
+    public int RunnerSyncDebtMaxAttempts { get; set; } = 48;
+
+    /// <summary>
     /// CARD-0672 D-2: how long one land request may stand aside at admission while queued
     /// dispatches wait for the repository mutation lease. Each yield lasts one land sweep
     /// (<see cref="LandSweepSeconds"/>); past this budget the land acquires anyway and writes one
@@ -1287,6 +1294,9 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
             failures.Add("Delegation:RunnerSyncBudgetSeconds must be at least 1.");
         if (options.RunnerSyncDebtAttentionMinutes < 1)
             failures.Add("Delegation:RunnerSyncDebtAttentionMinutes must be at least 1.");
+
+        if (options.RunnerSyncDebtMaxAttempts < 0)
+            failures.Add("Delegation:RunnerSyncDebtMaxAttempts must be zero or positive.");
         if (options.LandYieldToDispatchMaxSeconds is < 0 or > 600)
             failures.Add("Delegation:LandYieldToDispatchMaxSeconds must be between 0 and 600.");
         if (options.CheckInterpreterFirstAttemptSeconds is { } firstAttempt
