@@ -147,7 +147,7 @@ public sealed class AgentTaskWorktreeBaseResolver(
                 }
                 if (unverified.TryGetValue(row.Id, out var unpaid))
                 {
-                    warnings.Add(Unverified(row, unpaid, commits));
+                    warnings.Add(Unverified(row, unpaid.Debt, commits));
                     return Result(CardWorktreeBaseDecision.WaitForLand, row.Id, row.WorktreeBranch, reason: "pending_land_unknown");
                 }
                 if (!commits.TryGetValue(row.WorktreeBranch!, out var pendingSha))
