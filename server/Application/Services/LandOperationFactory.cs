@@ -83,6 +83,12 @@ internal static class LandOperationFactory
             gitDirectory = Path.Combine(common, "worktrees", Path.GetFileName(worktreePath));
         }
 
+        // CARD-1485: the approval is one tuple. Only an identical ordinary approval (same reviewed SHA and the same
+        // Review evidence, including none) keeps the predecessor's original request; any other replacement binds
+        // this request's evidence and identity together, never an obsolete Review a superseded request carried.
+        var sameApproval = request.RecoveryMode == LandRecoveryMode.None
+            && previous is { RecoveryMode: LandRecoveryMode.None, OriginalSourceSha: { } prev } && prev == expected
+            && previous.ReviewEvidenceId == request.ReviewEvidenceId;
         var op = new AgentTaskLanding
         {
             Id = id, TaskId = task.Id, SchemaVersion = 3, Phase = LandPhase.Inspected,
@@ -92,11 +98,8 @@ internal static class LandOperationFactory
             OriginalSourceSha = expected, ReviewedSourceSha = expected,
             PreparationInputSha = derivation ? previous!.RebasedSourceSha : expected,
             PreviousPreparationOperationId = derivation ? previous!.Id : null,
-            ApprovalLandRequestId = request.RecoveryMode == LandRecoveryMode.None
-                && previous is { OriginalSourceSha: { } prev } && prev == expected
-                ? previous.ApprovalLandRequestId ?? request.Id : request.Id,
-            ReviewEvidenceId = request.RecoveryMode == LandRecoveryMode.None
-                ? previous?.ReviewEvidenceId ?? request.ReviewEvidenceId : request.ReviewEvidenceId,
+            ApprovalLandRequestId = sameApproval ? previous!.ApprovalLandRequestId ?? request.Id : request.Id,
+            ReviewEvidenceId = request.ReviewEvidenceId,
             RecoveryMode = request.RecoveryMode,
             RecoveryOwnerStatus = request.RecoveryOwnerStatus,
             RecoverySourceTaskId = request.RecoverySourceTaskId,
