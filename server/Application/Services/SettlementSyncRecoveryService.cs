@@ -1,9 +1,11 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -18,10 +20,13 @@ namespace Antiphon.Server.Application.Services;
 /// attempt forward. Pending recovery is unchanged.
 /// This service does not read
 /// <c>RunnerSyncDebtOnSettlement</c>: that switch stops settlement from minting a row, and a
-/// row already accepted keeps recovering.
+/// row already accepted keeps recovering. CARD-1446 D-2: a Pending row claimed
+/// <see cref="DelegationSettings.RunnerSyncDebtMaxAttempts"/> times is Held
+/// <c>settlement_sync_attempts_exhausted</c> at its next due claim, before Git.
 /// </summary>
 public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspaceService workspace,
-    IEventBus events, TimeProvider clock, ILogger<SettlementSyncRecoveryService> logger)
+    IEventBus events, TimeProvider clock, ILogger<SettlementSyncRecoveryService> logger,
+    IOptions<DelegationSettings> delegation)
 {
     /// <summary>CARD-1136 D-3. Not a setting. A Held row is revisited at most once per hour.</summary>
     private const int HeldRecheckMinutes = 60;
@@ -113,6 +118,17 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
                     await TerminalAsync(debt, AgentTaskSyncDebtState.Superseded,
                         RemoteSettlementSyncReasons.SettlementSyncSuperseded, due, ct);
                     await tx.CommitAsync(ct);
+                    return null;
+                }
+                // CARD-1446 D-2: the cap is read before Git so an exhausted row costs one hourly restamp,
+                // not a Git inspection every five minutes. 0 disables it.
+                var cap = delegation.Value.RunnerSyncDebtMaxAttempts;
+                if (cap > 0 && debt.Attempts >= cap)
+                {
+                    await TerminalAsync(debt, AgentTaskSyncDebtState.Held,
+                        RemoteSettlementSyncReasons.SettlementSyncAttemptsExhausted, due, ct);
+                    await tx.CommitAsync(ct);
+                    logger.LogWarning("Settlement sync debt {DebtId} held after {Attempts} attempts", id, debt.Attempts);
                     return null;
                 }
                 var attempts = debt.Attempts + 1;
