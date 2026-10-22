@@ -7968,19 +7968,6 @@ public sealed partial class AgentTaskDispatcher
             return ReuseOutcome.SpawnFresh;
         }
 
-        // Nor can it change its --effort: CARD-0289 made effort a launch ARGUMENT, and the pool
-        // matches on tier, not role. A Delegation:ClaudeEffortByRole entry that differs from the
-        // tier's effort therefore needs a fresh process; a same-tier warm candidate may have been
-        // launched for a role without one (task 8333e231).
-        if (claimed.AgentKind == AgentKind.ClaudeCode
-            && ClaudeLaunchArgs.RoleOverrideDiffersFromTier(claimed.ModelLevel, claimed.Role, _settings.ClaudeEffortByRole))
-        {
-            _logger.LogInformation(
-                "Task {ShortId} has a Claude effort override for role {Role} that differs from its tier — declining warm reuse so a fresh process can apply it",
-                DelegationReportFormatter.Short(claimed.Id), claimed.Role);
-            return ReuseOutcome.SpawnFresh;
-        }
-
         Agent? agent = null;
 
         if (claimed.AgentId is Guid pinnedId)
@@ -8048,10 +8035,18 @@ public sealed partial class AgentTaskDispatcher
             if (pinned.Status != AgentStatus.Idle || pinned.PoolIdleSince is null)
                 return ReuseOutcome.WaitForAgent;
 
+            // Only a FREE pinned delegate reaches this: a busy one is waited for above, never
+            // replaced by a second session mid-task (CARD-1481 repair).
+            if (DeclinesReuseForClaudeEffort(claimed))
+                return ReuseOutcome.SpawnFresh;
+
             agent = pinned;
         }
         else if (_settings.PoolEnabled)
         {
+            if (DeclinesReuseForClaudeEffort(claimed))
+                return ReuseOutcome.SpawnFresh;
+
             var reservationCutoff = now.AddMinutes(-Math.Max(0, _settings.PoolReservedForCallerMinutes));
             var warm = await _db.Agents
                 .Where(a => a.IsPoolDelegate
@@ -8194,6 +8189,26 @@ public sealed partial class AgentTaskDispatcher
     /// Warm-pool reuse may only keep a process whose inherit-list projection matches this
     /// task's snapshot (CARD-0260). Same names and Ordinal values; two empties match.
     /// </summary>
+    /// <summary>
+    /// A reused POOL process cannot change its --effort either: CARD-0289 made effort a launch
+    /// ARGUMENT, and the pool matches on tier, not role. A Delegation:ClaudeEffortByRole entry that
+    /// differs from the tier's effort therefore needs a fresh process; a same-tier warm candidate
+    /// may have been launched for a role without one (task 8333e231). Pool placement only — a
+    /// standing seat runs at its own launch effort and keeps its own rules (PlaceOnStandingAgentAsync),
+    /// and a busy pinned delegate is waited for before this is asked (CARD-1481 repair).
+    /// </summary>
+    private bool DeclinesReuseForClaudeEffort(AgentTask claimed)
+    {
+        if (claimed.AgentKind != AgentKind.ClaudeCode
+            || !ClaudeLaunchArgs.RoleOverrideDiffersFromTier(claimed.ModelLevel, claimed.Role, _settings.ClaudeEffortByRole))
+            return false;
+
+        _logger.LogInformation(
+            "Task {ShortId} has a Claude effort override for role {Role} that differs from its tier — declining warm reuse so a fresh process can apply it",
+            DelegationReportFormatter.Short(claimed.Id), claimed.Role);
+        return true;
+    }
+
     private bool InheritedEnvMatchesPool(Agent agent, AgentTask task) =>
         AgentLaunchEnv.ProjectionsEqual(
             AgentLaunchEnv.Parse(agent.LaunchEnvJson),
