@@ -12,6 +12,7 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-0100 V-1. The CardRelationships table refuses a duplicate pair and a self-reference, and
 /// deleting either card removes its rows. Each test owns an isolated clone of the migrated template.
+/// The migration pin names the predecessor of AddCardRelationships, never the newest migration (CARD-1452).
 /// </summary>
 [Category("Integration")]
 public sealed class CardRelationshipSchemaTests
@@ -24,8 +25,18 @@ public sealed class CardRelationshipSchemaTests
         (await db.Database.GetPendingMigrationsAsync()).ShouldBeEmpty();
         db.Database.HasPendingModelChanges().ShouldBeFalse();
         var migrations = db.Database.GetMigrations().ToArray();
-        migrations[^1].ShouldEndWith("_AddCardRelationships");
-        migrations[^2].ShouldEndWith("_AddCardCleanupScheduling");
+        // CARD-1452: pin AddCardRelationships to its predecessor, never as the newest migration.
+        var position = Array.FindIndex(migrations, static name =>
+            name.EndsWith("_AddCardRelationships", StringComparison.Ordinal));
+        position.ShouldBeGreaterThan(0);
+        migrations[position - 1].ShouldEndWith("_AddCardCleanupScheduling");
+        var entity = db.Model.FindEntityType(typeof(CardRelationship));
+        entity.ShouldNotBeNull();
+        var pairIndex = entity.GetIndexes()
+            .Single(index => index.GetDatabaseName() == "IX_CardRelationships_CardId_RelatedCardId_Kind");
+        pairIndex.IsUnique.ShouldBeTrue();
+        pairIndex.Properties.Select(property => property.Name).ShouldBe(
+            new[] { nameof(CardRelationship.CardId), nameof(CardRelationship.RelatedCardId), nameof(CardRelationship.Kind) });
 
         var seed = await SeedAsync(db, "A", "B");
         db.CardRelationships.Add(Row(seed["A"], seed["B"]));
