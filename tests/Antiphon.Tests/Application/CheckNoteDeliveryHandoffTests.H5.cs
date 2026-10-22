@@ -30,16 +30,16 @@ public partial class CheckNoteDeliveryHandoffTests
         var seeded = await SeedLegacyWorldAsync(schema.ConnectionString, parent);
         var beforeChecks = seeded.CheckCount;
         var beforeRuns = seeded.RunCount;
-        var root = CheckCompactionFixture.CreateRoot();
-        var producer = CheckCompactionFixture.Start(new CrashWorkerRequest
+        await using var root = CheckCompactionFixture.CreateRoot();
+        await using var producer = CheckCompactionFixture.Start(new CrashWorkerRequest
         {
-            Root = root, Scenario = "produce-hold", Hold = "before-note-enqueue",
+            Root = root.FullPath, Scenario = "produce-hold", Hold = "before-note-enqueue",
             ConnectionString = schema.ConnectionString, SessionId = parent.SessionId, AgentId = parent.AgentId,
             EpisodeId = seeded.EpisodeId, CheckedTaskId = seeded.CheckedTaskId, RunId = seeded.RunId,
             CheckNumber = 1, Body = seeded.Body, Accepted = seeded.Generation,
         });
-        await CheckCompactionFixture.WaitForHeldAsync(root, 1, TimeSpan.FromSeconds(40));
-        var receipt = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "produced.json")));
+        await CheckCompactionFixture.WaitForHeldAsync(root.FullPath, 1, TimeSpan.FromSeconds(40));
+        var receipt = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root.FullPath, "produced.json")));
         receipt.RootElement.GetProperty("mvid").GetGuid()
             .ShouldBe(typeof(CheckCompactionCrashWorker).Assembly.ManifestModule.ModuleVersionId);
         receipt.RootElement.GetProperty("dbLifecycle").GetString().ShouldBe("never-requested");
@@ -50,10 +50,10 @@ public partial class CheckNoteDeliveryHandoffTests
             (await db.AgentTasks.SingleAsync(t => t.Id == seeded.CheckedTaskId)).CheckCount.ShouldBe(beforeChecks);
         }
 
-        await CheckCompactionFixture.DrainAsync(root, producer.Process, producer.Output, producer.Error);
-        var scanner = CheckCompactionFixture.Start(new CrashWorkerRequest
+        await CheckCompactionFixture.DrainAsync(root.FullPath, producer.Process, producer.Output, producer.Error);
+        await using var scanner = CheckCompactionFixture.Start(new CrashWorkerRequest
         {
-            Root = root, Scenario = "scan", ConnectionString = schema.ConnectionString,
+            Root = root.FullPath, Scenario = "scan", ConnectionString = schema.ConnectionString,
             SessionId = parent.SessionId, AgentId = parent.AgentId,
         });
         if (busy)
@@ -79,9 +79,9 @@ public partial class CheckNoteDeliveryHandoffTests
         await using var verify = NewDb(schema.ConnectionString);
         (await verify.AgentTasks.CountAsync(t => t.Role == AgentTaskRole.Check)).ShouldBe(beforeRuns);
         (await verify.AgentTasks.SingleAsync(t => t.Id == seeded.CheckedTaskId)).CheckCount.ShouldBe(beforeChecks);
-        await File.WriteAllTextAsync(Path.Combine(root, "stop"), "stop");
+        await File.WriteAllTextAsync(Path.Combine(root.FullPath, "stop"), "stop");
         await scanner.Process.WaitForExitAsync();
-        await CheckCompactionFixture.DrainAsync(root, scanner.Process, scanner.Output, scanner.Error);
+        await CheckCompactionFixture.DrainAsync(root.FullPath, scanner.Process, scanner.Output, scanner.Error);
     }
 
     [Test]
@@ -213,10 +213,10 @@ public partial class CheckNoteDeliveryHandoffTests
         await using (var before = NewDb(schema.ConnectionString))
             (await MatchingPromptsAsync(before, parent.SessionId, body)).Count.ShouldBe(0);
 
-        var root = CheckCompactionFixture.CreateRoot();
-        var scanner = CheckCompactionFixture.Start(new CrashWorkerRequest
+        await using var root = CheckCompactionFixture.CreateRoot();
+        await using var scanner = CheckCompactionFixture.Start(new CrashWorkerRequest
         {
-            Root = root, Scenario = "scan", ConnectionString = schema.ConnectionString,
+            Root = root.FullPath, Scenario = "scan", ConnectionString = schema.ConnectionString,
             SessionId = parent.SessionId, AgentId = parent.AgentId,
         });
         var prompts = new List<string>();
@@ -233,9 +233,9 @@ public partial class CheckNoteDeliveryHandoffTests
         await using var verify = NewDb(schema.ConnectionString);
         (await verify.LegacyCheckNotePublications.SingleAsync()).State.ShouldBe(LegacyCheckNoteState.Produced);
         (await verify.AgentTasks.CountAsync(t => t.Role == AgentTaskRole.Check)).ShouldBe(1);
-        await File.WriteAllTextAsync(Path.Combine(root, "stop"), "stop");
+        await File.WriteAllTextAsync(Path.Combine(root.FullPath, "stop"), "stop");
         await scanner.Process.WaitForExitAsync();
-        await CheckCompactionFixture.DrainAsync(root, scanner.Process, scanner.Output, scanner.Error);
+        await CheckCompactionFixture.DrainAsync(root.FullPath, scanner.Process, scanner.Output, scanner.Error);
     }
 
     [Test]
@@ -292,10 +292,10 @@ public partial class CheckNoteDeliveryHandoffTests
             await db.SaveChangesAsync();
         }
 
-        var root = CheckCompactionFixture.CreateRoot();
-        var scanner = CheckCompactionFixture.Start(new CrashWorkerRequest
+        await using var root = CheckCompactionFixture.CreateRoot();
+        await using var scanner = CheckCompactionFixture.Start(new CrashWorkerRequest
         {
-            Root = root, Scenario = "scan", ConnectionString = schema.ConnectionString,
+            Root = root.FullPath, Scenario = "scan", ConnectionString = schema.ConnectionString,
             SessionId = parent.SessionId, AgentId = parent.AgentId, ChecksDisabled = true,
         });
         var prompts = new List<string>();
@@ -311,9 +311,9 @@ public partial class CheckNoteDeliveryHandoffTests
         prompts.Count.ShouldBe(1);
         await using var verify = NewDb(schema.ConnectionString);
         (await verify.AgentTasks.CountAsync(t => t.Role == AgentTaskRole.Check)).ShouldBe(0);
-        await File.WriteAllTextAsync(Path.Combine(root, "stop"), "stop");
+        await File.WriteAllTextAsync(Path.Combine(root.FullPath, "stop"), "stop");
         await scanner.Process.WaitForExitAsync();
-        await CheckCompactionFixture.DrainAsync(root, scanner.Process, scanner.Output, scanner.Error);
+        await CheckCompactionFixture.DrainAsync(root.FullPath, scanner.Process, scanner.Output, scanner.Error);
     }
 
     private static async Task AssertLegacyReceiptAsync(

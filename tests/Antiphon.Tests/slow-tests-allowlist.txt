@@ -103,6 +103,8 @@ Antiphon.Tests.Application.SessionMessageQueueWedgedHeadTests
 Antiphon.Tests.Application.CheckNoteDeliveryHandoffTests
 # CARD-0079: owned crash workers for compaction stop/resume and legacy-note recovery.
 Antiphon.Tests.Application.CheckCompactionCrashTests
+# CARD-1494: each case boots an owned crash-worker child host (10-25 s) and proves disposal ends it.
+Antiphon.Tests.TestHelpers.CheckCompactionWorkerLifetimeTests
 # CARD-0487: historical allowance, API error recovery.
 Antiphon.Tests.Application.ApiErrorRecoveryServiceTests
 # CARD-0487: historical allowance, workspace hook runner.
