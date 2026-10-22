@@ -928,7 +928,7 @@ public sealed partial class PostLandMutationDeliveryTests
     private static async Task ConfirmLandReceiptAsync(string connection, BridgeQueueHarness h,
         AgentTaskLandNotification note, bool busy, bool alreadySubmitted = false, string? cut = null)
     {
-        if (busy) await SetWorkingAsync(connection, h.SessionId, true);
+        if (busy) await SetWorkingAsync(h, connection, h.SessionId, true);
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         var service = new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
         await service.ReconcileAsync(note.Id, CancellationToken.None);
@@ -949,10 +949,10 @@ public sealed partial class PostLandMutationDeliveryTests
             h.Adapter.Inputs.ShouldBeEmpty("land-busy-does-not-submit");
             queued = await db.SessionQueuedMessages.SingleAsync(m => m.Id == queued.Id);
             queued.Status.ShouldBe(QueuedMessageStatus.Pending);
-            await SetWorkingAsync(connection, h.SessionId, false);
+            await SetWorkingAsync(h, connection, h.SessionId, false);
         }
         else if (busy && alreadySubmitted)
-            await SetWorkingAsync(connection, h.SessionId, false);
+            await SetWorkingAsync(h, connection, h.SessionId, false);
         if (!alreadySubmitted && queued.Status != QueuedMessageStatus.Sent)
         {
             await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
@@ -1096,7 +1096,7 @@ public sealed partial class PostLandMutationDeliveryTests
         adapter ??= h.Adapter;
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         queued = await db.SessionQueuedMessages.SingleAsync(m => m.Id == queued.Id);
-        if (busy) await SetWorkingAsync(connection, sessionId, true);
+        if (busy) await SetWorkingAsync(h, connection, sessionId, true);
 
         if (queued.Status == QueuedMessageStatus.Pending && queued.DeliveryAttempts == 0)
         {
@@ -1106,7 +1106,7 @@ public sealed partial class PostLandMutationDeliveryTests
                 adapter.Inputs.ShouldBeEmpty();
                 (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queued.Id))
                     .Status.ShouldBe(QueuedMessageStatus.Pending);
-                await SetWorkingAsync(connection, sessionId, false);
+                await SetWorkingAsync(h, connection, sessionId, false);
                 await h.Queue.FlushIfIdleAsync(sessionId, CancellationToken.None);
             }
             queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queued.Id);
@@ -1217,20 +1217,9 @@ public sealed partial class PostLandMutationDeliveryTests
         adapter.Inputs.Count.ShouldBe(typed);
     }
 
-    private static async Task SetWorkingAsync(string connection, Guid sessionId, bool working)
-    {
-        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
-        var seq = ((await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).MaxAsync(t => (long?)t.Sequence)) ?? 0) + 1;
-        db.TranscriptEntries.Add(new TranscriptEntry
-        {
-            Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = seq,
-            Kind = working ? TranscriptKinds.AssistantText : TranscriptKinds.TurnEnd,
-            Text = working ? "busy" : null,
-            StopReason = working ? null : TranscriptKinds.StopReasons.EndTurn,
-            CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow,
-        });
-        await db.SaveChangesAsync();
-    }
+    // CARD-1464: the queue reads h's loaded SessionStateStore, so a raw row would leave it on the previous state.
+    private static Task SetWorkingAsync(BridgeQueueHarness h, string connection, Guid sessionId, bool working) =>
+        StoreAwareTranscript.SetWorkingAsync(h.Provider, connection, sessionId, working);
 
     private static async Task<SettledMutation> SettleMutationAsync(BridgeQueueHarness.HarnessOptions? options = null,
         string? report = null, QueueInsertFault? fault = null,
@@ -1590,7 +1579,7 @@ public sealed partial class PostLandMutationDeliveryTests
 
         if (busy)
         {
-            await SetWorkingAsync(world.Host.Schema.ConnectionString, sessionId, true);
+            await SetWorkingAsync(h, world.Host.Schema.ConnectionString, sessionId, true);
             ready!.TrySetResult(true);
         }
 

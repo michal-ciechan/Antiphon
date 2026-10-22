@@ -99,7 +99,7 @@ public sealed partial class PostLandMutationDeliveryTests
         }
         // This is the paging/stamping test. Hold delivery at the caller's working boundary
         // so 130 real terminal round trips cannot consume its recovery allowance.
-        await SetWorkingAsync(settled.World.Host.Schema.ConnectionString, settled.Bridge.SessionId, true);
+        await SetWorkingAsync(settled.Bridge, settled.World.Host.Schema.ConnectionString, settled.Bridge.SessionId, true);
         using var worker = RecoveryWorker(settled.Bridge, new RecoveryClock());
         await worker.StartAsync(default);
         try
