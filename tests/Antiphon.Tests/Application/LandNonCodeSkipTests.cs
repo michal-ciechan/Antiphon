@@ -1073,6 +1073,473 @@ public sealed class LandNonCodeSkipTests
         }
     }
 
+    // CARD-1409 repair (Review 31c77116 R1): a tracked .rsp file is parsed, not only hashed. Every
+    // non-comment line must be one allow-listed switch; a property, an @file and an unknown switch refuse.
+    [Test]
+    public async Task C1409_ResponseFileSwitchesAreAllowListed()
+    {
+        const string project = """
+            <Project Sdk="Microsoft.NET.Sdk">
+            </Project>
+            """;
+        foreach (var line in new[] { "-p:BaseIntermediateOutputPath=ext/", "-p:_DirectoryBuildPropsFile=docs/build.md", "@docs/flags.md" })
+        {
+            await AssertUpdateRefusesAsync(new Dictionary<string, string>
+            {
+                ["Directory.Build.rsp"] = "# comment\n-nodeReuse:false\n" + line + "\n",
+                ["server/App.csproj"] = project,
+            }, "response file switch the audit does not allow", "Directory.Build.rsp " + line);
+        }
+        // Any tracked .rsp is parsed, whatever its name; a value outside the allowed set and a target switch refuse.
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["eng/build.rsp"] = "-property:CustomAfterMicrosoftCommonTargets=../docs/x.md\n",
+            ["server/App.csproj"] = project,
+        }, "response file switch the audit does not allow", "eng/build.rsp -property:CustomAfterMicrosoftCommonTargets=../docs/x.md");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["Directory.Build.rsp"] = "-nodeReuse:maybe\n",
+            ["server/App.csproj"] = project,
+        }, "response file switch the audit does not allow", "Directory.Build.rsp -nodeReuse:maybe");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["Directory.Build.rsp"] = "/t:Build\n",
+            ["server/App.csproj"] = project,
+        }, "response file switch the audit does not allow", "Directory.Build.rsp /t:Build");
+        // The allowed switches, comments, blank lines, CRLF and a BOM are approved.
+        var allowed = await InitAuditTreeAsync(new Dictionary<string, string>
+        {
+            ["Directory.Build.rsp"] = "﻿# CARD-0589 D-2\r\n\r\n-nodeReuse:false\r\n-maxcpucount\r\n/m:4\r\n-verbosity:minimal\r\n-v:q\r\n-nologo\r\n",
+            ["server/App.csproj"] = project,
+        });
+        try
+        {
+            var ran = await RunAuditAsync(allowed, "en-US", "-Update");
+            ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
+            ran.Stdout.ShouldContain("count=2");
+            File.Exists(AuditManifest(allowed)).ShouldBeTrue();
+        }
+        finally
+        {
+            Directory.Delete(allowed, recursive: true);
+        }
+    }
+
+    // CARD-1409 repair (Review 31c77116 R2): a property name outside the audit's allow-list refuses wherever it
+    // is set, including one no review listed, so the design is default-deny rather than a name deny-list.
+    [Test]
+    public async Task C1409_UnknownPropertyRefuses()
+    {
+        const string project = """
+            <Project Sdk="Microsoft.NET.Sdk">
+            </Project>
+            """;
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <CustomAfterMicrosoftCommonTargets>../docs/evil.md</CustomAfterMicrosoftCommonTargets>
+                  </PropertyGroup>
+                </Project>
+                """,
+        }, "property the audit does not allow", "server/App.csproj CustomAfterMicrosoftCommonTargets");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["Directory.Build.props"] = """
+                <Project>
+                  <PropertyGroup>
+                    <CustomBeforeMicrosoftCommonProps>$(MSBuildThisFileDirectory)docs/evil.md</CustomBeforeMicrosoftCommonProps>
+                  </PropertyGroup>
+                </Project>
+                """,
+            ["server/App.csproj"] = project,
+        }, "property the audit does not allow", "Directory.Build.props CustomBeforeMicrosoftCommonProps");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["eng/shared.props"] = """
+                <Project>
+                  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+                    <DirectoryBuildTargetsPath>../docs/evil.md</DirectoryBuildTargetsPath>
+                  </PropertyGroup>
+                </Project>
+                """,
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../eng/shared.props" />
+                </Project>
+                """,
+        }, "property the audit does not allow", "eng/shared.props DirectoryBuildTargetsPath");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Target Name="Hook" BeforeTargets="Build">
+                    <PropertyGroup>
+                      <_DirectoryBuildTargetsFile>../docs/evil.md</_DirectoryBuildTargetsFile>
+                    </PropertyGroup>
+                  </Target>
+                </Project>
+                """,
+        }, "property the audit does not allow", "server/App.csproj _DirectoryBuildTargetsFile");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = project,
+            ["server/App.csproj.user"] = """
+                <Project>
+                  <PropertyGroup>
+                    <BeforeMicrosoftNETSdkTargets>../docs/evil.md</BeforeMicrosoftNETSdkTargets>
+                  </PropertyGroup>
+                </Project>
+                """,
+        }, "property the audit does not allow", "server/App.csproj.user BeforeMicrosoftNETSdkTargets");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["Directory.Packages.props"] = """
+                <Project>
+                  <PropertyGroup>
+                    <DirectoryPackagesPropsPath>docs/evil.md</DirectoryPackagesPropsPath>
+                  </PropertyGroup>
+                </Project>
+                """,
+            ["server/App.csproj"] = project,
+        }, "property the audit does not allow", "Directory.Packages.props DirectoryPackagesPropsPath");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <PublishProfile>../docs/evil.md</PublishProfile>
+                  </PropertyGroup>
+                </Project>
+                """,
+        }, "property the audit does not allow", "server/App.csproj PublishProfile");
+        // Not in any review's list: default-deny, not a deny-list. Case does not matter.
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <_antiphonFutureImportHook>../docs/evil.md</_antiphonFutureImportHook>
+                  </PropertyGroup>
+                </Project>
+                """,
+        }, "property the audit does not allow", "server/App.csproj _antiphonFutureImportHook");
+        // A task Output that sets a property is setting it.
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Target Name="Hook" BeforeTargets="Build">
+                    <Exec Command="echo ../docs/evil.md" ConsoleToMSBuild="true">
+                      <Output TaskParameter="ConsoleOutput" PropertyName="CustomAfterMicrosoftCSharpTargets" />
+                    </Exec>
+                  </Target>
+                </Project>
+                """,
+        }, "property the audit does not allow", "server/App.csproj CustomAfterMicrosoftCSharpTargets");
+        // Allow-listed names are approved in any letter case.
+        var allowed = await InitAuditTreeAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <TargetFramework>net9.0</TargetFramework>
+                    <nullable>enable</nullable>
+                    <AssemblyName>App</AssemblyName>
+                    <RootNamespace>App</RootNamespace>
+                  </PropertyGroup>
+                </Project>
+                """,
+        });
+        try
+        {
+            var ran = await RunAuditAsync(allowed, "en-US", "-Update");
+            ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
+            ran.Stdout.ShouldContain("count=1");
+            File.Exists(AuditManifest(allowed)).ShouldBeTrue();
+        }
+        finally
+        {
+            Directory.Delete(allowed, recursive: true);
+        }
+    }
+
+    // CARD-1409 repair (Review 31c77116 R3): every item type is classified. Analyzer-config and file items follow the
+    // docs-markdown rule, a ProjectReference must name a tracked project file, a package-style include is a name, and an
+    // item type outside the allow-list refuses by its type.
+    [Test]
+    public async Task C1409_UnknownItemTypeRefuses()
+    {
+        const string project = """
+            <Project Sdk="Microsoft.NET.Sdk">
+            </Project>
+            """;
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["docs/style.md"] = "# style",
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <EditorConfigFiles Include="../docs/style.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "includes docs markdown", "server/App.csproj EditorConfigFiles Include=../docs/style.md");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["Directory.Build.props"] = """
+                <Project>
+                  <ItemGroup>
+                    <GlobalAnalyzerConfigFiles Include="$(MSBuildThisFileDirectory)docs/analyzers.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+            ["server/App.csproj"] = project,
+        }, "includes docs markdown", "Directory.Build.props GlobalAnalyzerConfigFiles Include=$(MSBuildThisFileDirectory)docs/analyzers.md");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["docs/x.md"] = "# x",
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <ProjectReference Include="../docs/x.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "project reference is not a tracked project file", "server/App.csproj ProjectReference Include=../docs/x.md -> docs/x.md");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <ProjectReference Include="../lib/Missing.csproj" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "project reference is not a tracked project file", "server/App.csproj ProjectReference Include=../lib/Missing.csproj -> lib/Missing.csproj");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["lib/Lib.csproj"] = project,
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <ProjectReference Include="../lib/*.csproj" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "item include cannot be classified", "server/App.csproj ProjectReference Include=../lib/*.csproj");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <PackageReference Include="../docs/x.md" Version="1.0.0" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "item include cannot be classified", "server/App.csproj PackageReference Include=../docs/x.md");
+        // Types outside the allow-list refuse by type, whatever they include.
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <Reference Include="Evil" HintPath="../docs/x.md" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "item type the audit does not allow", "server/App.csproj Reference");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["eng/shared.targets"] = """
+                <Project>
+                  <Target Name="Hook" BeforeTargets="Build">
+                    <ItemGroup>
+                      <_AntiphonFutureFiles Include="$(MSBuildThisFileDirectory)../docs/**/*.txt" />
+                    </ItemGroup>
+                  </Target>
+                </Project>
+                """,
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../eng/shared.targets" />
+                </Project>
+                """,
+        }, "item type the audit does not allow", "eng/shared.targets _AntiphonFutureFiles");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Target Name="Hook" BeforeTargets="Build">
+                    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Other">
+                      <Output TaskParameter="TargetOutputs" ItemName="_AntiphonFutureOutputs" />
+                    </MSBuild>
+                  </Target>
+                </Project>
+                """,
+        }, "item type the audit does not allow", "server/App.csproj _AntiphonFutureOutputs");
+        // The allow-listed types with well-formed includes are approved.
+        var allowed = await InitAuditTreeAsync(new Dictionary<string, string>
+        {
+            ["lib/Lib.csproj"] = project,
+            ["server/.editorconfig"] = "root = true",
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <ProjectReference Include="../lib/Lib.csproj" />
+                    <PackageReference Include="Shouldly" Version="4.3.0" />
+                    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+                    <InternalsVisibleTo Include="App.Tests" />
+                    <EditorConfigFiles Include=".editorconfig" />
+                    <GlobalAnalyzerConfigFiles Include="$(MSBuildThisFileDirectory)analyzers.globalconfig" />
+                    <Compile Include="../lib/Shared.cs" Link="Shared.cs" />
+                    <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
+                  </ItemGroup>
+                </Project>
+                """,
+        });
+        try
+        {
+            var ran = await RunAuditAsync(allowed, "en-US", "-Update");
+            ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
+            ran.Stdout.ShouldContain("count=2");
+            File.Exists(AuditManifest(allowed)).ShouldBeTrue();
+        }
+        finally
+        {
+            Directory.Delete(allowed, recursive: true);
+        }
+    }
+
+    // CARD-1409 repair (Review 31c77116, default-deny): a construct the audit cannot classify refuses: a Project
+    // child element or SDK outside the allow-list, an item reference inside an include, and a file-item include
+    // that leaves the repository.
+    [Test]
+    public async Task C1409_UnclassifiedConstructRefuses()
+    {
+        const string project = """
+            <Project Sdk="Microsoft.NET.Sdk">
+            </Project>
+            """;
+        foreach (var (element, body) in new[]
+        {
+            ("UsingTask", "<UsingTask TaskName=\"Evil\" AssemblyFile=\"../docs/evil.dll\" />"),
+            ("ImportGroup", "<ImportGroup><Import Project=\"../eng/a.props\" /></ImportGroup>"),
+            ("Choose", "<Choose><When Condition=\"true\"><PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup></When></Choose>"),
+            ("ItemDefinitionGroup", "<ItemDefinitionGroup><Compile><Visible>false</Visible></Compile></ItemDefinitionGroup>"),
+            ("ProjectExtensions", "<ProjectExtensions><VisualStudio /></ProjectExtensions>"),
+        })
+        {
+            await AssertUpdateRefusesAsync(new Dictionary<string, string>
+            {
+                ["eng/a.props"] = "<Project />",
+                ["server/App.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\">" + body + "</Project>",
+            }, "element the audit does not classify", "server/App.csproj " + element);
+        }
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Evil.Sdk/1.0.0">
+                </Project>
+                """,
+        }, "SDK the audit does not allow", "server/App.csproj Sdk=Evil.Sdk/1.0.0");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Sdk Name="Evil.Sdk" Version="1.0.0" />
+                </Project>
+                """,
+        }, "SDK the audit does not allow", "server/App.csproj Sdk=Evil.Sdk");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <Content Include="@(Docs)" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "item include cannot be classified", "server/App.csproj Content Include=@(Docs)");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <None Include="%(Docs.FullPath)" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "item include cannot be classified", "server/App.csproj None Include=%(Docs.FullPath)");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <Compile Include="../../outside/Shared.cs" Link="Shared.cs" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "item include cannot be classified", "server/App.csproj Compile Include=../../outside/Shared.cs");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <None Include="/etc/hosts" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, "item include cannot be classified", "server/App.csproj None Include=/etc/hosts");
+        // The real repository's shapes are approved: the Web SDK, the Aspire SDK element, a target with Exec
+        // and task outputs, a conditional import and a %(RecursiveDir) link.
+        var allowed = await InitAuditTreeAsync(new Dictionary<string, string>
+        {
+            ["tests/Shared/Repeat.targets"] = """
+                <Project>
+                  <Target Name="Repeat" BeforeTargets="CoreCompile">
+                    <ItemGroup>
+                      <Compile Include="$(MSBuildThisFileDirectory)RepeatEvidence.cs" />
+                    </ItemGroup>
+                  </Target>
+                </Project>
+                """,
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk.Web">
+                  <Sdk Name="Aspire.AppHost.Sdk" Version="9.3.0" />
+                  <PropertyGroup>
+                    <TargetFramework>net9.0</TargetFramework>
+                    <SourceRevisionId Condition="'$(SourceRevisionId)' == ''">unknown</SourceRevisionId>
+                  </PropertyGroup>
+                  <ItemGroup>
+                    <Content Include="..\Fixtures\**\*" Link="Fixtures\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+                  </ItemGroup>
+                  <Import Project="$(MSBuildThisFileDirectory)../tests/Shared/Repeat.targets" Condition="'$(AntiphonCheckpointRepeat)' != ''" />
+                  <Target Name="SetSourceRevisionIdFromGit" BeforeTargets="InitializeSourceControlInformation">
+                    <Exec Command="git rev-parse HEAD" ConsoleToMSBuild="true" ContinueOnError="true">
+                      <Output TaskParameter="ConsoleOutput" PropertyName="_GitHeadSha" />
+                    </Exec>
+                    <PropertyGroup>
+                      <_GitHeadShaTrimmed>$([System.String]::Copy('$(_GitHeadSha)').Trim())</_GitHeadShaTrimmed>
+                    </PropertyGroup>
+                  </Target>
+                </Project>
+                """,
+        });
+        try
+        {
+            var ran = await RunAuditAsync(allowed, "en-US", "-Update");
+            ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
+            ran.Stdout.ShouldContain("count=2");
+            File.Exists(AuditManifest(allowed)).ShouldBeTrue();
+        }
+        finally
+        {
+            Directory.Delete(allowed, recursive: true);
+        }
+    }
+
     [Test]
     public async Task C1409_ProjectUserFileIsInTheHashedInventory()
     {
