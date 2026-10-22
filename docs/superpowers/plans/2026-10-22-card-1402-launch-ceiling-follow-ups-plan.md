@@ -28,11 +28,22 @@ Follow-ups from the CARD-1395 Final Review (clean at f51db694). CARD-1395 record
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1402-ceiling/` | cancelled-turn-class | `/*/*/AgentSessionCancelledTurnTests/*` | V-1, V-2, V-3 | all 16 methods, 0 failed/skipped | 16 | 25 |
-| CP-2 | S1 | CP-1 | unit-lane | `/*/*/*/*[Category=Unit]` | V-4 | all selected Unit cases, 0 failed | 1000 | 10 |
+
+### Descope (task b10154f3): CP-2 withdrawn, three inherited reds documented without receipts
+
+CP-2 (group `unit-lane`, filter `/*/*/*/*[Category=Unit]`, Covers V-4) is withdrawn from the closed list above, and nothing replaces it as a receipt row. Reason: Code task 4a1a5eee ran it once at 0d2fdcbf648b05528e7dc0247d8e0ee22ad7fa8f and it hit the 30-minute deadline the tool derives from its 10-minute estimate (max(15, 3x10)) on the loaded server2 host (load average 38-62 on 24 cores, five Code sessions and another `Antiphon.Tests` build in flight), writing no TRX; Final Review 3d40a611 (clean at 465d1a5a490f4f4c6551fa7606abf328d8f1c3b4, report `.antiphon/task-3d40a611.md` on `feat/card-task-3d40a611`) did not run it, so its ordinary scope settled Interim, and an Interim Review cannot approve a land. Policy: the operator's standing testing policy is minimal testing, one red witness plus one narrow green per task, the rc roster as the gate, and no whole-Unit or whole-lane runs (stated in the Code task b10154f3 brief; the same policy the CARD-1233 plan records as D-7 and the CARD-1403, CARD-1435 and CARD-1449 plans record as "minimal testing per the brief"). CP-1 (`AgentSessionCancelledTurnTests`, the whole class, 16/16 with a validated clean receipt at 465d1a5a in Review run `20261022-073943-6a7c`) is the only receipt row of this plan. The V-4 line above stays as written for history; it has no receipt row, and under that policy its lane coverage is the rc roster gate's, not this plan's.
+
+The three failures the partial CP-2 console showed are inherited. Review 3d40a611 ran each one narrowly at base 294fa3d1a81ff97abb285af3180d93ee4d4b25f6 (detached worktree, isolated build through `scripts/build-slot.ps1`) and at the tip 465d1a5a (its review-plan rows CR-1..3 in checkpoint run `20261022-071233-229d`), with identical results at both. None of them is in the area this card touches (`AgentSessionService.StartAsync`, `FakeAgentProtocolAdapter`, `AgentSessionCancelledTurnTests`; `RunAttemptStallDetector` is unchanged). The rows below are documentation, not receipts: no row of this plan runs them, their expected outcome is the known red, and no task of this card claims them green or fixes them.
+
+| Row | Test | Narrow filter | Base 294fa3d1a | Tip 465d1a5a | Origin |
+|---|---|---|---|---|---|
+| NR-1 | `TestClassificationGuardTests.Registry_matches_compiled_metadata` (`tests/Shared`, Unit; the drift it reports is `TestSchemaSnapshotTests`) | `/*/*/TestClassificationGuardTests/Registry_matches_compiled_metadata` | 1 run, 1 failed: `missing classes` and `unregistered-marked Antiphon.Tests.TestHelpers.TestSchemaSnapshotTests` | same | Registry drift from CARD-1420's new `TestSchemaSnapshotTests` (plan `2026-10-21-card-1420-cached-test-schema-plan.md`); no open card found by the Review |
+| NR-2 | `DispatchBaseWarningRosterTests.C1155_RosterNamesEveryDispatchWarningE2EMethod` (Unit) | `/*/*/DispatchBaseWarningRosterTests/C1155_RosterNamesEveryDispatchWarningE2EMethod` | 1 run, 1 failed: roster drift | same | Already recorded as inherited in the CARD-1422 plan (its CP-5 row) |
+| NR-3 | `CheckpointShapeConflictTests.shape_conflict_rule` (Unit, 16 `[Arguments]` cases) | `/*/*/CheckpointShapeConflictTests/shape_conflict_rule` | 16 run, 15 failed: `toolNote should be "ok" but was "receipt-invalid: negative qualification mismatch"` | same | No card found by the Review (`card.ps1 search -All` on the test name and the message); the Review's backlog suggestion is to file one |
 
 ### Cost
 
-Ordinary floor is 35 minutes.
+Ordinary floor is 25 minutes (CP-1 only; CP-2 was withdrawn in the descope section above).
 
 ## RC
 
