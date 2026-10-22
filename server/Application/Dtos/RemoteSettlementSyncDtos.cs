@@ -115,4 +115,7 @@ public static class RemoteSettlementSyncReasons
 
     /// <summary>CARD-1082 D-5. The desktop checkout was confirmed at the debt's recorded source.</summary>
     public const string SettlementSyncReady = "settlement_sync_ready";
+
+    /// <summary>CARD-1446 D-2. The Pending retries reached <c>Delegation:RunnerSyncDebtMaxAttempts</c>; Held before Git.</summary>
+    public const string SettlementSyncAttemptsExhausted = "settlement_sync_attempts_exhausted";
 }

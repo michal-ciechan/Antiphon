@@ -1141,6 +1141,131 @@ public sealed class SettlementSyncRecoveryTests
         (await world.Git.HeadAsync()).ShouldBe(head, cut);
     }
 
+    /// <summary>
+    /// CARD-1446 V-3. A due Pending debt whose <c>Attempts</c> already reached
+    /// <c>Delegation:RunnerSyncDebtMaxAttempts</c> (48) is Held <c>settlement_sync_attempts_exhausted</c> at the
+    /// claim, before Git: the sweep attempts nothing, no command is recorded, the desktop stays at its baseline,
+    /// and the Held row is restamped an hour later rather than retried.
+    /// </summary>
+    [Test]
+    public async Task C1446_PendingDebtAtAttemptCapIsHeldExhaustedWithoutGit()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync();
+        var source = await world.Git.RunnerPushAsync("work.txt", "recorded");
+        await SeedAsync(world, source);
+        await SetAttemptsAsync(world, 48);
+        world.Git.Git.Clear();
+        var due = world.DebtClock.GetUtcNow().UtcDateTime;
+
+        (await world.SweepSettlementSyncAsync()).ShouldBe(0, "the cap is read at the claim; nothing is attempted");
+        var debt = await DebtAsync(world);
+        debt.State.ShouldBe(AgentTaskSyncDebtState.Held);
+        debt.ReasonCode.ShouldBe("settlement_sync_attempts_exhausted");
+        debt.Attempts.ShouldBe(48, "an exhausted claim does not count another attempt");
+        debt.NextAttemptAt.ShouldBe(due.AddMinutes(60), "a Held row is revisited hourly");
+        world.Git.Git.Commands.ShouldBeEmpty("no Git ran for an exhausted debt");
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+
+        world.DebtClock.Advance(TimeSpan.FromMinutes(60));
+        (await world.SweepSettlementSyncAsync()).ShouldBe(0, "a Held row is restamped, never retried");
+        var held = await DebtAsync(world);
+        held.State.ShouldBe(AgentTaskSyncDebtState.Held);
+        held.ReasonCode.ShouldBe("settlement_sync_attempts_exhausted");
+        held.Attempts.ShouldBe(48);
+        held.NextAttemptAt.ShouldBe(world.DebtClock.GetUtcNow().UtcDateTime.AddMinutes(60));
+        world.Git.Git.Commands.ShouldBeEmpty();
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+    }
+
+    /// <summary>
+    /// CARD-1446 V-4. Lease busy from attempt 46: attempts 47 and 48 stay Pending on the 5-minute backoff and
+    /// the next due claim holds the row exhausted without Git, even once the lease is free.
+    /// </summary>
+    [Test]
+    public async Task C1446_LeaseBusyRunsToCapThenHolds()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync();
+        var source = await world.Git.RunnerPushAsync("work.txt", "recorded");
+        await SeedAsync(world, source);
+        await SetAttemptsAsync(world, 46);
+        var lease = await world.Git.Leases.TryAcquireAsync(world.Git.Desktop, CancellationToken.None);
+        lease.ShouldNotBeNull("hold the desktop repository lease");
+        try
+        {
+            foreach (var attempt in new[] { 47, 48 })
+            {
+                (await world.SweepSettlementSyncAsync()).ShouldBe(1, "attempt " + attempt);
+                var row = await DebtAsync(world);
+                row.State.ShouldBe(AgentTaskSyncDebtState.Pending, "attempt " + attempt);
+                row.Attempts.ShouldBe(attempt);
+                row.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+                row.NextAttemptAt.ShouldBe(world.DebtClock.GetUtcNow().UtcDateTime.AddMinutes(5), "attempt " + attempt);
+                (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+                world.DebtClock.Advance(TimeSpan.FromMinutes(5));
+            }
+
+            world.Git.Git.Clear();
+            (await world.SweepSettlementSyncAsync()).ShouldBe(0, "attempt 49 is refused at the claim");
+            var held = await DebtAsync(world);
+            held.State.ShouldBe(AgentTaskSyncDebtState.Held);
+            held.ReasonCode.ShouldBe("settlement_sync_attempts_exhausted");
+            held.Attempts.ShouldBe(48);
+            held.NextAttemptAt.ShouldBe(world.DebtClock.GetUtcNow().UtcDateTime.AddMinutes(60));
+            world.Git.Git.Commands.ShouldBeEmpty("the exhausted claim ran no Git");
+        }
+        finally
+        {
+            if (lease is not null) await lease.DisposeAsync();
+        }
+
+        world.DebtClock.Advance(TimeSpan.FromMinutes(60));
+        world.Git.Git.Clear();
+        (await world.SweepSettlementSyncAsync()).ShouldBe(0, "a free lease does not reopen a Held row");
+        (await DebtAsync(world)).State.ShouldBe(AgentTaskSyncDebtState.Held);
+        world.Git.Git.Commands.ShouldNotContain(c => c.Contains("--ff-only", StringComparison.Ordinal));
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+    }
+
+    /// <summary>CARD-1446 V-4. <c>RunnerSyncDebtMaxAttempts=0</c> disables the cap: attempt 501 is claimed and runs.</summary>
+    [Test]
+    public async Task C1446_ZeroCapKeepsRetrying()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync();
+        world.Services.GetRequiredService<IOptions<DelegationSettings>>().Value.RunnerSyncDebtMaxAttempts = 0;
+        var source = await world.Git.RunnerPushAsync("work.txt", "recorded");
+        await SeedAsync(world, source);
+        await SetAttemptsAsync(world, 500);
+        var lease = await world.Git.Leases.TryAcquireAsync(world.Git.Desktop, CancellationToken.None);
+        lease.ShouldNotBeNull("hold the desktop repository lease");
+        try
+        {
+            (await world.SweepSettlementSyncAsync()).ShouldBe(1, "no cap: the row is claimed");
+            var row = await DebtAsync(world);
+            row.State.ShouldBe(AgentTaskSyncDebtState.Pending);
+            row.Attempts.ShouldBe(501);
+            row.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        }
+        finally
+        {
+            if (lease is not null) await lease.DisposeAsync();
+        }
+
+        world.DebtClock.Advance(TimeSpan.FromMinutes(5));
+        (await world.SweepSettlementSyncAsync()).ShouldBe(1, "attempt 502 runs and fast-forwards");
+        var ready = await DebtAsync(world);
+        ready.State.ShouldBe(AgentTaskSyncDebtState.Ready);
+        ready.Attempts.ShouldBe(502);
+        (await world.Git.HeadAsync()).ShouldBe(source);
+    }
+
+    private static async Task SetAttemptsAsync(RunnerSettlementWorld world, int attempts)
+    {
+        await using var db = world.CreateContext();
+        var debt = await db.AgentTaskSyncDebts.SingleAsync(d => d.TaskId == world.TaskId);
+        debt.Attempts = attempts;
+        await db.SaveChangesAsync();
+    }
+
     private static async Task SeedAsync(RunnerSettlementWorld world, string source, string? evidence = null)
     {
         var now = world.DebtClock.GetUtcNow().UtcDateTime;
