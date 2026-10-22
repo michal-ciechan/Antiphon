@@ -2208,7 +2208,19 @@ whose first segment can be `docs` or is `**` (whatever it matches today), and a
 markdown or text match outside the document allow-list seeded from the real tree
 each refuse naming the resolved path. A property value that reads a file through
 a property function outside an output root, or whose literal part is a `docs/`
-path, refuses. An `Import` is followed as described above. Target bodies are not
+path, refuses. Every resolved path goes through one normaliser before it is
+compared (CARD-1409 repair 5, Review f0fb9035): a segment the Windows land host
+would read differently (a trailing `.` or space, a `:` past the drive prefix, an
+8.3 `~1` short name) refuses naming the segment, for includes, excludes,
+imports, project references, output-root tails, tracked matches and tracked
+definition paths alike; a free-text property value is read as the host reads it
+and refuses only when that reading is `docs/` or the root README. Item
+operations form a closed table (the CARD-1409 plan's O-table): `Include` and
+`Update` are censused, `Update` metadata included; `Exclude` and `Remove` only
+subtract (metadata on a `Remove` refuses); `KeepMetadata`, `RemoveMetadata`,
+`KeepDuplicates`, `MatchOnMetadata` and an element with no operation refuse by
+name; any other attribute is metadata that must be allow-listed. A path item
+whose pattern reaches a tracked symbolic link refuses naming the link. An `Import` is followed as described above. Target bodies are not
 evaluated beyond that: a task parameter (`Exec`, `Copy`, `ReadLinesFromFile`)
 can name any file and the audit refuses no task (CARD-1409 plan D-18, D-27). Any other definition-file edit still changes the
 digest, so the skip stops until the manifest is regenerated.

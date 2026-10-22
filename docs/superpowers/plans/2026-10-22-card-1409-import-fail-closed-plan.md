@@ -103,11 +103,11 @@ No R-n. No positive controls. Mutation has nothing new to plant beyond the refus
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S16 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_*)` | V-1 V-2 V-3 V-4 V-5 V-7 V-8 V-9 V-10 V-11 V-12 V-13 V-14 V-15 V-16 V-17 V-18 V-19 V-20 V-21 V-22 V-23 | exactly 77 executed, 0 failed/skipped | 77 | 15 |
+| CP-1 | S19 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_*)` | V-1 V-2 V-3 V-4 V-5 V-7 V-8 V-9 V-10 V-11 V-12 V-13 V-14 V-15 V-16 V-17 V-18 V-19 V-20 V-21 V-22 V-23 V-24 V-25 V-26 V-27 | exactly 81 executed, 0 failed/skipped | 81 | 15 |
 
 ### Cost
 
-Ordinary floor 15 minutes for the one row (the 42 `C1380_*` harness cases dominate), plus the unlisted red runs before S2, S6, S9, S12 and S15 and the unlisted green subset runs after S12 and S15.
+Ordinary floor 15 minutes for the one row (the 42 `C1380_*` harness cases dominate), plus the unlisted red runs before S2, S6, S9, S12, S15 and S18 and the unlisted green subset runs after S12, S15 and S18.
 
 ## Repair 3: default-deny (Review 31c77116)
 

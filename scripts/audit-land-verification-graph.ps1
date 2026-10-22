@@ -30,6 +30,22 @@
 # item type (ProjectReference AdditionalProperties, Properties and every unknown
 # name refuse). A property value that reads a file through a property function
 # outside an output root, or whose literal part is a docs path, refuses.
+# CARD-1409 repair 5 (Review f0fb9035): one path normaliser (ConvertTo-CanonicalPath) is the only
+# way resolved text becomes a repository path, and every comparison consumes its result: include and
+# update parts, Exclude parts, import targets, project references, literal property-value paths, the
+# tail of an output- or package-rooted path, every tracked match a wildcard selects and every tracked
+# definition path. Each segment is held to the Windows land host's rules first: a trailing '.' or
+# space, a segment of only dots or spaces, a ':' anywhere (the drive prefix is converted before this
+# point) and an 8.3 short name ('~' then a digit) refuse naming the segment; '.' and '..' collapse only
+# afterwards; letter case is kept and compared ordinal-ignore-case. A property value is free text, so
+# there a divergent segment is read as the host reads it and refuses only when that reading is docs/
+# or the root README.md. The MSBuild item-operation surface is a closed table (plan D-29): Include and
+# Update are censused, including Update metadata for %(Item.Metadata) and Pkg* expansion; Exclude
+# subtracts only; Remove subtracts only and may carry no metadata; KeepMetadata, RemoveMetadata,
+# KeepDuplicates, MatchOnMetadata and MatchOnMetadataOptions refuse by name; an element with no
+# operation refuses; any other attribute is metadata and must be allow-listed. A path item whose
+# resolved pattern reaches a tracked symbolic link (mode 120000), as a match or as a directory it
+# passes through, refuses naming the link.
 # CARD-1409: an Import Project path that still contains $(, @( or %( after the
 # two known properties are expanded is refused and is not followed; there is no
 # allow-list. An Import with an attribute other than Project, Condition or Label
