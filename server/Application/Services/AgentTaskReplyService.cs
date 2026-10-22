@@ -470,7 +470,10 @@ public sealed class AgentTaskReplyService
                 var repliedDetail = BlockedQuestion.RepliedEventDetail(origin, currentRound, message.Trim());
                 if (!string.IsNullOrEmpty(repliedDetailPrefix))
                     repliedDetail = repliedDetailPrefix + repliedDetail;
-                var blockedBody = $"{DelegationReportFormatter.TaskMarker(taskId)}\n\n{message.Trim()}".ReplaceLineEndings("\n");
+                // CARD-1472 D-1: the reopened turn settles this task again, so the wire restates the
+                // complete-report contract. The caller's text stays first; the contract follows it.
+                var blockedBody = ($"{DelegationReportFormatter.TaskMarker(taskId)}\n\n{message.Trim()}\n\n"
+                    + DelegationReportFormatter.BlockedReplyContract(taskId)).ReplaceLineEndings("\n");
                 var replyEvent = NewEvent(
                     taskId,
                     AgentTaskEventType.Replied,
@@ -1221,6 +1224,10 @@ public sealed class AgentTaskReplyService
             return;
 
         var (status, evidence, settledBody, failureReason) = classified.Value;
+        // CARD-1472 D-2: a bare closing line after a retained report adds nothing. The classifier
+        // handed the retained body back as the settled body; the handoff, the deliverable pointer
+        // and the report file keep their values below, and the record says the turn added nothing.
+        var retainedTokenOnly = IsTokenOnlyAfterRetainedReport(task, verdict, body);
 
         // CARD-0657 D-5. Never publish Succeeded for an unconfirmed canonical checkout: Blocked
         // keeps the report, the session and the workspace, and is not a no-progress accusation.
@@ -1259,31 +1266,37 @@ public sealed class AgentTaskReplyService
             task.CostPricingVersion = DelegationCost.PricingVersion;
         }
 
-        // The delegate was told to spill a long report to a file. Note it if it did — and if it
-        // ignored the instruction, write the file ourselves so the excerpt has somewhere to point.
-        task.ResultFilePath = await ResolveReportFileAsync(services, task, settledBody, ct);
-        var handoff = PipelineHandoff.TryParse(settledBody);
-        handoff = InterimVerificationPolicy.CapHandoff(task, handoff);
-        task.NextStage = handoff.Kind;
-        task.NextHandoff = handoff.Handoff;
-        if (remoteBlock is not null)
+        if (!retainedTokenOnly)
         {
-            // Nobody dispatches Review against an unknown SHA.
-            task.NextStage = PipelineHandoffKind.Decide;
-            task.NextHandoff = $"Runner sync blocked ({remoteBlock}): repair the desktop checkout or the task branch "
-                + "on origin, then reply to this task for a fresh completion report.";
+            // The delegate was told to spill a long report to a file. Note it if it did — and if it
+            // ignored the instruction, write the file ourselves so the excerpt has somewhere to point.
+            task.ResultFilePath = await ResolveReportFileAsync(services, task, settledBody, ct);
+            var handoff = PipelineHandoff.TryParse(settledBody);
+            handoff = InterimVerificationPolicy.CapHandoff(task, handoff);
+            task.NextStage = handoff.Kind;
+            task.NextHandoff = handoff.Handoff;
+            if (remoteBlock is not null)
+            {
+                // Nobody dispatches Review against an unknown SHA.
+                task.NextStage = PipelineHandoffKind.Decide;
+                task.NextHandoff = $"Runner sync blocked ({remoteBlock}): repair the desktop checkout or the task branch "
+                    + "on origin, then reply to this task for a fresh completion report.";
+            }
+            (task.DeliverablePath, task.DeliverableRef) = await ResolveDeliverableAsync(
+                services, task, settledBody, handoff.ArtifactPath, ct, remote.Result);
+            if (task.Status == AgentTaskStatus.Succeeded && task.OutboundDeliveryId is null)
+                await TryBuildDeliverableBundleAsync(services, db, task, settledBody, ct);
         }
-        (task.DeliverablePath, task.DeliverableRef) = await ResolveDeliverableAsync(
-            services, task, settledBody, handoff.ArtifactPath, ct, remote.Result);
-        if (task.Status == AgentTaskStatus.Succeeded && task.OutboundDeliveryId is null)
-            await TryBuildDeliverableBundleAsync(services, db, task, settledBody, ct);
 
         // What the report was built from, on the record. The report is the turn-ending response's
         // own text, so a delegate that front-loaded findings mid-turn left some behind — name how
         // much, or that loss is invisible from every surface (CARD-0046 slice 2). CARD-0159 adds
         // the verdict / evidence class so a Succeeded that was not positively reported is never silent.
-        var reported = DescribeReported(
-            settledBody.Length, turn, evidence, string.IsNullOrEmpty(verdict) ? null : verdict);
+        // CARD-1472: a token-only turn is recorded as adding nothing, never as a report of N characters.
+        var reported = retainedTokenOnly
+            ? RetainedReportStandsDetail(verdict, settledBody.Length)
+            : DescribeReported(
+                settledBody.Length, turn, evidence, string.IsNullOrEmpty(verdict) ? null : verdict);
 
         var eventType = task.Status switch
         {
@@ -1327,6 +1340,8 @@ public sealed class AgentTaskReplyService
         // the task, an incident on the agent's timeline, and a line the CALLER reads above the
         // report itself.
         string? callerWarning = remoteBlockWarning;
+        if (retainedTokenOnly)
+            callerWarning = callerWarning is null ? reported : $"{callerWarning}\n\n{reported}";
         if (remoteBlock is null
             && remote.Result is { State: RemoteSettlementSyncState.Pending } pendingSync
             && task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed)
@@ -3953,6 +3968,35 @@ public sealed class AgentTaskReplyService
         if (task.Role == AgentTaskRole.Diagnose)
             return ClassifyDiagnoseReport(body, verdict);
 
+        // CARD-1472 D-3: a bare closing line on a task whose row already holds a substantive report
+        // is not a new report. `done` asks once for the complete report through the existing bounded
+        // nudge and, once that ask was answered with a bare token again (or the session is dead),
+        // Blocks with the retained report; `blocked` and `failed` keep their verdict. The retained
+        // body rides as the settled body, so SettleAsync changes no retained field. No English is
+        // parsed and no earlier verdict is copied across attempts.
+        if (IsTokenOnlyAfterRetainedReport(task, verdict, body))
+        {
+            var retained = task.Result!;
+            if (verdict == "done")
+            {
+                var liveSession = task.AgentSessionId is Guid live && await IsSessionLiveAsync(db, live, ct);
+                if (liveSession)
+                {
+                    if (task.ReportNudgedAt is null)
+                    {
+                        await NudgeForClosingLineAsync(services, db, task, turn, now, ct, retainedChars: retained.Length);
+                        return null;
+                    }
+                    if (await NudgeStillOutstandingAsync(db, task, turn, now, ct))
+                        return null;
+                }
+                return (AgentTaskStatus.Blocked, AgentTaskReportEvidence.Marked, retained, null);
+            }
+            if (verdict == "failed")
+                return (AgentTaskStatus.Failed, AgentTaskReportEvidence.Marked, retained, "Delegate reported failed.");
+            return (AgentTaskStatus.Blocked, AgentTaskReportEvidence.Marked, retained, null);
+        }
+
         if (verdict == "done")
         {
             // CARD-0657 D-1: a correlated successful candidate prepares its runner checkout ONCE,
@@ -3993,28 +4037,8 @@ public sealed class AgentTaskReplyService
             }
 
             // CARD-0248: "asked once and it ended ANOTHER turn unmarked" — enforced literally.
-            // Legacy carve-out: pre-CARD-0248 nudges with both new columns null skip these gates
-            // so in-flight nudges at deploy cannot strand. Decays to dead code later.
-            var isLegacyNudge = task.ReportNudgedSequence is null && task.ReportNudgeMessageId is null;
-            if (!isLegacyNudge)
-            {
-                if (turn.Boundary is not { } boundary)
-                {
-                    _logger.LogWarning(
-                        "Task {ShortId}: settle-anyway reached with no boundary identity — staying Working",
-                        DelegationReportFormatter.Short(task.Id));
-                    return null;
-                }
-
-                if (await LoadNudgeFactsAsync(db, task, ct) is not { SentAt: DateTime deliveredAt } nudge)
-                    return null; // the ask has not been delivered
-                if (boundary.Sequence <= task.ReportNudgedSequence
-                    || boundary.CreatedAt <= nudge.CreatedAt)
-                    return null; // same boundary, or one that predates enqueue
-                if (turn.FinalMessageMissing
-                    && now < deliveredAt + TimeSpan.FromSeconds(_settings.ReportNudgeResponseSeconds))
-                    return null; // text-less boundary: give the answer time to land
-            }
+            if (await NudgeStillOutstandingAsync(db, task, turn, now, ct))
+                return null;
         }
 
         var evidence = turn.FinalMessageMissing
@@ -4151,19 +4175,69 @@ public sealed class AgentTaskReplyService
         return session.Status is SessionStatus.Created or SessionStatus.Starting or SessionStatus.Running;
     }
 
+    /// <summary>
+    /// CARD-1472. True for a valid closing line whose body is empty on a task whose row already
+    /// holds a report: the turn added nothing, so no retained field may be replaced by it.
+    /// </summary>
+    internal static bool IsTokenOnlyAfterRetainedReport(AgentTask task, string verdict, string body) =>
+        verdict.Length > 0 && string.IsNullOrWhiteSpace(body) && !string.IsNullOrWhiteSpace(task.Result);
+
+    private static string RetainedReportStandsDetail(string verdict, int retainedChars) =>
+        $"Turn ended with only the closing report line (verdict: {verdict}) and no report body; "
+        + $"the retained report ({retainedChars:N0} characters) stands and was not replaced.";
+
+    /// <summary>
+    /// CARD-0248 gates after the one closing-line ask, shared by the unmarked arm and the
+    /// CARD-1472 token-only arm: true while the ask is undelivered, this boundary is the nudged
+    /// one or predates the enqueue, or a text-less boundary is still inside the response window.
+    /// Legacy carve-out: pre-CARD-0248 nudges with both new columns null skip these gates so
+    /// in-flight nudges at deploy cannot strand. Decays to dead code later.
+    /// </summary>
+    private async Task<bool> NudgeStillOutstandingAsync(
+        AppDbContext db, AgentTask task, TurnOutcome turn, DateTime now, CancellationToken ct)
+    {
+        var isLegacyNudge = task.ReportNudgedSequence is null && task.ReportNudgeMessageId is null;
+        if (isLegacyNudge)
+            return false;
+        if (turn.Boundary is not { } boundary)
+        {
+            _logger.LogWarning(
+                "Task {ShortId}: settle-anyway reached with no boundary identity — staying Working",
+                DelegationReportFormatter.Short(task.Id));
+            return true;
+        }
+
+        if (await LoadNudgeFactsAsync(db, task, ct) is not { SentAt: DateTime deliveredAt } nudge)
+            return true; // the ask has not been delivered
+        if (boundary.Sequence <= task.ReportNudgedSequence
+            || boundary.CreatedAt <= nudge.CreatedAt)
+            return true; // same boundary, or one that predates enqueue
+        if (turn.FinalMessageMissing
+            && now < deliveredAt + TimeSpan.FromSeconds(_settings.ReportNudgeResponseSeconds))
+            return true; // text-less boundary: give the answer time to land
+        return false;
+    }
+
+    /// <param name="retainedChars">CARD-1472: set when the turn carried only the closing line on a
+    /// task with a retained report; the ask then names the retained report and demands the complete
+    /// one, under the same one-ask bound.</param>
     private async Task NudgeForClosingLineAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, TurnOutcome turn, DateTime now,
-        CancellationToken ct)
+        CancellationToken ct, int? retainedChars = null)
     {
         if (task.AgentSessionId is not Guid sessionId)
             return;
 
         var shortId = DelegationReportFormatter.Short(task.Id);
         var done = DelegationReportFormatter.ReportToken(task.Id, "done");
-        var body =
-            $"{DelegationReportFormatter.TaskMarker(task.Id)} Your turn ended without the closing report line. "
-            + $"If the work is finished, send the report now, ending with `{done}` (or `blocked` / `failed`). "
-            + "If it is not finished, continue.";
+        var body = retainedChars is int kept
+            ? $"{DelegationReportFormatter.TaskMarker(task.Id)} Your turn ended with only the closing report line and no report. "
+              + $"The report you sent before the reply ({kept:N0} characters) is retained, but a bare token cannot settle this task. "
+              + "Send the COMPLETE final report now (outcome, files, counts, the `--- next stage ---` block), "
+              + $"ending with `{done}` (or `blocked` / `failed`). If nothing changed, resend that report in full."
+            : $"{DelegationReportFormatter.TaskMarker(task.Id)} Your turn ended without the closing report line. "
+              + $"If the work is finished, send the report now, ending with `{done}` (or `blocked` / `failed`). "
+              + "If it is not finished, continue.";
 
         task.ReportNudgedAt = now;
         // Record the boundary first, before enqueue: if enqueue throws, the recorded nudge still
@@ -4174,8 +4248,12 @@ public sealed class AgentTaskReplyService
         task.ConcurrencyToken = Guid.NewGuid();
         db.AgentTaskEvents.Add(NewEvent(
             task.Id, AgentTaskEventType.Warning,
-            "Turn ended without the closing report line — asked once for `[antiphon-report:"
-            + $"{shortId} done|blocked|failed]`. The task stays Working.",
+            retainedChars is int retained
+                ? $"Turn ended with only the closing report line; the retained report ({retained:N0} characters) stands — "
+                  + $"asked once for the complete report ending with `[antiphon-report:{shortId} done|blocked|failed]`. "
+                  + "The task stays Working."
+                : "Turn ended without the closing report line — asked once for `[antiphon-report:"
+                  + $"{shortId} done|blocked|failed]`. The task stays Working.",
             now));
         await db.SaveChangesAsync(ct);
 
@@ -4210,7 +4288,7 @@ public sealed class AgentTaskReplyService
         _logger.LogInformation(
             "Task {ShortId}: nudged once for the closing report line", shortId);
 
-        await EnqueueParentWaitingNoteAsync(services, task, shortId, ct);
+        await EnqueueParentWaitingNoteAsync(services, task, shortId, ct, tokenOnly: retainedChars is not null);
     }
 
     private async Task StampNudgeRowAsync(
@@ -4253,15 +4331,18 @@ public sealed class AgentTaskReplyService
     /// batch into a sibling's completion note.
     /// </summary>
     private async Task EnqueueParentWaitingNoteAsync(
-        IServiceProvider services, AgentTask task, string shortId, CancellationToken ct)
+        IServiceProvider services, AgentTask task, string shortId, CancellationToken ct, bool tokenOnly = false)
     {
         if (task.ReplyTo != AgentTaskReplyTo.Session || task.ParentSessionId is not Guid parentSession)
             return;
 
         var done = DelegationReportFormatter.ReportToken(task.Id, "done");
-        var body =
-            $"[task {shortId} waiting] Child ended a turn without the closing report line; asked once for "
-            + $"`{done}` (or `blocked` / `failed`). Session is idle. Reply after it Blocks, or Refine now.";
+        var body = tokenOnly
+            ? $"[task {shortId} waiting] Child answered the reply with only the closing report line; its earlier report "
+              + $"is retained; asked once for the complete report ending with `{done}` (or `blocked` / `failed`). "
+              + "Reply after it Blocks, or Refine now."
+            : $"[task {shortId} waiting] Child ended a turn without the closing report line; asked once for "
+              + $"`{done}` (or `blocked` / `failed`). Session is idle. Reply after it Blocks, or Refine now.";
         if (!string.IsNullOrWhiteSpace(task.StandingAuthority))
             body += "\n" + BlockedNote.WaitingNoteAuthorityLine(task);
         try
