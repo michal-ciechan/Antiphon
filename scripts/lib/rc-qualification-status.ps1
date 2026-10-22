@@ -134,7 +134,7 @@ function Get-RcQualificationStatus {
     foreach ($name in $paths.Keys) {
         if ($result.inputs[$name].status -notin @('ok','missing')) { $complete = $false }
     }
-    $result.journal = Select-RcQualificationFields $result.inputs.journal.record @('candidateId','candidateRef','sha')
+    $result.journal = Select-RcQualificationFields $result.inputs.journal.record @('candidateId','ref','sha')
     $state = $result.inputs.state.record
     $result.state = Select-RcQualificationFields $state @('runId','candidateId','profile','ref','sha','expectedSha','phase',
         'startedAt','lastActivityAt','exitCode','testExit','reportExit','coverageComplete','testsPassed','reportDelivered','succeeded')
@@ -154,7 +154,7 @@ function Get-RcQualificationStatus {
         }
         $journal = $result.inputs.journal.record
         if ($journal) {
-            foreach ($pair in @(@('candidateId',$CandidateId), @('candidateRef',$state.ref), @('sha',$effectiveSha))) {
+            foreach ($pair in @(@('candidateId',$CandidateId), @('ref',$state.ref), @('sha',$effectiveSha))) {
                 if ($journal.($pair[0]) -isnot [string] -or $journal.($pair[0]) -cne $pair[1]) { $result.identityMismatches += ('journal-' + $pair[0]) }
             }
         }
