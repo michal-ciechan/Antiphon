@@ -227,6 +227,102 @@ public sealed class BlockedReplyReportRetentionTests
         events.Count(e => e.Type == AgentTaskEventType.Completed).ShouldBe(0, "no Succeeded publication");
     }
 
+    /// <summary>
+    /// CARD-1486 S1 guards (Review dfd45dcb). A recorded ask that can still be typed (Pending) or
+    /// was typed (Sent) keeps the one-ask bound across a Reply: the task keeps naming it, and a bare
+    /// <c>done</c> on the reopened turn sends no second ask.
+    /// </summary>
+    [Test]
+    [Timeout(240_000)]
+    public async Task Reply_with_a_pending_ask_keeps_the_recorded_ask()
+    {
+        await using var world = await BlockedBySyncAsync();
+        var pendingAsk = await SeedRecordedNudgeAsync(world, QueuedMessageStatus.Pending, sentAt: null);
+        var asksBefore = (await world.EventsAsync()).Count(IsRetainedReportAsk);
+
+        await ReplyAsync(world, "Accepted. Stop.");
+        world.Task.ReportNudgeMessageId.ShouldBe(pendingAsk, "a Pending ask can still be typed, so the Reply keeps it");
+        world.Task.ReportNudgedAt.ShouldNotBeNull();
+        var wire = await ReplyWireAsync(world);
+        await world.SettleAsync(
+            DelegationReportFormatter.ReportToken(world.TaskId, "done"), prompt: wire.Body, closingVerdict: false);
+
+        var after = world.Task;
+        after.ReportNudgeMessageId.ShouldBe(pendingAsk, Why(after) + " no second ask is recorded");
+        (await world.EventsAsync()).Count(IsRetainedReportAsk).ShouldBe(asksBefore, "no second ask goes out");
+    }
+
+    [Test]
+    [Timeout(240_000)]
+    public async Task Reply_with_a_sent_ask_keeps_the_recorded_ask()
+    {
+        await using var world = await BlockedBySyncAsync();
+        var sentAsk = await SeedRecordedNudgeAsync(
+            world, QueuedMessageStatus.Sent, sentAt: DateTime.UtcNow.AddMinutes(-1));
+        var asksBefore = (await world.EventsAsync()).Count(IsRetainedReportAsk);
+
+        await ReplyAsync(world, "Accepted. Stop.");
+        world.Task.ReportNudgeMessageId.ShouldBe(sentAsk, "a typed ask is the task's one ask, so the Reply keeps it");
+        world.Task.ReportNudgedAt.ShouldNotBeNull();
+        var wire = await ReplyWireAsync(world);
+        await world.SettleAsync(
+            DelegationReportFormatter.ReportToken(world.TaskId, "done"), prompt: wire.Body, closingVerdict: false);
+
+        var after = world.Task;
+        after.ReportNudgeMessageId.ShouldBe(sentAsk, Why(after) + " no second ask is recorded");
+        (await world.EventsAsync()).Count(IsRetainedReportAsk).ShouldBe(asksBefore, "no second ask goes out");
+    }
+
+    /// <summary>
+    /// CARD-1486 S2 (D-3). The reopened turn answers with an unmarked acknowledgement, is asked
+    /// once, and answers the typed ask unmarked again. The retained marked report stands: the task
+    /// Blocks with every retained field, and the settlement record names the unmarked turn.
+    /// </summary>
+    [Test]
+    [Timeout(240_000)]
+    public async Task Unmarked_ack_after_the_ask_blocks_with_retained_report()
+    {
+        await using var world = await BlockedBySyncAsync();
+        var retained = world.Task;
+        retained.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked, "fixture: the retained report was marked");
+        await ReplyAsync(world, "Accepted. The report is final. Stop now and do not take another turn.");
+        var wire = await ReplyWireAsync(world);
+
+        await world.SettleAsync("Acknowledged. Stopping.", prompt: wire.Body, closingVerdict: false);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Working, "fixture: the unmarked acknowledgement is asked once");
+        var ask = world.Task.ReportNudgeMessageId.ShouldNotBeNull("fixture: the ask is recorded");
+        string askBody;
+        await using (var db = world.CreateContext())
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == ask);
+            row.Status = QueuedMessageStatus.Sent;
+            row.SentAt = DateTime.UtcNow.AddSeconds(-1);
+            askBody = row.Body;
+            await db.SaveChangesAsync();
+        }
+
+        await world.SettleAsync("Acknowledged, nothing changed.", prompt: askBody, closingVerdict: false);
+
+        var after = world.Task;
+        after.Status.ShouldBe(AgentTaskStatus.Blocked, Why(after) + " an unmarked acknowledgement is not a new report");
+        after.ReportEvidence.ShouldBe(retained.ReportEvidence, "the retained evidence class stands");
+        AssertRetained(after, retained);
+        after.ReportNudgeMessageId.ShouldBe(ask, "no second ask is recorded");
+        long boundary;
+        await using (var db = world.CreateContext())
+        {
+            boundary = await db.TranscriptEntries.AsNoTracking()
+                .Where(e => e.AgentSessionId == world.SessionId)
+                .MaxAsync(e => e.Sequence);
+        }
+        var events = await world.EventsAsync();
+        events.Count(e => e.Type == AgentTaskEventType.Completed).ShouldBe(0, "no Succeeded publication");
+        var blocked = events.Where(e => e.Type == AgentTaskEventType.Blocked).OrderBy(e => e.CreatedAt).Last();
+        blocked.Detail.ShouldContain($"#{boundary}", Case.Sensitive, "the record names the unmarked turn");
+        blocked.Detail.ShouldContain("unmarked", Case.Sensitive);
+        blocked.Detail.ShouldContain("retained report", Case.Sensitive, "the record says the retained report stands");
+    }
+
     private static bool IsRetainedReportAsk(AgentTaskEvent e) =>
         e.Type == AgentTaskEventType.Warning && e.Detail.Contains("asked once for the complete report", StringComparison.Ordinal);
 
@@ -244,7 +340,12 @@ public sealed class BlockedReplyReportRetentionTests
     /// The CARD-1474 state after the sync block settled the report: the closing-line ask is
     /// recorded on the task, and its row was canceled before it was ever typed.
     /// </summary>
-    private static async Task<Guid> SeedRetiredNudgeAsync(RunnerSettlementWorld world)
+    private static Task<Guid> SeedRetiredNudgeAsync(RunnerSettlementWorld world) =>
+        SeedRecordedNudgeAsync(world, QueuedMessageStatus.Canceled, sentAt: null);
+
+    /// <summary>A closing-line ask recorded on the blocked task, its row in the given state.</summary>
+    private static async Task<Guid> SeedRecordedNudgeAsync(
+        RunnerSettlementWorld world, QueuedMessageStatus status, DateTime? sentAt)
     {
         var id = Guid.NewGuid();
         await using (var db = world.CreateContext())
@@ -257,7 +358,8 @@ public sealed class BlockedReplyReportRetentionTests
             {
                 Id = id, AgentSessionId = world.SessionId, Origin = QueuedMessageOrigin.Delegation,
                 Body = DelegationReportFormatter.TaskMarker(world.TaskId) + " Your turn ended without the closing report line.",
-                Status = QueuedMessageStatus.Canceled, CanceledAt = at.AddMinutes(1), CreatedAt = at,
+                Status = status, SentAt = sentAt, CreatedAt = at,
+                CanceledAt = status == QueuedMessageStatus.Canceled ? at.AddMinutes(1) : null,
             });
             var row = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
             row.ReportNudgedAt = at;
