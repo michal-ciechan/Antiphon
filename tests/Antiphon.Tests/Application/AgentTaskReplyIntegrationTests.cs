@@ -1112,7 +1112,8 @@ public partial class AgentTaskReplyIntegrationTests
                 .ToListAsync())
             .Single(m => m.Body.Contains(DelegationReportFormatter.TaskMarker(task.Id))
                 && m.Body.Contains(authority));
-        queued.Body.ShouldContain(BlockedNote.ContinueMessage(authority));
+        // CARD-1465: the raw literal carries the checkout's line ending (CRLF under autocrlf); the body is LF-normalised.
+        queued.Body.ShouldContain(BlockedNote.ContinueMessage(authority).ReplaceLineEndings("\n"));
         var replied = await verify.AgentTaskEvents.SingleAsync(
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Replied);
         replied.Detail.ShouldStartWith("continued with standing authority — ");
