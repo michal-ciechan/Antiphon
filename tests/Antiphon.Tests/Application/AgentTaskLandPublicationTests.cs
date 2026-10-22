@@ -526,8 +526,12 @@ public sealed partial class AgentTaskLandPublicationTests
     [Test]
     public async Task C688_LandNeverRunsGitInTheSourceWorktree()
     {
-        // CARD-0688 V-4 (D-2): before cleanup the task worktree is read once, for its git directory,
-        // besides the admission index-lock probe D-10 keeps; nothing inspects or mutates it.
+        // CARD-0688 V-4 (D-2) as amended by CARD-1379: before cleanup the task worktree sees only
+        // read-only git, and exactly this inventory: the admission index-lock probe (D-10), the one
+        // git-directory read (D-2), then the post-window ticket validation in the source checkout
+        // (index-lock probe, sequencer probe, tracked-tree status). Nothing mutates it and nothing
+        // else inspects it. The source status still runs without --no-optional-locks; that is a
+        // separate card, not a reason to widen this list.
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
         await h.AddSourceAsync();
@@ -550,8 +554,16 @@ public sealed partial class AgentTaskLandPublicationTests
         cleanupAt.ShouldBeGreaterThan(0);
         var inSource = h.Fixture.Git.Commands.Take(cleanupAt)
             .Where(c => Antiphon.Server.Infrastructure.Git.LandingGit.PathsEqual(c.Directory, h.Fixture.Source)).Select(c => string.Join(' ', c.Arguments)).ToList();
-        inSource.Count(c => c == "rev-parse --absolute-git-dir").ShouldBe(1, string.Join(" | ", inSource));
-        inSource.ShouldAllBe(c => c == "rev-parse --absolute-git-dir" || c == "rev-parse --path-format=absolute --git-path index.lock");
+        inSource.ShouldBe(new[]
+        {
+            "rev-parse --path-format=absolute --git-path index.lock", // D-10 admission probe
+            "rev-parse --absolute-git-dir", // D-2: the one git-directory read
+            "rev-parse --path-format=absolute --git-path index.lock", // CARD-1379 ValidateTicketAsync: index lock
+            "rev-parse --absolute-git-dir", // CARD-1379 ValidateTicketAsync: sequencer probe
+            "status --porcelain=v1 -z --untracked-files=no", // CARD-1379 ValidateTicketAsync: tracked tree
+        }, string.Join(" | ", inSource));
+        inSource.ShouldAllBe(c => c.StartsWith("rev-parse ", StringComparison.Ordinal) || c.StartsWith("status ", StringComparison.Ordinal),
+            "only read-only queries may touch the task worktree before cleanup");
         var profile = logger.Entries.Single(e => e.Message.StartsWith("Land git profile ", StringComparison.Ordinal));
         Convert.ToInt32(profile.State["Inspections"]).ShouldBe(2, "only the guarded cleanup inspects the task worktree");
     }

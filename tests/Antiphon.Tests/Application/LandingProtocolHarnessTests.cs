@@ -189,23 +189,38 @@ public sealed class LandingProtocolHarnessTests
     public async Task C475_LandingKeepsLeaseThroughProtocol(string mode)
     {
         await using var h = new LandingProtocolHarness();
+        // CARD-1447: only the protocol receives this observing lease; the service, the source
+        // resolver, guarded cleanup and the contender below keep the registered one. It records
+        // the land common-directory query count at each protocol ownership check (the protocol's
+        // CommonDirectoryAsync then Owns at entry), so the probe is anchored on the protocol's own
+        // query and not on an absolute index, which the execution lock, the mutation lease's own
+        // resolution, dispatch yield and source resolution all shift.
+        var commonQueries = 0;
+        var observer = new ProtocolLeaseObserver(() => commonQueries);
+        h.ConfigureServices = services => services.AddScoped(sp =>
+        {
+            observer.Inner ??= sp.GetRequiredService<IRepositoryMutationLease>();
+            return ActivatorUtilities.CreateInstance<Antiphon.Server.Application.Services.AgentTaskLandingProtocol>(sp, observer);
+        });
         await h.InitializeAsync();
         await PrepareModeAsync(h, mode);
+        observer.OwnsAtQuery.Clear();
         var leases = h.Services.GetRequiredService<IRepositoryMutationLease>();
         var acquired = new List<bool>();
-        var commonQueries = 0;
-        bool? entryAcquired = null;
+        var probes = new Dictionary<int, bool>();
         var probing = false;
         h.Git.BeforeCommonDirectory = async () =>
         {
-            // This isolated fixture has no other task/claim: query one acquires the
-            // service lease, query two is the protocol's first query, before Owns.
-            if (probing || ++commonQueries != 2) return;
+            if (probing) return; // the contender's own resolution is not a land query
+            var query = ++commonQueries;
+            // Probe at every land query until the protocol has checked ownership once; the probe
+            // stored at the query that check reads is the protocol's first query.
+            if (observer.OwnsAtQuery.Count > 0) return;
             probing = true;
             try
             {
                 await using var contender = await leases.TryAcquireAsync(h.Git.Repository, CancellationToken.None);
-                entryAcquired = contender is not null;
+                probes[query] = contender is not null;
             }
             finally { probing = false; }
         };
@@ -217,7 +232,12 @@ public sealed class LandingProtocolHarnessTests
         if (mode == "CleanupRetry") File.Delete(Path.Combine(h.Git.Source, ".antiphon", "report.md"));
         Exception? failure = null;
         try { await h.RunAsync(); } catch (Exception ex) { failure = ex; }
-        entryAcquired.ShouldBe(false, "the first protocol query must still hold the service lease");
+        observer.OwnsAtQuery.ShouldNotBeEmpty("the protocol must check lease ownership at entry");
+        var protocolQuery = observer.OwnsAtQuery[0];
+        probes.ShouldContainKey(protocolQuery, "the protocol's own common-directory query must have been probed");
+        probes[protocolQuery].ShouldBe(false, "the first protocol query must still hold the service lease");
+        probes.Where(p => p.Key < protocolQuery).ShouldContain(p => p.Value,
+            "a contender must take the free lease before the land acquires it, or the probe proves nothing");
         acquired.Count.ShouldBeGreaterThanOrEqualTo(2, "both guarded-cleanup inspections (CARD-0688: the only ones) must be observed under the lease");
         acquired.ShouldAllBe(value => !value);
         failure.ShouldBeNull();
@@ -294,5 +314,33 @@ public sealed class LandingProtocolHarnessTests
                 dir = dir.Parent;
             return dir?.FullName ?? throw new DirectoryNotFoundException("repo root");
         }
+    }
+
+    /// <summary>
+    /// CARD-1447: forwards every call to the registered lease and records, for each ownership
+    /// check, how many land common-directory queries preceded it.
+    /// </summary>
+    private sealed class ProtocolLeaseObserver(Func<int> queries) : IRepositoryMutationLease
+    {
+        public IRepositoryMutationLease? Inner { get; set; }
+        private IRepositoryMutationLease Target => Inner ?? throw new InvalidOperationException("registered lease not captured");
+        public List<int> OwnsAtQuery { get; } = [];
+        public bool SupportsVerificationWindows => Target.SupportsVerificationWindows;
+        public bool AllowsWorktree(RepositoryLease lease, string path, string branch) => Target.AllowsWorktree(lease, path, branch);
+        public Task<RepositoryLease?> TryAcquirePreflightAsync(string repository, RepositoryPreflight preflight,
+            RepositoryLeaseOwnerTag owner, CancellationToken ct) => Target.TryAcquirePreflightAsync(repository, preflight, owner, ct);
+        public Task<RepositoryVerificationWindow?> OpenVerificationWindowAsync(RepositoryLease lease,
+            IAsyncDisposable executionLease, RepositoryVerificationIdentity identity, CancellationToken ct)
+            => Target.OpenVerificationWindowAsync(lease, executionLease, identity, ct);
+        public Task<RepositoryLease?> TryAcquireAsync(string repository, CancellationToken ct) => Target.TryAcquireAsync(repository, ct);
+        public Task<RepositoryLease?> TryAcquireAsync(string repository, RepositoryLeaseOwnerTag owner, CancellationToken ct)
+            => Target.TryAcquireAsync(repository, owner, ct);
+        public bool Owns(RepositoryLease lease, string commonDirectory)
+        {
+            OwnsAtQuery.Add(queries());
+            return Target.Owns(lease, commonDirectory);
+        }
+        public Task<string?> DescribeUnavailableAsync(string repository, CancellationToken ct) => Target.DescribeUnavailableAsync(repository, ct);
+        public Task<RepositoryLeaseOwner?> FindOwnerAsync(string repository, CancellationToken ct) => Target.FindOwnerAsync(repository, ct);
     }
 }

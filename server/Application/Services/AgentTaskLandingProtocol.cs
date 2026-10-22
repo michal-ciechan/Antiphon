@@ -188,7 +188,10 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             }
             else
             {
-                if (op.SourcePinned || op.Phase != LandPhase.Inspected)
+                // CARD-1449: a fresh entry that finds this operation mid-flight is a resumption. The
+                // ticketed pass after the verification window re-enters with the operation this same
+                // run created or already relabelled, so it keeps the mode it has (Fresh stays Fresh).
+                if (ticket is null && (op.SourcePinned || op.Phase != LandPhase.Inspected))
                     op.Mode = LandOperationMode.ResumePublication;
                 // A saved push may have reached the endpoint even when its acknowledgement was lost.
                 // Check the immutable approval and recovery evidence before observing the exact saved
