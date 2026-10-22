@@ -503,6 +503,65 @@ public class AgentSessionBackendTests
         }
     }
 
+    [Test]
+    [Category("Integration")]
+    [NotInParallel("AgentControl")]
+    public async Task C0167_start_and_resume_restamp_a_pool_rows_provider_projection()
+    {
+        // CARD-0167 S3 repair 2 (Review 6c08cd4b R1): a start or resume of a pool row is a launch,
+        // so the row's provider-projection stamp is rewritten from what THIS launch projected. This
+        // harness registers no ApiKeyEnvResolver, so the launch projects nothing and the stamp must
+        // say so; a stale stamp left behind would let the warm pool match it.
+        var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "c0167-pool-start");
+            Directory.CreateDirectory(workspace);
+            await using var harness = AgentControlServiceIntegrationTests.BuildHarness(
+                tempRoot, [new FakeAgentProtocolAdapter(), new FakeAgentProtocolAdapter()], defaultKind: "ClaudeCode");
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest(Unique("C0167 Pool Start"), workspace), CancellationToken.None);
+            const string stale = "{\"env\":{\"ANTHROPIC_BASE_URL\":\"https://stale-0167.local\"},\"args\":[]}";
+            await SetPoolStampAsync(agent.Id, stale, makePool: true);
+
+            var first = await harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            first.PersistentSessionId.ShouldNotBeNull();
+            (await ReadPoolStampAsync(agent.Id)).ShouldBeNull("the new-session arm launched with no projection");
+
+            await AgentControlServiceIntegrationTests.MarkSessionEndedAsync(
+                first.PersistentSessionId!, SessionStatus.Failed);
+            await SetPoolStampAsync(agent.Id, stale, makePool: false);
+            using var scope = harness.Provider.CreateScope();
+            var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
+            var second = await control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            second.PersistentSessionId.ShouldBe(first.PersistentSessionId, "the resume arm");
+            (await ReadPoolStampAsync(agent.Id)).ShouldBeNull("the resume arm launched with no projection");
+        }
+        finally
+        {
+            await AgentControlServiceIntegrationTests.CleanupProjectsByTempRootAsync(tempRoot);
+            AgentControlServiceIntegrationTests.DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
+    private static async Task SetPoolStampAsync(Guid agentId, string stamp, bool makePool)
+    {
+        await using var db = CreateContext();
+        var row = await db.Agents.SingleAsync(a => a.Id == agentId);
+        if (makePool) row.IsPoolDelegate = true;
+        row.PoolProviderProjectionJson = stamp;
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task<string?> ReadPoolStampAsync(Guid agentId)
+    {
+        await using var db = CreateContext();
+        return await db.Agents.AsNoTracking().Where(a => a.Id == agentId)
+            .Select(a => a.PoolProviderProjectionJson).SingleAsync();
+    }
+
     private static async Task<AgentTuiProfile> SeedProfileAsync(
         AppDbContext db, AgentKind kind, string namePrefix)
     {

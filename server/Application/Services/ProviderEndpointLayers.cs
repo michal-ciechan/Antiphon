@@ -123,7 +123,15 @@ public static class ProviderEndpointLayers
         return JsonSerializer.Serialize(new PoolProjection(env, projected.Args), FingerprintJson);
     }
 
-    private static readonly JsonSerializerOptions FingerprintJson = new(JsonSerializerDefaults.Web) { WriteIndented = false };
+    /// <summary>
+    /// CARD-0167 S3 repair 2: the stamp of a pool row whose process projection is not known (an
+    /// adopted pane, or a launch whose spec has not been built yet). Not JSON, so no
+    /// <see cref="PoolFingerprint"/> result (a JSON document or null) can ever equal it: a row
+    /// stamped this way matches no task, including one that projects nothing.
+    /// </summary>
+    public const string UnknownPoolProjection = "unknown";
+
+    private static readonly JsonSerializerOptions FingerprintJson =new(JsonSerializerDefaults.Web) { WriteIndented = false };
 
     /// <summary>The fingerprint's shape: names with URL or placeholder values, then the argv tail. No value can enter it.</summary>
     private sealed record PoolProjection(IReadOnlyDictionary<string, string> Env, IReadOnlyList<string> Args);
