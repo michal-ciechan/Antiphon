@@ -160,6 +160,9 @@ $ItemMetadata['None'] = @('Pack', 'PackagePath', 'CopyToOutputDirectory')
 $ItemMetadata['StagedHelper'] = @('Folder', 'Glob')
 # Item element attributes that are not metadata (compared ordinally, as MSBuild reads them).
 $ItemElementAttributes = @('Include', 'Exclude', 'Update', 'Remove', 'Condition', 'Label')
+# CARD-1409 repair 5 (plan D-29, O-table): item operations the audit does not evaluate, refused by name.
+# Every other attribute is metadata and must be allow-listed above, so no operation is left unclassified.
+$RefusedItemOperations = @('KeepMetadata', 'RemoveMetadata', 'KeepDuplicates', 'MatchOnMetadata', 'MatchOnMetadataOptions')
 # CARD-1409 repair 4 (Review 937bb1c9 F1/F2): properties whose value is the build's own output or
 # intermediate directory. A path rooted at one is a build product, not a tracked input. A definition file
 # cannot set one (the property allow-list and D-12 refuse), the parsed .rsp cannot, and the land build
@@ -395,12 +398,16 @@ function Test-DocumentAllowed([string]$Pattern, [string]$Path) {
     return $false
 }
 
-function Test-GlobWalk($Pattern, [int]$Index, $Target, [int]$TargetIndex) {
+# Walks pattern segments against target segments. With $Prefix the walk succeeds as soon as every target
+# segment is consumed, whatever pattern remains: the pattern then selects the target itself or something
+# beneath it (CARD-1409 repair 5, D-30).
+function Test-GlobWalk($Pattern, [int]$Index, $Target, [int]$TargetIndex, [bool]$Prefix) {
     while ($true) {
+        if ($Prefix -and ($TargetIndex -ge $Target.Count)) { return $true }
         if ($Index -ge $Pattern.Count) { return ($TargetIndex -ge $Target.Count) }
         $seg = [string]$Pattern[$Index]
         if ($seg -eq '**') {
-            if (Test-GlobWalk $Pattern ($Index + 1) $Target $TargetIndex) { return $true }
+            if (Test-GlobWalk $Pattern ($Index + 1) $Target $TargetIndex $Prefix) { return $true }
             if ($TargetIndex -ge $Target.Count) { return $false }
             $TargetIndex = $TargetIndex + 1
             continue
@@ -412,6 +419,17 @@ function Test-GlobWalk($Pattern, [int]$Index, $Target, [int]$TargetIndex) {
     }
 }
 
+# CARD-1409 repair 5 (D-30): the first tracked symbolic link the canonical pattern selects or passes through.
+function Find-SymlinkReached([string]$Pattern) {
+    if ($script:SymlinkPaths.Count -eq 0) { return $null }
+    $segs = New-SegmentList $Pattern
+    foreach ($link in $script:SymlinkPaths) {
+        $target = New-SegmentList ([string]$link)
+        if (Test-GlobWalk $segs 0 $target 0 $true) { return [string]$link }
+    }
+    return $null
+}
+
 function Test-PatternMatchesReadme([string]$Pattern) {
     $target = New-Object 'System.Collections.Generic.List[string]'
     [void]$target.Add('README.md')
@@ -419,21 +437,61 @@ function Test-PatternMatchesReadme([string]$Pattern) {
     return Test-GlobWalk $segs 0 $target 0
 }
 
-function Normalize-RepoPattern([string]$Combined) {
+# CARD-1409 repair 5 (Review f0fb9035 F1, plan D-28): the one path normaliser. Every path the audit
+# compares goes through here before any comparison: an include or update part, an Exclude part, an
+# import target, a project reference, a literal property-value path, the tail of a path rooted at an
+# output or package root, every tracked match a wildcard selects and every tracked definition path. The
+# text is split on '/' and '\' (equal) and each segment is held to the Windows land host's rules: a
+# trailing '.' or space, a segment of only dots or spaces, a ':' anywhere (the drive prefix is handled
+# by the caller, so it is the only legal colon) and an 8.3 short-name shape ('~' then a digit) each
+# REFUSE naming the segment; nothing is silently rewritten. Only then are '.' and empty segments
+# dropped and '..' popped. Letter case is kept; every comparison of a canonical path is
+# ordinal-ignore-case. Returns Status ok with Path, outside ('..' above the root), escape ('..' after a
+# wildcard segment) or refused with Segment and Reason. With $Fold (property values only, D-25: a value
+# is free text, not an input) a divergent segment is read as the host reads it instead of refusing:
+# trailing dots and spaces are dropped, a colon cuts the segment to the name before it, and the first
+# divergence is returned as Divergent so a docs or README reading can still be refused by segment; an
+# 8.3 short name refuses even then, because its long name is unknowable.
+function ConvertTo-CanonicalPath([string]$Text, [bool]$Fold) {
     $stack = New-Object 'System.Collections.Generic.List[string]'
-    foreach ($part in $Combined.Replace('\', '/').Split('/')) {
-        if ($part -eq '' -or $part -eq '.') { continue }
+    $divergent = $null
+    foreach ($part in $Text.Replace('\', '/').Split('/')) {
+        if ($part.Length -eq 0 -or $part -eq '.') { continue }
         if ($part -eq '..') {
-            if ($stack.Count -eq 0) { return 'outside' }
+            if ($stack.Count -eq 0) { return @{ Status = 'outside' } }
             $top = [string]$stack[$stack.Count - 1]
-            if ($top.IndexOf('*') -ge 0 -or $top.IndexOf('?') -ge 0) { return 'escape' }
+            if (Test-PatternHasWildcard $top) { return @{ Status = 'escape' } }
             $stack.RemoveAt($stack.Count - 1)
             continue
         }
+        if ($part -match '~[0-9]') { return @{ Status = 'refused'; Segment = $part; Reason = '8.3 short name' } }
+        $colon = $part.IndexOf(':')
+        if ($colon -ge 0) {
+            if (-not $Fold) { return @{ Status = 'refused'; Segment = $part; Reason = 'colon' } }
+            if ($null -eq $divergent) { $divergent = @{ Segment = $part; Reason = 'colon' } }
+            $part = $part.Substring(0, $colon)
+        }
+        $trimmed = $part.TrimEnd('.', ' ')
+        if ($trimmed.Length -ne $part.Length) {
+            $reason = 'trailing dot or space'
+            if ($trimmed.Length -eq 0) { $reason = 'only dots or spaces' }
+            if (-not $Fold) { return @{ Status = 'refused'; Segment = $part; Reason = $reason } }
+            if ($null -eq $divergent) { $divergent = @{ Segment = $part; Reason = $reason } }
+            $part = $trimmed
+        }
+        if ($part.Length -eq 0) { continue }
         [void]$stack.Add($part)
     }
-    if ($stack.Count -eq 0) { return 'outside' }
-    return ($stack -join '/')
+    if ($stack.Count -eq 0) { return @{ Status = 'outside' } }
+    return @{ Status = 'ok'; Path = ($stack -join '/'); Divergent = $divergent }
+}
+
+function Test-CanonicalRefused($Canonical) {
+    return ([string]$Canonical.Status -eq 'refused')
+}
+
+function Format-SegmentDetail($Canonical) {
+    return 'segment=' + [string]$Canonical.Segment + ' (' + [string]$Canonical.Reason + ')'
 }
 
 function Get-RepoDirectory([string]$Path) {
@@ -490,6 +548,7 @@ $script:TaskItemOutputs = New-Object 'System.Collections.Generic.Dictionary[stri
 $script:ItemDeclarations = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::OrdinalIgnoreCase)
 $script:PackagePathProperties = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 $script:TrackedPaths = New-Object 'System.Collections.Generic.List[string]'
+$script:SymlinkPaths = New-Object 'System.Collections.Generic.List[string]'
 $script:UnresolvedReference = ''
 
 function Add-CensusEntry($Map, [string]$Key, $Entry) {
@@ -531,7 +590,10 @@ function Register-DefinitionFacts($Doc, [string]$Path) {
     foreach ($group in $Doc.GetElementsByTagName('ItemGroup')) {
         foreach ($node in $group.ChildNodes) {
             if ($node.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
+            # CARD-1409 repair 5 (Review f0fb9035 F2): an Update sets metadata on the items it names, static
+            # or inside a Target, so its values are declared values too; Remove sets nothing.
             $include = [string]$node.GetAttribute('Include')
+            if ([string]::IsNullOrWhiteSpace($include)) { $include = [string]$node.GetAttribute('Update') }
             if ([string]::IsNullOrWhiteSpace($include)) { continue }
             $metadata = Get-ItemMetadataValues $node
             Add-CensusEntry $script:ItemDeclarations ([string]$node.LocalName) @{ File = $Path; Include = $include; Metadata = $metadata }
@@ -699,13 +761,15 @@ function Get-PropertyCandidates([string]$Name, [string]$FileDir, [string]$Projec
     return ,$values
 }
 
-# Resolves one repo candidate, evaluated from $ProjectDirectory, to a repository-relative pattern,
-# 'outside' or 'escape'. An anchored candidate already starts at a known directory.
-function Resolve-CandidatePattern([string]$Root, $Candidate, [string]$ProjectDirectory) {
+# Resolves one repo candidate, evaluated from $ProjectDirectory, to a canonical result (D-28): Status ok
+# with the repository-relative pattern, outside, escape, or refused with the segment. A drive-letter or
+# rooted path is converted to a repository path first, so the drive colon is the only colon that may pass.
+# An anchored candidate already starts at a known directory.
+function Resolve-CandidatePattern([string]$Root, $Candidate, [string]$ProjectDirectory, [bool]$Fold) {
     $text = ([string]$Candidate.Text).Replace('\', '/')
     if ($text -match '^[A-Za-z]:/' -or $text.StartsWith('/')) {
         $relative = ConvertTo-RepoRelative $text $Root
-        if ($null -eq $relative) { return 'outside' }
+        if ($null -eq $relative) { return @{ Status = 'outside' } }
         $text = $relative
     }
     elseif ([bool]$Candidate.Anchored) {
@@ -714,7 +778,7 @@ function Resolve-CandidatePattern([string]$Root, $Candidate, [string]$ProjectDir
     elseif (-not [string]::IsNullOrEmpty($ProjectDirectory)) {
         $text = $ProjectDirectory + '/' + $text
     }
-    return Normalize-RepoPattern $text
+    return ConvertTo-CanonicalPath $text $Fold
 }
 
 function Find-NearestDirectoryBuild($Known, [string]$ProjectDirectory, [string]$FileName) {
@@ -765,10 +829,14 @@ function Resolve-ImportPart([string]$Root, [string]$FromFile, [string]$ProjectDi
     elseif (-not [string]::IsNullOrEmpty($fromDir)) {
         $text = $fromDir + '/' + $text
     }
-    $norm = Normalize-RepoPattern $text
-    if ($norm -eq 'outside' -or $norm -eq 'escape') {
+    $canonical = ConvertTo-CanonicalPath $text
+    if (Test-CanonicalRefused $canonical) {
+        Exit-Audit 1 (Format-PathSegmentRefusal $FromFile ('Import Project=' + $ProjectAttr) $canonical)
+    }
+    if ([string]$canonical.Status -ne 'ok') {
         Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr 'outside the repository')
     }
+    $norm = [string]$canonical.Path
     if (-not $Known.ContainsKey($norm)) {
         Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr $norm)
     }
@@ -904,6 +972,22 @@ function Format-ProjectReferenceRefusal([string]$Path, [string]$Item, [string]$I
     return 'definition file project reference is not a tracked project file; -Update cannot approve it: ' + $Path + ' ' + $Item + ' Include=' + $Include + ' -> ' + $Resolved
 }
 
+# CARD-1409 repair 5 (D-28): $Detail is the construct the path came from ('EmbeddedResource Include=...',
+# 'Import Project=...', 'Content Include=... -> <match>', or '' for a tracked definition path).
+function Format-PathSegmentRefusal([string]$Path, [string]$Detail, $Canonical) {
+    $text = 'definition file path has a segment the Windows land host would normalise; -Update cannot approve it: ' + $Path
+    if (-not [string]::IsNullOrEmpty($Detail)) { $text = $text + ' ' + $Detail }
+    return $text + ' ' + (Format-SegmentDetail $Canonical)
+}
+
+function Format-ItemOperationRefusal([string]$Path, [string]$Item, [string]$Label, [string]$Operation) {
+    return 'definition file item uses an operation the audit does not evaluate; -Update cannot approve it: ' + $Path + ' ' + $Item + ' ' + $Label + ' ' + $Operation
+}
+
+function Format-SymlinkRefusal([string]$Path, [string]$Item, [string]$Include, [string]$Link) {
+    return 'definition file item path reaches a tracked symbolic link the audit cannot follow; -Update cannot approve it: ' + $Path + ' ' + $Item + ' Include=' + $Include + ' -> ' + $Link
+}
+
 function Format-ElementRefusal([string]$Path, [string]$Element) {
     return 'definition file contains an element the audit does not classify; -Update cannot approve it: ' + $Path + ' ' + $Element
 }
@@ -986,14 +1070,24 @@ function Test-ItemNameIsPathLike([string]$Segment) {
     return $false
 }
 
-# CARD-1409 repair 4 (Review 937bb1c9 F3): every attribute that is not an item-element attribute, and every
-# child element, is metadata and must be allow-listed for the item type.
-function Assert-ItemMetadataAllowed($Node, [string]$Path, [string]$Item, [string]$Label) {
+# CARD-1409 repair 4 (Review 937bb1c9 F3) and repair 5 (plan D-29, O-table): an item element must carry
+# Include, Update or Remove; a named operation the audit does not evaluate (KeepMetadata, RemoveMetadata,
+# KeepDuplicates, MatchOnMetadata, MatchOnMetadataOptions) refuses by name; every other attribute that is
+# not an item-element attribute, and every child element, is metadata: it must be allow-listed for the
+# item type, and a Remove element may carry none.
+function Assert-ItemOperationsAllowed($Node, [string]$Path, [string]$Item, [string]$Label) {
+    $hasOperation = $false
+    foreach ($name in @('Include', 'Update', 'Remove')) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$Node.GetAttribute($name))) { $hasOperation = $true }
+    }
+    if (-not $hasOperation) { Exit-Audit 1 (Format-ItemOperationRefusal $Path $Item $Label '(none)') }
+    $isRemove = [string]::IsNullOrWhiteSpace([string]$Node.GetAttribute('Include')) -and [string]::IsNullOrWhiteSpace([string]$Node.GetAttribute('Update'))
     $allowed = @()
-    if ($ItemMetadata.ContainsKey($Item)) { $allowed = $ItemMetadata[$Item] }
+    if ($ItemMetadata.ContainsKey($Item) -and -not $isRemove) { $allowed = $ItemMetadata[$Item] }
     foreach ($attribute in $Node.Attributes) {
         $attributeName = [string]$attribute.Name
         if (Test-AllowedName $ItemElementAttributes $attributeName $false) { continue }
+        if (Test-AllowedName $RefusedItemOperations $attributeName $true) { Exit-Audit 1 (Format-ItemOperationRefusal $Path $Item $Label $attributeName) }
         if (-not (Test-AllowedName $allowed $attributeName $true)) { Exit-Audit 1 (Format-MetadataRefusal $Path $Item $Label $attributeName) }
     }
     foreach ($child in $Node.ChildNodes) {
@@ -1018,6 +1112,7 @@ function Get-IncludeLabel($Node) {
 # pattern is then expanded against the tracked tree, minus Exclude, and a match under docs/ or a
 # markdown/text document outside the document allow-list refuses naming that match.
 function Assert-PathCandidateAllowed([string]$Root, [string]$Path, [string]$Item, [string]$Segment, $Candidate, [string]$Directory, $ExcludeCandidates) {
+    $detail = $Item + ' Include=' + $Segment
     $kind = [string]$Candidate.Kind
     if ($kind -eq 'output' -or $kind -eq 'package') {
         $tail = ([string]$Candidate.Text).Replace('\', '/')
@@ -1025,11 +1120,29 @@ function Assert-PathCandidateAllowed([string]$Root, [string]$Path, [string]$Item
         foreach ($part in $tail.Split('/')) {
             if ($part -eq '..') { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
         }
+        # CARD-1409 repair 5 (D-28): the tail is compared like every other path, so a divergent segment refuses.
+        $tailCanonical = ConvertTo-CanonicalPath $tail
+        if (Test-CanonicalRefused $tailCanonical) { Exit-Audit 1 (Format-PathSegmentRefusal $Path $detail $tailCanonical) }
         return
     }
-    $pattern = [string](Resolve-CandidatePattern $Root $Candidate $Directory)
-    if ($pattern -eq 'escape') { Exit-Audit 1 (Format-ApprovalRefusal $Path $Item $Segment) }
-    if ($pattern -eq 'outside') { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
+    $canonical = Resolve-CandidatePattern $Root $Candidate $Directory
+    if (Test-CanonicalRefused $canonical) { Exit-Audit 1 (Format-PathSegmentRefusal $Path $detail $canonical) }
+    if ([string]$canonical.Status -eq 'escape') { Exit-Audit 1 (Format-ApprovalRefusal $Path $Item $Segment) }
+    if ([string]$canonical.Status -eq 'outside') { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
+    $pattern = [string]$canonical.Path
+    # CARD-1409 repair 5 (D-29, O-3): Exclude only subtracts; each part still goes through the normaliser.
+    $excludePatterns = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($exclude in $ExcludeCandidates) {
+        if ([string]$exclude.Kind -ne 'repo') { continue }
+        $excludeCanonical = Resolve-CandidatePattern $Root $exclude $Directory
+        if (Test-CanonicalRefused $excludeCanonical) { Exit-Audit 1 (Format-PathSegmentRefusal $Path ($Item + ' Exclude=' + [string]$exclude.Source) $excludeCanonical) }
+        if ([string]$excludeCanonical.Status -ne 'ok') { continue }
+        [void]$excludePatterns.Add([string]$excludeCanonical.Path)
+    }
+    # CARD-1409 repair 5 (D-30): a tracked symbolic link the pattern reaches, as a match or as a directory
+    # it passes through, refuses whatever the link points at today.
+    $link = Find-SymlinkReached $pattern
+    if ($null -ne $link) { Exit-Audit 1 (Format-SymlinkRefusal $Path $Item $Segment ([string]$link)) }
     if (Test-PatternMatchesReadme $pattern) { Exit-Audit 1 (Format-ApprovalRefusal $Path $Item $Segment 'README.md') }
     if (-not (Test-PatternHasWildcard $pattern)) {
         if (Test-PathUnderDocs $pattern) {
@@ -1041,14 +1154,12 @@ function Assert-PathCandidateAllowed([string]$Root, [string]$Path, [string]$Item
         }
         return
     }
-    $excludePatterns = New-Object 'System.Collections.Generic.List[string]'
-    foreach ($exclude in $ExcludeCandidates) {
-        if ([string]$exclude.Kind -ne 'repo') { continue }
-        $excludePattern = [string](Resolve-CandidatePattern $Root $exclude $Directory)
-        if ($excludePattern -eq 'escape' -or $excludePattern -eq 'outside') { continue }
-        [void]$excludePatterns.Add($excludePattern)
-    }
     $hits = Get-TrackedMatches $pattern $excludePatterns
+    # CARD-1409 repair 5 (D-28, N-12): a tracked match is compared like every other path.
+    foreach ($hit in $hits) {
+        $hitCanonical = ConvertTo-CanonicalPath ([string]$hit)
+        if (Test-CanonicalRefused $hitCanonical) { Exit-Audit 1 (Format-PathSegmentRefusal $Path ($detail + ' -> ' + [string]$hit) $hitCanonical) }
+    }
     if (Test-PatternCanReachDocs $pattern) {
         $named = $pattern
         foreach ($hit in $hits) {
@@ -1094,16 +1205,20 @@ function Assert-ItemIncludeAllowed([string]$Root, [string]$Path, [string]$Item, 
                 if ($null -eq $excludeDecoded) { continue }
                 $expanded = Expand-Candidates $excludeDecoded $fileDir ([string]$directory) 0
                 if ($null -eq $expanded) { continue }
-                foreach ($candidate in $expanded) { [void]$excludeCandidates.Add($candidate) }
+                foreach ($candidate in $expanded) {
+                    $candidate.Source = $excludeText
+                    [void]$excludeCandidates.Add($candidate)
+                }
             }
         }
         foreach ($candidate in $candidates) {
             if ($Rule -eq 'project') {
                 if ([string]$candidate.Kind -ne 'repo') { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
-                $resolved = [string](Resolve-CandidatePattern $Root $candidate ([string]$directory))
-                if (($resolved -eq 'escape') -or ($resolved -eq 'outside') -or (Test-PatternHasWildcard $resolved)) {
-                    Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment)
-                }
+                $canonical = Resolve-CandidatePattern $Root $candidate ([string]$directory)
+                if (Test-CanonicalRefused $canonical) { Exit-Audit 1 (Format-PathSegmentRefusal $Path ($Item + ' Include=' + $Segment) $canonical) }
+                if ([string]$canonical.Status -ne 'ok') { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
+                $resolved = [string]$canonical.Path
+                if (Test-PatternHasWildcard $resolved) { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
                 if ((-not (Test-ProjFile $resolved)) -or (-not $Known.ContainsKey($resolved))) {
                     Exit-Audit 1 (Format-ProjectReferenceRefusal $Path $Item $Segment $resolved)
                 }
@@ -1156,11 +1271,17 @@ function Assert-PropertyValuesAllowed([string]$Root, $Doc, [string]$Path, $Direc
                 if ($null -eq $candidates) { continue }
                 foreach ($candidate in $candidates) {
                     if ([string]$candidate.Kind -ne 'repo') { continue }
-                    $pattern = [string](Resolve-CandidatePattern $Root $candidate (Get-RepoDirectory $Path))
-                    if ($pattern -eq 'escape' -or $pattern -eq 'outside') { continue }
+                    # CARD-1409 repair 5 (D-28): a value is free text, so it is read as the land host would
+                    # read it (folded) and refuses only when that reading is docs/ or the root README.
+                    $canonical = Resolve-CandidatePattern $Root $candidate (Get-RepoDirectory $Path) $true
+                    if (Test-CanonicalRefused $canonical) { Exit-Audit 1 (Format-PropertyValueRefusal $Path $name (Format-SegmentDetail $canonical)) }
+                    if ([string]$canonical.Status -ne 'ok') { continue }
+                    $pattern = [string]$canonical.Path
                     $docs = (Test-PathUnderDocs $pattern) -or ($pattern -ieq 'README.md')
                     if ($docs -and -not (Test-AllowedName $AllowedDocsInputs $pattern $true)) {
-                        Exit-Audit 1 (Format-PropertyValueRefusal $Path $name ('-> ' + $pattern))
+                        $valueDetail = '-> ' + $pattern
+                        if ($null -ne $canonical.Divergent) { $valueDetail = $valueDetail + ' ' + (Format-SegmentDetail $canonical.Divergent) }
+                        Exit-Audit 1 (Format-PropertyValueRefusal $Path $name $valueDetail)
                     }
                 }
             }
@@ -1291,7 +1412,7 @@ function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows) {
                 if ($node.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
                 $local = [string]$node.LocalName
                 $rule = [string]$ItemRules[$local]
-                Assert-ItemMetadataAllowed $node ([string]$path) $local (Get-IncludeLabel $node)
+                Assert-ItemOperationsAllowed $node ([string]$path) $local (Get-IncludeLabel $node)
                 # Include and Update are classified; Remove only subtracts and is left alone.
                 foreach ($attributeName in @('Include', 'Update')) {
                     $include = $node.GetAttribute($attributeName)
@@ -1346,7 +1467,13 @@ for ($i = 0; $i -lt $last; $i++) {
     if (-not (Test-FullObjectId $oid)) { Exit-Audit 1 'ls-tree object id is not a full id' }
     # CARD-1409 repair 4: every tracked blob is what an item glob is expanded against.
     if ($blob) { [void]$script:TrackedPaths.Add($path) }
+    # CARD-1409 repair 5 (D-30): a tracked symbolic link is recorded so a path item that reaches it refuses.
+    if ($blob -and $mode -eq '120000') { [void]$script:SymlinkPaths.Add($path) }
     if (-not (Test-DefinitionPath $path)) { continue }
+    # CARD-1409 repair 5 (D-28, N-15): a definition path is compared like every other path, so an 'obj.'
+    # segment the land host would read as obj/ refuses by name instead of slipping past the obj/ rule.
+    $definitionCanonical = ConvertTo-CanonicalPath $path
+    if (Test-CanonicalRefused $definitionCanonical) { Exit-Audit 1 (Format-PathSegmentRefusal $path '' $definitionCanonical) }
     if (Test-PathUnderObjDirectory $path) { Exit-Audit 1 (Format-ObjDefinitionRefusal $path) }
     $regular = ($mode -eq '100644' -or $mode -eq '100755') -and ($kind -eq 'blob')
     if (-not $regular) { Exit-Audit 1 'definition path is not a regular blob' }
