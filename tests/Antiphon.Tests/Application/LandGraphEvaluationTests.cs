@@ -284,6 +284,7 @@ public sealed class LandGraphEvaluationTests
                      ("../docs/**/guide", "", 1),
                      ("../docs/**/*.MD", "../docs/**", 1),
                      ("../**/guide.md", "", 1),
+                     ("Sub/*.txt;../docs/new/*.md", "", 1),
                      ("Sub/**/*.cs", "", 0),
                      ("../docs-sibling/*.md", "", 0),
                  })
@@ -357,7 +358,7 @@ public sealed class LandGraphEvaluationTests
     [Timeout(300_000)]
     public async Task C1483_S2_ImportOutsideTrackedSetRefuses()
     {
-        foreach (var kind in new[] { "untracked", "docs", "wildcard", "non-definition", "tracked", "duplicate", "linked" })
+        foreach (var kind in new[] { "untracked", "docs", "wildcard", "wildcard-empty", "non-definition", "tracked", "duplicate", "linked" })
         {
             var path = kind switch
             {
@@ -365,7 +366,7 @@ public sealed class LandGraphEvaluationTests
                 "non-definition" => "build/import.xml",
                 _ => "build/import.props",
             };
-            var import = kind == "wildcard" ? "build/*.props" : path;
+            var import = kind.StartsWith("wildcard", StringComparison.Ordinal) ? "build/*.props" : path;
             var files = new Dictionary<string, string>
             {
                 ["App/App.csproj"] = SdkProject($"""
@@ -373,7 +374,7 @@ public sealed class LandGraphEvaluationTests
                     {(kind == "duplicate" ? $"<Import Project=\"../{import}\" />" : "")}
                     """),
             };
-            if (kind is not ("untracked" or "linked")) files[path] = "<Project />";
+            if (kind is not ("untracked" or "linked" or "wildcard-empty")) files[path] = "<Project />";
             await using var repo = await AuditRepo.CreateAsync(files,
                 links: kind == "linked" ? new() { [path] = "../external.props" } : null,
                 untrackedFiles: kind is "untracked" or "linked"
