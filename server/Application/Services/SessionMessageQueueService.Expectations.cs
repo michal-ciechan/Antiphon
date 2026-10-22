@@ -22,7 +22,7 @@ public sealed partial class SessionMessageQueueService
     /// <summary>
     /// CARD-0650 D-7. The watchdog's direct Now send. Under the per-session lock it rechecks the
     /// owner binding and generation, rules, herdr, modal and composer safety (held-back Pending
-    /// rows, unreconciled Sent rows and earlier unconfirmed watchdog bodies), commits the attempt
+    /// rows, canceled typed rows, unreconciled Sent rows and earlier unconfirmed watchdog bodies), commits the attempt
     /// through <paramref name="commitAttempt"/>, then reuses <see cref="DeliverAsync"/> with its
     /// overlay arms off. It never tests IsWorking, never creates a queue row, and never calls
     /// delivery-failure, truncation or forbidden-body recovery: every outcome is returned typed.
@@ -100,6 +100,8 @@ public sealed partial class SessionMessageQueueService
                     .ToListAsync(ct);
                 if (await HeldBackTypingBlocksTheComposerAsync(sessionId, pending, [], generation, ct))
                     return ExpectationSendResult.Refuse("held_back_body_in_composer");
+                if (await CanceledTypingBlocksTheComposerAsync(db, sessionId, generation, ct))
+                    return ExpectationSendResult.Refuse("composer_orphan");
                 if (await ExpectationBodyBlocksComposerAsync(db, sessionId, generation, ct))
                     return ExpectationSendResult.Refuse("unconfirmed_expectation_body");
 
@@ -234,19 +236,35 @@ public sealed partial class SessionMessageQueueService
         if (unrecorded.Count == 0)
             return false;
 
-        if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } snapshot)
-        {
-            _logger.LogInformation(
-                "Holding input to session {SessionId}: {Count} unconfirmed expectation prompt(s) of this "
-                + "generation, no transcript record of them, and no rendered snapshot to show the composer empty",
-                sessionId, unrecorded.Count);
-            return true;
-        }
-
         var kind = await db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == sessionId)
             .Select(s => s.AgentKind)
             .FirstOrDefaultAsync(ct);
+        return await TypedBodiesBlockComposerAsync(sessionId, kind, unrecorded, "expectation nudge", ct);
+    }
+
+    // Shared CARD-0650 screen judgement: Claude's box must read empty twice; a hidden or
+    // unreadable box holds even when a collapsed paste has no visible body head.
+    private async Task<bool> TypedBodiesBlockComposerAsync(
+        Guid sessionId, AgentKind kind, IReadOnlyList<(Guid Id, string Body)> bodies,
+        string what, CancellationToken ct)
+    {
+        if (bodies.Count == 0)
+            return false;
+        // Only watchdog attempts have an audited release endpoint. Canceled queue rows release
+        // through transcript, composer or generation evidence, never that endpoint.
+        var release = what == "expectation nudge"
+            ? ExpectationHoldAudit.ReleaseRoute(sessionId)
+            : "a later submitted UserPrompt, a cleared composer, or a new session generation";
+        if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } snapshot)
+        {
+            _logger.LogInformation(
+                "Holding input to session {SessionId}: {Count} {What}(s) of this generation, starting "
+                + "with {BodyId}, no transcript release evidence, and no rendered snapshot to show the composer empty",
+                sessionId, bodies.Count, what, bodies[0].Id);
+            return true;
+        }
+
         if (TryReadComposerRegion(kind, snapshot.RenderedScreen, out var composer))
         {
             if (ClaudeScreen.ComposerContentIsEmpty(composer))
@@ -254,27 +272,27 @@ public sealed partial class SessionMessageQueueService
                 if (await ComposerStaysEmptyAsync(kind, sessionId, ct))
                     return false;
                 _logger.LogWarning(
-                    "Holding input to session {SessionId}: expectation nudge {NudgeId} is unconfirmed, has no "
-                    + "transcript record, and the composer read empty on one snapshot but not on the next. Release: {Route}",
-                    sessionId, unrecorded[0].Id, ExpectationHoldAudit.ReleaseRoute(sessionId));
+                    "Holding input to session {SessionId}: {What} {BodyId} has no transcript release "
+                    + "evidence, and the composer read empty on one snapshot but not on the next. Release: {Release}",
+                    sessionId, what, bodies[0].Id, release);
                 return true;
             }
             _logger.LogWarning(
-                "Holding input to session {SessionId}: expectation nudge {NudgeId} is unconfirmed, has no "
-                + "transcript record, and the composer is not empty. Release: {Route}",
-                sessionId, unrecorded[0].Id, ExpectationHoldAudit.ReleaseRoute(sessionId));
+                "Holding input to session {SessionId}: {What} {BodyId} has no transcript release "
+                + "evidence, and the composer is not empty. Release: {Release}",
+                sessionId, what, bodies[0].Id, release);
             return true;
         }
         if (kind == AgentKind.ClaudeCode)
         {
             _logger.LogWarning(
-                "Holding input to session {SessionId}: expectation nudge {NudgeId} is unconfirmed, has no "
-                + "transcript record, and Claude's composer cannot be read to show it empty. Release: {Route}",
-                sessionId, unrecorded[0].Id, ExpectationHoldAudit.ReleaseRoute(sessionId));
+                "Holding input to session {SessionId}: {What} {BodyId} has no transcript release "
+                + "evidence, and Claude's composer cannot be read to show it empty. Release: {Release}",
+                sessionId, what, bodies[0].Id, release);
             return true;
         }
 
-        var standing = unrecorded
+        var standing = bodies
             .Where(n => ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(
                 snapshot.RenderedScreen, PtyInputEncoding.NormalizeBody(n.Body.Trim())))
             .Select(n => (Guid?)n.Id)
@@ -282,9 +300,9 @@ public sealed partial class SessionMessageQueueService
         if (standing is not { } standingId)
             return false;
         _logger.LogWarning(
-            "Holding input to session {SessionId}: expectation nudge {NudgeId} is unconfirmed, has no "
-            + "transcript record, and is still visible whole on screen. Release: {Route}",
-            sessionId, standingId, ExpectationHoldAudit.ReleaseRoute(sessionId));
+            "Holding input to session {SessionId}: {What} {BodyId} has no transcript release "
+            + "evidence, and is still visible whole on screen. Release: {Release}",
+            sessionId, what, standingId, release);
         return true;
     }
 
