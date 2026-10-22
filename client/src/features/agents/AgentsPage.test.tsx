@@ -1125,4 +1125,107 @@ describe('AgentsPage', () => {
     await settleQueries(queryClient)
     expect(await screen.findByRole('button', { name: 'Start agent' })).toBeInTheDocument()
   })
+
+  // CARD-0105 repair (Review 74b6b98b D-1): the click swallow a long-press arms must never
+  // survive to a later, genuine press on the icon, and a scroll must not open the menu.
+  it('C0105 repair: a held right-click then Escape leaves the next left-click opening the terminal', async () => {
+    server.use(...agentHandlers())
+
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
+    const icon = screen.getByRole('button', { name: 'Terminal Frontend Claude' })
+
+    vi.useFakeTimers()
+    try {
+      // The secondary button goes down and the browser raises contextmenu; the button stays held
+      // past the long-press threshold and comes up without a click.
+      fireEvent.mouseDown(icon, { button: 2 })
+      fireEvent.contextMenu(icon, { button: 2, clientX: 120, clientY: 80 })
+      expect(screen.getByRole('menu', { name: 'Terminal menu Frontend Claude' })).toBeInTheDocument()
+      act(() => {
+        vi.advanceTimersByTime(600)
+      })
+      fireEvent.mouseUp(icon, { button: 2 })
+      act(() => {
+        vi.runOnlyPendingTimers()
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    const menu = screen.getByRole('menu', { name: 'Terminal menu Frontend Claude' })
+    await waitFor(() => expect(menu.contains(document.activeElement)).toBe(true))
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+
+    // A genuine left-click after the menu closed is the icon's ordinary action: the CLI modal.
+    await userEvent.click(icon)
+    await settleQueries(queryClient)
+    expect(await screen.findByRole('button', { name: 'Start agent' })).toBeInTheDocument()
+  })
+
+  it('C0105 repair: touch movement before the threshold cancels the long-press', async () => {
+    server.use(...agentHandlers())
+
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
+    const icon = screen.getByRole('button', { name: 'Terminal Frontend Claude' })
+
+    vi.useFakeTimers()
+    try {
+      // A finger that starts a scroll: touchstart, movement, and the hold runs past 500 ms.
+      fireEvent.touchStart(icon)
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+      fireEvent.touchMove(icon)
+      act(() => {
+        vi.advanceTimersByTime(400)
+      })
+      // No menu mid-scroll: the move cancelled the timer.
+      expect(screen.queryByRole('menu')).toBeNull()
+      fireEvent.touchEnd(icon)
+      act(() => {
+        vi.runOnlyPendingTimers()
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    // The scroll armed no swallow: the icon's next click is a plain left-click.
+    await userEvent.click(icon)
+    await settleQueries(queryClient)
+    expect(await screen.findByRole('button', { name: 'Start agent' })).toBeInTheDocument()
+  })
+
+  it('C0105 repair: a long-press ended by touchcancel leaves the next tap opening the terminal', async () => {
+    server.use(...agentHandlers())
+
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
+    const icon = screen.getByRole('button', { name: 'Terminal Frontend Claude' })
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.touchStart(icon)
+      act(() => {
+        vi.advanceTimersByTime(500)
+      })
+      expect(screen.getByRole('menu', { name: 'Terminal menu Frontend Claude' })).toBeInTheDocument()
+      // The browser takes the touch over (a scroll or a system gesture): touchcancel, no click.
+      fireEvent.touchCancel(icon)
+      act(() => {
+        vi.runOnlyPendingTimers()
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    // The next tap is its own press and must open the terminal, whatever the earlier press armed.
+    fireEvent.touchStart(icon)
+    fireEvent.touchEnd(icon)
+    fireEvent.click(icon)
+    await settleQueries(queryClient)
+    expect(await screen.findByRole('button', { name: 'Start agent' })).toBeInTheDocument()
+  })
 })
