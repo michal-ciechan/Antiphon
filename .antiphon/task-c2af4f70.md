@@ -102,6 +102,18 @@ Neither slice changes the plan document, so the pick does not introduce it on RC
 clean-pick applicability only; the reviewed RC port and CP-1..CP-3 there are a separate task.
 Restart: none for this task. Eventual activation is server-side after a reviewed RC port.
 
+The notification repair below also picks cleanly, with both additional merge-tree calls
+returning exit 0. Continue from S2 tree `130f321c2f6ee42287a76fd196d371340994ed66` via
+synthetic commit `aa27e8df8fb49314159692562fc536887f27d00c` (parent is the S1 synthetic):
+
+3. Merge-base `3ad732422687d6ff7c2441cef6df5903e864ab9b`, left `aa27e8df8fb49314159692562fc536887f27d00c`,
+   right test repair `19f73e0e74eaa3ea7cb3cf82adaf5c3b54e01fe7` gives tree
+   `7ccb78af782e3e6d369e9c814af643652e144eec`, wrapped as synthetic commit
+   `e78b62b4e19ccab23ecd02fe317c9db1c5ea6a71` for the next pick.
+4. Merge-base `19f73e0e74eaa3ea7cb3cf82adaf5c3b54e01fe7`, left `e78b62b4e19ccab23ecd02fe317c9db1c5ea6a71`,
+   right fix `4c26df01c8bb96a88f5ab72bc7a89d7a266790d5` gives final RC applicability tree
+   `2e137ff937e9eb1779d64c853dfb169ee35f0643`. Report-only commits are excluded from this pick chain.
+
 Full card reads confirmed the plan's attention follow-up is already CARD-0267 (Done,
 `fd8f7536-be19-44dd-9514-70f549d3982f`), and the separate Pending/collapsed-paste retry gap is
 CARD-1505 (Backlog, `c063ceb8-6a5d-4759-984d-e745096bc1b4`). No duplicate card was created.
@@ -113,6 +125,30 @@ Code ordinary green does not discharge these. After ordinary Review, the caller 
 original Code task and commissions SourceLanding Mutation on the published source.
 
 ## Final qualification command
+
+The first final attempt (`20261022-191304-8746`) tested source
+`3ad732422687d6ff7c2441cef6df5903e864ab9b` only as far as an incomplete CP-2 build.
+It was explicitly stopped while its first build was running (about 4.5 minutes,
+slot=granted, waited=0s). CP-2/CP-3 executed zero tests and have no qualifying receipt
+from that attempt. `stop` completed; the subsequent `wait` returned exit 6 with
+`executor died without phase=done`, which is preserved as interrupted evidence, not
+an infrastructure regression or a passing checkpoint. Its owned partial output was
+inspected and removed after the stop, before editing or starting a fresh build.
+
+Reason: code inspection found the same-flush hold returned `Nothing` after persisting
+a cancellation, suppressing `SessionQueueChanged` in the outer flush. The existing
+all-superseded branch returns `LateConfirmed` to publish bookkeeping without reporting
+a delivery. The hold now preserves that behavior. The original rewritten sweep test
+also asserts the emitted queue snapshot excludes the canceled check:
+
+- Test assertion committed/pushed first: `19f73e0e74eaa3ea7cb3cf82adaf5c3b54e01fe7`.
+- Fix committed/pushed next: `4c26df01c8bb96a88f5ab72bc7a89d7a266790d5`.
+
+This notification assertion was found by inspection and added after the measured S1
+red run; it has no separate measured pre-fix red claim. It is part of the unchanged
+11-test CP-2 roster and the full CP-3 sweep class. No assertion was loosened. The
+replacement CP-2/CP-3 run uses the next committed report tip as expected source SHA.
+The interrupted attempt is retained; no green proof is being repeated.
 
 With this report committed and pushed, run the already-built checkpoint tool:
 
