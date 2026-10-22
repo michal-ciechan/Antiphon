@@ -21,9 +21,9 @@ public class CheckCompactionCrashTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var seat = await CheckCompactionFixture.SeedConfirmedAsync(schema.ConnectionString);
-        var root = CheckCompactionFixture.CreateRoot();
-        var first = CheckCompactionFixture.Start(Request(seat, root, "sweep", "resume-committed"));
-        await CheckCompactionFixture.WaitForHeldAsync(root, 1, TimeSpan.FromSeconds(40));
+        await using var root = CheckCompactionFixture.CreateRoot();
+        await using var first = CheckCompactionFixture.Start(Request(seat, root.FullPath, "sweep", "resume-committed"));
+        await CheckCompactionFixture.WaitForHeldAsync(root.FullPath, 1, TimeSpan.FromSeconds(40));
         await using (var db = NewDb(schema.ConnectionString))
         {
             var episode = await db.CheckCompactionRecoveries.SingleAsync();
@@ -35,11 +35,11 @@ public class CheckCompactionCrashTests
                 .ShouldBe(2);
         }
 
-        await CheckCompactionFixture.DrainAsync(root, first.Process, first.Output, first.Error);
-        var second = CheckCompactionFixture.Start(Request(seat, root, "sweep", ""));
+        await CheckCompactionFixture.DrainAsync(root.FullPath, first.Process, first.Output, first.Error);
+        await using var second = CheckCompactionFixture.Start(Request(seat, root.FullPath, "sweep", ""));
         await second.Process.WaitForExitAsync();
         second.Process.ExitCode.ShouldBe(0, await second.Error);
-        File.ReadAllLines(Path.Combine(root, "resume-calls.txt")).Length.ShouldBe(1);
+        File.ReadAllLines(Path.Combine(root.FullPath, "resume-calls.txt")).Length.ShouldBe(1);
         await using var verify = NewDb(schema.ConnectionString);
         var stored = await verify.CheckCompactionRecoveries.SingleAsync();
         new[] { stored.AcceptedStartedAt, stored.ResumeAcceptedStartedAt }
@@ -48,7 +48,7 @@ public class CheckCompactionCrashTests
             .Distinct()
             .Count()
             .ShouldBe(2);
-        await CheckCompactionFixture.DrainAsync(root, second.Process, second.Output, second.Error);
+        await CheckCompactionFixture.DrainAsync(root.FullPath, second.Process, second.Output, second.Error);
     }
 
     [Test]
@@ -56,21 +56,21 @@ public class CheckCompactionCrashTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var seat = await CheckCompactionFixture.SeedConfirmedAsync(schema.ConnectionString);
-        var root = CheckCompactionFixture.CreateRoot();
+        await using var root = CheckCompactionFixture.CreateRoot();
         var workers = new[]
         {
-            CheckCompactionFixture.Start(Request(seat, root, "sweep", "before-stop-commit")),
-            CheckCompactionFixture.Start(Request(seat, root, "sweep", "before-stop-commit")),
+            CheckCompactionFixture.Start(Request(seat, root.FullPath, "sweep", "before-stop-commit")),
+            CheckCompactionFixture.Start(Request(seat, root.FullPath, "sweep", "before-stop-commit")),
         };
         var until = DateTime.UtcNow.AddSeconds(40);
-        while (Directory.GetFiles(root, "held-*").Length < 2 && DateTime.UtcNow < until)
+        while (Directory.GetFiles(root.FullPath, "held-*").Length < 2 && DateTime.UtcNow < until)
             await Task.Delay(25);
-        Directory.GetFiles(root, "held-*").Length.ShouldBe(2);
-        await File.WriteAllTextAsync(Path.Combine(root, "release"), "go");
+        Directory.GetFiles(root.FullPath, "held-*").Length.ShouldBe(2);
+        await File.WriteAllTextAsync(Path.Combine(root.FullPath, "release"), "go");
         foreach (var worker in workers)
         {
             await worker.Process.WaitForExitAsync();
-            await CheckCompactionFixture.DrainAsync(root, worker.Process, worker.Output, worker.Error);
+            await CheckCompactionFixture.DrainAsync(root.FullPath, worker.Process, worker.Output, worker.Error);
         }
 
         await using var db = NewDb(schema.ConnectionString);
@@ -83,10 +83,10 @@ public class CheckCompactionCrashTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var seat = await CheckCompactionFixture.SeedConfirmedAsync(schema.ConnectionString);
-        var root = CheckCompactionFixture.CreateRoot();
-        var worker = CheckCompactionFixture.Start(Request(seat, root, "sweep", "stop-committed"));
-        await CheckCompactionFixture.WaitForHeldAsync(root, 1, TimeSpan.FromSeconds(40));
-        await CheckCompactionFixture.DrainAsync(root, worker.Process, worker.Output, worker.Error);
+        await using var root = CheckCompactionFixture.CreateRoot();
+        await using var worker = CheckCompactionFixture.Start(Request(seat, root.FullPath, "sweep", "stop-committed"));
+        await CheckCompactionFixture.WaitForHeldAsync(root.FullPath, 1, TimeSpan.FromSeconds(40));
+        await CheckCompactionFixture.DrainAsync(root.FullPath, worker.Process, worker.Output, worker.Error);
         await using var db = NewDb(schema.ConnectionString);
         var episode = await db.CheckCompactionRecoveries.SingleAsync();
         var supervision = await db.AgentSupervisionStates.SingleAsync(s => s.AgentId == seat.AgentId);
@@ -120,17 +120,17 @@ public class CheckCompactionCrashTests
             await db.SaveChangesAsync();
         }
 
-        var root = CheckCompactionFixture.CreateRoot();
-        var killed = CheckCompactionFixture.Start(Request(seat, root, "sweep", "failure-committed"));
-        await CheckCompactionFixture.WaitForHeldAsync(root, 1, TimeSpan.FromSeconds(40));
-        await CheckCompactionFixture.DrainAsync(root, killed.Process, killed.Output, killed.Error);
-        var resumed = CheckCompactionFixture.Start(Request(seat, root, "sweep", ""));
+        await using var root = CheckCompactionFixture.CreateRoot();
+        await using var killed = CheckCompactionFixture.Start(Request(seat, root.FullPath, "sweep", "failure-committed"));
+        await CheckCompactionFixture.WaitForHeldAsync(root.FullPath, 1, TimeSpan.FromSeconds(40));
+        await CheckCompactionFixture.DrainAsync(root.FullPath, killed.Process, killed.Output, killed.Error);
+        await using var resumed = CheckCompactionFixture.Start(Request(seat, root.FullPath, "sweep", ""));
         await resumed.Process.WaitForExitAsync();
         resumed.Process.ExitCode.ShouldBe(0, await resumed.Error);
         await using var verify = NewDb(schema.ConnectionString);
         (await verify.SessionQueuedMessages.SingleAsync(m => m.Body.Contains(occupant.ToString()))).Status
             .ShouldBe(QueuedMessageStatus.Canceled);
-        await CheckCompactionFixture.DrainAsync(root, resumed.Process, resumed.Output, resumed.Error);
+        await CheckCompactionFixture.DrainAsync(root.FullPath, resumed.Process, resumed.Output, resumed.Error);
     }
 
     [Test]
@@ -188,17 +188,17 @@ public class CheckCompactionCrashTests
             await db.SaveChangesAsync();
         }
 
-        var root = CheckCompactionFixture.CreateRoot();
-        var request = Request(seat, root, "sweep", "failure-committed");
-        var killed = CheckCompactionFixture.Start(request);
-        await CheckCompactionFixture.WaitForHeldAsync(root, 1, TimeSpan.FromSeconds(40));
-        await CheckCompactionFixture.DrainAsync(root, killed.Process, killed.Output, killed.Error);
+        await using var root = CheckCompactionFixture.CreateRoot();
+        var request = Request(seat, root.FullPath, "sweep", "failure-committed");
+        await using var killed = CheckCompactionFixture.Start(request);
+        await CheckCompactionFixture.WaitForHeldAsync(root.FullPath, 1, TimeSpan.FromSeconds(40));
+        await CheckCompactionFixture.DrainAsync(root.FullPath, killed.Process, killed.Output, killed.Error);
         string body;
         await using (var db = NewDb(schema.ConnectionString))
             body = (await db.AgentTaskLandNotifications.SingleAsync(n => n.Kind == LandNotificationKind.DeliveryFailure)).Body;
-        var scan = CheckCompactionFixture.Start(new CrashWorkerRequest
+        await using var scan = CheckCompactionFixture.Start(new CrashWorkerRequest
         {
-            Root = root, Scenario = "scan", ConnectionString = schema.ConnectionString,
+            Root = root.FullPath, Scenario = "scan", ConnectionString = schema.ConnectionString,
             SessionId = parent.SessionId, AgentId = parent.AgentId,
         });
         var until = DateTime.UtcNow.AddSeconds(30);
@@ -216,9 +216,9 @@ public class CheckCompactionCrashTests
         }
 
         prompts.Count.ShouldBe(1);
-        await File.WriteAllTextAsync(Path.Combine(root, "stop"), "stop");
+        await File.WriteAllTextAsync(Path.Combine(root.FullPath, "stop"), "stop");
         await scan.Process.WaitForExitAsync();
-        await CheckCompactionFixture.DrainAsync(root, scan.Process, scan.Output, scan.Error);
+        await CheckCompactionFixture.DrainAsync(root.FullPath, scan.Process, scan.Output, scan.Error);
     }
 
     [Test]
@@ -266,10 +266,10 @@ public class CheckCompactionCrashTests
             await db.SaveChangesAsync();
         }
 
-        var root = CheckCompactionFixture.CreateRoot();
-        var worker = CheckCompactionFixture.Start(new CrashWorkerRequest
+        await using var root = CheckCompactionFixture.CreateRoot();
+        await using var worker = CheckCompactionFixture.Start(new CrashWorkerRequest
         {
-            Root = root, Scenario = "reconcile", ConnectionString = schema.ConnectionString,
+            Root = root.FullPath, Scenario = "reconcile", ConnectionString = schema.ConnectionString,
             SessionId = parent.SessionId, AgentId = parent.AgentId, NotificationId = noteId,
         });
         await worker.Process.WaitForExitAsync();
@@ -280,7 +280,7 @@ public class CheckCompactionCrashTests
             .Select(t => t.Text!)
             .ToListAsync();
         prompts.Count(text => text.Contains(body, StringComparison.Ordinal)).ShouldBe(1);
-        await CheckCompactionFixture.DrainAsync(root, worker.Process, worker.Output, worker.Error);
+        await CheckCompactionFixture.DrainAsync(root.FullPath, worker.Process, worker.Output, worker.Error);
     }
 
     [Test]
@@ -288,16 +288,16 @@ public class CheckCompactionCrashTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var seat = await CheckCompactionFixture.SeedConfirmedAsync(schema.ConnectionString);
-        var root = CheckCompactionFixture.CreateRoot();
-        var killed = CheckCompactionFixture.Start(Request(seat, root, "sweep", "before-audit-publish"));
-        await CheckCompactionFixture.WaitForHeldAsync(root, 1, TimeSpan.FromSeconds(40));
-        await CheckCompactionFixture.DrainAsync(root, killed.Process, killed.Output, killed.Error);
-        var recovered = CheckCompactionFixture.Start(Request(seat, root, "sweep", ""));
+        await using var root = CheckCompactionFixture.CreateRoot();
+        await using var killed = CheckCompactionFixture.Start(Request(seat, root.FullPath, "sweep", "before-audit-publish"));
+        await CheckCompactionFixture.WaitForHeldAsync(root.FullPath, 1, TimeSpan.FromSeconds(40));
+        await CheckCompactionFixture.DrainAsync(root.FullPath, killed.Process, killed.Output, killed.Error);
+        await using var recovered = CheckCompactionFixture.Start(Request(seat, root.FullPath, "sweep", ""));
         await recovered.Process.WaitForExitAsync();
         recovered.Process.ExitCode.ShouldBe(0, await recovered.Error);
-        var published = await File.ReadAllTextAsync(Path.Combine(root, $"{recovered.Process.Id}.episodes.txt"));
+        var published = await File.ReadAllTextAsync(Path.Combine(root.FullPath, $"{recovered.Process.Id}.episodes.txt"));
         published.ShouldContain(seat.EpisodeId.ToString());
-        await CheckCompactionFixture.DrainAsync(root, recovered.Process, recovered.Output, recovered.Error);
+        await CheckCompactionFixture.DrainAsync(root.FullPath, recovered.Process, recovered.Output, recovered.Error);
     }
 
     [Test]
@@ -335,7 +335,7 @@ public class CheckCompactionCrashTests
     private static CrashWorkerRequest Request(CheckCompactionFixture.ConfirmedSeat seat, string root, string scenario, string hold) =>
         new()
         {
-            Root = root,
+            Root = root.FullPath,
             Scenario = scenario,
             ConnectionString = seat.ConnectionString,
             Hold = hold,
