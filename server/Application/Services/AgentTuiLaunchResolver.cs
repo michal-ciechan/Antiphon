@@ -21,7 +21,15 @@ public sealed record ResolvedAgentTuiLaunch(
     Guid? ProfileRevisionId,
     string? EffectiveModelId,
     AgentTuiLaunchActivityMode ActivityMode,
-    LaunchModelArgument ModelArgument = LaunchModelArgument.None);
+    LaunchModelArgument ModelArgument = LaunchModelArgument.None)
+{
+    /// <summary>
+    /// CARD-0167 S3 repair 2: the project endpoint map this launch was resolved from (the funnel's
+    /// one read), so a caller that stamps a pool row records what the spec projected rather than
+    /// re-reading a map that may have changed since. Null when no ApiKeyEnvResolver is registered.
+    /// </summary>
+    public IReadOnlyDictionary<AgentKind, ProviderEndpoint>? ProjectProviderEndpoints { get; init; }
+}
 
 /// <summary>
 /// Selects the managed-profile resolver when it is available, retaining the configured-file
@@ -59,7 +67,19 @@ internal static class AgentLaunchResolution
         };
         options = await AttachProjectContextAsync(
             options, agent.BoardId, apiKeyEnvResolver, cancellationToken);
+        var resolved = await ResolveWithContextAsync(
+            agent, agentRegistry, launchResolver, options, cancellationToken, apiKeyEnvResolver);
+        return resolved with { ProjectProviderEndpoints = options.ProjectProviderEndpoints };
+    }
 
+    private static async Task<ResolvedAgentTuiLaunch> ResolveWithContextAsync(
+        Agent agent,
+        AgentRegistry agentRegistry,
+        AgentTuiLaunchResolver? launchResolver,
+        AgentLaunchOptions options,
+        CancellationToken cancellationToken,
+        ApiKeyEnvResolver? apiKeyEnvResolver)
+    {
         if (StandingSpecialistSeatPolicy.IsAlternate(agent))
         {
             if (agent.TuiProfileId is not null || agent.ModelId is not null || agent.SessionBackend != SessionBackend.PtyHost)
