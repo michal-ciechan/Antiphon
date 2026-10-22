@@ -354,8 +354,9 @@ Never relabel earlier receipts. Review writes no source/evidence; SourceLanding
 Mutation keeps its stricter external-evidence/no-commit exception.
 
 Ignored output does not dirty source; modified tracked evidence does. Publication
-and cleanup remain separate: the currently registered `RefusingEvidenceRetention`
-can preserve residue after publication. Completed-card whole-worktree removal is
+and cleanup remain separate: the registered `FileSystemEvidenceRetention` (CARD-1446)
+copies evidence-class ignored files, byte-verified, to `WorktreeCleanup:RetainedEvidenceRoot`
+before removal; a protected name still refuses and preserves residue after publication. Completed-card whole-worktree removal is
 CARD-1017, outside this policy; raw artifacts gain no new durability guarantee.
 CARD-1015's separately marked normal deletion commit is checked by
 `check-evidence-deletion.ps1` against the independently recorded start-tree rule
