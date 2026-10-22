@@ -28,6 +28,7 @@ public sealed class AgentTaskLandRemovalMatrixTests
     [Arguments(1, "metadata")]
     [Arguments(1, "registration")]
     [Arguments(1, "submodule")]
+    [Arguments(1, "nested-repository")]
     [Arguments(2, "staged")]
     [Arguments(2, "unstaged")]
     [Arguments(2, "untracked")]
@@ -40,6 +41,7 @@ public sealed class AgentTaskLandRemovalMatrixTests
     [Arguments(2, "metadata")]
     [Arguments(2, "registration")]
     [Arguments(2, "submodule")]
+    [Arguments(2, "nested-repository")]
     public async Task C448_V18_LowLevelRemovalRechecksAtBothContentBoundaries(int reading, string change)
     {
         await using var h = new LandingSafetyHarness();
@@ -60,8 +62,13 @@ public sealed class AgentTaskLandRemovalMatrixTests
             op.CommonDirectory, op.GitDirectory, source, op.TargetBeforeSha, op.Id, lease);
         var seen = 0;
         var fired = false;
-        string? file = null;
-        byte[]? index = null;
+        // A pre-existing clean submodule must stop at reading one, even when the
+        // mutation is armed for reading two. Capture its bytes before either hook.
+        string? file = change == "submodule" ? Path.Combine(h.Fixture.Source, "nested", "keep.txt") : null;
+        byte[]? fileBytes = file is null ? null : await File.ReadAllBytesAsync(file);
+        string? marker = change == "submodule" ? Path.Combine(h.Fixture.Source, "nested", ".git") : null;
+        byte[]? markerBytes = marker is null ? null : await File.ReadAllBytesAsync(marker);
+        var index = await File.ReadAllBytesAsync(Path.Combine(op.GitDirectory, "index"));
         var retainedSha = source;
         h.Fixture.Git.BeforeCommand = async (repo, command) =>
         {
@@ -86,10 +93,23 @@ public sealed class AgentTaskLandRemovalMatrixTests
                 case "registration":
                     await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "lock", h.Fixture.Source);
                     break;
+                case "nested-repository":
+                    // Disposable ignored output is admitted at reading one until
+                    // a real private repository appears at the requested boundary.
+                    var nested = Path.Combine(repo, "obj", "nested");
+                    Directory.CreateDirectory(nested);
+                    await h.Fixture.RequiredAsync(nested, "init", "--separate-git-dir", Path.Combine(h.Fixture.Root, "private-admin"));
+                    marker = Path.Combine(nested, ".git");
+                    markerBytes = await File.ReadAllBytesAsync(marker);
+                    file = Path.Combine(nested, "private.txt");
+                    fileBytes = [0, 1, 13, 10, 255, 42];
+                    await File.WriteAllBytesAsync(file, fileBytes);
+                    break;
                 default:
                     file = Path.Combine(repo, change switch { "staged" or "unstaged" => "keep.txt", "untracked" => "new.txt", "submodule" => "nested/keep.txt", _ => change });
                     Directory.CreateDirectory(Path.GetDirectoryName(file)!);
                     await File.WriteAllTextAsync(file, "new owner bytes\n");
+                    fileBytes = System.Text.Encoding.UTF8.GetBytes("new owner bytes\n");
                     if (change == "staged") await h.Fixture.RequiredAsync(repo, "add", "keep.txt");
                     break;
             }
@@ -98,15 +118,36 @@ public sealed class AgentTaskLandRemovalMatrixTests
         };
         h.Fixture.Git.Trace.Clear();
         var removed = await h.Services.GetRequiredService<IWorktreeManager>().TryRemoveAsync(request, CancellationToken.None);
-        fired.ShouldBeTrue();
+        fired.ShouldBe(change != "submodule" || reading == 1,
+            "an existing submodule is preserved before a second status hook can fire");
         removed.IsClean.ShouldBeFalse();
+        if (change == "submodule")
+        {
+            seen.ShouldBe(1, "an existing submodule refuses before the second inspection");
+            removed.Residue.ShouldBe(reading == 1 ? "source_dirty" : "ignored_content_preserved");
+        }
+        if (change == "nested-repository")
+        {
+            seen.ShouldBe(reading, "a newly introduced repository must refuse at its own content boundary");
+            removed.Residue.ShouldBe("ignored_content_preserved");
+            removed.Detail.ShouldNotBeNull().ShouldContain("obj/nested/");
+        }
+        if (marker is not null)
+        {
+            removed.Unregistered.ShouldBeFalse();
+            removed.DirectoryGone.ShouldBeFalse();
+            removed.BranchDeleted.ShouldBeFalse();
+            (await File.ReadAllBytesAsync(marker)).ShouldBe(markerBytes!);
+        }
         if (change is ".antiphon/report.md" or ".claude/settings.json" or "bin-private/settings.local.json")
             seen.ShouldBe(reading, "each ignored-content guard must refuse at its own boundary, before another source status read");
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove") || a[0] == "update-ref" && a.Contains("-d"));
         Directory.Exists(h.Fixture.Source).ShouldBeTrue();
         h.Fixture.Git.BeforeCommand = null;
-        if (file is not null) (await File.ReadAllTextAsync(file)).ShouldBe("new owner bytes\n");
-        (await File.ReadAllBytesAsync(Path.Combine(op.GitDirectory, "index"))).ShouldBe(index!);
+        if (file is not null) (await File.ReadAllBytesAsync(file)).ShouldBe(fileBytes!);
+        (await File.ReadAllBytesAsync(Path.Combine(op.GitDirectory, "index"))).ShouldBe(index);
+        LandingGit.ParseRegistrations(await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "list", "--porcelain", "-z"))
+            .ShouldContain(r => LandingGit.PathsEqual(r.Path, h.Fixture.Source));
         (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(retainedSha);
         (await h.OperationAsync())!.RemoteConfirmedAt.ShouldBe(op.RemoteConfirmedAt);
         await h.Fixture.AssertRemoteSourceAsync();
