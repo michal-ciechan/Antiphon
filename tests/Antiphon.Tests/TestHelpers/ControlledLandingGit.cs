@@ -412,6 +412,32 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
 
     public void DeleteRef(string name) => _refs.Remove(name);
 
+    public IReadOnlyDictionary<string, string> Refs => _refs;
+
+    private LandingGitResult ForEachRef(IReadOnlyList<string> args)
+    {
+        var prefixes = args.Skip(2).ToArray();
+        var lines = _refs.Where(p => prefixes.Any(x => p.Key.StartsWith(x, StringComparison.Ordinal)))
+            .OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key} {p.Value}\n");
+        return new(0, string.Concat(lines), "");
+    }
+
+    /// <summary>CARD-1432 D-3: one all-or-nothing <c>update-ref --stdin</c> delete transaction.</summary>
+    public async Task<LandingGitResult> UpdateRefsAsync(string repository, IReadOnlyList<(string Ref, string Oid)> deletes,
+        CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        string[] arguments = ["update-ref", "--stdin"];
+        Trace.Add(arguments);
+        Commands.Add((repository, arguments));
+        if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
+        var result = deletes.All(d => _refs.TryGetValue(d.Ref, out var have) && have == d.Oid)
+            ? new LandingGitResult(0, "", "") : new LandingGitResult(128, "", "git_exit_128");
+        if (result.Succeeded) foreach (var d in deletes) _refs.Remove(d.Ref);
+        if (AfterCommand is not null) await AfterCommand(repository, arguments, result);
+        return result;
+    }
+
     public void LockSource() => _sourceLocked = true;
 
     public void SetSourcePrunable() => _sourcePrunable = true;
@@ -483,6 +509,10 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
             ["ls-remote", "--refs", "--exit-code", var endpoint, var fullRef] =>
                 endpoint == _endpoint && (fullRef == TargetRef || fullRef == SourceRef),
             ["merge-base", "--is-ancestor", var source, var target] => LooksOid(source) && LooksOid(target),
+            // CARD-1432 S2: the land ref retention list of one task.
+            ["for-each-ref", "--format=%(refname) %(objectname)", var land, var progress] =>
+                land.StartsWith("refs/antiphon/land/", StringComparison.Ordinal) && land.EndsWith('/')
+                && progress.StartsWith("refs/antiphon/progress/", StringComparison.Ordinal) && progress.EndsWith('/'),
             ["update-ref", var name, var sha, var expected] => IsFullRef(name) && LooksOid(sha) && LooksOid(expected),
             ["update-ref", "--no-deref", "-d", var name, var expected] => IsFullRef(name) && LooksOid(expected),
             ["rebase", "--abort"] => true,
@@ -538,6 +568,7 @@ internal sealed class ControlledLandingGit : ILandingGit, IDisposable
         if (args[0] == "rev-parse") return RevParse(repository, args);
         if (args[0] == "symbolic-ref") return SymbolicRef(repository, args);
         if (args[0] == "show-ref") return ShowRef(args);
+        if (args[0] == "for-each-ref") return ForEachRef(args);
         if (args[0] == "status") return new(0, StatusOutput(IsSource(repository)), "");
         if (args[0] == "ls-files") return new(0, string.Join('\0', IgnoredPaths()) + (IgnoredPaths().Length == 0 ? "" : "\0"), "");
         if (args[0] == "worktree" && args.Count > 1 && args[1] == "list") return WorktreeList();
