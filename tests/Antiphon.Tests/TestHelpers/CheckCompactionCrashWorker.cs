@@ -27,13 +27,17 @@ internal static class CheckCompactionCrashWorker
     {
         var request = JsonSerializer.Deserialize<CrashWorkerRequest>(encoded)
             ?? throw new InvalidOperationException("Missing crash worker request.");
-        var owned = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, ".antiphon", "acceptance", "card-0079"))
-            + Path.DirectorySeparatorChar;
-        if (!Path.GetFullPath(request.Root).StartsWith(owned, StringComparison.OrdinalIgnoreCase)
-            || !File.Exists(Path.Combine(request.Root, "owner")))
+        // CARD-1494: the parent names the owned temp prefix; the root must be one fixture-made
+        // directory directly under it, never a path relative to the build output.
+        var owned = CheckCompactionFixture.OwnedPrefix;
+        var root = Path.GetFullPath(request.Root);
+        if (!string.Equals(request.OwnedRoot, owned, StringComparison.Ordinal)
+            || !root.StartsWith(owned, StringComparison.Ordinal)
+            || root.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], owned.Length) >= 0
+            || !File.Exists(Path.Combine(root, "owner")))
             throw new InvalidOperationException("Unowned compaction crash worker.");
 
-        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        using var budget = new CancellationTokenSource(CheckCompactionFixture.ChildBudget);
         switch (request.Scenario)
         {
             case "sweep":
@@ -255,6 +259,7 @@ internal static class CheckCompactionCrashWorker
 internal sealed class CrashWorkerRequest
 {
     public string Root { get; set; } = "";
+    public string OwnedRoot { get; set; } = "";
     public string Scenario { get; set; } = "";
     public string ConnectionString { get; set; } = "";
     public string Hold { get; set; } = "";

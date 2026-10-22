@@ -38,7 +38,7 @@ public partial class CheckNoteDeliveryHandoffTests
             EpisodeId = seeded.EpisodeId, CheckedTaskId = seeded.CheckedTaskId, RunId = seeded.RunId,
             CheckNumber = 1, Body = seeded.Body, Accepted = seeded.Generation,
         });
-        await CheckCompactionFixture.WaitForHeldAsync(root.FullPath, 1, TimeSpan.FromSeconds(40));
+        await producer.WaitForHeldAsync();
         var receipt = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root.FullPath, "produced.json")));
         receipt.RootElement.GetProperty("mvid").GetGuid()
             .ShouldBe(typeof(CheckCompactionCrashWorker).Assembly.ManifestModule.ModuleVersionId);
@@ -50,38 +50,28 @@ public partial class CheckNoteDeliveryHandoffTests
             (await db.AgentTasks.SingleAsync(t => t.Id == seeded.CheckedTaskId)).CheckCount.ShouldBe(beforeChecks);
         }
 
-        await CheckCompactionFixture.DrainAsync(root.FullPath, producer.Process, producer.Output, producer.Error);
+        await producer.DrainAsync();
         await using var scanner = CheckCompactionFixture.Start(new CrashWorkerRequest
         {
             Root = root.FullPath, Scenario = "scan", ConnectionString = schema.ConnectionString,
             SessionId = parent.SessionId, AgentId = parent.AgentId,
         });
+        await scanner.WaitForReadyAsync();
         if (busy)
         {
-            await Task.Delay(500);
             await using var mid = NewDb(schema.ConnectionString);
             (await MatchingPromptsAsync(mid, parent.SessionId, seeded.Body)).Count.ShouldBe(0);
             await BridgeQueueHarness.InsertEntryAsync(parent.SessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn",
                 timestamp: DateTime.UtcNow, connectionString: schema.ConnectionString);
         }
 
-        var prompts = new List<string>();
-        var until = DateTime.UtcNow.AddSeconds(25);
-        while (DateTime.UtcNow < until && prompts.Count == 0)
-        {
-            await using var db = NewDb(schema.ConnectionString);
-            prompts = await MatchingPromptsAsync(db, parent.SessionId, seeded.Body);
-            if (prompts.Count == 0)
-                await Task.Delay(100);
-        }
+        var prompts = await WaitForPromptAsync(scanner, schema.ConnectionString, parent.SessionId, seeded.Body);
 
         prompts.Count.ShouldBe(1);
         await using var verify = NewDb(schema.ConnectionString);
         (await verify.AgentTasks.CountAsync(t => t.Role == AgentTaskRole.Check)).ShouldBe(beforeRuns);
         (await verify.AgentTasks.SingleAsync(t => t.Id == seeded.CheckedTaskId)).CheckCount.ShouldBe(beforeChecks);
-        await File.WriteAllTextAsync(Path.Combine(root.FullPath, "stop"), "stop");
-        await scanner.Process.WaitForExitAsync();
-        await CheckCompactionFixture.DrainAsync(root.FullPath, scanner.Process, scanner.Output, scanner.Error);
+        await scanner.StopAsync();
     }
 
     [Test]
@@ -219,23 +209,14 @@ public partial class CheckNoteDeliveryHandoffTests
             Root = root.FullPath, Scenario = "scan", ConnectionString = schema.ConnectionString,
             SessionId = parent.SessionId, AgentId = parent.AgentId,
         });
-        var prompts = new List<string>();
-        var until = DateTime.UtcNow.AddSeconds(25);
-        while (DateTime.UtcNow < until && prompts.Count == 0)
-        {
-            await using var db = NewDb(schema.ConnectionString);
-            prompts = await MatchingPromptsAsync(db, parent.SessionId, body);
-            if (prompts.Count == 0)
-                await Task.Delay(100);
-        }
+        await scanner.WaitForReadyAsync();
+        var prompts = await WaitForPromptAsync(scanner, schema.ConnectionString, parent.SessionId, body);
 
         prompts.Count.ShouldBe(1);
         await using var verify = NewDb(schema.ConnectionString);
         (await verify.LegacyCheckNotePublications.SingleAsync()).State.ShouldBe(LegacyCheckNoteState.Produced);
         (await verify.AgentTasks.CountAsync(t => t.Role == AgentTaskRole.Check)).ShouldBe(1);
-        await File.WriteAllTextAsync(Path.Combine(root.FullPath, "stop"), "stop");
-        await scanner.Process.WaitForExitAsync();
-        await CheckCompactionFixture.DrainAsync(root.FullPath, scanner.Process, scanner.Output, scanner.Error);
+        await scanner.StopAsync();
     }
 
     [Test]
@@ -298,22 +279,13 @@ public partial class CheckNoteDeliveryHandoffTests
             Root = root.FullPath, Scenario = "scan", ConnectionString = schema.ConnectionString,
             SessionId = parent.SessionId, AgentId = parent.AgentId, ChecksDisabled = true,
         });
-        var prompts = new List<string>();
-        var until = DateTime.UtcNow.AddSeconds(25);
-        while (DateTime.UtcNow < until && prompts.Count == 0)
-        {
-            await using var db = NewDb(schema.ConnectionString);
-            prompts = await MatchingPromptsAsync(db, parent.SessionId, body);
-            if (prompts.Count == 0)
-                await Task.Delay(100);
-        }
+        await scanner.WaitForReadyAsync();
+        var prompts = await WaitForPromptAsync(scanner, schema.ConnectionString, parent.SessionId, body);
 
         prompts.Count.ShouldBe(1);
         await using var verify = NewDb(schema.ConnectionString);
         (await verify.AgentTasks.CountAsync(t => t.Role == AgentTaskRole.Check)).ShouldBe(0);
-        await File.WriteAllTextAsync(Path.Combine(root.FullPath, "stop"), "stop");
-        await scanner.Process.WaitForExitAsync();
-        await CheckCompactionFixture.DrainAsync(root.FullPath, scanner.Process, scanner.Output, scanner.Error);
+        await scanner.StopAsync();
     }
 
     private static async Task AssertLegacyReceiptAsync(
@@ -448,6 +420,33 @@ public partial class CheckNoteDeliveryHandoffTests
             episode.State.ShouldBe(CheckCompactionRecoveryState.AwaitingCheck);
             (await db.AgentTaskLandNotifications.SingleAsync(n => n.Id == noteId)).ConfirmedAt.ShouldBeNull();
         }
+    }
+
+    // CARD-1494: wait for the prompt after the scanner is ready; on timeout say whether delivery
+    // was stuck or slow instead of only that no prompt arrived.
+    private static async Task<List<string>> WaitForPromptAsync(
+        CrashWorker scanner, string connectionString, Guid sessionId, string body)
+    {
+        var prompts = new List<string>();
+        await scanner.WaitUntilAsync(async () =>
+        {
+            await using var db = NewDb(connectionString);
+            prompts = await MatchingPromptsAsync(db, sessionId, body);
+            return prompts.Count > 0;
+        }, CheckCompactionFixture.PromptBudget, "the note prompt", () => DescribeDeliveryAsync(connectionString, sessionId));
+        return prompts;
+    }
+
+    private static async Task<string> DescribeDeliveryAsync(string connectionString, Guid sessionId)
+    {
+        await using var db = NewDb(connectionString);
+        var notes = (await db.AgentTaskLandNotifications.AsNoTracking().ToListAsync())
+            .Select(n => $"notification {n.Id} {n.Kind} {n.State} next {n.NextAttemptAt:O} attempts {n.EnqueueAttempts} error {n.LastErrorCode}");
+        var queued = (await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == sessionId).ToListAsync())
+            .Select(m => $"queued {m.Id} {m.Status} attempts {m.DeliveryAttempts} note {m.SourceLandNotificationId}");
+        var legacy = (await db.LegacyCheckNotePublications.AsNoTracking().ToListAsync())
+            .Select(p => $"legacy {p.Id} {p.State} next {p.NextAttemptAt:O}");
+        return string.Join(Environment.NewLine, notes.Concat(queued).Concat(legacy));
     }
 
     private static async Task<List<string>> MatchingPromptsAsync(AppDbContext db, Guid sessionId, string body)

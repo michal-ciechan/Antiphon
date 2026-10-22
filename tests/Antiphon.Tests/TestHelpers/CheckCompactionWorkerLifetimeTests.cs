@@ -57,7 +57,7 @@ public class CheckCompactionWorkerLifetimeTests
                 while (Directory.GetFiles(root.FullPath, marker).Length == 0)
                 {
                     if (worker.Process.HasExited)
-                        throw new InvalidOperationException($"child exited before {marker}: {await worker.Error}");
+                        throw new InvalidOperationException($"child exited before {marker}: {worker.Error}");
                     (DateTime.UtcNow < until).ShouldBeTrue($"child never wrote {marker}");
                     await Task.Delay(50);
                 }
