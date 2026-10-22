@@ -37,6 +37,11 @@
     A list or detail that cannot be read, or more candidates than the cap, is INVALID unless a rollback
     trigger already fired: never a silent zero.
 
+    Detail cap: -MaxLandDetailRequests (50) bounds the detail reads per measurement. It is sized for the default
+    30-minute window, where the board lists a handful of land candidates; at the observed dispatch rate it only
+    bites with -WindowMinutes around 8 hours or more (CARD-1423 A3). Then raise the cap or shorten the window.
+    Over the cap is INVALID with that remedy in the UNREADABLE line, never a partial count.
+
     Read-only: GET requests and TCP handshakes only. It sends no delegation token: the task detail GET writes
     poll bookkeeping only for a token-bearing caller, so never add auth headers. It never writes to the
     database, restarts anything or changes a setting. The only files it writes are its JSON baseline and result (default
@@ -526,7 +531,7 @@ function Read-CutoverLandDetails {
     $candidates = @(@($Items) | Where-Object { Test-CutoverLandCandidate -Item $_ })
     $details = New-Object System.Collections.ArrayList
     if ($candidates.Count -gt $MaxRequests) {
-        return [pscustomobject]@{ Ok = $false; Candidates = $candidates.Count; Details = @(); Reason = ('{0} tasks with a land attempt exceed -MaxLandDetailRequests {1}; failed lands not counted' -f $candidates.Count, $MaxRequests) }
+        return [pscustomobject]@{ Ok = $false; Candidates = $candidates.Count; Details = @(); Reason = ('{0} tasks with a land attempt exceed -MaxLandDetailRequests {1} (sized for the default 30-minute window; it bites with -WindowMinutes around 8 hours or more: raise the cap or shorten the window); failed lands not counted' -f $candidates.Count, $MaxRequests) }
     }
     foreach ($c in $candidates) {
         $id = [string](Get-CutoverProperty -Object $c -Name 'id')
