@@ -7,21 +7,27 @@ namespace Antiphon.Server.Infrastructure.Agents;
 /// <summary>
 /// CARD-0328 Hangfire entry point. Report-only until <c>WorktreeResidue:Execute</c> is flipped.
 /// Automatic retry is off so a git/database outage produces one Failed dashboard entry.
+/// CARD-1446 D-1: the abandoned-landing reconciler runs first on every daily run, whatever
+/// <c>Execute</c> says (a state correction, not a deletion); its failure never fails the sweep.
 /// </summary>
 public sealed class WorktreeResidueJob
 {
     private readonly WorktreeResidueSweepService _service;
     private readonly ILogger<WorktreeResidueJob> _logger;
+    private readonly AbandonedLandingReconciler? _reconciler;
 
-    public WorktreeResidueJob(WorktreeResidueSweepService service, ILogger<WorktreeResidueJob> logger)
+    public WorktreeResidueJob(WorktreeResidueSweepService service, ILogger<WorktreeResidueJob> logger,
+        AbandonedLandingReconciler? reconciler = null)
     {
         _service = service;
         _logger = logger;
+        _reconciler = reconciler;
     }
 
     [AutomaticRetry(Attempts = 0)]
     public async Task<WorktreeResidueResult> ExecuteAsync(CancellationToken cancellationToken)
     {
+        await ReconcileAbandonedLandingsAsync(cancellationToken);
         try
         {
             var result = await _service.RunAsync(cancellationToken);
@@ -60,6 +66,24 @@ public sealed class WorktreeResidueJob
         {
             _logger.LogError(ex, "Worktree residue sweep failed");
             throw;
+        }
+    }
+
+    private async Task ReconcileAbandonedLandingsAsync(CancellationToken cancellationToken)
+    {
+        if (_reconciler is null) return;
+        try
+        {
+            var refused = await _reconciler.RunAsync(cancellationToken);
+            _logger.LogInformation("Abandoned landing reconciler refused {Refused} operation(s)", refused);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Abandoned landing reconciler failed; the residue sweep still runs");
         }
     }
 }

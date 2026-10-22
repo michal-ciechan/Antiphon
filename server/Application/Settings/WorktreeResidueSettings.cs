@@ -40,6 +40,13 @@ public sealed class WorktreeResidueSettings
     /// <summary>Shared action budget across both cleanup lanes. Default 25.</summary>
     public int MaxActionsPerRun { get; set; } = 25;
 
+    /// <summary>
+    /// CARD-1446 D-1. An Active, unpublished landing in a resumable phase whose task is terminal,
+    /// with no pending request and no update for this many days, is marked Refused by the daily
+    /// job. 0 disables the reconciler. Default 7.
+    /// </summary>
+    public int AbandonedLandingDays { get; set; } = 7;
+
     /// <summary>Maximum candidate rows returned in one run-result page.</summary>
     public int RunResultPageSize { get; set; } = 50;
 

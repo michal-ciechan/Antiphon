@@ -591,6 +591,7 @@ try
     builder.Services.AddScoped<ZombieCensusService>();
     builder.Services.AddScoped<ZombieCensusJob>();
     builder.Services.AddScoped<WorktreeResidueSweepService>();
+    builder.Services.AddScoped<AbandonedLandingReconciler>();
     builder.Services.AddScoped<WorktreeResidueJob>();
     builder.Services.AddScoped<RunnerSlotReconcileJob>();
     builder.Services.AddScoped<RunnerRetireJob>();
