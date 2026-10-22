@@ -8,9 +8,9 @@ CARD-1432 Debug e57ff1e3 was re-derived fresh from the database and `git worktre
 
 | Measure | Before | After |
 |---|---|---|
-| Registered worktrees of `C:\src\Antiphon` | 1,161 | @@REG_AFTER@@ |
+| Registered worktrees of `C:\src\Antiphon` | 1,161 | 109 (the 104 kept plus 5 cut by new tasks since; 0 prunable) |
 | Local branches (`refs/heads`) | 2,647 + 979 deleted | 2,647 |
-| Free space on C: | 244.72 GB | @@FREE_AFTER@@ |
+| Free space on C: | 244.72 GB | 463.11 GB (about 218 GB freed) |
 
 - **Removed: 1,057 worktrees** (961 Succeeded, 48 Failed, 40 Canceled task worktrees, plus 8
   worktrees with no task row that were pushed and clean).
@@ -67,7 +67,7 @@ Scripts are kept outside the repository (task scratchpad); the procedure:
    lease and repository mutation lease), run `git worktree prune -v` (1,057 registrations, all
    the moved ones) and one `git update-ref --stdin` transaction of 979 branch deletions with
    expected old values. Leases held **7.5 s** in total.
-4. **Delete the moved directories** with no lease held.
+4. **Delete the moved directories** with no lease held (about 50 minutes, disk-bound; the trash directory was then removed).
 
 No `git gc` was run. No commit/ref of an open or protected task was touched.
 
