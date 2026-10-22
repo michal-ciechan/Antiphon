@@ -8,9 +8,11 @@ S2 implements D-2/D-4/D-7: evaluated ProjectReference closure, tracked not-built
 inventory, future glob reachability and resolved import trust. The seven landed
 S1 methods plus three S2 methods make CP-2 ten results. S1's linked-item assertion
 continues to count its six item refusals separately from the new glob diagnostics.
-The Final profile also requires the entire Unit lane, using CP-2's build. The
-affected integration class is LandGraphEvaluationTests in its entirety. No other
-integration class or production land behavior changes; wiring is S5.
+The caller's refinement in input e4a01f5a-5ae6-48a4-aad8-9fbc326759e3 replaces
+the original whole-Unit requirement: the closed S2 checkpoint list is the entire
+verification scope, and the Unit lane is deferred. The affected integration class
+is LandGraphEvaluationTests in its entirety. No other integration class or
+production land behavior changes; wiring is S5.
 
 V-5 includes empty future Markdown globs, ancestor globs, wildcard extensions,
 case-insensitive suffixes, no-extension patterns, ignored excludes and safe JSON,
@@ -28,18 +30,24 @@ Unlisted execution: bootstrap the checkpoint tool once through build-slot.ps1;
 run CP-2 on the committed tests before implementing S2 as the required red witness.
 The three new methods must fail for missing S2 behavior, not fixture/build errors.
 Then run the closed final list below on the committed implementation/report tip.
+The previous aggregate run had a passing CP-2 but an incomplete Unit row and an
+invalid aggregate receipt. Run CP-2 once on the refinement/report commit to obtain
+the missing standalone qualified receipt. Do not rerun the Unit lane or any suite.
+Rebuilding the previously cleaned checkpoint-tool bootstrap is an unlisted build
+needed to execute that row; it must also take a build slot.
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1483-s2/` | c1483-s2 | `/*/*/LandGraphEvaluationTests/(C1483_S1_*)\|(C1483_S2_*)` | V-1..V-7, V-1a V-1b V-3a | exactly 10 executed, 0 failed/skipped | 10 | 15 |
-| CP-U | S2 | CP-2 | c1483-s2-unit | `/*/*/*/*[Category=Unit]` | Final Unit lane | all Unit cases, 0 failed/skipped | 1 | 5 |
 
 ### Cost
 
-Ordinary floor: 20 minutes including an isolated build. The red witness needs one
-additional isolated build. No whole-assembly runs and no proof repetitions planned.
+Ordinary floor: 15 minutes including an isolated build. The red witness needs one
+additional isolated build. One final CP-2 execution replaces the invalid aggregate
+certificate; no repeat-proof run follows a qualified green. Historical Unit cost
+and failure evidence remain in the Code report, with the lane deferred, never passed.
 
 ### Pending SourceLanding Mutation
 
