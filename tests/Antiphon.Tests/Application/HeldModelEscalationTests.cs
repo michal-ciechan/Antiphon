@@ -109,7 +109,7 @@ public class HeldModelEscalationTests
             Title = "Held escalation",
             Goal = "Seeded goal.",
             Kind = AgentTaskKind.Worker,
-            Role = AgentTaskRole.Debug,
+            Role = AgentTaskRole.Custom,
             AgentKind = AgentKind.ClaudeCode,
             ModelLevel = level,
             Workspace = WorkspaceMode.Shared,
