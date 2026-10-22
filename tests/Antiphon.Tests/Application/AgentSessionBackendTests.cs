@@ -532,6 +532,25 @@ public class AgentSessionBackendTests
             await AgentControlServiceIntegrationTests.MarkSessionEndedAsync(
                 first.PersistentSessionId!, SessionStatus.Failed);
             await SetPoolStampAsync(agent.Id, stale, makePool: false);
+            // A pool row's session has no standing owner; the resume proves ownership through a
+            // task this delegate ran on that session (FindResumableSessionAsync's ownedHistory).
+            await using (var db = CreateContext())
+            {
+                var ranId = Guid.NewGuid();
+                db.AgentTasks.Add(new AgentTask
+                {
+                    Id = ranId,
+                    RootTaskId = ranId,
+                    Title = "c0167 ran on this session",
+                    Goal = "ownership evidence for the resume arm",
+                    WorkingDirectory = workspace,
+                    AgentId = agent.Id,
+                    AgentSessionId = Guid.Parse(first.PersistentSessionId!),
+                    Status = AgentTaskStatus.Succeeded,
+                    CreatedAt = DateTime.UtcNow,
+                });
+                await db.SaveChangesAsync();
+            }
             using var scope = harness.Provider.CreateScope();
             var control = scope.ServiceProvider.GetRequiredService<AgentControlService>();
             var second = await control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
