@@ -1173,8 +1173,9 @@ harness case and, in-process on `C545World`, the watchdog's carried CARD-0544 no
 ### Windows rc watchdogs and gate lanes (2026-10-18/19)
 
 **Windows rc profile watchdogs.** `tests/test-execution-policy.json` `watchdogs` are `antiphon`
-3600000 ms, `session-runner` 1800000 ms and `e2e` 7200000 ms. Each suite is one chunk and one
-watchdog, and the kill deletes the process before TUnit writes its TRX, so a timed-out suite is
+3600000 ms, `session-runner` 1800000 ms and `e2e` 7200000 ms. The cap applies per generated
+launch; profile-aware rc suites can have multiple class/method launch groups. A watchdog kill
+deletes that launch's process before TUnit writes its TRX, so a timed-out launch is
 `missing-trx` / `coverageComplete=false` whatever its tests did. The numbers come from the
 2026-10-18/19 gate logs. Session-runner went from 20 to 30 minutes because the expanded suite
 (about 1,550 UIDs) was still admitting its last test at the 20-minute kill while its longest
@@ -1188,6 +1189,14 @@ treat a `Duration` as returned. Records: [watchdog sizing](investigations/2026-1
 on `feat/card-task-210e914f`, [hangs](investigations/2026-10-19-rc-windows-hangs.md) on
 `feat/card-task-5b8ad483`, [live reds](investigations/2026-10-19-rc-windows-live-reds.md) on
 `feat/card-task-93971d09`.
+
+The [2026-10-22 group-10 remeasurement](investigations/2026-10-22-rc-group-10-timeout-debug.md)
+corrects the earlier single-line diagnostic interpretation: group 10 kept completing tests
+until its watchdog killed the underpriced launch. The
+[measured-budget plan](superpowers/plans/2026-10-22-card-1404-group-10-measured-budget-plan.md)
+prices its two complete classes from the slower complete sample and labels Publication's
+partial-sample price as provisional `pace`. Existing method splitting gives seven launches
+under the unchanged 60-minute cap. Historical failures and missing-TRX coverage remain incomplete.
 
 **Gate lanes run beside other work on server2.** The Linux rc roster shares the host with Code,
 Review and other gate tasks, and must tolerate that: run it in its own detached worktree and
