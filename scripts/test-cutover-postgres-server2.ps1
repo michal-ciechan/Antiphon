@@ -334,6 +334,28 @@ function Wait-C1407Api {
     return $ready
 }
 
+function Get-C1407ScriptSha {
+    $path = Join-Path $here 'cutover-postgres-server2.ps1'
+    return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Get-C1407Token {
+    # CARD-1417 (Review d6b441d2): the challenge token the cutover preview prints, computed here
+    # independently so the table can name yesterday's, a stale, and another repository's token.
+    # First 8 hex characters of SHA-256 over the UTF-8 text
+    # <machine name> LF <UTC date yyyy-MM-dd> LF <script SHA-256 lowercase hex> LF <resolved -Repository>.
+    param([string]$Repository = '', [int]$DayOffset = 0)
+    $repo = ''
+    if (-not [string]::IsNullOrWhiteSpace($Repository)) {
+        $repo = [System.IO.Path]::GetFullPath($Repository).TrimEnd([char]47, [char]92)
+    }
+    $day = [datetime]::UtcNow.Date.AddDays($DayOffset).ToString('yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture)
+    $text = [Environment]::MachineName + "`n" + $day + "`n" + (Get-C1407ScriptSha) + "`n" + $repo
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $hash = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text)) } finally { $sha.Dispose() }
+    return [System.BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant().Substring(0, 8)
+}
+
 function New-C1407WindowArgs {
     param(
         [string]$ApiBase,
@@ -352,7 +374,7 @@ function New-C1407WindowArgs {
     $repo = $Repository
     if ([string]::IsNullOrWhiteSpace($repo)) { $repo = Split-Path $here -Parent }
     $windowArgs = @(
-        '-Execute', '-ConfirmWindow',
+        '-Execute', '-ConfirmWindow', '-ConfirmToken', (Get-C1407Token -Repository $repo),
         '-ApiBase', $ApiBase,
         '-SnapshotReference', $Snapshot,
         '-DrillRecord', $Drill,
@@ -631,12 +653,18 @@ function Invoke-C1407Cutover {
         [string[]]$HostArguments = @(),
         [string]$FileSwitch = '-File',
         [switch]$AsCommand,
-        [string]$WorkingDirectory = ''
+        [string]$CommandSwitch = '-Command',
+        [string]$WorkingDirectory = '',
+        [string]$ScriptPath = '',
+        [string[]]$StdinLines = @()
     )
     # -HostArguments are pwsh's own options placed before the -File pair; -FileSwitch is the spelling
     # of that switch (pwsh also accepts -f, --File and /File); -AsCommand starts the script through
-    # -Command text instead of a -File pair; -WorkingDirectory is the caller's location for the launch.
-    $scriptPath = Join-Path $here 'cutover-postgres-server2.ps1'
+    # command text instead of a -File pair, with -CommandSwitch as that option's spelling;
+    # -WorkingDirectory is the caller's location for the launch; -ScriptPath replaces the cutover
+    # script with another file (a wrapper); -StdinLines are fed to the child's stdin (a -NoExit prompt).
+    $scriptPath = $ScriptPath
+    if ([string]::IsNullOrEmpty($scriptPath)) { $scriptPath = Join-Path $here 'cutover-postgres-server2.ps1' }
     $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
     $prev = $env:PATH
     $pushed = $false
@@ -649,10 +677,14 @@ function Invoke-C1407Cutover {
             $pushed = $true
         }
         $launch = @('-NoProfile') + @($HostArguments)
-        if ($AsCommand) { $launch += @('-Command', '&', ("'" + $scriptPath + "'")) }
+        if ($AsCommand) { $launch += @($CommandSwitch, '&', ("'" + $scriptPath + "'")) }
         else { $launch += @($FileSwitch, $scriptPath) }
         $launch += @($Arguments)
-        $output = @(& $pwsh @launch 2>&1 | ForEach-Object { $_.ToString() })
+        if ($StdinLines.Count -gt 0) {
+            $output = @($StdinLines | & $pwsh @launch 2>&1 | ForEach-Object { $_.ToString() })
+        } else {
+            $output = @(& $pwsh @launch 2>&1 | ForEach-Object { $_.ToString() })
+        }
         return [pscustomobject]@{
             ExitCode = $LASTEXITCODE
             Text     = ($output -join "`n")
@@ -784,7 +816,7 @@ function Test-W2 {
 function Test-W3 {
     $fake = New-C1407FakeBin
     try {
-        $r = Invoke-C1407Cutover -Fake $fake -Arguments @('-Execute', '-ConfirmWindow', '-ApiBase', $script:ClosedApi)
+        $r = Invoke-C1407Cutover -Fake $fake -Arguments @('-Execute', '-ConfirmWindow', '-ConfirmToken', (Get-C1407Token), '-ApiBase', $script:ClosedApi)
         $ok = ($r.ExitCode -ne 0) -and
             ($r.Text -match 'snapshot reference') -and
             [string]::IsNullOrWhiteSpace($r.Trace) -and
@@ -804,7 +836,7 @@ function Test-W4 {
     $snap = New-C1407File -Body 'snapshot-reference'
     try {
         $r = Invoke-C1407Cutover -Fake $fake -Arguments @(
-            '-Execute', '-ConfirmWindow', '-ApiBase', $script:ClosedApi,
+            '-Execute', '-ConfirmWindow', '-ConfirmToken', (Get-C1407Token), '-ApiBase', $script:ClosedApi,
             '-SnapshotReference', $snap
         )
         $ok = ($r.ExitCode -ne 0) -and
@@ -920,15 +952,15 @@ function Test-W9 {
     $long = New-C1407Drill -DumpRestoreSec 700 -CopySec 10
     try {
         $latency = Invoke-C1407Cutover -Fake $fake -Arguments @(
-            '-Execute', '-ConfirmWindow', '-ApiBase', $script:ClosedApi,
+            '-Execute', '-ConfirmWindow', '-ConfirmToken', (Get-C1407Token), '-ApiBase', $script:ClosedApi,
             '-SnapshotReference', $snap, '-DrillRecord', $slow
         )
         $notPassed = Invoke-C1407Cutover -Fake $fake -Arguments @(
-            '-Execute', '-ConfirmWindow', '-ApiBase', $script:ClosedApi,
+            '-Execute', '-ConfirmWindow', '-ConfirmToken', (Get-C1407Token), '-ApiBase', $script:ClosedApi,
             '-SnapshotReference', $snap, '-DrillRecord', $failed
         )
         $envelope = Invoke-C1407Cutover -Fake $fake -Arguments @(
-            '-Execute', '-ConfirmWindow', '-ApiBase', $script:ClosedApi,
+            '-Execute', '-ConfirmWindow', '-ConfirmToken', (Get-C1407Token), '-ApiBase', $script:ClosedApi,
             '-SnapshotReference', $snap, '-DrillRecord', $long
         )
         $ok = ($latency.ExitCode -ne 0) -and ($latency.Text -match 'latency') -and
@@ -1051,26 +1083,34 @@ function Test-W11 {
 }
 
 function Test-W12 {
+    # An abbreviation never opens the window. -Confirm and -Con are ambiguous between -ConfirmWindow
+    # and -ConfirmToken (a binder error before the script runs); -ConfirmW binds the switch but has
+    # no token (CARD-1417, Review d6b441d2); the exact switch plus the preview's token opens it.
     $fake = New-C1407FakeBin
     try {
         $confirm = Invoke-C1407Cutover -Fake $fake -Arguments @('-Execute', '-Confirm', '-ApiBase', $script:ClosedApi)
         $con = Invoke-C1407Cutover -Fake $fake -Arguments @('-Execute', '-Con', '-ApiBase', $script:ClosedApi)
-        $full = Invoke-C1407Cutover -Fake $fake -Arguments @('-Execute', '-ConfirmWindow', '-ApiBase', $script:ClosedApi)
+        $short = Invoke-C1407Cutover -Fake $fake -Arguments @('-Execute', '-ConfirmW', '-ApiBase', $script:ClosedApi)
+        $full = Invoke-C1407Cutover -Fake $fake -Arguments @('-Execute', '-ConfirmWindow', '-ConfirmToken', (Get-C1407Token), '-ApiBase', $script:ClosedApi)
         $confirmOk = ($confirm.ExitCode -ne 0) -and
-            ($confirm.Text.IndexOf('REFUSED: -Execute requires -ConfirmWindow.', [System.StringComparison]::Ordinal) -ge 0) -and
             [string]::IsNullOrWhiteSpace($confirm.Trace) -and
-            ($confirm.Text.IndexOf('snapshot reference', [System.StringComparison]::Ordinal) -lt 0)
+            ($confirm.Text.IndexOf('snapshot reference', [System.StringComparison]::Ordinal) -lt 0) -and
+            ($confirm.Text.IndexOf('ambiguous', [System.StringComparison]::Ordinal) -ge 0)
         $conOk = ($con.ExitCode -ne 0) -and
             [string]::IsNullOrWhiteSpace($con.Trace) -and
             ($con.Text.IndexOf('snapshot reference', [System.StringComparison]::Ordinal) -lt 0) -and
             ($con.Text.IndexOf('ambiguous', [System.StringComparison]::Ordinal) -ge 0)
+        $shortOk = ($short.ExitCode -eq 2) -and
+            ($short.Text.IndexOf('REFUSED: -Execute requires -ConfirmToken', [System.StringComparison]::Ordinal) -ge 0) -and
+            [string]::IsNullOrWhiteSpace($short.Trace) -and
+            ($short.Text.IndexOf('snapshot reference', [System.StringComparison]::Ordinal) -lt 0)
         $fullOk = ($full.ExitCode -ne 0) -and
             ($full.Text.IndexOf('snapshot reference', [System.StringComparison]::Ordinal) -ge 0) -and
-            ($full.Text.IndexOf('requires -ConfirmWindow', [System.StringComparison]::Ordinal) -lt 0) -and
+            ($full.Text.IndexOf('requires -Confirm', [System.StringComparison]::Ordinal) -lt 0) -and
             [string]::IsNullOrWhiteSpace($full.Trace)
-        if ($confirmOk -and $conOk -and $fullOk) { Write-Pass 'W-12' }
+        if ($confirmOk -and $conOk -and $shortOk -and $fullOk) { Write-Pass 'W-12' }
         else {
-            Write-Fail 'W-12' ("confirm=$($confirm.ExitCode) con=$($con.ExitCode) full=$($full.ExitCode) $(Get-C1407SafeText $confirm.Text) $(Get-C1407SafeText $con.Text) $(Get-C1407SafeText $full.Text)")
+            Write-Fail 'W-12' ("confirm=$($confirm.ExitCode) con=$($con.ExitCode) short=$($short.ExitCode) full=$($full.ExitCode) $(Get-C1407SafeText $confirm.Text) $(Get-C1407SafeText $con.Text) $(Get-C1407SafeText $short.Text) $(Get-C1407SafeText $full.Text)")
         }
     } catch {
         Write-Fail 'W-12' $_.Exception.Message
@@ -1595,9 +1635,13 @@ function New-C1407GateCase {
         [string[]]$HostArguments = @(),
         [string]$FileSwitch = '-File',
         [switch]$AsCommand,
+        [string]$CommandSwitch = '-Command',
         [string]$WorkingDirectory = '',
+        [string]$ScriptPath = '',
+        [string[]]$StdinLines = @(),
         [string]$Expect = 'refused',
-        [string]$Needle = ''
+        [string]$Needle = '',
+        [string]$ExpectToken = ''
     )
     return [pscustomobject]@{
         Label            = $Label
@@ -1605,53 +1649,104 @@ function New-C1407GateCase {
         HostArguments    = $HostArguments
         FileSwitch       = $FileSwitch
         AsCommand        = [bool]$AsCommand
+        CommandSwitch    = $CommandSwitch
         WorkingDirectory = $WorkingDirectory
+        ScriptPath       = $ScriptPath
+        StdinLines       = $StdinLines
         Expect           = $Expect
         Needle           = $Needle
+        ExpectToken      = $ExpectToken
     }
 }
 
 function Test-W27 {
-    # CARD-1417 A-1 and Review c25ee080 D-1: only the exact -ConfirmWindow token among the arguments
-    # after pwsh's own '-File <this script>' pair opens the window. Half 1: only a dash token counts
-    # (half1-common: -ErrorVariable is a common parameter the script's own value list does not know,
-    # so only the dash rule keeps /ConfirmWindow out). Half 2: the value of a value-taking parameter
-    # is skipped (half2-colon: pwsh -File hands the next token to a trailing-colon parameter as its
-    # value). Anchor: a -ConfirmWindow before the pair (-WorkingDirectory, -CustomPipeName) or inside
-    # -Command text (after #, or inside a quoted -HoldReason value that straddles argv tokens) never
-    # counts, and a start with no -File pair refuses even with the exact token.
+    # CARD-1417 (Review d6b441d2): -Execute proceeds only when the bound -ConfirmWindow switch is set
+    # AND -ConfirmToken equals the CONFIRM TOKEN the preview prints for this machine, this script,
+    # the same -Repository and today or yesterday UTC. No process command line is read, so every
+    # earlier pwsh quirk (Reviews c25ee080 and d6b441d2) is an extra row that must refuse because
+    # no valid token is given. Throwaway mutation that must turn rows red: make the token comparison
+    # always true (no-token, empty-token, wrong-token, stale-token, tomorrow-token, other-repo-token
+    # then open the window with exit 3).
     $fake = New-C1407FakeBin
     $closed = $script:ClosedApi
-    $refuse = 'REFUSED: -Execute requires -ConfirmWindow.'
-    $noPair = 'no -File pair'
+    $refuseSwitch = 'REFUSED: -Execute requires -ConfirmWindow.'
+    $refuseToken = 'REFUSED: -Execute requires -ConfirmToken'
+    $openedNeedle = 'REFUSED: verified snapshot reference is missing.'
+    $tokenPattern = 'CONFIRM TOKEN ([0-9a-f]{8})'
+    $cutover = Join-Path $here 'cutover-postgres-server2.ps1'
+    $pipeSocket = Join-Path ([System.IO.Path]::GetTempPath()) 'CoreFxPipe_-ConfirmWindow'
+    $en = [string][char]0x2013
+    $em = [string][char]0x2014
+    $bar = [string][char]0x2015
     try {
         New-Item -ItemType Directory -Path (Join-Path $fake.Dir '-ConfirmWindow') -Force | Out-Null
-        $cases = @(
-            (New-C1407GateCase -Label 'slash' -Arguments @('-Execute', '-Confirm', '-HoldReason', '/ConfirmWindow', '-ApiBase', $closed)),
-            (New-C1407GateCase -Label 'prefix' -Arguments @('-Execute', '-Confirm', '-HoldR', '/ConfirmWindow', '-ApiBase', $closed)),
-            (New-C1407GateCase -Label 'half1-common' -Arguments @('-Execute', '-Confirm', '-ErrorVariable', '/ConfirmWindow', '-ApiBase', $closed)),
-            (New-C1407GateCase -Label 'half2-colon' -Arguments @('-Execute', '-Confirm', '-HoldReason:', '-ConfirmWindow', '-ApiBase', $closed)),
-            (New-C1407GateCase -Label 'colon-dash' -Arguments @('-Execute', '-Confirm', '-HoldReason:-ConfirmWindow', '-ApiBase', $closed)),
-            (New-C1407GateCase -Label 'colon-false' -Arguments @('-Execute', '-ConfirmWindow:$false', '-ApiBase', $closed)),
-            (New-C1407GateCase -Label 'trailing-space' -Arguments @('-Execute', '-ConfirmWindow ', '-ApiBase', $closed)),
-            (New-C1407GateCase -Label 'wd' -HostArguments @('-WorkingDirectory', '-ConfirmWindow') -WorkingDirectory $fake.Dir -Arguments @('-Execute', '-Conf', '-ApiBase', $closed)),
-            (New-C1407GateCase -Label 'pipe' -HostArguments @('-CustomPipeName', '-ConfirmWindow') -Arguments @('-Execute', '-Conf', '-ApiBase', $closed)),
-            (New-C1407GateCase -Label 'cmd-comment' -AsCommand -Expect 'refused-any' -Needle $noPair -Arguments @('-Execute', '-Conf', '-ApiBase', $closed, '#', '-ConfirmWindow')),
-            (New-C1407GateCase -Label 'cmd-quoted' -AsCommand -Expect 'refused-any' -Needle $noPair -Arguments @('-Execute', '-Conf', '-ApiBase', $closed, '-HoldReason', "'window", '-ConfirmWindow', "now'")),
-            (New-C1407GateCase -Label 'cmd-exact' -AsCommand -Expect 'refused-any' -Needle $noPair -Arguments @('-Execute', '-ConfirmWindow', '-ApiBase', $closed)),
-            (New-C1407GateCase -Label 'double-dash' -Expect 'never-opens' -Arguments @('-Execute', '-Conf', '--', '-ConfirmWindow', '-ApiBase', $closed)),
-            (New-C1407GateCase -Label 'colon-value' -Expect 'opens' -Arguments @('-Execute', '-HoldReason:/ConfirmWindow', '-ConfirmWindow', '-ApiBase', $closed)),
-            (New-C1407GateCase -Label 'short-file' -Expect 'opens' -FileSwitch '-f' -Arguments @('-Execute', '-ConfirmWindow', '-ApiBase', $closed))
+        $otherRepo = Join-Path $fake.Dir 'other'
+        $token = Get-C1407Token
+        $tokenRepo = Get-C1407Token -Repository $fake.Dir
+        $tokenOther = Get-C1407Token -Repository $otherRepo
+        $tokenYesterday = Get-C1407Token -DayOffset -1
+        $tokenStale = Get-C1407Token -DayOffset -2
+        $tokenTomorrow = Get-C1407Token -DayOffset 1
+        $wrong = $(if ($token[0] -eq '0') { '1' } else { '0' }) + $token.Substring(1)
+        $wrapper = Join-Path $fake.Dir 'wrapper.ps1'
+        Set-Content -LiteralPath $wrapper -Encoding ascii -Value @(
+            ("& '" + $cutover + "' -Execute -ConfirmW -ApiBase '" + $closed + "'"),
+            'exit $LASTEXITCODE'
         )
+        $prompt = @(("& '" + $cutover + "' -Execute -ConfirmW -ApiBase '" + $closed + "'"), 'exit $LASTEXITCODE')
         $reasons = @()
         $failText = ''
+        # The preview prints the token the formula predicts, for the given -Repository and for none.
+        foreach ($pair in @(@('with-repo', $tokenRepo, @('-Repository', $fake.Dir)), @('no-repo', $token, @()))) {
+            $label = 'preview-' + $pair[0]
+            $p = Invoke-C1407Cutover -Fake $fake -Arguments (@($pair[2]) + @('-ApiBase', $closed))
+            $m = [regex]::Match($p.Text, $tokenPattern)
+            if ($p.ExitCode -ne 0) { $reasons += "$label exit=$($p.ExitCode)" }
+            if (-not $m.Success) { $reasons += "$label token-line-missing" }
+            elseif ($m.Groups[1].Value -ne $pair[1]) { $reasons += "$label token-mismatch printed=$($m.Groups[1].Value) expected=$($pair[1])" }
+            if (-not [string]::IsNullOrWhiteSpace($p.Trace)) { $reasons += "$label called-child" }
+            if ($reasons.Count -gt 0 -and [string]::IsNullOrEmpty($failText)) { $failText = Get-C1407SafeText $p.Text }
+        }
+        if ($token -eq $tokenRepo -or $token -eq $tokenStale -or $token -eq $tokenYesterday) { $reasons += 'formula tokens-collide' }
+        $cases = @(
+            (New-C1407GateCase -Label 'no-token' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', '-ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'empty-token' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', '-ConfirmWindow', '-ConfirmToken', '', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'wrong-token' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', '-ConfirmWindow', '-ConfirmToken', $wrong, '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'stale-token' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', '-ConfirmWindow', '-ConfirmToken', $tokenStale, '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'tomorrow-token' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', '-ConfirmWindow', '-ConfirmToken', $tokenTomorrow, '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'other-repo-token' -Needle $refuseToken -ExpectToken $tokenRepo -Arguments @('-Execute', '-ConfirmWindow', '-Repository', $fake.Dir, '-ConfirmToken', $tokenOther, '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'token-no-switch' -Needle $refuseSwitch -ExpectToken $token -Arguments @('-Execute', '-ConfirmToken', $token, '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'valid' -Expect 'opens' -Arguments @('-Execute', '-ConfirmWindow', '-ConfirmToken', $token, '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'valid-upper' -Expect 'opens' -Arguments @('-Execute', '-ConfirmWindow', '-ConfirmToken', $token.ToUpperInvariant(), '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'yesterday-token' -Expect 'opens' -Arguments @('-Execute', '-ConfirmWindow', '-ConfirmToken', $tokenYesterday, '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'valid-repo' -Expect 'opens' -Arguments @('-Execute', '-ConfirmWindow', '-Repository', $fake.Dir, '-ConfirmToken', $tokenRepo, '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'abbrev-conf' -Expect 'never-opens' -Needle 'ambiguous' -Arguments @('-Execute', '-Conf', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'abbrev-confirmw' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', '-ConfirmW', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'ev-alias' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', '-ConfirmW', '-ev', '/ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'holdreason-colon' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', '-ConfirmW', '-HoldReason:', '-ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'colon-dash' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', '-ConfirmW', '-HoldReason:-ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'colon-false' -Needle $refuseSwitch -ExpectToken $token -Arguments @('-Execute', '-ConfirmWindow:$false', '-ConfirmToken', $token, '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'trailing-space' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', '-ConfirmWindow ', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'wd' -Needle $refuseToken -ExpectToken $token -HostArguments @('-WorkingDirectory', '-ConfirmWindow') -WorkingDirectory $fake.Dir -Arguments @('-Execute', '-ConfirmW', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'pipe' -Needle $refuseToken -ExpectToken $token -HostArguments @('-CustomPipeName', '-ConfirmWindow') -Arguments @('-Execute', '-ConfirmW', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'en-dash' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', ($en + 'ConfirmWindow'), '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'em-dash-colon' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', '-ConfirmW', ($em + 'HoldReason:'), '-ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'bar-command' -AsCommand -CommandSwitch ($bar + 'c') -Expect 'refused-any' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', '-ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'cmd-exact' -AsCommand -Expect 'refused-any' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', '-ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'cmd-comment' -AsCommand -Expect 'refused-any' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', '-ConfirmW', '-ApiBase', $closed, '#', '-ConfirmWindow')),
+            (New-C1407GateCase -Label 'cmd-quoted' -AsCommand -Expect 'refused-any' -Needle $refuseToken -ExpectToken $token -Arguments @('-Execute', '-ConfirmW', '-ApiBase', $closed, '-HoldReason', "'window", '-ConfirmWindow', "now'")),
+            (New-C1407GateCase -Label 'wrapper' -Needle $refuseToken -ExpectToken $token -ScriptPath $wrapper -Arguments @('-File', $cutover, '-ConfirmWindow')),
+            (New-C1407GateCase -Label 'noexit' -Needle $refuseToken -ExpectToken $token -HostArguments @('-NoExit') -StdinLines $prompt -Arguments @('-WhatIf', '-ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'double-dash' -Expect 'never-opens' -Arguments @('-Execute', '-ConfirmW', '--', '-ConfirmWindow', '-ApiBase', $closed))
+        )
         foreach ($case in $cases) {
             $before = $reasons.Count
             $r = Invoke-C1407Cutover -Fake $fake -Arguments $case.Arguments -HostArguments $case.HostArguments `
-                -FileSwitch $case.FileSwitch -AsCommand:$case.AsCommand -WorkingDirectory $case.WorkingDirectory
+                -FileSwitch $case.FileSwitch -AsCommand:$case.AsCommand -CommandSwitch $case.CommandSwitch `
+                -WorkingDirectory $case.WorkingDirectory -ScriptPath $case.ScriptPath -StdinLines $case.StdinLines
             $label = $case.Label
-            $opened = ($r.Text.IndexOf('snapshot reference', [System.StringComparison]::Ordinal) -ge 0)
-            $refused = ($r.Text.IndexOf($refuse, [System.StringComparison]::Ordinal) -ge 0)
+            $opened = ($r.Text.IndexOf($openedNeedle, [System.StringComparison]::Ordinal) -ge 0)
+            $refused = ($r.Text.IndexOf('REFUSED: -Execute requires -Confirm', [System.StringComparison]::Ordinal) -ge 0)
             if (-not [string]::IsNullOrWhiteSpace($r.Trace)) { $reasons += "$label called-child" }
             switch ($case.Expect) {
                 'refused' {
@@ -1678,6 +1773,12 @@ function Test-W27 {
             if (-not [string]::IsNullOrEmpty($case.Needle) -and $r.Text.IndexOf($case.Needle, [System.StringComparison]::Ordinal) -lt 0) {
                 $reasons += "$label missing-needle"
             }
+            if (-not [string]::IsNullOrEmpty($case.ExpectToken)) {
+                # Every gate refusal prints the token for the -Repository it was given, so the operator can retry.
+                $m = [regex]::Match($r.Text, $tokenPattern)
+                if (-not $m.Success) { $reasons += "$label token-line-missing" }
+                elseif ($m.Groups[1].Value -ne $case.ExpectToken) { $reasons += "$label token-mismatch printed=$($m.Groups[1].Value)" }
+            }
             if ($reasons.Count -gt $before -and [string]::IsNullOrEmpty($failText)) { $failText = Get-C1407SafeText $r.Text }
         }
         if ($reasons.Count -eq 0) { Write-Pass 'W-27' }
@@ -1686,6 +1787,8 @@ function Test-W27 {
         Write-Fail 'W-27' $_.Exception.Message
     } finally {
         Remove-C1407Tree $fake.Dir
+        # pwsh leaves the Unix socket of -CustomPipeName -ConfirmWindow behind; it is this test's.
+        if (Test-Path -LiteralPath $pipeSocket) { Remove-Item -LiteralPath $pipeSocket -Force -ErrorAction SilentlyContinue }
     }
 }
 
