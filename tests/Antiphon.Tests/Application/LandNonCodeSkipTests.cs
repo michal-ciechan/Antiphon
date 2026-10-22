@@ -2136,6 +2136,44 @@ public sealed class LandNonCodeSkipTests
         await AssertUpdateApprovesAsync(control, 1, [("120000", "tools/link", "../docs")]);
     }
 
+    // CARD-1409 repair 6 (Review c64987ea F1, D-33): MSBuild expands properties and metadata, splits on ';' and
+    // decodes %XX once, in that order; the audit runs that one pipeline for every path text, so an escape a
+    // property value splices in reaches the README and docs rules instead of staying a literal segment.
+    [Test]
+    public async Task C1409_EscapeInExpandedTextIsDecodedOnce()
+    {
+        var files = await BuildRealTestProjectTreeAsync();
+        var real = files[RealTestProjectPath];
+        await AssertUpdateApprovesAsync(files, DefinitionCount(files));
+        files[RealTestProjectPath] = real.Replace("</Project>",
+            "  <PropertyGroup><PackageTags>$(RootNamespace)/%2E%2E/%2E%2E/%2E%2E/README.md</PackageTags></PropertyGroup>\n"
+            + "  <ItemGroup><None Include=\"$(PackageTags)\" /></ItemGroup>\n</Project>", StringComparison.Ordinal);
+        await AssertUpdateRefusesAsync(files, "includes docs markdown",
+            RealTestProjectPath + " None Include=$(PackageTags) -> README.md");
+
+        static Dictionary<string, string> Fixture(string item) => new()
+        {
+            ["README.md"] = "# root",
+            ["docs/data.json"] = "{}",
+            ["server/App.csproj"] = $"""
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <Description>sub</Description>
+                    <PackageTags>$(Description)/%2E%2E/%2E%2E/README.md</PackageTags>
+                    <PackageReadmeFile>$(Description)/%2E%2E/%2E%2E/%64ocs/data.json</PackageReadmeFile>
+                  </PropertyGroup>
+                  <ItemGroup>
+                    {item}
+                  </ItemGroup>
+                </Project>
+                """,
+        };
+        await AssertUpdateRefusesAsync(Fixture("""<None Include="$(PackageTags)" />"""),
+            "includes docs markdown", "server/App.csproj None Include=$(PackageTags) -> README.md");
+        await AssertUpdateRefusesAsync(Fixture("""<EmbeddedResource Include="$(PackageReadmeFile)" />"""),
+            "includes docs markdown", "server/App.csproj EmbeddedResource Include=$(PackageReadmeFile) -> docs/data.json");
+    }
+
     // One entry per 'table' row of the plan's N- and O-tables (D-28, D-29). Keys are the row ids.
     private static Dictionary<string, Func<Task>> TableWitnesses()
     {
@@ -2277,6 +2315,73 @@ public sealed class LandNonCodeSkipTests
                     "cannot resolve", "server/App.csproj " + stagedFiles, "%(Filename)");
                 await AssertUpdateRefusesAsync(Tree(Staged("""<StagedHelper Include="$(MSBuildThisFileDirectory)../lib/Lib.csproj" Folder="lib" Glob="$(Undefined)" />"""), ("lib/Lib.csproj", lib)),
                     "cannot resolve", "server/App.csproj " + stagedFiles, "$(Undefined)");
+            },
+            // CARD-1409 repair 6 (Review c64987ea F1, D-33): the escape table. Every path text is expanded, split on
+            // ';' and decoded once, in MSBuild's order; N-16 is its own case (C1409_EscapeInExpandedTextIsDecodedOnce).
+            ["N-17"] = () => Refuses(Items("""<EmbeddedResource Include="%2E%2E%2Fdocs%5Cguide.md" />"""), "includes docs markdown", "server/App.csproj EmbeddedResource Include=%2E%2E%2Fdocs%5Cguide.md -> docs/guide.md"),
+            ["N-18"] = async () =>
+            {
+                await Refuses(Items("""<EmbeddedResource Include="../docs/guide.md%3Bx.json" />"""), "includes docs markdown", "Include=../docs/guide.md%3Bx.json -> docs/guide.md;x.json");
+                await Refuses(Project("""  <PropertyGroup><RootNamespace>a.json%3B..</RootNamespace></PropertyGroup><ItemGroup><EmbeddedResource Include="$(RootNamespace)/docs/guide.md" /></ItemGroup>"""),
+                    "markdown or text document", "Include=$(RootNamespace)/docs/guide.md -> server/a.json;../docs/guide.md");
+                await Refuses(Project("""  <PropertyGroup><RootNamespace>a.json;..</RootNamespace></PropertyGroup><ItemGroup><EmbeddedResource Include="$(RootNamespace)/docs/guide.md" /></ItemGroup>"""),
+                    "includes docs markdown", "Include=$(RootNamespace)/docs/guide.md -> docs/guide.md");
+            },
+            ["N-19"] = async () =>
+            {
+                await Approves(Items("""<EmbeddedResource Include="%252E%252E/%252E%252E/docs/guide.json" />"""), 1);
+                await Refuses(Items("""<EmbeddedResource Include="%2E%2E/docs/guide.md" />"""), "includes docs markdown", "Include=%2E%2E/docs/guide.md -> docs/guide.md");
+            },
+            ["N-20"] = () => AssertUpdateRefusesAsync(Tree(Staged("""<StagedHelper Include="$(MSBuildThisFileDirectory)../lib/Lib.csproj" Folder="lib" Glob="%2E%2E/%2E%2E/docs/**/*.md" />"""), ("lib/Lib.csproj", lib)),
+                "cannot be classified", "server/App.csproj " + stagedFiles),
+            ["N-21"] = async () =>
+            {
+                await Refuses(Target("""<PropertyGroup><FakeBrowserOutputDir>$([System.IO.Path]::GetDirectoryName('$(FakeBrowserTargetPath)%2E%2E'))</FakeBrowserOutputDir></PropertyGroup><ItemGroup><FakeBrowserFile Include="$(FakeBrowserOutputDir)/x.dll" /></ItemGroup>"""),
+                    "cannot resolve", "server/App.csproj FakeBrowserFile Include=$(FakeBrowserOutputDir)/x.dll");
+                await Refuses(Project("""  <PropertyGroup><_AntiphonCleanFileChars>$([System.IO.File]::ReadAllText('$(IntermediateOutputPath)%2E%2E/%2E%2E/docs/guide.md').Length)</_AntiphonCleanFileChars></PropertyGroup>"""),
+                    "property value", "server/App.csproj _AntiphonCleanFileChars ReadAllText(");
+            },
+            ["N-22"] = () => Refuses(Items("""<EmbeddedResource Include="%2e%2e/docs/guide.md" />"""), "includes docs markdown", "Include=%2e%2e/docs/guide.md -> docs/guide.md"),
+            ["N-23"] = async () =>
+            {
+                await Refuses(Items("""<EmbeddedResource Include="../docs/g%GGide.md" />"""), "includes docs markdown", "-> docs/g%GGide.md");
+                await Refuses(Items("""<EmbeddedResource Include="../docs/guide.md%2" />"""), "includes docs markdown", "-> docs/guide.md%2");
+                await Refuses(Items("""<EmbeddedResource Include="../docs/guide.md%" />"""), "includes docs markdown", "-> docs/guide.md%");
+            },
+            ["N-24"] = async () =>
+            {
+                await Refuses(Items("""<None Include="a%00.json" />"""), "cannot be classified", "server/App.csproj None Include=a%00.json");
+                await AssertUpdateRefusesAsync(Tree(Project("""  <Import Project="../eng/shared%00.props" />"""), ("eng/shared.props", "<Project />")),
+                    "import cannot be resolved", "server/App.csproj Import Project=../eng/shared%00.props");
+            },
+            ["N-25"] = async () =>
+            {
+                await Refuses(Items("""<EmbeddedResource Include="../docs/%2A.md" />"""), "includes docs markdown", "Include=../docs/%2A.md");
+                await AssertUpdateRefusesAsync(Tree(Items("""<Content Include="fixtures/**" Exclude="fixtures/%2A.md" />"""), ("server/fixtures/notes.md", "# n")),
+                    "markdown or text document", "server/App.csproj Content Include=fixtures/** -> server/fixtures/notes.md");
+            },
+            ["N-26"] = async () =>
+            {
+                await Refuses(Items("""<EmbeddedResource Include="../%24(X)/../docs/guide.md" />"""), "includes docs markdown", "Include=../%24(X)/../docs/guide.md -> docs/guide.md");
+                await Refuses(Project("""  <PropertyGroup><Description>%24(Y)</Description></PropertyGroup><ItemGroup><EmbeddedResource Include="../$(Description)/../docs/guide.md" /></ItemGroup>"""),
+                    "includes docs markdown", "Include=../$(Description)/../docs/guide.md -> docs/guide.md");
+            },
+            ["N-27"] = async () =>
+            {
+                await AssertUpdateApprovesAsync(Tree(Project("""  <Import Project="%2E%2E/eng/%73hared.props" /><ItemGroup><ProjectReference Include="../lib/%4Cib.csproj" /></ItemGroup>"""),
+                    ("eng/shared.props", "<Project />"), ("lib/Lib.csproj", lib)), 3);
+                await AssertUpdateRefusesAsync(Tree(Project("""  <Import Project="../eng/shared.props%3Bx.props" />"""), ("eng/shared.props", "<Project />")),
+                    "not a tracked project file", "server/App.csproj Import Project=../eng/shared.props%3Bx.props -> eng/shared.props;x.props");
+            },
+            ["N-28"] = async () =>
+            {
+                await Refuses(Project("""  <PropertyGroup><PackageReadmeFile>%2E%2E/docs/guide.md</PackageReadmeFile></PropertyGroup>"""), "property value", "server/App.csproj PackageReadmeFile", "-> docs/guide.md");
+                await Refuses(Project("""  <PropertyGroup><PackageReadmeFile>%2E%2E%2Fdocs%2Fguide%2Emd</PackageReadmeFile></PropertyGroup>"""), "property value", "server/App.csproj PackageReadmeFile", "-> docs/guide.md");
+            },
+            ["N-29"] = async () =>
+            {
+                await Refuses(Items("""<PackageReference Include="Some%2FPackage" Version="1.0.0" />"""), "cannot be classified", "server/App.csproj PackageReference Include=Some%2FPackage");
+                await Approves(Items("""<PackageReference Include="Some%2EPackage" Version="1.0.0" GeneratePathProperty="true" /><Content Include="$(PkgSome_Package)\build\a.dll" />"""), 1);
             },
         };
     }
