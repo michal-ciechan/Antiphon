@@ -91,9 +91,16 @@ public sealed class ApiKeyEnvResolver
     public async Task<IReadOnlyDictionary<AgentKind, ProviderEndpoint>> GetProjectProviderEndpointsAsync(
         Guid? projectId, CancellationToken ct)
     {
-        // Skeleton (test-first commit): the fetch lands with the resolver wiring.
-        await Task.CompletedTask;
-        return ProviderEndpoint.NoEndpoints;
+        if (projectId is not { } id)
+            return ProviderEndpoint.NoEndpoints;
+
+        var json = await _db.Projects
+            .AsNoTracking()
+            .Where(p => p.Id == id)
+            .Select(p => p.ProviderEndpointsJson)
+            .FirstOrDefaultAsync(ct);
+
+        return ProviderEndpoint.ParseMap(json);
     }
 
     /// <summary>

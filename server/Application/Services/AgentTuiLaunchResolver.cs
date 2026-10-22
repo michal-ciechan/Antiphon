@@ -42,7 +42,11 @@ internal static class AgentLaunchResolution
         // environment somebody configured for it, silently.
         options = options with
         {
-            AgentEnv = options.AgentEnv ?? AgentLaunchEnv.ParseForAgent(agent)
+            AgentEnv = options.AgentEnv ?? AgentLaunchEnv.ParseForAgent(agent),
+            // CARD-0167 S3: the agent's endpoint mode and own endpoint (plan rank 5b), hoisted for
+            // the same reason, so the legacy registry path below sees them too.
+            AgentProviderEndpointMode = options.AgentProviderEndpointMode ?? agent.ProviderEndpointMode,
+            AgentProviderEndpoint = options.AgentProviderEndpoint ?? ProviderEndpoint.Parse(agent.ProviderEndpointJson),
         };
         // CARD-0193: the agent's tier, attached HERE for the same reason AgentEnv is — two of this
         // funnel's five call sites (CardService.SpawnAsync, OrchestratorService.ResolveDispatchLaunchAsync)
@@ -136,6 +140,9 @@ internal static class AgentLaunchResolution
         {
             ApiKeyProjectId = projectId,
             ProjectDefaultEnv = await apiKeyEnvResolver.GetProjectDefaultEnvAsync(
+                projectId, cancellationToken),
+            // CARD-0167 S3: the project's per-kind endpoints (rank 3b) from the same identity.
+            ProjectProviderEndpoints = await apiKeyEnvResolver.GetProjectProviderEndpointsAsync(
                 projectId, cancellationToken),
         };
     }
@@ -372,6 +379,21 @@ public sealed class AgentTuiLaunchResolver
                 environment[key] = value;
         }
 
+        // CARD-0167 S3, plan D-4: rank 3b (the project's endpoint for the RESOLVED kind) after the
+        // project default env, rank 5b (the agent's own endpoint) after the agent's LaunchEnvJson.
+        // The mode and own endpoint are read off the agent unless the caller supplied them, like
+        // AgentEnv; the project map arrives beside ProjectDefaultEnv from the hoisted project identity.
+        var endpoints = ProviderEndpointLayers.Select(
+            profile.Kind,
+            options.ProjectProviderEndpoints,
+            options.AgentProviderEndpointMode ?? agent.ProviderEndpointMode,
+            options.AgentProviderEndpoint ?? ProviderEndpoint.Parse(agent.ProviderEndpointJson));
+        if (endpoints.Project is { } projectEndpoint)
+        {
+            foreach (var (key, value) in projectEndpoint.Env)
+                environment[key] = value;
+        }
+
         if (options.InheritedEnv is not null)
         {
             foreach (var (key, value) in options.InheritedEnv)
@@ -380,6 +402,12 @@ public sealed class AgentTuiLaunchResolver
 
         foreach (var (key, value) in options.AgentEnv ?? AgentLaunchEnv.ParseForAgent(agent))
             environment[key] = value;
+
+        if (endpoints.Agent is { } agentEndpoint)
+        {
+            foreach (var (key, value) in agentEndpoint.Env)
+                environment[key] = value;
+        }
 
         if (options.LaunchEnvOverride is not null)
         {
@@ -402,6 +430,10 @@ public sealed class AgentTuiLaunchResolver
             args.Add(DollarEnvArg.Expand(argument, environment));
         if (options.ExtraArgs is not null)
             args.AddRange(options.ExtraArgs);
+        // CARD-0167 S3: Codex's five -c pairs after the caller's ExtraArgs and before the model
+        // argument. They are literal, never $env: expanded, and count against CommandLineBudgetChars
+        // like any other argument (CARD-0497).
+        args.AddRange(endpoints.Args);
 
         var (effectiveModelId, modelArgument) = ApplyModelArgument(profile, revision, agent, options, args);
 
@@ -437,6 +469,17 @@ public sealed class AgentTuiLaunchResolver
                 revision.RevisionNumber,
                 agent.ModelLevel,
                 options.TierModelAlias?.Trim());
+        }
+        if (endpoints.Source is { } projectedEndpoint)
+        {
+            // Host-only by design (plan: redaction in every log): a path could carry a tenant token,
+            // and the key is a NAME. The full URL goes to the child's environment and nowhere else.
+            _logger.LogInformation(
+                "{Subject}: provider endpoint projected kind={Kind} host={Host} key={KeyName}",
+                subject,
+                profile.Kind,
+                ProviderEndpointLayers.HostOf(projectedEndpoint),
+                projectedEndpoint.ApiKeyName ?? "(none)");
         }
         if (_apiKeyEnvResolver is not null)
         {
