@@ -1030,6 +1030,12 @@ Commit before each big run and record the commit and temporary PC mutations it e
 
 ## Nightly
 
+For local rc inspection, emergency manual stop and evidence-preserving stale-lock
+recovery, use [Inspecting and stopping a qualification](release-gates.md#inspecting-and-stopping-a-qualification).
+The shared `native-run.lock` serializes native work across lanes and is never
+automatically reclaimed; the state root's `run.lock` has separate reclaim rules.
+A dead recorded owner alone does not prove its children have stopped.
+
 The pinned TUnit 1.44.0/MTP 2.2.2 diagnostic adapter reads unescaped human-readable
 records, not a general serialization. It selects the unique identifier/location-to-state
 transition and validates exception boundaries against the explanation echo. Ordinary
