@@ -56,15 +56,18 @@ public partial class CheckNoteDeliveryHandoffTests
             Root = root.FullPath, Scenario = "scan", ConnectionString = schema.ConnectionString,
             SessionId = parent.SessionId, AgentId = parent.AgentId,
         });
-        await scanner.WaitForReadyAsync();
         if (busy)
         {
+            // The turn ends before the scanner host starts (8-26 s). Written after its first scan, this
+            // TurnEnd left the note Pending through 12 scans in CARD-1494 run 20261022-152908-dd89.
+            await Task.Delay(500);
             await using var mid = NewDb(schema.ConnectionString);
             (await MatchingPromptsAsync(mid, parent.SessionId, seeded.Body)).Count.ShouldBe(0);
             await BridgeQueueHarness.InsertEntryAsync(parent.SessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn",
                 timestamp: DateTime.UtcNow, connectionString: schema.ConnectionString);
         }
 
+        await scanner.WaitForReadyAsync();
         var prompts = await WaitForPromptAsync(scanner, schema.ConnectionString, parent.SessionId, seeded.Body);
 
         prompts.Count.ShouldBe(1);
