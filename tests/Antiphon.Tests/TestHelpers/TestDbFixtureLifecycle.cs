@@ -208,14 +208,6 @@ internal class TestDbOperations
         return applied;
     }
 
-    /// <summary>
-    /// CARD-1420: builds the EF model differ's caches (design-time model, snapshot model, diff) with
-    /// no database access, as a migrating bootstrap does, so a test's first <c>MigrateAsync</c>
-    /// stays a version check on a cache hit.
-    /// </summary>
-    public virtual Task WarmMigratorAsync(string connectionString) =>
-        throw new NotImplementedException("CARD-1420 red: migrator warm-up not wired");
-
     /// <summary>The migrations assembly's ordered migration IDs (reflection only, no connection).</summary>
     public virtual IReadOnlyList<string> GetAssemblyMigrations() => AssemblyMigrations.Value;
 
