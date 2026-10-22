@@ -73,6 +73,22 @@ CHECKPOINT CP-6 commit=94635d3ee16b7cc2e711d42c18cb80e22c6062dd build=n/a filter
 Evidence: `.antiphon/checkpoints/20261022-185859-9605/report.md` and its CP-6 console log.
 The corrected final tip must run CP-6 again and then the ten neighbour files once.
 
+Second attempt at `d9d0ec449683e2033980e7316ca60e95ef1521d1`: typecheck and lint
+passed; Vitest executed 7 tests, 6 passed and D-2 failed because both the project and
+API-key editor have a textbox named Name. D-2 now targets the existing `My Project`
+placeholder and checks its initial value before editing. The project fixture also
+handles the profiles read, matching the adjacent ProjectConfig test fixture; this
+removes the unhandled MSW request observed during that attempt. No product change
+or relaxed assertion. Original receipt (wall 2m45s):
+
+```text
+CHECKPOINT CP-6 commit=d9d0ec449683e2033980e7316ca60e95ef1521d1 build=n/a filter=pwsh -File scripts/test-client.ps1 ProviderEndpointFields.test executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=1 slot=granted waited=0s dirty=0 source=d9d0ec449683e2033980e7316ca60e95ef1521d1 sourceState=clean buildSource=notApplicable
+```
+
+Evidence: `.antiphon/checkpoints/20261022-190118-fd20/report.md` and its CP-6 console log.
+The two failures above are test authoring errors, not Mutation evidence. No unchanged
+selection has been repeated more than once, and neighbours have not yet run.
+
 The stage-code contract reserves deliberate mutations and red/restore/green cycles for
 Mutation. Therefore the brief's requested new mutant runs are not executed in Code and
 must not be reported as proved. Review a4cdbeab's historical mutation outcomes remain:
