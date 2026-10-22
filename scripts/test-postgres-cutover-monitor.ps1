@@ -529,7 +529,9 @@ function Invoke-C1423MaskingForms {
         if (-not $url) { $url = $form.Server + '/api/agent-tasks/pipeline?projectId=p1' }
         $exText = ''
         try { $u = [uri]$url; $exText = 'request failed for ' + $u.AbsoluteUri + ' original ' + $u.OriginalString } catch { $exText = [string]$_.Exception.Message }
-        Assert-C1408 -Cond ($exText -match $form.Sentinel -and (Hide-CutoverText -Text $exText) -notmatch $form.Sentinel) -Name ('exception text is masked: ' + $form.Name) -Detail (Hide-CutoverText -Text $exText)
+        # The request error is masked by Invoke-CutoverHttpGet's catch, which adds this URL's known forms (userinfo and secret query values).
+        $r = Invoke-CutoverHttpGet -Url $url -HttpGet { param([string]$Url); $u = [uri]$Url; throw ('request failed for ' + $u.AbsoluteUri + ' original ' + $u.OriginalString) }
+        Assert-C1408 -Cond ($exText -match $form.Sentinel -and $r.Ok -eq $false -and $r.Error -notmatch $form.Sentinel) -Name ('exception text is masked: ' + $form.Name) -Detail $r.Error
         $p = Invoke-PostgresCutoverMonitor -Mode Plan -ServerBaseUrl $form.Server -PipelineUrl $form.Pipe -ProjectId 'p1' -BaselinePath $bp -Now $script:FixedNow
         # An optional Diag body puts the form's sentinel on the pool-diagnostics surface (Hide-CutoverSecrets, then the JSON).
         $diag = ''
@@ -757,6 +759,166 @@ function Test-C1423_VerdictLinesReadableWithMaskedUserinfo {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# R-DEF-1 (CARD-1423 Final Review 5d4be758): a secret pair's value stopped at whitespace. .NET sends '?token=SEN T1' as
+# SEN%20T1, so the whole value is the secret, but the PLAN line printed 'token=<redacted> T1', a failed task-list request
+# printed the tail in the UNREADABLE and REASON lines, and 'Host=h;Password=SE NT;' printed 'NT'. The given URLs' secret
+# query values (raw, escaped, unescaped and as [uri] spells them) are known forms like the userinfo, and a connection-string
+# value runs to the next ';' or the end of the line. A plain value still stops at whitespace, so the verdict line's pairs
+# stay, and a numeric secret value is never a form (D-11 numbers).
+function Test-C1423_SpaceInSecretValueMasked {
+    $root = New-C1408Scratch
+    $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100)
+    $cs = Hide-CutoverText -Text 'Host=h;Password=SE NTCS1423;Database=d'
+    Assert-C1408 -Cond ($cs -eq 'Host=h;Password=<redacted>;Database=d') -Name 'a connection-string Password= value with a space runs to the next ; and the neighbours are kept' -Detail $cs
+    $lead = Hide-CutoverText -Text 'Password=SE NTCS1423;Database=d'
+    Assert-C1408 -Cond ($lead -eq 'Password=<redacted>;Database=d') -Name 'a leading Password= value with a space runs to the next ;' -Detail $lead
+    $last = Hide-CutoverText -Text 'Host=h;Password=SE NTCS1423'
+    Assert-C1408 -Cond ($last -eq 'Host=h;Password=<redacted>') -Name 'a trailing Password= value with a space runs to the end of the line' -Detail $last
+    $json = Hide-CutoverText -Text '{"cs":"Host=h;Password=SE NTCS1423;Database=d","n":1}' -JsonText
+    Assert-C1408 -Cond ($json -eq '{"cs":"Host=h;Password=<redacted>;Database=d","n":1}') -Name 'in JSON text the value runs to the next ; and stops at the closing quote' -Detail $json
+    $verdict = 'CUTOVER-MONITOR mode=Watch verdict=ROLLBACK exit=2 medianMs=5000 baselineMedianMs=100 failures=0 baselineFailures=0'
+    Assert-C1408 -Cond ((Hide-CutoverText -Text $verdict) -eq $verdict) -Name 'a plain pair value still stops at whitespace, so the verdict line keeps every pair' -Detail (Hide-CutoverText -Text $verdict)
+    Invoke-C1423MaskingForms -Root $root -BaselinePath $b.BaselinePath -Forms @(
+        @{ Name = 'space inside a secret query value'; Server = 'http://fake.invalid'; Pipe = 'http://fake.invalid/api/agent-tasks/pipeline?projectId=p1&token=SENTSPA1423 SENTSPB1423'; Sentinel = 'SENTSPA1423|SENTSPB1423' }
+    )
+    # The task-list URL with a space in its Password= value and a request that fails quoting the URL .NET would send:
+    # the UNREADABLE and REASON lines and the result JSON carry neither half of the value.
+    $tasks = 'http://fake.invalid/api/agent-tasks?Password=SENTSPC1423 SENTSPD1423'
+    $inner = New-C1408FakeHttp -PipelineMs (Get-C1408Twenty -Median 100)
+    $seam = { param([string]$Url); if ($Url -like '*api/agent-tasks?Password=*') { $u = [uri]$Url; throw ('request failed for ' + $u.AbsoluteUri + ' original ' + $u.OriginalString) }; & $inner $Url }.GetNewClosure()
+    $w = Invoke-PostgresCutoverMonitor -Mode Watch -Execute -ServerBaseUrl 'http://fake.invalid' -TaskListUrl $tasks -ProjectId 'p1' -BaselinePath $b.BaselinePath -ResultPath (Join-Path $root 'tasks-w-result.json') -SampleCount 20 -HttpGet $seam -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
+    $leak = @($w.Lines | Where-Object { $_ -match 'SENTSPC1423|SENTSPD1423' })
+    Assert-C1408 -Cond ($w.ExitCode -eq 4 -and $leak.Count -eq 0) -Name 'a failed task-list request with a space in its Password= value is INVALID and no line carries either half' -Detail ('w=' + $w.ExitCode + ' ' + ($leak -join ' | '))
+    Assert-C1408 -Cond (@($w.Lines | Where-Object { $_ -like 'UNREADABLE task list returned status 0 request failed for http://fake.invalid/api/agent-tasks?Password=<redacted>*' }).Count -eq 1) -Name 'the UNREADABLE line keeps its status and host beside the masked value' -Detail (@($w.Lines | Where-Object { $_ -like 'UNREADABLE*' }) -join ' | ')
+    $rj = Get-Content -LiteralPath (Join-Path $root 'tasks-w-result.json') -Raw
+    Assert-C1408 -Cond ($rj -notmatch 'SENTSPC1423|SENTSPD1423' -and $rj -match 'Password=<redacted>') -Name 'the result json carries the masked task-list url and error' -Detail ([regex]::Match($rj, '.{0,60}(SENTSPC1423|SENTSPD1423).{0,20}').Value)
+    $forms = @(Get-CutoverKnownForms -Urls @('http://fake.invalid/api/x?projectId=p1&token=SEN TQ1423&z=1'))
+    Assert-C1408 -Cond ($forms -contains 'SEN TQ1423' -and $forms -contains 'SEN%20TQ1423' -and -not ($forms -contains 'p1') -and -not ($forms -contains '1')) -Name 'the given URL registers its secret query value raw and escaped, not its plain values' -Detail ($forms -join ' | ')
+    $numeric = @(Get-CutoverKnownForms -Urls @('http://fake.invalid/api/x?token=5000'))
+    $numLine = Hide-CutoverText -Text 'http://fake.invalid/api/x?token=5000 medianMs=5000'
+    Assert-C1408 -Cond ($numeric.Count -eq 0 -and $numLine -eq 'http://fake.invalid/api/x?token=<redacted> medianMs=5000') -Name 'a numeric secret value is masked by the pair rule only and never registered as a form (D-11 numbers)' -Detail (($numeric -join ' | ') + ' ' + $numLine)
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# R-DEF-2: JSON pairs for the secret-key list were not masked and Test-CutoverSecretName lacked key, auth, sig and
+# signature (pool-diagnostics fields auth, privateKey and sig were written verbatim into the Baseline result JSON;
+# {"password":"S"} passed through Hide-CutoverText unchanged). The name list now carries the secret-key list plus
+# bearer and cookie, and a JSON "name":"value" pair of a secret name is masked in raw and -JsonText mode.
+function Test-C1423_JsonSecretPairsMasked {
+    $root = New-C1408Scratch
+    foreach ($name in @('key', 'auth', 'sig', 'signature', 'apikey', 'api_key', 'bearer', 'cookie', 'authorization', 'credential', 'privateKey', 'password', 'token')) {
+        Assert-C1408 -Cond (Test-CutoverSecretName -Name $name) -Name ('property name is secret: ' + $name)
+    }
+    foreach ($name in @('host', 'MaxPoolSize', 'NoResetOnClose', 'medianMs')) {
+        Assert-C1408 -Cond (-not (Test-CutoverSecretName -Name $name)) -Name ('property name is plain: ' + $name)
+    }
+    $pairs = @(
+        @{ Text = '{"password":"SENTJP1423"}'; Want = '{"password":"<redacted>"}'; Name = 'a compact "password" pair' },
+        @{ Text = '{"token": "SENTJP1423"}'; Want = '{"token": "<redacted>"}'; Name = 'a "token" pair with a space after the colon' },
+        @{ Text = '{"pool":{"apiKey":"SENTJP1423","MaxPoolSize":100}}'; Want = '{"pool":{"apiKey":"<redacted>","MaxPoolSize":100}}'; Name = 'an "apiKey" pair beside a plain number pair' },
+        @{ Text = '{"auth":"SE\"NTJP1423","sig":"SENTJP1423","privateKey":"SENTJP1423"}'; Want = '{"auth":"<redacted>","sig":"<redacted>","privateKey":"<redacted>"}'; Name = 'auth, sig and privateKey pairs, an escaped quote inside the value' },
+        @{ Text = '{"pin":1234,"secret":5678,"flag":true}'; Want = '{"pin":1234,"secret":"<redacted>","flag":true}'; Name = 'a numeric value of a secret name is masked, plain numbers kept' }
+    )
+    foreach ($p in $pairs) {
+        $raw = Hide-CutoverText -Text $p.Text
+        Assert-C1408 -Cond ($raw -eq $p.Want) -Name ('raw text: ' + $p.Name) -Detail $raw
+        $json = Hide-CutoverText -Text $p.Text -JsonText
+        Assert-C1408 -Cond ($json -eq $p.Want) -Name ('json text: ' + $p.Name) -Detail $json
+    }
+    $plain = '{"host":"h","medianMs":5000,"url":"http://fake.invalid/x"}'
+    Assert-C1408 -Cond ((Hide-CutoverText -Text $plain) -eq $plain -and (Hide-CutoverText -Text $plain -JsonText) -eq $plain) -Name 'plain JSON pairs are kept in both modes' -Detail (Hide-CutoverText -Text $plain)
+    $hidden = Hide-CutoverSecrets -Object ([pscustomobject]@{ auth = 'SENTJP1423'; privateKey = 'SENTJP1423'; sig = 'SENTJP1423'; MaxPoolSize = 100 })
+    Assert-C1408 -Cond (@($hidden.Keys).Count -eq 1 -and $hidden['MaxPoolSize'] -eq 100) -Name 'Hide-CutoverSecrets drops auth, privateKey and sig and keeps MaxPoolSize' -Detail (@($hidden.Keys) -join ',')
+    $diag = '{"pool":{"NoResetOnClose":true,"auth":"SENTAUTH1423","privateKey":"SENTKEY1423","sig":"SENTSIG1423","nested":{"signature":"SENTSIG1423"}}}'
+    $bp = Join-Path $root 'baseline.json'
+    $b = Invoke-PostgresCutoverMonitor -Mode Baseline -Execute -ServerBaseUrl 'http://fake.invalid' -ProjectId 'p1' -BaselinePath $bp -ResultPath (Join-Path $root 'b-result.json') -SampleCount 3 -HttpGet (New-C1408FakeHttp -DiagBody $diag) -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
+    $all = ''
+    foreach ($f in @(Get-ChildItem -LiteralPath $root -Filter '*.json')) { $all += (Get-Content -LiteralPath $f.FullName -Raw) }
+    Assert-C1408 -Cond ($b.ExitCode -eq 0 -and $all -notmatch 'SENTAUTH1423|SENTKEY1423|SENTSIG1423' -and $all -match '"NoResetOnClose": true') -Name 'pool-diagnostics auth, privateKey, sig and a nested signature are absent from the Baseline result JSON and the plain flag is kept' -Detail ('b=' + $b.ExitCode + ' ' + [regex]::Match($all, '.{0,60}(SENTAUTH1423|SENTKEY1423|SENTSIG1423).{0,20}').Value)
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# R-DEF-3: the pair lead set was [?&;#"'\s] (and (^|[;\s]) in Test-CutoverSecretValue), so a key preceded by ( , : [ { <
+# / or | printed whole and '(Password=S)' in a pool-diagnostics string reached the result JSON. The lead is now any
+# character that cannot be part of a key; a key character still joins the key (access_token is one key).
+function Test-C1423_PairLeadCharactersMasked {
+    $root = New-C1408Scratch
+    foreach ($lead in @('(', ',', ':', '[', '{', '<', '/', '|')) {
+        $text = 'Host=h' + $lead + 'Password=SENTLEAD1423'
+        $masked = Hide-CutoverText -Text $text
+        Assert-C1408 -Cond ($masked -eq ('Host=h' + $lead + 'Password=<redacted>')) -Name ('a Password= pair led by ' + $lead + ' is masked') -Detail $masked
+        $json = Hide-CutoverText -Text ('"' + $text + '"') -JsonText
+        Assert-C1408 -Cond ($json -eq ('"Host=h' + $lead + 'Password=<redacted>"')) -Name ('a Password= pair led by ' + $lead + ' is masked in JSON text') -Detail $json
+        Assert-C1408 -Cond (Test-CutoverSecretValue -Value $text) -Name ('a pool string with a Password= pair led by ' + $lead + ' is a secret value') -Detail $text
+    }
+    $paren = Hide-CutoverText -Text '(Password=SENTLEAD1423)'
+    Assert-C1408 -Cond ($paren -notmatch 'SENTLEAD1423') -Name 'a parenthesised Password= pair is masked' -Detail $paren
+    $keyChars = Hide-CutoverText -Text 'x=1&access_token=SENTLEAD1423&my.key=SENTLEAD1423&a-b=1'
+    Assert-C1408 -Cond ($keyChars -eq 'x=1&access_token=<redacted>&my.key=<redacted>&a-b=1') -Name 'a key character before a secret word joins the key; plain keys are kept' -Detail $keyChars
+    $amp = Hide-CutoverText -Text '"x=1&token=SENTLEAD1423"' -JsonText
+    Assert-C1408 -Cond ($amp -eq '"x=1&token=<redacted>"') -Name 'the JSON-escaped & is still a lead' -Detail $amp
+    $diag = '{"pool":{"NoResetOnClose":true,"note":"(Password=SENTPAREN1423)","list":"Host=h,Password=SENTPAREN1423"}}'
+    $bp = Join-Path $root 'baseline.json'
+    $b = Invoke-PostgresCutoverMonitor -Mode Baseline -Execute -ServerBaseUrl 'http://fake.invalid' -ProjectId 'p1' -BaselinePath $bp -ResultPath (Join-Path $root 'b-result.json') -SampleCount 3 -HttpGet (New-C1408FakeHttp -DiagBody $diag) -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
+    $all = ''
+    foreach ($f in @(Get-ChildItem -LiteralPath $root -Filter '*.json')) { $all += (Get-Content -LiteralPath $f.FullName -Raw) }
+    Assert-C1408 -Cond ($b.ExitCode -eq 0 -and $all -notmatch 'SENTPAREN1423' -and $all -match '"NoResetOnClose": true') -Name 'a parenthesised or comma-led Password= pair in a pool string is absent from the Baseline result JSON' -Detail ('b=' + $b.ExitCode + ' ' + [regex]::Match($all, '.{0,60}SENTPAREN1423.{0,20}').Value)
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# R-DEF-4 (low): the userinfo rule required a word boundary before the scheme, so '1http://u:S@h' and '_postgres://u:S@h'
+# printed whole. The scheme is matched from its first letter wherever it starts.
+function Test-C1423_SchemeAfterWordCharacterMasked {
+    $digit = Hide-CutoverText -Text 'see 1http://u:SENTWB1423@h/x'
+    Assert-C1408 -Cond ($digit -eq 'see 1http://<redacted>@h/x') -Name 'a scheme after a digit is masked to the last @' -Detail $digit
+    $under = Hide-CutoverText -Text '_postgres://u:SENTWB1423@h/db'
+    Assert-C1408 -Cond ($under -eq '_postgres://<redacted>@h/db') -Name 'a scheme after an underscore is masked' -Detail $under
+    $json = Hide-CutoverText -Text '{"note":"x1http://u:SENTWB1423@h/x"}' -JsonText
+    Assert-C1408 -Cond ($json -eq '{"note":"x1http://<redacted>@h/x"}') -Name 'a scheme after a word character inside JSON text is masked' -Detail $json
+    Assert-C1408 -Cond (Test-CutoverSecretValue -Value '1http://u:SENTWB1423@h') -Name 'a pool string whose scheme follows a digit is a secret value'
+    $p = Invoke-PostgresCutoverMonitor -Mode Plan -ServerBaseUrl 'x1http://u:SENTWB1423@fake.invalid' -ProjectId 'p1' -BaselinePath (Join-Path ([System.IO.Path]::GetTempPath()) 'c1423-none.json') -Now $script:FixedNow
+    Assert-C1408 -Cond (@($p.Lines | Where-Object { $_ -match 'SENTWB1423' }).Count -eq 0 -and @($p.Lines | Where-Object { $_ -like 'PLAN would GET x1http://<redacted>@fake.invalid/api/agent-tasks/pipeline?projectId=p1 x*' }).Count -eq 1) -Name 'the PLAN line masks a server URL whose scheme follows a word character' -Detail (@($p.Lines | Where-Object { $_ -like 'PLAN would GET*pipeline*' }) -join ' | ')
+}
+
+# R-DEF-5 (adequacy): the decode-bound mutant (three rounds instead of four) survived because the post-bound rule masks a
+# secret pair anyway and only over-masks a benign value encoded exactly four times, which nothing pinned. A benign value
+# encoded four times is KEPT and one encoded five times is masked, so the bound is pinned from both sides.
+function Test-C1423_DecodeBoundPinnedFromBothSides {
+    $levels = @()
+    $v = '/home?tab=1'
+    for ($i = 1; $i -le 5; $i++) { $v = [uri]::EscapeDataString($v); $levels += $v }
+    $four = 'http://fake.invalid/p?projectId=p1&redirect=' + $levels[3] + '&z=1'
+    Assert-C1408 -Cond ((Hide-CutoverText -Text $four) -eq $four) -Name 'a benign value encoded four times is kept (the bound is at least four)' -Detail (Hide-CutoverText -Text $four)
+    Assert-C1408 -Cond (-not (Test-CutoverEncodedSecret -Value $levels[3])) -Name 'Test-CutoverEncodedSecret keeps a benign value encoded four times'
+    $five = 'http://fake.invalid/p?projectId=p1&redirect=' + $levels[4] + '&z=1'
+    $masked = Hide-CutoverText -Text $five
+    Assert-C1408 -Cond ($masked -eq 'http://fake.invalid/p?projectId=p1&redirect=<redacted>&z=1') -Name 'a benign value encoded five times is masked whole (the bound is at most four) and the neighbours kept' -Detail $masked
+    Assert-C1408 -Cond (Test-CutoverEncodedSecret -Value $levels[4]) -Name 'Test-CutoverEncodedSecret masks a value still encoded after four rounds'
+}
+
+# A-1 (advisory): userinfo without a password registered the bare username as a known form and replaced it everywhere:
+# with -ServerBaseUrl 'http://0@h' the Watch line 'medianMs=5000' became '5<redacted><redacted><redacted>' and the D-11
+# REASON lost its numbers. A form is registered only when it is at least four characters and not only digits and
+# separators; the userinfo rule still masks the username inside its URL.
+function Test-C1423_BareUsernameKeepsNumbersReadable {
+    $root = New-C1408Scratch
+    $server = 'http://0@fake.invalid'
+    $bp = Join-Path $root 'baseline.json'
+    $b = Invoke-PostgresCutoverMonitor -Mode Baseline -Execute -ServerBaseUrl $server -ProjectId 'p1' -BaselinePath $bp -ResultPath (Join-Path $root 'b-result.json') -SampleCount 20 -HttpGet (New-C1408FakeHttp -PipelineMs (Get-C1408Twenty -Median 100)) -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
+    $w = Invoke-PostgresCutoverMonitor -Mode Watch -Execute -ServerBaseUrl $server -ProjectId 'p1' -BaselinePath $bp -ResultPath (Join-Path $root 'w-result.json') -SampleCount 20 -HttpGet (New-C1408FakeHttp -PipelineMs (Get-C1408Twenty -Median 5000)) -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
+    Assert-C1408 -Cond ($b.ExitCode -eq 0 -and $w.ExitCode -eq 2) -Name 'a numeric bare username still measures and decides ROLLBACK' -Detail ('b=' + $b.ExitCode + ' w=' + $w.ExitCode + ' ' + (@($w.Lines) -join ' | '))
+    Assert-C1408 -Cond (@($w.Lines | Where-Object { $_ -eq 'REASON median 5000 ms is above the 1000 ms floor and above 3x the baseline median 100 ms (300 ms)' }).Count -eq 1) -Name 'the D-11 rollback reason keeps its numbers beside a numeric bare username' -Detail (@($w.Lines | Where-Object { $_ -like 'REASON*' }) -join ' | ')
+    Assert-C1408 -Cond (@($w.Lines | Where-Object { $_ -like 'CUTOVER-MONITOR mode=Watch verdict=ROLLBACK exit=2 medianMs=5000 baselineMedianMs=100 failures=0 baselineFailures=0 result=*' }).Count -eq 1) -Name 'the verdict line keeps its numbers' -Detail (@($w.Lines | Where-Object { $_ -like 'CUTOVER-MONITOR*' }) -join ' | ')
+    Assert-C1408 -Cond (@($w.Lines | Where-Object { $_ -match '^MEASURED pipeline http://<redacted>@fake\.invalid/api/agent-tasks/pipeline\?projectId=p1 medianMs=5000 ' }).Count -eq 1) -Name 'the MEASURED line masks the username inside its URL and keeps its numbers' -Detail (@($w.Lines | Where-Object { $_ -like 'MEASURED pipeline*' }) -join ' | ')
+    $json = Get-Content -LiteralPath (Join-Path $root 'w-result.json') -Raw
+    Assert-C1408 -Cond ($json -match '"server": "http://<redacted>@fake\.invalid"' -and $json -match '"medianMs": 5000' -and $json -match '"baselineMedianMs": 100') -Name 'the recorded json masks the username and keeps the medians' -Detail ([regex]::Match($json, '.{0,40}("server"|"medianMs").{0,40}').Value)
+    $forms = @(Get-CutoverKnownForms -Urls @('http://0@h', 'http://ms@h', 'http://1234@h', 'http://user1423@h', 'http://u:SENTBU1423@h'))
+    Assert-C1408 -Cond (-not ($forms -contains '0') -and -not ($forms -contains 'ms') -and -not ($forms -contains '1234') -and ($forms -contains 'user1423') -and ($forms -contains 'u:SENTBU1423')) -Name 'a bare username is a known form only when at least four characters and not numeric; a user:password form is' -Detail ($forms -join ' | ')
+    $alpha = Hide-CutoverText -Text 'http://user1423@fake.invalid/x'
+    Assert-C1408 -Cond ($alpha -eq 'http://<redacted>@fake.invalid/x') -Name 'a bare username is masked inside its URL' -Detail $alpha
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $cases = @(
     'C1408_RollbackAboveFloorAndRatio',
     'C1408_FloorHoldsUnderOneSecond',
@@ -783,7 +945,13 @@ $cases = @(
     'C1423_QuotedConnectionStringPasswordMasked',
     'C1423_PlusAsSpaceInEncodedValueMasked',
     'C1423_FiveTimesEncodedValueMasked',
-    'C1423_VerdictLinesReadableWithMaskedUserinfo'
+    'C1423_VerdictLinesReadableWithMaskedUserinfo',
+    'C1423_SpaceInSecretValueMasked',
+    'C1423_JsonSecretPairsMasked',
+    'C1423_PairLeadCharactersMasked',
+    'C1423_SchemeAfterWordCharacterMasked',
+    'C1423_DecodeBoundPinnedFromBothSides',
+    'C1423_BareUsernameKeepsNumbersReadable'
 )
 
 if (-not (Test-Path -LiteralPath $monitor)) {
