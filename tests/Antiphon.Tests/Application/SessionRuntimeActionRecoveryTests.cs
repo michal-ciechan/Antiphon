@@ -370,6 +370,130 @@ public class SessionRuntimeActionRecoveryTests
         (await verify.SessionRuntimeActions.CountAsync(a => a.AgentSessionId == h.SessionId)).ShouldBe(0);
     }
 
+    // CARD-1434: channel debt is ordered per destination. A reply that keeps failing to one chat
+    // holds only later replies to that chat; another chat's reply publishes, and the failing
+    // reply still publishes first once its destination recovers.
+    [Test]
+    public async Task C1434_a_failing_reply_to_one_destination_does_not_hold_another_destination()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        const string dead = "dead-recipient";
+        const string live = "live-recipient";
+        var producer = new RecordingProducer { FailingConversations = { dead } };
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
+            ConfigureServices = s => s.AddSingleton<IAntiphonMessagingProducer>(producer)
+        });
+        const string first = "[Telegram Family] First question, to the dead chat";
+        const string second = "[Telegram Work] Second question, to the live chat";
+        var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
+        await h.SeedChannelCorrelationAsync(first, "telegram:" + dead);
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 1, "UserPrompt", first), Entry(h, 2, "AssistantText", "first answer"), Entry(h, 3, "TurnEnd", null)]);
+        await actions.DrainPageAsync(h.SessionId, default);
+        producer.Failures.ShouldBeGreaterThan(0, "the real producer must be reached");
+        producer.Sent.ShouldBeEmpty();
+        await using (var db = h.CreateObserverContext())
+            await db.SessionRuntimeActions.Where(a => a.TriggerKind == SessionRuntimeActionCoordinator.ChannelReplyDebt)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, DateTime.UtcNow.AddHours(1)));
+
+        await h.SeedChannelCorrelationAsync(second, "telegram:" + live);
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 4, "UserPrompt", second), Entry(h, 5, "AssistantText", "second answer"), Entry(h, 6, "TurnEnd", null)]);
+        await actions.DrainPageAsync(h.SessionId, default);
+        producer.Sent.Select(r => r.Text).ShouldBe(["second answer"],
+            "a reply that keeps failing to one chat must not hold another chat's reply");
+        producer.Sent.ShouldAllBe(r => r.ConversationId == live);
+        await using (var db = h.CreateObserverContext())
+        {
+            var pending = await db.SessionRuntimeActions.AsNoTracking().Where(a => a.AgentSessionId == h.SessionId).ToListAsync();
+            var debt = pending.ShouldHaveSingleItem("only the dead chat's reply is owed");
+            debt.TriggerKind.ShouldBe(SessionRuntimeActionCoordinator.ChannelReplyDebt);
+            debt.Sequence.ShouldBe(3);
+            debt.Attempts.ShouldBeGreaterThan(0);
+            debt.ConversationKey.ShouldBe("telegram:" + dead, "debt is keyed by the destination it owes");
+        }
+
+        producer.FailingConversations.Clear();
+        await using (var db = h.CreateObserverContext())
+            await db.SessionRuntimeActions.ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, DateTime.UtcNow.AddSeconds(-1)));
+        await actions.DrainPageAsync(h.SessionId, default);
+        producer.Sent.Select(r => r.Text).ShouldBe(["second answer", "first answer"]);
+        producer.Sent.Select(r => r.ConversationId).ShouldBe([live, dead]);
+        await using var verify = h.CreateObserverContext();
+        (await verify.SessionRuntimeActions.CountAsync(a => a.AgentSessionId == h.SessionId)).ShouldBe(0, "delivered replies leave no debt");
+    }
+
+    // CARD-1433: a late-confirm publication that waits for an earlier owed reply is channel debt
+    // at its own sequence, not a retained queue-phase action, so a later turn's queue phase
+    // still types the next queued message while the replies wait.
+    [Test]
+    public async Task C1433_a_waiting_late_confirm_does_not_hold_later_queue_actions()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var producer = new RecordingProducer { Failing = true };
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
+            ConfigureServices = s => s.AddSingleton<IAntiphonMessagingProducer>(producer)
+        });
+        const string destination = "late-confirm-hold-recipient";
+        const string first = "[Telegram Family] First question";
+        const string second = "[Telegram Family] Second question, typed once";
+        const string next = "C1433 next queued message";
+        var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
+        var owed = await h.SeedChannelCorrelationAsync(first, "telegram:" + destination);
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 1, "UserPrompt", first), Entry(h, 2, "AssistantText", "first answer"), Entry(h, 3, "TurnEnd", null)]);
+        await actions.DrainPageAsync(h.SessionId, default);
+        producer.Failures.ShouldBeGreaterThan(0, "the real producer must be reached");
+        await using (var db = h.CreateObserverContext())
+            await db.SessionRuntimeActions.Where(a => a.TriggerKind == SessionRuntimeActionCoordinator.ChannelReplyDebt)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, DateTime.UtcNow.AddHours(1)));
+
+        // The second channel message was typed once and is confirmed late by the turn end at 6.
+        producer.Failing = false;
+        var typed = await h.SeedPendingMessageAsync(second, deliveryAttempts: 1, baselineSequence: 3,
+            origin: QueuedMessageOrigin.Channel, conversationKey: "telegram:" + destination);
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 4, "UserPrompt", second), Entry(h, 5, "AssistantText", "second answer"), Entry(h, 6, "TurnEnd", null)]);
+        await actions.DrainPageAsync(h.SessionId, default);
+        producer.Sent.ShouldBeEmpty("a late-confirmed reply cannot publish past an earlier owed reply");
+        await using (var db = h.CreateObserverContext())
+            (await db.SessionQueuedMessages.SingleAsync(m => m.Id == typed)).DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+
+        // A plain queued message and a terminal-typed third turn while both replies wait.
+        var queued = await h.SeedPendingMessageAsync(next);
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 7, "UserPrompt", "typed in the terminal"), Entry(h, 8, "AssistantText", "terminal answer"), Entry(h, 9, "TurnEnd", null)]);
+        await actions.DrainPageAsync(h.SessionId, default);
+        h.Adapter.SubmittedBodies.ShouldBe([next], "a waiting late-confirm publication must not hold the next queued message");
+        producer.Sent.ShouldBeEmpty("the owed replies still wait");
+        await using (var db = h.CreateObserverContext())
+        {
+            (await db.SessionQueuedMessages.SingleAsync(m => m.Id == queued)).Status.ShouldBe(QueuedMessageStatus.Sent);
+            (await db.SessionQueuedMessages.SingleAsync(m => m.Id == owed)).ChannelReplySettledAt.ShouldBeNull("the first reply is still owed");
+            var pending = await db.SessionRuntimeActions.AsNoTracking().Where(a => a.AgentSessionId == h.SessionId)
+                .OrderBy(a => a.Sequence).ToListAsync();
+            pending.ShouldAllBe(a => a.TriggerKind == SessionRuntimeActionCoordinator.ChannelReplyDebt,
+                "only channel debt remains; no queue-phase action is retained");
+            pending.Select(a => a.Sequence).ShouldBe([3L, 6L, 9L]);
+            pending[0].Attempts.ShouldBeGreaterThan(0);
+            pending[1].LateConfirmedChannelMessageIds.ShouldContain(typed, "the late-confirmed publication is debt at its own sequence");
+            pending[2].Attempts.ShouldBe(0);
+            await db.SessionRuntimeActions.ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, DateTime.UtcNow.AddSeconds(-1)));
+        }
+
+        await actions.DrainPageAsync(h.SessionId, default);
+        producer.Sent.Select(r => r.Text).ShouldBe(["first answer", "second answer"]);
+        producer.Sent.ShouldAllBe(r => r.ConversationId == destination);
+        await using var verify = h.CreateObserverContext();
+        (await verify.SessionRuntimeActions.CountAsync(a => a.AgentSessionId == h.SessionId)).ShouldBe(0);
+    }
+
     [Test]
     public async Task C1259_queue_prune_holds_the_transcript_mutation_lease()
     {
@@ -460,11 +584,14 @@ public class SessionRuntimeActionRecoveryTests
         public List<ChannelReply> Sent { get; } = [];
         public bool FailNext;
         public bool Failing;
+        // CARD-1434: fail only the replies addressed to these conversation ids.
+        public HashSet<string> FailingConversations { get; } = new(StringComparer.Ordinal);
         public int Failures;
         public Func<Task>? OnSend;
         public async Task SendAsync(ChannelReply reply, CancellationToken ct = default)
         {
-            if (FailNext || Failing) { FailNext = false; Failures++; throw new IOException("pre-accept failure"); }
+            var dead = reply.ConversationId is { } conversation && FailingConversations.Contains(conversation);
+            if (FailNext || Failing || dead) { FailNext = false; Failures++; throw new IOException("pre-accept failure"); }
             Sent.Add(reply);
             if (OnSend is not null) await OnSend();
         }
