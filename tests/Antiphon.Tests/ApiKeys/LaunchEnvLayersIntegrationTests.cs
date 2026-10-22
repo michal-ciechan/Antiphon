@@ -1176,6 +1176,167 @@ public sealed class LaunchEnvLayersIntegrationTests
         unscoped.Env.ShouldNotContainKey("ANTHROPIC_API_KEY");
     }
 
+    // CARD-1495: the warm-pool reuse witnesses for the CARD-0167 S3 endpoint stamp. The predicate
+    // tests stop at InheritedEnvMatchesPool; these drive TryReuseWarmAgentAsync through both of its
+    // call sites (the unpinned pool query and the pinned pool delegate), reading the project's map
+    // from the database, so a call site that drops the map (null) turns a named case red.
+    public enum ReusePath { Pool, Pinned }
+
+    private static readonly ProviderEndpoint C1495Endpoint = new("https://proxy-1495.local", "c1495-proxy-key");
+
+    [Test]
+    [Arguments(ReusePath.Pool)]
+    [Arguments(ReusePath.Pinned)]
+    public async Task C1495_a_no_endpoint_process_is_not_reused_after_its_project_sets_an_endpoint(ReusePath path)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildDispatcherProvider(schema.ConnectionString);
+        var (dispatcher, db) = DispatcherOf(provider);
+        using var workspace = new TempWorkspace();
+        var now = DateTime.UtcNow;
+        var project = await AddProjectAsync(db);
+        // The cold-launch stamp of a process started while the project had no endpoint.
+        var coldStamp = C1495LaunchStamp(project);
+        coldStamp.ShouldBeNull("a launch with no project endpoint projects nothing");
+        var agent = await AddWarmPoolAgentAsync(db, workspace.Path, project.Id, coldStamp, now);
+
+        await SetProviderEndpointAsync(db, project, C1495Endpoint);
+        (await dispatcher.TryReuseWarmAgentAsync(await C1495TaskAsync(db, workspace.Path, project.Id, agent, path), now, Ct))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.SpawnFresh,
+                "the process was launched without the endpoint the project now routes through");
+
+        // Same row, same task shape, endpoint cleared again: the decline was the endpoint alone.
+        await SetProviderEndpointAsync(db, project, endpoint: null);
+        (await dispatcher.TryReuseWarmAgentAsync(await C1495TaskAsync(db, workspace.Path, project.Id, agent, path), now, Ct))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.Reused);
+    }
+
+    [Test]
+    [Arguments(ReusePath.Pool)]
+    [Arguments(ReusePath.Pinned)]
+    public async Task C1495_an_unchanged_no_endpoint_map_reuses_the_process(ReusePath path)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildDispatcherProvider(schema.ConnectionString);
+        var (dispatcher, db) = DispatcherOf(provider);
+        using var workspace = new TempWorkspace();
+        var now = DateTime.UtcNow;
+        var project = await AddProjectAsync(db);
+        var agent = await AddWarmPoolAgentAsync(db, workspace.Path, project.Id, C1495LaunchStamp(project), now);
+
+        (await dispatcher.TryReuseWarmAgentAsync(await C1495TaskAsync(db, workspace.Path, project.Id, agent, path), now, Ct))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.Reused);
+    }
+
+    [Test]
+    [Arguments(ReusePath.Pool)]
+    [Arguments(ReusePath.Pinned)]
+    public async Task C1495_a_stamp_matching_the_current_endpoint_reuses_the_process(ReusePath path)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildDispatcherProvider(schema.ConnectionString);
+        var (dispatcher, db) = DispatcherOf(provider);
+        using var workspace = new TempWorkspace();
+        var now = DateTime.UtcNow;
+        var project = await AddProjectAsync(
+            db, providerEndpoints: new Dictionary<AgentKind, ProviderEndpoint> { [AgentKind.ClaudeCode] = C1495Endpoint });
+        var stamp = C1495LaunchStamp(project);
+        stamp.ShouldNotBeNull();
+        var agent = await AddWarmPoolAgentAsync(db, workspace.Path, project.Id, stamp, now);
+
+        (await dispatcher.TryReuseWarmAgentAsync(await C1495TaskAsync(db, workspace.Path, project.Id, agent, path), now, Ct))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.Reused);
+    }
+
+    [Test]
+    [Arguments(ReusePath.Pool)]
+    [Arguments(ReusePath.Pinned)]
+    public async Task C1495_an_unknown_stamp_never_matches_with_or_without_an_endpoint(ReusePath path)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildDispatcherProvider(schema.ConnectionString);
+        var (dispatcher, db) = DispatcherOf(provider);
+        using var workspace = new TempWorkspace();
+        var now = DateTime.UtcNow;
+        var project = await AddProjectAsync(db);
+        var agent = await AddWarmPoolAgentAsync(
+            db, workspace.Path, project.Id, ProviderEndpointLayers.UnknownPoolProjection, now);
+
+        (await dispatcher.TryReuseWarmAgentAsync(await C1495TaskAsync(db, workspace.Path, project.Id, agent, path), now, Ct))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.SpawnFresh, "an unknown projection matches even a task that projects nothing");
+        await SetProviderEndpointAsync(db, project, C1495Endpoint);
+        (await dispatcher.TryReuseWarmAgentAsync(await C1495TaskAsync(db, workspace.Path, project.Id, agent, path), now, Ct))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.SpawnFresh);
+    }
+
+    /// <summary>What a cold pool launch on this project stamps: its map, Inherit mode, no agent endpoint.</summary>
+    private static string? C1495LaunchStamp(Project project) =>
+        ProviderEndpointLayers.PoolFingerprint(
+            AgentKind.ClaudeCode,
+            ProviderEndpoint.ParseMap(project.ProviderEndpointsJson),
+            ProviderEndpointMode.Inherit,
+            agentEndpoint: null);
+
+    private static async Task<AgentTask> C1495TaskAsync(
+        AppDbContext db, string directory, Guid projectId, Agent agent, ReusePath path)
+    {
+        var task = NewQueued(directory, AgentModelLevel.Medium);
+        task.ProjectId = projectId;
+        if (path == ReusePath.Pinned)
+            task.AgentId = agent.Id;
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync(Ct);
+        return task;
+    }
+
+    private static async Task SetProviderEndpointAsync(AppDbContext db, Project project, ProviderEndpoint? endpoint)
+    {
+        project.ProviderEndpointsJson = ProviderEndpoint.SerializeMap(endpoint is null
+            ? null
+            : new Dictionary<AgentKind, ProviderEndpoint> { [AgentKind.ClaudeCode] = endpoint });
+        project.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(Ct);
+    }
+
+    private static async Task<Agent> AddWarmPoolAgentAsync(
+        AppDbContext db, string directory, Guid projectId, string? stamp, DateTime now)
+    {
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            DefinitionName = "claude",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = directory,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+        };
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = $"task-{Guid.NewGuid():N}"[..13],
+            Slug = $"pool-{Guid.NewGuid():N}"[..13],
+            WorkingDirectory = directory,
+            Status = AgentStatus.Idle,
+            IsPoolDelegate = true,
+            Kind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Medium,
+            PoolIdleSince = now.AddMinutes(-10),
+            PoolProjectId = projectId,
+            PoolProviderProjectionJson = stamp,
+            PersistentSessionId = session.Id.ToString("D"),
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.AgentSessions.Add(session);
+        db.Agents.Add(agent);
+        await db.SaveChangesAsync(Ct);
+        return agent;
+    }
+
     private static AgentTask NewQueued(string directory, AgentModelLevel level)
     {
         var id = Guid.NewGuid();
