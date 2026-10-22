@@ -50,3 +50,28 @@ The closed plan is
 When CP-3 and receipt qualification succeed, next is ordinary Review of this
 landing-owner chain. A fixture defect permits one minimal repair and one CP-3
 rerun; a product-shape disagreement is reported without a workaround.
+
+## Initial Windows result and fixture repair
+
+Run 20261022-211505-021c completed red at committed
+55c0dc6da27c587e9a1b3a2012e099fa98968393. Fresh TRX contains exactly
+RcQualificationStatusTests.C1500_WindowsSharedReadAndPs51: 1 executed, 0 passed,
+1 failed, 0 skipped. It failed before the fixture because the default harness
+resolved the WindowsApps pwsh alias, which its native ownership guard rejects.
+This is fixture setup red, not a behavioral mutation/control or a product defect.
+The isolated build passed (1152 warnings, zero errors), slot granted/waited 0s,
+368.1636823 seconds including checkpoint work. The test slot waited 311 seconds
+for memory admission. Total checkpoint wall time was 13m25s. No gate was bypassed.
+
+CHECKPOINT CP-3 commit=55c0dc6da27c587e9a1b3a2012e099fa98968393 build=ok filter=/*/*/RcQualificationStatusTests/C1500_WindowsSharedReadAndPs51 executed=1 passed=0 failed=1 skipped=0 trx=C:\Antiphon\worktrees\card-task-f7f161f3\.antiphon\checkpoints\20261022-211505-021c\rows\CP-3\run.trx slot=granted waited=311s dirty=0 source=55c0dc6da27c587e9a1b3a2012e099fa98968393 sourceState=clean buildSource=verified
+
+The minimal repair selects the existing fixture resolver for a regular installed
+PowerShell executable in CP-3 only. The nested pwsh invocation uses that host's
+PSHOME executable. No production code, shared harness, timeout or assertion changes.
+The permitted one CP-3 rerun is pending when this report is committed. Red output
+is removed only after checkpoint termination, while its receipts and TRX remain.
+
+The predecessor's final report was recovered through GET /api/agent-tasks for
+05f0443d: CP-1 and CP-2 each passed one test at e90c47450df4247bc254a027390711a555e59980,
+with clean source, verified build provenance, slot granted/waited 0s and validated
+receipts. Those results remain inherited evidence; no portable rerun was authorized.
