@@ -2462,7 +2462,9 @@ public sealed partial class SessionMessageQueueService
             // The last-look supersession above can create an orphan in THIS flush, after the
             // initial composer checks. Recheck before typing the next surviving completion note.
             if (await CanceledTypingBlocksTheComposerAsync(db, sessionId, sessionGeneration, ct))
-                return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
+                // As in the all-superseded case below, publish the changed queue without
+                // reporting a new delivery or charging an attempt to the surviving note.
+                return FlushResult.LateConfirmed;
         }
         pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
         if (pending.Count == 0)
