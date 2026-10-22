@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    CARD-1483: real MSBuild evaluation for scripts/audit-land-verification-graph.ps1 -Update.
+    Microsoft.Build is compile-only (ExcludeAssets="runtime"); MSBuildLocator loads the MSBuild of
+    the SDK that the audited repo's global.json resolves, so this targets that SDK's runtime.
+    Not in Antiphon.sln (plan D-1/S1): Antiphon.Tests stages it as a helper.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Antiphon.LandGraphAudit</RootNamespace>
+    <AssemblyName>Antiphon.LandGraphAudit</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Build" Version="18.0.2" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.Build.Framework" Version="18.0.2" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.Build.Locator" Version="1.11.2" />
+  </ItemGroup>
+
+</Project>
