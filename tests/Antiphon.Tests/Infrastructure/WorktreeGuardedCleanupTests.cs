@@ -13,7 +13,7 @@ namespace Antiphon.Tests.Infrastructure;
 
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<GitProcessSpawnLimit>]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class WorktreeGuardedCleanupTests
 {
     [Test]
