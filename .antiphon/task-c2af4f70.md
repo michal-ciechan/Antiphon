@@ -118,6 +118,11 @@ synthetic commit `aa27e8df8fb49314159692562fc536887f27d00c` (parent is the S1 sy
    `c3dd6faee97571187f0e00d5720eda95b7223812`, left that synthetic commit, right
    `0a049b6fd87e21075563f9b03195547e3e5321b5`. Final tree:
    `394bef87f676388e1345b11d3d5ca5a9fadd74b9`. The report and plan documents remain excluded.
+6. The live-snapshot helper repair also picks cleanly (exit 0): wrap the preceding tree
+   as `92fbbe900c80b8900c768c7a021c9a79d0d8d0e3`, then merge-base
+   `7377e078b7bc2d95343c29e29573fbf985b3d040`, left that synthetic commit, right
+   `09605a6aed45933aae23422e584eae1f82904069`. Final applicability tree:
+   `d1313a1cd5c7b1baaef4ef9e448c6aba186da0ef`.
 
 Full card reads confirmed the plan's attention follow-up is already CARD-0267 (Done,
 `fd8f7536-be19-44dd-9514-70f549d3982f`), and the separate Pending/collapsed-paste retry gap is
@@ -166,6 +171,31 @@ correction found before a compiler result, not a measured test failure. Stop com
 wait returned exit 6 (stopped executor without phase=done), and inspected partial output
 was removed before editing. Both stopped attempts are non-receipt rows; neither can
 qualify any ordinary test. Final qualification starts fresh at the next report commit.
+
+The next attempt `20261022-192251-362e`, at source
+`7377e078b7bc2d95343c29e29573fbf985b3d040`, completed CP-2 with 11 executed,
+10 passed, 1 failed, 0 skipped. Fresh TRX identities were inspected: R1, R2, G1-G4,
+the rewritten sweep including its notification assertion, and all three F1 guards
+passed. Only the empty-composer sweep twin failed its `Runner.Writes.ShouldNotBeEmpty`
+assertion. Attribution: introduced test-helper deficiency. Runtime live snapshot reads
+both GetSnapshotAsync and GetBufferAsync; the helper's buffer method still threw,
+so the real service correctly treated the snapshot as unavailable and held. The
+baseline twin had been green because old production did not inspect this canceled row.
+Pushed repair `09605a6aed45933aae23422e584eae1f82904069` returns a buffer only when
+the test explicitly configures a snapshot. It changes no production logic, timeout,
+or assertion. The measured failing test was committed before this helper fix.
+
+```text
+CHECKPOINT CP-2 commit=7377e078b7bc2d95343c29e29573fbf985b3d040 build=ok filter=/*/Antiphon.Tests.Application/(SessionMessageQueueWedgedHeadTests*)|(AgentTaskCheckSweepTests*)/(C0266_*)|(Parked_head_*)|(Cleared_composer_*)|(the_flush_cancels_a_settled_check*) executed=11 passed=10 failed=1 skipped=0 trx=/work/worktrees/task-c2af4f70/.antiphon/checkpoints/20261022-192251-362e/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=7377e078b7bc2d95343c29e29573fbf985b3d040 sourceState=clean buildSource=verified
+```
+
+CP-2 build cost 340.59s and its slot waited 0s; the test slot also waited 0s and
+was held about 83s. The run was stopped during CP-3's build after the known red
+was inspected; CP-3 executed zero tests in this attempt. Stop completed, wait
+returned exit 6, and both inspected output directories were removed before the
+helper edit. The completed red row's original line remains in state.json; the
+stopped run has no final report.json and supplies no green certificate. The next
+run repeats required CP-2 after the fix and performs the still-outstanding CP-3.
 
 With this report committed and pushed, run the already-built checkpoint tool:
 
