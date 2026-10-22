@@ -361,7 +361,7 @@ function Get-ResolvedImportPaths([string]$Root, [string]$FromFile, [string]$Proj
     $startsAnchored = $text -match '^(?i)\$\(\s*MSBuild(ThisFile|Project)Directory\s*\)'
     $text = [regex]::Replace($text, '(?i)\$\(\s*MSBuildThisFileDirectory\s*\)', (ConvertTo-RegexReplacement $fileDir))
     $text = [regex]::Replace($text, '(?i)\$\(\s*MSBuildProjectDirectory\s*\)', (ConvertTo-RegexReplacement $projectDir))
-    if ($text.IndexOf('$(') -ge 0) {
+    if (($text.IndexOf('$(') -ge 0) -or ($text.IndexOf('@(') -ge 0) -or ($text.IndexOf('%(') -ge 0)) {
         Exit-Audit 1 (Format-UnresolvedImportRefusal $FromFile $ProjectAttr)
     }
     if ($text -match '^[A-Za-z]:/' -or $text.StartsWith('/')) {
@@ -401,6 +401,16 @@ function Add-ImportQueue($Doc, [string]$FromFile, [string]$ProjectDirectory, $Qu
     foreach ($node in $Doc.GetElementsByTagName('*')) {
         if ($node.LocalName -ne 'Import') { continue }
         $project = $node.GetAttribute('Project')
+        foreach ($attribute in $node.Attributes) {
+            $attributeName = [string]$attribute.Name
+            $supported = $false
+            foreach ($allowed in @('Project', 'Condition', 'Label')) {
+                if ($attributeName.Equals($allowed, [System.StringComparison]::Ordinal)) { $supported = $true }
+            }
+            if (-not $supported) {
+                Exit-Audit 1 (Format-UnsupportedImportAttributeRefusal $FromFile $project $attributeName ([string]$attribute.Value))
+            }
+        }
         if ([string]::IsNullOrWhiteSpace($project)) { continue }
         $targets = @(Get-ResolvedImportPaths $Root $FromFile $ProjectDirectory $project $Known)
         foreach ($target in $targets) {
@@ -440,6 +450,10 @@ function Format-ApprovalRefusal([string]$Path, [string]$Item, [string]$Include) 
 
 function Format-UnresolvedImportRefusal([string]$Path, [string]$ProjectAttr) {
     return 'definition file import cannot be resolved; -Update cannot approve it: ' + $Path + ' Import Project=' + $ProjectAttr
+}
+
+function Format-UnsupportedImportAttributeRefusal([string]$Path, [string]$ProjectAttr, [string]$Name, [string]$Value) {
+    return 'definition file import carries an attribute the audit does not support; -Update cannot approve it: ' + $Path + ' Import Project=' + $ProjectAttr + ' ' + $Name + '=' + $Value
 }
 
 function Get-GitBytes([string]$Root, [string]$Arguments) {
