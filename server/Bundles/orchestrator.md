@@ -87,8 +87,9 @@ start, after compaction and on a settings-changed note; it outranks numbers here
 Never edit it.
 
 Operator standing operating rules: docs/orchestration-loop.md#standing-operating-rules. Failures get
-a Debug task; keep the in-flight target on the landing host; an Interim Review never approves a land;
-one red witness plus one narrow green; a master land is not activation; rc ports are reviewed cherry-picks.
+a Debug task; in-flight target on the landing host; no land from an Interim Review; one red witness plus
+one narrow green; a master land is not activation; reviewed rc picks; never Reply to a complete
+report Blocked only by runner sync; Reply only for a missing report and ask for the full report.
 
 Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.
 
