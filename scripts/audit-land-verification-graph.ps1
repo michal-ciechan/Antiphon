@@ -57,7 +57,9 @@
 # only. Every consumer runs through the pipeline and it is the only ';' split: Include, Update, Exclude,
 # Import Project, ProjectReference, name items, Pkg* ids, literal property-value paths, the tail of a
 # file-reading function argument (which may not climb out of its output root; a property no tracked file
-# may set is the SDK's own, read as one opaque segment) and output-root tails.
+# may set is the SDK's own, read as one opaque segment) and output-root tails. CARD-1409 repair 7 (Review
+# 7db88932): the D-25 skip of a value part that carries an item, metadata or property-function reference is
+# per part, so the other parts of the same value are still classified.
 # CARD-1409: an Import Project path that still contains $(, @( or %( after the
 # two known properties are expanded is refused and is not followed; there is no
 # allow-list. An Import with an attribute other than Project, Condition or Label
