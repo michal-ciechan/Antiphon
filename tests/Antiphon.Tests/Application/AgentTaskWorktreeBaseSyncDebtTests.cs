@@ -21,7 +21,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<GitProcessSpawnLimit>]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class AgentTaskWorktreeBaseSyncDebtTests
 {
     private const string AbsentSha = "0123456789abcdef0123456789abcdef01234567";
