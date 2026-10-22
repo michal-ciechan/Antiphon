@@ -5,7 +5,8 @@ import type { AgentDetailDto, AgentSummaryDto, InstructionBundleDto } from '../.
 import type { ProjectReadinessDto } from '../../api/projectSetup'
 import type { AgentTuiProfileDto } from '../../api/agentTui'
 import type { AgentSessionSummaryDto, BoardDetailDto, BoardSummaryDto } from '../../api/boards'
-import { pasteInto, renderWithProviders, screen, settleQueries, userEvent, waitFor } from '../../test/utils'
+import { fireEvent } from '@testing-library/react'
+import { pasteInto, renderWithProviders, screen, settleQueries, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { AgentCard, AgentsPage } from './AgentsPage'
 
@@ -993,5 +994,34 @@ describe('AgentsPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Load readiness' }))
 
     await waitFor(() => expect(renders).toEqual(['memo-agent-1']))
+  })
+
+  // CARD-0105: right-click on the card's terminal icon opens a cursor-anchored menu with the
+  // kebab's destinations plus "Open terminal". `fireEvent` returns false when a handler called
+  // preventDefault, which is the witness that the icon owns the right-click (otherwise the
+  // browser's own context menu would open on top of ours).
+  it('C0105 right-click on the terminal icon opens the card menu at the pointer', async () => {
+    server.use(...agentHandlers())
+
+    renderWithProviders(<AgentsPage />)
+
+    const icon = await screen.findByRole('button', { name: 'Terminal Frontend Claude' })
+    const allowed = fireEvent.contextMenu(icon, { clientX: 120, clientY: 80 })
+    expect(allowed).toBe(false)
+
+    const menu = await screen.findByRole('menu', { name: 'Terminal menu Frontend Claude' })
+    const items = within(menu).getAllByRole('menuitem')
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Open terminal',
+      'Open files view',
+      'Open board',
+      'Edit settings',
+    ])
+    expect(items[1]).toHaveAttribute('href', '/agents/agent-1/files')
+    expect(items[1]).toHaveAttribute('target', '_blank')
+    expect(items[2]).toHaveAttribute('href', '/boards/board-1')
+    expect(screen.getByTestId('card-menu-anchor')).toHaveAttribute('data-anchor', '120,80')
+    // The left-click path (the CLI modal) was not taken.
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
