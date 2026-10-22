@@ -30,6 +30,7 @@
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 . (Join-Path $PSScriptRoot (Join-Path 'lib' 'build-slot.ps1'))
+. (Join-Path $PSScriptRoot (Join-Path 'lib' 'build-driver-environment.ps1'))
 
 # Under `pwsh -File` the raw process arguments follow this script's own path; when the script is
 # invoked from a PowerShell session instead, $args is what the caller passed.
@@ -116,7 +117,9 @@ function Start-AntiphonWrappedCommand {
 
 $code = 1
 $script:WrappedProcess = $null
+$environmentRestore = $null
 try {
+    $environmentRestore = Enter-AntiphonBuildDriverEnvironment -Windows $IsWindows
     if (-not [string]::IsNullOrWhiteSpace($env:C589_COMMAND_SHIM)) {
         $shimArgs = @('-NoProfile', '-NonInteractive', '-File', $env:C589_COMMAND_SHIM) + $command
         $code = Start-AntiphonWrappedCommand -FileName (Get-Command pwsh).Source -Arguments $shimArgs
@@ -138,6 +141,7 @@ try {
         }
     }
 } finally {
+    Exit-AntiphonBuildDriverEnvironment -Restore $environmentRestore
     if ($null -ne $script:WrappedProcess) {
         if (-not $script:WrappedProcess.HasExited) {
             try { $script:WrappedProcess.Kill($true) } catch { }

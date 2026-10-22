@@ -644,6 +644,7 @@ public static class BuildConfinement
                 psi.Environment[name] = value;
         psi.Environment["MSBUILDDISABLENODEREUSE"] = "1";
         psi.Environment["DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER"] = "1";
+        new Antiphon.Build.BuildDriverEnvironment().Apply(psi);
         foreach (var name in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE" })
             psi.Environment.Remove(name);
 

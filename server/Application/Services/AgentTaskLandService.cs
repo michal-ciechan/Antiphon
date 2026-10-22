@@ -1916,6 +1916,7 @@ public sealed class AgentTaskLandService
         var start = new ProcessStartInfo { FileName = file, WorkingDirectory = cwd, UseShellExecute = false,
             CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in args) start.ArgumentList.Add(arg);
+        new Antiphon.Build.BuildDriverEnvironment().Apply(start);
         if (observer is not null) await observer.BeforeStartAsync(ct);
         using var process = Process.Start(start) ?? throw new InvalidOperationException($"Could not start {file}.");
         var stdout = process.StandardOutput.ReadToEndAsync();

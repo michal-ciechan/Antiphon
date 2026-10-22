@@ -26,6 +26,15 @@ Read inventory and integration boundaries:
 | `scripts/lib/nightly-tests-impl.ps1` | native owner and exact roster | child environment before native creation |
 | `scripts/restart-apphost.ps1` | calls `dev-aspire.ps1` | route restore/build through build-slot; launch AppHost with no-build |
 | `Directory.Build.props` | project evaluation, after driver startup | unchanged; cannot set startup GC or CLI environment |
+| AppHost daemon supervisor | `scripts/run-daemon.ps1` builds before executable launch | build-slot child; daemon does not inherit policy |
+| watched test executable | `scripts/run-tests-watched.ps1` | scoped environment around Start-Process |
+
+The launch census also found operator-only publish/isolated-host scripts
+`deploy-nightly-watchdog.ps1` and `verify-phone-home-grok.ps1`; invoke these through
+`scripts/build-slot.ps1` as the existing build-slot contract requires. Their
+children inherit the central policy. Linux-only nightly probe supervision,
+Dockerfiles, shell deployment builds, fixture children and `dotnet --version`
+identity reads are outside the Windows driver change.
 
 ## Slices
 
@@ -45,6 +54,9 @@ Windows qualification, restart or shutdown is permitted from this task.
   values conflict. The red assertion names the missing setting.
 - V-2: shared helper's child-environment output agrees across Windows default,
   exact opt-out and non-opt-out values; unrelated variables and parent survive.
+  Four direct ProcessStartInfo cases additionally cover the C# platform/opt-out
+  guards (24 setting assertions); the wrapper caller checks its own environment
+  after the command returns.
 - R-1: Linux wrapper and helper preserve absent and pre-existing settings.
 - R-2: opt-out preserves conflicting caller values on Windows.
 - V-3: compile both C# consumers and inspect every launch adapter above; parse
@@ -77,4 +89,4 @@ both take build slots and isolated output. No repetition after green.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | all | n/a | build-driver-environment | `pwsh -NoProfile -File scripts/test-build-driver-environment.ps1` | V-1, V-2, R-1, R-2 | 6 scenarios, 0 failed (S1 intentionally red on Windows settings) | n/a | 2 |
+| CP-1 | all | n/a | build-driver-environment | `pwsh -NoProfile -File scripts/test-build-driver-environment.ps1` | V-1, V-2, R-1, R-2 | 6 child scenarios and 4 direct cases, 0 failed (S1 intentionally red on Windows settings) | n/a | 2 |

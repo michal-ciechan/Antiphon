@@ -629,6 +629,7 @@ if ($NoBuild) {
 
 # (2b) Host build slot (CARD-0589), after every input check so an invalid row never waits.
 . (Join-Path $PSScriptRoot (Join-Path 'lib' 'build-slot.ps1'))
+. (Join-Path $PSScriptRoot (Join-Path 'lib' 'build-driver-environment.ps1'))
 $slot = $null
 $slotState = 'skipped'
 $slotWaited = 0
@@ -677,6 +678,7 @@ function Invoke-Dotnet {
     }
     foreach ($token in $tokens) { [void]$psi.ArgumentList.Add([string]$token) }
     if ($Nonce) { $psi.Environment['ANTIPHON_CHECKPOINT_NONCE'] = $Nonce }
+    Set-AntiphonBuildDriverEnvironment -StartInfo $psi
     $logPath = Join-Path $resultsDirectory ($Phase + '.log')
     $stream = Open-CheckpointSafeCreate $logPath $resultsDirectory
     $writer = [System.IO.StreamWriter]::new($stream)
@@ -766,6 +768,7 @@ function Invoke-CheckpointGraphEval {
     foreach ($token in $evalArgs) { [void]$psi.ArgumentList.Add([string]$token) }
     $psi.Environment['MSBUILDDISABLENODEREUSE'] = '1'
     $psi.Environment['DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER'] = '1'
+    Set-AntiphonBuildDriverEnvironment -StartInfo $psi
     foreach ($name in @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE')) {
         if ($psi.Environment.ContainsKey($name)) { [void]$psi.Environment.Remove($name) }
     }
