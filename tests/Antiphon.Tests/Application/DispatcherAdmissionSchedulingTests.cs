@@ -6,6 +6,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
 public sealed class DispatcherAdmissionSchedulingTests
 {
     [Test]
@@ -18,7 +19,7 @@ public sealed class DispatcherAdmissionSchedulingTests
         // The initial timers were observed armed before entering the real watchdog.
         // Do not let an absent next timer replace the durable outcome assertion on old hosting.
         f.Clock.Advance(TimeSpan.FromSeconds(5));
-        await DispatcherAdmissionFixture.ObserveAsync(f.IsDispatchedAsync);
+        await DispatcherAdmissionFixture.ObserveAsync(async () => await f.IsDispatchedAsync() && f.Sink.Sessions.Count == 1);
         await f.AssertOutcomeAsync(dispatched: true);
     }
 
@@ -99,6 +100,10 @@ public sealed class DispatcherAdmissionSchedulingTests
             if (!cooperative)
             {
                 await DispatcherAdmissionFixture.WaitUntilAsync(() => Task.FromResult(f.Logger.Active == 0), "admission joined");
+                // Allow a host missing the owned-sweep join to finish; an instantaneous
+                // IsCompleted check could merely see its cancellation continuation still queued.
+                (await DispatcherAdmissionFixture.ObserveAsync(() => Task.FromResult(f.Service.ExecuteTask!.IsCompleted)))
+                    .ShouldBeFalse("execution cannot finish while its abandoned sweep is held");
                 f.Service.ExecuteTask!.IsCompleted.ShouldBeFalse("execution must still own the abandoned scope");
                 stop.IsCompleted.ShouldBeFalse("unbounded stop must wait for the execution lifetime");
                 (await sweepDb.Database.CanConnectAsync()).ShouldBeTrue("scope remains usable until its operation ends");
