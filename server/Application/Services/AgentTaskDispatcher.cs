@@ -5949,24 +5949,19 @@ public sealed partial class AgentTaskDispatcher
         // CARD-0260: the inherited-env snapshot is the other half of that honesty — a warm
         // process retains whatever LLM routing it launched with.
         // CARD-0167 S3 repair (Review e4b591eb D1): so is the provider-endpoint projection. The
-        // stamp records WHICH projection this process gets, from the same project column the launch
-        // reads for the same identity (ProjectProviderEndpointsAsync and the ApiKeyEnvResolver both
-        // ParseMap the task project's row; both launch paths project nothing without that
-        // resolver), for the kind the session launches as. The warm-pool predicate compares this
-        // stamp, never a re-read of the current map, with what a later task would launch with, so
-        // an endpoint set, cleared or changed after this launch means a fresh process. Names, the
-        // URL and the {{key:NAME}} placeholder only; the resolved value is never stored.
+        // warm-pool predicate compares the row's stamp, never a re-read of the current map, with
+        // what a later task would launch with, so an endpoint set, cleared or changed after this
+        // launch means a fresh process. Repair 2 (Review 6c08cd4b R1): the stamp is written by
+        // BuildLaunchSpecAsync from the very map read the spec is built from, so a claim-time read
+        // and the post-commit spec read can no longer disagree. Until that spec exists the row is
+        // stamped unknown and matches nothing.
         if (agent.IsPoolDelegate)
         {
             agent.PoolProjectId = claimed.ProjectId;
             agent.LaunchEnvJson = string.IsNullOrWhiteSpace(claimed.InheritedLaunchEnvJson)
                 ? "{}"
                 : claimed.InheritedLaunchEnvJson;
-            agent.PoolProviderProjectionJson = ProviderEndpointLayers.PoolFingerprint(
-                program.Kind,
-                _apiKeyEnvResolver is null ? null : await ProjectProviderEndpointsAsync(claimed.ProjectId, ct),
-                agent.ProviderEndpointMode,
-                ProviderEndpoint.Parse(agent.ProviderEndpointJson));
+            agent.PoolProviderProjectionJson = ProviderEndpointLayers.UnknownPoolProjection;
         }
 
         var cwd = claimed.WorktreePath ?? claimed.WorkingDirectory;
@@ -6506,6 +6501,12 @@ public sealed partial class AgentTaskDispatcher
         agent.PersistentSessionId = session.Id.ToString("D");
         agent.Status = AgentStatus.Running;
         agent.UpdatedAt = now;
+        // CARD-0167 S3 repair 2 (Review 6c08cd4b R1): the relaunch starts a new process for this
+        // same pool row, and that process reads the project's endpoint map as it is NOW. The old
+        // stamp described the wedged process; BuildLaunchSpecAsync restamps from the new launch's
+        // own read, and a relaunch that never builds a spec leaves the row matching nothing.
+        if (agent.IsPoolDelegate)
+            agent.PoolProviderProjectionJson = ProviderEndpointLayers.UnknownPoolProjection;
 
         var limit = Math.Max(1, _settings.BootWedgeRelaunchLimit);
         _db.AgentTaskEvents.Add(new AgentTaskEvent
@@ -6970,7 +6971,25 @@ public sealed partial class AgentTaskDispatcher
             var endpoints = _apiKeyEnvResolver is not null
                 ? await _apiKeyEnvResolver.GetProjectProviderEndpointsAsync(projectId, ct)
                 : null;
-            return BuildLaunchSpec(task, agent, session, attachedBundleKeys, defaults, endpoints);
+            var spec = BuildLaunchSpec(task, agent, session, attachedBundleKeys, defaults, endpoints);
+            // CARD-0167 S3 repair 2 (Review 6c08cd4b R1): the pool row's provider-projection stamp
+            // comes from THIS map read, the one the spec was just built from, for the kind the
+            // session launches as. Every launch of a pool row (cold dispatch and boot-wedge
+            // relaunch) passes here, and a pool delegate never takes the profile branch below
+            // (ResolveDelegateProgramAsync resolves a profile only for a standing agent). Saved
+            // before the caller can enqueue the launch. Names, the URL and the {{key:NAME}}
+            // placeholder only; the resolved value is never stored.
+            if (agent.IsPoolDelegate)
+            {
+                agent.PoolProviderProjectionJson = ProviderEndpointLayers.PoolFingerprint(
+                    session.AgentKind,
+                    endpoints,
+                    agent.ProviderEndpointMode,
+                    ProviderEndpoint.Parse(agent.ProviderEndpointJson));
+                await _db.SaveChangesAsync(ct);
+            }
+
+            return spec;
         }
 
         // CARD-0182 D2 / CARD-0140 D4: an exact ModelId wins, so the tier alias is omitted and
@@ -8227,8 +8246,8 @@ public sealed partial class AgentTaskDispatcher
     /// CARD-0167 S3: the pure predicate behind the warm-pool match, in two halves. CARD-0260's:
     /// the candidate's stored inherit-list snapshot against the task's, on the inherit-list names.
     /// Then (repair of Review e4b591eb D1) the provider-endpoint projection the candidate's process
-    /// was LAUNCHED with (<see cref="Agent.PoolProviderProjectionJson"/>, stamped at its cold
-    /// launch) against the projection this task would launch with NOW (the project's entry for the
+    /// was LAUNCHED with (<see cref="Agent.PoolProviderProjectionJson"/>, stamped by every launch
+    /// of the row from that launch's own map read; repair 2) against the projection this task would launch with NOW (the project's entry for the
     /// task's kind, as a fresh pool row in Inherit mode would get it). The current map is read for
     /// the task side only: a process launched with no endpoint never serves a task that expects
     /// one, a process launched through F never serves a task after F is cleared or changed, and a
