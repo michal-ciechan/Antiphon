@@ -176,7 +176,7 @@ public static class CodexStartupScreen
     // names the selected model and effort in the footer beneath the empty composer.
     // This is a fallback only when no model: row was drawn; an empty/loading row is not repaired
     // by borrowing the footer.
-    private static bool TryReadFooterOnlyModel(string footer, out string modelValue)
+    internal static bool TryReadFooterOnlyModel(string footer, out string modelValue)
     {
         modelValue = "";
         var dot = footer.IndexOf('·');

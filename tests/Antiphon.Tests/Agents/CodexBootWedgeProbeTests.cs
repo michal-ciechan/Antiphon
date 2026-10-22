@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
+using System.Reflection;
 using Antiphon.Agents.Pty;
 using Antiphon.FakeLlmApi;
 using Antiphon.Server.Application.Services;
@@ -9,6 +11,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Agents;
@@ -29,6 +32,173 @@ public sealed class CodexBootWedgeProbeTests
     private const int DefaultIterations = 30;
     private static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan SubmitObservation = TimeSpan.FromSeconds(30);
+
+    [Test]
+    [Timeout(150_000)]
+    public async Task C1521_Cold_pointer_records_write_consume_enter_and_receipt(CancellationToken ct)
+    {
+        RealCliStubGate.SkipIfNotEligible(AgentKind.Codex);
+        var root = Path.Combine(Path.GetTempPath(), "card1521-" + Guid.NewGuid().ToString("N"));
+        var cwd = Path.Combine(root, "cwd");
+        var home = Path.Combine(root, "codex-home");
+        Directory.CreateDirectory(cwd);
+        Directory.CreateDirectory(home);
+        var evidence = Path.GetFullPath(Path.Combine(".antiphon", "evidence", "card-1521", Guid.NewGuid().ToString("N")));
+        Directory.CreateDirectory(evidence);
+        var id = Guid.NewGuid();
+        var marker = "[antiphon-task:" + id.ToString("N")[..8] + "]";
+        var spill = Path.Combine(cwd, "brief.md");
+        await File.WriteAllTextAsync(spill, "Reply with the local stub response. No files need changing.", ct);
+        var body = $"{marker} role=Code tier=Frontier workspace=Worktree Read the complete task brief at '{spill}' before doing anything. Follow its reporting contract. {marker}";
+        var elapsed = Stopwatch.StartNew();
+        var milestones = new List<string>();
+        var writes = new List<(string Input, TimeSpan At)>();
+        var host = new WindowsHostStatsProbe([]);
+        string raw = "", screen = "";
+        TimeSpan? consumedAt = null;
+        Process? child = null;
+        await using var stub = await FakeLlmApiServer.StartAsync(new FakeLlmApiOptions { Codex = true });
+        stub.Script.SetDefault(StubEndpointKeys.CodexResponses, new ScriptedTextTurn("local stub response"));
+        var overlay = RealCliStubEnv.ForCodex(stub.BaseUrl, "stub-codex-" + Guid.NewGuid().ToString("N"), home);
+        var env = new Dictionary<string, string>(overlay.Env, StringComparer.OrdinalIgnoreCase) { ["TERM"] = "xterm-256color" };
+        var (app, launchArgs) = BuildInteractiveLaunch(null);
+        var args = new List<string>(launchArgs) { "--no-alt-screen", "--dangerously-bypass-approvals-and-sandbox" };
+        args.AddRange(overlay.Args);
+        args.AddRange([CodexLaunchArgs.ConfigFlag, CodexLaunchArgs.DisablePasteBurst]);
+        await using var runtime = new SessionRunnerRuntime(Options.Create(new SessionRunnerSettings
+        {
+            SessionLogPath = Path.Combine(root, "logs"), PtyHostLingerHours = 0.02, PtyBackend = "modern",
+        }), NullLogger<SessionRunnerRuntime>.Instance);
+        void Mark(string name)
+        {
+            var sample = host.Read();
+            var line = $"utc={DateTime.UtcNow:o} elapsedMs={elapsed.Elapsed.TotalMilliseconds:F0} {name} "
+                + $"cpu={sample?.CpuPercent?.ToString("F2") ?? "unknown"} load=unknown memoryAvailable={sample?.MemoryAvailableBytes?.ToString() ?? "unknown"}";
+            milestones.Add(line);
+            Console.WriteLine("CARD-1521 " + line);
+        }
+        async Task SnapshotAsync(CancellationToken token)
+        {
+            var snapshot = await runtime.GetSnapshotAsync(id, token);
+            raw = snapshot.RawOutput;
+            screen = snapshot.RenderedScreen;
+        }
+        async Task WriteAsync(string input)
+        {
+            if (input == "\r")
+            {
+                consumedAt.ShouldNotBeNull("no Enter before whole consumption");
+                (elapsed.Elapsed >= consumedAt.Value).ShouldBeTrue();
+            }
+            writes.Add((input, elapsed.Elapsed));
+            Mark(input == "\r" ? "enter" : "body-write-start");
+            await runtime.SendInputAsync(id, input, ct);
+            if (input != "\r") Mark("body-write-return");
+        }
+        try
+        {
+            Mark("launch");
+            var started = await runtime.StartAsync(new RunnerLaunchRequest(id, app, args, env, cwd, 120, 30,
+                TranscriptEnabled: true, TranscriptFormat: TranscriptFormats.Codex, Backend: SessionBackends.PtyHost), ct);
+            started.Status.ShouldBe("Running");
+            if (started.Pid is { } pid) child = Process.GetProcessById(pid);
+            runtime.BackendDecision.Backend.ShouldBe(PtyBackend.ModernConPty);
+            Mark("backend=" + runtime.BackendDecision.Backend + " source="
+                + typeof(SessionRunnerRuntime).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion);
+            var ready = await CodexReadyWait.WaitAsync(async token =>
+            {
+                await SnapshotAsync(token);
+                return new CodexStartupSnapshot(screen, raw);
+            }, new CodexReadyWaitOptions { MaxWait = TimeSpan.FromSeconds(60) },
+                (input, token) => runtime.SendInputAsync(id, input, token), ct: ct);
+            ready.ShouldBeTrue("bounded positive readiness is required");
+            var version = System.Text.RegularExpressions.Regex.Match(screen, @"OpenAI Codex \(v([^\)]+)\)");
+            version.Success.ShouldBeTrue("retain the actual CLI version from its banner");
+            Mark("ready cli=" + version.Groups[1].Value);
+            await WriteAsync(PtyInputEncoding.WrapIfMultiline(PtyInputEncoding.NormalizeBody(body)));
+            var consumeDeadline = elapsed.Elapsed + TimeSpan.FromSeconds(15);
+            var prefix = 0;
+            while (elapsed.Elapsed < consumeDeadline)
+            {
+                await SnapshotAsync(ct);
+                var next = CodexPointerComposerEvidence.MatchingPrefixLength(screen, body);
+                if (next > prefix) { prefix = next; Mark("prefix=" + prefix); }
+                if (CodexPointerComposerEvidence.IsComplete(screen, body)) { consumedAt = elapsed.Elapsed; break; }
+                await Task.Delay(50, ct);
+            }
+            consumedAt.ShouldNotBeNull("whole consumption must be observed within 15 seconds");
+            Mark("whole-composer");
+            var settleEnd = elapsed.Elapsed + TimeSpan.FromSeconds(3);
+            var quietSince = elapsed.Elapsed;
+            long? sequence = null;
+            while (elapsed.Elapsed < settleEnd)
+            {
+                var snapshot = await runtime.GetSnapshotAsync(id, ct);
+                if (sequence != snapshot.LastSequence) { sequence = snapshot.LastSequence; quietSince = elapsed.Elapsed; }
+                if (elapsed.Elapsed - quietSince >= TimeSpan.FromMilliseconds(500)) break;
+                await Task.Delay(50, ct);
+            }
+            await SnapshotAsync(ct);
+            CodexPointerComposerEvidence.IsComplete(screen, body).ShouldBeTrue("recheck after settling");
+            await WriteAsync("\r");
+            var receiptDeadline = elapsed.Elapsed + TimeSpan.FromSeconds(30);
+            var complete = false;
+            var request = false;
+            while (elapsed.Elapsed < receiptDeadline)
+            {
+                await SnapshotAsync(ct);
+                complete = runtime.GetTranscript(id).Entries.Count(e => e.Kind == TranscriptKinds.UserPrompt
+                    && PromptSubmissionMatch.IsCompleteIn(body, e.Text)) == 1;
+                request = stub.Requests.All.Any(r => RequestContains(r.Body, body));
+                if (complete && request) break;
+                await Task.Delay(50, ct);
+            }
+            complete.ShouldBeTrue("one complete UserPrompt within the unchanged submit window");
+            request.ShouldBeTrue("the local stub must receive the whole pointer");
+            Mark("complete-receipt");
+            writes.Select(w => w.Input).ShouldBe([body, "\r"]);
+        }
+        finally
+        {
+            try
+            {
+                if (runtime.List().Any(s => s.SessionId == id))
+                {
+                    var killed = await runtime.KillAsync(id, TimeSpan.FromSeconds(10), CancellationToken.None)
+                        .WaitAsync(TimeSpan.FromSeconds(10));
+                    killed.Status.ShouldBe("Exited");
+                    if (child is not null) child.HasExited.ShouldBeTrue("the owned native child must exit");
+                    Mark("owned-process-exited");
+                }
+            }
+            finally
+            {
+                child?.Dispose();
+                await File.WriteAllBytesAsync(Path.Combine(evidence, "raw.txt"), Encoding.UTF8.GetBytes(raw).Take(128 * 1024).ToArray(), CancellationToken.None);
+                await File.WriteAllBytesAsync(Path.Combine(evidence, "screen.txt"), Encoding.UTF8.GetBytes(screen).Take(128 * 1024).ToArray(), CancellationToken.None);
+                await File.WriteAllLinesAsync(Path.Combine(evidence, "milestones.txt"), milestones, CancellationToken.None);
+                Console.WriteLine("CARD-1521 evidence=" + evidence);
+                RealCliStubBServerHarness.TryDelete(root);
+            }
+        }
+    }
+
+    private static bool RequestContains(string json, string body)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return Contains(document.RootElement);
+        }
+        catch (JsonException) { return false; }
+        bool Contains(JsonElement element) => element.ValueKind switch
+        {
+            JsonValueKind.String => PromptSubmissionMatch.IsCompleteIn(body, element.GetString()),
+            JsonValueKind.Array => element.EnumerateArray().Any(Contains),
+            JsonValueKind.Object => element.EnumerateObject().Any(p => Contains(p.Value)),
+            _ => false,
+        };
+    }
 
     [Test]
     [Timeout(3_600_000)]

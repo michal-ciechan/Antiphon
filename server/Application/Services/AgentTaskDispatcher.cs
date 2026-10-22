@@ -6459,7 +6459,7 @@ public sealed partial class AgentTaskDispatcher
     }
 
     internal const string BootWedgeFailedReason =
-        "boot prompt could not be delivered; TUI stopped reading after the brief rendered, twice; "
+        "boot prompt could not be delivered; no submission was confirmed within either submit window; "
         + "relaunched once and wedged again.";
 
     /// <summary>

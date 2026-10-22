@@ -85,6 +85,20 @@ public sealed class SessionMessageQueueCodexPointerTests
             var row = await RowAsync(h);
             row.Status.ShouldBe(QueuedMessageStatus.Sent);
             PromptSubmissionMatch.IsCompleteIn(body, h.Adapter.SubmittedBodies.Single()).ShouldBeTrue();
+            if (variant == "complete-swallowed-enter")
+            {
+                await using var cold = await CreateAsync();
+                cold.Adapter.RenderedScreenOverride = Frame(body);
+                cold.Adapter.SwallowSubmits = 99;
+                cold.Adapter.SubmitAck = "";
+                await cold.Queue.EnqueueAsync(cold.SessionId, body, MessageSendMode.WhenIdle,
+                    CancellationToken.None, origin: QueuedMessageOrigin.Delegation);
+                cold.Adapter.Inputs.Count(i => i != "\r").ShouldBe(1);
+                cold.Adapter.Killed.ShouldBeTrue("complete consumption retains bounded cold recovery");
+                await using var db = cold.CreateObserverContext();
+                (await db.AgentIncidents.SingleAsync(i => i.SessionId == cold.SessionId
+                    && i.Kind == AgentIncidentKind.BootWedged)).Message.ShouldContain("after complete pointer consumption");
+            }
         }
         else
         {
@@ -231,11 +245,12 @@ public sealed class SessionMessageQueueCodexPointerTests
 
     private static async Task<BridgeQueueHarness> CreateAsync()
     {
-        var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false });
+        var h = await SessionMessageQueueBootWedgeTests.CreateBootWedgeHarnessAsync();
         await using var db = h.CreateObserverContext();
         await db.AgentSessions.Where(s => s.Id == h.SessionId)
             .ExecuteUpdateAsync(u => u.SetProperty(s => s.AgentKind, AgentKind.Codex));
         h.Adapter.RenderedScreenIncludesComposer = true;
+        await SessionMessageQueueBootWedgeTests.SeedDispatchedTaskAsync(h);
         return h;
     }
 
@@ -256,6 +271,7 @@ public sealed class SessionMessageQueueCodexPointerTests
         await using var db = h.CreateObserverContext();
         (await db.AgentIncidents.AnyAsync(i => i.SessionId == h.SessionId && i.Kind == AgentIncidentKind.BootWedged))
             .ShouldBeFalse();
+        (await db.AgentTasks.AnyAsync(t => t.AgentId == h.AgentId && t.BootWedgeRelaunchCount > 0)).ShouldBeFalse();
     }
 
     private static async Task<SessionQueuedMessage> RowAsync(BridgeQueueHarness h, Guid? id = null)

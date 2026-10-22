@@ -247,10 +247,13 @@ public sealed partial class SessionMessageQueueService
     // unreadable box holds even when a collapsed paste has no visible body head.
     private async Task<bool> TypedBodiesBlockComposerAsync(
         Guid sessionId, AgentKind kind, IReadOnlyList<(Guid Id, string Body)> bodies,
-        string what, CancellationToken ct)
+        string what, CancellationToken ct, bool bufferedPointer = false)
     {
         if (bodies.Count == 0)
             return false;
+        // A screenshot cannot show that a previously written Codex input FIFO has drained.
+        // The caller has already applied CARD-0266's transcript and generation release rules.
+        if (bufferedPointer) return true;
         // Only watchdog attempts have an audited release endpoint. Canceled queue rows release
         // through transcript, composer or generation evidence, never that endpoint.
         var release = what == "expectation nudge"
