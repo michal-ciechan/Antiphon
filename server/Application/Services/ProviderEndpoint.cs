@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Antiphon.Server.Application.Exceptions;
@@ -109,6 +110,12 @@ public sealed record ProviderEndpoint(string BaseUrl, string? ApiKeyName)
                 urlField,
                 "A base URL may not contain whitespace, control characters, quotes or backslashes.",
                 "provider_endpoint_base_url_characters");
+        }
+        if (TryReadExplicitPort(baseUrl, out var port) && (port < 1 || port > 65535))
+        {
+            // Uri would read ":0" as a valid port and refuse ":65536" as "not a URL"; name the rule.
+            throw new ValidationException(
+                urlField, "The base URL port must be between 1 and 65535.", "provider_endpoint_base_url_port");
         }
         if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) || string.IsNullOrEmpty(uri.Host))
         {
@@ -238,6 +245,52 @@ public sealed record ProviderEndpoint(string BaseUrl, string? ApiKeyName)
         foreach (var (kind, endpoint) in map)
             ordered[kind.ToString()] = endpoint;
         return JsonSerializer.Serialize(ordered, JsonOptions);
+    }
+
+    /// <summary>
+    /// Host and key NAME only. A record's default <c>ToString</c> prints every member, the full URL
+    /// included, and a path or query could carry a tenant token; the plan's log rule is host only,
+    /// so the prose form follows it and an interpolated or structured log of the setting cannot leak
+    /// one. The column and the DTO still carry the full URL through <see cref="Serialize"/>.
+    /// </summary>
+    public override string ToString() =>
+        $"ProviderEndpoint {{ Host = {HostOnly()}, ApiKeyName = {ApiKeyName ?? "(none)"} }}";
+
+    private string HostOnly() =>
+        Uri.TryCreate(BaseUrl?.Trim(), UriKind.Absolute, out var uri) && uri.Host.Length > 0
+            ? uri.Host
+            : "(unparsed)";
+
+    /// <summary>
+    /// The explicit port of <c>scheme://[userinfo@]host[:port][/...]</c>, when one is written. Only
+    /// digits after the last colon of the authority count (an IPv6 literal's colons sit inside its
+    /// brackets); anything else is left for <see cref="Uri"/> to judge.
+    /// </summary>
+    private static bool TryReadExplicitPort(string url, out long port)
+    {
+        port = 0;
+        var schemeEnd = url.IndexOf("://", StringComparison.Ordinal);
+        if (schemeEnd < 0)
+            return false;
+
+        var authorityStart = schemeEnd + 3;
+        var authorityEnd = url.IndexOfAny(['/', '?', '#'], authorityStart);
+        var authority = authorityEnd < 0 ? url[authorityStart..] : url[authorityStart..authorityEnd];
+        var at = authority.LastIndexOf('@');
+        if (at >= 0)
+            authority = authority[(at + 1)..];
+
+        var colon = authority.LastIndexOf(':');
+        var bracket = authority.LastIndexOf(']');
+        if (colon < 0 || colon < bracket)
+            return false;
+
+        var digits = authority[(colon + 1)..];
+        if (digits.Length == 0 || !digits.All(char.IsAsciiDigit))
+            return false;
+
+        port = digits.Length > 9 ? long.MaxValue : long.Parse(digits, CultureInfo.InvariantCulture);
+        return true;
     }
 
     /// <summary>A kind by its enum NAME only: <c>"1"</c> is not a kind an operator wrote.</summary>
