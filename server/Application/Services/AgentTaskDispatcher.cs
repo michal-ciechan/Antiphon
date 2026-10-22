@@ -359,25 +359,31 @@ public sealed partial class AgentTaskDispatcher
                 .Where(t => t.Status == AgentTaskStatus.Queued && t.Workspace == WorkspaceMode.Worktree)
                 .OrderBy(t => t.CreatedAt).ThenBy(t => t.Id).Select(t => t.Id).Take(8).ToListAsync(ct);
         if (ready.Count == 0) return 0;
-        if (_scopeFactory is null) return (await TickCoreAsync(ready, ct)).Dispatched;
+        if (_scopeFactory is null) return (await DispatchCoreAsync(ready, ct)).Dispatched;
         await using var scope = _scopeFactory.CreateAsyncScope();
-        return (await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickCoreAsync(ready, ct)).Dispatched;
+        return (await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().DispatchCoreAsync(ready, ct)).Dispatched;
     }
 
-    public Task<TickResult> TickAsync(CancellationToken ct) => TickCoreAsync(null, ct);
-
-    private async Task<TickResult> TickCoreAsync(IReadOnlyList<Guid>? ready, CancellationToken ct)
+    /// <summary>Compatibility path for direct callers; hosting owns the two loops separately.</summary>
+    public async Task<TickResult> TickAsync(CancellationToken ct)
     {
-        using var observation = new RuntimePhase(_logger, _timeProvider, Guid.Empty, "dispatcher.sweep");
+        var maintenance = await RunMaintenanceAsync(ct);
+        var admission = await DispatchQueuedAsync(ct);
+        return admission with
+        {
+            SweepFailures = admission.SweepFailures + maintenance.SweepFailures,
+            ResumedRoutingBlocked = admission.ResumedRoutingBlocked + maintenance.ResumedRoutingBlocked,
+        };
+    }
+
+    public Task<TickResult> DispatchQueuedAsync(CancellationToken ct) => DispatchCoreAsync(null, ct);
+
+    public async Task<TickResult> RunMaintenanceAsync(CancellationToken ct)
+    {
+        using var observation = new RuntimePhase(_logger, _timeProvider, Guid.Empty, "dispatcher.maintenance");
         var sweepFailures = 0;
         var resumedRoutingBlocked = 0;
-        if (!_settings.Enabled)
-        {
-            _leaseWaiters?.ReconcileDispatch(new HashSet<Guid>(), ready);
-            return new TickResult(0, 0, 0, 0, 0, sweepFailures);
-        }
-        if (ready is null)
-        {
+        if (!_settings.Enabled) return new TickResult(0, 0, 0, 0, 0);
         if (_compaction is not null)
         {
             sweepFailures += await RunSweepAsync(
@@ -476,8 +482,18 @@ public sealed partial class AgentTaskDispatcher
             "resume routing-blocked",
             async (d, ct2) => resumedRoutingBlocked = await d.ResumeRoutingBlockedAsync(ct2),
             ct);
-        }
+        return new TickResult(0, 0, 0, 0, 0, sweepFailures, ResumedRoutingBlocked: resumedRoutingBlocked);
+    }
 
+    private async Task<TickResult> DispatchCoreAsync(IReadOnlyList<Guid>? ready, CancellationToken ct)
+    {
+        using var observation = new RuntimePhase(_logger, _timeProvider, Guid.Empty,
+            ready is null ? "dispatcher.admission.full" : "dispatcher.admission.ready");
+        if (!_settings.Enabled)
+        {
+            _leaseWaiters?.ReconcileDispatch(new HashSet<Guid>(), ready);
+            return new TickResult(0, 0, 0, 0, 0);
+        }
         // CARD-0653: a runner-bound task occupies that runner's declared seats, not this
         // desktop process cap. An empty RunnerId is the local process-spawning population.
         _hostLimits = _hostBudgets is null
@@ -517,7 +533,7 @@ public sealed partial class AgentTaskDispatcher
         {
             _leaseWaiters?.ReconcileDispatch(new HashSet<Guid>(), ready);
             return new TickResult(
-                0, 0, 0, 0, 0, sweepFailures, ResumedRoutingBlocked: resumedRoutingBlocked);
+                0, 0, 0, 0, 0);
         }
 
         // Tasks that declare overlapping file scopes must not run concurrently — the second waits
@@ -642,7 +658,6 @@ public sealed partial class AgentTaskDispatcher
                      ? queued.OrderBy(t => _siblingInspections?.Attempted(t.Id) == true)
                      : queued.AsEnumerable())
         {
-            if (ready is null) await DispatchReadyWaitersAsync(ct);
             ct.ThrowIfCancellationRequested();
 
             // Old rows can retain the public desktop aliases. Use the canonical null binding
@@ -1127,8 +1142,8 @@ public sealed partial class AgentTaskDispatcher
         var heldOnRunner = heldThisTick.Count(h =>
             h.Kind is HoldKind.RunnerCapacity or HoldKind.RunnerUnavailable or HoldKind.RunnerDraining);
         return new TickResult(
-            queued.Count, dispatched, skippedConcurrency, skippedScope, failures, sweepFailures,
-            skippedModelAvailability, skippedRoutingPin, blockedRoutingExhausted, resumedRoutingBlocked, skippedCapacityWait,
+            queued.Count, dispatched, skippedConcurrency, skippedScope, failures, 0,
+            skippedModelAvailability, skippedRoutingPin, blockedRoutingExhausted, 0, skippedCapacityWait,
             heldOnLease.Count, heldOnRunner);
     }
 
@@ -1926,7 +1941,6 @@ public sealed partial class AgentTaskDispatcher
     internal async Task<int> RunSweepAsync(
         string name, Func<AgentTaskDispatcher, CancellationToken, Task<int>> sweep, CancellationToken ct)
     {
-        await DispatchReadyWaitersAsync(ct);
         var budget = TimeSpan.FromSeconds(_settings.SweepBudgetSeconds);
         if (_scopeFactory is null || _sweepInFlight is null)
             return await RunAwaitedSweepAsync(name, this, sweep, budget, ct);

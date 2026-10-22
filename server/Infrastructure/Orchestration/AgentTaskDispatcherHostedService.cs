@@ -7,7 +7,7 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Orchestration;
 
-/// <summary>Ticks the delegated-task dispatcher. Same shape as the orchestrator's tick service.</summary>
+/// <summary>Owns independent serial admission and maintenance loops.</summary>
 public sealed class AgentTaskDispatcherHostedService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
@@ -15,18 +15,20 @@ public sealed class AgentTaskDispatcherHostedService : BackgroundService
     private readonly ILogger<AgentTaskDispatcherHostedService> _logger;
     private readonly RepositoryLeaseWaiters? _waiters;
     private readonly TimeProvider _clock;
+    private readonly SweepInFlightState? _sweeps;
 
     public AgentTaskDispatcherHostedService(
         IServiceScopeFactory scopeFactory,
         IOptions<DelegationSettings> settings,
         ILogger<AgentTaskDispatcherHostedService> logger, RepositoryLeaseWaiters? waiters = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null, SweepInFlightState? sweepInFlight = null)
     {
         _scopeFactory = scopeFactory;
         _settings = settings.Value;
         _logger = logger;
         _waiters = waiters;
         _clock = timeProvider ?? TimeProvider.System;
+        _sweeps = sweepInFlight;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -38,53 +40,86 @@ public sealed class AgentTaskDispatcherHostedService : BackgroundService
         }
 
         var interval = TimeSpan.FromSeconds(Math.Max(1, _settings.PollIntervalSeconds));
-        while (!stoppingToken.IsCancellationRequested)
+        try
+        {
+            await Task.WhenAll(AdmissionLoopAsync(interval, stoppingToken), MaintenanceLoopAsync(interval, stoppingToken));
+        }
+        finally
+        {
+            // Both loops have joined: maintenance can no longer register an owned sweep.
+            // An expired StopAsync deadline does not make its still-running scope disposable.
+            if (_sweeps is not null) await _sweeps.WhenAllReleasedAsync();
+        }
+    }
+
+    private async Task AdmissionLoopAsync(TimeSpan interval, CancellationToken ct)
+    {
+        var lastFull = _clock.GetTimestamp();
+        while (!ct.IsCancellationRequested)
         {
             try
             {
-                using (var wait = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken))
+                var remaining = interval - _clock.GetElapsedTime(lastFull);
+                if (remaining > TimeSpan.Zero)
                 {
-                    var timer = Task.Delay(interval, _clock, wait.Token);
+                    using var wait = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    var timer = Task.Delay(remaining, _clock, wait.Token);
                     var ready = _waiters?.WaitForReadyAsync(wait.Token) ?? timer;
                     await Task.WhenAny(timer, ready);
                     await wait.CancelAsync();
                     try { await Task.WhenAll(timer, ready); }
-                    catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) { }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
                 }
+                ct.ThrowIfCancellationRequested();
                 await using var scope = _scopeFactory.CreateAsyncScope();
                 var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
-                await dispatcher.DispatchReadyWaitersAsync(stoppingToken);
-                var result = await dispatcher.TickAsync(stoppingToken);
-                if (result.Dispatched > 0 || result.Failures > 0 || result.SkippedCapacityWait > 0
-                    || result.HeldOnLease > 0 || result.HeldOnRunner > 0)
+                // Ready signals coalesce in RepositoryLeaseWaiters. They never reset this deadline,
+                // and a due full pass wins even when timer and signal become ready together.
+                if (_clock.GetElapsedTime(lastFull) >= interval)
                 {
-                    _logger.LogDebug(
-                        "Delegation tick: {Dispatched} dispatched, {Concurrency} held on concurrency, "
-                        + "{Scope} held on scope, {CapacityWait} held on capacity wait, {Lease} held on lease, "
-                        + "{Runner} held on runner, {Failures} failed",
-                        result.Dispatched, result.SkippedConcurrency, result.SkippedScope, result.SkippedCapacityWait,
-                        result.HeldOnLease, result.HeldOnRunner, result.Failures);
+                    lastFull = _clock.GetTimestamp();
+                    LogAdmission(await dispatcher.DispatchQueuedAsync(ct));
                 }
-
-                // A tick that dispatched fine but lost a clock is the dangerous shape — the visible
-                // work carries on while an escalation, a watchdog or a check-in silently stops
-                // happening. The sweep itself logs the exception; this says it at the tick's level
-                // and at a level nothing filters out.
-                if (result.SweepFailures > 0)
+                else
                 {
-                    _logger.LogWarning(
-                        "Delegation tick ran DEGRADED: {SweepFailures} of its 9 sweeps threw "
-                        + "(see the errors above for which)", result.SweepFailures);
+                    await dispatcher.DispatchReadyWaitersAsync(ct);
                 }
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Delegation dispatch tick failed");
-            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            catch (Exception ex) { _logger.LogWarning(ex, "Delegation admission pass failed"); }
         }
+    }
+
+    private async Task MaintenanceLoopAsync(TimeSpan interval, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(interval, _clock, ct);
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                var result = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().RunMaintenanceAsync(ct);
+                if (result.SweepFailures > 0)
+                    _logger.LogWarning("Delegation maintenance ran DEGRADED: {SweepFailures} sweeps failed (see the errors above)",
+                        result.SweepFailures);
+                if (result.ResumedRoutingBlocked > 0)
+                    _logger.LogDebug("Delegation maintenance resumed {ResumedRoutingBlocked} routing-blocked tasks",
+                        result.ResumedRoutingBlocked);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            catch (Exception ex) { _logger.LogWarning(ex, "Delegation maintenance pass failed"); }
+        }
+    }
+
+    private void LogAdmission(AgentTaskDispatcher.TickResult result)
+    {
+        if (result.Dispatched > 0 || result.Failures > 0 || result.SkippedCapacityWait > 0
+            || result.HeldOnLease > 0 || result.HeldOnRunner > 0)
+            _logger.LogDebug(
+                "Delegation admission: {Dispatched} dispatched, {Concurrency} held on concurrency, "
+                + "{Scope} held on scope, {CapacityWait} held on capacity wait, {Lease} held on lease, "
+                + "{Runner} held on runner, {Failures} failed",
+                result.Dispatched, result.SkippedConcurrency, result.SkippedScope, result.SkippedCapacityWait,
+                result.HeldOnLease, result.HeldOnRunner, result.Failures);
     }
 }

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Data.Common;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -8,6 +9,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Orchestration;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -35,6 +37,9 @@ internal sealed class DispatcherAdmissionFixture : IAsyncDisposable
     public Guid SentinelSession { get; } = Guid.NewGuid();
     public TaskCompletionSource SweepEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource ReleaseSweep { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource SweepCanceled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource AdmissionEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource? HoldAdmission { get; set; }
     public AppDbContext? SweepDb { get; private set; }
     public ConcurrentQueue<AppDbContext> AdmissionDbs { get; } = new();
     public bool Cooperative { get; set; }
@@ -49,7 +54,8 @@ internal sealed class DispatcherAdmissionFixture : IAsyncDisposable
         f.Host.Directory.MarkRecovered(await f.Host.WaitLiveAsync());
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(f.Schema.ConnectionString));
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(f.Schema.ConnectionString)
+            .AddInterceptors(new WatchdogQueryObserver(f)));
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton<TimeProvider>(f.Clock);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
@@ -91,19 +97,27 @@ internal sealed class DispatcherAdmissionFixture : IAsyncDisposable
             d.CatchUpOverride = async (id, ct) =>
             {
                 if (id != f.SentinelSession) return;
-                f.SweepDb = d.Db;
+                using var canceled = ct.Register(() => f.SweepCanceled.TrySetResult());
                 f.SweepEntered.TrySetResult();
                 if (f.Cooperative) await f.ReleaseSweep.Task.WaitAsync(ct);
                 else await f.ReleaseSweep.Task;
                 ct.ThrowIfCancellationRequested();
             };
-            d.AfterQueuedSnapshotAsync = (db, _) => { f.AdmissionDbs.Enqueue(db); return Task.CompletedTask; };
+            d.AfterQueuedSnapshotAsync = async (db, ct) =>
+            {
+                f.AdmissionDbs.Enqueue(db);
+                if (f.HoldAdmission is { } hold)
+                {
+                    f.AdmissionEntered.TrySetResult();
+                    await hold.Task.WaitAsync(ct);
+                }
+            };
             return d;
         });
         f.Provider = services.BuildServiceProvider();
         f.Service = new AgentTaskDispatcherHostedService(f.Provider.GetRequiredService<IServiceScopeFactory>(),
             f.Provider.GetRequiredService<IOptions<DelegationSettings>>(),
-            NullLogger<AgentTaskDispatcherHostedService>.Instance, f.Waiters, f.Clock);
+            NullLogger<AgentTaskDispatcherHostedService>.Instance, f.Waiters, f.Clock, f.Sweeps);
         await using var db = f.Read();
         var now = f.Clock.GetUtcNow().UtcDateTime;
         db.AgentSessions.Add(f.Session(f.Occupant, f.Host.AllowedRunnerId, now));
@@ -133,10 +147,11 @@ internal sealed class DispatcherAdmissionFixture : IAsyncDisposable
     {
         await Service.StartAsync(default);
         await WaitUntilAsync(() => Task.FromResult(Clock.HasPoll), "initial poll armed");
+        var initialPolls = Clock.Polls;
         Clock.Advance(TimeSpan.FromSeconds(5));
         await WaitUntilAsync(async () => (await HeldAsync())?.Contains("capacity", StringComparison.OrdinalIgnoreCase) == true,
             "candidate held on runner capacity");
-        await WaitUntilAsync(() => Task.FromResult(Clock.HasPoll && Logger.Active == 0), "next poll armed");
+        await WaitUntilAsync(() => Task.FromResult(Clock.Polls >= initialPolls && Logger.Active == 0), "loop timers rearmed");
         Waiters.IsEmpty.ShouldBeTrue("capacity holds do not register lease waiters");
     }
 
@@ -226,28 +241,47 @@ internal sealed class DispatcherAdmissionFixture : IAsyncDisposable
         public ConcurrentQueue<Guid> Sessions { get; } = new();
         public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec) => Sessions.Enqueue(sessionId);
     }
+    private sealed class WatchdogQueryObserver(DispatcherAdmissionFixture fixture) : DbCommandInterceptor
+    {
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            // Observe the real watchdog query's context, including its independently owned scope.
+            if (command.CommandText.Contains("\"DispatchedAt\" <")
+                && command.CommandText.Contains("\"AgentSessionId\" IS NOT NULL"))
+                fixture.SweepDb = (AppDbContext?)eventData.Context;
+            return ValueTask.FromResult(result);
+        }
+    }
     public sealed class AdmissionLogger : ILogger<AgentTaskDispatcher>
     {
         private int _active;
         public int Active => Volatile.Read(ref _active);
         public int Maximum { get; private set; }
         public ConcurrentQueue<string> Messages { get; } = new();
+        public int FullStarts => Messages.Count(m => m.StartsWith("Runtime phase dispatcher.admission.full start"));
+        public int ReadyEnds => Messages.Count(m => m.StartsWith("Runtime phase dispatcher.admission.ready end"));
+        public string[] AdmissionStarts => Messages.Where(m => m.StartsWith("Runtime phase dispatcher.admission.")
+            && m.Contains(" start ")).ToArray();
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public bool IsEnabled(LogLevel level) => true;
         public void Log<TState>(LogLevel level, EventId id, TState state, Exception? ex, Func<TState, Exception?, string> formatter)
         {
             var message = formatter(state, ex);
             Messages.Enqueue(message);
-            if (message.StartsWith("Runtime phase dispatcher.admission start"))
+            if (message.StartsWith("Runtime phase dispatcher.admission.") && message.Contains(" start "))
                 Maximum = Math.Max(Maximum, Interlocked.Increment(ref _active));
-            if (message.StartsWith("Runtime phase dispatcher.admission end")) Interlocked.Decrement(ref _active);
+            if (message.StartsWith("Runtime phase dispatcher.admission.") && message.Contains(" end ")) Interlocked.Decrement(ref _active);
         }
     }
     public sealed class ArmedClock : TimeProvider
     {
         private readonly FakeTimeProvider _inner = new(DateTimeOffset.UtcNow);
         private readonly ConcurrentQueue<ArmedTimer> _timers = new();
-        public bool HasPoll => _timers.Any(t => !t.Disposed && t.Due > GetUtcNow() && t.Due <= GetUtcNow().AddSeconds(5));
+        public int Polls => _timers.Count(t => !t.Disposed && t.Due > GetUtcNow() && t.Due <= GetUtcNow().AddSeconds(5));
+        public bool HasPoll => Polls > 0;
+        public bool HasTimer(TimeSpan delay) => _timers.Any(t => !t.Disposed && t.Due == GetUtcNow() + delay);
         public override DateTimeOffset GetUtcNow() => _inner.GetUtcNow();
         public override long GetTimestamp() => _inner.GetTimestamp();
         public override long TimestampFrequency => _inner.TimestampFrequency;

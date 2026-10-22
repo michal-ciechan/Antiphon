@@ -1339,6 +1339,17 @@ success notification, and that a new global editor then shows revision 7 with Co
 
 ### Launching an agent
 
+The hosted dispatcher owns independent serial admission and maintenance loops (CARD-1519).
+Each pass opens its own service scope. Full queued admission is due every
+`max(1, Delegation:PollIntervalSeconds)` seconds, default five, even while maintenance
+waits. A pass already executing adds its remaining duration; inspection, lease, Git,
+preparation and launch work add their own time. Repository signals coalesce and can
+accelerate a ready batch, but cannot reset or outrank a due full pass. Every attempt
+still rechecks capacity and claims through the existing gates. Shutdown joins both
+loops and any abandoned sweep's owned scope; an expired host shutdown deadline does
+not prove that join completed. `TickAsync` remains a sequential maintenance then
+admission wrapper for direct callers.
+
 A Queued runner-bound task whose mirror is not recorded yet stays Queued. Its deduplicated `Held` detail is one of three texts: remote workspace preparation is in flight (the branch push and mirror were requested); preparation failed N times in a row and the next attempt is not before an instant (exponential backoff, base 30 seconds, cap 900 seconds, reset when the mirror is recorded); or the runner is not dispatch-eligible. Those traces are not a warning on every tick. A warning is written once per failed preparation attempt.
 
 The preparer pushes that branch with `git push origin <branch>` and no `-u` (CARD-1076). The desktop task branch does not track origin, so the worktree does not show itself ahead of or behind `origin/<branch>`. The objects are still on origin for the runner to fetch. One push runs at a time per repository, inside the preparer and off the dispatcher tick; a task waiting for its turn stays in flight. `RemoteWorkspacePreparer.Progress().BehindTaskId` is the current push-gate holder while that task waits for its turn (CARD-1093), read under the gate lock on each call. A waiter names whoever holds the turn now. It is null when that task is pushing or mirroring, and null while the holder is empty. The push budget is `Delegation:RemotePrepPushBudgetMinutes` (default 20, floor 1). The child journal is tagged purpose `remote-prep-push` with the task id. A live record with that purpose does not fence the repository mutation lease. A dead, reused, or unknown record still fences, and the unavailable sentence still names `scripts/recover-repository-children.ps1` with `purpose=remote-prep-push` and the task id. When the pipeline shows `remotePrep` with a holder for many minutes, that holder's push is the upload to watch. Do not run `recover-repository-children.ps1` against that live record, and do not restart the server: the push starts again from scratch.
