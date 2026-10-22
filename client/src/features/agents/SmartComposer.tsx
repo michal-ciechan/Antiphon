@@ -330,7 +330,7 @@ function DeliveryReceiptLine({
   if (by === 'screen' || receipt.receipt.degraded) {
     return (
       <Text size="xs" c="orange" data-testid="delivery-receipt" data-confirmed-by="screen">
-        Typed · unverified — no transcript bound (see incidents)
+        Typed · unverified — no transcript confirmation yet (see incidents)
       </Text>
     )
   }
