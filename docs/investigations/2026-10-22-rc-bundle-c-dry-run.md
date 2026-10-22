@@ -7,23 +7,24 @@ Method follows [bundle A](2026-10-22-rc-bundle-dry-run.md) and
 
 ## Outcome and scope decision
 
-The ten applicable landed card sets assemble and compile on rc. **The complete requested
-set is blocked by CARD-1495:** its tests require CARD-0167 provider endpoints, which rc does
-not contain. The recipe below excludes that card explicitly. The caller must either accept
-this scoped bundle or commission the prerequisite CARD-0167 port before adding CARD-1495.
-It does not silently introduce that feature and its migrations.
+The caller accepted CARD-1495 as **blocked and excluded**: its CARD-0167 provider-endpoint
+prerequisite remains master-only and stays off rc. The eleven included card sets assemble,
+and the server and test projects compile. This completes the scoped Docs recipe;
+CARD-1495 no longer blocks this deliverable. The executable recipe now includes CARD-1502
+S1 after CARD-1448, using the landed master copies of the reviewed re-cut. CARD-1500 and
+CARD-1483 S2 remain explicitly pending as directed.
 
 - Base: `0714a9a89e4bff65aae7e0b4b94098694aeb931c` (bundles A and B).
-- Source selection snapshot: `79341d09664267c7ccce40175815022b7e7c9c61` on origin/master.
-  Every one of the 49 selected full SHAs is an ancestor of that master snapshot.
-- Scratch tip: `f5c4f699fe4c91c2720f09e9cb864ed2af7a8d69`.
-- **Resulting tree: `93c9459395115248f5793e26bc2b0cfe96d275e4`.** Commit times make the
+- Source selection snapshot for the revised recipe: `5ffed3091a204c08f87421693d9bbb43e1692f82` on origin/master.
+  Every one of the 55 selected full SHAs is an ancestor of that master snapshot.
+- Scratch tip: `1dd1cc2e97860ce0ed2c6c70ac61c00bea3be90e`.
+- **Resulting tree: `e0a0863a62cba708320722398b3f69575876d06f`.** Commit times make the
   tip nondeterministic; a reproduction must match this tree.
-- 60 scratch commits: 49 `cherry-pick -x` commits, nine ordinary commits undoing unconsumed
+- 66 scratch commits: 55 `cherry-pick -x` commits, nine ordinary commits undoing unconsumed
   plan changes, and two generated manifest updates. No history rewrite is used.
-- 48 picks were clean; one conflict was confined to an omitted plan. No production or test
+- 54 picks were clean; one conflict was confined to an omitted plan. No production or test
   hunk was dropped or hand-resolved. The whole requested CARD-1495 patch was refused separately.
-- Net change: 57 files, +3593/-213. No EF migration, `src/` or `client/` change. All pre-existing
+- Net change: 59 files, +3913/-213. No EF migration, `src/` or `client/` change. All pre-existing
   rc plan files remain byte-identical; no new plan file is retained.
 
 ## Per-card disposition
@@ -35,9 +36,10 @@ why each set is included or withheld; short SHAs here are navigation aids only.
 |---|---:|---|
 | 1499 | 3 | `3d9214743`, `153d9a068`, `3c9db6187`; clean. Drop the release-unresolved plan. `ba311ed04` is only report/plan evidence and is omitted. |
 | 1494 | 5 | `e6032f85b` through `a01b38a2c` as explicitly listed below, including both early fixture repairs and the busy-produce repair. Clean; drop its plan. Omit report-only `de7b54cd2` and `713801a8f`. |
-| 1495 | 0 | **Blocked.** Landed source is `df45aa1d7aa68297945bec894877dbf644e028af`. Its isolated pick conflicts in `LaunchEnvLayersIntegrationTests.cs`; the pick was aborted. See dependency evidence below. |
+| 1495 | 0 | **Blocked and excluded by caller decision.** Landed source is `df45aa1d7aa68297945bec894877dbf644e028af`. Its isolated pick conflicts in `LaunchEnvLayersIntegrationTests.cs`; the pick was aborted. See dependency evidence below. |
 | 1493 S1 + repair | 4 | `8866e4467`, `f2cfe512d`, `951e5e210`, `4800c50f3`; clean. Drop both S1 and repair plans; omit the three report/plan-only commits in the seven-commit landed chain. The importer and its repair are both retained. |
-| 1448 | 2 | `0498c748a`, `a23ca2869`; clean. Drop its plan; omit report/plan-only `e4ef4c621`, `222ceeb00`. This remains the prerequisite for pending 1502. |
+| 1448 | 2 | `0498c748a`, `a23ca2869`; clean. Drop its plan; omit report/plan-only `e4ef4c621`, `222ceeb00`. Its two code commits precede 1502; the other two entries are validated as plan/report-only and skipped in their original positions. |
+| 1502 S1 | 6 | All eight reviewed re-cut commits are mapped to master and processed immediately after the four CARD-1448 entries: six clean code/test picks and two explicit plan/report-only skips. Final re-cut report `e6bfcbc2c` is also skipped. No code conflict or adaptation. |
 | 1486 S1/S2/S3 | 8 | S1 then S2 then S3, all clean. S3 uses landed copies `12a2141e6`, `0fc7a4c2b`, `2316cd6fa` of the brief's `73ee2fb32`, `60d484226`, `ad6fa1db3`. Report-only commits and the independent plan are omitted. |
 | 1496 | 3 | `ccac6053e`, `0c4386050`, `9bcbb9cbb`; clean. Drop its plan. The fourth commit, `00651b1df`, is a report. Required CARD-1490 is already in rc bundle A. |
 | 1506 | 3 | `87262adf4`, `c15961b94`, `4db0d927a`. The fix has one modify/delete conflict on its already-dropped plan; runtime hunks merge cleanly. Skip empty provenance commit `ba1c88522`, plan/mutation-candidate-only `aaa93dadf`, master manifest `516151924`, and report `c5da1d238`. Generate rc's own manifest twice as described below. |
@@ -69,10 +71,37 @@ An isolated attempt on the otherwise assembled scratch tree produced a content c
 restored that tree. This is a dependency refusal, not a test assertion failure. No substitute,
 weakened witness or CARD-0167 schema change is part of this recipe.
 
-To append it later: first port and qualify CARD-0167 S1/S2/S3, including producer-stamp repairs
-and its rc-specific migrations; then pick `df45aa1d7aa68297945bec894877dbf644e028af`, run its
-CP-1 `/*/Antiphon.Tests.ApiKeys/LaunchEnvLayersIntegrationTests/*` (minimum 33), and regenerate
-the final manifest. That expanded bundle needs its own resulting tree and verification.
+The caller explicitly decided to keep CARD-0167 off rc and leave CARD-1495 blocked. No
+CARD-0167 prerequisite port or CARD-1495 append is authorized by this recipe.
+
+### CARD-1448 then CARD-1502 order
+
+The recipe processes all four CARD-1448 entries, then all eight re-cut entries from Review
+`.antiphon/task-0d9bea9b.md` on `origin/feat/card-task-0d9bea9b`. The four CARD-1448 SHAs are
+`0498c748a448f367e6153316c992585d36dea74b`,
+`a23ca2869618811619bcb0965d386ecb6e786c18`,
+`e4ef4c621cb43835254db8d9d21fb79abc18f7bd`, and
+`222ceeb0074427fb42b7a7cb8b439fa0e17ffa59`. The last two are plan/report-only and stay omitted
+under the original brief's rule. The same rule omits the last two of the eight re-cut commits.
+`skip_docs` checks every touched path before skipping, so an unexpected code delta stops the recipe.
+
+All eight re-cut/master pairs were independently checked with `git patch-id --stable`: every
+pair matches, and every master copy is an ancestor of the revised selection snapshot.
+
+| Reviewed re-cut | Landed master copy | Recipe disposition |
+|---|---|---|
+| `173104b91ee1c3a036d39165cfbd4ba3164cdfb8` | `a04e42f5a137d7eac8fcd4d9e1c9f63abcf89518` | pick |
+| `50ff34229105c93bf90d6a398dc197f95b337f38` | `c2c837bc6ff8ff61dfd966252f38ef6486037782` | pick |
+| `1fbeb2c7dd80ae4f7244cce7db6d9db9eefd74b0` | `df23c2778e2c8468dc5069a83fd6cd52b71339e9` | pick |
+| `aad6ca7a206ef2aced9dbdb5da39de7133c2e901` | `c2c739e1650cfa518b2214cfd9eb7c146ce4e8a9` | pick |
+| `d3a27554fddd9790ae1efba430e453eac438fc4f` | `8b47b6c0883675c46b694cafcffc80f4321eab10` | pick |
+| `74ca025bdc9293fcd1f3c2cc267cf8610242e398` | `979876a637a3546742b9cd9fefbcef0b14d9f8a0` | pick |
+| `0d7c501366c0836c740ae514b7c796bad9651d08` | `4ec059d7befb21db0b2f9f53dce35f5f4e87397c` | skip plan only |
+| `d1e2459b1f78d4545a5ae8b6450f1cd104687ff6` | `065f9c203ce823e7d0ff1f21970bed3eaeba7236` | skip report only |
+
+The final re-cut report is master `e6bfcbc2c13f4a7431b1d314e2aef87f30de4ca7` (reviewed source
+`55f998fab6ff5a6e3d0b204540aff638b5040847`); it has no runtime delta and is explicitly skipped.
+Thus the complete dependency order is recorded without adding historical plans/reports to rc.
 
 ## Manifest regeneration
 
@@ -89,7 +118,30 @@ The brief's count 57 cannot describe the final tree while also including 1483 S1
 staging definition explain the new fingerprint. S1's allowlist and all landed pinning repairs
 are included before the final audit.
 
-## Build and narrow verification
+## Verification of the revised recipe
+
+The amended shell block was executed verbatim from the same pinned rc base. The new tip is
+`1dd1cc2e97860ce0ed2c6c70ac61c00bea3be90e`, tree
+`e0a0863a62cba708320722398b3f69575876d06f`. CARD-1502 changes no build-definition file, so the
+regenerated final `-Check` remains
+`digest=637CFA8577440D255076CBF5CBA40BECA0C3BC8F738705A5536A35182DAD9C3E count=58`, exit 0.
+
+The caller's added CARD-1502 slice justifies one fresh server build, one fresh test-project
+build, and its own narrow CP-1 selection. Each uses the build-slot gate and a 590-second hard
+timeout, with `OutputPath=bin-rcbundlec1502/` and `UseAppHost=false`. Earlier green rows below
+remain attributed to their original SHA; they were not rerun or relabelled as new-tip evidence.
+
+| Revised run | Selection | Outcome on `1dd1cc2e97860ce0ed2c6c70ac61c00bea3be90e` | Slot |
+|---|---|---|---|
+| Revised server build | `server/Antiphon.Server.csproj` | 0 errors, 22 warnings; MSBuild 00:01:12.04 | `17bb87ac-1627-4680-b868-b664ae3f2b3d`; waited 30s, held 73s |
+| Revised tests build | `tests/Antiphon.Tests/Antiphon.Tests.csproj` | 0 errors, 1111 warnings; MSBuild 00:03:54.94 | `976b354c-0ef6-4f18-91f6-59879e1ab1ec`; waited 31s, held 236s |
+| CARD-1502 CP-1 | `/*/*/(WorktreeManagerGitIntegrationTests*)\|(DelegationWorktreeTests*)\|(AgentSessionServiceIntegrationTests*)/C1502*` | executed 10, passed 10, failed 0, skipped 0; duration 1m 26s 482ms | `732d9ec3-f4c3-453f-a925-635ae72bcc6e`; waited 0s, held 93s |
+
+All revised runs exited 0; the TRX counters were read independently. The tracked tree stayed
+clean. All 29 `bin-rcbundlec1502` directories and this owned scratch worktree were removed
+after verification. The initial run's cleanup and outcomes remain recorded below.
+
+## Initial verification (historical, before CARD-1502)
 
 Every build and test driver runs through `scripts/build-slot.ps1`, with the host's granted
 `maxcpucount=6`. Each invocation has a hard 590-second GNU `timeout` limit, with a 10-second
@@ -103,7 +155,7 @@ termination grace. The two builds are separate and sequential. Both verify scrat
 
 The warnings include nullable/analyzer warnings, including ASP.NET RouteHandlerAnalyzer AD0001.
 They are reported rather than classified as inherited without a base build. No additional
-build was needed. This is compile/smoke evidence, not a Full Review or Windows RC qualification.
+build was needed in that initial round. This is compile/smoke evidence, not a Full Review or Windows RC qualification.
 
 Four narrow selections provide the brief's one-per-three-card sampling of the eleven requested
 landed cards (ten included). Their coverage is limited to the named rows; a sample does not
@@ -148,22 +200,23 @@ export TEMP=/tmp TMP=/tmp TMPDIR=/tmp
 
 timeout --signal=TERM --kill-after=10s 590s pwsh -NoProfile -File scripts/build-slot.ps1 \
   -Label rc-bundle-c-server -- dotnet build server/Antiphon.Server.csproj \
-  --property:OutputPath=bin-rcbundlec/ --property:UseAppHost=false --nologo
+  --property:OutputPath=bin-rcbundlec1502/ --property:UseAppHost=false --nologo
 
 timeout --signal=TERM --kill-after=10s 590s pwsh -NoProfile -File scripts/build-slot.ps1 \
   -Label rc-bundle-c-tests -- dotnet build tests/Antiphon.Tests/Antiphon.Tests.csproj \
-  --property:OutputPath=bin-rcbundlec/ --property:UseAppHost=false --nologo
+  --property:OutputPath=bin-rcbundlec1502/ --property:UseAppHost=false --nologo
 
 run_narrow() {
   local card=$1 filter=$2
   timeout --signal=TERM --kill-after=10s 590s pwsh -NoProfile -File scripts/build-slot.ps1 \
     -Label "rc-bundle-c-$card" -- dotnet run --project tests/Antiphon.Tests/Antiphon.Tests.csproj \
-    --no-build --property:OutputPath=bin-rcbundlec/ --property:UseAppHost=false -- \
+    --no-build --property:OutputPath=bin-rcbundlec1502/ --property:UseAppHost=false -- \
     --treenode-filter "$filter" --report-trx --report-trx-filename "$card.trx" \
     --results-directory "$EVIDENCE/$card"
 }
 run_narrow 1494 '/*/*/(CheckCompactionFixtureTests*)|(CheckCompactionWorkerLifetimeTests*)/*'
 run_narrow 1448 '/*/*/WorktreeManagerGitIntegrationTests/C1448_*'
+run_narrow 1502 '/*/*/(WorktreeManagerGitIntegrationTests*)|(DelegationWorktreeTests*)|(AgentSessionServiceIntegrationTests*)/C1502*'
 run_narrow 0266 '/*/Antiphon.Tests.Application/(SessionMessageQueueWedgedHeadTests*)|(AgentTaskCheckSweepTests*)/(C0266_*)|(Parked_head_*)|(Cleared_composer_*)|(the_flush_cancels_a_settled_check*)'
 timeout --signal=TERM --kill-after=10s 590s pwsh -NoProfile -File scripts/build-slot.ps1 \
   -Label rc-bundle-c-1506-cp1 -- pwsh -NoProfile -File scripts/test-build-driver-environment.ps1
@@ -174,33 +227,22 @@ timeout --signal=TERM --kill-after=10s 590s pwsh -NoProfile -File scripts/build-
 
 ## Pending appendices: not part of this tree
 
-Final master fetch at 2026-10-22 22:25 UTC: `a141e9afca94dd7766904612d6df445d4f242bcc`. CARD-1502 landed during verification, after the tested tree was frozen; its landed append list is recorded below. The other four pending implementations are still absent from master. A source branch is not proof of master landing. These placeholders
-are intentionally excluded from the executable recipe and its tree assertion. After a named
-set lands, resolve its landed master copies, retain topological order, drop unconsumed plan/report
-paths, rerun the affected narrow selection, regenerate the manifest, and record a new tree.
+Reopened-task source snapshot: `5ffed3091a204c08f87421693d9bbb43e1692f82`. CARD-1502 is now
+included above. CARD-1500 has also landed, but **remains pending by the caller's explicit
+decision**, as does CARD-1483 S2. These placeholders are excluded from the executable recipe
+and its tree assertion. A later append must retain dependency order, drop unconsumed plans/reports,
+verify its affected selection, regenerate the manifest and record its own resulting tree.
 
 | Pending set | Prerequisite and exact known source order |
 |---|---|
-| 1502 S1 | **Landed during this run; pending append/verification.** 1448 first (already included). The reviewed re-cut order is in `.antiphon/task-0d9bea9b.md` on `origin/feat/card-task-0d9bea9b`. The exact six landed code/test commits are below. Their following plan/report commits add no runtime change. Appending them changes the tested tree and requires new verification; they are not counted in the 49 picks above. |
 | 1519 + 1457 | Master has plan `5b44186fc19c6a8612e7b17d1647bdd2fa89679f`, but no implementation chain was found in the fetched refs. Append the eventual landed admission-loop and partial-inspection-retention chain; do not pick the plan as a fix. |
 | 1483 S2 | S1 and every repair above first. Known source order below, on `origin/feat/card-task-69f144fd`. The brief's `.antiphon/task-69f144fd.md` is absent at its fetched tip `b3d62ad1eade7222e544b1039dce94f7e19a092a`; use the final owner report and landed chain before appending. |
 | 1486 S4 | S1/S2/S3 first. No S4 implementation commit was found on master or in the fetched commit subjects. Append the eventual landed closing-line-only report classification test/fix chain, then run its CP-8 selection. |
-| 1500 | Only its plan is on master. Known source test/fix/repair order below is on `origin/feat/card-task-05f0443d`, following plan `c6d08dccb8aece1dcf2a757b6a64ffe2824d6ee6`. Use the final reviewed master chain, including any later repairs, before adding the qualification status/recovery scripts and docs. |
+| 1500 | **Landed, pending by caller decision.** Its landed implementation/repair SHAs are listed below, through `5ffed3091a204c08f87421693d9bbb43e1692f82`. Reconcile any later repairs before a separately verified append. |
 
-Known append orders, oldest first (1502 uses landed master SHAs; the other lists are source-branch SHAs to map after landing):
+Known pending append orders, oldest first (1500 uses landed master SHAs; 1483 S2 still lists source-branch SHAs to map after landing):
 
 ```text
-CARD-1502 S1 (landed; pending append):
-a04e42f5a137d7eac8fcd4d9e1c9f63abcf89518
-c2c837bc6ff8ff61dfd966252f38ef6486037782
-df23c2778e2c8468dc5069a83fd6cd52b71339e9
-c2c739e1650cfa518b2214cfd9eb7c146ce4e8a9
-8b47b6c0883675c46b694cafcffc80f4321eab10
-979876a637a3546742b9cd9fefbcef0b14d9f8a0
-Omit docs/report: 4ec059d7befb21db0b2f9f53dce35f5f4e87397c
-                 065f9c203ce823e7d0ff1f21970bed3eaeba7236
-                 e6bfcbc2c13f4a7431b1d314e2aef87f30de4ca7
-
 CARD-1483 S2:
 675f4ad7d0bb9e1a8623ff4e0e1b57223759c9ea
 eb1aa9b769d8c8feebda3c6282e930f216047470
@@ -208,11 +250,14 @@ fc757ac306cfde3ab6adb3e067c34bad09f3eddb
 f84af0d0343771280f81efbad1fc8a472e33019d
 b3d62ad1eade7222e544b1039dce94f7e19a092a
 
-CARD-1500:
-0d8b75f877d7a1ab8443fd4d5920684d9a32d64b
-d5baedb13101fc4e78a48661a273a676530f1b65
-74b4e5cd93ad79dca9eba1709beb247e8abf1d88
-e90c47450df4247bc254a027390711a555e59980
+CARD-1500 (landed, still pending by caller decision):
+82083a4043c1cf41b863d1aafadf8e16e6dc5a9a
+c4af6e8c7f679fe2327401404d2e81f7277700e4
+9c4143a0dd980b54f0b2916578176553dac5921a
+f6cf651292a64ba4f7e7edfd9b845697503b8963
+565ce3cb987314326392aa0caa99dd4eb79a465d
+Omit report/scope docs: 9223cac4fd5d3b4a545c2c806ad9db48587a0dd9
+                       5ffed3091a204c08f87421693d9bbb43e1692f82
 
 CARD-1519 + CARD-1457: PENDING landed implementation SHAs
 CARD-1486 S4: PENDING landed implementation SHAs
@@ -220,15 +265,15 @@ CARD-1486 S4: PENDING landed implementation SHAs
 
 ## Evidence, activation and limits
 
-The full scratch history passes the evidence guard, exit 0:
+The revised scratch history passes the evidence guard, exit 0:
 
 ```text
-EVIDENCE range base=0714a9a89e4bff65aae7e0b4b94098694aeb931c head=f5c4f699fe4c91c2720f09e9cb864ed2af7a8d69
-EVIDENCE result commits=60 entries=0 violations=0 base=0714a9a89e4bff65aae7e0b4b94098694aeb931c head=f5c4f699fe4c91c2720f09e9cb864ed2af7a8d69
+EVIDENCE range base=0714a9a89e4bff65aae7e0b4b94098694aeb931c head=1dd1cc2e97860ce0ed2c6c70ac61c00bea3be90e
+EVIDENCE result commits=66 entries=0 violations=0 base=0714a9a89e4bff65aae7e0b4b94098694aeb931c head=1dd1cc2e97860ce0ed2c6c70ac61c00bea3be90e
 ```
 
 The artifact is a Docs recipe, not a publication, deployment or release approval. The caller
-performs the real rc pick after deciding the CARD-1495 disposition. The affected server must be
+performs the real rc pick with CARD-1495 excluded as decided. The affected server must be
 built/activated from the resulting rc commit; CARD-1506's owner also calls for refreshing the
 desktop runner when the active Windows qualification permits it. The bundle adds no migration
 and changes no client bundle or session-runner source. No live product process, host, candidate journal,
@@ -245,13 +290,13 @@ test "$(git rev-parse origin/rc/2026-10-20)" = 0714a9a89e4bff65aae7e0b4b94098694
 git worktree add --detach ../rc-bundle-c 0714a9a89e4bff65aae7e0b4b94098694aeb931c
 cd ../rc-bundle-c
 bash /absolute/path/to/rc-bundle-c.sh
-test "$(git rev-parse HEAD^{tree})" = 93c9459395115248f5793e26bc2b0cfe96d275e4
+test "$(git rev-parse HEAD^{tree})" = e0a0863a62cba708320722398b3f69575876d06f
 pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -Repository . \
   -BaseRef 0714a9a89e4bff65aae7e0b4b94098694aeb931c -HeadRef HEAD
 # Verification commands above. Publication and release gates remain the caller's work.
 ```
 
-Expected script result: 48 `PICK clean` lines, one `PICK plan-conflict-dropped` line for
+Expected script result: 54 `PICK clean` lines, five `SKIP plan/report-only` lines, and one `PICK plan-conflict-dropped` line for
 `c15961b94`, both audit values above, and the recorded tree. The helper restores a touched
 plan's previous rc copy if it existed, otherwise removes only that touched path. It never
 removes the whole plan directory. No added plan is read by an included test; existing
@@ -295,6 +340,16 @@ pick() {
     echo "PICK plan-conflict-dropped $s"
   fi
 }
+# Preserve the full dependency order while omitting unconsumed plan/report-only commits.
+skip_docs() {
+  local s=$1 p
+  while IFS= read -r p; do
+    case "$p" in docs/superpowers/plans/*|.antiphon/task-*.md) ;;
+      *) echo "STOP $s is not plan/report-only: $p"; exit 1;;
+    esac
+  done < <(git diff-tree --no-commit-id --name-only -r "$s")
+  echo "SKIP plan/report-only $s"
+}
 # CARD-1499
 pick 3d921474345ff25c3af2fdecd8f94b3fa0bdc170
 pick 153d9a0683d5b18d587f82f7f6bfcae126ed70a6
@@ -313,6 +368,20 @@ pick 4800c50f3216ca5399d900a204004d8eea64ea98
 # CARD-1448
 pick 0498c748a448f367e6153316c992585d36dea74b
 pick a23ca2869618811619bcb0965d386ecb6e786c18
+# CARD-1448's third/fourth commits are plan/report-only; preserve their position.
+skip_docs e4ef4c621cb43835254db8d9d21fb79abc18f7bd
+skip_docs 222ceeb0074427fb42b7a7cb8b439fa0e17ffa59
+# CARD-1502: all eight re-cut commits, now using their landed master copies.
+pick a04e42f5a137d7eac8fcd4d9e1c9f63abcf89518
+pick c2c837bc6ff8ff61dfd966252f38ef6486037782
+pick df23c2778e2c8468dc5069a83fd6cd52b71339e9
+pick c2c739e1650cfa518b2214cfd9eb7c146ce4e8a9
+pick 8b47b6c0883675c46b694cafcffc80f4321eab10
+pick 979876a637a3546742b9cd9fefbcef0b14d9f8a0
+skip_docs 4ec059d7befb21db0b2f9f53dce35f5f4e87397c
+skip_docs 065f9c203ce823e7d0ff1f21970bed3eaeba7236
+# Final re-cut report identifies the landed owner; no runtime delta.
+skip_docs e6bfcbc2c13f4a7431b1d314e2aef87f30de4ca7
 # CARD-1486 S1 S2 S3
 pick 27e994af1f6e8de1493408e7a0ec25404199ac0d
 pick 8b7edcdde449f7e85e39e27b0f166ebaf92a5b3e
