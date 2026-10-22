@@ -41,7 +41,9 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // qualifications: normalised body 11,077 of 11,500; transport and reserve limits stay fixed.
         // CARD-1469 adds the operator standing-operating-rules pointer paragraph (full text at
         // docs/orchestration-loop.md#standing-operating-rules): normalised body 11,389 of 11,500.
+        // CARD-1469 repair (Review 6bebf489 F1) rewrites rule 6 and adds its no-Reply-to-a-sync-blocked-report
+        // prohibition to the pointer paragraph: normalised body 11,477 of 11,500.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("d46d51948734b70e09aba019882896042a713d7c70fcaefde491e37f723e1534", "orchestrator-approved-bytes");
+            .ShouldBe("ded83f88b39699663c0a7a7434d52eb040d420a8497124438a5c564d8e7a556a", "orchestrator-approved-bytes");
     }
 }
