@@ -42,6 +42,13 @@ public sealed class WorktreeCleanupSettings
     /// <summary>Evidence: byte-copied to the retained report root before the tree is removed.</summary>
     public string[]? RetainedIgnored { get; set; }
 
+    /// <summary>
+    /// CARD-1446 D-4 (S4a): where <c>FileSystemEvidenceRetention</c> copies evidence before removal, as
+    /// <c>&lt;root&gt;/&lt;taskId:N&gt;/&lt;attemptId:N&gt;/&lt;relative&gt;</c>. Null derives
+    /// <c>Path.Combine(Git:WorktreeBasePath, ".retained")</c>. Retained copies are never deleted by code.
+    /// </summary>
+    public string? RetainedEvidenceRoot { get; set; }
+
     /// <summary>Total evidence bytes one removal may retain. Default 64 MiB.</summary>
     public long MaxRetainedEvidenceBytes { get; set; } = 64L * 1024 * 1024;
 
