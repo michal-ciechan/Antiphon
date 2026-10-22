@@ -49,6 +49,19 @@ public static class Program
             if (!Directory.Exists(repo))
                 return Fail($"repository '{repo}' does not exist");
 
+            // This static gate runs before loading MSBuild. A matching pin is only permission
+            // to continue to the unchanged evaluation checks, never sufficient for approval.
+            if (!probe)
+            {
+                var pinRefusals = new SortedSet<string>(StringComparer.Ordinal);
+                TargetPins.Check(repo, pinRefusals);
+                if (pinRefusals.Count > 0)
+                {
+                    foreach (var refusal in pinRefusals) Console.Out.WriteLine(refusal);
+                    return Refused;
+                }
+            }
+
             // global.json is resolved from the audited repo, exactly as the land's dotnet build would.
             var instance = MSBuildLocator.QueryVisualStudioInstances(new VisualStudioInstanceQueryOptions
             {
