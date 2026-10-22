@@ -39,7 +39,9 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // rules and pointers (normalised body 10,822 of its 11,500 allocation). The keep-six line stays.
         // CARD-1366 deliberately restores explicit Mutation tiers with matrix/pin and bound-pack
         // qualifications: normalised body 11,077 of 11,500; transport and reserve limits stay fixed.
+        // CARD-1469 adds the operator standing-operating-rules pointer paragraph (full text at
+        // docs/orchestration-loop.md#standing-operating-rules): normalised body 11,389 of 11,500.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("2ec1bd25f1be78edab6346dd57bcfc691b39edffceaef0a274d7f03ca90c0129", "orchestrator-approved-bytes");
+            .ShouldBe("d46d51948734b70e09aba019882896042a713d7c70fcaefde491e37f723e1534", "orchestrator-approved-bytes");
     }
 }
