@@ -158,6 +158,119 @@ public sealed class BlockedReplyReportRetentionTests
     }
 
     /// <summary>
+    /// CARD-1486 S1 (G-4). CARD-1474 retired the never-typed ask when the report settled, so its
+    /// row is Canceled with no <c>SentAt</c> while the task still names it. A Reply re-arms the
+    /// one ask: a bare <c>done</c> on the reopened turn is asked again instead of waiting forever.
+    /// </summary>
+    [Test]
+    [Timeout(240_000)]
+    public async Task Reply_after_a_retired_nudge_rearms_the_one_ask()
+    {
+        await using var world = await BlockedBySyncAsync();
+        var retiredAsk = await SeedRetiredNudgeAsync(world);
+        var retained = world.Task;
+        var warningsBefore = (await world.EventsAsync()).Count(IsRetainedReportAsk);
+
+        await ReplyAsync(world, "Accepted. The report is final. Stop now and do not take another turn.");
+        var wire = await ReplyWireAsync(world);
+        await world.SettleAsync(
+            DelegationReportFormatter.ReportToken(world.TaskId, "done"), prompt: wire.Body, closingVerdict: false);
+
+        var after = world.Task;
+        after.Status.ShouldBe(AgentTaskStatus.Working, Why(after) + " the reopened turn is asked, not settled");
+        var newAsk = after.ReportNudgeMessageId.ShouldNotBeNull("the reopened turn records its own ask");
+        newAsk.ShouldNotBe(retiredAsk, "the retired, never-typed ask cannot be the reopened turn's ask");
+        (await world.EventsAsync()).Count(IsRetainedReportAsk).ShouldBe(warningsBefore + 1,
+            "one new token-only ask is recorded");
+        await using (var db = world.CreateContext())
+        {
+            var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == newAsk);
+            row.Status.ShouldBe(QueuedMessageStatus.Pending, "the new ask is queued for the live session");
+            row.Body.ShouldContain("only the closing report line", Case.Sensitive);
+        }
+        AssertRetained(after, retained);
+    }
+
+    [Test]
+    [Timeout(240_000)]
+    public async Task Second_bare_done_after_a_typed_ask_blocks_with_retained_report()
+    {
+        await using var world = await BlockedBySyncAsync();
+        var retained = world.Task;
+        await ReplyAsync(world, "Accepted. Stop.");
+        var wire = await ReplyWireAsync(world);
+        var done = DelegationReportFormatter.ReportToken(world.TaskId, "done");
+
+        await world.SettleAsync(done, prompt: wire.Body, closingVerdict: false);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Working, "fixture: the first bare done is asked once");
+        var ask = world.Task.ReportNudgeMessageId.ShouldNotBeNull("fixture: the ask is recorded");
+        string askBody;
+        await using (var db = world.CreateContext())
+        {
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == ask);
+            row.Status = QueuedMessageStatus.Sent;
+            row.SentAt = DateTime.UtcNow.AddSeconds(-1);
+            askBody = row.Body;
+            await db.SaveChangesAsync();
+        }
+        var asksBefore = (await world.EventsAsync()).Count(IsRetainedReportAsk);
+
+        await world.SettleAsync(done, prompt: askBody, closingVerdict: false);
+
+        var after = world.Task;
+        after.Status.ShouldBe(AgentTaskStatus.Blocked, Why(after) + " a second bare done after a typed ask Blocks");
+        after.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+        after.ReportNudgeMessageId.ShouldBe(ask, "no second ask is recorded");
+        AssertRetained(after, retained);
+        var events = await world.EventsAsync();
+        events.Count(IsRetainedReportAsk).ShouldBe(asksBefore, "no second ask goes out");
+        events.Count(e => e.Type == AgentTaskEventType.Completed).ShouldBe(0, "no Succeeded publication");
+    }
+
+    private static bool IsRetainedReportAsk(AgentTaskEvent e) =>
+        e.Type == AgentTaskEventType.Warning && e.Detail.Contains("asked once for the complete report", StringComparison.Ordinal);
+
+    private static void AssertRetained(AgentTask after, AgentTask retained)
+    {
+        after.Result.ShouldBe(retained.Result, "the retained report body stands");
+        after.NextStage.ShouldBe(retained.NextStage, "the retained handoff kind stands");
+        after.NextHandoff.ShouldBe(retained.NextHandoff, "the retained handoff sentence stands");
+        after.DeliverablePath.ShouldBe(retained.DeliverablePath, "the retained artifact pointer stands");
+        after.DeliverableRef.ShouldBe(retained.DeliverableRef);
+        after.ResultFilePath.ShouldBe(retained.ResultFilePath);
+    }
+
+    /// <summary>
+    /// The CARD-1474 state after the sync block settled the report: the closing-line ask is
+    /// recorded on the task, and its row was canceled before it was ever typed.
+    /// </summary>
+    private static async Task<Guid> SeedRetiredNudgeAsync(RunnerSettlementWorld world)
+    {
+        var id = Guid.NewGuid();
+        await using (var db = world.CreateContext())
+        {
+            var boundary = await db.TranscriptEntries.AsNoTracking()
+                .Where(e => e.AgentSessionId == world.SessionId)
+                .MaxAsync(e => e.Sequence);
+            var at = DateTime.UtcNow.AddMinutes(-2);
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = id, AgentSessionId = world.SessionId, Origin = QueuedMessageOrigin.Delegation,
+                Body = DelegationReportFormatter.TaskMarker(world.TaskId) + " Your turn ended without the closing report line.",
+                Status = QueuedMessageStatus.Canceled, CanceledAt = at.AddMinutes(1), CreatedAt = at,
+            });
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+            row.ReportNudgedAt = at;
+            row.ReportNudgedSequence = boundary;
+            row.ReportNudgeMessageId = id;
+            await db.SaveChangesAsync();
+        }
+        await world.ReloadAsync();
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, "fixture");
+        return id;
+    }
+
+    /// <summary>
     /// A runner Code task whose complete marked report was settled while the desktop repository
     /// lease was busy: Blocked on <c>runner_sync_lease_busy</c> with the report retained.
     /// </summary>
