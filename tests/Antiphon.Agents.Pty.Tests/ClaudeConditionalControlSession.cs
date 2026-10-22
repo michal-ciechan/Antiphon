@@ -12,6 +12,9 @@ namespace Antiphon.Agents.Pty.Tests;
 /// <summary>Portable, opt-in native fixture. Never attaches to a production session.</summary>
 internal sealed class ClaudeConditionalControlSession : IAsyncDisposable
 {
+    public const string PermissionProbeSource =
+        "const fs=require('fs');fs.writeFileSync('started.txt',String(process.pid));"
+        + "fs.writeFileSync('completed.txt','permission was granted');";
     private readonly string _cwd = Directory.CreateTempSubdirectory("antiphon-c1517-").FullName;
     private readonly string _sessionId = Guid.NewGuid().ToString("D");
     private string? _transcript;
@@ -40,8 +43,7 @@ internal sealed class ClaudeConditionalControlSession : IAsyncDisposable
                 "const fs=require('fs');fs.writeFileSync('started.txt',String(process.pid));"
                 + "setTimeout(()=>{fs.writeFileSync('completed.txt','completed');},180000);");
             File.WriteAllText(Path.Combine(live._cwd, "permission-probe.cjs"),
-                "const fs=require('fs');fs.writeFileSync('started.txt',String(process.pid));"
-                + "fs.writeFileSync('completed.txt','permission was granted');");
+                PermissionProbeSource);
             var settings = Path.Combine(live._cwd, "settings.json");
             File.WriteAllText(settings, JsonSerializer.Serialize(new
             {
@@ -201,7 +203,9 @@ internal sealed class ClaudeConditionalControlSession : IAsyncDisposable
         var screen = Runner.SnapshotScreen();
         var readable = ClaudeScreen.TryReadComposer(screen, out var composer);
         Log("observation-timeout", $"modal={ClaudeBlockingPromptDetector.Detect(screen)?.Kind.ToString() ?? "none"} "
-            + $"working={ClaudeScreen.IsWorking(screen)} composer_readable={readable} composer_length={composer.Length}");
+            + $"working={ClaudeScreen.IsWorking(screen)} composer_readable={readable} composer_length={composer.Length} "
+            + $"probe_started={File.Exists(StartedPath)} probe_completed={File.Exists(CompletedPath)}");
+        LogRows();
         throw new System.TimeoutException(failure);
     }
 

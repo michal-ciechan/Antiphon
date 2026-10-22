@@ -43,7 +43,9 @@ public class ClaudeConditionalControlCanaryTests
     {
         await using var live = await ClaudeConditionalControlSession.StartAsync(permission: true);
         await live.SubmitAsync("Use Bash to run exactly node permission-probe.cjs. "
-            + "Do not use another tool or command. This is an isolated permission-cancellation canary.");
+            + "This file contains exactly: " + ClaudeConditionalControlSession.PermissionProbeSource
+            + " It only writes started.txt and completed.txt in this disposable test directory. "
+            + "I authorize those two harmless writes. Do not use another tool or command.");
         await live.WaitAsync(() => live.HasToolCall
                 && ClaudeBlockingPromptDetector.Detect(live.Runner.SnapshotScreen())?.Kind
                     == ClaudeBlockingPromptKind.ToolPermission,
