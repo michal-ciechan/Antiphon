@@ -1024,4 +1024,34 @@ describe('AgentsPage', () => {
     // The left-click path (the CLI modal) was not taken.
     expect(screen.queryByRole('dialog')).toBeNull()
   })
+
+  it('C0105 context menu opens the terminal', async () => {
+    server.use(...agentHandlers())
+
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Terminal Frontend Claude' }), { clientX: 120, clientY: 80 })
+    await userEvent.click(await screen.findByRole('menuitem', { name: /Open terminal/ }))
+    await settleQueries(queryClient)
+
+    // The CLI modal's no-session prompt: the same destination as a left-click on the icon.
+    expect(await screen.findByRole('button', { name: 'Start agent' })).toBeInTheDocument()
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('C0105 context menu opens the settings modal', async () => {
+    server.use(...agentHandlers())
+
+    const { queryClient } = renderWithProviders(<AgentsPage />)
+    await settleQueries(queryClient)
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Terminal Frontend Claude' }), { clientX: 120, clientY: 80 })
+    await userEvent.click(await screen.findByRole('menuitem', { name: /Edit settings/ }))
+    await settleQueries(queryClient)
+
+    expect(screen.getByText('Agent Settings')).toBeInTheDocument()
+    expect(screen.getByLabelText('Details')).toBeInTheDocument()
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
 })

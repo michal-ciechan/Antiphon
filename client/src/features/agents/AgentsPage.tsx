@@ -440,6 +440,9 @@ export const AgentCard = memo(function AgentCard({
   onRendered?: (agentId: string) => void
 }) {
   onRendered?.(agent.id)
+  // CARD-0105: the terminal icon's context menu, anchored at the pointer. Null while closed, so a
+  // closed card renders no menu and an open one re-renders only itself.
+  const [cardMenu, setCardMenu] = useState<{ x: number; y: number } | null>(null)
   return (
     <Box pos="relative">
       <UnstyledButton
@@ -497,6 +500,11 @@ export const AgentCard = memo(function AgentCard({
           color={agent.liveSession?.status === 'Running' ? 'green' : agent.liveSession ? 'yellow' : 'gray'}
           aria-label={`Terminal ${agent.name}`}
           onClick={() => onOpenTerminal(agent)}
+          onContextMenu={(event) => {
+            // Own the right-click: the browser's menu must not open on top of ours.
+            event.preventDefault()
+            setCardMenu({ x: event.clientX, y: event.clientY })
+          }}
           pos="absolute"
           top={8}
           right={36}
@@ -504,6 +512,26 @@ export const AgentCard = memo(function AgentCard({
           <TbTerminal2 size={18} />
         </ActionIcon>
       </Tooltip>
+      {cardMenu && (
+        <Menu opened onClose={() => setCardMenu(null)} position="bottom-start" withinPortal shadow="md">
+          <Menu.Target>
+            <Box
+              pos="fixed"
+              left={cardMenu.x}
+              top={cardMenu.y}
+              w={1}
+              h={1}
+              data-testid="card-menu-anchor"
+              data-anchor={`${cardMenu.x},${cardMenu.y}`}
+            />
+          </Menu.Target>
+          {/* Popover names the dropdown after its target; that target is the invisible anchor
+              above, so the name is cleared and the label below applies. */}
+          <Menu.Dropdown aria-label={`Terminal menu ${agent.name}`} aria-labelledby={undefined}>
+            <AgentCardDestinations agent={agent} onOpenTerminal={onOpenTerminal} onEditSettings={onEditSettings} />
+          </Menu.Dropdown>
+        </Menu>
+      )}
       <Menu shadow="md" position="bottom-end" withinPortal>
         <Menu.Target>
           <ActionIcon
@@ -518,32 +546,58 @@ export const AgentCard = memo(function AgentCard({
           </ActionIcon>
         </Menu.Target>
         <Menu.Dropdown>
-          <Menu.Item
-            leftSection={<TbFiles size={14} />}
-            component="a"
-            href={`/agents/${agent.id}/files`}
-            target="_blank"
-          >
-            Open files view
-          </Menu.Item>
-          {agent.boardId && (
-            <Menu.Item
-              leftSection={<TbLayoutKanban size={14} />}
-              component={Link}
-              to={`/boards/${agent.boardId}`}
-            >
-              Open board
-            </Menu.Item>
-          )}
-          <Menu.Divider />
-          <Menu.Item leftSection={<TbSettings size={14} />} onClick={() => onEditSettings(agent)}>
-            Edit settings
-          </Menu.Item>
+          <AgentCardDestinations agent={agent} onEditSettings={onEditSettings} />
         </Menu.Dropdown>
       </Menu>
     </Box>
   )
 })
+
+/**
+ * The destinations an agent card offers (CARD-0105). Both the kebab menu and the terminal icon's
+ * context menu render this one list so the two cannot drift; only the context menu passes
+ * `onOpenTerminal`, which prepends "Open terminal" (the same action as a left-click on the icon).
+ */
+function AgentCardDestinations({
+  agent,
+  onOpenTerminal,
+  onEditSettings,
+}: {
+  agent: AgentSummaryDto
+  onOpenTerminal?: (agent: AgentSummaryDto) => void
+  onEditSettings: (agent: AgentSummaryDto) => void
+}) {
+  return (
+    <>
+      {onOpenTerminal && (
+        <Menu.Item leftSection={<TbTerminal2 size={14} />} onClick={() => onOpenTerminal(agent)}>
+          Open terminal
+        </Menu.Item>
+      )}
+      <Menu.Item
+        leftSection={<TbFiles size={14} />}
+        component="a"
+        href={`/agents/${agent.id}/files`}
+        target="_blank"
+      >
+        Open files view
+      </Menu.Item>
+      {agent.boardId && (
+        <Menu.Item
+          leftSection={<TbLayoutKanban size={14} />}
+          component={Link}
+          to={`/boards/${agent.boardId}`}
+        >
+          Open board
+        </Menu.Item>
+      )}
+      <Menu.Divider />
+      <Menu.Item leftSection={<TbSettings size={14} />} onClick={() => onEditSettings(agent)}>
+        Edit settings
+      </Menu.Item>
+    </>
+  )
+}
 
 function IncidentRow({ incident }: { incident: AgentIncidentDto }) {
   return (
