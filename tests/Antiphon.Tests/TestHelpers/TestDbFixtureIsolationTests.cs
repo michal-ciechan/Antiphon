@@ -1,7 +1,10 @@
+using System.Collections.Concurrent;
+using System.Data.Common;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Npgsql;
 using Shouldly;
 using TUnit.Core;
@@ -107,14 +110,96 @@ public sealed class TestDbFixtureIsolationTests
     public async Task MigrateAsync_on_a_clone_is_a_version_check()
     {
         await using var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(isolated.ConnectionString));
+        var recorder = new RecordingCommandInterceptor();
+        await using var db = new AppDbContext(
+            TestDbFixture.CreateDbContextOptions(isolated.ConnectionString, recorder));
         (await db.Database.GetPendingMigrationsAsync()).ShouldBeEmpty();
+        var ops = new TestDbOperations();
+        var before = await ops.ReadAppliedMigrationsAsync(isolated.ConnectionString);
+        recorder.Clear();
 
-        var started = DateTime.UtcNow;
-        await db.Database.MigrateAsync();
-        (DateTime.UtcNow - started).ShouldBeLessThan(
-            TimeSpan.FromSeconds(2),
-            "a cloned database is already current; MigrateAsync must not replay migrations");
+        // CARD-1420: the property is "applies no migration", asserted below. The timeout is only a
+        // hang guard, not a speed bound: on a schema-cache hit no bootstrap migrate ran, so this
+        // process's first MigrateAsync pays a cold EF model differ (1-4 s of CPU on server2), which
+        // is not a migration.
+        await db.Database.MigrateAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        var commands = recorder.Commands.ToArray();
+        commands.ShouldNotBeEmpty("the interceptor observed the version check");
+        (await ops.ReadAppliedMigrationsAsync(isolated.ConnectionString)).ShouldBe(
+            before,
+            "a cloned database is already current; MigrateAsync must not record a migration");
+        commands.SelectMany(Statements).Where(IsSchemaOrDataChange).ShouldBeEmpty(
+            "MigrateAsync on a current clone may only read and lock the history: "
+            + string.Join(" || ", commands));
+    }
+
+    private static IEnumerable<string> Statements(string commandText) =>
+        commandText.Split(';').Select(statement => statement.Trim()).Where(statement => statement.Length > 0);
+
+    /// <summary>
+    /// DDL or DML in a version check means a migration ran. EF's idempotent history-table ensure is
+    /// the one exception: on a current store it changes nothing.
+    /// </summary>
+    private static bool IsSchemaOrDataChange(string statement)
+    {
+        if (statement.StartsWith("CREATE TABLE IF NOT EXISTS \"__EFMigrationsHistory\"", StringComparison.OrdinalIgnoreCase))
+            return false;
+        string[] changes = ["CREATE", "ALTER", "DROP", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "COMMENT", "GRANT", "REVOKE", "DO"];
+        var head = statement.Split(new[] { ' ', '\n', '\r', '\t' }, 2)[0];
+        return changes.Contains(head, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private sealed class RecordingCommandInterceptor : DbCommandInterceptor
+    {
+        public ConcurrentQueue<string> Commands { get; private set; } = new();
+
+        public void Clear() => Commands = new();
+
+        public override InterceptionResult<int> NonQueryExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result)
+        {
+            Commands.Enqueue(command.CommandText);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            Commands.Enqueue(command.CommandText);
+            return ValueTask.FromResult(result);
+        }
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        {
+            Commands.Enqueue(command.CommandText);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Commands.Enqueue(command.CommandText);
+            return ValueTask.FromResult(result);
+        }
+
+        public override InterceptionResult<object> ScalarExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<object> result)
+        {
+            Commands.Enqueue(command.CommandText);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<object> result,
+            CancellationToken cancellationToken = default)
+        {
+            Commands.Enqueue(command.CommandText);
+            return ValueTask.FromResult(result);
+        }
     }
 
     private static Agent NewAgent(string name)
