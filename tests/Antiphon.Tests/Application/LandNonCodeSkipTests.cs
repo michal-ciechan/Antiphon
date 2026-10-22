@@ -626,6 +626,139 @@ public sealed class LandNonCodeSkipTests
     }
 
     [Test]
+    public async Task C1409_ImportWithItemOrMetadataReferenceRefuses()
+    {
+        foreach (var reference in new[] { "@(SharedProps)", "%(Shared.Path)" })
+        {
+            var root = await InitAuditTreeAsync(new Dictionary<string, string>
+            {
+                ["eng/shared.props"] = """
+                    <Project>
+                      <ItemGroup>
+                        <None Include="notes.txt" />
+                      </ItemGroup>
+                    </Project>
+                    """,
+                ["server/App.csproj"] =
+                    "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <Import Project=\"" + reference + "\" />\n</Project>\n",
+            });
+            try
+            {
+                var ran = await RunAuditAsync(root, "en-US", "-Update");
+                ran.Code.ShouldBe(1, reference + ": " + ran.Stdout + ran.Stderr);
+                ran.Stderr.ShouldContain("cannot approve it", customMessage: reference);
+                ran.Stderr.IndexOf("server/App.csproj Import Project=" + reference, StringComparison.Ordinal)
+                    .ShouldBeGreaterThanOrEqualTo(0, reference + ": " + ran.Stderr);
+                File.Exists(AuditManifest(root)).ShouldBeFalse(reference);
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Test]
+    public async Task C1409_ImportWithUnsupportedAttributeRefuses()
+    {
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/Sdk.props"] = """
+                <Project>
+                  <ItemGroup>
+                    <None Include="notes.txt" />
+                  </ItemGroup>
+                </Project>
+                """,
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="Sdk.props" Sdk="Some.Sdk" />
+                </Project>
+                """,
+        }, "server/App.csproj Import Project=Sdk.props", "Sdk=Some.Sdk");
+    }
+
+    [Test]
+    public async Task C1409_MissingImportTargetRefuses()
+    {
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../eng/missing.props" />
+                </Project>
+                """,
+        }, "server/App.csproj Import Project=../eng/missing.props", "-> eng/missing.props");
+    }
+
+    [Test]
+    public async Task C1409_ImportOutsideRepositoryRefuses()
+    {
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../../outside.props" />
+                </Project>
+                """,
+        }, "server/App.csproj Import Project=../../outside.props", "outside the repository");
+    }
+
+    [Test]
+    public async Task C1409_UninspectedImportTargetRefuses()
+    {
+        const string items = """
+            <Project>
+              <ItemGroup>
+                <Content Include="../docs/**/*.md" />
+              </ItemGroup>
+            </Project>
+            """;
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["eng/docs.items"] = items,
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../eng/docs.items" />
+                </Project>
+                """,
+        }, "server/App.csproj Import Project=../eng/docs.items", "-> eng/docs.items");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["eng/docs.items"] = items,
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../eng/*.items" />
+                </Project>
+                """,
+        }, "server/App.csproj Import Project=../eng/*.items", "-> eng/docs.items");
+    }
+
+    [Test]
+    public async Task C1409_EmptyWildcardImportIsAccepted()
+    {
+        var root = await InitAuditTreeAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../eng/*.props" />
+                </Project>
+                """,
+        });
+        try
+        {
+            var ran = await RunAuditAsync(root, "en-US", "-Update");
+            ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
+            ran.Stdout.ShouldContain("count=1");
+            File.Exists(AuditManifest(root)).ShouldBeTrue();
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task C1390_MissingNulFailsUnderNonInvariantCulture()
     {
         var root = await InitAuditRepositoryAsync("<Project Sdk=\"Microsoft.NET.Sdk\"></Project>\n");
