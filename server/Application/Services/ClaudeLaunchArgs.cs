@@ -68,7 +68,12 @@ public static class ClaudeLaunchArgs
     /// setting: the validator refuses it at startup, and this is the last line before argv.
     /// </summary>
     public static string Effort(AgentModelLevel level, AgentTaskRole role, IReadOnlyDictionary<string, string>? byRole)
-        => Effort(level);
+    {
+        if (!TryGetOverride(byRole, role, out var configured))
+            return Effort(level);
+        return Canonical(configured) ?? throw new InvalidOperationException(
+            $"Delegation:ClaudeEffortByRole:{role} is '{configured}', which is not a Claude effort. Use {CatalogSentence}.");
+    }
 
     /// <summary>
     /// True when the role's override would launch at a different effort than the tier's — the case a
@@ -76,5 +81,36 @@ public static class ClaudeLaunchArgs
     /// would refuse is not a reason to decline reuse.
     /// </summary>
     public static bool RoleOverrideDiffersFromTier(AgentModelLevel level, AgentTaskRole role, IReadOnlyDictionary<string, string>? byRole)
-        => false;
+        => TryGetOverride(byRole, role, out var configured)
+           && Canonical(configured) is { } effort
+           && !string.Equals(effort, Effort(level), StringComparison.Ordinal);
+
+    /// <summary>
+    /// The role's entry, keyed by <see cref="AgentTaskRole"/> name. Configuration keys are
+    /// case-insensitive and the setting's dictionary is built that way; the scan is for a map built
+    /// by hand with the default comparer.
+    /// </summary>
+    private static bool TryGetOverride(IReadOnlyDictionary<string, string>? byRole, AgentTaskRole role, out string configured)
+    {
+        configured = string.Empty;
+        if (byRole is null || byRole.Count == 0)
+            return false;
+        var name = role.ToString();
+        if (byRole.TryGetValue(name, out var exact))
+        {
+            configured = exact;
+            return true;
+        }
+
+        foreach (var (key, value) in byRole)
+        {
+            if (string.Equals(key?.Trim(), name, StringComparison.OrdinalIgnoreCase))
+            {
+                configured = value;
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
