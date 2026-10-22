@@ -51,7 +51,7 @@ ignored task report so the tested SHA is the pushed tip.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1512-final/` | publication-fixture | `/*/*/AgentTaskLandPublicationTests/(C448_V04_IgnoredFilesSurviveConfirmedPublication)\|(C1512_ImageEvidenceIsRetainedBeforeCleanup)\|(C1512_UnavailableImageRetentionPreservesSource)` | V-1, R-1, R-2 | all 4 cases, 0 failed/skipped | 4 | 7 |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1512-final2/` | publication-fixture | `/*/*/AgentTaskLandPublicationTests/(C448_V04_IgnoredFilesSurviveConfirmedPublication*)\|(C1512_ImageEvidenceIsRetainedBeforeCleanup*)\|(C1512_UnavailableImageRetentionPreservesSource*)` | V-1, R-1, R-2 | all 4 cases, 0 failed/skipped | 4 | 7 |
 
 ### Mutation handoff
 
