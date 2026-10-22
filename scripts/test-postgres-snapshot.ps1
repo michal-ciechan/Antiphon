@@ -521,6 +521,11 @@ case "$cmd" in
         esac
         exit 0
         ;;
+    context)
+        printf '%s\n' "${CARD1405_DOCKER_ENDPOINT:-unix:///var/run/docker.sock}"
+        exit 0
+        ;;
+
     ps)
         vol=""
         for arg in "$@"; do
@@ -566,7 +571,7 @@ exit 0
 }
 
 function Invoke-DrillCase {
-    param($Fixture, [string]$Scenario, [string[]]$Extra, [string]$PlainBytes = '32', [string[]]$Volumes = @())
+    param($Fixture, [string]$Scenario, [string[]]$Extra, [string]$PlainBytes = '32', [string[]]$Volumes = @(), [hashtable]$Env = @{})
     Remove-Item -LiteralPath $Fixture.Marker -Force -ErrorAction SilentlyContinue
     $dockerState = Join-Path $Fixture.Root 'docker-state'
     Remove-Item -LiteralPath $dockerState -Force -ErrorAction SilentlyContinue
@@ -580,13 +585,15 @@ function Invoke-DrillCase {
         '-Execute', '-RestoreDrill', '-IdentityFile', $Fixture.Identity,
         '-Destination', $Fixture.Dest, '-SyncRoot', $Fixture.Sync, '-StagingPath', $Fixture.Stage
     ) + @($Extra)
-    return Invoke-Snapshot -Fixture $Fixture -Arguments $arguments -ExtraEnv @{
+    $environment = @{
         CARD1405_SCENARIO = $Scenario
         CARD1405_DOCKER_STATE = (Join-Path $Fixture.Root 'docker-state')
         CARD1405_DUMP_BYTES = '1048576'
         CARD1405_TABLE_DATA = '1'
         CARD1405_PLAIN_BYTES = $PlainBytes
     }
+    foreach ($key in @($Env.Keys)) { $environment[[string]$key] = [string]$Env[$key] }
+    return Invoke-Snapshot -Fixture $Fixture -Arguments $arguments -ExtraEnv $environment
 }
 
 function Assert-DrillRefused {
@@ -679,18 +686,20 @@ function Test-DrillRefusesScratchDatabase {
 }
 
 function Invoke-PublishCase {
-    param($Fixture, [string]$Bytes, [string]$TableData)
+    param($Fixture, [string]$Bytes, [string]$TableData, [hashtable]$Env = @{}, [string[]]$Extra = @())
     Remove-Item -LiteralPath $Fixture.Marker -Force -ErrorAction SilentlyContinue
-    return Invoke-Snapshot -Fixture $Fixture -Arguments @(
-        '-Execute', '-RecipientFile', $Fixture.Recipient,
-        '-Destination', $Fixture.Dest, '-SyncRoot', $Fixture.Sync, '-StagingPath', $Fixture.Stage
-    ) -ExtraEnv @{
+    $environment = @{
         CARD1405_SCENARIO = 'publish'
         CARD1405_DOCKER_STATE = (Join-Path $Fixture.Root 'docker-state')
         CARD1405_DUMP_BYTES = $Bytes
         CARD1405_TABLE_DATA = $TableData
         CARD1405_PLAIN_BYTES = '32'
     }
+    foreach ($key in @($Env.Keys)) { $environment[[string]$key] = [string]$Env[$key] }
+    return Invoke-Snapshot -Fixture $Fixture -Arguments (@(
+        '-Execute', '-RecipientFile', $Fixture.Recipient,
+        '-Destination', $Fixture.Dest, '-SyncRoot', $Fixture.Sync, '-StagingPath', $Fixture.Stage
+    ) + @($Extra)) -ExtraEnv $environment
 }
 
 function Assert-PublishRejected {
@@ -1024,6 +1033,50 @@ function Test-DrillRefusesTaintedReuse {
     } finally { Remove-Fixture $fx }
 }
 
+function Test-DockerDaemonPinned {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'DockerDaemonPinned script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $common = @('-ScratchContainer', 'antiphon-postgres-drill', '-ScratchVolume', 'antiphon-postgres-drill-pgdata')
+        $tcp = Invoke-DrillCase $fx 'clean' $common '1048576' @() @{ DOCKER_HOST = 'tcp://10.0.0.9:2375' }
+        Assert-True ($tcp.Exit -eq 4) 'tcp DOCKER_HOST exits 4' "exit=$($tcp.Exit) $($tcp.Out)"
+        Assert-True ($tcp.Out -match 'reason=docker-host') 'tcp DOCKER_HOST reason' $tcp.Out
+        Assert-True ($tcp.Out -notmatch '10\.0\.0\.9') 'tcp DOCKER_HOST hides the endpoint' $tcp.Out
+        Assert-NoDocker $tcp 'tcp DOCKER_HOST'
+        Assert-NoSecret $tcp $fx 'tcp DOCKER_HOST'
+        $runs = @(Get-ChildItem -LiteralPath $fx.Stage -Force -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^run-' })
+        Assert-True ($runs.Count -eq 0) 'tcp DOCKER_HOST opens no run directory' "count=$($runs.Count)"
+        $context = Invoke-DrillCase $fx 'clean' $common '1048576' @() @{ CARD1405_DOCKER_ENDPOINT = 'tcp://10.0.0.9:2376' }
+        Assert-True ($context.Exit -eq 4) 'tcp context exits 4' "exit=$($context.Exit) $($context.Out)"
+        Assert-True ($context.Out -match 'reason=docker-context') 'tcp context reason' $context.Out
+        Assert-True ($context.Out -notmatch '10\.0\.0\.9') 'tcp context hides the endpoint' $context.Out
+        Assert-True ($context.Tools -match 'context inspect') 'tcp context reads the context' $context.Tools
+        Assert-True ($context.Tools -notmatch 'docker inspect') 'tcp context inspects no container' $context.Tools
+        Assert-True ($context.Tools -notmatch 'run -d') 'tcp context starts nothing' $context.Tools
+        Assert-True ($context.Tools -notmatch 'pg_restore') 'tcp context restores nothing' $context.Tools
+        Assert-NoSecret $context $fx 'tcp context'
+        $empty = Invoke-DrillCase $fx 'clean' $common '1048576' @() @{ CARD1405_DOCKER_ENDPOINT = '' }
+        Assert-True ($empty.Exit -eq 4 -and $empty.Out -match 'reason=docker-context') 'empty context endpoint exits 4' "exit=$($empty.Exit) $($empty.Out)"
+        Assert-True ($empty.Tools -notmatch 'pg_restore') 'empty context endpoint restores nothing' $empty.Tools
+        $unix = Invoke-DrillCase $fx 'clean' $common '1048576' @() @{ DOCKER_HOST = 'unix:///var/run/docker.sock' }
+        Assert-True ($unix.Exit -eq 0) 'unix DOCKER_HOST passes' "exit=$($unix.Exit) $($unix.Out)"
+        Assert-True ($unix.Tools -match 'context inspect') 'unix DOCKER_HOST still reads the context' $unix.Tools
+        $allowed = Invoke-DrillCase $fx 'clean' ($common + @('-AllowRemoteDocker')) '1048576' @() @{ DOCKER_HOST = 'tcp://10.0.0.9:2375' }
+        Assert-True ($allowed.Exit -eq 0) 'AllowRemoteDocker passes' "exit=$($allowed.Exit) $($allowed.Out)"
+        Assert-True ($allowed.Out -match 'warning: remote docker') 'AllowRemoteDocker warns' $allowed.Out
+        $publish = Invoke-PublishCase $fx '1048576' '1' @{ DOCKER_HOST = 'tcp://10.0.0.9:2375' }
+        Assert-True ($publish.Exit -eq 4) 'publish tcp DOCKER_HOST exits 4' "exit=$($publish.Exit) $($publish.Out)"
+        Assert-True ($publish.Out -match 'reason=docker-host') 'publish tcp DOCKER_HOST reason' $publish.Out
+        Assert-NoDocker $publish 'publish tcp DOCKER_HOST'
+        Assert-DestUntouched $fx 'publish tcp DOCKER_HOST'
+        $publishContext = Invoke-PublishCase $fx '1048576' '1' @{ CARD1405_DOCKER_ENDPOINT = 'tcp://10.0.0.9:2376' }
+        Assert-True ($publishContext.Exit -eq 4 -and $publishContext.Out -match 'reason=docker-context') 'publish tcp context exits 4' "exit=$($publishContext.Exit) $($publishContext.Out)"
+        Assert-True ($publishContext.Tools -notmatch 'pg_dump') 'publish tcp context dumps nothing' $publishContext.Tools
+        Assert-DestUntouched $fx 'publish tcp context'
+    } finally { Remove-Fixture $fx }
+}
+
 $all = @(
     'WhatIfPlan', 'MissingRecipient', 'RecipientInsideDestination',
     'DrillRefusesProduction', 'DrillPlan', 'Retention',
@@ -1033,7 +1086,7 @@ $all = @(
     'PublishRejectsTinyDump', 'PublishRejectsMissingTableData',
     'RetentionIgnoresConflictCopy', 'StagingHygiene', 'StagingPreservesOperatorFiles',
     'StagingRefusesLink', 'StagingOutsideDestination', 'DrillRemovesScratch',
-    'DrillRefusesTaintedReuse'
+    'DrillRefusesTaintedReuse', 'DockerDaemonPinned'
 )
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
