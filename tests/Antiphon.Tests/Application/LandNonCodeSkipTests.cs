@@ -2323,7 +2323,7 @@ public sealed class LandNonCodeSkipTests
             {
                 await Refuses(Items("""<EmbeddedResource Include="../docs/guide.md%3Bx.json" />"""), "includes docs markdown", "Include=../docs/guide.md%3Bx.json -> docs/guide.md;x.json");
                 await Refuses(Project("""  <PropertyGroup><RootNamespace>a.json%3B..</RootNamespace></PropertyGroup><ItemGroup><EmbeddedResource Include="$(RootNamespace)/docs/guide.md" /></ItemGroup>"""),
-                    "markdown or text document", "Include=$(RootNamespace)/docs/guide.md -> server/a.json;../docs/guide.md");
+                    "Windows land host", "Include=$(RootNamespace)/docs/guide.md", "segment=a.json;..");
                 await Refuses(Project("""  <PropertyGroup><RootNamespace>a.json;..</RootNamespace></PropertyGroup><ItemGroup><EmbeddedResource Include="$(RootNamespace)/docs/guide.md" /></ItemGroup>"""),
                     "includes docs markdown", "Include=$(RootNamespace)/docs/guide.md -> docs/guide.md");
             },
