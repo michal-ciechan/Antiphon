@@ -13,4 +13,6 @@ public record CreateProjectRequest(
     string? BaseBranch,
     IReadOnlyDictionary<string, string>? DefaultLaunchEnv = null,
     [property: JsonConverter(typeof(RepositoryVisibilityConverter))] RepositoryVisibility? RepositoryVisibility = null,
-    string? DefaultWorkerWorkspace = null);
+    string? DefaultWorkerWorkspace = null,
+    // CARD-0167 S2. Null/omitted = none. Same validation as the update request.
+    IReadOnlyDictionary<string, ProviderEndpointDto?>? ProviderEndpoints = null);

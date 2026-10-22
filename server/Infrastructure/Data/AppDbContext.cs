@@ -761,6 +761,12 @@ public class AppDbContext : DbContext
                 .IsRequired()
                 .HasColumnType("jsonb")
                 .HasDefaultValue("{}");
+            // CARD-0167 S2. Same shape as DefaultLaunchEnvJson: the default states that every
+            // project predating the column had no provider endpoint.
+            entity.Property(p => p.ProviderEndpointsJson)
+                .IsRequired()
+                .HasColumnType("jsonb")
+                .HasDefaultValue("{}");
             entity.Property(p => p.OrchestratorWorkspaceAcknowledgedAt).IsRequired(false);
             entity.Property(p => p.CommitOnSettle).IsRequired(false);
             entity.Property(p => p.DefaultWorkerWorkspace).HasConversion<string>().HasColumnType("text").IsRequired(false);
@@ -1261,6 +1267,11 @@ public class AppDbContext : DbContext
                 .IsRequired()
                 .HasColumnType("jsonb")
                 .HasDefaultValue("{}");
+            // CARD-0167 S2. Inherit IS 0, so no HasDefaultValue here (the ReplyStyle / ModelLevel
+            // trap: EF would omit an explicit Inherit from INSERT). The migration's column default
+            // backfills existing rows; the entity initializer is Inherit.
+            entity.Property(a => a.ProviderEndpointMode).IsRequired();
+            entity.Property(a => a.ProviderEndpointJson).HasColumnType("jsonb");
             entity.Property(a => a.CreatedAt).IsRequired();
             entity.Property(a => a.UpdatedAt).IsRequired();
 

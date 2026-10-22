@@ -126,6 +126,10 @@ public class ProjectService
                 ? "{}"
                 : AgentLaunchEnv.Serialize(
                     AgentLaunchEnv.ValidateOverride(request.DefaultLaunchEnv, "defaultLaunchEnv")),
+            ProviderEndpointsJson = request.ProviderEndpoints is null
+                ? "{}"
+                : ProviderEndpointSettings.SerializeMap(
+                    ProviderEndpointSettings.ValidateMap(request.ProviderEndpoints, "providerEndpoints")),
         };
 
         _db.Projects.Add(project);
@@ -137,7 +141,8 @@ public class ProjectService
 
         _logger.LogInformation("Created project {ProjectName} ({ProjectId})", project.Name, project.Id);
 
-        return await WithWarningsAsync(project, true, cancellationToken);
+        return await WithProviderEndpointWarningsAsync(
+            await WithWarningsAsync(project, true, cancellationToken), project, cancellationToken);
     }
 
     public async Task<ProjectDto> UpdateAsync(
@@ -184,6 +189,13 @@ public class ProjectService
             project.DefaultLaunchEnvJson = AgentLaunchEnv.Serialize(
                 AgentLaunchEnv.ValidateOverride(request.DefaultLaunchEnv, "defaultLaunchEnv"));
         }
+        // CARD-0167 S2. Null leaves the map alone; an empty map is the explicit clear. A refused
+        // entry throws before SaveChanges, so nothing half-validated is stored.
+        if (request.ProviderEndpoints is not null)
+        {
+            project.ProviderEndpointsJson = ProviderEndpointSettings.SerializeMap(
+                ProviderEndpointSettings.ValidateMap(request.ProviderEndpoints, "providerEndpoints"));
+        }
 
         var parsedProjectCommit = CommitOnSettlePolicyResolver.ParseProjectValue(
             request.CommitOnSettle, leaveUnchangedWhenNull: true, out var leaveCommitOnSettle);
@@ -202,7 +214,8 @@ public class ProjectService
 
         if (_eventBus is not null) await _eventBus.PublishToAllAsync("BoardChanged", new { projectId = id }, cancellationToken);
         fileLease?.Dispose();
-        return await WithWarningsAsync(project, pathChanged, cancellationToken);
+        return await WithProviderEndpointWarningsAsync(
+            await WithWarningsAsync(project, pathChanged, cancellationToken), project, cancellationToken);
     }
 
     /// <summary>
@@ -510,6 +523,20 @@ public class ProjectService
         }
     }
 
+    /// <summary>
+    /// CARD-0167 D-8: after a save, name (never resolve) any endpoint key that exists at neither
+    /// project nor global scope. Save responses only; the launch is the loud gate.
+    /// </summary>
+    private async Task<ProjectDto> WithProviderEndpointWarningsAsync(ProjectDto dto, Project project, CancellationToken ct)
+    {
+        var endpoints = ProviderEndpointSettings.ParseMap(project.ProviderEndpointsJson);
+        if (endpoints.Count == 0)
+            return dto;
+        var warnings = await ProviderEndpointSettings.MissingKeyWarningsAsync(
+            _db.ApiKeys.AsNoTracking(), project.Id, endpoints, ct);
+        return warnings.Count == 0 ? dto : dto with { Warnings = [.. dto.Warnings, .. warnings] };
+    }
+
     private async Task<ProjectDto> WithWarningsAsync(Project project, bool install, CancellationToken ct)
     {
         var dto = ToDto(project) with
@@ -547,6 +574,7 @@ public class ProjectService
             EffectiveWorkerWorkspace = (entity.DefaultWorkerWorkspace ?? _delegation.DefaultWorkerWorkspace).ToString(),
             DispatchHonorsWorkspaceDefault = false, // S3 will connect this preference to task admission.
             DefaultPipelineDefinitionId = entity.DefaultPipelineDefinitionId,
+            ProviderEndpoints = ProviderEndpointSettings.ParseMap(entity.ProviderEndpointsJson),
         };
 
     private static WorkspaceMode? ParseWorkerWorkspace(string? value)

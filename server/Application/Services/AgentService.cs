@@ -601,6 +601,8 @@ public sealed class AgentService
                 ct);
             // Re-check after the profile may have changed Kind (Herdr is Claude/Grok/Codex only).
             ValidateSessionBackendPairing(agent.SessionBackend, agent.Kind);
+            // CARD-0167 S2. After the profile, so a Codex endpoint is checked against the real kind.
+            ApplyProviderEndpoint(agent, request.ProviderEndpointMode, request.ProviderEndpoint, agent.Kind, kindChanged: false);
             RemoteControlPolicy.Require(agent.Kind, agent.RemoteControlEnabled, $"agent '{agent.Name}'");
             RefuseRunnerClaudeRemoteControl(agent.RunnerId, agent.Kind, agent.RemoteControlEnabled);
             _db.Agents.Add(agent);
@@ -641,7 +643,7 @@ public sealed class AgentService
                 await _eventBus.PublishToAllAsync("BoardChanged", new { boardId = board.Id }, ct);
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
 
-            return await GetByIdAsync(agent.Id, ct);
+            return await WithProviderEndpointWarningsAsync(await GetByIdAsync(agent.Id, ct), agent, ct);
         }
     }
 
@@ -689,6 +691,10 @@ public sealed class AgentService
             $"agent '{agent.Name}'");
         RefuseRunnerClaudeRemoteControl(agent.RunnerId, finalKind,
             request.RemoteControlEnabled ?? agent.RemoteControlEnabled);
+        // CARD-0167 S2. Against the kind this PATCH leaves the agent with, before any field is
+        // applied, so a refusal here writes nothing.
+        ApplyProviderEndpoint(agent, request.ProviderEndpointMode, request.ProviderEndpoint, finalKind,
+            kindChanged: finalKind != agent.Kind);
 
         var previousCwd = agent.WorkingDirectory;
         agent.Name = request.Name.Trim();
@@ -771,7 +777,7 @@ public sealed class AgentService
             await _pins.OnWorkingDirectoryChangedAsync(agent, previousCwd, ct);
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);
 
-        return await GetByIdAsync(agent.Id, ct);
+        return await WithProviderEndpointWarningsAsync(await GetByIdAsync(agent.Id, ct), agent, ct);
     }
 
     /// <summary>
@@ -1520,7 +1526,80 @@ public sealed class AgentService
             agent.HerdrWorkspaceLabel,
             agent.HerdrTabLabel,
             agent.StandingSpecialistOwnerId,
-            agent.PinClaudeImportMode);
+            agent.PinClaudeImportMode)
+        {
+            // CARD-0167 S2. What the operator wrote: a URL and a key NAME, never a resolved value.
+            ProviderEndpointMode = agent.ProviderEndpointMode,
+            ProviderEndpoint = agent.ProviderEndpointMode == ProviderEndpointMode.Endpoint
+                ? ProviderEndpointSettings.Parse(agent.ProviderEndpointJson)
+                : null,
+        };
+    }
+
+    /// <summary>
+    /// CARD-0167 S2. Applies a create/PATCH's provider endpoint fields to the row, validated
+    /// against <paramref name="finalKind"/>. Both null leaves the row alone, except that a kind
+    /// change re-checks a stored Endpoint-mode endpoint (a Claude endpoint without a key name is
+    /// not a valid Codex one, and the PATCH that moved the kind is where to hear that).
+    /// </summary>
+    private static void ApplyProviderEndpoint(
+        Agent agent,
+        ProviderEndpointMode? requestedMode,
+        ProviderEndpointDto? requestedEndpoint,
+        AgentKind finalKind,
+        bool kindChanged)
+    {
+        if (requestedMode is null && requestedEndpoint is null)
+        {
+            if (kindChanged && agent.ProviderEndpointMode == ProviderEndpointMode.Endpoint)
+                ProviderEndpointSettings.Validate(ProviderEndpointSettings.Parse(agent.ProviderEndpointJson), finalKind, "providerEndpoint");
+            return;
+        }
+
+        var mode = requestedMode ?? agent.ProviderEndpointMode;
+        if (!Enum.IsDefined(mode))
+            throw new ValidationException("providerEndpointMode", "providerEndpointMode must be Inherit, Endpoint or Direct.");
+        if (mode != ProviderEndpointMode.Endpoint)
+        {
+            if (requestedEndpoint is not null)
+            {
+                throw new ValidationException(
+                    "providerEndpoint",
+                    $"An agent in {mode} mode has no endpoint of its own; set providerEndpointMode to Endpoint or omit providerEndpoint.",
+                    ProviderEndpointSettings.NotApplicableCode);
+            }
+            agent.ProviderEndpointMode = mode;
+            agent.ProviderEndpointJson = null;
+            return;
+        }
+
+        var endpoint = requestedEndpoint ?? ProviderEndpointSettings.Parse(agent.ProviderEndpointJson);
+        var validated = ProviderEndpointSettings.Validate(endpoint, finalKind, "providerEndpoint");
+        agent.ProviderEndpointMode = ProviderEndpointMode.Endpoint;
+        agent.ProviderEndpointJson = ProviderEndpointSettings.Serialize(validated);
+    }
+
+    /// <summary>
+    /// CARD-0167 D-8: after a save, name (never resolve) an Endpoint-mode key that exists at neither
+    /// the agent's project scope (via its board) nor global scope.
+    /// </summary>
+    private async Task<AgentDetailDto> WithProviderEndpointWarningsAsync(AgentDetailDto dto, Agent agent, CancellationToken ct)
+    {
+        var endpoint = agent.ProviderEndpointMode == ProviderEndpointMode.Endpoint
+            ? ProviderEndpointSettings.Parse(agent.ProviderEndpointJson)
+            : null;
+        if (endpoint is null || endpoint.ApiKeyName is null)
+            return dto;
+
+        Guid? projectId = agent.BoardId is { } boardId
+            ? await _db.Boards.AsNoTracking().Where(b => b.Id == boardId).Select(b => (Guid?)b.ProjectId).FirstOrDefaultAsync(ct)
+            : null;
+        var warnings = await ProviderEndpointSettings.MissingKeyWarningsAsync(
+            _db.ApiKeys.AsNoTracking(),
+            projectId,
+            new Dictionary<string, ProviderEndpointDto>(StringComparer.Ordinal) { [agent.Kind.ToString()] = endpoint },
+            ct);
+        return warnings.Count == 0 ? dto : dto with { Warnings = [.. dto.Warnings, .. warnings] };
     }
 
     private static (AgentTuiConfiguredSelectionDto? Configured, AgentTuiLiveSessionSelectionDto? Live)

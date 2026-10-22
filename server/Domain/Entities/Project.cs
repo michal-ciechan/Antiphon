@@ -40,6 +40,15 @@ public class Project
     public string DefaultLaunchEnvJson { get; set; } = "{}";
 
     /// <summary>
+    /// CARD-0167 S2: the trusted provider endpoint this project's agents use, one per agent kind
+    /// (<c>ClaudeCode</c>, <c>Grok</c>, <c>Codex</c>). JSON object keyed by <c>AgentKind</c> name,
+    /// each value <c>{ baseUrl, apiKeyName }</c>; default <c>{}</c>. <c>apiKeyName</c> is the NAME
+    /// of a key in the <see cref="ApiKeys"/> store (project over global at launch), never a value.
+    /// Dormant until S3 projects it into the launch environment.
+    /// </summary>
+    public string ProviderEndpointsJson { get; set; } = "{}";
+
+    /// <summary>
     /// CARD-0251 S2: when set, the orchestrator-workspace readiness row reads Ok
     /// ("acknowledged on &lt;date&gt;") and launch-time incidents of that kind are
     /// suppressed. One decision per project, not per agent.
