@@ -695,7 +695,8 @@ Real proxy/key acceptance is separately **operator-owned** and is not run by del
    profile/project/agent/inherited/launch override supplies `ANTHROPIC_BASE_URL`, and select Inherit.
    Record the original URL/name/mode configuration, never credential values.
 2. Through the approved credential flow, provision a project key name for the already-running
-   trusted proxy. Set that project's ClaudeCode endpoint in the UI (or PATCH the complete map).
+   trusted proxy. Set that project's ClaudeCode endpoint in the UI (or PUT the complete project
+   update with the replacement map and other required fields preserved).
    Read it back and check only URL/name. Do not send a real key in shell arguments or logs.
 3. Start fresh with a unique prompt token, then pull `/api/sessions/{id}/transcript` and require a
    complete matching `UserPrompt`; a Running status or screen redraw is insufficient. Confirm the

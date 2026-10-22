@@ -19,6 +19,8 @@ public sealed class ProviderEndpointDocumentationTests
         doc.ShouldContain("providerEndpointMode: Inherit");
         doc.ShouldContain("providerEndpoints: {}");
         doc.ShouldContain("Rotation changes the key store");
+        doc.ShouldContain("PUT /api/projects/{id}");
+        doc.ShouldNotContain("PATCH `/api/projects/{id}`");
     }
 
     [Test]

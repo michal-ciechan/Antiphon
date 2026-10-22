@@ -5,6 +5,9 @@ Code task / landing owner `db635bb0`, branch `feat/card-task-db635bb0`, base
 [landed plan](2026-10-22-card-0167-provider-endpoint-plan.md), incorporating the S3
 repair's launch-time pool stamp and Endpoint-mode replacement semantics.
 
+The parent plan's project PATCH instruction is corrected to the shipped PUT route. Project and
+agent update examples name endpoint members, and require preserving the other required fields.
+
 The explicit S6 brief limits this round to minimal verification: no Unit lane or whole suite.
 CP-7 below is unchanged from the parent plan (the S6 prose's reference to CP-6 was a typo;
 CP-6 is S5's client row). CP-9 adds the requested portable sentinel variant, with both cases
