@@ -569,6 +569,24 @@ function Test-C1423_SlashInUserinfoMasked {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# A2 (CARD-1423): a secret pair inside a percent-encoded value of a non-secret key (x=y%26token%3DS is sent as
+# x=y&token=S), a double-encoded one, and an encoded URL with userinfo inside a plain value are secrets; a
+# benign encoded value is kept.
+function Test-C1423_EncodedValueSecretsMasked {
+    $root = New-C1408Scratch
+    $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100)
+    $benign = 'http://fake.invalid/api/agent-tasks/pipeline?projectId=p1&redirect=%2Fhome%3Ftab%3D1'
+    Assert-C1408 -Cond ((Hide-CutoverText -Text $benign) -eq $benign) -Name 'a benign encoded value is kept' -Detail (Hide-CutoverText -Text $benign)
+    $single = Hide-CutoverText -Text 'http://fake.invalid/p?projectId=p1&x=y%26token%3DSENTENC1423&z=1'
+    Assert-C1408 -Cond ($single -notmatch 'SENTENC1423' -and $single -match 'projectId=p1' -and $single -match '&z=1') -Name 'an encoded secret pair inside a plain value is masked and its neighbours kept' -Detail $single
+    Invoke-C1423MaskingForms -Root $root -BaselinePath $b.BaselinePath -Forms @(
+        @{ Name = 'encoded pair inside a plain value'; Server = 'http://fake.invalid'; Pipe = 'http://fake.invalid/api/agent-tasks/pipeline?projectId=p1&x=y%26token%3DSENTENC1423'; Sentinel = 'SENTENC1423' },
+        @{ Name = 'double-encoded pair inside a plain value'; Server = 'http://fake.invalid'; Pipe = 'http://fake.invalid/api/agent-tasks/pipeline?projectId=p1&x=y%2526token%253DSENTDBL1423'; Sentinel = 'SENTDBL1423' },
+        @{ Name = 'encoded userinfo url inside a plain value'; Server = 'http://fake.invalid'; Pipe = 'http://fake.invalid/api/agent-tasks/pipeline?projectId=p1&next=http%3A%2F%2Fu%3ASENTENCURL1423%40h%2Fdb'; Sentinel = 'SENTENCURL1423' }
+    )
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $cases = @(
     'C1408_RollbackAboveFloorAndRatio',
     'C1408_FloorHoldsUnderOneSecond',
@@ -583,7 +601,8 @@ $cases = @(
     'C1408_AdvisoryGuards',
     'C1408_LandRefusedWithoutRefusedOp',
     'C1408_MaskingBypassForms',
-    'C1423_SlashInUserinfoMasked'
+    'C1423_SlashInUserinfoMasked',
+    'C1423_EncodedValueSecretsMasked'
 )
 
 if (-not (Test-Path -LiteralPath $monitor)) {
