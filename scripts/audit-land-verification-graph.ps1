@@ -153,7 +153,7 @@ foreach ($allowedProperty in @(
     '_AntiphonCleanFileChars', '_AntiphonRepeatAdditional', '_AntiphonRepeatFile', '_CustodyChildOutputDir',
     '_F5PtyHostNativeDir', '_FakeClaudeOutputDir', '_FakeGrokOutputDir', '_GitHeadSha', '_GitHeadShaTrimmed',
     '_GitRevParseExitCode', '_LandFakeGrokDir', '_PtyHostNativeDir', '_StagedHelperDest', '_StagedHelperDir',
-    '_StagedHelperGlob', '_StagedHelperShared', 'AntiphonCleanFileMaxBytes', 'AntiphonMessagingVersion',
+    '_StagedHelperFramework', '_StagedHelperGlob', '_StagedHelperShared', 'AntiphonCleanFileMaxBytes', 'AntiphonMessagingVersion',
     'AssemblyName', 'Authors', 'ConcurrentGarbageCollection', 'DefaultItemExcludes', 'Description',
     'EnableMicrosoftTestingPlatformRunner', 'EnablePublicApiAnalyzers', 'FakeBrowserOutputDir',
     'FakeBrowserTargetPath', 'ImplicitUsings', 'InvariantGlobalization', 'IsAspireHost', 'IsPackable',
@@ -185,14 +185,18 @@ foreach ($nameItem in @('PackageReference', 'FrameworkReference', 'InternalsVisi
 # item type, seeded from the tracked definition files. A type absent here allows none. The global-property
 # metadata (AdditionalProperties, Properties, GlobalProperties, SetConfiguration, SetPlatform,
 # SetTargetFramework, UndefineProperties) and every other name refuse: they reopen the R2 property imports.
+# CARD-1483: the one exception is ProjectReference SetTargetFramework pinned to the literal value below
+# (the LandGraphAudit tool is built for net10.0); any other value, or the child-element form, refuses.
 $ItemMetadata = New-Object 'System.Collections.Generic.Dictionary[string,string[]]' ([System.StringComparer]::OrdinalIgnoreCase)
 $ItemMetadata['PackageReference'] = @('Version', 'GeneratePathProperty', 'ExcludeAssets', 'PrivateAssets', 'IncludeAssets')
-$ItemMetadata['ProjectReference'] = @('Aliases', 'ReferenceOutputAssembly', 'Private')
+$ItemMetadata['ProjectReference'] = @('Aliases', 'ReferenceOutputAssembly', 'Private', 'SkipGetTargetFrameworkProperties')
 $ItemMetadata['Content'] = @('CopyToOutputDirectory', 'CopyToPublishDirectory', 'Link', 'TargetPath')
 $ItemMetadata['Compile'] = @('Link')
 $ItemMetadata['EmbeddedResource'] = @('LogicalName')
 $ItemMetadata['None'] = @('Pack', 'PackagePath', 'CopyToOutputDirectory')
-$ItemMetadata['StagedHelper'] = @('Folder', 'Glob')
+$ItemMetadata['StagedHelper'] = @('Folder', 'Glob', 'HelperTargetFramework')
+# Item type -> metadata attribute name -> the only value (ordinal) under which that name is allowed.
+$PinnedItemMetadata = @{ 'ProjectReference' = @{ 'SetTargetFramework' = 'TargetFramework=net10.0' } }
 # Item element attributes that are not metadata (compared ordinally, as MSBuild reads them).
 $ItemElementAttributes = @('Include', 'Exclude', 'Update', 'Remove', 'Condition', 'Label')
 # CARD-1409 repair 5 (plan D-29, O-table): item operations the audit does not evaluate, refused by name.
@@ -1248,6 +1252,8 @@ function Assert-ItemOperationsAllowed($Node, [string]$Path, [string]$Item, [stri
         $attributeName = [string]$attribute.Name
         if (Test-AllowedName $ItemElementAttributes $attributeName $false) { continue }
         if (Test-AllowedName $RefusedItemOperations $attributeName $true) { Exit-Audit 1 (Format-ItemOperationRefusal $Path $Item $Label $attributeName) }
+        if (-not $isRemove -and $PinnedItemMetadata.ContainsKey($Item) -and $PinnedItemMetadata[$Item].ContainsKey($attributeName) -and
+            [string]::Equals([string]$PinnedItemMetadata[$Item][$attributeName], [string]$attribute.Value, [System.StringComparison]::Ordinal)) { continue }
         if (-not (Test-AllowedName $allowed $attributeName $true)) { Exit-Audit 1 (Format-MetadataRefusal $Path $Item $Label $attributeName) }
     }
     foreach ($child in $Node.ChildNodes) {
