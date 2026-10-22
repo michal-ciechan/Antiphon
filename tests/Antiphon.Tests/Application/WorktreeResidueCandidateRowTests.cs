@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -48,7 +49,7 @@ public sealed class WorktreeResidueCandidateRowTests
         firstRows.Count.ShouldBe(CandidatesPerRun, "first-run-rows");
         firstRows.ShouldAllBe(r => r.Outcome == nameof(WorktreeResidueCandidateOutcome.Held));
         firstRows.Select(r => r.Lane).Distinct().OrderBy(l => l).ShouldBe(
-            [nameof(WorktreeResidueLane.Publication), nameof(WorktreeResidueLane.SettledTask)]);
+            new[] { nameof(WorktreeResidueLane.Publication), nameof(WorktreeResidueLane.SettledTask) });
 
         clock.Advance(TimeSpan.FromDays(1));
         await service.RunAsync(CancellationToken.None);
