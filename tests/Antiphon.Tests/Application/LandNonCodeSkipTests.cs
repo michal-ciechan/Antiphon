@@ -2213,6 +2213,53 @@ public sealed class LandNonCodeSkipTests
         await AssertUpdateApprovesAsync(Fixture("@(None);src/x.json"), 1);
     }
 
+    // CARD-1409 repair 8 (Review d43d1e4a R2, D-39): MSBuild expands a property wherever it stands and splits
+    // afterwards, so a later ';'-part that starts with a directory property is that directory's path, as at
+    // fd20e8dcc, for a property value and an import alike; a later part with any other reference is left as it was.
+    [Test]
+    public async Task C1409_LaterPartDirectoryPropertyIsExpanded()
+    {
+        var files = await BuildRealTestProjectTreeAsync();
+        files["docs/guide.md"] = "# guide";
+        var real = files[RealTestProjectPath];
+        foreach (var directory in new[] { "$(MSBuildThisFileDirectory)", "$(MSBuildProjectDirectory)/" })
+        {
+            files[RealTestProjectPath] = real.Replace("</Project>",
+                "  <PropertyGroup><PackageReadmeFile>x.json;" + directory + "../../docs/guide.md</PackageReadmeFile></PropertyGroup>\n</Project>",
+                StringComparison.Ordinal);
+            await AssertUpdateRefusesAsync(files, "property value", RealTestProjectPath + " PackageReadmeFile -> docs/guide.md");
+        }
+
+        static Dictionary<string, string> Fixture(string value, string import = "") => new()
+        {
+            ["docs/guide.md"] = "# guide",
+            ["eng/shared.props"] = "<Project />",
+            ["server/App.csproj"] = $"""
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <Description>sub</Description>
+                    <PackageTags>{value}</PackageTags>
+                  </PropertyGroup>
+                  {import}
+                </Project>
+                """,
+        };
+        await AssertUpdateRefusesAsync(Fixture("src/x.json;$(MSBuildThisFileDirectory)../docs/guide.md"),
+            "property value", "server/App.csproj PackageTags -> docs/guide.md");
+        await AssertUpdateRefusesAsync(Fixture("src/x.json;$(MSBuildProjectDirectory)/../docs/guide.md"),
+            "property value", "server/App.csproj PackageTags -> docs/guide.md");
+        // A later part with any other property reference is left alone, as at fd20e8dcc.
+        await AssertUpdateApprovesAsync(Fixture("src/x.json;$(Description)/../../docs/guide.md"), 2);
+        await AssertUpdateApprovesAsync(Fixture("src/x.json;$(Undefined)../docs/guide.md"), 2);
+        // An import's later part is resolved from its directory property and followed.
+        await AssertUpdateRefusesAsync(Fixture("x", """<Import Project="../eng/shared.props;$(MSBuildThisFileDirectory)../eng/missing.props" />"""),
+            "import target is not a tracked project file",
+            "server/App.csproj Import Project=../eng/shared.props;$(MSBuildThisFileDirectory)../eng/missing.props -> eng/missing.props");
+        await AssertUpdateApprovesAsync(Fixture("x", """<Import Project="../eng/shared.props;$(MSBuildProjectDirectory)/../eng/shared.props" />"""), 2);
+        await AssertUpdateRefusesAsync(Fixture("x", """<Import Project="../eng/shared.props;$(Description)/../eng/shared.props" />"""),
+            "import cannot be resolved");
+    }
+
     // One entry per 'table' row of the plan's N- and O-tables (D-28, D-29). Keys are the row ids.
     private static Dictionary<string, Func<Task>> TableWitnesses()
     {

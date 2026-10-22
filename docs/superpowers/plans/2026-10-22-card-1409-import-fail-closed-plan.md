@@ -103,7 +103,7 @@ No R-n. No positive controls. Mutation has nothing new to plant beyond the refus
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S25 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_*)` | V-1 V-2 V-3 V-4 V-5 V-7 V-8 V-9 V-10 V-11 V-12 V-13 V-14 V-15 V-16 V-17 V-18 V-19 V-20 V-21 V-22 V-23 V-24 V-25 V-26 V-27 V-28 V-29 V-30 | exactly 83 executed, 0 failed/skipped | 83 | 15 |
+| CP-1 | S28 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_*)` | V-1 V-2 V-3 V-4 V-5 V-7 V-8 V-9 V-10 V-11 V-12 V-13 V-14 V-15 V-16 V-17 V-18 V-19 V-20 V-21 V-22 V-23 V-24 V-25 V-26 V-27 V-28 V-29 V-30 V-31 | exactly 84 executed, 0 failed/skipped | 84 | 15 |
 
 ### Cost
 
@@ -350,6 +350,32 @@ Final Review 7db88932 (second pass; report `.antiphon/task-7db88932.md` on `feat
 | V-30 | The unmodified real test project tree is approved; with `<PackageReadmeFile>../../docs/guide.md;@(None)</PackageReadmeFile>`, `...;$([System.String]::Copy(''))` or `...;%(None.Identity)` appended it refuses naming `tests/Antiphon.Tests/Antiphon.Tests.csproj PackageReadmeFile -> docs/guide.md`; a fixture refuses `@(None);../docs/guide.md` and `%(None.Identity);../docs/guide.md` naming `server/App.csproj PackageTags -> docs/guide.md`; `@(None)`, `%(None.Identity)`, `$([System.String]::Copy('../docs/guide.md'))` and `@(None);src/x.json` are approved with `count=1`. | `C1409_PropertyValuePartWithReferenceSkipsOnlyThatPart` |
 
 V-7 remains the acceptance witness for D-38. No new PC rows: the per-part skip is one line of the D-25 rule Review already named; existing land PCs stay pending for SourceLanding Mutation.
+
+## Repair 8: a later part's directory property (Review d43d1e4a)
+
+Final Review d43d1e4a (report `.antiphon/task-d43d1e4a.md` on `feat/card-task-d43d1e4a`, commit `617aa44c6`) confirmed repair 7 and found one more regression repair 6 introduced: R2. In `-DirectoryPropertiesOnly` mode `Resolve-ItemPathText` expanded `$(MSBuildThisFileDirectory)` / `$(MSBuildProjectDirectory)` only at the start of the whole text, so a later `;`-part that starts with one was returned `unresolved` and `Assert-PropertyValuesAllowed` skipped it. On the real tree `<PackageReadmeFile>x.json;$(MSBuildThisFileDirectory)../../docs/orchestration-loop.md</PackageReadmeFile>` appended to `tests/Antiphon.Tests/Antiphon.Tests.csproj` is refused at `fd20e8dcc` (`PackageReadmeFile -> docs/orchestration-loop.md`) and approved at `f8f3233f3` (`-Update` exit 0, count=57); the `$(MSBuildProjectDirectory)/` spelling behaves the same. For an Import the same text failed closed (`cannot be resolved`), where `fd20e8dcc` followed it. Branch `feat/card-task-f78d75df`, start ref `f8f3233f3cddce69cb4783e0de73565de7a5108d`; this task lands as its own owner and the whole CARD-1409 chain lands with it, master first, then the rc port.
+
+**D-39 — The leading directory property is per part.** MSBuild expands a property wherever it stands and splits afterwards, so `a;$(MSBuildThisFileDirectory)b` is `a` and that directory's `b`. In `-DirectoryPropertiesOnly` mode the pipeline splits the text on `;` first and then expands a directory property at the start of each trimmed part (the directory values carry no `;`, so the order is the same); that part is anchored at the directory and its kind is repo. A part that still carries `$(`, `@(` or `%(` after that expansion, including a directory property past the start of its part, stays `unresolved` for the consumer to refuse (imports, name items) or skip (D-25 values, `Pkg*` ids). The full expansion (`Expand-Candidates`) is unchanged. Repair 7's comment that a reference past a leading directory property is skipped is corrected to say per part.
+
+**D-40 — Witnesses.** `C1409_LaterPartDirectoryPropertyIsExpanded`: on the real test project tree `x.json;$(MSBuildThisFileDirectory)../../docs/guide.md` and `x.json;$(MSBuildProjectDirectory)/../../docs/guide.md` as `PackageReadmeFile` refuse naming `PackageReadmeFile -> docs/guide.md`; on a fixture `src/x.json;$(MSBuildThisFileDirectory)../docs/guide.md` and `src/x.json;$(MSBuildProjectDirectory)/../docs/guide.md` refuse naming `server/App.csproj PackageTags -> docs/guide.md`; `src/x.json;$(Description)/../../docs/guide.md` and `src/x.json;$(Undefined)../docs/guide.md` stay approved (`count=2`), as at `fd20e8dcc`; `Import Project="../eng/shared.props;$(MSBuildThisFileDirectory)../eng/missing.props"` refuses naming `-> eng/missing.props`, the `$(MSBuildProjectDirectory)/../eng/shared.props` form is approved (`count=2`) and a later `$(Description)/...` part still refuses `cannot be resolved`. Each outcome was confirmed with the `fd20e8dcc` and `f8f3233f3` scripts on a scratch fixture before the witness was written.
+
+**D-41 — Acceptance.** `-Check` on the real repository prints `F240D0F1DBF9AA627A0A3637B52318B8030181B60F20E677C6E3DE2D2285B72F` count=57 (V-7); the ordinary edit of D-27 passes `-Update` with count=57 in a scratch worktree; the script stays ASCII-only and parses under Windows PowerShell 5.1 rules. CP-1 expects 84: 28 `C1409_*`, 10 `C1400_*`, 3 `C1390_*`, `C1385_RegistryMatchesNarrowGraph`, 42 `C1380_*`. After the fix a differential sweep of property-value and import shapes (directory properties per part, item references, function calls, escapes, empty parts, leading and trailing `;`) runs against the `fd20e8dcc` and fixed scripts; any shape `fd20e8dcc` refuses and the fix approves is fixed in this round. The out-of-contract residue of D-35 is unchanged.
+
+### Repair 8 slices
+
+**S26 — Red witness.** `C1409_LaterPartDirectoryPropertyIsExpanded`; this section; CP-1 moved to S28 expecting 84. One unlisted red run at the witness commit (reason: red proof before the fix; counts in the report).
+
+**S27 — Fix.** `scripts/audit-land-verification-graph.ps1` D-39 (ASCII; parses under Windows PowerShell 5.1). The differential sweep of D-41 at the fix commit (scratch fixtures, no build).
+
+**S28 — Wording.** `docs/orchestration-loop.md`, the script header; CP-1 after S28 expecting 84.
+
+### Repair 8 verification design
+
+| ID | Behaviour | Witness |
+|---|---|---|
+| V-31 | A later `;`-part that starts with `$(MSBuildThisFileDirectory)` or `$(MSBuildProjectDirectory)/` is expanded from that directory: a property value naming `docs/guide.md` that way refuses on the real test project tree and on a fixture, an import part that way is followed (a missing target names `-> eng/missing.props`, a tracked one is approved), and a later part with any other property reference is skipped in a value and refuses in an import, as at `fd20e8dcc`. | `C1409_LaterPartDirectoryPropertyIsExpanded` |
+
+V-7 remains the acceptance witness for D-41. No new PC rows: the per-part expansion is one branch of the pipeline Review already named; existing land PCs stay pending for SourceLanding Mutation.
 
 ### Inventory (tracked definition files at `9eab17ecfb73cf3f968ce8abba8141282a6a81c9`)
 
