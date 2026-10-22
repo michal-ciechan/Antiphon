@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -1620,12 +1621,27 @@ public sealed class LandNonCodeSkipTests
     [Test]
     public async Task C1409_RealTestProjectWidenedToPlanGlobRefuses()
     {
-        var repo = DelegateScriptRunner.RepoRoot;
-        const string projectPath = "tests/Antiphon.Tests/Antiphon.Tests.csproj";
         const string captures = "../../docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-captures.json";
         const string widened = "../../docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-*";
-        var real = await File.ReadAllTextAsync(Path.Combine(repo, projectPath.Replace('/', Path.DirectorySeparatorChar)));
+        var files = await BuildRealTestProjectTreeAsync();
+        var real = files[RealTestProjectPath];
         real.ShouldContain(captures);
+        await AssertUpdateApprovesAsync(files, DefinitionCount(files));
+
+        files[RealTestProjectPath] = real.Replace(captures, widened, StringComparison.Ordinal);
+        await AssertUpdateRefusesAsync(files, "includes docs markdown",
+            RealTestProjectPath + " EmbeddedResource Include=" + widened,
+            "docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-readiness-plan.md");
+    }
+
+    private const string RealTestProjectPath = "tests/Antiphon.Tests/Antiphon.Tests.csproj";
+
+    // The V-20 scratch tree: the real tests/Antiphon.Tests project, the real root Directory.Build.* files and
+    // tests/Shared/CheckpointRepeat.targets, a stub project at every ProjectReference and the two card-0449 docs files.
+    private static async Task<Dictionary<string, string>> BuildRealTestProjectTreeAsync()
+    {
+        var repo = DelegateScriptRunner.RepoRoot;
+        var real = await File.ReadAllTextAsync(Path.Combine(repo, RealTestProjectPath.Replace('/', Path.DirectorySeparatorChar)));
         var files = new Dictionary<string, string>
         {
             ["Directory.Build.props"] = await File.ReadAllTextAsync(Path.Combine(repo, "Directory.Build.props")),
@@ -1635,7 +1651,7 @@ public sealed class LandNonCodeSkipTests
             ["docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-captures.json"] = "{}",
             ["docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-readiness-plan.md"] = "# plan",
         };
-        foreach (System.Text.RegularExpressions.Match reference in System.Text.RegularExpressions.Regex.Matches(real, "<ProjectReference Include=\"([^\"]+)\""))
+        foreach (Match reference in Regex.Matches(real, "<ProjectReference Include=\"([^\"]+)\""))
         {
             var relative = reference.Groups[1].Value.Replace('\\', '/');
             var stack = new List<string> { "tests", "Antiphon.Tests" };
@@ -1646,26 +1662,14 @@ public sealed class LandNonCodeSkipTests
             }
             files[string.Join('/', stack)] = """<Project Sdk="Microsoft.NET.Sdk"></Project>""";
         }
+        files[RealTestProjectPath] = real;
+        return files;
+    }
 
+    private static int DefinitionCount(IReadOnlyDictionary<string, string> files)
+    {
         var graph = new LandVerificationBuildGraph();
-        files[projectPath] = real;
-        var expectedCount = files.Keys.Count(graph.Includes);
-        var control = await InitAuditTreeAsync(files);
-        try
-        {
-            var ran = await RunAuditAsync(control, "en-US", "-Update");
-            ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
-            ran.Stdout.ShouldContain("count=" + expectedCount.ToString(CultureInfo.InvariantCulture));
-        }
-        finally
-        {
-            Directory.Delete(control, recursive: true);
-        }
-
-        files[projectPath] = real.Replace(captures, widened, StringComparison.Ordinal);
-        await AssertUpdateRefusesAsync(files, "includes docs markdown",
-            projectPath + " EmbeddedResource Include=" + widened,
-            "docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-readiness-plan.md");
+        return files.Keys.Count(graph.Includes);
     }
 
     // CARD-1409 repair 4 (Review 937bb1c9 F2): a $(...) in a file-item include is expanded from the
@@ -1956,6 +1960,326 @@ public sealed class LandNonCodeSkipTests
         }
     }
 
+    // CARD-1409 repair 5 (Review f0fb9035 F1, D-28): the Windows land host strips trailing dots and spaces per
+    // segment and opens '::$DATA' as the file itself, so a resolved segment that would change under the host's
+    // rules refuses naming the segment; the unchanged real test project still passes in the V-20 scratch tree.
+    [Test]
+    public async Task C1409_WindowsPathNormalisationRefusesBySegment()
+    {
+        foreach (var (include, segment) in new[]
+        {
+            ("../README.md.", "README.md."),
+            ("../docs./guide.md.", "docs."),
+            ("../docs./*.md", "docs."),
+            ("../README.md::$DATA", "README.md::$DATA"),
+            ("../README.md. .", "README.md. ."),
+        })
+        {
+            await AssertUpdateRefusesAsync(new Dictionary<string, string>
+            {
+                ["README.md"] = "# root",
+                ["docs/guide.md"] = "# guide",
+                ["server/App.csproj"] = $"""
+                    <Project Sdk="Microsoft.NET.Sdk">
+                      <ItemGroup>
+                        <EmbeddedResource Include="{include}" />
+                      </ItemGroup>
+                    </Project>
+                    """,
+            }, "Windows land host", "server/App.csproj EmbeddedResource Include=" + include, "segment=" + segment);
+        }
+
+        var files = await BuildRealTestProjectTreeAsync();
+        var real = files[RealTestProjectPath];
+        await AssertUpdateApprovesAsync(files, DefinitionCount(files));
+        files[RealTestProjectPath] = real.Replace("</Project>",
+            "  <ItemGroup><EmbeddedResource Include=\"../../README.md.\" /></ItemGroup>\n</Project>", StringComparison.Ordinal);
+        await AssertUpdateRefusesAsync(files, "Windows land host",
+            RealTestProjectPath + " EmbeddedResource Include=../../README.md.", "segment=README.md.");
+
+        await AssertUpdateApprovesAsync(new Dictionary<string, string>
+        {
+            ["lib/Shared.cs"] = "// shared",
+            ["server/Fixtures/x.jsonl"] = "{}",
+            ["server/slow-tests-allowlist.txt"] = "",
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <Compile Include="..\lib\Shared.cs" Link="Shared.cs" />
+                    <Content Include="Fixtures\*" />
+                    <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
+                  </ItemGroup>
+                </Project>
+                """,
+        }, 1);
+    }
+
+    // CARD-1409 repair 5 (Review f0fb9035 F2, D-29): an item Update sets metadata too, so its values join the
+    // census that %(Item.Metadata) and the Pkg* path properties expand; the real StagedHelper Update climbs out
+    // of the output root and refuses, the real **\* glob and a PackageReference Update stay approved.
+    [Test]
+    public async Task C1409_ItemUpdateMetadataFeedsTheCensus()
+    {
+        var files = await BuildRealTestProjectTreeAsync();
+        files[RealTestProjectPath] = files[RealTestProjectPath].Replace("</Project>",
+            """  <ItemGroup><StagedHelper Update="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj" Glob="..\..\..\..\..\docs\**\*.md" /></ItemGroup>"""
+            + "\n</Project>", StringComparison.Ordinal);
+        await AssertUpdateRefusesAsync(files, "cannot be classified",
+            RealTestProjectPath + " _StagedHelperFiles Include=$(_StagedHelperDir)$(_StagedHelperGlob)");
+
+        const string lib = """<Project Sdk="Microsoft.NET.Sdk"></Project>""";
+        static string Staged(string updateGlob) => $$"""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <StagedHelper Include="$(MSBuildThisFileDirectory)../lib/Lib.csproj" Folder="lib" Glob="*" />
+                <PackageReference Include="Some.Package" Version="1.0.0" />
+                <PackageReference Update="Some.Package" GeneratePathProperty="true" />
+                <Content Include="$(PkgSome_Package)\build\a.dll" />
+              </ItemGroup>
+              <Target Name="Stage">
+                <ItemGroup>
+                  <StagedHelper Update="$(MSBuildThisFileDirectory)../lib/Lib.csproj" Glob="{{updateGlob}}" />
+                </ItemGroup>
+                <MSBuild Projects="@(StagedHelper)" Targets="GetTargetPath">
+                  <Output TaskParameter="TargetOutputs" ItemName="_StagedHelperTarget" />
+                </MSBuild>
+                <PropertyGroup>
+                  <_StagedHelperDir>@(_StagedHelperTarget->'%(RootDir)%(Directory)')</_StagedHelperDir>
+                  <_StagedHelperGlob>%(StagedHelper.Glob)</_StagedHelperGlob>
+                </PropertyGroup>
+                <ItemGroup>
+                  <_StagedHelperFiles Include="$(_StagedHelperDir)$(_StagedHelperGlob)" />
+                </ItemGroup>
+              </Target>
+            </Project>
+            """;
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["docs/guide.md"] = "# guide",
+            ["lib/Lib.csproj"] = lib,
+            ["server/App.csproj"] = Staged(@"..\..\docs\**\*.md"),
+        }, "cannot be classified", "server/App.csproj _StagedHelperFiles Include=$(_StagedHelperDir)$(_StagedHelperGlob)");
+        await AssertUpdateApprovesAsync(new Dictionary<string, string>
+        {
+            ["lib/Lib.csproj"] = lib,
+            ["server/App.csproj"] = Staged(@"**\*"),
+        }, 2);
+    }
+
+    // CARD-1409 repair 5 (D-31, V-26): every row of the plan's normaliser (N-) and item-operation (O-) tables has
+    // a witness. A 'table' row runs here with the row's outcome; a named row must name an existing C1409_ method;
+    // an entry without a row fails too, so the tables and this test move together.
+    [Test]
+    public async Task C1409_NormaliserAndItemOperationTablesHaveWitnesses()
+    {
+        var plan = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "docs", "superpowers", "plans",
+            "2026-10-22-card-1409-import-fail-closed-plan.md"));
+        var rows = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (Match row in Regex.Matches(plan, @"^\| ((?:N|O)-\d+) \|(.*)\|\s*$", RegexOptions.Multiline))
+        {
+            var cells = row.Groups[2].Value.Split('|');
+            rows[row.Groups[1].Value] = cells[^1].Trim().Trim('`');
+        }
+        rows.Count.ShouldBeGreaterThan(0, "the plan has no N-/O- table rows");
+        var witnesses = TableWitnesses();
+        foreach (var (id, witness) in rows)
+        {
+            if (witness == "table")
+            {
+                witnesses.ContainsKey(id).ShouldBeTrue($"plan row {id} has no table witness in this test");
+                continue;
+            }
+            witness.StartsWith("C1409_", StringComparison.Ordinal).ShouldBeTrue($"plan row {id} names witness {witness}");
+            typeof(LandNonCodeSkipTests).GetMethod(witness).ShouldNotBeNull($"plan row {id} names a missing witness {witness}");
+        }
+        foreach (var id in witnesses.Keys)
+            rows.ContainsKey(id).ShouldBeTrue($"table witness {id} has no plan row");
+
+        foreach (var (id, run) in witnesses.OrderBy(w => w.Key, StringComparer.Ordinal))
+        {
+            try
+            {
+                await run();
+            }
+            catch (Exception e)
+            {
+                throw new InvalidOperationException($"table row {id} failed: {e.Message}", e);
+            }
+        }
+    }
+
+    // CARD-1409 repair 5 (Review f0fb9035 disclosure, D-30): a tracked symbolic link a path item reaches as a
+    // file or passes through as a directory refuses naming the link; a link elsewhere changes nothing.
+    [Test]
+    public async Task C1409_TrackedSymlinkUnderItemPatternRefuses()
+    {
+        static Dictionary<string, string> Tree(string include) => new()
+        {
+            ["docs/guide.md"] = "# guide",
+            ["server/App.csproj"] = $"""
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <ItemGroup>
+                    <Content Include="{include}" />
+                  </ItemGroup>
+                </Project>
+                """,
+        };
+        foreach (var include in new[] { "fixtures/**", "fixtures/guide.md" })
+        {
+            await AssertUpdateRefusesWithEntriesAsync(Tree(include), [("120000", "server/fixtures", "../docs")],
+                "symbolic link", "server/App.csproj Content Include=" + include + " -> server/fixtures");
+        }
+        await AssertUpdateRefusesWithEntriesAsync(Tree("*.jsonl"), [("120000", "server/notes.jsonl", "../docs/guide.md")],
+            "symbolic link", "server/App.csproj Content Include=*.jsonl -> server/notes.jsonl");
+        var control = Tree("fixtures/**");
+        control["server/fixtures/a.jsonl"] = "{}";
+        await AssertUpdateApprovesAsync(control, 1, [("120000", "tools/link", "../docs")]);
+    }
+
+    // One entry per 'table' row of the plan's N- and O-tables (D-28, D-29). Keys are the row ids.
+    private static Dictionary<string, Func<Task>> TableWitnesses()
+    {
+        const string lib = """<Project Sdk="Microsoft.NET.Sdk"></Project>""";
+        static string Project(string body) => "<Project Sdk=\"Microsoft.NET.Sdk\">\n" + body + "\n</Project>\n";
+        static string Items(string items) => Project("  <ItemGroup>\n    " + items + "\n  </ItemGroup>");
+        static string Target(string body) => Project("  <Target Name=\"T\">\n    " + body + "\n  </Target>");
+        // A StagedHelper fixture: the declarations, the task that fills _StagedHelperTarget, and the real
+        // $(_StagedHelperDir)$(_StagedHelperGlob) include that %(StagedHelper.Glob) feeds.
+        static string Staged(string declarations, string fill = """<MSBuild Projects="@(StagedHelper)" Targets="GetTargetPath"><Output TaskParameter="TargetOutputs" ItemName="_StagedHelperTarget" /></MSBuild>""") =>
+            Project("  <ItemGroup>\n    " + declarations + "\n  </ItemGroup>\n  <Target Name=\"T\">\n    " + fill +
+                "\n    <PropertyGroup><_StagedHelperDir>@(_StagedHelperTarget->'%(RootDir)%(Directory)')</_StagedHelperDir><_StagedHelperGlob>%(StagedHelper.Glob)</_StagedHelperGlob></PropertyGroup>" +
+                "\n    <ItemGroup><_StagedHelperFiles Include=\"$(_StagedHelperDir)$(_StagedHelperGlob)\" /></ItemGroup>\n  </Target>");
+        static Dictionary<string, string> Tree(string project, params (string Path, string Content)[] extra)
+        {
+            var files = new Dictionary<string, string>
+            {
+                ["docs/guide.md"] = "# guide",
+                ["README.md"] = "# root",
+                ["server/App.csproj"] = project,
+            };
+            foreach (var (path, content) in extra) files[path] = content;
+            return files;
+        }
+        static Task Refuses(string project, params string[] needles) => AssertUpdateRefusesAsync(Tree(project), needles);
+        static Task Approves(string project, int count) => AssertUpdateApprovesAsync(Tree(project), count);
+        const string stagedFiles = "_StagedHelperFiles Include=$(_StagedHelperDir)$(_StagedHelperGlob)";
+
+        return new Dictionary<string, Func<Task>>(StringComparer.Ordinal)
+        {
+            ["N-1"] = async () =>
+            {
+                await Refuses(Items("""<EmbeddedResource Include="../docs./guide.md" />"""), "Windows land host", "server/App.csproj EmbeddedResource Include=../docs./guide.md", "segment=docs.");
+                await Refuses(Items("""<EmbeddedResource Include="../README.md." />"""), "Windows land host", "segment=README.md.");
+            },
+            ["N-2"] = () => Refuses(Items("""<EmbeddedResource Include="../README.md. ." />"""), "Windows land host", "segment=README.md. ."),
+            ["N-3"] = () => Refuses(Items("""<EmbeddedResource Include="../docs/.../guide.md" />"""), "Windows land host", "segment=..."),
+            ["N-4"] = async () =>
+            {
+                await Refuses(Items("""<EmbeddedResource Include="../README.md::$DATA" />"""), "Windows land host", "segment=README.md::$DATA");
+                await Refuses(Items("""<EmbeddedResource Include="../docs/guide.md:stream" />"""), "Windows land host", "segment=guide.md:stream");
+                await AssertUpdateRefusesAsync(Tree(Project("""  <Import Project="../eng/shared.props:x" />"""), ("eng/shared.props", "<Project />")),
+                    "Windows land host", "server/App.csproj Import Project=../eng/shared.props:x", "segment=shared.props:x");
+            },
+            ["N-5"] = async () =>
+            {
+                await Refuses(Items("""<EmbeddedResource Include="../DOCS~1/guide.md" />"""), "Windows land host", "segment=DOCS~1");
+                await AssertUpdateRefusesAsync(Tree(Items("""<ProjectReference Include="../lib/LIB~1.csproj" />"""), ("lib/LIB~1.csproj", lib)),
+                    "Windows land host", "server/App.csproj ProjectReference Include=../lib/LIB~1.csproj", "segment=LIB~1.csproj");
+            },
+            ["N-6"] = () => Refuses(Items("""<EmbeddedResource Include="../DOCS/Guide.MD" />"""), "includes docs markdown", "server/App.csproj EmbeddedResource Include=../DOCS/Guide.MD"),
+            ["N-7"] = () => Refuses(Items("""<EmbeddedResource Include="..\docs\guide.md" />"""), "includes docs markdown", "server/App.csproj EmbeddedResource Include=..\\docs\\guide.md"),
+            ["N-8"] = () => Refuses(Items("""<EmbeddedResource Include=".//../docs/./guide.md" />"""), "includes docs markdown", "server/App.csproj EmbeddedResource Include=.//../docs/./guide.md"),
+            ["N-9"] = async () =>
+            {
+                await Refuses(Items("""<EmbeddedResource Include="sub/../../docs/guide.md" />"""), "includes docs markdown", "Include=sub/../../docs/guide.md");
+                await Refuses(Items("""<EmbeddedResource Include="../../outside.md" />"""), "cannot be classified", "Include=../../outside.md");
+                await Refuses(Items("""<EmbeddedResource Include="../docs/*/../guide.md" />"""), "includes docs markdown", "Include=../docs/*/../guide.md");
+            },
+            ["N-10"] = async () =>
+            {
+                await Refuses(Items("""<EmbeddedResource Include="C:/repo/README.md" />"""), "cannot be classified", "Include=C:/repo/README.md");
+                await Refuses(Items("""<EmbeddedResource Include="C:README.md" />"""), "Windows land host", "segment=C:README.md");
+            },
+            ["N-11"] = () => Refuses(Target("""<ItemGroup><Compile Include="$(IntermediateOutputPath)docs./x.md" /></ItemGroup>"""),
+                "Windows land host", "server/App.csproj Compile Include=$(IntermediateOutputPath)docs./x.md", "segment=docs."),
+            ["N-12"] = () => AssertUpdateRefusesWithEntriesAsync(Tree(Items("""<Content Include="fixtures/**" />""")), [("100644", "server/fixtures/notes.md.", "# notes")],
+                "Windows land host", "server/App.csproj Content Include=fixtures/** -> server/fixtures/notes.md.", "segment=notes.md."),
+            ["N-13"] = () => Refuses(Items("""<EmbeddedResource Include="Bundles\*.md" Exclude="Bundles\README.md." />"""),
+                "Windows land host", "server/App.csproj EmbeddedResource Exclude=Bundles\\README.md.", "segment=README.md."),
+            ["N-14"] = () => Refuses(Project("""  <PropertyGroup><PackageReadmeFile>../docs./guide.md</PackageReadmeFile></PropertyGroup>"""),
+                "property value", "server/App.csproj PackageReadmeFile", "segment=docs."),
+            ["N-15"] = () => AssertUpdateRefusesWithEntriesAsync(Tree(Items("""<Compile Include="A.cs" />""")), [("100644", "server/obj./evil.props", "<Project />")],
+                "Windows land host", "server/obj./evil.props", "segment=obj."),
+            ["O-1"] = () => Refuses(Items("""<EmbeddedResource Include="../docs/guide.md" LogicalName="g" />"""), "includes docs markdown", "server/App.csproj EmbeddedResource Include=../docs/guide.md"),
+            ["O-2"] = () => Refuses(Target("""<ItemGroup><Compile Include="../docs/guide.md" /></ItemGroup>"""), "includes docs markdown", "server/App.csproj Compile Include=../docs/guide.md"),
+            ["O-3"] = async () =>
+            {
+                await AssertUpdateApprovesAsync(Tree(Items("""<Content Include="fixtures/**" Exclude="fixtures/*.md" />"""), ("server/fixtures/notes.md", "# n"), ("server/fixtures/a.jsonl", "{}")), 1);
+                await AssertUpdateApprovesAsync(Tree(Items("""<Content Include="Fixtures\*" Exclude="../docs/**;$(Undefined)" />"""), ("server/Fixtures/x.jsonl", "{}")), 1);
+            },
+            ["O-4"] = () => Refuses(Items("""<Content Update="../docs/guide.md" />"""), "includes docs markdown", "server/App.csproj Content Include=../docs/guide.md"),
+            ["O-5"] = () => Refuses(Target("""<ItemGroup><Content Update="../docs/guide.md" /></ItemGroup>"""), "includes docs markdown", "server/App.csproj Content Include=../docs/guide.md"),
+            ["O-6"] = async () =>
+            {
+                await AssertUpdateRefusesAsync(Tree(Staged("""<StagedHelper Include="$(MSBuildThisFileDirectory)../lib/Lib.csproj" Folder="lib" Glob="*" /><StagedHelper Update="$(MSBuildThisFileDirectory)../lib/Lib.csproj" Glob="../../docs/**/*.md" />"""), ("lib/Lib.csproj", lib)),
+                    "cannot be classified", "server/App.csproj " + stagedFiles);
+                await Approves(Items("""<PackageReference Include="Some.Package" Version="1.0.0" /><PackageReference Update="Some.Package" GeneratePathProperty="true" /><Content Include="$(PkgSome_Package)\build\a.dll" />"""), 1);
+            },
+            ["O-7"] = async () =>
+            {
+                await Approves(Items("""<None Remove="../docs/**/*.md" />"""), 1);
+                await Refuses(Items("""<None Remove="x.json" Pack="true" />"""), "metadata the audit does not allow", "server/App.csproj None Remove=x.json Pack");
+            },
+            ["O-8"] = () => Approves(Target("""<ItemGroup><_StagedHelperTarget Remove="@(_StagedHelperTarget)" /></ItemGroup>"""), 1),
+            ["O-9"] = async () =>
+            {
+                await Refuses(Target("""<ItemGroup><Compile Include="A.cs" KeepMetadata="Link" /></ItemGroup>"""), "operation the audit does not evaluate", "server/App.csproj Compile Include=A.cs KeepMetadata");
+                await Refuses(Target("""<ItemGroup><Compile Include="A.cs" RemoveMetadata="Link" /></ItemGroup>"""), "operation the audit does not evaluate", "server/App.csproj Compile Include=A.cs RemoveMetadata");
+            },
+            ["O-10"] = () => Refuses(Target("""<ItemGroup><Compile Include="A.cs" KeepDuplicates="false" /></ItemGroup>"""), "operation the audit does not evaluate", "server/App.csproj Compile Include=A.cs KeepDuplicates"),
+            ["O-11"] = async () =>
+            {
+                await Refuses(Target("""<ItemGroup><None Remove="@(None)" MatchOnMetadata="Link" /></ItemGroup>"""), "operation the audit does not evaluate", "server/App.csproj None Remove=@(None) MatchOnMetadata");
+                await Refuses(Target("""<ItemGroup><None Remove="@(None)" MatchOnMetadataOptions="CaseInsensitive" /></ItemGroup>"""), "operation the audit does not evaluate", "server/App.csproj None Remove=@(None) MatchOnMetadataOptions");
+            },
+            ["O-12"] = () => Refuses(Items("""<Content Include="@(Docs->'%(FullPath)')" />"""), "cannot be classified", "server/App.csproj Content Include=@(Docs->'%(FullPath)')"),
+            ["O-13"] = () => Refuses(Items("""<None Update="%(Docs.FullPath)" />"""), "cannot be classified", "server/App.csproj None Include=%(Docs.FullPath)"),
+            ["O-14"] = async () =>
+            {
+                await Refuses(Items("""<Compile Include="A.cs" DependentUpon="x.md" />"""), "metadata the audit does not allow", "server/App.csproj Compile Include=A.cs DependentUpon");
+                await Approves(Items("""<Compile Include="A.cs" Link="B.cs" />"""), 1);
+            },
+            ["O-15"] = async () =>
+            {
+                await AssertUpdateRefusesAsync(Tree(Items("""<ProjectReference Include="../lib/Lib.csproj"><Properties>X=1</Properties></ProjectReference>"""), ("lib/Lib.csproj", lib)),
+                    "metadata the audit does not allow", "server/App.csproj ProjectReference Include=../lib/Lib.csproj Properties");
+                await Approves(Items("""<PackageReference Include="Shouldly" Version="4.3.0"><IncludeAssets>runtime</IncludeAssets></PackageReference>"""), 1);
+            },
+            ["O-16"] = async () =>
+            {
+                await Refuses(Project("""  <ItemGroup Condition="'$(Never)' == 'true'"><EmbeddedResource Include="../docs/guide.md" /></ItemGroup>"""), "includes docs markdown", "Include=../docs/guide.md");
+                await Refuses(Items("""<EmbeddedResource Include="../docs/guide.md" Condition="false" />"""), "includes docs markdown", "Include=../docs/guide.md");
+            },
+            ["O-17"] = () => Refuses(Items("""<Compile Link="x.cs" />"""), "operation the audit does not evaluate", "server/App.csproj Compile Include= (none)"),
+            ["O-18"] = () => Refuses(Project("""  <ItemDefinitionGroup><StagedHelper><Glob>../../docs/**/*.md</Glob></StagedHelper></ItemDefinitionGroup>"""), "element the audit does not classify", "server/App.csproj ItemDefinitionGroup"),
+            ["O-19"] = async () =>
+            {
+                await Refuses(Target("""<Exec Command="echo"><Output TaskParameter="ConsoleOutput" ItemName="_AntiphonFutureOutputs" /></Exec>"""), "item type the audit does not allow", "server/App.csproj _AntiphonFutureOutputs");
+                await AssertUpdateRefusesAsync(Tree(Staged("""<StagedHelper Include="$(MSBuildThisFileDirectory)../lib/Lib.csproj" Folder="lib" Glob="*" />""",
+                        """<Exec Command="echo"><Output TaskParameter="ConsoleOutput" ItemName="_StagedHelperTarget" /></Exec>"""), ("lib/Lib.csproj", lib)),
+                    "cannot resolve", "server/App.csproj " + stagedFiles);
+            },
+            ["O-20"] = () => Refuses(Items("""<Content Include="a.json" Foo="bar" />"""), "metadata the audit does not allow", "server/App.csproj Content Include=a.json Foo"),
+            ["O-21"] = async () =>
+            {
+                await AssertUpdateRefusesAsync(Tree(Staged("""<StagedHelper Include="$(MSBuildThisFileDirectory)../lib/Lib.csproj" Folder="lib" Glob="%(Filename)" />"""), ("lib/Lib.csproj", lib)),
+                    "cannot resolve", "server/App.csproj " + stagedFiles, "%(Filename)");
+                await AssertUpdateRefusesAsync(Tree(Staged("""<StagedHelper Include="$(MSBuildThisFileDirectory)../lib/Lib.csproj" Folder="lib" Glob="$(Undefined)" />"""), ("lib/Lib.csproj", lib)),
+                    "cannot resolve", "server/App.csproj " + stagedFiles, "$(Undefined)");
+            },
+        };
+    }
+
     [Test]
     public async Task C1409_ProjectUserFileIsInTheHashedInventory()
     {
@@ -2139,9 +2463,15 @@ public sealed class LandNonCodeSkipTests
     private static string AuditManifest(string root) => Path.Combine(root, "server", "Application", "Services",
         "LandVerificationBuildGraph.manifest.txt");
 
-    private static async Task AssertUpdateRefusesAsync(IReadOnlyDictionary<string, string> files, params string[] needles)
+    private static Task AssertUpdateRefusesAsync(IReadOnlyDictionary<string, string> files, params string[] needles) =>
+        AssertUpdateRefusesWithEntriesAsync(files, null, needles);
+
+    // CARD-1409 repair 5: entries are index-only tracked blobs (mode, path, content) added through
+    // git update-index --cacheinfo, so a symbolic link or a path no host could materialise is still at HEAD.
+    private static async Task AssertUpdateRefusesWithEntriesAsync(IReadOnlyDictionary<string, string> files,
+        IReadOnlyList<(string Mode, string Path, string Content)>? entries, params string[] needles)
     {
-        var root = await InitAuditTreeAsync(files);
+        var root = await InitAuditTreeAsync(files, entries);
         try
         {
             var ran = await RunAuditAsync(root, "en-US", "-Update");
@@ -2150,6 +2480,22 @@ public sealed class LandNonCodeSkipTests
             foreach (var needle in needles)
                 ran.Stderr.IndexOf(needle, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
             File.Exists(AuditManifest(root)).ShouldBeFalse();
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static async Task AssertUpdateApprovesAsync(IReadOnlyDictionary<string, string> files, int count,
+        IReadOnlyList<(string Mode, string Path, string Content)>? entries = null)
+    {
+        var root = await InitAuditTreeAsync(files, entries);
+        try
+        {
+            var ran = await RunAuditAsync(root, "en-US", "-Update");
+            ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
+            ran.Stdout.ShouldContain("count=" + count.ToString(CultureInfo.InvariantCulture));
         }
         finally
         {
@@ -2174,7 +2520,8 @@ public sealed class LandNonCodeSkipTests
         return root;
     }
 
-    private static async Task<string> InitAuditTreeAsync(IReadOnlyDictionary<string, string> files)
+    private static async Task<string> InitAuditTreeAsync(IReadOnlyDictionary<string, string> files,
+        IReadOnlyList<(string Mode, string Path, string Content)>? entries = null)
     {
         var root = Directory.CreateTempSubdirectory("c1400-audit-").FullName;
         Directory.CreateDirectory(Path.Combine(root, "scripts"));
@@ -2192,8 +2539,28 @@ public sealed class LandNonCodeSkipTests
         await GitAsync(root, "config", "user.email", "c1400@example.invalid");
         await GitAsync(root, "config", "user.name", "CARD-1400");
         await GitAsync(root, "add", "--", ".");
+        foreach (var (mode, path, content) in entries ?? [])
+        {
+            var oid = await GitHashObjectAsync(root, content);
+            await GitAsync(root, "update-index", "--add", "--cacheinfo", mode + "," + oid + "," + path);
+        }
         await GitAsync(root, "commit", "-m", "fixture");
         return root;
+    }
+
+    private static async Task<string> GitHashObjectAsync(string root, string content)
+    {
+        var start = GitStart(root, "hash-object", "-w", "--stdin");
+        start.RedirectStandardInput = true;
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("git did not start.");
+        await process.StandardInput.WriteAsync(content);
+        process.StandardInput.Close();
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await process.WaitForExitAsync(timeout.Token);
+        process.ExitCode.ShouldBe(0, await stdout + await stderr);
+        return (await stdout).Trim();
     }
 
     private static string WhichGit()
