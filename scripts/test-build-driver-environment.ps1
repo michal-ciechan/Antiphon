@@ -19,7 +19,12 @@ foreach ($name in $names) { $values[$name] = [Environment]::GetEnvironmentVariab
 @'
 param([string]$Root, [string]$Probe, [bool]$Windows)
 Set-Variable -Name IsWindows -Value $Windows -Force
+$before = [Environment]::GetEnvironmentVariables()
 & (Join-Path $Root 'scripts/build-slot.ps1') -Label c1506-fixture -- pwsh -NoProfile -File $Probe
+foreach ($name in @('UseSharedCompilation', 'DOTNET_gcServer', 'DOTNET_gcConcurrent',
+    'DOTNET_CLI_USE_MSBUILD_SERVER', 'MSBUILDDISABLENODEREUSE', 'DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER')) {
+    if ([Environment]::GetEnvironmentVariable($name) -cne $before[$name]) { throw "wrapper failed to restore $name" }
+}
 '@ | Set-Content -LiteralPath $caller
 $before = @{}
 foreach ($name in $names) { $before[$name] = [Environment]::GetEnvironmentVariable($name) }
@@ -76,6 +81,29 @@ try {
             if (-not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
             $process.Dispose()
         }
+    }
+    # The compiled consumers apply directly to ProcessStartInfo. Exercise that same
+    # shared implementation too, including its own platform guard (not just the PS guard).
+    $policySource = Join-Path $root 'scripts/lib/BuildDriverEnvironment.cs'
+    if (Test-Path -LiteralPath $policySource) {
+        Add-Type -Path $policySource
+        $policy = New-Object Antiphon.Build.BuildDriverEnvironment
+        foreach ($windows in @($false, $true)) {
+            foreach ($optOut in @('', '1')) {
+                $info = [Diagnostics.ProcessStartInfo]::new()
+                $info.Environment.Clear()
+                $info.Environment['ANTIPHON_BUILD_MEMORY_POLICY_OPTOUT'] = $optOut
+                foreach ($name in $names) { $info.Environment[$name] = 'direct-caller' }
+                $policy.Apply($info.EnvironmentVariables, $windows)
+                for ($i = 0; $i -lt $names.Count; $i++) {
+                    $want = if ($windows -and $optOut -ne '1') { $expected[$i] } else { 'direct-caller' }
+                    if ($info.EnvironmentVariables[$names[$i]] -cne $want) {
+                        throw "direct policy windows=$windows optout=$optOut wrong $($names[$i])"
+                    }
+                }
+            }
+        }
+        Write-Host 'PASS direct-policy: 4 cases, 24 setting assertions'
     }
     foreach ($name in $names) {
         if ([Environment]::GetEnvironmentVariable($name) -cne $before[$name]) { throw "parent changed: $name" }
