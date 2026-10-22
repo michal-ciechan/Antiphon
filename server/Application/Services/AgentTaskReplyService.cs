@@ -463,6 +463,7 @@ public sealed class AgentTaskReplyService
                     .Where(t => t.AgentSessionId == blockedSessionId)
                     .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
                 await HoldUnreservedParkAsync(scope.ServiceProvider, db, task, ct);
+                await RearmNeverTypedClosingNudgeAsync(db, task, ct);
                 task.Status = AgentTaskStatus.Working;
                 task.RepliedAt = now;
                 task.RepliedAtSequence = watermark;
@@ -4144,6 +4145,36 @@ public sealed class AgentTaskReplyService
         if (row is null)
             return null;
         return new NudgeFacts(row.CreatedAt, row.SentAt);
+    }
+
+    /// <summary>
+    /// CARD-1486 S1 (D-1). A Reply reopens the turn. A recorded closing-line ask that was never typed
+    /// (no message id, a missing row, or a row that ended without <c>SentAt</c>, as CARD-1474's
+    /// retirement or the waiting Block leaves it) can never be answered, so it would hold every later
+    /// boundary as outstanding. Clearing it re-arms the one ask for the reopened turn. An ask that
+    /// was typed, or a row not Canceled that can still be typed, keeps the one-ask bound.
+    /// </summary>
+    private async Task RearmNeverTypedClosingNudgeAsync(AppDbContext db, AgentTask task, CancellationToken ct)
+    {
+        // Nothing recorded, or a legacy ask (both CARD-0248 columns null) that already settles anyway.
+        if (task.ReportNudgedAt is null || (task.ReportNudgedSequence is null && task.ReportNudgeMessageId is null))
+            return;
+        if (task.ReportNudgeMessageId is Guid messageId)
+        {
+            var row = await db.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.Id == messageId)
+                .Select(m => new { m.Status, m.SentAt })
+                .FirstOrDefaultAsync(ct);
+            if (row is not null && (row.SentAt is not null || row.Status != QueuedMessageStatus.Canceled))
+                return;
+        }
+
+        _logger.LogInformation(
+            "Task {ShortId}: reply re-arms the never-typed closing-line ask {MessageId}",
+            DelegationReportFormatter.Short(task.Id), task.ReportNudgeMessageId);
+        task.ReportNudgedAt = null;
+        task.ReportNudgedSequence = null;
+        task.ReportNudgeMessageId = null;
     }
 
     private static string FirstLine(string text)
