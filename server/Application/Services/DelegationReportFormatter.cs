@@ -404,6 +404,26 @@ public static class DelegationReportFormatter
         """;
 
     /// <summary>
+    /// CARD-1472 D-1. Appended to every Reply that reopens a Blocked task. The reopened turn is a
+    /// new model turn whose completion settles the task again, so the child is told in the same
+    /// message that only a complete final report with the exact task-specific closing line
+    /// counts: an acknowledgement or the bare token is not a report and cannot replace the one
+    /// the harness retained. "Accepted, stop" is still a model turn, not a server-side acceptance.
+    /// </summary>
+    public static string BlockedReplyContract(Guid taskId) =>
+        $"""
+        --- how to report back ---
+        This reply reopens task {Short(taskId)}. When this turn completes, send your COMPLETE final report
+        again: the outcome, the files, the counts and the `--- next stage ---` block, exactly as the
+        original contract asked, even if you are only acknowledging or nothing changed. An acknowledgement,
+        a summary of the earlier report, or the closing line alone is not a report: the harness keeps the
+        report it already has and cannot settle this task on a bare token.
+        End your final message with one line, on its own: `{ReportToken(taskId, "done")}` if the work
+        is complete, `{ReportToken(taskId, "blocked")}` if you need a decision or an answer to continue,
+        `{ReportToken(taskId, "failed")}` if you could not do it. Nothing after it.
+        """.ReplaceLineEndings("\n");
+
+    /// <summary>
     /// CARD-0272. The self-report finding line for an <see cref="OrchestrationStage"/> pass.
     /// Distinct from <see cref="StageHandoffContract"/> (CARD-0146 pipeline next-stage).
     /// </summary>
