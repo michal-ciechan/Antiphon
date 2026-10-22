@@ -8,7 +8,12 @@ public enum LandPhase
 }
 
 public enum LandPublicationOutcome { Unconfirmed = 0, Landed = 1, AlreadyPresent = 2, Refused = 3 }
-public enum LandCleanupStatus { NotStarted = 0, Pending = 1, Complete = 2, Refused = 3 }
+/// <summary>
+/// <see cref="Abandoned"/> (CARD-1446 D-4): a refused cleanup the Publication lane has retried
+/// <c>WorktreeResidue:MaxCleanupRetries</c> times; the worktree is kept and only an explicit -Land retries.
+/// Every <c>Cleanup != Complete</c> reader still reads it as residue.
+/// </summary>
+public enum LandCleanupStatus { NotStarted = 0, Pending = 1, Complete = 2, Refused = 3, Abandoned = 4 }
 public enum LandOperationMode { Fresh = 0, ResumePublication = 1, CleanupRetry = 2 }
 
 public enum LandRequestState { Queued, Held, Running, NeedsResolution, Completed, Superseded, Canceled }

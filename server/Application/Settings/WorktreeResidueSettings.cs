@@ -47,6 +47,18 @@ public sealed class WorktreeResidueSettings
     /// </summary>
     public int AbandonedLandingDays { get; set; } = 7;
 
+    /// <summary>
+    /// CARD-1446 D-4 (S4c). After the Publication lane queues a cleanup retry, the operation is skipped
+    /// (<c>Held/cooldown</c>) for this many days. 0 disables pacing. Default 7.
+    /// </summary>
+    public int CleanupRetryCooldownDays { get; set; } = 7;
+
+    /// <summary>
+    /// CARD-1446 D-4 (S4c). A <c>Refused</c> cleanup with this many earlier queued retries is marked
+    /// <c>Abandoned</c> instead of being queued again. 0 disables abandonment. Default 3.
+    /// </summary>
+    public int MaxCleanupRetries { get; set; } = 3;
+
     /// <summary>Maximum candidate rows returned in one run-result page.</summary>
     public int RunResultPageSize { get; set; } = 50;
 
