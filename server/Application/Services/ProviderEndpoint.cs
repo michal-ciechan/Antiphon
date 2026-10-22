@@ -42,6 +42,9 @@ public sealed record ProviderEndpoint(string BaseUrl, string? ApiKeyName)
     /// <summary>The kinds the setting applies to: the three real CLIs with a known redirect contract.</summary>
     public static IReadOnlyList<AgentKind> SupportedKinds => Supported;
 
+    /// <summary>The empty project map: no endpoint for any kind (CARD-0167 S3 callers' "none").</summary>
+    public static IReadOnlyDictionary<AgentKind, ProviderEndpoint> NoEndpoints => EmptyMap;
+
     public static bool IsSupportedKind(AgentKind kind) => Array.IndexOf(Supported, kind) >= 0;
 
     /// <summary>

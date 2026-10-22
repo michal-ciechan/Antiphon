@@ -8259,10 +8259,22 @@ public sealed partial class AgentTaskDispatcher
     }
 
     private bool InheritedEnvMatchesPool(Agent agent, AgentTask task) =>
+        InheritedEnvMatchesPool(agent, task, projectEndpoints: null, _settings.LlmEnvInheritance.Names);
+
+    /// <summary>
+    /// CARD-0167 S3: the pure predicate behind the warm-pool match, with the project's provider
+    /// endpoints in hand so the agent side can include its own projection.
+    /// </summary>
+    internal static bool InheritedEnvMatchesPool(
+        Agent agent,
+        AgentTask task,
+        IReadOnlyDictionary<AgentKind, ProviderEndpoint>? projectEndpoints,
+        IReadOnlyList<string> names) =>
+        // Skeleton (test-first commit): the projection is not yet part of the comparison.
         AgentLaunchEnv.ProjectionsEqual(
             AgentLaunchEnv.Parse(agent.LaunchEnvJson),
             AgentLaunchEnv.Parse(task.InheritedLaunchEnvJson),
-            _settings.LlmEnvInheritance.Names);
+            names);
 
     /// <summary>
     /// Standing agents keep the env the operator configured. When that disagrees with the

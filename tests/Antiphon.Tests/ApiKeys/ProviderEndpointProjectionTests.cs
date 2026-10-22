@@ -265,6 +265,152 @@ public class ProviderEndpointProjectionTests
         }
     }
 
+    // ---- Carried from the S1 Final Review (task 149377a0): the injection and scheme witnesses ------
+
+    private static readonly IReadOnlyDictionary<string, string> RefusedUrls = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["quote"] = "https://proxy.local/a\"b",            // U+0022 would close the Codex -c TOML string
+        ["backslash"] = "https://proxy.local/a\\b",        // a backslash starts a TOML escape
+        ["space"] = "https://proxy.local/a b",
+        ["tab"] = "https://proxy.local/a\tb",
+        ["newline"] = "https://proxy.local/a\nb",
+        ["carriage-return"] = "https://proxy.local/a\rb",
+        ["del-control"] = "https://proxy.local/a\u007Fb",
+        ["c1-control"] = "https://proxy.local/a\u0085b",
+        ["line-separator-2028"] = "https://proxy.local/a\u2028b",
+        ["paragraph-separator-2029"] = "https://proxy.local/a\u2029b",
+        ["ideographic-space"] = "https://proxy.local/a\u3000b",
+        ["ftp"] = "ftp://proxy.local/v1",
+        ["ws"] = "ws://proxy.local/v1",
+        ["scheme-relative"] = "//proxy.local/v1",
+    };
+
+    [Test]
+    [Arguments("quote", "provider_endpoint_base_url_characters")]
+    [Arguments("backslash", "provider_endpoint_base_url_characters")]
+    [Arguments("space", "provider_endpoint_base_url_characters")]
+    [Arguments("tab", "provider_endpoint_base_url_characters")]
+    [Arguments("newline", "provider_endpoint_base_url_characters")]
+    [Arguments("carriage-return", "provider_endpoint_base_url_characters")]
+    [Arguments("del-control", "provider_endpoint_base_url_characters")]
+    [Arguments("c1-control", "provider_endpoint_base_url_characters")]
+    [Arguments("line-separator-2028", "provider_endpoint_base_url_characters")]
+    [Arguments("paragraph-separator-2029", "provider_endpoint_base_url_characters")]
+    [Arguments("ideographic-space", "provider_endpoint_base_url_characters")]
+    [Arguments("ftp", "provider_endpoint_base_url_scheme")]
+    [Arguments("ws", "provider_endpoint_base_url_scheme")]
+    [Arguments("scheme-relative", "provider_endpoint_base_url_scheme")]
+    public void C0167_Validate_refuses_characters_and_non_http_schemes(string caseName, string expectedCode)
+    {
+        var baseUrl = RefusedUrls[caseName];
+
+        // Save path: 422 naming the field and the rule, never the URL.
+        var saved = Should.Throw<ValidationException>(
+            () => new ProviderEndpoint(baseUrl, KeyName).Validate(AgentKind.Codex));
+        saved.StatusCode.ShouldBe(422);
+        saved.Code.ShouldBe(expectedCode);
+        saved.Errors.Keys.ShouldBe(["providerEndpoint.baseUrl"]);
+        string.Join(" ", saved.Errors.Values.SelectMany(v => v)).ShouldNotContain(baseUrl);
+
+        // Resolve path: the same row written around the API is refused by the projection before any
+        // argument exists, so nothing of it can reach a -c TOML string or an env value.
+        var atLaunch = Should.Throw<ValidationException>(
+            () => ProviderEndpointProjection.For(AgentKind.Codex, new ProviderEndpoint(baseUrl, KeyName)));
+        atLaunch.Code.ShouldBe(expectedCode);
+    }
+
+    [Test]
+    [Arguments("https://proxy.local:0", "provider_endpoint_base_url_port")]
+    [Arguments("https://proxy.local:65536/v1", "provider_endpoint_base_url_port")]
+    [Arguments("http://127.0.0.1:99999", "provider_endpoint_base_url_port")]
+    [Arguments("http://[::1]:0/", "provider_endpoint_base_url_port")]
+    public void C0167_Validate_reports_port_zero_and_out_of_range_by_code(string baseUrl, string expectedCode)
+    {
+        var ex = Should.Throw<ValidationException>(
+            () => new ProviderEndpoint(baseUrl, KeyName).Validate(AgentKind.ClaudeCode));
+        ex.StatusCode.ShouldBe(422);
+        ex.Code.ShouldBe(expectedCode);
+        ex.Errors.Keys.ShouldBe(["providerEndpoint.baseUrl"]);
+        string.Join(" ", ex.Errors.Values.SelectMany(v => v)).ShouldNotContain(baseUrl);
+
+        // In-range ports, explicit or implied, are kept verbatim, IPv6 literals included.
+        new ProviderEndpoint("https://proxy.local:8443/", KeyName).Validate(AgentKind.ClaudeCode).BaseUrl
+            .ShouldBe("https://proxy.local:8443");
+        new ProviderEndpoint("http://[::1]:8080/", KeyName).Validate(AgentKind.ClaudeCode).BaseUrl
+            .ShouldBe("http://[::1]:8080");
+        new ProviderEndpoint("https://proxy.local:65535", KeyName).Validate(AgentKind.ClaudeCode).BaseUrl
+            .ShouldBe("https://proxy.local:65535");
+    }
+
+    [Test]
+    public void C0167_For_refuses_a_stored_bad_url_without_echoing_it()
+    {
+        // Parse is not a gate (an unreadable column must not take an agent offline), so a row written
+        // around the API survives it; For() is where it is refused, and the refusal never quotes it.
+        var stored = ProviderEndpoint.Parse("{\"baseUrl\":\"https://user:pw-0167@proxy.local/\",\"apiKeyName\":\"k\"}");
+        stored.ShouldNotBeNull();
+        stored.BaseUrl.ShouldContain("pw-0167", Case.Sensitive, "Parse keeps what it read");
+
+        var userinfo = Should.Throw<ValidationException>(() => ProviderEndpointProjection.For(AgentKind.ClaudeCode, stored));
+        userinfo.Code.ShouldBe("provider_endpoint_base_url_userinfo");
+        userinfo.Message.ShouldNotContain("pw-0167");
+        string.Join(" ", userinfo.Errors.Values.SelectMany(v => v)).ShouldNotContain("pw-0167");
+
+        var quoted = ProviderEndpoint.Parse("{\"baseUrl\":\"https://proxy.local/a\\\"b\",\"apiKeyName\":\"k\"}");
+        quoted.ShouldNotBeNull();
+        Should.Throw<ValidationException>(() => ProviderEndpointProjection.For(AgentKind.Codex, quoted))
+            .Code.ShouldBe("provider_endpoint_base_url_characters");
+
+        var relative = ProviderEndpoint.Parse("{\"baseUrl\":\"proxy.local/v1\",\"apiKeyName\":\"k\"}");
+        relative.ShouldNotBeNull();
+        Should.Throw<ValidationException>(() => ProviderEndpointProjection.For(AgentKind.Grok, relative))
+            .Code.ShouldBe("provider_endpoint_base_url_relative");
+
+        // The project map has the same property: an entry is kept by ParseMap and refused by For.
+        var map = ProviderEndpoint.ParseMap("{\"Codex\":{\"baseUrl\":\"https://proxy.local/?t=pw-0167\",\"apiKeyName\":\"k\"}}");
+        map.ShouldContainKey(AgentKind.Codex);
+        var query = Should.Throw<ValidationException>(() => ProviderEndpointProjection.For(AgentKind.Codex, map[AgentKind.Codex]));
+        query.Code.ShouldBe("provider_endpoint_base_url_query");
+        query.Message.ShouldNotContain("pw-0167");
+    }
+
+    [Test]
+    public void C0167_Lookalike_quotes_cannot_close_the_codex_toml_string()
+    {
+        // U+201C, U+201D, U+FF02 and U+2033 are literal characters, not U+0022: they are accepted,
+        // and the emitted base_url argument still carries exactly its own two quotes and no escape.
+        foreach (var lookalike in new[] { "\u201C", "\u201D", "\uFF02", "\u2033" })
+        {
+            var projected = ProviderEndpointProjection.For(
+                AgentKind.Codex, new ProviderEndpoint("https://proxy.local/" + lookalike + "x", KeyName));
+            var baseUrlArg = projected.Args.Single(a => a.StartsWith("model_providers.antiphon.base_url=", StringComparison.Ordinal));
+            baseUrlArg.ShouldBe("model_providers.antiphon.base_url=\"https://proxy.local/" + lookalike + "x/v1\"");
+            baseUrlArg.Count(c => c == '"').ShouldBe(2, $"U+{(int)lookalike[0]:X4}");
+            baseUrlArg.ShouldNotContain("\\");
+        }
+    }
+
+    [Test]
+    public void C0167_ToString_prints_host_and_key_name_never_the_path()
+    {
+        // A record's default ToString prints every member, the full URL included; the plan's log rule
+        // is host only (a path or query could carry a tenant token). The prose form follows the rule
+        // so an interpolated or structured log of the setting cannot leak one.
+        var endpoint = new ProviderEndpoint("https://proxy.local:8443/tenant-token-0167", KeyName);
+        var prose = endpoint.ToString();
+        prose.ShouldContain("proxy.local");
+        prose.ShouldContain(KeyName);
+        prose.ShouldNotContain("tenant-token-0167");
+        prose.ShouldNotContain("8443");
+        $"{endpoint}".ShouldNotContain("tenant-token-0167");
+
+        // A stored row that is not a URL prints nothing of itself.
+        new ProviderEndpoint("not a url with pw-0167", null).ToString().ShouldNotContain("pw-0167");
+
+        // The column and the DTO still carry the full URL: only prose output is host-only.
+        ProviderEndpoint.Serialize(endpoint).ShouldContain("tenant-token-0167");
+    }
+
     private static IEnumerable<string> Names(IReadOnlyDictionary<string, string> env) => env.Keys;
 
     private static IEnumerable<string> ArgKeys(IReadOnlyList<string> args) =>
