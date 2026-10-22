@@ -2183,7 +2183,8 @@ public sealed class LandNonCodeSkipTests
             ["N-5"] = async () =>
             {
                 await Refuses(Items("""<EmbeddedResource Include="../DOCS~1/guide.md" />"""), "Windows land host", "segment=DOCS~1");
-                await AssertUpdateRefusesAsync(Tree(Items("""<ProjectReference Include="../lib/LIB~1.csproj" />"""), ("lib/LIB~1.csproj", lib)),
+                // Untracked on purpose: a tracked LIB~1.csproj is refused earlier as a definition path (N-15).
+                await Refuses(Items("""<ProjectReference Include="../lib/LIB~1.csproj" />"""),
                     "Windows land host", "server/App.csproj ProjectReference Include=../lib/LIB~1.csproj", "segment=LIB~1.csproj");
             },
             ["N-6"] = () => Refuses(Items("""<EmbeddedResource Include="../DOCS/Guide.MD" />"""), "includes docs markdown", "server/App.csproj EmbeddedResource Include=../DOCS/Guide.MD"),
