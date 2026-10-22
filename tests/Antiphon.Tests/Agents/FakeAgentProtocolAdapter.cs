@@ -519,12 +519,22 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public Task<bool> WaitForReadyAsync(CancellationToken ct) =>
         ReadyHold is not null ? ReadyHold.Task.WaitAsync(ct) : Task.FromResult(ReadyResult);
 
-    public Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct)
+    /// <summary>
+    /// Runs at the start of <see cref="WaitForTurnCompleteAsync"/>, before the turn result is
+    /// returned. Cancelled-turn tests persist the cancelled TurnEnd and a follow-up here, so
+    /// both rows are stored before StartAsync records the launch ceiling (CARD-1402).
+    /// </summary>
+    public Func<CancellationToken, Task>? OnTurnWait { get; set; }
+
+    public async Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct)
     {
+        if (OnTurnWait is { } onTurnWait)
+            await onTurnWait(ct);
+
         if (ExitReason != AgentExitReason.Unknown)
             _exit.TrySetResult(ExitCode);
 
-        return Task.FromResult(new AgentTurnResult(TurnCompleted, null, false, SnapshotRawOutput(), TurnStopReason));
+        return new AgentTurnResult(TurnCompleted, null, false, SnapshotRawOutput(), TurnStopReason);
     }
 
     public string SnapshotRawOutput() => _rawOutput.ToString();
