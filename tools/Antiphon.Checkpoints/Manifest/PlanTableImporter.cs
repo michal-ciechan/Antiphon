@@ -78,6 +78,7 @@ public static class PlanTableImporter
 
         var manifest = new CheckpointManifest { Plan = planProvenance };
         var rowBuilds = new Dictionary<string, (string BuildId, string AfterKey)>(StringComparer.Ordinal);
+        var definedBuilds = new List<(string BuildId, string Project, string AfterKey, int Repeat, string RowId)>();
         foreach (var cells in data)
         {
             if (cells.Count != header.Count)
@@ -223,6 +224,17 @@ public static class PlanTableImporter
                 if (existingBuild is null)
                 {
                     manifest.Builds.Add(new BuildSpec { Id = buildId, Project = project, OutputPath = output });
+                    // CARD-1493: advisory only; an equivalent earlier build (same project, After and
+                    // Repeat) could have been reused with a CP-n reference.
+                    var normalizedProject = NormalizeProject(project);
+                    var afterKey = string.Join(",", after);
+                    var equivalent = definedBuilds.FirstOrDefault(prior =>
+                        string.Equals(prior.Project, normalizedProject, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(prior.AfterKey, afterKey, StringComparison.Ordinal)
+                        && prior.Repeat == row.Repeat);
+                    if (equivalent.BuildId is not null)
+                        warnings.Add($"{id}: Build '{buildId}' duplicates '{equivalent.BuildId}' from {equivalent.RowId} (same project '{normalizedProject}', After '{afterKey}', Repeat {row.Repeat}); write '{equivalent.RowId}' in the Build cell to reuse it and save one build");
+                    definedBuilds.Add((buildId, normalizedProject, afterKey, row.Repeat, id));
                 }
 
                 row.Build = buildId;
@@ -303,6 +315,24 @@ public static class PlanTableImporter
         }
 
         return [];
+    }
+
+    private static string NormalizeProject(string project)
+    {
+        var text = project.Trim().Trim('`').Replace('\\', '/');
+        while (text.StartsWith("./", StringComparison.Ordinal))
+            text = text[2..];
+        text = text.TrimEnd('/');
+        var slash = text.LastIndexOf('/');
+        if (slash > 0 && text.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+        {
+            var name = text[(slash + 1)..^".csproj".Length];
+            var parent = text[..slash];
+            if (string.Equals(parent[(parent.LastIndexOf('/') + 1)..], name, StringComparison.OrdinalIgnoreCase))
+                text = parent;
+        }
+
+        return text;
     }
 
     private static ImportResult Fail(string message) =>
