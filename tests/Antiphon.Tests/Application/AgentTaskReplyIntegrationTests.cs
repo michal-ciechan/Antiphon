@@ -885,6 +885,65 @@ public partial class AgentTaskReplyIntegrationTests
             .Single(m => m.Body.Contains(marker) && m.Body.Contains("\n\ncontinue"));
     }
 
+    /// <summary>
+    /// CARD-1486 S1 (G-4): the Block canceled the never-typed ask, so the reopened turn gets one
+    /// fresh ask instead of waiting forever on a row that can never be typed, and a second
+    /// unmarked turn after that ask settles with its own body.
+    /// </summary>
+    [Test]
+    public async Task unmarked_waiting_answer_then_unmarked_turns_settle_with_the_new_report()
+    {
+        using var workspace = new TempWorkspace();
+        var parentSessionId = await SeedSessionAsync(workspace.Path);
+        var (task, sessionId) = await SeedDispatchedTaskAsync(workspace.Path, parentSessionId);
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+
+        await SeedTurnAsync(sessionId, marker, "Please approve this design first.", closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        Guid firstAsk;
+        await using (var db = CreateContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            firstAsk = row.ReportNudgeMessageId.ShouldNotBeNull("fixture: the first ask is recorded");
+            row.ReportNudgedAt = DateTime.UtcNow.AddMinutes(-6);
+            await db.SaveChangesAsync();
+        }
+        await CreateService().BlockUnmarkedWaitingAsync(sessionId, CancellationToken.None);
+        await using (var db = CreateContext())
+        {
+            (await db.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Blocked, "fixture");
+            var canceled = await db.SessionQueuedMessages.SingleAsync(m => m.Id == firstAsk);
+            canceled.Status.ShouldBe(QueuedMessageStatus.Canceled, "fixture: the Block cancels the never-typed ask");
+            canceled.SentAt.ShouldBeNull("fixture");
+        }
+
+        await CreateService().AnswerAsync(task.Id, "continue", CancellationToken.None);
+        await SeedTurnAsync(sessionId, marker, "Acknowledged, continuing.", closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using (var db = CreateContext())
+        {
+            var asked = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+            asked.Status.ShouldBe(AgentTaskStatus.Working, "one unmarked turn after the Answer only asks");
+            var secondAsk = asked.ReportNudgeMessageId.ShouldNotBeNull("the reopened turn records its own ask");
+            secondAsk.ShouldNotBe(firstAsk, "the canceled, never-typed ask is not the reopened turn's ask");
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == secondAsk);
+            row.Status.ShouldBe(QueuedMessageStatus.Pending);
+            row.Body.ShouldContain("Your turn ended without the closing report line");
+        }
+
+        await MarkNudgeDeliveredAsync(task.Id, DateTime.UtcNow.AddSeconds(-1));
+        const string report = "Design approved and implemented; no closing line though.";
+        await SeedTurnAsync(sessionId, marker, report, closingVerdict: false);
+        await CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var settled = await verify.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.UnmarkedAfterNudge);
+        settled.Result.ShouldBe(report, "the second unmarked turn is the new report");
+    }
+
     [Test]
     public async Task the_nudged_delegates_marked_reply_settles_with_marked_evidence()
     {
