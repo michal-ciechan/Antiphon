@@ -229,6 +229,8 @@ Antiphon.Tests.Infrastructure.RepositoryChildRecoveryTests
 
 # CARD-0442: real Git ancestry and isolated PostgreSQL candidate selection.
 Antiphon.Tests.Application.AgentTaskWorktreeBaseResolverTests
+# CARD-1480: real Git sync-debt source verification and isolated PostgreSQL candidate selection.
+Antiphon.Tests.Application.AgentTaskWorktreeBaseSyncDebtTests
 # CARD-0442: real create, dispatch and land against scratch Git and isolated PostgreSQL.
 Antiphon.Tests.Application.AgentTaskWorktreeContinuityTests
 # CARD-0442: real create admission and source-boundary fixtures.
