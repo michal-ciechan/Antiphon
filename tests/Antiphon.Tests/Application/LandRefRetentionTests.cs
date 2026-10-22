@@ -181,7 +181,10 @@ public sealed class LandRefRetentionTests
 
         (await AntiphonRefProtection.QueryAsync(db, [id], CancellationToken.None)).Contains(id).ShouldBe(expected, clause);
         (await AntiphonRefProtection.QueryAsync(db, null, CancellationToken.None)).Contains(id).ShouldBe(expected, clause + " (whole set)");
-        (await AntiphonRefProtection.QueryAsync(db, [owner], CancellationToken.None)).ShouldBeEmpty("a filtered query never reports other tasks");
+        // The owner is protected only by its own live request or interrupted landing; a filter for it never reports the other task.
+        var ownerProtected = clause is "request-recovery-source" or "landing-recovery-source";
+        (await AntiphonRefProtection.QueryAsync(db, [owner], CancellationToken.None))
+            .ShouldBe(ownerProtected ? [owner] : [], clause + " (owner)");
     }
 
     [Test]
