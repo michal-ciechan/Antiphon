@@ -59,7 +59,9 @@
 # file-reading function argument (which may not climb out of its output root; a property no tracked file
 # may set is the SDK's own, read as one opaque segment) and output-root tails. CARD-1409 repair 7 (Review
 # 7db88932): the D-25 skip of a value part that carries an item, metadata or property-function reference is
-# per part, so the other parts of the same value are still classified.
+# per part, so the other parts of the same value are still classified. CARD-1409 repair 8 (Review d43d1e4a):
+# with the two directory properties only (imports, values, name items, Pkg* ids), the text is split on ';'
+# first and a directory property at the start of each part is that directory, as MSBuild expands then splits.
 # CARD-1409: an Import Project path that still contains $(, @( or %( after the
 # two known properties are expanded is refused and is not followed; there is no
 # allow-list. An Import with an attribute other than Project, Condition or Label
@@ -804,7 +806,7 @@ function Get-PropertyCandidates([string]$Name, [string]$FileDir, [string]$Projec
 # and only then compare through ConvertTo-CanonicalPath. A decoded '$(' '@(' '%(' is literal text, never a
 # reference. A root (a directory property, an output or package root) belongs to the first part of its
 # expanded text; later parts are ordinary project-relative paths. With $DirectoryPropertiesOnly the
-# expansion knows $(MSBuildThisFileDirectory) and $(MSBuildProjectDirectory) at the start of the text and
+# expansion knows $(MSBuildThisFileDirectory) and $(MSBuildProjectDirectory) at the start of each part and
 # nothing else (imports, D-1; literal property values, D-25; name items; Pkg* ids): a part that still carries
 # a reference is returned with Kind unresolved for the consumer to refuse or skip. Returns $null with
 # $script:UnresolvedReference set when the full expansion cannot resolve a reference; otherwise a list of
@@ -812,20 +814,14 @@ function Get-PropertyCandidates([string]$Name, [string]$FileDir, [string]$Projec
 # Text (decoded), Anchored and Source (the escaped part, for messages).
 function Resolve-ItemPathText([string]$Text, [string]$FileDir, [string]$ProjectDir, [bool]$DirectoryPropertiesOnly) {
     if ($DirectoryPropertiesOnly) {
+        # CARD-1409 repair 8 (Review d43d1e4a R2, D-39): the directory values carry no ';', so splitting first
+        # and expanding a directory property at the start of each part below is MSBuild's expand-then-split.
         $candidates = New-Object 'System.Collections.Generic.List[object]'
+        [void]$candidates.Add((New-Candidate 'repo' $Text $false))
         $fileText = $FileDir
         if ([string]::IsNullOrEmpty($fileText)) { $fileText = './' }
         $projectText = $ProjectDir
         if ([string]::IsNullOrEmpty($projectText)) { $projectText = '.' }
-        $leading = '^(?i)\$\(\s*MSBuild(ThisFile|Project)Directory\s*\)'
-        $anchored = $Text -match $leading
-        $expanded = $Text
-        if ($anchored) {
-            $root = $fileText
-            if ($Text -match '^(?i)\$\(\s*MSBuildProjectDirectory\s*\)') { $root = $projectText }
-            $expanded = $root + [regex]::Replace($Text, $leading, '')
-        }
-        [void]$candidates.Add((New-Candidate 'repo' $expanded $anchored))
     }
     else {
         $candidates = Expand-Candidates $Text $FileDir $ProjectDir 0
@@ -843,8 +839,17 @@ function Resolve-ItemPathText([string]$Text, [string]$FileDir, [string]$ProjectD
                 $kind = [string]$candidate.Kind
                 $anchoredPart = [bool]$candidate.Anchored
             }
-            if ($DirectoryPropertiesOnly -and (($part.IndexOf('$(') -ge 0) -or ($part.IndexOf('@(') -ge 0) -or ($part.IndexOf('%(') -ge 0))) {
-                $kind = 'unresolved'
+            if ($DirectoryPropertiesOnly) {
+                $directory = [regex]::Match($part, '^(?i)\$\(\s*MSBuild(ThisFile|Project)Directory\s*\)')
+                if ($directory.Success) {
+                    $root = $fileText
+                    if ($directory.Groups[1].Value -ieq 'Project') { $root = $projectText }
+                    $part = $root + $part.Substring($directory.Length)
+                    $anchoredPart = $true
+                }
+                if (($part.IndexOf('$(') -ge 0) -or ($part.IndexOf('@(') -ge 0) -or ($part.IndexOf('%(') -ge 0)) {
+                    $kind = 'unresolved'
+                }
             }
             $decoded = ConvertFrom-PercentEncoding $part
             if ($null -eq $decoded) { $kind = 'nul'; $decoded = $part }
@@ -1400,8 +1405,8 @@ function Assert-PropertyValuesAllowed([string]$Root, $Doc, [string]$Path, $Direc
             # The pipeline splits the value on ';' and decodes each part once (D-33). CARD-1409 repair 7 (Review
             # 7db88932 R1, D-36): the D-25 skip is per part, as it was before repair 6: a part whose escaped text
             # carries an item, metadata or property-function reference is left alone on its own, and so is a part
-            # the pipeline returns unresolved (a reference past a leading directory property); every other part of
-            # the same value is still classified.
+            # the pipeline returns unresolved (a reference other than a directory property at the start of its own
+            # part, CARD-1409 repair 8, D-39); every other part of the same value is still classified.
             foreach ($spec in (Resolve-ItemPathText $value $fileDir $projectDir $true)) {
                 $source = [string]$spec.Source
                 if (($source.IndexOf('@(') -ge 0) -or ($source.IndexOf('%(') -ge 0) -or ($source.IndexOf('$([') -ge 0)) { continue }
