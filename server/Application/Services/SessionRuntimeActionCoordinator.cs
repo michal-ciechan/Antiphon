@@ -157,12 +157,15 @@ public sealed class SessionRuntimeActionCoordinator(
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             // Route all committed work before considering any idle request. A failed earlier
             // action holds this session's order, without occupying a worker between retries.
-            // Channel debt holds only later channel debt: its earliest row runs when due.
+            // Channel debt holds only later channel debt to the same destination (CARD-1434): the
+            // earliest due row per conversation key runs; a null key is every destination.
             var now = clock.GetUtcNow().UtcDateTime;
             var action = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == sessionId
                     && (a.TriggerKind != ChannelReplyDebt || (a.DueAt <= now
                         && !db.SessionRuntimeActions.Any(b => b.AgentSessionId == sessionId
-                            && b.TriggerKind == ChannelReplyDebt && b.Sequence < a.Sequence))))
+                            && b.TriggerKind == ChannelReplyDebt && b.Sequence < a.Sequence
+                            && (b.ConversationKey == null || a.ConversationKey == null
+                                || b.ConversationKey == a.ConversationKey)))))
                 .OrderBy(a => a.Phase >= QueuePhase).ThenBy(a => a.Sequence).ThenBy(a => a.TriggerKind)
                 .FirstOrDefaultAsync(ct);
             if (action is null) return false;
@@ -201,9 +204,12 @@ public sealed class SessionRuntimeActionCoordinator(
                         .SetProperty(a => a.DueAt, due).SetProperty(a => a.FailureReason, reason), ct);
                 Diagnostic(ex, "Action phase retained for retry", sessionId);
                 if (action.TriggerKind != ChannelReplyDebt) return false;
-                // Later replies wait for this one; they need no wakeup before it is due.
+                // Later replies to this destination wait for this one; they need no wakeup
+                // before it is due. Same key predicate as head selection.
+                var key = action.ConversationKey;
                 await db.SessionRuntimeActions.Where(a => a.AgentSessionId == sessionId
-                        && a.TriggerKind == ChannelReplyDebt && a.Sequence > action.Sequence && a.DueAt < due)
+                        && a.TriggerKind == ChannelReplyDebt && a.Sequence > action.Sequence && a.DueAt < due
+                        && (key == null || a.ConversationKey == null || a.ConversationKey == key))
                     .ExecuteUpdateAsync(s => s.SetProperty(a => a.DueAt, due), ct);
             }
         }
@@ -300,15 +306,25 @@ public sealed class SessionRuntimeActionCoordinator(
     }
 
     /// <summary>
-    /// Runs this action's channel reply, unless an earlier reply is still owed. A failed or
-    /// waiting reply becomes channel debt, saved with this action's phase advance, so the
-    /// later phases (review, settlement, refinement confirmation, catch-up) still run.
+    /// Runs this action's channel reply, unless an earlier reply to the same destination is
+    /// still owed. A failed or waiting reply becomes channel debt keyed by its destination,
+    /// saved with this action's phase advance, so the later phases (review, settlement,
+    /// refinement confirmation, catch-up) still run. A trigger with no publishable boundary
+    /// publishes nothing and owes nothing (CARD-1434 D-2).
     /// </summary>
     private async Task ExecuteChannelReplyPhaseAsync(AgentSessionRuntime runtime, AppDbContext db,
         SessionRuntimeAction action, CancellationToken ct)
     {
+        var route = await runtime.ResolveActionChannelRouteAsync(action.AgentSessionId, action.Sequence, ct);
+        if (route is null)
+        {
+            await runtime.ExecuteActionChannelReplyAsync(action.AgentSessionId, action.Sequence, ct);
+            return;
+        }
+        var key = route.ConversationKey;
         var owed = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == action.AgentSessionId
-                && a.TriggerKind == ChannelReplyDebt && a.Sequence < action.Sequence)
+                && a.TriggerKind == ChannelReplyDebt && a.Sequence < action.Sequence
+                && (key == null || a.ConversationKey == null || a.ConversationKey == key))
             .MaxAsync(a => (DateTime?)a.DueAt, ct);
         var now = clock.GetUtcNow().UtcDateTime;
         Exception? failure = null;
@@ -330,7 +346,8 @@ public sealed class SessionRuntimeActionCoordinator(
             Sequence = action.Sequence, ProducerSequence = action.ProducerSequence,
             TriggerKind = ChannelReplyDebt, Phase = ChannelReplyPhase, CreatedAt = now,
             DueAt = failure is null ? (owed > now ? owed.Value : now) : RetryAt(1),
-            Attempts = failure is null ? 0 : 1, FailureReason = failure?.GetType().Name });
+            Attempts = failure is null ? 0 : 1, FailureReason = failure?.GetType().Name,
+            ConversationKey = key });
         if (failure is not null) Diagnostic(failure, "Channel reply retained as debt", action.AgentSessionId);
     }
 
