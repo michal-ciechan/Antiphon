@@ -2174,6 +2174,45 @@ public sealed class LandNonCodeSkipTests
             "includes docs markdown", "server/App.csproj EmbeddedResource Include=$(PackageReadmeFile) -> docs/data.json");
     }
 
+    // CARD-1409 repair 7 (Review 7db88932 R1, D-36): the D-25 skip of a value part that carries an item, metadata
+    // or property-function reference is per part, as it was before repair 6, so every other part of the same
+    // value is still classified; a value whose only part is a reference is left alone, as at fd20e8dcc.
+    [Test]
+    public async Task C1409_PropertyValuePartWithReferenceSkipsOnlyThatPart()
+    {
+        var files = await BuildRealTestProjectTreeAsync();
+        files["docs/guide.md"] = "# guide";
+        var real = files[RealTestProjectPath];
+        await AssertUpdateApprovesAsync(files, DefinitionCount(files));
+        foreach (var reference in new[] { "@(None)", "$([System.String]::Copy(''))", "%(None.Identity)" })
+        {
+            files[RealTestProjectPath] = real.Replace("</Project>",
+                "  <PropertyGroup><PackageReadmeFile>../../docs/guide.md;" + reference + "</PackageReadmeFile></PropertyGroup>\n</Project>",
+                StringComparison.Ordinal);
+            await AssertUpdateRefusesAsync(files, "property value", RealTestProjectPath + " PackageReadmeFile -> docs/guide.md");
+        }
+
+        static Dictionary<string, string> Fixture(string value) => new()
+        {
+            ["docs/guide.md"] = "# guide",
+            ["server/App.csproj"] = $"""
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <PackageTags>{value}</PackageTags>
+                  </PropertyGroup>
+                </Project>
+                """,
+        };
+        // The reference may come first: the part after it is still classified.
+        await AssertUpdateRefusesAsync(Fixture("@(None);../docs/guide.md"), "property value", "server/App.csproj PackageTags -> docs/guide.md");
+        await AssertUpdateRefusesAsync(Fixture("%(None.Identity);../docs/guide.md"), "property value", "server/App.csproj PackageTags -> docs/guide.md");
+        // A value whose only part is a reference, and a value whose other part is not a document, stay approved.
+        await AssertUpdateApprovesAsync(Fixture("@(None)"), 1);
+        await AssertUpdateApprovesAsync(Fixture("%(None.Identity)"), 1);
+        await AssertUpdateApprovesAsync(Fixture("$([System.String]::Copy('../docs/guide.md'))"), 1);
+        await AssertUpdateApprovesAsync(Fixture("@(None);src/x.json"), 1);
+    }
+
     // One entry per 'table' row of the plan's N- and O-tables (D-28, D-29). Keys are the row ids.
     private static Dictionary<string, Func<Task>> TableWitnesses()
     {
