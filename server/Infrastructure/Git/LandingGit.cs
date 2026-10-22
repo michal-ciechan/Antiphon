@@ -703,8 +703,9 @@ public class LandingGit : ILandingGit
         return output.ToArray();
     }
 
-    // Read-only, byte-safe Git batch input. The output can contain arbitrary blob bytes;
-    // never decode it until a caller has established that it is textual metadata.
+    // Byte-safe Git batch input. Read-only except the CARD-1432 update-ref --stdin ref deletion batch.
+    // The output can contain arbitrary blob bytes; never decode it until a caller has established
+    // that it is textual metadata.
     protected virtual async Task<(int ExitCode, byte[] Output)> RunGitInputBytesAsync(
         string path, IReadOnlyList<string> arguments, byte[] input, CancellationToken ct)
     {
@@ -958,6 +959,39 @@ public class LandingGit : ILandingGit
         var recoveryRef = RetirementPrefix(retirementId) + pinName;
         return await RunAsync(repository, ["update-ref", "--no-deref", "-d", recoveryRef, expectedSha], ct);
     }
+
+    /// <summary>
+    /// CARD-1432 D-3: one <c>update-ref --stdin</c> transaction of <c>delete &lt;ref&gt; &lt;oid&gt;</c> lines,
+    /// written as UTF-8 without a BOM (git rejects a BOM as whitespace before the first command and
+    /// applies none of the batch). Git applies all or nothing, so one stale old value leaves every ref.
+    /// </summary>
+    public async Task<LandingGitResult> UpdateRefsAsync(string repository, IReadOnlyList<(string Ref, string Oid)> deletes,
+        CancellationToken ct)
+    {
+        if (deletes.Count == 0) return new(0, "", "");
+        var batch = new StringBuilder();
+        foreach (var (name, oid) in deletes)
+        {
+            if (!IsRetainedRef(name)) return new(1, "", "update_refs_foreign_namespace");
+            if (!IsOid(oid)) return new(1, "", "update_refs_invalid_oid");
+            batch.Append("delete ").Append(name).Append(' ').Append(oid).Append('\n');
+        }
+        string[] arguments = ["update-ref", "--stdin"];
+        var clock = Stopwatch.StartNew();
+        try
+        {
+            var (exit, _) = await RunGitInputBytesAsync(repository, arguments, new UTF8Encoding(false).GetBytes(batch.ToString()), ct);
+            return new(exit, "", exit == 0 ? "" : $"git_exit_{exit}");
+        }
+        finally { Scope?.Profile.Record(arguments, clock.Elapsed); }
+    }
+
+    private static bool IsRetainedRef(string name) =>
+        (name.StartsWith("refs/antiphon/land/", StringComparison.Ordinal)
+            || name.StartsWith("refs/antiphon/progress/", StringComparison.Ordinal))
+        && !name.Contains("..", StringComparison.Ordinal)
+        && !name.EndsWith('/')
+        && name.All(c => c > ' ' && c != 0x7f && c is not ('~' or '^' or ':' or '?' or '*' or '[' or '\\'));
 
     public async Task<LandingGitResult> PinAsync(string repository, string recoveryRef, string sha, CancellationToken ct)
     {

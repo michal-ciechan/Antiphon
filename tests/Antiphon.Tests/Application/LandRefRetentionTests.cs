@@ -1,6 +1,10 @@
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using TUnit.Core;
 
@@ -45,5 +49,239 @@ public sealed class LandRefRetentionTests
                 || k.StartsWith($"refs/antiphon/progress/{task:N}/", StringComparison.Ordinal))
             .ShouldBeEmpty("land refs still present after a completed land of an unprotected task");
         foreach (var name in foreign) h.Git.Refs[name].ShouldBe(sha, "another task's refs are untouched");
+
+    [Test]
+    public async Task C1432_protected_task_keeps_recovery_pins_drops_observations()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var task = SeedTask(db, fixture.TaskId, AgentTaskStatus.Succeeded, fixture.Repository);
+        db.AgentTaskSyncDebts.Add(Debt(task.Id, AgentTaskSyncDebtState.Pending));
+        await db.SaveChangesAsync();
+        var landing = $"refs/antiphon/land/{task.Id:N}/{Guid.NewGuid():N}/";
+        var request = $"refs/antiphon/land/{task.Id:N}/{Guid.NewGuid():N}/";
+        string[] kept =
+        [
+            landing + "source", landing + "target-before", landing + "prepared",
+            request + "adopt/source", request + "adopt/local-before", request + "adopt/remote-before",
+            $"refs/antiphon/progress/{task.Id:N}/settlement-sync",
+            $"refs/antiphon/progress/{task.Id:N}/baseline-1",
+        ];
+        string[] dropped =
+        [
+            landing + "remote-observed/" + Guid.NewGuid().ToString("N"),
+            landing + "cleanup-observed/" + Guid.NewGuid().ToString("N"),
+            landing + "source-recheck/" + Guid.NewGuid().ToString("N"),
+            request + "source-observed/" + Guid.NewGuid().ToString("N"),
+            request + "recover-owner-observed/" + Guid.NewGuid().ToString("N"),
+            $"refs/antiphon/land/{task.Id:N}/{Guid.NewGuid():N}/mirror-observed",
+        ];
+        foreach (var name in kept.Concat(dropped))
+            await fixture.RequiredAsync(fixture.Repository, "update-ref", name, fixture.SeedSha);
+
+        var deleted = await new LandRefRetention(db, fixture.Git, NullLogger.Instance)
+            .ReleaseAsync(task, new HeldLease(fixture.Repository), CancellationToken.None);
+
+        deleted.ShouldNotBeNull().Order(StringComparer.Ordinal).ToArray().ShouldBe(dropped.Order(StringComparer.Ordinal).ToArray());
+        (await ListAsync(fixture, $"refs/antiphon/")).ShouldBe(kept.Order(StringComparer.Ordinal).ToArray());
+        fixture.Git.Trace.Count(a => a is ["update-ref", "--stdin"]).ShouldBe(1, "one transaction");
+    }
+
+    [Test]
+    [Arguments("task-queued", true)]
+    [Arguments("task-dispatched", true)]
+    [Arguments("task-working", true)]
+    [Arguments("task-blocked", true)]
+    [Arguments("task-succeeded", false)]
+    [Arguments("task-failed", false)]
+    [Arguments("task-canceled", false)]
+    [Arguments("task-missing", false)]
+    [Arguments("request-queued", true)]
+    [Arguments("request-held", true)]
+    [Arguments("request-running", true)]
+    [Arguments("request-needs-resolution", true)]
+    [Arguments("request-completed", false)]
+    [Arguments("request-recovery-source", true)]
+    [Arguments("request-completed-recovery-source", false)]
+    [Arguments("adopt-witness", true)]
+    [Arguments("adopt-resolved", false)]
+    [Arguments("landing-interrupted", true)]
+    [Arguments("landing-recovery-source", true)]
+    [Arguments("landing-complete", false)]
+    [Arguments("landing-refused", false)]
+    [Arguments("landing-inactive", false)]
+    [Arguments("debt-pending", true)]
+    [Arguments("debt-ready", true)]
+    [Arguments("debt-held", true)]
+    [Arguments("debt-superseded", false)]
+    [Arguments("retirement-released", true)]
+    [Arguments("retirement-claimed", true)]
+    [Arguments("retirement-command-started", true)]
+    [Arguments("retirement-partial", true)]
+    [Arguments("retirement-complete", false)]
+    [Arguments("retirement-inactive", false)]
+    public async Task C1432_protection_rule_rows(string clause, bool expected)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var id = Guid.NewGuid();
+        var owner = Guid.NewGuid();
+        var status = clause switch
+        {
+            "task-queued" => AgentTaskStatus.Queued,
+            "task-dispatched" => AgentTaskStatus.Dispatched,
+            "task-working" => AgentTaskStatus.Working,
+            "task-blocked" => AgentTaskStatus.Blocked,
+            "task-failed" => AgentTaskStatus.Failed,
+            "task-canceled" => AgentTaskStatus.Canceled,
+            _ => AgentTaskStatus.Succeeded,
+        };
+        if (clause != "task-missing") SeedTask(db, id, status, "/repo");
+        SeedTask(db, owner, AgentTaskStatus.Succeeded, "/repo");
+        switch (clause)
+        {
+            case "request-queued": db.AgentTaskLandRequests.Add(Request(id, LandRequestState.Queued)); break;
+            case "request-held": db.AgentTaskLandRequests.Add(Request(id, LandRequestState.Held)); break;
+            case "request-running": db.AgentTaskLandRequests.Add(Request(id, LandRequestState.Running)); break;
+            case "request-needs-resolution": db.AgentTaskLandRequests.Add(Request(id, LandRequestState.NeedsResolution)); break;
+            case "request-completed": db.AgentTaskLandRequests.Add(Request(id, LandRequestState.Completed)); break;
+            case "request-recovery-source":
+                db.AgentTaskLandRequests.Add(Request(owner, LandRequestState.Queued, recoverySource: id)); break;
+            case "request-completed-recovery-source":
+                db.AgentTaskLandRequests.Add(Request(owner, LandRequestState.Completed, recoverySource: id)); break;
+            case "adopt-witness":
+                db.AgentTaskLandRequests.Add(Request(id, LandRequestState.Completed, LandSourceResolutionState.AdvanceStarted)); break;
+            case "adopt-resolved":
+            {
+                var resolved = Request(id, LandRequestState.Completed, LandSourceResolutionState.AdvanceStarted);
+                resolved.RecoveryAdoptedAt = DateTime.UtcNow;
+                db.AgentTaskLandRequests.Add(resolved);
+                break;
+            }
+            case "landing-interrupted": db.AgentTaskLandings.Add(Landing(id, LandPhase.PushStarted)); break;
+            case "landing-recovery-source": db.AgentTaskLandings.Add(Landing(owner, LandPhase.CleanupStarted, recoverySource: id)); break;
+            case "landing-complete": db.AgentTaskLandings.Add(Landing(id, LandPhase.Complete)); break;
+            case "landing-refused": db.AgentTaskLandings.Add(Landing(id, LandPhase.Refused)); break;
+            case "landing-inactive": db.AgentTaskLandings.Add(Landing(id, LandPhase.PushStarted, active: false)); break;
+            case "debt-pending": db.AgentTaskSyncDebts.Add(Debt(id, AgentTaskSyncDebtState.Pending)); break;
+            case "debt-ready": db.AgentTaskSyncDebts.Add(Debt(id, AgentTaskSyncDebtState.Ready)); break;
+            case "debt-held": db.AgentTaskSyncDebts.Add(Debt(id, AgentTaskSyncDebtState.Held)); break;
+            case "debt-superseded": db.AgentTaskSyncDebts.Add(Debt(id, AgentTaskSyncDebtState.Superseded)); break;
+            case "retirement-released": db.TaskWorktreeRetirements.Add(Retirement(id, WorktreeRetirementState.Released)); break;
+            case "retirement-claimed": db.TaskWorktreeRetirements.Add(Retirement(id, WorktreeRetirementState.Claimed)); break;
+            case "retirement-command-started": db.TaskWorktreeRetirements.Add(Retirement(id, WorktreeRetirementState.CommandStarted)); break;
+            case "retirement-partial": db.TaskWorktreeRetirements.Add(Retirement(id, WorktreeRetirementState.Partial)); break;
+            case "retirement-complete": db.TaskWorktreeRetirements.Add(Retirement(id, WorktreeRetirementState.Complete)); break;
+            case "retirement-inactive": db.TaskWorktreeRetirements.Add(Retirement(id, WorktreeRetirementState.Claimed, active: false)); break;
+        }
+        await db.SaveChangesAsync();
+
+        (await AntiphonRefProtection.QueryAsync(db, [id], CancellationToken.None)).Contains(id).ShouldBe(expected, clause);
+        (await AntiphonRefProtection.QueryAsync(db, null, CancellationToken.None)).Contains(id).ShouldBe(expected, clause + " (whole set)");
+        (await AntiphonRefProtection.QueryAsync(db, [owner], CancellationToken.None)).ShouldBeEmpty("a filtered query never reports other tasks");
+    }
+
+    [Test]
+    public async Task C1432_update_refs_rejects_foreign_namespace()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var land = $"refs/antiphon/land/{fixture.TaskId:N}/{Guid.NewGuid():N}/source";
+        await fixture.RequiredAsync(fixture.Repository, "update-ref", land, fixture.SeedSha);
+        foreach (var foreign in new[] { fixture.SourceRef, "refs/antiphon/retirement/x/source", "refs/antiphon/landx/y", "refs/antiphon/land/../heads/master" })
+        {
+            var result = await fixture.Git.UpdateRefsAsync(fixture.Repository, [(land, fixture.SeedSha), (foreign, fixture.SeedSha)], CancellationToken.None);
+            result.Diagnostic.ShouldBe("update_refs_foreign_namespace", foreign);
+        }
+        (await fixture.Git.UpdateRefsAsync(fixture.Repository, [(land, "HEAD")], CancellationToken.None))
+            .Diagnostic.ShouldBe("update_refs_invalid_oid");
+        fixture.Git.Trace.ShouldNotContain(a => a is ["update-ref", "--stdin"], "a refused batch never reaches git");
+        (await ListAsync(fixture, "refs/antiphon/")).ShouldBe([land]);
+        (await fixture.RequiredAsync(fixture.Repository, "rev-parse", fixture.SourceRef)).Trim().ShouldBe(fixture.SeedSha);
+    }
+
+    [Test]
+    public async Task C1432_update_refs_old_value_mismatch_applies_nothing()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var other = (await fixture.PushIndependentAsync("c1432-other")).Trim();
+        await fixture.RequiredAsync(fixture.Repository, "fetch", "origin", "master");
+        var first = $"refs/antiphon/land/{fixture.TaskId:N}/{Guid.NewGuid():N}/source";
+        var second = $"refs/antiphon/progress/{fixture.TaskId:N}/baseline-1";
+        await fixture.RequiredAsync(fixture.Repository, "update-ref", first, fixture.SeedSha);
+        await fixture.RequiredAsync(fixture.Repository, "update-ref", second, fixture.SeedSha);
+        await fixture.RequiredAsync(fixture.Repository, "pack-refs", "--all");
+
+        var stale = await fixture.Git.UpdateRefsAsync(fixture.Repository,
+            [(first, fixture.SeedSha), (second, other)], CancellationToken.None);
+        stale.Succeeded.ShouldBeFalse("one stale old value refuses the transaction");
+        (await ListAsync(fixture, "refs/antiphon/")).ShouldBe([first, second], "nothing applied");
+
+        var applied = await fixture.Git.UpdateRefsAsync(fixture.Repository,
+            [(first, fixture.SeedSha), (second, fixture.SeedSha)], CancellationToken.None);
+        applied.Succeeded.ShouldBeTrue(applied.Diagnostic);
+        (await ListAsync(fixture, "refs/antiphon/")).ShouldBeEmpty("the BOM-free batch deletes packed refs");
+    }
+
+    private static async Task<string[]> ListAsync(LandingGitFixture fixture, string prefix) =>
+        (await fixture.RequiredAsync(fixture.Repository, "for-each-ref", "--format=%(refname)", prefix))
+        .Split('\n', StringSplitOptions.RemoveEmptyEntries).Order(StringComparer.Ordinal).ToArray();
+
+    private static AgentTask SeedTask(AppDbContext db, Guid id, AgentTaskStatus status, string repository)
+    {
+        var task = new AgentTask
+        {
+            Id = id, RootTaskId = id, Title = "C1432", Goal = "C1432",
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = repository, RepoPath = repository, Status = status,
+            ReplyTo = AgentTaskReplyTo.None, CreatedAt = DateTime.UtcNow,
+            CompletedAt = status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled ? DateTime.UtcNow : null,
+        };
+        db.AgentTasks.Add(task);
+        return task;
+    }
+
+    private static AgentTaskLandRequest Request(Guid taskId, LandRequestState state,
+        LandSourceResolutionState resolution = LandSourceResolutionState.None, Guid? recoverySource = null) => new()
+    {
+        Id = Guid.NewGuid(), TaskId = taskId, RequestedAt = DateTime.UtcNow, LastEvaluatedAt = DateTime.UtcNow,
+        LastProgressAt = DateTime.UtcNow, State = state,
+        IsPending = state is LandRequestState.Queued or LandRequestState.Held or LandRequestState.Running or LandRequestState.NeedsResolution,
+        ExpectedSourceSha = new string('a', 40), SourceResolutionState = resolution, RecoverySourceTaskId = recoverySource,
+    };
+
+    private static AgentTaskLanding Landing(Guid taskId, LandPhase phase, bool active = true, Guid? recoverySource = null) => new()
+    {
+        Id = Guid.NewGuid(), TaskId = taskId, SchemaVersion = 3, Active = active, Phase = phase,
+        Publication = LandPublicationOutcome.Unconfirmed, RepositoryPath = "/repo", WorktreePath = "/trees/x",
+        CommonDirectory = "/repo/.git", GitDirectory = "/repo/.git", SourceFullRef = "refs/heads/feat/x",
+        TargetFullRef = "refs/heads/master", DestinationFullRef = "refs/heads/master",
+        OriginalSourceSha = new string('a', 40), TargetBeforeSha = new string('b', 40),
+        RecoverySourceTaskId = recoverySource, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+    };
+
+    private static AgentTaskSyncDebt Debt(Guid taskId, AgentTaskSyncDebtState state) => new()
+    {
+        Id = Guid.NewGuid(), TaskId = taskId, Attempt = 1, SettlementEventId = Guid.NewGuid(), State = state,
+        CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+    };
+
+    private static TaskWorktreeRetirement Retirement(Guid taskId, WorktreeRetirementState state, bool active = true) => new()
+    {
+        Id = Guid.NewGuid(), TaskId = taskId, TaskAttempt = 1, TerminalStatus = AgentTaskStatus.Succeeded,
+        TaskCompletedAt = DateTime.UtcNow, ReleasedTaskRevision = Guid.NewGuid(), CallerIdentity = "op",
+        ReleaseReason = "x", ReleasedAt = DateTime.UtcNow, RepositoryPath = "/repo", CommonDirectory = "/repo/.git",
+        WorktreePath = "/trees/x", GitDirectory = "/repo/.git", SourceFullRef = "refs/heads/feat/x",
+        SourceSha = new string('a', 40), TargetFullRef = "refs/heads/master", State = state, Active = active,
+        UpdatedAt = DateTime.UtcNow,
+    };
+
+    private sealed class HeldLease(string common) : RepositoryLease
+    {
+        public override string CommonDirectory => common;
+        public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

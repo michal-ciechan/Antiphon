@@ -18,6 +18,8 @@ internal sealed class LandRepositoryLeaseScope(IRepositoryMutationLease leases, 
     private ILandingOperationScope? _scope = git.BeginOperationScope();
     private readonly LandingGitProfile _finished = new();
     public RepositoryLease Lease => _lease ?? throw new InvalidOperationException("repository_lease_released");
+    /// <summary>The live lease, or null while it is released (verification window, or after disposal).</summary>
+    public RepositoryLease? Held => _lease;
     public LandingGitProfile Profile
     {
         get
