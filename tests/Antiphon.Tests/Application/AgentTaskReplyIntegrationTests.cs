@@ -5279,7 +5279,8 @@ public partial class AgentTaskReplyIntegrationTests
     /// (SessionMessageQueueSpillTests), but one that would hide the thing V-5 has to show: the
     /// report text itself arriving in the parent's transcript.
     /// </summary>
-    private static TestScopeFactory NewDeliveryFactory(DeliverablesSettings? deliverables = null) => new(
+    internal static TestScopeFactory NewDeliveryFactory(
+        DeliverablesSettings? deliverables = null, LandDeliveryBoundary? boundary = null) => new(
         supervision: new SupervisionSettings
         {
             DeliveryVerification = new DeliveryVerificationSettings
@@ -5293,6 +5294,7 @@ public partial class AgentTaskReplyIntegrationTests
             },
         },
         delegation: new DelegationSettings { PtySingleChunkBytes = 43_200 },
+        boundary: boundary,
         configureServices: deliverables is null ? null : services =>
             services.AddSingleton<IOptions<DeliverablesSettings>>(Options.Create(deliverables)));
 
@@ -5302,7 +5304,7 @@ public partial class AgentTaskReplyIntegrationTests
     /// CARD-0055's confirm gate reads, so a delivery driven through this fake is judged the way
     /// production judges one.
     /// </summary>
-    private static FakeAgentProtocolAdapter AttachTerminal(TestScopeFactory factory, Guid sessionId)
+    internal static FakeAgentProtocolAdapter AttachTerminal(TestScopeFactory factory, Guid sessionId)
     {
         var adapter = new FakeAgentProtocolAdapter
         {
@@ -5322,14 +5324,14 @@ public partial class AgentTaskReplyIntegrationTests
     /// baseline falls back to CARD-0164's wall-clock arm; the sequence floor V-5's anti-duplicate
     /// claim rests on only exists once the session has written something.
     /// </summary>
-    private static async Task SeedParentHistoryAsync(Guid parentSessionId)
+    internal static async Task SeedParentHistoryAsync(Guid parentSessionId)
     {
         await SeedEntryAsync(parentSessionId, TranscriptKinds.UserPrompt, "dispatch a delegate for the slice", DateTime.UtcNow);
         await SeedEntryAsync(parentSessionId, TranscriptKinds.AssistantText, "Dispatched.", DateTime.UtcNow);
         await SeedEntryAsync(parentSessionId, TranscriptKinds.TurnEnd, null, DateTime.UtcNow);
     }
 
-    private static SessionMessageQueueService Queue(TestScopeFactory factory) =>
+    internal static SessionMessageQueueService Queue(TestScopeFactory factory) =>
         factory.ServiceProvider.GetRequiredService<SessionMessageQueueService>();
 
     /// <summary>
@@ -5366,7 +5368,7 @@ public partial class AgentTaskReplyIntegrationTests
         return (note, prompt);
     }
 
-    private static AgentTaskReplyService CreateService(
+    internal static AgentTaskReplyService CreateService(
         TestScopeFactory? factory = null,
         DelegationSettings? settings = null,
         TimeProvider? timeProvider = null,
@@ -5381,7 +5383,7 @@ public partial class AgentTaskReplyIntegrationTests
             logger ?? NullLogger<AgentTaskReplyService>.Instance);
     }
 
-    private static async Task<(AgentTask Task, Guid SessionId)> SeedDispatchedTaskAsync(
+    internal static async Task<(AgentTask Task, Guid SessionId)> SeedDispatchedTaskAsync(
         string workingDirectory, Guid? parentSessionId = null, Action<AgentTask>? configure = null,
         string? connectionString = null)
     {
@@ -5467,7 +5469,7 @@ public partial class AgentTaskReplyIntegrationTests
         return agent.Id;
     }
 
-    private static async Task<Guid> SeedSessionAsync(string cwd, string? connectionString = null)
+    internal static async Task<Guid> SeedSessionAsync(string cwd, string? connectionString = null)
     {
         var sessionId = Guid.NewGuid();
         var now = DateTime.UtcNow;
@@ -5659,7 +5661,7 @@ public partial class AgentTaskReplyIntegrationTests
     }
 
     /// <summary>One entry appended at the session's next sequence, with a real record timestamp.</summary>
-    private static async Task SeedEntryAsync(
+    internal static async Task SeedEntryAsync(
         Guid sessionId, string kind, string? text, DateTime timestamp, string? apiCallId = null,
         string? toolUseId = null, string? toolName = null)
     {
@@ -5888,7 +5890,7 @@ public partial class AgentTaskReplyIntegrationTests
         CreatedAt = DateTime.UtcNow,
     };
 
-    private static AppDbContext CreateContext(string? connectionString = null) =>
+    internal static AppDbContext CreateContext(string? connectionString = null) =>
         new(TestDbFixture.CreateDbContextOptions(connectionString));
 
     /// <summary>
@@ -5898,7 +5900,7 @@ public partial class AgentTaskReplyIntegrationTests
     /// terminal on it (see <see cref="AttachTerminal"/>) and carry the note all the way to the
     /// recipient's transcript.
     /// </summary>
-    private sealed class TestScopeFactory : IServiceScopeFactory, IServiceScope, IServiceProvider
+    internal sealed class TestScopeFactory : IServiceScopeFactory, IServiceScope, IServiceProvider
     {
         private readonly ServiceProvider _provider;
 
@@ -5971,7 +5973,7 @@ public partial class AgentTaskReplyIntegrationTests
         private sealed class TempWorkspaceMarker;
     }
 
-    private sealed class TempWorkspace : IDisposable
+    internal sealed class TempWorkspace : IDisposable
     {
         public string Path { get; } = Directory.CreateTempSubdirectory("antiphon-reply-test").FullName;
 
