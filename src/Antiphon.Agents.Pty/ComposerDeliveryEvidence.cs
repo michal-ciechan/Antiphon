@@ -45,6 +45,10 @@ namespace Antiphon.Agents.Pty;
 /// </summary>
 public static class ComposerDeliveryEvidence
 {
+    /// <summary>Equality of entire bodies, with the same wrapping normalization as rendering evidence.</summary>
+    public static bool WholeBodyEquals(string expected, string actual) =>
+        Normalize(expected) is { Length: > 0 } body
+        && string.Equals(body, Normalize(actual), StringComparison.Ordinal);
     /// <summary>How much of the body's head/tail is considered (after normalisation).</summary>
     public const int FragmentSpan = 40;
 
@@ -241,7 +245,7 @@ public static class ComposerDeliveryEvidence
     // Strip whitespace and TUI chrome so wrap points, trimmed rows, border rows and prompt glyphs
     // cannot break (or fake) a match. Applied to BOTH the screen and the body, so a body that
     // itself contains such characters stays consistent with what is searched for.
-    private static string Normalize(string text)
+    internal static string Normalize(string text)
     {
         if (string.IsNullOrEmpty(text))
             return string.Empty;
