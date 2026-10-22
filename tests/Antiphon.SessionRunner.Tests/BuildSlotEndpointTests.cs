@@ -160,6 +160,7 @@ public sealed class BuildSlotEndpointTests
             using var http = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(10) };
             (await http.GetAsync("/health")).StatusCode.ShouldBe(HttpStatusCode.OK);
             (await http.GetAsync("/build-slots")).StatusCode.ShouldBe(HttpStatusCode.OK);
+            (await http.GetAsync("/build-slots/metrics")).StatusCode.ShouldBe(HttpStatusCode.OK);
             (await http.GetAsync("/sessions")).StatusCode.ShouldBe(HttpStatusCode.NotFound);
             (await http.GetAsync("/capabilities")).StatusCode.ShouldBe(HttpStatusCode.NotFound);
         }

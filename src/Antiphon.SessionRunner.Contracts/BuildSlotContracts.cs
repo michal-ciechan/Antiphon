@@ -60,6 +60,39 @@ public sealed record BuildSlotListing(
     IReadOnlyList<BuildSlotLease> Leases,
     IReadOnlyList<BuildSlotWaiter> Waiters);
 
+/// <summary>
+/// CARD-1489 <c>GET /build-slots/metrics</c>: lease lifecycle over the window
+/// [<see cref="WindowStartUtc"/>, <see cref="NowUtc"/>]. The window is the last three hours, starting
+/// no earlier than <see cref="BrokerStartedAtUtc"/> (<see cref="PartialWindow"/>) and, when the record
+/// bound dropped records inside it, at the oldest retained record (<see cref="Truncated"/>).
+/// <see cref="Grants"/> counts new leases once, however often the holder re-asks; <see cref="Reaps"/>
+/// (dead, recycled or expired holders) are not <see cref="Releases"/>; <see cref="WaiterDrops"/> are
+/// waiters that stopped polling. Refusals count polls answered 409, not queued jobs, at minute
+/// resolution. <see cref="Held"/> covers released and reaped leases.
+/// </summary>
+public sealed record BuildSlotMetrics(
+    DateTime BrokerStartedAtUtc,
+    DateTime NowUtc,
+    DateTime WindowStartUtc,
+    double WindowSeconds,
+    bool PartialWindow,
+    bool Truncated,
+    long DroppedRecords,
+    int RetainedRecords,
+    int RecordCapacity,
+    int Grants,
+    int Releases,
+    int Reaps,
+    int WaiterDrops,
+    int BusyRefusals,
+    int MemoryFloorRefusals,
+    BuildSlotDurationStats AcquireWait,
+    BuildSlotDurationStats Held,
+    double? ReleasesPerHour);
+
+/// <summary>Seconds; <see cref="P95Seconds"/> is nearest-rank. Null statistics when <see cref="Count"/> is zero.</summary>
+public sealed record BuildSlotDurationStats(int Count, double? MeanSeconds, double? P95Seconds, double? MaxSeconds);
+
 /// <summary>Problem-details <c>type</c> codes the wrappers branch on.</summary>
 public static class BuildSlotProblemTypes
 {
