@@ -170,16 +170,20 @@ a name, while Claude/Grok may use a key-injecting proxy with no name. API shape:
 {"providerEndpoints":{"Codex":{"baseUrl":"http://127.0.0.1:8088","apiKeyName":"proxy-codex"}}}
 ```
 
-This is a sentinel configuration example, not a running endpoint. Only an operator provisions a
+This shows the endpoint member of a project update, not a complete request or running endpoint.
+Project updates use `PUT /api/projects/{id}` and must preserve the other required project fields
+from a fresh read (including name, repository URL and integration/notification flags). Agent PATCH
+also retains its required name, working directory and assignment fields; the UI supplies these.
+Only an operator provisions a
 real credential through the approved vault/write-only key-store flow; never paste a value into a
 brief, terminal command, launch argument, log or report. Never inspect `auth.json` or an operator's
 Codex home to obtain a credential. The setting does not change OAuth/subscription stores.
 
 | Operation | Procedure |
 |---|---|
-| Set | Provision the named key with `PUT /api/api-keys/{name}` or `PUT /api/projects/{projectId}/api-keys/{name}` through the approved secret flow. PATCH `/api/projects/{id}` with `providerEndpoints` (the complete replacement map), or use project settings. For one agent PATCH `/api/agents/{id}` with `providerEndpointMode: Endpoint` and `providerEndpoint: { baseUrl, apiKeyName }`. |
+| Set | Provision the named key with `PUT /api/api-keys/{name}` or `PUT /api/projects/{projectId}/api-keys/{name}` through the approved secret flow. PUT `/api/projects/{id}` with `providerEndpoints` (the complete replacement map), or use project settings. For one agent PATCH `/api/agents/{id}` with `providerEndpointMode: Endpoint` and `providerEndpoint: { baseUrl, apiKeyName }`. |
 | Rotate | Rotation changes the key store under the same name. The next fresh launch resolves the new value. A running or warm process retains its old value until replaced; rotation alone does not invalidate its routing stamp. |
-| Clear | PATCH the project with `providerEndpoints: {}` to clear all entries (remove just one kind by sending the remaining map). PATCH the agent with `providerEndpointMode: Inherit` and `providerEndpoint: null` to clear its own endpoint; it then inherits the project again. Use `Direct` to suppress that inheritance. Neither operation removes generic env. |
+| Clear | PUT the project with `providerEndpoints: {}` to clear all entries (remove just one kind by sending the remaining map). PATCH the agent with `providerEndpointMode: Inherit` and `providerEndpoint: null` to clear its own endpoint; it then inherits the project again. Use `Direct` to suppress that inheritance. Neither operation removes generic env. |
 | Inspect | GET the project/agent for URL, mode and name; GET `/api/agent-tui/runner-types` for `providerEndpoint` descriptors. Key-list routes return metadata, never values. Resolver diagnostics name the host and key name, never a full URL path or resolved value. |
 
 Omitted/null project maps leave the map unchanged. Omitted/null agent fields together also leave

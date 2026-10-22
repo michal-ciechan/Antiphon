@@ -1067,9 +1067,10 @@ POST   /api/schedules/{id}/fire-now          bypasses grace, does not advance re
 [ai-agent-tui-configuration.md](ai-agent-tui-configuration.md) and
 [agent-credentials.md](agent-credentials.md).
 
-CARD-0167 adds `providerEndpoints` to project create/PATCH/read DTOs: a complete replacement map
+CARD-0167 adds `providerEndpoints` to project create/PUT/read DTOs: a complete replacement map
 keyed by `ClaudeCode`, `Grok` or `Codex`, each value `{ "baseUrl": "http://127.0.0.1:8088",
 "apiKeyName": "proxy-key" }` (sentinel example). Null/omitted leaves the map unchanged; `{}` clears.
+`PUT /api/projects/{id}` still requires the other project fields; retain them from a fresh GET.
 Agent create/PATCH/read DTOs add `providerEndpointMode` (`Inherit`, `Endpoint`, `Direct`) and
 `providerEndpoint` (the same URL/name shape). Endpoint mode requires an endpoint; Inherit/Direct
 require no own endpoint. Null fields together leave an existing setting unchanged; set the mode
