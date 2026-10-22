@@ -402,6 +402,12 @@ POST   /api/agent-tasks/{id}/cancel  |  /retry  |  /escalate
                                              `settlement`, `startedAt`, `holdExpiresAt` (CARD-0547);
                                              `abandonCommitRecovery: true` on /retry records a
                                              `CommitRecoveryAbandoned` event and requeues.
+                                             /escalate, and /retry of a task not governed by a
+                                             chain or pin, are 409 `model_disabled` (the create
+                                             body) when the alias the dispatcher would launch is
+                                             held (a pinned agent's ModelId or a specialist's
+                                             alias wins the tier). Nothing is killed or changed
+                                             (CARD-1490).
 POST   /api/agent-tasks/{id}/reply           answer a Blocked delegate's question.
                                              Body `ReplyToAgentTaskRequest`:
                                              `message`, optional `round` (stale
