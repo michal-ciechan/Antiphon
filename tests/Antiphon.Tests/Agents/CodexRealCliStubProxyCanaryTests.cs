@@ -13,6 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
+using SessionRunnerSettings = Antiphon.SessionRunner.SessionRunnerSettings;
 
 namespace Antiphon.Tests.Agents;
 
