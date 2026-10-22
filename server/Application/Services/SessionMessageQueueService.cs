@@ -3392,7 +3392,9 @@ public sealed partial class SessionMessageQueueService
             outcome.ConfirmedBy,
             degraded,
             Reason: degraded
-                ? "this session has no transcript bound (or has not written one yet)"
+                ? "no matching UserPrompt transcript record arrived within the "
+                  + $"{_verification.TranscriptConfirmTimeoutSeconds}s verification window; delivery is "
+                  + "unverified until a later matching UserPrompt proves it"
                 : null,
             At: UtcNow());
     }
@@ -3402,9 +3404,10 @@ public sealed partial class SessionMessageQueueService
     /// only — no kill, no re-type, no change to the Delivered verdict. Deduped per session
     /// per 10 minutes. Reached from EVERY delivery path that ends in the fallback — a queued
     /// WhenIdle body on a pre-first-turn session as much as a Mode:Now send (CARD-0201) — so the
-    /// message must not name one of them.
+    /// message must not name one of them. CARD-1475: the copy states what was known at the attempt
+    /// (no matching record within the window), never that verification is impossible.
     /// </summary>
-    private async Task RecordDeliveryUnverifiedAsync(Guid sessionId, CancellationToken ct)
+    private async Task RecordDeliveryUnverifiedAsync(Guid sessionId, int entersSent, CancellationToken ct)
     {
         try
         {
@@ -3431,9 +3434,12 @@ public sealed partial class SessionMessageQueueService
                 sessionId,
                 AgentIncidentKind.DeliveryUnverified,
                 severity,
-                "A message was typed but could not be confirmed: this session has no transcript bound "
-                + "(or has not written one yet). The terminal redrew, so the text probably landed — "
-                + "nothing can verify it.",
+                $"A message was typed and {entersSent} Enter(s) sent, but no matching complete UserPrompt "
+                + "transcript record arrived within the "
+                + $"{_verification.TranscriptConfirmTimeoutSeconds}s verification window (the session had "
+                + "no transcript rows when the attempt began). Delivery is unverified as of this attempt, "
+                + "not disproved: a later matching UserPrompt in the transcript proves it. The screen "
+                + "showed a submit signal, but a redraw alone does not prove the text was submitted.",
                 ct: ct);
             await db.SaveChangesAsync(ct);
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
@@ -4147,7 +4153,7 @@ public sealed partial class SessionMessageQueueService
                             + "after {Timeout}s with no transcript row (bind-failed / pre-first-turn "
                             + "fallback); {Enters} Enter(s) sent",
                             sessionId, _verification.TranscriptConfirmTimeoutSeconds, entersSent);
-                        await RecordDeliveryUnverifiedAsync(sessionId, ct);
+                        await RecordDeliveryUnverifiedAsync(sessionId, entersSent, ct);
                         return DeliveryOutcome.Confirmed(DeliveryConfirmedBy.Screen);
                     }
 

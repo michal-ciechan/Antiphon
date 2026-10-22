@@ -110,7 +110,8 @@ describe('SmartComposer', () => {
             verdict: 'Delivered',
             confirmedBy: 'screen',
             degraded: true,
-            reason: 'this session has no transcript bound (or has not written one yet)',
+            reason:
+              'no matching UserPrompt transcript record arrived within the 30s verification window; delivery is unverified until a later matching UserPrompt proves it',
             at: '2026-08-24T12:00:00Z',
           },
         }),
@@ -120,7 +121,7 @@ describe('SmartComposer', () => {
     await user.type(screen.getByPlaceholderText(/Message to the agent/), 'hello there')
     await user.click(screen.getByRole('button', { name: /Send now/ }))
     expect(await screen.findByTestId('delivery-receipt')).toHaveTextContent(
-      'Typed · unverified — no transcript bound (see incidents)',
+      'Typed · unverified — no transcript confirmation yet (see incidents)',
     )
     expect(screen.getByTestId('delivery-receipt')).toHaveAttribute('data-confirmed-by', 'screen')
   })
