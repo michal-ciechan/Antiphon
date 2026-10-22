@@ -495,12 +495,12 @@ function Invoke-SnapshotPublish {
 
 function Get-SnapshotContainerFact {
     param([string]$Docker, [string]$Name)
-    $missing = [pscustomobject]@{ Found = $false; Parse = $false; Id = ''; Name = ''; Label = ''; Mounts = @(); Aliases = @(); Env = @() }
+    $missing = [pscustomobject]@{ Found = $false; Parse = $false; Id = ''; Name = ''; Label = ''; Mounts = @(); Aliases = @(); Env = @(); Binds = 0; NetworkMode = '' }
     if ([string]::IsNullOrWhiteSpace($Name)) { return $missing }
     $result = Invoke-SnapshotNative $Docker @('inspect', '--format', '{{json .}}', $Name)
     if ($result.Exit -ne 0) { return $missing }
     $text = (($result.Lines -join "`n").Trim())
-    $bad = [pscustomobject]@{ Found = $true; Parse = $false; Id = ''; Name = ''; Label = ''; Mounts = @(); Aliases = @(); Env = @() }
+    $bad = [pscustomobject]@{ Found = $true; Parse = $false; Id = ''; Name = ''; Label = ''; Mounts = @(); Aliases = @(); Env = @(); Binds = 0; NetworkMode = '' }
     if ([string]::IsNullOrWhiteSpace($text)) { return $bad }
     try { $info = $text | ConvertFrom-Json } catch { return $bad }
     if ($info -is [System.Array]) { $info = $info[0] }
@@ -509,10 +509,18 @@ function Get-SnapshotContainerFact {
         $prop = $info.Config.Labels.PSObject.Properties[$script:SnapshotDrillLabel]
         if ($prop) { $label = [string]$prop.Value }
     }
+    $binds = 0
     $mounts = New-Object System.Collections.Generic.List[string]
     if ($info.Mounts) {
         foreach ($mount in @($info.Mounts)) {
-            if ($mount -and -not [string]::IsNullOrWhiteSpace($mount.Name)) { [void]$mounts.Add([string]$mount.Name) }
+            if (-not $mount) { continue }
+            $kind = ''
+            if ($mount.PSObject.Properties['Type']) { $kind = [string]$mount.Type }
+            if (-not [string]::IsNullOrWhiteSpace($mount.Name) -and ($kind -eq '' -or $kind -eq 'volume')) {
+                [void]$mounts.Add([string]$mount.Name)
+            } else {
+                $binds++
+            }
         }
     }
     $aliases = New-Object System.Collections.Generic.List[string]
@@ -530,6 +538,8 @@ function Get-SnapshotContainerFact {
             if (-not [string]::IsNullOrWhiteSpace([string]$entry)) { [void]$envList.Add([string]$entry) }
         }
     }
+    $networkMode = ''
+    if ($info.HostConfig -and $info.HostConfig.PSObject.Properties['NetworkMode']) { $networkMode = [string]$info.HostConfig.NetworkMode }
     $id = ''
     if ($info.Id) { $id = [string]$info.Id }
     $bare = ''
@@ -537,6 +547,7 @@ function Get-SnapshotContainerFact {
     return [pscustomobject]@{
         Found = $true; Parse = $true; Id = $id; Name = $bare; Label = $label
         Mounts = $mounts.ToArray(); Aliases = $aliases.ToArray(); Env = $envList.ToArray()
+        Binds = $binds; NetworkMode = $networkMode
     }
 }
 
@@ -560,10 +571,29 @@ function Test-SnapshotRemoteEnv {
     param([string[]]$Entries)
     foreach ($entry in @($Entries)) {
         if ([string]::IsNullOrWhiteSpace($entry)) { continue }
-        if ($entry -match '^(?i)PGHOST=(.*)$' -and -not [string]::IsNullOrWhiteSpace($Matches[1])) { return $true }
-        if ($entry -match '^(?i)PGPORT=(.*)$' -and -not [string]::IsNullOrWhiteSpace($Matches[1])) { return $true }
+        if ($entry -match '^(?i)(PGHOST|PGPORT|PGHOSTADDR)=(.*)$' -and -not [string]::IsNullOrWhiteSpace($Matches[2])) { return $true }
     }
     return $false
+}
+
+# Any other libpq variable (PGSERVICE, PGPASSFILE, PGOPTIONS, ...) can point a
+# reused container at another server; a scratch container needs none of them.
+function Test-SnapshotPgEnv {
+    param([string[]]$Entries)
+    foreach ($entry in @($Entries)) {
+        if ([string]::IsNullOrWhiteSpace($entry)) { continue }
+        if ($entry -match '^(?i)PG[A-Z0-9_]*=(.*)$' -and -not [string]::IsNullOrWhiteSpace($Matches[1])) { return $true }
+    }
+    return $false
+}
+
+function Test-SnapshotNetworkGuard {
+    param([string]$Mode)
+    if ([string]::IsNullOrWhiteSpace($Mode)) { return '' }
+    $trim = $Mode.Trim()
+    if ($trim.Equals('host', [StringComparison]::OrdinalIgnoreCase)) { return 'host-network' }
+    if ($trim.StartsWith('container:', [StringComparison]::OrdinalIgnoreCase)) { return 'shared-network' }
+    return ''
 }
 
 function Test-SnapshotReuseGuard {
@@ -584,6 +614,10 @@ function Test-SnapshotReuseGuard {
         if (Test-SnapshotNameMatch $mount $SourceMounts) { return 'source-mount' }
     }
     if (Test-SnapshotRemoteEnv $Fact.Env) { return 'pghost' }
+    if (Test-SnapshotPgEnv $Fact.Env) { return 'pg-env' }
+    if ([int]$Fact.Binds -gt 0) { return 'bind-mount' }
+    $network = Test-SnapshotNetworkGuard $Fact.NetworkMode
+    if ($network -ne '') { return $network }
     return 'ok'
 }
 
