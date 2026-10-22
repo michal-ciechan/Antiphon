@@ -124,34 +124,33 @@ public sealed class LandGraphEvaluationTests
     // V-3: anything MSBuild cannot evaluate denies with exit 2 and never approves.
     [Test]
     [Timeout(300_000)]
-    [Arguments("missing-import")]
-    [Arguments("bad-sdk")]
-    [Arguments("malformed-xml")]
-    public async Task C1483_S1_EvaluationFailureDenies(string failure)
+    public async Task C1483_S1_EvaluationFailureDenies()
     {
-        var project = failure switch
+        var failures = new Dictionary<string, string>
         {
-            "missing-import" => SdkProject("""<Import Project="../build/does-not-exist.props" />"""),
-            "bad-sdk" => """
+            ["missing-import"] = SdkProject("""<Import Project="../build/does-not-exist.props" />"""),
+            ["bad-sdk"] = """
                 <Project Sdk="Antiphon.C1483.NoSuch.Sdk">
                   <PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup>
                 </Project>
                 """,
-            "malformed-xml" => """<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net9.0</TargetFramework></Project>""",
-            _ => throw new ArgumentOutOfRangeException(nameof(failure)),
+            ["malformed-xml"] = """<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net9.0</TargetFramework></Project>""",
         };
-        await using var repo = await AuditRepo.CreateAsync(new()
+        foreach (var (failure, project) in failures)
         {
-            ["App/Program.cs"] = "System.Console.WriteLine();\n",
-            ["App/App.csproj"] = project,
-        });
+            await using var repo = await AuditRepo.CreateAsync(new()
+            {
+                ["App/Program.cs"] = "System.Console.WriteLine();\n",
+                ["App/App.csproj"] = project,
+            });
 
-        var run = await repo.RunToolAsync();
+            var run = await repo.RunToolAsync();
 
-        run.ExitCode.ShouldBe(2, run.Text);
-        run.Lines.ShouldContain(l => l.StartsWith("evaluation-failed: ", StringComparison.Ordinal), run.Text);
-        run.Lines.ShouldNotContain("approved", run.Text);
-        repo.AssertUntouched();
+            run.ExitCode.ShouldBe(2, $"{failure}: {run.Text}");
+            run.Lines.ShouldContain(l => l.StartsWith("evaluation-failed: ", StringComparison.Ordinal), $"{failure}: {run.Text}");
+            run.Lines.ShouldNotContain("approved", $"{failure}: {run.Text}");
+            repo.AssertUntouched();
+        }
     }
 
     private static string SdkProject(string body) => $"""
