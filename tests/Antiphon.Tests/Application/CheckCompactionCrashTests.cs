@@ -335,7 +335,7 @@ public class CheckCompactionCrashTests
     private static CrashWorkerRequest Request(CheckCompactionFixture.ConfirmedSeat seat, string root, string scenario, string hold) =>
         new()
         {
-            Root = root.FullPath,
+            Root = root,
             Scenario = scenario,
             ConnectionString = seat.ConnectionString,
             Hold = hold,
