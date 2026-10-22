@@ -162,7 +162,7 @@ internal static class SolutionAudit
     /// <summary>
     /// realpath: walks an absolute path from its root and replaces every existing symbolic link or
     /// junction by its target before the next component, so <c>..</c> after a link leaves the target.
-    /// Missing components are kept as written. Windows folds <c>..</c> lexically before the file system
+    /// Missing components are kept as written; one that cannot be read throws. Windows folds <c>..</c> lexically before the file system
     /// sees it, so there this only over-approximates (another candidate, never fewer refusals).
     /// </summary>
     internal static string RealPath(string path)
@@ -190,6 +190,16 @@ internal static class SolutionAudit
             var target = new FileInfo(next).LinkTarget;
             if (target is null)
             {
+                // LinkTarget is also null when readlink fails (EACCES on Linux): only a missing
+                // component counts as a plain path; any other error fails the evaluation (exit 2).
+                try
+                {
+                    File.GetAttributes(next);
+                }
+                catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+                {
+                }
+
                 current = next;
                 continue;
             }
