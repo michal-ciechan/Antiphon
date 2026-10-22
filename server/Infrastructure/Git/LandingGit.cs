@@ -1022,6 +1022,29 @@ public class LandingGit : ILandingGit
         && !name.EndsWith('/')
         && name.All(c => c > ' ' && c != 0x7f && c is not ('~' or '^' or ':' or '?' or '*' or '[' or '\\'));
 
+    /// <summary>
+    /// CARD-1432 G1: one <c>show-ref --verify</c> for every ref of a recheck. Git prints <c>&lt;oid&gt; &lt;ref&gt;</c>
+    /// per readable ref in request order and stops at the first missing or broken one (exit 128), so the result
+    /// holds exactly the refs read before it; a caller that checks in order refuses on the first absent entry, as
+    /// the per-ref reads did. An empty request spawns nothing.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, string>> ReadRefsAsync(string repository, IReadOnlyList<string> fullRefs,
+        CancellationToken ct)
+    {
+        var shas = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (fullRefs.Count == 0) return shas;
+        var read = await RunAsync(repository, ["show-ref", "--verify", .. fullRefs], ct);
+        foreach (var line in read.Output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var space = line.IndexOf(' ');
+            if (space <= 0) continue;
+            var sha = line[..space];
+            var name = line[(space + 1)..];
+            if (IsOid(sha) && fullRefs.Contains(name, StringComparer.Ordinal)) shas[name] = sha;
+        }
+        return shas;
+    }
+
     public async Task<LandingGitResult> PinAsync(string repository, string recoveryRef, string sha, CancellationToken ct)
     {
         if (!IsOid(sha) || !recoveryRef.StartsWith("refs/antiphon/land/", StringComparison.Ordinal))
@@ -1029,21 +1052,36 @@ public class LandingGit : ILandingGit
         return await PinWithPrefixAsync(repository, recoveryRef, sha, ct);
     }
 
+    /// <summary>
+    /// CARD-1432 G2: name check, commit check, then one expected-old-zero <c>update-ref</c>, which git refuses when
+    /// the ref exists. Only a refusal reads the ref back (a failed commit check defers its verdict past that read,
+    /// so the reasons keep their order): the same id is a repeat, another id is <c>recovery_ref_collision</c>, an
+    /// unreadable ref is <c>recovery_ref_query_error</c>; after those, <c>invalid_recovery_commit</c>, then git's
+    /// own refusal. A fresh pin is three processes, not five.
+    /// </summary>
     private async Task<LandingGitResult> PinWithPrefixAsync(string repository, string recoveryRef, string sha, CancellationToken ct)
     {
         if (!IsOid(sha))
             return new(1, "", "invalid_recovery_identity");
         var valid = await RunAsync(repository, ["check-ref-format", recoveryRef], ct);
         if (!valid.Succeeded) return new(1, "", "invalid_recovery_ref");
+        var commit = false;
+        IOException? commitFault = null;
+        try { commit = await CommitAsync(repository, sha, ct) == sha; }
+        catch (IOException ex) { commitFault = ex; }
+        var created = commit
+            ? await RunAsync(repository, ["update-ref", recoveryRef, sha, new string('0', sha.Length)], ct)
+            : null;
+        if (created is { Succeeded: true }) return created;
         var existing = await RunAsync(repository, ["show-ref", "--verify", "--hash", recoveryRef], ct);
         if (existing.Succeeded)
             return existing.Output.Trim() == sha ? new(0, "", "") : new(1, "", "recovery_ref_collision");
         // show-ref --verify uses 128 for a missing named ref, so use --exists (Git >= 2.43)
-        // to distinguish absence (2) from a lookup error (1) before expected-old creation.
+        // to distinguish absence (2) from a lookup error (1).
         var existence = await RunAsync(repository, ["show-ref", "--exists", recoveryRef], ct);
         if (existence.ExitCode != 2) return new(1, "", "recovery_ref_query_error");
-        if (await CommitAsync(repository, sha, ct) != sha) return new(1, "", "invalid_recovery_commit");
-        return await RunAsync(repository, ["update-ref", recoveryRef, sha, new string('0', sha.Length)], ct);
+        if (commitFault is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(commitFault);
+        return created ?? new(1, "", "invalid_recovery_commit");
     }
 
     public async Task<LandingGitResult> PushAsync(string repository, LandingDestination destination, string sha, CancellationToken ct)

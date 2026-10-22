@@ -234,12 +234,14 @@ public class TaskProgressGit : LandingGit, ITaskProgressGit
             lease = await _leases.TryAcquireAsync(repository, ct);
         await using var owned = lease;
 
+        // CARD-1432 G2: create-if-absent first (expected old value all zeros); only git's refusal reads the ref
+        // back, so a repeat of the same id still succeeds and another id is still recovery_ref_collision.
+        var update = await RunAsync(repository, ["update-ref", pin, sha, new string('0', sha.Length)], ct);
+        if (update.Succeeded) return new(true, pin);
         var existing = await RunAsync(repository, ["show-ref", "--verify", "--hash", pin], ct);
         if (existing.Succeeded)
             return existing.Output.Trim() == sha ? new(true, pin) : new(false, pin, "recovery_ref_collision");
-
-        var update = await RunAsync(repository, ["update-ref", pin, sha, new string('0', sha.Length)], ct);
-        return update.Succeeded ? new(true, pin) : new(false, pin, "pin_failed");
+        return new(false, pin, "pin_failed");
     }
 
     public async Task<IReadOnlyList<string>> ListProgressPinsAsync(string repository, Guid taskId, CancellationToken ct)

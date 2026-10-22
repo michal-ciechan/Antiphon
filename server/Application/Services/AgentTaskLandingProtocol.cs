@@ -834,28 +834,41 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         }
     }
 
-    /// <summary>DB coordinates, recovery pins and one <c>show-ref</c> of the branch (I-1, I-2, I-8).</summary>
-    private async Task RecheckSourceAsync(AgentTaskLanding op, CancellationToken ct)
-    {
-        await RecheckSourceIdentityAndPinsAsync(op, ct);
-        var branch = await LandOperationFactory.ReadBranchAsync(git, op.RepositoryPath, op.SourceFullRef, ct);
-        Require(branch.Sha is not null && branch.Sha == ExpectedBranch(op), branch.Reason ?? "source_changed");
-    }
+    /// <summary>DB coordinates, recovery pins and the branch, read by one <c>show-ref</c> (I-1, I-2, I-8; CARD-1432 G1).</summary>
+    private Task RecheckSourceAsync(AgentTaskLanding op, CancellationToken ct)
+        => RecheckSourceIdentityAndPinsAsync(op, includeBranch: true, ct);
 
     /// <summary>Immutable owner/coordinates and recovery pins; safe before a saved push is reconciled.</summary>
-    private async Task RecheckSourceIdentityAndPinsAsync(AgentTaskLanding op, CancellationToken ct)
+    private Task RecheckSourceIdentityAndPinsAsync(AgentTaskLanding op, CancellationToken ct)
+        => RecheckSourceIdentityAndPinsAsync(op, includeBranch: false, ct);
+
+    /// <summary>
+    /// CARD-1432 G1: the recovery pins and, when asked, the source branch are read by one <c>show-ref --verify</c>
+    /// instead of one process per pin plus one for the branch. The reasons keep their order: a pin missing or moved
+    /// refuses <c>recovery_pin_changed</c> before the branch is judged; a branch absent from the batch is re-read
+    /// alone on that refusal path only, which still tells <c>source_ref_missing</c> from <c>source_ref_error</c>;
+    /// a branch that moved is <c>source_changed</c>.
+    /// </summary>
+    private async Task RecheckSourceIdentityAndPinsAsync(AgentTaskLanding op, bool includeBranch, CancellationToken ct)
     {
         await RequireTaskIdentityAsync(op, ct);
         var pins = new List<(string Name, string Sha)>();
         if (op.SourcePinned) pins.Add(("source", op.OriginalSourceSha));
         if (op.TargetPinned) pins.Add(("target-before", op.TargetBeforeSha));
         if (op.PreparedPinned) pins.Add(("prepared", op.RebasedSourceSha!));
+        var refs = pins.Select(pin => op.RecoveryRefPrefix + "/" + pin.Name).ToList();
+        if (includeBranch) refs.Add(op.SourceFullRef);
+        var read = await git.ReadRefsAsync(op.RepositoryPath, refs, ct);
         foreach (var pin in pins)
+            Require(read.TryGetValue(op.RecoveryRefPrefix + "/" + pin.Name, out var sha) && sha == pin.Sha, "recovery_pin_changed");
+        if (!includeBranch) return;
+        if (!read.TryGetValue(op.SourceFullRef, out var branchSha))
         {
-            var read = await git.RunAsync(op.RepositoryPath,
-                ["show-ref", "--verify", "--hash", op.RecoveryRefPrefix + "/" + pin.Name], ct);
-            Require(read.Succeeded && read.Output.Trim() == pin.Sha, "recovery_pin_changed");
+            var branch = await LandOperationFactory.ReadBranchAsync(git, op.RepositoryPath, op.SourceFullRef, ct);
+            Require(branch.Sha is not null, branch.Reason ?? "source_changed");
+            branchSha = branch.Sha!;
         }
+        Require(branchSha == ExpectedBranch(op), "source_changed");
     }
 
     private async Task<bool> PreparationChangedAsync(AgentTaskLanding op, LandSourceCoordinates coordinates,
