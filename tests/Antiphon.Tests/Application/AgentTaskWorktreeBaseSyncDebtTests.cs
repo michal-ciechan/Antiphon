@@ -122,6 +122,55 @@ public class AgentTaskWorktreeBaseSyncDebtTests
         selected.SourceSha.ShouldBe(world.S);
     }
 
+    [Test]
+    public async Task C1480_start_ref_bypasses_debt_guard()
+    {
+        using var repo = new ScratchGitRepo("c1480-start-ref");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var world = await SeedAsync(db, repo);
+        AddDebt(db, world.Owner, world.B, AbsentSha, AgentTaskSyncDebtState.Pending);
+        await db.SaveChangesAsync();
+        var request = NewRequest(repo, world.Card.Id);
+        request.WorktreeBaseRequestedRef = world.B;
+        var trace = new TraceGit();
+
+        var selected = await ResolveAsync(db, request, trace);
+
+        selected.Decision.ShouldBe(CardWorktreeBaseDecision.Target);
+        selected.Reason.ShouldBeNull();
+        selected.GitCommands.ShouldBe(0);
+        trace.Commands.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments("ready")]
+    [Arguments("same-tip")]
+    [Arguments("prior-attempt")]
+    public async Task C1480_paid_or_foreign_debts_do_not_change_selection(string shape)
+    {
+        using var repo = new ScratchGitRepo("c1480-paid");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var world = await SeedAsync(db, repo);
+        await db.SaveChangesAsync();
+        var baseline = await ResolveAsync(db, NewRequest(repo, world.Card.Id));
+        baseline.Decision.ShouldBe(CardWorktreeBaseDecision.Target);
+
+        if (shape == "prior-attempt") world.Owner.Attempt = 2;
+        AddDebt(db, world.Owner, world.B, shape == "same-tip" ? world.B : world.S,
+            shape == "ready" ? AgentTaskSyncDebtState.Ready : AgentTaskSyncDebtState.Pending,
+            attempt: 1);
+        await db.SaveChangesAsync();
+        var actual = await ResolveAsync(db, NewRequest(repo, world.Card.Id));
+
+        actual.Decision.ShouldBe(baseline.Decision);
+        actual.SourceTaskId.ShouldBe(baseline.SourceTaskId);
+        actual.SourceSha.ShouldBe(baseline.SourceSha);
+        actual.Reason.ShouldBe(baseline.Reason);
+        actual.CandidateWarnings.SequenceEqual(baseline.CandidateWarnings).ShouldBeTrue();
+    }
+
     private sealed record World(Card Card, AgentTask Owner, string B, string S, string Diverged);
 
     /// <summary>

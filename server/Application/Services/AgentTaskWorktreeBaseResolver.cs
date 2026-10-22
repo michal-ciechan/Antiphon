@@ -29,6 +29,7 @@ public sealed record CardWorktreeBaseSelection(
     public IReadOnlyList<string> CandidateWarnings => Warnings ?? [];
     public bool Incomplete => Reason is "inspection_timeout" or "candidate_limit"
         or "git_command_limit" or "git_inspection_error";
+    public bool SyncUnverified => Reason == "source_sync_unverified";
 }
 
 /// <summary>
@@ -127,6 +128,8 @@ public sealed class AgentTaskWorktreeBaseResolver(
                 .Concat(inventory.PendingLands.Where(p => pendingLand.Contains(p.Task.Id))
                     .Select(p => p.Task.WorktreeBranch!)).Distinct(StringComparer.Ordinal).ToArray();
             var commits = await inspection.BranchCommitsAsync(branches);
+            var unverified = await ApplySettledSourcesAsync(inventory, inspectable.Concat(inventory.PendingLands
+                .Where(p => pendingLand.Contains(p.Task.Id)).Select(p => p.Task)), commits, inspection, warnings);
             var merged = await inspection.MergedBranchesAsync(target, branches);
             bool IsMerged(string branch) => commits.TryGetValue(branch, out var tip)
                 && merged.TryGetValue(branch, out var mergedTip) && tip == mergedTip;
@@ -142,12 +145,41 @@ public sealed class AgentTaskWorktreeBaseResolver(
                     pendingLand.Remove(row.Id);
                     continue;
                 }
+                if (unverified.TryGetValue(row.Id, out var unpaid))
+                {
+                    warnings.Add(Unverified(row, unpaid, commits));
+                    return Result(CardWorktreeBaseDecision.WaitForLand, row.Id, row.WorktreeBranch, reason: "pending_land_unknown");
+                }
                 if (!commits.TryGetValue(row.WorktreeBranch!, out var pendingSha))
                     return Result(CardWorktreeBaseDecision.WaitForLand, row.Id, row.WorktreeBranch, reason: "pending_land_unknown");
                 if (!IsMerged(row.WorktreeBranch!)
                     && await inspection.ContainsAsync(pendingSha, target) != DelegationWorktreeService.CommitContainment.Contained)
                     return Result(CardWorktreeBaseDecision.WaitForLand, row.Id, row.WorktreeBranch, pendingSha, "pending_land");
                 pendingLand.Remove(row.Id);
+            }
+            // CARD-1480 D-2: a settled source this store cannot prove is never replaced by the stale local tip.
+            foreach (var (row, unpaid) in unverified.Values)
+            {
+                var settled = unpaid.SourceSha!.ToLowerInvariant();
+                var repo = row.RepoPath is { } original && Directory.Exists(original) ? original : row.WorktreePath;
+                if (!SameDestination(row.MergeTargetRef, task.MergeTargetRef) || repo is null || !Directory.Exists(repo))
+                    continue;
+                try
+                {
+                    if (!string.Equals(common, await inspection.CommonAsync(repo), PathComparison)) continue;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException and not WorktreeBaseInspectionLimitException)
+                { continue; }
+                if (task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Target)
+                {
+                    warnings.Add($"Fresh worktree omits task {Short(row.Id)} branch {row.WorktreeBranch} @ {settled} "
+                        + $"(settled source, sync debt {unpaid.State}, not verified here).");
+                    continue;
+                }
+                warnings.Add(Unverified(row, unpaid, commits));
+                if (task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task && task.RequestedWorktreeBaseTaskId != row.Id)
+                    continue;
+                return Result(CardWorktreeBaseDecision.Unknown, row.Id, row.WorktreeBranch, settled, "source_sync_unverified");
             }
             foreach (var row in inspectable.Where(t => !commits.ContainsKey(t.WorktreeBranch!)
                 && !(task.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task
@@ -350,6 +382,44 @@ public sealed class AgentTaskWorktreeBaseResolver(
                 ? CardWorktreeBaseDecision.Target : CardWorktreeBaseDecision.Unknown,
                 reason: "git_inspection_error");
         }
+    }
+
+    /// <summary>
+    /// CARD-1480 D-1: an unpaid sync debt owes the local branch a fast-forward to the pushed source.
+    /// Use that source when this object store proves it fast-forwards the local tip; return the
+    /// rows whose source cannot be verified here.
+    /// </summary>
+    private static async Task<Dictionary<Guid, (AgentTask Task, AgentTaskSyncDebt Debt)>> ApplySettledSourcesAsync(
+        CardSiblingInventory.Snapshot inventory, IEnumerable<AgentTask> rows, Dictionary<string, string> commits,
+        WorktreeBaseInspection inspection, List<string> warnings)
+    {
+        var unverified = new Dictionary<Guid, (AgentTask Task, AgentTaskSyncDebt Debt)>();
+        foreach (var row in rows.DistinctBy(t => t.Id))
+        {
+            if (!inventory.SyncDebts.TryGetValue(row.Id, out var debt)) continue;
+            var branch = row.WorktreeBranch!;
+            var settled = debt.SourceSha!.ToLowerInvariant();
+            var local = commits.GetValueOrDefault(branch);
+            if (local == settled) continue;
+            if (local is not null && await inspection.CommitAsync(settled) == settled
+                && await inspection.AncestorAsync(local, settled))
+            {
+                commits[branch] = settled;
+                warnings.Add($"Task {Short(row.Id)} branch {branch} local tip {local} is behind its settled source {settled} "
+                    + $"(sync debt {debt.State}); using {settled}.");
+                continue;
+            }
+            unverified[row.Id] = (row, debt);
+        }
+        return unverified;
+    }
+
+    private static string Unverified(AgentTask row, AgentTaskSyncDebt debt, Dictionary<string, string> commits)
+    {
+        var settled = debt.SourceSha!.ToLowerInvariant();
+        return $"Task {Short(row.Id)} branch {row.WorktreeBranch} owes a settlement sync to {settled} (sync debt {debt.State}) "
+            + $"and the local branch is at {commits.GetValueOrDefault(row.WorktreeBranch!) ?? "no local commit"}; "
+            + $"that source cannot be verified here. Retry after the sync, or recreate with -StartRef {settled}.";
     }
 
     private static bool SameDestination(string? left, string? right) =>
