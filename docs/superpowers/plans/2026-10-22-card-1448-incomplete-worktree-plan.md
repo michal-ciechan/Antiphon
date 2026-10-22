@@ -43,10 +43,17 @@ report): 8 executed, the 5 behaviour witnesses failed, the 3 guards passed.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1-fix | `tests/Antiphon.Tests -> bin-c1448-fix/` | c1448-manager | `/*/*/WorktreeManagerGitIntegrationTests/C1448_*` | D-1 listing, D-2 recover (with and without directory), refuse on another lock reason or a moved branch | 5 passed, 0 failed/skipped | 5 | 8 |
 | CP-2 | S1-fix | CP-1 | c1448-service | `/*/*/DelegationWorktreeTests/C1448_*` | D-1 never adopts (pre-create and fallback), recreate records the base, a complete creation is still adopted | 3 passed, 0 failed/skipped | 3 | 4 |
-| CP-3 | S1-fix | CP-1 | c1448-regression | `/*/*/(WorktreeManager*)\|(DelegationWorktreeTests*)/*` | regression over every `WorktreeManager*` class and `DelegationWorktreeTests` | all executed pass, 0 failed/skipped | 70 | 12 |
+| CP-3 | S1-fix | CP-1 | c1448-regression | `/*/*/(WorktreeManagerTests*)\|(WorktreeManagerSafetyTests*)\|(WorktreeManagerStartRefLocalOnlyTests*)\|(DelegationWorktreeTests*)/*` | regression over the other `WorktreeManager*` classes and `DelegationWorktreeTests` | all executed pass, 0 failed/skipped (59) | 55 | 10 |
+| CP-4 | S1-fix | CP-1 | c1448-git-regression | `/*/*/WorktreeManagerGitIntegrationTests/(C1213*)\|(C1448*)\|(WorktreeManager_create*)\|(WorktreeManager_list*)\|(WorktreeManager_raw_remove_preserves*)\|(WorktreeManager_raw_remove_cannot*)\|(ScanDelegateWorktrees*)\|(WorktreeManager_remove*)\|(WorktreeManager_try*)\|(WorktreeJanitor*)\|(WorktreeManager_touch*)` | regression over `WorktreeManagerGitIntegrationTests` except the inherited Linux red below | all executed pass, 0 failed/skipped (21) | 21 | 4 |
 
 This is a closed list, run once through the checkpoint tool on server2 at the reported tip. Linux only;
 nothing runs on the desktop. D-3 is a log line with no checkpoint.
+
+CP-4 leaves out `WorktreeManager_raw_remove_refuses_without_authority`: it is red on Linux at the base
+(`e4db491e7`, 1 executed, 1 failed) because it asserts that `worktree list --porcelain` does not
+contain a path that is still registered, which holds only on Windows where porcelain prints forward
+slashes. The class is `exclude` in `tests/linux-test-roster.json` (CARD-0590). The first run of the
+original single CP-3 row (run 20261022-170015-54a7, 81 executed, 80 passed) showed it.
 
 ### Cost
 
