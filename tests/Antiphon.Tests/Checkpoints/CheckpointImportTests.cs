@@ -448,6 +448,73 @@ public sealed class CheckpointImportTests : CheckpointTestBase
         text.ShouldContain("--row-timeout 20m --total-timeout 70m");
     }
 
+    [Test]
+    public void C1493_DuplicateBuild_second_equivalent_build_warns_once()
+    {
+        var imported = PlanTableImporter.ImportMarkdown(Table("",
+            FilterRow("CP-1", "`tests/Antiphon.Tests -> bin-a/`"),
+            FilterRow("CP-2", "`tests/Antiphon.Tests -> bin-b/`"),
+            FilterRow("CP-3", "`tests/Antiphon.Tests -> bin-b/`"),
+            FilterRow("CP-4", "CP-2")));
+
+        imported.ExitCode.ShouldBe(0, imported.Error);
+        imported.Warnings.ShouldBe(["CP-2: Build 'bin-b' duplicates 'bin-a' from CP-1 (same project 'tests/Antiphon.Tests', After 'S1', Repeat 1); write 'CP-1' in the Build cell to reuse it and save one build"]);
+        var manifest = imported.Manifest.ShouldNotBeNull();
+        manifest.Builds.Select(build => build.Id).ShouldBe(["bin-a", "bin-b"]);
+        manifest.Checkpoints.Select(row => row.Build).ShouldBe(["bin-a", "bin-b", "bin-b", "bin-b"]);
+    }
+
+    [Test]
+    public void C1493_DuplicateBuild_project_spellings_normalise()
+    {
+        var imported = PlanTableImporter.ImportMarkdown(Table("| Repeat",
+            FilterRow("CP-1", @"`tests\Antiphon.Tests\Antiphon.Tests.csproj -> bin-a/`", "S1", "| 3"),
+            FilterRow("CP-2", "`./tests/Antiphon.Tests/ -> bin-b/`", "S1", "| 3")));
+
+        imported.ExitCode.ShouldBe(0, imported.Error);
+        imported.Warnings.ShouldBe(["CP-2: Build 'bin-b' duplicates 'bin-a' from CP-1 (same project 'tests/Antiphon.Tests', After 'S1', Repeat 3); write 'CP-1' in the Build cell to reuse it and save one build"]);
+    }
+
+    [Test]
+    public void C1493_distinct_after_repeat_or_project_do_not_warn()
+    {
+        var imported = PlanTableImporter.ImportMarkdown(Table("| Repeat",
+            FilterRow("CP-1", "`tests/Antiphon.Tests -> bin-a/`", "S1", "|"),
+            FilterRow("CP-2", "`tests/Antiphon.Tests -> bin-b/`", "S2", "|"),
+            FilterRow("CP-3", "`tests/Antiphon.Tests -> bin-c/`", "S1", "| 2"),
+            FilterRow("CP-4", "`tests/Antiphon.SessionRunner.Tests -> bin-d/`", "S1", "|"),
+            FilterRow("CP-5", "`tests/Antiphon.Tests/Other.csproj -> bin-e/`", "S1", "|"),
+            FilterRow("CP-6", "CP-1", "S1", "|"),
+            FilterRow("CP-7", "`tests/Antiphon.Tests -> bin-a/`", "S1", "|")));
+
+        imported.ExitCode.ShouldBe(0, imported.Error);
+        imported.Warnings.ShouldBeEmpty();
+        imported.Manifest.ShouldNotBeNull().Builds.Count.ShouldBe(5);
+    }
+
+    [Test]
+    public async Task C1493_warning_keeps_import_exit_and_output()
+    {
+        var root = TempDir();
+        var plan = Path.Combine(root, "plan.md");
+        var output = Path.Combine(root, "import.yaml");
+        File.WriteAllText(plan, Table("",
+            FilterRow("CP-1", "`tests/Antiphon.Tests -> bin-a/`"),
+            FilterRow("CP-2", "`tests/Antiphon.Tests -> bin-b/`")));
+        (await Antiphon.Checkpoints.Program.RunAsync(["import", "--plan", plan, "--repo-root", root, "--out", output])).ShouldBe(0);
+        var manifest = ManifestLoader.LoadFile(output, root);
+        manifest.Builds.Select(build => build.Id).ShouldBe(["bin-a", "bin-b"]);
+        manifest.Checkpoints.Select(row => row.Build).ShouldBe(["bin-a", "bin-b"]);
+
+        var refused = PlanTableImporter.ImportMarkdown(Table("",
+            FilterRow("CP-1", "`tests/Antiphon.Tests -> bin-a/`"),
+            FilterRow("CP-2", "`tests/Antiphon.Tests -> bin-b/`"),
+            FilterRow("CP-3", "CP-9")));
+        refused.ExitCode.ShouldBe(2);
+        refused.Error.ShouldBe("CP-3: reuses CP-9 which is not an earlier row");
+        refused.Manifest.ShouldBeNull();
+    }
+
     private static string[] FilterMethods(string? filter)
     {
         filter.ShouldNotBeNull();
