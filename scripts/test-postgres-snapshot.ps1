@@ -1448,7 +1448,16 @@ function Test-WindowsAclRules {
             $private = Join-Path $dir 'private'
             $made = New-SnapshotPrivateDirectory $private
             Assert-True ($made -eq $true) 'live: private directory is created' "made=$made"
-            $acl = Get-Acl -LiteralPath $private
+            # Access section only: Get-Acl/Set-Acl round-trip every section and
+            # Set-Acl then needs SeSecurityPrivilege for the SACL, which an
+            # ordinary desktop session does not hold (Review fe40955b).
+            $di = New-Object System.IO.DirectoryInfo $private
+            $accessOnly = [System.Security.AccessControl.AccessControlSections]::Access
+            if ($PSVersionTable.PSEdition -eq 'Desktop') {
+                $acl = $di.GetAccessControl($accessOnly)
+            } else {
+                $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($di, $accessOnly)
+            }
             $caller = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
             $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
             $names = @($rules | ForEach-Object { $_.IdentityReference.Value })
@@ -1459,7 +1468,11 @@ function Test-WindowsAclRules {
             $usersSid = New-Object System.Security.Principal.SecurityIdentifier($users)
             $grant = New-Object System.Security.AccessControl.FileSystemAccessRule($usersSid, [System.Security.AccessControl.FileSystemRights]::ReadAndExecute, 'ContainerInherit,ObjectInherit', 'None', 'Allow')
             $acl.AddAccessRule($grant)
-            Set-Acl -LiteralPath $private -AclObject $acl
+            if ($PSVersionTable.PSEdition -eq 'Desktop') {
+                $di.SetAccessControl($acl)
+            } else {
+                [System.IO.FileSystemAclExtensions]::SetAccessControl($di, $acl)
+            }
             Assert-True (-not (Test-SnapshotWindowsOwnedDirectory $private)) 'live: Users read on a run directory is refused' 'accepted'
             $liveState = Test-SnapshotStagingRoot $private
             Assert-True ($liveState -eq 'staging-mode') 'live: Users read on the staging root is staging-mode' $liveState
