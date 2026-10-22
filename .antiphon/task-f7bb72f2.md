@@ -79,6 +79,30 @@ passes. The kept `bin-c1486-s3-red/` was deleted by hand.
 - `scripts/check-evidence-diff.ps1` reported 0 violations over `db1e72fd3..60d484226` (2 commits)
   and over `713801a8f..60d484226` (33 commits).
 
+## Run 2 red at 295d4bbed: the witness assertion was too strict
+
+Run `20261022-185731-dea7` (CP-6 + CP-11) was started at `295d4bbed20b2c15c26cd894c48241b6a3586958`.
+CP-6 was red: 3 executed, 1 passed, 2 failed. Both `Untyped_*` methods passed every behaviour
+assertion: Blocked, Marked evidence, the six retained fields, the session kept, the ask Canceled.
+They failed only on my own extra check, `CallerNotesAsync(...).ShouldBe(notesBefore + 1)`, which
+expected 3 notes and found 2.
+
+Cause: `SessionMessageQueueService.EnqueueAsync` skips a Delegation note with the same source task
+and the same report digest (CARD-0320). The Block delivers the retained report, and the
+sync-block note already carried that report, so no new row is written. This is existing behaviour
+and not a fix defect. The plan asks only for "the parent note carrying the retained report".
+
+Repair (test only): the count must stay unchanged, because delivering the waiting turn would write
+a row with a new digest, and a caller note for the task must carry the retained body. CP-11 was
+stopped while its build was running, since the tip had to change. Both kept `bin-*` directories
+were deleted. No source was edited while that run was in flight.
+
+Observation for the caller: a Block that keeps the retained report does not send the caller a new
+note, because of the same-digest dedupe. The same holds for the S2 unmarked Block and for the
+CARD-1472 token-only Block. The caller sees the re-Block on the task, its events and the attention
+feed, not in a new session note. If the caller should be told, that needs a separate card: it is a
+queue/notification decision, outside D-6.
+
 ## Final checkpoint run
 
 CP-6 (S3 green) and CP-11 (the reply-service integration classes) run in one checkpoint run at
