@@ -27,6 +27,9 @@ internal sealed class LandVerificationBuildGraph
     /// <summary>Manifest count, or null when the manifest cannot be read.</summary>
     internal static int? AuditedCount => Current.Count;
 
+    // CARD-1409 (Review 8989ece8 F1): a tracked obj/ .props or .targets, which Microsoft.Common.props/.targets
+    // import by wildcard, is included by its extension; the audit script refuses it, so no manifest ever
+    // covers such a tree and a docs-only land builds.
     internal bool Includes(string path)
     {
         var name = Path.GetFileName(path);

@@ -30,6 +30,15 @@
 # project is imported by it; both resolve includes from the project directory.
 # ReadLinesFromFile, Copy, and property functions that read files are not
 # inspected.
+# CARD-1409 (Review 8989ece8 F1): Microsoft.Common.props and .targets import
+# $(MSBuildProjectExtensionsPath)$(MSBuildProjectFile).*.props and .*.targets,
+# obj/ by default, and the audit does not follow those wildcards. A tracked
+# definition file under any obj/ path segment (case-insensitive) is refused by
+# its path, whatever it contains. A definition file that sets
+# BaseIntermediateOutputPath, MSBuildProjectExtensionsPath or
+# IntermediateOutputPath is refused because a redirected extension directory
+# cannot be evaluated; reading one of them inside another property is not
+# setting it.
 # ASCII-only: must parse under Windows PowerShell 5.1.
 #
 # Usage:
@@ -95,6 +104,28 @@ function Test-DefinitionPath([string]$Path) {
 function Test-ProjectUserFile([string]$Path) {
     $name = [System.IO.Path]::GetFileName($Path).ToLowerInvariant()
     return $name.EndsWith('proj.user', [System.StringComparison]::Ordinal)
+}
+
+# CARD-1409 (Review 8989ece8 F1): obj/ is where Microsoft.Common.props/.targets import
+# $(MSBuildProjectFile).*.props/.targets from by wildcard; the audit does not follow them.
+function Test-PathUnderObjDirectory([string]$Path) {
+    $segments = $Path.Replace('\', '/').Split('/')
+    for ($i = 0; $i -lt ($segments.Length - 1); $i++) {
+        if ([string]::Equals($segments[$i], 'obj', [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
+# CARD-1409 (Review 8989ece8 F1): an element that sets a redirect of the extension or intermediate
+# directory, wherever it sits; returns the element name as written, or $null.
+function Get-IntermediateRedirectElement($Doc) {
+    foreach ($node in $Doc.GetElementsByTagName('*')) {
+        $local = [string]$node.LocalName
+        foreach ($name in @('BaseIntermediateOutputPath', 'MSBuildProjectExtensionsPath', 'IntermediateOutputPath')) {
+            if ($local.Equals($name, [System.StringComparison]::OrdinalIgnoreCase)) { return $local }
+        }
+    }
+    return $null
 }
 
 function Test-ProjectXml([string]$Path) {
@@ -494,6 +525,14 @@ function Format-WildcardImportRefusal([string]$Path, [string]$ProjectAttr) {
     return 'definition file import uses a wildcard the audit does not follow; -Update cannot approve it: ' + $Path + ' Import Project=' + $ProjectAttr
 }
 
+function Format-ObjDefinitionRefusal([string]$Path) {
+    return 'definition file is tracked under an obj/ directory that MSBuild imports by wildcard; -Update cannot approve it: ' + $Path
+}
+
+function Format-IntermediateRedirectRefusal([string]$Path, [string]$Name) {
+    return 'definition file redirects the intermediate directory, which the audit cannot evaluate; -Update cannot approve it: ' + $Path + ' ' + $Name
+}
+
 function Get-GitBytes([string]$Root, [string]$Arguments) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = 'git'
@@ -546,6 +585,10 @@ function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows) {
         }
         catch {
             Exit-Audit 1 ('definition file is not readable project XML and cannot be approved: ' + $path)
+        }
+        $redirect = Get-IntermediateRedirectElement $doc
+        if ($null -ne $redirect) {
+            Exit-Audit 1 (Format-IntermediateRedirectRefusal $path ([string]$redirect))
         }
         $known[$path] = $doc
     }
@@ -618,6 +661,7 @@ for ($i = 0; $i -lt $last; $i++) {
     if ((-not $blob) -and (-not $gitlink)) { Exit-Audit 1 'ls-tree row is not a blob or commit' }
     if (-not (Test-FullObjectId $oid)) { Exit-Audit 1 'ls-tree object id is not a full id' }
     if (-not (Test-DefinitionPath $path)) { continue }
+    if (Test-PathUnderObjDirectory $path) { Exit-Audit 1 (Format-ObjDefinitionRefusal $path) }
     $regular = ($mode -eq '100644' -or $mode -eq '100755') -and ($kind -eq 'blob')
     if (-not $regular) { Exit-Audit 1 'definition path is not a regular blob' }
     [void]$selected.Add($row)
