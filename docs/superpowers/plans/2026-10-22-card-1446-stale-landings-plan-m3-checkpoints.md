@@ -22,7 +22,8 @@ TUnit's `TreeNodeFilter` rejects a `/` inside an OR operand and `(ClassA)|(Class
 RV-2 is unlisted in the plan: S5 replaces the SettledTask lane's `PersistCooldownAsync` cursor write with the
 preloaded-cursor path the dedupe needs and changes when a candidate row is written, which
 `WorktreeResidueSweepTests` (`C459_CooldownSurvivesRestart`, `C459_FairnessSurvivesRestart`, `C459_BudgetIsShared`,
-`C459_OnlyCompleteCountsRemoved`, ...) covers and CP-16 does not. It reuses CP-15's build.
+`C459_OnlyCompleteCountsRemoved`, ...) covers and CP-16 does not. It reuses CP-15's build. Its `Min` is 15: the class has
+15 `[Test]` methods (run `20261022-101614-6c82` executed 15/15; the first draft of this row said 18, a miscount).
 
 ### Checkpoints
 
@@ -34,4 +35,4 @@ implementation commit exists.
 | CP-14 | S5-test | `tests/Antiphon.Tests -> bin-c1446-s5red/` | s5-red | `/*/*/WorktreeResidueCandidateRowTests/C1446_unchanged_held_rows_are_not_rewritten` | V-11 witness | **red**: 1 executed, 1 failed (second run writes N rows) | 1 | 7 |
 | CP-15 | S5-impl | `tests/Antiphon.Tests -> bin-c1446-s5/` | s5-green | `/*/*/WorktreeResidueCandidateRowTests/*` | V-11, V-12 | all listed, 0 failed/skipped | 3 | 8 |
 | CP-16 | S5-impl | CP-15 | s5-regress | `/*/*/(WorktreeResidueRegistrationTests*)\|(WorktreeRetirementRaceTests*)\|(CardWorktreeMirrorCleanupTests*)/*` | V-13 | all listed, 0 failed/skipped | 20 | 12 |
-| RV-2 | S5-impl | CP-15 | s5-sweep | `/*/*/WorktreeResidueSweepTests/*` | unlisted (S5 cursor write path; see above) | all listed, 0 failed/skipped | 18 | 8 |
+| RV-2 | S5-impl | CP-15 | s5-sweep | `/*/*/WorktreeResidueSweepTests/*` | unlisted (S5 cursor write path; see above) | all listed, 0 failed/skipped | 15 | 8 |
