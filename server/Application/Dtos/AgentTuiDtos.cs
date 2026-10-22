@@ -91,7 +91,21 @@ public sealed record AgentTuiRunnerTypeDto(
     IReadOnlyList<AgentTuiAuthenticationMode> AuthenticationModes,
     IReadOnlyList<AgentTuiModelDto> CuratedModels,
     IReadOnlyList<AgentTuiCapabilityDto> Capabilities,
-    string Guidance);
+    string Guidance,
+    AgentTuiProviderEndpointDescriptorDto ProviderEndpoint);
+
+/// <summary>
+/// CARD-0167 S4 (plan D-12): what a provider endpoint setting projects for one runner kind, names
+/// only. <see cref="EnvironmentNames"/> lists the variables the projection sets (ordinal order, the
+/// key variable included even though Claude and Grok set it only when a key name is given);
+/// <see cref="ArgumentTemplate"/> is the argv it appends with the base URL as the literal
+/// <c>&lt;url&gt;</c>. Never a key value, never the <c>{{key:...}}</c> placeholder.
+/// </summary>
+public sealed record AgentTuiProviderEndpointDescriptorDto(
+    bool Supported,
+    bool KeyRequired,
+    IReadOnlyList<string> EnvironmentNames,
+    IReadOnlyList<string> ArgumentTemplate);
 
 public sealed record AgentTuiValidationSummaryDto(
     AgentTuiValidationStatus Status,

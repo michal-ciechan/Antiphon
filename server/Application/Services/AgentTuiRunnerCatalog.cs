@@ -66,7 +66,8 @@ public sealed class AgentTuiRunnerCatalog
             [AgentTuiAuthenticationMode.WrapperManaged, AgentTuiAuthenticationMode.ManagedEnvironment],
             [],
             RawCapabilities(),
-            "Raw profiles do not advertise runner-specific session capabilities."),
+            "Raw profiles do not advertise runner-specific session capabilities.",
+            ProviderEndpointDescriptor(kind)),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown agent runner kind.")
     };
 
@@ -104,7 +105,24 @@ public sealed class AgentTuiRunnerCatalog
                     index == 0))
                 .ToArray(),
             capabilities,
-            guidance);
+            guidance,
+            ProviderEndpointDescriptor(kind));
+
+    /// <summary>
+    /// CARD-0167 S4: the descriptor comes from <see cref="ProviderEndpointProjection.Describe"/>, so the
+    /// catalogue and the launch path cannot name different variables. Only the environment NAMES leave
+    /// here: Describe's values carry the <c>{{key:&lt;name&gt;}}</c> placeholder, which is launch shape,
+    /// not catalogue content. The argument template carries only the literal <c>&lt;url&gt;</c>.
+    /// </summary>
+    private static AgentTuiProviderEndpointDescriptorDto ProviderEndpointDescriptor(AgentKind kind)
+    {
+        var described = ProviderEndpointProjection.Describe(kind);
+        return new AgentTuiProviderEndpointDescriptorDto(
+            ProviderEndpoint.IsSupportedKind(kind),
+            ProviderEndpoint.RequiresKeyName(kind),
+            described.Env.Keys.Order(StringComparer.Ordinal).ToArray(),
+            described.Args.ToArray());
+    }
 
     private static IReadOnlyList<AgentTuiCapabilityDto> ClaudeCapabilities(
         IReadOnlyList<string>? arguments) =>
