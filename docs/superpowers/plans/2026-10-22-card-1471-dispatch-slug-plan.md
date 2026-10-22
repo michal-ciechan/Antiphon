@@ -61,10 +61,13 @@ slug, weakening `IX_Agents_Slug`, production cleanup, settings or restarts.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-dispatch-save-lifecycle/` | dispatch-agent-lifecycle | `/*/*/PhoneHomeTaskDispatchProjectionTests/C_dispatch_save_*` | V-1, V-2, V-3 | all listed, 0 failed | 3 | 8 |
-| CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-dispatch-save-regression/` | dispatch-agent-regression | `/*/*/PhoneHomeTaskDispatchProjectionTests/(Runner_bound_claude_task_reaches_the_queue_projected)\|(Runner_bound_grok_task_reaches_the_queue_projected)\|(Signed_out_codex_runner_still_claims_and_reuses_a_warm_session)\|(Card_bound_runner_worktree_task_dispatches)\|(Refused_runner_task_leaves_no_pushed_branch_or_mirror)` | R-1, R-2, R-3, R-4, R-5 | all listed, 0 failed | 5 | 8 |
+| CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-dispatch-save-regression/` | dispatch-agent-regression | `/*/*/PhoneHomeTaskDispatchProjectionTests/(Runner_bound_claude_task_reaches_the_queue_projected*)\|(Runner_bound_grok_task_reaches_the_queue_projected*)\|(Signed_out_codex_runner_still_claims_and_reuses_a_warm_session*)\|(Card_bound_runner_worktree_task_dispatches*)\|(Refused_runner_task_leaves_no_pushed_branch_or_mirror*)` | R-1, R-2, R-3, R-4, R-5 | all listed, 0 failed | 5 | 8 |
 | CP-3 | S1-S2 | CP-1 | dispatch-failure-reason | `/*/*/PhoneHomeTaskDispatchProjectionTests/C_dispatch_failure_reason_names_the_violated_constraint` | F-1 | all listed, 0 failed | 1 | 3 |
 
-CP-1 and CP-2 are the card's closed rows unchanged. CP-3 is added for the brief's failure-reason
+CP-1 is the card's closed row unchanged. CP-2 is the card's row with the same five methods; its
+filter uses the `(Name*)` group form because TUnit's tree-node grammar runs zero tests for a
+`(FullName)|(FullName)` group list (run `20261022-101841-f05b` executed 0 with the card's form; each
+prefix is unique in the class, so the roster is still exactly five). CP-3 is added for the brief's failure-reason
 requirement and reuses CP-1's build (same `After` group). No Unit lane, assembly or qualification
 run; the brief asks for minimal testing.
 
