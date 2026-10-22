@@ -42,6 +42,8 @@
     <ProjectReference Include="..\..\src\Antiphon.FakeLlmApi\Antiphon.FakeLlmApi.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Native qualification must use the production normalizer, not a second interpretation. -->
+    <Compile Include="../../src/Antiphon.SessionRunner/TranscriptNormalizer.cs" Link="TestSupport/TranscriptNormalizer.cs" />
     <Compile Include="..\Shared\TestClassificationMetadata.cs" Link="TestSupport\TestClassificationMetadata.cs" />
     <Compile Include="..\Shared\TestClassificationGuardTests.cs" Link="TestSupport\TestClassificationGuardTests.cs" />
     <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
