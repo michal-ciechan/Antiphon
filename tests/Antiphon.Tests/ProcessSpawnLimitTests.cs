@@ -1,7 +1,9 @@
 using System.Reflection;
+using System.Reflection.Emit;
 using Antiphon.Tests.AgentTui;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.Application;
+using Antiphon.Tests.Scripts;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -64,9 +66,15 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Checkpoints.CheckpointRecoveryWindowsTests),
         typeof(Antiphon.Tests.Checkpoints.BuildSlotClientTests),
         typeof(Antiphon.Tests.Checkpoints.CheckpointSlotExecutorTests),
-        // CARD-1421: git-only, but asserts stale index locks against the host-wide git census,
-        // which any concurrent git exit can flip to held.
+        // CARD-1421: git-only, but its stale-lock assertions read the host-wide git census. CARD-1436
+        // (master 76cd76fa) stopped counting a git that exits mid-census; a live git older than the lock
+        // still counts, so the class stays strict and is not moved (repair task 4721be7c).
         typeof(AgentTaskLandIndexLockTests),
+        // CARD-1421 repair (Review b529639c D-1): these three call DirectoryLink.TryCreate, which runs
+        // Scripts/Fixtures/directory-link.ps1 through ScriptHarnessProcess on Windows, so they start pwsh.
+        typeof(Antiphon.Tests.Infrastructure.WorktreeGuardedCleanupTests),
+        typeof(AgentTaskLandHalfResetWindowsTests),
+        typeof(AgentTaskLandHoldVisibilityTests),
     ];
 
     // CARD-1421 Appendix B: strict-roster classes whose only children are git, in fixture-owned repositories.
@@ -147,6 +155,154 @@ public class ProcessSpawnLimitTests
             var strict = Attribute.GetCustomAttribute(type, typeof(ParallelLimiterAttribute<ProcessSpawnLimit>)) is not null;
             var git = Attribute.GetCustomAttribute(type, typeof(ParallelLimiterAttribute<GitProcessSpawnLimit>)) is not null;
             (strict && git).ShouldBeFalse($"{type.Name} carries both limiters");
+        }
+    }
+
+    // CARD-1421 repair (Review b529639c D-1): DirectoryLink runs Scripts/Fixtures/directory-link.ps1 through
+    // ScriptHarnessProcess on Windows, so a class that reaches it starts pwsh and is not git-only. The scan
+    // reflects over the compiled type: partial-class siblings, async state machines, lambdas and local
+    // functions all compile into the class or its nested types, so none of them can hide a reference.
+    private static readonly Type[] PwshBackedHelpers =
+    [
+        typeof(DirectoryLink),
+        typeof(DirectoryLinkCommand),
+        typeof(ScriptHarnessProcess),
+    ];
+
+    [Test]
+    public void Git_lane_classes_do_not_reach_the_pwsh_backed_link_helpers()
+    {
+        var gitLane = LoadableTypes(typeof(ProcessSpawnLimitTests).Assembly)
+            .Where(type => !type.IsNested
+                && Attribute.GetCustomAttribute(type, typeof(ParallelLimiterAttribute<GitProcessSpawnLimit>)) is not null)
+            .OrderBy(type => type.FullName, StringComparer.Ordinal)
+            .ToList();
+        gitLane.Count.ShouldBeGreaterThanOrEqualTo(GitOnlyClasses.Length, "the git roster is a floor of the git lane");
+
+        var offenders = gitLane
+            .SelectMany(type => HelperReferences(type).Select(reference => $"{type.Name}: {reference}"))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(line => line, StringComparer.Ordinal)
+            .ToList();
+        offenders.ShouldBeEmpty(
+            "a git-lane class reaches a pwsh-backed helper and belongs on [ParallelLimiter<ProcessSpawnLimit>]:"
+            + Environment.NewLine + string.Join(Environment.NewLine, offenders));
+    }
+
+    private static IEnumerable<Type> LoadableTypes(Assembly assembly)
+    {
+        try { return assembly.GetTypes(); }
+        catch (ReflectionTypeLoadException ex) { return ex.Types.Where(type => type is not null).Select(type => type!); }
+    }
+
+    /// <summary>Every pwsh-backed helper the type, its nested types, their signatures, locals and IL reach.</summary>
+    private static IEnumerable<string> HelperReferences(Type root)
+    {
+        const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
+            | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        var pending = new Stack<Type>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var type = pending.Pop();
+            foreach (var nested in type.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))
+                pending.Push(nested);
+            foreach (var field in type.GetFields(all))
+                if (ReachesHelper(field.FieldType, out var hit))
+                    yield return $"field {field.Name} is {hit}";
+            foreach (var method in type.GetMethods(all).Cast<MethodBase>().Concat(type.GetConstructors(all)))
+            {
+                if (method is MethodInfo info && ReachesHelper(info.ReturnType, out var returned))
+                    yield return $"{method.Name} returns {returned}";
+                foreach (var parameter in method.GetParameters())
+                    if (ReachesHelper(parameter.ParameterType, out var accepted))
+                        yield return $"{method.Name}({parameter.Name}) is {accepted}";
+                var body = method.GetMethodBody();
+                if (body is null)
+                    continue;
+                foreach (var local in body.LocalVariables)
+                    if (ReachesHelper(local.LocalType, out var held))
+                        yield return $"{method.Name} holds a {held}";
+                foreach (var member in ReferencedMembers(method, body))
+                {
+                    if (member is Type referencedType)
+                    {
+                        if (ReachesHelper(referencedType, out var named))
+                            yield return $"{method.Name} names {named}";
+                    }
+                    else if (member.DeclaringType is { } owner && ReachesHelper(owner, out var called))
+                        yield return $"{method.Name} calls {called}.{member.Name}";
+                }
+            }
+        }
+    }
+
+    private static bool ReachesHelper(Type type, out string hit)
+    {
+        hit = "";
+        var current = type;
+        while (current.HasElementType)
+            current = current.GetElementType()!;
+        if (current.IsGenericParameter)
+            return false;
+        if (current.IsConstructedGenericType)
+        {
+            foreach (var argument in current.GetGenericArguments())
+                if (ReachesHelper(argument, out hit))
+                    return true;
+            current = current.GetGenericTypeDefinition();
+        }
+        for (var outer = current; outer is not null; outer = outer.DeclaringType)
+        {
+            if (PwshBackedHelpers.Contains(outer))
+            {
+                hit = outer.Name;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static readonly Dictionary<short, OpCode> OpCodeByValue = typeof(OpCodes)
+        .GetFields(BindingFlags.Public | BindingFlags.Static)
+        .Where(field => field.FieldType == typeof(OpCode))
+        .Select(field => (OpCode)field.GetValue(null)!)
+        .ToDictionary(opCode => opCode.Value);
+
+    /// <summary>The methods, fields and types a body's IL names through metadata tokens.</summary>
+    private static IEnumerable<MemberInfo> ReferencedMembers(MethodBase method, MethodBody body)
+    {
+        var il = body.GetILAsByteArray();
+        if (il is null)
+            yield break;
+        var typeArguments = method.DeclaringType is { IsGenericType: true } declaring ? declaring.GetGenericArguments() : null;
+        var methodArguments = method.IsGenericMethod ? method.GetGenericArguments() : null;
+        var offset = 0;
+        while (offset < il.Length)
+        {
+            short value = il[offset++];
+            if (value == 0xFE)
+                value = unchecked((short)(0xFE00 | il[offset++]));
+            if (!OpCodeByValue.TryGetValue(value, out var opCode))
+                throw new InvalidOperationException($"{method.DeclaringType?.Name}.{method.Name}: unknown IL opcode 0x{value:X4} at {offset - 1}");
+            var operandSize = opCode.OperandType switch
+            {
+                OperandType.InlineNone => 0,
+                OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
+                OperandType.InlineVar => 2,
+                OperandType.InlineI8 or OperandType.InlineR => 8,
+                OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(il, offset),
+                _ => 4,
+            };
+            if (opCode.OperandType is OperandType.InlineMethod or OperandType.InlineField or OperandType.InlineType or OperandType.InlineTok)
+            {
+                MemberInfo? member = null;
+                try { member = method.Module.ResolveMember(BitConverter.ToInt32(il, offset), typeArguments, methodArguments); }
+                catch (ArgumentException) { }
+                if (member is not null)
+                    yield return member;
+            }
+            offset += operandSize;
         }
     }
 
