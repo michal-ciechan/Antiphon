@@ -194,4 +194,63 @@ public sealed class StandingPipelinePolicyDocumentationTests
             Should.Throw<ShouldAssertException>(() => scratch.ShouldContain(shortSentence));
         }
     }
+
+    /// <summary>
+    /// CARD-1469 rule 6, repaired after Review 6bebf489 F1. A Reply to a complete report that is Blocked
+    /// only by runner sync reopens the task as a new model turn, and a token-only answer then replaces the
+    /// retained report with an empty result (Debug fc28850a). The owner states the distinction, every
+    /// pointer repeats the prohibition, and no copy carries the old "accepted, stop" Reply instruction.
+    /// </summary>
+    [Test]
+    public void standing_rule_six_never_replies_to_a_sync_blocked_complete_report()
+    {
+        var document = ReadRepoFile("docs", "orchestration-loop.md");
+        var start = document.IndexOf("### Standing operating rules", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, "c1469-rule-6-owner-heading");
+        var end = document.IndexOf("### Post-land miss retrospective", start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start, "c1469-rule-6-owner-end");
+        var owner = Collapse(document[start..end]);
+        foreach (var phrase in new[]
+        {
+            "6. **Do not Reply to a complete report that is Blocked only by runner sync.**",
+            "`runner_sync_lease_busy`",
+            "use the pushed branch",
+            "settlement sync sweep clears the block",
+            "reopens the task as a new model turn",
+            "replaces the retained report with an empty result",
+            "docs/investigations/2026-10-22-report-contract-and-first-prompt-noise.md",
+            "CARD-1472",
+            "genuinely missing",
+            "ask for the full report",
+            "never just \"stop\"",
+        })
+            owner.ShouldContain(phrase, Case.Sensitive, "c1469-rule-6-owner");
+
+        const string prohibition = "never Reply to a complete report Blocked only by runner sync";
+        foreach (var relative in new[]
+        {
+            "docs/orchestration-loop.md",
+            "AGENTS.md",
+            "server/Bundles/orchestrator.md",
+            ".claude/skills/antiphon-orchestrator/SKILL.md",
+            ".claude/skills/antiphon-delegate/SKILL.md",
+            "docs/superpowers/plans/2026-10-22-card-1469-standing-operating-rules-plan.md",
+        })
+        {
+            var text = Collapse(ReadRepoFile(relative));
+            foreach (var stale in new[]
+            {
+                "Stop now and do not take another turn",
+                "Accepted. The report is final",
+                "Settle a blocked task with a complete report",
+                "complete-report reply",
+            })
+                text.ShouldNotContain(stale, Case.Insensitive, $"c1469-rule-6-stale:{relative}");
+            if (relative == "docs/orchestration-loop.md" || relative.EndsWith("-plan.md", StringComparison.Ordinal))
+                continue;
+            text.ShouldContain("docs/orchestration-loop.md#standing-operating-rules", Case.Sensitive, $"c1469-rule-6-pointer:{relative}");
+            text.ShouldContain(prohibition, Case.Sensitive, $"c1469-rule-6-prohibition:{relative}");
+            text.ShouldContain("full report", Case.Sensitive, $"c1469-rule-6-full-report:{relative}");
+        }
+    }
 }
