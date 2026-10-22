@@ -508,6 +508,67 @@ exit $LASTEXITCODE
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# Runs the masking-form child/in-process checks shared by the C1423 cases: each form's sentinel must appear in no
+# Plan, Baseline or Watch line, no recorded JSON and no child pwsh stdout or stderr, including the request's
+# exception text (the fake converts the URL to [uri] first, as a real request does).
+function Invoke-C1423MaskingForms {
+    param([string]$Root, [string]$BaselinePath, [object[]]$Forms)
+    $n = 0
+    foreach ($form in $Forms) {
+        $n++
+        $dir = Join-Path $Root ('c1423form' + $n)
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $bp = Join-Path $dir 'baseline.json'
+        Copy-Item -LiteralPath $BaselinePath -Destination $bp
+        $url = $form.Pipe
+        if (-not $url) { $url = $form.Server + '/api/agent-tasks/pipeline?projectId=p1' }
+        $exText = ''
+        try { $u = [uri]$url; $exText = 'request failed for ' + $u.AbsoluteUri + ' original ' + $u.OriginalString } catch { $exText = [string]$_.Exception.Message }
+        Assert-C1408 -Cond ($exText -match $form.Sentinel -and (Hide-CutoverText -Text $exText) -notmatch $form.Sentinel) -Name ('exception text is masked: ' + $form.Name) -Detail (Hide-CutoverText -Text $exText)
+        $p = Invoke-PostgresCutoverMonitor -Mode Plan -ServerBaseUrl $form.Server -PipelineUrl $form.Pipe -ProjectId 'p1' -BaselinePath $bp -Now $script:FixedNow
+        $http = New-C1408FakeHttp
+        $b = Invoke-PostgresCutoverMonitor -Mode Baseline -Execute -ServerBaseUrl $form.Server -PipelineUrl $form.Pipe -ProjectId 'p1' -BaselinePath (Join-Path $dir 'in-baseline.json') -ResultPath (Join-Path $dir 'in-b-result.json') -SampleCount 2 -HttpGet $http -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
+        $w = Invoke-PostgresCutoverMonitor -Mode Watch -Execute -ServerBaseUrl $form.Server -PipelineUrl $form.Pipe -ProjectId 'p1' -BaselinePath $bp -ResultPath (Join-Path $dir 'in-w-result.json') -SampleCount 2 -HttpGet $http -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
+        $lines = @($p.Lines) + @($b.Lines) + @($w.Lines)
+        Assert-C1408 -Cond ($b.ExitCode -eq 0 -and $w.ExitCode -eq 0) -Name ('the request still routes and measures: ' + $form.Name) -Detail ('b=' + $b.ExitCode + ' w=' + $w.ExitCode + ' ' + ($lines -join ' | '))
+        Assert-C1408 -Cond (@($lines | Where-Object { $_ -match $form.Sentinel }).Count -eq 0) -Name ('no sentinel in Plan, Baseline or Watch lines: ' + $form.Name) -Detail (@($lines | Where-Object { $_ -match $form.Sentinel }) -join ' | ')
+        $pipeArg = ''
+        if ($form.Pipe) { $pipeArg = "-PipelineUrl '" + $form.Pipe + "'" }
+        $errOut = Join-Path $dir 'child.err'
+        $cmd = @'
+$seam = { param([string]$Url); $u = [uri]$Url; throw ('request failed for ' + $u.AbsoluteUri + ' original ' + $u.OriginalString) }
+& '__MON__' -Mode Plan -ServerBaseUrl '__SRV__' __PIPE__ -ProjectId 'p1' -BaselinePath '__BP__'
+& '__MON__' -Mode Baseline -Execute -ServerBaseUrl '__SRV__' __PIPE__ -ProjectId 'p1' -BaselinePath '__DIR__/child-baseline.json' -ResultPath '__DIR__/b-result.json' -SampleCount 2 -HttpGet $seam
+& '__MON__' -Mode Watch -Execute -ServerBaseUrl '__SRV__' __PIPE__ -ProjectId 'p1' -BaselinePath '__BP__' -ResultPath '__DIR__/w-result.json' -SampleCount 2 -HttpGet $seam
+exit $LASTEXITCODE
+'@
+        $cmd = $cmd.Replace('__MON__', $monitor).Replace('__SRV__', $form.Server).Replace('__PIPE__', $pipeArg).Replace('__BP__', $bp).Replace('__DIR__', $dir)
+        $out = @(& pwsh -NoProfile -NonInteractive -Command $cmd 2> $errOut | ForEach-Object { [string]$_ })
+        $err = ''
+        if (Test-Path -LiteralPath $errOut) { $err = [string](Get-Content -LiteralPath $errOut -Raw) }
+        $leaks = @($out | Where-Object { $_ -match $form.Sentinel })
+        Assert-C1408 -Cond ($out.Count -gt 0 -and $leaks.Count -eq 0 -and $err -notmatch $form.Sentinel) -Name ('child stdout and stderr carry no sentinel: ' + $form.Name) -Detail (($leaks -join ' | ') + ' ERR ' + $err)
+        $json = ''
+        foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.json')) { $json += (Get-Content -LiteralPath $f.FullName -Raw) }
+        Assert-C1408 -Cond ($json -match 'request failed|Cannot convert' -and $json -notmatch $form.Sentinel) -Name ('recorded json carries the request error without the sentinel: ' + $form.Name) -Detail ([regex]::Match($json, '.{0,60}' + $form.Sentinel + '.{0,20}').Value)
+    }
+}
+
+# A1 (CARD-1423, Review of CARD-1408 at 2324f10d): a 'password' containing '/' is parsed by .NET as host, port and
+# path, so nothing is sent; but if the value was meant as userinfo it must not print as path text either.
+function Test-C1423_SlashInUserinfoMasked {
+    $root = New-C1408Scratch
+    $b = Invoke-C1408Baseline -Root $root -PipelineMs (Get-C1408Twenty -Median 100)
+    $masked = Hide-CutoverText -Text 'http://u:1234/SENTSLASH1423@h/api/x'
+    Assert-C1408 -Cond ($masked -eq 'http://<redacted>@h/api/x') -Name 'userinfo with a slash in the password is masked to the last @' -Detail $masked
+    $plain = 'PLAN would GET http://fake.invalid/health and mail ops@fake.invalid'
+    Assert-C1408 -Cond ((Hide-CutoverText -Text $plain) -eq $plain) -Name 'a URL followed by whitespace and a later @ is left intact' -Detail (Hide-CutoverText -Text $plain)
+    Invoke-C1423MaskingForms -Root $root -BaselinePath $b.BaselinePath -Forms @(
+        @{ Name = 'slash in the password'; Server = 'http://u:12/SENTSLASH1423@fake.invalid'; Pipe = ''; Sentinel = 'SENTSLASH1423' }
+    )
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $cases = @(
     'C1408_RollbackAboveFloorAndRatio',
     'C1408_FloorHoldsUnderOneSecond',
@@ -521,7 +582,8 @@ $cases = @(
     'C1408_UrlSecretsNeverPrinted',
     'C1408_AdvisoryGuards',
     'C1408_LandRefusedWithoutRefusedOp',
-    'C1408_MaskingBypassForms'
+    'C1408_MaskingBypassForms',
+    'C1423_SlashInUserinfoMasked'
 )
 
 if (-not (Test-Path -LiteralPath $monitor)) {
