@@ -113,6 +113,11 @@ synthetic commit `aa27e8df8fb49314159692562fc536887f27d00c` (parent is the S1 sy
 4. Merge-base `19f73e0e74eaa3ea7cb3cf82adaf5c3b54e01fe7`, left `e78b62b4e19ccab23ecd02fe317c9db1c5ea6a71`,
    right fix `4c26df01c8bb96a88f5ab72bc7a89d7a266790d5` gives final RC applicability tree
    `2e137ff937e9eb1779d64c853dfb169ee35f0643`. Report-only commits are excluded from this pick chain.
+5. The assertion spelling correction also picks cleanly (exit 0): wrap the preceding tree
+   as `0e0e6454ccac22105c4a86e6b29979e4af2d1515`, then merge-base
+   `c3dd6faee97571187f0e00d5720eda95b7223812`, left that synthetic commit, right
+   `0a049b6fd87e21075563f9b03195547e3e5321b5`. Final tree:
+   `394bef87f676388e1345b11d3d5ca5a9fadd74b9`. The report and plan documents remain excluded.
 
 Full card reads confirmed the plan's attention follow-up is already CARD-0267 (Done,
 `fd8f7536-be19-44dd-9514-70f549d3982f`), and the separate Pending/collapsed-paste retry gap is
@@ -149,6 +154,18 @@ red run; it has no separate measured pre-fix red claim. It is part of the unchan
 11-test CP-2 roster and the full CP-3 sweep class. No assertion was loosened. The
 replacement CP-2/CP-3 run uses the next committed report tip as expected source SHA.
 The interrupted attempt is retained; no green proof is being repeated.
+
+The replacement attempt `20261022-191953-b8ec` at
+`c3dd6faee97571187f0e00d5720eda95b7223812` was also stopped during its first CP-2
+build (about two minutes, slot=granted, waited=0s; zero tests executed). Local Shouldly
+assembly metadata confirmed its predicate overload takes `Expression<Func<T,bool>>`,
+which does not accept the newly added pattern-variable expression. The assertion was
+spelled with `OfType<SessionQueueDto>()` before `ShouldContain`, preserving its meaning,
+in pushed commit `0a049b6fd87e21075563f9b03195547e3e5321b5`. This was a compile-safety
+correction found before a compiler result, not a measured test failure. Stop completed,
+wait returned exit 6 (stopped executor without phase=done), and inspected partial output
+was removed before editing. Both stopped attempts are non-receipt rows; neither can
+qualify any ordinary test. Final qualification starts fresh at the next report commit.
 
 With this report committed and pushed, run the already-built checkpoint tool:
 
