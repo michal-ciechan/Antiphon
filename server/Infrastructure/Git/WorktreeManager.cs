@@ -97,6 +97,7 @@ public sealed class WorktreeManager : IWorktreeManager
         using var creationLock = new FileStream(Path.Combine(creationLocks, lockName + ".lock"),
             FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
 
+        await RecoverInterruptedCreationAsync(repoFullPath, worktreeRoot, worktreePath, branch, ct);
         var healed = await TryHealStaleRegistrationAsync(repoFullPath, worktreePath, ct);
         if (healed)
             return ToInfo((await FindMetadataByPathAsync(worktreeRoot, worktreePath, ct))!);
@@ -1036,7 +1037,10 @@ public sealed class WorktreeManager : IWorktreeManager
         metadata.Branch,
         metadata.BaseRef,
         metadata.CreatedAt,
-        metadata.LastTouchedAt);
+        metadata.LastTouchedAt)
+    {
+        CreationIncomplete = metadata is { SchemaVersion: >= 2, CreationComplete: false },
+    };
 
     private TimeSpan TimeoutFor(IReadOnlyList<string> arguments)
     {
@@ -1102,6 +1106,67 @@ public sealed class WorktreeManager : IWorktreeManager
         return false;
     }
 
+    /// <summary>
+    /// CARD-1448: a killed <c>git worktree add</c> (timeout, tick cancellation, a restart) leaves the
+    /// registration <c>locked initializing</c> over a partial checkout, and its intent never reaches
+    /// CreationComplete. Remove it so the caller adds afresh, but only when the saved schema-2 intent
+    /// is incomplete, exactly one registration at the path is locked <c>initializing</c> on the
+    /// intent's branch, and that branch is still at InitialSha. Any mismatch removes nothing.
+    /// </summary>
+    private async Task RecoverInterruptedCreationAsync(
+        string repoPath, string worktreeRoot, string worktreePath, string branch, CancellationToken ct)
+    {
+        var intent = await FindMetadataByPathAsync(worktreeRoot, worktreePath, ct);
+        if (intent is not { SchemaVersion: >= 2, CreationComplete: false })
+            return;
+        var list = await RunGitAsync(repoPath, ["worktree", "list", "--porcelain"], ct, throwOnError: false);
+        if (list.ExitCode != 0)
+            throw new ConflictException("Worktree registration inspection failed; nothing removed.");
+        var matching = ParseWorktreeList(list.Stdout).Where(entry => PathsEqual(entry.Path, worktreePath)).ToArray();
+        if (matching.Length == 0)
+            return; // The add never registered: the ordinary path/branch checks decide.
+        var refName = "refs/heads/" + branch;
+        var tip = await RunGitAsync(repoPath, ["rev-parse", "--verify", "--quiet", refName], ct, throwOnError: false);
+        if (intent is not { SchemaVersion: 2, CreationId: not null, InitialSha: not null }
+            || !PathsEqual(intent.RepoPath, repoPath) || intent.Branch != branch
+            || matching.Length != 1 || !matching[0].Locked || matching[0].LockReason != "initializing"
+            || matching[0].Branch != refName || tip.ExitCode != 0 || tip.Stdout.Trim() != intent.InitialSha)
+            throw new ConflictException(
+                $"Incomplete worktree creation at {worktreePath} does not match an interrupted add of {branch} at its starting commit; nothing removed.");
+
+        _logger.LogWarning(
+            "Recovering interrupted worktree creation {CreationId} at {Path}: removing the locked initializing registration and adding {Branch} again",
+            intent.CreationId, worktreePath, branch);
+        if (Directory.Exists(worktreePath))
+        {
+            await RunGitAsync(repoPath, ["worktree", "remove", "--force", "--force", worktreePath], ct);
+        }
+        else
+        {
+            // No directory: `worktree remove` cannot validate it and a repository-wide prune would
+            // also drop other missing registrations, so delete only this registration's admin dir.
+            var common = (await RunGitAsync(repoPath, ["rev-parse", "--path-format=absolute", "--git-common-dir"], ct)).Stdout.Trim();
+            var marker = Path.Combine(worktreePath, ".git");
+            var admins = Directory.Exists(Path.Combine(common, "worktrees"))
+                ? Directory.EnumerateDirectories(Path.Combine(common, "worktrees"))
+                    .Where(dir => File.Exists(Path.Combine(dir, "gitdir"))
+                        && PathsEqual(File.ReadAllText(Path.Combine(dir, "gitdir")).Trim(), marker))
+                    .ToArray()
+                : [];
+            if (admins.Length != 1)
+                throw new ConflictException($"Interrupted worktree creation at {worktreePath} has no unique registration; nothing removed.");
+            Directory.Delete(admins[0], recursive: true);
+        }
+
+        var remaining = await RunGitAsync(repoPath, ["worktree", "list", "--porcelain"], ct, throwOnError: false);
+        if (remaining.ExitCode != 0 || ParseWorktreeList(remaining.Stdout).Any(entry => PathsEqual(entry.Path, worktreePath)))
+            throw new ConflictException($"Interrupted worktree creation at {worktreePath} is still registered after removal.");
+        var delete = await RunGitAsync(repoPath, ["update-ref", "--no-deref", "-d", refName, intent.InitialSha], ct, throwOnError: false);
+        if (delete.ExitCode != 0)
+            throw new ConflictException($"Interrupted worktree creation branch {branch} moved during recovery; branch kept.");
+        await DeleteMetadataForPathAsync(worktreeRoot, worktreePath, ct);
+    }
+
     private async Task RollbackFailedAddAsync(WorktreeMetadata intent, bool branchExistedBefore)
     {
         try
@@ -1114,7 +1179,16 @@ public sealed class WorktreeManager : IWorktreeManager
             var rows = LandingGit.ParseRegistrations((await git.RunAsync(intent.RepoPath,
                 ["worktree", "list", "--porcelain", "-z"], CancellationToken.None)).Output);
             var matching = rows.Where(r => PathsEqual(r.Path, intent.Path)).ToArray();
-            if (matching.Length != 1 || matching[0].Locked || matching[0].Branch != "refs/heads/" + intent.Branch
+            if (matching.Length == 1 && matching[0].Locked)
+            {
+                // CARD-1448 D-3: git left its `locked initializing` marker; the next CreateAsync
+                // recovers it only if it is still an untouched interrupted add.
+                _logger.LogWarning(
+                    "Failed worktree creation {CreationId} at {Path} left a locked registration; rollback skipped",
+                    intent.CreationId, intent.Path);
+                return;
+            }
+            if (matching.Length != 1 || matching[0].Branch != "refs/heads/" + intent.Branch
                 || matching[0].Head != intent.InitialSha || !Directory.Exists(intent.Path)
                 || !PathsEqual(common, await git.CommonDirectoryAsync(intent.Path, CancellationToken.None))) return;
             var head = await git.RunAsync(intent.Path, ["symbolic-ref", "-q", "HEAD"], CancellationToken.None);
