@@ -87,7 +87,7 @@ admits the head waiter. No kill, no revoke, no fallback.
   starved one.** Measured: CARD-1449's land (task fa175d9b) was requested 05:19:07Z and started
   05:35:43Z, 16.6 min behind CARD-1427's 24-minute verification; CARD-0167's (0f389926) requested
   06:54:08Z, started 06:58:54Z behind CARD-0105. Non-code lands that would have finished in seconds
-  (ten of the last 24 h's lands were `non-code` skips) queue the same way.
+  (24 of the last 24 h's 80 lands were `non-code` skips) queue the same way.
 - **Progress stamping.** `LastProgressAt` moves only on a phase transition
   (`AgentTaskLandingProtocol.cs:889-901`); the wait has none, so `AttentionService.cs:1461-1479`
   emits `LandNoProgress` Warning at 300 s and Error at 900 s (`DelegationSettings.cs:646-647`). The
@@ -102,8 +102,8 @@ before the slot wait, and `VerifiedAt` after the tests), `AgentTaskLandRequests`
 type 32 (LandAged), 36 h to 07:00Z. `PreparedAt -> VerificationStartedAt` was 0.0 min on every row, so
 `VerifiedAt - VerificationStartedAt` = slot wait + build + tests.
 
-Baseline: 45 verified lands in the window took 1.9-4.5 min each (build plus
-`tests/Antiphon.Tests` with the land filter). Outliers:
+Baseline: 80 lands in the 24 h to 07:00Z, 24 of them `non-code` skips; of the 56 verified lands, 49 took 1.9-4.5 min each (build plus
+`tests/Antiphon.Tests` with the land filter). The seven outliers:
 
 | Verification started (Z) | Card / task | Verify min | LandAged events (type 32) |
 |---|---|---:|---|
