@@ -8311,6 +8311,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<int>("Attempts")
                         .HasColumnType("integer");
 
+                    b.Property<string>("ConversationKey")
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
