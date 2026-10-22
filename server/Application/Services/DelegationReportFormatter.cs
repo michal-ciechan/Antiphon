@@ -440,6 +440,27 @@ public static class DelegationReportFormatter
         $"[antiphon-finding:{Short(taskId)} {verdict.Trim().ToLowerInvariant()}]";
 
     /// <summary>
+    /// CARD-1486. Empty text or only this task's finding/progress closing lines adds no report
+    /// body. A finding's inline detail is still a closing line; another task's marker is not.
+    /// </summary>
+    public static bool IsClosingLinesOnly(Guid taskId, string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return true;
+
+        foreach (var raw in text.ReplaceLineEndings("\n").Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || TryReadFindingLine(taskId, line, out _, out _))
+                continue;
+            if (TaskCompletionProgressService.ParseClaim(taskId, line).Sha is not null)
+                continue;
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Reads <c>[antiphon-finding:&lt;id&gt; found|clean]</c> from anywhere in the last 20 lines
     /// (CARD-0272). A token naming a different task is ignored. When both markers are present,
     /// the last one in that window wins. False means Unreported — never a guess.
