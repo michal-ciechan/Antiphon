@@ -383,10 +383,15 @@ public sealed class BlockedReplyReportRetentionTests
         {
             (await db.SessionQueuedMessages.SingleAsync(m => m.Id == ask))
                 .Status.ShouldBe(QueuedMessageStatus.Canceled, "the never-typed ask is canceled at the Block");
-            (await CallerNotesAsync(db, world)).ShouldBe(notesBefore + 1, "the Block notifies the caller once");
+            // The Block delivers the retained report, which the caller already holds: the queue drops
+            // a same-task, same-digest Delegation note (CARD-0320). The waiting turn would add a row.
+            (await CallerNotesAsync(db, world)).ShouldBe(
+                notesBefore, "the caller note is the retained report, never the waiting turn");
+            (await db.SessionQueuedMessages.AsNoTracking()
+                    .Where(m => m.AgentSessionId == world.CallerSessionId && m.SourceTaskId == world.TaskId)
+                    .Select(m => m.Body).ToListAsync())
+                .ShouldContain(b => b.Contains(RetainedBody), "the caller note carries the retained report");
         }
-        var note = (await world.NoteAsync()).ShouldNotBeNull();
-        note.Body.ShouldContain(RetainedBody, Case.Sensitive, "the caller note carries the retained report");
         (await world.EventsAsync()).Count(e => e.Type == AgentTaskEventType.Completed)
             .ShouldBe(0, "no Succeeded publication");
     }
