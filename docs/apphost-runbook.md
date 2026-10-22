@@ -57,7 +57,11 @@ is the caller. Start that window with
 see `-ConfirmWindow` on the process command line and refuses. Default `-WhatIf`
 changes nothing. `-Execute -ConfirmWindow` is the real window. If
 `logs/apphost.down-on-purpose` already exists, the window refuses before it
-enters maintenance; the operator clears that marker first. An ordinary restart
+enters maintenance; the operator clears that marker first. An enter that wrote the
+marker and then failed names the marker and leaves it in place, and exit 2 means it
+already existed (CARD-1417). A failed `keep-six -ClearHold` at window exit prints a
+RECOVERY line naming the agent. `-TailnetPort` (default 5432) is the listener the
+phase 0 probe connects to; a parameter value never opens the window. An ordinary restart
 remains the command above.
 
 Before that force-kill, and only after the restart lock is held and SHA admission
