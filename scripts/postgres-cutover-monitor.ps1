@@ -33,9 +33,9 @@
     landRequest.terminalFailureCode is set without a publication (a land that threw), or that has a
     LandRefused event at or after the window start (refusals that never move the landing op to Refused).
     Known gaps, equal in Baseline and Watch: a land that fails in the window on a task completed before it
-    is not listed, an unresolved NeedsResolution counts in every window whatever its age, and a Blocked task
-    whose land threw before the window (terminalFailureCode without a publication) counts in every window the
-    list returns it in (CARD-1423 A4). Each cancels in the Baseline-to-Watch delta.
+    is not listed, an unresolved NeedsResolution counts in every window whatever its age, and a
+    Blocked task whose land threw before the window (terminalFailureCode without a publication) counts in
+    every window the list returns it in (CARD-1423 A4). Each cancels in the Baseline-to-Watch delta.
     A list or detail that cannot be read, or more candidates than the cap, is INVALID unless a rollback
     trigger already fired: never a silent zero.
 
