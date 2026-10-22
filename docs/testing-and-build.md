@@ -851,6 +851,19 @@ and mean delta `0.633` percentage points (24 cores; `on-samples=15`, disabled ro
 
 ### Build slots (CARD-0589)
 
+CARD-1506: Windows build/test children use the single policy in
+`scripts/lib/BuildDriverEnvironment.cs`: shared compilation, server/concurrent GC,
+MSBuild server use and node reuse are disabled before child startup. The build-slot
+wrapper, checkpoint tool/script, land verifier, nightly native/exact runners and
+watched-test launcher apply it. AppHost and daemon builds use the wrapper; their
+subsequent runtime launches retain the caller's normal environment. Linux is
+unchanged. Set `ANTIPHON_BUILD_MEMORY_POLICY_OPTOUT=1` in the invoking environment
+to bypass this policy (existing graph-evaluation/node-reuse protections remain).
+No process is stopped and no machine/user environment is modified. Incremental
+Windows builds may be slower. After the reviewed rc pick, restart the rc AppHost
+and desktop session runner when the active qualification permits it; a master
+land alone does not activate the compiled land-verifier helper.
+
 Nothing else bounds how many `dotnet build` / `dotnet run --project tests/*` drivers, MSBuild worker nodes, compilers and test hosts run at once across the sessions on one host; the outage behind CARD-0589 had 203 build processes and 1.1 GB free. Three layers do, cheapest first. Plan: [2026-09-25-card-0589-build-fanout-cap-plan.md](superpowers/plans/2026-09-25-card-0589-build-fanout-cap-plan.md).
 
 **`Directory.Build.rsp` at the repo root** carries `-nodeReuse:false`, so every invoker (a delegate's raw command, the wrappers, the land verifier, the nightly, `run-daemon.ps1`'s rebuild) leaves no MSBuild worker node behind. CP-1 measured it on the server2 Linux runner (SDK 10.0.401, 24 cores) building `tests/Antiphon.Messaging.Tests --no-incremental`: nine worker nodes at peak, every one started `/nodeReuse:false`, zero alive ten seconds after the driver exited (before this file, 17 orphaned `nodeReuse:true` nodes held 4.7 GB for up to 3.3 h). A `-maxcpucount:2` line in the rsp was **ignored**: the SDK prepends its own bare `-maxcpucount`, the diagnostic log still showed `MSBuildNodeCount = 24` and the peak stayed at nine. On the command line `-maxcpucount:3` gave `MSBuildNodeCount = 3`. So the rsp holds no count (`DirectoryBuildRspTests` pins that) and the per-build count comes from the grant. `UseSharedCompilation` stays on (the shared `VBCSCompiler` idles out after ten minutes).

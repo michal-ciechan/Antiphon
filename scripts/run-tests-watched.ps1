@@ -69,8 +69,14 @@ function PgConns {
 $argv = @('--treenode-filter', $Filter, '--no-progress', '--no-ansi')
 if ($Detailed) { $argv += @('--output', 'Detailed') }
 $start = Get-Date
-$p = Start-Process -FilePath $Exe -WorkingDirectory (Split-Path $Exe) -ArgumentList $argv `
-        -RedirectStandardOutput $log -RedirectStandardError $err -PassThru -NoNewWindow
+. (Join-Path $PSScriptRoot 'lib/build-driver-environment.ps1')
+$environmentRestore = Enter-AntiphonBuildDriverEnvironment
+try {
+    $p = Start-Process -FilePath $Exe -WorkingDirectory (Split-Path $Exe) -ArgumentList $argv `
+            -RedirectStandardOutput $log -RedirectStandardError $err -PassThru -NoNewWindow
+} finally {
+    Exit-AntiphonBuildDriverEnvironment -Restore $environmentRestore
+}
 Note "[$Tag] started pid=$($p.Id) at $($start.ToString('HH:mm:ss')) exe=$Exe filter=$Filter"
 
 $lastSize = -1; $lastGrow = Get-Date; $lastCpu = 0.0; $lastSample = Get-Date; $stalled = $false
