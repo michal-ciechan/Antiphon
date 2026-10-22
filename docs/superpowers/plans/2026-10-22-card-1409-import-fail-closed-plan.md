@@ -103,7 +103,7 @@ No R-n. No positive controls. Mutation has nothing new to plant beyond the refus
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S22 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_*)` | V-1 V-2 V-3 V-4 V-5 V-7 V-8 V-9 V-10 V-11 V-12 V-13 V-14 V-15 V-16 V-17 V-18 V-19 V-20 V-21 V-22 V-23 V-24 V-25 V-26 V-27 V-28 V-29 | exactly 82 executed, 0 failed/skipped | 82 | 15 |
+| CP-1 | S25 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_*)` | V-1 V-2 V-3 V-4 V-5 V-7 V-8 V-9 V-10 V-11 V-12 V-13 V-14 V-15 V-16 V-17 V-18 V-19 V-20 V-21 V-22 V-23 V-24 V-25 V-26 V-27 V-28 V-29 V-30 | exactly 83 executed, 0 failed/skipped | 83 | 15 |
 
 ### Cost
 
@@ -324,6 +324,32 @@ Every `table` row runs in `C1409_NormaliserAndItemOperationTablesHaveWitnesses`;
 | V-29 | Every N-16..N-29 row has a witness and every `table` entry runs with the row's outcome (V-26 extended to the escape table). | `C1409_NormaliserAndItemOperationTablesHaveWitnesses` |
 
 V-7 remains the acceptance witness for D-35. No new PC rows: the pipeline's decode, split and root rules are the mutation surface Review already named; existing land PCs stay pending for SourceLanding Mutation.
+
+## Repair 7: the D-25 part skip (Review 7db88932)
+
+Final Review 7db88932 (second pass; report `.antiphon/task-7db88932.md` on `feat/card-task-7db88932`) found one regression repair 6 introduced and no new class: `Assert-PropertyValuesAllowed` (D-25) skipped a whole property value when any part of it carried `@(`, `%(` or `$([`, where `fd20e8dcc` applied that test to each `;`-part. On the real tree `<PackageReadmeFile>../../docs/guide.md;@(None)</PackageReadmeFile>` appended to `tests/Antiphon.Tests/Antiphon.Tests.csproj` is refused at `fd20e8dcc` (`-> docs/guide.md`) and approved at `ad13d6cd3` (`-Update` exit 0, count=57); the same with `;$([System.String]::Copy(''))` or `;%(None.Identity)`. The well-known-metadata gap (Review 8e8726fd F1) is pre-existing and stays CARD-1483. Branch `feat/card-task-18ac0f5a`, start ref `ad13d6cd36018d2eaedc39b80f99d5612fefd27c`; this task lands as its own owner and the whole CARD-1409 chain lands with it, master first, then the rc port.
+
+**D-36 — The D-25 skip is per part.** The `@(`, `%(`, `$([` test runs inside the pipeline's spec loop on each part's escaped text (`Source`), as D-25 states it and as `fd20e8dcc` did: a part that carries a reference is left alone on its own (a value is not an input by itself; an include that uses it is classified where it is used), and every other part of the same value is still classified. Nothing else in `Assert-PropertyValuesAllowed` changes: the file-reading function rule, the wildcard skip, the separator-or-document gate and the folded docs/README refusal run as repair 6 left them, and a part the pipeline returns as `unresolved` (a reference past a leading directory property) is still skipped.
+
+**D-37 — Witnesses.** `C1409_PropertyValuePartWithReferenceSkipsOnlyThatPart`: the real test project tree is approved unmodified and refuses `-> docs/guide.md` naming `PackageReadmeFile` once `../../docs/guide.md;@(None)`, `../../docs/guide.md;$([System.String]::Copy(''))` or `../../docs/guide.md;%(None.Identity)` is appended; on a fixture the reference may come first (`@(None);../docs/guide.md`, `%(None.Identity);../docs/guide.md`) and the value still refuses; a value whose only part is a reference (`@(None)`, `%(None.Identity)`, `$([System.String]::Copy('../docs/guide.md'))`) and a value whose other part is not a document (`@(None);src/x.json`) are approved with `count=1`, as at `fd20e8dcc` (each outcome confirmed with the `fd20e8dcc` and `ad13d6cd3` scripts on a scratch fixture before the witness was written).
+
+**D-38 — Acceptance.** `-Check` on the real repository prints `F240D0F1DBF9AA627A0A3637B52318B8030181B60F20E677C6E3DE2D2285B72F` count=57 (V-7); the ordinary edit of D-27 passes `-Update` with count=57 in a scratch worktree; the script stays ASCII-only and parses under Windows PowerShell 5.1 rules. CP-1 expects 83: 27 `C1409_*`, 10 `C1400_*`, 3 `C1390_*`, `C1385_RegistryMatchesNarrowGraph`, 42 `C1380_*`. The out-of-contract residue of D-35 is unchanged.
+
+### Repair 7 slices
+
+**S23 — Red witness.** `C1409_PropertyValuePartWithReferenceSkipsOnlyThatPart`; this section; CP-1 moved to S25 expecting 83. One unlisted red run at the witness commit (reason: red proof before the fix; counts in the report).
+
+**S24 — Fix.** `scripts/audit-land-verification-graph.ps1` D-36 (ASCII; parses under Windows PowerShell 5.1). One unlisted green run of the witness, `C1409_PropertyValueNamingDocsRefuses` and the table case at the fix commit (reason: catch a value-rule regression before the checkpoint build; same dll, the tests copy the script at run time).
+
+**S25 — Wording.** `docs/orchestration-loop.md`, the script header; CP-1 after S25 expecting 83.
+
+### Repair 7 verification design
+
+| ID | Behaviour | Witness |
+|---|---|---|
+| V-30 | The unmodified real test project tree is approved; with `<PackageReadmeFile>../../docs/guide.md;@(None)</PackageReadmeFile>`, `...;$([System.String]::Copy(''))` or `...;%(None.Identity)` appended it refuses naming `tests/Antiphon.Tests/Antiphon.Tests.csproj PackageReadmeFile -> docs/guide.md`; a fixture refuses `@(None);../docs/guide.md` and `%(None.Identity);../docs/guide.md` naming `server/App.csproj PackageTags -> docs/guide.md`; `@(None)`, `%(None.Identity)`, `$([System.String]::Copy('../docs/guide.md'))` and `@(None);src/x.json` are approved with `count=1`. | `C1409_PropertyValuePartWithReferenceSkipsOnlyThatPart` |
+
+V-7 remains the acceptance witness for D-38. No new PC rows: the per-part skip is one line of the D-25 rule Review already named; existing land PCs stay pending for SourceLanding Mutation.
 
 ### Inventory (tracked definition files at `9eab17ecfb73cf3f968ce8abba8141282a6a81c9`)
 
