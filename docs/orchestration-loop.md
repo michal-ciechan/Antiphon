@@ -2229,7 +2229,10 @@ not a separator, a `;` inside an expanded value is), each part is decoded once
 and only then normalised, so an escape a property value splices in is read as
 the path the build reads; a decoded `$(` is literal text, an escaped `*` is
 read as a wildcard for an include and dropped from an `Exclude`, and the tail
-of a file-reading property function may not climb out of its output root. An `Import` is followed as described above. Target bodies are not
+of a file-reading property function may not climb out of its output root. A
+property-value part that carries an item, metadata or property-function
+reference is skipped on its own and the other parts of the same value are
+still classified (CARD-1409 repair 7, Review 7db88932). An `Import` is followed as described above. Target bodies are not
 evaluated beyond that: a task parameter (`Exec`, `Copy`, `ReadLinesFromFile`)
 can name any file and the audit refuses no task (CARD-1409 plan D-18, D-27). Any other definition-file edit still changes the
 digest, so the skip stops until the manifest is regenerated.
