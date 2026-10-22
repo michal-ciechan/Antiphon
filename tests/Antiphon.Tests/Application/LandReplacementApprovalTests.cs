@@ -16,7 +16,7 @@ namespace Antiphon.Tests.Application;
 /// resolution, the operation factory and the protocol through the real git fixture.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<GitProcessSpawnLimit>]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class LandReplacementApprovalTests
 {
     [Test]
