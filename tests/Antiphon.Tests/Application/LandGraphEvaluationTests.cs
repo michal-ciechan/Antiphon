@@ -153,6 +153,65 @@ public sealed class LandGraphEvaluationTests
         }
     }
 
+    // Review cb067299 D-1: a solution entry of a type the audit does not evaluate is still built by
+    // `dotnet build Antiphon.sln`, so it denies (exit 2) instead of approving what it never read.
+    [Test]
+    [Timeout(300_000)]
+    public async Task C1483_S1_UnevaluatedSolutionEntryDenies()
+    {
+        await using var repo = await AuditRepo.CreateAsync(new()
+        {
+            ["docs/guide.md"] = "# guide\n",
+            ["App/Program.cs"] = "System.Console.WriteLine();\n",
+            ["App/App.csproj"] = SdkProject(""),
+            ["Other/Program.cs"] = "System.Console.WriteLine();\n",
+            ["Other/Other.csproj"] = SdkProject("""
+                <ItemGroup>
+                  <EmbeddedResource Include="../docs/guide.md" />
+                </ItemGroup>
+                """),
+        }, projectTypes: new() { ["Other/Other.csproj"] = "{11111111-2222-3333-4444-555555555555}" });
+
+        var run = await repo.RunToolAsync();
+
+        run.ExitCode.ShouldBe(2, run.Text);
+        run.Lines.ShouldContain(l => l.StartsWith("evaluation-failed: ", StringComparison.Ordinal) && l.Contains("Other"), run.Text);
+        run.Lines.ShouldNotContain("approved", run.Text);
+        repo.AssertUntouched();
+    }
+
+    // Review cb067299 D-2: an item reaching docs/ or the root README through a tracked link refuses;
+    // the build reads the link's target, not the lexical path MSBuild reports.
+    [Test]
+    [Timeout(300_000)]
+    public async Task C1483_S1_LinkedSkippableItemRefuses()
+    {
+        await using var repo = await AuditRepo.CreateAsync(new()
+        {
+            ["README.md"] = "# root\n",
+            ["docs/guide.md"] = "# guide\n",
+            ["docs/sub/deep.md"] = "# deep\n",
+            ["App/Program.cs"] = "System.Console.WriteLine();\n",
+            ["App/App.csproj"] = SdkProject("""
+                <ItemGroup>
+                  <None Include="link/guide.md" />
+                  <AntiphonCustomItem Include="link/../docs/sub/deep.md" />
+                  <EmbeddedResource Include="top.md" />
+                </ItemGroup>
+                """),
+        }, links: new() { ["App/link"] = "../docs", ["App/top.md"] = "../README.md" });
+
+        var run = await repo.RunToolAsync();
+
+        run.ExitCode.ShouldBe(1, run.Text);
+        run.Lines.ShouldContain($"refused: App/App.csproj None {repo.Full("docs/guide.md")}", run.Text);
+        run.Lines.ShouldContain($"refused: App/App.csproj AntiphonCustomItem {repo.Full("docs/sub/deep.md")}", run.Text);
+        run.Lines.ShouldContain($"refused: App/App.csproj EmbeddedResource {repo.Full("README.md")}", run.Text);
+        run.Lines.Count(l => l.StartsWith("refused: ", StringComparison.Ordinal)).ShouldBe(3, run.Text);
+        run.Lines.ShouldNotContain("approved", run.Text);
+        repo.AssertUntouched();
+    }
+
     private static string SdkProject(string body) => $"""
         <Project Sdk="Microsoft.NET.Sdk">
           <PropertyGroup>
@@ -199,7 +258,10 @@ public sealed class LandGraphEvaluationTests
         public string Full(string relative) =>
             Path.GetFullPath(Path.Combine(Root, relative.Replace('/', Path.DirectorySeparatorChar)));
 
-        public static async Task<AuditRepo> CreateAsync(Dictionary<string, string> files)
+        /// <param name="projectTypes">Solution type GUID per project (default the C# GUID).</param>
+        /// <param name="links">Link path to relative target, created as symbolic links (a junction on a Windows host that refuses them) and committed.</param>
+        public static async Task<AuditRepo> CreateAsync(Dictionary<string, string> files,
+            Dictionary<string, string>? projectTypes = null, Dictionary<string, string>? links = null)
         {
             var root = Path.Combine(Path.GetTempPath(), "c1483-" + Guid.NewGuid().ToString("N")[..12]);
             Directory.CreateDirectory(root);
@@ -211,8 +273,11 @@ public sealed class LandGraphEvaluationTests
                 await File.WriteAllTextAsync(path, content);
             }
 
+            foreach (var (relative, target) in links ?? [])
+                await CreateLinkAsync(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)), target);
+
             await File.WriteAllTextAsync(Path.Combine(root, "Antiphon.sln"),
-                Solution(files.Keys.Where(k => k.EndsWith(".csproj", StringComparison.Ordinal))));
+                Solution(files.Keys.Where(k => k.EndsWith(".csproj", StringComparison.Ordinal)), projectTypes ?? []));
             await GitAsync(root, "init", "-q");
             await GitAsync(root, "add", "-A");
             await GitAsync(root, "-c", "user.name=c1483", "-c", "user.email=c1483@antiphon.test",
@@ -287,7 +352,32 @@ public sealed class LandGraphEvaluationTests
             return relative == ".git" || relative.StartsWith(".git" + Path.DirectorySeparatorChar, StringComparison.Ordinal);
         }
 
-        private static string Solution(IEnumerable<string> projects)
+        private static async Task CreateLinkAsync(string path, string target)
+        {
+            var parent = Path.GetDirectoryName(path)!;
+            var isDirectory = Directory.Exists(Path.Combine(parent, target));
+            try
+            {
+                if (isDirectory)
+                    Directory.CreateSymbolicLink(path, target);
+                else
+                    File.CreateSymbolicLink(path, target);
+            }
+            catch (Exception ex) when (OperatingSystem.IsWindows() && isDirectory && ex is IOException or UnauthorizedAccessException)
+            {
+                // No symlink privilege: a junction (absolute target) is the same link class to the audit.
+                var psi = new ProcessStartInfo("cmd.exe") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+                foreach (var arg in new[] { "/c", "mklink", "/J", path, Path.GetFullPath(Path.Combine(parent, target)) })
+                    psi.ArgumentList.Add(arg);
+                using var process = Process.Start(psi)!;
+                await process.WaitForExitAsync();
+                process.ExitCode.ShouldBe(0, $"mklink /J {path}: {await process.StandardError.ReadToEndAsync()}");
+            }
+
+            new FileInfo(path).LinkTarget.ShouldNotBeNull($"{path} must be a link");
+        }
+
+        private static string Solution(IEnumerable<string> projects, Dictionary<string, string> projectTypes)
         {
             var sb = new StringBuilder();
             sb.Append("\r\nMicrosoft Visual Studio Solution File, Format Version 12.00\r\n# Visual Studio Version 17\r\n");
@@ -296,7 +386,8 @@ public sealed class LandGraphEvaluationTests
             {
                 var id = "{" + Guid.NewGuid().ToString().ToUpperInvariant() + "}";
                 ids.Add(id);
-                sb.Append($"Project(\"{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}\") = \"{Path.GetFileNameWithoutExtension(project)}\", \"{project.Replace('/', '\\')}\", \"{id}\"\r\nEndProject\r\n");
+                var type = projectTypes.GetValueOrDefault(project, "{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}");
+                sb.Append($"Project(\"{type}\") = \"{Path.GetFileNameWithoutExtension(project)}\", \"{project.Replace('/', '\\')}\", \"{id}\"\r\nEndProject\r\n");
             }
 
             sb.Append("Global\r\n\tGlobalSection(SolutionConfigurationPlatforms) = preSolution\r\n\t\tDebug|Any CPU = Debug|Any CPU\r\n\tEndGlobalSection\r\n");
