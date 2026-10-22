@@ -18,7 +18,7 @@ function New-C1500Fixture {
         Write-NightlyAtomicJson -Path $path -Object $owner
     }
     Write-NightlyAtomicJson -Path (Join-Path $fx.ReleaseRoot 'candidates/rc-fixture/candidate.json') -Object @{
-        candidateId = $fx.CandidateId; sha = $ShaA; candidateRef = 'rc/fixture' }
+        candidateId = $fx.CandidateId; sha = $ShaA; ref = 'rc/fixture' }
     return $fx
 }
 
@@ -68,8 +68,8 @@ function Test-C1500_StatusIdentityAndObservation {
     Remove-Item -LiteralPath $journal
     $r = Get-RcQualificationStatus @fx
     Assert-C487 ($r.inputs.journal.status -ceq 'missing' -and $r.state.runId -ceq $fx.RunId) 'C1500 optional-journal-missing'
-    foreach ($field in @('candidateId','candidateRef','sha')) {
-        Write-NightlyAtomicJson -Path $journal -Object @{ candidateId = $fx.CandidateId; candidateRef = 'rc/fixture'; sha = $ShaA }
+    foreach ($field in @('candidateId','ref','sha')) {
+        Write-NightlyAtomicJson -Path $journal -Object @{ candidateId = $fx.CandidateId; ref = 'rc/fixture'; sha = $ShaA }
         Set-C1500Field $journal $field 'foreign'
         $r = Get-RcQualificationStatus @fx
         Assert-C487 ($r.identityMismatches -contains ('journal-' + $field)) ('C1500 journal-' + $field)
