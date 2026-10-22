@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -277,6 +278,134 @@ public class WorktreeManagerGitIntegrationTests
         (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "refs/heads/feat/card-task-deadbeef")).Trim()
             .ShouldBe(moved, "moved-branch-kept");
         (await manager.ReadVerificationCreationAsync(first.Path, default)).ShouldBeNull("intent-kept-incomplete");
+    }
+
+    [Test]
+    public async Task C1502_CompleteCheckoutStillMarkedIncompleteIsHealed()
+    {
+        // CARD-1502 (A): the process died between `worktree add` returning and the final save. The
+        // checkout is complete and unlocked; the flag is cleared so the caller adopts it, nothing removed.
+        using var env = await GitTestEnvironment.CreateAsync();
+        var manager = BuildManager(env.WorktreeRoot);
+        var first = await manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default);
+        await File.WriteAllTextAsync(Path.Combine(first.Path, "work.md"), "work\n");
+        await GitTestEnvironment.RunGitAsync(first.Path, "add", "work.md");
+        await GitTestEnvironment.RunGitAsync(first.Path, "commit", "-m", "work");
+        var tip = (await GitTestEnvironment.RunGitAsync(first.Path, "rev-parse", "HEAD")).Trim();
+        var admin = InterruptedWorktreeCreation.DiedBeforeFinalSave(env.WorktreeRoot, first.Path);
+
+        await Should.ThrowAsync<ConflictException>(() => manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default));
+
+        (await manager.ListAsync(env.RepoPath, default)).Single().CreationIncomplete.ShouldBeFalse("healed-listed-complete");
+        var creation = (await manager.ReadVerificationCreationAsync(first.Path, default)).ShouldNotBeNull("healed-creation-complete");
+        creation.GitDirectory.ShouldBe(admin);
+        File.Exists(Path.Combine(first.Path, "work.md")).ShouldBeTrue("work-kept");
+        (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "refs/heads/feat/card-task-deadbeef")).Trim()
+            .ShouldBe(tip, "branch-kept");
+    }
+
+    [Test]
+    public async Task C1502_HealRefusesWithoutAnIndex()
+    {
+        using var env = await GitTestEnvironment.CreateAsync();
+        var manager = BuildManager(env.WorktreeRoot);
+        var first = await manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default);
+        var admin = InterruptedWorktreeCreation.DiedBeforeFinalSave(env.WorktreeRoot, first.Path);
+        File.Delete(Path.Combine(admin, "index"));
+
+        await Should.ThrowAsync<ConflictException>(() => manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default));
+
+        (await manager.ListAsync(env.RepoPath, default)).Single().CreationIncomplete.ShouldBeTrue("not-healed");
+        File.Exists(Path.Combine(first.Path, "README.md")).ShouldBeTrue("checkout-kept");
+    }
+
+    [Test]
+    public async Task C1502_HealRefusesABranchNotDescendedFromItsStart()
+    {
+        using var env = await GitTestEnvironment.CreateAsync();
+        var manager = BuildManager(env.WorktreeRoot);
+        var first = await manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default);
+        InterruptedWorktreeCreation.DiedBeforeFinalSave(env.WorktreeRoot, first.Path);
+        const string emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"; // git's built-in empty tree
+        var orphan = (await GitTestEnvironment.RunGitAsync(first.Path, "commit-tree", emptyTree, "-m", "unrelated")).Trim();
+        await GitTestEnvironment.RunGitAsync(first.Path, "reset", "--hard", orphan);
+
+        await Should.ThrowAsync<ConflictException>(() => manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default));
+
+        (await manager.ListAsync(env.RepoPath, default)).Single().CreationIncomplete.ShouldBeTrue("not-healed");
+        (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "refs/heads/feat/card-task-deadbeef")).Trim()
+            .ShouldBe(orphan, "branch-kept");
+    }
+
+    [Test]
+    public async Task C1502_CompleteRecordStillLockedInitializingRemovesNothing()
+    {
+        // CARD-1502 (B): only an incomplete intent is ever recovered; a complete one locked
+        // `initializing` over a partial checkout is refused and left exactly as it is.
+        using var env = await GitTestEnvironment.CreateAsync();
+        var manager = BuildManager(env.WorktreeRoot);
+        var baseSha = (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "HEAD")).Trim();
+        var first = await manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default);
+        var admin = InterruptedWorktreeCreation.Simulate(env.WorktreeRoot, first.Path, markIncomplete: false);
+
+        await Should.ThrowAsync<ConflictException>(() => manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default));
+
+        Directory.Exists(first.Path).ShouldBeTrue("directory-kept");
+        File.ReadAllText(Path.Combine(admin, "locked")).ShouldBe("initializing");
+        (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "refs/heads/feat/card-task-deadbeef")).Trim()
+            .ShouldBe(baseSha, "branch-kept");
+        (await manager.ReadVerificationCreationAsync(first.Path, default)).ShouldNotBeNull("record-kept-complete");
+    }
+
+    [Test]
+    public async Task C1502_NoDirectoryRecoveryLeavesSiblingRegistrationsAlone()
+    {
+        // CARD-1502 (B): the no-directory recovery deletes only its own admin folder, never a
+        // sibling's (live or missing) and never a repository-wide prune.
+        using var env = await GitTestEnvironment.CreateAsync();
+        var manager = BuildManager(env.WorktreeRoot);
+        var live = await manager.CreateAsync(env.RepoPath, "task-cafebabe", "HEAD", default);
+        var missing = await manager.CreateAsync(env.RepoPath, "task-aabbccdd", "HEAD", default);
+        var interrupted = await manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default);
+        var liveAdmin = InterruptedWorktreeCreation.AdminDirectory(live.Path);
+        var missingAdmin = InterruptedWorktreeCreation.AdminDirectory(missing.Path);
+        Directory.Delete(missing.Path, recursive: true);
+        InterruptedWorktreeCreation.Simulate(env.WorktreeRoot, interrupted.Path);
+        Directory.Delete(interrupted.Path, recursive: true);
+
+        await manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default);
+
+        Directory.Exists(liveAdmin).ShouldBeTrue("live-sibling-admin-kept");
+        Directory.Exists(missingAdmin).ShouldBeTrue("missing-sibling-admin-kept");
+        var porcelain = await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "list", "--porcelain");
+        porcelain.ShouldContain("worktree " + live.Path, customMessage: "live-sibling-registered");
+        porcelain.ShouldContain("worktree " + missing.Path, customMessage: "missing-sibling-registered");
+        (await GitTestEnvironment.RunGitAsync(live.Path, "status", "--porcelain")).ShouldBeEmpty("live-sibling-usable");
+    }
+
+    [Test]
+    public async Task C1502_RollbackWarnsWhenItSkipsALockedRegistration()
+    {
+        // CARD-1448 D-3: a real `worktree add` killed mid-checkout (a slow smudge filter past a 1 s
+        // add timeout) leaves `locked initializing`; the rollback skips it and says so.
+        using var env = await GitTestEnvironment.CreateAsync();
+        await File.WriteAllTextAsync(Path.Combine(env.RepoPath, ".gitattributes"), "*.slow filter=slow\n");
+        await File.WriteAllTextAsync(Path.Combine(env.RepoPath, "a.slow"), "slow\n");
+        await GitTestEnvironment.RunGitAsync(env.RepoPath, "add", ".gitattributes", "a.slow");
+        await GitTestEnvironment.RunGitAsync(env.RepoPath, "commit", "-m", "slow");
+        await GitTestEnvironment.RunGitAsync(env.RepoPath, "config", "filter.slow.smudge", "sleep 60; cat");
+        var logger = new RecordingLogger<WorktreeManager>();
+        var manager = new WorktreeManager(
+            Options.Create(new GitSettings { WorktreeBasePath = env.WorktreeRoot, WorktreeAddTimeoutSeconds = 1 }),
+            TimeProvider.System,
+            logger);
+
+        await Should.ThrowAsync<TimeoutException>(() => manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default));
+
+        var path = Path.Combine(env.WorktreeRoot, "card-task-deadbeef");
+        File.ReadAllText(Path.Combine(InterruptedWorktreeCreation.AdminDirectory(path), "locked")).ShouldBe("initializing");
+        logger.Entries.ShouldContain(e => e.Level == LogLevel.Warning
+            && e.Message.Contains("left a locked registration; rollback skipped"), "rollback-skip-warned");
     }
 
     [Test]

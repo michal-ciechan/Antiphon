@@ -1273,6 +1273,56 @@ public class AgentSessionServiceIntegrationTests
         (await verify.Agents.AnyAsync(a => a.Id == h.AgentId)).ShouldBeTrue();
     }
 
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task C1502_card_spawn_never_adopts_an_incomplete_worktree(bool incomplete)
+    {
+        // CARD-1448 D-1 / CARD-1502 (B): after a create conflict the card-spawn adopt skips a listed
+        // worktree whose creation never completed; a complete one is still adopted (control).
+        await using var db = CreateContext();
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-c1502-{Guid.NewGuid():N}");
+        var repoPath = Path.Combine(tempRoot, "repo");
+        var worktreePath = Path.Combine(tempRoot, "worktree");
+        Directory.CreateDirectory(repoPath);
+        Directory.CreateDirectory(worktreePath);
+
+        try
+        {
+            var graph = CreateGraph(repoPath);
+            db.Add(graph.Project);
+            await db.SaveChangesAsync();
+            var settings = CreateSessionSettings(tempRoot);
+            settings.FirstDeltaTimeoutMs = 100;
+            await using var provider = BuildProvider();
+            var (service, _) = BuildServiceWithFakes(
+                db,
+                new MockEventBus(),
+                provider,
+                new FakeAgentProtocolAdapter(),
+                worktreePath,
+                settings,
+                new ConflictingWorktreeManager(graph.Card.Identifier, worktreePath, incomplete));
+            var request = new StartAgentSessionRequest(graph.Card.Id, "fake", AgentKind.Raw, "prompt", Cols: 120, Rows: 30);
+            var spec = new AgentLaunchSpec("fake", AgentKind.Raw, "fake", [], new Dictionary<string, string>(), repoPath, 120, 30);
+
+            if (incomplete)
+            {
+                await Should.ThrowAsync<ConflictException>(() => service.StartAsync(request, spec, CancellationToken.None));
+                (await db.Worktrees.AnyAsync(w => w.CardId == graph.Card.Id)).ShouldBeFalse("incomplete-not-adopted");
+            }
+            else
+            {
+                await service.StartAsync(request, spec, CancellationToken.None);
+                (await db.Worktrees.SingleAsync(w => w.CardId == graph.Card.Id)).Path.ShouldBe(worktreePath, "complete-adopted");
+            }
+        }
+        finally
+        {
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     private static void SkipIfNotWindows()
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -1692,6 +1742,29 @@ public class AgentSessionServiceIntegrationTests
 
         public Task<IReadOnlyList<WorktreeInfo>> ListAsync(string repoPath, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<WorktreeInfo>>([]);
+
+        public Task RemoveAsync(string repoPath, string worktreePath, CancellationToken ct) =>
+            Task.CompletedTask;
+
+        public Task TouchAsync(string worktreePath, CancellationToken ct) =>
+            Task.CompletedTask;
+
+        public Task<int> PruneStaleAsync(CancellationToken ct) =>
+            Task.FromResult(0);
+    }
+
+    private sealed class ConflictingWorktreeManager(string listedCardId, string listedPath, bool incomplete) : IWorktreeManager
+    {
+        public Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, CancellationToken ct) =>
+            throw new ConflictException($"Worktree path already exists: {listedPath}");
+
+        public Task<IReadOnlyList<WorktreeInfo>> ListAsync(string repoPath, CancellationToken ct)
+        {
+            var now = DateTimeOffset.UtcNow;
+            return Task.FromResult<IReadOnlyList<WorktreeInfo>>(
+                [new WorktreeInfo(listedCardId, repoPath, listedPath, $"feat/card-{listedCardId}", "main", now, now)
+                    { CreationIncomplete = incomplete }]);
+        }
 
         public Task RemoveAsync(string repoPath, string worktreePath, CancellationToken ct) =>
             Task.CompletedTask;
