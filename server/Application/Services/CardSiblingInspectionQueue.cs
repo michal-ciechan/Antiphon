@@ -18,28 +18,27 @@ public sealed record CardSiblingInspectionIntent(Guid TaskId, int Attempt, Guid?
         task.MergeTargetRef, fallback);
 }
 
-/// <summary>Owned, bounded observations. This service has no claim or launch authority.</summary>
+/// <summary>
+/// Owned, bounded observations. This service has no claim or launch authority. The workers, the
+/// channel and shutdown are here; each task's entry lifetime is <see cref="SiblingInspectionResults"/> (CARD-1428 D-4).
+/// </summary>
 public sealed class CardSiblingInspectionQueue(IServiceScopeFactory scopes, TimeProvider clock,
     ILogger<CardSiblingInspectionQueue> logger) : IAsyncDisposable
 {
-    private sealed class Entry(CardSiblingInspectionIntent intent)
-    {
-        public CardSiblingInspectionIntent Intent { get; } = intent;
-        public CancellationTokenSource Cancel { get; } = new();
-        public TaskCompletionSource Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public SiblingBaseGuard? Result { get; set; }
-        public long CompletedAt { get; set; }
-    }
-
+    private readonly SiblingInspectionResults _results = new(clock);
     private readonly object _sync = new();
-    private readonly Dictionary<Guid, Entry> _entries = [];
     private readonly Dictionary<Guid, long> _attempted = [];
-    private readonly Channel<Entry> _pending = Channel.CreateBounded<Entry>(32);
+    private readonly Channel<SiblingInspectionResults.Entry> _pending = Channel.CreateBounded<SiblingInspectionResults.Entry>(32);
     private readonly CancellationTokenSource _stopping = new();
     private Task[]? _workers;
     private int _active;
     public int Active => Volatile.Read(ref _active);
-    public int Outstanding { get { lock (_sync) return _entries.Count; } }
+
+    /// <summary>Every entry, in flight or completed.</summary>
+    public int Outstanding => _results.Count;
+
+    /// <summary>Entries the workers have not completed.</summary>
+    public int InFlight => _results.InFlightCount;
 
     public void Start()
     {
@@ -54,25 +53,9 @@ public sealed class CardSiblingInspectionQueue(IServiceScopeFactory scopes, Time
 
     public void Reconcile(IReadOnlySet<Guid> queued)
     {
+        _results.Reconcile(queued);
         lock (_sync)
-        {
-            foreach (var entry in _entries.Values.ToArray())
-                if (!queued.Contains(entry.Intent.TaskId) || entry.Done.Task.IsCompleted
-                    && clock.GetElapsedTime(entry.CompletedAt) >= TimeSpan.FromSeconds(30))
-                    Evict(entry);
             foreach (var id in _attempted.Keys.Where(id => !queued.Contains(id)).ToArray()) _attempted.Remove(id);
-        }
-    }
-
-    private void Evict(Entry entry)
-    {
-        entry.Cancel.Cancel();
-        // Keep canceled work counted until the owned worker has joined it.
-        if (entry.Done.Task.IsCompleted)
-        {
-            _entries.Remove(entry.Intent.TaskId);
-            entry.Cancel.Dispose();
-        }
     }
 
     public bool TryEnqueue(CardSiblingInspectionIntent intent)
@@ -80,16 +63,10 @@ public sealed class CardSiblingInspectionQueue(IServiceScopeFactory scopes, Time
         lock (_sync)
         {
             if (_stopping.IsCancellationRequested) return false;
-            if (_entries.TryGetValue(intent.TaskId, out var existing))
-            {
-                if (existing.Intent == intent && !existing.Cancel.IsCancellationRequested) return true;
-                Evict(existing);
-                if (_entries.ContainsKey(intent.TaskId)) return false;
-            }
-            if (_entries.Count >= 32) return false;
-            var entry = new Entry(intent);
-            if (!_pending.Writer.TryWrite(entry)) { entry.Cancel.Dispose(); return false; }
-            _entries.Add(intent.TaskId, entry);
+            var entry = _results.Begin(intent, out var started);
+            if (entry is null) return false;
+            if (!started) return true;
+            if (!_pending.Writer.TryWrite(entry)) { _results.Abandon(entry); return false; }
             _attempted[intent.TaskId] = clock.GetTimestamp();
             if (_attempted.Count > 32)
                 _attempted.Remove(_attempted.MinBy(pair => pair.Value).Key);
@@ -97,27 +74,10 @@ public sealed class CardSiblingInspectionQueue(IServiceScopeFactory scopes, Time
         }
     }
 
-    public SiblingBaseGuard? Take(CardSiblingInspectionIntent intent)
-    {
-        lock (_sync)
-        {
-            if (!_entries.TryGetValue(intent.TaskId, out var entry)) return null;
-            if (entry.Intent != intent) { Evict(entry); return null; }
-            if (!entry.Done.Task.IsCompleted) return null;
-            var result = !entry.Cancel.IsCancellationRequested
-                && clock.GetElapsedTime(entry.CompletedAt) < TimeSpan.FromSeconds(30) ? entry.Result : null;
-            _entries.Remove(intent.TaskId);
-            entry.Cancel.Dispose();
-            return result;
-        }
-    }
+    public SiblingBaseGuard? Take(CardSiblingInspectionIntent intent) => _results.Peek(intent);
 
-    public async Task WhenIdleAsync(CancellationToken ct = default)
-    {
-        Task[] pending;
-        lock (_sync) pending = _entries.Values.Select(entry => entry.Done.Task).ToArray();
-        await Task.WhenAll(pending).WaitAsync(ct);
-    }
+    public async Task WhenIdleAsync(CancellationToken ct = default) =>
+        await Task.WhenAll(_results.Completions()).WaitAsync(ct);
 
     private async Task WorkerAsync()
     {
@@ -125,8 +85,9 @@ public sealed class CardSiblingInspectionQueue(IServiceScopeFactory scopes, Time
         {
             await foreach (var entry in _pending.Reader.ReadAllAsync(_stopping.Token))
             {
-                using var operation = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token, entry.Cancel.Token);
+                using var operation = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token, entry.Cancellation);
                 Interlocked.Increment(ref _active);
+                SiblingBaseGuard? result = null;
                 try
                 {
                     operation.Token.ThrowIfCancellationRequested();
@@ -140,26 +101,21 @@ public sealed class CardSiblingInspectionQueue(IServiceScopeFactory scopes, Time
                         || task.RepoPath is null) continue;
                     var fallback = await service.ConfiguredDefaultAsync(task, inspection, operation.Token);
                     if (CardSiblingInspectionIntent.From(task, fallback) != entry.Intent) continue;
-                    entry.Result = await service.InspectAsync(task, inspection, operation.Token);
+                    result = await service.InspectAsync(task, inspection, operation.Token);
                 }
                 catch (OperationCanceledException) when (operation.IsCancellationRequested) { }
                 catch (Exception ex)
                 {
-                    entry.Result = new SiblingBaseGuard(null, [], null,
+                    result = new SiblingBaseGuard(null, [], null,
                         ex is WorktreeBaseInspectionLimitException limit ? limit.Reason : "git_inspection_error",
                         PendingKnown: false);
                     logger.LogWarning("Sibling inspection failed for task {TaskId} attempt {Attempt} reason {Reason}",
-                        entry.Intent.TaskId, entry.Intent.Attempt, entry.Result.Reason);
+                        entry.Intent.TaskId, entry.Intent.Attempt, result.Reason);
                 }
                 finally
                 {
                     Interlocked.Decrement(ref _active);
-                    lock (_sync)
-                    {
-                        entry.CompletedAt = clock.GetTimestamp();
-                        entry.Done.TrySetResult();
-                        if (entry.Cancel.IsCancellationRequested) Evict(entry);
-                    }
+                    _results.Complete(entry, result);
                 }
             }
         }
@@ -173,15 +129,7 @@ public sealed class CardSiblingInspectionQueue(IServiceScopeFactory scopes, Time
         lock (_sync) workers = _workers ?? [];
         // Caller cancellation does not abandon the workers this service owns.
         await Task.WhenAll(workers);
-        lock (_sync)
-        {
-            foreach (var entry in _entries.Values)
-            {
-                entry.Done.TrySetResult();
-                entry.Cancel.Dispose();
-            }
-            _entries.Clear();
-        }
+        _results.Clear();
     }
 
     public async ValueTask DisposeAsync() => await StopAsync(CancellationToken.None);
