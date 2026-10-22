@@ -317,7 +317,10 @@ source_json='{"Id":"0123abcd9f0123456789abcdef0123456789abcd0123456789abcdef0123
 alias_json='{"Id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","Name":"/snapshot-alias","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"Mounts":[{"Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres","snapshot-alias"]}}}}'
 unlabelled_json='{"Id":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","Name":"/antiphon-postgres-drill","Config":{"Labels":{}},"Mounts":[{"Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
 mount_json='{"Id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"Mounts":[{"Name":"antiphon_pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
-clean_json='{"Id":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"Mounts":[{"Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
+# The official postgres image sets PG_MAJOR, PG_VERSION and PGDATA itself, so
+# every container the drill creates or reuses carries them (CARD-1413 D-1).
+image_env='"Env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/postgresql/16/bin","GOSU_VERSION=1.17","LANG=en_US.utf8","PG_MAJOR=16","PG_VERSION=16.4-1.pgdg120+1","PGDATA=/var/lib/postgresql/data","POSTGRES_HOST_AUTH_METHOD=trust","POSTGRES_USER=antiphon"]'
+clean_json='{"Id":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"},'"$image_env"'},"HostConfig":{"NetworkMode":"none"},"Mounts":[{"Type":"volume","Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{}}}'
 server2_json='{"Id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","Name":"/antiphon-server2-postgres-postgres-1","Config":{"Labels":{}},"Mounts":[{"Name":"antiphon-server2-postgres_pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["postgres"]}}}}'
 custom_source_json='{"Id":"1212121212121212121212121212121212121212121212121212121212121212","Name":"/custom-pg","Config":{"Labels":{}},"Mounts":[{"Name":"custom_pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["custom-pg"]}}}}'
 labelled_source_json='{"Id":"3434343434343434343434343434343434343434343434343434343434343434","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"Mounts":[{"Name":"custom_pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
@@ -325,7 +328,9 @@ mismatch_json='{"Id":"5656565656565656565656565656565656565656565656565656565656
 pghost_json='{"Id":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"},"Env":["PGHOST=db.internal","PGPORT=5432"]},"Mounts":[{"Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
 own_running_json='{"Id":"7878787878787878787878787878787878787878787878787878787878787878","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"Mounts":[{"Name":"custom_pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"bridge":{"Aliases":["antiphon-postgres-drill"]}}}}'
 pghostaddr_json='{"Id":"9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"},"Env":["PGHOSTADDR=10.0.0.5"]},"HostConfig":{"NetworkMode":"none"},"Mounts":[{"Type":"volume","Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{}}}'
-pgenv_json='{"Id":"9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"},"Env":["PATH=/usr/bin","PGSERVICE=production"]},"HostConfig":{"NetworkMode":"none"},"Mounts":[{"Type":"volume","Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{}}}'
+pgenv_json='{"Id":"9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"},"Env":["PATH=/usr/bin","PG_MAJOR=16","PG_VERSION=16.4-1.pgdg120+1","PGDATA=/var/lib/postgresql/data","PGSERVICE=production"]},"HostConfig":{"NetworkMode":"none"},"Mounts":[{"Type":"volume","Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{}}}'
+pgpassfile_json='{"Id":"9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"},"Env":["PG_MAJOR=16","PG_VERSION=16.4-1.pgdg120+1","PGDATA=/var/lib/postgresql/data","PGPASSFILE=/run/secrets/pgpass"]},"HostConfig":{"NetworkMode":"none"},"Mounts":[{"Type":"volume","Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{}}}'
+pgssl_json='{"Id":"8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"},"Env":["PG_MAJOR=16","PG_VERSION=16.4-1.pgdg120+1","PGDATA=/var/lib/postgresql/data","PGSSLMODE=verify-full","PGSSLROOTCERT=/certs/root.crt"]},"HostConfig":{"NetworkMode":"none"},"Mounts":[{"Type":"volume","Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{}}}'
 bind_json='{"Id":"9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"HostConfig":{"NetworkMode":"none"},"Mounts":[{"Type":"volume","Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"},{"Type":"bind","Source":"/var/lib/docker/volumes/antiphon_pgdata/_data","Destination":"/mnt/live"}],"NetworkSettings":{"Networks":{}}}'
 hostnet_json='{"Id":"9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"HostConfig":{"NetworkMode":"host"},"Mounts":[{"Type":"volume","Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{"host":{"Aliases":[]}}}}'
 sharednet_json='{"Id":"9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e","Name":"/antiphon-postgres-drill","Config":{"Labels":{"antiphon.snapshot-drill":"1"}},"HostConfig":{"NetworkMode":"container:0123abcd9f0123456789abcdef0123456789abcd0123456789abcdef012345"},"Mounts":[{"Type":"volume","Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{}}}'
@@ -426,6 +431,18 @@ case "$cmd" in
                 ;;
             pgenv)
                 emit "$pgenv_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            pgpassfile)
+                emit "$pgpassfile_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            pgssl)
+                emit "$pgssl_json" "antiphon-postgres-drill"
+                exit 0
+                ;;
+            reuse)
+                emit "$clean_json" "antiphon-postgres-drill"
                 exit 0
                 ;;
             bind)
@@ -1028,6 +1045,10 @@ function Test-DrillRefusesTaintedReuse {
         $pgenv = Invoke-DrillCase $fx 'pgenv' $common '1048576' @($volume)
         Assert-DrillRefused $pgenv $fx 'pg-env' 'pg env'
         Assert-True ($pgenv.Tools -notmatch 'volume rm') 'pg env leaves volumes' $pgenv.Tools
+        $passfile = Invoke-DrillCase $fx 'pgpassfile' $common '1048576' @($volume)
+        Assert-DrillRefused $passfile $fx 'pg-env' 'pgpassfile beside image env'
+        $ssl = Invoke-DrillCase $fx 'pgssl' $common '1048576' @($volume)
+        Assert-DrillRefused $ssl $fx 'pg-env' 'pgssl beside image env'
         $bind = Invoke-DrillCase $fx 'bind' $common '1048576' @($volume)
         Assert-DrillRefused $bind $fx 'bind-mount' 'bind mount'
         Assert-True ($bind.Tools -notmatch 'volume rm') 'bind mount leaves volumes' $bind.Tools
@@ -1037,6 +1058,28 @@ function Test-DrillRefusesTaintedReuse {
         $shared = Invoke-DrillCase $fx 'sharednet' $common '1048576' @($volume)
         Assert-DrillRefused $shared $fx 'shared-network' 'shared network'
         Assert-True ($shared.Tools -notmatch 'volume rm') 'shared network leaves volumes' $shared.Tools
+    } finally { Remove-Fixture $fx }
+}
+
+# CARD-1413 D-1: the image's own PG_MAJOR, PG_VERSION and PGDATA are not libpq
+# connection variables; a labelled scratch container that carries only them is
+# reused, and the one the drill creates (DrillRemovesScratch) is accepted.
+function Test-DrillReusesImageEnvScratch {
+    $id = 'c' * 64
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'DrillReusesImageEnvScratch script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $volume = 'antiphon-postgres-drill-pgdata'
+        $reused = Invoke-DrillCase $fx 'reuse' @('-ScratchContainer', 'antiphon-postgres-drill', '-ScratchVolume', $volume) '1048576' @($volume)
+        Assert-True ($reused.Exit -eq 0) 'image env reuse exits 0' "exit=$($reused.Exit) $($reused.Out)"
+        Assert-True ($reused.Out -notmatch 'guard=') 'image env reuse trips no guard' $reused.Out
+        Assert-True ($reused.Tools -notmatch 'run -d') 'image env reuse starts no container' $reused.Tools
+        Assert-True ($reused.Tools -notmatch 'volume create') 'image env reuse creates no volume' $reused.Tools
+        Assert-True ($reused.Tools -match ('exec ' + $id + ' createdb')) 'image env reuse creates the scratch database' $reused.Tools
+        Assert-True ($reused.Tools -match ('exec ' + $id + ' pg_restore --no-owner')) 'image env reuse restores into the scratch container' $reused.Tools
+        Assert-True ($reused.Tools -match ('rm -f ' + $id)) 'image env reuse removes the scratch container' $reused.Tools
+        Assert-NoSecret $reused $fx 'image env reuse'
     } finally { Remove-Fixture $fx }
 }
 
@@ -1283,7 +1326,7 @@ $all = @(
     'PublishRejectsTinyDump', 'PublishRejectsMissingTableData',
     'RetentionIgnoresConflictCopy', 'StagingHygiene', 'StagingPreservesOperatorFiles',
     'StagingRefusesLink', 'StagingOutsideDestination', 'DrillRemovesScratch',
-    'DrillRefusesTaintedReuse', 'DockerDaemonPinned', 'StagingRefusesForeignRoot',
+    'DrillRefusesTaintedReuse', 'DrillReusesImageEnvScratch', 'DockerDaemonPinned', 'StagingRefusesForeignRoot',
     'StagingSkipsLiveRun', 'DrillPicksExactSnapshot',
     'PublishRejectsEncryptFailure', 'MissingAge'
 )
