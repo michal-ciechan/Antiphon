@@ -58,7 +58,7 @@ writer.
 
 1. **Identical event signature in all three failures.** Each one goes: worktree created →
    "remote workspace preparation is in flight" → "prepared workspace is ready" → fails
-   with the generic save message 18-25 s later, with no session or agent bound and no
+   with the generic save message 17-25 s later, with no session or agent bound and no
    remote-prep failure:
 
    | Task | Title | Prep in flight | Ready | Failed | Ready→fail |
@@ -153,3 +153,8 @@ Read-only SQL (`BEGIN READ ONLY … ROLLBACK`) against the desktop dev Postgres 
 `antiphon.desktop.codeperf.net:17280` from the server2 mirror covered `AgentTasks`,
 `AgentTaskEvents` and `Agents`. Also read: `GET /api/version`, and git
 `merge-tree`/`grep` against `origin/rc/2026-10-20` and master. Builds and tests: 0.
+
+--- next stage ---
+next: code
+handoff: Port CARD-1471 to rc/2026-10-20: cherry-pick e7825b823 and 0aa1473a9 (drop the plan doc), build, run CP-1 C_dispatch_save_* (3) and CP-2 R-1..R-5 (5, (Name*) form), ordinary Review, rc land, then restart the AppHost onto the new rc tip and confirm /api/version. Optionally confirm the quoted 23505 for a4f88c28/5fdc4967 with the desktop commands in the doc.
+artifact: docs/investigations/2026-10-22-dispatch-save-failed-recurrence.md
