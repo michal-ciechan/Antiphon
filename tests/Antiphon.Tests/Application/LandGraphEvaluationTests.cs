@@ -15,7 +15,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public sealed class LandGraphEvaluationTests
+public sealed partial class LandGraphEvaluationTests
 {
     // V-4: the plan's D-1 members exist on the SDK pinned by global.json, before anything relies on them.
     [Test]
