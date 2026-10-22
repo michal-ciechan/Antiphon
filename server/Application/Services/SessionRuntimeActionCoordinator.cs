@@ -233,6 +233,9 @@ public sealed class SessionRuntimeActionCoordinator(
         if (action.TriggerKind == ChannelReplyDebt)
         {
             await runtime.ExecuteActionChannelReplyAsync(action.AgentSessionId, action.Sequence, ct);
+            // CARD-1433: a debt row that carries late-confirmed sources publishes them too.
+            if (action.LateConfirmedChannelMessageIds.Length > 0)
+                await runtime.ExecuteActionLateConfirmAsync(action, ct);
             db.SessionRuntimeActions.Remove(action);
             await db.SaveChangesAsync(ct);
             return ExecutionDisposition.Continue;
@@ -292,14 +295,7 @@ public sealed class SessionRuntimeActionCoordinator(
             await db.SaveChangesAsync(ct);
         }
         if (action.Phase > QueuePhase)
-        {
-            // Late-confirmed replies publish after any earlier owed reply, never past it.
-            if (action.LateConfirmedChannelMessageIds.Length > 0
-                && await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == action.AgentSessionId
-                    && a.TriggerKind == ChannelReplyDebt && a.Sequence <= action.Sequence, ct))
-                throw new InvalidOperationException("An earlier channel reply remains owed.");
-            await runtime.ExecuteActionLateConfirmAsync(action, ct);
-        }
+            await ExecuteLateConfirmPhaseAsync(runtime, db, action, ct);
         db.SessionRuntimeActions.Remove(action);
         await db.SaveChangesAsync(ct);
         return ExecutionDisposition.Continue;
@@ -349,6 +345,58 @@ public sealed class SessionRuntimeActionCoordinator(
             Attempts = failure is null ? 0 : 1, FailureReason = failure?.GetType().Name,
             ConversationKey = key });
         if (failure is not null) Diagnostic(failure, "Channel reply retained as debt", action.AgentSessionId);
+    }
+
+    /// <summary>
+    /// CARD-1433: publishes this action's late-confirmed channel sources, unless an earlier
+    /// reply to their destination is still owed at or below this sequence. A waiting or failed
+    /// publication becomes channel debt at this sequence carrying the source ids (merged into
+    /// the phase-4 row when one exists), saved with the action's removal, so later queue
+    /// actions are not held behind it. Late-confirmed replies still publish after any earlier
+    /// owed reply to the same destination, never past it.
+    /// </summary>
+    private async Task ExecuteLateConfirmPhaseAsync(AgentSessionRuntime runtime, AppDbContext db,
+        SessionRuntimeAction action, CancellationToken ct)
+    {
+        var ids = action.LateConfirmedChannelMessageIds;
+        if (ids.Length == 0) return;
+        var keys = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == action.AgentSessionId && ids.Contains(m.Id))
+            .Select(m => m.ConversationKey).Distinct().ToListAsync(ct);
+        var key = keys.Count == 1 ? keys[0] : null;
+        var owed = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == action.AgentSessionId
+                && a.TriggerKind == ChannelReplyDebt && a.Sequence <= action.Sequence
+                && (key == null || a.ConversationKey == null || a.ConversationKey == key))
+            .MaxAsync(a => (DateTime?)a.DueAt, ct);
+        var now = clock.GetUtcNow().UtcDateTime;
+        Exception? failure = null;
+        if (owed is null)
+        {
+            try
+            {
+                await runtime.ExecuteActionLateConfirmAsync(action, ct);
+                return;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex) { failure = ex; }
+        }
+        var debt = await db.SessionRuntimeActions.SingleOrDefaultAsync(a => a.AgentSessionId == action.AgentSessionId
+            && a.Sequence == action.Sequence && a.TriggerKind == ChannelReplyDebt, ct);
+        if (debt is not null)
+        {
+            debt.LateConfirmedChannelMessageIds = debt.LateConfirmedChannelMessageIds.Union(ids).ToArray();
+            if (debt.ConversationKey != key) debt.ConversationKey = null;
+        }
+        else
+            db.SessionRuntimeActions.Add(new SessionRuntimeAction { Id = Guid.NewGuid(),
+                AgentSessionId = action.AgentSessionId, AcceptedGeneration = action.AcceptedGeneration,
+                AcceptedTaskId = action.AcceptedTaskId, AcceptedTaskAttempt = action.AcceptedTaskAttempt,
+                Sequence = action.Sequence, ProducerSequence = action.ProducerSequence,
+                TriggerKind = ChannelReplyDebt, Phase = ChannelReplyPhase, CreatedAt = now,
+                DueAt = failure is null ? (owed > now ? owed.Value : now) : RetryAt(1),
+                Attempts = failure is null ? 0 : 1, FailureReason = failure?.GetType().Name,
+                ConversationKey = key, LateConfirmedChannelMessageIds = ids });
+        if (failure is not null) Diagnostic(failure, "Late-confirm publication retained as debt", action.AgentSessionId);
     }
 
     private void Diagnostic(Exception exception, string message, Guid sessionId)
