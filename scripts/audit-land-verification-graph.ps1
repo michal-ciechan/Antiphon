@@ -46,6 +46,18 @@
 # operation refuses; any other attribute is metadata and must be allow-listed. A path item whose
 # resolved pattern reaches a tracked symbolic link (mode 120000), as a match or as a directory it
 # passes through, refuses naming the link.
+# CARD-1409 repair 6 (Review c64987ea): one pipeline (Resolve-ItemPathText) turns every item or import text
+# into path specs in MSBuild's order, read from a scratch 'dotnet msbuild -getItem' run: expand properties
+# and metadata (values spliced in their escaped form), split the expanded text on ';' (an escaped %3B is not
+# a separator; a ';' inside an expanded value is), decode %XX once per part (two hex digits in either case
+# become one character; %252E is the literal %2E; a malformed %X or %GG stays literal; %00 refuses by name),
+# then normalise (D-28). A decoded $( @( %( is literal text, never a reference. An escaped * or ? is literal
+# for MSBuild; the audit reads the decoded include as a wildcard, which selects at least the literal name,
+# and drops an Exclude part whose decoded text gained a wildcard character. A root belongs to the first part
+# only. Every consumer runs through the pipeline and it is the only ';' split: Include, Update, Exclude,
+# Import Project, ProjectReference, name items, Pkg* ids, literal property-value paths, the tail of a
+# file-reading function argument (which may not climb out of its output root; a property no tracked file
+# may set is the SDK's own, read as one opaque segment) and output-root tails.
 # CARD-1409: an Import Project path that still contains $(, @( or %( after the
 # two known properties are expanded is refused and is not followed; there is no
 # allow-list. An Import with an attribute other than Project, Condition or Label
