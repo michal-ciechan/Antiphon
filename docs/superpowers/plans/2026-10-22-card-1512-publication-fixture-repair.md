@@ -16,8 +16,10 @@ The explicit Code brief limits this Final round to the exact repaired methods:
 no Unit lane, full class, or assembly run. Existing shared harness code stays
 unchanged. The supplied group-10 Debug report and CARD-1512 support this decision.
 The separately named `2026-10-22-rc-windows-qualification-interim-reds.md` is absent
-from both the assigned tree and fetched master; the group-10 report contains the
-completed image failure and its diagnostic source references.
+from both the assigned tree and fetched master. It was retrieved and read at
+`7d47ae6ca0d1e84d13ac5fa604065895f2543420` on the investigation's
+`feat/card-task-77c15d47` branch. The group-10 report contains the completed image
+failure and its diagnostic source references.
 
 ## Slices
 
