@@ -156,8 +156,11 @@ mid-flight relabels it `ResumePublication` (CARD-1449).
 
 Generated verification evidence stays ignored (CARD-1015); essential receipt lines and
 provenance belong in the stored task report. Ignored output does not dirty tracked source.
-Program currently registers `RefusingEvidenceRetention`, so publication can succeed while
-cleanup retains evidence residue. Whole completed-card worktree removal belongs to CARD-1017;
+Program registers `FileSystemEvidenceRetention` (CARD-1446 S4a): evidence-class ignored files
+are copied, byte-verified, under `WorktreeCleanup:RetainedEvidenceRoot` (default
+`<Git:WorktreeBasePath>/.retained/<task>/<attempt>/`) before the tree is removed, and an unlisted
+`.antiphon` spill is evidence (`**/.antiphon/**`, S4b). Publication can still succeed while
+cleanup refuses on a protected name and retains residue. Whole completed-card worktree removal belongs to CARD-1017;
 this policy supplies neither that deletion authority nor durable raw-artifact storage.
 A 409 with code `land_running` means a land is running in this server now: wait for its outcome
 event. For a 409 with another code, read its code and message and follow the route it names; the
@@ -2194,7 +2197,14 @@ Created/Starting/Running/Stopping, or a row younger than `WorktreeResidue:Launch
 and dispatch failure, land outcome, session exit, kill and launch failure, and a refused
 admitting operation release their rows after their own commit. Herdr adoption attributes its row
 to the adopted session. `WorktreeResidue:Execute` ships false;
-activation is a commissioned deploy after Review/land. CARD-0452's ignored-content guard is
+activation is a commissioned deploy after Review/land, and CARD-1446 S4d presumes S4a-S4c are
+deployed first: copy-based evidence retention, the `**/.antiphon/**` evidence default, and the
+Publication lane's pacing. A queued cleanup retry stamps the operation's `landing:<opId>` cursor
+`NotBefore = now + WorktreeResidue:CleanupRetryCooldownDays` (default 7; 0 disables) and the lane
+holds it as `cooldown` until then; a `Refused` cleanup with `WorktreeResidue:MaxCleanupRetries`
+(default 3; 0 disables) earlier queued retries becomes `Cleanup=Abandoned` (one `LandingCleanup`
+event, worktree kept, candidate `Refused/cleanup_abandoned`) and leaves the lane; an explicit
+`-Land` on the task is its retry path. `MaxActionsPerRun` stays 25. CARD-0452's ignored-content guard is
 unchanged. Failed-add
 rollback and stale-registration healing retain uncertain state for inspection. They no longer
 force-remove or recursively erase a directory. This increases residue intentionally.
