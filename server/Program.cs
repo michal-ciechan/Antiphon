@@ -458,10 +458,10 @@ try
     builder.Services.AddSingleton<IWorktreeDeleteAccessProbe, WindowsWorktreeDeleteAccessProbe>();
     builder.Services.AddSingleton<IWorktreeCleanupJournal, WorktreeCleanupJournal>();
     builder.Services.AddSingleton<WorktreeGuardedCleanup>();
-    // CARD-0665 S2: every guarded removal classifies ignored content; evidence is refused until
-    // the retaining implementation replaces this seam (S3).
+    // CARD-0665 S2: every guarded removal classifies ignored content. CARD-1446 S4a: evidence is copied,
+    // byte-verified, under WorktreeCleanup:RetainedEvidenceRoot before the tree is removed.
     builder.Services.AddSingleton<WorktreeIgnoredContentClassifier>();
-    builder.Services.AddSingleton<IWorktreeEvidenceRetention, RefusingEvidenceRetention>();
+    builder.Services.AddSingleton<IWorktreeEvidenceRetention, FileSystemEvidenceRetention>();
     builder.Services.AddSingleton<WorktreeIgnoredContentGate>();
     builder.Services.AddSingleton<GuardedWorktreeRemoval>();
     builder.Services.AddSingleton<IRepositoryMutationLease>(sp => new RepositoryMutationLease(
