@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../scripts/lib/BuildDriverEnvironment.cs" Link="Infrastructure/BuildDriverEnvironment.cs" />
     <InternalsVisibleTo Include="Antiphon.Tests" />
     <InternalsVisibleTo Include="Antiphon.E2E" />
     <InternalsVisibleTo Include="Antiphon.ChannelOutbound.Probe" />
