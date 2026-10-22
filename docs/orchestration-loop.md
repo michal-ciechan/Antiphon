@@ -2204,7 +2204,12 @@ Publication lane's pacing. A queued cleanup retry stamps the operation's `landin
 holds it as `cooldown` until then; a `Refused` cleanup with `WorktreeResidue:MaxCleanupRetries`
 (default 3; 0 disables) earlier queued retries becomes `Cleanup=Abandoned` (one `LandingCleanup`
 event, worktree kept, candidate `Refused/cleanup_abandoned`) and leaves the lane; an explicit
-`-Land` on the task is its retry path. `MaxActionsPerRun` stays 25. CARD-0452's ignored-content guard is
+`-Land` on the task is its retry path. `MaxActionsPerRun` stays 25. A daily run writes a `Held` candidate row
+only when the candidate's `<Lane>|<Outcome>|<ReasonCode>` differs from the cursor's `LastOutcomeKey` (its last
+non-preview verdict); action rows and preview rows are always written, run counters count every evaluation, the
+run log says `candidates=M rows=N unchanged=M-N`, and `Retention:WorktreeResidueHeldRowRetentionDays` (default 30;
+0 disables) prunes `Held`/`Preview` rows older than that while keeping run headers and action rows (CARD-1446
+D-5). CARD-0452's ignored-content guard is
 unchanged. Failed-add
 rollback and stale-registration healing retain uncertain state for inspection. They no longer
 force-remove or recursively erase a directory. This increases residue intentionally.

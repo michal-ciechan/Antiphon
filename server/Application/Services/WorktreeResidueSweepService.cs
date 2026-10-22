@@ -168,8 +168,10 @@ public sealed class WorktreeResidueSweepService
                 && (o.Publication == LandPublicationOutcome.Landed || o.Publication == LandPublicationOutcome.AlreadyPresent))
             .ToListAsync(ct);
         var landingKeys = landings.Select(o => PublicationLanePolicy.CursorKey(o.Id)).ToList();
-        var landingCursors = landingKeys.Count == 0 ? []
-            : await _db.WorktreeResidueCandidateCursors.Where(c => landingKeys.Contains(c.CandidateKey)).ToListAsync(ct);
+        // CARD-1446 D-5 (S5): one cursor per candidate (task:<id:N>, landing:<opId:N>) carries the pacing
+        // columns and LastOutcomeKey, the last non-preview verdict that decides whether a Held row is rewritten.
+        var cursors = await LoadCursorsAsync(tasks.Select(t => TaskCursorKey(t.Id)).Concat(landingKeys).ToList(), ct);
+        var rows = 0;
         var landingIds = landings.Select(o => o.Id).ToList();
         var queuedOutcome = nameof(WorktreeResidueCandidateOutcome.Queued);
         var queuedBefore = landingIds.Count == 0 ? new Dictionary<Guid, int>()
@@ -185,6 +187,7 @@ public sealed class WorktreeResidueSweepService
         {
             ct.ThrowIfCancellationRequested();
             var release = releases.FirstOrDefault(r => r.TaskId == task.Id && r.TaskAttempt == task.Attempt);
+            var taskCursorKey = TaskCursorKey(task.Id);
             var outcome = WorktreeResidueCandidateOutcome.Held;
             var code = "release_required";
             if (release?.State == WorktreeRetirementState.Complete)
@@ -220,7 +223,7 @@ public sealed class WorktreeResidueSweepService
                     outcome = WorktreeResidueCandidateOutcome.Refused;
                     code = removed.Residue ?? "refused";
                     run.Refused++;
-                    await PersistCooldownAsync("task:" + task.Id.ToString("N"), ct);
+                    StampTaskCooldown(cursors, taskCursorKey, now);
                 }
             }
             else if (!authorized)
@@ -229,19 +232,23 @@ public sealed class WorktreeResidueSweepService
             }
             }
 
-            _db.WorktreeResidueRunCandidates.Add(new Domain.Entities.WorktreeResidueRunCandidate
+            if (ShouldWriteRow(cursors, taskCursorKey, nameof(WorktreeResidueLane.SettledTask), outcome, code, preview, now))
             {
-                Id = Guid.NewGuid(),
-                RunId = run.Id,
-                Lane = nameof(WorktreeResidueLane.SettledTask),
-                Outcome = outcome.ToString(),
-                ReasonCode = code,
-                TaskId = task.Id,
-                RetirementId = release?.Id,
-                Path = task.WorktreePath,
-                Branch = task.WorktreeBranch,
-                EvaluatedAt = now,
-            });
+                rows++;
+                _db.WorktreeResidueRunCandidates.Add(new Domain.Entities.WorktreeResidueRunCandidate
+                {
+                    Id = Guid.NewGuid(),
+                    RunId = run.Id,
+                    Lane = nameof(WorktreeResidueLane.SettledTask),
+                    Outcome = outcome.ToString(),
+                    ReasonCode = code,
+                    TaskId = task.Id,
+                    RetirementId = release?.Id,
+                    Path = task.WorktreePath,
+                    Branch = task.WorktreeBranch,
+                    EvaluatedAt = now,
+                });
+            }
             run.Candidates++;
         }
 
@@ -252,7 +259,7 @@ public sealed class WorktreeResidueSweepService
             var code = "publication_retry";
             Guid? requestId = null;
             var cursorKey = PublicationLanePolicy.CursorKey(op.Id);
-            var cursor = landingCursors.FirstOrDefault(c => c.CandidateKey == cursorKey);
+            var cursor = cursors.GetValueOrDefault(cursorKey);
             var earlierRetries = queuedBefore.GetValueOrDefault(op.Id);
             var decision = PublicationLanePolicy.Decide(op, earlierRetries, cursor, now, _settings);
             if (decision == PublicationLaneDecision.Cooldown)
@@ -292,7 +299,7 @@ public sealed class WorktreeResidueSweepService
                         code = "retry_queued";
                         requestId = queued.RequestId;
                         run.Queued++;
-                        StampLandingCooldown(cursor, cursorKey, now);
+                        StampLandingCooldown(cursors, cursorKey, now);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -307,20 +314,24 @@ public sealed class WorktreeResidueSweepService
                 run.Held++;
             }
 
-            _db.WorktreeResidueRunCandidates.Add(new Domain.Entities.WorktreeResidueRunCandidate
+            if (ShouldWriteRow(cursors, cursorKey, nameof(WorktreeResidueLane.Publication), outcome, code, preview, now))
             {
-                Id = Guid.NewGuid(),
-                RunId = run.Id,
-                Lane = nameof(WorktreeResidueLane.Publication),
-                Outcome = outcome.ToString(),
-                ReasonCode = code,
-                TaskId = op.TaskId,
-                LandingOperationId = op.Id,
-                LandRequestId = requestId,
-                Path = op.WorktreePath,
-                Branch = op.SourceFullRef,
-                EvaluatedAt = now,
-            });
+                rows++;
+                _db.WorktreeResidueRunCandidates.Add(new Domain.Entities.WorktreeResidueRunCandidate
+                {
+                    Id = Guid.NewGuid(),
+                    RunId = run.Id,
+                    Lane = nameof(WorktreeResidueLane.Publication),
+                    Outcome = outcome.ToString(),
+                    ReasonCode = code,
+                    TaskId = op.TaskId,
+                    LandingOperationId = op.Id,
+                    LandRequestId = requestId,
+                    Path = op.WorktreePath,
+                    Branch = op.SourceFullRef,
+                    EvaluatedAt = now,
+                });
+            }
             run.Candidates++;
         }
 
@@ -340,11 +351,15 @@ public sealed class WorktreeResidueSweepService
                 Branch = entry.Branch,
                 EvaluatedAt = now,
             });
+            rows++;
             run.Candidates++;
             run.Held++;
         }
 
         run.ActionsAccepted = actions;
+        _logger.LogInformation(
+            "Worktree residue run {RunId} preview={Preview} candidates={Candidates} rows={Rows} unchanged={Unchanged}",
+            run.Id, preview, run.Candidates, rows, run.Candidates - rows);
         run.FinishedAt = _clock.GetUtcNow().UtcDateTime;
         await _db.SaveChangesAsync(ct);
         var page = await _db.WorktreeResidueRunCandidates.AsNoTracking()
@@ -365,36 +380,73 @@ public sealed class WorktreeResidueSweepService
     /// CARD-1446 D-4 (S4c): a queued cleanup retry paces the next one by <c>CleanupRetryCooldownDays</c>
     /// (0 only touches <c>LastEvaluatedAt</c>). The cursor is saved with the run.
     /// </summary>
-    private void StampLandingCooldown(Domain.Entities.WorktreeResidueCandidateCursor? cursor, string key, DateTime now)
+    private void StampLandingCooldown(Dictionary<string, Domain.Entities.WorktreeResidueCandidateCursor> cursors, string key, DateTime now)
     {
-        if (cursor is null)
-        {
-            cursor = new Domain.Entities.WorktreeResidueCandidateCursor { Id = Guid.NewGuid(), CandidateKey = key };
-            _db.WorktreeResidueCandidateCursors.Add(cursor);
-        }
+        var cursor = GetOrAddCursor(cursors, key, now);
         cursor.LastEvaluatedAt = now;
         cursor.NotBefore = _settings.CleanupRetryCooldownDays > 0 ? now.AddDays(_settings.CleanupRetryCooldownDays) : null;
     }
 
-    private async Task PersistCooldownAsync(string key, CancellationToken ct)
+    /// <summary>A refused SettledTask retirement is not retried for 24 hours (CARD-0459 fairness cursor).</summary>
+    private void StampTaskCooldown(Dictionary<string, Domain.Entities.WorktreeResidueCandidateCursor> cursors, string key, DateTime now)
     {
-        var due = _clock.GetUtcNow().UtcDateTime.AddHours(24);
-        var cursor = await _db.WorktreeResidueCandidateCursors.SingleOrDefaultAsync(c => c.CandidateKey == key, ct);
-        if (cursor is null)
-        {
-            _db.WorktreeResidueCandidateCursors.Add(new Domain.Entities.WorktreeResidueCandidateCursor
-            {
-                Id = Guid.NewGuid(),
-                CandidateKey = key,
-                LastEvaluatedAt = _clock.GetUtcNow().UtcDateTime,
-                NotBefore = due,
-            });
-        }
-        else
-        {
-            cursor.LastEvaluatedAt = _clock.GetUtcNow().UtcDateTime;
-            cursor.NotBefore = due;
-        }
+        var cursor = GetOrAddCursor(cursors, key, now);
+        cursor.LastEvaluatedAt = now;
+        cursor.NotBefore = now.AddHours(24);
+    }
+
+    /// <summary>
+    /// CARD-1446 D-5 (S5). A non-preview run stamps the candidate's cursor with
+    /// <c>&lt;Lane&gt;|&lt;Outcome&gt;|&lt;ReasonCode&gt;</c> and writes a <c>Held</c> row only when that key differs
+    /// from the stored one (or no cursor existed yet); action rows (<c>Queued</c>, <c>Refused</c>, <c>Partial</c>,
+    /// <c>Removed</c>) are always written. A preview run writes every row and leaves the cursor alone, so the next
+    /// daily run still records a change the operator previewed. Run counters count every evaluation either way.
+    /// </summary>
+    private bool ShouldWriteRow(
+        Dictionary<string, Domain.Entities.WorktreeResidueCandidateCursor> cursors,
+        string cursorKey,
+        string lane,
+        WorktreeResidueCandidateOutcome outcome,
+        string code,
+        bool preview,
+        DateTime now)
+    {
+        if (preview) return true;
+        var cursor = GetOrAddCursor(cursors, cursorKey, now);
+        var key = OutcomeKey(lane, outcome, code);
+        var unchanged = outcome == WorktreeResidueCandidateOutcome.Held
+            && string.Equals(cursor.LastOutcomeKey, key, StringComparison.Ordinal);
+        cursor.LastOutcomeKey = key;
+        cursor.LastEvaluatedAt = now;
+        return !unchanged;
+    }
+
+    internal static string TaskCursorKey(Guid taskId) => "task:" + taskId.ToString("N");
+
+    internal static string OutcomeKey(string lane, WorktreeResidueCandidateOutcome outcome, string code)
+    {
+        var key = lane + "|" + outcome + "|" + code;
+        return key.Length <= 200 ? key : key[..200];
+    }
+
+    private async Task<Dictionary<string, Domain.Entities.WorktreeResidueCandidateCursor>> LoadCursorsAsync(
+        List<string> keys, CancellationToken ct)
+    {
+        var cursors = new Dictionary<string, Domain.Entities.WorktreeResidueCandidateCursor>(StringComparer.Ordinal);
+        if (keys.Count == 0) return cursors;
+        foreach (var cursor in await _db.WorktreeResidueCandidateCursors.Where(c => keys.Contains(c.CandidateKey)).ToListAsync(ct))
+            cursors[cursor.CandidateKey] = cursor;
+        return cursors;
+    }
+
+    private Domain.Entities.WorktreeResidueCandidateCursor GetOrAddCursor(
+        Dictionary<string, Domain.Entities.WorktreeResidueCandidateCursor> cursors, string key, DateTime now)
+    {
+        if (cursors.TryGetValue(key, out var cursor)) return cursor;
+        cursor = new Domain.Entities.WorktreeResidueCandidateCursor { Id = Guid.NewGuid(), CandidateKey = key, LastEvaluatedAt = now };
+        _db.WorktreeResidueCandidateCursors.Add(cursor);
+        cursors[key] = cursor;
+        return cursor;
     }
 
     /// <summary>
