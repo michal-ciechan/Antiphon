@@ -55,7 +55,8 @@ at <phase> on <UpdatedAt:O>; no resume within <days> days; the next -Land starts
 Under the task row lock (`SELECT ... FOR UPDATE`), one transaction per operation, same as
 `RequestCleanupRetryCoreAsync`.
 Effect on the 5 rows: all five are 26+ days old, unpublished, tasks Succeeded, requests Completed, and
-`fc89bde9` has `PushExitCode=1`; they become `Refused` on the first daily run. A later explicit `-Land`
+`fc89bde9` is `push_rejected`, which the protocol raises only for a non-zero push exit
+(`AgentTaskLandingProtocol.cs:355`); they become `Refused` on the first daily run. A later explicit `-Land`
 replaces a Refused operation (`CanReplaceRefused`, schema 3 needs `ApprovalLandRequestId` and
 `ReviewedSourceSha == OriginalSourceSha`, both true for these), re-rebases and re-verifies.
 *Rejected:* extending the terminal arm for `push_rejected`. It breaks the CARD-0711 same-SHA resume and
