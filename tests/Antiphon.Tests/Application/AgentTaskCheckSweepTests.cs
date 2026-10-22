@@ -1617,7 +1617,9 @@ public class AgentTaskCheckSweepTests
             throw new NotSupportedException("a check does not read the runner");
 
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
-            throw new NotSupportedException("a check does not read the runner");
+            Snapshot is { } snapshot
+                ? Task.FromResult(new SessionRunnerBufferDto(sessionId, snapshot.RawOutput, snapshot.LastSequence))
+                : throw new NotSupportedException("a check does not read the runner");
 
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
             Snapshot is { } snapshot ? Task.FromResult(snapshot)
