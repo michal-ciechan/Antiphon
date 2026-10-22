@@ -1102,7 +1102,7 @@ public sealed partial class AgentTaskDispatcher
                     DelegationReportFormatter.Short(task.Id));
                 await FailAndNotifyAsync(
                     task,
-                    $"Dispatch failed before a session existed: {ex.Message}",
+                    $"Dispatch failed before a session existed: {DispatchFailureDetail(ex)}",
                     "dispatch",
                     ct, ex is SpecialistIdentityMismatchException ? AgentTaskFailureCode.SpecialistIdentityMismatch : null);
                 failures++;
@@ -5874,7 +5874,7 @@ public sealed partial class AgentTaskDispatcher
         // its branch or leaves a mirror on the runner. cardStart is false: a card-bound delegated
         // task is not a card start (its session has no CardId and runs in the task worktree); the
         // card-start refusal belongs to a standing agent's card spawn (AgentControlService).
-        var agent = await ResolveAgentAsync(claimed, now, ct);
+        var (agent, freshAgent) = await ResolveAgentAsync(claimed, now, ct);
         if (_phoneHome?.IsRunnerBound(agent) == true)
         {
             _phoneHome.RefuseUnsupportedStart(
@@ -5995,6 +5995,12 @@ public sealed partial class AgentTaskDispatcher
             return DispatchOneResult.NotClaimed;
         }
 
+        // CARD-1471: a fresh pool agent is tracked only here, beside its session, once remote
+        // preparation has a mirror. The preparation-only commit above (HeldForRemotePrep) never
+        // persists an unbound agent, so the ready claim inserts the one row this save binds, and
+        // every rollback/Clear path below drops the agent together with the session.
+        if (freshAgent)
+            _db.Agents.Add(agent);
         _db.AgentSessions.Add(session);
 
         global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? verificationBinding = null;
@@ -7342,7 +7348,14 @@ public sealed partial class AgentTaskDispatcher
         }
     }
 
-    private async Task<Agent> ResolveAgentAsync(AgentTask task, DateTime now, CancellationToken ct)
+    /// <summary>
+    /// The agent a claim will launch on: the pinned row when the task names one, otherwise a fresh
+    /// pool delegate. CARD-1471: the fresh delegate is returned untracked (<c>Fresh</c> is true)
+    /// and <see cref="DispatchOneAsync(AgentTask, CancellationToken)"/> adds it beside the session
+    /// row after remote preparation has a mirror. Adding it here let the preparation-only commit
+    /// persist an unbound agent whose slug the ready claim then collided with on IX_Agents_Slug.
+    /// </summary>
+    private async Task<(Agent Agent, bool Fresh)> ResolveAgentAsync(AgentTask task, DateTime now, CancellationToken ct)
     {
         if (task.AgentId is Guid pinned)
         {
@@ -7357,7 +7370,7 @@ public sealed partial class AgentTaskDispatcher
                 // nothing reads it, and restamping it from the task would undo the profile sync.
                 if (existing.IsPoolDelegate)
                     existing.Kind = task.AgentKind;
-                return existing;
+                return (existing, false);
             }
         }
 
@@ -7389,9 +7402,18 @@ public sealed partial class AgentTaskDispatcher
             CreatedAt = now,
             UpdatedAt = now,
         };
-        _db.Agents.Add(agent);
-        return agent;
+        return (agent, true);
     }
+
+    /// <summary>
+    /// CARD-1471: a failed dispatch save names what broke (constraint or table and SQLSTATE) in
+    /// the persisted reason. Provider detail, statement parameters and connection strings are
+    /// never copied; <see cref="AgentService.DescribeDbFailure"/> reads only the error identity.
+    /// </summary>
+    private static string DispatchFailureDetail(Exception ex) =>
+        ex is DbUpdateException update && update.InnerException is Npgsql.PostgresException pg
+            ? $"{ex.Message} ({AgentService.DescribeDbFailure(update)}; SQLSTATE {pg.SqlState})"
+            : ex.Message;
 
     private async Task<bool> RootIsOverBudgetAsync(Guid rootId, CancellationToken ct)
     {
