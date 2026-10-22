@@ -2169,7 +2169,7 @@ CARD-1409, Review 23aedc52 D4), or when the lowercased file name is
 unchanged, so a docs-only skip still applies. `-Check` and `-Update` refuse an
 EmbeddedResource, Content, None, Compile, or AdditionalFiles include that can
 select `docs/**/*.md` or the root `README.md`. Matching is case-insensitive and
-happens after one `%XX` hex decode. Every such include is resolved from the
+happens after one `%XX` hex decode of the expanded text. Every such include is resolved from the
 definition file's own directory and from each importing project's directory,
 including through another import. The nearest `Directory.Build.props`,
 `Directory.Build.targets` and `Directory.Packages.props` above a project count as
@@ -2258,7 +2258,16 @@ operations form a closed table (the CARD-1409 plan's O-table): `Include` and
 subtract (metadata on a `Remove` refuses); `KeepMetadata`, `RemoveMetadata`,
 `KeepDuplicates`, `MatchOnMetadata` and an element with no operation refuse by
 name; any other attribute is metadata that must be allow-listed. A path item
-whose pattern reaches a tracked symbolic link refuses naming the link. An `Import` is followed as described above. Target bodies are not
+whose pattern reaches a tracked symbolic link refuses naming the link. Every
+item or import text is read in MSBuild's order by one pipeline (CARD-1409
+repair 6, Review c64987ea): properties and metadata are expanded with their
+values in escaped form, the expanded text is split on `;` (an escaped `%3B` is
+not a separator, a `;` inside an expanded value is), each part is decoded once
+(`%252E` is the literal `%2E`, a malformed escape stays literal, `%00` refuses)
+and only then normalised, so an escape a property value splices in is read as
+the path the build reads; a decoded `$(` is literal text, an escaped `*` is
+read as a wildcard for an include and dropped from an `Exclude`, and the tail
+of a file-reading property function may not climb out of its output root. An `Import` is followed as described above. Target bodies are not
 evaluated beyond that: a task parameter (`Exec`, `Copy`, `ReadLinesFromFile`)
 can name any file and the audit refuses no task (CARD-1409 plan D-18, D-27). Any other definition-file edit still changes the
 digest, so the skip stops until the manifest is regenerated.
