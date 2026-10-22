@@ -1986,6 +1986,24 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         }
     }
 
+    /// <summary>
+    /// CARD-1499: a phone-home kill is <c>ReleaseSlot</c>, which drops the runner's record once the
+    /// process is gone, so the read after a kill the runner already answered as exited is its 404
+    /// <c>not_found</c>. That is the release confirmed, not an undelivered kill. Any other read
+    /// failure, or a 404 after a kill answer that was not an exit, still propagates.
+    /// </summary>
+    private async Task<SessionRunnerSessionDto> ReadAfterKillAsync(Guid sessionId, bool killed, CancellationToken ct)
+    {
+        try
+        {
+            return await _runtime.GetSessionAsync(sessionId, ct);
+        }
+        catch (RunnerProblemException ex) when (killed && ex is { StatusCode: 404, Code: "not_found" })
+        {
+            return new SessionRunnerSessionDto(sessionId, null, UtcNow(), "Exited", null, AgentExitReason.Unknown, 0);
+        }
+    }
+
     private async Task KillOnAsync(
         AppDbContext db, Guid sessionId, SessionTerminationSource source, CancellationToken ct)
     {
@@ -2012,7 +2030,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 sessionId,
                 TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs)),
                 ct);
-            runnerSession = await _runtime.GetSessionAsync(sessionId, ct);
+            runnerSession = await ReadAfterKillAsync(sessionId, killed, ct);
         }
         catch (Exception ex)
         {
