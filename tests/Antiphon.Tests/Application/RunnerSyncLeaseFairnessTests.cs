@@ -26,7 +26,7 @@ namespace Antiphon.Tests.Application;
 /// clock is fake, so slices and budgets are advanced, never slept.
 /// </summary>
 [Category("Integration")]
-[ParallelLimiter<GitProcessSpawnLimit>]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RunnerSyncLeaseFairnessTests
 {
     /// <summary>
