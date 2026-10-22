@@ -27,7 +27,7 @@ granted every time. Builds: `dotnet build tests/Antiphon.Tests
 in detached worktrees (removed afterwards). Filters:
 
 - C688: `/*/*/AgentTaskLandPublicationTests/C688_LandNeverRunsGitInTheSourceWorktree`
-- RR: `/*/*/AgentTaskLandRefusedRetryTests/(RR_V1*)|(RR_V3*)|(RR_V4*)|(RR_V6*)` (10 cases; RR_V4_RemoteContainment and no other pass are the 2 green)
+- RR: `/*/*/AgentTaskLandRefusedRetryTests/(RR_V1*)|(RR_V3*)|(RR_V4*)|(RR_V6*)` (10 cases; the 2 green in every run are RR_V4_TargetStatusFailureRetriesFromFreshEvidence(False) and RR_V4_RemoteContainmentAfterRefusalKeepsAlreadyPresentShortcut, so the card's "both cases" for RR_V4_TargetStatusFailure is not reproduced: only the True case fails)
 - C475: `/*/*/LandingProtocolHarnessTests/C475_LandingKeepsLeaseThroughProtocol`
 
 | Commit | Build | C688 | RR (10) | C475 (4) |
@@ -134,8 +134,9 @@ Raw logs stayed in the session scratchpad (not committed): `base-*.log`, `rc-*.l
   `CleanupRetry`; `:803` writes `mode={op.Mode}` into the terminal event detail;
   `:1447` copies it to `terminal.LandingMode`; `AgentTaskLandMonitorService.cs:97`
   reports it as `LandingMode`. So the regression is the durable label and the
-  operator-facing reports, not publication behaviour. The two green cases
-  (RR_V2, RR_V4_RemoteContainment) never reach a fresh windowed land.
+  operator-facing reports, not publication behaviour. The two green cases, RR_V4_TargetStatusFailure(False) (B refused again before
+  preparation) and RR_V4_RemoteContainment (already-present shortcut), never reach
+  a windowed fresh land.
 - The 8 cases stop at line 597; later assertions in `AssertReplacementAsync` and
   `AssertSuccessAsync` are unverified against the windowed flow.
 
