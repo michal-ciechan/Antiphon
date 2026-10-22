@@ -2084,6 +2084,51 @@ public sealed partial class SessionMessageQueueService
         return true;
     }
 
+    // CARD-0266: cancellation changes queue bookkeeping, never the terminal's composer. Any
+    // submitted UserPrompt after the typing floor proves that composer was emptied, regardless
+    // of its text; this is release evidence, not a delivery verdict for the canceled message.
+    private async Task<bool> CanceledTypingBlocksTheComposerAsync(
+        AppDbContext db, Guid sessionId, DateTime generation, CancellationToken ct)
+    {
+        var canceled = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Canceled
+                && m.DeliveryAttempts > 0 && m.SentAt == null)
+            // Stored timestamps have the same microsecond precision as the normalized token.
+            // Keep legacy rows without generation evidence, but bound known old generations.
+            .Where(m => m.LastDeliveryGeneration == generation
+                || (m.LastDeliveryGeneration == null
+                    && (m.LastDeliveryStartedAt == null || m.LastDeliveryStartedAt >= generation)))
+            .ToListAsync(ct);
+        var unrecorded = new List<(Guid Id, string Body)>();
+        foreach (var message in canceled.Where(m => !DeliveryGenerationChanged(m, generation)))
+            if (!await TryFindAnyUserPromptAboveAsync(db, sessionId, message, ct))
+                unrecorded.Add((message.Id, message.Body));
+        if (unrecorded.Count == 0)
+            return false;
+
+        var kind = await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId).Select(s => s.AgentKind).FirstAsync(ct);
+        return await TypedBodiesBlockComposerAsync(sessionId, kind, unrecorded, "canceled message", ct);
+    }
+
+    private Task<bool> TryFindAnyUserPromptAboveAsync(
+        AppDbContext db, Guid sessionId, SessionQueuedMessage message, CancellationToken ct)
+    {
+        var prompts = db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt);
+        if (message.LastDeliveryBaselineSequence is { } floor)
+            return prompts.AnyAsync(t => t.Sequence > floor, ct);
+        if (message.LastDeliveryStartedAt is { } started)
+        {
+            var tolerance = TimeSpan.FromSeconds(
+                Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds));
+            var confirmFrom = started - tolerance;
+            return prompts.AnyAsync(t => t.Timestamp != null && t.Timestamp >= confirmFrom, ct);
+        }
+        // No floor cannot establish that an unrelated historical prompt followed this typing.
+        return Task.FromResult(false);
+    }
+
     private async Task<bool> CancelDeadBriefsAsync(AppDbContext db,
         IEnumerable<SessionQueuedMessage> messages, DateTime currentGeneration, CancellationToken ct)
     {
@@ -2349,10 +2394,13 @@ public sealed partial class SessionMessageQueueService
         // nothing is parked, and the no-kill guards above are untouched.
         //
         // The ordinary exit is the late-confirm that already ran: a held body that really did land
-        // becomes Sent and stops being a held-back row at all. CancelDeadBriefsAsync and a relaunch
-        // are the other two.
+        // becomes Sent and stops being a held-back row at all. A cleared composer or a relaunch
+        // also releases it. Cancellation alone never proves the composer empty (CARD-0266).
         if (await HeldBackTypingBlocksTheComposerAsync(
                 sessionId, pending, deliverable, sessionGeneration, ct))
+            return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
+
+        if (await CanceledTypingBlocksTheComposerAsync(db, sessionId, sessionGeneration, ct))
             return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
 
         // CARD-0650 D-7: the same hold for an unconfirmed watchdog prompt of this generation.
@@ -2409,7 +2457,13 @@ public sealed partial class SessionMessageQueueService
             }
         }
         if (changedSuperseded)
+        {
             await db.SaveChangesAsync(ct);
+            // The last-look supersession above can create an orphan in THIS flush, after the
+            // initial composer checks. Recheck before typing the next surviving completion note.
+            if (await CanceledTypingBlocksTheComposerAsync(db, sessionId, sessionGeneration, ct))
+                return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
+        }
         pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
         if (pending.Count == 0)
             return changedSuperseded ? FlushResult.LateConfirmed : FlushResult.Nothing;
