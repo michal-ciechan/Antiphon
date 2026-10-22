@@ -2270,7 +2270,12 @@ read as a wildcard for an include and dropped from an `Exclude`, and the tail
 of a file-reading property function may not climb out of its output root. A
 property-value part that carries an item, metadata or property-function
 reference is skipped on its own and the other parts of the same value are
-still classified (CARD-1409 repair 7, Review 7db88932). An `Import` is followed as described above. Target bodies are not
+still classified (CARD-1409 repair 7, Review 7db88932). Where only the two
+directory properties are expanded (an `Import`, a property-value path, a name
+item), the text is split on `;` first and a directory property at the start of
+each part is that directory, so `a;$(MSBuildThisFileDirectory)b` is `a` and
+that directory's `b`, as MSBuild expands before it splits (CARD-1409 repair 8,
+Review d43d1e4a). An `Import` is followed as described above. Target bodies are not
 evaluated beyond that: a task parameter (`Exec`, `Copy`, `ReadLinesFromFile`)
 can name any file and the audit refuses no task (CARD-1409 plan D-18, D-27). Any other definition-file edit still changes the
 digest, so the skip stops until the manifest is regenerated.
