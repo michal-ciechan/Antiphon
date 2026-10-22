@@ -81,6 +81,19 @@ whole `AgentTaskLandPublicationTests` class; CP-3 is separate only because its `
 `AgentTaskLandRefusedRetryTests` class. `Min` is a floor; confirm `executed=`
 in each CHECKPOINT line.
 
+## Inherited red found by the first CP-4 run (not this task's)
+
+`RR_V4_RemoteReadFailureRetriesUnchangedSource` fails in its refusal setup, `Scenario.RefuseAsync`
+(`_pins.ShouldNotBeEmpty()`, AgentTaskLandRefusedRetryTests.cs:516): after the `source_remote_unreadable`
+refusal the operation's recovery pins are gone. That assertion precedes the mode assertion (line 597) that
+has been red since f612cbe60, so no run on master had reached it. It fails identically at this task's base
+e1e3beb5c (detached worktree, isolated `bin-c1449base/` build through `scripts/build-slot.ps1`, one method
+filter), and it passed line 516 at 55b706761 (the investigation's base, where the case failed at line 597),
+so it comes from a master commit between those two. The land-path commits in that range are CARD-1432 S2
+(6cd9317a0 `ReleaseLandRefsAsync`/`LandRefRetention`, ee62ec013 keeps latest and Refused pins), CARD-1436
+(5403b5f77, cd49eb98f) and the CARD-1421 lane move (6922ec628); the retention path is the first suspect.
+Separate card; this task does not touch it.
+
 ### Cost
 
 Ordinary floor 46 minutes (10 + 20 + 4 + 12, rows overlapping two at a time) plus the checkpoint
