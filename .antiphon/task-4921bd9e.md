@@ -35,6 +35,19 @@ Run `20261022-145754-f7d0`, exit 1. Disclosure: when deleting the kept `bin-c149
 also removed the run's `builds/bin-c1493-red/` folder (its build.log); report.md/json, TRX and
 failures.md are intact.
 
+## Refinement: CP-3 Unit lane stopped and dropped
+
+A caller refinement (operator standing rule: minimal testing, no whole-suite runs; the row held
+build slots) stopped run `20261022-151038-4cc5` (started at 4e22bf8f with rows CP-2, CP-3) with
+the stop verb about 45 minutes in; wait then returned exit 6 with no report.md/report.json. CP-2 had
+already finished green in that run (state.json line below, not a validated receipt). CP-3 was
+removed from the plan table; the other plan-importing Unit classes and the Unit lane are a stated
+residual, not a pass. CP-2 is rerun alone at the tip carrying this report for the receipt.
+
+```
+CHECKPOINT CP-2 commit=4e22bf8faf301a6935e81a805f17795ec23d26e5 build=ok filter=/*/*/CheckpointImportTests/* executed=25 passed=25 failed=0 skipped=0 trx=/work/worktrees/task-4921bd9e/.antiphon/checkpoints/20261022-151038-4cc5/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=4e22bf8faf301a6935e81a805f17795ec23d26e5 sourceState=clean buildSource=verified
+```
+
 ## M-1 census (manual, disclosed)
 
 `import --plan` over all 890 `docs/superpowers/plans/*.md`, with the tool built at 337d9ecf (base
