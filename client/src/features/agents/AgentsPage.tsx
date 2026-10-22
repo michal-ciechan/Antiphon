@@ -513,7 +513,16 @@ export const AgentCard = memo(function AgentCard({
         </ActionIcon>
       </Tooltip>
       {cardMenu && (
-        <Menu opened onClose={() => setCardMenu(null)} position="bottom-start" withinPortal shadow="md">
+        <Menu
+          opened
+          onClose={() => setCardMenu(null)}
+          position="bottom-start"
+          withinPortal
+          shadow="md"
+          // The target is an invisible anchor, not a control: without Popover's target/dropdown
+          // roles the dropdown is named by its own label instead of the anchor's empty text.
+          withRoles={false}
+        >
           <Menu.Target>
             <Box
               pos="fixed"
@@ -525,9 +534,7 @@ export const AgentCard = memo(function AgentCard({
               data-anchor={`${cardMenu.x},${cardMenu.y}`}
             />
           </Menu.Target>
-          {/* Popover names the dropdown after its target; that target is the invisible anchor
-              above, so the name is cleared and the label below applies. */}
-          <Menu.Dropdown aria-label={`Terminal menu ${agent.name}`} aria-labelledby={undefined}>
+          <Menu.Dropdown aria-label={`Terminal menu ${agent.name}`}>
             <AgentCardDestinations agent={agent} onOpenTerminal={onOpenTerminal} onEditSettings={onEditSettings} />
           </Menu.Dropdown>
         </Menu>
