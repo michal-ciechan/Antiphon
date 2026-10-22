@@ -317,7 +317,7 @@ public sealed class BlockedReplyReportRetentionTests
         }
         var events = await world.EventsAsync();
         events.Count(e => e.Type == AgentTaskEventType.Completed).ShouldBe(0, "no Succeeded publication");
-        var blocked = events.Where(e => e.Type == AgentTaskEventType.Blocked).OrderBy(e => e.CreatedAt).Last();
+        var blocked = events.Where(e => e.Type == AgentTaskEventType.Blocked).OrderBy(e => e.At).Last();
         blocked.Detail.ShouldContain($"#{boundary}", Case.Sensitive, "the record names the unmarked turn");
         blocked.Detail.ShouldContain("unmarked", Case.Sensitive);
         blocked.Detail.ShouldContain("retained report", Case.Sensitive, "the record says the retained report stands");
