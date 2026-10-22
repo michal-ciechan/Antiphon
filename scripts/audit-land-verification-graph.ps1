@@ -347,7 +347,7 @@ function Find-NearestDirectoryBuild($Known, [string]$ProjectDirectory, [string]$
     }
 }
 
-function Get-ResolvedImportPaths([string]$Root, [string]$FromFile, [string]$ProjectDirectory, [string]$ProjectAttr, $Known) {
+function Get-ResolvedImportPaths([string]$Root, [string]$FromFile, [string]$ProjectDirectory, [string]$ProjectAttr, $Known, $Tracked) {
     $decoded = ConvertFrom-PercentEncoding $ProjectAttr
     if ($null -eq $decoded) {
         Exit-Audit 1 (Format-ApprovalRefusal $FromFile 'Import' $ProjectAttr)
@@ -366,7 +366,9 @@ function Get-ResolvedImportPaths([string]$Root, [string]$FromFile, [string]$Proj
     }
     if ($text -match '^[A-Za-z]:/' -or $text.StartsWith('/')) {
         $relative = ConvertTo-RepoRelative $text $Root
-        if ($null -eq $relative) { return $null }
+        if ($null -eq $relative) {
+            Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr 'outside the repository')
+        }
         $text = $relative
     }
     elseif ($startsAnchored) {
@@ -376,15 +378,27 @@ function Get-ResolvedImportPaths([string]$Root, [string]$FromFile, [string]$Proj
         $text = $fromDir + '/' + $text
     }
     $norm = Normalize-RepoPattern $text
-    if ($norm -eq 'outside' -or $norm -eq 'escape') { return $null }
+    if ($norm -eq 'outside') {
+        Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr 'outside the repository')
+    }
+    if ($norm -eq 'escape') {
+        Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr 'a wildcard segment followed by ..')
+    }
     $matches = New-Object 'System.Collections.Generic.List[string]'
     if (($norm.IndexOf('*') -ge 0) -or ($norm.IndexOf('?') -ge 0)) {
-        foreach ($candidate in @($Known.Keys)) {
-            if (Test-PathMatchesPattern $norm ([string]$candidate)) { [void]$matches.Add([string]$candidate) }
+        foreach ($candidate in $Tracked) {
+            if (-not (Test-PathMatchesPattern $norm ([string]$candidate))) { continue }
+            if (-not $Known.ContainsKey([string]$candidate)) {
+                Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr ([string]$candidate))
+            }
+            [void]$matches.Add([string]$candidate)
         }
     }
     elseif ($Known.ContainsKey($norm)) {
         [void]$matches.Add($norm)
+    }
+    else {
+        Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr $norm)
     }
     return ,$matches.ToArray()
 }
@@ -397,7 +411,7 @@ function Add-ImporterBase($Map, [string]$Path, [string]$ProjectDirectory) {
     if (-not $list.Contains($ProjectDirectory)) { [void]$list.Add($ProjectDirectory) }
 }
 
-function Add-ImportQueue($Doc, [string]$FromFile, [string]$ProjectDirectory, $Queue, $Known, [string]$Root) {
+function Add-ImportQueue($Doc, [string]$FromFile, [string]$ProjectDirectory, $Queue, $Known, $Tracked, [string]$Root) {
     foreach ($node in $Doc.GetElementsByTagName('*')) {
         if ($node.LocalName -ne 'Import') { continue }
         $project = $node.GetAttribute('Project')
@@ -411,8 +425,10 @@ function Add-ImportQueue($Doc, [string]$FromFile, [string]$ProjectDirectory, $Qu
                 Exit-Audit 1 (Format-UnsupportedImportAttributeRefusal $FromFile $project $attributeName ([string]$attribute.Value))
             }
         }
-        if ([string]::IsNullOrWhiteSpace($project)) { continue }
-        $targets = @(Get-ResolvedImportPaths $Root $FromFile $ProjectDirectory $project $Known)
+        if ([string]::IsNullOrWhiteSpace($project)) {
+            Exit-Audit 1 (Format-MissingImportRefusal $FromFile $project '(empty)')
+        }
+        $targets = @(Get-ResolvedImportPaths $Root $FromFile $ProjectDirectory $project $Known $Tracked)
         foreach ($target in $targets) {
             if ([string]::IsNullOrEmpty([string]$target)) { continue }
             $Queue.Enqueue([string]$target)
@@ -420,7 +436,7 @@ function Add-ImportQueue($Doc, [string]$FromFile, [string]$ProjectDirectory, $Qu
     }
 }
 
-function Get-ImportedProjectDirectories([string]$Root, $Known) {
+function Get-ImportedProjectDirectories([string]$Root, $Known, $Tracked) {
     $bases = @{}
     foreach ($path in @($Known.Keys)) {
         if (-not (Test-ProjFile ([string]$path))) { continue }
@@ -431,13 +447,13 @@ function Get-ImportedProjectDirectories([string]$Root, $Known) {
             $hit = Find-NearestDirectoryBuild $Known $projectDir $name
             if ($null -ne $hit) { $queue.Enqueue([string]$hit) }
         }
-        Add-ImportQueue $Known[$path] ([string]$path) $projectDir $queue $Known $Root
+        Add-ImportQueue $Known[$path] ([string]$path) $projectDir $queue $Known $Tracked $Root
         while ($queue.Count -gt 0) {
             $current = [string]$queue.Dequeue()
             if (-not $seen.Add($current)) { continue }
             Add-ImporterBase $bases $current $projectDir
             if ($Known.ContainsKey($current)) {
-                Add-ImportQueue $Known[$current] $current $projectDir $queue $Known $Root
+                Add-ImportQueue $Known[$current] $current $projectDir $queue $Known $Tracked $Root
             }
         }
     }
@@ -454,6 +470,10 @@ function Format-UnresolvedImportRefusal([string]$Path, [string]$ProjectAttr) {
 
 function Format-UnsupportedImportAttributeRefusal([string]$Path, [string]$ProjectAttr, [string]$Name, [string]$Value) {
     return 'definition file import carries an attribute the audit does not support; -Update cannot approve it: ' + $Path + ' Import Project=' + $ProjectAttr + ' ' + $Name + '=' + $Value
+}
+
+function Format-MissingImportRefusal([string]$Path, [string]$ProjectAttr, [string]$Resolved) {
+    return 'definition file import target is not a tracked project file; -Update cannot approve it: ' + $Path + ' Import Project=' + $ProjectAttr + ' -> ' + $Resolved
 }
 
 function Get-GitBytes([string]$Root, [string]$Arguments) {
@@ -489,7 +509,7 @@ function Get-GitBytes([string]$Root, [string]$Arguments) {
     return ,$ms.ToArray()
 }
 
-function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows) {
+function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows, $Tracked) {
     $names = @('EmbeddedResource', 'Content', 'None', 'Compile', 'AdditionalFiles')
     $utf = New-Object System.Text.UTF8Encoding $false
     $known = @{}
@@ -511,7 +531,7 @@ function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows) {
         }
         $known[$path] = $doc
     }
-    $bases = Get-ImportedProjectDirectories $Root $known
+    $bases = Get-ImportedProjectDirectories $Root $known $Tracked
     foreach ($path in @($known.Keys)) {
         $doc = $known[$path]
         $directories = New-Object 'System.Collections.Generic.List[string]'
@@ -587,7 +607,7 @@ for ($i = 0; $i -lt $last; $i++) {
 
 $arr = $selected.ToArray()
 [System.Array]::Sort($arr, [System.StringComparer]::Ordinal)
-Assert-NoDocumentationInput $RepoRoot $arr
+Assert-NoDocumentationInput $RepoRoot $arr $seen
 $payload = [string]::Join($trailing, $arr) + $trailing
 $sha = [System.Security.Cryptography.SHA256]::Create()
 try {
