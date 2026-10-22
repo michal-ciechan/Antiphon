@@ -198,7 +198,11 @@ internal sealed class ClaudeConditionalControlSession : IAsyncDisposable
             if (condition()) return;
             await Task.Delay(250);
         }
-        throw new TimeoutException(failure);
+        var screen = Runner.SnapshotScreen();
+        var readable = ClaudeScreen.TryReadComposer(screen, out var composer);
+        Log("observation-timeout", $"modal={ClaudeBlockingPromptDetector.Detect(screen)?.Kind.ToString() ?? "none"} "
+            + $"working={ClaudeScreen.IsWorking(screen)} composer_readable={readable} composer_length={composer.Length}");
+        throw new System.TimeoutException(failure);
     }
 
     private static string ResolveExecutable(string name) =>
