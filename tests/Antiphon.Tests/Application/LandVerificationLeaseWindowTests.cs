@@ -98,16 +98,48 @@ public sealed class LandVerificationLeaseWindowTests
         });
 
     [Test]
-    public async Task C1388_SourceTreeChangeRefusesResume() =>
-        await RefuseAsync("c1388-source", "verification_tracked_tree_changed", async world =>
+    public async Task C1388_SourceTreeChangeLandsWithResidue()
+    {
+        // CARD-1463 (CARD-0688 D-2/D-12): the task worktree is a live checkout, so a tracked change there during
+        // the window is guarded-cleanup residue, never a refusal: the land publishes and cleanup keeps the tree.
+        // Until CARD-1463 this case was C1388_SourceTreeChangeRefusesResume (verification_tracked_tree_changed).
+        await using var child = new LandVerificationWindowHarness();
+        await using var world = await RepairSourceWorld.CreateAsync(ordinaryCodeTask: true, landingVerifier: child.Verifier);
+        var origin = await ScratchGitRepo.GitInAsync(world.Remote, "rev-parse", "refs/heads/master");
+        origin.Ok.ShouldBeTrue(origin.StdErr);
+        var originSha = origin.StdOut.Trim();
+        await using var scope = world.Services.CreateAsyncScope();
+        var lands = scope.ServiceProvider.GetRequiredService<AgentTaskLandService>();
+        await lands.RequestAsync(world.Owner.Id, new LandAgentTaskRequest("c1463-source", world.OwnerSha), CancellationToken.None);
+        var landing = lands.RunAsync(world.Owner.Id, null, CancellationToken.None);
+        string owner;
+        try
         {
+            await child.Started.Task.WaitAsync(TimeSpan.FromSeconds(30));
             var land = await LandPathAsync(world);
             var source = await SourcePathAsync(world);
             SameDirectory(land, source).ShouldBeFalse();
-            var owner = Path.Combine(source, "owner.md");
+            owner = Path.Combine(source, "owner.md");
             File.Exists(owner).ShouldBeTrue();
-            await File.AppendAllTextAsync(owner, "c1388 source\n");
-        });
+            await File.AppendAllTextAsync(owner, "c1463 source\n");
+        }
+        finally
+        {
+            child.Release();
+            await landing;
+        }
+
+        await using var final = world.CreateContext();
+        var operation = await final.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.TaskId == world.Owner.Id);
+        operation.Publication.ShouldBe(LandPublicationOutcome.Landed, operation.LastReason);
+        operation.RemoteConfirmedAt.ShouldNotBeNull();
+        operation.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+        operation.LastReason.ShouldBe("source_dirty");
+        (await File.ReadAllTextAsync(owner)).ShouldEndWith("c1463 source\n");
+        var after = await ScratchGitRepo.GitInAsync(world.Remote, "rev-parse", "refs/heads/master");
+        after.Ok.ShouldBeTrue(after.StdErr);
+        after.StdOut.Trim().ShouldNotBe(originSha, "the land must publish despite the task worktree's dirt");
+    }
 
     [Test]
     public async Task C1388_LandWorktreeHeadChangeRefusesResume() =>
