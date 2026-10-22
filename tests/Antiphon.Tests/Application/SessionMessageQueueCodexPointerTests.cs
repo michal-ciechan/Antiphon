@@ -48,7 +48,9 @@ public sealed class SessionMessageQueueCodexPointerTests
             var consumed = capture.GetProperty("consumedPrefixLength").GetInt32();
             var normalized = Compact(screen);
             normalized.ShouldContain(Compact(body[..consumed]));
-            normalized.ShouldNotContain(Compact(body[..(consumed + 1)]));
+            var nextSubstantive = consumed;
+            while (char.IsWhiteSpace(body[nextSubstantive])) nextSubstantive++;
+            normalized.ShouldNotContain(Compact(body[..(nextSubstantive + 1)]));
             ComposerDeliveryEvidence.IsVisible("", screen, body).ShouldBeTrue();
             ComposerDeliveryEvidence.BodyConsumed("", screen, body).ShouldBeTrue();
         }
