@@ -35,7 +35,8 @@ public partial class AgentTaskReplyIntegrationTests
                 : id => new SessionRunnerSessionDto(id, null, DateTime.UtcNow, "Exited", null, AgentExitReason.Unknown, 0),
         };
 
-        var (agentId, sessionId) = await SettleThroughReleaseEvictingRunnerAsync(runner);
+        await using var h = await CreateReleaseEvictingHarnessAsync(runner);
+        var (agentId, sessionId) = await SettleThroughReleaseEvictingRunnerAsync(h, runner);
 
         runner.Kills.ShouldBe([sessionId]);
         await using var verify = CreateContext();
@@ -73,7 +74,8 @@ public partial class AgentTaskReplyIntegrationTests
                 break;
         }
 
-        var (agentId, sessionId) = await SettleThroughReleaseEvictingRunnerAsync(runner);
+        await using var h = await CreateReleaseEvictingHarnessAsync(runner);
+        var (agentId, sessionId) = await SettleThroughReleaseEvictingRunnerAsync(h, runner);
 
         await using var verify = CreateContext();
         var agent = await verify.Agents.SingleOrDefaultAsync(a => a.Id == agentId);
@@ -86,14 +88,17 @@ public partial class AgentTaskReplyIntegrationTests
         incident.Severity.ShouldBe(AlertSeverity.Error);
     }
 
-    private static async Task<(Guid AgentId, Guid SessionId)> SettleThroughReleaseEvictingRunnerAsync(
-        ReleaseEvictingRunner runner)
-    {
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
+    // The harness deletes its agent and sessions on dispose, so the caller asserts inside its lifetime.
+    private static Task<BridgeQueueHarness> CreateReleaseEvictingHarnessAsync(ReleaseEvictingRunner runner) =>
+        BridgeQueueHarness.CreateAsync(new()
         {
             AlwaysOn = false,
             ConfigureServices = services => services.AddSingleton<ISessionRunnerClient>(runner),
         });
+
+    private static async Task<(Guid AgentId, Guid SessionId)> SettleThroughReleaseEvictingRunnerAsync(
+        BridgeQueueHarness h, ReleaseEvictingRunner runner)
+    {
         await using (var db = CreateContext())
             await db.Agents.Where(a => a.Id == h.AgentId).ExecuteUpdateAsync(u => u
                 .SetProperty(a => a.IsPoolDelegate, true).SetProperty(a => a.BoardId, (Guid?)null));
