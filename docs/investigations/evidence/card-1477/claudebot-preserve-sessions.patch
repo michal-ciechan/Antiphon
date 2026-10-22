@@ -1,0 +1,136 @@
+diff --git a/scripts/update-claude.ps1 b/scripts/update-claude.ps1
+index d9c9f0a..eaa6eac 100644
+--- a/scripts/update-claude.ps1
++++ b/scripts/update-claude.ps1
+@@ -50,6 +50,17 @@
+     When set and -Name is not also given, the default session name becomes
+     "ClaudeBot" rather than "ClaudeBot-Admin" (there is nothing "Admin" about it).
+ 
++.PARAMETER PreserveSessions
++    Never terminate a Claude Code CLI process. Updates the binary on disk only (the
++    native installer renames the locked exe to claude.exe.old.<ts>.<pid>, so running
++    sessions keep their current build and every NEW launch gets the new one). A locked
++    or failed update is deferred: the script exits 2 with nothing stopped. The stale-
++    binary sweep is skipped, and a replacement remote session is launched only when no
++    '--remote-control <Name>' session is already running. This is the mode for anything
++    unattended (daily-update.ps1): on 2026-10-22 the default mode force-stopped 13
++    Antiphon pty-host sessions, including two qualification monitors, and the dispatched
++    tasks failed without a report (Antiphon restarts AlwaysOn agents, not delegated tasks).
++
+ .EXAMPLE
+     pwsh -NoProfile -File C:\src\ClaudeBot\scripts\update-claude.ps1
+ 
+@@ -67,7 +78,8 @@ param(
+     [string]$WorkDir = 'C:\src\ClaudeBot',
+     [switch]$NoUpdate,
+     [switch]$NoLaunch,
+-    [switch]$NoElevate
++    [switch]$NoElevate,
++    [switch]$PreserveSessions
+ )
+ 
+ $ErrorActionPreference = 'Stop'
+@@ -141,6 +153,11 @@ if ($NoUpdate) {
+ }
+ else {
+     $ok = Invoke-ClaudeUpdate
++    if (-not $ok -and $PreserveSessions) {
++        $live = @(Get-ClaudeCliProcs)
++        Write-Warning ("Update did not apply with {0} live Claude Code CLI session(s) running; -PreserveSessions: deferred, nothing stopped. Retry later, or run without -PreserveSessions by hand." -f $live.Count)
++        exit 2
++    }
+     if (-not $ok) {
+         # Fallback for a locked exe (update_apply_exe_locked, npm EBUSY): free it and retry.
+         # Antiphon may relaunch sessions in between -- step 3 cleans those up.
+@@ -157,13 +174,16 @@ else {
+ # --- 2. Kill every running Claude Code CLI session -------------------------------
+ $procs = Get-ClaudeCliProcs
+ if (-not $procs) { Write-Host "No Claude Code CLI sessions running." -ForegroundColor Yellow }
++elseif ($PreserveSessions) {
++    Write-Host ("Preserving {0} live Claude Code CLI session(s) (-PreserveSessions); they keep their current build until they next restart: {1}" -f $procs.Count, ($procs.ProcessId -join ', ')) -ForegroundColor Yellow
++}
+ else { Stop-ClaudeCliProcs $procs 'so they restart on the new binary' }
+ 
+ # --- 3. Sweep sessions that came back on a stale binary --------------------------
+ # Antiphon (PtyHost) relaunches its sessions ~5-40s after a kill. They should now
+ # pick up the new exe; anything still running a renamed claude.exe.old.<ts> image
+ # gets killed again so it relaunches correctly.
+-if (-not $NoUpdate) {
++if (-not $NoUpdate -and -not $PreserveSessions) {
+     $deadline = (Get-Date).AddSeconds(90)
+     while ((Get-Date) -lt $deadline) {
+         Start-Sleep -Seconds 10
+@@ -183,6 +203,17 @@ if ($NoLaunch) {
+ 
+ if (-not (Test-Path -LiteralPath $WorkDir)) { throw "WorkDir does not exist: $WorkDir" }
+ 
++# Nothing was killed, so the previous '<Name>' remote session is normally still up: do not
++# stack a second one. (Default mode killed it above, so it always relaunches there.)
++if ($PreserveSessions) {
++    $pattern = '--remote-control\s+"?' + [regex]::Escape($Name) + '"?(\s|$)'
++    $existing = @(Get-ClaudeCliProcs | Where-Object { $_.CommandLine -match $pattern })
++    if ($existing) {
++        Write-Host ("Remote session '{0}' already running (PID {1}); not launching another (-PreserveSessions)." -f $Name, ($existing.ProcessId -join ', ')) -ForegroundColor Yellow
++        return
++    }
++}
++
+ # Reuse the committed remote-launch helper (single source of truth for how sessions start).
+ $launcher = Join-Path $PSScriptRoot '..\claude-home\skills\launch-remote\launch-claude.ps1'
+ if (-not (Test-Path -LiteralPath $launcher)) {
+diff --git a/scripts/daily-update.ps1 b/scripts/daily-update.ps1
+index 85dc5e1..b4a34eb 100644
+--- a/scripts/daily-update.ps1
++++ b/scripts/daily-update.ps1
+@@ -5,12 +5,15 @@
+ # "Schedule" note at the bottom). Idempotent + best-effort: a failure in one step
+ # never blocks the others, and everything is logged.
+ #
+-# WARNING: this KILLS EVERY RUNNING CLAUDE CODE CLI SESSION on this machine as part
+-# of the Claude Code update step (see step 2 below) -- runs unattended daily at 08:00,
+-# so anything actively working in a Claude Code session at that time gets terminated.
+-# Antiphon relaunches its own dispatched worker sessions automatically; an interactive
+-# session (e.g. an orchestrator) does not self-revive and needs POST
+-# /api/agents/{id}/start afterward if it must come back up.
++# The Claude Code step is NON-DISRUPTIVE: update-claude.ps1 -PreserveSessions updates the
++# binary on disk and never stops a running Claude Code CLI process. Running sessions keep
++# their current build (the native installer renames the locked exe to claude.exe.old.*)
++# and pick up the new one when they next restart; new launches get it immediately. A
++# locked update is deferred to the next run (exit 2); nothing is killed. The kill-and-
++# relaunch form is still available by hand: update-claude.ps1 without -PreserveSessions.
++# (2026-10-22: the previous unattended default force-stopped 13 Antiphon sessions at 08:00,
++# including two qualification monitors; Antiphon restarts AlwaysOn agents but delegated
++# tasks failed without a report. See Antiphon CARD-1477.)
+ #
+ # Telegram: reads the bot token from %USERPROFILE%\.antiphon-bot-token (chmod-equivalent
+ # user-only file; never committed). Chat id is Mike's DM with the bot.
+@@ -29,20 +32,20 @@ try {
+     else { Note "• browser-harness: updated" }
+ } catch { Note ("• browser-harness: ERROR " + $_.Exception.Message) }
+ 
+-# 2. Claude Code — full disruptive update: updates the CLI, then force-kills every
+-#    running Claude Code CLI session so it restarts on the new binary, then relaunches
+-#    a fresh non-elevated "ClaudeBot" remote-control session in C:\src\ClaudeBot.
+-#    Delegates entirely to update-claude.ps1 -NoElevate, which already has the correct
+-#    order-of-operations (update while sessions are still running so the native
+-#    installer can rename the locked exe out from under them, kill, sweep for anything
+-#    that raced back onto the old binary, relaunch) -- see that script's header for why.
++# 2. Claude Code — on-disk update only (update-claude.ps1 -NoElevate -PreserveSessions):
++#    no running session is stopped, no stale-binary sweep, and the "ClaudeBot" remote
++#    session is relaunched only if it is not already running. Exit 2 = update deferred
++#    (exe locked / updater failed) with nothing stopped; it retries at the next run.
+ #    -NoElevate is required here: this runs unattended from a Scheduled Task, and
+ #    -Verb RunAs would pop a UAC prompt that can never be answered.
+ try {
+     $updateScript = Join-Path $PSScriptRoot 'update-claude.ps1'
+-    & $updateScript -NoElevate *>&1 | Out-Null
++    & $updateScript -NoElevate -PreserveSessions *>&1 | Out-Null
++    $rc = $LASTEXITCODE
+     $ver = (& claude --version 2>&1 | Select-Object -Last 1)
+-    Note ("• Claude Code: now " + $ver + " (all sessions restarted; ClaudeBot relaunched)")
++    if ($rc -eq 2)     { Note ("• Claude Code: update deferred (exe locked or updater failed); still " + $ver + " on disk; no sessions stopped") }
++    elseif ($rc -ne 0) { Note ("• Claude Code: updater exit " + $rc + "; " + $ver + " on disk; no sessions stopped") }
++    else               { Note ("• Claude Code: now " + $ver + " on disk (no sessions stopped; running sessions pick it up on their next restart)") }
+ } catch { Note ("• Claude Code: ERROR " + $_.Exception.Message) }
+ 
+ # 3. Todoist digest - overdue + due today, so the list can't rot unseen. (The old
