@@ -627,22 +627,39 @@ function Test-C1407HoldReleased {
 function Invoke-C1407Cutover {
     param(
         [string[]]$Arguments = @(),
-        $Fake
+        $Fake,
+        [string[]]$HostArguments = @(),
+        [string]$FileSwitch = '-File',
+        [switch]$AsCommand,
+        [string]$WorkingDirectory = ''
     )
+    # -HostArguments are pwsh's own options placed before the -File pair; -FileSwitch is the spelling
+    # of that switch (pwsh also accepts -f, --File and /File); -AsCommand starts the script through
+    # -Command text instead of a -File pair; -WorkingDirectory is the caller's location for the launch.
     $scriptPath = Join-Path $here 'cutover-postgres-server2.ps1'
     $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
     $prev = $env:PATH
+    $pushed = $false
     try {
         if ($Fake) {
             $env:PATH = $Fake.Dir + [System.IO.Path]::PathSeparator + $prev
         }
-        $output = @(& $pwsh -NoProfile -File $scriptPath @Arguments 2>&1 | ForEach-Object { $_.ToString() })
+        if (-not [string]::IsNullOrEmpty($WorkingDirectory)) {
+            Push-Location -LiteralPath $WorkingDirectory
+            $pushed = $true
+        }
+        $launch = @('-NoProfile') + @($HostArguments)
+        if ($AsCommand) { $launch += @('-Command', '&', ("'" + $scriptPath + "'")) }
+        else { $launch += @($FileSwitch, $scriptPath) }
+        $launch += @($Arguments)
+        $output = @(& $pwsh @launch 2>&1 | ForEach-Object { $_.ToString() })
         return [pscustomobject]@{
             ExitCode = $LASTEXITCODE
             Text     = ($output -join "`n")
             Trace    = $(if ($Fake) { (Read-C1407Trace $Fake).Trim() } else { '' })
         }
     } finally {
+        if ($pushed) { Pop-Location }
         if ($null -eq $prev) { Remove-Item Env:PATH -ErrorAction SilentlyContinue }
         else { $env:PATH = $prev }
     }
@@ -1571,30 +1588,100 @@ function Test-W26 {
     else { Write-Fail 'W-26' ($reasons -join ' || ') }
 }
 
+function New-C1407GateCase {
+    param(
+        [string]$Label,
+        [string[]]$Arguments,
+        [string[]]$HostArguments = @(),
+        [string]$FileSwitch = '-File',
+        [switch]$AsCommand,
+        [string]$WorkingDirectory = '',
+        [string]$Expect = 'refused',
+        [string]$Needle = ''
+    )
+    return [pscustomobject]@{
+        Label            = $Label
+        Arguments        = $Arguments
+        HostArguments    = $HostArguments
+        FileSwitch       = $FileSwitch
+        AsCommand        = [bool]$AsCommand
+        WorkingDirectory = $WorkingDirectory
+        Expect           = $Expect
+        Needle           = $Needle
+    }
+}
+
 function Test-W27 {
-    # CARD-1417 A-1: a value token never opens the window; only the exact -ConfirmWindow token does.
+    # CARD-1417 A-1 and Review c25ee080 D-1: only the exact -ConfirmWindow token among the arguments
+    # after pwsh's own '-File <this script>' pair opens the window. Half 1: only a dash token counts
+    # (half1-common: -ErrorVariable is a common parameter the script's own value list does not know,
+    # so only the dash rule keeps /ConfirmWindow out). Half 2: the value of a value-taking parameter
+    # is skipped (half2-colon: pwsh -File hands the next token to a trailing-colon parameter as its
+    # value). Anchor: a -ConfirmWindow before the pair (-WorkingDirectory, -CustomPipeName) or inside
+    # -Command text (after #, or inside a quoted -HoldReason value that straddles argv tokens) never
+    # counts, and a start with no -File pair refuses even with the exact token.
     $fake = New-C1407FakeBin
+    $closed = $script:ClosedApi
+    $refuse = 'REFUSED: -Execute requires -ConfirmWindow.'
+    $noPair = 'no -File pair'
     try {
-        $refusals = @(
-            [pscustomobject]@{ Label = 'slash'; Arguments = @('-Execute', '-Confirm', '-HoldReason', '/ConfirmWindow', '-ApiBase', $script:ClosedApi) },
-            [pscustomobject]@{ Label = 'prefix'; Arguments = @('-Execute', '-Confirm', '-HoldR', '/ConfirmWindow', '-ApiBase', $script:ClosedApi) }
+        New-Item -ItemType Directory -Path (Join-Path $fake.Dir '-ConfirmWindow') -Force | Out-Null
+        $cases = @(
+            (New-C1407GateCase -Label 'slash' -Arguments @('-Execute', '-Confirm', '-HoldReason', '/ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'prefix' -Arguments @('-Execute', '-Confirm', '-HoldR', '/ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'half1-common' -Arguments @('-Execute', '-Confirm', '-ErrorVariable', '/ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'half2-colon' -Arguments @('-Execute', '-Confirm', '-HoldReason:', '-ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'colon-dash' -Arguments @('-Execute', '-Confirm', '-HoldReason:-ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'colon-false' -Arguments @('-Execute', '-ConfirmWindow:$false', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'trailing-space' -Arguments @('-Execute', '-ConfirmWindow ', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'wd' -HostArguments @('-WorkingDirectory', '-ConfirmWindow') -WorkingDirectory $fake.Dir -Arguments @('-Execute', '-Conf', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'pipe' -HostArguments @('-CustomPipeName', '-ConfirmWindow') -Arguments @('-Execute', '-Conf', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'cmd-comment' -AsCommand -Expect 'refused-any' -Needle $noPair -Arguments @('-Execute', '-Conf', '-ApiBase', $closed, '#', '-ConfirmWindow')),
+            (New-C1407GateCase -Label 'cmd-quoted' -AsCommand -Expect 'refused-any' -Needle $noPair -Arguments @('-Execute', '-Conf', '-ApiBase', $closed, '-HoldReason', "'window", '-ConfirmWindow', "now'")),
+            (New-C1407GateCase -Label 'cmd-exact' -AsCommand -Expect 'refused-any' -Needle $noPair -Arguments @('-Execute', '-ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'double-dash' -Expect 'never-opens' -Arguments @('-Execute', '-Conf', '--', '-ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'colon-value' -Expect 'opens' -Arguments @('-Execute', '-HoldReason:/ConfirmWindow', '-ConfirmWindow', '-ApiBase', $closed)),
+            (New-C1407GateCase -Label 'short-file' -Expect 'opens' -FileSwitch '-f' -Arguments @('-Execute', '-ConfirmWindow', '-ApiBase', $closed))
         )
         $reasons = @()
-        foreach ($case in $refusals) {
-            $r = Invoke-C1407Cutover -Fake $fake -Arguments $case.Arguments
+        $failText = ''
+        foreach ($case in $cases) {
+            $before = $reasons.Count
+            $r = Invoke-C1407Cutover -Fake $fake -Arguments $case.Arguments -HostArguments $case.HostArguments `
+                -FileSwitch $case.FileSwitch -AsCommand:$case.AsCommand -WorkingDirectory $case.WorkingDirectory
             $label = $case.Label
-            if ($r.ExitCode -ne 2) { $reasons += "$label exit=$($r.ExitCode)" }
-            if ($r.Text.IndexOf('REFUSED: -Execute requires -ConfirmWindow.', [System.StringComparison]::Ordinal) -lt 0) { $reasons += "$label missing-refusal" }
-            if ($r.Text.IndexOf('snapshot reference', [System.StringComparison]::Ordinal) -ge 0) { $reasons += "$label opened-window" }
+            $opened = ($r.Text.IndexOf('snapshot reference', [System.StringComparison]::Ordinal) -ge 0)
+            $refused = ($r.Text.IndexOf($refuse, [System.StringComparison]::Ordinal) -ge 0)
             if (-not [string]::IsNullOrWhiteSpace($r.Trace)) { $reasons += "$label called-child" }
+            switch ($case.Expect) {
+                'refused' {
+                    if ($r.ExitCode -ne 2) { $reasons += "$label exit=$($r.ExitCode)" }
+                    if (-not $refused) { $reasons += "$label missing-refusal" }
+                    if ($opened) { $reasons += "$label opened-window" }
+                }
+                'refused-any' {
+                    # pwsh -Command folds a script exit 2 into process exit 1; the refusal text is the verdict.
+                    if ($r.ExitCode -eq 0) { $reasons += "$label exit=0" }
+                    if (-not $refused) { $reasons += "$label missing-refusal" }
+                    if ($opened) { $reasons += "$label opened-window" }
+                }
+                'never-opens' {
+                    if ($r.ExitCode -eq 0) { $reasons += "$label exit=0" }
+                    if ($opened) { $reasons += "$label opened-window" }
+                }
+                'opens' {
+                    if ($r.ExitCode -ne 3) { $reasons += "$label exit=$($r.ExitCode)" }
+                    if (-not $opened) { $reasons += "$label not-opened" }
+                    if ($refused) { $reasons += "$label refused" }
+                }
+            }
+            if (-not [string]::IsNullOrEmpty($case.Needle) -and $r.Text.IndexOf($case.Needle, [System.StringComparison]::Ordinal) -lt 0) {
+                $reasons += "$label missing-needle"
+            }
+            if ($reasons.Count -gt $before -and [string]::IsNullOrEmpty($failText)) { $failText = Get-C1407SafeText $r.Text }
         }
-        $colon = Invoke-C1407Cutover -Fake $fake -Arguments @('-Execute', '-HoldReason:/ConfirmWindow', '-ConfirmWindow', '-ApiBase', $script:ClosedApi)
-        if ($colon.ExitCode -ne 3) { $reasons += "colon exit=$($colon.ExitCode)" }
-        if ($colon.Text.IndexOf('snapshot reference', [System.StringComparison]::Ordinal) -lt 0) { $reasons += 'colon not-opened' }
-        if ($colon.Text.IndexOf('requires -ConfirmWindow', [System.StringComparison]::Ordinal) -ge 0) { $reasons += 'colon refused' }
-        if (-not [string]::IsNullOrWhiteSpace($colon.Trace)) { $reasons += 'colon called-child' }
         if ($reasons.Count -eq 0) { Write-Pass 'W-27' }
-        else { Write-Fail 'W-27' (($reasons -join ' || ') + ' ' + (Get-C1407SafeText $colon.Text)) }
+        else { Write-Fail 'W-27' (($reasons -join ' || ') + ' ' + $failText) }
     } catch {
         Write-Fail 'W-27' $_.Exception.Message
     } finally {
