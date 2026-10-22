@@ -822,8 +822,15 @@ the transcript mutation gate. Activation requires both server and runner support
   holds while any held-back row was typed in the current generation and the whole normalized head
   of its body is still on the rendered screen — the same predicate pair the Enter-only recovery
   uses to conclude the body is in the composer, so the two can never disagree. An unreadable
-  snapshot holds too. Release is a late-confirm (the ordinary exit), a terminal-task cancellation,
-  a demonstrably cleared composer, or a new generation. The hold charges no attempt, parks
+  snapshot holds too. Release is a late-confirm (the ordinary exit), a demonstrably cleared
+  composer, or a new generation. Cancellation is bookkeeping and never a release: a canceled
+  typed row of this generation with no `SentAt` holds the queue flush and expectation direct
+  send until any later `UserPrompt` above its typing floor, a composer shown empty, or a new
+  generation (CARD-0266). It reuses CARD-0650's screen judgement, including two empty Claude
+  composer readings and a hold for unreadable or collapsed-paste boxes. Human Send-now retains
+  its operator-intent semantics. Pinned by `SessionMessageQueueWedgedHeadTests.C0266_*` and
+  `AgentTaskCheckSweepTests.C0266_flush_types_the_completion_note_once_the_caller_composer_is_shown_empty`.
+  The hold charges no attempt, parks
   nothing and kills nothing. A produced check note's whole journey — interpretation produced by
   `SpecialistTaskRunner`, placed by the real dispatcher, received as the interpreter's own whole
   `UserPrompt`, then the note's own enqueue, recovery and recipient `UserPrompt` — is pinned end
