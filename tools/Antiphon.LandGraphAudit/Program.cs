@@ -62,7 +62,7 @@ public static class Program
             if (probe)
                 return Evaluation.Probe(instance.Version.ToString(), Console.Out);
 
-            var audit = Task.Run(() => Evaluation.Audit(repo, solution!, Console.Out));
+            var audit = Task.Run(() => Evaluation.Audit(repo, solution!, instance.MSBuildPath, Console.Out));
             if (!audit.Wait(SolutionTimeout))
                 return Fail($"evaluating {solution} exceeded {SolutionTimeout.TotalSeconds:0} s");
             return audit.Result;
@@ -98,6 +98,6 @@ internal static class Evaluation
     public static int Probe(string sdkVersion, TextWriter output) => ApiProbe.Run(sdkVersion, output);
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static int Audit(string repo, string solution, TextWriter output) =>
-        SolutionAudit.Run(repo, solution, output);
+    public static int Audit(string repo, string solution, string sdkDirectory, TextWriter output) =>
+        SolutionAudit.Run(repo, solution, sdkDirectory, output);
 }

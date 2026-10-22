@@ -16,7 +16,7 @@ internal static class SolutionAudit
     private const string SolutionConfiguration = "Debug";
     private const string SolutionPlatform = "Any CPU";
 
-    public static int Run(string repo, string solution, TextWriter output)
+    public static int Run(string repo, string solution, string sdkDirectory, TextWriter output)
     {
         var solutionPath = Path.GetFullPath(Path.Combine(repo, solution));
         var parsed = SolutionFile.Parse(solutionPath);
@@ -35,6 +35,9 @@ internal static class SolutionAudit
         var evaluated = 0;
         var realRepo = RealPath(repo);
         var realDirectories = new Dictionary<string, string>(StringComparer.Ordinal);
+        var inputs = new BuildInputPolicy(repo, sdkDirectory);
+        var evaluatedProjects = new HashSet<string>(BuildInputPolicy.PathComparer);
+        var evaluations = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var entry in parsed.ProjectsInOrder)
         {
@@ -65,16 +68,25 @@ internal static class SolutionAudit
 
         int Evaluate(string projectPath, Dictionary<string, string> globals)
         {
+            projectPath = Path.GetFullPath(projectPath);
+            // A cycle or a second solution entry must not repeat the same evaluation. Different
+            // global properties still need their own evaluation (including each target framework).
+            var key = projectPath + "\0" + string.Join('\0', globals.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(p => p.Key.ToUpperInvariant() + "=" + p.Value));
+            if (!evaluations.Add(key)) return 0;
+            evaluatedProjects.Add(projectPath);
             var project = Project.FromFile(projectPath, new ProjectOptions
             {
                 GlobalProperties = globals,
                 ProjectCollection = collection,
                 EvaluationContext = context,
-                LoadSettings = ProjectLoadSettings.Default,
+                LoadSettings = ProjectLoadSettings.RecordDuplicateButNotCircularImports
+                               | ProjectLoadSettings.RecordEvaluatedItemElements,
             });
             try
             {
                 errors.ThrowIfAny(projectPath);
+                inputs.Check(project, refusals);
                 foreach (var item in project.AllEvaluatedItems)
                 {
                     var fullPath = SkippablePath(repo, realRepo, item.GetMetadataValue("FullPath"),
@@ -89,11 +101,18 @@ internal static class SolutionAudit
                     ? project.GetPropertyValue("TargetFrameworks")
                         .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                     : [];
+                // GetItems is the evaluated, surviving reference list: false Conditions and
+                // removed references do not expand the solution build's project closure.
+                var references = project.GetItems("ProjectReference")
+                    .Select(item => (Path: item.GetMetadataValue("FullPath"), Globals: ReferenceGlobals(globals, item)))
+                    .ToArray();
                 collection.UnloadProject(project);
                 project = null;
                 var count = 1;
                 foreach (var framework in frameworks.Distinct(StringComparer.OrdinalIgnoreCase))
                     count += Evaluate(projectPath, new(globals, StringComparer.OrdinalIgnoreCase) { ["TargetFramework"] = framework });
+                foreach (var reference in references)
+                    count += Evaluate(reference.Path, reference.Globals);
                 return count;
             }
             finally
@@ -115,6 +134,9 @@ internal static class SolutionAudit
         if (evaluated == 0)
             return Program.Fail($"{solution} names no MSBuild project");
 
+        foreach (var path in inputs.TrackedProjects.Where(path => !evaluatedProjects.Contains(path)).Order(StringComparer.Ordinal))
+            output.WriteLine($"not-built: {Display(repo, path)}");
+
         if (refusals.Count > 0)
         {
             foreach (var refusal in refusals)
@@ -124,6 +146,30 @@ internal static class SolutionAudit
 
         output.WriteLine("approved");
         return Program.Approved;
+    }
+
+    private static Dictionary<string, string> ReferenceGlobals(Dictionary<string, string> globals, ProjectItem reference)
+    {
+        var result = new Dictionary<string, string>(globals, StringComparer.OrdinalIgnoreCase);
+        // Let the referenced project choose its own frameworks; an explicit SetTargetFramework
+        // below selects the requested one. Otherwise Evaluate visits all its inner evaluations.
+        result.Remove("TargetFramework");
+        foreach (var name in Project.GetMetadataValueEscaped(reference, "GlobalPropertiesToRemove")
+                     .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            result.Remove(ProjectCollection.Unescape(name));
+        foreach (var metadata in new[] { "SetConfiguration", "SetPlatform", "SetTargetFramework", "AdditionalProperties" })
+        {
+            foreach (var assignment in Project.GetMetadataValueEscaped(reference, metadata)
+                         .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var equals = assignment.IndexOf('=');
+                if (equals <= 0)
+                    throw new InvalidOperationException($"{reference.EvaluatedInclude}: invalid {metadata} assignment");
+                result[ProjectCollection.Unescape(assignment[..equals].Trim())] =
+                    ProjectCollection.Unescape(assignment[(equals + 1)..].Trim());
+            }
+        }
+        return result;
     }
 
     /// <summary>
