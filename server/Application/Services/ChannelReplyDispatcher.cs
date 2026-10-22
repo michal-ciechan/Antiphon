@@ -59,6 +59,12 @@ public sealed record ChannelReplyDispatchResult(
 public sealed record ChannelReplyRoute(string? ConversationKey);
 
 /// <summary>
+/// CARD-1434: what the coordinator knows about a due channel debt row. The dispatcher owns the
+/// give-up policy (<c>ChannelBridge:ReplyDebtGiveUpAttempts</c>/<c>ReplyDebtGiveUpMinutes</c>).
+/// </summary>
+public sealed record ChannelReplyDebtState(int Attempts, DateTime CreatedAt, string? FailureReason);
+
+/// <summary>
 /// Routes an agent's turn output back down the external channel that asked for it. When a session
 /// completes a turn (<c>TurnEnd</c>/<c>end_turn</c>, observed by <see cref="AgentSessionRuntime"/>),
 /// this dispatcher matches the turn's prompt (<c>UserPrompt</c> or <c>QueuedUserPrompt</c>) back to
@@ -127,6 +133,12 @@ public sealed class ChannelReplyDispatcher
         /// Raised now, not at TTL.
         /// </summary>
         ProviderError,
+
+        /// <summary>
+        /// CARD-1434: the turn completed and its reply was routed, but every publication attempt
+        /// failed until the channel debt give-up bound. Raised by the debt retry, not at TTL.
+        /// </summary>
+        PublishFailed,
     }
 
     /// <summary>
@@ -241,6 +253,63 @@ public sealed class ChannelReplyDispatcher
             .Select(m => m.ConversationKey).Distinct(StringComparer.Ordinal).ToList();
         if (keys.Count == 0) return new ChannelReplyRoute(await NewestConversationKeyAsync(db, sessionId, ct));
         return new ChannelReplyRoute(keys.Count == 1 ? keys[0] : null);
+    }
+
+    /// <summary>
+    /// CARD-1434 give-up policy, checked before each channel debt retry. False while neither
+    /// bound is reached. Otherwise the turn's open correlations and any open late-confirm
+    /// sources on the row are settled with a Critical <see cref="AgentIncidentKind.ChannelReplyLost"/>
+    /// (<see cref="LossReason.PublishFailed"/>), the originating chat is notified best-effort,
+    /// and true tells the coordinator to remove the row so later replies to that chat flow. A
+    /// row whose correlations are already settled (TTL or a concurrent publication) is abandoned
+    /// with an information log naming the sequence; nothing is dropped silently. The time bound
+    /// needs at least one failed attempt: a row that only waited behind another has not been
+    /// tried, and gets its one attempt before the bound applies.
+    /// </summary>
+    internal async Task<bool> TryAbandonExhaustedDebtAsync(Guid sessionId, long sequence,
+        IReadOnlyCollection<Guid> lateConfirmedIds, ChannelReplyDebtState state, CancellationToken ct)
+    {
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        var attempts = _settings.ReplyDebtGiveUpAttempts;
+        var minutes = _settings.ReplyDebtGiveUpMinutes;
+        var exhausted = (attempts > 0 && state.Attempts >= attempts)
+            || (minutes > 0 && state.Attempts > 0 && now - state.CreatedAt >= TimeSpan.FromMinutes(minutes));
+        if (!exhausted) return false;
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var lost = new Dictionary<Guid, SessionQueuedMessage>();
+        var boundary = await TranscriptTurnWindow.FindActionBoundaryAsync(db, sessionId, sequence, ct);
+        var prompt = boundary is null ? null
+            : await TranscriptTurnWindow.FindOwningPromptAsync(db, sessionId, boundary.Value, ct);
+        if (prompt?.Text is not null)
+        {
+            var matched = (await MatchChannelRowsAsync(db, prompt, ct)).Select(m => m.Id).ToArray();
+            foreach (var row in await OpenCorrelations(db).AsNoTracking()
+                .Where(m => m.AgentSessionId == sessionId && matched.Contains(m.Id)).ToListAsync(ct))
+                lost[row.Id] = row;
+        }
+        if (lateConfirmedIds.Count > 0)
+        {
+            var ids = lateConfirmedIds.ToArray();
+            foreach (var row in await OpenCorrelations(db).AsNoTracking()
+                .Where(m => m.AgentSessionId == sessionId && ids.Contains(m.Id)).ToListAsync(ct))
+                lost[row.Id] = row;
+        }
+        if (lost.Count == 0)
+        {
+            _logger.LogInformation(
+                "Channel debt at sequence {Sequence} for session {SessionId} abandoned after {Attempts} attempt(s): its correlations are already settled",
+                sequence, sessionId, state.Attempts);
+            return true;
+        }
+        var recorded = await ReportLostAsync(sessionId, lost.Values.OrderBy(m => m.Sequence).ToList(),
+            LossReason.PublishFailed, ct, debt: state);
+        if (!recorded)
+            _logger.LogInformation(
+                "Channel debt at sequence {Sequence} for session {SessionId} abandoned after {Attempts} attempt(s): its correlations settled concurrently",
+                sequence, sessionId, state.Attempts);
+        return true;
     }
 
     /// <summary>The session's newest Channel conversation key: the machine follow-up target.</summary>
@@ -1062,11 +1131,17 @@ public sealed class ChannelReplyDispatcher
         TranscriptEntry? unmatchedPrompt = null,
         int assistantChars = 0,
         string? apiErrorClass = null,
-        int? apiErrorStatus = null)
+        int? apiErrorStatus = null,
+        ChannelReplyDebtState? debt = null)
     {
         var conversations = DescribeConversations(lost);
+        var debtMinutes = debt is null ? 0
+            : Math.Max(0, (int)Math.Round((_timeProvider.GetUtcNow().UtcDateTime - debt.CreatedAt).TotalMinutes));
         var why = reason switch
         {
+            LossReason.PublishFailed =>
+                $"the turn completed but its reply could not be published after {debt?.Attempts ?? 0} attempt(s) "
+                + $"over {debtMinutes} minute(s); last failure {debt?.FailureReason ?? "unknown"}",
             LossReason.Unroutable =>
                 $"the stored conversation key names no routable target ({conversations})",
             LossReason.TurnIncomplete =>

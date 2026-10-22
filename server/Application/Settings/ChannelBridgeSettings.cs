@@ -95,15 +95,21 @@ public sealed class ChannelBridgeSettingsValidator : IValidateOptions<ChannelBri
 
     public ValidateOptionsResult Validate(string? name, ChannelBridgeSettings settings)
     {
-        var origins = settings.MachineTurnTextOrigins;
-        if (origins is null)
-            return ValidateOptionsResult.Success;
-        var rejected = origins.Where(o => Forbidden.Contains(o)).Distinct().ToList();
-        if (rejected.Count == 0)
-            return ValidateOptionsResult.Success;
-        return ValidateOptionsResult.Fail(
-            "ChannelBridge:MachineTurnTextOrigins must not include Channel, Ui, or Supervision "
-            + $"(got {string.Join(", ", rejected)}). The main path owns Channel; operator and "
-            + "supervision turns stay silent. Leave the list empty for attachments-only.");
+        var failures = new List<string>();
+        // CARD-1434: the give-up bounds; 0 disables a bound, and the time bound cannot outlive
+        // the TTL backstop that would otherwise report the same reply first.
+        if (settings.ReplyDebtGiveUpAttempts is < 0 or > 1000)
+            failures.Add("ChannelBridge:ReplyDebtGiveUpAttempts must be 0 (disabled) or 1..1000 "
+                + $"(got {settings.ReplyDebtGiveUpAttempts}).");
+        if (settings.ReplyDebtGiveUpMinutes < 0 || settings.ReplyDebtGiveUpMinutes > settings.PendingReplyTtlMinutes)
+            failures.Add("ChannelBridge:ReplyDebtGiveUpMinutes must be 0 (disabled) or at most "
+                + $"PendingReplyTtlMinutes ({settings.PendingReplyTtlMinutes}); got {settings.ReplyDebtGiveUpMinutes}. "
+                + "The TTL remains the backstop for a reply that is never published.");
+        var rejected = (settings.MachineTurnTextOrigins ?? []).Where(o => Forbidden.Contains(o)).Distinct().ToList();
+        if (rejected.Count > 0)
+            failures.Add("ChannelBridge:MachineTurnTextOrigins must not include Channel, Ui, or Supervision "
+                + $"(got {string.Join(", ", rejected)}). The main path owns Channel; operator and "
+                + "supervision turns stay silent. Leave the list empty for attachments-only.");
+        return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }
 }

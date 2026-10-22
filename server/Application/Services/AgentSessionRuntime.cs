@@ -442,6 +442,15 @@ public sealed class AgentSessionRuntime
             ? await channel.ResolveActionRouteAsync(sessionId, sequence, ct) : null;
     }
 
+    /// <summary>CARD-1434: true when the debt row at <paramref name="sequence"/> reached the give-up bound and was reported lost.</summary>
+    internal async Task<bool> TryAbandonExhaustedChannelDebtAsync(Guid sessionId, long sequence,
+        IReadOnlyCollection<Guid> lateConfirmedIds, ChannelReplyDebtState state, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        return scope.ServiceProvider.GetService<ChannelReplyDispatcher>() is { } channel
+            && await channel.TryAbandonExhaustedDebtAsync(sessionId, sequence, lateConfirmedIds, state, ct);
+    }
+
     private static async Task ExecuteChannelReplyAsync(
         IServiceProvider services, Guid sessionId, long sequence, CancellationToken ct)
     {
