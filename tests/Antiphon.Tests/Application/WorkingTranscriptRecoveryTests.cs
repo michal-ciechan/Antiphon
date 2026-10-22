@@ -135,6 +135,10 @@ public class WorkingTranscriptRecoveryTests
             {
                 await using var mutation = await h.F.Store.BeginMutationAsync([h.Id], default);
                 await using var db = h.F.Db();
+                // CARD-1440: since CARD-1259 S2 every ingested row is admitted as a SessionRuntimeAction whose
+                // TranscriptEntryId FK is Restrict, so a legal replacement removes the session's actions first
+                // (the order DataRetentionService requires before it deletes a session's transcript).
+                await db.SessionRuntimeActions.Where(a => a.AgentSessionId == h.Id).ExecuteDeleteAsync();
                 await db.TranscriptEntries.Where(r => r.AgentSessionId == h.Id).ExecuteDeleteAsync();
                 db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = h.Id,
                     Sequence = 1, Kind = "UserPrompt", Uuid = "replacement", Text = "other", CreatedAt = DateTime.UtcNow });
