@@ -613,6 +613,52 @@ public sealed class LandingGitTests
         File.Exists(path).ShouldBeFalse();
     }
 
+    // CARD-1432 D2 (Review 9e126982). The update-ref --stdin deletion batch is a mutating child: a standing
+    // journal record names its process while it runs and the owner deletes it once the exact handle exited.
+    [Test]
+    [Timeout(30_000)]
+    public async Task C1432_UpdateRefsBatchRunsUnderTheChildJournal(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c1432-journal");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        var git = new LandingGit();
+        var sha = (await git.RunAsync(repo.Path, ["rev-parse", "HEAD"], ct)).Output.Trim();
+        var pin = $"refs/antiphon/land/{Guid.NewGuid():N}/{Guid.NewGuid():N}/source";
+        (await git.RunAsync(repo.Path, ["update-ref", pin, sha], ct)).Succeeded.ShouldBeTrue();
+        // The hook runs inside the ref transaction, so the batch stays alive while it sleeps.
+        await InstallExecutableHookAsync(repo.Path, "reference-transaction", "#!/bin/sh\n[ \"$1\" = prepared ] && sleep 8\nexit 0\n", ct);
+        var common = await git.CommonDirectoryAsync(repo.Path, ct);
+        var children = Path.Combine(common, "antiphon", "children");
+        var deleting = git.UpdateRefsAsync(repo.Path, [(pin, sha)], ct);
+
+        string? path = null;
+        RepositoryChildJournal.ChildRecord? record = null;
+        using (var poll = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            poll.CancelAfter(TimeSpan.FromSeconds(8));
+            while (record?.ProcessId is null)
+            {
+                if (Directory.Exists(children))
+                    path = Directory.EnumerateFiles(children, "*.json").FirstOrDefault();
+                if (path is not null)
+                    record = JsonSerializer.Deserialize<RepositoryChildJournal.ChildRecord>(await File.ReadAllTextAsync(path, ct));
+                if (record?.ProcessId is not null) break;
+                if (deleting.IsCompleted) await deleting;
+                await Task.Delay(50, poll.Token);
+            }
+        }
+
+        record.ShouldNotBeNull("a fencing record exists while the batch runs");
+        record.ProcessId.ShouldNotBeNull("the started child is recorded");
+        record.CommonDirectory.ShouldBe(common);
+        record.Purpose.ShouldBeNull("the batch is the untagged journal, like every other update-ref");
+        var result = await deleting;
+        result.Succeeded.ShouldBeTrue(result.Diagnostic);
+        File.Exists(path!).ShouldBeFalse("the owner deletes its record after the exact handle exited");
+        Directory.EnumerateFiles(children).ShouldBeEmpty();
+        (await git.RunAsync(repo.Path, ["show-ref", "--verify", pin], ct)).Succeeded.ShouldBeFalse("the batch applied");
+    }
+
     private static async Task<string> InstallExecutableHookAsync(string repository, string name, string body, CancellationToken ct)
     {
         var hooks = Path.Combine(repository, ".git", "hooks");
