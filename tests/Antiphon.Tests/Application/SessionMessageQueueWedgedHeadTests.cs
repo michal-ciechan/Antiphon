@@ -347,6 +347,119 @@ public class SessionMessageQueueWedgedHeadTests
     }
 
     [Test]
+    public async Task C0266_Dropped_typed_row_left_in_the_composer_holds_the_next_message()
+    {
+        await using var h = await CreateAsync();
+        h.Adapter.ClaudeComposerChrome = true;
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1, baselineSequence: baseline);
+        h.Adapter.PrimeComposer(Body);
+        await h.Queue.CancelAsync(h.SessionId, id, CancellationToken.None);
+        var nextId = await h.SeedPendingMessageAsync("the next live queue message");
+
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        await AssertCanceledComposerHoldAsync(h, id, nextId);
+    }
+
+    [Test]
+    public async Task C0266_Canceled_typed_check_left_in_the_composer_holds_the_next_note()
+    {
+        await using var h = await CreateAsync();
+        h.Adapter.ClaudeComposerChrome = true;
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1, baselineSequence: baseline,
+            status: QueuedMessageStatus.Canceled, origin: QueuedMessageOrigin.Check);
+        h.Adapter.PrimeComposer(Body);
+        var nextId = await h.SeedPendingMessageAsync("the next completion note", origin: QueuedMessageOrigin.Delegation);
+
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        await AssertCanceledComposerHoldAsync(h, id, nextId);
+    }
+
+    private static async Task AssertCanceledComposerHoldAsync(BridgeQueueHarness h, Guid id, Guid nextId)
+    {
+        // Assert the actual submitted prompt first: at base this is the fused orphan + next body.
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        h.Adapter.Inputs.ShouldBeEmpty();
+        await AssertUserPromptsAsync(h, []);
+        var canceled = await MessageAsync(id);
+        canceled.Status.ShouldBe(QueuedMessageStatus.Canceled);
+        canceled.DeliveryAttempts.ShouldBe(1);
+        var next = await MessageAsync(nextId);
+        next.Status.ShouldBe(QueuedMessageStatus.Pending);
+        next.DeliveryAttempts.ShouldBe(0);
+        next.DeliveryVerdict.ShouldBeNull();
+        (await h.Queue.GetQueueAsync(h.SessionId, CancellationToken.None)).Messages
+            .Single(m => m.Id == nextId).Parked.ShouldBeFalse();
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task C0266_Canceled_typed_row_from_a_previous_generation_does_not_hold()
+    {
+        await using var h = await CreateAsync();
+        h.Adapter.ClaudeComposerChrome = true;
+        await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1, status: QueuedMessageStatus.Canceled,
+            lastDeliveryGeneration: (await GenerationAsync(h)).AddMinutes(-30));
+        h.Adapter.PrimeComposer("");
+        await AssertNextBodyDeliveredAsync(h);
+    }
+
+    [Test]
+    public async Task C0266_Canceled_never_typed_row_does_not_hold()
+    {
+        await using var h = await CreateAsync();
+        h.Adapter.ClaudeComposerChrome = true;
+        await h.SeedPendingMessageAsync(Body, status: QueuedMessageStatus.Canceled);
+        await AssertNextBodyDeliveredAsync(h);
+    }
+
+    [Test]
+    public async Task C0266_Canceled_typed_row_resolved_by_a_later_UserPrompt_does_not_hold()
+    {
+        await using var h = await CreateAsync();
+        h.Adapter.ClaudeComposerChrome = true;
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1, baselineSequence: baseline,
+            status: QueuedMessageStatus.Canceled);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, "anything");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        h.Adapter.PrimeComposer("");
+        // A later non-empty composer must not resurrect the resolved orphan. This is conversation
+        // history above an unreadable Claude box, so the transcript is the only release evidence.
+        h.Adapter.RenderedScreenOverride = Body;
+        h.Adapter.ClaudeComposerChrome = false;
+        await AssertNextBodyDeliveredAsync(h, ["anything"]);
+    }
+
+    [Test]
+    public async Task C0266_Cleared_composer_releases_after_a_canceled_typed_row()
+    {
+        await using var h = await CreateAsync();
+        h.Adapter.ClaudeComposerChrome = true;
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1, baselineSequence: baseline);
+        h.Adapter.PrimeComposer(Body);
+        await h.Queue.CancelAsync(h.SessionId, id, CancellationToken.None);
+        // Clear before asking the next flush to deliver. R1 separately pins the occupied case.
+        h.Adapter.PrimeComposer("");
+        await AssertNextBodyDeliveredAsync(h);
+        (await MessageAsync(id)).Status.ShouldBe(QueuedMessageStatus.Canceled);
+    }
+
+    private static async Task AssertNextBodyDeliveredAsync(BridgeQueueHarness h, string[]? priorPrompts = null)
+    {
+        const string nextBody = "the next live queue message";
+        var nextId = await h.SeedPendingMessageAsync(nextBody);
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+        h.Adapter.SubmittedBodies.ShouldBe([nextBody]);
+        await AssertUserPromptsAsync(h, [.. priorPrompts ?? [], nextBody]);
+        (await MessageAsync(nextId)).DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+    }
+
+    [Test]
     public async Task Failed_Enter_only_recovery_kills_the_generation_it_pressed_Enter_into()
     {
         await using var h = await CreateAsync(alwaysOn: true);

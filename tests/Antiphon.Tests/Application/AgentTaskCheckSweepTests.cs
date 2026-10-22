@@ -736,7 +736,31 @@ public class AgentTaskCheckSweepTests
         var stored = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
         stored.Status.ShouldBe(QueuedMessageStatus.Canceled);
         stored.DeliveryAttempts.ShouldBe(1, "the last look cancels instead of re-typing");
-        harness.Runner.Writes.ShouldNotBeEmpty("the next completion note is typed after the canceled check");
+        harness.Runner.Writes.ShouldBeEmpty("no write while the canceled check may stand in the composer");
+    }
+
+    [Test]
+    public async Task C0266_flush_types_the_completion_note_once_the_caller_composer_is_shown_empty()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
+        var noteId = await harness.SeedCheckNoteAsync(
+            seed.CallerSessionId, seed.Task.Id, "[check] stale", deliveryAttempts: 1,
+            createdAt: DateTime.UtcNow.AddMinutes(-2));
+        await harness.SettleAsync(seed.Task.Id);
+        await harness.SeedCompletionNoteAsync(seed.CallerSessionId, seed.Task.RootTaskId);
+        harness.Runner.LiveSessions.Add(seed.CallerSessionId);
+        var rule = new string('─', 60);
+        harness.Runner.Snapshot = new SessionRunnerSnapshotDto(seed.CallerSessionId, "",
+            $"{rule}\n❯ \n{rule}\n  ⏵⏵ bypass permissions on (shift+tab to cycle)", 0, DateTime.UtcNow);
+
+        await harness.Messages.FlushIfIdleAsync(seed.CallerSessionId, CancellationToken.None);
+
+        await using var verify = harness.CreateContext();
+        var stored = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == noteId);
+        stored.Status.ShouldBe(QueuedMessageStatus.Canceled);
+        stored.DeliveryAttempts.ShouldBe(1);
+        harness.Runner.Writes.ShouldNotBeEmpty("the empty composer releases the next completion note");
     }
 
     [Test]
@@ -1543,6 +1567,7 @@ public class AgentTaskCheckSweepTests
     private sealed class RecordingRunnerClient : ISessionRunnerClient
     {
         public List<string> Writes { get; } = [];
+        public SessionRunnerSnapshotDto? Snapshot { get; set; }
 
         public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
         {
@@ -1589,7 +1614,8 @@ public class AgentTaskCheckSweepTests
             throw new NotSupportedException("a check does not read the runner");
 
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
-            throw new NotSupportedException("a check does not read the runner");
+            Snapshot is { } snapshot ? Task.FromResult(snapshot)
+                : throw new NotSupportedException("a check does not read the runner");
 
         public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotSupportedException("a check does not read the runner");
