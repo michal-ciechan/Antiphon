@@ -2260,6 +2260,41 @@ public sealed class LandNonCodeSkipTests
             "import cannot be resolved");
     }
 
+    // CARD-1409 repair 9 (Review 4ecdb753 R3, plan D-42): MSBuild stores $(MSBuildProjectDirectory) escaped, so a
+    // folder named a%2Fb is not a/b; a definition path holding a character MSBuild escapes refuses by name.
+    [Test]
+    public async Task C1409_DefinitionPathWithEscapedCharacterRefuses()
+    {
+        static Dictionary<string, string> Project(string path, string value, string import = "", string? extra = null)
+        {
+            var files = new Dictionary<string, string>
+            {
+                ["docs/guide.md"] = "# guide",
+                [path] = "<Project Sdk=\"Microsoft.NET.Sdk\">\n" +
+                    (value.Length == 0 ? "" : "  <PropertyGroup><PackageReadmeFile>" + value + "</PackageReadmeFile></PropertyGroup>\n") +
+                    import + "\n</Project>\n",
+            };
+            if (extra is not null) files[extra] = "<Project />";
+            return files;
+        }
+        const string projectDirectory = "$(MSBuildProjectDirectory)/../../docs/guide.md";
+        const string refusal = "definition file path holds a character MSBuild escapes";
+        // The R3 shapes: approved at e6ac1c606, refused at fd20e8dcc, and real MSBuild selects the root docs/guide.md.
+        await AssertUpdateRefusesAsync(Project("server/a%2Fb/App.csproj", projectDirectory), refusal, "server/a%2Fb/App.csproj char=%");
+        await AssertUpdateRefusesAsync(Project("server/a%2Fb/App.csproj", "x.json;" + projectDirectory), refusal, "server/a%2Fb/App.csproj char=%");
+        await AssertUpdateRefusesAsync(Project("server/a%2fb/App.csproj", projectDirectory), refusal, "server/a%2fb/App.csproj char=%");
+        // A folder holding a reference: approved at e6ac1c606, refused at fd20e8dcc (the repair 9 sweep).
+        await AssertUpdateRefusesAsync(Project("server/a$(Description)b/App.csproj", projectDirectory), refusal, "server/a$(Description)b/App.csproj char=$");
+        await AssertUpdateRefusesAsync(Project("server/a@(None)b/App.csproj", projectDirectory), refusal, "server/a@(None)b/App.csproj char=@");
+        // An imported file in such a folder refuses by its own path.
+        await AssertUpdateRefusesAsync(Project("server/App.csproj", "", """  <Import Project="../eng/a%252Fb/shared.props" />""", "eng/a%2Fb/shared.props"),
+            refusal, "eng/a%2Fb/shared.props char=%");
+        // Controls with their fd20e8dcc outcomes: a real server/ab/c/ folder reads server/docs/guide.md, and the
+        // unescaped $(MSBuildThisFileDirectory) form in the a%2Fb folder still refuses.
+        await AssertUpdateApprovesAsync(Project("server/ab/c/App.csproj", projectDirectory), 1);
+        await AssertUpdateRefusesAsync(Project("server/a%2Fb/App.csproj", "$(MSBuildThisFileDirectory)../../docs/guide.md"), "server/a%2Fb/App.csproj");
+    }
+
     // One entry per 'table' row of the plan's N- and O-tables (D-28, D-29). Keys are the row ids.
     private static Dictionary<string, Func<Task>> TableWitnesses()
     {
