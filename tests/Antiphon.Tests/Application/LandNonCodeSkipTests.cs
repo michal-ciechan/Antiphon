@@ -1634,6 +1634,68 @@ public sealed class LandNonCodeSkipTests
             "docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-readiness-plan.md");
     }
 
+    // CARD-1483 (Review cff23aba D-1): the S1 helper metadata is allowed only as the exact tree literal, in
+    // attribute form, on an Include. HelperTargetFramework reaches an MSBuild task Properties string, which
+    // splits on ';', so 'net10.0;CustomBeforeMicrosoftCommonTargets=...docs...' would import a docs file.
+    // The real tree approves; each other shape refuses naming the metadata.
+    [Test]
+    [Arguments("tree")]
+    [Arguments("htf-semicolon")]
+    [Arguments("htf-docs-import")]
+    [Arguments("htf-net9")]
+    [Arguments("htf-leading-space")]
+    [Arguments("htf-case")]
+    [Arguments("htf-child")]
+    [Arguments("htf-remove")]
+    [Arguments("skip-false")]
+    [Arguments("skip-semicolon")]
+    [Arguments("stf-net9")]
+    [Arguments("stf-semicolon")]
+    [Arguments("stf-child")]
+    public async Task C1483_PinnedHelperMetadataRefusesOtherShapes(string shape)
+    {
+        const string helper = """<StagedHelper Include="$(MSBuildThisFileDirectory)..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj" Folder="land-graph-audit" Glob="**\*" """;
+        const string htf = """HelperTargetFramework="net10.0" />""";
+        const string skip = """SkipGetTargetFrameworkProperties="true" """;
+        const string stf = """SetTargetFramework="TargetFramework=net10.0" />""";
+        const string helperLabel = @"StagedHelper Include=$(MSBuildThisFileDirectory)..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj";
+        const string referenceLabel = @"ProjectReference Include=..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj";
+        var files = await BuildRealTestProjectTreeAsync();
+        var real = files[RealTestProjectPath];
+        real.ShouldContain(helper + htf);
+        real.ShouldContain(skip + stf);
+        if (shape == "tree")
+        {
+            await AssertUpdateApprovesAsync(files, DefinitionCount(files));
+            return;
+        }
+
+        string HelperValue(string value) => real.Replace(helper + htf, helper + "HelperTargetFramework=\"" + value + "\" />", StringComparison.Ordinal);
+        string ReferenceValue(string name, string value, string tail) =>
+            real.Replace(skip + stf, name == "skip" ? "SkipGetTargetFrameworkProperties=\"" + value + "\" " + stf : skip + "SetTargetFramework=\"" + value + "\"" + tail, StringComparison.Ordinal);
+        var (edited, label, name) = shape switch
+        {
+            "htf-semicolon" => (HelperValue("net10.0;X=Y"), helperLabel, "HelperTargetFramework"),
+            "htf-docs-import" => (HelperValue(@"net10.0;CustomBeforeMicrosoftCommonTargets=$(MSBuildThisFileDirectory)..\..\docs\evil.md"), helperLabel, "HelperTargetFramework"),
+            "htf-net9" => (HelperValue("net9.0"), helperLabel, "HelperTargetFramework"),
+            "htf-leading-space" => (HelperValue(" net10.0"), helperLabel, "HelperTargetFramework"),
+            "htf-case" => (HelperValue("NET10.0"), helperLabel, "HelperTargetFramework"),
+            "htf-child" => (real.Replace(helper + htf, helper + "><HelperTargetFramework>net10.0</HelperTargetFramework></StagedHelper>", StringComparison.Ordinal), helperLabel, "HelperTargetFramework"),
+            "htf-remove" => (real.Replace("</Project>", """  <ItemGroup><StagedHelper Remove="$(MSBuildThisFileDirectory)..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj" HelperTargetFramework="net10.0" /></ItemGroup>""" + "\n</Project>", StringComparison.Ordinal),
+                @"StagedHelper Remove=$(MSBuildThisFileDirectory)..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj", "HelperTargetFramework"),
+            "skip-false" => (ReferenceValue("skip", "false", ""), referenceLabel, "SkipGetTargetFrameworkProperties"),
+            "skip-semicolon" => (ReferenceValue("skip", "true;X=Y", ""), referenceLabel, "SkipGetTargetFrameworkProperties"),
+            "stf-net9" => (ReferenceValue("stf", "TargetFramework=net9.0", " />"), referenceLabel, "SetTargetFramework"),
+            "stf-semicolon" => (ReferenceValue("stf", @"TargetFramework=net10.0;CustomBeforeMicrosoftCommonTargets=$(MSBuildThisFileDirectory)..\..\docs\evil.md", " />"), referenceLabel, "SetTargetFramework"),
+            "stf-child" => (real.Replace(skip + stf, skip + "><SetTargetFramework>TargetFramework=net10.0</SetTargetFramework></ProjectReference>", StringComparison.Ordinal), referenceLabel, "SetTargetFramework"),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, null),
+        };
+        edited.ShouldNotBe(real);
+        files[RealTestProjectPath] = edited;
+        files["docs/evil.md"] = "# evil";
+        await AssertUpdateRefusesAsync(files, "metadata the audit does not allow", RealTestProjectPath + " " + label + " " + name);
+    }
+
     private const string RealTestProjectPath = "tests/Antiphon.Tests/Antiphon.Tests.csproj";
 
     // The V-20 scratch tree: the real tests/Antiphon.Tests project, the real root Directory.Build.* files and
