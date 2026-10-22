@@ -155,6 +155,7 @@ public sealed class RepositoryLeaseWaiters(IOptions<DelegationSettings>? setting
             {
                 var stale = waiters.Values
                     .Where(w => w.Purpose == RepositoryLeasePurposes.Dispatch && !stillHeld.Contains(w.TaskId)
+                        && (prerequisitePending is null || !prerequisitePending.Contains(w.TaskId))
                         && (considered is null || considered.Contains(w.TaskId)))
                     .Select(w => w.TaskId)
                     .ToList();
