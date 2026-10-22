@@ -950,6 +950,129 @@ public sealed class LandNonCodeSkipTests
         }
     }
 
+    // CARD-1409 repair (Review 8989ece8 F1): Microsoft.Common.props/.targets import
+    // $(MSBuildProjectExtensionsPath)$(MSBuildProjectFile).*.props and .*.targets (obj/ by default), which the
+    // audit does not follow. A tracked definition file under any obj/ segment is refused by its path alone,
+    // whatever it contains, and the server inventory already digests it.
+    [Test]
+    public async Task C1409_ObjExtensionDefinitionFileRefuses()
+    {
+        const string project = """
+            <Project Sdk="Microsoft.NET.Sdk">
+            </Project>
+            """;
+        const string docs = """
+            <Project>
+              <ItemGroup>
+                <None Include="../docs/**/*.md" />
+              </ItemGroup>
+            </Project>
+            """;
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = project,
+            ["server/obj/App.csproj.evil.props"] = docs,
+        }, "under an obj/ directory", "server/obj/App.csproj.evil.props");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = project,
+            ["server/obj/App.csproj.evil.targets"] = docs,
+        }, "under an obj/ directory", "server/obj/App.csproj.evil.targets");
+        // Path-based: a harmless file, an upper-case segment and a nested project under obj/ refuse too.
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = project,
+            ["server/OBJ/Debug/App.csproj.harmless.props"] = """
+                <Project>
+                  <PropertyGroup>
+                    <Harmless>true</Harmless>
+                  </PropertyGroup>
+                </Project>
+                """,
+        }, "under an obj/ directory", "server/OBJ/Debug/App.csproj.harmless.props");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = project,
+            ["obj/Generated.csproj"] = project,
+        }, "under an obj/ directory", "obj/Generated.csproj");
+
+        var graph = new LandVerificationBuildGraph();
+        graph.Includes("server/obj/App.csproj.evil.props").ShouldBeTrue();
+        graph.Includes("server/obj/App.csproj.evil.targets").ShouldBeTrue();
+        graph.Includes("server/obj/project.assets.json").ShouldBeFalse();
+    }
+
+    // CARD-1409 repair (Review 8989ece8 F1): a project or imported definition file that redirects the
+    // extension or intermediate directory cannot be evaluated, so it is refused wherever it is set.
+    [Test]
+    public async Task C1409_IntermediateOutputRedirectRefuses()
+    {
+        const string project = """
+            <Project Sdk="Microsoft.NET.Sdk">
+            </Project>
+            """;
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <BaseIntermediateOutputPath>../build/obj/</BaseIntermediateOutputPath>
+                  </PropertyGroup>
+                </Project>
+                """,
+        }, "redirects the intermediate directory", "server/App.csproj BaseIntermediateOutputPath");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["Directory.Build.props"] = """
+                <Project>
+                  <PropertyGroup>
+                    <MSBuildProjectExtensionsPath>$(MSBuildThisFileDirectory)ext/</MSBuildProjectExtensionsPath>
+                  </PropertyGroup>
+                </Project>
+                """,
+            ["server/App.csproj"] = project,
+        }, "redirects the intermediate directory", "Directory.Build.props MSBuildProjectExtensionsPath");
+        await AssertUpdateRefusesAsync(new Dictionary<string, string>
+        {
+            ["eng/shared.props"] = """
+                <Project>
+                  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+                    <intermediateoutputpath>$(MSBuildProjectDirectory)/tmp/</intermediateoutputpath>
+                  </PropertyGroup>
+                </Project>
+                """,
+            ["server/App.csproj"] = """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <Import Project="../eng/shared.props" />
+                </Project>
+                """,
+        }, "redirects the intermediate directory", "eng/shared.props intermediateoutputpath");
+        // Reading the property is not setting it: the real Directory.Build.targets expands
+        // $(IntermediateOutputPath) inside another property and stays approved.
+        var reads = await InitAuditTreeAsync(new Dictionary<string, string>
+        {
+            ["Directory.Build.targets"] = """
+                <Project>
+                  <PropertyGroup>
+                    <_CleanFile>$(IntermediateOutputPath)$(CleanFile)</_CleanFile>
+                  </PropertyGroup>
+                </Project>
+                """,
+            ["server/App.csproj"] = project,
+        });
+        try
+        {
+            var ran = await RunAuditAsync(reads, "en-US", "-Update");
+            ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
+            ran.Stdout.ShouldContain("count=2");
+            File.Exists(AuditManifest(reads)).ShouldBeTrue();
+        }
+        finally
+        {
+            Directory.Delete(reads, recursive: true);
+        }
+    }
+
     [Test]
     public async Task C1409_ProjectUserFileIsInTheHashedInventory()
     {
