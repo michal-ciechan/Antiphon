@@ -313,7 +313,7 @@ automatically — see "What the delegate is told" below; don't type them into `-
 - **One task, one deliverable.** Don't delegate what you could finish in two tool calls.
 - **Always pass `-Title`.** It is a 2–5 word label (max 80) for check headers, completion notes, and the board — not a second Goal.
 - **Write `-Goal` as an outcome, not a procedure.** The delegate decides how.
-- **Operator standing operating rules apply to every dispatch** (a failed launch gets a Debug task, a blocked task settles with a complete-report reply, verify the card title before binding): [standing operating rules](../../../docs/orchestration-loop.md#standing-operating-rules) (CARD-1469).
+- **Operator standing operating rules apply to every dispatch** (a failed launch gets a Debug task; never Reply to a complete report Blocked only by runner sync, Reply only for a missing report and ask for the full report; verify the card title before binding): [standing operating rules](../../../docs/orchestration-loop.md#standing-operating-rules) (CARD-1469).
 - **Put the state of today in `-Goal`, not the standing rules.** Known-red tests, what already
   landed, what is out of scope, which ports are taken — that is what only you know. The harness
   rules it already has.
