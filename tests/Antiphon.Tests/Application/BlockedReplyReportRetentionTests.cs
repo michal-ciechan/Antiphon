@@ -148,8 +148,9 @@ public sealed class BlockedReplyReportRetentionTests
         settled.ReportNudgeMessageId.ShouldBeNull("normal settlement needs no complete-report ask");
         var events = await world.EventsAsync();
         events.Count(IsRetainedReportAsk).ShouldBe(eventsBefore.Count(IsRetainedReportAsk));
-        events.Count(e => e.Type == AgentTaskEventType.Completed).ShouldBe(
-            eventsBefore.Count(e => e.Type == AgentTaskEventType.Completed) + 1, "exactly one completion is published");
+        // Merge-back bookkeeping can emit a separate Completed event; count the report settlement itself.
+        events.Count(IsReportSettlement).ShouldBe(
+            eventsBefore.Count(IsReportSettlement) + 1, "exactly one report settlement is published");
 
         var token = settled.ConcurrencyToken;
         await world.Services.GetRequiredService<AgentTaskReplyService>()
@@ -538,6 +539,9 @@ public sealed class BlockedReplyReportRetentionTests
 
     private static bool IsRetainedReportAsk(AgentTaskEvent e) =>
         e.Type == AgentTaskEventType.Warning && e.Detail.Contains("asked once for the complete report", StringComparison.Ordinal);
+
+    private static bool IsReportSettlement(AgentTaskEvent e) =>
+        e.Type == AgentTaskEventType.Completed && e.Detail.StartsWith("Delegate reported ", StringComparison.Ordinal);
 
     private static void AssertRetained(AgentTask after, AgentTask retained)
     {
