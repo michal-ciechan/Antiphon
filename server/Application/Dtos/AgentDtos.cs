@@ -135,7 +135,15 @@ public sealed record AgentDetailDto(
     string? HerdrWorkspaceLabel = null,
     string? HerdrTabLabel = null,
     Guid? StandingSpecialistOwnerId = null,
-    PinClaudeImportMode PinClaudeImportMode = PinClaudeImportMode.Unverified);
+    PinClaudeImportMode PinClaudeImportMode = PinClaudeImportMode.Unverified)
+{
+    /// <summary>CARD-0167 S2. Inherit (default), Endpoint, or Direct; see <c>Agent.ProviderEndpointMode</c>.</summary>
+    public ProviderEndpointMode ProviderEndpointMode { get; init; } = ProviderEndpointMode.Inherit;
+    /// <summary>CARD-0167 S2. The agent's own endpoint in Endpoint mode, null otherwise. URL and key NAME only.</summary>
+    public ProviderEndpointDto? ProviderEndpoint { get; init; }
+    /// <summary>Save-time advisories (CARD-0167 D-8): an endpoint key name that resolves nowhere, by name.</summary>
+    public IReadOnlyList<string> Warnings { get; init; } = [];
+}
 
 /// <summary>
 /// What of a live session's standing instructions the repo has moved past (CARD-0334).
@@ -331,7 +339,11 @@ public sealed record CreateAgentRequest(
     string? HerdrTabLabel = null,
     // CARD-0604 D-2. Null = the local runner. Only the configured PhoneHomeRunner:AllowedRunnerId
     // is admitted (422 otherwise); a runner-bound agent's sessions launch in that container.
-    string? RunnerId = null);
+    string? RunnerId = null,
+    // CARD-0167 S2. Null = Inherit. Endpoint mode requires ProviderEndpoint, validated against the
+    // agent's final kind (after any TUI profile is applied).
+    ProviderEndpointMode? ProviderEndpointMode = null,
+    ProviderEndpointDto? ProviderEndpoint = null);
 
 public sealed record DraftAgentRequest(string Description);
 
@@ -400,7 +412,13 @@ public sealed record UpdateAgentRequest(
     string? HerdrWorkspaceLabel = null,
     string? HerdrTabLabel = null,
     // CARD-0262. Null = leave unchanged. Operator-only; a present task-token header on PATCH is 403.
-    PinClaudeImportMode? PinClaudeImportMode = null);
+    PinClaudeImportMode? PinClaudeImportMode = null,
+    // CARD-0167 S2. Both null = leave unchanged. A mode other than Endpoint drops the agent's own
+    // endpoint (an endpoint sent beside it is 422 provider_endpoint_not_applicable, not dropped);
+    // Endpoint mode needs an endpoint in this request or already stored (422
+    // provider_endpoint_required), validated against the kind this PATCH leaves the agent with.
+    ProviderEndpointMode? ProviderEndpointMode = null,
+    ProviderEndpointDto? ProviderEndpoint = null);
 
 /// <summary>CARD-0334 S3. Body of <c>POST /api/agents/{id}/refresh-policy</c>.</summary>
 public sealed record RefreshPolicyRequest(bool Force = false);

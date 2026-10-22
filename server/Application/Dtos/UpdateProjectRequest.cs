@@ -21,4 +21,11 @@ public record UpdateProjectRequest(
     /// </summary>
     string? CommitOnSettle = null,
     /// <summary>Shared, Worktree, or Inherit. Null leaves the stored value unchanged.</summary>
-    string? DefaultWorkerWorkspace = null);
+    string? DefaultWorkerWorkspace = null,
+    /// <summary>
+    /// CARD-0167 S2. Per-kind provider endpoints keyed by <c>AgentKind</c> name (ClaudeCode, Grok,
+    /// Codex). Null leaves the stored map unchanged (the DefaultLaunchEnv rule); an empty map is the
+    /// explicit clear. Validated by <c>ProviderEndpointSettings</c>: 422 on an unsupported kind, a
+    /// bad URL, or a Codex endpoint without a key name.
+    /// </summary>
+    IReadOnlyDictionary<string, ProviderEndpointDto?>? ProviderEndpoints = null);
