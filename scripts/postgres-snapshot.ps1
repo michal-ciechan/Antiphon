@@ -755,13 +755,39 @@ function Test-SnapshotRemoteEnv {
     return $false
 }
 
-# Any other libpq variable (PGSERVICE, PGPASSFILE, PGOPTIONS, ...) can point a
-# reused container at another server; a scratch container needs none of them.
+# libpq reads these names (PostgreSQL manual, "Environment Variables" for
+# libpq); any one of them can point a reused container's pg_restore at another
+# server or change how it authenticates, and a scratch container needs none of
+# them. The official image's own PG_MAJOR, PG_VERSION and PGDATA are server
+# settings, not libpq variables, and stay allowed (CARD-1413 D-1).
+$script:SnapshotLibpqEnvNames = @(
+    'PGHOST', 'PGHOSTADDR', 'PGPORT', 'PGDATABASE', 'PGUSER', 'PGPASSWORD', 'PGPASSFILE',
+    'PGREQUIREAUTH', 'PGCHANNELBINDING', 'PGSERVICE', 'PGSERVICEFILE', 'PGOPTIONS', 'PGAPPNAME',
+    'PGREQUIRESSL', 'PGREQUIREPEER', 'PGKRBSRVNAME', 'PGCONNECT_TIMEOUT', 'PGCLIENTENCODING',
+    'PGTARGETSESSIONATTRS', 'PGLOADBALANCEHOSTS', 'PGDATESTYLE', 'PGTZ', 'PGGEQO',
+    'PGSYSCONFDIR', 'PGLOCALEDIR', 'PGMINPROTOCOLVERSION', 'PGMAXPROTOCOLVERSION'
+)
+# PGSSL* (mode, cert, key, root cert, CRL, SNI, protocol bounds, key log),
+# PGGSS* (encryption mode, library, delegation) and PGOAUTH* (OAuth flow).
+$script:SnapshotLibpqEnvPrefixes = @('PGSSL', 'PGGSS', 'PGOAUTH')
+
+function Test-SnapshotLibpqName {
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    $upper = $Name.Trim().ToUpperInvariant()
+    if ($script:SnapshotLibpqEnvNames -contains $upper) { return $true }
+    foreach ($prefix in $script:SnapshotLibpqEnvPrefixes) {
+        if ($upper.StartsWith($prefix, [StringComparison]::Ordinal)) { return $true }
+    }
+    return $false
+}
+
 function Test-SnapshotPgEnv {
     param([string[]]$Entries)
     foreach ($entry in @($Entries)) {
         if ([string]::IsNullOrWhiteSpace($entry)) { continue }
-        if ($entry -match '^(?i)PG[A-Z0-9_]*=(.*)$' -and -not [string]::IsNullOrWhiteSpace($Matches[1])) { return $true }
+        if ($entry -notmatch '^([^=]+)=(.*)$') { continue }
+        if ((Test-SnapshotLibpqName $Matches[1]) -and -not [string]::IsNullOrWhiteSpace($Matches[2])) { return $true }
     }
     return $false
 }
