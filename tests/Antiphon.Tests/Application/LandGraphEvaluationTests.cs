@@ -334,7 +334,7 @@ public sealed class LandGraphEvaluationTests
             if (reference == "transitive-cycle")
             {
                 run.ExitCode.ShouldBe(1, run.Text);
-                run.Text.ShouldContain(repo.Full("docs/guide.md"), run.Text);
+                run.Text.ShouldContain(repo.Full("docs/guide.md"), Case.Sensitive, run.Text);
                 run.Lines.ShouldNotContain("not-built: docs/Hidden.csproj", run.Text);
                 run.Lines.ShouldNotContain("not-built: Library/Library.csproj", run.Text);
                 run.Lines.ShouldNotContain("approved", run.Text);
