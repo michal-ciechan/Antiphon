@@ -198,7 +198,7 @@ public sealed class LandRefRetentionTests
         }
         (await fixture.Git.UpdateRefsAsync(fixture.Repository, [(land, "HEAD")], CancellationToken.None))
             .Diagnostic.ShouldBe("update_refs_invalid_oid");
-        fixture.Git.Trace.ShouldNotContain(a => a is ["update-ref", "--stdin"], "a refused batch never reaches git");
+        fixture.Git.Trace.ShouldNotContain(a => a.Length == 2 && a[0] == "update-ref" && a[1] == "--stdin", "a refused batch never reaches git");
         (await ListAsync(fixture, "refs/antiphon/")).ShouldBe([land]);
         (await fixture.RequiredAsync(fixture.Repository, "rev-parse", fixture.SourceRef)).Trim().ShouldBe(fixture.SeedSha);
     }
