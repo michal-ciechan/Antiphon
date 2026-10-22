@@ -1138,6 +1138,10 @@ public sealed class WorktreeManager : IWorktreeManager
             || matching[0].Branch != refName || tip.ExitCode != 0 || tip.Stdout.Trim() != intent.InitialSha)
             throw new ConflictException(
                 $"Incomplete worktree creation at {worktreePath} does not match an interrupted add of {branch} at its starting commit; nothing removed.");
+        // CARD-1502 (D): the recovery deletes the branch; update-ref does not check other worktrees.
+        if (ParseWorktreeList(list.Stdout).Any(entry => !PathsEqual(entry.Path, worktreePath) && entry.Branch == refName))
+            throw new ConflictException(
+                $"Interrupted worktree creation branch {branch} is checked out in another worktree; nothing removed.");
 
         _logger.LogWarning(
             "Recovering interrupted worktree creation {CreationId} at {Path}: removing the locked initializing registration and adding {Branch} again",
