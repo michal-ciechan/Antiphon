@@ -572,7 +572,7 @@ exit 0
 }
 
 function Invoke-DrillCase {
-    param($Fixture, [string]$Scenario, [string[]]$Extra, [string]$PlainBytes = '32', [string[]]$Volumes = @(), [hashtable]$Env = @{})
+    param($Fixture, [string]$Scenario, [string[]]$Extra, [string]$PlainBytes = '32', [string[]]$Volumes = @(), [hashtable]$Env = @{}, [switch]$NoSnapshot)
     Remove-Item -LiteralPath $Fixture.Marker -Force -ErrorAction SilentlyContinue
     $dockerState = Join-Path $Fixture.Root 'docker-state'
     Remove-Item -LiteralPath $dockerState -Force -ErrorAction SilentlyContinue
@@ -581,7 +581,11 @@ function Invoke-DrillCase {
         if (-not [string]::IsNullOrWhiteSpace($seed)) { Add-Content -LiteralPath ($dockerState + '.volumes') -Value $seed -Encoding ASCII }
     }
     $cipher = Join-Path $Fixture.Dest 'antiphon-20261021T120000Z.dump.age'
-    Set-Content -LiteralPath $cipher -Value 'cipher' -Encoding ASCII
+    if ($NoSnapshot) {
+        Remove-Item -LiteralPath $cipher -Force -ErrorAction SilentlyContinue
+    } else {
+        Set-Content -LiteralPath $cipher -Value 'cipher' -Encoding ASCII
+    }
     $arguments = @(
         '-Execute', '-RestoreDrill', '-IdentityFile', $Fixture.Identity,
         '-Destination', $Fixture.Dest, '-SyncRoot', $Fixture.Sync, '-StagingPath', $Fixture.Stage
@@ -1198,6 +1202,29 @@ function Test-StagingSkipsLiveRun {
     }
 }
 
+function Test-DrillPicksExactSnapshot {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'DrillPicksExactSnapshot script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $manual = Join-Path $fx.Dest 'antiphon-20261022T000000Z-manual.dump.age'
+        Set-Content -LiteralPath $manual -Value 'not a snapshot' -Encoding ASCII
+        $common = @('-ScratchContainer', 'antiphon-postgres-drill', '-ScratchVolume', 'antiphon-postgres-drill-pgdata')
+        $picked = Invoke-DrillCase $fx 'clean' $common '1048576'
+        Assert-True ($picked.Exit -eq 0) 'exact snapshot drill exits 0' "exit=$($picked.Exit) $($picked.Out)"
+        Assert-True ($picked.Tools -match 'age -d .*antiphon-20261021T120000Z\.dump\.age') 'drill decrypts the exact-pattern snapshot' $picked.Tools
+        Assert-True ($picked.Tools -notmatch 'antiphon-20261022T000000Z-manual') 'drill ignores the non-snapshot file' $picked.Tools
+        Assert-True (Test-Path -LiteralPath $manual) 'drill keeps the non-snapshot file' $manual
+        $only = Invoke-DrillCase $fx 'clean' $common '1048576' @() @{} -NoSnapshot
+        Assert-True ($only.Exit -eq 9) 'no exact snapshot exits 9' "exit=$($only.Exit) $($only.Out)"
+        Assert-True ($only.Out -match 'reason=missing-snapshot') 'no exact snapshot reason' $only.Out
+        Assert-True ($only.Tools -notmatch '/age -d') 'no exact snapshot decrypts nothing' $only.Tools
+        Assert-True ($only.Tools -notmatch 'pg_restore') 'no exact snapshot restores nothing' $only.Tools
+        Assert-True (Test-Path -LiteralPath $manual) 'no exact snapshot keeps the non-snapshot file' $manual
+        Assert-NoSecret $only $fx 'no exact snapshot'
+    } finally { Remove-Fixture $fx }
+}
+
 $all = @(
     'WhatIfPlan', 'MissingRecipient', 'RecipientInsideDestination',
     'DrillRefusesProduction', 'DrillPlan', 'Retention',
@@ -1208,7 +1235,7 @@ $all = @(
     'RetentionIgnoresConflictCopy', 'StagingHygiene', 'StagingPreservesOperatorFiles',
     'StagingRefusesLink', 'StagingOutsideDestination', 'DrillRemovesScratch',
     'DrillRefusesTaintedReuse', 'DockerDaemonPinned', 'StagingRefusesForeignRoot',
-    'StagingSkipsLiveRun'
+    'StagingSkipsLiveRun', 'DrillPicksExactSnapshot'
 )
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
