@@ -14,16 +14,19 @@ public sealed class AgentTaskDispatcherHostedService : BackgroundService
     private readonly DelegationSettings _settings;
     private readonly ILogger<AgentTaskDispatcherHostedService> _logger;
     private readonly RepositoryLeaseWaiters? _waiters;
+    private readonly TimeProvider _clock;
 
     public AgentTaskDispatcherHostedService(
         IServiceScopeFactory scopeFactory,
         IOptions<DelegationSettings> settings,
-        ILogger<AgentTaskDispatcherHostedService> logger, RepositoryLeaseWaiters? waiters = null)
+        ILogger<AgentTaskDispatcherHostedService> logger, RepositoryLeaseWaiters? waiters = null,
+        TimeProvider? timeProvider = null)
     {
         _scopeFactory = scopeFactory;
         _settings = settings.Value;
         _logger = logger;
         _waiters = waiters;
+        _clock = timeProvider ?? TimeProvider.System;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -41,7 +44,7 @@ public sealed class AgentTaskDispatcherHostedService : BackgroundService
             {
                 using (var wait = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken))
                 {
-                    var timer = Task.Delay(interval, wait.Token);
+                    var timer = Task.Delay(interval, _clock, wait.Token);
                     var ready = _waiters?.WaitForReadyAsync(wait.Token) ?? timer;
                     await Task.WhenAny(timer, ready);
                     await wait.CancelAsync();
