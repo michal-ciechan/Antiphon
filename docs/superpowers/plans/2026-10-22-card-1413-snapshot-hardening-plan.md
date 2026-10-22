@@ -1,0 +1,32 @@
+# CARD-1413 snapshot script hardening checkpoints
+
+Date: 2026-10-22. Code task `a6672982` on `feat/card-task-a6672982`, base `cc3e54fba56ea35796228f6464b8f6d0876ab8ac`. Card CARD-1413 (`127710db-cb00-49ed-8277-0a5a753ef4b3`), board Antiphon. Parent design: `docs/superpowers/plans/2026-10-21-card-1401-postgres-to-server2-plan.md` stage B / B1; prior slice `docs/superpowers/plans/2026-10-21-card-1405-postgres-snapshot-script.md` (CARD-1405, Review clean at `44f4f6ed`). Script `scripts/postgres-snapshot.ps1`; witness `scripts/test-postgres-snapshot.ps1`. This slice does not enable a schedule, does not run docker for real, and never reaches production Postgres or OneDrive.
+
+## Items
+
+| Item | Card finding | Change | Witness case |
+|---|---|---|---|
+| A-1 | A reused labelled scratch container is trusted beyond `PGHOST`/`PGPORT`: `PGHOSTADDR`, a bind mount of the production data directory, and host network mode all pass | `Get-SnapshotContainerFact` reads mount types and `HostConfig.NetworkMode`; `Test-SnapshotReuseGuard` refuses `PGHOSTADDR` (`guard=pghost`), any other non-empty `PG*` variable (`guard=pg-env`), any non-volume mount (`guard=bind-mount`), `NetworkMode=host` (`guard=host-network`) and `container:<id>` (`guard=shared-network`) | `DrillRefusesTaintedReuse` |
+| A-2 | `DOCKER_HOST` / `DOCKER_CONTEXT` unchecked; a `tcp://` daemon carries the plaintext dump over the network | Before staging is opened: `DOCKER_HOST` must be empty, `unix://` or `npipe://` (`reason=docker-host`, exit 4); then `docker context inspect --format {{.Endpoints.docker.Host}}` must print one `unix://` or `npipe://` endpoint (`reason=docker-context`, exit 4). `-AllowRemoteDocker` is the explicit override | `DockerDaemonPinned` |
+| A-3 | Staging root ownership unchecked; default under shared `/tmp`; parents not re-checked before deletion | Default root is `<LocalApplicationData>/antiphon/postgres-snapshot-staging` (per user). An absent root is created `0700`; an existing root must be owned by the caller (`reason=staging-owner`) and owner-only (`reason=staging-mode`); every parent must be owned by the caller or root and not group/world-writable unless sticky (`reason=staging-parent`). Windows checks the ACL owner. `Remove-SnapshotStaging` re-checks links and ownership before deleting | `StagingRefusesForeignRoot` |
+| A-4 | Start-up sweep deletes a concurrent run's files; empty old run directories are never removed | Each run holds `run.lock` (`FileShare.None`) in its run directory. The sweep skips a run directory whose lock is held or whose last write is newer than `-StaleRunMinutes` (default 360); otherwise it removes owned plaintext, the lock, and the directory when nothing else remains | `StagingSkipsLiveRun` |
+| A-5 | The drill picks the newest `antiphon-*.dump.age` by name without the exact pattern | The drill selects only names matching `^antiphon-[0-9]{8}T[0-9]{6}Z\.dump\.age$`; none is `reason=missing-snapshot` | `DrillPicksExactSnapshot` |
+| A-6 | No case for age failing (exit 6) or age missing (exit 3) | Coverage only; the script already handles both. These cases are green on arrival and have no red commit | `PublishRejectsEncryptFailure`, `MissingAge` |
+
+Existing cases that change with A-3: the harness fixture's staging root and the `StagingHygiene` root are now `0700`, and `StagingHygiene`'s prior run directory is aged past the threshold so the sweep assertion keeps its meaning. No assertion is loosened.
+
+## Verification design
+
+V-1. `scripts/test-postgres-snapshot.ps1` with no `-Case`: every CARD-1405 case still holds (see that plan's V-1), plus: a labelled scratch container with `PGHOSTADDR`, any other `PG*` variable, a bind mount, host network mode, or a `container:` network mode is refused with exit 9, `reason=drill-refused`, the named guard, and no `createdb`/`pg_restore`; `DOCKER_HOST=tcp://...` is refused with exit 4 `reason=docker-host` before any docker call, a `tcp://` context endpoint is refused with exit 4 `reason=docker-context` after only `context inspect`, `unix://` passes, and `-AllowRemoteDocker` passes; a root-owned staging root is `reason=staging-owner`, a caller-owned `0755` root is `reason=staging-mode`, a world-writable non-sticky parent is `reason=staging-parent`, each exit 3 before docker; a run directory with a held lock or a fresh timestamp is not swept, an old unlocked one has its owned plaintext and lock removed and the empty directory deleted, and the live run's own `run.lock` cannot be opened exclusively by another process; the drill decrypts the exact-pattern snapshot even when a non-snapshot `.dump.age` sorts above it, and with only non-matching files exits 9 `reason=missing-snapshot` without calling age; an age exit of 1 is exit 6 `reason=encrypt-failed` with nothing published and no plaintext left; a PATH without age is exit 3 `reason=missing-age` without docker for both `-Execute` and `-RestoreDrill`. No production database, volume, or OneDrive directory.
+
+No R-n. No PC-n. Mutation owns positive controls; this slice declares none.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---|---|
+| CP-1 | S1 | n/a | snapshot-script | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1` | V-1 | 31 cases, 0 failed, exit 0 | n/a | 3 |
+
+### Cost
+
+Ordinary floor: 3 minutes. Lane: server2 (default; no `-Runner`, no `-Platform`).
