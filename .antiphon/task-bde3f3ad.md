@@ -108,8 +108,9 @@ no conflicts.
 ## Pending for Mutation (zero-PC plan; method-scoped candidates, unbound)
 
 - Drop the `event.button === 0` gate in `useLongPress.onMouseDown` -> V-7 red.
-- Remove `onTouchMove: cancel` -> V-8 red. Remove `onTouchCancel: cancel` -> hmm: V-9 stays green
-  through `onPressStart`; remove `onPressStart` clearing instead -> V-9 red.
+- Remove `onTouchMove: cancel` -> V-8 red.
+- Remove the `onPressStart` clearing of `swallowClick` -> V-9 red. Removing `onTouchCancel: cancel`
+  alone leaves V-9 green (the press-start clearing covers it): missing-control candidate.
 - Remove `swallowClick.current = false` in `closeMenu` alone -> no current red (press-start clearing
   covers the witnesses): missing-control candidate for Mutation.
 - Remove the `swallowClick` check in `onClick` -> V-5 red (`dialog` null).
