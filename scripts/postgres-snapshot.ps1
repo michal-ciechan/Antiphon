@@ -14,6 +14,10 @@
     The recipient and identity are -RecipientFile / -IdentityFile paths, or
     -RecipientRef / -IdentityRef environment-variable names whose values are
     those paths. This script has no schedule and does not enable one.
+    Staging defaults to <LocalApplicationData>/antiphon/postgres-snapshot-staging;
+    the root must be owned by the caller and owner-only, under parents that
+    others cannot rename in. Docker must answer on a local unix:// or npipe://
+    endpoint unless -AllowRemoteDocker is passed.
     ASCII-only. Do not pass a password or connection string.
 #>
 [CmdletBinding()]
@@ -290,6 +294,104 @@ function Clear-SnapshotOwnedFiles {
     }
 }
 
+# The default staging root is per user. On Linux the shared /tmp would let
+# another local user create the root first and choose where plaintext lands.
+function Get-SnapshotDefaultStaging {
+    $local = [Environment]::GetFolderPath('LocalApplicationData')
+    if ([string]::IsNullOrWhiteSpace($local)) { $local = [System.IO.Path]::GetTempPath() }
+    return Join-Path (Join-Path $local 'antiphon') 'postgres-snapshot-staging'
+}
+
+# Callers may isolate PATH to fixture binaries, so coreutils are not looked up there.
+function Get-SnapshotUnixTool {
+    param([string]$Name)
+    foreach ($candidate in @(('/usr/bin/' + $Name), ('/bin/' + $Name))) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
+    return $null
+}
+
+function Get-SnapshotUnixStat {
+    param([string]$Path)
+    $stat = Get-SnapshotUnixTool 'stat'
+    if (-not $stat) { return $null }
+    $result = Invoke-SnapshotNative $stat @('-c', '%u %a', '--', $Path)
+    if ($result.Exit -ne 0 -or $result.Lines.Count -lt 1) { return $null }
+    if (([string]$result.Lines[0]).Trim() -match '^([0-9]+) ([0-7]{3,4})$') {
+        return [pscustomobject]@{ Uid = [int]$Matches[1]; Mode = [Convert]::ToInt32($Matches[2], 8) }
+    }
+    return $null
+}
+
+function Get-SnapshotUnixUid {
+    $id = Get-SnapshotUnixTool 'id'
+    if (-not $id) { return -1 }
+    $result = Invoke-SnapshotNative $id @('-u')
+    if ($result.Exit -ne 0 -or $result.Lines.Count -lt 1) { return -1 }
+    if (([string]$result.Lines[0]).Trim() -match '^[0-9]+$') { return [int](([string]$result.Lines[0]).Trim()) }
+    return -1
+}
+
+function Test-SnapshotOwnedDirectory {
+    param([string]$Path)
+    if ($env:OS -eq 'Windows_NT') { return (Test-SnapshotWindowsOwner $Path) -eq '' }
+    $me = Get-SnapshotUnixUid
+    $info = Get-SnapshotUnixStat $Path
+    if ($me -lt 0 -or -not $info) { return $false }
+    # 63 is 0077: any group or other permission bit.
+    return ($info.Uid -eq $me) -and (($info.Mode -band 63) -eq 0)
+}
+
+function Test-SnapshotWindowsOwner {
+    param([string]$Path)
+    try {
+        $acl = Get-Acl -LiteralPath $Path
+        $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier])
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        if ($owner -and $owner.Equals($identity.User)) { return '' }
+        $admins = New-Object System.Security.Principal.SecurityIdentifier([System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
+        $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+        if ($owner -and $owner.Equals($admins) -and $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) { return '' }
+        return 'staging-owner'
+    } catch {
+        return 'staging-owner'
+    }
+}
+
+# The root must be the caller's and owner-only; each parent must be the
+# caller's or root's, and writable by others only under a sticky bit. An
+# absent root is created owner-only and then checked like an existing one.
+function Test-SnapshotStagingRoot {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return 'staging-owner' }
+    if (Test-SnapshotContainsLink $Path) { return 'staging-link' }
+    if (-not (Test-Path -LiteralPath $Path)) {
+        try { New-Item -ItemType Directory -Path $Path -Force -ErrorAction Stop | Out-Null } catch { return 'staging-owner' }
+        if (-not (Protect-SnapshotStaging $Path)) { return 'staging-mode' }
+    }
+    if (Test-SnapshotContainsLink $Path) { return 'staging-link' }
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return 'staging-owner' }
+    if ($env:OS -eq 'Windows_NT') { return Test-SnapshotWindowsOwner $Path }
+    $me = Get-SnapshotUnixUid
+    if ($me -lt 0) { return 'staging-owner' }
+    $root = Get-SnapshotUnixStat $Path
+    if (-not $root) { return 'staging-owner' }
+    if ($root.Uid -ne $me) { return 'staging-owner' }
+    if (($root.Mode -band 63) -ne 0) { return 'staging-mode' }
+    $cursor = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($Path))
+    while (-not [string]::IsNullOrWhiteSpace($cursor)) {
+        $info = Get-SnapshotUnixStat $cursor
+        if (-not $info) { return 'staging-parent' }
+        if ($info.Uid -ne $me -and $info.Uid -ne 0) { return 'staging-owner' }
+        # 18 is 0022 (group/other write); 512 is 01000 (sticky).
+        if (($info.Mode -band 18) -ne 0 -and ($info.Mode -band 512) -eq 0) { return 'staging-parent' }
+        $parent = [System.IO.Path]::GetDirectoryName($cursor)
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $cursor) { break }
+        $cursor = $parent
+    }
+    return ''
+}
+
 function Initialize-SnapshotStaging {
     param([string]$Path)
     $script:SnapshotRunStaging = ''
@@ -313,9 +415,11 @@ function Initialize-SnapshotStaging {
 function Remove-SnapshotStaging {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return $true }
+    if (Test-SnapshotContainsLink $Path) { return $false }
     $item = Get-Item -LiteralPath $Path -Force
     if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { return $false }
     if ($item.Name -notmatch '^run-[0-9a-f]{32}$') { return $false }
+    if (-not (Test-SnapshotOwnedDirectory $Path)) { return $false }
     Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
     return -not (Test-Path -LiteralPath $Path)
 }
@@ -338,6 +442,8 @@ function Get-SnapshotReasonCode {
         'staging-inside-destination' { return 3 }
         'staging-link' { return 3 }
         'staging-mode' { return 3 }
+        'staging-owner' { return 3 }
+        'staging-parent' { return 3 }
         'staging-cleanup' { return 3 }
         'missing-docker' { return 4 }
         'docker-host' { return 4 }
@@ -980,7 +1086,7 @@ function Invoke-PostgresSnapshot {
     $dest = $Destination
     if ([string]::IsNullOrWhiteSpace($dest)) { $dest = Join-Path $sync 'antiphon-postgres' }
     $stage = $StagingPath
-    if ([string]::IsNullOrWhiteSpace($stage)) { $stage = Join-Path ([System.IO.Path]::GetTempPath()) 'antiphon-postgres-snapshot-staging' }
+    if ([string]::IsNullOrWhiteSpace($stage)) { $stage = Get-SnapshotDefaultStaging }
     $Container = Get-SnapshotBareName $Container
     $Database = Get-SnapshotBareName $Database
     $ScratchContainer = Get-SnapshotBareName $ScratchContainer
@@ -1032,6 +1138,8 @@ function Invoke-PostgresSnapshot {
         $dockerCmd = Get-Command docker -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $ageCmd) { return Write-SnapshotResult $false 'missing-age' '' }
         if (-not $dockerCmd) { return Write-SnapshotResult $false 'missing-docker' '' }
+        $rootState = Test-SnapshotStagingRoot $stage
+        if ($rootState -ne '') { return Write-SnapshotResult $false $rootState '' }
         $daemon = Test-SnapshotDockerDaemon $dockerCmd.Source ([bool]$AllowRemoteDocker)
         if ($daemon -ne '') { return Write-SnapshotResult $false $daemon '' }
         Write-SnapshotDaemonWarning
@@ -1067,6 +1175,8 @@ function Invoke-PostgresSnapshot {
     $dockerCmd = Get-Command docker -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $ageCmd) { return Write-SnapshotResult $false 'missing-age' '' }
     if (-not $dockerCmd) { return Write-SnapshotResult $false 'missing-docker' '' }
+    $rootState = Test-SnapshotStagingRoot $stage
+    if ($rootState -ne '') { return Write-SnapshotResult $false $rootState '' }
     $daemon = Test-SnapshotDockerDaemon $dockerCmd.Source ([bool]$AllowRemoteDocker)
     if ($daemon -ne '') { return Write-SnapshotResult $false $daemon '' }
     Write-SnapshotDaemonWarning
