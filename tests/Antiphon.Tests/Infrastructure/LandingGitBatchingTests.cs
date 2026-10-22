@@ -76,8 +76,9 @@ public sealed class LandingGitBatchingTests
 
     /// <summary>
     /// The branch half of the batched read keeps today's reasons: a branch that moved during verification is
-    /// <c>source_changed</c>; a branch deleted during verification is still <c>source_ref_missing</c>, classified
-    /// by the single-ref read on the refusal path only.
+    /// <c>source_changed</c>; a branch deleted right before the batched read (deleting it earlier leaves the
+    /// source checkout headless, which the tracked-tree recheck refuses first) is still <c>source_ref_missing</c>,
+    /// classified by the single-ref read on the refusal path only.
     /// </summary>
     [Test]
     [Arguments("moved", "source_changed")]
@@ -88,15 +89,22 @@ public sealed class LandingGitBatchingTests
         await h.InitializeAsync();
         await h.AddSourceAsync();
         await SetVerifyFilterAsync(h);
-        h.Verifier.Barrier = async () =>
-        {
-            if (change == "moved")
-                await h.Fixture.RequiredAsync(h.Fixture.Source, "commit", "--allow-empty", "-m", "moved during verification");
-            else
-                await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", "-d", h.Fixture.SourceRef);
-        };
+        var deleted = false;
+        if (change == "moved")
+            h.Verifier.Barrier = () => h.Fixture.RequiredAsync(h.Fixture.Source, "commit", "--allow-empty", "-m", "moved during verification");
+        else
+            h.Fixture.Git.BeforeCommand = async (repo, args) =>
+            {
+                // The batched recheck is the only show-ref --verify without --hash that ends with the branch.
+                if (deleted || args[0] != "show-ref" || args[1] != "--verify" || args.Contains("--hash") || args[^1] != h.Fixture.SourceRef)
+                    return null;
+                deleted = true;
+                await h.Fixture.RequiredAsync(repo, "update-ref", "-d", h.Fixture.SourceRef);
+                return null;
+            };
         h.Fixture.Git.Trace.Clear();
         await h.RunAsync();
+        if (change == "missing") deleted.ShouldBeTrue("the branch was deleted right before a batched recheck read");
         (await h.OperationAsync())!.LastReason.ShouldBe(reason);
         h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("--ff-only") || a[0] == "push" || a.Contains("remove"));
         if (change == "moved") await h.Fixture.AssertRemoteSourceAsync();
