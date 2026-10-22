@@ -5763,7 +5763,8 @@ public sealed partial class AgentTaskDispatcher
                 var previewedSource = PreviewedCardSource(claimed.WorktreeBasePreviewJson);
                 if (selected.Decision == CardWorktreeBaseDecision.Ambiguous
                     || selected.Decision == CardWorktreeBaseDecision.Unknown
-                        && (claimed.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task
+                        && (selected.SyncUnverified
+                            || claimed.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Task
                             || claimed.RequestedWorktreeBaseMode == RequestedWorktreeBaseMode.Auto
                                 && selected.Incomplete
                                 && (claimed.Role == AgentTaskRole.Review || previewedSource is not null)))
