@@ -37,7 +37,8 @@ param(
     [string]$ScratchDatabase = 'antiphon_drill',
     [string]$ScratchVolume = 'antiphon-postgres-drill-pgdata',
     [string]$SourceVolume = 'antiphon_pgdata',
-    [string]$ScratchImage = 'postgres:16'
+    [string]$ScratchImage = 'postgres:16',
+    [switch]$AllowRemoteDocker
 )
 
 # A drill may reuse only a container that carries this label. These names stay
@@ -339,6 +340,8 @@ function Get-SnapshotReasonCode {
         'staging-mode' { return 3 }
         'staging-cleanup' { return 3 }
         'missing-docker' { return 4 }
+        'docker-host' { return 4 }
+        'docker-context' { return 4 }
         'dump-failed' { return 4 }
         'verify-failed' { return 5 }
         'encrypt-failed' { return 6 }
@@ -399,6 +402,40 @@ function Test-SnapshotOutsideFile {
         return $InsideReason
     }
     return 'ok'
+}
+
+# The guards above apply to whichever daemon docker talks to. A tcp:// daemon
+# would carry the plaintext dump across the network, so the endpoint must be a
+# local socket or pipe unless the operator passes -AllowRemoteDocker. The
+# endpoint itself is never printed.
+function Test-SnapshotLocalEndpoint {
+    param([string]$Endpoint)
+    if ([string]::IsNullOrWhiteSpace($Endpoint)) { return $false }
+    return $Endpoint.Trim() -match '^(?i)(unix|npipe)://'
+}
+
+function Test-SnapshotDockerDaemon {
+    param([string]$Docker, [bool]$AllowRemote)
+    $script:SnapshotRemoteDockerAllowed = $false
+    $hostVar = [Environment]::GetEnvironmentVariable('DOCKER_HOST')
+    if (-not [string]::IsNullOrWhiteSpace($hostVar) -and -not (Test-SnapshotLocalEndpoint $hostVar)) {
+        if (-not $AllowRemote) { return 'docker-host' }
+        $script:SnapshotRemoteDockerAllowed = $true
+        return ''
+    }
+    $shown = Invoke-SnapshotNative $Docker @('context', 'inspect', '--format', '{{.Endpoints.docker.Host}}')
+    $lines = @($shown.Lines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($shown.Exit -ne 0 -or $lines.Count -ne 1 -or -not (Test-SnapshotLocalEndpoint ([string]$lines[0]))) {
+        if (-not $AllowRemote) { return 'docker-context' }
+        $script:SnapshotRemoteDockerAllowed = $true
+    }
+    return ''
+}
+
+function Write-SnapshotDaemonWarning {
+    if ($script:SnapshotRemoteDockerAllowed) {
+        Write-Output 'warning: remote docker endpoint allowed by -AllowRemoteDocker'
+    }
 }
 
 function Write-SnapshotStatus {
@@ -995,6 +1032,9 @@ function Invoke-PostgresSnapshot {
         $dockerCmd = Get-Command docker -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $ageCmd) { return Write-SnapshotResult $false 'missing-age' '' }
         if (-not $dockerCmd) { return Write-SnapshotResult $false 'missing-docker' '' }
+        $daemon = Test-SnapshotDockerDaemon $dockerCmd.Source ([bool]$AllowRemoteDocker)
+        if ($daemon -ne '') { return Write-SnapshotResult $false $daemon '' }
+        Write-SnapshotDaemonWarning
         if (-not (Initialize-SnapshotStaging $stage)) { return Write-SnapshotResult $false 'staging-mode' '' }
         $run = [string]$script:SnapshotRunStaging
         if ([string]::IsNullOrWhiteSpace($run)) { return Write-SnapshotResult $false 'staging-mode' '' }
@@ -1027,6 +1067,9 @@ function Invoke-PostgresSnapshot {
     $dockerCmd = Get-Command docker -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $ageCmd) { return Write-SnapshotResult $false 'missing-age' '' }
     if (-not $dockerCmd) { return Write-SnapshotResult $false 'missing-docker' '' }
+    $daemon = Test-SnapshotDockerDaemon $dockerCmd.Source ([bool]$AllowRemoteDocker)
+    if ($daemon -ne '') { return Write-SnapshotResult $false $daemon '' }
+    Write-SnapshotDaemonWarning
     if (-not (Initialize-SnapshotStaging $stage)) { return Write-SnapshotResult $false 'staging-mode' '' }
     $run = [string]$script:SnapshotRunStaging
     if ([string]::IsNullOrWhiteSpace($run)) { return Write-SnapshotResult $false 'staging-mode' '' }
