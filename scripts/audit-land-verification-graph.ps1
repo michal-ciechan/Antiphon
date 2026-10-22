@@ -164,6 +164,9 @@ foreach ($allowedProperty in @(
     'WarningsAsErrors')) {
     [void]$AllowedProperties.Add($allowedProperty)
 }
+# CARD-1483 (Review cff23aba D-1): property -> the only element texts (ordinal) it may be set to. The value
+# reaches an MSBuild task Properties string, which splits on ';'; a task Output may not set it.
+$PinnedPropertyValues = @{ '_StagedHelperFramework' = @('%(StagedHelper.HelperTargetFramework)', '$(TargetFramework)') }
 # Item type -> rule. path: resolved like a file include and refused when it leaves the repository
 # or selects docs markdown or the root README.md. project: a tracked *proj. name: a bare identifier.
 $ItemRules = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([System.StringComparer]::OrdinalIgnoreCase)
@@ -185,18 +188,23 @@ foreach ($nameItem in @('PackageReference', 'FrameworkReference', 'InternalsVisi
 # item type, seeded from the tracked definition files. A type absent here allows none. The global-property
 # metadata (AdditionalProperties, Properties, GlobalProperties, SetConfiguration, SetPlatform,
 # SetTargetFramework, UndefineProperties) and every other name refuse: they reopen the R2 property imports.
-# CARD-1483: the one exception is ProjectReference SetTargetFramework pinned to the literal value below
-# (the LandGraphAudit tool is built for net10.0); any other value, or the child-element form, refuses.
+# CARD-1483: the exceptions are the pinned entries below, each allowed only as its one tree literal
+# (the LandGraphAudit tool is built for net10.0); any other value, the child-element form or a Remove refuses.
 $ItemMetadata = New-Object 'System.Collections.Generic.Dictionary[string,string[]]' ([System.StringComparer]::OrdinalIgnoreCase)
 $ItemMetadata['PackageReference'] = @('Version', 'GeneratePathProperty', 'ExcludeAssets', 'PrivateAssets', 'IncludeAssets')
-$ItemMetadata['ProjectReference'] = @('Aliases', 'ReferenceOutputAssembly', 'Private', 'SkipGetTargetFrameworkProperties')
+$ItemMetadata['ProjectReference'] = @('Aliases', 'ReferenceOutputAssembly', 'Private')
 $ItemMetadata['Content'] = @('CopyToOutputDirectory', 'CopyToPublishDirectory', 'Link', 'TargetPath')
 $ItemMetadata['Compile'] = @('Link')
 $ItemMetadata['EmbeddedResource'] = @('LogicalName')
 $ItemMetadata['None'] = @('Pack', 'PackagePath', 'CopyToOutputDirectory')
-$ItemMetadata['StagedHelper'] = @('Folder', 'Glob', 'HelperTargetFramework')
+$ItemMetadata['StagedHelper'] = @('Folder', 'Glob')
 # Item type -> metadata attribute name -> the only value (ordinal) under which that name is allowed.
-$PinnedItemMetadata = @{ 'ProjectReference' = @{ 'SetTargetFramework' = 'TargetFramework=net10.0' } }
+# HelperTargetFramework and SetTargetFramework reach an MSBuild Properties string, which splits on ';'
+# (Review cff23aba D-1); SkipGetTargetFrameworkProperties is held to its tree value as well.
+$PinnedItemMetadata = @{
+    'ProjectReference' = @{ 'SetTargetFramework' = 'TargetFramework=net10.0'; 'SkipGetTargetFrameworkProperties' = 'true' }
+    'StagedHelper' = @{ 'HelperTargetFramework' = 'net10.0' }
+}
 # Item element attributes that are not metadata (compared ordinally, as MSBuild reads them).
 $ItemElementAttributes = @('Include', 'Exclude', 'Update', 'Remove', 'Condition', 'Label')
 # CARD-1409 repair 5 (plan D-29, O-table): item operations the audit does not evaluate, refused by name.
@@ -1125,6 +1133,10 @@ function Format-PropertyRefusal([string]$Path, [string]$Name) {
     return 'definition file sets a property the audit does not allow; -Update cannot approve it: ' + $Path + ' ' + $Name
 }
 
+function Format-PinnedPropertyRefusal([string]$Path, [string]$Name) {
+    return 'definition file sets a pinned property to a value the audit does not allow; -Update cannot approve it: ' + $Path + ' ' + $Name
+}
+
 function Format-ItemTypeRefusal([string]$Path, [string]$Item) {
     return 'definition file declares an item type the audit does not allow; -Update cannot approve it: ' + $Path + ' ' + $Item
 }
@@ -1200,6 +1212,9 @@ function Assert-AllowedProperties($Doc, [string]$Path) {
             if ($child.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
             $name = [string]$child.LocalName
             if (-not $AllowedProperties.Contains($name)) { Exit-Audit 1 (Format-PropertyRefusal $Path $name) }
+            if ($PinnedPropertyValues.ContainsKey($name) -and -not (Test-AllowedName $PinnedPropertyValues[$name] ([string]$child.InnerXml) $false)) {
+                Exit-Audit 1 (Format-PinnedPropertyRefusal $Path $name)
+            }
         }
     }
     foreach ($output in $Doc.GetElementsByTagName('Output')) {
@@ -1207,6 +1222,7 @@ function Assert-AllowedProperties($Doc, [string]$Path) {
         if ($propertyName.Length -gt 0 -and -not $AllowedProperties.Contains($propertyName)) {
             Exit-Audit 1 (Format-PropertyRefusal $Path $propertyName)
         }
+        if ($PinnedPropertyValues.ContainsKey($propertyName)) { Exit-Audit 1 (Format-PinnedPropertyRefusal $Path $propertyName) }
         $itemName = ([string]$output.GetAttribute('ItemName')).Trim()
         if ($itemName.Length -gt 0 -and -not $ItemRules.ContainsKey($itemName)) {
             Exit-Audit 1 (Format-ItemTypeRefusal $Path $itemName)
