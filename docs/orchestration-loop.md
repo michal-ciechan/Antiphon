@@ -2237,7 +2237,11 @@ directory properties are expanded (an `Import`, a property-value path, a name
 item), the text is split on `;` first and a directory property at the start of
 each part is that directory, so `a;$(MSBuildThisFileDirectory)b` is `a` and
 that directory's `b`, as MSBuild expands before it splits (CARD-1409 repair 8,
-Review d43d1e4a). An `Import` is followed as described above. Target bodies are not
+Review d43d1e4a). A tracked definition path holding a character
+MSBuild escapes in `$(MSBuildProjectDirectory)` (`%`, `$`, `@`, `;`, `'`,
+`(`, `)`, `*`, `?`) refuses by name, because MSBuild leaves the same characters
+unescaped in `$(MSBuildThisFileDirectory)` and the audit does not re-implement
+that escaping (CARD-1409 repair 9, Review 4ecdb753). An `Import` is followed as described above. Target bodies are not
 evaluated beyond that: a task parameter (`Exec`, `Copy`, `ReadLinesFromFile`)
 can name any file and the audit refuses no task (CARD-1409 plan D-18, D-27). Any other definition-file edit still changes the
 digest, so the skip stops until the manifest is regenerated.
