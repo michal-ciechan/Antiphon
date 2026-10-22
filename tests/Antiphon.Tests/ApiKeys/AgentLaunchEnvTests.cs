@@ -461,6 +461,230 @@ public class AgentLaunchEnvTests
         validated["ANTIPHON_SESSION_ID"].ShouldBe("stored-and-inert");
     }
 
+    // ---- CARD-0167 S3: provider endpoint ranks 3b and 5b on the legacy registry path -----------
+
+    private const string C0167Url = "https://proxy-0167.local";
+    private const string C0167KeyName = "c0167-proxy-key";
+    private const string C0167Placeholder = "{{key:" + C0167KeyName + "}}";
+
+    [Test]
+    public void C0167_registry_applies_project_and_agent_endpoints_in_rank_order()
+    {
+        var registry = KindRegistry("claude", AgentKind.ClaudeCode, "claude.exe",
+            definitionEnv: new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://from-definition" });
+        var map = new Dictionary<AgentKind, ProviderEndpoint>
+        {
+            [AgentKind.ClaudeCode] = new(C0167Url + "/", C0167KeyName),
+        };
+        var box = new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://from-box" };
+
+        // No setting: byte-identical to the definition plus the kind defaults, no argument.
+        var baseline = registry.Resolve("claude", new AgentLaunchOptions(Cwd: "C:\\tmp", ProjectProviderEndpoints: new Dictionary<AgentKind, ProviderEndpoint>()));
+        Lines(baseline.Env).ShouldBe(
+        [
+            "ANTHROPIC_BASE_URL=http://from-definition",
+            "CLAUDECODE=",
+            "CLAUDE_CODE_BRIDGE_SESSION_ID=",
+            "CLAUDE_CODE_CHILD_SESSION=",
+            "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1",
+            "CLAUDE_CODE_ENTRYPOINT=",
+            "CLAUDE_CODE_SESSION_ID=",
+            "DISABLE_AUTOUPDATER=1",
+        ]);
+        baseline.Args.ShouldBeEmpty();
+
+        // Rank 3b beats the definition and the generic project box.
+        var project = registry.Resolve("claude", new AgentLaunchOptions(
+            Cwd: "C:\\tmp", ProjectDefaultEnv: box, ProjectProviderEndpoints: map));
+        project.Env["ANTHROPIC_BASE_URL"].ShouldBe(C0167Url, "trailing slash trimmed");
+        project.Env["ANTHROPIC_API_KEY"].ShouldBe(C0167Placeholder);
+        project.Env["DISABLE_AUTOUPDATER"].ShouldBe("1", "kind defaults still gap-fill around the projection");
+        project.Args.ShouldBeEmpty();
+
+        // Rank 4 beats 3b; rank 5 beats 4.
+        registry.Resolve("claude", new AgentLaunchOptions(
+                Cwd: "C:\\tmp",
+                ProjectProviderEndpoints: map,
+                InheritedEnv: new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://from-inherited" }))
+            .Env["ANTHROPIC_BASE_URL"].ShouldBe("http://from-inherited");
+        registry.Resolve("claude", new AgentLaunchOptions(
+                Cwd: "C:\\tmp",
+                ProjectProviderEndpoints: map,
+                InheritedEnv: new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://from-inherited" },
+                AgentEnv: new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://from-agent" }))
+            .Env["ANTHROPIC_BASE_URL"].ShouldBe("http://from-agent");
+
+        // Rank 5b beats 5, and the project's key does not follow the agent's URL-only endpoint.
+        var own = registry.Resolve("claude", new AgentLaunchOptions(
+            Cwd: "C:\\tmp",
+            ProjectProviderEndpoints: map,
+            AgentEnv: new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://from-agent" },
+            AgentProviderEndpointMode: ProviderEndpointMode.Endpoint,
+            AgentProviderEndpoint: new ProviderEndpoint("https://agent-0167.local", null)));
+        own.Env["ANTHROPIC_BASE_URL"].ShouldBe("https://agent-0167.local");
+        own.Env.ShouldNotContainKey("ANTHROPIC_API_KEY");
+
+        // Rank 6 beats 5b; rank 7 beats 6.
+        registry.Resolve("claude", new AgentLaunchOptions(
+                Cwd: "C:\\tmp",
+                ProjectProviderEndpoints: map,
+                AgentProviderEndpointMode: ProviderEndpointMode.Endpoint,
+                AgentProviderEndpoint: new ProviderEndpoint("https://agent-0167.local", null),
+                LaunchEnvOverride: new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://override" }))
+            .Env["ANTHROPIC_BASE_URL"].ShouldBe("http://override");
+        registry.Resolve("claude", new AgentLaunchOptions(
+                Cwd: "C:\\tmp",
+                ProjectProviderEndpoints: map,
+                AgentProviderEndpointMode: ProviderEndpointMode.Endpoint,
+                AgentProviderEndpoint: new ProviderEndpoint("https://agent-0167.local", null),
+                LaunchEnvOverride: new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://override" },
+                ExtraEnv: new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://extra" }))
+            .Env["ANTHROPIC_BASE_URL"].ShouldBe("http://extra");
+
+        // Direct suppresses 3b and removes nothing.
+        var direct = registry.Resolve("claude", new AgentLaunchOptions(
+            Cwd: "C:\\tmp", ProjectDefaultEnv: box, ProjectProviderEndpoints: map,
+            AgentProviderEndpointMode: ProviderEndpointMode.Direct));
+        direct.Env["ANTHROPIC_BASE_URL"].ShouldBe("http://from-box");
+        direct.Env.ShouldNotContainKey("ANTHROPIC_API_KEY");
+
+        // Endpoint mode with nothing to project is refused rather than silently inherited.
+        Should.Throw<ConflictException>(() => registry.Resolve("claude", new AgentLaunchOptions(
+                Cwd: "C:\\tmp", ProjectProviderEndpoints: map, AgentProviderEndpointMode: ProviderEndpointMode.Endpoint)))
+            .Code.ShouldBe("provider_endpoint_required");
+
+        // The Raw test definition with a map that has no Raw entry: nothing projected, no throw.
+        NewRegistry().Resolve("test", new AgentLaunchOptions(Cwd: "C:\\tmp", ProjectProviderEndpoints: map))
+            .Env.ShouldNotContainKey("ANTHROPIC_BASE_URL");
+
+        // Codex: the five -c pairs go after ExtraArgs and before the tier's --model, and the tripwire
+        // passes over every argument.
+        var codex = KindRegistry("codex", AgentKind.Codex, "codex", argsTemplate: ["exec"]);
+        var spec = codex.Resolve("codex", new AgentLaunchOptions(
+            Cwd: "C:\\tmp",
+            ExtraArgs: ["-c", "x=1"],
+            TierModelAlias: "gpt-5",
+            ProjectProviderEndpoints: new Dictionary<AgentKind, ProviderEndpoint>
+            {
+                [AgentKind.Codex] = new("https://codex-0167.local", C0167KeyName),
+            }));
+        spec.Args.ShouldBe(
+        [
+            "exec",
+            "-c", "x=1",
+            "-c", "model_providers.antiphon.name=\"Antiphon endpoint\"",
+            "-c", "model_providers.antiphon.base_url=\"https://codex-0167.local/v1\"",
+            "-c", "model_providers.antiphon.env_key=\"OPENAI_API_KEY\"",
+            "-c", "model_providers.antiphon.wire_api=\"responses\"",
+            "-c", "model_provider=antiphon",
+            "--model", "gpt-5",
+        ]);
+        spec.Env["OPENAI_API_KEY"].ShouldBe(C0167Placeholder);
+        for (var i = 0; i < spec.Args.Count; i++)
+            ApiKeyPlaceholder.EnsureAbsent(spec.Args[i], $"registry argument {i}");
+    }
+
+    [Test]
+    public void C0167_pool_match_includes_the_agent_projection()
+    {
+        // CARD-0260's warm-pool predicate compares inherit-list names. With a project endpoint the
+        // process was launched with projected names its LaunchEnvJson never carried, so both sides
+        // of the comparison include their projection: rank 3b, then the stored env, then rank 5b.
+        var names = new LlmEnvInheritanceSettings().Names;
+        var map = new Dictionary<AgentKind, ProviderEndpoint> { [AgentKind.ClaudeCode] = new(C0167Url, C0167KeyName) };
+        var task = new AgentTask { AgentKind = AgentKind.ClaudeCode, InheritedLaunchEnvJson = "{}" };
+
+        // 1. A plain delegate and a task on the same project both get the project endpoint: match.
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(), task, map, names).ShouldBeTrue();
+
+        // 2. A delegate launched with its own endpoint is not what this task would launch with.
+        AgentTaskDispatcher.InheritedEnvMatchesPool(
+                Delegate(ProviderEndpointMode.Endpoint, new ProviderEndpoint("https://agent-0167.local", null)),
+                task, map, names)
+            .ShouldBeFalse();
+
+        // 3. A Direct delegate carries no proxy; the task expects the project's.
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(ProviderEndpointMode.Direct), task, map, names).ShouldBeFalse();
+
+        // 4. The task's inherited routing points elsewhere (rank 4 beats 3b on both sides), and a
+        //    delegate whose stamped snapshot points to the same elsewhere matches it.
+        var elsewhere = new AgentTask
+        {
+            AgentKind = AgentKind.ClaudeCode,
+            InheritedLaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://elsewhere" }),
+        };
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(), elsewhere, map, names).ShouldBeFalse();
+        AgentTaskDispatcher.InheritedEnvMatchesPool(
+                Delegate(launchEnv: new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://elsewhere" }),
+                elsewhere, map, names)
+            .ShouldBeTrue();
+
+        // 5. No endpoint anywhere: two empties still match (CARD-0260 unchanged); a Grok-only map is
+        //    nothing for a Claude pair.
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(), task, null, names).ShouldBeTrue();
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(), task, new Dictionary<AgentKind, ProviderEndpoint>(), names).ShouldBeTrue();
+        AgentTaskDispatcher.InheritedEnvMatchesPool(
+                Delegate(), task,
+                new Dictionary<AgentKind, ProviderEndpoint> { [AgentKind.Grok] = new("https://grok-0167.local", null) },
+                names)
+            .ShouldBeTrue();
+
+        // 6. Codex: the key placeholder compares as a NAME on both sides; nothing is resolved here.
+        var codexMap = new Dictionary<AgentKind, ProviderEndpoint> { [AgentKind.Codex] = new("https://codex-0167.local", C0167KeyName) };
+        var codexTask = new AgentTask { AgentKind = AgentKind.Codex, InheritedLaunchEnvJson = "{}" };
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(kind: AgentKind.Codex), codexTask, codexMap, names).ShouldBeTrue();
+        AgentTaskDispatcher.InheritedEnvMatchesPool(
+                Delegate(kind: AgentKind.Codex, launchEnv: new Dictionary<string, string> { ["OPENAI_API_KEY"] = "{{key:other-0167}}" }),
+                codexTask, codexMap, names)
+            .ShouldBeFalse();
+
+        // 7. An unsupported-kind entry written around the API projects nothing in the predicate; the
+        //    launch is where it is refused.
+        AgentTaskDispatcher.InheritedEnvMatchesPool(
+                Delegate(kind: AgentKind.OpenCode),
+                new AgentTask { AgentKind = AgentKind.OpenCode, InheritedLaunchEnvJson = "{}" },
+                new Dictionary<AgentKind, ProviderEndpoint> { [AgentKind.OpenCode] = new(C0167Url, C0167KeyName) },
+                names)
+            .ShouldBeTrue();
+
+        static Agent Delegate(
+            ProviderEndpointMode mode = ProviderEndpointMode.Inherit,
+            ProviderEndpoint? own = null,
+            IReadOnlyDictionary<string, string>? launchEnv = null,
+            AgentKind kind = AgentKind.ClaudeCode) => new()
+        {
+            Id = Guid.NewGuid(),
+            Kind = kind,
+            IsPoolDelegate = true,
+            ProviderEndpointMode = mode,
+            ProviderEndpointJson = ProviderEndpoint.Serialize(own),
+            LaunchEnvJson = AgentLaunchEnv.Serialize(launchEnv),
+        };
+    }
+
+    private static string[] Lines(IReadOnlyDictionary<string, string> env) =>
+        env.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key}={p.Value}").ToArray();
+
+    private static AgentRegistry KindRegistry(
+        string name, AgentKind kind, string exe,
+        IDictionary<string, string>? definitionEnv = null, string[]? argsTemplate = null)
+    {
+        var definition = new AgentDefinition { Kind = kind.ToString(), Exe = exe };
+        if (argsTemplate is not null)
+            definition.ArgsTemplate.AddRange(argsTemplate);
+        if (definitionEnv is not null)
+        {
+            foreach (var (key, value) in definitionEnv)
+                definition.Env[key] = value;
+        }
+
+        return new AgentRegistry(new OptionsMonitorStub(new AgentRegistrySettings
+        {
+            DefaultDefinition = name,
+            Definitions = { [name] = definition },
+        }));
+    }
+
     private static AgentRegistry NewRegistry(IDictionary<string, string>? definitionEnv = null)
     {
         var definition = new AgentDefinition

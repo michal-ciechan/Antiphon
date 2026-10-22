@@ -1,3 +1,5 @@
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -145,6 +147,61 @@ public sealed class PhoneHomeTaskRoutingTests
         Should.NotThrow(() =>
             Policy().RefuseUnsupportedStart(PoolAgent(), false, delegatedTask: true, worktree: true,
                 sourceLanding: true, false, SessionBackend.PtyHost, AgentKind.Grok, null));
+    }
+
+    [Test]
+    public void C0167_runner_bound_claude_endpoint_projection_is_phone_home_env_refused()
+    {
+        // CARD-0167 D-11 / CARD-0628: a runner-bound Claude or Codex agent still may not carry a
+        // metered key. The projection uses the canonical names on purpose, so this refusal cannot be
+        // dodged by naming the key variable differently. The message names the variable, never the
+        // placeholder, the URL or a value.
+        var withKey = new ProviderEndpoint("https://proxy-0167.local/tenant-path-0167", "c0167-proxy-key");
+
+        var claude = ProviderEndpointProjection.For(AgentKind.ClaudeCode, withKey);
+        var claudeSpec = new AgentLaunchSpec("claude", AgentKind.ClaudeCode, "claude.exe", [], claude.Env, "/work", 80, 24);
+        var claudeRefused = Should.Throw<ConflictException>(() => Policy().Project(claudeSpec, PoolAgent()));
+        claudeRefused.Code.ShouldBe("phone_home_env_refused");
+        claudeRefused.Message.ShouldContain("ANTHROPIC_API_KEY");
+        claudeRefused.Message.ShouldNotContain("{{key:");
+        claudeRefused.Message.ShouldNotContain("tenant-path-0167");
+
+        var codex = ProviderEndpointProjection.For(AgentKind.Codex, withKey);
+        var codexSpec = new AgentLaunchSpec("codex", AgentKind.Codex, "codex", codex.Args, codex.Env, "/work", 80, 24);
+        var codexRefused = Should.Throw<ConflictException>(() => Policy().Project(codexSpec, PoolAgent()));
+        codexRefused.Code.ShouldBe("phone_home_env_refused");
+        codexRefused.Message.ShouldContain("OPENAI_API_KEY");
+        codexRefused.Message.ShouldNotContain("{{key:");
+        codexRefused.Message.ShouldNotContain("tenant-path-0167");
+
+        // A URL-only Claude endpoint (a key-injecting proxy) names no credential and is admitted; the
+        // base URL reaches the runner child while the runner's own OAuth home still wins.
+        var urlOnly = ProviderEndpointProjection.For(AgentKind.ClaudeCode, new ProviderEndpoint("https://proxy-0167.local", null));
+        var admitted = Policy().Project(
+            new AgentLaunchSpec("claude", AgentKind.ClaudeCode, "claude.exe", [], urlOnly.Env, "/work", 80, 24), PoolAgent());
+        admitted.Env["ANTHROPIC_BASE_URL"].ShouldBe("https://proxy-0167.local");
+        admitted.Env.ShouldNotContainKey("ANTHROPIC_API_KEY");
+        admitted.Env["CLAUDE_CONFIG_DIR"].ShouldBe("/state/claude");
+
+        // Grok has no such refusal (CARD-0628 scope): both base URLs and the key placeholder pass
+        // through, and the runner's Grok home still wins.
+        var grok = ProviderEndpointProjection.For(AgentKind.Grok, withKey);
+        var grokProjected = Policy().Project(
+            new AgentLaunchSpec("grok", AgentKind.Grok, "grok.exe", [], grok.Env, "/work", 80, 24), PoolAgent());
+        grokProjected.Env["GROK_CLI_CHAT_PROXY_BASE_URL"].ShouldBe("https://proxy-0167.local/tenant-path-0167");
+        grokProjected.Env["GROK_XAI_API_BASE_URL"].ShouldBe("https://proxy-0167.local/tenant-path-0167");
+        grokProjected.Env["GROK_CODE_XAI_API_KEY"].ShouldBe("{{key:c0167-proxy-key}}");
+        grokProjected.Env["GROK_HOME"].ShouldBe("/state/grok");
+
+        // An agent that is not runner-bound is never refused: the spec passes through unchanged.
+        var desktop = new Agent
+        {
+            Id = Guid.NewGuid(),
+            RunnerId = null,
+            IsPoolDelegate = true,
+            WorkingDirectory = @"C:\Antiphon\worktrees\card-task-deadbeef",
+        };
+        Policy().Project(claudeSpec, desktop).Env["ANTHROPIC_API_KEY"].ShouldBe("{{key:c0167-proxy-key}}");
     }
 
     private static Agent PoolAgent() => new()

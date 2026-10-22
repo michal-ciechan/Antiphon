@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -79,6 +80,20 @@ public sealed class ApiKeyEnvResolver
             .FirstOrDefaultAsync(ct);
 
         return AgentLaunchEnv.Parse(json);
+    }
+
+    /// <summary>
+    /// CARD-0167 S3: the project's per-kind provider endpoints (plan merge rank 3b), or empty when
+    /// <paramref name="projectId"/> is null or the row is missing/unreadable. Same stance as
+    /// <see cref="GetProjectDefaultEnvAsync"/>, and read from the same hoisted project identity.
+    /// The column carries a URL and a key NAME per kind, never a value.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<AgentKind, ProviderEndpoint>> GetProjectProviderEndpointsAsync(
+        Guid? projectId, CancellationToken ct)
+    {
+        // Skeleton (test-first commit): the fetch lands with the resolver wiring.
+        await Task.CompletedTask;
+        return ProviderEndpoint.NoEndpoints;
     }
 
     /// <summary>
