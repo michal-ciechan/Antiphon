@@ -1067,6 +1067,22 @@ POST   /api/schedules/{id}/fire-now          bypasses grace, does not advance re
 [ai-agent-tui-configuration.md](ai-agent-tui-configuration.md) and
 [agent-credentials.md](agent-credentials.md).
 
+CARD-0167 adds `providerEndpoints` to project create/PATCH/read DTOs: a complete replacement map
+keyed by `ClaudeCode`, `Grok` or `Codex`, each value `{ "baseUrl": "http://127.0.0.1:8088",
+"apiKeyName": "proxy-key" }` (sentinel example). Null/omitted leaves the map unchanged; `{}` clears.
+Agent create/PATCH/read DTOs add `providerEndpointMode` (`Inherit`, `Endpoint`, `Direct`) and
+`providerEndpoint` (the same URL/name shape). Endpoint mode requires an endpoint; Inherit/Direct
+require no own endpoint. Null fields together leave an existing setting unchanged; set the mode
+explicitly to clear an own endpoint. Direct does not remove generic env values.
+
+Save validates HTTP(S) URL shape and key names; Codex requires a key name. Invalid input is 422
+(`provider_endpoint_unsupported_kind`, `provider_endpoint_key_required` and field-specific URL
+codes). A missing named key produces a `warnings` entry without rejecting save; launch refuses
+`api_key_not_found`. GET runner-types adds a `providerEndpoint` descriptor with `supported`,
+`keyRequired`, `environmentNames` and `argumentTemplate`. These are names/templates, never key
+values. Runner-bound Claude/Codex credentials still refuse `phone_home_env_refused`. See
+[provider endpoint operations](agent-credentials.md#provider-endpoint-operations-card-0167).
+
 ```
 GET    /api/agent-tui/runner-types                           per-kind capability catalogue
 GET    /api/agent-tui/profiles     POST /api/agent-tui/profiles
