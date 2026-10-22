@@ -15,6 +15,9 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class LandRefRetentionTests
 {
+    /// <summary>V-3 (Review 9e126982 D1): a completed land of an unprotected task deletes its observation pins,
+    /// its progress pins and the subtrees of superseded operations, and keeps the recovery pins of the
+    /// operation that just landed (CARD-0448 V-26).</summary>
     [Test]
     public async Task C1432_completed_land_deletes_task_land_and_progress_refs()
     {
@@ -24,10 +27,12 @@ public sealed class LandRefRetentionTests
         var task = h.Git.TaskId;
         var other = Guid.NewGuid();
         var sha = h.Git.SeedSha;
+        var superseded = $"refs/antiphon/land/{task:N}/{Guid.NewGuid():N}/"; // an operation the task has no row for
         string[] own =
         [
             $"refs/antiphon/land/{task:N}/{Guid.NewGuid():N}/source-observed/{Guid.NewGuid():N}", // request-id subtree
             $"refs/antiphon/land/{task:N}/{Guid.NewGuid():N}/mirror-observed", // mirror subtree
+            superseded + "source", superseded + "target-before", superseded + "prepared",
             $"refs/antiphon/progress/{task:N}/baseline-1",
             $"refs/antiphon/progress/{task:N}/observe-2",
         ];
@@ -38,17 +43,82 @@ public sealed class LandRefRetentionTests
             "refs/heads/feat/c1432-keep",
         ];
         foreach (var name in own.Concat(foreign)) h.Git.SetPin(name, sha);
+        List<string>? beforeDelete = null;
+        h.Git.BeforeCommand = (_, args) =>
+        {
+            if (args is ["update-ref", "--stdin"]) beforeDelete = h.Git.Refs.Keys.ToList();
+            return Task.FromResult<LandingGitResult?>(null);
+        };
 
         (await h.RunAsync()).ShouldBe(LandRunResult.Complete);
 
         var op = (await h.OperationAsync()).ShouldNotBeNull();
         op.Publication.ShouldBe(LandPublicationOutcome.Landed);
-        h.Git.Trace.ShouldContain(a => a[0] == "update-ref" && a.Any(x => x.StartsWith($"refs/antiphon/land/{task:N}/", StringComparison.Ordinal)),
-            "the land pinned its own recovery refs");
-        h.Git.Refs.Keys.Where(k => k.StartsWith($"refs/antiphon/land/{task:N}/", StringComparison.Ordinal)
+        var prefix = op.RecoveryRefPrefix + "/";
+        prefix.ShouldStartWith($"refs/antiphon/land/{task:N}/");
+        beforeDelete.ShouldNotBeNull("the land ran its one deletion batch");
+        var remaining = h.Git.Refs.Keys.Where(k => k.StartsWith($"refs/antiphon/land/{task:N}/", StringComparison.Ordinal)
                 || k.StartsWith($"refs/antiphon/progress/{task:N}/", StringComparison.Ordinal))
-            .ShouldBeEmpty("land refs still present after a completed land of an unprotected task");
+            .Order(StringComparer.Ordinal).ToArray();
+        var expected = beforeDelete.Where(k => k.StartsWith(prefix, StringComparison.Ordinal) && !LandRefRetention.IsObservation(k))
+            .Order(StringComparer.Ordinal).ToArray();
+        remaining.ShouldBe(expected, "only the landed operation's recovery pins survive a completed land of an unprotected task");
+        remaining.ShouldContain(prefix + "source");
+        remaining.ShouldContain(prefix + "target-before");
+        remaining.ShouldContain(prefix + "prepared");
+        foreach (var name in own) remaining.ShouldNotContain(name);
         foreach (var name in foreign) h.Git.Refs[name].ShouldBe(sha, "another task's refs are untouched");
+    }
+
+    /// <summary>Review 9e126982 D1: an unprotected task keeps the recovery pins of its latest operation and of
+    /// every Refused operation (CARD-0448 V-26, the refused-retry pin rule). A superseded operation, a settled
+    /// request's adopt pins, every observation and the progress pins go.</summary>
+    [Test]
+    public async Task C1432_unprotected_task_keeps_latest_and_refused_operation_pins()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var task = SeedTask(db, fixture.TaskId, AgentTaskStatus.Succeeded, fixture.Repository);
+        var now = DateTime.UtcNow;
+        var refused = Landing(task.Id, LandPhase.Refused, active: false);
+        refused.CreatedAt = now.AddMinutes(-30);
+        var superseded = Landing(task.Id, LandPhase.Complete, active: false);
+        superseded.CreatedAt = now.AddMinutes(-20);
+        var latest = Landing(task.Id, LandPhase.Complete);
+        latest.CreatedAt = now;
+        db.AgentTaskLandings.AddRange(refused, superseded, latest);
+        db.AgentTaskLandRequests.Add(Request(task.Id, LandRequestState.Completed));
+        await db.SaveChangesAsync();
+        (await AntiphonRefProtection.QueryAsync(db, [task.Id], CancellationToken.None)).ShouldBeEmpty("the task is not protected");
+
+        string Prefix(AgentTaskLanding o) => $"refs/antiphon/land/{task.Id:N}/{o.Id:N}/";
+        var request = $"refs/antiphon/land/{task.Id:N}/{Guid.NewGuid():N}/";
+        string[] kept =
+        [
+            Prefix(latest) + "source", Prefix(latest) + "target-before", Prefix(latest) + "prepared",
+            Prefix(refused) + "source", Prefix(refused) + "target-before", Prefix(refused) + "prepared",
+        ];
+        string[] dropped =
+        [
+            Prefix(latest) + "remote-observed/" + Guid.NewGuid().ToString("N"),
+            Prefix(refused) + "cleanup-observed/" + Guid.NewGuid().ToString("N"),
+            Prefix(superseded) + "source", Prefix(superseded) + "target-before", Prefix(superseded) + "prepared",
+            request + "adopt/source", request + "source-observed/" + Guid.NewGuid().ToString("N"),
+            $"refs/antiphon/land/{task.Id:N}/{Guid.NewGuid():N}/mirror-observed",
+            $"refs/antiphon/progress/{task.Id:N}/settlement-sync",
+            $"refs/antiphon/progress/{task.Id:N}/baseline-1",
+        ];
+        foreach (var name in kept.Concat(dropped))
+            await fixture.RequiredAsync(fixture.Repository, "update-ref", name, fixture.SeedSha);
+
+        var deleted = await new LandRefRetention(db, fixture.Git, NullLogger.Instance)
+            .ReleaseAsync(task, new HeldLease(fixture.Repository), CancellationToken.None);
+
+        deleted.ShouldNotBeNull().Order(StringComparer.Ordinal).ToArray().ShouldBe(dropped.Order(StringComparer.Ordinal).ToArray());
+        (await ListAsync(fixture, "refs/antiphon/")).ShouldBe(kept.Order(StringComparer.Ordinal).ToArray());
+        fixture.Git.Trace.Count(a => a is ["update-ref", "--stdin"]).ShouldBe(1, "one transaction");
     }
 
     [Test]
