@@ -451,18 +451,6 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 CheckInterpreterProvisioner.Spec(_delegationSettings) with { WorkingDirectory = cwd }, agent.SessionBackend);
         var specialistLaunchEvidence = isProvisionedSeat ? SpecialistExecutionEvidenceReader.CaptureLaunch(spec) : null;
         GrokLaunchArgs.EnsureWindowsRulesArgv(spec.Args, spec.Kind, agent.SessionBackend, spec.Env, $"Agent '{agent.Name}'");
-        // CARD-0167 S3 repair 2 (Review 6c08cd4b R1): a start or resume of a pool row is a launch,
-        // so its provider-projection stamp is rewritten from the map THIS spec was resolved from
-        // (the funnel's one read), for the kind it launches as. Both arms below save it with the
-        // session row. Names, the URL and the {{key:NAME}} placeholder only, never a value.
-        if (agent.IsPoolDelegate)
-        {
-            agent.PoolProviderProjectionJson = ProviderEndpointLayers.PoolFingerprint(
-                spec.Kind,
-                resolved.ProjectProviderEndpoints,
-                agent.ProviderEndpointMode,
-                ProviderEndpoint.Parse(agent.ProviderEndpointJson));
-        }
 
         // Bootstrap/restart notes ride on every launch of a preamble-configured agent; the launch
         // path picks FreshBody for explicit creation and ResumeBody for strict resume.
@@ -573,6 +561,19 @@ public sealed class AgentControlService : ICompactionContinuationResume
             }
             if (agent.UpdatedAt != expectedAgentVersion)
                 throw new ConflictException("Agent settings or intent changed during preflight.", "standing_resume_current_changed");
+            // CARD-0167 S3 repair 2 (Review 6c08cd4b R1): a start or resume of a pool row is a
+            // launch, so its provider-projection stamp is rewritten from the map THIS spec was
+            // resolved from (the funnel's one read), for the kind it launches as. Set after the
+            // reservation's reload so both arms below save it with the session row. Names, the URL
+            // and the {{key:NAME}} placeholder only, never a value.
+            if (agent.IsPoolDelegate)
+            {
+                agent.PoolProviderProjectionJson = ProviderEndpointLayers.PoolFingerprint(
+                    spec.Kind,
+                    resolved.ProjectProviderEndpoints,
+                    agent.ProviderEndpointMode,
+                    ProviderEndpoint.Parse(agent.ProviderEndpointJson));
+            }
             var intent = await GetOrCreateSupervisionStateAsync(agent.Id, ct);
             CapacityRecoveryWait? admittedCapacity = null;
             if (_db.Entry(intent).State != EntityState.Added) await _db.Entry(intent).ReloadAsync(ct);
