@@ -109,6 +109,7 @@ function seedProject(put: (body: Record<string, unknown>) => void, warnings: str
     http.get('/api/projects/readiness', () => HttpResponse.json([readiness])),
     http.get('/api/projects/:id/api-keys', () => HttpResponse.json([])),
     http.get('/api/api-keys', () => HttpResponse.json(apiKeys)),
+    http.get('/api/agent-tui/profiles', () => HttpResponse.json([])),
     http.get('/api/agent-tui/runner-types', () => HttpResponse.json(runnerTypes)),
     http.put('/api/projects/:id', async ({ request }) => {
       const body = (await request.json()) as Record<string, unknown>
@@ -165,7 +166,9 @@ describe('ProviderEndpointFields on the project settings modal', () => {
     await openProjectEditor()
 
     expect(await screen.findByRole('textbox', { name: 'Claude Code base URL' })).toHaveValue('http://claude-proxy:8080')
-    fireEvent.change(screen.getByRole('textbox', { name: /^Name$/ }), {
+    const name = screen.getByPlaceholderText('My Project')
+    expect(name).toHaveValue('Antiphon')
+    fireEvent.change(name, {
       target: { value: 'Renamed project' },
     })
     await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
