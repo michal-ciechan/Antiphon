@@ -803,7 +803,7 @@ public sealed class LandNonCodeSkipTests
             ["eng/shared.props"] = """
                 <Project>
                   <ItemGroup>
-                    <None Include="notes.txt" />
+                    <None Include="notes.json" />
                   </ItemGroup>
                 </Project>
                 """,
@@ -820,7 +820,7 @@ public sealed class LandNonCodeSkipTests
             ["eng/a.props"] = """
                 <Project>
                   <ItemGroup>
-                    <None Include="notes.txt" />
+                    <None Include="notes.json" />
                   </ItemGroup>
                 </Project>
                 """,
