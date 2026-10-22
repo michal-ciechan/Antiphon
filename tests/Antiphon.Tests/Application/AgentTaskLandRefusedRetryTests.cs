@@ -131,7 +131,8 @@ public sealed class AgentTaskLandRefusedRetryTests
         var sourceReads = 0;
         s.Inject = (p, a) => s.Is(p, s.F.Repository) && a.SequenceEqual(new[] { "ls-remote", "--refs", "--exit-code", s.F.Remote, s.F.SourceRef })
             && ++sourceReads == 3; // 1 resolver observation, 2 resolver recheck, 3 protocol entry
-        await s.RefuseAsync("source_remote_unreadable");
+        // CARD-1456: this refusal happens at protocol entry, before any recovery pin exists (see RefuseAsync).
+        await s.RefuseAsync("source_remote_unreadable", recoveryPinned: false);
         s.Hits.ShouldBeGreaterThan(0);
         s.Inject = null;
         await s.RequestAsync();
@@ -502,7 +503,7 @@ public sealed class AgentTaskLandRefusedRetryTests
             await using var db = H.CreateContext();
             return await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == F.TaskId).OrderBy(e => e.At).ThenBy(e => e.Id).ToListAsync();
         }
-        public async Task RefuseAsync(string reason = "land_worktree_foreign")
+        public async Task RefuseAsync(string reason = "land_worktree_foreign", bool recoveryPinned = true)
         {
             await H.RunAsync();
             A = (await H.OperationAsync())!;
@@ -510,7 +511,20 @@ public sealed class AgentTaskLandRefusedRetryTests
             A.LastReason.ShouldBe(reason);
             (await ReadAsync(F.Source, "rev-parse", "HEAD")).Trim().ShouldBe(SourceSha);
             _pins = await PinsAsync();
-            _pins.ShouldNotBeEmpty();
+            if (recoveryPinned) _pins.ShouldNotBeEmpty();
+            else
+            {
+                // CARD-1456: a refusal at protocol entry (the source recheck in AgentTaskLandingProtocol.RunAsync,
+                // AgentTaskLandingProtocol.cs:211 at CARD-1456) runs before the Inspected block writes the `source` and
+                // `target-before` recovery pins (:220-225), so no recovery pin was ever written. The only ref the factory
+                // created is `<prefix>/remote-observed` (LandOperationFactory.cs:46), an observation pin that CARD-1432 S2
+                // deletes on the terminal land (LandRefRetention.IsDeletable: an observation pin always goes). The retry
+                // below still replaces A from the unchanged source without any pin; AssertPinsAsync keeps the empty set.
+                _pins.ShouldBeEmpty("an entry refusal writes no recovery pin and CARD-1432 S2 deletes the observation pin");
+                A.SourcePinned.ShouldBeFalse(); A.TargetPinned.ShouldBeFalse(); A.PreparedPinned.ShouldBeFalse();
+                (await Reader().RunAsync(F.Repository, ["show-ref", "--verify", A.RecoveryRefPrefix + "/remote-observed"], CancellationToken.None))
+                    .Succeeded.ShouldBeFalse("CARD-1432 S2 deletes the remote-observed observation pin on the terminal land");
+            }
             _oldEvents = await EventsAsync();
             await AssertSettledAsync(A);
             await F.AssertRemoteSourceAsync();
