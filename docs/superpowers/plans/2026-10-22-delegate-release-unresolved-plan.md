@@ -82,3 +82,15 @@ red).
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1499b/` | session-service | `/*/Antiphon.Tests.Application/AgentSessionServiceIntegrationTests/*` | R-1 | all listed, 0 failed | 20 | 8 | |
 
 Lane: server2 (Linux, the runner default); Postgres-backed integration tests, no process spawn.
+
+### Runs
+
+| Run | Rows | Commit | Outcome |
+|---|---|---|---|
+| 20261022-161545-b5c2 | CP-1 | `1f0c20d68930c7c7b0e6a9ddbc0d36278ba66ffb` (S1) | Invalid witness, not a red record: 0/6 passed because `BridgeQueueHarness` deletes its agent and sessions on dispose, which the helper did before the assertions. Fixed in `6aa23a90f`. |
+| 20261022-162434-b3c6 | CP-1 | `6aa23a90f7b0482197e438f1458441edb9ebcba1` (S1 repaired) | RED as designed: executed=6 passed=4 failed=2. Both V-1/V-2 cases fail "a confirmed release retires the pool row" (the agent row is kept); the four V-3 guards pass. `slot=granted waited=210s`. |
+| final | CP-1, CP-2, CP-3 | the report commit (S1+S2+S3) | See the task report: the final run verifies the tip that carries this table. |
+
+Unlisted: one `dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-c1499tool/` through `scripts/build-slot.ps1` (granted, waited 61 s) to run `import`/`run`/`wait`/`validate` from the built dll, and one `import --plan` to validate the table. No other build or test.
+
+Landability at the S2 commit `382423d9e`: `git merge-tree --write-tree origin/master HEAD` (master `445df8a805dac8525203081c03f6e58fa3f9ff3d`) clean. RC: chained `git merge-tree --write-tree --merge-base <c>^ <prev> <c>` for `1f0c20d68`, `6aa23a90f`, `382423d9e` onto `rc/2026-10-20` tip `0714a9a89e4bff65aae7e0b4b94098694aeb931c` (the AppHost's rc) all clean; the pick may drop the plan document.
