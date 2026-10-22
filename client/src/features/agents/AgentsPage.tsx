@@ -21,9 +21,9 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core'
-import { useLongPress } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLongPress } from '../../hooks/useLongPress'
 import {
   TbAlertCircle,
   TbDotsVertical,
@@ -446,13 +446,15 @@ export const AgentCard = memo(function AgentCard({
   const [cardMenu, setCardMenu] = useState<{ x: number; y: number } | null>(null)
   const terminalRef = useRef<HTMLButtonElement>(null)
   // A long-press opens the menu; the click the browser synthesises afterwards must not also open
-  // the terminal. One-shot: the next click on the icon clears it.
+  // the terminal. The swallow belongs to the press that set it: every new press and every menu
+  // close clear it, so it can never eat a later, genuine left-click (Review 74b6b98b D-1).
   const swallowClick = useRef(false)
   const iconAnchor = () => {
     const rect = terminalRef.current?.getBoundingClientRect()
     return { x: rect?.left ?? 0, y: rect?.bottom ?? 0 }
   }
   const closeMenu = () => {
+    swallowClick.current = false
     setCardMenu(null)
     terminalRef.current?.focus()
   }
@@ -461,7 +463,12 @@ export const AgentCard = memo(function AgentCard({
       swallowClick.current = true
       setCardMenu(iconAnchor())
     },
-    { threshold: 500 },
+    {
+      threshold: 500,
+      onPressStart: () => {
+        swallowClick.current = false
+      },
+    },
   )
   return (
     <Box pos="relative">
@@ -531,6 +538,8 @@ export const AgentCard = memo(function AgentCard({
             // Own the right-click: the browser's menu must not open on top of ours. A contextmenu
             // a browser synthesises from the keyboard carries (0,0); anchor that one at the icon.
             event.preventDefault()
+            // The menu is open now; a press still held has nothing to add.
+            longPress.cancel()
             setCardMenu(event.clientX || event.clientY ? { x: event.clientX, y: event.clientY } : iconAnchor())
           }}
           onKeyDown={(event) => {
@@ -541,7 +550,7 @@ export const AgentCard = memo(function AgentCard({
               setCardMenu(iconAnchor())
             }
           }}
-          {...longPress}
+          {...longPress.handlers}
           pos="absolute"
           top={8}
           right={36}
