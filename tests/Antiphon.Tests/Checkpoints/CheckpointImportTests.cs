@@ -515,6 +515,43 @@ public sealed class CheckpointImportTests : CheckpointTestBase
         refused.Manifest.ShouldBeNull();
     }
 
+    [Test]
+    public void C1493_DuplicateBuild_recommendation_imports_for_non_numeric_row_id()
+    {
+        var rows = new[]
+        {
+            FilterRow("CP-1-first", "`tests/Antiphon.Tests -> bin-a/`"),
+            FilterRow("CP-2", "`tests/Antiphon.Tests -> bin-b/`"),
+            FilterRow("CP-3", "`tests/Antiphon.Tests -> bin-c/`", "S2"),
+            FilterRow("CP-4", "`tests/Antiphon.Tests -> bin-d/`", "S2"),
+        };
+        var imported = PlanTableImporter.ImportMarkdown(Table("", rows));
+
+        imported.ExitCode.ShouldBe(0, imported.Error);
+        imported.Warnings.ShouldBe([
+            "CP-2: Build 'bin-b' duplicates 'bin-a' from CP-1-first (same project 'tests/Antiphon.Tests', After 'S1', Repeat 1); write 'tests/Antiphon.Tests -> bin-a/' in the Build cell to reuse it and save one build",
+            "CP-4: Build 'bin-d' duplicates 'bin-c' from CP-3 (same project 'tests/Antiphon.Tests', After 'S2', Repeat 1); write 'CP-3' in the Build cell to reuse it and save one build",
+        ]);
+
+        // Apply each recommendation to its row and re-import the amended plan text.
+        var amended = rows.ToArray();
+        foreach (var warning in imported.Warnings)
+        {
+            var rowId = warning[..warning.IndexOf(':')];
+            var cell = System.Text.RegularExpressions.Regex.Match(warning, @"write '(?<cell>[^']+)' in the Build cell").Groups["cell"].Value;
+            cell.ShouldNotBeEmpty();
+            var index = Array.FindIndex(amended, row => row.StartsWith($"| {rowId} |", StringComparison.Ordinal));
+            amended[index] = FilterRow(rowId, cell, rowId == "CP-4" ? "S2" : "S1");
+        }
+        var reimported = PlanTableImporter.ImportMarkdown(Table("", amended));
+
+        reimported.ExitCode.ShouldBe(0, reimported.Error);
+        reimported.Warnings.ShouldBeEmpty();
+        var manifest = reimported.Manifest.ShouldNotBeNull();
+        manifest.Builds.Select(build => build.Id).ShouldBe(["bin-a", "bin-c"]);
+        manifest.Checkpoints.Select(row => row.Build).ShouldBe(["bin-a", "bin-a", "bin-c", "bin-c"]);
+    }
+
     private static string[] FilterMethods(string? filter)
     {
         filter.ShouldNotBeNull();
