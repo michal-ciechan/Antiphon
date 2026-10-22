@@ -98,6 +98,74 @@ public sealed class AgentTuiApiTests
         deleteOriginal.StatusCode.ShouldBe(HttpStatusCode.NoContent);
     }
 
+    /// <summary>
+    /// CARD-0167 S4 (plan D-12): the catalogue tells the UI what a provider endpoint projects per
+    /// kind, names only. The projection's own <c>Describe</c> carries <c>{{key:&lt;name&gt;}}</c> as an
+    /// environment VALUE; the descriptor must expose the variable names and never that value shape.
+    /// </summary>
+    [Test]
+    public async Task C0167_runner_types_describe_provider_endpoint_projection_per_kind()
+    {
+        using var client = _factory.CreateClient();
+        var response = await client.GetAsync("/api/agent-tui/runner-types");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var text = await response.Content.ReadAsStringAsync();
+        text.ShouldNotContain("{{key:");
+        text.ShouldNotContain("<name>");
+
+        var byKind = JsonDocument.Parse(text).RootElement.EnumerateArray()
+            .ToDictionary(item => item.GetProperty("kind").GetString()!, item => item.Clone());
+
+        static (bool Supported, bool KeyRequired, string[] Env, string[] Args) Descriptor(JsonElement runner)
+        {
+            runner.TryGetProperty("providerEndpoint", out var descriptor).ShouldBeTrue(
+                "runner type " + runner.GetProperty("kind").GetString() + " has no providerEndpoint descriptor");
+            return (
+                descriptor.GetProperty("supported").GetBoolean(),
+                descriptor.GetProperty("keyRequired").GetBoolean(),
+                descriptor.GetProperty("environmentNames").EnumerateArray().Select(v => v.GetString()!).ToArray(),
+                descriptor.GetProperty("argumentTemplate").EnumerateArray().Select(v => v.GetString()!).ToArray());
+        }
+
+        var claude = Descriptor(byKind["ClaudeCode"]);
+        claude.Supported.ShouldBeTrue();
+        claude.KeyRequired.ShouldBeFalse();
+        claude.Env.ShouldBe(["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"]);
+        claude.Args.ShouldBeEmpty();
+
+        var grok = Descriptor(byKind["Grok"]);
+        grok.Supported.ShouldBeTrue();
+        grok.KeyRequired.ShouldBeFalse();
+        grok.Env.ShouldBe(["GROK_CLI_CHAT_PROXY_BASE_URL", "GROK_CODE_XAI_API_KEY", "GROK_XAI_API_BASE_URL"]);
+        grok.Args.ShouldBeEmpty();
+
+        var codex = Descriptor(byKind["Codex"]);
+        codex.Supported.ShouldBeTrue();
+        codex.KeyRequired.ShouldBeTrue();
+        codex.Env.ShouldBe(["OPENAI_API_KEY"]);
+        codex.Args.ShouldBe(
+        [
+            "-c", "model_providers.antiphon.name=\"Antiphon endpoint\"",
+            "-c", "model_providers.antiphon.base_url=\"<url>/v1\"",
+            "-c", "model_providers.antiphon.env_key=\"OPENAI_API_KEY\"",
+            "-c", "model_providers.antiphon.wire_api=\"responses\"",
+            "-c", "model_provider=antiphon",
+        ]);
+
+        foreach (var kind in new[] { "OpenCode", "Raw" })
+        {
+            var unsupported = Descriptor(byKind[kind]);
+            unsupported.Supported.ShouldBeFalse(kind);
+            unsupported.KeyRequired.ShouldBeFalse(kind);
+            unsupported.Env.ShouldBeEmpty(kind);
+            unsupported.Args.ShouldBeEmpty(kind);
+        }
+
+        // Names only: every listed name is a bare variable name, never NAME=value.
+        foreach (var name in byKind.Values.SelectMany(runner => Descriptor(runner).Env))
+            Regex.IsMatch(name, "^[A-Z][A-Z0-9_]*$").ShouldBeTrue(name);
+    }
+
     [Test]
     public async Task Secret_routes_are_strict_write_only_and_keep_canary_out_of_reads_errors_logs_metrics_and_audit()
     {
