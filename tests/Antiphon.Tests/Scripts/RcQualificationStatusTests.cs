@@ -20,5 +20,11 @@ public sealed class RcQualificationStatusTests
     [Test]
     public Task C1500_WindowsSharedReadAndPs51() =>
         ScriptHarness.RunHarnessCaseAsync("test-release-gate.ps1", "C1500", "C1500_WindowsSharedReadAndPs51", 4,
-            "C1500 powershell-shared-read", "C1500 pwsh-shared-read");
+            ["C1500 powershell-shared-read", "C1500 pwsh-shared-read"],
+            ScriptHarnessOptions.Default with
+            {
+                ExecutablePath = OperatingSystem.IsWindows()
+                    ? ScriptHarnessProcessFixture.ResolveInstalledPowerShell()
+                    : null
+            }, CancellationToken.None);
 }

@@ -137,7 +137,9 @@ function Test-C1500_WindowsSharedReadAndPs51 {
     $stream = [IO.File]::Open($native, 'Open', 'Write', 'Read')
     try {
         foreach ($hostName in @('powershell','pwsh')) {
-            $hostPath = (Get-Command $hostName -CommandType Application -ErrorAction Stop).Source
+            # Reuse the installed harness host, avoiding PATH's App Execution Alias.
+            $hostPath = if ($hostName -eq 'pwsh') { Join-Path $PSHOME 'pwsh.exe' }
+                else { (Get-Command $hostName -CommandType Application -ErrorAction Stop).Source }
             $version = & $hostPath -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
             $versionOk = ($LASTEXITCODE -eq 0) -and (($hostName -eq 'powershell' -and $version -match '^5\.1\.') -or
                 ($hostName -eq 'pwsh' -and ([version]$version).Major -ge 7))
