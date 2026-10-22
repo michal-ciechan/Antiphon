@@ -42,7 +42,8 @@ param(
     [string]$ScratchVolume = 'antiphon-postgres-drill-pgdata',
     [string]$SourceVolume = 'antiphon_pgdata',
     [string]$ScratchImage = 'postgres:16',
-    [switch]$AllowRemoteDocker
+    [switch]$AllowRemoteDocker,
+    [int]$StaleRunMinutes = 360
 )
 
 # A drill may reuse only a container that carries this label. These names stay
@@ -276,20 +277,43 @@ function Test-SnapshotContainsLink {
     return $false
 }
 
+function Test-SnapshotRunLockFree {
+    param([string]$LockPath)
+    if (-not (Test-Path -LiteralPath $LockPath -PathType Leaf)) { return $true }
+    try {
+        $handle = [System.IO.File]::Open($LockPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        $handle.Dispose()
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+# Sweeps only run directories that are the caller's, older than the stale
+# threshold, and whose run.lock no process holds. A concurrent run keeps its
+# files; a dead run loses its plaintext, its lock, and then its empty directory.
 function Clear-SnapshotOwnedFiles {
-    param([string]$Root)
+    param([string]$Root, [int]$StaleMinutes = 360)
     if ([string]::IsNullOrWhiteSpace($Root) -or -not (Test-Path -LiteralPath $Root -PathType Container)) { return }
     $rootItem = Get-Item -LiteralPath $Root -Force
     if ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { return }
-    $filePattern = '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump(\.age)?$|^antiphon-drill-plain\.dump$'
+    $filePattern = '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump(\.age)?$|^antiphon-drill-plain\.dump$|^run\.lock$'
+    $cutoff = [datetime]::UtcNow.AddMinutes(-1 * [Math]::Max(1, $StaleMinutes))
     foreach ($dir in @(Get-ChildItem -LiteralPath $Root -Force -Directory -ErrorAction SilentlyContinue)) {
         if ($dir.Name -notmatch '^run-[0-9a-f]{32}$') { continue }
         if ($dir.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
+        if ($dir.LastWriteTimeUtc -gt $cutoff) { continue }
+        if (-not (Test-SnapshotOwnedDirectory $dir.FullName)) { continue }
+        if (-not (Test-SnapshotRunLockFree (Join-Path $dir.FullName 'run.lock'))) { continue }
         foreach ($file in @(Get-ChildItem -LiteralPath $dir.FullName -Force -File -ErrorAction SilentlyContinue)) {
             if ($file.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
             if ($file.Name -match $filePattern) {
                 Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue
             }
+        }
+        $left = @(Get-ChildItem -LiteralPath $dir.FullName -Force -ErrorAction SilentlyContinue)
+        if ($left.Count -eq 0) {
+            Remove-Item -LiteralPath $dir.FullName -Force -ErrorAction SilentlyContinue
         }
     }
 }
@@ -395,17 +419,25 @@ function Test-SnapshotStagingRoot {
 function Initialize-SnapshotStaging {
     param([string]$Path)
     $script:SnapshotRunStaging = ''
+    $script:SnapshotRunLock = $null
     if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
     if (Test-SnapshotContainsLink $Path) { return $false }
     if (-not (Test-Path -LiteralPath $Path)) {
         New-Item -ItemType Directory -Path $Path | Out-Null
     }
     if (Test-SnapshotContainsLink $Path) { return $false }
-    Clear-SnapshotOwnedFiles $Path
+    Clear-SnapshotOwnedFiles $Path $StaleRunMinutes
     $run = Join-Path $Path ('run-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $run | Out-Null
     if (-not (Protect-SnapshotStaging $run)) {
         Remove-Item -LiteralPath $run -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+    try {
+        $script:SnapshotRunLock = [System.IO.File]::Open((Join-Path $run 'run.lock'), [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+    } catch {
+        $script:SnapshotRunLock = $null
+        Remove-Item -LiteralPath $run -Recurse -Force -ErrorAction SilentlyContinue
         return $false
     }
     $script:SnapshotRunStaging = $run
@@ -420,6 +452,10 @@ function Remove-SnapshotStaging {
     if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { return $false }
     if ($item.Name -notmatch '^run-[0-9a-f]{32}$') { return $false }
     if (-not (Test-SnapshotOwnedDirectory $Path)) { return $false }
+    if ($script:SnapshotRunLock) {
+        try { $script:SnapshotRunLock.Dispose() } catch { }
+        $script:SnapshotRunLock = $null
+    }
     Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
     return -not (Test-Path -LiteralPath $Path)
 }

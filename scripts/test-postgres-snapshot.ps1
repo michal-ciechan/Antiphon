@@ -808,6 +808,7 @@ function Test-StagingHygiene {
         $priorName = 'run-' + ('ab' * 16)
         $prior = Join-Path $dir $priorName
         New-Item -ItemType Directory -Path $prior | Out-Null
+        if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $prior }
         Set-Content -LiteralPath (Join-Path $prior 'antiphon-20261021T010101Z.dump') -Value 'owned' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $prior 'notes.txt') -Value 'keep' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $prior 'dev-backup-20261020.dump') -Value 'keep' -Encoding ASCII
@@ -1150,18 +1151,22 @@ function Test-StagingSkipsLiveRun {
     try {
         $stale = Join-Path $dir ('run-' + ('aa' * 16))
         New-Item -ItemType Directory -Path $stale | Out-Null
+        if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $stale }
         Set-Content -LiteralPath (Join-Path $stale $dumpName) -Value 'stale' -Encoding ASCII
         (Get-Item -LiteralPath $stale -Force).LastWriteTimeUtc = $old
         $live = Join-Path $dir ('run-' + ('bb' * 16))
         New-Item -ItemType Directory -Path $live | Out-Null
+        if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $live }
         Set-Content -LiteralPath (Join-Path $live $dumpName) -Value 'live' -Encoding ASCII
         $lock = [System.IO.File]::Open((Join-Path $live 'run.lock'), [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
         (Get-Item -LiteralPath $live -Force).LastWriteTimeUtc = $old
         $fresh = Join-Path $dir ('run-' + ('cc' * 16))
         New-Item -ItemType Directory -Path $fresh | Out-Null
+        if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $fresh }
         Set-Content -LiteralPath (Join-Path $fresh $dumpName) -Value 'fresh' -Encoding ASCII
         $mixed = Join-Path $dir ('run-' + ('dd' * 16))
         New-Item -ItemType Directory -Path $mixed | Out-Null
+        if ($env:OS -ne 'Windows_NT') { & chmod 0700 -- $mixed }
         Set-Content -LiteralPath (Join-Path $mixed $dumpName) -Value 'mixed' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $mixed 'notes.txt') -Value 'keep' -Encoding ASCII
         (Get-Item -LiteralPath $mixed -Force).LastWriteTimeUtc = $old
