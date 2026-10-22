@@ -8,7 +8,8 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>
 /// CARD-1082 D-7. Read-time projection of settlement sync debt. Held always warns.
 /// Pending warns only when it is older than <see cref="DelegationSettings.RunnerSyncDebtAttentionMinutes"/>.
-/// Ready and Superseded warn nothing.
+/// Ready and Superseded warn nothing. CARD-1446: every item names <c>attempts=</c>, and the
+/// exhausted Held reason names its count in the recovery sentence.
 /// </summary>
 public static class SettlementSyncDebtAttention
 {
@@ -38,9 +39,10 @@ public static class SettlementSyncDebtAttention
             var evidence = "task=" + debt.TaskId.ToString("D")
                 + "; attempt=" + debt.Attempt
                 + "; source=" + debt.SourceSha
-                + "; reason=" + debt.ReasonCode;
+                + "; reason=" + debt.ReasonCode
+                + "; attempts=" + debt.Attempts;
             if (held)
-                evidence += "; " + Recovery(debt.ReasonCode);
+                evidence += "; " + Recovery(debt);
             items.Add(new AttentionItemDto(
                 AttentionKind.SessionDisagreement,
                 AlertSeverity.Warning,
@@ -71,8 +73,10 @@ public static class SettlementSyncDebtAttention
     }
 
     /// <summary>Held recovery, the same sentences as Runner sync outcomes.</summary>
-    private static string Recovery(string reason) => reason switch
+    private static string Recovery(AgentTaskSyncDebt debt) => debt.ReasonCode switch
     {
+        RemoteSettlementSyncReasons.SettlementSyncAttemptsExhausted =>
+            "Retried " + debt.Attempts + " times without a fast-forward. Run git pull --ff-only in the desktop worktree, or retire it.",
         RemoteSettlementSyncReasons.SettlementSyncEpisodeChanged =>
             "The task attempt, baseline or worktree changed; this debt will not be fast-forwarded.",
         RemoteSettlementSyncReasons.TipNotReported =>
