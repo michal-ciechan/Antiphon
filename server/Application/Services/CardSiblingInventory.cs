@@ -1,3 +1,4 @@
+using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -12,7 +13,8 @@ public sealed class CardSiblingInventory(AppDbContext db)
     public sealed record Snapshot(
         IReadOnlyList<AgentTask> Rows, IReadOnlyList<Pending> PendingLands,
         IReadOnlySet<Guid> Landed, IReadOnlyDictionary<Guid, AgentTaskLandRequest> Requests,
-        bool Overflow, bool PendingOverflow);
+        bool Overflow, bool PendingOverflow,
+        IReadOnlyDictionary<Guid, AgentTaskSyncDebt> SyncDebts);
 
     public async Task<Snapshot> ReadAsync(AgentTask task, bool warningsOnly,
         WorktreeBaseInspection inspection, CancellationToken ct)
@@ -45,9 +47,30 @@ public sealed class CardSiblingInventory(AppDbContext db)
             .Where(e => ids.Contains(e.AgentTaskId)
                 && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.LandedWithResidue))
             .Select(e => e.AgentTaskId).Distinct().ToListAsync(token));
+        var debts = warningsOnly ? new Dictionary<Guid, AgentTaskSyncDebt>()
+            : await UnpaidSyncDebtsAsync(rows.Concat(pending.Select(p => p.Task)).ToArray(), inspection);
         return new Snapshot(rows, pending.Select(p => new Pending(p.Task, p.Request,
                 p.Request.LandingOperationId is Guid id ? originals.GetValueOrDefault(id) : null)).ToArray(),
             landed.ToHashSet(), requests, rows.Count > inspection.MaxInventoryRows,
-            pending.Count > inspection.MaxInventoryRows);
+            pending.Count > inspection.MaxInventoryRows, debts);
+    }
+
+    /// <summary>
+    /// CARD-1480 D-3/D-5: one bounded read of the unpaid settlement syncs owed to these rows' local
+    /// branches. Ready is paid; a prior attempt's debt belongs to an earlier settlement.
+    /// </summary>
+    private async Task<Dictionary<Guid, AgentTaskSyncDebt>> UnpaidSyncDebtsAsync(
+        IReadOnlyList<AgentTask> tasks, WorktreeBaseInspection inspection)
+    {
+        var byId = tasks.GroupBy(t => t.Id).ToDictionary(g => g.Key, g => g.First());
+        if (byId.Count == 0) return new();
+        var ids = byId.Keys.ToArray();
+        var debts = await inspection.ReadAsync(token => db.AgentTaskSyncDebts.AsNoTracking()
+            .Where(d => ids.Contains(d.TaskId) && d.State != AgentTaskSyncDebtState.Ready)
+            .ToListAsync(token));
+        return debts.Where(d => byId[d.TaskId] is var t && d.Attempt == t.Attempt
+                && d.FullRef == "refs/heads/" + t.WorktreeBranch && GitObjectId.IsFull(d.SourceSha))
+            .GroupBy(d => d.TaskId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(d => d.CreatedAt).First());
     }
 }
