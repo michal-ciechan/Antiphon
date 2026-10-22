@@ -9,10 +9,15 @@ function Start-NightlyNativeOwner {
           [Antiphon.Nightly.NativeProcessHooks]$Hooks = $null)
     if (-not $IsWindows) { throw 'Nightly native custody requires Windows.' }
     $command = Get-Command $FilePath -CommandType Application -ErrorAction Stop | Select-Object -First 1
-    [string[]]$entries = $null
+    . (Join-Path $PSScriptRoot 'build-driver-environment.ps1')
+    $start = [Diagnostics.ProcessStartInfo]::new()
     if ($null -ne $Environment) {
-        $entries = [string[]]@($Environment.Keys | ForEach-Object { '{0}={1}' -f $_, $Environment[$_] })
+        $start.Environment.Clear()
+        foreach ($key in $Environment.Keys) { $start.Environment[$key] = [string]$Environment[$key] }
     }
+    Set-AntiphonBuildDriverEnvironment -StartInfo $start
+    [string[]]$entries = $null
+    $entries = [string[]]@($start.Environment.Keys | ForEach-Object { '{0}={1}' -f $_, $start.Environment[$_] })
     return [Antiphon.Nightly.NativeProcessOwner]::Start($command.Source, $ArgumentList,
         $WorkingDirectory, $TimeoutMilliseconds, $LogPath, [string[]]$entries, $Hooks)
 }

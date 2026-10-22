@@ -142,7 +142,7 @@ while ($true) {
         Write-Startup 'build-start'
         $buildClock = [Diagnostics.Stopwatch]::StartNew()
         Write-Log "Building $BuildProjectDir (Debug)..."
-        $buildOut = & dotnet build $BuildProjectDir -c Debug --nologo 2>&1
+        $buildOut = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'build-slot.ps1') -Label daemon-build -- dotnet build $BuildProjectDir -c Debug --nologo 2>&1
         $buildCode = $LASTEXITCODE
         Write-Startup 'build-complete' $buildClock.Elapsed.TotalMilliseconds $buildCode
         foreach ($l in $buildOut) {

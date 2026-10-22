@@ -101,7 +101,7 @@ if (-not (Test-Path $worktreeDir)) { New-Item -ItemType Directory -Force $worktr
 
 if (-not $NoBuild) {
     Write-Host "`n> Restoring AppHost dependencies..." -ForegroundColor Cyan
-    dotnet restore $appHostDir
+    & "$root\scripts\build-slot.ps1" -Label apphost-restore -- dotnet restore $appHostDir
     if ($LASTEXITCODE -ne 0) { Write-Error "dotnet restore failed." }
 
     Write-Host "`n> Installing client npm packages..." -ForegroundColor Cyan
@@ -124,7 +124,7 @@ Write-Host ""
 
 # Launch AppHost detached in a hidden window so this script can exit cleanly
 $encodedCmd = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
-    "Set-Location '$appHostDir'; dotnet run 2>&1 | Tee-Object -FilePath '$logFile'"
+    "Set-Location '$appHostDir'; & '$root\scripts\build-slot.ps1' -Label apphost-build -- dotnet build 2>&1 | Tee-Object -FilePath '$logFile'; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }; dotnet run --no-build 2>&1 | Tee-Object -FilePath '$logFile' -Append"
 ))
 $appHostProc = Start-Process pwsh -ArgumentList @(
     '-NonInteractive', '-NoLogo', '-EncodedCommand', $encodedCmd

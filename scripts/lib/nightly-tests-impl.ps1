@@ -1304,6 +1304,8 @@ function Invoke-NightlyExactRoster {
         $start.ArgumentList.Add([IO.Path]::GetFullPath($AssemblyPath))
         foreach ($arg in $args) { $start.ArgumentList.Add($arg) }
         if ($Environment) { foreach ($key in $Environment.Keys) { $start.Environment[$key] = [string]$Environment[$key] } }
+        . (Join-Path $PSScriptRoot 'build-driver-environment.ps1')
+        Set-AntiphonBuildDriverEnvironment -StartInfo $start
         $timingRoot = $env:ANTIPHON_TEST_TIMING_ROOT
         if ($timingRoot) {
             try {
