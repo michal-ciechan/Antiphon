@@ -384,6 +384,26 @@ public class WorktreeManagerGitIntegrationTests
     }
 
     [Test]
+    public async Task C1502_BranchCheckedOutElsewhereRemovesNothing()
+    {
+        // CARD-1502 (D): the recovery deletes the branch, so another checkout of it refuses first.
+        using var env = await GitTestEnvironment.CreateAsync();
+        var manager = BuildManager(env.WorktreeRoot);
+        var baseSha = (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "HEAD")).Trim();
+        var first = await manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default);
+        var admin = InterruptedWorktreeCreation.Simulate(env.WorktreeRoot, first.Path);
+        await GitTestEnvironment.RunGitAsync(env.RepoPath, "checkout", "--ignore-other-worktrees", "feat/card-task-deadbeef");
+
+        await Should.ThrowAsync<ConflictException>(() => manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default));
+
+        Directory.Exists(first.Path).ShouldBeTrue("directory-kept");
+        File.ReadAllText(Path.Combine(admin, "locked")).ShouldBe("initializing");
+        (await GitTestEnvironment.RunGitAsync(env.RepoPath, "rev-parse", "refs/heads/feat/card-task-deadbeef")).Trim()
+            .ShouldBe(baseSha, "branch-kept");
+        (await manager.ReadVerificationCreationAsync(first.Path, default)).ShouldBeNull("intent-kept-incomplete");
+    }
+
+    [Test]
     public async Task C1502_RollbackWarnsWhenItSkipsALockedRegistration()
     {
         // CARD-1448 D-3: a real `worktree add` killed mid-checkout (a slow smudge filter past a 1 s
