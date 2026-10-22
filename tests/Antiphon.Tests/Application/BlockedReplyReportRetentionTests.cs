@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -322,6 +323,77 @@ public sealed class BlockedReplyReportRetentionTests
         blocked.Detail.ShouldContain("unmarked", Case.Sensitive);
         blocked.Detail.ShouldContain("retained report", Case.Sensitive, "the record says the retained report stands");
     }
+
+    /// <summary>
+    /// CARD-1486 S3 (D-4). The reopened turn sends only the closing token, the one ask is recorded
+    /// and never typed, and the session stays idle past <c>UnmarkedWaitingMinutes</c>. The waiting
+    /// deadline Blocks it: the original marked report in the transcript predates the Reply and the
+    /// bare token adds nothing, so neither stops the sweep, and the Block keeps the retained report.
+    /// </summary>
+    [Test]
+    [Timeout(240_000)]
+    public async Task Untyped_token_only_ask_blocks_after_waiting_minutes_with_retained_report()
+    {
+        await using var world = await BlockedBySyncAsync();
+        await AssertWaitingDeadlineKeepsRetainedReportAsync(
+            world, DelegationReportFormatter.ReportToken(world.TaskId, "done"));
+    }
+
+    /// <summary>CARD-1486 S3 (D-4): the same deadline for an unmarked acknowledgement after the Reply.</summary>
+    [Test]
+    [Timeout(240_000)]
+    public async Task Untyped_unmarked_ask_after_reply_blocks_with_retained_report()
+    {
+        await using var world = await BlockedBySyncAsync();
+        await AssertWaitingDeadlineKeepsRetainedReportAsync(world, "Acknowledged. Stopping.");
+    }
+
+    private static async Task AssertWaitingDeadlineKeepsRetainedReportAsync(
+        RunnerSettlementWorld world, string reopenedTurn)
+    {
+        var retained = world.Task;
+        retained.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked, "fixture: the retained report was marked");
+        await ReplyAsync(world, "Accepted. The report is final. Stop now and do not take another turn.");
+        var wire = await ReplyWireAsync(world);
+
+        await world.SettleAsync(reopenedTurn, prompt: wire.Body, closingVerdict: false);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Working, "fixture: the reopened turn is asked once");
+        var ask = world.Task.ReportNudgeMessageId.ShouldNotBeNull("fixture: the ask is recorded");
+        int notesBefore;
+        await using (var db = world.CreateContext())
+        {
+            (await db.SessionQueuedMessages.SingleAsync(m => m.Id == ask))
+                .SentAt.ShouldBeNull("fixture: the ask is never typed");
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+            row.ReportNudgedAt = DateTime.UtcNow.AddMinutes(-6);
+            await db.SaveChangesAsync();
+            notesBefore = await CallerNotesAsync(db, world);
+        }
+
+        await world.Services.GetRequiredService<AgentTaskReplyService>()
+            .BlockUnmarkedWaitingAsync(world.SessionId, CancellationToken.None);
+        await world.ReloadAsync();
+
+        var after = world.Task;
+        after.Status.ShouldBe(AgentTaskStatus.Blocked, Why(after) + " the waiting deadline reaches the reopened task");
+        after.ReportEvidence.ShouldBe(retained.ReportEvidence, "the retained evidence class stands");
+        AssertRetained(after, retained);
+        after.AgentSessionId.ShouldBe(world.SessionId, "the Block keeps the session");
+        await using (var db = world.CreateContext())
+        {
+            (await db.SessionQueuedMessages.SingleAsync(m => m.Id == ask))
+                .Status.ShouldBe(QueuedMessageStatus.Canceled, "the never-typed ask is canceled at the Block");
+            (await CallerNotesAsync(db, world)).ShouldBe(notesBefore + 1, "the Block notifies the caller once");
+        }
+        var note = (await world.NoteAsync()).ShouldNotBeNull();
+        note.Body.ShouldContain(RetainedBody, Case.Sensitive, "the caller note carries the retained report");
+        (await world.EventsAsync()).Count(e => e.Type == AgentTaskEventType.Completed)
+            .ShouldBe(0, "no Succeeded publication");
+    }
+
+    private static Task<int> CallerNotesAsync(AppDbContext db, RunnerSettlementWorld world) =>
+        db.SessionQueuedMessages.AsNoTracking()
+            .CountAsync(m => m.AgentSessionId == world.CallerSessionId && m.SourceTaskId == world.TaskId);
 
     private static bool IsRetainedReportAsk(AgentTaskEvent e) =>
         e.Type == AgentTaskEventType.Warning && e.Detail.Contains("asked once for the complete report", StringComparison.Ordinal);
