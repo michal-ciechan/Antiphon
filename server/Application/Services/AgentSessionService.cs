@@ -287,10 +287,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     // only postpone the automatic kill of a session waiting for operator input.
                     // The ceiling is the launch turn. A later follow-up has a higher sequence
                     // even when ending a provisional arm moves PhaseStartedAt past its CreatedAt.
-                    var launchCeiling = await _db.TranscriptEntries.AsNoTracking()
-                        .Where(t => t.AgentSessionId == session.Id)
-                        .MaxAsync(t => (long?)t.Sequence, ct) ?? 0L;
-                    RunAttemptStateMachine.RememberLaunchPromptCeiling(attempt, launchCeiling);
+                    RunAttemptStateMachine.RememberLaunchPromptCeiling(
+                        attempt, await ReadLaunchPromptCeilingAsync(session.Id, ct));
                     RunAttemptStateMachine.Transition(attempt, RunPhase.AwaitingInput, UtcNow());
                     _logger.LogInformation(
                         "Agent turn interrupted for session {SessionId}; retaining run attempt {RunAttemptId}",
@@ -3616,6 +3614,21 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             throw new ValidationException(nameof(Project.LocalRepositoryPath), "Project local repository path is required to start an agent session.");
 
         return Task.FromResult(project.LocalRepositoryPath);
+    }
+
+    /// <summary>
+    /// The stored sequence of the cancelled TurnEnd that ended the launch turn. A follow-up
+    /// stored after that row, even before this query ran, is above the ceiling and still
+    /// re-arms (CARD-1402). When that row is not stored yet nothing after it is either, so
+    /// the highest stored sequence is at or before it and stays the ceiling.
+    /// </summary>
+    private async Task<long> ReadLaunchPromptCeilingAsync(Guid sessionId, CancellationToken ct)
+    {
+        var rows = _db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == sessionId);
+        var cancelledEnd = await rows
+            .Where(t => t.Kind == TranscriptKinds.TurnEnd && t.StopReason == TranscriptKinds.StopReasons.Cancelled)
+            .MaxAsync(t => (long?)t.Sequence, ct);
+        return cancelledEnd ?? await rows.MaxAsync(t => (long?)t.Sequence, ct) ?? 0L;
     }
 
     private static string BuildLaunchPrompt(
