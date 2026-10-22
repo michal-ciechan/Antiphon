@@ -400,7 +400,7 @@ public class WorktreeManagerGitIntegrationTests
             TimeProvider.System,
             logger);
 
-        await Should.ThrowAsync<TimeoutException>(() => manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default));
+        await Should.ThrowAsync<System.TimeoutException>(() => manager.CreateAsync(env.RepoPath, "task-deadbeef", "HEAD", default));
 
         var path = Path.Combine(env.WorktreeRoot, "card-task-deadbeef");
         File.ReadAllText(Path.Combine(InterruptedWorktreeCreation.AdminDirectory(path), "locked")).ShouldBe("initializing");
