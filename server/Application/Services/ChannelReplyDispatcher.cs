@@ -51,6 +51,14 @@ public sealed record ChannelReplyDispatchResult(
 }
 
 /// <summary>
+/// <summary>
+/// CARD-1434: the destination a route action publishes to. <see cref="ConversationKey"/> is
+/// <c>{provider}:{conversationId}</c>; null means every destination (a turn that addresses more
+/// than one conversation, or a session with no known conversation).
+/// </summary>
+public sealed record ChannelReplyRoute(string? ConversationKey);
+
+/// <summary>
 /// Routes an agent's turn output back down the external channel that asked for it. When a session
 /// completes a turn (<c>TurnEnd</c>/<c>end_turn</c>, observed by <see cref="AgentSessionRuntime"/>),
 /// this dispatcher matches the turn's prompt (<c>UserPrompt</c> or <c>QueuedUserPrompt</c>) back to
@@ -212,6 +220,38 @@ public sealed class ChannelReplyDispatcher
 
         return result;
     }
+
+    /// <summary>
+    /// CARD-1434: the destination a route action at <paramref name="sequence"/> would publish to,
+    /// or null when nothing publishes from that trigger (no completed turn boundary or owning
+    /// prompt, the same early returns as <see cref="OnTranscriptActionAsync"/>). The key comes
+    /// from the channel rows the turn's prompt matches, settled rows included, so it survives
+    /// settlement; a turn that matches no channel row keys to the session's newest Channel
+    /// conversation, the machine follow-up target. Several distinct keys resolve to null.
+    /// </summary>
+    internal async Task<ChannelReplyRoute?> ResolveActionRouteAsync(Guid sessionId, long sequence, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var boundary = await TranscriptTurnWindow.FindActionBoundaryAsync(db, sessionId, sequence, ct);
+        if (boundary is null) return null;
+        var prompt = await TranscriptTurnWindow.FindOwningPromptAsync(db, sessionId, boundary.Value, ct);
+        if (prompt?.Text is null) return null;
+        var keys = (await MatchChannelRowsAsync(db, prompt, ct))
+            .Select(m => m.ConversationKey).Distinct(StringComparer.Ordinal).ToList();
+        if (keys.Count == 0) return new ChannelReplyRoute(await NewestConversationKeyAsync(db, sessionId, ct));
+        return new ChannelReplyRoute(keys.Count == 1 ? keys[0] : null);
+    }
+
+    /// <summary>The session's newest Channel conversation key: the machine follow-up target.</summary>
+    private static Task<string?> NewestConversationKeyAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>
+        db.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sessionId
+                && m.Origin == QueuedMessageOrigin.Channel
+                && m.ConversationKey != null)
+            .OrderByDescending(m => m.Sequence)
+            .Select(m => m.ConversationKey)
+            .FirstOrDefaultAsync(ct);
 
     internal async Task OnTranscriptActionAsync(Guid sessionId, long triggerSequence, CancellationToken ct)
     {
@@ -1394,13 +1434,7 @@ public sealed class ChannelReplyDispatcher
 
         // Gate 1: channel-bound. One indexed query — the only cost added to every non-channel
         // session's turn end. Newest ConversationKey is the follow-up target.
-        var conversationKey = await db.SessionQueuedMessages
-            .Where(m => m.AgentSessionId == sessionId
-                && m.Origin == QueuedMessageOrigin.Channel
-                && m.ConversationKey != null)
-            .OrderByDescending(m => m.Sequence)
-            .Select(m => m.ConversationKey)
-            .FirstOrDefaultAsync(ct);
+        var conversationKey = await NewestConversationKeyAsync(db, sessionId, ct);
         if (conversationKey is null)
             return;
 

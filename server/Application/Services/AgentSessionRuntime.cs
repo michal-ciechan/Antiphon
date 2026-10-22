@@ -434,6 +434,14 @@ public sealed class AgentSessionRuntime
         await ExecuteChannelReplyAsync(scope.ServiceProvider, sessionId, sequence, ct);
     }
 
+    /// <summary>CARD-1434: the destination the route action at <paramref name="sequence"/> publishes to; null when nothing publishes.</summary>
+    internal async Task<ChannelReplyRoute?> ResolveActionChannelRouteAsync(Guid sessionId, long sequence, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        return scope.ServiceProvider.GetService<ChannelReplyDispatcher>() is { } channel
+            ? await channel.ResolveActionRouteAsync(sessionId, sequence, ct) : null;
+    }
+
     private static async Task ExecuteChannelReplyAsync(
         IServiceProvider services, Guid sessionId, long sequence, CancellationToken ct)
     {
