@@ -165,7 +165,7 @@ describe('ProviderEndpointFields on the project settings modal', () => {
     await openProjectEditor()
 
     expect(await screen.findByRole('textbox', { name: 'Claude Code base URL' })).toHaveValue('http://claude-proxy:8080')
-    fireEvent.change(screen.getByRole('textbox', { name: 'Name', exact: true }), {
+    fireEvent.change(screen.getByRole('textbox', { name: /^Name$/ }), {
       target: { value: 'Renamed project' },
     })
     await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
