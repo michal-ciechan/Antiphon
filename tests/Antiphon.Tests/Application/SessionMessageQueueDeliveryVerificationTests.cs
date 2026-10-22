@@ -1269,7 +1269,8 @@ public partial class SessionMessageQueueDeliveryVerificationTests
     {
         await using var h = await ObservableHarnessAsync();
         h.Adapter.OnSubmitted = _ =>
-            h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "on it");
+            StoreAwareTranscript.WriteAsync(h.Provider, h.SessionId,
+                () => h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "on it"));
 
         await h.Queue.EnqueueAsync(
             h.SessionId, "the body whose record never got ingested",
