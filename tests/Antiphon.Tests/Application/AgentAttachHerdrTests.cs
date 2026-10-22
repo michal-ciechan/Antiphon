@@ -183,6 +183,48 @@ public class AgentAttachHerdrTests
     }
 
     [Test]
+    public async Task C0167_attaching_a_pool_delegate_marks_its_provider_projection_unknown()
+    {
+        // CARD-0167 S3 repair 2 (Review 6c08cd4b R1): an adopted pane's process was launched by
+        // someone else with an environment Antiphon never saw. Keeping the row's old stamp would
+        // let the warm pool match a process whose routing nobody knows, so the stamp becomes the
+        // unknown marker, which no task's projection equals (not even "none").
+        var tempRoot = NewTemp();
+        await using var fake = StartFake();
+        try
+        {
+            await using var harness = BuildHarness(tempRoot, fake);
+            var nativeId = Guid.NewGuid();
+            var cwd = Path.Combine(tempRoot, "cwd");
+            Directory.CreateDirectory(cwd);
+            using var grok = PinGrokHome(tempRoot, nativeId, cwd);
+            var pane = SeedGrokPane(fake, nativeId, cwd);
+            var agent = await CreateGrokHerdrAgentAsync(harness, cwd);
+            await using (var seed = CreateContext())
+            {
+                var row = await seed.Agents.SingleAsync(a => a.Id == agent.Id);
+                row.IsPoolDelegate = true;
+                row.PoolProviderProjectionJson = null;
+                await seed.SaveChangesAsync();
+            }
+
+            await harness.Control.AttachHerdrAsync(agent.Id, new AttachHerdrPaneRequest(pane.PaneId), CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var stored = await verify.Agents.AsNoTracking().SingleAsync(a => a.Id == agent.Id);
+            stored.PoolProviderProjectionJson.ShouldBe(ProviderEndpointLayers.UnknownPoolProjection);
+            var unscoped = new AgentTask { AgentKind = AgentKind.Grok, InheritedLaunchEnvJson = "{}" };
+            AgentTaskDispatcher.InheritedEnvMatchesPool(
+                    stored, unscoped, ProviderEndpoint.NoEndpoints, new LlmEnvInheritanceSettings().Names)
+                .ShouldBeFalse("an adopted process's routing is unknown, so it matches no task");
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Refuses_non_herdr_agent_and_unmapped_kinds()
     {
         var tempRoot = NewTemp();
