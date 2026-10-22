@@ -28,8 +28,9 @@ No migration. No secret was read, printed or stored.
 - `382827029ec88a43d851a39d7ee830334c8b9e88` test first (red).
 - `98c76f96b857441701e6f4ec96065038afc11739` implementation plus the S4 amendment
   `docs/superpowers/plans/2026-10-22-card-0167-provider-endpoint-plan-s4-amendment.md` (CP-5 unchanged, CP-8 adds
-  the three whole classes that read the catalogue's DTOs, floor 71).
-- This report commit; the receipt run starts at this tip.
+  the three whole classes that read the catalogue's DTOs, floor 70 after the fix below).
+- `9592719aefade677e8f66034def7b0a7d115bebe` report v1; run `20261022-161645-8beb` at that tip.
+- This commit: CP-8 floor 71 -> 70 in the amendment, report v2; the receipt run starts at this tip.
 
 ## Red witness (unlisted by plan D-14)
 
@@ -53,4 +54,17 @@ The brief says "minimal testing, no whole-suite runs", so the whole Unit lane wa
 passed. The S4 rows are CP-5 (plan) and CP-8 (amendment). No V-n/R-n IDs exist for S4. The plan's PC rows (none
 for S4) stay with SourceLanding Mutation.
 
-CHECKPOINT lines for CP-5 and CP-8 are in the task's final message (run started after this commit).
+## First run (roster miss, not a test failure)
+
+Run `20261022-161645-8beb` at `9592719ae`, verdict RED exit=3 only because the amendment floor double-counted the new
+method (71 for a 70-test selection); every test passed:
+
+```
+CHECKPOINT CP-5 commit=9592719aefade677e8f66034def7b0a7d115bebe build=ok filter=/*/*/AgentTuiApiTests/(C0167_*)|(Runner_catalogue_and_profile_crud*) executed=2 passed=2 failed=0 skipped=0 trx=/work/worktrees/task-16fc75cf/.antiphon/checkpoints/20261022-161645-8beb/rows/CP-5/run.trx slot=granted waited=75s dirty=0 source=9592719aefade677e8f66034def7b0a7d115bebe sourceState=clean buildSource=verified
+CHECKPOINT CP-8 commit=9592719aefade677e8f66034def7b0a7d115bebe build=reused filter=/*/*/(AgentTuiApiTests*)|(AgentTuiProfileServiceTests*)|(ProviderContractCatalogTests*)/* executed=70 passed=70 failed=0 skipped=0 trx=/work/worktrees/task-16fc75cf/.antiphon/checkpoints/20261022-161645-8beb/rows/CP-8/run.trx slot=granted waited=90s dirty=0 source=9592719aefade677e8f66034def7b0a7d115bebe sourceState=clean buildSource=verified
+```
+
+TRX per class: AgentTuiApiTests 11, AgentTuiProfileServiceTests 22, ProviderContractCatalogTests 37. The kept
+`tests/Antiphon.Tests/bin-c0167d/` was deleted by hand (only that path; the run folder record kept).
+
+The receipt run's CHECKPOINT lines are in the task's final message (run started after this commit).
