@@ -286,11 +286,15 @@ and the shipped default is **empty**, so nothing changes until an operator sets 
 value fails `DelegationSettingsValidator` at startup and is never passed to argv. Set it in the
 per-machine overlay (`appsettings.Development.json` or `dotnet user-secrets --id antiphon-server`,
 keys `Delegation:ClaudeEffortByRole:<Role>`) and restart; the operator's 2026-10-22 map names
-every role except **Review**, which is intentionally absent so Review keeps the tier's effort.
-A task whose override differs from its tier's effort declines warm-pool reuse (a running process
-cannot change its `--effort`); a task without an override may still reuse a same-tier warm
-session launched at an overridden effort. Named standing agents have no task role and are
-unaffected; Codex and Grok keep their own switches. Escalation events say when the target rung
+every role except **Review**, which is intentionally absent so Review keeps the tier's effort, and
+**Check**, which runs on the standing Check seat (below). Keys are role names only; a number or a
+comma list fails validation. A task whose override differs from its tier's effort declines
+warm-pool reuse (a running process cannot change its `--effort`): an unpinned task skips the pool
+and a task pinned to a FREE pool delegate relaunches it, while a task pinned to a BUSY pool
+delegate still waits for it. A task without an override may still reuse a same-tier warm session
+launched at an overridden effort. Standing agents ignore the setting: a task pinned to one,
+including every Check task on the AlwaysOn Check seat, runs at the seat's own launch effort under
+the seat's rules (CARD-1481 repair). Codex and Grok keep their own switches. Escalation events say when the target rung
 launches at an overridden effort.
 
 ## 4. Claude Code

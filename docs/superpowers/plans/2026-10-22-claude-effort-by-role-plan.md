@@ -118,12 +118,14 @@ validate this table.
     "Investigate": "xhigh", "Plan": "xhigh", "TestDesign": "xhigh", "Code": "xhigh",
     "Mutation": "xhigh", "Debug": "xhigh", "Coverage": "xhigh", "Merge": "xhigh",
     "Docs": "xhigh", "Commit": "xhigh", "Test": "xhigh", "Deploy": "xhigh",
-    "Custom": "xhigh", "Check": "xhigh", "Distill": "xhigh", "Diagnose": "xhigh"
+    "Custom": "xhigh", "Distill": "xhigh", "Diagnose": "xhigh"
   }
 }
 ```
 
-Review is deliberately absent, so it keeps the tier's effort. Restart the AppHost after setting it.
+Review is deliberately absent, so it keeps the tier's effort. Check is absent too: Check tasks run
+on the standing AlwaysOn Check seat, which ignores the setting (CARD-1481 repair,
+`2026-10-22-claude-effort-by-role-repair.md`). Restart the AppHost after setting it.
 
 ## rc port
 

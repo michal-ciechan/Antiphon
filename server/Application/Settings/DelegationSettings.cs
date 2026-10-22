@@ -405,7 +405,8 @@ public sealed class DelegationSettings
     /// <c>max</c>), refused by <see cref="DelegationSettingsValidator"/> at startup otherwise. EMPTY
     /// as shipped, so every launch stays byte-identical to the tier table; the operator sets the map
     /// in the per-machine overlay. ClaudeCode tasks only: a named standing agent has no task role
-    /// (<c>AgentSessionLaunchComposer</c> is unchanged) and Codex/Grok keep their own switches.
+    /// (<c>AgentSessionLaunchComposer</c> is unchanged), so a task pinned to one (every Check task on
+    /// the AlwaysOn Check seat) runs at the seat's own effort; Codex/Grok keep their own switches.
     /// </summary>
     public Dictionary<string, string> ClaudeEffortByRole { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -1419,8 +1420,9 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
         // would not accept never reaches a launch.
         foreach (var (role, effort) in options.ClaudeEffortByRole)
         {
-            if (!Enum.TryParse<AgentTaskRole>(role?.Trim(), ignoreCase: true, out var parsedRole)
-                || !Enum.IsDefined(parsedRole))
+            // A role NAME only: Enum.TryParse would also take a defined number ('2') or a comma
+            // list ('Plan,Code'), which the launch-time name lookup silently ignores (CARD-1481).
+            if (!Enum.GetNames<AgentTaskRole>().Any(name => string.Equals(name, role?.Trim(), StringComparison.OrdinalIgnoreCase)))
             {
                 failures.Add(
                     $"Delegation:ClaudeEffortByRole has unknown role '{role}'. Use {string.Join(", ", Enum.GetNames<AgentTaskRole>())}.");
