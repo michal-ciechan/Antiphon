@@ -4,15 +4,24 @@ namespace Antiphon.Server.Application.Services;
 /// CARD-1428 D-4: the per-task lifetime of same-card inspection entries, kept apart from
 /// <see cref="CardSiblingInspectionQueue"/>'s workers, channel and cancellation. Pure in-memory state
 /// on a <see cref="TimeProvider"/>; it has no claim or launch authority, and claim-time revalidation
-/// under the lease stays the only authority over a result.
+/// under the lease stays the only authority over a result. A result is not consumed by being read:
+/// it survives a lease refusal and the other pre-claim holds until its owner invalidates it, its
+/// intent changes, the task leaves the queue, or <see cref="RetainedResultMaxAge"/> passes.
 /// </summary>
 public sealed class SiblingInspectionResults(TimeProvider clock)
 {
-    /// <summary>A completed result is valid for at most this long from completion.</summary>
-    public static readonly TimeSpan RetainedResultMaxAge = TimeSpan.FromSeconds(30);
+    /// <summary>
+    /// D-5: a completed result is valid for at most this long from completion. About two typical
+    /// lands; it bounds how old the advisory sibling warnings on a cut can be. Correctness does not
+    /// rest on it: the claim revalidates intent, inventory metadata and every frozen ref under the lease.
+    /// </summary>
+    public static readonly TimeSpan RetainedResultMaxAge = TimeSpan.FromMinutes(10);
 
-    /// <summary>Entries the owned workers still have to inspect; <see cref="Begin"/> refuses past this.</summary>
+    /// <summary>D-6: entries the owned workers still have to inspect; <see cref="Begin"/> refuses past this.</summary>
     public const int InFlightCapacity = 32;
+
+    /// <summary>D-6: completed results kept for reuse; past this the oldest completed entry is evicted first.</summary>
+    public const int RetainedCapacity = 256;
 
     /// <summary>One task's entry: the intent it answers, the owned cancellation, and the result once complete.</summary>
     public sealed class Entry
@@ -54,7 +63,8 @@ public sealed class SiblingInspectionResults(TimeProvider clock)
                 Evict(existing);
                 if (_entries.ContainsKey(intent.TaskId)) return null;
             }
-            if (_entries.Count >= InFlightCapacity) return null;
+            if (InFlightUnlocked() >= InFlightCapacity) return null;
+            TrimRetained();
             var entry = new Entry(intent);
             _entries.Add(intent.TaskId, entry);
             started = true;
@@ -88,8 +98,9 @@ public sealed class SiblingInspectionResults(TimeProvider clock)
     }
 
     /// <summary>
-    /// The completed, uncancelled, unexpired result for an equal intent. A different intent evicts
-    /// the entry; a skipped, cancelled or expired result is evicted and null.
+    /// D-4: the completed, uncancelled, unexpired result for an equal intent, left in place for the
+    /// next attempt. A different intent evicts the entry; a skipped, cancelled or expired result is
+    /// evicted and null, so the caller enqueues a fresh inspection.
     /// </summary>
     public SiblingBaseGuard? Peek(CardSiblingInspectionIntent intent)
     {
@@ -98,10 +109,13 @@ public sealed class SiblingInspectionResults(TimeProvider clock)
             if (!_entries.TryGetValue(intent.TaskId, out var entry)) return null;
             if (entry.Intent != intent) { Evict(entry); return null; }
             if (!entry.IsCompleted) return null;
-            var result = !entry.Cancel.IsCancellationRequested
-                && clock.GetElapsedTime(entry.CompletedAt) < RetainedResultMaxAge ? entry.Result : null;
-            Evict(entry);
-            return result;
+            if (entry.Cancel.IsCancellationRequested || entry.Result is null
+                || clock.GetElapsedTime(entry.CompletedAt) >= RetainedResultMaxAge)
+            {
+                Evict(entry);
+                return null;
+            }
+            return entry.Result;
         }
     }
 
@@ -145,6 +159,15 @@ public sealed class SiblingInspectionResults(TimeProvider clock)
     }
 
     private int InFlightUnlocked() => _entries.Values.Count(entry => !entry.IsCompleted);
+
+    // D-6: retained results have their own bound; the oldest completed entries go first.
+    private void TrimRetained()
+    {
+        var completed = _entries.Values.Where(entry => entry.IsCompleted).ToList();
+        if (completed.Count < RetainedCapacity) return;
+        foreach (var oldest in completed.OrderBy(entry => entry.CompletedAt).Take(completed.Count - RetainedCapacity + 1))
+            Evict(oldest);
+    }
 
     // Only on an entry still in the dictionary: a removed entry's cancellation is disposed.
     private void Evict(Entry entry)
