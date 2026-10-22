@@ -2096,6 +2096,13 @@ public sealed partial class AgentTaskDispatcher
             if (now - stalledSince < window)
                 continue;
 
+            // CARD-1490: escalating onto a held alias would kill this session and park the task
+            // behind the hold. Leave it running; the clock fires again once the hold clears.
+            if (_modelAvailability is not null
+                && await _modelAvailability.IsHeldAsync(
+                    task.AgentKind, ModelLevelAliases.For(task.AgentKind, policy.EscalateTo!.Value), ct))
+                continue;
+
             try
             {
                 // The handoff (BuildBrief) carries FailureReason into the next attempt — say WHY

@@ -3201,6 +3201,12 @@ public sealed class AgentTaskService
                 + $"({ModelLevelAliases.For(task.AgentKind, from)}).");
         }
 
+        // CARD-1490: an escalation is an explicit pick of the next tier. A held target is the same
+        // 409 model_disabled create returns, BEFORE the session is killed or the row changes —
+        // requeueing onto the hold would stop working delegates and park the task behind it.
+        if (_modelAvailability is not null)
+            await _modelAvailability.RequireAsync(task.AgentKind, ModelLevelAliases.For(task.AgentKind, target.Value), ct);
+
         task.EscalatedFrom = from;
         task.ModelLevel = target.Value;
         var detail = $"Escalated {ModelLevelAliases.For(task.AgentKind, from)} "
