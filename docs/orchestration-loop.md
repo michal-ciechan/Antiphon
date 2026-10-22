@@ -2138,13 +2138,25 @@ including through another import. The nearest `Directory.Build.props` and
 with the importing file's folder again. `$(MSBuildThisFileDirectory)` in an
 include is that file's directory. `$(MSBuildProjectDirectory)` is the directory
 being checked. An `Import` `Project` path that still contains an unknown
-`$(...)` is refused and is not followed. The failure names the definition file
-and the include, or the import path when the import cannot be resolved.
+`$(...)`, an `@(...)` item reference or a `%(...)` metadata reference is refused
+and is not followed. There is no allow-list: `$(MSBuildExtensionsPath)`,
+`$(NuGetPackageRoot)` and `$([MSBuild]::GetPathOfFileAbove(...))` refuse too, so
+a future chained `Directory.Build.props` that needs one of them changes the audit
+first (CARD-1409). An `Import` with an attribute other than `Project`,
+`Condition` or `Label`, such as `Sdk`, is refused; `Condition` is not evaluated,
+so a conditional import is still followed. A non-wildcard import target must be
+tracked at HEAD inside the repository as a `*proj`, `.props` or `.targets` file:
+an empty `Project`, a path outside the repository, a path absent from HEAD or a
+tracked file with another extension is refused, and the message names the
+importing file, the attribute text and the resolved path. A wildcard `Import` is
+matched against every tracked path; a match with another extension is refused,
+and a wildcard that matches nothing is accepted. The failure names the definition
+file and the include, or the import path when the import cannot be resolved.
 Regenerating the manifest does not approve that include. An unknown `$(...)`
 in an item include is refused only when the include text contains the exact
 spellings `docs` and `.md`, or `README`, so `$(DocsDir)*.md` stays accepted.
-`Import`, `ReadLinesFromFile`, `Copy`, and property functions that read files
-are not inspected. Any other definition-file edit still changes the
+An `Import` is followed as described above; `ReadLinesFromFile`, `Copy`, and
+property functions that read files are not inspected. Any other definition-file edit still changes the
 digest, so the skip stops until the manifest is regenerated.
 
 The fingerprint is SHA-256 over ordinal-sorted `git ls-tree -r -z <candidate>`
