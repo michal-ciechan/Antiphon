@@ -3206,6 +3206,7 @@ public sealed class AgentTaskService
         var detail = $"Escalated {ModelLevelAliases.For(task.AgentKind, from)} "
             + $"-> {ModelLevelAliases.For(task.AgentKind, target.Value)}."
             + SameModelEscalationNote(task, from, target.Value)
+            + ClaudeEffortOverrideNote(task, target.Value)
             + (reason is null ? string.Empty : $" {reason}");
 
         // A task that has not started yet only needs the new tier — there is nothing to requeue.
@@ -3245,14 +3246,14 @@ public sealed class AgentTaskService
     /// <see cref="ResolveEscalationTarget"/> never returns the current rung, so a Claude escalation
     /// can never take this arm and its event text is byte-identical to before.</para>
     /// </summary>
-    private static string SameModelEscalationNote(AgentTask task, AgentModelLevel from, AgentModelLevel to)
+    private string SameModelEscalationNote(AgentTask task, AgentModelLevel from, AgentModelLevel to)
     {
         var alias = ModelLevelAliases.For(task.AgentKind, to);
         if (!string.Equals(ModelLevelAliases.For(task.AgentKind, from), alias, StringComparison.Ordinal))
             return string.Empty;
 
-        var fromEffort = TierWiredEffort(task.AgentKind, from);
-        var toEffort = TierWiredEffort(task.AgentKind, to);
+        var fromEffort = LaunchEffort(task, from);
+        var toEffort = LaunchEffort(task, to);
         if (fromEffort is not null
             && toEffort is not null
             && !string.Equals(fromEffort, toEffort, StringComparison.Ordinal))
@@ -3266,17 +3267,39 @@ public sealed class AgentTaskService
     }
 
     /// <summary>
-    /// The effort string a kind actually puts on its launch argv, or null when the kind has no
-    /// tier-wired effort (OpenCode/Raw). Kept as a switch over the three independent mappings so a
-    /// future provider can diverge without a shared abstraction (CARD-0289).
+    /// The effort string a task actually puts on its launch argv at <paramref name="level"/>, or null
+    /// when the kind has no tier-wired effort (OpenCode/Raw). Kept as a switch over the three
+    /// independent mappings so a future provider can diverge without a shared abstraction
+    /// (CARD-0289). For Claude the task's role matters too: a <c>Delegation:ClaudeEffortByRole</c>
+    /// entry wins over the tier (task 8333e231), and this string must say what the launch does.
     /// </summary>
-    private static string? TierWiredEffort(AgentKind kind, AgentModelLevel level) => kind switch
+    private string? LaunchEffort(AgentTask task, AgentModelLevel level) => task.AgentKind switch
     {
         AgentKind.Codex => CodexLaunchArgs.ReasoningEffort(level),
         AgentKind.Grok => GrokLaunchArgs.ReasoningEffort(level),
-        AgentKind.ClaudeCode => ClaudeLaunchArgs.Effort(level),
+        AgentKind.ClaudeCode => ClaudeLaunchArgs.Effort(level, task.Role, _settings.ClaudeEffortByRole),
         _ => null,
     };
+
+    /// <summary>
+    /// Task 8333e231: when a Claude task's role override makes the target rung launch at an effort
+    /// other than the tier's own, the escalation event says so — otherwise an operator reading
+    /// "opus -> fable" would expect the tier table. Empty when there is no override, when the
+    /// override equals the target tier's effort, and for every other kind, so the pre-change text
+    /// is byte-identical.
+    /// </summary>
+    private string ClaudeEffortOverrideNote(AgentTask task, AgentModelLevel to)
+    {
+        if (task.AgentKind != AgentKind.ClaudeCode
+            || !ClaudeLaunchArgs.RoleOverrideDiffersFromTier(to, task.Role, _settings.ClaudeEffortByRole))
+        {
+            return string.Empty;
+        }
+
+        return $" {ModelLevelAliases.For(task.AgentKind, to)} launches at"
+            + $" {ClaudeLaunchArgs.Effort(to, task.Role, _settings.ClaudeEffortByRole)} by role override"
+            + $" (Delegation:ClaudeEffortByRole:{task.Role}), not the tier-wired {ClaudeLaunchArgs.Effort(to)}.";
+    }
 
     /// <summary>
     /// One rung up, unless the role policy names a specific target — the ladder is config, so a

@@ -278,6 +278,21 @@ events, escalation notes, the check digest, completion-note headers. Launch argu
 do **not**: they branch explicitly at the sites that build them, because a wrong alias in an
 argument is a wrong process, not a wrong word.
 
+**Per-role Claude effort override (task 8333e231).** `Delegation:ClaudeEffortByRole` is a map of
+`AgentTaskRole` name → Claude effort (`low`, `medium`, `high`, `xhigh`, `max`) that wins over the
+tier table for a ClaudeCode *delegate task*; a role absent from the map keeps the tier's effort,
+and the shipped default is **empty**, so nothing changes until an operator sets it. It exists so
+"opus at xhigh" can be expressed (opus is tier High, which maps to `high`). An unknown role or
+value fails `DelegationSettingsValidator` at startup and is never passed to argv. Set it in the
+per-machine overlay (`appsettings.Development.json` or `dotnet user-secrets --id antiphon-server`,
+keys `Delegation:ClaudeEffortByRole:<Role>`) and restart; the operator's 2026-10-22 map names
+every role except **Review**, which is intentionally absent so Review keeps the tier's effort.
+A task whose override differs from its tier's effort declines warm-pool reuse (a running process
+cannot change its `--effort`); a task without an override may still reuse a same-tier warm
+session launched at an overridden effort. Named standing agents have no task role and are
+unaffected; Codex and Grok keep their own switches. Escalation events say when the target rung
+launches at an overridden effort.
+
 ## 4. Claude Code
 
 **Launch.** `claude.exe --dangerously-skip-permissions [--model <alias>]
@@ -315,6 +330,8 @@ outside `TranscriptTailer`.
   row). `ClaudeEffortPromptSettleMs` defaults to
   15,000 ms; the shared startup/probe deadline never restarts for recurring dialogs.
   This is a narrow startup exception, not authorization to confirm arbitrary choice menus.
+  The launch value is the tier's (`ClaudeLaunchArgs.Effort`) unless `Delegation:ClaudeEffortByRole`
+  names the task's role (section 3).
 - Remote control (`/remote-control`) is supported and is what puts a session in the claude.ai
   session list. A failed or unknown `/remote-control` degrades (`RcDegraded` / `RemoteControlArmSuppressed` /
   `RemoteControlMonitoringDegraded`); it never fails the launch. CARD-0514: never type it into an
