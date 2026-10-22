@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Enums;
 
@@ -85,6 +86,45 @@ public static class ProviderEndpointLayers
             ? uri.Host
             : "(unparsed)";
     }
+
+    /// <summary>
+    /// CARD-0167 S3 repair (Review e4b591eb D1): what one launch projects, in the form the pool row
+    /// records it (<c>Agent.PoolProviderProjectionJson</c>) and the warm-pool predicate compares it.
+    /// The projected env sorted by NAME, each with its URL or <c>{{key:NAME}}</c> placeholder, plus
+    /// the argv tail (Codex's <c>-c</c> pairs), as one canonical JSON document; null when nothing is
+    /// projected (no setting, Direct mode, or a refusal the launch itself raises). Taken before
+    /// placeholder resolution, so it never holds a key value. Same inputs as <see cref="Select"/>,
+    /// so the stamp and the comparison cannot drift from what the resolvers project.
+    /// </summary>
+    public static string? PoolFingerprint(
+        AgentKind kind,
+        IReadOnlyDictionary<AgentKind, ProviderEndpoint>? projectEndpoints,
+        ProviderEndpointMode mode,
+        ProviderEndpoint? agentEndpoint)
+    {
+        Selection selection;
+        try
+        {
+            selection = Select(kind, projectEndpoints, mode, agentEndpoint);
+        }
+        catch (Exception exception) when (exception is ConflictException or ValidationException)
+        {
+            selection = Selection.None;
+        }
+
+        if (selection.Effective is not { } projected)
+            return null;
+
+        var env = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, value) in projected.Env)
+            env[key] = value;
+        return JsonSerializer.Serialize(new PoolProjection(env, projected.Args), FingerprintJson);
+    }
+
+    private static readonly JsonSerializerOptions FingerprintJson = new(JsonSerializerDefaults.Web) { WriteIndented = false };
+
+    /// <summary>The fingerprint's shape: names with URL or placeholder values, then the argv tail. No value can enter it.</summary>
+    private sealed record PoolProjection(IReadOnlyDictionary<string, string> Env, IReadOnlyList<string> Args);
 
     /// <summary>
     /// The inherit-list view of one process's provider routing for the warm-pool predicate

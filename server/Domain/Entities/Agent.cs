@@ -214,6 +214,20 @@ public class Agent
     public Guid? PoolProjectId { get; set; }
 
     /// <summary>
+    /// CARD-0167 S3 repair (Review e4b591eb D1): the provider-endpoint projection this pool
+    /// delegate's LIVE process was launched with, as <see cref="ProviderEndpointLayers.PoolFingerprint"/>
+    /// writes it: the projected env NAMES with their URL or <c>{{key:NAME}}</c> placeholder and the
+    /// Codex <c>-c</c> argv tail, or null when the launch projected nothing. Never a key value (it is
+    /// taken before placeholder resolution). Stamped beside <see cref="PoolProjectId"/> at every
+    /// cold launch and relaunch, then compared by the warm-pool predicate with what the next task
+    /// would launch with NOW, so a process keeps the routing it launched with (an endpoint set,
+    /// cleared or changed after the launch is a fresh process, never a silent mix-up). Kept out of
+    /// <see cref="LaunchEnvJson"/>, which child tasks inherit from. Meaningless for agents that are
+    /// not pool delegates.
+    /// </summary>
+    public string? PoolProviderProjectionJson { get; set; }
+
+    /// <summary>
     /// For a reservation window after each task, the warm delegate answers only to the run that
     /// just used it — follow-ups keep their context. The window expiring releases it to anyone;
     /// that is a pure time comparison, so release needs no state change.

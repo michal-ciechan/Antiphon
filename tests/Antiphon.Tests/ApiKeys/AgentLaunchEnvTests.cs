@@ -594,17 +594,22 @@ public class AgentLaunchEnvTests
         var map = new Dictionary<AgentKind, ProviderEndpoint> { [AgentKind.ClaudeCode] = new(C0167Url, C0167KeyName) };
         var task = new AgentTask { AgentKind = AgentKind.ClaudeCode, InheritedLaunchEnvJson = "{}" };
 
-        // 1. A plain delegate and a task on the same project both get the project endpoint: match.
-        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(), task, map, names).ShouldBeTrue();
+        // 1. A delegate LAUNCHED under the project endpoint and a task on the same project: match.
+        //    (Repair of Review e4b591eb D1: the match is against the stamp the cold launch wrote, not a
+        //    re-read of the project map, so a delegate with no stamp is one launched with no proxy.)
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(launchedWith: Stamp(map)), task, map, names).ShouldBeTrue();
 
         // 2. A delegate launched with its own endpoint is not what this task would launch with.
+        var own = new ProviderEndpoint("https://agent-0167.local", null);
         AgentTaskDispatcher.InheritedEnvMatchesPool(
-                Delegate(ProviderEndpointMode.Endpoint, new ProviderEndpoint("https://agent-0167.local", null)),
+                Delegate(ProviderEndpointMode.Endpoint, own, launchedWith: Stamp(map, ProviderEndpointMode.Endpoint, own)),
                 task, map, names)
             .ShouldBeFalse();
 
-        // 3. A Direct delegate carries no proxy; the task expects the project's.
-        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(ProviderEndpointMode.Direct), task, map, names).ShouldBeFalse();
+        // 3. A Direct delegate carries no proxy (its stamp is null); the task expects the project's.
+        AgentTaskDispatcher.InheritedEnvMatchesPool(
+                Delegate(ProviderEndpointMode.Direct, launchedWith: Stamp(map, ProviderEndpointMode.Direct)), task, map, names)
+            .ShouldBeFalse();
 
         // 4. The task's inherited routing points elsewhere (rank 4 beats 3b on both sides), and a
         //    delegate whose stamped snapshot points to the same elsewhere matches it.
@@ -613,9 +618,11 @@ public class AgentLaunchEnvTests
             AgentKind = AgentKind.ClaudeCode,
             InheritedLaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://elsewhere" }),
         };
-        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(), elsewhere, map, names).ShouldBeFalse();
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(launchedWith: Stamp(map)), elsewhere, map, names).ShouldBeFalse();
         AgentTaskDispatcher.InheritedEnvMatchesPool(
-                Delegate(launchEnv: new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://elsewhere" }),
+                Delegate(
+                    launchEnv: new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://elsewhere" },
+                    launchedWith: Stamp(map)),
                 elsewhere, map, names)
             .ShouldBeTrue();
 
@@ -632,9 +639,15 @@ public class AgentLaunchEnvTests
         // 6. Codex: the key placeholder compares as a NAME on both sides; nothing is resolved here.
         var codexMap = new Dictionary<AgentKind, ProviderEndpoint> { [AgentKind.Codex] = new("https://codex-0167.local", C0167KeyName) };
         var codexTask = new AgentTask { AgentKind = AgentKind.Codex, InheritedLaunchEnvJson = "{}" };
-        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(kind: AgentKind.Codex), codexTask, codexMap, names).ShouldBeTrue();
+        var codexStamp = Stamp(codexMap, kind: AgentKind.Codex);
         AgentTaskDispatcher.InheritedEnvMatchesPool(
-                Delegate(kind: AgentKind.Codex, launchEnv: new Dictionary<string, string> { ["OPENAI_API_KEY"] = "{{key:other-0167}}" }),
+                Delegate(kind: AgentKind.Codex, launchedWith: codexStamp), codexTask, codexMap, names)
+            .ShouldBeTrue();
+        AgentTaskDispatcher.InheritedEnvMatchesPool(
+                Delegate(
+                    kind: AgentKind.Codex,
+                    launchEnv: new Dictionary<string, string> { ["OPENAI_API_KEY"] = "{{key:other-0167}}" },
+                    launchedWith: codexStamp),
                 codexTask, codexMap, names)
             .ShouldBeFalse();
 
@@ -647,20 +660,84 @@ public class AgentLaunchEnvTests
                 names)
             .ShouldBeTrue();
 
-        static Agent Delegate(
-            ProviderEndpointMode mode = ProviderEndpointMode.Inherit,
-            ProviderEndpoint? own = null,
-            IReadOnlyDictionary<string, string>? launchEnv = null,
-            AgentKind kind = AgentKind.ClaudeCode) => new()
-        {
-            Id = Guid.NewGuid(),
-            Kind = kind,
-            IsPoolDelegate = true,
-            ProviderEndpointMode = mode,
-            ProviderEndpointJson = ProviderEndpoint.Serialize(own),
-            LaunchEnvJson = AgentLaunchEnv.Serialize(launchEnv),
-        };
     }
+
+    [Test]
+    public void C0167_pool_match_compares_the_launch_time_projection_not_the_current_map()
+    {
+        // Review e4b591eb D1: a warm process keeps the routing it launched with (the dispatcher's own
+        // rule at its cold-launch stamp), so the predicate must compare the projection the process GOT
+        // with the one this task would get NOW. Computing both sides from the current map matched a
+        // proxy-less process to a task that expects the proxy, and a process still holding the
+        // resolved key to a task on a project whose endpoint was cleared or changed.
+        var names = new LlmEnvInheritanceSettings().Names;
+        var task = new AgentTask { AgentKind = AgentKind.ClaudeCode, InheritedLaunchEnvJson = "{}" };
+        var f = new Dictionary<AgentKind, ProviderEndpoint> { [AgentKind.ClaudeCode] = new(C0167Url, C0167KeyName) };
+        var fPrime = new Dictionary<AgentKind, ProviderEndpoint> { [AgentKind.ClaudeCode] = new("https://proxy-prime-0167.local", C0167KeyName) };
+        var fOtherKey = new Dictionary<AgentKind, ProviderEndpoint> { [AgentKind.ClaudeCode] = new(C0167Url, "c0167-rotated-name") };
+        var launchedWithF = Stamp(f);
+        launchedWithF.ShouldNotBeNull();
+
+        // The stamp is names, the URL and the placeholder: the key NAME, never a value, and nothing
+        // the resolver would substitute later.
+        launchedWithF.ShouldContain("ANTHROPIC_BASE_URL");
+        launchedWithF.ShouldContain(C0167Placeholder);
+        launchedWithF.ShouldNotContain("sentinel");
+
+        // (a) Launched while the project had NO endpoint; an operator then set F. The process runs
+        //     direct to the provider, so it is not what this task would launch with.
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(launchedWith: null), task, f, names).ShouldBeFalse();
+
+        // (b) Launched with F (its environment holds the resolved key); the endpoint was then cleared.
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(launchedWith: launchedWithF), task, ProviderEndpoint.NoEndpoints, names).ShouldBeFalse();
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(launchedWith: launchedWithF), task, null, names).ShouldBeFalse();
+
+        // (c) Launched with F; the endpoint is now F' (another host), or the same host under another key NAME.
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(launchedWith: launchedWithF), task, fPrime, names).ShouldBeFalse();
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(launchedWith: launchedWithF), task, fOtherKey, names).ShouldBeFalse();
+
+        // (d) Launched with F; the endpoint is still F: match.
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(launchedWith: launchedWithF), task, f, names).ShouldBeTrue();
+
+        // Codex: F and F' differ only in the -c argv tail (same key NAME, same env names), which the
+        // inherit-list env view cannot see; the stamp carries the tail, so this is still no match.
+        var codexTask = new AgentTask { AgentKind = AgentKind.Codex, InheritedLaunchEnvJson = "{}" };
+        var codexF = new Dictionary<AgentKind, ProviderEndpoint> { [AgentKind.Codex] = new("https://codex-0167.local", C0167KeyName) };
+        var codexFPrime = new Dictionary<AgentKind, ProviderEndpoint> { [AgentKind.Codex] = new("https://codex-prime-0167.local", C0167KeyName) };
+        var launchedWithCodexF = Stamp(codexF, kind: AgentKind.Codex);
+        launchedWithCodexF.ShouldNotBeNull();
+        launchedWithCodexF.ShouldContain("model_providers.antiphon.base_url");
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(kind: AgentKind.Codex, launchedWith: launchedWithCodexF), codexTask, codexFPrime, names).ShouldBeFalse();
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(kind: AgentKind.Codex, launchedWith: launchedWithCodexF), codexTask, codexF, names).ShouldBeTrue();
+
+        // A row that predates the stamp (null) is a process launched with no projection: it still
+        // serves a task on a project with no endpoint, and nothing else.
+        AgentTaskDispatcher.InheritedEnvMatchesPool(Delegate(launchedWith: null), task, ProviderEndpoint.NoEndpoints, names).ShouldBeTrue();
+    }
+
+    /// <summary>What a cold launch stamps on the pool row for these inputs (the predicate's agent side).</summary>
+    private static string? Stamp(
+        IReadOnlyDictionary<AgentKind, ProviderEndpoint>? map,
+        ProviderEndpointMode mode = ProviderEndpointMode.Inherit,
+        ProviderEndpoint? own = null,
+        AgentKind kind = AgentKind.ClaudeCode) =>
+        ProviderEndpointLayers.PoolFingerprint(kind, map, mode, own);
+
+    private static Agent Delegate(
+        ProviderEndpointMode mode = ProviderEndpointMode.Inherit,
+        ProviderEndpoint? own = null,
+        IReadOnlyDictionary<string, string>? launchEnv = null,
+        AgentKind kind = AgentKind.ClaudeCode,
+        string? launchedWith = null) => new()
+    {
+        Id = Guid.NewGuid(),
+        Kind = kind,
+        IsPoolDelegate = true,
+        ProviderEndpointMode = mode,
+        ProviderEndpointJson = ProviderEndpoint.Serialize(own),
+        LaunchEnvJson = AgentLaunchEnv.Serialize(launchEnv),
+        PoolProviderProjectionJson = launchedWith,
+    };
 
     private static string[] Lines(IReadOnlyDictionary<string, string> env) =>
         env.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key}={p.Value}").ToArray();

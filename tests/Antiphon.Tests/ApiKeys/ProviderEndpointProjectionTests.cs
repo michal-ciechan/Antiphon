@@ -343,6 +343,55 @@ public class ProviderEndpointProjectionTests
     }
 
     [Test]
+    public void C0167_save_path_refuses_every_url_the_launch_path_refuses()
+    {
+        // Review e4b591eb D2: S2's save validator (ProviderEndpointSettings.ValidateBaseUrl, the
+        // project and agent routes) and S1's launch validator (ProviderEndpoint.Validate, re-run by
+        // For at every launch) must agree, or a URL saves with 200 and every launch is then refused.
+        // Every URL the launch refuses is refused at save under the same code; the five the review
+        // executed are named, the rest come from the launch roster above.
+        var launchRefused = RefusedUrls.Values
+            .Concat(["https://proxy.local:0", "https://proxy.local:65536/v1", "http://127.0.0.1:99999", "http://[::1]:0/"])
+            .Concat(
+            [
+                "http://127.0.0.1:0",
+                "https://proxy.example.com/v1\"x",
+                "https://proxy.example.com/a\\b",
+                "https://proxy.example.com/a\u00A0b",
+                "https://proxy.example.com/a\u0085b",
+            ])
+            .ToList();
+
+        foreach (var url in launchRefused)
+        {
+            var atLaunch = Should.Throw<ValidationException>(
+                () => new ProviderEndpoint(url, KeyName).Validate(AgentKind.ClaudeCode), $"launch roster: {url}");
+            var atSave = Should.Throw<ValidationException>(
+                () => ProviderEndpointSettings.ValidateBaseUrl(url, "providerEndpoint.baseUrl"), $"save must refuse: {url}");
+            atSave.StatusCode.ShouldBe(422);
+            atSave.Errors.Keys.ShouldBe(["providerEndpoint.baseUrl"]);
+            string.Join(" ", atSave.Errors.Values.SelectMany(v => v)).ShouldNotContain(url);
+            if (atSave.Code != ProviderEndpointSettings.InvalidUrlCode)
+                atSave.Code.ShouldBe(atLaunch.Code, $"a rule S2 does not own keeps S1's code: {url}");
+        }
+
+        // The five the review executed carry S1's own codes (S2 had no rule for them).
+        ProviderEndpointSettingsCode("http://127.0.0.1:0").ShouldBe("provider_endpoint_base_url_port");
+        ProviderEndpointSettingsCode("https://proxy.example.com/v1\"x").ShouldBe("provider_endpoint_base_url_characters");
+        ProviderEndpointSettingsCode("https://proxy.example.com/a\\b").ShouldBe("provider_endpoint_base_url_characters");
+        ProviderEndpointSettingsCode("https://proxy.example.com/a\u00A0b").ShouldBe("provider_endpoint_base_url_characters");
+        ProviderEndpointSettingsCode("https://proxy.example.com/a\u0085b").ShouldBe("provider_endpoint_base_url_characters");
+
+        // And what the launch accepts, the save still accepts, normalised the same way.
+        ProviderEndpointSettings.ValidateBaseUrl("https://proxy.local:8443/", "f").ShouldBe("https://proxy.local:8443");
+        ProviderEndpointSettings.ValidateBaseUrl("http://[::1]:8080/", "f").ShouldBe("http://[::1]:8080");
+        ProviderEndpointSettings.ValidateBaseUrl("http://127.0.0.1:8080", "f").ShouldBe("http://127.0.0.1:8080");
+
+        static string ProviderEndpointSettingsCode(string url) =>
+            Should.Throw<ValidationException>(() => ProviderEndpointSettings.ValidateBaseUrl(url, "f.baseUrl")).Code;
+    }
+
+    [Test]
     public void C0167_For_refuses_a_stored_bad_url_without_echoing_it()
     {
         // Parse is not a gate (an unreadable column must not take an agent offline), so a row written
