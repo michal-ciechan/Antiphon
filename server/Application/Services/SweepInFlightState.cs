@@ -38,6 +38,9 @@ public sealed class SweepInFlightState
     public Task WhenReleasedAsync(string name) =>
         _running.TryGetValue(name, out var entry) ? entry.Released.Task : Task.CompletedTask;
 
+    /// <summary>Join owned scopes after the maintenance loop has stopped registering new sweeps.</summary>
+    public Task WhenAllReleasedAsync() => Task.WhenAll(_running.Values.Select(entry => entry.Released.Task));
+
     private sealed class Entry(DateTime since)
     {
         public DateTime Since { get; } = since;
