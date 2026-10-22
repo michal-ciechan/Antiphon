@@ -329,6 +329,10 @@ public sealed partial class AgentTaskDispatcher
     {
         Scope, RoutingPin, ModelHeld, CapacityWait, RepairSourceLanding, SiblingLanding, Lease, ConcurrencyCap, PinnedAgent,
         RemotePrep, RemotePrepBackoff, RunnerUnavailable, RunnerCapacity, RunnerDraining, Parallel,
+        // CARD-1427 D-2: a prerequisite of the cut is pending (the same-card inspection has no
+        // result yet, or the observation went stale at claim). Unlike SiblingLanding, a task held
+        // here still waits for the lease, so its registered waiter is kept by the end-of-tick reconcile.
+        SiblingInspectionPending,
     }
 
     private sealed class QueuedHoldIndex
@@ -853,7 +857,7 @@ public sealed partial class AgentTaskDispatcher
                 var siblingGuard = _siblingInspections.Take(siblingIntent);
                 if (siblingGuard is null)
                 {
-                    heldThisTick.Add((task.Id, HoldKind.SiblingLanding));
+                    heldThisTick.Add((task.Id, HoldKind.SiblingInspectionPending));
                     await TraceHeldAsync(task, DispatchHoldDetails.SiblingInspectionPending, lastHeld, ct);
                     if (!_siblingInspections.TryEnqueue(siblingIntent))
                         await TraceHeldAsync(task, DispatchHoldDetails.SiblingInspectionCapacity, lastHeld, ct);
@@ -1077,8 +1081,12 @@ public sealed partial class AgentTaskDispatcher
         }
 
         // CARD-0672 D-2: only a task refused the lease on THIS tick still waits for it.
+        // CARD-1427 D-1/D-2: except that a registered waiter whose only hold this tick is a cut
+        // prerequisite (inspection pending, observation stale at claim) keeps its turn and its Since.
         var heldOnLease = heldThisTick.Where(h => h.Kind == HoldKind.Lease).Select(h => h.TaskId).ToHashSet();
-        _leaseWaiters?.ReconcileDispatch(heldOnLease, ready);
+        var prerequisitePending = heldThisTick.Where(h => h.Kind == HoldKind.SiblingInspectionPending)
+            .Select(h => h.TaskId).ToHashSet();
+        _leaseWaiters?.ReconcileDispatch(heldOnLease, ready, prerequisitePending);
 
         var occupantShorts = busyScopes
             .Select(s => DelegationReportFormatter.Short(s.Id))
