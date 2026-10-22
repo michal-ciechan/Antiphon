@@ -73,10 +73,11 @@ public partial class DispatcherSiblingInspectionSchedulingTests
         await using var f = await SiblingInspectionFixture.CreateAsync(
             configure: services => RefuseLease(services, waiters, refusals: 1));
         var common = await f.Git.CommonDirectoryAsync(f.Repo.Path, default);
+        var workerCommands = CountWorkerCommands(f);
 
         await f.ObserveAsync();
-        var inspections = f.Git.Calls.Count(c => c[0] == "for-each-ref");
-        inspections.ShouldBe(1, "one owned inspection observed the card");
+        var inspected = Volatile.Read(ref workerCommands.Value);
+        inspected.ShouldBeGreaterThan(0, "one owned inspection observed the card");
 
         var refused = await f.TickAsync();
         refused.HeldOnLease.ShouldBe(1);
@@ -84,13 +85,13 @@ public partial class DispatcherSiblingInspectionSchedulingTests
         waiters.Snapshot(common).ShouldHaveSingleItem().TaskId.ShouldBe(f.Task.Id);
         f.Queue.Outstanding.ShouldBe(1, "the refused attempt's result is retained");
         f.Queue.InFlight.ShouldBe(0, "no new inspection was enqueued");
-        f.Git.Calls.Count(c => c[0] == "for-each-ref").ShouldBe(inspections, "the refusal did not re-inspect");
+        Volatile.Read(ref workerCommands.Value).ShouldBe(inspected, "the refusal did not re-inspect");
 
         f.Clock.Advance(TimeSpan.FromSeconds(10));
         var granted = await f.TickAsync();
         granted.Dispatched.ShouldBe(1, "the retained observation is claimed and cut on the next attempt");
         granted.HeldOnLease.ShouldBe(0);
-        f.Git.Calls.Count(c => c[0] == "for-each-ref").ShouldBe(inspections, "the inspection ran once in total");
+        Volatile.Read(ref workerCommands.Value).ShouldBe(inspected, "the inspection ran once in total");
         await using var read = f.Read();
         var task = await read.AgentTasks.SingleAsync(t => t.Id == f.Task.Id);
         task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
@@ -116,9 +117,11 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                 onGranted: () => fixture!.Repo.CommitFileAsync("moved.txt", "the land that moved master")));
         fixture = f;
         var common = await f.Git.CommonDirectoryAsync(f.Repo.Path, default);
+        var workerCommands = CountWorkerCommands(f);
 
         await f.ObserveAsync();
-        var inspections = f.Git.Calls.Count(c => c[0] == "for-each-ref");
+        var inspected = Volatile.Read(ref workerCommands.Value);
+        inspected.ShouldBeGreaterThan(0);
         var t1 = f.Clock.GetUtcNow();
         (await f.TickAsync()).HeldOnLease.ShouldBe(1);
         waiters.Snapshot(common).ShouldHaveSingleItem().Since.ShouldBe(t1);
@@ -143,7 +146,9 @@ public partial class DispatcherSiblingInspectionSchedulingTests
             w => w.Since.ShouldBe(t1, "the waiter keeps its turn across the stale-at-claim tick"));
 
         await f.Queue.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(15));
-        f.Git.Calls.Count(c => c[0] == "for-each-ref").ShouldBe(inspections + 1, "exactly one fresh inspection");
+        Volatile.Read(ref workerCommands.Value).ShouldBeGreaterThan(inspected, "a fresh owned inspection ran");
+        f.Queue.InFlight.ShouldBe(0);
+        f.Queue.Outstanding.ShouldBe(1, "exactly one fresh observation is retained");
         f.Clock.Advance(TimeSpan.FromSeconds(10));
         var cut = await f.TickAsync();
         cut.Dispatched.ShouldBe(1, "the fresh observation is claimed and cut");
@@ -153,6 +158,24 @@ public partial class DispatcherSiblingInspectionSchedulingTests
         (await ScratchGitRepo.GitInAsync(dispatched.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim()
             .ShouldBe((await f.Repo.GitReadAsync("rev-parse", "master")).Trim(), "cut from the moved master");
         waiters.IsEmpty.ShouldBeTrue();
+    }
+
+    private sealed class Counter { public int Value; }
+
+    /// <summary>
+    /// Git commands issued by the owned inspection workers: the claim's revalidation and the cut run
+    /// on the tick with no worker active, so they are not counted. Independent of how many commands
+    /// one inspection issues.
+    /// </summary>
+    private static Counter CountWorkerCommands(SiblingInspectionFixture f)
+    {
+        var counter = new Counter();
+        f.Git.Before = (_, _) =>
+        {
+            if (f.Queue.Active > 0) Interlocked.Increment(ref counter.Value);
+            return Task.FromResult<LandingGitResult?>(null);
+        };
+        return counter;
     }
 
     private static void RefuseLease(IServiceCollection services, RepositoryLeaseWaiters waiters, int refusals,
