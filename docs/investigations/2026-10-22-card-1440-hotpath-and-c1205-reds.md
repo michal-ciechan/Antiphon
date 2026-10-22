@@ -52,7 +52,7 @@ H2 shows that the missing wiring is the whole cause. No plan or index assertion 
 - `Harness.CreateAsync` (`tests/Antiphon.Tests/Application/WorkingTranscriptRecoveryTests.cs:478`)
   ingests the `UserPrompt` row through `Runtime.PersistTranscriptAsync`.
 - Since dd039a405, every persisted row is admitted as a durable action:
-  `AgentSessionRuntime.cs:1388` calls `AdmitActionsAsync`, which calls
+  `AgentSessionRuntime.cs:1396` (and the per-row fallback at `:1488`, `:1524`) calls `AdmitActionsAsync`, which calls
   `SessionRuntimeActionCoordinator.Admit` (`:1470`). That writes a `SessionRuntimeAction` with
   `TranscriptEntryId = row.Id` (`SessionRuntimeActionCoordinator.cs:46-47`).
 - The FK is `OnDelete(DeleteBehavior.Restrict)` (`server/Infrastructure/Data/AppDbContext.cs:1637`;
