@@ -60,6 +60,10 @@ worktree registration, index/HEAD/remote and no removal commands. This reaches
 inspection two without pre-seeding a repository that must refuse earlier.
 No timeout changes, retries or product changes.
 
+S2 is implemented in `tests/Antiphon.Tests/Application/AgentTaskLandRemovalMatrixTests.cs`.
+This report is frozen with the implementation before its final checkpoint; green
+qualification is not yet claimed in this committed document.
+
 ## Verification design
 
 | ID | Ordinary proof | Required result |
@@ -94,6 +98,7 @@ rerun only a red row after a genuine repair. No repeated green proof is needed.
 
 All controls remain pending for Mutation after ordinary Review and landing.
 Unbound candidate inventory (bind to the actual landed source before execution):
+`docs/superpowers/mutations/2026-10-22-card-1511-removal-matrix-candidate.md`.
 
 | ID | Deliberate mutant, owned by Mutation | Expected non-stub failure |
 |---|---|---|
