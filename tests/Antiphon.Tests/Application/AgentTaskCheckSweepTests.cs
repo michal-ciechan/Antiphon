@@ -738,9 +738,10 @@ public class AgentTaskCheckSweepTests
         stored.Status.ShouldBe(QueuedMessageStatus.Canceled);
         stored.DeliveryAttempts.ShouldBe(1, "the last look cancels instead of re-typing");
         harness.Runner.Writes.ShouldBeEmpty("no write while the canceled check may stand in the composer");
-        events.PublishedEvents.ShouldContain(e => e.EventName == "SessionQueueChanged"
-            && e.Payload is SessionQueueDto queue && queue.SessionId == seed.CallerSessionId
-            && queue.Messages.All(m => m.Id != noteId),
+        events.PublishedEvents.Where(e => e.EventName == "SessionQueueChanged")
+            .Select(e => e.Payload).OfType<SessionQueueDto>()
+            .ShouldContain(queue => queue.SessionId == seed.CallerSessionId
+                && queue.Messages.All(m => m.Id != noteId),
             "holding input must still publish the check cancellation to the caller's queue");
     }
 
