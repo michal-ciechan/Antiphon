@@ -136,7 +136,7 @@ pick 17dc4a9899cab08323774655c4d9a86f226219dd
 pick dd980c82e9932b35bf4bf2d9d6f5726380709e0b
 pick 285aa79bf05fc677d437dc4185be71571321d9ab
 pick aed1449a8a7a6c0321ae81b287fa1066a222ad0e
-pick 8ef0baca812807bf83c7c34578173ac61a36eed6
+skip_docs 8ef0baca812807bf83c7c34578173ac61a36eed6
 
 # CARD-1500: Review order, including explicit prerequisite/scope-plan skips.
 skip_docs 5d9cdbe9b92a0a8ab5fa94588a8af94d8afdb0f4
