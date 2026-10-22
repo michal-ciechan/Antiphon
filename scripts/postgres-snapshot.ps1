@@ -228,13 +228,158 @@ function Update-SnapshotRetention {
     return [pscustomobject]@{ Ok = $true; Reason = 'prune'; Kept = $left.Count }
 }
 
-function Protect-SnapshotStaging {
+# Windows principals that may hold access on the caller's staging directories
+# (CARD-1413 D-2), and the owners a parent directory may have.
+$script:SnapshotWindowsSystemSid = 'S-1-5-18'
+$script:SnapshotWindowsAdministratorsSid = 'S-1-5-32-544'
+$script:SnapshotWindowsTrustedInstallerSid = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+# Rights that let a principal rename, delete or re-permission a path
+# component: DELETE, FILE_DELETE_CHILD, WRITE_DAC, WRITE_OWNER, GENERIC_WRITE
+# and GENERIC_ALL.
+$script:SnapshotWindowsHijackMask = [int64]0x10000 -bor [int64]0x40 -bor [int64]0x40000 -bor [int64]0x80000 -bor [int64]0x40000000 -bor [int64]0x10000000
+
+function Get-SnapshotWindowsCallerSid {
+    try { return [string][System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value } catch { return '' }
+}
+
+function Test-SnapshotWindowsElevated {
+    try {
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+        return [bool]$principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch {
+        return $false
+    }
+}
+
+# Reads a directory's owner and every access entry, inherited or explicit, as
+# plain SID strings and access masks. $null when the security cannot be read.
+function Get-SnapshotWindowsSecurity {
     param([string]$Path)
+    try {
+        $acl = Get-Acl -LiteralPath $Path
+        $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier])
+        $rules = New-Object System.Collections.Generic.List[object]
+        foreach ($rule in @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))) {
+            $flags = [int]$rule.PropagationFlags
+            [void]$rules.Add([pscustomobject]@{
+                Sid = [string]$rule.IdentityReference.Value
+                Type = [string]$rule.AccessControlType
+                Rights = [int64]$rule.FileSystemRights.value__
+                InheritOnly = (($flags -band 2) -ne 0)
+                Inherited = [bool]$rule.IsInherited
+            })
+        }
+        $ownerSid = ''
+        if ($owner) { $ownerSid = [string]$owner.Value }
+        return [pscustomobject]@{ Owner = $ownerSid; Rules = $rules.ToArray() }
+    } catch {
+        return $null
+    }
+}
+
+function Get-SnapshotWindowsPermittedSids {
+    param([string]$CallerSid)
+    return @($CallerSid, $script:SnapshotWindowsSystemSid, $script:SnapshotWindowsAdministratorsSid)
+}
+
+# $Rules are objects with Sid, Type (Allow or Deny), Rights (access mask) and
+# InheritOnly. Strict (the root and each run directory): no Allow entry may
+# name any SID other than the caller, SYSTEM and Administrators. A parent: no
+# other SID may hold a right that renames, deletes or re-permissions the
+# component itself; an inherit-only entry does not apply to the component. A
+# Deny entry grants nothing. Unreadable rules or an unknown caller refuse.
+function Test-SnapshotWindowsRules {
+    param($Rules, [string]$CallerSid, [bool]$Strict)
+    if ($null -eq $Rules) { return $false }
+    if ([string]::IsNullOrWhiteSpace($CallerSid)) { return $false }
+    $permitted = Get-SnapshotWindowsPermittedSids $CallerSid
+    foreach ($rule in @($Rules)) {
+        if (-not $rule) { continue }
+        if ([string]$rule.Type -ne 'Allow') { continue }
+        $sid = [string]$rule.Sid
+        if (-not [string]::IsNullOrWhiteSpace($sid) -and ($permitted -contains $sid)) { continue }
+        if ($Strict) { return $false }
+        if ([bool]$rule.InheritOnly) { continue }
+        $mask = ([int64]$rule.Rights) -band 0xFFFFFFFF
+        if (($mask -band $script:SnapshotWindowsHijackMask) -ne 0) { return $false }
+    }
+    return $true
+}
+
+# '' or the refusal reason for one directory. Strict directories must be owned
+# by the caller (or Administrators when elevated); a parent may also be owned
+# by SYSTEM, Administrators or TrustedInstaller.
+function Test-SnapshotWindowsDirectory {
+    param([string]$Path, [bool]$Strict, [string]$CallerSid, [scriptblock]$Reader, [bool]$Elevated)
+    if ([string]::IsNullOrWhiteSpace($CallerSid)) { return 'staging-owner' }
+    $security = & $Reader $Path
+    if (-not $security) { return 'staging-owner' }
+    $owner = [string]$security.Owner
+    $owners = @($CallerSid)
+    if ($Elevated) { $owners += $script:SnapshotWindowsAdministratorsSid }
+    if (-not $Strict) {
+        $owners += @($script:SnapshotWindowsSystemSid, $script:SnapshotWindowsAdministratorsSid, $script:SnapshotWindowsTrustedInstallerSid)
+    }
+    if ([string]::IsNullOrWhiteSpace($owner) -or -not ($owners -contains $owner)) { return 'staging-owner' }
+    if (-not (Test-SnapshotWindowsRules $security.Rules $CallerSid $Strict)) {
+        if ($Strict) { return 'staging-mode' }
+        return 'staging-parent'
+    }
+    return ''
+}
+
+function Resolve-SnapshotWindowsContext {
+    param([string]$CallerSid, [scriptblock]$Reader, [bool]$Elevated, [bool]$ElevatedGiven)
+    if (-not $Reader) {
+        $Reader = { param([string]$Path) Get-SnapshotWindowsSecurity $Path }
+        if ([string]::IsNullOrWhiteSpace($CallerSid)) { $CallerSid = Get-SnapshotWindowsCallerSid }
+        if (-not $ElevatedGiven) { $Elevated = Test-SnapshotWindowsElevated }
+    }
+    return [pscustomobject]@{ CallerSid = $CallerSid; Reader = $Reader; Elevated = $Elevated }
+}
+
+# The Windows staging root check: the root itself is strict, then every parent
+# up to the drive root is checked for rename, delete and re-permission rights.
+# -CallerSid, -Reader and -Elevated are the seam the witness uses off Windows.
+function Test-SnapshotWindowsStagingRoot {
+    param([string]$Path, [string]$CallerSid = '', [scriptblock]$Reader = $null, [bool]$Elevated = $false)
+    $context = Resolve-SnapshotWindowsContext $CallerSid $Reader $Elevated $PSBoundParameters.ContainsKey('Elevated')
+    $full = [System.IO.Path]::GetFullPath($Path)
+    $state = Test-SnapshotWindowsDirectory $full $true $context.CallerSid $context.Reader $context.Elevated
+    if ($state -ne '') { return $state }
+    $cursor = [System.IO.Path]::GetDirectoryName($full)
+    while (-not [string]::IsNullOrWhiteSpace($cursor)) {
+        $state = Test-SnapshotWindowsDirectory $cursor $false $context.CallerSid $context.Reader $context.Elevated
+        if ($state -ne '') { return $state }
+        $parent = [System.IO.Path]::GetDirectoryName($cursor)
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $cursor) { break }
+        $cursor = $parent
+    }
+    return ''
+}
+
+function Test-SnapshotWindowsOwnedDirectory {
+    param([string]$Path, [string]$CallerSid = '', [scriptblock]$Reader = $null, [bool]$Elevated = $false)
+    $context = Resolve-SnapshotWindowsContext $CallerSid $Reader $Elevated $PSBoundParameters.ContainsKey('Elevated')
+    $full = [System.IO.Path]::GetFullPath($Path)
+    return (Test-SnapshotWindowsDirectory $full $true $context.CallerSid $context.Reader $context.Elevated) -eq ''
+}
+
+# Creates $Path owner-only in one step, so no other account can put files in
+# it first: on Windows the directory is created with a protected DACL that
+# names only the caller; elsewhere mkdir -m 0700 creates it. An existing path
+# is never adopted, and the result is re-read before it is trusted.
+function New-SnapshotPrivateDirectory {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path) -or (Test-Path -LiteralPath $Path)) { return $false }
     if ($env:OS -eq 'Windows_NT') {
         try {
+            $sid = Get-SnapshotWindowsCallerSid
+            if ([string]::IsNullOrWhiteSpace($sid)) { return $false }
+            $identity = New-Object System.Security.Principal.SecurityIdentifier($sid)
             $acl = New-Object System.Security.AccessControl.DirectorySecurity
             $acl.SetAccessRuleProtection($true, $false)
-            $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
             $inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
             $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
                 $identity,
@@ -244,21 +389,24 @@ function Protect-SnapshotStaging {
                 [System.Security.AccessControl.AccessControlType]::Allow)
             $acl.AddAccessRule($rule)
             $dir = New-Object System.IO.DirectoryInfo $Path
-            $dir.SetAccessControl($acl)
-            return $true
+            if ($PSVersionTable.PSEdition -eq 'Desktop') {
+                $dir.Create($acl)
+            } else {
+                [System.IO.FileSystemAclExtensions]::Create($dir, $acl)
+            }
         } catch {
             return $false
         }
+    } else {
+        # Callers may isolate PATH to fixture binaries, so mkdir is not looked up there.
+        $mkdir = Get-SnapshotUnixTool 'mkdir'
+        if (-not $mkdir) { return $false }
+        $made = Invoke-SnapshotNative $mkdir @('-m', '0700', '--', $Path)
+        if ($made.Exit -ne 0) { return $false }
     }
-    # Callers may isolate PATH to fixture binaries, so chmod is not looked up there.
-    $chmod = $null
-    foreach ($candidate in @('/bin/chmod', '/usr/bin/chmod')) {
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $chmod = $candidate; break }
-    }
-    if (-not $chmod) { return $false }
-    & $chmod '0700' '--' $Path
-    if ($LASTEXITCODE -ne 0) { return $false }
-    return $true
+    if (Test-SnapshotContainsLink $Path) { return $false }
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return $false }
+    return Test-SnapshotOwnedDirectory $Path
 }
 
 function Test-SnapshotContainsLink {
@@ -356,9 +504,12 @@ function Get-SnapshotUnixUid {
     return -1
 }
 
+# Owner-only: on Windows the owner is the caller (or Administrators when
+# elevated) and no access entry names anyone but the caller, SYSTEM and
+# Administrators; on Unix the owner is the caller and no group/other bit is set.
 function Test-SnapshotOwnedDirectory {
     param([string]$Path)
-    if ($env:OS -eq 'Windows_NT') { return (Test-SnapshotWindowsOwner $Path) -eq '' }
+    if ($env:OS -eq 'Windows_NT') { return Test-SnapshotWindowsOwnedDirectory $Path }
     $me = Get-SnapshotUnixUid
     $info = Get-SnapshotUnixStat $Path
     if ($me -lt 0 -or -not $info) { return $false }
@@ -366,36 +517,29 @@ function Test-SnapshotOwnedDirectory {
     return ($info.Uid -eq $me) -and (($info.Mode -band 63) -eq 0)
 }
 
-function Test-SnapshotWindowsOwner {
-    param([string]$Path)
-    try {
-        $acl = Get-Acl -LiteralPath $Path
-        $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier])
-        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-        if ($owner -and $owner.Equals($identity.User)) { return '' }
-        $admins = New-Object System.Security.Principal.SecurityIdentifier([System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
-        $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
-        if ($owner -and $owner.Equals($admins) -and $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) { return '' }
-        return 'staging-owner'
-    } catch {
-        return 'staging-owner'
-    }
-}
-
 # The root must be the caller's and owner-only; each parent must be the
-# caller's or root's, and writable by others only under a sticky bit. An
-# absent root is created owner-only and then checked like an existing one.
+# caller's or root's, and writable by others only under a sticky bit. On
+# Windows the root's DACL may name only the caller, SYSTEM and Administrators
+# and no parent may let anyone else rename, delete or re-permission it. An
+# absent root is created owner-only in one step and then checked like an
+# existing one.
 function Test-SnapshotStagingRoot {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) { return 'staging-owner' }
     if (Test-SnapshotContainsLink $Path) { return 'staging-link' }
     if (-not (Test-Path -LiteralPath $Path)) {
-        try { New-Item -ItemType Directory -Path $Path -Force -ErrorAction Stop | Out-Null } catch { return 'staging-owner' }
-        if (-not (Protect-SnapshotStaging $Path)) { return 'staging-mode' }
+        $above = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($Path))
+        if (-not [string]::IsNullOrWhiteSpace($above) -and -not (Test-Path -LiteralPath $above)) {
+            try { New-Item -ItemType Directory -Path $above -Force -ErrorAction Stop | Out-Null } catch { return 'staging-owner' }
+        }
+        if (-not (New-SnapshotPrivateDirectory $Path)) {
+            if (Test-Path -LiteralPath $Path) { return 'staging-mode' }
+            return 'staging-owner'
+        }
     }
     if (Test-SnapshotContainsLink $Path) { return 'staging-link' }
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return 'staging-owner' }
-    if ($env:OS -eq 'Windows_NT') { return Test-SnapshotWindowsOwner $Path }
+    if ($env:OS -eq 'Windows_NT') { return Test-SnapshotWindowsStagingRoot $Path }
     $me = Get-SnapshotUnixUid
     if ($me -lt 0) { return 'staging-owner' }
     $root = Get-SnapshotUnixStat $Path
@@ -427,9 +571,10 @@ function Initialize-SnapshotStaging {
     }
     if (Test-SnapshotContainsLink $Path) { return $false }
     Clear-SnapshotOwnedFiles $Path $StaleRunMinutes
+    # The run directory is created owner-only in one step; there is no window
+    # in which another account could put files into it before its ACL is set.
     $run = Join-Path $Path ('run-' + [guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $run | Out-Null
-    if (-not (Protect-SnapshotStaging $run)) {
+    if (-not (New-SnapshotPrivateDirectory $run)) {
         Remove-Item -LiteralPath $run -Force -ErrorAction SilentlyContinue
         return $false
     }
