@@ -399,7 +399,7 @@ public sealed class DelegationSettings
     /// <summary>
     /// Task 8333e231 (operator request 2026-10-22, "all apart from review on opus xhigh"): a per-ROLE
     /// Claude <c>--effort</c> that wins over the tier table in
-    /// <see cref="Services.ClaudeLaunchArgs.Effort(AgentModelLevel)"/> for a delegate TASK. Keys are
+    /// <see cref="ClaudeLaunchArgs.Effort(AgentModelLevel)"/> for a delegate TASK. Keys are
     /// <see cref="AgentTaskRole"/> names (case-insensitive, like <see cref="RolePolicy"/>); values are
     /// the Claude CLI's accepted efforts (<c>low</c>, <c>medium</c>, <c>high</c>, <c>xhigh</c>,
     /// <c>max</c>), refused by <see cref="DelegationSettingsValidator"/> at startup otherwise. EMPTY
@@ -1402,6 +1402,25 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
                     failures.Add(
                         $"Delegation:ComplexityChains:{tier} lists {candidate.Kind}/{candidate.Level} twice.");
                 }
+            }
+        }
+
+        // Task 8333e231 (ClaudeEffortByRoleSettingsTests): an unknown role or a value the Claude CLI
+        // would not accept never reaches a launch.
+        foreach (var (role, effort) in options.ClaudeEffortByRole)
+        {
+            if (!Enum.TryParse<AgentTaskRole>(role?.Trim(), ignoreCase: true, out var parsedRole)
+                || !Enum.IsDefined(parsedRole))
+            {
+                failures.Add(
+                    $"Delegation:ClaudeEffortByRole has unknown role '{role}'. Use {string.Join(", ", Enum.GetNames<AgentTaskRole>())}.");
+                continue;
+            }
+
+            if (ClaudeLaunchArgs.Canonical(effort) is null)
+            {
+                failures.Add(
+                    $"Delegation:ClaudeEffortByRole:{role} is '{effort}', which is not a Claude effort. Use {ClaudeLaunchArgs.CatalogSentence}.");
             }
         }
 

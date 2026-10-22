@@ -7035,7 +7035,8 @@ public sealed partial class AgentTaskDispatcher
         {
             extraArgs.AddRange([
                 ClaudeLaunchArgs.EffortFlag,
-                ClaudeLaunchArgs.Effort(task.ModelLevel),
+                // Task 8333e231: the role's Delegation:ClaudeEffortByRole entry wins over the tier.
+                ClaudeLaunchArgs.Effort(task.ModelLevel, task.Role, _settings.ClaudeEffortByRole),
             ]);
         }
 
@@ -7964,6 +7965,19 @@ public sealed partial class AgentTaskDispatcher
             _logger.LogInformation(
                 "Task {ShortId} carries a launch-env override — declining warm reuse so a fresh process can apply it",
                 DelegationReportFormatter.Short(claimed.Id));
+            return ReuseOutcome.SpawnFresh;
+        }
+
+        // Nor can it change its --effort: CARD-0289 made effort a launch ARGUMENT, and the pool
+        // matches on tier, not role. A Delegation:ClaudeEffortByRole entry that differs from the
+        // tier's effort therefore needs a fresh process; a same-tier warm candidate may have been
+        // launched for a role without one (task 8333e231).
+        if (claimed.AgentKind == AgentKind.ClaudeCode
+            && ClaudeLaunchArgs.RoleOverrideDiffersFromTier(claimed.ModelLevel, claimed.Role, _settings.ClaudeEffortByRole))
+        {
+            _logger.LogInformation(
+                "Task {ShortId} has a Claude effort override for role {Role} that differs from its tier — declining warm reuse so a fresh process can apply it",
+                DelegationReportFormatter.Short(claimed.Id), claimed.Role);
             return ReuseOutcome.SpawnFresh;
         }
 
