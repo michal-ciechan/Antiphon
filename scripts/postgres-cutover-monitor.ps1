@@ -49,9 +49,13 @@
     database, restarts anything or changes a setting. The only files it writes are its JSON baseline and result (default
     .antiphon/postgres-cutover/, which is gitignored). It takes no credentials. Diagnostics properties whose
     name or value looks like a credential (password, token, dsn, connection string) are dropped, and URL
-    userinfo (from :// to the last @ before whitespace) and secret-looking query and fragment values (key names compared after
-    percent-decoding; a plain value that percent-decodes to a secret pair or a userinfo URL is masked whole) are
-    masked in every printed line, error and recorded JSON.
+    userinfo (from :// to the last @ on the same line: a newline is the only terminator, so a password may hold
+    quotes, spaces, angle brackets, '/' or '@', and a literal @ later on the line is over-masked; CARD-1423 DEF-1)
+    and secret-looking query, fragment and connection-string values (quoted values included; key names compared
+    after percent-decoding; a plain value that percent-decodes, with '+' read as a space, to a secret pair or a
+    userinfo URL is masked whole, as is one still encoded after four rounds) are masked in every printed line,
+    error and recorded JSON. The raw and escaped userinfo of the given URLs is also replaced wherever it appears
+    there, so an error that quotes the credential without its URL is covered.
 
     Seams for tests, so no server or database is needed:
       -HttpGet      { param([string]$Url) } returns @{ StatusCode = 200; Body = '<text>'; ElapsedMs = <optional> }
@@ -130,12 +134,35 @@ function Test-CutoverSecretName {
 }
 
 # A value shaped like a credential whatever its property is called: a URL or DSN with userinfo (to the last '@'
-# before whitespace, as Hide-CutoverText masks it), or a connection-string pair such as Password= / Pwd=.
+# on the same line, as Hide-CutoverText masks it; CARD-1423 DEF-1), or a connection-string pair such as Password= / Pwd=.
 function Test-CutoverSecretValue {
     param([string]$Value)
-    if ($Value -match '(?i)[a-z][a-z0-9+.\-]*://[^\s"''<>]*@') { return $true }
+    if ($Value -match '(?i)[a-z][a-z0-9+.\-]*://[^\r\n]*@') { return $true }
     return ($Value -match '(?i)(^|[;\s])(password|passwd|pwd|user id|uid|secret|token)\s*=')
 }
+
+# The raw and escaped userinfo of each URL this run was given (CARD-1423 DEF-1): the text from '://' to the last '@' on
+# its first line, its percent-escaped and percent-decoded spellings, and the [uri] parse's UserInfo (which escapes a
+# double quote, a space and angle brackets but keeps an apostrophe). Hide-CutoverText replaces them wherever they
+# appear, so an error that quotes the credential without its URL is covered too. Empty forms are dropped.
+function Get-CutoverUserinfoForms {
+    param([string[]]$Urls)
+    $forms = New-Object System.Collections.Generic.List[string]
+    foreach ($u in @($Urls)) {
+        if (-not $u -or $u -notmatch '(?i)://(?<ui>[^\r\n]*)@') { continue }
+        $raw = [string]$Matches['ui']
+        if (-not $raw) { continue }
+        [void]$forms.Add($raw)
+        try { [void]$forms.Add([uri]::EscapeDataString($raw)) } catch { }
+        try { [void]$forms.Add([uri]::UnescapeDataString($raw)) } catch { }
+        try { $parsed = [uri]$u; if ($parsed.UserInfo) { [void]$forms.Add([string]$parsed.UserInfo) } } catch { }
+    }
+    return @($forms | Where-Object { $_ } | Select-Object -Unique)
+}
+
+# The userinfo forms of the URLs the current invocation was given; set by Invoke-PostgresCutoverMonitor for its
+# duration and empty otherwise, so a direct Hide-CutoverText call masks by the rules alone.
+$script:CutoverKnownUserinfo = @()
 
 # A key=value name that carries a secret, compared after percent-decoding: .NET sends access%5Ftoken as access_token.
 function Test-CutoverSecretKey {
@@ -146,46 +173,73 @@ function Test-CutoverSecretKey {
 }
 
 # A plain (non-secret-keyed) value whose percent-decoding reveals a secret (CARD-1423 A2): x=y%26token%3DS reaches
-# the server as x=y&token=S, and next=http%3A%2F%2Fu%3Ap%40h as a URL with userinfo. Decoding repeats while the
-# text changes, so a double-encoded pair is found too; a value that decodes to nothing secret is kept.
+# the server as x=y&token=S, and next=http%3A%2F%2Fu%3Ap%40h as a URL with userinfo. The server reads '+' in a
+# value as a space, exactly as it reads %20, so every round is also checked with '+' as a space (DEF-1). Decoding
+# repeats while the text changes, up to four rounds, so a double-encoded pair is found; a value still encoded
+# after the bound is a secret whatever it hides (DEF-1: a pair encoded five times passed). A value that decodes
+# to nothing secret is kept.
 function Test-CutoverEncodedSecret {
     param([string]$Value)
     $current = $Value
     for ($i = 0; $i -lt 4; $i++) {
-        if ($current -notmatch '%[0-9a-fA-F]{2}') { return $false }
+        if ($current -notmatch '%[0-9a-fA-F]{2}|\+') { return $false }
         $decoded = $current
         try { $decoded = [uri]::UnescapeDataString($current) } catch { return $true }
+        $spaced = $decoded.Replace('+', ' ')
+        if ((Hide-CutoverText -Text $decoded) -ne $decoded -or (Hide-CutoverText -Text $spaced) -ne $spaced) { return $true }
         if ($decoded -eq $current) { return $false }
-        if ((Hide-CutoverText -Text $decoded) -ne $decoded) { return $true }
         $current = $decoded
     }
-    return $false
+    return ($current -match '%[0-9a-fA-F]{2}')
 }
 
-# Masks URL userinfo and secret-looking key=value pairs (query strings, fragments, connection strings) in any
-# text before it is printed, recorded or returned, including exception messages that embed a URL. Userinfo
-# runs from '://' to the LAST '@' before whitespace, a quote or an angle bracket, so a literal '@' or '/' in a
-# password stays masked (CARD-1423 A1: .NET reads http://u:1234/S3@h/ as host u, port 1234 and path /S3@h/, so
-# nothing is sent, but a value meant as userinfo would print as path text; a path '@' is over-masked instead). A
-# '#' starts a new pair, as in a fragment. The request itself always uses the unmasked URL.
+# Masks, in any text before it is printed, recorded or returned (exception messages that embed a URL included):
+#  1. URL userinfo, from the first scheme '://' to the LAST '@' on the same line. A newline is the only terminator,
+#     so a password may hold '/', '@', quotes, spaces or angle brackets (CARD-1423 A1 and DEF-1: .NET keeps ' " space
+#     < > as part of the password, and the old class stopped at them); a literal '@' later on the line is over-masked.
+#  2. A quoted value (Password="..." or Password='...', DEF-1) of a secret-looking key, masked whole with its quotes;
+#     a plain key's quoted value is masked whole when it percent-decodes to a secret. Skipped for JSON text, where a
+#     raw quote is structure and a quote inside a value is escaped.
+#  3. A secret-looking key=value pair (query strings, fragments, connection strings). A plain value is searched for
+#     pairs of its own (a URL inside a value, a '#' fragment) and, when it percent-decodes to a secret, masked whole.
+#  4. The raw and escaped userinfo forms of the URLs this run was given ($script:CutoverKnownUserinfo, plus
+#     -KnownUserinfo), replaced wherever they appear (DEF-1), longest first.
+# -JsonText is for serialized JSON: a pair value stops at a structural '"' (an escaped quote is part of the value) and
+# the known forms are matched in their JSON-escaped spelling too. The request itself always uses the unmasked URL.
 function Hide-CutoverText {
-    param([string]$Text)
+    param([string]$Text, [switch]$JsonText, [string[]]$KnownUserinfo = @())
     if (-not $Text) { return $Text }
-    $t = [regex]::Replace($Text, '(?i)\b([a-z][a-z0-9+.\-]*://)[^\s"''<>]*@', '$1<redacted>@')
-    $pair = '(?i)(?<lead>(?:^|[?&;#"''\s]|\\u0026)(?<key>(?:[a-z0-9_.\-]|%[0-9a-f]{2})+)\s*=\s*)(?<val>[^&;\s"''\\<>]+)'
-    $evaluator = [System.Text.RegularExpressions.MatchEvaluator]{
+    $t = [regex]::Replace($Text, '(?i)\b([a-z][a-z0-9+.\-]*://)[^\r\n]*@', '$1<redacted>@')
+    $lead = '(?i)(?<lead>(?:^|[?&;#"''\s]|\\u0026)(?<key>(?:[a-z0-9_.\-]|%[0-9a-f]{2})+)\s*=\s*)'
+    if (-not $JsonText) {
+        $quoted = [System.Text.RegularExpressions.MatchEvaluator]{
+            param($m)
+            $val = $m.Groups['val'].Value
+            if ((Test-CutoverSecretKey -Key $m.Groups['key'].Value) -or (Test-CutoverEncodedSecret -Value $val.Substring(1, $val.Length - 2))) { return $m.Groups['lead'].Value + '<redacted>' }
+            return $m.Value
+        }
+        $t = [regex]::Replace($t, $lead + '(?<val>"[^"\r\n]*"|''[^''\r\n]*'')', $quoted)
+    }
+    $valClass = '(?:[^&;\s\\]|\\.)+'
+    if ($JsonText) { $valClass = '(?:[^&;\s"\\]|\\.)+' }
+    $pair = [System.Text.RegularExpressions.MatchEvaluator]{
         param($m)
         if (Test-CutoverSecretKey -Key $m.Groups['key'].Value) { return $m.Groups['lead'].Value + '<redacted>' }
-        # A plain value ends at '#'; what follows is a fragment whose own pairs are masked the same way.
         $val = $m.Groups['val'].Value
-        $rest = ''
-        $hash = $val.IndexOf('#')
-        if ($hash -ge 0) { $rest = Hide-CutoverText -Text $val.Substring($hash); $val = $val.Substring(0, $hash) }
+        # A plain value can hold pairs of its own (a nested URL's query, a '#' fragment): they are masked in place.
+        $inner = Hide-CutoverText -Text $val -JsonText:$JsonText
+        if ($inner -ne $val) { return $m.Groups['lead'].Value + $inner }
         # A plain value that percent-decodes to a secret (an embedded pair, a URL with userinfo) is one whole.
-        if (Test-CutoverEncodedSecret -Value $val) { $val = '<redacted>' }
-        return $m.Groups['lead'].Value + $val + $rest
+        if (Test-CutoverEncodedSecret -Value $val) { return $m.Groups['lead'].Value + '<redacted>' }
+        return $m.Value
     }
-    return [regex]::Replace($t, $pair, $evaluator)
+    $t = [regex]::Replace($t, $lead + '(?<val>' + $valClass + ')', $pair)
+    $forms = @(@($script:CutoverKnownUserinfo) + @($KnownUserinfo) | Where-Object { $_ })
+    if ($JsonText) {
+        $forms = @($forms | ForEach-Object { $_; $j = ConvertTo-Json -InputObject ([string]$_) -Compress; $j.Substring(1, $j.Length - 2) })
+    }
+    foreach ($f in @($forms | Where-Object { $_ } | Select-Object -Unique | Sort-Object -Property Length -Descending)) { $t = $t.Replace($f, '<redacted>') }
+    return $t
 }
 
 function Hide-CutoverSecrets {
@@ -388,8 +442,9 @@ function Invoke-CutoverHttpGet {
         $sw.Stop()
         $code = 0
         try { if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } } catch { $code = 0 }
-        # The message can embed the URL (a [uri] conversion error quotes it whole), so it is masked here.
-        return [pscustomobject]@{ Ok = $false; StatusCode = $code; Body = ''; ElapsedMs = $sw.Elapsed.TotalMilliseconds; Error = (Hide-CutoverText -Text ([string]$_.Exception.Message)) }
+        # The message can embed the URL (a [uri] conversion error quotes it whole, a request error quotes the escaped
+        # AbsoluteUri), so it is masked here, this URL's raw and escaped userinfo included (CARD-1423 DEF-1).
+        return [pscustomobject]@{ Ok = $false; StatusCode = $code; Body = ''; ElapsedMs = $sw.Elapsed.TotalMilliseconds; Error = (Hide-CutoverText -Text ([string]$_.Exception.Message) -KnownUserinfo (Get-CutoverUserinfoForms -Urls @($Url))) }
     }
 }
 
@@ -613,7 +668,7 @@ function Write-CutoverJson {
     param([string]$Path, $Object)
     $dir = Split-Path -Parent $Path
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    $json = Hide-CutoverText -Text ($Object | ConvertTo-Json -Depth 12)
+    $json = Hide-CutoverText -Text ($Object | ConvertTo-Json -Depth 12) -JsonText
     [System.IO.File]::WriteAllText($Path, $json + [Environment]::NewLine)
 }
 
@@ -651,15 +706,21 @@ function Invoke-PostgresCutoverMonitor {
         [scriptblock]$Now
     )
     $ErrorActionPreference = 'Stop'
+    # The raw and escaped userinfo of the given URLs is replaced on every surface for this invocation (DEF-1).
+    $script:CutoverKnownUserinfo = @(Get-CutoverUserinfoForms -Urls @($ServerBaseUrl, $PipelineUrl, $TaskListUrl))
     try {
-        $o = Invoke-CutoverMonitorCore @PSBoundParameters
-    } catch {
-        $msg = Hide-CutoverText -Text ([string]$_.Exception.Message)
-        $lines = @(('INVALID unexpected error: ' + $msg), ('CUTOVER-MONITOR mode=' + $Mode + ' verdict=INVALID exit=4'))
-        return [pscustomobject]@{ ExitCode = 4; Verdict = 'INVALID'; Lines = $lines; Result = $null; ResultPath = '' }
+        try {
+            $o = Invoke-CutoverMonitorCore @PSBoundParameters
+        } catch {
+            $msg = Hide-CutoverText -Text ([string]$_.Exception.Message)
+            $lines = @(('INVALID unexpected error: ' + $msg), ('CUTOVER-MONITOR mode=' + $Mode + ' verdict=INVALID exit=4'))
+            return [pscustomobject]@{ ExitCode = 4; Verdict = 'INVALID'; Lines = $lines; Result = $null; ResultPath = '' }
+        }
+        $masked = @(@($o.Lines) | ForEach-Object { Hide-CutoverText -Text ([string]$_) })
+        return [pscustomobject]@{ ExitCode = $o.ExitCode; Verdict = $o.Verdict; Lines = $masked; Result = $o.Result; ResultPath = $o.ResultPath }
+    } finally {
+        $script:CutoverKnownUserinfo = @()
     }
-    $masked = @(@($o.Lines) | ForEach-Object { Hide-CutoverText -Text ([string]$_) })
-    return [pscustomobject]@{ ExitCode = $o.ExitCode; Verdict = $o.Verdict; Lines = $masked; Result = $o.Result; ResultPath = $o.ResultPath }
 }
 
 function Invoke-CutoverMonitorCore {
