@@ -46,3 +46,5 @@ One build serves every row (all rows read one test assembly) and all rows are on
 **CP-5 repair.** At `8c285b514` CP-5 was 43: 41 passed, 2 failed (both control witnesses). `StartInteractiveSessionAsync` reloads the agent inside its reservation, which discarded a stamp set before it, so the stamp moved after that reload (`79604e7b9`). The attach witness had seeded the pool flag through a second context while the harness scope still tracked the row (a test artifact: production gives each request its own scope), so it now seeds through the harness scope's context.
 
 No V-n/R-n IDs and no PC table exist in the plan. The Unit lane is not a row: the brief for 8c2a794e asks for minimal testing with no whole-suite runs, and every changed production path is covered by CP-3..CP-6. The plan's two operator acceptance items are unchanged and remain operator-run after land.
+
+**Re-cut addendum:** the re-cut onto master (task 937df27f) runs its closed checkpoint list from `2026-10-22-card-0167-provider-endpoint-plan-s3-recut.md`.
