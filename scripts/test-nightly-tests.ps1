@@ -1740,6 +1740,139 @@ function Test-C1397_RcAntiphonLaunchGroups {
     Assert-C487 -Cond $ok -Name 'C1397 rc antiphon launch groups are far below 1346 and assign every class once' -Detail $detail
 }
 
+function Test-C1404_Group10MeasuredBudget {
+    # Independent R/P evidence prices; Publication is a partial-sample pace bound.
+    # Exercise the real cost loader, rc policy and packer against the recorded roster.
+    $ErrorActionPreference = 'Stop'
+    $ok = $false
+    $detail = ''
+    try {
+        $expected = @{
+            'AgentTaskLandCheckpointMatrixTests' = @{ Nodes = 43; Seconds = 1560; Basis = 'measured'; Launches = 1 }
+            'AgentTaskLandPersistenceFailureTests' = @{ Nodes = 52; Seconds = 1980; Basis = 'measured'; Launches = 1 }
+            'AgentTaskLandPublicationTests' = @{ Nodes = 63; Seconds = 3780; Basis = 'pace'; Launches = 5 }
+        }
+        $nodes = New-Object System.Collections.Generic.List[object]
+        $listing = Join-Path $here 'fixtures/nightly/c1404-group10-listing.txt'
+        foreach ($line in [IO.File]::ReadAllLines($listing)) {
+            if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith('#')) { continue }
+            $fields = $line.Split('|')
+            if ($fields.Count -ne 3 -or $fields[1] -cnotin @('S', '-')) { throw 'invalid fixture row' }
+            $className = $fields[0]
+            $dot = $className.LastIndexOf('.')
+            $type = $className.Substring($dot + 1)
+            foreach ($entry in $fields[2].Split(',')) {
+                if ($entry -cnotmatch '^([A-Za-z_][A-Za-z0-9_]*)=([1-9][0-9]*)$') { throw 'invalid fixture method' }
+                $method = $Matches[1]
+                $cases = [int]$Matches[2]
+                for ($k = 0; $k -lt $cases; $k++) {
+                    [void]$nodes.Add([pscustomobject]@{
+                        ClassName = $className; Namespace = $className.Substring(0, $dot); Type = $type
+                        Method = $method; Uid = ($className + '.' + $method + '.' + $k)
+                        Categories = @($(if ($fields[1] -ceq 'S') { 'Slow' }))
+                    })
+                }
+            }
+        }
+        $reasons = New-Object System.Collections.Generic.List[string]
+        $prices = New-Object System.Collections.Generic.List[string]
+        $costDoc = [IO.File]::ReadAllText((Join-Path $lib 'nightly-class-costs.json')) | ConvertFrom-Json
+        foreach ($type in @($expected.Keys | Sort-Object)) {
+            $oracle = $expected[$type]
+            $bare = 'Antiphon.Tests.Application.' + $type
+            $classNodes = @($nodes | Where-Object { $_.ClassName -ceq $bare })
+            if ($classNodes.Count -ne $oracle.Nodes) { [void]$reasons.Add('fixture:' + $type) }
+            $row = $costDoc.classes.PSObject.Properties[$bare]
+            if ($null -eq $row -or [int]$row.Value.nodes -ne $oracle.Nodes -or
+                [double]$row.Value.seconds -ne $oracle.Seconds -or [string]$row.Value.basis -cne $oracle.Basis) {
+                [void]$reasons.Add('cost-row:' + $type)
+            }
+            $actual = Get-NightlyLaunchClassCost -Nodes $classNodes -TypeName $type -Bare $bare
+            [void]$prices.Add($type + '=' + [Math]::Round($actual.Seconds, 1))
+            if ($actual.NodeCount -ne $oracle.Nodes -or [Math]::Abs($actual.Seconds - $oracle.Seconds) -gt 0.01) {
+                [void]$reasons.Add('class-cost:' + $type)
+            }
+        }
+        $uids = @($nodes | ForEach-Object { $_.Uid } | Sort-Object -Unique)
+        if ($nodes.Count -ne 158 -or $uids.Count -ne 158) { [void]$reasons.Add('fixture-census') }
+        $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+        $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'rc' -SuiteId 'antiphon' -Platform 'windows')
+        if ($exclusions.Count -eq 0) { [void]$reasons.Add('rc-exclusions') }
+        foreach ($node in $nodes) {
+            if (Test-NightlyDiscoveryExcluded -Node $node -ProfileExclusions $exclusions -ProfileAware) { [void]$reasons.Add('excluded:' + $node.Uid) }
+        }
+        $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes @($nodes.ToArray()) -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $exclusions -ProfileAware $true -Native $true)
+        $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'antiphon' -Fallback 0
+        if ($watchdog -ne 3600000) { [void]$reasons.Add('watchdog') }
+        if ($chunks.Count -ne 7) { [void]$reasons.Add('launch-count') }
+
+        # Evaluate the actual emitted filter against the entire fixture. Do not use
+        # chunk.nodes or chunk.classes as the selection oracle.
+        function Test-C1404FilterSegment {
+            param([string]$Value, [string]$Pattern)
+            foreach ($operand in $Pattern.Split('|')) {
+                $patternText = $operand.Trim('(', ')')
+                $regex = '^' + [regex]::Escape($patternText).Replace('\*', '.*') + '$'
+                if ([regex]::IsMatch($Value, $regex, [Text.RegularExpressions.RegexOptions]::CultureInvariant)) { return $true }
+            }
+            return $false
+        }
+        $covered = @{}
+        $launchCounts = @{}
+        $publicationCounts = New-Object System.Collections.Generic.List[int]
+        $launchDetails = New-Object System.Collections.Generic.List[string]
+        $maxSeconds = 0.0
+        foreach ($chunk in $chunks) {
+            $argv = @(Get-NightlyNativeExecutionArguments -TrxPath (Join-Path $ResultsDirectory 'c1404.trx') -DiagnosticDirectory $ResultsDirectory -Classes @($chunk.classes) -ExactFilter ([string]$chunk.exactFilter) -GroupFilter ([string]$chunk.groupFilter) -MethodFilter ([string]$chunk.methodFilter))
+            $filterIndex = [Array]::IndexOf($argv, '--treenode-filter')
+            if ($filterIndex -lt 0) { [void]$reasons.Add('missing-filter'); continue }
+            $filter = [string]$argv[$filterIndex + 1]
+            $segments = $filter.Split('/')
+            if ($segments.Count -ne 5 -or $segments[1] -cne '*') { [void]$reasons.Add('invalid-filter:' + $filter); continue }
+            $hits = @($nodes | Where-Object {
+                (Test-C1404FilterSegment -Value $_.Namespace -Pattern $segments[2]) -and
+                (Test-C1404FilterSegment -Value $_.Type -Pattern $segments[3]) -and
+                (Test-C1404FilterSegment -Value $_.Method -Pattern $segments[4])
+            })
+            $types = @($hits | ForEach-Object { $_.Type } | Sort-Object -Unique)
+            if ($types.Count -ne 1) { [void]$reasons.Add('mixed-or-empty-launch:' + $chunk.id) }
+            $seconds = 0.0
+            foreach ($node in $hits) {
+                $oracle = $expected[$node.Type]
+                $seconds += [double]$oracle.Seconds / $oracle.Nodes
+                $covered[$node.Uid] = 1 + [int]$covered[$node.Uid]
+            }
+            if ([Math]::Abs($seconds - [double]$chunk.seconds) -gt 0.11) { [void]$reasons.Add('launch-price:' + $chunk.id) }
+            if ($seconds -ge ($watchdog / 1000.0)) { [void]$reasons.Add('watchdog-fit:' + $chunk.id) }
+            $maxSeconds = [Math]::Max($maxSeconds, $seconds)
+            foreach ($type in $types) { $launchCounts[$type] = 1 + [int]$launchCounts[$type] }
+            if ($types.Count -eq 1 -and $types[0] -ceq 'AgentTaskLandPublicationTests') {
+                [void]$publicationCounts.Add($hits.Count)
+                if ($seconds -gt 900.01 -or $segments[4] -ceq '*') { [void]$reasons.Add('publication-split') }
+            } elseif ($types.Count -eq 1 -and ($hits.Count -ne $expected[$types[0]].Nodes -or $segments[4] -cne '*')) {
+                [void]$reasons.Add('complete-class:' + $types[0])
+            }
+            [void]$launchDetails.Add($chunk.id + ':' + $hits.Count + '/' + [Math]::Round($seconds, 1) + 's')
+        }
+        foreach ($type in $expected.Keys) {
+            if ([int]$launchCounts[$type] -ne $expected[$type].Launches) { [void]$reasons.Add('class-launches:' + $type) }
+        }
+        $missing = @($uids | Where-Object { -not $covered.ContainsKey($_) }).Count
+        $double = @($covered.Keys | Where-Object { $covered[$_] -ne 1 }).Count
+        $extra = @($covered.Keys | Where-Object { $_ -cnotin $uids }).Count
+        if ($missing -ne 0 -or $double -ne 0 -or $extra -ne 0) { [void]$reasons.Add('census') }
+        $publicationShape = @($publicationCounts | Sort-Object) -join ','
+        if ($publicationShape -cne '3,15,15,15,15') { [void]$reasons.Add('publication-node-counts') }
+        if ([Math]::Abs($maxSeconds - 1980) -gt 0.01) { [void]$reasons.Add('largest-launch') }
+        $ok = ($reasons.Count -eq 0)
+        $detail = 'prices=' + ($prices -join ',') + ' launches=' + $chunks.Count + ' nodes=' + $nodes.Count + ' missing=' + $missing + ' double=' + $double + ' extra=' + $extra + ' publicationNodes=' + $publicationShape + ' maxEstimatedSeconds=' + [Math]::Round($maxSeconds, 1) + ' watchdog=' + $watchdog + ' groups=' + ($launchDetails -join ',') + ' reasons=' + ($reasons -join ',')
+        Write-Host $detail
+    } catch {
+        $detail = 'setup-error: ' + [string]$_.Exception.Message + ' at ' + [string]$_.InvocationInfo.PositionMessage
+    }
+    Assert-C487 -Cond $ok -Name 'C1404 group 10 uses evidence costs, seven isolated launches and the unchanged watchdog' -Detail $detail
+}
+
 function Test-C1410_MeasuredCostGroups {
     # CARD-1410 (supersedes the CARD-1404 120-node cap case). The real
     # Antiphon.Tests listing (scripts/fixtures/nightly/c1410-antiphon-listing.txt,
