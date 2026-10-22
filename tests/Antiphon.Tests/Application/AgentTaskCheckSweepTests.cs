@@ -718,7 +718,8 @@ public class AgentTaskCheckSweepTests
     [Test]
     public async Task the_flush_cancels_a_settled_check_already_typed_once_before_it_retypes()
     {
-        await using var harness = await Harness.CreateAsync();
+        var events = new MockEventBus();
+        await using var harness = await Harness.CreateAsync(eventBus: events);
         var seed = await harness.SeedDelegateAsync(nextCheckInMinutes: 30);
         var noteId = await harness.SeedCheckNoteAsync(
             seed.CallerSessionId, seed.Task.Id, "[check] stale", deliveryAttempts: 1,
@@ -737,6 +738,10 @@ public class AgentTaskCheckSweepTests
         stored.Status.ShouldBe(QueuedMessageStatus.Canceled);
         stored.DeliveryAttempts.ShouldBe(1, "the last look cancels instead of re-typing");
         harness.Runner.Writes.ShouldBeEmpty("no write while the canceled check may stand in the composer");
+        events.PublishedEvents.ShouldContain(e => e.EventName == "SessionQueueChanged"
+            && e.Payload is SessionQueueDto queue && queue.SessionId == seed.CallerSessionId
+            && queue.Messages.All(m => m.Id != noteId),
+            "holding input must still publish the check cancellation to the caller's queue");
     }
 
     [Test]
