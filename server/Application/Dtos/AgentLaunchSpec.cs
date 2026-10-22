@@ -1,4 +1,5 @@
-﻿using Antiphon.Server.Domain.Enums;
+﻿using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Dtos;
 
@@ -49,7 +50,21 @@ public sealed record AgentLaunchOptions(
     AgentModelLevel? ModelTier = null,
     global::Antiphon.SessionRunner.Contracts.GrokRulesPayload? GrokRulesPayload = null,
     int? CommandLineBudgetChars = null,
-    global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? VerificationBinding = null);
+    global::Antiphon.SessionRunner.Contracts.VerificationExecutionBinding? VerificationBinding = null,
+    // CARD-0167 S3, plan merge rank 3b: the project's per-kind provider endpoints, projected for the
+    // RESOLVED kind after the project default env and before the inherited caller env. Null means
+    // "none" (no project identity, or not yet fetched). AgentLaunchResolution attaches it beside
+    // ProjectDefaultEnv from the one hoisted project identity, so the two cannot disagree.
+    IReadOnlyDictionary<AgentKind, ProviderEndpoint>? ProjectProviderEndpoints = null,
+    // CARD-0167 S3, rank 5b: how THIS launch's agent relates to the project endpoint. Null means
+    // "read it off the agent" where one is in hand and Inherit where none is. Direct suppresses 3b
+    // and projects nothing; Endpoint replaces 3b with AgentProviderEndpoint, applied after the
+    // agent's own LaunchEnvJson and before the launch-time override.
+    ProviderEndpointMode? AgentProviderEndpointMode = null,
+    // CARD-0167 S3: the agent's own endpoint for Endpoint mode (a URL and a key NAME, never a
+    // value). Null means "read it off the agent" where one is in hand; Endpoint mode with nothing
+    // to project is refused at resolve rather than silently inherited.
+    ProviderEndpoint? AgentProviderEndpoint = null);
 
 /// <summary>
 /// How the resolved launch treated the model argument (CARD-0182 D4).

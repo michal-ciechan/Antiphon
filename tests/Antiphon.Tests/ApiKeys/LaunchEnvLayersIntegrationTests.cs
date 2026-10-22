@@ -1088,6 +1088,94 @@ public sealed class LaunchEnvLayersIntegrationTests
         ex.Errors.Values.SelectMany(e => e).ShouldContain(e => e.Contains("ANTIPHON_SESSION_ID"));
     }
 
+    [Test]
+    public async Task C0167_legacy_registry_applies_project_and_agent_endpoints_in_rank_order()
+    {
+        // CARD-0167 S3, plan D-4 on the legacy registry path: the dispatcher's profile-less launch
+        // reads the project map and the agent's mode/endpoint off the rows and applies ranks 3b and
+        // 5b around the generic layers, in the same order as the profile path.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var provider = BuildDispatcherProvider(schema.ConnectionString, withApiKeys: true);
+        var (dispatcher, db) = DispatcherOf(provider);
+        var project = await AddProjectAsync(
+            db,
+            new Dictionary<string, string>
+            {
+                ["ANTHROPIC_BASE_URL"] = "http://from-box",
+                ["X_LLM_PROJECT"] = "FromProject",
+            },
+            new Dictionary<AgentKind, ProviderEndpoint>
+            {
+                [AgentKind.ClaudeCode] = new("https://proxy-0167.local/", "c0167-proxy-key"),
+            });
+
+        var task = NewQueued(Path.GetTempPath(), AgentModelLevel.High);
+        task.ProjectId = project.Id;
+        var agent = new Agent
+        {
+            Id = Guid.NewGuid(),
+            Name = "pool",
+            Slug = $"pool-{Guid.NewGuid():N}"[..16],
+            WorkingDirectory = task.WorkingDirectory,
+            IsPoolDelegate = true,
+        };
+        var session = new AgentSession
+        {
+            Id = Guid.NewGuid(),
+            DefinitionName = "claude",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Starting,
+            Cwd = task.WorkingDirectory,
+            Cols = 120,
+            Rows = 30,
+        };
+        var program = new AgentTaskDispatcher.DelegateProgram(AgentKind.ClaudeCode, "claude", null);
+
+        // Rank 3b beats the project box; the uncontested box entry stays; no argument for Claude.
+        var fromProject = await dispatcher.BuildLaunchSpecAsync(task, agent, session, program, null, Ct);
+        fromProject.Env["ANTHROPIC_BASE_URL"].ShouldBe("https://proxy-0167.local");
+        fromProject.Env["ANTHROPIC_API_KEY"].ShouldBe("{{key:c0167-proxy-key}}");
+        fromProject.Env["X_LLM_PROJECT"].ShouldBe("FromProject");
+        fromProject.Env.ShouldNotContainKey("GROK_CLI_CHAT_PROXY_BASE_URL");
+
+        // Rank 4 (the caller's inherited routing) beats 3b; the key name is uncontested and stays.
+        task.InheritedLaunchEnvJson = AgentLaunchEnv.Serialize(
+            new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://from-inherited" });
+        var inherited = await dispatcher.BuildLaunchSpecAsync(task, agent, session, program, null, Ct);
+        inherited.Env["ANTHROPIC_BASE_URL"].ShouldBe("http://from-inherited");
+        inherited.Env["ANTHROPIC_API_KEY"].ShouldBe("{{key:c0167-proxy-key}}");
+
+        // Rank 5b (the agent's own endpoint, read off the row) beats inherited and the box, and the
+        // project's key does not follow a URL-only agent endpoint.
+        agent.ProviderEndpointMode = ProviderEndpointMode.Endpoint;
+        agent.ProviderEndpointJson = ProviderEndpoint.Serialize(new ProviderEndpoint("https://agent-0167.local", null));
+        var own = await dispatcher.BuildLaunchSpecAsync(task, agent, session, program, null, Ct);
+        own.Env["ANTHROPIC_BASE_URL"].ShouldBe("https://agent-0167.local");
+        own.Env.ShouldNotContainKey("ANTHROPIC_API_KEY");
+
+        // Rank 6 (the launch-time override) beats 5b.
+        task.LaunchEnvOverrideJson = AgentLaunchEnv.Serialize(
+            new Dictionary<string, string> { ["ANTHROPIC_BASE_URL"] = "http://override" });
+        var overridden = await dispatcher.BuildLaunchSpecAsync(task, agent, session, program, null, Ct);
+        overridden.Env["ANTHROPIC_BASE_URL"].ShouldBe("http://override");
+
+        // Direct projects nothing and removes nothing: the box value is what remains.
+        task.LaunchEnvOverrideJson = "{}";
+        task.InheritedLaunchEnvJson = "{}";
+        agent.ProviderEndpointMode = ProviderEndpointMode.Direct;
+        agent.ProviderEndpointJson = null;
+        var direct = await dispatcher.BuildLaunchSpecAsync(task, agent, session, program, null, Ct);
+        direct.Env["ANTHROPIC_BASE_URL"].ShouldBe("http://from-box");
+        direct.Env.ShouldNotContainKey("ANTHROPIC_API_KEY");
+
+        // No project on the task: global-only, nothing projected, no box either.
+        task.ProjectId = null;
+        agent.ProviderEndpointMode = ProviderEndpointMode.Inherit;
+        var unscoped = await dispatcher.BuildLaunchSpecAsync(task, agent, session, program, null, Ct);
+        unscoped.Env.ShouldNotContainKey("ANTHROPIC_BASE_URL");
+        unscoped.Env.ShouldNotContainKey("ANTHROPIC_API_KEY");
+    }
+
     private static AgentTask NewQueued(string directory, AgentModelLevel level)
     {
         var id = Guid.NewGuid();
@@ -1107,7 +1195,9 @@ public sealed class LaunchEnvLayersIntegrationTests
     }
 
     private static async Task<Project> AddProjectAsync(
-        AppDbContext db, IReadOnlyDictionary<string, string>? defaults = null)
+        AppDbContext db,
+        IReadOnlyDictionary<string, string>? defaults = null,
+        IReadOnlyDictionary<AgentKind, ProviderEndpoint>? providerEndpoints = null)
     {
         var now = DateTime.UtcNow;
         var project = new Project
@@ -1117,6 +1207,7 @@ public sealed class LaunchEnvLayersIntegrationTests
             GitRepositoryUrl = "https://example.test/repo.git",
             BaseBranch = "main",
             DefaultLaunchEnvJson = AgentLaunchEnv.Serialize(defaults),
+            ProviderEndpointsJson = ProviderEndpoint.SerializeMap(providerEndpoints),
             CreatedAt = now,
             UpdatedAt = now,
         };
