@@ -1091,6 +1091,21 @@ function Format-WildcardImportRefusal([string]$Path, [string]$ProjectAttr) {
     return 'definition file import uses a wildcard the audit does not follow; -Update cannot approve it: ' + $Path + ' Import Project=' + $ProjectAttr
 }
 
+# CARD-1409 repair 9 (Review 4ecdb753 R3, D-42): MSBuild escapes these characters in $(MSBuildProjectDirectory)
+# and leaves them as written in $(MSBuildThisFileDirectory); the audit does not re-implement that escaping.
+$MSBuildEscapedCharacters = @('%', '$', '@', ';', "'", '(', ')', '*', '?')
+
+function Get-EscapedDefinitionCharacter([string]$Path) {
+    foreach ($c in $MSBuildEscapedCharacters) {
+        if ($Path.IndexOf($c, [System.StringComparison]::Ordinal) -ge 0) { return $c }
+    }
+    return $null
+}
+
+function Format-EscapedDefinitionPathRefusal([string]$Path, [string]$Character) {
+    return 'definition file path holds a character MSBuild escapes in $(MSBuildProjectDirectory), so the audit cannot read a directory spliced from it; -Update cannot approve it: ' + $Path + ' char=' + $Character
+}
+
 function Format-ObjDefinitionRefusal([string]$Path) {
     return 'definition file is tracked under an obj/ directory that MSBuild imports by wildcard; -Update cannot approve it: ' + $Path
 }
@@ -1619,6 +1634,10 @@ for ($i = 0; $i -lt $last; $i++) {
     $definitionCanonical = ConvertTo-CanonicalPath $path
     if (Test-CanonicalRefused $definitionCanonical) { Exit-Audit 1 (Format-PathSegmentRefusal $path '' $definitionCanonical) }
     if (Test-PathUnderObjDirectory $path) { Exit-Audit 1 (Format-ObjDefinitionRefusal $path) }
+    # CARD-1409 repair 9 (D-42): every directory the audit splices, and every import or reference target, is a
+    # tracked definition path, so one holding a character MSBuild escapes refuses before any file is read.
+    $escapedCharacter = Get-EscapedDefinitionCharacter $path
+    if ($null -ne $escapedCharacter) { Exit-Audit 1 (Format-EscapedDefinitionPathRefusal $path $escapedCharacter) }
     $regular = ($mode -eq '100644' -or $mode -eq '100755') -and ($kind -eq 'blob')
     if (-not $regular) { Exit-Audit 1 'definition path is not a regular blob' }
     [void]$selected.Add($row)
