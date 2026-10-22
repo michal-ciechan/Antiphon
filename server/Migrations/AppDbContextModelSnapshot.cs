@@ -10037,6 +10037,10 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime>("LastEvaluatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("LastOutcomeKey")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<DateTime?>("NotBefore")
                         .HasColumnType("timestamp with time zone");
 

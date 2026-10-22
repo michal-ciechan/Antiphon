@@ -3196,6 +3196,7 @@ public class AppDbContext : DbContext
             entity.HasKey(c => c.Id);
             entity.Property(c => c.CandidateKey).HasMaxLength(80);
             entity.Property(c => c.EvidenceDigest).HasMaxLength(64);
+            entity.Property(c => c.LastOutcomeKey).HasMaxLength(200);
             entity.HasIndex(c => c.CandidateKey).IsUnique()
                 .HasDatabaseName("IX_WorktreeResidueCandidateCursors_CandidateKey");
         });

@@ -25,6 +25,14 @@ public sealed class RetentionSettings
     /// </summary>
     public int SubscriptionUsageRetentionDays { get; set; } = 30;
 
+    /// <summary>
+    /// CARD-1446 D-5. <c>WorktreeResidueRunCandidates</c> rows whose Outcome is <c>Held</c> or <c>Preview</c> and
+    /// whose <c>EvaluatedAt</c> is older than this many days are deleted; run headers and action rows
+    /// (<c>Queued</c>, <c>Refused</c>, <c>Partial</c>, <c>Removed</c>) are kept so every queued cleanup keeps its
+    /// provenance. Nonpositive disables the pass.
+    /// </summary>
+    public int WorktreeResidueHeldRowRetentionDays { get; set; } = 30;
+
     /// <summary>How often <c>DataRetentionHostedService</c> runs. <c>&lt;= 0</c> disables the hosted sweep.</summary>
     public int SweepHours { get; set; } = 6;
 }
