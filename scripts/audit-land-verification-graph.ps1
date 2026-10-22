@@ -1395,10 +1395,14 @@ function Assert-PropertyValuesAllowed([string]$Root, $Doc, [string]$Path, $Direc
                     Exit-Audit 1 (Format-PropertyValueRefusal $Path $name ($function + '(' + $argument + ') ' + $problem))
                 }
             }
-            if (($value.IndexOf('@(') -ge 0) -or ($value.IndexOf('%(') -ge 0) -or ($value.IndexOf('$([') -ge 0)) { continue }
-            # The pipeline splits the value on ';' and decodes each part once (D-33); a part that still carries a
-            # reference other than a leading directory property is left alone, as before.
+            # The pipeline splits the value on ';' and decodes each part once (D-33). CARD-1409 repair 7 (Review
+            # 7db88932 R1, D-36): the D-25 skip is per part, as it was before repair 6: a part whose escaped text
+            # carries an item, metadata or property-function reference is left alone on its own, and so is a part
+            # the pipeline returns unresolved (a reference past a leading directory property); every other part of
+            # the same value is still classified.
             foreach ($spec in (Resolve-ItemPathText $value $fileDir $projectDir $true)) {
+                $source = [string]$spec.Source
+                if (($source.IndexOf('@(') -ge 0) -or ($source.IndexOf('%(') -ge 0) -or ($source.IndexOf('$([') -ge 0)) { continue }
                 if ([string]$spec.Kind -ne 'repo') { continue }
                 # A wildcard in a value is an exclude list or a glob some include expands where it is used (an
                 # escaped '*' is a literal character, so the escaped part decides), and a bare word (true, Exe,
