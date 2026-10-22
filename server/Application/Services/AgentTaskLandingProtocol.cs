@@ -441,7 +441,10 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         op.RegistrationRemoved = removed.Unregistered;
         op.BranchRemoved = removed.BranchDeleted;
         op.LastReason = removed.Residue is null ? null : WorktreeCleanupPresentation.Clip(removed.Residue, 400);
-        op.Cleanup = removed.IsClean ? LandCleanupStatus.Complete : LandCleanupStatus.Refused;
+        // CARD-1446 D-4 (S4c): an explicit retry of an Abandoned cleanup that refuses again stays Abandoned,
+        // so the daily Publication lane does not pick it up a fourth time; a clean retry completes it.
+        op.Cleanup = removed.IsClean ? LandCleanupStatus.Complete
+            : op.Cleanup == LandCleanupStatus.Abandoned ? LandCleanupStatus.Abandoned : LandCleanupStatus.Refused;
         op.CleanupCompletedAt = Now();
         // The terminal cleanup evidence is committed with the outcome event and pending-task
         // changes by AgentTaskLandService. Until then the saved cleanup intent supports retry.

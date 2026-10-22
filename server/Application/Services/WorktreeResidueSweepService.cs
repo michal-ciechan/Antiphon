@@ -162,10 +162,22 @@ public sealed class WorktreeResidueSweepService
         var extraRepos = tasks.Select(t => t.RepoPath).Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p!)
             .Distinct(PathComparer).ToList();
         var scan = await _worktrees.ScanResidueCandidatesAsync(extraRepos, ct);
+        // CARD-1446 D-4 (S4c): an Abandoned cleanup has left the lane; only an explicit -Land retries it.
         var landings = await _db.AgentTaskLandings.AsNoTracking()
-            .Where(o => o.Active && o.Cleanup != LandCleanupStatus.Complete
+            .Where(o => o.Active && o.Cleanup != LandCleanupStatus.Complete && o.Cleanup != LandCleanupStatus.Abandoned
                 && (o.Publication == LandPublicationOutcome.Landed || o.Publication == LandPublicationOutcome.AlreadyPresent))
             .ToListAsync(ct);
+        var landingKeys = landings.Select(o => PublicationLanePolicy.CursorKey(o.Id)).ToList();
+        var landingCursors = landingKeys.Count == 0 ? []
+            : await _db.WorktreeResidueCandidateCursors.Where(c => landingKeys.Contains(c.CandidateKey)).ToListAsync(ct);
+        var landingIds = landings.Select(o => o.Id).ToList();
+        var queuedOutcome = nameof(WorktreeResidueCandidateOutcome.Queued);
+        var queuedBefore = landingIds.Count == 0 ? new Dictionary<Guid, int>()
+            : await _db.WorktreeResidueRunCandidates.AsNoTracking()
+                .Where(c => c.LandingOperationId != null && landingIds.Contains(c.LandingOperationId.Value) && c.Outcome == queuedOutcome)
+                .GroupBy(c => c.LandingOperationId!.Value)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToDictionaryAsync(g => g.Key, g => g.Count, ct);
         var releases = await _db.TaskWorktreeRetirements.AsNoTracking().Where(r => r.Active).ToListAsync(ct);
 
         var actions = 0;
@@ -239,22 +251,55 @@ public sealed class WorktreeResidueSweepService
             var outcome = WorktreeResidueCandidateOutcome.Held;
             var code = "publication_retry";
             Guid? requestId = null;
-            if (execute && !preview && actions < run.ActionBudget && _lands is not null)
+            var cursorKey = PublicationLanePolicy.CursorKey(op.Id);
+            var cursor = landingCursors.FirstOrDefault(c => c.CandidateKey == cursorKey);
+            var earlierRetries = queuedBefore.GetValueOrDefault(op.Id);
+            var decision = PublicationLanePolicy.Decide(op, earlierRetries, cursor, now, _settings);
+            if (decision == PublicationLaneDecision.Cooldown)
             {
-                try
+                // Paced: the retry queued within CleanupRetryCooldownDays has not had its daily run yet.
+                code = "cooldown";
+                run.Held++;
+            }
+            else if (execute && !preview && actions < run.ActionBudget && _lands is not null)
+            {
+                if (decision == PublicationLaneDecision.Abandon)
                 {
-                    var queued = await _lands.RequestCleanupRetryAsync(op.TaskId, op.Id, run.Id, ct);
-                    actions++;
-                    outcome = WorktreeResidueCandidateOutcome.Queued;
-                    code = "retry_queued";
-                    requestId = queued.RequestId;
-                    run.Queued++;
+                    try
+                    {
+                        await _lands.AbandonCleanupAsync(op.TaskId, op.Id, earlierRetries, ct);
+                        actions++;
+                        outcome = WorktreeResidueCandidateOutcome.Refused;
+                        code = "cleanup_abandoned";
+                        run.Refused++;
+                        _logger.LogWarning("Worktree residue cleanup abandoned task={TaskId} operation={OperationId} retries={Retries} reason={Reason} path={Path}",
+                            op.TaskId, op.Id, earlierRetries, op.LastReason, op.WorktreePath);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        outcome = WorktreeResidueCandidateOutcome.Refused;
+                        code = (ex as Antiphon.Server.Application.Exceptions.HttpException)?.Code ?? "cleanup_abandon_refused";
+                        run.Refused++;
+                    }
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                else
                 {
-                    outcome = WorktreeResidueCandidateOutcome.Refused;
-                    code = "publication_unconfirmed";
-                    run.Refused++;
+                    try
+                    {
+                        var queued = await _lands.RequestCleanupRetryAsync(op.TaskId, op.Id, run.Id, ct);
+                        actions++;
+                        outcome = WorktreeResidueCandidateOutcome.Queued;
+                        code = "retry_queued";
+                        requestId = queued.RequestId;
+                        run.Queued++;
+                        StampLandingCooldown(cursor, cursorKey, now);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        outcome = WorktreeResidueCandidateOutcome.Refused;
+                        code = "publication_unconfirmed";
+                        run.Refused++;
+                    }
                 }
             }
             else
@@ -314,6 +359,21 @@ public sealed class WorktreeResidueSweepService
                 c.Id, c.Lane, c.Outcome, c.ReasonCode, c.TaskId, c.RetirementId, c.LandingOperationId, c.LandRequestId,
                 c.Path, c.Branch, c.DirectoryRemoved, c.RegistrationRemoved, c.BranchRemoved)).ToList(),
             0, _settings.RunResultPageSize, run.Candidates);
+    }
+
+    /// <summary>
+    /// CARD-1446 D-4 (S4c): a queued cleanup retry paces the next one by <c>CleanupRetryCooldownDays</c>
+    /// (0 only touches <c>LastEvaluatedAt</c>). The cursor is saved with the run.
+    /// </summary>
+    private void StampLandingCooldown(Domain.Entities.WorktreeResidueCandidateCursor? cursor, string key, DateTime now)
+    {
+        if (cursor is null)
+        {
+            cursor = new Domain.Entities.WorktreeResidueCandidateCursor { Id = Guid.NewGuid(), CandidateKey = key };
+            _db.WorktreeResidueCandidateCursors.Add(cursor);
+        }
+        cursor.LastEvaluatedAt = now;
+        cursor.NotBefore = _settings.CleanupRetryCooldownDays > 0 ? now.AddDays(_settings.CleanupRetryCooldownDays) : null;
     }
 
     private async Task PersistCooldownAsync(string key, CancellationToken ct)

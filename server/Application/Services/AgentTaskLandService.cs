@@ -342,10 +342,40 @@ public sealed class AgentTaskLandService
 
     /// <summary>
     /// CARD-1446 D-4 (S4c): the Publication lane's terminal state for a refused cleanup retried
-    /// <c>WorktreeResidue:MaxCleanupRetries</c> times. S4c-test skeleton.
+    /// <c>WorktreeResidue:MaxCleanupRetries</c> times. Under the task row lock: requires the exact confirmed
+    /// active operation with <c>Cleanup == Refused</c> and no pending request; sets <c>Abandoned</c>, keeps
+    /// <c>LastReason</c>, and records one <c>LandingCleanup</c> event. The worktree is kept; an explicit
+    /// -Land on the task is the retry path (<see cref="RequestCleanupRetryAsync"/> refuses only <c>Complete</c>).
     /// </summary>
-    public Task AbandonCleanupAsync(Guid taskId, Guid operationId, int refusedRetries, CancellationToken ct) =>
-        throw new ConflictException("Cleanup abandonment is not implemented.", "cleanup_abandon_unavailable");
+    public async Task AbandonCleanupAsync(Guid taskId, Guid operationId, int refusedRetries, CancellationToken ct)
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE", ct);
+        var task = await _db.AgentTasks.SingleOrDefaultAsync(t => t.Id == taskId, ct)
+            ?? throw new NotFoundException(nameof(AgentTask), taskId.ToString());
+        var op = await _db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == operationId, ct);
+        if (op is null || !op.Active || op.TaskId != taskId || task.ActiveLandingId != op.Id
+            || !new AgentTaskLandingState().HasPublication(op) || op.Cleanup != LandCleanupStatus.Refused)
+            throw new ConflictException("Cleanup abandonment requires the exact confirmed active operation with a refused cleanup.", "publication_unconfirmed");
+        if (await _db.AgentTaskLandRequests.AnyAsync(r => r.TaskId == taskId && r.IsPending, ct))
+            throw new ConflictException("A pending land request already exists.", "land_request_pending");
+
+        var now = _clock.GetUtcNow().UtcDateTime;
+        op.Cleanup = LandCleanupStatus.Abandoned;
+        op.UpdatedAt = now;
+        op.ConcurrencyToken = Guid.NewGuid();
+        var detail = WorktreeCleanupPresentation.Clip(
+            $"cleanup abandoned after {refusedRetries} refused retries ({op.LastReason ?? "no reason recorded"}); worktree kept at {op.WorktreePath}; an explicit -Land retries cleanup",
+            WorktreeCleanupPresentation.DetailLimit);
+        var abandoned = Event(taskId, AgentTaskEventType.LandingCleanup, detail, now);
+        abandoned.LandingOperationId = op.Id;
+        abandoned.LandingPublication = op.Publication;
+        abandoned.LandingCleanup = op.Cleanup;
+        abandoned.LandingMode = op.Mode;
+        _db.AgentTaskEvents.Add(abandoned);
+        await _db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+    }
 
     internal async Task<LandRequestResult> RequestCardDoneCleanupRetryAsync(Guid endpointId, Guid? sweepRunId, CancellationToken ct)
     {
@@ -1327,7 +1357,8 @@ public sealed class AgentTaskLandService
         if (published)
         {
             op!.LastReason = LandFailureDiagnostic.InterruptedAfterPublication;
-            if (op.Cleanup != LandCleanupStatus.Complete) op.Cleanup = LandCleanupStatus.Pending;
+            // CARD-1446 S4c: an interrupted retry of an Abandoned cleanup stays Abandoned (out of the lane).
+            if (op.Cleanup is not (LandCleanupStatus.Complete or LandCleanupStatus.Abandoned)) op.Cleanup = LandCleanupStatus.Pending;
             await CompleteTerminalLockedAsync(task, request, TerminalType(op), FormatOutcome(op), [], null, ct);
             return;
         }
