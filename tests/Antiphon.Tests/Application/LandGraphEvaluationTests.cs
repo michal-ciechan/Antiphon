@@ -53,11 +53,11 @@ public sealed class LandGraphEvaluationTests
             .RootElement.GetProperty("sdk").GetProperty("version").GetString()!;
         var majorMinor = string.Join('.', pinned.Split('.').Take(2));
         var sdkLine = run.Lines.Single(l => l.StartsWith("sdk: ", StringComparison.Ordinal));
-        sdkLine.ShouldStartWith($"sdk: {majorMinor}.", run.Text);
+        sdkLine.ShouldStartWith($"sdk: {majorMinor}.", Case.Sensitive, run.Text);
         var msbuildLine = run.Lines.Single(l => l.StartsWith("msbuild: ", StringComparison.Ordinal));
         var msbuildDir = Path.GetDirectoryName(msbuildLine["msbuild: ".Length..])!;
-        Path.GetFileName(msbuildDir).ShouldStartWith($"{majorMinor}.", run.Text);
-        msbuildDir.ShouldNotStartWith(Path.GetDirectoryName(ToolDll())!, run.Text);
+        Path.GetFileName(msbuildDir).ShouldStartWith($"{majorMinor}.", Case.Sensitive, run.Text);
+        msbuildDir.ShouldNotStartWith(Path.GetDirectoryName(ToolDll())!, Case.Sensitive, run.Text);
         repo.AssertUntouched();
     }
 
