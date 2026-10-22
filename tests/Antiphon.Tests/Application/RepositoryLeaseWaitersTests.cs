@@ -109,4 +109,41 @@ public sealed class RepositoryLeaseWaitersTests
         waiters.MarkExhausted(request).ShouldBeTrue();
         waiters.FirstYield(other, T0.AddSeconds(90)).ShouldBe(T0.AddSeconds(40));
     }
+
+    /// <summary>CARD-1427 V-1 (D-1): a registered waiter survives a tick whose only hold is a cut prerequisite, keeping its Since.</summary>
+    [Test]
+    public void C1427_prerequisite_pending_keeps_a_registered_waiter_and_its_since()
+    {
+        var waiters = new RepositoryLeaseWaiters();
+        var task = Guid.NewGuid();
+        waiters.Register(Common, task, RepositoryLeasePurposes.Dispatch, T0, verificationCompatible: true);
+
+        // Inspection-pending tick: not refused the lease, but its prerequisite is pending.
+        waiters.ReconcileDispatch(new HashSet<Guid>(), [task], prerequisitePending: new HashSet<Guid> { task });
+        waiters.Snapshot(Common).ShouldHaveSingleItem()
+            .ShouldBe(new RepositoryLeaseWaiter(task, RepositoryLeasePurposes.Dispatch, T0, VerificationCompatible: true));
+
+        // A later refusal re-registers without resetting Since.
+        waiters.Register(Common, task, RepositoryLeasePurposes.Dispatch, T0.AddSeconds(20), verificationCompatible: true);
+        waiters.ReconcileDispatch(new HashSet<Guid> { task }, [task]);
+        waiters.Snapshot(Common).ShouldHaveSingleItem().Since.ShouldBe(T0);
+
+        // A tick with the task in neither set drops it (dispatched, failed, held for another reason).
+        waiters.ReconcileDispatch(new HashSet<Guid>(), [task], prerequisitePending: new HashSet<Guid>());
+        waiters.Any(Common).ShouldBeFalse();
+        waiters.IsEmpty.ShouldBeTrue();
+    }
+
+    /// <summary>CARD-1427 V-2 (D-1): membership in the prerequisite set never registers a waiter; only a lease refusal does.</summary>
+    [Test]
+    public void C1427_prerequisite_pending_never_registers_a_new_waiter()
+    {
+        var waiters = new RepositoryLeaseWaiters();
+        var unregistered = Guid.NewGuid();
+
+        waiters.ReconcileDispatch(new HashSet<Guid>(), [unregistered], prerequisitePending: new HashSet<Guid> { unregistered });
+
+        waiters.Snapshot(Common).ShouldBeEmpty();
+        waiters.IsEmpty.ShouldBeTrue();
+    }
 }

@@ -1572,10 +1572,10 @@ public sealed class AgentTaskLandService
             return null;
         }
 
-        IReadOnlyList<RepositoryLeaseWaiter> waiters;
+        string common;
         try
         {
-            waiters = _leaseWaiters.Snapshot(await _landingGit!.CommonDirectoryAsync(task.RepoPath!, ct));
+            common = await _landingGit!.CommonDirectoryAsync(task.RepoPath!, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
@@ -1583,17 +1583,16 @@ public sealed class AgentTaskLandService
             return null;
         }
 
-        if (waiters.Count == 0)
-        {
-            _leaseWaiters.EndYield(request.Id);
-            return null;
-        }
-
+        // CARD-1427 D-8: the decision is the registry's; this method owns the database writes.
         var now = _clock.GetUtcNow();
-        var first = _leaseWaiters.FirstYield(request.Id, now);
-        if (now - first >= TimeSpan.FromSeconds(max))
+        var decision = _leaseWaiters.DecideYield(common, request.Id, now, max);
+        if (decision.Outcome == LandYieldOutcome.Proceed)
+            return null;
+        var waiters = decision.Waiters;
+        var first = decision.FirstYield;
+        if (decision.Outcome == LandYieldOutcome.ProceedExhausted)
         {
-            if (_leaseWaiters.MarkExhausted(request.Id))
+            if (decision.FirstExhaustion)
             {
                 var waited = (int)(now - first).TotalSeconds;
                 var warning = Event(task.Id, AgentTaskEventType.Warning,
