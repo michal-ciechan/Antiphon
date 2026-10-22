@@ -47,6 +47,9 @@ public sealed class WorktreeResidueSettingsValidator : IValidateOptions<Worktree
         if (options.RunResultPageSize <= 0)
             failures.Add("WorktreeResidue:RunResultPageSize must be positive.");
 
+        if (options.AbandonedLandingDays < 0)
+            failures.Add("WorktreeResidue:AbandonedLandingDays must be zero or positive.");
+
         if (!WorktreeResidueSettings.TryReadCardDoneAfterUtc(options.CardDoneAfterUtc, out _, out var cutoffFailure))
             failures.Add(cutoffFailure!);
 
