@@ -29,16 +29,15 @@ public class HeldStandingAgentChainTests
     public async Task Retrying_a_chain_task_on_a_standing_agent_whose_model_is_held_is_409_with_no_kill(AgentTaskStatus status)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        using var workspace = new TempWorkspace();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         await SeedHoldAsync(db, ModelAlias.Fable, new DateTime(2099, 10, 23, 8, 0, 0, DateTimeKind.Utc));
         var agentId = await SeedAgentAsync(db, ModelAlias.Fable, ephemeral: false);
         var sessionId = Guid.NewGuid();
-        var task = await SeedChainTaskAsync(db, workspace.Path, status, sessionId, agentId, ephemeral: false);
+        var task = await SeedChainTaskAsync(db, Path.GetTempPath(), status, sessionId, agentId, ephemeral: false);
         var stopper = new RecordingSessionStopper();
 
         var ex = await Should.ThrowAsync<ModelDisabledException>(
-            () => CreateService(db, workspace.Path, stopper).RetryAsync(task.Id, CancellationToken.None),
+            () => CreateService(db, stopper).RetryAsync(task.Id, CancellationToken.None),
             "C1496-retry-standing-held-refused");
 
         ex.Code.ShouldBe("model_disabled", "C1496-retry-code");
@@ -61,15 +60,14 @@ public class HeldStandingAgentChainTests
     public async Task Retrying_a_chain_task_requeues_as_today_when_no_standing_agent_model_is_held(bool ephemeral, string modelId)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        using var workspace = new TempWorkspace();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         await SeedHoldAsync(db, ModelAlias.Fable, DateTime.UtcNow.AddHours(1));
         var agentId = await SeedAgentAsync(db, modelId, ephemeral);
         var sessionId = Guid.NewGuid();
-        var task = await SeedChainTaskAsync(db, workspace.Path, AgentTaskStatus.Failed, sessionId, agentId, ephemeral);
+        var task = await SeedChainTaskAsync(db, Path.GetTempPath(), AgentTaskStatus.Failed, sessionId, agentId, ephemeral);
         var stopper = new RecordingSessionStopper();
 
-        var summary = await CreateService(db, workspace.Path, stopper).RetryAsync(task.Id, CancellationToken.None);
+        var summary = await CreateService(db, stopper).RetryAsync(task.Id, CancellationToken.None);
 
         summary.Status.ShouldBe(AgentTaskStatus.Queued, "C1496-retry-control-requeued");
         var after = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id);
@@ -85,15 +83,14 @@ public class HeldStandingAgentChainTests
     public async Task Wall_reroute_of_a_chain_task_on_a_standing_agent_whose_model_is_held_blocks_and_launches_nothing()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        using var workspace = new TempWorkspace();
         await WallRerouteFixture.SeedHardChainAsync(schema);
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         await SeedHoldAsync(db, ModelAlias.Fable, new DateTime(2099, 10, 23, 8, 0, 0, DateTimeKind.Utc));
         var agentId = await SeedAgentAsync(db, ModelAlias.Fable, ephemeral: false);
         var sessionId = Guid.NewGuid();
-        var task = await SeedChainTaskAsync(db, workspace.Path, AgentTaskStatus.Working, sessionId, agentId, ephemeral: false);
+        var task = await SeedChainTaskAsync(db, Path.GetTempPath(), AgentTaskStatus.Working, sessionId, agentId, ephemeral: false);
 
-        var decision = await CreateService(db, workspace.Path, new RecordingSessionStopper()).RerouteOnWallAsync(
+        var decision = await CreateService(db, new RecordingSessionStopper()).RerouteOnWallAsync(
             await db.AgentTasks.SingleAsync(t => t.Id == task.Id), ModelAlias.Fable, "usage wall", false,
             CancellationToken.None);
 
@@ -124,16 +121,15 @@ public class HeldStandingAgentChainTests
     public async Task Wall_reroute_of_a_chain_task_requeues_as_today_when_no_standing_agent_model_is_held(bool ephemeral, string modelId)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        using var workspace = new TempWorkspace();
         await WallRerouteFixture.SeedHardChainAsync(schema);
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         await SeedHoldAsync(db, ModelAlias.Fable, DateTime.UtcNow.AddHours(1));
         var agentId = await SeedAgentAsync(db, modelId, ephemeral);
         var sessionId = Guid.NewGuid();
-        var task = await SeedChainTaskAsync(db, workspace.Path, AgentTaskStatus.Working, sessionId, agentId, ephemeral);
+        var task = await SeedChainTaskAsync(db, Path.GetTempPath(), AgentTaskStatus.Working, sessionId, agentId, ephemeral);
         var stopper = new RecordingSessionStopper();
 
-        var decision = await CreateService(db, workspace.Path, stopper).RerouteOnWallAsync(
+        var decision = await CreateService(db, stopper).RerouteOnWallAsync(
             await db.AgentTasks.SingleAsync(t => t.Id == task.Id), ModelAlias.Fable, "usage wall", false,
             CancellationToken.None);
 
@@ -207,11 +203,11 @@ public class HeldStandingAgentChainTests
         return task;
     }
 
-    private static AgentTaskService CreateService(AppDbContext db, string directory, RecordingSessionStopper stopper)
+    private static AgentTaskService CreateService(AppDbContext db, RecordingSessionStopper stopper)
     {
         var settings = Options.Create(new DelegationSettings
         {
-            MaxDepth = 5, MaxTasksPerRoot = 40, AllowedRoots = [directory],
+            MaxDepth = 5, MaxTasksPerRoot = 40, AllowedRoots = [],
         });
         var availability = new ModelAvailability(db, TimeProvider.System, NullLogger<ModelAvailability>.Instance);
         return new AgentTaskService(
