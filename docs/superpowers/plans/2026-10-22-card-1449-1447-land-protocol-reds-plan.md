@@ -69,13 +69,16 @@ Lane: portable .NET/PostgreSQL on the eligible default runner (server2). No `-Ru
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1449/` | c1449-harness | `/*/*/LandingProtocolHarnessTests/*` | V-1, R-1, R-3 | all 9 methods (18 cases), 0 failed/skipped | 18 | 10 |
-| CP-2 | S1 | CP-1 | c1449-publication | `/*/*/AgentTaskLandPublicationTests/(C494_*)\|(C448_*)\|(C665_*)\|(C642_*)\|(C688_LandNeverRunsGitInTheSourceWorktree*)\|(C688_RebaseAndVerifyRunInTheLandWorktree*)\|(C688_PushPrecedesCanonicalAdvance*)\|(C688_DirtyCanonicalCheckoutLandsWithResidue*)\|(C688_TargetCheckedOutElsewhereIsResidueNotRefusal*)\|(C688_Repair_AlreadyCanonicalRecordsLocalIdentity*)\|(C688_LocalMasterBehindOriginRebasesOntoOrigin*)\|(C688_LocalMasterAheadOfOriginRefuses*)` | V-2, R-2 | 22 methods (44 cases), 0 failed/skipped | 44 | 20 |
+| CP-2 | S1 | CP-1 | c1449-publication | `/*/*/AgentTaskLandPublicationTests/(C494_*)\|(C448_*)\|(C665_*)\|(C642_*)\|(C688_LandNeverRunsGitInTheSourceWorktree*)\|(C688_RebaseAndVerifyRunInTheLandWorktree*)\|(C688_PushPrecedesCanonicalAdvance*)\|(C688_DirtyCanonicalCheckoutLandsWithResidue*)\|(C688_TargetCheckedOutElsewhereIsResidueNotRefusal*)\|(C688_Repair_AlreadyCanonicalRecordsLocalIdentity*)\|(C688_LocalMasterBehindOriginRebasesOntoOrigin*)\|(C688_LocalMasterAheadOfOriginRefuses*)` | V-2, R-2 | 24 methods (56 cases), 0 failed/skipped | 56 | 20 |
 | CP-3 | S1 | CP-1 | c1449-publication-skip | `/*/*/AgentTaskLandPublicationTests/C688_Repair_UnknownLinkedHeadPreventsCanonicalAdvance` | R-2 | 7 cases: 6 passed, 1 skipped (`locked`, Windows-only); documented non-receipt row | 6 | 4 |
-| CP-4 | S1 | CP-1 | c1449-refused-retry | `/*/*/AgentTaskLandRefusedRetryTests/*` | V-3, R-3 | all 12 methods (15 cases), 0 failed/skipped | 15 | 12 |
+| CP-4 | S1 | CP-1 | c1449-refused-retry | `/*/*/AgentTaskLandRefusedRetryTests/(RR_V1*)\|(RR_V2*)\|(RR_V3*)\|(RR_V4_TargetStatusFailureRetriesFromFreshEvidence*)\|(RR_V4_RemoteContainmentAfterRefusalKeepsAlreadyPresentShortcut*)\|(RR_V5*)\|(RR_V6*)\|(C688_RealLandProfile*)` | V-3, R-3 | 11 methods (14 cases), 0 failed/skipped; `RR_V4_RemoteReadFailureRetriesUnchangedSource` is CP-5 | 14 | 12 |
+| CP-5 | S1 | `tests/Antiphon.Tests -> bin-c1449-red/` | c1449-inherited-red | `/*/*/AgentTaskLandRefusedRetryTests/RR_V4_RemoteReadFailureRetriesUnchangedSource` | documents the inherited red below | 1 executed, 1 failed (`_pins should not be empty`, `Scenario.RefuseAsync` line 516); documented non-receipt row, red at base e1e3beb5c | 1 | 8 |
 
-The four rows are one checkpoint-tool run with one build. CP-2 and CP-3 together are the whole
-`AgentTaskLandPublicationTests` class; CP-3 is separate only because its `locked` row calls
-`Skip.Test` off Windows and a skipped case refuses the receipt. `Min` is a floor; confirm `executed=`
+CP-1 to CP-4 are one checkpoint-tool run with one build; CP-5 runs alone in a second run, because a
+red row keeps its build output and that refuses every receipt of its run. CP-2 and CP-3 together are the
+whole `AgentTaskLandPublicationTests` class; CP-3 is separate only because its `locked` row calls
+`Skip.Test` off Windows and a skipped case refuses the receipt. CP-4 and CP-5 together are the whole
+`AgentTaskLandRefusedRetryTests` class. `Min` is a floor; confirm `executed=`
 in each CHECKPOINT line.
 
 ### Cost
