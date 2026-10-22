@@ -10,16 +10,16 @@ namespace Antiphon.Tests.TestHelpers;
 
 internal static class CheckCompactionFixture
 {
-    internal static string CreateRoot()
+    internal static CrashRoot CreateRoot()
     {
         var root = Path.GetFullPath(Path.Combine(
             ".antiphon", "acceptance", "card-0079", "crash-" + Guid.NewGuid().ToString("N")));
         Directory.CreateDirectory(root);
         File.WriteAllText(Path.Combine(root, "owner"), Environment.ProcessId.ToString());
-        return root;
+        return new CrashRoot(root);
     }
 
-    internal static (Process Process, Task<string> Output, Task<string> Error) Start(CrashWorkerRequest request)
+    internal static CrashWorker Start(CrashWorkerRequest request)
     {
         var start = new ProcessStartInfo("dotnet")
         {
@@ -34,7 +34,7 @@ internal static class CheckCompactionFixture
         start.ArgumentList.Add("/*/*/CheckCompactionCrashTests/Resume_reservation_survives_crash_without_a_second_launch");
         start.Environment[CheckCompactionCrashWorker.Marker] = JsonSerializer.Serialize(request);
         var process = Process.Start(start) ?? throw new InvalidOperationException("Crash worker did not start.");
-        return (process, process.StandardOutput.ReadToEndAsync(), process.StandardError.ReadToEndAsync());
+        return new CrashWorker(process, process.StandardOutput.ReadToEndAsync(), process.StandardError.ReadToEndAsync());
     }
 
     internal static async Task WaitForHeldAsync(string root, int count, TimeSpan budget)
@@ -160,4 +160,22 @@ internal static class CheckCompactionFixture
 
     internal sealed record ConfirmedSeat(
         string ConnectionString, Guid SessionId, Guid AgentId, Guid EpisodeId, DateTime Accepted);
+}
+
+/// <summary>CARD-1494 seam: the crash-worker root. Nothing deletes it yet.</summary>
+internal sealed class CrashRoot(string fullPath) : IAsyncDisposable
+{
+    public string FullPath { get; } = fullPath;
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+/// <summary>CARD-1494 seam: one crash-worker child. A failed wait still leaves it running.</summary>
+internal sealed class CrashWorker(Process process, Task<string> output, Task<string> error) : IAsyncDisposable
+{
+    public Process Process { get; } = process;
+    public Task<string> Output { get; } = output;
+    public Task<string> Error { get; } = error;
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
