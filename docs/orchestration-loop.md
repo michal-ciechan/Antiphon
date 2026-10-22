@@ -150,6 +150,9 @@ It refuses changed candidates instead of resetting them under an old result.
 The existing remote target observation, push CAS, confirmation and bounded
 target-race reprepare path remain authoritative. Completed artifacts do not
 make a restarted Prepared operation verified.
+The ticketed re-entry keeps the operation's mode: a fresh land settles as `Fresh` on its
+terminal `mode=` detail and `LandingMode`; only a fresh entry that finds an operation
+mid-flight relabels it `ResumePublication` (CARD-1449).
 
 Generated verification evidence stays ignored (CARD-1015); essential receipt lines and
 provenance belong in the stored task report. Ignored output does not dirty tracked source.
