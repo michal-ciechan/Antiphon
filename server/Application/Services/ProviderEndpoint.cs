@@ -81,7 +81,46 @@ public sealed record ProviderEndpoint(string BaseUrl, string? ApiKeyName)
                 "provider_endpoint_unsupported_kind");
         }
 
-        var baseUrl = BaseUrl?.Trim() ?? string.Empty;
+        var baseUrl = ValidateBaseUrl(BaseUrl, urlField);
+
+        string? name = string.IsNullOrWhiteSpace(ApiKeyName) ? null : ApiKeyName.Trim();
+        if (name is not null)
+        {
+            if (ApiKeyPlaceholder.ContainsMarker(name))
+            {
+                throw new ValidationException(
+                    nameField,
+                    "apiKeyName is the NAME of a stored API key, not a placeholder: write the name "
+                    + "without {{key:...}}.",
+                    "provider_endpoint_placeholder");
+            }
+
+            name = ApiKeyNaming.Validate(name, nameField);
+        }
+        else if (kind is { } requiresKey && RequiresKeyName(requiresKey))
+        {
+            throw new ValidationException(
+                nameField,
+                $"A {requiresKey} endpoint needs an API key name: the CLI's env_key must name a set "
+                + $"variable, so the projection sets {ProviderEndpointProjection.CodexKeyVariable} from "
+                + "that key.",
+                "provider_endpoint_key_required");
+        }
+
+        return new ProviderEndpoint(baseUrl, name);
+    }
+
+    /// <summary>
+    /// The URL rules alone, as the launch applies them (<see cref="Validate"/> runs these before the
+    /// key-name rules), returning the URL normalised (trimmed, trailing slash removed). The save path
+    /// (<c>ProviderEndpointSettings.ValidateBaseUrl</c>) runs these after its own rules, so nothing
+    /// it stores is refused at launch (Review e4b591eb D2). Throws 422 under <paramref name="urlField"/>
+    /// with a <c>provider_endpoint_base_url_*</c> or <c>provider_endpoint_placeholder</c> code; the
+    /// URL itself is never quoted in the message.
+    /// </summary>
+    public static string ValidateBaseUrl(string? value, string urlField)
+    {
+        var baseUrl = value?.Trim() ?? string.Empty;
         if (baseUrl.Length == 0)
         {
             throw new ValidationException(
@@ -149,33 +188,7 @@ public sealed record ProviderEndpoint(string BaseUrl, string? ApiKeyName)
                 urlField, "The base URL may not carry a fragment.", "provider_endpoint_base_url_fragment");
         }
 
-        baseUrl = baseUrl.TrimEnd('/');
-
-        string? name = string.IsNullOrWhiteSpace(ApiKeyName) ? null : ApiKeyName.Trim();
-        if (name is not null)
-        {
-            if (ApiKeyPlaceholder.ContainsMarker(name))
-            {
-                throw new ValidationException(
-                    nameField,
-                    "apiKeyName is the NAME of a stored API key, not a placeholder: write the name "
-                    + "without {{key:...}}.",
-                    "provider_endpoint_placeholder");
-            }
-
-            name = ApiKeyNaming.Validate(name, nameField);
-        }
-        else if (kind is { } requiresKey && RequiresKeyName(requiresKey))
-        {
-            throw new ValidationException(
-                nameField,
-                $"A {requiresKey} endpoint needs an API key name: the CLI's env_key must name a set "
-                + $"variable, so the projection sets {ProviderEndpointProjection.CodexKeyVariable} from "
-                + "that key.",
-                "provider_endpoint_key_required");
-        }
-
-        return new ProviderEndpoint(baseUrl, name);
+        return baseUrl.TrimEnd('/');
     }
 
     /// <summary>One stored endpoint (the agent column). Blank, malformed or URL-less JSON reads as <c>null</c>.</summary>

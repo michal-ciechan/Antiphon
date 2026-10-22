@@ -94,7 +94,9 @@ public static class ProviderEndpointLayers
     /// the argv tail (Codex's <c>-c</c> pairs), as one canonical JSON document; null when nothing is
     /// projected (no setting, Direct mode, or a refusal the launch itself raises). Taken before
     /// placeholder resolution, so it never holds a key value. Same inputs as <see cref="Select"/>,
-    /// so the stamp and the comparison cannot drift from what the resolvers project.
+    /// so the stamp and the comparison cannot drift from what the resolvers project. A refusal
+    /// (unsupported kind, missing key name, bad stored URL, half-set row) fingerprints as nothing
+    /// here; the launch is where it is raised.
     /// </summary>
     public static string? PoolFingerprint(
         AgentKind kind,
@@ -126,47 +128,4 @@ public static class ProviderEndpointLayers
     /// <summary>The fingerprint's shape: names with URL or placeholder values, then the argv tail. No value can enter it.</summary>
     private sealed record PoolProjection(IReadOnlyDictionary<string, string> Env, IReadOnlyList<string> Args);
 
-    /// <summary>
-    /// The inherit-list view of one process's provider routing for the warm-pool predicate
-    /// (CARD-0260): rank 3b, then the stored launch env, then rank 5b, on the names a launch would
-    /// use. A refusal (unsupported kind, missing key name, bad stored URL, half-set row) projects
-    /// nothing here; the launch is where it is raised.
-    /// </summary>
-    public static IReadOnlyDictionary<string, string> PoolView(
-        AgentKind kind,
-        IReadOnlyDictionary<string, string> launchEnv,
-        IReadOnlyDictionary<AgentKind, ProviderEndpoint>? projectEndpoints,
-        ProviderEndpointMode mode,
-        ProviderEndpoint? agentEndpoint)
-    {
-        ArgumentNullException.ThrowIfNull(launchEnv);
-
-        Selection selection;
-        try
-        {
-            selection = Select(kind, projectEndpoints, mode, agentEndpoint);
-        }
-        catch (Exception exception) when (exception is ConflictException or ValidationException)
-        {
-            selection = Selection.None;
-        }
-
-        var env = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (selection.Project is { } project)
-        {
-            foreach (var (key, value) in project.Env)
-                env[key] = value;
-        }
-
-        foreach (var (key, value) in launchEnv)
-            env[key] = value;
-
-        if (selection.Agent is { } agent)
-        {
-            foreach (var (key, value) in agent.Env)
-                env[key] = value;
-        }
-
-        return env;
-    }
 }
