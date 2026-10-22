@@ -195,6 +195,88 @@ Property-driven includes: `$(_CustodyChildOutputDir)*` (two files), `$(_FakeClau
 Documents selected by file items at HEAD: 21 bundle, preset and fragment markdown files under `server/Bundles/` (plus the excluded `server/Bundles/README.md`); 25 fixture `.md`/`.txt` files under the three `tests/Antiphon.Agents.Pty.Tests` globs and `tests/Antiphon.Tests/Agents/Fixtures/`; eight `src/*/README.md`; `PublicAPI.*.txt` per messaging project; `slow-tests-allowlist.txt` in seven test projects; the land-graph manifest.
 
 
+## Repair 5: one path normaliser and the item-operation table (Review f0fb9035)
+
+Final Review f0fb9035 (report `.antiphon/task-f0fb9035.md` on `feat/card-task-f0fb9035`) confirmed the resolved-path design and found two bypasses that pass `-Update` on the real tree at count=57: F1 the docs, README, document and output-root rules compared the resolved text literally, so `../README.md.`, `../docs./guide.md.`, `../docs./*.md`, `../README.md::$DATA` and `../README.md. .` were approved although the Windows land host strips trailing dots and spaces per segment and `::$DATA` opens the file itself; F2 `Register-DefinitionFacts` recorded item metadata only from elements with `Include`, so a `StagedHelper Update=... Glob="..\..\..\..\..\docs\**\*.md"` fed `%(StagedHelper.Glob)` a value the expansion never saw. The Review also disclosed, out of contract, that a tracked symbolic link is opaque to the tree expansion. This round stops adding example checks: one normaliser every comparison goes through, one table of every MSBuild item operation, and the symlink refusal. Branch `feat/card-task-e295bb13`, start ref `5471da833f9e4b4b1cf08dd4bbd70584d67220f8`; this task lands as its own owner and the whole CARD-1409 delta lands with it.
+
+**D-28 — One canonical path normaliser, and a segment that would change refuses by name.** `ConvertTo-CanonicalPath` is the only function that turns resolved text into a repository path, and every comparison consumes its result: a path item's `Include` and `Update` parts and their `Exclude` parts, an `Import` target, a `ProjectReference`, a literal property-value path (D-25), the tail of a path rooted at an output or package root, every tracked match a wildcard selects, and every tracked definition path the audit parses (so `server/obj./x.props` is no longer a way past the `obj/` rule). The text is split on `/` and `\` (equal) and each segment is held to the Windows land host's rules before anything is compared: a trailing `.` or space, a segment of only dots or spaces, a `:` anywhere (the drive prefix `X:/` is converted to a repository path or refused as outside before this point, so it is the only legal colon), and an 8.3 short-name shape (`~` followed by a digit) each REFUSE naming the segment and the reason; nothing is silently rewritten. Only after the segment rules are `.` and empty segments dropped and `..` popped (`outside` above the root, `escape` after a wildcard, as before). Letter case is not changed; every comparison of a canonical path is ordinal-ignore-case, which is the case-fold. The rules are the N-table below; `Normalize-RepoPattern` is replaced. The real tree has no tracked path or include with such a segment, so `-Check` still prints the digest with count=57.
+
+**D-29 — The MSBuild item-operation surface is a closed table.** Every way an item element can introduce a path or a metadata value is enumerated in the O-table below and is either censused like `Include` or refused by name; an attribute that is none of the item-element attributes (`Include`, `Exclude`, `Update`, `Remove`, `Condition`, `Label`), none of the named refused operations (`KeepMetadata`, `RemoveMetadata`, `KeepDuplicates`, `MatchOnMetadata`, `MatchOnMetadataOptions`) and not an allow-listed metadata name refuses as metadata, so an operation outside the table has nowhere to hide. `Update` elements are censused like `Include` elements (F2): their path part is classified (D-21, unchanged) and their metadata values, static or inside a `Target`, join `ItemDeclarations` for `%(Item.Metadata)` expansion and the `Pkg*` path properties; an `Update` of an item also counts as a declaration, so the `@(Item->'%(RootDir)%(Directory)')` build-product rule needs an item never declared by `Include` or `Update`. `Remove` subtracts only and its text is not classified (the real `Remove="@(_StagedHelperTarget)"` idiom), but any metadata on a `Remove` element refuses. An element with none of `Include`, `Update` or `Remove` refuses by name. `Condition` is still not evaluated, so every value counts. `Exclude` is resolved through the normaliser (a divergent segment refuses) and subtracts from the tracked expansion only; an unresolvable `Exclude` part is dropped, so the audit sees more, never less.
+
+**D-30 — A tracked symbolic link under a path item refuses.** Every `ls-tree` row with mode `120000` is recorded. A path item's resolved pattern refuses naming the link when the pattern reaches the link as a file (the link is a match) or as a directory it passes through (the link's path is matched by a prefix of the pattern; exact paths, `*`, `?` and `**` all count), because a link materialised by a land checkout with `core.symlinks=true` can point a non-definition change at `docs/` or at a document outside the allow-list without the digest changing. Imports and project references already require a tracked regular definition blob, so a link cannot stand in for one. No tracked path is a symlink today.
+
+**D-31 — Witnesses: one per F, one table-driven case, one symlink case.** `C1409_WindowsPathNormalisationRefusesBySegment` (F1; the Review's five shapes from `server/App.csproj` and the real `tests/Antiphon.Tests/Antiphon.Tests.csproj` with `<EmbeddedResource Include="../../README.md." />` appended, in the V-20 scratch tree); `C1409_ItemUpdateMetadataFeedsTheCensus` (F2; the Review's real-project `StagedHelper Update` and a target-time `Update` on a small fixture, with the `**\*` control and a `PackageReference Update` with `GeneratePathProperty`); `C1409_NormaliserAndItemOperationTablesHaveWitnesses` reads the N- and O-tables from this plan and fails when a row has no witness (a `table` row must have an entry in the test, a named row must name an existing `C1409_*` method) or when an entry has no row, then runs every `table` entry; `C1409_TrackedSymlinkUnderItemPatternRefuses` tracks `120000` blobs through `git update-index --cacheinfo`, so no host needs symlink rights.
+
+**D-32 — Acceptance.** `-Check` on the real repository prints `F240D0F1DBF9AA627A0A3637B52318B8030181B60F20E677C6E3DE2D2285B72F` count=57 (V-7); the ordinary edit of D-27 passes `-Update` with count=57 in a scratch worktree; the script stays ASCII-only. CP-1 expects 81: 25 `C1409_*`, 10 `C1400_*`, 3 `C1390_*`, `C1385_RegistryMatchesNarrowGraph`, 42 `C1380_*`. Out of contract and left as before (D-18, D-27): task parameters, `Condition` text, environment-variable properties, Windows reserved device names (`CON`, `NUL`; they select no tracked file), and a symlink that a `core.symlinks=false` checkout materialises as a text file.
+
+### Repair 5 path normaliser rules
+
+Every row is exercised by the `table` witness in `C1409_NormaliserAndItemOperationTablesHaveWitnesses`; the Through column names the comparison the witness drives the segment into.
+
+| Rule | Segment shape | Treatment | Through | Witness |
+|---|---|---|---|---|
+| N-1 | trailing `.` (`../docs./guide.md`, `../README.md.`) | refused naming the segment | `EmbeddedResource Include` | table |
+| N-2 | trailing dot and space mix (`../README.md. .`) | refused naming the segment | `EmbeddedResource Include` | table |
+| N-3 | only dots or spaces (`../docs/.../guide.md`) | refused naming the segment | `EmbeddedResource Include` | table |
+| N-4 | `:` anywhere (`../README.md::$DATA`, `../docs/guide.md:stream`, `Import Project="../eng/shared.props:x"`) | refused naming the segment | `Include`, `Import` | table |
+| N-5 | 8.3 short name, `~` then a digit (`../DOCS~1/guide.md`, `ProjectReference Include="../lib/LIB~1.csproj"`) | refused naming the segment | `Include`, `ProjectReference` | table |
+| N-6 | letter case (`../DOCS/Guide.MD`) | compared ordinal-ignore-case: refuses as docs markdown | `EmbeddedResource Include` | table |
+| N-7 | `\` and `/` (`..\docs\guide.md`) | equal: refuses as docs markdown | `EmbeddedResource Include` | table |
+| N-8 | `.` and empty segments (`.//../docs/./guide.md`) | dropped after the segment rules: refuses as docs markdown | `EmbeddedResource Include` | table |
+| N-9 | `..` (`sub/../../docs/guide.md`; `../../outside.md`; `../docs/*/../guide.md`) | popped after the segment rules: docs markdown; outside refuses unclassified; after a wildcard refuses as escape | `EmbeddedResource Include` | table |
+| N-10 | drive prefix (`C:/repo/README.md`; `C:README.md`) | the only legal colon: converted to a repository path or refused as outside; a drive-relative colon segment refuses naming the segment | `EmbeddedResource Include` | table |
+| N-11 | output-root tail (`$(IntermediateOutputPath)docs./x.md` inside a `Target`) | refused naming the segment | `Compile Include` on an output root | table |
+| N-12 | a tracked match (`Content Include="fixtures/**"` over a tracked `server/fixtures/notes.md.`) | refused naming the match and the segment | tracked expansion | table |
+| N-13 | an `Exclude` part (`Bundles\*.md` with `Exclude="Bundles\README.md."`) | refused naming the segment | `Exclude` | table |
+| N-14 | a literal property-value path (`<PackageReadmeFile>../docs./guide.md</PackageReadmeFile>`) | refused naming the property and the segment | property value (D-25) | table |
+| N-15 | a tracked definition path (`server/obj./evil.props`) | refused naming the path and the segment | definition inventory | table |
+
+### Repair 5 item-operation table
+
+| Op | Operation | Where | Treatment | Witness |
+|---|---|---|---|---|
+| O-1 | `Include` | static `ItemGroup` | censused: each `;`-part classified by the type rule (D-14, D-21), metadata names allow-listed, values recorded | table |
+| O-2 | `Include` | inside a `Target` | same as O-1 | table |
+| O-3 | `Exclude` on an `Include` | both | subtract only: resolved through the normaliser, honoured for the tracked expansion, never adds; an unresolvable part is dropped | table |
+| O-4 | `Update` path part | static `ItemGroup` | classified like `Include` | table |
+| O-5 | `Update` path part | inside a `Target` | classified like `Include` | table |
+| O-6 | `Update` metadata | both | names allow-listed per type; values recorded for `%(Item.Metadata)` and `Pkg*` (F2) | table |
+| O-7 | `Remove` | static `ItemGroup` | subtract only, text not classified; any metadata on it refuses | table |
+| O-8 | `Remove="@(...)"` | inside a `Target` | the real idiom, accepted | table |
+| O-9 | `KeepMetadata`, `RemoveMetadata` | `Include` | refused by name | table |
+| O-10 | `KeepDuplicates` | `Include` | refused by name | table |
+| O-11 | `MatchOnMetadata`, `MatchOnMetadataOptions` | `Remove` | refused by name | table |
+| O-12 | item transform `@(X->'...')` | `Include` or `Update` | refused as unclassified | table |
+| O-13 | `%(...)` batching | `Include` or `Update` | refused as unclassified | table |
+| O-14 | metadata as an attribute | `Include` or `Update` | name allow-listed per type (`DependentUpon` refuses, `Link` passes) | table |
+| O-15 | metadata as a child element | `Include` or `Update` | name allow-listed per type (`Properties` refuses, `IncludeAssets` passes) | table |
+| O-16 | `Condition` on the element or its group | both | not evaluated: every value counts | table |
+| O-17 | no `Include`, `Update` or `Remove` | both | refused by name | table |
+| O-18 | `ItemDefinitionGroup` default metadata | project | refused as an unclassified element (D-15) | table |
+| O-19 | task `Output ItemName` | `Target` | type allow-listed; an item filled only by the `MSBuild` task is a build product, any other task refuses as unresolvable when used in a path | table |
+| O-20 | any other attribute | any item element | metadata default-deny: refuses unless allow-listed | table |
+| O-21 | a metadata value with `%(`, `@(` or an undefined `$(` used in a path | `%(Item.Metadata)` expansion | refuses as unresolvable | table |
+| O-22 | a tracked symbolic link the pattern reaches | path item | refused naming the link (D-30) | `C1409_TrackedSymlinkUnderItemPatternRefuses` |
+
+### Repair 5 slices
+
+**S17 — Red witnesses and the tables.** `C1409_WindowsPathNormalisationRefusesBySegment`, `C1409_ItemUpdateMetadataFeedsTheCensus`, `C1409_NormaliserAndItemOperationTablesHaveWitnesses`, `C1409_TrackedSymlinkUnderItemPatternRefuses`; this section with the two tables, which the table-driven case reads. One unlisted red run at the witness commit (reason: red proof before the fix; counts in the report).
+
+**S18 — Fix.** `scripts/audit-land-verification-graph.ps1` D-28 to D-30 (ASCII; parses under Windows PowerShell 5.1). One unlisted green run of `(C1409_*)|(C1400_*)|(C1390_*)` at the fix commit (reason: catch a fixture regression before the checkpoint build).
+
+**S19 — Wording.** `docs/orchestration-loop.md`, the script header; CP-1 after S19 expecting 81.
+
+### Repair 5 verification design
+
+| ID | Behaviour | Witness |
+|---|---|---|
+| V-24 | From `server/App.csproj`, `EmbeddedResource` includes `../README.md.`, `../docs./guide.md.`, `../docs./*.md`, `../README.md::$DATA` and `../README.md. .` each refuse naming the include and the segment; the real `tests/Antiphon.Tests/Antiphon.Tests.csproj` passes in the V-20 scratch tree and refuses once `<EmbeddedResource Include="../../README.md." />` is appended, naming `segment=README.md.`; `Compile Include="..\lib\Shared.cs"`, `Content Include="Fixtures\*"` and `None Include="slow-tests-allowlist.txt"` are approved with `count=1`. | `C1409_WindowsPathNormalisationRefusesBySegment` |
+| V-25 | The real test project with `<StagedHelper Update="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj" Glob="..\..\..\..\..\docs\**\*.md" />` appended refuses naming `_StagedHelperFiles Include=$(_StagedHelperDir)$(_StagedHelperGlob)`; a target-time `StagedHelper Update` with a `..` glob refuses the same way on a small fixture; the same `Update` with `Glob="**\*"` and a `PackageReference Update` with `GeneratePathProperty="true"` feeding `$(PkgSome_Package)\build\a.dll` are approved with `count=2`. | `C1409_ItemUpdateMetadataFeedsTheCensus` |
+| V-26 | Every N- and O-row above has a witness: a `table` row has an entry in the test and a named row names an existing `C1409_*` method, an entry without a row fails, and every `table` entry runs with the row's outcome. | `C1409_NormaliserAndItemOperationTablesHaveWitnesses` |
+| V-27 | A tracked `120000` blob `server/fixtures -> ../docs` refuses `Content Include="fixtures/**"` and `Content Include="fixtures/guide.md"` naming `-> server/fixtures`; a tracked `120000` blob `server/notes.jsonl -> ../docs/guide.md` refuses `Content Include="*.jsonl"` naming the link; a link elsewhere (`tools/link`) leaves `Content Include="fixtures/**"` over `server/fixtures/a.jsonl` approved with `count=1`. | `C1409_TrackedSymlinkUnderItemPatternRefuses` |
+
+V-7 remains the acceptance witness for D-32. No new PC rows: the normaliser's refusal predicates and the operation table are the mutation surface Review already named; existing land PCs stay pending for SourceLanding Mutation.
+
 ### Inventory (tracked definition files at `9eab17ecfb73cf3f968ce8abba8141282a6a81c9`)
 
 57 files: 46 `*.csproj`, `Antiphon.sln`, `Directory.Build.props`, `Directory.Build.rsp`, `Directory.Build.targets`, `global.json`, `src/Messaging.Pack.props`, `tests/Shared/CheckpointRepeat.targets`, two nightly fixture `Directory.Build.*` pairs under `scripts/fixtures/nightly/` (`c1375-probe`, `c487-probe`). Project root `Sdk`: `Microsoft.NET.Sdk` (42), `Microsoft.NET.Sdk.Web` (4). `<Sdk>` element: `Aspire.AppHost.Sdk` (`Antiphon.AppHost`). Project children: `PropertyGroup` (49 files), `ItemGroup` (40), `Import` (8), `Target` (8), `Sdk` (1). Task elements inside targets: `Copy`, `Delete`, `Error`, `Exec`, `MSBuild`, `Warning`, `WriteLinesToFile`. `Directory.Build.rsp`: four comment lines and `-nodeReuse:false`.
