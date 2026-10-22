@@ -397,6 +397,19 @@ public sealed class DelegationSettings
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Task 8333e231 (operator request 2026-10-22, "all apart from review on opus xhigh"): a per-ROLE
+    /// Claude <c>--effort</c> that wins over the tier table in
+    /// <see cref="Services.ClaudeLaunchArgs.Effort(AgentModelLevel)"/> for a delegate TASK. Keys are
+    /// <see cref="AgentTaskRole"/> names (case-insensitive, like <see cref="RolePolicy"/>); values are
+    /// the Claude CLI's accepted efforts (<c>low</c>, <c>medium</c>, <c>high</c>, <c>xhigh</c>,
+    /// <c>max</c>), refused by <see cref="DelegationSettingsValidator"/> at startup otherwise. EMPTY
+    /// as shipped, so every launch stays byte-identical to the tier table; the operator sets the map
+    /// in the per-machine overlay. ClaudeCode tasks only: a named standing agent has no task role
+    /// (<c>AgentSessionLaunchComposer</c> is unchanged) and Codex/Grok keep their own switches.
+    /// </summary>
+    public Dictionary<string, string> ClaudeEffortByRole { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// A Dispatched task whose session has written no TURN PROMPT of its own after this long never
     /// received its brief — it fails loudly instead of sitting Dispatched forever
     /// (CARD-0003/CARD-0020). Long enough for the stranded-queue watchdog (60s cadence) to
