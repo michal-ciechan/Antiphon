@@ -205,6 +205,19 @@ public sealed class WorktreeIgnoredContentClassifierTests
         Same(Defaults().Classify(["server/obj/x.json"]).Disposable, "server/obj/x.json");
     }
 
+    // CARD-1446 V-7 (S4b): an unlisted `.antiphon` spill is evidence (retained by copy, then deleted
+    // with the tree) instead of protected; a protected name still wins, and the explicit disposable
+    // spill patterns still win over the `**/.antiphon/**` catch-all.
+    [Test]
+    public void C1446_unlisted_antiphon_spill_is_evidence_not_protected()
+    {
+        var result = Defaults().Classify([".antiphon/c820-s3-final/load.jsonl", ".antiphon/report.md",
+            ".antiphon/deliverables/x", "server/appsettings.Development.json", ".antiphon/inbox/a.md"]);
+        Same(result.Evidence, ".antiphon/c820-s3-final/load.jsonl");
+        Same(result.Protected, ".antiphon/deliverables/x", ".antiphon/report.md", "server/appsettings.Development.json");
+        Same(result.Disposable, ".antiphon/inbox/a.md");
+    }
+
     private static void Same(ImmutableArray<string> actual, params string[] expected) =>
         actual.ToArray().ShouldBe(expected);
 
