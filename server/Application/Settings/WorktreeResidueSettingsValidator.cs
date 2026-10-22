@@ -50,6 +50,12 @@ public sealed class WorktreeResidueSettingsValidator : IValidateOptions<Worktree
         if (options.AbandonedLandingDays < 0)
             failures.Add("WorktreeResidue:AbandonedLandingDays must be zero or positive.");
 
+        if (options.CleanupRetryCooldownDays < 0)
+            failures.Add("WorktreeResidue:CleanupRetryCooldownDays must be zero or positive.");
+
+        if (options.MaxCleanupRetries < 0)
+            failures.Add("WorktreeResidue:MaxCleanupRetries must be zero or positive.");
+
         if (!WorktreeResidueSettings.TryReadCardDoneAfterUtc(options.CardDoneAfterUtc, out _, out var cutoffFailure))
             failures.Add(cutoffFailure!);
 

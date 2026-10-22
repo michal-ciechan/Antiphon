@@ -184,6 +184,8 @@ public sealed class LandRefRetentionTests
     [Arguments("landing-complete", false)]
     [Arguments("landing-refused", false)]
     [Arguments("landing-inactive", false)]
+    [Arguments("landing-cleanup-refused", true)]
+    [Arguments("landing-cleanup-abandoned", false)]
     [Arguments("debt-pending", true)]
     [Arguments("debt-ready", false)]
     [Arguments("debt-held", true)]
@@ -237,6 +239,9 @@ public sealed class LandRefRetentionTests
             case "landing-complete": db.AgentTaskLandings.Add(Landing(id, LandPhase.Complete)); break;
             case "landing-refused": db.AgentTaskLandings.Add(Landing(id, LandPhase.Refused)); break;
             case "landing-inactive": db.AgentTaskLandings.Add(Landing(id, LandPhase.PushStarted, active: false)); break;
+            // CARD-1446 D-3/D-4: a refused cleanup can still be retried; an abandoned one has left the lane.
+            case "landing-cleanup-refused": db.AgentTaskLandings.Add(Published(id, LandCleanupStatus.Refused)); break;
+            case "landing-cleanup-abandoned": db.AgentTaskLandings.Add(Published(id, LandCleanupStatus.Abandoned)); break;
             case "debt-pending": db.AgentTaskSyncDebts.Add(Debt(id, AgentTaskSyncDebtState.Pending)); break;
             case "debt-ready": db.AgentTaskSyncDebts.Add(Debt(id, AgentTaskSyncDebtState.Ready)); break;
             case "debt-held": db.AgentTaskSyncDebts.Add(Debt(id, AgentTaskSyncDebtState.Held)); break;
@@ -337,6 +342,16 @@ public sealed class LandRefRetentionTests
         OriginalSourceSha = new string('a', 40), TargetBeforeSha = new string('b', 40),
         RecoverySourceTaskId = recoverySource, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
     };
+
+    private static AgentTaskLanding Published(Guid taskId, LandCleanupStatus cleanup)
+    {
+        var landing = Landing(taskId, LandPhase.CleanupStarted);
+        landing.Publication = LandPublicationOutcome.Landed;
+        landing.RemoteConfirmedAt = DateTime.UtcNow;
+        landing.Cleanup = cleanup;
+        landing.LastReason = "ignored_content_preserved";
+        return landing;
+    }
 
     private static AgentTaskSyncDebt Debt(Guid taskId, AgentTaskSyncDebtState state) => new()
     {

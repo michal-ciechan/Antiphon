@@ -340,6 +340,13 @@ public sealed class AgentTaskLandService
     public async Task<LandRequestResult> RequestCleanupRetryAsync(Guid taskId, Guid operationId, Guid? sweepRunId, CancellationToken ct)
         => await RequestCleanupRetryCoreAsync(taskId, operationId, sweepRunId, null, ct);
 
+    /// <summary>
+    /// CARD-1446 D-4 (S4c): the Publication lane's terminal state for a refused cleanup retried
+    /// <c>WorktreeResidue:MaxCleanupRetries</c> times. S4c-test skeleton.
+    /// </summary>
+    public Task AbandonCleanupAsync(Guid taskId, Guid operationId, int refusedRetries, CancellationToken ct) =>
+        throw new ConflictException("Cleanup abandonment is not implemented.", "cleanup_abandon_unavailable");
+
     internal async Task<LandRequestResult> RequestCardDoneCleanupRetryAsync(Guid endpointId, Guid? sweepRunId, CancellationToken ct)
     {
         var endpoint = await _db.CardWorktreeCleanupEndpoints.AsNoTracking().Include(e => e.Target)

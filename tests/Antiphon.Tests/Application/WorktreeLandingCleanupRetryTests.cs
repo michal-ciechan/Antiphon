@@ -498,6 +498,64 @@ public sealed class WorktreeLandingCleanupRetryTests
         completeMatchingPrompts.ShouldBe(1);
     }
 
+    /// <summary>CARD-1446 V-10 (S4c): an explicit retry of an Abandoned cleanup that refuses again keeps Abandoned, never Refused.</summary>
+    [Test]
+    public async Task C1446_AbandonedStaysAbandonedOnRefusedRetry()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var sentinel = Path.Combine(h.Fixture.Source, ".antiphon", "report.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(sentinel)!);
+        await File.WriteAllTextAsync(sentinel, "fixture report");
+        await h.RunAsync();
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Cleanup.ShouldBe(LandCleanupStatus.Refused, op.LastReason);
+        await MarkAbandonedAsync(h, op.Id);
+
+        await h.RequestCleanupRetryAsync(op.Id);
+        await h.RunAsync();
+
+        var after = (await h.OperationAsync())!;
+        after.Id.ShouldBe(op.Id);
+        after.Cleanup.ShouldBe(LandCleanupStatus.Abandoned, after.LastReason);
+        after.LastReason.ShouldBe("ignored_content_preserved");
+        File.Exists(sentinel).ShouldBeTrue("the protected file is still there");
+    }
+
+    /// <summary>CARD-1446 V-10 (S4c): an Abandoned cleanup is still explicitly retryable and completes when the tree is clean.</summary>
+    [Test]
+    public async Task C1446_AbandonedCompletesOnCleanRetry()
+    {
+        await using var h = new LandingSafetyHarness();
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var sentinel = Path.Combine(h.Fixture.Source, ".antiphon", "report.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(sentinel)!);
+        await File.WriteAllTextAsync(sentinel, "fixture report");
+        await h.RunAsync();
+        var op = (await h.OperationAsync()).ShouldNotBeNull();
+        op.Cleanup.ShouldBe(LandCleanupStatus.Refused, op.LastReason);
+        await MarkAbandonedAsync(h, op.Id);
+        File.Delete(sentinel);
+
+        await h.RequestCleanupRetryAsync(op.Id);
+        await h.RunAsync();
+
+        var after = (await h.OperationAsync())!;
+        after.Id.ShouldBe(op.Id);
+        after.Cleanup.ShouldBe(LandCleanupStatus.Complete, after.LastReason);
+        after.Phase.ShouldBe(LandPhase.Complete);
+    }
+
+    private static async Task MarkAbandonedAsync(LandingSafetyHarness h, Guid operationId)
+    {
+        await using var db = h.CreateContext();
+        var row = await db.AgentTaskLandings.SingleAsync(o => o.Id == operationId);
+        row.Cleanup = LandCleanupStatus.Abandoned;
+        await db.SaveChangesAsync();
+    }
+
     private static async Task<int> CountPublicationsAsync(LandingSafetyHarness h)
     {
         await using var db = h.CreateContext();
