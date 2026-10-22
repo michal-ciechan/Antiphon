@@ -103,8 +103,130 @@ No R-n. No positive controls. Mutation has nothing new to plant beyond the refus
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S10 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-1 V-2 V-3 V-4 V-5 V-7 V-8 V-9 V-10 V-11 V-12 V-13 V-14 | exactly 26 executed, 0 failed/skipped | 26 | 15 |
+| CP-1 | S13 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_*)` | V-1 V-2 V-3 V-4 V-5 V-7 V-8 V-9 V-10 V-11 V-12 V-13 V-14 V-15 V-16 V-17 V-18 | exactly 72 executed, 0 failed/skipped | 72 | 15 |
 
 ### Cost
 
-Ordinary floor 15 minutes for the one row, plus the unlisted red runs before S2, S6 and S9.
+Ordinary floor 15 minutes for the one row (the 42 `C1380_*` harness cases dominate), plus the unlisted red runs before S2, S6, S9 and S12 and the unlisted green subset run after S12.
+
+## Repair 3: default-deny (Review 31c77116)
+
+Final Review 31c77116 found three remaining classes of fail-open after three rounds of enumerated fixes: R1 response files were hashed but never parsed; R2 about thirty SDK imports are driven by ordinary properties (`CustomAfterMicrosoftCommonTargets`, `DirectoryBuildTargetsPath`, `PublishProfile` and their kin) that a name deny-list cannot close; R3 item types the audit did not watch (`EditorConfigFiles`, `GlobalAnalyzerConfigFiles`, `ProjectReference`) accepted docs markdown. The audit only gates `-Update`; a changed definition file is never a docs-only land. The design therefore changes to default-deny: the script carries allow-lists seeded from the tracked definition files, and every construct outside them refuses by name. Branch `feat/card-task-726f1f91`, start ref `9eab17ecfb73cf3f968ce8abba8141282a6a81c9`.
+
+**D-13 — Property names are allow-listed.** Every child element of a `PropertyGroup`, wherever the group sits (under `Project`, inside a `Target`), and every task `Output` with a `PropertyName`, must name one of the 54 properties in the inventory below; names compare case-insensitively, as MSBuild does. Anything else refuses, naming the file and the property as written. The D-12 names keep their own message because that check runs first. A new property is a reviewed edit of the list in `scripts/audit-land-verification-graph.ps1`.
+
+**D-14 — Item types are allow-listed with a rule each.** Every child element of an `ItemGroup`, wherever the group sits, and every `Output` `ItemName`, must be one of the 24 item types below; an unknown type refuses by type. `Include` is split on `;` and each part follows the type's rule. A part that contains `@(` or `%(` refuses for every type. *path* (`Compile`, `EmbeddedResource`, `Content`, `None`, `AdditionalFiles`, `EditorConfigFiles`, `GlobalAnalyzerConfigFiles` and the repository's thirteen target-time items): resolved from the file's own directory and from every importing project's directory as CARD-1400 already did; `escape` and a forbidden unknown property keep the docs refusal; a part that leaves the repository (absolute, or `..` past the root) now refuses as unclassified where it was accepted before; an unresolved `$(...)` keeps the CARD-1400 spelling heuristic; a resolved pattern that selects `docs/**/*.md` or the root `README.md` refuses. *project* (`ProjectReference`): no `$(`, `*`, `?`; the resolved path from every directory must be a `*proj` tracked at HEAD, otherwise the message names the part and ` -> <resolved>`. *name* (`PackageReference`, `FrameworkReference`, `InternalsVisibleTo`): after one `%XX` decode the part contains none of `/`, `\`, `$(`, `*`, `?`, `..`, `:`. The brief's draft rule, "file items only inside the project's own directory and never `docs/**`", was relaxed to this after reading the inventory: ten projects link `Compile` and three link `Content` from sibling directories, and `tests/Antiphon.Tests` and `tests/Antiphon.Agents.Pty.Tests` embed `docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-captures.json`; the skip policy already treats docs JSON as a build input, so `docs/**/*.md` and the root README are the only paths that matter. Item metadata, `Exclude`, `Remove` and `Update` are not evaluated: they add no input.
+
+**D-15 — Structure is allow-listed.** The root must be `<Project>`; each `;`-part of its `Sdk` attribute must be `Microsoft.NET.Sdk` or `Microsoft.NET.Sdk.Web`; its children must be `PropertyGroup`, `ItemGroup`, `Import`, `Target` or `Sdk`, and a `<Sdk>` element must name `Aspire.AppHost.Sdk`. `UsingTask`, `ImportGroup`, `Choose`, `ItemDefinitionGroup`, `ProjectExtensions` and every other element refuse naming the file and the element. Element names compare ordinally, as XML does.
+
+**D-16 — Response files are parsed (R1).** Every tracked `.rsp` is read; a leading BOM is dropped, lines are trimmed, blank lines and `#` comments are skipped, and each remaining line must be exactly one switch: `-` or `/`, then `nodeReuse`/`nr` with `true` or `false`, `maxcpucount`/`m` with no value or 1 to 9999, `verbosity`/`v` with `q`, `quiet`, `m`, `minimal`, `n`, `normal`, `d`, `detailed`, `diag` or `diagnostic`, or `nologo` with no value. Anything else refuses naming the file and the line: `-p:`, `-property:`, `@file`, `/t:`, an unknown value, or two switches on one line. The real `Directory.Build.rsp` holds a comment block and `-nodeReuse:false`.
+
+**D-17 — The real repository passes unchanged.** `-Check` still prints digest `F240D0F1DBF9AA627A0A3637B52318B8030181B60F20E677C6E3DE2D2285B72F` count=57; that is the acceptance test that the lists are not too tight. `LandVerificationBuildGraph.Includes` is unchanged (a comment records why): `.rsp` was already selected, and `EditorConfigFiles`/`GlobalAnalyzerConfigFiles` are item types, not files. Three existing fixtures used names outside the inventory and now use inventory names with unchanged assertions: `ActiveDebugProfile` became `Nullable` in `C1409_ProjectUserFileIsAuditedAndImported`, `PackageVersion` became `PackageReference` in `C1409_DirectoryPackagesPropsIsImportedByTheNearestProject`, and `_CleanFile` became `_AntiphonCleanFileChars`, the real `Directory.Build.targets` shape, in `C1409_IntermediateOutputRedirectRefuses`. `PackageVersion` is not allow-listed because no tracked file uses it; adopting central package management is a reviewed edit of the list. V-10's witness also changed: its shadowed root `Directory.Packages.props` relied on `../docs/**/*.md` being silently accepted when it leaves the repository from the file's own directory, which D-14 now refuses, so `C1409_DirectoryPackagesPropsIsImportedByTheNearestProject` now proves nearest-only import through an `Import Project="eng/docs.items"` that the audit follows, and refuses as an uninspected target, only when the root file is the nearest one; shadowed, the root file is still parsed against the allow-lists and counted (`count=3`). A definition file no project reaches has its imports left unfollowed, as MSBuild leaves them unevaluated; its own properties, items and structure are still checked.
+
+**D-18 — Out of scope, and why.** Machine-wide `ImportBefore`/`ImportAfter` under `$(MSBuildExtensionsPath)` and the SDK's own targets are toolchain state outside the tree; `global.json` is hashed, their contents are not in HEAD. NuGet package `build/*.props` and `.targets` live in the package cache, addressed by the `PackageReference` id and version the digest already covers. Solution-level files are hashed, not parsed; a tracked `Directory.Solution.props` or `.targets` is parsed as project XML and meets the same allow-lists. Target bodies are not evaluated: a task parameter (`Exec`, `Copy`, `ReadLinesFromFile`) or a property value can name any file and the audit refuses no task. That is unchanged since CARD-1400 and is accepted because such an edit is a definition-file change, which never lands as docs-only and is reviewed, while R1 to R3 lived in what the SDK evaluates at import time, which the allow-lists now bound.
+
+**D-19 — Verification scope.** CP-1 adds `C1380_*` as the brief requires: the server inventory file changes (comment only) and the land policy depends on it. Expected 72 executed: 16 `C1409_*`, 10 `C1400_*`, 3 `C1390_*`, `C1385_RegistryMatchesNarrowGraph`, 42 `C1380_*` cases.
+
+**D-20 — Landing.** None of the CARD-1409 commits is on `origin/master` or `origin/rc/2026-10-20`. The report states the `merge-tree` result against master and a chained per-commit `merge-tree` onto the rc tip; nothing is merged.
+
+### Repair 3 slices
+
+**S11 — Red witnesses.** `C1409_ResponseFileSwitchesAreAllowListed`, `C1409_UnknownPropertyRefuses`, `C1409_UnknownItemTypeRefuses`, `C1409_UnclassifiedConstructRefuses`. One unlisted red run at the witness commit (reason: red proof before the fix; CHECKPOINT line and counts in the report).
+
+**S12 — Fix.** `scripts/audit-land-verification-graph.ps1` D-13 to D-16 (ASCII; parses under Windows PowerShell 5.1); the three fixture renames of D-17. One unlisted green run of `(C1409_*)|(C1400_*)|(C1390_*)` at the fix commit (reason: catch a fixture regression before the checkpoint build).
+
+**S13 — Wording.** This section, `docs/orchestration-loop.md`, the script header, the `LandVerificationBuildGraph.cs` comment; CP-1 widened and expecting 72.
+
+### Repair 3 verification design
+
+| ID | Behaviour | Witness |
+|---|---|---|
+| V-15 | `-p:BaseIntermediateOutputPath=ext/`, `-p:_DirectoryBuildPropsFile=docs/build.md` and `@docs/flags.md` in `Directory.Build.rsp`, `-property:...` in `eng/build.rsp`, `-nodeReuse:maybe` and `/t:Build` each refuse naming the file and the line; a BOM, CRLF, comments, blanks, `-nodeReuse:false`, `-maxcpucount`, `/m:4`, `-verbosity:minimal`, `-v:q` and `-nologo` are approved with `count=2`. | `C1409_ResponseFileSwitchesAreAllowListed` |
+| V-16 | `CustomAfterMicrosoftCommonTargets` in a project, `CustomBeforeMicrosoftCommonProps` in `Directory.Build.props`, `DirectoryBuildTargetsPath` in an imported `.props`, `_DirectoryBuildTargetsFile` inside a `Target`, `BeforeMicrosoftNETSdkTargets` in a `.user`, `DirectoryPackagesPropsPath` in `Directory.Packages.props`, `PublishProfile`, the unlisted `_antiphonFutureImportHook`, and an `Output PropertyName="CustomAfterMicrosoftCSharpTargets"` each refuse naming the file and the property; `TargetFramework`, lower-case `nullable`, `AssemblyName`, `RootNamespace` are approved with `count=1`. | `C1409_UnknownPropertyRefuses` |
+| V-17 | `EditorConfigFiles Include="../docs/style.md"` and `GlobalAnalyzerConfigFiles Include="$(MSBuildThisFileDirectory)docs/analyzers.md"` refuse as docs markdown; `ProjectReference` to `../docs/x.md` and to an untracked `../lib/Missing.csproj` refuse naming ` -> ` the resolved path; a wildcard `ProjectReference` and a `PackageReference Include="../docs/x.md"` refuse as unclassified; `Reference`, a `_AntiphonFutureFiles` item inside a target and an `Output ItemName="_AntiphonFutureOutputs"` refuse by type; a tracked `ProjectReference`, `PackageReference`, `FrameworkReference`, `InternalsVisibleTo`, `.editorconfig`, `analyzers.globalconfig`, a linked `Compile` and a `None` are approved with `count=2`. | `C1409_UnknownItemTypeRefuses` |
+| V-18 | `UsingTask`, `ImportGroup`, `Choose`, `ItemDefinitionGroup`, `ProjectExtensions` refuse naming the element; `Sdk="Evil.Sdk/1.0.0"` and `<Sdk Name="Evil.Sdk">` refuse naming the SDK; `Content Include="@(Docs)"`, `None Include="%(Docs.FullPath)"`, `Compile Include="../../outside/Shared.cs"` and `None Include="/etc/hosts"` refuse as unclassified; the Web SDK, the Aspire `<Sdk>` element, a conditional import, an `Exec` with `Output PropertyName="_GitHeadSha"`, a `%(RecursiveDir)` link and a target-time `Compile` are approved with `count=2`. | `C1409_UnclassifiedConstructRefuses` |
+
+V-7 remains the acceptance witness for D-17: `C1385_RegistryMatchesNarrowGraph` runs `-Check` on the real repository. No new PC rows; the refusal predicates are the mutation surface Review already named.
+
+### Inventory (tracked definition files at `9eab17ecfb73cf3f968ce8abba8141282a6a81c9`)
+
+57 files: 46 `*.csproj`, `Antiphon.sln`, `Directory.Build.props`, `Directory.Build.rsp`, `Directory.Build.targets`, `global.json`, `src/Messaging.Pack.props`, `tests/Shared/CheckpointRepeat.targets`, two nightly fixture `Directory.Build.*` pairs under `scripts/fixtures/nightly/` (`c1375-probe`, `c487-probe`). Project root `Sdk`: `Microsoft.NET.Sdk` (42), `Microsoft.NET.Sdk.Web` (4). `<Sdk>` element: `Aspire.AppHost.Sdk` (`Antiphon.AppHost`). Project children: `PropertyGroup` (49 files), `ItemGroup` (40), `Import` (8), `Target` (8), `Sdk` (1). Task elements inside targets: `Copy`, `Delete`, `Error`, `Exec`, `MSBuild`, `Warning`, `WriteLinesToFile`. `Directory.Build.rsp`: four comment lines and `-nodeReuse:false`.
+
+Property names set in a `PropertyGroup` (51) plus three set only by a task `Output` (`_GitHeadSha`, `_GitRevParseExitCode` in `Directory.Build.props`; `FakeBrowserTargetPath` in `tests/Antiphon.MarkdownPdf.Tests`):
+
+| Property | Files | Where (when one or two) |
+|---|---:|---|
+| `_AntiphonCleanFileChars` | 1 | `Directory.Build.targets` |
+| `_AntiphonRepeatAdditional` | 1 | `tests/Shared/CheckpointRepeat.targets` |
+| `_AntiphonRepeatFile` | 1 | `tests/Shared/CheckpointRepeat.targets` |
+| `_CustodyChildOutputDir` | 2 | `tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj`, `tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj` |
+| `_F5PtyHostNativeDir` | 1 | `tests/Antiphon.E2E/Antiphon.E2E.csproj` |
+| `_FakeClaudeOutputDir` | 1 | `tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj` |
+| `_FakeGrokOutputDir` | 1 | `tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj` |
+| `_GitHeadShaTrimmed` | 1 | `Directory.Build.props` |
+| `_LandFakeGrokDir` | 1 | `tests/Antiphon.E2E/Antiphon.E2E.csproj` |
+| `_PtyHostNativeDir` | 1 | `tests/Antiphon.Tests/Antiphon.Tests.csproj` |
+| `_StagedHelperDest` | 1 | `tests/Antiphon.Tests/Antiphon.Tests.csproj` |
+| `_StagedHelperDir` | 1 | `tests/Antiphon.Tests/Antiphon.Tests.csproj` |
+| `_StagedHelperGlob` | 1 | `tests/Antiphon.Tests/Antiphon.Tests.csproj` |
+| `_StagedHelperShared` | 1 | `tests/Antiphon.Tests/Antiphon.Tests.csproj` |
+| `AntiphonCleanFileMaxBytes` | 1 | `Directory.Build.targets` |
+| `AntiphonMessagingVersion` | 1 | `samples/EchoGateway/EchoGateway.csproj` |
+| `AssemblyName` | 27 |  |
+| `Authors` | 1 | `src/Messaging.Pack.props` |
+| `ConcurrentGarbageCollection` | 1 | `src/Antiphon.SessionRunner/Antiphon.SessionRunner.csproj` |
+| `DefaultItemExcludes` | 2 | `Directory.Build.props`, `scripts/fixtures/nightly/c1375-probe/Probe.csproj` |
+| `Description` | 11 |  |
+| `EnableMicrosoftTestingPlatformRunner` | 12 |  |
+| `EnablePublicApiAnalyzers` | 2 | `src/Antiphon.Messaging.FakeGateway/Antiphon.Messaging.FakeGateway.csproj`, `src/Messaging.Pack.props` |
+| `FakeBrowserOutputDir` | 1 | `tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj` |
+| `ImplicitUsings` | 46 |  |
+| `InvariantGlobalization` | 4 |  |
+| `IsAspireHost` | 1 | `Antiphon.AppHost/Antiphon.AppHost.csproj` |
+| `IsPackable` | 12 |  |
+| `IsTestProject` | 12 |  |
+| `Nullable` | 46 |  |
+| `OutputType` | 20 |  |
+| `PackageId` | 2 | `src/Antiphon.Messaging.FakeGateway/Antiphon.Messaging.FakeGateway.csproj`, `tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj` |
+| `PackageLicenseExpression` | 1 | `src/Messaging.Pack.props` |
+| `PackageProjectUrl` | 1 | `src/Messaging.Pack.props` |
+| `PackageReadmeFile` | 1 | `src/Messaging.Pack.props` |
+| `PackageTags` | 1 | `src/Messaging.Pack.props` |
+| `PackAsTool` | 2 | `src/Antiphon.Messaging.FakeGateway/Antiphon.Messaging.FakeGateway.csproj`, `tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj` |
+| `PublishRepositoryUrl` | 1 | `src/Messaging.Pack.props` |
+| `RepositoryUrl` | 1 | `src/Messaging.Pack.props` |
+| `RollForward` | 1 | `tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj` |
+| `RootNamespace` | 31 |  |
+| `ServerGarbageCollection` | 1 | `src/Antiphon.SessionRunner/Antiphon.SessionRunner.csproj` |
+| `SourceControlInformationFeatureSupported` | 1 | `Directory.Build.props` |
+| `SourceRevisionId` | 1 | `Directory.Build.props` |
+| `TargetFramework` | 46 |  |
+| `ToolCommandName` | 2 | `src/Antiphon.Messaging.FakeGateway/Antiphon.Messaging.FakeGateway.csproj`, `tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj` |
+| `UseAppHost` | 1 | `tests/Antiphon.ScriptHarnessHost/Antiphon.ScriptHarnessHost.csproj` |
+| `UsePublishedPackages` | 1 | `samples/EchoGateway/EchoGateway.csproj` |
+| `UserSecretsId` | 2 | `Antiphon.AppHost/Antiphon.AppHost.csproj`, `server/Antiphon.Server.csproj` |
+| `Version` | 2 | `src/Messaging.Pack.props`, `tools/Antiphon.Checkpoints/Antiphon.Checkpoints.csproj` |
+| `WarningsAsErrors` | 1 | `src/Messaging.Pack.props` |
+
+Item types (18 declared in an `ItemGroup`) plus four set only by a task `Output` `ItemName` (`_CustodyChildTargetPath`, `_FakeClaudeTargetPath`, `_FakeGrokTargetPath`, `_LandFakeGrokTarget`), and `EditorConfigFiles` and `GlobalAnalyzerConfigFiles` from the review's R3, which no tracked file declares:
+
+| Item type | Files | Where (when one or two) |
+|---|---:|---|
+| `_AntiphonRepeatLine` | 1 | `tests/Shared/CheckpointRepeat.targets` |
+| `_StagedHelperFiles` | 1 | `tests/Antiphon.Tests/Antiphon.Tests.csproj` |
+| `_StagedHelperTarget` | 1 | `tests/Antiphon.Tests/Antiphon.Tests.csproj` |
+| `AdditionalFiles` | 1 | `src/Messaging.Pack.props` |
+| `Compile` | 11 |  |
+| `Content` | 8 |  |
+| `CustodyChildOutput` | 2 | `tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj`, `tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj` |
+| `EmbeddedResource` | 3 |  |
+| `FakeBrowserFile` | 1 | `tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj` |
+| `FakeClaudeOutput` | 1 | `tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj` |
+| `FakeGrokOutput` | 1 | `tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj` |
+| `FrameworkReference` | 5 |  |
+| `InternalsVisibleTo` | 12 |  |
+| `LandFakeGrokOutput` | 1 | `tests/Antiphon.E2E/Antiphon.E2E.csproj` |
+| `None` | 9 |  |
+| `PackageReference` | 30 |  |
+| `ProjectReference` | 27 |  |
+| `StagedHelper` | 1 | `tests/Antiphon.Tests/Antiphon.Tests.csproj` |
