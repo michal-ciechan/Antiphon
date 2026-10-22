@@ -2161,16 +2161,21 @@ confirmation and cleanup remain required; this is not an advisory-review exempti
 The candidate must also match the audited dotnet-build definition inventory in
 `LandVerificationBuildGraph`. A path is included when its lowercased extension
 ends with `proj` or is `.props`, `.targets`, `.sln`, `.slnx`, `.slnf`, or `.rsp`,
-when the file name starts with `Directory.Build.`, or when the lowercased file
-name is `global.json`, `nuget.config`, `packages.lock.json`, `packages.config`,
-or `directory.packages.props`. Editing an unrelated script leaves that digest
+when the file name starts with `Directory.Build.`, when the lowercased file name
+ends with `proj.user` (a tracked `<project>.user` is imported by its project;
+CARD-1409, Review 23aedc52 D4), or when the lowercased file name is
+`global.json`, `nuget.config`, `packages.lock.json`, `packages.config`, or
+`directory.packages.props`. Editing an unrelated script leaves that digest
 unchanged, so a docs-only skip still applies. `-Check` and `-Update` refuse an
 EmbeddedResource, Content, None, Compile, or AdditionalFiles include that can
 select `docs/**/*.md` or the root `README.md`. Matching is case-insensitive and
 happens after one `%XX` hex decode. Every such include is resolved from the
 definition file's own directory and from each importing project's directory,
-including through another import. The nearest `Directory.Build.props` and
-`Directory.Build.targets` above a project count as imported. An `Import`
+including through another import. The nearest `Directory.Build.props`,
+`Directory.Build.targets` and `Directory.Packages.props` above a project count as
+imported, and so does a tracked `<project>.user` beside the project; their
+includes resolve from the importing project's directory (CARD-1409, Review
+23aedc52 D3 and D4). An `Import`
 `Project` path that starts with `$(MSBuildThisFileDirectory)` or
 `$(MSBuildProjectDirectory)` is expanded from that property and is not prefixed
 with the importing file's folder again. `$(MSBuildThisFileDirectory)` in an
@@ -2182,13 +2187,17 @@ and is not followed. There is no allow-list: `$(MSBuildExtensionsPath)`,
 a future chained `Directory.Build.props` that needs one of them changes the audit
 first (CARD-1409). An `Import` with an attribute other than `Project`,
 `Condition` or `Label`, such as `Sdk`, is refused; `Condition` is not evaluated,
-so a conditional import is still followed. A non-wildcard import target must be
-tracked at HEAD inside the repository as a `*proj`, `.props` or `.targets` file:
-an empty `Project`, a path outside the repository, a path absent from HEAD or a
-tracked file with another extension is refused, and the message names the
-importing file, the attribute text and the resolved path. A wildcard `Import` is
-matched against every tracked path; a match with another extension is refused,
-and a wildcard that matches nothing is accepted. The failure names the definition
+so a conditional import is still followed. An `Import` `Project` is split on `;`
+as MSBuild splits it, and every non-empty part is audited as its own import
+(Review 23aedc52 D1). Each part must be tracked at HEAD inside the repository as
+a `*proj`, `*proj.user`, `.props` or `.targets` file: an empty `Project`, a path
+outside the repository, a path absent from HEAD or a tracked file with another
+extension is refused, and the message names the importing file, the whole
+attribute text and the resolved path. A part that contains `*` or `?` is refused
+outright, whatever it matches: land digests only definition files, so a later
+non-definition match of an accepted wildcard would never be re-audited (Review
+23aedc52 D2). The real repository has no wildcard import; a future one changes
+the audit first. The failure names the definition
 file and the include, or the import path when the import cannot be resolved.
 Regenerating the manifest does not approve that include. An unknown `$(...)`
 in an item include is refused only when the include text contains the exact
