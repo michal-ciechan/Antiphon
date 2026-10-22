@@ -87,6 +87,32 @@ stdin_file="$stdin_dir/$name.$$.in"
 if [ -p /dev/stdin ]; then
   cat > "$stdin_file"
 fi
+if [ "$name" = "pwsh" ]; then
+  maint=0
+  enter=0
+  keepsix=0
+  clearhold=0
+  for arg in "$@"; do
+    case "$arg" in
+      *set-apphost-maintenance.ps1*) maint=1 ;;
+      -EnterIfAbsent) enter=1 ;;
+      *keep-six.ps1*) keepsix=1 ;;
+      -ClearHold) clearhold=1 ;;
+    esac
+  done
+  if [ "$maint" = 1 ] && [ "$enter" = 1 ]; then
+    if [ -n "$C1407_ENTER_MARKER" ]; then
+      mkdir -p "$(dirname "$C1407_ENTER_MARKER")"
+      printf '%s\n' 'down-on-purpose c1417-enter' > "$C1407_ENTER_MARKER"
+    fi
+    if [ -n "$C1407_MAINTENANCE_EXIT" ]; then
+      exit "$C1407_MAINTENANCE_EXIT"
+    fi
+  fi
+  if [ "$keepsix" = 1 ] && [ "$clearhold" = 1 ] && [ "$C1407_FAIL_CLEARHOLD" = "1" ]; then
+    exit 1
+  fi
+fi
 if [ "$name" = "pwsh" ] && [ "$C1407_FAIL_MAINTENANCE" = "1" ]; then
   for arg in "$@"; do
     case "$arg" in
@@ -412,7 +438,10 @@ function Invoke-C1407WindowRun {
         [string]$SourceSessions = '',
         [string]$MarkerOnSessionState = '',
         [string]$ForeignMarker = '',
-        [string]$FailComposeStart = ''
+        [string]$FailComposeStart = '',
+        [string]$FailClearHold = '',
+        [string]$EnterMarker = '',
+        [string]$MaintenanceExit = ''
     )
     $result = @{
         ExitCode = 99
@@ -444,6 +473,9 @@ function Invoke-C1407WindowRun {
     $prevSessions = $env:C1407_SOURCE_SESSIONS
     $prevForeign = $env:C1407_FOREIGN_MARKER
     $prevComposeStart = $env:C1407_FAIL_COMPOSE_START
+    $prevClearHold = $env:C1407_FAIL_CLEARHOLD
+    $prevEnterMarker = $env:C1407_ENTER_MARKER
+    $prevMaintExit = $env:C1407_MAINTENANCE_EXIT
     try {
         $fake = New-C1407SmartFake
         $env:C1407_TRACE = $fake.Trace
@@ -467,6 +499,12 @@ function Invoke-C1407WindowRun {
         else { Remove-Item Env:C1407_FOREIGN_MARKER -ErrorAction SilentlyContinue }
         if ($FailComposeStart -eq '1') { $env:C1407_FAIL_COMPOSE_START = '1' }
         else { Remove-Item Env:C1407_FAIL_COMPOSE_START -ErrorAction SilentlyContinue }
+        if ($FailClearHold -eq '1') { $env:C1407_FAIL_CLEARHOLD = '1' }
+        else { Remove-Item Env:C1407_FAIL_CLEARHOLD -ErrorAction SilentlyContinue }
+        if (-not [string]::IsNullOrWhiteSpace($EnterMarker)) { $env:C1407_ENTER_MARKER = $EnterMarker }
+        else { Remove-Item Env:C1407_ENTER_MARKER -ErrorAction SilentlyContinue }
+        if (-not [string]::IsNullOrWhiteSpace($MaintenanceExit)) { $env:C1407_MAINTENANCE_EXIT = $MaintenanceExit }
+        else { Remove-Item Env:C1407_MAINTENANCE_EXIT -ErrorAction SilentlyContinue }
         if (-not $SkipTcp) {
             $tcp = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 5432)
             $tcp.Server.SetSocketOption(
@@ -538,6 +576,9 @@ function Invoke-C1407WindowRun {
         if ($null -eq $prevSessions) { Remove-Item Env:C1407_SOURCE_SESSIONS -ErrorAction SilentlyContinue } else { $env:C1407_SOURCE_SESSIONS = $prevSessions }
         if ($null -eq $prevForeign) { Remove-Item Env:C1407_FOREIGN_MARKER -ErrorAction SilentlyContinue } else { $env:C1407_FOREIGN_MARKER = $prevForeign }
         if ($null -eq $prevComposeStart) { Remove-Item Env:C1407_FAIL_COMPOSE_START -ErrorAction SilentlyContinue } else { $env:C1407_FAIL_COMPOSE_START = $prevComposeStart }
+        if ($null -eq $prevClearHold) { Remove-Item Env:C1407_FAIL_CLEARHOLD -ErrorAction SilentlyContinue } else { $env:C1407_FAIL_CLEARHOLD = $prevClearHold }
+        if ($null -eq $prevEnterMarker) { Remove-Item Env:C1407_ENTER_MARKER -ErrorAction SilentlyContinue } else { $env:C1407_ENTER_MARKER = $prevEnterMarker }
+        if ($null -eq $prevMaintExit) { Remove-Item Env:C1407_MAINTENANCE_EXIT -ErrorAction SilentlyContinue } else { $env:C1407_MAINTENANCE_EXIT = $prevMaintExit }
         Remove-C1407Tree $(if ($fake) { $fake.Dir } else { $null })
         Remove-C1407Tree $snap
         Remove-C1407Tree $drill
@@ -1513,7 +1554,182 @@ function Test-W26 {
     else { Write-Fail 'W-26' ($reasons -join ' || ') }
 }
 
-$all = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26')
+function Test-W27 {
+    # CARD-1417 A-1: a value token never opens the window; only the exact -ConfirmWindow token does.
+    $fake = New-C1407FakeBin
+    try {
+        $refusals = @(
+            [pscustomobject]@{ Label = 'slash'; Arguments = @('-Execute', '-Confirm', '-HoldReason', '/ConfirmWindow', '-ApiBase', $script:ClosedApi) },
+            [pscustomobject]@{ Label = 'prefix'; Arguments = @('-Execute', '-Confirm', '-HoldR', '/ConfirmWindow', '-ApiBase', $script:ClosedApi) }
+        )
+        $reasons = @()
+        foreach ($case in $refusals) {
+            $r = Invoke-C1407Cutover -Fake $fake -Arguments $case.Arguments
+            $label = $case.Label
+            if ($r.ExitCode -ne 2) { $reasons += "$label exit=$($r.ExitCode)" }
+            if ($r.Text.IndexOf('REFUSED: -Execute requires -ConfirmWindow.', [System.StringComparison]::Ordinal) -lt 0) { $reasons += "$label missing-refusal" }
+            if ($r.Text.IndexOf('snapshot reference', [System.StringComparison]::Ordinal) -ge 0) { $reasons += "$label opened-window" }
+            if (-not [string]::IsNullOrWhiteSpace($r.Trace)) { $reasons += "$label called-child" }
+        }
+        $colon = Invoke-C1407Cutover -Fake $fake -Arguments @('-Execute', '-HoldReason:/ConfirmWindow', '-ConfirmWindow', '-ApiBase', $script:ClosedApi)
+        if ($colon.ExitCode -ne 3) { $reasons += "colon exit=$($colon.ExitCode)" }
+        if ($colon.Text.IndexOf('snapshot reference', [System.StringComparison]::Ordinal) -lt 0) { $reasons += 'colon not-opened' }
+        if ($colon.Text.IndexOf('requires -ConfirmWindow', [System.StringComparison]::Ordinal) -ge 0) { $reasons += 'colon refused' }
+        if (-not [string]::IsNullOrWhiteSpace($colon.Trace)) { $reasons += 'colon called-child' }
+        if ($reasons.Count -eq 0) { Write-Pass 'W-27' }
+        else { Write-Fail 'W-27' (($reasons -join ' || ') + ' ' + (Get-C1407SafeText $colon.Text)) }
+    } catch {
+        Write-Fail 'W-27' $_.Exception.Message
+    } finally {
+        Remove-C1407Tree $fake.Dir
+    }
+}
+
+function Test-C1407ClearHoldRecovery {
+    param($Run, [string]$Label, [string]$Refusal)
+    $agent = '11111111-1111-1111-1111-111111111111'
+    $line = 'RECOVERY: keep-six -ClearHold exited 1.'
+    if (-not $Run.Ready) { return @("$Label not-ready $($Run.Error)") }
+    $reasons = @()
+    if ($Run.ExitCode -ne 3) { $reasons += "$Label exit=$($Run.ExitCode)" }
+    if ($Run.Text.IndexOf($Refusal, [System.StringComparison]::Ordinal) -lt 0) { $reasons += "$Label lost-refusal" }
+    $at = $Run.Text.IndexOf($line, [System.StringComparison]::Ordinal)
+    if ($at -lt 0) { $reasons += "$Label missing-recovery" }
+    else {
+        $end = $Run.Text.IndexOf("`n", $at, [System.StringComparison]::Ordinal)
+        if ($end -lt 0) { $end = $Run.Text.Length }
+        $recovery = $Run.Text.Substring($at, $end - $at)
+        if ($recovery.IndexOf($agent, [System.StringComparison]::Ordinal) -lt 0) { $reasons += "$Label recovery-no-agent" }
+        if ($recovery.IndexOf('-ClearHold -Agent', [System.StringComparison]::Ordinal) -lt 0) { $reasons += "$Label recovery-no-command" }
+    }
+    $sawClearHold = $false
+    $sawClear = $false
+    foreach ($l in @($Run.Lines)) {
+        if ((Test-C1407Suffix -Line $l -Suffix 'keep-six.ps1') -and (Test-C1407Field -Line $l -Token '-ClearHold')) { $sawClearHold = $true }
+        if ((Test-C1407Suffix -Line $l -Suffix 'set-apphost-maintenance.ps1') -and (Test-C1407Field -Line $l -Token '-Clear')) { $sawClear = $true }
+    }
+    if (-not $sawClearHold) { $reasons += "$Label clearhold-not-attempted" }
+    if (-not $sawClear) { $reasons += "$Label maintenance-not-cleared" }
+    if ($Run.Text.Contains('SENTINEL-1407-ARGV')) { $reasons += "$Label printed-sentinel" }
+    return @($reasons)
+}
+
+function Test-W28 {
+    # CARD-1417 A-2: a failed keep-six -ClearHold at window exit is reported, not swallowed.
+    $reasons = @()
+    $secret = Invoke-C1407WindowRun -FailSecret '1' -FailClearHold '1'
+    $reasons += @(Test-C1407ClearHoldRecovery -Run $secret -Label 'secret' -Refusal 'REFUSED: user-secrets set failed. Value not displayed.')
+    if ($secret.Ready -and $secret.Text.IndexOf('RECOVERY: restarted AppHost on the old connection string before lifting maintenance.', [System.StringComparison]::Ordinal) -lt 0) {
+        $reasons += 'secret missing-old-restart'
+    }
+    $stop = Invoke-C1407WindowRun -StopOnlyExit '4' -FailClearHold '1'
+    $reasons += @(Test-C1407ClearHoldRecovery -Run $stop -Label 'stop' -Refusal 'REFUSED: StopOnly exited 4. The old database stays in place.')
+    $reasons = @($reasons | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($reasons.Count -eq 0) { Write-Pass 'W-28' }
+    else { Write-Fail 'W-28' (($reasons -join ' || ') + ' ' + (Get-C1407SafeText $secret.Text) + ' ' + (Get-C1407SafeText $stop.Text)) }
+}
+
+function Test-C1407EnterFailure {
+    param($Run, [string]$Label, [string]$Marker, [string[]]$Needles, [string[]]$Absent)
+    if (-not $Run.Ready) { return @("$Label not-ready $($Run.Error)") }
+    $reasons = @()
+    if ($Run.ExitCode -ne 3) { $reasons += "$Label exit=$($Run.ExitCode)" }
+    foreach ($needle in @($Needles)) {
+        if ($Run.Text.IndexOf($needle, [System.StringComparison]::Ordinal) -lt 0) { $reasons += "$Label missing [$needle]" }
+    }
+    foreach ($needle in @($Absent)) {
+        if ($Run.Text.IndexOf($needle, [System.StringComparison]::Ordinal) -ge 0) { $reasons += "$Label unexpected [$needle]" }
+    }
+    $sawEnter = $false
+    foreach ($line in @($Run.Lines)) {
+        if ((Test-C1407Suffix -Line $line -Suffix 'set-apphost-maintenance.ps1') -and (Test-C1407Field -Line $line -Token '-EnterIfAbsent')) { $sawEnter = $true }
+        if ((Test-C1407Suffix -Line $line -Suffix 'set-apphost-maintenance.ps1') -and (Test-C1407Field -Line $line -Token '-Clear')) { $reasons += "$Label cleared-marker" }
+        if (Test-C1407Field -Line $line -Token '-StopOnly') { $reasons += "$Label reached-stoponly" }
+        if ((Test-C1407Suffix -Line $line -Suffix 'keep-six.ps1') -and (Test-C1407Field -Line $line -Token '-Hold')) { $reasons += "$Label recorded-hold" }
+    }
+    if (-not $sawEnter) { $reasons += "$Label enter-not-called" }
+    if (-not (Test-Path -LiteralPath $Marker)) { $reasons += "$Label marker-removed" }
+    if ($Run.Text.Contains('SENTINEL-1407-ARGV')) { $reasons += "$Label printed-sentinel" }
+    return @($reasons)
+}
+
+function Test-W29 {
+    # CARD-1417 A-3: an enter that wrote the marker and then failed is told apart from exit 2, and the refusal names the marker.
+    $reasons = @()
+    $writtenRepo = New-C1407TempRepo
+    $raceRepo = New-C1407TempRepo
+    try {
+        $writtenMarker = Join-Path (Join-Path $writtenRepo 'logs') 'apphost.down-on-purpose'
+        $written = Invoke-C1407WindowRun -Repository $writtenRepo -EnterMarker $writtenMarker -MaintenanceExit '1'
+        $reasons += @(Test-C1407EnterFailure -Run $written -Label 'written' -Marker $writtenMarker `
+            -Needles @('REFUSED: AppHost maintenance enter exit check failed.', 'logs/apphost.down-on-purpose', 'written by this run', 'left in place') `
+            -Absent @('already existed'))
+        $raceMarker = Join-Path (Join-Path $raceRepo 'logs') 'apphost.down-on-purpose'
+        $race = Invoke-C1407WindowRun -Repository $raceRepo -EnterMarker $raceMarker -MaintenanceExit '2'
+        $reasons += @(Test-C1407EnterFailure -Run $race -Label 'race' -Marker $raceMarker `
+            -Needles @('REFUSED: AppHost maintenance enter exit check failed.', 'logs/apphost.down-on-purpose', 'already existed', 'This run did not enter it') `
+            -Absent @('written by this run'))
+    } catch {
+        $reasons += $_.Exception.Message
+    } finally {
+        Remove-C1407Tree $writtenRepo
+        Remove-C1407Tree $raceRepo
+    }
+    $reasons = @($reasons | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($reasons.Count -eq 0) { Write-Pass 'W-29' }
+    else { Write-Fail 'W-29' ($reasons -join ' || ') }
+}
+
+function Test-W30 {
+    # CARD-1417 A-4: a window run drives an ephemeral tailnet port and a temporary repository, never 5432 or this checkout.
+    $reasons = @()
+    $checkout = [System.IO.Path]::GetFullPath((Split-Path $here -Parent)).TrimEnd([char]47, [char]92)
+    $temp = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd([char]47, [char]92)
+    $run = Invoke-C1407WindowRun
+    if (-not $run.Ready) { $reasons += "window not-ready $($run.Error)" }
+    else {
+        if ($run.ExitCode -ne 0) { $reasons += "window exit=$($run.ExitCode)" }
+        $m = [regex]::Match($run.Text, 'PHASE 0 tailnet ([0-9]+) accepted a desktop connect\.')
+        if (-not $m.Success) { $reasons += 'window port-not-reported' }
+        else {
+            $port = [int]$m.Groups[1].Value
+            if ($port -eq 5432) { $reasons += 'window port-5432' }
+            if ($port -lt 1024) { $reasons += "window port-privileged $port" }
+        }
+        $repo = $null
+        foreach ($line in @($run.Lines)) {
+            if (-not (Test-C1407Suffix -Line $line -Suffix 'recover-repository-children.ps1')) { continue }
+            $parts = @($line.Split([char]9))
+            for ($p = 0; $p -lt ($parts.Count - 1); $p++) {
+                if ($parts[$p] -eq '-Repository') { $repo = $parts[$p + 1] }
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($repo)) { $reasons += 'window repository-not-passed' }
+        else {
+            $full = [System.IO.Path]::GetFullPath($repo).TrimEnd([char]47, [char]92)
+            if ($full.Equals($checkout, [System.StringComparison]::OrdinalIgnoreCase)) { $reasons += 'window repository-is-checkout' }
+            if (-not $full.StartsWith($temp, [System.StringComparison]::OrdinalIgnoreCase)) { $reasons += 'window repository-not-temp' }
+            if (Test-Path -LiteralPath $full) { $reasons += 'window repository-left-behind' }
+        }
+        if ($run.Text.Contains('SENTINEL-1407-ARGV')) { $reasons += 'window printed-sentinel' }
+    }
+    $closed = Invoke-C1407WindowRun -SkipTcp -ExtraArgs @('-TailnetPort', '9')
+    if (-not $closed.Ready) { $reasons += "closed not-ready $($closed.Error)" }
+    else {
+        if ($closed.ExitCode -ne 3) { $reasons += "closed exit=$($closed.ExitCode)" }
+        if ($closed.Text.IndexOf('REFUSED: tailnet 9 did not accept a desktop connect. StopOnly was not run.', [System.StringComparison]::Ordinal) -lt 0) {
+            $reasons += 'closed missing-refusal'
+        }
+        foreach ($line in @($closed.Lines)) {
+            if (Test-C1407Suffix -Line $line -Suffix 'set-apphost-maintenance.ps1') { $reasons += 'closed entered-maintenance' }
+            if (Test-C1407Field -Line $line -Token '-StopOnly') { $reasons += 'closed reached-stoponly' }
+        }
+    }
+    if ($reasons.Count -eq 0) { Write-Pass 'W-30' }
+    else { Write-Fail 'W-30' (($reasons -join ' || ') + ' ' + (Get-C1407SafeText $run.Text) + ' ' + (Get-C1407SafeText $closed.Text)) }
+}
+
+$all = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26', 'W27', 'W28', 'W29', 'W30')
 if ($Case) {
     $name = $Case
     if ($name -match '^W-([0-9]+)$') { $name = 'W' + $Matches[1] }
