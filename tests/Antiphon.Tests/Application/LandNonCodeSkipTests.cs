@@ -1637,7 +1637,8 @@ public sealed class LandNonCodeSkipTests
     // CARD-1483 (Review cff23aba D-1): the S1 helper metadata is allowed only as the exact tree literal, in
     // attribute form, on an Include. HelperTargetFramework reaches an MSBuild task Properties string, which
     // splits on ';', so 'net10.0;CustomBeforeMicrosoftCommonTargets=...docs...' would import a docs file.
-    // The real tree approves; each other shape refuses naming the metadata.
+    // The _StagedHelperFramework property that carries it is pinned to its two tree values the same way.
+    // The real tree approves; each other shape refuses naming the metadata or the property.
     [Test]
     [Arguments("tree")]
     [Arguments("htf-semicolon")]
@@ -1652,6 +1653,9 @@ public sealed class LandNonCodeSkipTests
     [Arguments("stf-net9")]
     [Arguments("stf-semicolon")]
     [Arguments("stf-child")]
+    [Arguments("prop-toplevel")]
+    [Arguments("prop-intarget")]
+    [Arguments("prop-output")]
     public async Task C1483_PinnedHelperMetadataRefusesOtherShapes(string shape)
     {
         const string helper = """<StagedHelper Include="$(MSBuildThisFileDirectory)..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj" Folder="land-graph-audit" Glob="**\*" """;
@@ -1659,11 +1663,14 @@ public sealed class LandNonCodeSkipTests
         const string skip = """SkipGetTargetFrameworkProperties="true" """;
         const string stf = """SetTargetFramework="TargetFramework=net10.0" />""";
         const string helperLabel = @"StagedHelper Include=$(MSBuildThisFileDirectory)..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj";
+        const string evil = @"net10.0;CustomBeforeMicrosoftCommonTargets=$(MSBuildThisFileDirectory)..\..\docs\evil.md";
+        const string inTarget = "<_StagedHelperFramework>%(StagedHelper.HelperTargetFramework)</_StagedHelperFramework>";
         const string referenceLabel = @"ProjectReference Include=..\..\tools\Antiphon.LandGraphAudit\Antiphon.LandGraphAudit.csproj";
         var files = await BuildRealTestProjectTreeAsync();
         var real = files[RealTestProjectPath];
         real.ShouldContain(helper + htf);
         real.ShouldContain(skip + stf);
+        real.ShouldContain(inTarget);
         if (shape == "tree")
         {
             await AssertUpdateApprovesAsync(files, DefinitionCount(files));
@@ -1676,7 +1683,7 @@ public sealed class LandNonCodeSkipTests
         var (edited, label, name) = shape switch
         {
             "htf-semicolon" => (HelperValue("net10.0;X=Y"), helperLabel, "HelperTargetFramework"),
-            "htf-docs-import" => (HelperValue(@"net10.0;CustomBeforeMicrosoftCommonTargets=$(MSBuildThisFileDirectory)..\..\docs\evil.md"), helperLabel, "HelperTargetFramework"),
+            "htf-docs-import" => (HelperValue(evil), helperLabel, "HelperTargetFramework"),
             "htf-net9" => (HelperValue("net9.0"), helperLabel, "HelperTargetFramework"),
             "htf-leading-space" => (HelperValue(" net10.0"), helperLabel, "HelperTargetFramework"),
             "htf-case" => (HelperValue("NET10.0"), helperLabel, "HelperTargetFramework"),
@@ -1688,12 +1695,18 @@ public sealed class LandNonCodeSkipTests
             "stf-net9" => (ReferenceValue("stf", "TargetFramework=net9.0", " />"), referenceLabel, "SetTargetFramework"),
             "stf-semicolon" => (ReferenceValue("stf", @"TargetFramework=net10.0;CustomBeforeMicrosoftCommonTargets=$(MSBuildThisFileDirectory)..\..\docs\evil.md", " />"), referenceLabel, "SetTargetFramework"),
             "stf-child" => (real.Replace(skip + stf, skip + "><SetTargetFramework>TargetFramework=net10.0</SetTargetFramework></ProjectReference>", StringComparison.Ordinal), referenceLabel, "SetTargetFramework"),
+            "prop-toplevel" => (real.Replace("<IsTestProject>", "<_StagedHelperFramework>" + evil + "</_StagedHelperFramework><IsTestProject>", StringComparison.Ordinal), "", "_StagedHelperFramework"),
+            "prop-intarget" => (real.Replace(inTarget, "<_StagedHelperFramework>" + evil + "</_StagedHelperFramework>", StringComparison.Ordinal), "", "_StagedHelperFramework"),
+            "prop-output" => (real.Replace(inTarget, inTarget + "</PropertyGroup><CreateProperty Value=\"" + evil + "\"><Output TaskParameter=\"Value\" PropertyName=\"_StagedHelperFramework\" /></CreateProperty><PropertyGroup>", StringComparison.Ordinal), "", "_StagedHelperFramework"),
             _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, null),
         };
         edited.ShouldNotBe(real);
         files[RealTestProjectPath] = edited;
         files["docs/evil.md"] = "# evil";
-        await AssertUpdateRefusesAsync(files, "metadata the audit does not allow", RealTestProjectPath + " " + label + " " + name);
+        if (label.Length == 0)
+            await AssertUpdateRefusesAsync(files, "value the audit does not allow", RealTestProjectPath + " " + name);
+        else
+            await AssertUpdateRefusesAsync(files, "metadata the audit does not allow", RealTestProjectPath + " " + label + " " + name);
     }
 
     private const string RealTestProjectPath = "tests/Antiphon.Tests/Antiphon.Tests.csproj";
