@@ -10,13 +10,18 @@
 
     The script never prints a password or a connection string, never removes a
     data directory, and never passes a worktree override to the restart script.
-    Start it with pwsh -File. The window gate reads only the process command
-    line tokens after pwsh's own -File <this script> pair: the exact
-    -ConfirmWindow token there opens it. An abbreviation (-Conf), a parameter
-    value (-HoldReason /ConfirmWindow, -HoldReason: -ConfirmWindow), or a
-    -ConfirmWindow before that pair or inside -Command text does not, and a
-    start with no such pair (-Command, -EncodedCommand, an implicit script
-    path, a same-process call) refuses -Execute with exit 2.
+    The window gate is a challenge token, not a command-line scan (CARD-1417,
+    Review d6b441d2). The preview and every gate refusal print one line,
+    CONFIRM TOKEN <8 hex>: the first 8 hex characters of SHA-256 over the UTF-8
+    text <machine name> LF <UTC date yyyy-MM-dd> LF <this file's SHA-256,
+    lowercase hex> LF <resolved -Repository path, trailing separators removed>.
+    -Execute proceeds only when the bound -ConfirmWindow switch is set AND
+    -ConfirmToken equals today's or yesterday's UTC token for the same
+    -Repository (a window may cross midnight). Nothing reads the process
+    command line, so an abbreviation, a parameter value, a Unicode dash, a
+    wrapper, a same-process call or a -Command start cannot open the window:
+    the actor must have read the preview printed for this machine, this file
+    and this repository on this day. Refusals exit 2.
     -TailnetPort (default 5432) is the listener the phase 0 connect probes;
     tests point it at a loopback port. A failed keep-six -ClearHold at exit
     prints a RECOVERY line naming the agent. An enter that wrote the marker
@@ -35,6 +40,7 @@ param(
     [switch]$WhatIf,
     [switch]$Execute,
     [switch]$ConfirmWindow,
+    [string]$ConfirmToken,
     [switch]$Rollback,
     [switch]$AcceptDataLossRollback,
     [switch]$AcceptDrillTime,
@@ -79,103 +85,64 @@ function Fail-Cutover {
     exit $Code
 }
 
-# CARD-1417 A-1: the names this script binds, split by whether they consume the next token.
-$script:CutoverSwitchParameters = @()
-$script:CutoverValueParameters = @()
-foreach ($entry in $MyInvocation.MyCommand.Parameters.GetEnumerator()) {
-    if ($entry.Value.SwitchParameter) { $script:CutoverSwitchParameters += [string]$entry.Key }
-    else { $script:CutoverValueParameters += [string]$entry.Key }
+# CARD-1417 (Review d6b441d2): the confirm gate is a challenge token bound to this machine, this
+# file, the -Repository and the UTC day. Three rounds of pwsh command-line quirks (abbreviations,
+# parameter values, trailing colons, host options, -Command text, wrappers, -NoExit prompts,
+# Unicode dashes) showed that a scan of the process command line cannot be made complete, so no
+# code here reads it: the switch is the bound parameter and the token must come from the preview.
+$script:CutoverSelfPath = $PSCommandPath
+
+function Get-CutoverRepositoryKey {
+    # The resolved -Repository path as it enters the token: full path, trailing separators removed,
+    # empty when none was given. No existence check: the preview may run before anything else.
+    if ([string]::IsNullOrWhiteSpace($Repository)) { return '' }
+    try { return [System.IO.Path]::GetFullPath($Repository).TrimEnd([char]47, [char]92) } catch { return $Repository }
 }
 
-function Test-CutoverValueParameterName {
-    # True when the dash token names (exactly, or as a unique prefix the binder accepts)
-    # a parameter that takes the following token as its value.
+function Get-CutoverChallengeToken {
+    # First 8 hex characters of SHA-256 over the UTF-8 text
+    # <machine name> LF <UTC date yyyy-MM-dd> LF <this file's SHA-256, lowercase hex> LF <repository key>.
+    param([datetime]$UtcDay)
+    $self = $script:CutoverSelfPath
+    if ([string]::IsNullOrWhiteSpace($self) -or -not (Test-Path -LiteralPath $self -PathType Leaf)) { return $null }
+    $fileSha = (Get-FileHash -LiteralPath $self -Algorithm SHA256).Hash.ToLowerInvariant()
+    $day = $UtcDay.ToString('yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture)
+    $text = [Environment]::MachineName + "`n" + $day + "`n" + $fileSha + "`n" + (Get-CutoverRepositoryKey)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $hash = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text)) } finally { $sha.Dispose() }
+    return [System.BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant().Substring(0, 8)
+}
+
+function Test-CutoverChallengeToken {
+    # True only for today's or yesterday's UTC token (a window may cross midnight). Case-insensitive
+    # and trimmed, because the operator retypes it; nothing else is forgiven.
     param([string]$Token)
-    if ([string]::IsNullOrEmpty($Token)) { return $false }
-    $all = @($script:CutoverValueParameters) + @($script:CutoverSwitchParameters)
-    foreach ($name in $all) {
-        if ($name.Equals($Token, [System.StringComparison]::OrdinalIgnoreCase)) {
-            return (@($script:CutoverValueParameters) -contains $name)
-        }
-    }
-    $candidates = @($all | Where-Object { $_.StartsWith($Token, [System.StringComparison]::OrdinalIgnoreCase) })
-    if ($candidates.Count -ne 1) { return $false }
-    return (@($script:CutoverValueParameters) -contains $candidates[0])
-}
-
-function Test-CutoverHostSwitch {
-    # pwsh resolves its own switch by prefix: any prefix of $Name at least as long as $Shortest.
-    param([string]$Key, [string]$Name, [string]$Shortest)
-    if ([string]::IsNullOrEmpty($Key) -or $Key.Length -lt $Shortest.Length) { return $false }
-    return $Name.StartsWith($Key, [System.StringComparison]::OrdinalIgnoreCase)
-}
-
-function Test-CutoverSamePath {
-    # True when both resolve to the same full path. A relative token resolves against the process
-    # directory, the one pwsh used to open -File; case is ignored only on Windows.
-    param([string]$Candidate, [string]$Expected)
-    if ([string]::IsNullOrWhiteSpace($Candidate) -or [string]::IsNullOrWhiteSpace($Expected)) { return $false }
-    try {
-        $full = [System.IO.Path]::GetFullPath($Candidate)
-        $want = [System.IO.Path]::GetFullPath($Expected)
-    } catch {
-        return $false
-    }
-    $comparison = [System.StringComparison]::Ordinal
-    if ([System.IO.Path]::DirectorySeparatorChar -eq '\') { $comparison = [System.StringComparison]::OrdinalIgnoreCase }
-    return $full.Equals($want, $comparison)
-}
-
-function Get-CutoverScriptArguments {
-    # CARD-1417 D-1 (Review c25ee080): the tokens pwsh handed to this script's binder are the ones
-    # after the host's own '-File <path>' pair whose path is this script, in any spelling pwsh
-    # accepts (-f, --File, /File). Anchored is $false when there is no such pair: a -Command or
-    # -EncodedCommand start (any prefix pwsh accepts, -c or -e onwards), an implicit script path,
-    # or an in-process call. A '-File' that is the value of another host option names another path
-    # and is walked past; a non-dash token before the pair is a host option's value.
-    $argv = @([Environment]::GetCommandLineArgs())
-    for ($i = 1; $i -lt $argv.Count; $i++) {
-        $token = [string]$argv[$i]
-        if ([string]::IsNullOrEmpty($token)) { continue }
-        if ($token[0] -ne '-' -and $token[0] -ne '/') { continue }
-        $key = $token.Substring(1)
-        if ($key.Length -gt 0 -and $key[0] -eq '-') { $key = $key.Substring(1) }
-        if ((Test-CutoverHostSwitch $key 'command' 'c') -or (Test-CutoverHostSwitch $key 'encodedcommand' 'e')) {
-            return [pscustomobject]@{ Anchored = $false; Tokens = [string[]]@() }
-        }
-        if (-not (Test-CutoverHostSwitch $key 'file' 'f')) { continue }
-        if ($i + 1 -ge $argv.Count) { break }
-        if (-not (Test-CutoverSamePath ([string]$argv[$i + 1]) $PSCommandPath)) { continue }
-        $tail = [string[]]@()
-        if ($i + 2 -lt $argv.Count) { $tail = [string[]]@($argv[($i + 2)..($argv.Count - 1)]) }
-        return [pscustomobject]@{ Anchored = $true; Tokens = $tail }
-    }
-    return [pscustomobject]@{ Anchored = $false; Tokens = [string[]]@() }
-}
-
-function Test-ExactNamedSwitch {
-    # CARD-1417 A-1, over the anchored tokens only. Half 1: only a dash token counts, so
-    # /ConfirmWindow or a bare word never does. Half 2: the value of the previous value-taking
-    # parameter is skipped. Under pwsh -File that value arrives through a trailing colon
-    # (-HoldReason: -ConfirmWindow binds HoldReason and no switch); a value-taking name without
-    # the colon followed by a dash token is a binder error before this runs, so the name-resolved
-    # branch is defence in depth for other hosts.
-    param([string]$Name, [string[]]$Tokens)
-    $skipValue = $false
-    foreach ($token in @($Tokens)) {
-        $text = [string]$token
-        if ($skipValue) { $skipValue = $false; continue }
-        if (-not $text.StartsWith('-')) { continue }
-        if ($text.StartsWith('--')) { $text = $text.Substring(1) }
-        $text = $text.Substring(1)
-        $colon = $text.IndexOf(':')
-        $carriesValue = ($colon -ge 0)
-        $valueInNextToken = ($carriesValue -and $colon -eq ($text.Length - 1))
-        if ($carriesValue) { $text = $text.Substring(0, $colon) }
-        if ($text.Equals($Name, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
-        if ($valueInNextToken -or (-not $carriesValue -and (Test-CutoverValueParameterName $text))) { $skipValue = $true }
+    if ([string]::IsNullOrWhiteSpace($Token)) { return $false }
+    $given = $Token.Trim()
+    $today = [datetime]::UtcNow.Date
+    foreach ($day in @($today, $today.AddDays(-1))) {
+        $expected = Get-CutoverChallengeToken -UtcDay $day
+        if (-not [string]::IsNullOrEmpty($expected) -and $expected.Equals($given, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
     }
     return $false
+}
+
+function Write-CutoverChallengeLine {
+    $today = [datetime]::UtcNow.Date
+    $token = Get-CutoverChallengeToken -UtcDay $today
+    if ([string]::IsNullOrEmpty($token)) {
+        Write-Host 'CONFIRM TOKEN unavailable: this file could not be hashed, so -Execute cannot be confirmed from this start.'
+        return
+    }
+    Write-Host ('CONFIRM TOKEN ' + $token + ' (machine ' + [Environment]::MachineName + ', ' + $today.ToString('yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture) + ' UTC, this script, -Repository ''' + (Get-CutoverRepositoryKey) + '''): pass -Execute -ConfirmWindow -ConfirmToken ' + $token + ' with the same -Repository today or tomorrow UTC.')
+}
+
+function Fail-CutoverGate {
+    # A gate refusal names the token so the operator who read the preview can retry; exit 2.
+    param([string]$Message)
+    Write-Host $Message
+    Write-CutoverChallengeLine
+    exit 2
 }
 
 function Test-CutoverSha {
@@ -954,20 +921,17 @@ function Invoke-CutoverWindow {
 
 if (-not $Execute) {
     Show-CutoverWhatIf
+    Write-CutoverChallengeLine
     exit 0
 }
 if ($WhatIf) {
-    Fail-Cutover 'REFUSED: -Execute and -WhatIf together are ambiguous. Nothing was changed.' 2
+    Fail-CutoverGate 'REFUSED: -Execute and -WhatIf together are ambiguous. Nothing was changed.'
 }
 if (-not $ConfirmWindow) {
-    Fail-Cutover 'REFUSED: -Execute requires -ConfirmWindow. Nothing was changed.' 2
+    Fail-CutoverGate 'REFUSED: -Execute requires -ConfirmWindow. Nothing was changed.'
 }
-$scriptArguments = Get-CutoverScriptArguments
-if (-not $scriptArguments.Anchored) {
-    Fail-Cutover 'REFUSED: -Execute requires -ConfirmWindow. The process command line has no -File pair naming this script (a -Command, -EncodedCommand, implicit-path or in-process start), so the exact token cannot be checked. Start it with pwsh -File scripts/cutover-postgres-server2.ps1. Nothing was changed.' 2
-}
-if (-not (Test-ExactNamedSwitch -Name 'ConfirmWindow' -Tokens $scriptArguments.Tokens)) {
-    Fail-Cutover 'REFUSED: -Execute requires -ConfirmWindow. Nothing was changed.' 2
+if (-not (Test-CutoverChallengeToken $ConfirmToken)) {
+    Fail-CutoverGate 'REFUSED: -Execute requires -ConfirmToken equal to the CONFIRM TOKEN the preview prints for this machine, this script, the same -Repository and today or yesterday UTC. Nothing was changed.'
 }
 if ($Rollback) {
     Invoke-CutoverRollback

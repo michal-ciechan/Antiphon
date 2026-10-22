@@ -53,21 +53,25 @@ child is left behind. Exit 3 stays a refusal and kills nothing. `-StopOnly
 -WhatIf` prints the stop and does not POST, take the restart lock, or launch.
 Postgres on 17280 and the session runner on 17204 stay up. The cutover script
 is the caller. Start that window with
-`pwsh -File scripts/cutover-postgres-server2.ps1`. A same-process call does not
-see `-ConfirmWindow` on the process command line and refuses. Default `-WhatIf`
-changes nothing. `-Execute -ConfirmWindow` is the real window. If
+`pwsh -File scripts/cutover-postgres-server2.ps1`. Default `-WhatIf`
+changes nothing and ends with one `CONFIRM TOKEN <8 hex>` line.
+`-Execute -ConfirmWindow -ConfirmToken <that token>` is the real window. If
 `logs/apphost.down-on-purpose` already exists, the window refuses before it
 enters maintenance; the operator clears that marker first. An enter that wrote the
 marker and then failed names the marker and leaves it in place, and exit 2 means it
 already existed (CARD-1417). A failed `keep-six -ClearHold` at window exit prints a
 RECOVERY line naming the agent. `-TailnetPort` (default 5432) is the listener the
-phase 0 probe connects to. The window gate reads only the process command-line tokens after
-pwsh's own `-File scripts/cutover-postgres-server2.ps1` pair: the exact `-ConfirmWindow` token
-there opens it. An abbreviation (`-Conf`), a parameter value (`-HoldReason /ConfirmWindow`,
-`-HoldReason: -ConfirmWindow`), or a `-ConfirmWindow` placed before that pair (`-WorkingDirectory`,
-`-CustomPipeName`) or inside `-Command` text does not, and a start without that pair (`-Command`,
-`-EncodedCommand`, an implicit script path, an in-process call) refuses `-Execute` with exit 2
-(Review c25ee080 D-1). An ordinary restart remains the command above.
+phase 0 probe connects to. The window gate is a challenge token, not a command-line scan
+(CARD-1417, Review d6b441d2): run the preview with the `-Repository` you will execute against,
+read its `CONFIRM TOKEN` line (first 8 hex characters of SHA-256 over the machine name, the UTC
+date, the script file's own SHA-256 and the resolved `-Repository`), and pass it back as
+`-ConfirmToken`. `-Execute` proceeds only when the bound `-ConfirmWindow` switch is set and the
+token equals today's or yesterday's UTC token for the same `-Repository`; a window may cross
+midnight. Nothing reads the process command line, so an abbreviation, a parameter value, a
+Unicode dash, a wrapper, an in-process call or a `-Command` start cannot open the window without
+the preview's token; every gate refusal exits 2 and prints the token again. `-Confirm` and
+`-Conf` are ambiguous between `-ConfirmWindow` and `-ConfirmToken` and never bind. An ordinary
+restart remains the command above.
 
 Before that force-kill, and only after the restart lock is held and SHA admission
 has passed, the script POSTs `http://localhost:17202/api/operator/shutdown` with
