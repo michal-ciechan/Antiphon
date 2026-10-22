@@ -79,6 +79,7 @@ internal sealed class DispatcherAdmissionFixture : IAsyncDisposable
         }));
         services.AddSingleton<PhoneHomeLaunchPolicy>();
         services.AddSingleton<ISessionRunnerDirectory>(f.Host.Directory);
+        services.AddSingleton<RemoteWorkspaceService>();
         services.AddSingleton<IAgentTaskLaunchSink>(f.Sink);
         services.AddSingleton<RepositoryLeaseWaiters>();
         services.AddSingleton<SweepInFlightState>();
@@ -135,7 +136,7 @@ internal sealed class DispatcherAdmissionFixture : IAsyncDisposable
         await WaitUntilAsync(async () => (await HeldAsync())?.Contains("capacity", StringComparison.OrdinalIgnoreCase) == true,
             "candidate held on runner capacity");
         await WaitUntilAsync(() => Task.FromResult(Clock.HasPoll && Logger.Active == 0), "next poll armed");
-        Waiters.Snapshot(_workspace).ShouldBeEmpty("capacity holds do not register lease waiters");
+        Waiters.IsEmpty.ShouldBeTrue("capacity holds do not register lease waiters");
     }
 
     public async Task ArmSweepAsync()
@@ -167,7 +168,7 @@ internal sealed class DispatcherAdmissionFixture : IAsyncDisposable
     {
         await using var db = Read();
         return await db.AgentTaskEvents.Where(e => e.AgentTaskId == Candidate && e.Type == AgentTaskEventType.Held)
-            .OrderByDescending(e => e.CreatedAt).Select(e => e.Detail).FirstOrDefaultAsync();
+            .OrderByDescending(e => e.At).Select(e => e.Detail).FirstOrDefaultAsync();
     }
     public async Task<bool> IsDispatchedAsync()
     {
