@@ -20,6 +20,8 @@ Use only method-scoped filters `/*/*/LandGraphEvaluationTests/<exact method>` fo
 red/restore/green. Reference global-property metadata, package-root configuration,
 and links encountered below a glob's wildcard portion need discovery as well;
 the ordinary matrix does not individually prove those branches.
+The narrow SDK ImportAfter/workload-manifest exceptions also need negative-control
+discovery (spoofed importer/SDK name, outside target and redirected SDK wildcard).
 
 Inherited plan controls also remain pending: remove target pins comparison
 (V-8/V-9), omit differential evaluation (V-12), accept exit 2 (V-3/V-14), and the

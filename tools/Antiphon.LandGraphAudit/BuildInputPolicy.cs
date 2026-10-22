@@ -45,10 +45,14 @@ internal sealed class BuildInputPolicy
         {
             var text = import.ImportingElement.Project;
             var path = import.ImportedProject.FullPath;
-            var wildcard = text.IndexOfAny(['*', '?']) >= 0;
-            if (wildcard || !TrustedDefinition(path))
+            var owner = import.ImportingElement.ContainingProject.FullPath;
+            // The installed SDK itself uses ImportAfter/* for its extension targets. That
+            // exception requires BOTH ends inside the resolved SDK, never a repository target.
+            var sdkExtension = Within(_sdk, SolutionAudit.RealPath(owner))
+                               && Within(_sdk, SolutionAudit.RealPath(path));
+            var wildcard = text.IndexOfAny(['*', '?']) >= 0 && !sdkExtension;
+            if (wildcard || (!TrustedDefinition(path) && !SdkWorkloadManifest(import)))
             {
-                var owner = import.ImportingElement.ContainingProject.FullPath;
                 refusals.Add($"refused: {Display(owner)} import {text} => {Display(path)} ({(wildcard ? "wildcard" : "outside trusted definition set")})");
             }
         }
@@ -81,6 +85,20 @@ internal sealed class BuildInputPolicy
                 refusals.Add($"refused: {Display(result.ItemElement.ContainingProject.FullPath)} glob {result.ItemElement.Include} ({glob.FixedDirectoryPart}{glob.WildcardDirectoryPart}{glob.FilenamePart})");
             }
         }
+    }
+
+    private bool SdkWorkloadManifest(ResolvedImport import)
+    {
+        // Workload manifests ship next to sdk/, not beneath sdk/<version>/. Admit only
+        // the SDK's known workload-locator import and its manifest file in that installation.
+        var owner = Path.Combine(_sdk, "Sdks", "Microsoft.NET.Sdk", "targets", "Microsoft.NET.Sdk.ImportWorkloads.targets");
+        var manifests = SolutionAudit.RealPath(Path.Combine(_sdk, "..", "..", "sdk-manifests"));
+        var target = SolutionAudit.RealPath(import.ImportedProject.FullPath);
+        return PathComparer.Equals(SolutionAudit.RealPath(import.ImportingElement.ContainingProject.FullPath), owner)
+               && import.ImportingElement.Sdk == "Microsoft.NET.SDK.WorkloadManifestTargetsLocator"
+               && import.ImportingElement.Project == "WorkloadManifest.targets"
+               && Path.GetFileName(target) == "WorkloadManifest.targets"
+               && Within(manifests, target);
     }
 
     private bool TrustedDefinition(string path, bool allowDocs = false)

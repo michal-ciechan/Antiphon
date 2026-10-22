@@ -48,3 +48,17 @@ exit-2-as-approval (V-3/V-14), plus inherited S1 controls. S2 candidates for dis
 PC-S2-1 remove glob reachability (V-5); PC-S2-2 omit reference recursion or not-built
 inventory (V-6); PC-S2-3 omit import trust/wildcard/real-path checks (V-7).
 Mutation owns every deliberate mutant and red/restore/green cycle.
+
+### SDK layout clarification from the first implementation run
+
+D-7's literal SDK-directory/wildcard rules reject every harmless SDK fixture on
+SDK 10.0.402: Microsoft.Common.CurrentVersion.targets imports SDK-owned ImportAfter/*,
+and Microsoft.NET.Sdk.ImportWorkloads.targets imports installed WorkloadManifest.targets
+from the sibling sdk-manifests tree. Both are part of the selected SDK installation.
+S2 permits wildcard imports only when importer and resolved target are both under
+the Locator SDK root. It permits the manifest exception only for the exact installed
+Microsoft.NET.Sdk.ImportWorkloads.targets importer, the workload-locator SDK name,
+the literal WorkloadManifest.targets import and filename, and a real target under
+that installation's sdk-manifests directory. Repository wildcard imports still
+refuse, and no whole installation-root trust is added. Existing acceptance assertions
+remain unchanged. Custom workload layouts outside this narrow exception fail closed.
