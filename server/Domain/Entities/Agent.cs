@@ -130,6 +130,22 @@ public class Agent
     /// </summary>
     public string LaunchEnvJson { get; set; } = "{}";
 
+    /// <summary>
+    /// CARD-0167 S2: how this agent relates to its project's per-kind provider endpoint.
+    /// <see cref="Domain.Enums.ProviderEndpointMode.Inherit"/> (0, the backfill for every row that
+    /// predates the column) follows the project; <see cref="Domain.Enums.ProviderEndpointMode.Endpoint"/>
+    /// uses <see cref="ProviderEndpointJson"/>; <see cref="Domain.Enums.ProviderEndpointMode.Direct"/>
+    /// exempts the agent from the project endpoint, which the generic env box cannot express.
+    /// Dormant until S3 reads it in the launch resolvers.
+    /// </summary>
+    public ProviderEndpointMode ProviderEndpointMode { get; set; } = ProviderEndpointMode.Inherit;
+
+    /// <summary>
+    /// CARD-0167 S2: the agent's own endpoint, <c>{ baseUrl, apiKeyName }</c>, meaningful only in
+    /// <c>Endpoint</c> mode and null otherwise. A key NAME, never a value.
+    /// </summary>
+    public string? ProviderEndpointJson { get; set; }
+
     public string? PersistentSessionId { get; set; }
     public Guid? CurrentCardId { get; set; }
     /// <summary>The standing agent's default board; always null for a pool delegate (<see cref="IsPoolDelegate"/>).</summary>
