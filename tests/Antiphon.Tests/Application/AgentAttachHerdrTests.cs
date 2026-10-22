@@ -200,13 +200,13 @@ public class AgentAttachHerdrTests
             using var grok = PinGrokHome(tempRoot, nativeId, cwd);
             var pane = SeedGrokPane(fake, nativeId, cwd);
             var agent = await CreateGrokHerdrAgentAsync(harness, cwd);
-            await using (var seed = CreateContext())
-            {
-                var row = await seed.Agents.SingleAsync(a => a.Id == agent.Id);
-                row.IsPoolDelegate = true;
-                row.PoolProviderProjectionJson = null;
-                await seed.SaveChangesAsync();
-            }
+            // Through the harness scope's own context: it already tracks this row (see
+            // CreateGrokHerdrAgentAsync), and the service's FOR UPDATE read resolves to that instance.
+            var scoped = harness.Scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = await scoped.Agents.SingleAsync(a => a.Id == agent.Id);
+            row.IsPoolDelegate = true;
+            row.PoolProviderProjectionJson = null;
+            await scoped.SaveChangesAsync();
 
             await harness.Control.AttachHerdrAsync(agent.Id, new AttachHerdrPaneRequest(pane.PaneId), CancellationToken.None);
 
