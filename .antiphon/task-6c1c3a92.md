@@ -59,6 +59,20 @@ the final HEAD, and fetch/merge-tree current origin/master without merging it.
 
 ## Pending Mutation and follow-up
 
+Historical qualification at `94635d3ee16b7cc2e711d42c18cb80e22c6062dd`:
+the checkpoint bootstrap succeeded (0 errors, 4 nullable warnings; slot granted,
+waited=0s, held=7s). CP-6 was red before Vitest: TS2769 at the new Name selector,
+because ByRoleOptions has no `exact` property. The repair uses an anchored name
+matcher. This was an introduced test authoring error, not a guarded product defect
+or a Mutation red result. No tests executed in this attempt. Its original receipt:
+
+```text
+CHECKPOINT CP-6 commit=94635d3ee16b7cc2e711d42c18cb80e22c6062dd build=n/a filter=pwsh -File scripts/test-client.ps1 ProviderEndpointFields.test executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=2 slot=granted waited=0s dirty=0 source=94635d3ee16b7cc2e711d42c18cb80e22c6062dd sourceState=clean buildSource=notApplicable
+```
+
+Evidence: `.antiphon/checkpoints/20261022-185859-9605/report.md` and its CP-6 console log.
+The corrected final tip must run CP-6 again and then the ten neighbour files once.
+
 The stage-code contract reserves deliberate mutations and red/restore/green cycles for
 Mutation. Therefore the brief's requested new mutant runs are not executed in Code and
 must not be reported as proved. Review a4cdbeab's historical mutation outcomes remain:
@@ -68,6 +82,7 @@ ordinary green does not discharge the following pending controls:
 | Control | Mutation | Exact detecting test in ProviderEndpointFields.test.tsx |
 |---|---|---|
 | M1-project / D-1 | Render the key rows including sentinel value in ProjectProviderEndpoints | renders stored endpoints per kind and submits the parsed map |
+| M1-agent | Render the key rows including sentinel value in AgentProviderEndpoint | Direct mode hides the fields and submits providerEndpoint null |
 | M2 / D-2 | ProjectConfig always sends providerEndpoints on save | omits providerEndpoints when saving an unrelated project field |
 | M3 / D-3 | Own endpoint sends providerEndpoint null | Own endpoint mode submits the edited URL and full endpoint |
 
@@ -76,8 +91,10 @@ remain pending for method-scoped SourceLanding Mutation after ordinary Review an
 
 Backlog-only follow-up: reject userinfo in endpoint URLs in both client forms before sending
 the request. Exhaustive card searches for `userinfo`, `provider endpoint`, and `URL credentials`
-found no covering card; CARD-1423 was inspected and concerns monitor logs instead. The task's
-completion report records the newly filed card number.
+found no covering card; CARD-1423 was inspected and concerns monitor logs instead.
+Filed and read back **CARD-1509**, Backlog, id `42857453-08aa-449d-af5b-28d73ca44823`.
+The initial POST returned HTTP 499 after creating it; search and GET confirmed the stored
+description, so no duplicate write was attempted.
 
 Next: Review the repaired S5 branch and its ordinary evidence. The caller lands original
 Code task 6c1c3a92 after approval, then commissions SourceLanding Mutation for all pending
