@@ -64,6 +64,10 @@ public interface ILandingGit
         => Task.FromResult(new LandingGitResult(1, "", "retirement_pin_not_implemented"));
     Task<LandingGitResult> DeleteRetirementPinAsync(string repository, Guid retirementId, string pinName, string expectedSha, CancellationToken ct)
         => Task.FromResult(new LandingGitResult(1, "", "retirement_pin_not_implemented"));
+    /// <summary>CARD-1432 D-3: deletes <c>refs/antiphon/{land,progress}/</c> refs in one <c>update-ref --stdin</c>
+    /// transaction with old-value checks; any other ref refuses the whole batch before git runs.</summary>
+    Task<LandingGitResult> UpdateRefsAsync(string repository, IReadOnlyList<(string Ref, string Oid)> deletes, CancellationToken ct)
+        => Task.FromResult(new LandingGitResult(1, "", "update_refs_not_implemented"));
     /// <summary>
     /// Drops Git's administrative entry for a linked worktree whose directory is already gone, without
     /// handing Git the path (CARD-0665 review 0c0b9a4e item 2). The entry's <c>gitdir</c> must name

@@ -497,6 +497,7 @@ public sealed class AgentTaskLandService
         {
             var run = await RunLeasedAsync(task, request, ownership, executionLease, ct);
             outcome = run.ToString();
+            await ReleaseLandRefsAsync(task, request, ownership, ct);
             return run;
         }
         finally
@@ -517,6 +518,27 @@ public sealed class AgentTaskLandService
                 Math.Round(wall.Elapsed.TotalSeconds, 2), profile.Processes, profile.WorktreeLists, profile.RegistrationHits,
                 profile.CanonicalHits, profile.Inspections, profile.RemoteRoundTrips, Math.Round(profile.GitSeconds, 2),
                 phases.Reset, phases.Rebase, phases.Verify, phases.Push, phases.Canonical, phases.Cleanup, profile.DescribeHistogram());
+        }
+    }
+
+    /// <summary>
+    /// CARD-1432 S2 (D-3): once the request is terminal (its result is committed) and while this land still
+    /// holds the repository lease, delete the task's land and progress refs. Never changes the land outcome.
+    /// </summary>
+    private async Task ReleaseLandRefsAsync(AgentTask task, AgentTaskLandRequest request,
+        LandRepositoryLeaseScope ownership, CancellationToken ct)
+    {
+        if (ownership.Held is not { } lease) return;
+        // The result is already committed: not even cancellation may turn it into an exception here.
+        try
+        {
+            await _db.Entry(request).ReloadAsync(ct);
+            if (request.IsPending) return;
+            await new LandRefRetention(_db, _landingGit!, _logger).ReleaseAsync(task, lease, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Land ref retention skipped task={TaskId}", task.Id);
         }
     }
 
