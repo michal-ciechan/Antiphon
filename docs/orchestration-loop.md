@@ -2179,7 +2179,9 @@ an allow-listed item type, each under a rule (a path item such as `Compile`,
 must stay inside the repository and never select docs markdown or the root
 README; a `ProjectReference` must resolve to a tracked `*proj` from every
 directory it is evaluated from; `PackageReference`, `FrameworkReference` and
-`InternalsVisibleTo` are bare names; an include carrying `@(` or `%(` refuses);
+`InternalsVisibleTo` are bare names; an include carrying `@(` or `%(` refuses;
+item metadata names are allow-listed per item type, so a `ProjectReference`
+`AdditionalProperties` or `Properties` and any unknown name refuse);
 and hold under `<Project>` only `PropertyGroup`, `ItemGroup`, `Import`, `Target`
 and an allow-listed `<Sdk>`, with an allow-listed `Sdk` attribute. Every
 tracked `.rsp` is parsed: each non-comment line is one of `-nodeReuse`,
@@ -2190,13 +2192,25 @@ inventory; anything outside them refuses naming the file and the construct, so
 a new property, item type, SDK or switch is a reviewed edit of the script,
 never a silent acceptance. The failure names the definition
 file, the construct and the include, or the import path when the import cannot be resolved.
-Regenerating the manifest does not approve that include. An unknown `$(...)`
-in an item include is refused only when the include text contains the exact
-spellings `docs` and `.md`, or `README`, so `$(DocsDir)*.md` stays accepted.
-An `Import` is followed as described above. Target bodies are not evaluated: a
-task parameter (`Exec`, `Copy`, `ReadLinesFromFile`), item metadata and a
-property value can name any file and the audit refuses no task (CARD-1409 plan
-D-18). Any other definition-file edit still changes the
+Regenerating the manifest does not approve that include. A file item is
+classified by what it resolves to, not by its spelling (CARD-1409 repair 4,
+Review 937bb1c9): every `$(...)` in a path item's `Include` or `Update` is
+expanded from the tracked definition files' own property values (the two
+directory properties, an output or intermediate root, a `Pkg*` path property
+with `GeneratePathProperty`, an `MSBuild` task output, every `PropertyGroup`
+value of the name), a reference the audit cannot resolve statically refuses by
+name (`$(MSBuildStartupDirectory)`, `$(DocsDir)`, an `Exec` output), and a path
+rooted at an output or package root accepts any tail without `..`. The resolved
+pattern is expanded against every blob tracked at HEAD with a real glob matcher,
+honouring `Exclude`: the root `README.md`, an exact `docs/` path other than the
+one allow-listed input (the CARD-0449 captures JSON, by exact path), a wildcard
+whose first segment can be `docs` or is `**` (whatever it matches today), and a
+markdown or text match outside the document allow-list seeded from the real tree
+each refuse naming the resolved path. A property value that reads a file through
+a property function outside an output root, or whose literal part is a `docs/`
+path, refuses. An `Import` is followed as described above. Target bodies are not
+evaluated beyond that: a task parameter (`Exec`, `Copy`, `ReadLinesFromFile`)
+can name any file and the audit refuses no task (CARD-1409 plan D-18, D-27). Any other definition-file edit still changes the
 digest, so the skip stops until the manifest is regenerated.
 
 The fingerprint is SHA-256 over ordinal-sorted `git ls-tree -r -z <candidate>`
