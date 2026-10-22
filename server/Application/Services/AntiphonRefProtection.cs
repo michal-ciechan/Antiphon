@@ -7,7 +7,8 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>
 /// CARD-1432 D-5: the tasks whose <c>refs/antiphon/{land,progress}/&lt;task&gt;/</c> refs must stay
-/// (investigation §2). A task with no database row is not protected.
+/// (investigation §2, with the CARD-1446 D-3 correction: a Ready sync debt is paid, not open).
+/// A task with no database row is not protected.
 /// </summary>
 public static class AntiphonRefProtection
 {
@@ -15,8 +16,9 @@ public static class AntiphonRefProtection
         [AgentTaskStatus.Queued, AgentTaskStatus.Dispatched, AgentTaskStatus.Working, AgentTaskStatus.Blocked];
     private static readonly LandRequestState[] LiveRequest =
         [LandRequestState.Queued, LandRequestState.Held, LandRequestState.Running, LandRequestState.NeedsResolution];
+    // CARD-1446 D-3: Ready is the paid state; only Pending and Held debts are open.
     private static readonly AgentTaskSyncDebtState[] OpenDebt =
-        [AgentTaskSyncDebtState.Pending, AgentTaskSyncDebtState.Ready, AgentTaskSyncDebtState.Held];
+        [AgentTaskSyncDebtState.Pending, AgentTaskSyncDebtState.Held];
     private static readonly WorktreeRetirementState[] LiveRetirement =
     [
         WorktreeRetirementState.Released, WorktreeRetirementState.Claimed,

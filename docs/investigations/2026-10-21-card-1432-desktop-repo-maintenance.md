@@ -109,6 +109,9 @@ protected set, which is any of:
 - the task or `RecoverySourceTaskId` of an `Active` landing whose `Phase` is not Complete or Refused (interrupted
   publication, or a refused cleanup that can be retried; 150 rows);
 - the task of an `AgentTaskSyncDebts` row in Pending/Ready/Held;
+  - Correction (CARD-1446, 2026-10-22): `Ready` is the paid state (`SettlementSyncRecoveryService` sets it only once desktop
+    and remote both equal `SourceSha`); only `Pending` or `Held` debts are open. The deletion that ran was conservative: the
+    misread protected 110 extra tasks and deleted nothing it should have kept.
 - the task of an active `TaskWorktreeRetirements` row in Released/Claimed/CommandStarted/Partial.
 
 Everything else was deleted: tasks that are terminal (Succeeded, Failed or Canceled) and tasks that are no longer

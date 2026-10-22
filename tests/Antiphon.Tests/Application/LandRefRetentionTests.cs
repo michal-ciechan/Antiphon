@@ -185,7 +185,7 @@ public sealed class LandRefRetentionTests
     [Arguments("landing-refused", false)]
     [Arguments("landing-inactive", false)]
     [Arguments("debt-pending", true)]
-    [Arguments("debt-ready", true)]
+    [Arguments("debt-ready", false)]
     [Arguments("debt-held", true)]
     [Arguments("debt-superseded", false)]
     [Arguments("retirement-released", true)]
