@@ -133,7 +133,7 @@ public sealed class AbandonedLandingReconcilerTests
 
             op.Phase.ShouldBe(row == "schema2-target-advance" ? LandPhase.TargetAdvanceStarted : LandPhase.PushStarted, row);
             op.Publication.ShouldBe(row == "published" ? LandPublicationOutcome.Landed : LandPublicationOutcome.Unconfirmed, row);
-            op.LastReason.ShouldNotStartWith("landing_abandoned:", row);
+            (op.LastReason ?? string.Empty).StartsWith("landing_abandoned:", StringComparison.Ordinal).ShouldBeFalse(row);
             op.UpdatedAt.ShouldBe(Now.UtcDateTime - age, row);
             events.ShouldBe(0, row);
         }
