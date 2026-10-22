@@ -2400,7 +2400,7 @@ public partial class SessionMessageQueueDeliveryVerificationTests
         first.LastDelivery!.ConfirmedBy.ShouldBe(DeliveryConfirmedBy.Screen);
         first.LastDelivery.Degraded.ShouldBeTrue();
         first.LastDelivery.Reason.ShouldNotBeNull();
-        first.LastDelivery.Reason.ShouldContain("no transcript bound");
+        first.LastDelivery.Reason.ShouldContain("verification window");
 
         var second = await h.Queue.EnqueueAsync(
             h.SessionId, body + " again", MessageSendMode.Now, CancellationToken.None);
