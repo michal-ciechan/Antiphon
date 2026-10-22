@@ -18,13 +18,18 @@
 # CARD-1409: an Import Project path that still contains $(, @( or %( after the
 # two known properties are expanded is refused and is not followed; there is no
 # allow-list. An Import with an attribute other than Project, Condition or Label
-# is refused; Condition is not evaluated. A non-wildcard import target must be
-# tracked at HEAD inside the repository as a *proj, .props or .targets file; an
-# empty Project, a path outside the repository, a path absent from HEAD or a
-# tracked file with another extension is refused. A wildcard Import is matched
-# against every tracked path; a match with another extension is refused, and a
-# wildcard that matches nothing is accepted. ReadLinesFromFile, Copy, and
-# property functions that read files are not inspected.
+# is refused; Condition is not evaluated. An Import Project is split on ';' as
+# MSBuild splits it, and every non-empty part is audited as its own import. Each
+# part must be tracked at HEAD inside the repository as a *proj, *proj.user,
+# .props or .targets file; an empty Project, a path outside the repository, a
+# path absent from HEAD or a tracked file with another extension is refused. A
+# part that contains * or ? is refused outright: land digests only definition
+# files, so a later non-definition match would never be re-audited (Review
+# 23aedc52). The nearest Directory.Packages.props above a project counts as
+# imported like Directory.Build.props, and a tracked <project>.user beside a
+# project is imported by it; both resolve includes from the project directory.
+# ReadLinesFromFile, Copy, and property functions that read files are not
+# inspected.
 # ASCII-only: must parse under Windows PowerShell 5.1.
 #
 # Usage:
@@ -75,6 +80,7 @@ function Test-DefinitionPath([string]$Path) {
         '.rsp' { return $true }
     }
     if ($name.StartsWith('Directory.Build.', [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    if (Test-ProjectUserFile $Path) { return $true }
     switch ($name.ToLowerInvariant()) {
         'global.json' { return $true }
         'nuget.config' { return $true }
@@ -85,10 +91,17 @@ function Test-DefinitionPath([string]$Path) {
     return $false
 }
 
+# CARD-1409: Microsoft.Common.targets imports $(MSBuildProjectFullPath).user when it exists.
+function Test-ProjectUserFile([string]$Path) {
+    $name = [System.IO.Path]::GetFileName($Path).ToLowerInvariant()
+    return $name.EndsWith('proj.user', [System.StringComparison]::Ordinal)
+}
+
 function Test-ProjectXml([string]$Path) {
     $extension = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
     if ($extension.EndsWith('proj', [System.StringComparison]::Ordinal)) { return $true }
     if ($extension -eq '.props' -or $extension -eq '.targets') { return $true }
+    if (Test-ProjectUserFile $Path) { return $true }
     return $false
 }
 
@@ -293,12 +306,6 @@ function ConvertFrom-PercentEncoding([string]$Value) {
     return [System.Text.Encoding]::UTF8.GetString($bytes.ToArray())
 }
 
-function Test-PathMatchesPattern([string]$Pattern, [string]$Path) {
-    $psegs = New-SegmentList $Pattern
-    $tsegs = New-SegmentList $Path
-    return Test-GlobWalk $psegs 0 $tsegs 0
-}
-
 function Resolve-IncludePattern([string]$Root, [string]$DefinitionPath, [string]$ProjectDirectory, [string]$Include) {
     $decoded = ConvertFrom-PercentEncoding $Include
     if ($null -eq $decoded) { return 'escape' }
@@ -355,8 +362,10 @@ function Find-NearestDirectoryBuild($Known, [string]$ProjectDirectory, [string]$
     }
 }
 
-function Get-ResolvedImportPaths([string]$Root, [string]$FromFile, [string]$ProjectDirectory, [string]$ProjectAttr, $Known, $Tracked) {
-    $decoded = ConvertFrom-PercentEncoding $ProjectAttr
+# CARD-1409: resolves one ';'-separated part of an Import Project attribute to a tracked,
+# parsed project path or refuses. $ProjectAttr is the whole attribute text for messages.
+function Resolve-ImportPart([string]$Root, [string]$FromFile, [string]$ProjectDirectory, [string]$ProjectAttr, [string]$Part, $Known) {
+    $decoded = ConvertFrom-PercentEncoding $Part
     if ($null -eq $decoded) {
         Exit-Audit 1 (Format-ApprovalRefusal $FromFile 'Import' $ProjectAttr)
     }
@@ -372,6 +381,9 @@ function Get-ResolvedImportPaths([string]$Root, [string]$FromFile, [string]$Proj
     if (($text.IndexOf('$(') -ge 0) -or ($text.IndexOf('@(') -ge 0) -or ($text.IndexOf('%(') -ge 0)) {
         Exit-Audit 1 (Format-UnresolvedImportRefusal $FromFile $ProjectAttr)
     }
+    if (($text.IndexOf('*') -ge 0) -or ($text.IndexOf('?') -ge 0)) {
+        Exit-Audit 1 (Format-WildcardImportRefusal $FromFile $ProjectAttr)
+    }
     if ($text -match '^[A-Za-z]:/' -or $text.StartsWith('/')) {
         $relative = ConvertTo-RepoRelative $text $Root
         if ($null -eq $relative) {
@@ -386,29 +398,13 @@ function Get-ResolvedImportPaths([string]$Root, [string]$FromFile, [string]$Proj
         $text = $fromDir + '/' + $text
     }
     $norm = Normalize-RepoPattern $text
-    if ($norm -eq 'outside') {
+    if ($norm -eq 'outside' -or $norm -eq 'escape') {
         Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr 'outside the repository')
     }
-    if ($norm -eq 'escape') {
-        Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr 'a wildcard segment followed by ..')
-    }
-    $matches = New-Object 'System.Collections.Generic.List[string]'
-    if (($norm.IndexOf('*') -ge 0) -or ($norm.IndexOf('?') -ge 0)) {
-        foreach ($candidate in $Tracked) {
-            if (-not (Test-PathMatchesPattern $norm ([string]$candidate))) { continue }
-            if (-not $Known.ContainsKey([string]$candidate)) {
-                Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr ([string]$candidate))
-            }
-            [void]$matches.Add([string]$candidate)
-        }
-    }
-    elseif ($Known.ContainsKey($norm)) {
-        [void]$matches.Add($norm)
-    }
-    else {
+    if (-not $Known.ContainsKey($norm)) {
         Exit-Audit 1 (Format-MissingImportRefusal $FromFile $ProjectAttr $norm)
     }
-    return ,$matches.ToArray()
+    return $norm
 }
 
 function Add-ImporterBase($Map, [string]$Path, [string]$ProjectDirectory) {
@@ -419,7 +415,7 @@ function Add-ImporterBase($Map, [string]$Path, [string]$ProjectDirectory) {
     if (-not $list.Contains($ProjectDirectory)) { [void]$list.Add($ProjectDirectory) }
 }
 
-function Add-ImportQueue($Doc, [string]$FromFile, [string]$ProjectDirectory, $Queue, $Known, $Tracked, [string]$Root) {
+function Add-ImportQueue($Doc, [string]$FromFile, [string]$ProjectDirectory, $Queue, $Known, [string]$Root) {
     foreach ($node in $Doc.GetElementsByTagName('*')) {
         if ($node.LocalName -ne 'Import') { continue }
         $project = $node.GetAttribute('Project')
@@ -433,35 +429,45 @@ function Add-ImportQueue($Doc, [string]$FromFile, [string]$ProjectDirectory, $Qu
                 Exit-Audit 1 (Format-UnsupportedImportAttributeRefusal $FromFile $project $attributeName ([string]$attribute.Value))
             }
         }
-        if ([string]::IsNullOrWhiteSpace($project)) {
+        # CARD-1409: MSBuild splits Project on ';' into several imports; every non-empty part is audited.
+        $parts = New-Object 'System.Collections.Generic.List[string]'
+        foreach ($part in ([string]$project).Split(';')) {
+            $trimmed = $part.Trim()
+            if ($trimmed.Length -gt 0) { [void]$parts.Add($trimmed) }
+        }
+        if ($parts.Count -eq 0) {
             Exit-Audit 1 (Format-MissingImportRefusal $FromFile $project '(empty)')
         }
-        $targets = @(Get-ResolvedImportPaths $Root $FromFile $ProjectDirectory $project $Known $Tracked)
-        foreach ($target in $targets) {
+        foreach ($part in $parts) {
+            $target = Resolve-ImportPart $Root $FromFile $ProjectDirectory $project $part $Known
             if ([string]::IsNullOrEmpty([string]$target)) { continue }
             $Queue.Enqueue([string]$target)
         }
     }
 }
 
-function Get-ImportedProjectDirectories([string]$Root, $Known, $Tracked) {
+function Get-ImportedProjectDirectories([string]$Root, $Known) {
     $bases = @{}
     foreach ($path in @($Known.Keys)) {
         if (-not (Test-ProjFile ([string]$path))) { continue }
         $projectDir = Get-RepoDirectory ([string]$path)
         $queue = New-Object 'System.Collections.Generic.Queue[string]'
         $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
-        foreach ($name in @('Directory.Build.props', 'Directory.Build.targets')) {
+        # CARD-1409: Microsoft.Common.props imports the nearest Directory.Packages.props (Review 23aedc52 D3).
+        foreach ($name in @('Directory.Build.props', 'Directory.Build.targets', 'Directory.Packages.props')) {
             $hit = Find-NearestDirectoryBuild $Known $projectDir $name
             if ($null -ne $hit) { $queue.Enqueue([string]$hit) }
         }
-        Add-ImportQueue $Known[$path] ([string]$path) $projectDir $queue $Known $Tracked $Root
+        # CARD-1409: Microsoft.Common.targets imports a tracked <project>.user (Review 23aedc52 D4).
+        $userFile = [string]$path + '.user'
+        if ($Known.ContainsKey($userFile)) { $queue.Enqueue($userFile) }
+        Add-ImportQueue $Known[$path] ([string]$path) $projectDir $queue $Known $Root
         while ($queue.Count -gt 0) {
             $current = [string]$queue.Dequeue()
             if (-not $seen.Add($current)) { continue }
             Add-ImporterBase $bases $current $projectDir
             if ($Known.ContainsKey($current)) {
-                Add-ImportQueue $Known[$current] $current $projectDir $queue $Known $Tracked $Root
+                Add-ImportQueue $Known[$current] $current $projectDir $queue $Known $Root
             }
         }
     }
@@ -482,6 +488,10 @@ function Format-UnsupportedImportAttributeRefusal([string]$Path, [string]$Projec
 
 function Format-MissingImportRefusal([string]$Path, [string]$ProjectAttr, [string]$Resolved) {
     return 'definition file import target is not a tracked project file; -Update cannot approve it: ' + $Path + ' Import Project=' + $ProjectAttr + ' -> ' + $Resolved
+}
+
+function Format-WildcardImportRefusal([string]$Path, [string]$ProjectAttr) {
+    return 'definition file import uses a wildcard the audit does not follow; -Update cannot approve it: ' + $Path + ' Import Project=' + $ProjectAttr
 }
 
 function Get-GitBytes([string]$Root, [string]$Arguments) {
@@ -517,7 +527,7 @@ function Get-GitBytes([string]$Root, [string]$Arguments) {
     return ,$ms.ToArray()
 }
 
-function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows, $Tracked) {
+function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows) {
     $names = @('EmbeddedResource', 'Content', 'None', 'Compile', 'AdditionalFiles')
     $utf = New-Object System.Text.UTF8Encoding $false
     $known = @{}
@@ -539,7 +549,7 @@ function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows, $Tracked) {
         }
         $known[$path] = $doc
     }
-    $bases = Get-ImportedProjectDirectories $Root $known $Tracked
+    $bases = Get-ImportedProjectDirectories $Root $known
     foreach ($path in @($known.Keys)) {
         $doc = $known[$path]
         $directories = New-Object 'System.Collections.Generic.List[string]'
@@ -615,7 +625,7 @@ for ($i = 0; $i -lt $last; $i++) {
 
 $arr = $selected.ToArray()
 [System.Array]::Sort($arr, [System.StringComparer]::Ordinal)
-Assert-NoDocumentationInput $RepoRoot $arr $seen
+Assert-NoDocumentationInput $RepoRoot $arr
 $payload = [string]::Join($trailing, $arr) + $trailing
 $sha = [System.Security.Cryptography.SHA256]::Create()
 try {

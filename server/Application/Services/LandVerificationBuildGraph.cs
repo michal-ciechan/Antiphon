@@ -34,6 +34,8 @@ internal sealed class LandVerificationBuildGraph
         return extension.EndsWith("proj", StringComparison.Ordinal)
             || extension is ".props" or ".targets" or ".sln" or ".slnx" or ".slnf" or ".rsp"
             || name.StartsWith("Directory.Build.", StringComparison.OrdinalIgnoreCase)
+            // CARD-1409: Microsoft.Common.targets imports a tracked <project>.user beside its project.
+            || name.EndsWith("proj.user", StringComparison.OrdinalIgnoreCase)
             || name.ToLowerInvariant() is "global.json" or "nuget.config" or "packages.lock.json"
                 or "packages.config" or "directory.packages.props";
     }
