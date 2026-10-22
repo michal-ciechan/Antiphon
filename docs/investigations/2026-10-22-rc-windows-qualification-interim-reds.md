@@ -287,8 +287,9 @@ Searched with `card.ps1 search -Board Antiphon -All` for each class, reason stri
   on a second ReconcileAsync) and CARD-1120 (Done) describe different PostLand failures and do not
   cover B. CARD-0739 (Backlog, ScaledTimeProvider for VerificationRound/CheckNote) is speed, not B.
   CARD-1388 (Done) added the `ValidateTicketAsync` refusal tests that A now contradicts.
-- Not covered, filed by this task (see the report for the numbers):
-  1. **Land refuses a dirty or sequencer-busy task worktree after the verification window; CARD-0688 D-2 tests red (21 cases)**.
+- Not covered, filed by this task as CARD-1463 (A, High/Soon), CARD-1464 (B, Normal/Soon) and
+  CARD-1465 (C, Low/Normal):
+  1. **CARD-1463. Land refuses a dirty or sequencer-busy task worktree after the verification window; CARD-0688 D-2 tests red (21 cases)**.
      `AgentTaskLandingProtocol.ValidateTicketAsync` (`:622-630`) runs index-lock, sequencer and
      `status` probes in the source worktree since CARD-1379 and refuses with
      `verification_tracked_tree_changed` / `verification_sequencer_changed`. CARD-0688 D-2/D-12 made
@@ -300,7 +301,7 @@ Searched with `card.ps1 search -Board Antiphon -All` for each class, reason stri
      contract (drop the source-worktree `status`, or make it `--no-optional-locks` and reclassify
      dirt as residue, or accept the new rule and re-pin the tests), then fix one way. Observed in the
      Windows qualification of rc/2026-10-20 at ceb6e3d6b; platform-neutral.
-  2. **Delivery fixtures mark Working/idle with raw transcript inserts; the queue reads the loaded store (CARD-1373 leftovers, 11+ reds)**.
+  2. **CARD-1464. Delivery fixtures mark Working/idle with raw transcript inserts; the queue reads the loaded store (CARD-1373 leftovers, 11+ reds)**.
      `ReadWorkingAsync` (`SessionMessageQueueService.cs:5402`) prefers the `SessionStateStore`
      projection; `PostLandMutationDeliveryTests.SetWorkingAsync` (`:1220`),
      `QueuedReceiptAssertions.SetWorkingAsync` (`:193`) and the raw `TurnEnd` inserts in
@@ -310,7 +311,7 @@ Searched with `card.ps1 search -Board Antiphon -All` for each class, reason stri
      / `MarkIdleAsync` or the store lease, then rerun `TurnEndGapRestartDeliveryTests`,
      `SessionMessageQueueDeliveryVerificationTests` (C561 and `A_working_session_is_not_killed`)
      and `VerificationRoundDeliveryTests.C544` to see which of the 11 plausible rows clear.
-  3. **`BlockedNote.ContinueMessage` assertion fails on CRLF checkouts**.
+  3. **CARD-1465. `BlockedNote.ContinueMessage` assertion fails on CRLF checkouts**.
      `AgentTaskReplyIntegrationTests.cs:1115` compares the LF-normalised queued body
      (`AgentTaskReplyService.cs:473`, `SessionMessageQueueService.cs:484`) with a raw string literal
      from `BlockedNote.cs:32-36`, CRLF under `core.autocrlf=true`. Normalise both sides.
