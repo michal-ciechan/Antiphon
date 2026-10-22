@@ -232,10 +232,19 @@ public sealed class SessionRuntimeActionCoordinator(
         var runtime = services.GetRequiredService<AgentSessionRuntime>();
         if (action.TriggerKind == ChannelReplyDebt)
         {
-            await runtime.ExecuteActionChannelReplyAsync(action.AgentSessionId, action.Sequence, ct);
-            // CARD-1433: a debt row that carries late-confirmed sources publishes them too.
-            if (action.LateConfirmedChannelMessageIds.Length > 0)
-                await runtime.ExecuteActionLateConfirmAsync(action, ct);
+            // CARD-1434: a reply that has failed to the give-up bound is abandoned with a
+            // Critical ChannelReplyLost (PublishFailed) and its row removed, so later replies
+            // to that destination flow instead of waiting for the TTL's misreport.
+            var exhausted = await runtime.TryAbandonExhaustedChannelDebtAsync(action.AgentSessionId, action.Sequence,
+                action.LateConfirmedChannelMessageIds,
+                new ChannelReplyDebtState(action.Attempts, action.CreatedAt, action.FailureReason), ct);
+            if (!exhausted)
+            {
+                await runtime.ExecuteActionChannelReplyAsync(action.AgentSessionId, action.Sequence, ct);
+                // CARD-1433: a debt row that carries late-confirmed sources publishes them too.
+                if (action.LateConfirmedChannelMessageIds.Length > 0)
+                    await runtime.ExecuteActionLateConfirmAsync(action, ct);
+            }
             db.SessionRuntimeActions.Remove(action);
             await db.SaveChangesAsync(ct);
             return ExecutionDisposition.Continue;
