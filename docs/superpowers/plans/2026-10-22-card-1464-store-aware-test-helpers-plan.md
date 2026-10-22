@@ -46,15 +46,30 @@ helpers with no red (`QueuedReceiptAssertions.SetWorkingAsync`, `RunnerAlarmDeli
 - **V-2:** both `CheckNoteDeliveryHandoffTests` busy-recipient cases are green.
 - **V-3:** C561 x5 and `A_working_session_is_not_killed_when_the_record_never_arrives` are green.
 - **R-1:** the rest of `PostLandMutationDeliveryTests`, `CheckNoteDeliveryHandoffTests` and
-  `SessionMessageQueueDeliveryVerificationTests` stays green (full classes).
+  `SessionMessageQueueDeliveryVerificationTests` stays green (full classes less the exclusions below).
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1464/` | postland-delivery | `/*/*/PostLandMutationDeliveryTests/*` | V-1, R-1 | all listed, 0 failed | 46 | 20 |
-| CP-2 | S1 | CP-1 | checknote-handoff | `/*/*/CheckNoteDeliveryHandoffTests/*` | V-2, R-1 | all listed, 0 failed | 18 | 6 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1464b/` | postland-delivery | `/*/*/PostLandMutationDeliveryTests/(C478_CompletionNote*)\|(C478_CompletionReplayAfterRetention*)\|(C478_G*)\|(C478_V*)\|(C699_*)` | V-1, R-1 | all listed, 0 failed | 66 | 20 |
+| CP-2 | S1 | CP-1 | checknote-handoff | `/*/*/CheckNoteDeliveryHandoffTests/(A_*)\|(An_*)\|(Automatic_*)\|(Legacy_matching*)\|(Legacy_note_receipt*)\|(Legacy_note_requires*)\|(Legacy_pointer*)\|(Legacy_suppressed*)` | V-2, R-1 | all listed, 0 failed | 15 | 6 |
 | CP-3 | S1 | CP-1 | delivery-verification | `/*/*/SessionMessageQueueDeliveryVerificationTests/*` | V-3, R-1 | all listed, 0 failed | 119 | 10 |
+
+Amended after run `20261022-122438-fb40` at `3f94e0e4c` (full-class filters: CP-1 66/67, CP-2 17/19,
+CP-3 123/123, receipt `cleanup_refused`). Two exclusions, each with evidence:
+
+- `C478_CompletionReplayAfterPartialEnqueueRetention` is inherited: red at base `08765c68c` in an
+  isolated detached-worktree run with the same assertion (queue rows 1, expected 0), census row 49
+  (group H). It runs with `busy: false` and never reaches the converted helper.
+- `Legacy_captured_note_survives_worker_death`, `Legacy_produced_note_survives_pre_enqueue_worker_death`
+  (both cases) and `Legacy_note_recovery_runs_with_checks_disabled` start the CARD-0079 crash worker,
+  whose child writes `.antiphon/acceptance/card-0079/crash-*` inside the build output; the tool
+  cannot adopt that, so any run containing them refuses cleanup and no receipt validates. Two of
+  them went red while CP-1 overlapped; isolated, those three cases pass at base and at `e41eb41bb`
+  (`checks_disabled` passed in the run).
+  They do not reach the converted code except through `MarkWorkingAsync`, whose rows and lease
+  order are unchanged.
 
 No Unit lane, assembly or qualification run: the brief asks for minimal testing and the change is
 confined to Integration fixtures. The Windows desktop reproduction is owed to the Windows lane.
