@@ -95,6 +95,72 @@ public sealed class BlockedReplyReportRetentionTests
 
     [Test]
     [Timeout(240_000)]
+    public async Task Closing_lines_only_rejects_own_marker_between_prose_lines()
+    {
+        await using var world = await BlockedBySyncAsync();
+        var replacement = "Replacement report: implemented and pushed.\n"
+            + DelegationReportFormatter.FindingToken(world.TaskId, "clean")
+            + "\nThe new report still contains substantive work after the marker.";
+
+        await AssertReplacementSettlesOnceAsync(world, replacement);
+    }
+
+    [Test]
+    [Timeout(240_000)]
+    public async Task Closing_lines_only_rejects_first_line_marker_followed_by_prose()
+    {
+        await using var world = await BlockedBySyncAsync();
+        var pushedSha = await world.Git.RunAsync(world.Git.Runner, "rev-parse", "HEAD");
+        var replacement = $"[antiphon-progress:{world.TaskId:D} commit={pushedSha}]\n"
+            + "Replacement report: implemented and pushed; the first marker must not hide this work.";
+
+        await AssertReplacementSettlesOnceAsync(world, replacement);
+    }
+
+    [Test]
+    [Timeout(240_000)]
+    public async Task Closing_lines_only_rejects_foreign_marker_without_prose()
+    {
+        await using var world = await BlockedBySyncAsync();
+        var replacement = DelegationReportFormatter.FindingToken(Guid.NewGuid(), "clean");
+
+        await AssertReplacementSettlesOnceAsync(world, replacement);
+    }
+
+    private static async Task AssertReplacementSettlesOnceAsync(RunnerSettlementWorld world, string replacement)
+    {
+        var retained = world.Task;
+        await ReplyAsync(world, "Accepted. Resend the complete report.");
+        var wire = await ReplyWireAsync(world);
+        var eventsBefore = await world.EventsAsync();
+
+        // Preserve the exact body shape: adding a handoff would give the foreign-marker case prose.
+        await world.SettleAsync(replacement + "\n" + DelegationReportFormatter.ReportToken(world.TaskId, "done"),
+            prompt: wire.Body, closingVerdict: false);
+
+        var settled = world.Task;
+        settled.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(settled) + " this body is not closing-only");
+        settled.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+        settled.Result.ShouldBe(replacement, "the entire new body replaces the retained report");
+        settled.Result.ShouldNotBe(retained.Result);
+        settled.NextStage.ShouldBeNull("the replacement has no handoff; the retained sync handoff is gone");
+        settled.NextHandoff.ShouldBeNull();
+        settled.ReportNudgeMessageId.ShouldBeNull("normal settlement needs no complete-report ask");
+        var events = await world.EventsAsync();
+        events.Count(IsRetainedReportAsk).ShouldBe(eventsBefore.Count(IsRetainedReportAsk));
+        events.Count(e => e.Type == AgentTaskEventType.Completed).ShouldBe(
+            eventsBefore.Count(e => e.Type == AgentTaskEventType.Completed) + 1, "exactly one completion is published");
+
+        var token = settled.ConcurrencyToken;
+        await world.Services.GetRequiredService<AgentTaskReplyService>()
+            .OnTurnEndAsync(world.SessionId, CancellationToken.None);
+        await world.ReloadAsync();
+        world.Task.ConcurrencyToken.ShouldBe(token, "observing the same boundary again changes nothing");
+        (await world.EventsAsync()).Count.ShouldBe(events.Count, "no duplicate completion or ask");
+    }
+
+    [Test]
+    [Timeout(240_000)]
     public async Task Bare_blocked_after_blocked_reply_blocks_with_retained_report()
     {
         await using var world = await BlockedBySyncAsync();
