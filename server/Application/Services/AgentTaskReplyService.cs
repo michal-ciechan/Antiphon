@@ -4219,11 +4219,12 @@ public sealed class AgentTaskReplyService
     }
 
     /// <summary>
-    /// CARD-1472. True for a valid closing line whose body is empty on a task whose row already
-    /// holds a report: the turn added nothing, so no retained field may be replaced by it.
+    /// CARD-1472/1486. True for a valid closing line whose body is empty or only this task's
+    /// harness closing lines on a task whose row already holds a report: no retained field is replaced.
     /// </summary>
     internal static bool IsTokenOnlyAfterRetainedReport(AgentTask task, string verdict, string body) =>
-        verdict.Length > 0 && string.IsNullOrWhiteSpace(body) && !string.IsNullOrWhiteSpace(task.Result);
+        verdict.Length > 0 && DelegationReportFormatter.IsClosingLinesOnly(task.Id, body)
+        && !string.IsNullOrWhiteSpace(task.Result);
 
     /// <summary>
     /// CARD-1486 D-4: <paramref name="text"/> is this task's closing line and nothing more, on a task
