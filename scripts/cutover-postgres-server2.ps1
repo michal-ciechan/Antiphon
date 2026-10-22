@@ -10,8 +10,13 @@
 
     The script never prints a password or a connection string, never removes a
     data directory, and never passes a worktree override to the restart script.
-    Start it with pwsh -File. A same-process call cannot see -ConfirmWindow,
-    and a value such as -HoldReason /ConfirmWindow never opens the window.
+    Start it with pwsh -File. The window gate reads only the process command
+    line tokens after pwsh's own -File <this script> pair: the exact
+    -ConfirmWindow token there opens it. An abbreviation (-Conf), a parameter
+    value (-HoldReason /ConfirmWindow, -HoldReason: -ConfirmWindow), or a
+    -ConfirmWindow before that pair or inside -Command text does not, and a
+    start with no such pair (-Command, -EncodedCommand, an implicit script
+    path, a same-process call) refuses -Execute with exit 2.
     -TailnetPort (default 5432) is the listener the phase 0 connect probes;
     tests point it at a loopback port. A failed keep-six -ClearHold at exit
     prints a RECOVERY line naming the agent. An enter that wrote the marker
@@ -98,12 +103,66 @@ function Test-CutoverValueParameterName {
     return (@($script:CutoverValueParameters) -contains $candidates[0])
 }
 
+function Test-CutoverHostSwitch {
+    # pwsh resolves its own switch by prefix: any prefix of $Name at least as long as $Shortest.
+    param([string]$Key, [string]$Name, [string]$Shortest)
+    if ([string]::IsNullOrEmpty($Key) -or $Key.Length -lt $Shortest.Length) { return $false }
+    return $Name.StartsWith($Key, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-CutoverSamePath {
+    # True when both resolve to the same full path. A relative token resolves against the process
+    # directory, the one pwsh used to open -File; case is ignored only on Windows.
+    param([string]$Candidate, [string]$Expected)
+    if ([string]::IsNullOrWhiteSpace($Candidate) -or [string]::IsNullOrWhiteSpace($Expected)) { return $false }
+    try {
+        $full = [System.IO.Path]::GetFullPath($Candidate)
+        $want = [System.IO.Path]::GetFullPath($Expected)
+    } catch {
+        return $false
+    }
+    $comparison = [System.StringComparison]::Ordinal
+    if ([System.IO.Path]::DirectorySeparatorChar -eq '\') { $comparison = [System.StringComparison]::OrdinalIgnoreCase }
+    return $full.Equals($want, $comparison)
+}
+
+function Get-CutoverScriptArguments {
+    # CARD-1417 D-1 (Review c25ee080): the tokens pwsh handed to this script's binder are the ones
+    # after the host's own '-File <path>' pair whose path is this script, in any spelling pwsh
+    # accepts (-f, --File, /File). Anchored is $false when there is no such pair: a -Command or
+    # -EncodedCommand start (any prefix pwsh accepts, -c or -e onwards), an implicit script path,
+    # or an in-process call. A '-File' that is the value of another host option names another path
+    # and is walked past; a non-dash token before the pair is a host option's value.
+    $argv = @([Environment]::GetCommandLineArgs())
+    for ($i = 1; $i -lt $argv.Count; $i++) {
+        $token = [string]$argv[$i]
+        if ([string]::IsNullOrEmpty($token)) { continue }
+        if ($token[0] -ne '-' -and $token[0] -ne '/') { continue }
+        $key = $token.Substring(1)
+        if ($key.Length -gt 0 -and $key[0] -eq '-') { $key = $key.Substring(1) }
+        if ((Test-CutoverHostSwitch $key 'command' 'c') -or (Test-CutoverHostSwitch $key 'encodedcommand' 'e')) {
+            return [pscustomobject]@{ Anchored = $false; Tokens = [string[]]@() }
+        }
+        if (-not (Test-CutoverHostSwitch $key 'file' 'f')) { continue }
+        if ($i + 1 -ge $argv.Count) { break }
+        if (-not (Test-CutoverSamePath ([string]$argv[$i + 1]) $PSCommandPath)) { continue }
+        $tail = [string[]]@()
+        if ($i + 2 -lt $argv.Count) { $tail = [string[]]@($argv[($i + 2)..($argv.Count - 1)]) }
+        return [pscustomobject]@{ Anchored = $true; Tokens = $tail }
+    }
+    return [pscustomobject]@{ Anchored = $false; Tokens = [string[]]@() }
+}
+
 function Test-ExactNamedSwitch {
-    # Only a dash token counts. A token that is the value of the previous value-taking
-    # parameter is skipped, so -HoldReason /ConfirmWindow cannot open the window.
-    param([string]$Name)
+    # CARD-1417 A-1, over the anchored tokens only. Half 1: only a dash token counts, so
+    # /ConfirmWindow or a bare word never does. Half 2: the value of the previous value-taking
+    # parameter is skipped. Under pwsh -File that value arrives through a trailing colon
+    # (-HoldReason: -ConfirmWindow binds HoldReason and no switch); a value-taking name without
+    # the colon followed by a dash token is a binder error before this runs, so the name-resolved
+    # branch is defence in depth for other hosts.
+    param([string]$Name, [string[]]$Tokens)
     $skipValue = $false
-    foreach ($token in @([Environment]::GetCommandLineArgs())) {
+    foreach ($token in @($Tokens)) {
         $text = [string]$token
         if ($skipValue) { $skipValue = $false; continue }
         if (-not $text.StartsWith('-')) { continue }
@@ -111,9 +170,10 @@ function Test-ExactNamedSwitch {
         $text = $text.Substring(1)
         $colon = $text.IndexOf(':')
         $carriesValue = ($colon -ge 0)
+        $valueInNextToken = ($carriesValue -and $colon -eq ($text.Length - 1))
         if ($carriesValue) { $text = $text.Substring(0, $colon) }
         if ($text.Equals($Name, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
-        if (-not $carriesValue -and (Test-CutoverValueParameterName $text)) { $skipValue = $true }
+        if ($valueInNextToken -or (-not $carriesValue -and (Test-CutoverValueParameterName $text))) { $skipValue = $true }
     }
     return $false
 }
@@ -899,7 +959,14 @@ if (-not $Execute) {
 if ($WhatIf) {
     Fail-Cutover 'REFUSED: -Execute and -WhatIf together are ambiguous. Nothing was changed.' 2
 }
-if (-not $ConfirmWindow -or -not (Test-ExactNamedSwitch 'ConfirmWindow')) {
+if (-not $ConfirmWindow) {
+    Fail-Cutover 'REFUSED: -Execute requires -ConfirmWindow. Nothing was changed.' 2
+}
+$scriptArguments = Get-CutoverScriptArguments
+if (-not $scriptArguments.Anchored) {
+    Fail-Cutover 'REFUSED: -Execute requires -ConfirmWindow. The process command line has no -File pair naming this script (a -Command, -EncodedCommand, implicit-path or in-process start), so the exact token cannot be checked. Start it with pwsh -File scripts/cutover-postgres-server2.ps1. Nothing was changed.' 2
+}
+if (-not (Test-ExactNamedSwitch -Name 'ConfirmWindow' -Tokens $scriptArguments.Tokens)) {
     Fail-Cutover 'REFUSED: -Execute requires -ConfirmWindow. Nothing was changed.' 2
 }
 if ($Rollback) {
