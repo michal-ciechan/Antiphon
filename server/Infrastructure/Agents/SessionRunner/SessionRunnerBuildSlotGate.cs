@@ -14,6 +14,12 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 /// build unleased at <c>-maxcpucount:4</c> once the runner has not answered for
 /// <see cref="LandingSettings.BuildSlotUnreachableGraceSeconds"/>. The holder is this server
 /// process, so the runner reaps the lease if the server dies mid-verification.
+/// CARD-1461 option C: once the runner has refused with the memory floor alone for
+/// <see cref="LandingSettings.BuildSlotMemoryFloorFallbackMinutes"/> (default 0, off; a busy or
+/// missed answer restarts that window), the verifier builds unleased at
+/// <see cref="LandingSettings.BuildSlotMemoryFloorFallbackMaxCpuCount"/> with a
+/// <c>reason=memory_floor_fallback</c> line logged at Warning. The timeout check stays first, so a
+/// window at or above the wait never fires.
 /// </summary>
 public sealed class SessionRunnerBuildSlotGate(
     ISessionRunnerClient runner,
@@ -29,6 +35,9 @@ public sealed class SessionRunnerBuildSlotGate(
         var options = settings.Value;
         var wait = TimeSpan.FromMinutes(Math.Max(0, options.BuildSlotWaitMinutes));
         var grace = TimeSpan.FromSeconds(Math.Max(0, options.BuildSlotUnreachableGraceSeconds));
+        var fallback = TimeSpan.FromMinutes(Math.Max(0, options.BuildSlotMemoryFloorFallbackMinutes));
+        // A count of 0 would build with no -maxcpucount at all on a host already short of memory.
+        var fallbackCpuCount = Math.Max(1, options.BuildSlotMemoryFloorFallbackMaxCpuCount);
         DateTime processStart;
         using (var self = Process.GetCurrentProcess())
             processStart = self.StartTime.ToUniversalTime();
@@ -36,6 +45,8 @@ public sealed class SessionRunnerBuildSlotGate(
 
         var started = time.GetTimestamp();
         TimeSpan? unreachableSince = null;
+        // CARD-1461 D-3: elapsed at the last answer that was not a memory-floor refusal, zero at the start.
+        var floorSince = TimeSpan.Zero;
         string? lastReason = null;
         var lastReported = TimeSpan.MinValue;
         var position = 0;
@@ -68,6 +79,7 @@ public sealed class SessionRunnerBuildSlotGate(
             if (answer?.Busy is { } busy)
             {
                 unreachableSince = null;
+                floorSince = elapsed;
                 position = busy.QueuePosition;
                 delay = RetryAfter(busy.RetryAfterMs);
                 if (lastReason != BuildSlotProblemTypes.Busy || elapsed - lastReported >= TimeSpan.FromMinutes(1))
@@ -81,6 +93,11 @@ public sealed class SessionRunnerBuildSlotGate(
                 unreachableSince = null;
                 position = floor.QueuePosition;
                 delay = RetryAfter(floor.RetryAfterMs);
+                if (fallback > TimeSpan.Zero && elapsed - floorSince >= fallback)
+                {
+                    Warn(report, $"BUILD SLOT unleased reason=memory_floor_fallback available={floor.AvailableMb}MB floor={floor.FloorMb}MB waited={(int)elapsed.TotalSeconds}s maxcpucount={fallbackCpuCount}");
+                    return new BuildSlotHold(BuildSlotHoldOutcome.Unleased, null, fallbackCpuCount, elapsed, floor.QueuePosition);
+                }
                 if (lastReason != BuildSlotProblemTypes.MemoryFloor || elapsed - lastReported >= TimeSpan.FromMinutes(1))
                 {
                     Report(report, $"BUILD SLOT waiting label={label} reason=memory_floor available={floor.AvailableMb}MB floor={floor.FloorMb}MB position={floor.QueuePosition} elapsed={(int)elapsed.TotalMinutes}m");
@@ -90,6 +107,7 @@ public sealed class SessionRunnerBuildSlotGate(
             else
             {
                 unreachableSince ??= elapsed;
+                floorSince = elapsed;
                 delay = UnreachableRetry;
                 if (elapsed - unreachableSince >= grace)
                 {
@@ -129,6 +147,13 @@ public sealed class SessionRunnerBuildSlotGate(
     private void Report(Action<string> report, string line)
     {
         logger?.LogInformation("{BuildSlotLine}", line);
+        try { report(line); } catch (Exception) { /* Evidence only; never fails the build. */ }
+    }
+
+    /// <summary>The memory-floor fallback line: the one unbudgeted build an operator must be able to grep for.</summary>
+    private void Warn(Action<string> report, string line)
+    {
+        logger?.LogWarning("{BuildSlotLine}", line);
         try { report(line); } catch (Exception) { /* Evidence only; never fails the build. */ }
     }
 }
