@@ -36,7 +36,6 @@ internal static class SolutionAudit
         var realRepo = RealPath(repo);
         var realDirectories = new Dictionary<string, string>(StringComparer.Ordinal);
         var inputs = new BuildInputPolicy(repo, sdkDirectory);
-        TargetPins.Check(repo, inputs.TrackedPaths, refusals);
         var evaluatedProjects = new HashSet<string>(BuildInputPolicy.PathComparer);
         var evaluations = new HashSet<string>(StringComparer.Ordinal);
 

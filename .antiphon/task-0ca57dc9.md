@@ -21,8 +21,8 @@ names), hashes normalized target/OS-element OuterXml and refuses missing, change
 stale, malformed or duplicate pins. It preserves attribute values, leaf text,
 CDATA, comments and significant whitespace; only layout between element children
 is removed. OS selectors are absolute ordinal element paths. Pins must themselves
-be tracked and cannot be supplied through a link. The existing S1/S2 evaluation
-checks still run after the pin comparison. The scan covers non-built definitions.
+be tracked and cannot be supplied through a link. Matching pins continue to the
+unchanged S1/S2 evaluation checks. The scan covers non-built definitions.
 
 The pins file contains the twelve targets read in this task. No non-Target
 OS-conditioned element was found in the current tracked project definitions.
@@ -86,6 +86,18 @@ slot=granted waited=0s, lease b0c5e204-d626-453e-8458-4fe191fc04b2,
 path included net9.0; that invocation started no tool/build/test and was corrected.
 The red CP-3 and bounded manual real-tree tool run are the documented unlisted
 executions. No full assembly, Unit lane or repeat-proof execution was requested.
+
+The first implementation checkpoint, `20261022-230110-fdbc`, was stopped before
+test execution on `92c42ff5d5c3e97e8a1ff17387a96892487a4cf3`. A fresh merge-tree
+against master `c54c0eea50daa7bdd9ccc1da8ff2bc655def1ea2` exposed add/add and
+content conflicts in the two edited S2 files because this checkout carried the
+cherry-picked prerequisite chain. The checkpoint tool stopped its owned process
+tree and confirmed executor death before any source edit. The partial build had
+slot=granted waited=0s (lease 8b3da01c-8d87-4576-8d10-d00ff5849e6e); it supplies
+no test result or passing receipt. The final implementation moves the static
+gate into Program before SDK registration and leaves both inherited S2 files
+byte-identical to master. This resolves the source overlap without merging or
+rebasing. The pin inventory uses Git and XML only, with no MSBuild dependency.
 
 ## Final obligations and handoff
 

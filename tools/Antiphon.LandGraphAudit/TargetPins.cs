@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml;
@@ -12,11 +13,15 @@ internal static class TargetPins
 {
     private const string PinsPath = "server/Application/Services/LandVerificationBuildGraph.pins.txt";
 
-    public static void Check(string repo, IReadOnlySet<string> tracked, ISet<string> refusals)
+    private static StringComparer PathComparer => OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+    public static void Check(string repo, ISet<string> refusals)
     {
+        var tracked = TrackedFiles(repo);
         var pins = ReadPins(repo, tracked, refusals);
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var file in tracked.Where(BuildInputPolicy.Definition).Order(StringComparer.Ordinal))
+        foreach (var file in tracked.Where(Definition).Order(StringComparer.Ordinal))
         {
             var text = File.ReadAllText(file);
             var extension = Path.GetExtension(file);
@@ -74,11 +79,17 @@ internal static class TargetPins
             refusals.Add($"refused: {PinsPath} (untracked pins file)");
             return pins;
         }
-        var expectedPath = Path.Combine(SolutionAudit.RealPath(repo), PinsPath);
-        if (!BuildInputPolicy.PathComparer.Equals(SolutionAudit.RealPath(path), expectedPath))
+        // Reject linked pin components below the caller-selected repository root. Inspect attributes
+        // too: LinkTarget alone can return null after an access error. No MSBuild type is loaded here.
+        for (var component = path; !PathComparer.Equals(component, repo); component = Path.GetDirectoryName(component)!)
         {
-            refusals.Add($"refused: {PinsPath} (linked pins file)");
-            return pins;
+            if (component is null) throw new InvalidDataException("pins path escaped repository");
+            if (new FileInfo(component).LinkTarget is not null
+                || File.GetAttributes(component).HasFlag(FileAttributes.ReparsePoint))
+            {
+                refusals.Add($"refused: {PinsPath} (linked pins file)");
+                return pins;
+            }
         }
         var lineNumber = 0;
         foreach (var line in File.ReadLines(path))
@@ -103,6 +114,43 @@ internal static class TargetPins
         condition.Contains("$(OS)", StringComparison.OrdinalIgnoreCase)
         || condition.Contains("IsOSPlatform", StringComparison.OrdinalIgnoreCase)
         || condition.Contains("RuntimeInformation", StringComparison.OrdinalIgnoreCase);
+
+    // Same closed inventory as LandVerificationBuildGraph.Includes. This gate deliberately has
+    // no Microsoft.Build dependency: it runs before Locator registers the chosen SDK assembly.
+    private static bool Definition(string path)
+    {
+        var name = Path.GetFileName(path);
+        var extension = Path.GetExtension(path).ToLowerInvariant();
+        return extension.EndsWith("proj", StringComparison.Ordinal)
+               || extension is ".props" or ".targets" or ".sln" or ".slnx" or ".slnf" or ".rsp"
+               || name.StartsWith("Directory.Build.", StringComparison.OrdinalIgnoreCase)
+               || name.EndsWith("proj.user", StringComparison.OrdinalIgnoreCase)
+               || name.ToLowerInvariant() is "global.json" or "nuget.config" or "packages.lock.json"
+                   or "packages.config" or "directory.packages.props";
+    }
+
+    private static HashSet<string> TrackedFiles(string repo)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = repo, UseShellExecute = false,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var arg in new[] { "ls-files", "--cached", "-z" }) start.ArgumentList.Add(arg);
+        using var process = Process.Start(start)!;
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(10_000))
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit();
+            throw new InvalidOperationException("git pin inventory timed out");
+        }
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"git pin inventory failed: {stderr.GetAwaiter().GetResult()}");
+        return stdout.GetAwaiter().GetResult().Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Select(path => Path.GetFullPath(Path.Combine(repo, path))).ToHashSet(PathComparer);
+    }
 
     private static IEnumerable<XmlElement> Elements(XmlElement element)
     {
