@@ -49,20 +49,25 @@ public class CheckCompactionWorkerLifetimeTests
         var pid = 0;
         try
         {
-            await Should.ThrowAsync<WaitFailedException>(async () =>
+            try
             {
                 await using var worker = CheckCompactionFixture.Start(request);
                 pid = worker.Process.Id;
                 var until = DateTime.UtcNow.AddSeconds(90);
                 while (Directory.GetFiles(root.FullPath, marker).Length == 0)
                 {
-                    worker.Process.HasExited.ShouldBeFalse($"child exited before {marker}: {await worker.Error}");
+                    if (worker.Process.HasExited)
+                        throw new InvalidOperationException($"child exited before {marker}: {await worker.Error}");
                     (DateTime.UtcNow < until).ShouldBeTrue($"child never wrote {marker}");
                     await Task.Delay(50);
                 }
 
+                // Stands in for a failed assertion while the child is running.
                 throw new WaitFailedException();
-            });
+            }
+            catch (WaitFailedException)
+            {
+            }
 
             var deadline = DateTime.UtcNow.AddSeconds(10);
             while (IsAlive(pid) && DateTime.UtcNow < deadline)
