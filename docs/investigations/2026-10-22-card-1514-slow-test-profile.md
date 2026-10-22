@@ -1,44 +1,66 @@
 # CARD-1514 slow test profile
 
-Investigation `85ca6a8c`, 2026-10-22. Source: `ffa98a8f76588c12df6b0437d24b541762b95f09`.
-Evidence checkpoint; bounded Linux profiling is pending. No product or test source changes.
+2026-10-22; investigation `85ca6a8c`; executable source `ffa98a8f76588c12df6b0437d24b541762b95f09`.
+**Confirmed:** the landing matrices repeatedly run the real Git/DB protocol; script witnesses expand single test nodes into many complete subprocess scenarios. The recorded cost table also conflates serial totals with concurrent work. **Not confirmed:** which Windows host effect accounts for the additional latency. No product/test source was changed; the live Windows qualification was untouched.
 
-The Windows group-10 watchdog interrupted continuing work, not a demonstrated repeated hang.
-The prior investigation records 43 CheckpointMatrix tests in 933.338 seconds, 52
-PersistenceFailure tests in 1473.781 seconds, and 47/63 Publication tests in 1144.271
-seconds (one assertion failure). The slower earlier run records 1549.837 and 1938.054
-seconds for the first two complete classes. These are summed test durations, not
-build/slot waits. Source: [group-10 Debug](2026-10-22-rc-group-10-timeout-debug.md),
-D10 line coordinates and run identities therein; [measured budget plan](../superpowers/plans/2026-10-22-card-1404-group-10-measured-budget-plan.md)
-records diagnostic SHA-256 hashes. The Windows raw paths are not mounted in this runner;
-Windows medians/p95 cannot be recovered from these aggregates.
+## Measurements
 
-The next two largest rows outside these three in `scripts/lib/nightly-class-costs.json`
-are RemoteScriptContractTests (499 nodes, 4591 seconds) and
-DelegationDispatchRecoveryBoundaryTests (381 nodes, 3505 seconds). Both are **pace
-estimates**, not measured complete-class totals. AgentTaskLandActiveSourceClaimTests
-has the next largest measured row (16 nodes, 1920 seconds). This distinction prevents
-calling the five requested classes the empirically established five slowest.
+One isolated build (274.72 s, zero errors, 1,141 warnings), then one invocation per class, sequentially through `scripts/build-slot.ps1`. Each test process had TERM at 585 s and KILL at 590 s; no rebuilds or reruns. Debian 12, .NET 9.0.21, TUnit 1.44, 24 available CPUs, shared server2 host. Source stayed unchanged; the intermediate commit adds this report only.
 
-`LandingSafetyHarness.InitializeAsync` (`tests/Antiphon.Tests/TestHelpers/LandingSafetyHarness.cs:41`)
-creates fresh Git state, then an isolated database and seed row per test.
-`LandingGitFixture.InitializeAsync` (`tests/Antiphon.Tests/TestHelpers/LandingGitFixture.cs:36`)
-executes ten top-level Git commands including an independent observer clone.
-`TestDbFixtureLifecycle.cs:94` serializes template-database cloning, with retry delays
-only for `ObjectInUse`; `:131` drops the clone. One lazy container belongs to the
-assembly, not each test (`TestDbFixture.cs:13,28`). The landing verifier is controlled
-(`LandingSafetyHarness.cs:432`); it does not run builds or acquire build slots.
+[Every completed test/argument, timing, outcome, evidence line and hash](2026-10-22-card-1514-per-test-observations.md) is retained separately. Raw evidence and the reproduction/parser scripts are at `/work/test-evidence/card-1514-85ca6a8c/`. `run.json` records literal argv and UTC intervals. Median and p95 exclude skipped nodes; p95 uses nearest rank. Summed durations are **not** elapsed class time when tests overlap.
 
-Current-source differences matter: PersistenceFailure moved from ProcessSpawnLimit to
-GitProcessSpawnLimit after candidate `0714a9a89e4bff65aae7e0b4b94098694aeb931c`.
-The schema cache also postdates that candidate. Fixture-owned Git census was already
-present in that candidate; it is **not** a new explanation for a Linux/Windows difference.
+| Class (namespace omitted) | Passed / failed / skipped | Driver wall s | Summed test s | Median / p95 s | Windows evidence |
+|---|---:|---:|---:|---:|---|
+| AgentTaskLandPersistenceFailureTests | 52 / 0 / 0 | 249.21 | 169.93 | 2.65 / 8.16 | 52 tests: 1473.78–1938.05 s |
+| AgentTaskLandCheckpointMatrixTests | 43 / 0 / 0 | 251.22 | 215.77 | 3.52 / 7.31 | 43 tests: 933.34–1549.84 s |
+| AgentTaskLandPublicationTests (including Delivery partial) | 61 / 1 / 1 | 291.48 | 247.35 | 3.01 / 9.16 | Partial: 47/63 completed, 1144.27 s |
+| DelegationDispatchRecoveryBoundaryTests | 374 / 7 / 0 | 68.40 | 3740.74 | 12.88 / 24.34 | 3505 s is a **pace estimate**, not a complete measurement |
+| RemoteScriptContractTests | 29 completed passes; cutoff | 587.19 | 123.34 completed | 1.08 / 23.23 (29 only) | 4591 s is a **pace estimate**, not a complete measurement |
+
+Windows values are reconstructed from the committed [group-10 Debug](2026-10-22-rc-group-10-timeout-debug.md) and [measured-budget plan](../superpowers/plans/2026-10-22-card-1404-group-10-measured-budget-plan.md), which identify the raw diagnostic files/hashes. Those Windows paths are not mounted here, and the older `/work/evidence/task-aaee7f74` is absent. Windows medians/p95 remain unavailable; totals cannot supply them. Persistence's observed Linux total is 8.67–11.40 times smaller; CheckpointMatrix's is 4.33–7.18 times smaller. These are **different-source, different-host observations**, not an isolated OS effect: current source includes CARD-1462's batched Git reads/pins (`042832a2f6f94c0e7f8783b84d766488730d9b6e`) and CARD-1420's schema cache. Fixture-owned process census already existed on the Windows candidate.
+
+The three named landing classes plus the next two largest *recorded rows* define this selection (`scripts/lib/nightly-class-costs.json:27-50`). They are not an established empirical top five: ActiveSourceClaim has a separate measured 1920 s/16-node row (`:22-25`). The slow allowlist lists CheckpointMatrix and Publication, but not PersistenceFailure (`tests/Antiphon.Tests/slow-tests-allowlist.txt:126,205`). The current watchdog remains 3600000 ms (`tests/test-execution-policy.json:782`).
+
+## Where the time went
+
+| Landing class | Git processes, including diagnostic reads | Git internal seconds | Completed Git-wrapper interval union s | Initial Git setup s | Following DB/seed gap s |
+|---|---:|---:|---:|---:|---:|
+| PersistenceFailure | 16148 | 40.01 | 85.85 | 10.41 | 13.78 |
+| CheckpointMatrix | 11821 | 39.82 | 91.29 | 12.84 | 11.65 |
+| Publication | 15082 | 51.91 | 120.70 | 19.95 | 20.26 |
+
+Git `trace2` root sessions supply native counts/runtime; fixture JSONL start/exit pairs supply wrapper intervals. These columns overlap and must not be added. Wrapper intervals include process launch, journal and stream handling (`server/Infrastructure/Git/LandingGit.cs:72-114`); they do not measure CPU alone. Optional `ANTIPHON_C448_EVIDENCE` adds **2362 / 2141 / 2111** snapshot Git reads respectively, plus JSON writes/observer queries (`LandingGitFixture.cs:103-140`, `LandingSafetyHarness.cs:246,270`). Thus these are instrumented profiles, not uninstrumented benchmarks. The appendix binds rows to TRX/diagnostic evidence; raw `attribution.json` retains each fixture and interval.
+
+- **PersistenceFailure:** 101 service entries for 52 tests; 60–425 observed Git processes per test. Completed wrapper intervals occupy about half the summed test time. Each fixture runs ten initial Git commands including its observer clone (`tests/Antiphon.Tests/TestHelpers/LandingGitFixture.cs:36-50`), then creates/seeds a private DB (`LandingSafetyHarness.cs:41-46`). Initial Git setup median/p95 is 0.161/0.544 s; the following DB/seed gap is 0.220/0.392 s. This gap also contains DI and fixture work; it is not a pure SQL timer.
+- **CheckpointMatrix:** the two `C665_WorkerDeathKeepsRecordedTreeAcrossActualRegistrationDrop` variants take 28.99 and 29.21 s, **58.20 s/27%** of the class. They launch real dotnet workers, poll for a recorded boundary every 100 ms, kill/await their own worker, then reconstruct the protocol (`AgentTaskLandCheckpointMatrixTests.cs:298-335`). The two-minute budget is a bound, not a mandatory sleep. The other 41 nodes total 157.57 s.
+- **Publication:** median/p95 are 3.01/9.16 s. The slowest completed case is the protected/before-enqueue caller-notification scenario, 18.38 s. The Delivery partial uses the real queue with a system clock (`AgentTaskLandPublicationTests.Delivery.cs:53-56,136-145`); the profile does not isolate queue settling from EF/JIT/protocol cost. No class-wide fixed sleep was found.
+- **RecoveryBoundary:** actual test intervals overlap up to **96** at once; their union spans 46.409 s. Summing them yields 3740.74 s although the entire driver took 68.40 s. Only 22 native Git processes/0.020 s occurred. Tests create private DB clones and run statement/queue scenarios (`DelegationDispatchRecoveryBoundaryTests.cs:57-75` and its partials); cloning is serialized by `_cloneLock` (`TestDbFixtureLifecycle.cs:94-126`). DB setup/SQL/queue scheduling are live causes; this pass does not allocate their individual shares. Neither the 3505-second estimate nor the new sum is a measured serial rerun or class wall time.
+- **RemoteScriptContract:** the cap returned exit 124, with no TRX. Before cutoff, 29 tests passed (123.34 s summed); their median/p95 are a censored sample, not a class distribution. `C1374_Host_census_recovers_transient_reads` took 71.85 s for 32 transport vectors, although its retry sleeps are replaced by logging (`tests/Antiphon.Tests/Scripts/C1374CensusProbes.cs:36,119`). `C1008_Recycle_resume_requires_matching_receipt` was interrupted after 457.604 s (see the exact diagnostic filename/hash in the appendix, cancellation record line 407). Its loops expand to 32 complete script runs across 16 fixtures (`tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs:2764`). Each fixture reconstructs current/previous Compose models with Node and runs the generated Bash script (`RollingVolumeRecycleScriptTests.cs:1891,1910,2062`). A 10.042-second, 50 ms `/proc` sample of the owned test subtree observed at least 261 child processes: 170 Bash, 65 Node, 14 jq, four Docker-named fixture shims, seven Compose-named shims and one timeout. This is a lower bound, not a complete process count. All 18 final Error updates were deadline cancellation (one timed, 17 untimed); they are not separate assertion-failure findings. The rest of the recorded 499-node class was not fully observed.
+
+One Testcontainers PostgreSQL instance is initialized per process, not per landing test (`TestDbFixture.cs:28-45`); each private database is cloned from its template and dropped (`TestDbFixtureLifecycle.cs:94-145,358`). Captured schema bootstrap lines report a **57.139 s miss**, then **14.275/7.463/7.146 s hits** in the four DB classes. This is observed startup variation, not a paired saving measurement. Publication waited **15 s at occupied=4/4** before its slot; the other class grants and build grant reported zero wait. No grant reported a memory-floor refusal. These waits are outside the TRX test durations. Landing's `ControlledVerifier` does not run builds or acquire slots (`LandingSafetyHarness.cs:432-443`). No Defender/ETW or synchronized Windows memory evidence was available, so antivirus and Windows memory amplification remain hypotheses.
+
+## Ranked evidence for the next stage
+
+1. **Repeated protocol/scenario work has the largest demonstrated budgets.** Landing Git-wrapper unions are 86/91/121 s; the script's single-node scenario expansion is documented above. These include required witnesses and instrumentation, so they are not promised savings. CARD-1462 already owns the landed Git reduction; avoid presenting it as new work.
+2. **Existing startup/scheduling changes need Windows attribution before new speedup claims.** The schema-cache miss/hit observations differ by 43–50 s; the Linux Persistence pass explicitly set `ANTIPHON_TEST_GIT_SPAWN_LIMIT=1`, retaining historical serial scheduling. CheckpointMatrix/Publication retain their strict process limiter. This pass measures no wider-lane speedup. The existing [CARD-0856 plan](../superpowers/plans/2026-10-22-card-0856-windows-wall-time-plan.md) separately owns schema-cache/lane rollout estimates.
+3. **Initial fixture setup is a smaller measured budget.** Eliminating *all* initial Git setup could save at most 10.41/12.84/19.95 s in these instrumented Linux runs; eliminating the entire following DB/seed gaps adds at most 13.78/11.65/20.26 s. Neither elimination is assumed safe or feasible. This evidence does not justify a large Windows saving for shared repositories/databases.
+4. **Classification and splitting affect watchdog fit, not test-body work.** Remote/Recovery estimates are provisional, and concurrent summed durations must stay distinct from wall time. The three group-10 cost corrections are already present at this task's base.
+
+A ranked implementation plan and credible expected Windows savings are **not established** by these observations. The resolving evidence is: recover the stored Windows per-test records; obtain comparable per-phase/process timing at the same source and scheduling once release operations authorize it; finish the censored script-method profile separately. Do not interrupt the current qualification. This is an investigation handoff, not a proposed repair.
+
+## Failures and custody
+
+Publication reproduced **CARD-1512**: the photo argument expects `ignored_content_preserved` but receives `evidence_retention_unavailable` (`AgentTaskLandPublicationTests.cs:437`; fixture registers `RefusingEvidenceRetention` at `DelegationTestServices.cs:92`; its result is `IWorktreeEvidenceRetention.cs:29-34`). The locked-head variant skips on Linux. No data-loss defect was demonstrated.
+
+**Filed and read back CARD-1522**, Backlog, `ed444290-86e7-47f9-acc6-2e0901b507f6`: seven `C1149_C1150_Statement_budgets` results exceed their assertions by 1–2 queries (18→19 for held/working/dead-session ticks; 42→44 initial refusal; 16→17 blocked tick; 60→61 watchdog/missing-brief recovery). SQL rosters and timings are in `DelegationDispatchRecoveryBoundaryTests/console.log:4,45,86,127,193,232,315`. New-query attribution versus a stale contract still needs Debug; functional failure is not established. The profile ran the unchanged baseline, not a repair. Card creation persisted successfully before a local presentation error at `scripts/card.ps1:542` tried to resolve a Windows drive on Linux; read-back verified the same ID, so creation was not retried. The same presentation defect is already tracked by **CARD-0793**, which was read in full; no duplicate was filed.
+
+Four complete classes produced 539 TRX nodes: **530 passed, eight failed, one skipped**. The script pass adds 29 completed passes and the separately reported cutoff errors. The multiline diagnostic parser reproduces all four TRX counts and summed durations. No failing witness was weakened or rerun. All commands were awaited; all 262 sampled process identities (test host plus descendants) had exited, and no process argv still referenced this task's isolated binaries. The 29 task-created `bin-card1514` output roots were inventoried and removed; DLL SHA-256 and cleanup records remain with the external evidence. Only the two Markdown investigation files are committed.
 
 ## Not done, noted
 
-No speedup implemented or designed; any fixture, clock, Git-operation, concurrency or class-split change belongs to the subsequent Plan and needs measured attribution first.
+No fix designed or implemented; shared fixtures, fewer Git/scenario invocations, signals/test clock, safe parallelism and class splits remain candidate ideas for a separately commissioned Plan after the unresolved attribution is measured.
 
 --- next stage ---
 next: investigate
-handoff: Complete the authorized one-build, single-class Linux profiles and separate measured body/fixture costs from historical Windows aggregates; do not touch the live Windows qualification.
+handoff: Recover stored Windows per-test/phase evidence and finish the censored RemoteScriptContract method attribution; preserve the measured Linux profiles, source/scheduling differences, and CARD-1522's separate query-budget Debug. Do not touch the live qualification or assume shared-fixture savings.
 artifact: docs/investigations/2026-10-22-card-1514-slow-test-profile.md
