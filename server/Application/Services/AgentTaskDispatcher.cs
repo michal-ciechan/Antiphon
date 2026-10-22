@@ -5442,7 +5442,9 @@ public sealed partial class AgentTaskDispatcher
         var claudeAuth = await ReadClaudeProviderAuthBeforeClaimAsync(task, ct);
         var grokAuth = await ReadGrokProviderAuthBeforeClaimAsync(task, ct);
         // Admission and landing read running claims under the same common-directory lease.
-        // Hold through commit of the claim, including warm-agent and follow-up paths.
+        // Held from the pre-claim preflight through the last leased crossing (the worktree cut, a
+        // repair source, the SourceLanding validation); CARD-1430 D-4 releases it before the
+        // baseline capture, so the claim commits with R free. Warm-agent and follow-up paths too.
         // CARD-0672 D-1 (invariant I-A): a runner session never writes the desktop checkout; only
         // the leased settlement sync moves it. So the launch of a prepared runner task - its own
         // worktree already cut, its mirror already recorded - mutates nothing a land relies on and
@@ -5810,6 +5812,19 @@ public sealed partial class AgentTaskDispatcher
 
         if (claimed.SourceLandingOperationId is not null)
             await _worktrees.ValidateVerificationAsync(claimed, repositoryLease!, ct);
+
+        // CARD-1430 D-4: for a cut, the last leased crossing is behind us. The baseline capture
+        // below runs read-only git plus a journaled pin that takes its own short lease
+        // (TaskProgressGit.PinBaselineAsync), and the claim transaction commits after it, so R is
+        // released here instead of after the commit: a cut leaves R in about 3 s rather than
+        // holding it through the capture (13 s idle, up to 2 min under a land). The later disposals
+        // stay and are idempotent (OwnedLease.Disposed). An acquirer that lands inside the pin's
+        // update-ref is refused once and re-picked (CARD-1082 D-3). A Shared claim has no cut and
+        // no capture; it keeps R through its commit so a land's writer search
+        // (AgentTaskLandService.FindWriterAsync) still reads it under the same lease.
+        // DispatcherLeaseSpanTests.C1430_lease_is_released_before_the_baseline_capture.
+        if (claimed.Workspace == WorkspaceMode.Worktree && repositoryLease is not null)
+            await repositoryLease.DisposeAsync();
 
         // CARD-0657 D-3: every ordinary runner-bound Worktree role needs the same source identity,
         // because its settlement synchronizes against it. Code keeps its existing capture rule.
