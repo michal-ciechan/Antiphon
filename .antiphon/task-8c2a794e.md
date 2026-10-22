@@ -8,7 +8,11 @@ Start ref 81937b7e5 (73a4fdd8 tip). Branch feat/card-task-8c2a794e, fast-forward
 - 4e36b93d0f4fd9c85226a7fd6769050dc1419673 docs: plan amendment docs/superpowers/plans/2026-10-22-card-0167-provider-endpoint-plan-s3-repair2.md (CP-1..CP-6).
 - 8c285b51436d7d3176109a35270c8a5fbbda2d42 report v1; first checkpoint run 20261022-121333-47cc: CP-1 37/37, CP-2 12/12, CP-3 62/62, CP-4 25/25 green; CP-5 41/43 (2 control witnesses red); CP-6 28/50 (22 inherited, identical names at base 81937b7e5).
 - 79604e7b9d5f5753e3a97e35384b08d9cde2eb5a fix: control start stamps after the reservation reload; attach witness seeds through the harness scope.
-- this commit: report v2 + plan note; the receipt run `--rows CP-1,CP-2,CP-3,CP-4,CP-5` verifies this tip.
+- e1500036e53b44d2951760f66ba9ecefdc5908d8 report v2 + plan note; run 20261022-123425-e9e0: CP-1 37/37, CP-2 12/12, CP-3 62/62, CP-4 25/25 green; CP-5 42/43 (resume arm of the control witness held on standing_continuity: a pool session has no standing owner).
+- 90232b4f24c0cf68383659fee18063244e536b6d test: the resume arm seeds the task row that proves pool-session ownership.
+- this commit: report v3; the receipt run `--rows CP-1,CP-2,CP-3,CP-4,CP-5` verifies this tip.
+
+Read-only checks at e1500036e: scripts/check-evidence-diff.ps1 81937b7e5..HEAD violations=0 (also a38e1e1bd..HEAD violations=0). `git merge-tree --write-tree origin/master HEAD` (origin/master 711409c41) conflicts add/add only on the carried S2 files (ProviderEndpointSettings.cs, ProviderEndpointApiTests.cs); a scratch `git rebase --onto origin/master a38e1e1bd` exits 0 and drops the carry 25ae6869 as already upstream (13 commits remain), which is what the land service does.
 
 ## Fix, by path
 - Cold dispatch: claim marks the pool row `unknown`; `BuildLaunchSpecAsync` (profile-less, the only branch a pool delegate takes) stamps from the endpoints it read for the spec and saves before the launch is enqueued. Closes the claim-read vs spec-read race.
