@@ -56,6 +56,24 @@ public interface ILandingGit
     Task<LandingSourceRecheck> RecheckSourceRemoteAsync(string repository, string sourceFullRef, string expectedSha,
         string expectedFingerprint, CancellationToken ct)
         => Task.FromResult(new LandingSourceRecheck(null, null, "source_recheck_unsupported"));
+    /// <summary>
+    /// CARD-1432 G1: the object ids of <paramref name="fullRefs"/>. The result holds every ref read before the first
+    /// unreadable one (missing or broken), in request order, so a caller checking refs in order refuses on the first
+    /// absent entry. The default reads one ref per process, which keeps every fake's command shapes; a real
+    /// implementation reads them in one process.
+    /// </summary>
+    async Task<IReadOnlyDictionary<string, string>> ReadRefsAsync(string repository, IReadOnlyList<string> fullRefs, CancellationToken ct)
+    {
+        var shas = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var fullRef in fullRefs)
+        {
+            var read = await RunAsync(repository, ["show-ref", "--verify", "--hash", fullRef], ct);
+            var sha = read.Output.Trim();
+            if (!read.Succeeded || !Antiphon.Server.Domain.GitObjectId.IsFull(sha)) break;
+            shas[fullRef] = sha;
+        }
+        return shas;
+    }
     Task<LandingGitResult> PinAsync(string repository, string recoveryRef, string sha, CancellationToken ct);
     Task<LandingRemoteObservation> ObserveRetirementAsync(string repository, LandingDestination destination,
         string sourceSha, Guid retirementId, string pinName, CancellationToken ct)
