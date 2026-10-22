@@ -64,6 +64,76 @@ public sealed class BlockedReplyReportRetentionTests
 
     [Test]
     [Timeout(240_000)]
+    public async Task Closing_lines_only_after_blocked_reply_preserve_retained_report()
+    {
+        await using var world = await BlockedBySyncAsync();
+        var retained = world.Task;
+        await ReplyAsync(world, "Accepted. Stop.");
+        var wire = await ReplyWireAsync(world);
+        var pushedSha = await world.Git.RunAsync(world.Git.Runner, "rev-parse", "HEAD");
+        var closingLines = DelegationReportFormatter.FindingToken(world.TaskId, "clean")
+            + $"\n[antiphon-progress:{world.TaskId:D} commit={pushedSha}]\n"
+            + DelegationReportFormatter.ReportToken(world.TaskId, "done");
+
+        await world.SettleAsync(closingLines, prompt: wire.Body, closingVerdict: false);
+
+        var after = world.Task;
+        after.Status.ShouldBe(AgentTaskStatus.Working, Why(after) + " closing markers add no report body");
+        after.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+        AssertRetained(after, retained);
+        var ask = after.ReportNudgeMessageId.ShouldNotBeNull("one complete-report ask is recorded");
+        await using (var db = world.CreateContext())
+        {
+            var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == ask);
+            row.Status.ShouldBe(QueuedMessageStatus.Pending);
+            row.Body.ShouldContain("only the closing report line", Case.Sensitive);
+        }
+        var events = await world.EventsAsync();
+        events.Count(IsRetainedReportAsk).ShouldBe(1, "exactly one token-only ask");
+        events.Count(e => e.Type == AgentTaskEventType.Completed).ShouldBe(0, "no Succeeded publication");
+    }
+
+    [Test]
+    [Timeout(240_000)]
+    public async Task Bare_blocked_after_blocked_reply_blocks_with_retained_report()
+    {
+        await using var world = await BlockedBySyncAsync();
+        var retained = world.Task;
+        await ReplyAsync(world, "Accepted. Stop.");
+        var wire = await ReplyWireAsync(world);
+
+        await world.SettleAsync(
+            DelegationReportFormatter.ReportToken(world.TaskId, "blocked"), prompt: wire.Body, closingVerdict: false);
+
+        var after = world.Task;
+        after.Status.ShouldBe(AgentTaskStatus.Blocked, Why(after));
+        after.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+        AssertRetained(after, retained);
+        (await world.EventsAsync()).Count(e => e.Type == AgentTaskEventType.Blocked).ShouldBe(2,
+            "the sync block and the bare blocked verdict");
+    }
+
+    [Test]
+    [Timeout(240_000)]
+    public async Task Bare_failed_after_blocked_reply_fails_with_retained_report()
+    {
+        await using var world = await BlockedBySyncAsync();
+        var retained = world.Task;
+        await ReplyAsync(world, "Accepted. Stop.");
+        var wire = await ReplyWireAsync(world);
+
+        await world.SettleAsync(
+            DelegationReportFormatter.ReportToken(world.TaskId, "failed"), prompt: wire.Body, closingVerdict: false);
+
+        var after = world.Task;
+        after.Status.ShouldBe(AgentTaskStatus.Failed, Why(after));
+        after.FailureReason.ShouldBe("Delegate reported failed.");
+        after.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+        AssertRetained(after, retained);
+    }
+
+    [Test]
+    [Timeout(240_000)]
     public async Task Blocked_reply_wire_requires_a_complete_report_and_closing_token()
     {
         await using var world = await BlockedBySyncAsync();
