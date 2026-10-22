@@ -143,6 +143,7 @@ describe('ProviderEndpointFields on the project settings modal', () => {
     // Global keys and this project's own keys; another project's key is not offered.
     expect(await screen.findByRole('option', { name: 'claude-proxy-key' })).toBeInTheDocument()
     expect(screen.queryByRole('option', { name: 'other-project-key' })).not.toBeInTheDocument()
+    expect(document.body.textContent ?? '').not.toContain(SENTINEL)
     await userEvent.click(screen.getByRole('option', { name: 'project-1-key' }))
 
     await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
@@ -156,7 +157,22 @@ describe('ProviderEndpointFields on the project settings modal', () => {
       color: 'yellow',
       message: expect.stringContaining(warning),
     })))
-    expect(document.body.textContent ?? '').not.toContain(SENTINEL)
+  })
+
+  it('omits providerEndpoints when saving an unrelated project field', async () => {
+    const put = vi.fn()
+    seedProject(put)
+    await openProjectEditor()
+
+    expect(await screen.findByRole('textbox', { name: 'Claude Code base URL' })).toHaveValue('http://claude-proxy:8080')
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name', exact: true }), {
+      target: { value: 'Renamed project' },
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    expect(put.mock.calls[0][0]).toHaveProperty('name', 'Renamed project')
+    expect(put.mock.calls[0][0]).not.toHaveProperty('providerEndpoints')
   })
 
   it('clears every endpoint with the empty map', async () => {
@@ -239,23 +255,48 @@ const agentDetail = {
   providerEndpoint: { baseUrl: 'http://agent-proxy:8080', apiKeyName: 'claude-proxy-key' },
 } as AgentDetailDto
 
+function seedAgent(patch: (body: Record<string, unknown>) => void) {
+  server.use(
+    // BEFORE ':id', which otherwise treats "bundles" as an agent id.
+    http.get('/api/agents/bundles', () => HttpResponse.json([])),
+    http.get('/api/agents/:id', () => HttpResponse.json(agentDetail)),
+    http.get('/api/boards', () => HttpResponse.json([])),
+    http.get('/api/agent-tui/profiles', () => HttpResponse.json([])),
+    http.get('/api/agent-tui/profiles/:id/models', () => HttpResponse.json([])),
+    http.get('/api/agent-tui/runner-types', () => HttpResponse.json(runnerTypes)),
+    http.get('/api/api-keys', () => HttpResponse.json(apiKeys)),
+    http.patch('/api/agents/:id', async ({ request }) => {
+      patch((await request.json()) as Record<string, unknown>)
+      return HttpResponse.json(agentDetail)
+    }),
+  )
+}
+
 describe('ProviderEndpointFields on the agent settings modal', () => {
+  it('Own endpoint mode submits the edited URL and full endpoint', async () => {
+    const patch = vi.fn()
+    seedAgent(patch)
+    renderWithProviders(<AgentSettingsModal agent={agent} opened onClose={() => {}} onDeleted={() => {}} />)
+
+    const url = await screen.findByRole('textbox', { name: 'Claude Code base URL' })
+    expect(url).toHaveValue('http://agent-proxy:8080')
+    expect(screen.getByRole('radio', { name: 'Own endpoint' })).toBeChecked()
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'Claude Code key name' })).toHaveValue('claude-proxy-key'))
+    fireEvent.change(url, { target: { value: 'http://edited-agent-proxy:9000' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1))
+    expect(patch.mock.calls[0][0]).toHaveProperty('providerEndpointMode', 'Endpoint')
+    expect(patch.mock.calls[0][0].providerEndpoint).toEqual({
+      baseUrl: 'http://edited-agent-proxy:9000',
+      apiKeyName: 'claude-proxy-key',
+    })
+  })
+
   it('Direct mode hides the fields and submits providerEndpoint null', async () => {
     let submitted: Record<string, unknown> | null = null
-    server.use(
-      // BEFORE ':id', which otherwise treats "bundles" as an agent id.
-      http.get('/api/agents/bundles', () => HttpResponse.json([])),
-      http.get('/api/agents/:id', () => HttpResponse.json(agentDetail)),
-      http.get('/api/boards', () => HttpResponse.json([])),
-      http.get('/api/agent-tui/profiles', () => HttpResponse.json([])),
-      http.get('/api/agent-tui/profiles/:id/models', () => HttpResponse.json([])),
-      http.get('/api/agent-tui/runner-types', () => HttpResponse.json(runnerTypes)),
-      http.get('/api/api-keys', () => HttpResponse.json(apiKeys)),
-      http.patch('/api/agents/:id', async ({ request }) => {
-        submitted = (await request.json()) as Record<string, unknown>
-        return HttpResponse.json(agentDetail)
-      }),
-    )
+    seedAgent((body) => { submitted = body })
 
     renderWithProviders(<AgentSettingsModal agent={agent} opened onClose={() => {}} onDeleted={() => {}} />)
 
