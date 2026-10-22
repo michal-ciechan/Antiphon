@@ -342,3 +342,6 @@ Antiphon.Tests.Checkpoints.CheckpointFixtureRoutingTests
 
 # CARD-1232: isolated PostgreSQL delivery recovery, persistence cuts and scratch-Git claim rollback; cold witness measured 18.7s.
 Antiphon.Tests.Application.PreDispatchFailureDeliveryTests
+
+# CARD-1519: isolated PostgreSQL, hosted admission and owned shutdown barriers; the first control run measured 17-22s.
+Antiphon.Tests.Application.DispatcherAdmissionSchedulingTests

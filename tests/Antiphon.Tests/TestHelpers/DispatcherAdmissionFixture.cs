@@ -99,9 +99,19 @@ internal sealed class DispatcherAdmissionFixture : IAsyncDisposable
                 if (id != f.SentinelSession) return;
                 using var canceled = ct.Register(() => f.SweepCanceled.TrySetResult());
                 f.SweepEntered.TrySetResult();
-                if (f.Cooperative) await f.ReleaseSweep.Task.WaitAsync(ct);
-                else await f.ReleaseSweep.Task;
-                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    if (f.Cooperative) await f.ReleaseSweep.Task.WaitAsync(ct);
+                    else await f.ReleaseSweep.Task;
+                    ct.ThrowIfCancellationRequested();
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // WaitAsync's cancellation can resume this method and dispose the older
+                    // registration before that callback runs. The operation observes it too.
+                    f.SweepCanceled.TrySetResult();
+                    throw;
+                }
             };
             d.AfterQueuedSnapshotAsync = async (db, ct) =>
             {
@@ -256,6 +266,7 @@ internal sealed class DispatcherAdmissionFixture : IAsyncDisposable
     }
     public sealed class AdmissionLogger : ILogger<AgentTaskDispatcher>
     {
+        private readonly object _gate = new();
         private int _active;
         public int Active => Volatile.Read(ref _active);
         public int Maximum { get; private set; }
@@ -271,8 +282,9 @@ internal sealed class DispatcherAdmissionFixture : IAsyncDisposable
             var message = formatter(state, ex);
             Messages.Enqueue(message);
             if (message.StartsWith("Runtime phase dispatcher.admission.") && message.Contains(" start "))
-                Maximum = Math.Max(Maximum, Interlocked.Increment(ref _active));
-            if (message.StartsWith("Runtime phase dispatcher.admission.") && message.Contains(" end ")) Interlocked.Decrement(ref _active);
+                lock (_gate) Maximum = Math.Max(Maximum, ++_active);
+            if (message.StartsWith("Runtime phase dispatcher.admission.") && message.Contains(" end "))
+                lock (_gate) _active--;
         }
     }
     public sealed class ArmedClock : TimeProvider
