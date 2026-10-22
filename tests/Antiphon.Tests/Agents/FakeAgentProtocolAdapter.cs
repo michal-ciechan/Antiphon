@@ -28,6 +28,9 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public string NoiseDuringSendPrompt { get; set; } = string.Empty;
     public string PromptOutput { get; set; } = string.Empty;
     public string? RenderedScreenOverride { get; set; }
+    // A captured frame already includes its composer; do not append the simulated input.
+    public bool RenderedScreenIncludesComposer { get; set; }
+    public Action? BeforeRenderedSnapshot { get; set; }
 
     /// <summary>
     /// CARD-0650 S4 repair 5: rendered frames served one per <see cref="SnapshotRenderedScreen"/>
@@ -561,6 +564,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
 
     public string SnapshotRenderedScreen()
     {
+        BeforeRenderedSnapshot?.Invoke();
         if (ThrowOnRenderedSnapshot)
             throw new InvalidOperationException("Rendered snapshot is not available.");
 
@@ -577,6 +581,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
                 frame = RenderedScreenFrames.Count > 1 ? RenderedScreenFrames.Dequeue() : RenderedScreenFrames.Peek();
         }
         var screen = frame ?? RenderedScreenOverride ?? _rawOutput.ToString();
+        if (RenderedScreenIncludesComposer)
+            return screen;
         var composer = _composer.ToString();
         if (_emptyComposerSnapshotsRemaining > 0)
         {
