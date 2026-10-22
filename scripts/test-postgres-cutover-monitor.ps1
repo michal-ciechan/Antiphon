@@ -22,9 +22,14 @@ function Assert-C1408 {
     }
 }
 
+# Every scratch root is recorded so the sweep after the cases removes what a case that threw left behind
+# (CARD-1423 A5: five /tmp/c1408-* folders from a stalled Review run remained on server2). A run that is
+# killed from outside still leaves its folders; the sweep is for the harness's own exits.
+$script:C1408ScratchRoots = New-Object System.Collections.ArrayList
 function New-C1408Scratch {
     $root = Join-Path ([System.IO.Path]::GetTempPath()) ('c1408-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $root -Force | Out-Null
+    [void]$script:C1408ScratchRoots.Add($root)
     return $root
 }
 
@@ -652,10 +657,16 @@ if (-not (Test-Path -LiteralPath $monitor)) {
 } else {
     . $monitor
     $selected = if ($Case) { @($Case) } else { $cases }
-    foreach ($c in $selected) {
-        $fn = Get-Command -Name ('Test-' + $c) -ErrorAction SilentlyContinue
-        if (-not $fn) { Write-Error ('unknown case ' + $c); exit 2 }
-        try { & $fn } catch { Assert-C1408 -Cond $false -Name ($c + ' threw') -Detail ([string]$_.Exception.Message + ' at ' + [string]$_.InvocationInfo.PositionMessage) }
+    try {
+        foreach ($c in $selected) {
+            $fn = Get-Command -Name ('Test-' + $c) -ErrorAction SilentlyContinue
+            if (-not $fn) { Write-Error ('unknown case ' + $c); exit 2 }
+            try { & $fn } catch { Assert-C1408 -Cond $false -Name ($c + ' threw') -Detail ([string]$_.Exception.Message + ' at ' + [string]$_.InvocationInfo.PositionMessage) }
+        }
+    } finally {
+        $left = @($script:C1408ScratchRoots | Where-Object { Test-Path -LiteralPath $_ })
+        Assert-C1408 -Cond ($left.Count -eq 0) -Name 'every case removed its own scratch root' -Detail ($left -join ' | ')
+        foreach ($r in $left) { Remove-Item -LiteralPath $r -Recurse -Force -ErrorAction SilentlyContinue }
     }
 }
 
