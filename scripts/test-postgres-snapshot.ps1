@@ -561,7 +561,7 @@ bytes="${CARD1405_PLAIN_BYTES:-16}"
 if [ -n "$out" ]; then
     /bin/dd if=/dev/zero of="$out" bs="$bytes" count=1 status=none 2>/dev/null || exit 1
 fi
-exit 0
+exit "${CARD1405_AGE_EXIT:-0}"
 '@
     $encoding = New-Object System.Text.UTF8Encoding $false
     $dockerPath = Join-Path $Fixture.Bin 'docker'
@@ -1225,6 +1225,55 @@ function Test-DrillPicksExactSnapshot {
     } finally { Remove-Fixture $fx }
 }
 
+function Test-PublishRejectsEncryptFailure {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'PublishRejectsEncryptFailure script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $result = Invoke-PublishCase $fx '1048576' '1' @{ CARD1405_AGE_EXIT = '1' }
+        Assert-True ($result.Exit -eq 6) 'age failure exits 6' "exit=$($result.Exit) $($result.Out)"
+        Assert-True ($result.Out -match 'reason=encrypt-failed') 'age failure reason' $result.Out
+        Assert-True ($result.Tools -match '/age -R') 'age failure ran age' $result.Tools
+        Assert-DestUntouched $fx 'age failure'
+        $runs = @(Get-ChildItem -LiteralPath $fx.Stage -Force -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^run-' })
+        Assert-True ($runs.Count -eq 0) 'age failure removes its run directory' "count=$($runs.Count)"
+        $plain = @(Get-ChildItem -LiteralPath $fx.Stage -Recurse -Force -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '\.dump(\.age)?$' })
+        Assert-True ($plain.Count -eq 0) 'age failure leaves no plaintext or ciphertext' ("count=$($plain.Count)")
+        Assert-True ($result.Tools -match 'rm -f /tmp/antiphon-snapshot-') 'age failure removes the container dump' $result.Tools
+        Assert-NoSecret $result $fx 'age failure'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-MissingAge {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'MissingAge script exists' $scriptPath; return }
+        foreach ($name in @('age', 'age.cmd')) {
+            Remove-Item -LiteralPath (Join-Path $fx.Bin $name) -Force -ErrorAction SilentlyContinue
+        }
+        $publish = Invoke-Snapshot -Fixture $fx -Arguments @(
+            '-Execute', '-RecipientFile', $fx.Recipient,
+            '-Destination', $fx.Dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage
+        )
+        Assert-True ($publish.Exit -eq 3) 'missing age exits 3' "exit=$($publish.Exit) $($publish.Out)"
+        Assert-True ($publish.Out -match 'reason=missing-age') 'missing age reason' $publish.Out
+        Assert-NoDocker $publish 'missing age'
+        Assert-DestUntouched $fx 'missing age'
+        $runs = @(Get-ChildItem -LiteralPath $fx.Stage -Force -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^run-' })
+        Assert-True ($runs.Count -eq 0) 'missing age opens no run directory' "count=$($runs.Count)"
+        Assert-NoSecret $publish $fx 'missing age'
+        Remove-Item -LiteralPath $fx.Marker -Force -ErrorAction SilentlyContinue
+        $drill = Invoke-Snapshot -Fixture $fx -Arguments @(
+            '-Execute', '-RestoreDrill', '-IdentityFile', $fx.Identity,
+            '-Destination', $fx.Dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage
+        )
+        Assert-True ($drill.Exit -eq 3) 'missing age drill exits 3' "exit=$($drill.Exit) $($drill.Out)"
+        Assert-True ($drill.Out -match 'reason=missing-age') 'missing age drill reason' $drill.Out
+        Assert-NoDocker $drill 'missing age drill'
+        Assert-NoSecret $drill $fx 'missing age drill'
+    } finally { Remove-Fixture $fx }
+}
+
 $all = @(
     'WhatIfPlan', 'MissingRecipient', 'RecipientInsideDestination',
     'DrillRefusesProduction', 'DrillPlan', 'Retention',
@@ -1235,7 +1284,8 @@ $all = @(
     'RetentionIgnoresConflictCopy', 'StagingHygiene', 'StagingPreservesOperatorFiles',
     'StagingRefusesLink', 'StagingOutsideDestination', 'DrillRemovesScratch',
     'DrillRefusesTaintedReuse', 'DockerDaemonPinned', 'StagingRefusesForeignRoot',
-    'StagingSkipsLiveRun', 'DrillPicksExactSnapshot'
+    'StagingSkipsLiveRun', 'DrillPicksExactSnapshot',
+    'PublishRejectsEncryptFailure', 'MissingAge'
 )
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
