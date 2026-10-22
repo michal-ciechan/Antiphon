@@ -124,6 +124,69 @@ public sealed class ClaudeEffortByRoleDispatchTests
         retained.Status.ShouldBe(AgentStatus.Idle, "the warm delegate is left for a task it can serve");
     }
 
+    // ---- pinned placement (CARD-1481 repair, Review df795c38 D-1) --------------------------------
+
+    [Test]
+    public async Task a_check_task_pinned_to_its_standing_seat_keeps_the_seats_placement_under_an_override()
+    {
+        // A standing seat's effort is the seat's own launch, not the task's role: every Check task
+        // is pinned to the AlwaysOn Check seat and must go through that seat's rules (compaction
+        // admission, identity, one task at a time), never a second, fresh process.
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Check"] = "xhigh" };
+        using var workspace = new TempWorkspace();
+
+        // Control first: no override, the seat takes the task into its live session.
+        var (plainSeat, plainSession) = await SeedAgentAsync(workspace.Path, AgentModelLevel.Low, pool: false, idle: true);
+        var plain = await SeedQueuedTaskAsync(workspace.Path, AgentTaskRole.Check, AgentModelLevel.Low, pinnedTo: plainSeat);
+        (await CreateDispatcher(Empty).TryReuseWarmAgentAsync(plain, DateTime.UtcNow, CancellationToken.None))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.Reused);
+        plain.AgentSessionId.ShouldBe(plainSession);
+
+        var (seat, session) = await SeedAgentAsync(workspace.Path, AgentModelLevel.Low, pool: false, idle: true);
+        var overridden = await SeedQueuedTaskAsync(workspace.Path, AgentTaskRole.Check, AgentModelLevel.Low, pinnedTo: seat);
+        (await CreateDispatcher(map).TryReuseWarmAgentAsync(overridden, DateTime.UtcNow, CancellationToken.None))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.Reused, "ClaudeEffortByRole never applies to a standing seat");
+        overridden.AgentSessionId.ShouldBe(session);
+    }
+
+    [Test]
+    public async Task a_task_pinned_to_a_busy_pool_delegate_still_waits_for_it_under_an_override()
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Docs"] = "xhigh" };
+        using var workspace = new TempWorkspace();
+
+        // Control first: no override, a pin to a mid-task delegate waits rather than starting a second session.
+        var (plainBusy, _) = await SeedAgentAsync(workspace.Path, AgentModelLevel.Medium, pool: true, idle: false);
+        var plain = await SeedQueuedTaskAsync(workspace.Path, AgentTaskRole.Docs, AgentModelLevel.Medium, pinnedTo: plainBusy);
+        (await CreateDispatcher(Empty).TryReuseWarmAgentAsync(plain, DateTime.UtcNow, CancellationToken.None))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.WaitForAgent);
+
+        var (busy, _) = await SeedAgentAsync(workspace.Path, AgentModelLevel.Medium, pool: true, idle: false);
+        var overridden = await SeedQueuedTaskAsync(workspace.Path, AgentTaskRole.Docs, AgentModelLevel.Medium, pinnedTo: busy);
+        (await CreateDispatcher(map).TryReuseWarmAgentAsync(overridden, DateTime.UtcNow, CancellationToken.None))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.WaitForAgent,
+                "a busy pinned delegate is waited for; the effort decline applies only once it is free");
+    }
+
+    [Test]
+    public async Task a_task_pinned_to_a_free_pool_delegate_launched_at_another_effort_relaunches()
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Docs"] = "xhigh" };
+        using var workspace = new TempWorkspace();
+
+        // Control first: no override, the free pinned delegate is taken over.
+        var (plainFree, _) = await SeedAgentAsync(workspace.Path, AgentModelLevel.Medium, pool: true, idle: true);
+        var plain = await SeedQueuedTaskAsync(workspace.Path, AgentTaskRole.Docs, AgentModelLevel.Medium, pinnedTo: plainFree);
+        (await CreateDispatcher(Empty).TryReuseWarmAgentAsync(plain, DateTime.UtcNow, CancellationToken.None))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.Reused);
+
+        var (free, _) = await SeedAgentAsync(workspace.Path, AgentModelLevel.Medium, pool: true, idle: true);
+        var overridden = await SeedQueuedTaskAsync(workspace.Path, AgentTaskRole.Docs, AgentModelLevel.Medium, pinnedTo: free);
+        (await CreateDispatcher(map).TryReuseWarmAgentAsync(overridden, DateTime.UtcNow, CancellationToken.None))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.SpawnFresh,
+                "a free pinned process launched at the tier's medium cannot carry --effort xhigh");
+    }
+
     // ---- escalation text -----------------------------------------------------------------------
 
     [Test]
@@ -258,7 +321,8 @@ public sealed class ClaudeEffortByRoleDispatchTests
         CreatedAt = DateTime.UtcNow,
     };
 
-    private static async Task<AgentTask> SeedQueuedTaskAsync(string directory, AgentTaskRole role, AgentModelLevel level)
+    private static async Task<AgentTask> SeedQueuedTaskAsync(
+        string directory, AgentTaskRole role, AgentModelLevel level, Guid? pinnedTo = null)
     {
         var id = Guid.NewGuid();
         var task = new AgentTask
@@ -277,6 +341,7 @@ public sealed class ClaudeEffortByRoleDispatchTests
             Status = AgentTaskStatus.Queued,
             CreatedAt = DateTime.UtcNow,
             ReplyTo = AgentTaskReplyTo.None,
+            AgentId = pinnedTo,
         };
         await using var db = CreateContext();
         db.AgentTasks.Add(task);
@@ -311,7 +376,16 @@ public sealed class ClaudeEffortByRoleDispatchTests
     }
 
     /// <summary>A warm Claude pool delegate at <paramref name="level"/> with a live Running session.</summary>
-    private static async Task<(Guid AgentId, Guid SessionId)> SeedWarmAgentAsync(string directory, AgentModelLevel level)
+    private static Task<(Guid AgentId, Guid SessionId)> SeedWarmAgentAsync(string directory, AgentModelLevel level)
+        => SeedAgentAsync(directory, level, pool: true, idle: true);
+
+    /// <summary>
+    /// A Claude agent at <paramref name="level"/> with a live Running session: a pool delegate, or an
+    /// AlwaysOn standing seat when <paramref name="pool"/> is false; Idle and warm, or Running
+    /// mid-task when <paramref name="idle"/> is false.
+    /// </summary>
+    private static async Task<(Guid AgentId, Guid SessionId)> SeedAgentAsync(
+        string directory, AgentModelLevel level, bool pool, bool idle)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -337,13 +411,14 @@ public sealed class ClaudeEffortByRoleDispatchTests
             Name = $"task-{agentId:N}"[..13],
             Slug = $"task-{agentId:N}"[..13],
             WorkingDirectory = directory,
-            Details = "Warm pool delegate.",
-            Status = AgentStatus.Idle,
+            Details = pool ? "Warm pool delegate." : "Standing seat.",
+            Status = idle ? AgentStatus.Idle : AgentStatus.Running,
             ModelLevel = level,
             Kind = AgentKind.ClaudeCode,
-            IsPoolDelegate = true,
+            IsPoolDelegate = pool,
+            AlwaysOn = !pool,
             // Well outside PoolReservedForCallerMinutes, so the reservation window never decides.
-            PoolIdleSince = now.AddMinutes(-5),
+            PoolIdleSince = pool && idle ? now.AddMinutes(-5) : null,
             PersistentSessionId = sessionId.ToString("D"),
             CreatedAt = now,
             UpdatedAt = now,
