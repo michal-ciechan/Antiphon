@@ -2159,7 +2159,17 @@ attribute text and the resolved path. A part that contains `*` or `?` is refused
 outright, whatever it matches: land digests only definition files, so a later
 non-definition match of an accepted wildcard would never be re-audited (Review
 23aedc52 D2). The real repository has no wildcard import; a future one changes
-the audit first. The failure names the definition
+the audit first. `Microsoft.Common.props` and `Microsoft.Common.targets` import
+`$(MSBuildProjectExtensionsPath)$(MSBuildProjectFile).*.props` and `.*.targets`,
+`obj/` by default, and the audit does not follow those wildcards either: a
+tracked definition file under any `obj/` path segment, in any letter case, is
+refused by its path whatever it contains, and a definition file that sets
+`BaseIntermediateOutputPath`, `MSBuildProjectExtensionsPath` or
+`IntermediateOutputPath` is refused because a redirected extension directory
+cannot be evaluated; reading one of those properties inside another property,
+as `Directory.Build.targets` does, is not setting it (CARD-1409, Review 8989ece8
+F1). The inventory already digests a tracked `obj/` `.props` or `.targets`, so
+no manifest covers such a tree and a docs-only land builds. The failure names the definition
 file and the include, or the import path when the import cannot be resolved.
 Regenerating the manifest does not approve that include. An unknown `$(...)`
 in an item include is refused only when the include text contains the exact

@@ -32,6 +32,10 @@ The real repository has eight `Import` elements: seven `..\Messaging.Pack.props`
 
 **D-10 — `*proj.user` joins both inventories (Review 23aedc52 D4).** `Microsoft.Common.targets` imports `$(MSBuildProjectFullPath).user` when it exists. A lowercased file name ending in `proj.user` is a definition file in `LandVerificationBuildGraph.Includes` and in the script's `Test-DefinitionPath`, is parsed as project XML, and is enqueued as an import of its project. No `*proj.user` is tracked at HEAD, so the manifest digest and count do not change (D-5 holds).
 
+**D-11 — A tracked definition file under `obj/` is refused by its path (Review 8989ece8 F1).** `Microsoft.Common.props` and `Microsoft.Common.targets` import `$(MSBuildProjectExtensionsPath)$(MSBuildProjectFile).*.props` and `.*.targets`, `obj/` by default, and the audit does not follow those wildcards. Any path that `Test-DefinitionPath` selects and that has an `obj` directory segment, compared case-insensitively, refuses in both `-Check` and `-Update`, whatever the file contains; the message names the path. The server inventory is unchanged: a tracked `obj/` `.props` or `.targets` already counts by its extension, so no manifest can cover such a tree. No tracked path has an `obj` segment today, so D-5 holds.
+
+**D-12 — A redirected extension or intermediate directory is refused (Review 8989ece8 F1).** A parsed definition file with an element named `BaseIntermediateOutputPath`, `MSBuildProjectExtensionsPath` or `IntermediateOutputPath`, compared case-insensitively and wherever it sits, refuses with a message naming the file and the element as written; a redirected path cannot be evaluated. Reading one of those properties inside another property, as the real `Directory.Build.targets` and `tests/Shared/CheckpointRepeat.targets` do, is not setting it, so `-Check` still prints the digest above and count 57.
+
 ## Slices
 
 ### S1 — Red witnesses for items 1 and 2
@@ -62,6 +66,18 @@ The real repository has eight `Import` elements: seven `..\Messaging.Pack.props`
 
 `docs/orchestration-loop.md`, the script header, and this plan.
 
+### S8 — F1 witnesses (Review 8989ece8)
+
+`tests/Antiphon.Tests/Application/LandNonCodeSkipTests.cs` gains `C1409_ObjExtensionDefinitionFileRefuses` and `C1409_IntermediateOutputRedirectRefuses`. One unlisted red run at the witness commit (reason: red proof before the fix; reported with counts).
+
+### S9 — F1 fix
+
+`scripts/audit-land-verification-graph.ps1` D-11 and D-12; a comment in `server/Application/Services/LandVerificationBuildGraph.cs` records why the inventory needs no change. ASCII.
+
+### S10 — F1 wording
+
+`docs/orchestration-loop.md`, the script header, and this plan; CP-1 expects 26.
+
 ## Verification design
 
 | ID | Behaviour | Witness |
@@ -78,6 +94,8 @@ The real repository has eight `Import` elements: seven `..\Messaging.Pack.props`
 | V-10 | A root `Directory.Packages.props` with `<None Include="../docs/**/*.md" />` is refused for `server/App.csproj`; with a harmless `server/Directory.Packages.props` nearer to `server/sub/App.csproj`, `-Update` exits 0 with count=3 (nearest only). | `C1409_DirectoryPackagesPropsIsImportedByTheNearestProject` |
 | V-11 | A tracked `server/App.csproj.user` with a docs include refuses; one that imports `../eng/docs.items` refuses naming `-> eng/docs.items`; a harmless one is counted (`count=2`). | `C1409_ProjectUserFileIsAuditedAndImported` |
 | V-12 | `LandVerificationBuildGraph.Includes` is true for `*proj.user` (case-insensitive) and false for `settings.user`, `Antiphon.sln.user` and `*.csproj.user.bak`; a tracked `server/Antiphon.Server.csproj.user` already on the target makes a docs-only land build with `unrecognized-build-graph`. | `C1409_ProjectUserFileIsInTheHashedInventory` |
+| V-13 | A tracked `server/obj/App.csproj.evil.props` or `.evil.targets` with `<None Include="../docs/**/*.md" />`, a harmless `server/OBJ/Debug/App.csproj.harmless.props` and an `obj/Generated.csproj` each refuse naming the path; `Includes` is true for the obj `.props`/`.targets` and false for `obj/project.assets.json`. | `C1409_ObjExtensionDefinitionFileRefuses` |
+| V-14 | `BaseIntermediateOutputPath` in the project, `MSBuildProjectExtensionsPath` in `Directory.Build.props` and a lower-case `intermediateoutputpath` in an imported `.props` each refuse naming the file and the element; a `Directory.Build.targets` that only reads `$(IntermediateOutputPath)` is approved with `count=2`. | `C1409_IntermediateOutputRedirectRefuses` |
 
 No R-n. No positive controls. Mutation has nothing new to plant beyond the refusal predicates. Zero new PC rows. Existing land PCs stay pending for SourceLanding Mutation.
 
@@ -85,8 +103,8 @@ No R-n. No positive controls. Mutation has nothing new to plant beyond the refus
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S7 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-1 V-2 V-3 V-4 V-5 V-7 V-8 V-9 V-10 V-11 V-12 | exactly 24 executed, 0 failed/skipped | 24 | 15 |
+| CP-1 | S10 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-1 V-2 V-3 V-4 V-5 V-7 V-8 V-9 V-10 V-11 V-12 V-13 V-14 | exactly 26 executed, 0 failed/skipped | 26 | 15 |
 
 ### Cost
 
-Ordinary floor 15 minutes for the one row, plus the unlisted red run before S2.
+Ordinary floor 15 minutes for the one row, plus the unlisted red runs before S2, S6 and S9.
