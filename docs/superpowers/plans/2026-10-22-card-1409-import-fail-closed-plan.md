@@ -24,6 +24,14 @@ The real repository has eight `Import` elements: seven `..\Messaging.Pack.props`
 
 **D-6 — Master only; cherry-pick status reported.** The audit script, the test class and the doc are byte-identical on `origin/master` and `origin/rc/2026-10-20`, so the branch should cherry-pick cleanly; the report says whether `merge-tree` agrees.
 
+**D-7 — An `Import` `Project` is split on `;` (Review 23aedc52 D1).** MSBuild treats `a.props;b.props` as two imports. The audit splits the raw attribute on `;`, trims, drops empty parts, and resolves and follows each part on its own; a list with no non-empty part is the existing empty-`Project` refusal. Refusals name the whole attribute text and the resolved part. `%3B` is decoded after the split, so an escaped semicolon stays inside its part, as in MSBuild.
+
+**D-8 — A wildcard `Import` is refused outright (Review 23aedc52 D2).** This supersedes the wildcard sentence of D-3 and withdraws V-6. Land digests only definition files, so a wildcard accepted today would not be re-audited when a later non-definition file starts matching it. A part containing `*` or `?` after the two known properties are expanded refuses with a message naming the importing file and the attribute text, whatever it matches; the tracked-path scan goes away. The real repository has no wildcard import; a future one changes the audit first, as D-1 already says for unknown properties. Proving that a given wildcard can only match parsed definition files was not attempted.
+
+**D-9 — The nearest `Directory.Packages.props` is an implicit import (Review 23aedc52 D3).** `Microsoft.Common.props` imports it into every project, so it joins `Directory.Build.props` and `Directory.Build.targets` in the nearest-ancestor lookup and its includes resolve from each importing project's directory. Only the nearest file is imported, as MSBuild does.
+
+**D-10 — `*proj.user` joins both inventories (Review 23aedc52 D4).** `Microsoft.Common.targets` imports `$(MSBuildProjectFullPath).user` when it exists. A lowercased file name ending in `proj.user` is a definition file in `LandVerificationBuildGraph.Includes` and in the script's `Test-DefinitionPath`, is parsed as project XML, and is enqueued as an import of its project. No `*proj.user` is tracked at HEAD, so the manifest digest and count do not change (D-5 holds).
+
 ## Slices
 
 ### S1 — Red witnesses for items 1 and 2
@@ -42,6 +50,18 @@ The real repository has eight `Import` elements: seven `..\Messaging.Pack.props`
 
 `docs/orchestration-loop.md`, the script header, the CARD-1400 plan separator row, and this plan.
 
+### S5 — Repair witnesses (Review 23aedc52 D1-D4)
+
+`tests/Antiphon.Tests/Application/LandNonCodeSkipTests.cs` gains `C1409_SemicolonImportAuditsEveryPart`, `C1409_WildcardImportRefuses` (replacing `C1409_EmptyWildcardImportIsAccepted`), `C1409_DirectoryPackagesPropsIsImportedByTheNearestProject`, `C1409_ProjectUserFileIsAuditedAndImported` and `C1409_ProjectUserFileIsInTheHashedInventory`; the wildcard half of `C1409_UninspectedImportTargetRefuses` moves into the wildcard witness. One unlisted red run at the witness commit (reason: red proof before the fix; reported with its CHECKPOINT line and counts).
+
+### S6 — Repair fixes
+
+`scripts/audit-land-verification-graph.ps1` D-7 to D-10 and `server/Application/Services/LandVerificationBuildGraph.cs` D-10. ASCII.
+
+### S7 — Repair wording
+
+`docs/orchestration-loop.md`, the script header, and this plan.
+
 ## Verification design
 
 | ID | Behaviour | Witness |
@@ -50,9 +70,14 @@ The real repository has eight `Import` elements: seven `..\Messaging.Pack.props`
 | V-2 | `<Import Project="Sdk.props" Sdk="Some.Sdk" />` refuses even though `server/Sdk.props` is tracked and harmless; the message names the attribute. | `C1409_ImportWithUnsupportedAttributeRefuses` |
 | V-3 | `<Import Project="../eng/missing.props" />` with no such tracked file refuses and names `eng/missing.props`. | `C1409_MissingImportTargetRefuses` |
 | V-4 | `<Import Project="../../outside.props" />` from `server/App.csproj` resolves outside the repository and refuses. | `C1409_ImportOutsideRepositoryRefuses` |
-| V-5 | A tracked `eng/docs.items` imported by exact path, and the same file matched by `../eng/*.items`, refuse as uninspected targets. | `C1409_UninspectedImportTargetRefuses` |
-| V-6 | `<Import Project="../eng/*.props" />` that matches nothing is accepted: `-Update` exits 0 and writes the manifest. Acceptance control for D-3; red when the fix refuses an empty wildcard. | `C1409_EmptyWildcardImportIsAccepted` |
+| V-5 | A tracked `eng/docs.items` imported by exact path refuses as an uninspected target. The `../eng/*.items` wildcard half moved to V-9 under D-8. | `C1409_UninspectedImportTargetRefuses` |
+| V-6 | Withdrawn by the repair (D-8): an empty wildcard import is refused, not accepted. `C1409_EmptyWildcardImportIsAccepted` is replaced by `C1409_WildcardImportRefuses` (V-9). | none |
 | V-7 | The CARD-1400 and CARD-1390 refusals still hold, the conditional real-repo import is still followed, and `-Check` still matches the manifest. | `C1400_*`, `C1390_*`, `C1385_RegistryMatchesNarrowGraph` |
+| V-8 | `<Import Project="../eng/docs.items;../eng/*.props" />` refuses naming the whole attribute text and `-> eng/docs.items`; a root project importing `eng/a.props;eng/x/docs.props` is refused on the second part's `docs/**/*.md` include, so every part is followed. | `C1409_SemicolonImportAuditsEveryPart` |
+| V-9 | `../eng/*.props` matching nothing, `../eng/*.props` matching a tracked harmless file, `../eng/shared.?rops`, and `../eng/*.items` each refuse with the wildcard message naming the attribute text. | `C1409_WildcardImportRefuses` |
+| V-10 | A root `Directory.Packages.props` with `<None Include="../docs/**/*.md" />` is refused for `server/App.csproj`; with a harmless `server/Directory.Packages.props` nearer to `server/sub/App.csproj`, `-Update` exits 0 with count=3 (nearest only). | `C1409_DirectoryPackagesPropsIsImportedByTheNearestProject` |
+| V-11 | A tracked `server/App.csproj.user` with a docs include refuses; one that imports `../eng/docs.items` refuses naming `-> eng/docs.items`; a harmless one is counted (`count=2`). | `C1409_ProjectUserFileIsAuditedAndImported` |
+| V-12 | `LandVerificationBuildGraph.Includes` is true for `*proj.user` (case-insensitive) and false for `settings.user`, `Antiphon.sln.user` and `*.csproj.user.bak`; a tracked `server/Antiphon.Server.csproj.user` already on the target makes a docs-only land build with `unrecognized-build-graph`. | `C1409_ProjectUserFileIsInTheHashedInventory` |
 
 No R-n. No positive controls. Mutation has nothing new to plant beyond the refusal predicates. Zero new PC rows. Existing land PCs stay pending for SourceLanding Mutation.
 
@@ -60,7 +85,7 @@ No R-n. No positive controls. Mutation has nothing new to plant beyond the refus
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S4 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-1 V-2 V-3 V-4 V-5 V-6 V-7 | exactly 20 executed, 0 failed/skipped | 20 | 15 |
+| CP-1 | S7 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-1 V-2 V-3 V-4 V-5 V-7 V-8 V-9 V-10 V-11 V-12 | exactly 24 executed, 0 failed/skipped | 24 | 15 |
 
 ### Cost
 
