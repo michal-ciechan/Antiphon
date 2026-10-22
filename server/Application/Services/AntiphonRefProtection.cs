@@ -7,7 +7,8 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>
 /// CARD-1432 D-5: the tasks whose <c>refs/antiphon/{land,progress}/&lt;task&gt;/</c> refs must stay
-/// (investigation §2, with the CARD-1446 D-3 correction: a Ready sync debt is paid, not open).
+/// (investigation §2, with the CARD-1446 D-3 correction: a Ready sync debt is paid, not open, and the
+/// D-4 clause: an Active landing whose Cleanup is Abandoned is not protected).
 /// A task with no database row is not protected.
 /// </summary>
 public static class AntiphonRefProtection
@@ -47,9 +48,11 @@ public static class AntiphonRefProtection
             if (LiveRequest.Contains(r.State) && r.RecoverySourceTaskId is Guid source) protectedIds.Add(source);
         }
 
-        // An interrupted publication or a refused cleanup that can be retried.
+        // An interrupted publication or a refused cleanup that can be retried. CARD-1446 D-4: an Abandoned
+        // cleanup has left the Publication lane and no longer protects its task.
         var landings = db.AgentTaskLandings.AsNoTracking()
-            .Where(o => o.Active && o.Phase != LandPhase.Complete && o.Phase != LandPhase.Refused);
+            .Where(o => o.Active && o.Phase != LandPhase.Complete && o.Phase != LandPhase.Refused
+                && o.Cleanup != LandCleanupStatus.Abandoned);
         if (ids is not null)
             landings = landings.Where(o => ids.Contains(o.TaskId)
                 || (o.RecoverySourceTaskId != null && ids.Contains(o.RecoverySourceTaskId.Value)));
