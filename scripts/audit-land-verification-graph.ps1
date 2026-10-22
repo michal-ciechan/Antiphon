@@ -12,9 +12,24 @@
 # or $(MSBuildProjectDirectory) is expanded from that property and is not
 # prefixed with the importing file's folder again. $(MSBuildThisFileDirectory)
 # in an include is that file's directory. $(MSBuildProjectDirectory) is the
-# directory being checked. An unknown $(...) in an item include is refused only
-# when the text contains the exact spellings docs and .md, or README, so
-# $(DocsDir)*.md stays accepted.
+# directory being checked.
+# CARD-1409 repair 4 (Review 937bb1c9): file items are classified by what they
+# RESOLVE to, not by spelling. Every $(...) in a path-item Include or Update is
+# expanded from the tracked definition files' own property values (every
+# definition, where it is defined; the two directory properties; an output or
+# intermediate root such as $(IntermediateOutputPath); a Pkg* path property with
+# GeneratePathProperty; an MSBuild task output, also through
+# @(Item->'%(RootDir)%(Directory)'), %(Item.Metadata) and GetDirectoryName). A
+# property the audit cannot resolve statically refuses by name; a path rooted
+# at an output or package root accepts any tail without '..'. A repo pattern is
+# expanded against every blob tracked at HEAD with a real glob matcher (honouring
+# Exclude): the root README.md, an exact docs/ path other than the one
+# allow-listed input, a wildcard whose first segment can be docs/ (whatever it
+# matches today), and a markdown or text match outside the document allow-list
+# each refuse naming the resolved path. Item metadata names are allow-listed per
+# item type (ProjectReference AdditionalProperties, Properties and every unknown
+# name refuse). A property value that reads a file through a property function
+# outside an output root, or whose literal part is a docs path, refuses.
 # CARD-1409: an Import Project path that still contains $(, @( or %( after the
 # two known properties are expanded is refused and is not followed; there is no
 # allow-list. An Import with an attribute other than Project, Condition or Label
@@ -55,7 +70,7 @@
 # non-comment line is one switch among -nodeReuse, -maxcpucount, -verbosity and
 # -nologo with a checked value; -p:, -property:, @file and every other switch
 # refuse. Anything the audit cannot classify refuses by name. Target task
-# parameters and item metadata are not evaluated.
+# parameters are not evaluated; item metadata names are (repair 4).
 # ASCII-only: must parse under Windows PowerShell 5.1.
 #
 # Usage:
@@ -119,16 +134,55 @@ foreach ($allowedProperty in @(
 $ItemRules = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([System.StringComparer]::OrdinalIgnoreCase)
 foreach ($pathItem in @(
     'Compile', 'EmbeddedResource', 'Content', 'None', 'AdditionalFiles', 'EditorConfigFiles',
-    'GlobalAnalyzerConfigFiles', '_AntiphonRepeatLine', '_StagedHelperFiles', '_StagedHelperTarget',
+    'GlobalAnalyzerConfigFiles', '_StagedHelperFiles', '_StagedHelperTarget',
     'CustodyChildOutput', 'FakeBrowserFile', 'FakeClaudeOutput', 'FakeGrokOutput', 'LandFakeGrokOutput',
     'StagedHelper', '_CustodyChildTargetPath', '_FakeClaudeTargetPath', '_FakeGrokTargetPath',
     '_LandFakeGrokTarget')) {
     $ItemRules[$pathItem] = 'path'
 }
+# text: source lines handed to WriteLinesToFile inside a target, never a file path (CARD-1409 repair 4).
+$ItemRules['_AntiphonRepeatLine'] = 'text'
 $ItemRules['ProjectReference'] = 'project'
 foreach ($nameItem in @('PackageReference', 'FrameworkReference', 'InternalsVisibleTo')) {
     $ItemRules[$nameItem] = 'name'
 }
+# CARD-1409 repair 4 (Review 937bb1c9 F3): item metadata names, as attributes or child elements, per
+# item type, seeded from the tracked definition files. A type absent here allows none. The global-property
+# metadata (AdditionalProperties, Properties, GlobalProperties, SetConfiguration, SetPlatform,
+# SetTargetFramework, UndefineProperties) and every other name refuse: they reopen the R2 property imports.
+$ItemMetadata = New-Object 'System.Collections.Generic.Dictionary[string,string[]]' ([System.StringComparer]::OrdinalIgnoreCase)
+$ItemMetadata['PackageReference'] = @('Version', 'GeneratePathProperty', 'ExcludeAssets', 'PrivateAssets', 'IncludeAssets')
+$ItemMetadata['ProjectReference'] = @('Aliases', 'ReferenceOutputAssembly', 'Private')
+$ItemMetadata['Content'] = @('CopyToOutputDirectory', 'CopyToPublishDirectory', 'Link', 'TargetPath')
+$ItemMetadata['Compile'] = @('Link')
+$ItemMetadata['EmbeddedResource'] = @('LogicalName')
+$ItemMetadata['None'] = @('Pack', 'PackagePath', 'CopyToOutputDirectory')
+$ItemMetadata['StagedHelper'] = @('Folder', 'Glob')
+# Item element attributes that are not metadata (compared ordinally, as MSBuild reads them).
+$ItemElementAttributes = @('Include', 'Exclude', 'Update', 'Remove', 'Condition', 'Label')
+# CARD-1409 repair 4 (Review 937bb1c9 F1/F2): properties whose value is the build's own output or
+# intermediate directory. A path rooted at one is a build product, not a tracked input. A definition file
+# cannot set one (the property allow-list and D-12 refuse), the parsed .rsp cannot, and the land build
+# passes no -p:, so the root is the SDK's.
+$OutputRootProperties = @('IntermediateOutputPath', 'BaseIntermediateOutputPath', 'MSBuildProjectExtensionsPath',
+    'OutDir', 'OutputPath', 'BaseOutputPath', 'TargetDir', 'TargetPath', 'PublishDir')
+# The one docs/ path a tracked definition file may select, by exact resolved path (never by pattern).
+$AllowedDocsInputs = @('docs/superpowers/plans/2026-09-08-card-0449-claude-effort-dialog-captures.json')
+# Markdown and text documents outside docs/ never skip a land build, but the audit still names what it
+# accepts: the resolved patterns the tracked definition files use (from the item's own directory and from
+# every importing project directory), three bare names the shared props use, a README.md beside a
+# non-root project, and one exact path. Any other selected document refuses by its matched path.
+$DocumentExtensions = @('.md', '.markdown', '.txt')
+$AllowedDocumentPatterns = @(
+    'server/Bundles/*.md', 'server/Bundles/Presets/*.md', 'server/Bundles/Fragments/*.md',
+    'tests/Antiphon.Agents.Pty.Tests/golden/**/*', 'tests/Antiphon.Agents.Pty.Tests/Fixtures/CodexStartup/**/*',
+    'tests/Antiphon.Agents.Pty.Tests/probes/**/*', 'tests/Antiphon.Tests/Agents/Fixtures/**',
+    'tests/Antiphon.Messaging.Tests/Fixtures/*')
+$AllowedDocumentNames = @('PublicAPI.Shipped.txt', 'PublicAPI.Unshipped.txt', 'slow-tests-allowlist.txt')
+$AllowedDocumentPaths = @('server/Application/Services/LandVerificationBuildGraph.manifest.txt')
+# A property function that reads the file system; its first argument must be rooted at an output root.
+$FileReadingFunctions = @('ReadAllText', 'ReadAllBytes', 'ReadAllLines', 'ReadLines', 'GetFiles', 'GetDirectories',
+    'GetFileSystemEntries', 'EnumerateFiles', 'EnumerateDirectories', 'EnumerateFileSystemEntries')
 
 function Test-AllowedName($Allowed, [string]$Name, [bool]$IgnoreCase) {
     foreach ($candidate in $Allowed) {
@@ -233,13 +287,6 @@ function ConvertTo-RegexReplacement([string]$Value) {
     return $Value.Replace('$', '$$')
 }
 
-function Test-UnresolvedIncludeIsForbidden([string]$Include) {
-    $text = $Include.Replace('\', '/')
-    if (($text.IndexOf('docs') -ge 0) -and ($text.IndexOf('.md') -ge 0)) { return $true }
-    if ($text.IndexOf('README') -ge 0) { return $true }
-    return $false
-}
-
 function ConvertTo-RepoRelative([string]$Absolute, [string]$Root) {
     $full = $Absolute.Replace('\', '/')
     $prefix = $Root.Replace('\', '/').TrimEnd('/')
@@ -263,20 +310,89 @@ function Test-SegmentMatch([string]$Glob, [string]$Text) {
     return [regex]::IsMatch($Text, '^' + $body + '$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
 }
 
-function Test-SegmentCanBeMarkdownFile([string]$Segment) {
-    if (Test-SegmentMatch $Segment 'a.md') { return $true }
-    if ($Segment.IndexOf('*') -lt 0 -and $Segment.IndexOf('?') -lt 0) {
-        return $Segment.EndsWith('.md', [System.StringComparison]::OrdinalIgnoreCase)
-    }
-    $concrete = $Segment.Replace('*', 'a').Replace('?', 'a')
-    return $concrete.EndsWith('.md', [System.StringComparison]::OrdinalIgnoreCase)
+function Test-PatternHasWildcard([string]$Pattern) {
+    return (($Pattern.IndexOf('*') -ge 0) -or ($Pattern.IndexOf('?') -ge 0))
 }
 
-function Test-SegmentCanBeDirectory([string]$Segment) {
-    if ($Segment.IndexOf('*') -lt 0 -and $Segment.IndexOf('?') -lt 0) {
-        return $Segment.Length -gt 0
+# CARD-1409 repair 4 (Review 937bb1c9 F1): a wildcard pattern can reach docs/ when its first segment is
+# '**' or can match the name 'docs'. What it matches today does not matter: a docs file added later would
+# be a docs-only land, so the pattern itself is refused.
+function Test-PatternCanReachDocs([string]$Pattern) {
+    $segs = New-SegmentList $Pattern
+    if ($segs.Count -eq 0) { return $false }
+    $first = [string]$segs[0]
+    if ($first -eq '**') { return $true }
+    return (Test-SegmentMatch $first 'docs')
+}
+
+function Test-PathUnderDocs([string]$Path) {
+    if ([string]::Equals($Path, 'docs', [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    return $Path.StartsWith('docs/', [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+# A real glob matcher over repository-relative paths: * and ? stay inside a segment, ** spans segments.
+function Get-GlobRegex([string]$Pattern) {
+    $segs = New-SegmentList $Pattern
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('^')
+    for ($i = 0; $i -lt $segs.Count; $i++) {
+        $seg = [string]$segs[$i]
+        $last = ($i -eq ($segs.Count - 1))
+        if ($seg -eq '**') {
+            if ($last) { [void]$sb.Append('.*') } else { [void]$sb.Append('(?:[^/]+/)*') }
+            continue
+        }
+        $body = [regex]::Escape($seg).Replace('\*\*', '[^/]*').Replace('\*', '[^/]*').Replace('\?', '[^/]')
+        [void]$sb.Append($body)
+        if (-not $last) { [void]$sb.Append('/') }
     }
-    return (Test-SegmentMatch $Segment 'dir') -or (Test-SegmentMatch $Segment 'a')
+    [void]$sb.Append('$')
+    return New-Object System.Text.RegularExpressions.Regex ($sb.ToString(), [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+}
+
+function Get-GlobLiteralPrefix([string]$Pattern) {
+    $cut = $Pattern.Length
+    $star = $Pattern.IndexOf('*')
+    if ($star -ge 0 -and $star -lt $cut) { $cut = $star }
+    $question = $Pattern.IndexOf('?')
+    if ($question -ge 0 -and $question -lt $cut) { $cut = $question }
+    $prefix = $Pattern.Substring(0, $cut)
+    $slash = $prefix.LastIndexOf('/')
+    if ($slash -lt 0) { return '' }
+    return $prefix.Substring(0, $slash + 1)
+}
+
+# Every path tracked at HEAD that the pattern selects, minus the Exclude patterns.
+function Get-TrackedMatches([string]$Pattern, $ExcludePatterns) {
+    $hits = New-Object 'System.Collections.Generic.List[string]'
+    $regex = Get-GlobRegex $Pattern
+    $prefix = Get-GlobLiteralPrefix $Pattern
+    $excludes = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($exclude in $ExcludePatterns) { [void]$excludes.Add((Get-GlobRegex ([string]$exclude))) }
+    foreach ($tracked in $script:TrackedPaths) {
+        if ($prefix.Length -gt 0 -and -not $tracked.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        if (-not $regex.IsMatch($tracked)) { continue }
+        $excluded = $false
+        foreach ($ex in $excludes) {
+            if ($ex.IsMatch($tracked)) { $excluded = $true; break }
+        }
+        if (-not $excluded) { [void]$hits.Add($tracked) }
+    }
+    return ,$hits
+}
+
+function Test-DocumentPath([string]$Path) {
+    $extension = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+    return ($DocumentExtensions -contains $extension)
+}
+
+function Test-DocumentAllowed([string]$Pattern, [string]$Path) {
+    if (Test-AllowedName $AllowedDocumentPatterns $Pattern $true) { return $true }
+    if (Test-AllowedName $AllowedDocumentPaths $Path $true) { return $true }
+    $name = [System.IO.Path]::GetFileName($Path)
+    if (Test-AllowedName $AllowedDocumentNames $name $true) { return $true }
+    if ([string]::Equals($name, 'README.md', [System.StringComparison]::OrdinalIgnoreCase) -and ($Path.IndexOf('/') -ge 0)) { return $true }
+    return $false
 }
 
 function Test-GlobWalk($Pattern, [int]$Index, $Target, [int]$TargetIndex) {
@@ -301,46 +417,6 @@ function Test-PatternMatchesReadme([string]$Pattern) {
     [void]$target.Add('README.md')
     $segs = New-SegmentList $Pattern
     return Test-GlobWalk $segs 0 $target 0
-}
-
-function Test-AlignDocs($Pattern, [int]$Index, [int]$Phase, [int]$Depth) {
-    if ($Depth -gt 24) { return $false }
-    if ($Index -ge $Pattern.Count) { return ($Phase -eq 3) }
-    if ($Phase -eq 3) { return $false }
-    $seg = [string]$Pattern[$Index]
-    if ($seg -eq '**') {
-        if (Test-AlignDocs $Pattern ($Index + 1) $Phase ($Depth + 1)) { return $true }
-        if ($Depth -gt 16) { return $false }
-        if ($Phase -eq 0) {
-            if (Test-AlignDocs $Pattern $Index 2 ($Depth + 1)) { return $true }
-        }
-        elseif ($Phase -eq 2) {
-            if (Test-AlignDocs $Pattern $Index 2 ($Depth + 1)) { return $true }
-            if (Test-AlignDocs $Pattern ($Index + 1) 3 ($Depth + 1)) { return $true }
-        }
-        return $false
-    }
-    if ($Phase -eq 0) {
-        if (Test-SegmentMatch $seg 'docs') {
-            return Test-AlignDocs $Pattern ($Index + 1) 2 ($Depth + 1)
-        }
-        return $false
-    }
-    if ($Phase -eq 2) {
-        if ((Test-SegmentCanBeMarkdownFile $seg) -and (Test-AlignDocs $Pattern ($Index + 1) 3 ($Depth + 1))) {
-            return $true
-        }
-        if (Test-SegmentCanBeDirectory $seg) {
-            return Test-AlignDocs $Pattern ($Index + 1) 2 ($Depth + 1)
-        }
-        return $false
-    }
-    return $false
-}
-
-function Test-PatternSelectsDocsMarkdown([string]$Pattern) {
-    $segs = New-SegmentList $Pattern
-    return Test-AlignDocs $segs 0 0 0
 }
 
 function Normalize-RepoPattern([string]$Combined) {
@@ -406,47 +482,239 @@ function ConvertFrom-PercentEncoding([string]$Value) {
     return [System.Text.Encoding]::UTF8.GetString($bytes.ToArray())
 }
 
-function Resolve-IncludePattern([string]$Root, [string]$DefinitionPath, [string]$ProjectDirectory, [string]$Include) {
-    $decoded = ConvertFrom-PercentEncoding $Include
-    if ($null -eq $decoded) { return 'escape' }
-    $include = $decoded.Replace('\', '/')
-    $fileBase = Get-RepoDirectory $DefinitionPath
-    if ([string]::IsNullOrEmpty($fileBase)) { $fileDir = './' }
-    else { $fileDir = $fileBase + '/' }
-    if ([string]::IsNullOrEmpty($ProjectDirectory)) {
-        $projectDir = '.'
-        $projectBase = ''
-    }
-    else {
-        $projectDir = $ProjectDirectory
-        $projectBase = $ProjectDirectory
-    }
-    $anchored = $include -match '(?i)\$\(\s*MSBuild(ThisFile|Project)Directory\s*\)'
-    $expanded = [regex]::Replace($include, '(?i)\$\(\s*MSBuildThisFileDirectory\s*\)', (ConvertTo-RegexReplacement $fileDir))
-    $expanded = [regex]::Replace($expanded, '(?i)\$\(\s*MSBuildProjectDirectory\s*\)', (ConvertTo-RegexReplacement $projectDir))
-    if ($expanded.IndexOf('$(') -ge 0) {
-        if (Test-UnresolvedIncludeIsForbidden $expanded) { return 'forbidden-property' }
-        return 'unresolved'
-    }
-    if ($expanded -match '^[A-Za-z]:/' -or $expanded.StartsWith('/')) {
-        $relative = ConvertTo-RepoRelative $expanded $Root
-        if ($null -eq $relative) { return 'outside' }
-        $expanded = $relative
-    }
-    elseif ($anchored) {
-        if ($expanded.StartsWith('./')) { $expanded = $expanded.Substring(2) }
-    }
-    elseif ($projectBase.Length -gt 0) {
-        $expanded = $projectBase + '/' + $expanded
-    }
-    return Normalize-RepoPattern $expanded
+# CARD-1409 repair 4 (Review 937bb1c9 F2): the census of every parsed definition file, filled before any
+# include is classified: property definitions, task outputs, declared items and package path properties.
+$script:PropertyDefinitions = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::OrdinalIgnoreCase)
+$script:TaskPropertyOutputs = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::OrdinalIgnoreCase)
+$script:TaskItemOutputs = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::OrdinalIgnoreCase)
+$script:ItemDeclarations = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::OrdinalIgnoreCase)
+$script:PackagePathProperties = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+$script:TrackedPaths = New-Object 'System.Collections.Generic.List[string]'
+$script:UnresolvedReference = ''
+
+function Add-CensusEntry($Map, [string]$Key, $Entry) {
+    if (-not $Map.ContainsKey($Key)) { $Map[$Key] = New-Object 'System.Collections.Generic.List[object]' }
+    [void]$Map[$Key].Add($Entry)
 }
 
-function Test-ResolvedIncludeRefused([string]$Resolved) {
-    if ($Resolved -eq 'forbidden-property' -or $Resolved -eq 'escape') { return $true }
-    if ($Resolved -eq 'outside' -or $Resolved -eq 'unresolved') { return $false }
-    if ((Test-PatternMatchesReadme $Resolved) -or (Test-PatternSelectsDocsMarkdown $Resolved)) { return $true }
-    return $false
+function Get-ItemMetadataValues($Node) {
+    $values = @{}
+    foreach ($attribute in $Node.Attributes) {
+        $attributeName = [string]$attribute.Name
+        if (Test-AllowedName $ItemElementAttributes $attributeName $false) { continue }
+        $values[$attributeName] = [string]$attribute.Value
+    }
+    foreach ($child in $Node.ChildNodes) {
+        if ($child.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
+        $values[[string]$child.LocalName] = ([string]$child.InnerText).Trim()
+    }
+    return $values
+}
+
+function Register-DefinitionFacts($Doc, [string]$Path) {
+    foreach ($group in $Doc.GetElementsByTagName('PropertyGroup')) {
+        $groupConditional = -not [string]::IsNullOrWhiteSpace([string]$group.GetAttribute('Condition'))
+        foreach ($child in $group.ChildNodes) {
+            if ($child.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
+            $conditional = $groupConditional -or (-not [string]::IsNullOrWhiteSpace([string]$child.GetAttribute('Condition')))
+            Add-CensusEntry $script:PropertyDefinitions ([string]$child.LocalName) @{ File = $Path; Value = ([string]$child.InnerText).Trim(); Conditional = $conditional }
+        }
+    }
+    foreach ($output in $Doc.GetElementsByTagName('Output')) {
+        $task = ''
+        if ($null -ne $output.ParentNode) { $task = [string]$output.ParentNode.LocalName }
+        $propertyName = ([string]$output.GetAttribute('PropertyName')).Trim()
+        if ($propertyName.Length -gt 0) { Add-CensusEntry $script:TaskPropertyOutputs $propertyName $task }
+        $itemName = ([string]$output.GetAttribute('ItemName')).Trim()
+        if ($itemName.Length -gt 0) { Add-CensusEntry $script:TaskItemOutputs $itemName $task }
+    }
+    foreach ($group in $Doc.GetElementsByTagName('ItemGroup')) {
+        foreach ($node in $group.ChildNodes) {
+            if ($node.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
+            $include = [string]$node.GetAttribute('Include')
+            if ([string]::IsNullOrWhiteSpace($include)) { continue }
+            $metadata = Get-ItemMetadataValues $node
+            Add-CensusEntry $script:ItemDeclarations ([string]$node.LocalName) @{ File = $Path; Include = $include; Metadata = $metadata }
+            if ([string]$node.LocalName -ieq 'PackageReference') {
+                $generate = ''
+                if ($metadata.ContainsKey('GeneratePathProperty')) { $generate = [string]$metadata['GeneratePathProperty'] }
+                if ($generate -ieq 'true') {
+                    foreach ($id in $include.Split(';')) {
+                        $trimmed = $id.Trim()
+                        if ($trimmed.Length -gt 0) { [void]$script:PackagePathProperties.Add('Pkg' + $trimmed.Replace('.', '_')) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+# True when every task Output that fills the name comes from the MSBuild task, whose TargetOutputs are
+# other projects' build products. Any other task (Exec, ReadLinesFromFile) is not statically resolvable.
+function Test-TaskOutputOnly($Map, [string]$Name) {
+    if (-not $Map.ContainsKey($Name)) { return $false }
+    foreach ($task in $Map[$Name]) {
+        if (-not [string]::Equals([string]$task, 'MSBuild', [System.StringComparison]::Ordinal)) { return $false }
+    }
+    return $true
+}
+
+function New-Candidate([string]$Kind, [string]$Text, [bool]$Anchored) {
+    return @{ Kind = $Kind; Text = $Text; Anchored = $Anchored }
+}
+
+function Set-Unresolved([string]$Reference) {
+    $script:UnresolvedReference = $Reference
+    return $null
+}
+
+function Get-FileDirectoryPrefix([string]$Path) {
+    $base = Get-RepoDirectory $Path
+    if ([string]::IsNullOrEmpty($base)) { return './' }
+    return $base + '/'
+}
+
+# Expands one text (an include part or a property value) into every value it can take: candidates
+# tagged repo (a path inside the tree), output (rooted at a build output or intermediate directory) or
+# package (rooted at a restored package folder). $FileDir is what $(MSBuildThisFileDirectory) means in
+# the file holding the text. Returns $null, with $script:UnresolvedReference set, when a reference cannot be
+# resolved statically: a property no tracked file defines, a non-MSBuild task output, a property function
+# other than GetDirectoryName over an MSBuild task output, an item transform other than
+# @(MSBuildOutputItem->'%(RootDir)%(Directory)'), %(Item.Metadata) of an undeclared item, or a rooted
+# reference that is not the first token.
+function Expand-Candidates([string]$Text, [string]$FileDir, [string]$ProjectDir, [int]$Depth) {
+    $result = New-Object 'System.Collections.Generic.List[object]'
+    if ($Depth -gt 8) { return (Set-Unresolved $Text) }
+    $transform = [regex]::Match($Text, '^@\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*->\s*''%\(RootDir\)%\(Directory\)''\s*\)$')
+    if ($transform.Success) {
+        $itemName = $transform.Groups[1].Value
+        if ((Test-TaskOutputOnly $script:TaskItemOutputs $itemName) -and (-not $script:ItemDeclarations.ContainsKey($itemName))) {
+            [void]$result.Add((New-Candidate 'output' '' $false))
+            return ,$result
+        }
+        return (Set-Unresolved $Text)
+    }
+    $batch = [regex]::Match($Text, '^%\(\s*([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\)$')
+    if ($batch.Success) {
+        $itemName = $batch.Groups[1].Value
+        $metadataName = $batch.Groups[2].Value
+        if (-not $script:ItemDeclarations.ContainsKey($itemName)) { return (Set-Unresolved $Text) }
+        foreach ($declaration in $script:ItemDeclarations[$itemName]) {
+            $value = ''
+            if ($declaration.Metadata.ContainsKey($metadataName)) { $value = [string]$declaration.Metadata[$metadataName] }
+            $inner = Expand-Candidates $value (Get-FileDirectoryPrefix ([string]$declaration.File)) $ProjectDir ($Depth + 1)
+            if ($null -eq $inner) { return $null }
+            foreach ($candidate in $inner) { [void]$result.Add($candidate) }
+        }
+        return ,$result
+    }
+    if (($Text.IndexOf('@(') -ge 0) -or ($Text.IndexOf('%(') -ge 0)) { return (Set-Unresolved $Text) }
+    $directoryOf = [regex]::Match($Text, '^\$\(\[System\.IO\.Path\]::GetDirectoryName\(''\$\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)''\)\)$')
+    if ($directoryOf.Success) {
+        $inner = Expand-Candidates ('$(' + $directoryOf.Groups[1].Value + ')') $FileDir $ProjectDir ($Depth + 1)
+        if ($null -eq $inner) { return $null }
+        foreach ($candidate in $inner) {
+            if ([string]$candidate.Kind -ne 'output') { return (Set-Unresolved $Text) }
+            [void]$result.Add((New-Candidate 'output' '' $false))
+        }
+        return ,$result
+    }
+    if ($Text.IndexOf('$([') -ge 0) { return (Set-Unresolved $Text) }
+    $tokens = New-Object 'System.Collections.Generic.List[object]'
+    $position = 0
+    foreach ($m in [regex]::Matches($Text, '\$\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)')) {
+        if ($m.Index -gt $position) { [void]$tokens.Add(@{ Literal = $Text.Substring($position, $m.Index - $position) }) }
+        [void]$tokens.Add(@{ Property = $m.Groups[1].Value })
+        $position = $m.Index + $m.Length
+    }
+    if ($position -lt $Text.Length) { [void]$tokens.Add(@{ Literal = $Text.Substring($position) }) }
+    foreach ($token in $tokens) {
+        if ($token.ContainsKey('Literal') -and (([string]$token['Literal']).IndexOf('$(') -ge 0)) { return (Set-Unresolved $Text) }
+    }
+    [void]$result.Add((New-Candidate 'repo' '' $false))
+    $first = $true
+    foreach ($token in $tokens) {
+        if ($token.ContainsKey('Literal')) {
+            foreach ($candidate in $result) { $candidate.Text = [string]$candidate.Text + [string]$token['Literal'] }
+            $first = $false
+            continue
+        }
+        $name = [string]$token['Property']
+        $values = Get-PropertyCandidates $name $FileDir $ProjectDir $Depth
+        if ($null -eq $values) { return $null }
+        $next = New-Object 'System.Collections.Generic.List[object]'
+        foreach ($candidate in $result) {
+            foreach ($value in $values) {
+                $rooted = ([string]$value.Kind -ne 'repo') -or [bool]$value.Anchored
+                if ($rooted -and -not $first) { return (Set-Unresolved ('$(' + $name + ')')) }
+                if ($rooted) { [void]$next.Add((New-Candidate ([string]$value.Kind) ([string]$value.Text) ([bool]$value.Anchored))) }
+                else { [void]$next.Add((New-Candidate ([string]$candidate.Kind) ([string]$candidate.Text + [string]$value.Text) ([bool]$candidate.Anchored))) }
+            }
+        }
+        if ($next.Count -gt 64) { return (Set-Unresolved ('$(' + $name + ')')) }
+        $result = $next
+        $first = $false
+    }
+    return ,$result
+}
+
+# The values one $(Name) can take: the two directory properties, an output root, a package path property,
+# an MSBuild task output, or the union of every PropertyGroup definition across the tracked files (each
+# expanded where it is defined), plus the empty value when a definition is conditional.
+function Get-PropertyCandidates([string]$Name, [string]$FileDir, [string]$ProjectDir, [int]$Depth) {
+    $values = New-Object 'System.Collections.Generic.List[object]'
+    if ($Name -ieq 'MSBuildThisFileDirectory') {
+        [void]$values.Add((New-Candidate 'repo' $FileDir $true))
+        return ,$values
+    }
+    if ($Name -ieq 'MSBuildProjectDirectory') {
+        $projectText = $ProjectDir
+        if ([string]::IsNullOrEmpty($projectText)) { $projectText = '.' }
+        [void]$values.Add((New-Candidate 'repo' $projectText $true))
+        return ,$values
+    }
+    if (Test-AllowedName $OutputRootProperties $Name $true) {
+        [void]$values.Add((New-Candidate 'output' '' $false))
+        return ,$values
+    }
+    if ($script:PackagePathProperties.Contains($Name)) {
+        [void]$values.Add((New-Candidate 'package' '' $false))
+        return ,$values
+    }
+    $defined = $script:PropertyDefinitions.ContainsKey($Name)
+    if ($script:TaskPropertyOutputs.ContainsKey($Name)) {
+        if ($defined -or -not (Test-TaskOutputOnly $script:TaskPropertyOutputs $Name)) { return (Set-Unresolved ('$(' + $Name + ')')) }
+        [void]$values.Add((New-Candidate 'output' '' $false))
+        return ,$values
+    }
+    if (-not $defined) { return (Set-Unresolved ('$(' + $Name + ')')) }
+    $conditional = $false
+    foreach ($definition in $script:PropertyDefinitions[$Name]) {
+        if ([bool]$definition.Conditional) { $conditional = $true }
+        $inner = Expand-Candidates ([string]$definition.Value) (Get-FileDirectoryPrefix ([string]$definition.File)) $ProjectDir ($Depth + 1)
+        if ($null -eq $inner) { return $null }
+        foreach ($candidate in $inner) { [void]$values.Add($candidate) }
+    }
+    if ($conditional) { [void]$values.Add((New-Candidate 'repo' '' $false)) }
+    return ,$values
+}
+
+# Resolves one repo candidate, evaluated from $ProjectDirectory, to a repository-relative pattern,
+# 'outside' or 'escape'. An anchored candidate already starts at a known directory.
+function Resolve-CandidatePattern([string]$Root, $Candidate, [string]$ProjectDirectory) {
+    $text = ([string]$Candidate.Text).Replace('\', '/')
+    if ($text -match '^[A-Za-z]:/' -or $text.StartsWith('/')) {
+        $relative = ConvertTo-RepoRelative $text $Root
+        if ($null -eq $relative) { return 'outside' }
+        $text = $relative
+    }
+    elseif ([bool]$Candidate.Anchored) {
+        if ($text.StartsWith('./')) { $text = $text.Substring(2) }
+    }
+    elseif (-not [string]::IsNullOrEmpty($ProjectDirectory)) {
+        $text = $ProjectDirectory + '/' + $text
+    }
+    return Normalize-RepoPattern $text
 }
 
 function Find-NearestDirectoryBuild($Known, [string]$ProjectDirectory, [string]$FileName) {
@@ -574,8 +842,26 @@ function Get-ImportedProjectDirectories([string]$Root, $Known) {
     return $bases
 }
 
-function Format-ApprovalRefusal([string]$Path, [string]$Item, [string]$Include) {
-    return 'definition file includes docs markdown or the root README.md; -Update cannot approve it: ' + $Path + ' ' + $Item + ' Include=' + $Include
+function Format-ApprovalRefusal([string]$Path, [string]$Item, [string]$Include, [string]$Resolved) {
+    $text = 'definition file includes docs markdown or the root README.md; -Update cannot approve it: ' + $Path + ' ' + $Item + ' Include=' + $Include
+    if (-not [string]::IsNullOrEmpty($Resolved)) { $text = $text + ' -> ' + $Resolved }
+    return $text
+}
+
+function Format-DocumentRefusal([string]$Path, [string]$Item, [string]$Include, [string]$Matched) {
+    return 'definition file item selects a markdown or text document the audit does not allow; -Update cannot approve it: ' + $Path + ' ' + $Item + ' Include=' + $Include + ' -> ' + $Matched
+}
+
+function Format-UnresolvedPropertyRefusal([string]$Path, [string]$Item, [string]$Include, [string]$Reference) {
+    return 'definition file item include uses a property the audit cannot resolve; -Update cannot approve it: ' + $Path + ' ' + $Item + ' Include=' + $Include + ' ' + $Reference
+}
+
+function Format-MetadataRefusal([string]$Path, [string]$Item, [string]$Label, [string]$Name) {
+    return 'definition file item carries metadata the audit does not allow; -Update cannot approve it: ' + $Path + ' ' + $Item + ' ' + $Label + ' ' + $Name
+}
+
+function Format-PropertyValueRefusal([string]$Path, [string]$Name, [string]$Detail) {
+    return 'definition file property value names a docs path or reads a file the audit cannot classify; -Update cannot approve it: ' + $Path + ' ' + $Name + ' ' + $Detail
 }
 
 function Format-UnresolvedImportRefusal([string]$Path, [string]$ProjectAttr) {
@@ -700,37 +986,184 @@ function Test-ItemNameIsPathLike([string]$Segment) {
     return $false
 }
 
-# CARD-1409 (Review 31c77116): one ';'-separated include part under its item type's rule, resolved from
-# every directory the item is evaluated from. Every refusal names the file, the item type and the part.
-function Assert-ItemIncludeAllowed([string]$Root, [string]$Path, [string]$Item, [string]$Rule, [string]$Segment, $Directories, $Known) {
+# CARD-1409 repair 4 (Review 937bb1c9 F3): every attribute that is not an item-element attribute, and every
+# child element, is metadata and must be allow-listed for the item type.
+function Assert-ItemMetadataAllowed($Node, [string]$Path, [string]$Item, [string]$Label) {
+    $allowed = @()
+    if ($ItemMetadata.ContainsKey($Item)) { $allowed = $ItemMetadata[$Item] }
+    foreach ($attribute in $Node.Attributes) {
+        $attributeName = [string]$attribute.Name
+        if (Test-AllowedName $ItemElementAttributes $attributeName $false) { continue }
+        if (-not (Test-AllowedName $allowed $attributeName $true)) { Exit-Audit 1 (Format-MetadataRefusal $Path $Item $Label $attributeName) }
+    }
+    foreach ($child in $Node.ChildNodes) {
+        if ($child.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
+        $childName = [string]$child.LocalName
+        if (-not (Test-AllowedName $allowed $childName $true)) { Exit-Audit 1 (Format-MetadataRefusal $Path $Item $Label $childName) }
+    }
+}
+
+function Get-IncludeLabel($Node) {
+    foreach ($name in @('Include', 'Update', 'Remove')) {
+        $value = [string]$Node.GetAttribute($name)
+        if (-not [string]::IsNullOrWhiteSpace($value)) { return ($name + '=' + $value) }
+    }
+    return 'Include='
+}
+
+# CARD-1409 repair 4 (Review 937bb1c9 F1): one expanded path-item candidate, evaluated from one directory.
+# An output or package root accepts any tail that does not climb out of it. A repo path becomes a
+# repository-relative pattern: the root README.md refuses; an exact path under docs/ refuses unless it is
+# the allow-listed input; a wildcard pattern that can reach docs/ refuses whatever it matches today; the
+# pattern is then expanded against the tracked tree, minus Exclude, and a match under docs/ or a
+# markdown/text document outside the document allow-list refuses naming that match.
+function Assert-PathCandidateAllowed([string]$Root, [string]$Path, [string]$Item, [string]$Segment, $Candidate, [string]$Directory, $ExcludeCandidates) {
+    $kind = [string]$Candidate.Kind
+    if ($kind -eq 'output' -or $kind -eq 'package') {
+        $tail = ([string]$Candidate.Text).Replace('\', '/')
+        if ($tail -match '^[A-Za-z]:') { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
+        foreach ($part in $tail.Split('/')) {
+            if ($part -eq '..') { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
+        }
+        return
+    }
+    $pattern = [string](Resolve-CandidatePattern $Root $Candidate $Directory)
+    if ($pattern -eq 'escape') { Exit-Audit 1 (Format-ApprovalRefusal $Path $Item $Segment) }
+    if ($pattern -eq 'outside') { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
+    if (Test-PatternMatchesReadme $pattern) { Exit-Audit 1 (Format-ApprovalRefusal $Path $Item $Segment 'README.md') }
+    if (-not (Test-PatternHasWildcard $pattern)) {
+        if (Test-PathUnderDocs $pattern) {
+            if (-not (Test-AllowedName $AllowedDocsInputs $pattern $true)) { Exit-Audit 1 (Format-ApprovalRefusal $Path $Item $Segment $pattern) }
+            return
+        }
+        if ((Test-DocumentPath $pattern) -and -not (Test-DocumentAllowed $pattern $pattern)) {
+            Exit-Audit 1 (Format-DocumentRefusal $Path $Item $Segment $pattern)
+        }
+        return
+    }
+    $excludePatterns = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($exclude in $ExcludeCandidates) {
+        if ([string]$exclude.Kind -ne 'repo') { continue }
+        $excludePattern = [string](Resolve-CandidatePattern $Root $exclude $Directory)
+        if ($excludePattern -eq 'escape' -or $excludePattern -eq 'outside') { continue }
+        [void]$excludePatterns.Add($excludePattern)
+    }
+    $hits = Get-TrackedMatches $pattern $excludePatterns
+    if (Test-PatternCanReachDocs $pattern) {
+        $named = $pattern
+        foreach ($hit in $hits) {
+            if ((Test-PathUnderDocs ([string]$hit)) -and -not (Test-AllowedName $AllowedDocsInputs ([string]$hit) $true)) { $named = [string]$hit; break }
+        }
+        Exit-Audit 1 (Format-ApprovalRefusal $Path $Item $Segment $named)
+    }
+    if (Test-AllowedName $AllowedDocumentPatterns $pattern $true) { return }
+    foreach ($hit in $hits) {
+        $hitPath = [string]$hit
+        if (Test-PathUnderDocs $hitPath) { Exit-Audit 1 (Format-ApprovalRefusal $Path $Item $Segment $hitPath) }
+        if ((Test-DocumentPath $hitPath) -and -not (Test-DocumentAllowed $pattern $hitPath)) {
+            Exit-Audit 1 (Format-DocumentRefusal $Path $Item $Segment $hitPath)
+        }
+    }
+}
+
+# CARD-1409 (Review 31c77116): one ';'-separated include or update part under its item type's rule,
+# expanded (repair 4) and resolved from every directory the item is evaluated from. Every refusal names
+# the file, the item type and the part.
+function Assert-ItemIncludeAllowed([string]$Root, [string]$Path, [string]$Item, [string]$Rule, [string]$Segment, $Directories, $Known, [string]$Exclude) {
     if (($Segment.IndexOf('@(') -ge 0) -or ($Segment.IndexOf('%(') -ge 0)) {
         Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment)
     }
+    if ($Rule -eq 'text') { return }
     if ($Rule -eq 'name') {
         if (Test-ItemNameIsPathLike $Segment) { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
         return
     }
+    $decoded = ConvertFrom-PercentEncoding $Segment
+    if ($null -eq $decoded) { Exit-Audit 1 (Format-ApprovalRefusal $Path $Item $Segment) }
+    $fileDir = Get-FileDirectoryPrefix $Path
     foreach ($directory in $Directories) {
-        $resolved = [string](Resolve-IncludePattern $Root $Path ([string]$directory) $Segment)
-        if ($Rule -eq 'project') {
-            $unclassified = ($resolved -eq 'escape') -or ($resolved -eq 'forbidden-property') -or ($resolved -eq 'outside') -or ($resolved -eq 'unresolved')
-            if ($unclassified -or ($resolved.IndexOf('*') -ge 0) -or ($resolved.IndexOf('?') -ge 0)) {
-                Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment)
+        $candidates = Expand-Candidates $decoded $fileDir ([string]$directory) 0
+        if ($null -eq $candidates) { Exit-Audit 1 (Format-UnresolvedPropertyRefusal $Path $Item $Segment $script:UnresolvedReference) }
+        $excludeCandidates = New-Object 'System.Collections.Generic.List[object]'
+        if (-not [string]::IsNullOrWhiteSpace($Exclude)) {
+            foreach ($excludePart in $Exclude.Split(';')) {
+                $excludeText = $excludePart.Trim()
+                if ($excludeText.Length -eq 0) { continue }
+                if (($excludeText.IndexOf('@(') -ge 0) -or ($excludeText.IndexOf('%(') -ge 0)) { continue }
+                $excludeDecoded = ConvertFrom-PercentEncoding $excludeText
+                if ($null -eq $excludeDecoded) { continue }
+                $expanded = Expand-Candidates $excludeDecoded $fileDir ([string]$directory) 0
+                if ($null -eq $expanded) { continue }
+                foreach ($candidate in $expanded) { [void]$excludeCandidates.Add($candidate) }
             }
-            if ((-not (Test-ProjFile $resolved)) -or (-not $Known.ContainsKey($resolved))) {
-                Exit-Audit 1 (Format-ProjectReferenceRefusal $Path $Item $Segment $resolved)
+        }
+        foreach ($candidate in $candidates) {
+            if ($Rule -eq 'project') {
+                if ([string]$candidate.Kind -ne 'repo') { Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment) }
+                $resolved = [string](Resolve-CandidatePattern $Root $candidate ([string]$directory))
+                if (($resolved -eq 'escape') -or ($resolved -eq 'outside') -or (Test-PatternHasWildcard $resolved)) {
+                    Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment)
+                }
+                if ((-not (Test-ProjFile $resolved)) -or (-not $Known.ContainsKey($resolved))) {
+                    Exit-Audit 1 (Format-ProjectReferenceRefusal $Path $Item $Segment $resolved)
+                }
+                continue
             }
-            continue
+            Assert-PathCandidateAllowed $Root $Path $Item $Segment $candidate ([string]$directory) $excludeCandidates
         }
-        if ($resolved -eq 'forbidden-property' -or $resolved -eq 'escape') {
-            Exit-Audit 1 (Format-ApprovalRefusal $Path $Item $Segment)
-        }
-        if ($resolved -eq 'outside') {
-            Exit-Audit 1 (Format-UnclassifiedIncludeRefusal $Path $Item $Segment)
-        }
-        if ($resolved -eq 'unresolved') { continue }
-        if ((Test-PatternMatchesReadme $resolved) -or (Test-PatternSelectsDocsMarkdown $resolved)) {
-            Exit-Audit 1 (Format-ApprovalRefusal $Path $Item $Segment)
+    }
+}
+
+# CARD-1409 repair 4 (Review 937bb1c9, D-18 items closed cheaply): a property value that reads the file
+# system through a property function must read under an output root, and a value part that is a literal
+# path (after the two directory properties) must not be a docs/ path, the root README.md, or a wildcard
+# that can reach them. Other references in a value are left alone: a value is not an input by itself,
+# and an include that uses it is expanded and classified where it is used.
+function Assert-PropertyValuesAllowed([string]$Root, $Doc, [string]$Path, $Directories) {
+    $fileDir = Get-FileDirectoryPrefix $Path
+    $outputRooted = '^\$\(\s*(' + ($OutputRootProperties -join '|') + ')\s*\)'
+    foreach ($group in $Doc.GetElementsByTagName('PropertyGroup')) {
+        foreach ($child in $group.ChildNodes) {
+            if ($child.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
+            $name = [string]$child.LocalName
+            $value = ([string]$child.InnerText).Trim()
+            if ($value.Length -eq 0) { continue }
+            foreach ($call in [regex]::Matches($value, '::\s*([A-Za-z]+)\s*\(\s*(?:''([^'']*)''|([^,)]*))')) {
+                $function = $call.Groups[1].Value
+                if (-not (Test-AllowedName $FileReadingFunctions $function $true)) { continue }
+                $argument = $call.Groups[2].Value
+                if ($argument.Length -eq 0) { $argument = $call.Groups[3].Value.Trim() }
+                if (-not ($argument -match $outputRooted)) {
+                    Exit-Audit 1 (Format-PropertyValueRefusal $Path $name ($function + '(' + $argument + ')'))
+                }
+            }
+            foreach ($part in $value.Split(';')) {
+                $text = $part.Trim()
+                if ($text.Length -eq 0) { continue }
+                if (($text.IndexOf('@(') -ge 0) -or ($text.IndexOf('%(') -ge 0) -or ($text.IndexOf('$([') -ge 0)) { continue }
+                $stripped = [regex]::Replace($text, '(?i)\$\(\s*MSBuild(ThisFile|Project)Directory\s*\)', '')
+                if ($stripped.IndexOf('$(') -ge 0) { continue }
+                # A wildcard in a value is an exclude list or a glob some include expands where it is used,
+                # and a bare word (true, Exe, net10.0) is not a file reference; only a part with a path
+                # separator or a document extension is resolved, from the file's own directory. An include
+                # that uses the value is expanded from every importing project directory where it is used.
+                if (Test-PatternHasWildcard $stripped) { continue }
+                $normalizedPart = $stripped.Replace('\', '/')
+                if (($normalizedPart.IndexOf('/') -lt 0) -and -not (Test-DocumentPath $normalizedPart)) { continue }
+                $decoded = ConvertFrom-PercentEncoding $text
+                if ($null -eq $decoded) { continue }
+                $candidates = Expand-Candidates $decoded $fileDir (Get-RepoDirectory $Path) 0
+                if ($null -eq $candidates) { continue }
+                foreach ($candidate in $candidates) {
+                    if ([string]$candidate.Kind -ne 'repo') { continue }
+                    $pattern = [string](Resolve-CandidatePattern $Root $candidate (Get-RepoDirectory $Path))
+                    if ($pattern -eq 'escape' -or $pattern -eq 'outside') { continue }
+                    $docs = (Test-PathUnderDocs $pattern) -or ($pattern -ieq 'README.md')
+                    if ($docs -and -not (Test-AllowedName $AllowedDocsInputs $pattern $true)) {
+                        Exit-Audit 1 (Format-PropertyValueRefusal $Path $name ('-> ' + $pattern))
+                    }
+                }
+            }
         }
     }
 }
@@ -838,6 +1271,8 @@ function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows) {
         Assert-ClassifiedStructure $doc $path
         Assert-AllowedProperties $doc $path
         Assert-AllowedItemTypes $doc $path
+        # CARD-1409 repair 4: the census every include expansion reads; complete before any file is classified.
+        Register-DefinitionFacts $doc $path
         $known[$path] = $doc
     }
     $bases = Get-ImportedProjectDirectories $Root $known
@@ -850,17 +1285,24 @@ function Assert-NoDocumentationInput([string]$Root, [string[]]$Rows) {
                 if (-not $directories.Contains([string]$dir)) { [void]$directories.Add([string]$dir) }
             }
         }
+        Assert-PropertyValuesAllowed $Root $doc ([string]$path) $directories
         foreach ($group in $doc.GetElementsByTagName('ItemGroup')) {
             foreach ($node in $group.ChildNodes) {
                 if ($node.NodeType -ne [System.Xml.XmlNodeType]::Element) { continue }
                 $local = [string]$node.LocalName
                 $rule = [string]$ItemRules[$local]
-                $include = $node.GetAttribute('Include')
-                if ([string]::IsNullOrWhiteSpace($include)) { continue }
-                foreach ($segment in $include.Split(';')) {
-                    $segment = $segment.Trim()
-                    if ($segment.Length -eq 0) { continue }
-                    Assert-ItemIncludeAllowed $Root ([string]$path) $local $rule $segment $directories $known
+                Assert-ItemMetadataAllowed $node ([string]$path) $local (Get-IncludeLabel $node)
+                # Include and Update are classified; Remove only subtracts and is left alone.
+                foreach ($attributeName in @('Include', 'Update')) {
+                    $include = $node.GetAttribute($attributeName)
+                    if ([string]::IsNullOrWhiteSpace($include)) { continue }
+                    $exclude = ''
+                    if ($attributeName -eq 'Include') { $exclude = [string]$node.GetAttribute('Exclude') }
+                    foreach ($segment in $include.Split(';')) {
+                        $segment = $segment.Trim()
+                        if ($segment.Length -eq 0) { continue }
+                        Assert-ItemIncludeAllowed $Root ([string]$path) $local $rule $segment $directories $known $exclude
+                    }
                 }
             }
         }
@@ -902,6 +1344,8 @@ for ($i = 0; $i -lt $last; $i++) {
     $gitlink = ($kind -eq 'commit') -and ($mode -eq '160000')
     if ((-not $blob) -and (-not $gitlink)) { Exit-Audit 1 'ls-tree row is not a blob or commit' }
     if (-not (Test-FullObjectId $oid)) { Exit-Audit 1 'ls-tree object id is not a full id' }
+    # CARD-1409 repair 4: every tracked blob is what an item glob is expanded against.
+    if ($blob) { [void]$script:TrackedPaths.Add($path) }
     if (-not (Test-DefinitionPath $path)) { continue }
     if (Test-PathUnderObjDirectory $path) { Exit-Audit 1 (Format-ObjDefinitionRefusal $path) }
     $regular = ($mode -eq '100644' -or $mode -eq '100755') -and ($kind -eq 'blob')
