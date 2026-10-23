@@ -146,13 +146,17 @@ public sealed class RunBudgetClock : IDisposable
     {
         Validate(admissionLimit, "slotWaitMinutes");
         var started = _time.GetTimestamp();
-        using var admission = activity.Admission();
         using var deadline = new CancellationTokenSource(admissionLimit, _time);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, Token, deadline.Token);
         try
         {
             linked.Token.ThrowIfCancellationRequested();
-            var lease = await slots.AcquireAsync(session, label, linked.Token).ConfigureAwait(false);
+            // Charge synchronous client preflight and grant settlement. Only a
+            // genuinely pending broker acquisition earns admission-only credit.
+            var pending = slots.AcquireAsync(session, label, linked.Token);
+            SlotLease lease;
+            using (var admission = session.Mode == "enabled" && !pending.IsCompleted ? activity.Admission() : null)
+                lease = await pending.ConfigureAwait(false);
             if (linked.IsCancellationRequested)
             {
                 await lease.DisposeAsync().ConfigureAwait(false);

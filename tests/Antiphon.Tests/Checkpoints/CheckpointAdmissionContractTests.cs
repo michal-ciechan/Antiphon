@@ -178,6 +178,12 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         merged.Attempts[0].ExitCode.ShouldBe(5);
         merged.Attempts[0].Rows.Single().ExecutedSeconds.ShouldBe(1);
         merged.Rows.Single().ExecutedSeconds.ShouldBe(2);
+        foreach (var invalid in new[] { -1d, double.NaN, double.PositiveInfinity })
+        {
+            var malformed = Attempt(0, 2);
+            malformed.Budget = new RunBudgetEvidence { AdmissionLimitSeconds = invalid };
+            ReportValidator.Validate(malformed, new string('a', 40)).ShouldBe("invalid_timing");
+        }
     }
 
     private sealed class HeldHttp : HttpMessageHandler
