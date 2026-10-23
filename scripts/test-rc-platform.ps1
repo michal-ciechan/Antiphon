@@ -73,7 +73,17 @@ function Test-C1323_PlatformPolicy {
     $bytes = [IO.File]::ReadAllBytes($path)
     $authorityPolicy = ConvertFrom-ReleaseAuthorityPolicyBytes $bytes
     $expectedSuites = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts', 'e2e', 'markdown-pdf')
-    Assert-C1323 (Same-C1323Set $authorityPolicy.RequiredSuites $expectedSuites) 'nine-suite-authority'
+    if ($policy.suites.observability) { $expectedSuites += 'observability' }
+    $observabilityRequired = $true
+    if ($policy.suites.observability) {
+        $missing = Copy-C1323Object $policy
+        $missing.profiles.rc.requiredSuites = @($missing.profiles.rc.requiredSuites | Where-Object { $_ -cne 'observability' })
+        $missing.policyHash = Get-NightlyPolicyHash $missing
+        $message = ''
+        try { [void](ConvertFrom-ReleaseAuthorityPolicyBytes ([Text.Encoding]::UTF8.GetBytes(($missing | ConvertTo-Json -Depth 40)))) } catch { $message = $_.Exception.Message }
+        $observabilityRequired = $message -ceq 'policy-rc-suite-missing:observability'
+    }
+    Assert-C1323 ((Same-C1323Set $authorityPolicy.RequiredSuites $expectedSuites) -and $observabilityRequired) 'nine-suite-authority'
     Assert-C1323 (Same-C1323Set (Get-ReleaseAuthorityRequiredUids $nodes $authorityPolicy.Exclusions 'e2e') $expectedWindows) 'authority-resolves-windows'
 
     $invalid = @('macos', '', 'Windows', 1, $true, $null, @('linux'), @{ os = 'linux' })
