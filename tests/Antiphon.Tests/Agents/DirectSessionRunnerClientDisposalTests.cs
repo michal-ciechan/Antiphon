@@ -395,10 +395,11 @@ internal sealed class OwnedPtyFixture : IAsyncDisposable
         prompts.ShouldHaveSingleItem();
         prompts[0].Text.ShouldBe(body, "complete unique UserPrompt after baseline");
     }
-    public Task DeleteRootAsync()
+    public async Task DeleteRootAsync()
     {
         Witness?.Release();
-        return Cleanup.DeleteAsync();
+        await Cleanup.DeleteAsync();
+        Directory.Exists(Root).ShouldBeFalse("private-tree-deletable");
     }
 
     public async ValueTask DisposeAsync()
