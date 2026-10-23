@@ -3,6 +3,8 @@
 The operator refinement arrived and resolved the transport decision: implement
 independent Windows Application Event Log, local marker and optional webhook
 sinks. The source now implements that choice; no transport decision remains open.
+The later caller reply requires HTTPS only; HTTP endpoints and redirects are now
+refused while local sinks remain independent. This is the only new behavior in S7.
 
 Original Code / landing owner: cee89aca-0bbe-4902-b1ed-6f03f7824270.
 Branch feat/card-task-cee89aca; worktree /work/worktrees/task-cee89aca.
@@ -23,7 +25,7 @@ can omit the local entry, while marker and webhook intent remain independent.
 logs/apphost-down.alert records outage start, minutes down and the last restart
 attempt; it refreshes on fires/attempts and is removed on recovery. Current state
 prevents historical webhook retries from recreating a recovered marker.
-The optional webhook reads only ANTIPHON_WATCHDOG_ALERT_WEBHOOK. No URL means no
+The optional HTTPS webhook reads only ANTIPHON_WATCHDOG_ALERT_WEBHOOK. No URL means no
 request. Configured requests have a five-second bound and stable Idempotency-Key;
 accepted events are not repeated, failed deliveries retry, and receivers must
 deduplicate ambiguous HTTP completions. No URL or response body is logged.
@@ -57,22 +59,37 @@ preserves typed DateTime/DateTimeOffset instants and adds a persisted 179.5-seco
 outage check to prevent an early threshold. No assertion or timeout was loosened.
 Report: .antiphon/checkpoints/20261023-020700-93da/report.md (1m23s wall).
 
+The full refinement baseline 415116fd9145c43a91c1cba415e01319540e5da7 passed
+all nine rows / 149 assertions, with validated clean receipts in run
+20261023-021002-3879 (21s wall, every slot=granted waited=0s).
+
+S7's HTTPS witness was committed first at 97183719d9233c0db7d4fa97ea9ef8d12008135f.
+CP-9 failed the intended HTTP-refusal assertion after seven existing assertions
+passed: 20261023-021809-3da1 (3s wall, slot=granted waited=0s). The fix restricts
+the scheme and disables redirects; no timeout or assertion was loosened.
+
 ## Final qualification and limits
 
 This tracked report is frozen before the final source run. Final actual tested SHA,
 counts and every V/R outcome, unedited CHECKPOINT lines, receipt validation,
 master/rc simulations and cleanup facts are retained in the ignored report
-.antiphon/task-cee89aca-evidence/refinement-final.md and its checkpoint reports.
+.antiphon/task-cee89aca-evidence/https-final.md and its checkpoint reports.
+The earlier full baseline remains preserved separately in refinement-final.md.
+The HTTPS repair reruns CP-3/CP-4/CP-7/CP-8/CP-9 once, covering the caller,
+conservative guards and all three sender sinks. CP-1/CP-2/CP-5/CP-6 keep their
+actual baseline SHA above: restart admission, launcher exit, lock age and health
+classification are unchanged. No old receipt is relabeled with the new SHA.
 No later report commit may relabel tested source. The nine closed command rows
 cover ordinary Linux scope: no Unit lane or full assembly per the explicit brief.
 Nonzero assertion counts come from fresh console logs; non-TUnit rows have no TRX
 and buildSource=notApplicable. A common-helper/entry-script behavior change requires
 this final run; it is not an unchanged green proof repetition.
 
-Unlisted builds were checkpoint tool bootstraps only, both build-slot gated:
+Unlisted builds were checkpoint tool bootstraps only, all build-slot gated:
 initial bin-c1527-tool/ (0 errors, 4 existing warnings, waited=0s, held=13s), and
 refinement bin-c1527-refinement/ (0 errors, 4 existing warnings, waited=211s,
-held=7s). No unlisted test runs. Alternate output directories are removed only
+held=7s); HTTPS reply bin-c1527-https/ (0 errors, 4 existing warnings, waited=0s,
+held=6s). No unlisted test runs. Alternate output directories are removed only
 after the tool and all executors finish.
 
 R-3 remains OWED to Windows: native CIM, denied-access census, 5.1 launcher capture
@@ -84,7 +101,7 @@ access. Restart: none. No installation, land or activation occurred.
 
 PC-1 (two-fire, identity, absence), PC-2 (nonzero-exit, own-lock), PC-3 (threshold,
 deduplication, recovery, maintenance) and PC-4 (independent sinks, optional variable,
-marker recovery): every variant remains PENDING method-scoped SourceLanding
+marker recovery, HTTPS-only, no redirect): every variant remains PENDING method-scoped SourceLanding
 Mutation. No deliberate mutants were run. Native OWED work is not a green gate.
 
 Next: ordinary Review of the original Code task, retaining the explicit Windows

@@ -1232,11 +1232,11 @@ function Send-AppHostOutageEvent {
     $Event | Add-Member NoteProperty WebhookConfigured $true -Force
     if ($DeferWebhook) { return $false }
     $uri = $null
-    if (-not [Uri]::TryCreate($endpoint, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -notin @('http','https')) { return $false }
+    if (-not [Uri]::TryCreate($endpoint, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -ne 'https') { return $false }
     try {
         # Send only notification data, not mutable local delivery bookkeeping.
         $body = [pscustomobject]@{Id=$Event.Id;Kind=$Event.Kind;DownSinceUtc=$Event.DownSinceUtc;ObservedUtc=$Event.ObservedUtc}
-        $null = Invoke-WebRequest -Uri $uri -Method Post -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop -Verbose:$false -Debug:$false `
+        $null = Invoke-WebRequest -Uri $uri -Method Post -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 5 -ErrorAction Stop -Verbose:$false -Debug:$false `
             -ContentType 'application/json' -Headers @{'Idempotency-Key'=$Event.Id} -Body ($body | ConvertTo-Json -Compress)
         $Event | Add-Member NoteProperty WebhookComplete $true -Force
         return $true
