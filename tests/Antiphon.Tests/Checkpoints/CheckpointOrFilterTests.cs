@@ -111,6 +111,7 @@ public sealed class CheckpointOrFilterTests : CheckpointTestBase
         driver.Count(CheckpointFixtures.IsRun).ShouldBe(2);
         result.Rows.Single(row => row.Id == "CP-2").ExitCode.ShouldBe(0);
         AssertZero(result.Rows.Single(row => row.Id == "CP-1"));
+        File.WriteAllText(Path.Combine(root, "manifest.resolved.yaml"), ManifestLoader.ToYaml(manifest));
         var model = CheckpointApp.BuildReport(root, root, new RunRequest(), manifest, state, result);
         var json = ReportWriter.JsonText(model);
         json.ShouldContain("zero-tests-executed");
