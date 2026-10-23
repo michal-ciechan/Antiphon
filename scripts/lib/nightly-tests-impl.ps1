@@ -421,7 +421,17 @@ function ConvertTo-NightlyProfileLaunchGroups {
 function Get-NightlyProfileLaunchPlan {
     param([object[]]$DiscoveryNodes, [object[]]$Chunks, [object[]]$Exclusions)
     $leaves = @(Get-NightlyProfileExecutionChunks -DiscoveryNodes $DiscoveryNodes -Chunks $Chunks -Exclusions $Exclusions)
-    return @(ConvertTo-NightlyProfileLaunchGroups -Leaves $leaves -DiscoveryNodes $DiscoveryNodes)
+    $plan = @(ConvertTo-NightlyProfileLaunchGroups -Leaves $leaves -DiscoveryNodes $DiscoveryNodes)
+    # CARD-1567: the 60-minute native watchdog detects hangs, not ordinary
+    # packing overflow. A single expanded method may itself exceed the
+    # splitter's target: refuse the plan before launching any test process.
+    foreach ($launch in $plan) {
+        $seconds = [double]$launch.seconds
+        if ([double]::IsNaN($seconds) -or [double]::IsInfinity($seconds) -or $seconds -le 0 -or $seconds -gt 2400) {
+            throw ('launch-estimate-ceiling id={0} seconds={1} ceiling=2400' -f $launch.id, $seconds)
+        }
+    }
+    return $plan
 }
 
 function Resolve-NightlySuiteChunks {

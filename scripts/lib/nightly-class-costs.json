@@ -48,6 +48,90 @@
       "nodes": 63,
       "seconds": 3780,
       "basis": "pace"
+    },
+    "Antiphon.Tests.Application.AgentTaskLandAdmissionTests": {
+      "nodes": 8,
+      "seconds": 528,
+      "basis": "observed-bound",
+      "source": "CARD-1567: maximum available R/P diagnostic table total (minutes x 60), docs/investigations/2026-10-23-rc-5a126f6fc-qualification-groups-15-20-debug.md; denominator is committed c1410 Linux listing, not a fresh Windows full-class measurement. Complete R/P/S3 extracts remain required."
+    },
+    "Antiphon.Tests.Application.AgentTaskLandApprovalRecoveryTests": {
+      "nodes": 94,
+      "seconds": 480,
+      "basis": "observed-bound",
+      "source": "CARD-1567: maximum available R/P diagnostic table total (minutes x 60), docs/investigations/2026-10-23-rc-5a126f6fc-qualification-groups-15-20-debug.md; denominator is committed c1410 Linux listing, not a fresh Windows full-class measurement. Complete R/P/S3 extracts remain required."
+    },
+    "Antiphon.Tests.Application.AgentTaskLandBoundaryControlledTests": {
+      "nodes": 94,
+      "seconds": 1218,
+      "basis": "observed-bound",
+      "source": "CARD-1567: maximum available R/P diagnostic table total (minutes x 60), docs/investigations/2026-10-23-rc-5a126f6fc-qualification-groups-15-20-debug.md; denominator is committed c1410 Linux listing, not a fresh Windows full-class measurement. Complete R/P/S3 extracts remain required."
+    },
+    "Antiphon.Tests.Application.AgentTaskLandConcurrencyTests": {
+      "nodes": 14,
+      "seconds": 576,
+      "basis": "observed-bound",
+      "source": "CARD-1567: maximum available R/P diagnostic table total (minutes x 60), docs/investigations/2026-10-23-rc-5a126f6fc-qualification-groups-15-20-debug.md; denominator is committed c1410 Linux listing, not a fresh Windows full-class measurement. Complete R/P/S3 extracts remain required."
+    },
+    "Antiphon.Tests.Application.AgentTaskLandHalfResetTests": {
+      "nodes": 55,
+      "seconds": 1776,
+      "basis": "observed-bound",
+      "source": "CARD-1567: maximum available R/P diagnostic table total (minutes x 60), docs/investigations/2026-10-23-rc-5a126f6fc-qualification-groups-15-20-debug.md; denominator is committed c1410 Linux listing, not a fresh Windows full-class measurement. Complete R/P/S3 extracts remain required."
+    },
+    "Antiphon.Tests.Application.AgentTaskLandRemoteSourceRetentionCTests": {
+      "nodes": 8,
+      "seconds": 456,
+      "basis": "observed-bound",
+      "source": "CARD-1567: maximum available R/P diagnostic table total (minutes x 60), docs/investigations/2026-10-23-rc-5a126f6fc-qualification-groups-15-20-debug.md; denominator is committed c1410 Linux listing, not a fresh Windows full-class measurement. Complete R/P/S3 extracts remain required."
+    },
+    "Antiphon.Tests.Application.AgentTaskLandSourceFreshnessTests": {
+      "nodes": 59,
+      "seconds": 630,
+      "basis": "observed-bound",
+      "source": "CARD-1567: maximum available R/P diagnostic table total (minutes x 60), docs/investigations/2026-10-23-rc-5a126f6fc-qualification-groups-15-20-debug.md; denominator is committed c1410 Linux listing, not a fresh Windows full-class measurement. Complete R/P/S3 extracts remain required."
+    },
+    "Antiphon.Tests.Application.AgentTaskWorktreeLockOutcomeTests": {
+      "nodes": 20,
+      "seconds": 948,
+      "basis": "observed-bound",
+      "source": "CARD-1567: maximum available R/P diagnostic table total (minutes x 60), docs/investigations/2026-10-23-rc-5a126f6fc-qualification-groups-15-20-debug.md; denominator is committed c1410 Linux listing, not a fresh Windows full-class measurement. Complete R/P/S3 extracts remain required."
+    },
+    "Antiphon.Tests.Application.DelegationWorktreeTests": {
+      "nodes": 41,
+      "seconds": 636,
+      "basis": "observed-bound",
+      "source": "CARD-1567: maximum available R/P diagnostic table total (minutes x 60), docs/investigations/2026-10-23-rc-5a126f6fc-qualification-groups-15-20-debug.md; denominator is committed c1410 Linux listing, not a fresh Windows full-class measurement. Complete R/P/S3 extracts remain required."
+    },
+    "Antiphon.Tests.Application.DispatchBaseNotificationTests": {
+      "nodes": 55,
+      "seconds": 336,
+      "basis": "observed-bound",
+      "source": "CARD-1567: maximum available R/P diagnostic table total (minutes x 60), docs/investigations/2026-10-23-rc-5a126f6fc-qualification-groups-15-20-debug.md; denominator is committed c1410 Linux listing, not a fresh Windows full-class measurement. Complete R/P/S3 extracts remain required."
+    },
+    "Antiphon.Tests.Application.DispatcherSiblingInspectionSchedulingTests": {
+      "nodes": 44,
+      "seconds": 576,
+      "basis": "observed-bound",
+      "source": "CARD-1567: maximum available R/P diagnostic table total (minutes x 60), docs/investigations/2026-10-23-rc-5a126f6fc-qualification-groups-15-20-debug.md; denominator is committed c1410 Linux listing, not a fresh Windows full-class measurement. Complete R/P/S3 extracts remain required."
+    },
+    "Antiphon.Tests.Application.LandNonCodeSkipTests": {
+      "nodes": 42,
+      "seconds": 2088,
+      "basis": "observed-bound",
+      "source": "CARD-1567: maximum available R/P diagnostic table total (minutes x 60), docs/investigations/2026-10-23-rc-5a126f6fc-qualification-groups-15-20-debug.md; denominator is committed c1410 Linux listing, not a fresh Windows full-class measurement. Complete R/P/S3 extracts remain required."
+    },
+    "Antiphon.Tests.Application.PostLandMutationCleanupTests": {
+      "nodes": 46,
+      "seconds": 1398,
+      "basis": "observed-bound",
+      "source": "CARD-1567: maximum available R/P diagnostic table total (minutes x 60), docs/investigations/2026-10-23-rc-5a126f6fc-qualification-groups-15-20-debug.md; denominator is committed c1410 Linux listing, not a fresh Windows full-class measurement. Complete R/P/S3 extracts remain required."
+    },
+    "Antiphon.Tests.Application.PostLandMutationDeliveryTests": {
+      "nodes": 67,
+      "seconds": 1662,
+      "basis": "observed-bound",
+      "source": "CARD-1567: maximum available R/P diagnostic table total (minutes x 60), docs/investigations/2026-10-23-rc-5a126f6fc-qualification-groups-15-20-debug.md; denominator is committed c1410 Linux listing, not a fresh Windows full-class measurement. Complete R/P/S3 extracts remain required."
     }
   }
 }

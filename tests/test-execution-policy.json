@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "2d6ee9af7d4daaf3df0472ebdd2fe0fc7bc20589369cecdcb416f0ddd17443aa",
+  "policyHash": "add59a1e4dccec4c9d1b923ffe315382c31b2090b0022cdbbe0c7c3b7fa3b0b9",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -608,6 +608,51 @@
           "platform": "windows",
           "reason": "The #!/bin/sh sleep post-checkout hook does not delay git worktree add under Git for Windows, so the timeout boundary is proven only off Windows.",
           "owner": "CARD-1415"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CardWorktreeMirrorCleanupTests",
+          "methods": [
+            "C1017_MirrorBehindPushedTip",
+            "C1017_ReopenBetweenEndpoints",
+            "C1017_MultipleMirrorsRemainDistinct",
+            "C1032_AdmissionCurrentEligibility",
+            "C1032_AdmissionArtifactSurvival",
+            "C1032_ReportRecognitionCaseTable",
+            "C1032_ReportAddedAfterProducerInspection",
+            "C1032_ReportAbsentAllowsCleanup",
+            "C1032_AdmissionIntentOrdering",
+            "C1032_AdmissionBoundRebaseProof",
+            "C1017_ReceiptMustMatchOperation",
+            "C1017_ReceiptMustMatchEndpoint",
+            "C1017_ReceiptMustMatchStore",
+            "C1017_ReceiptMustMatchTaskAttempt",
+            "C1017_AckIsNotRemoval",
+            "C1017_UnsupportedNeverFallsBack",
+            "C1032_ReceiptCompleteBoundReceipt",
+            "C1032_WitnessLandingOwnership",
+            "C1032_WitnessLandingCompleteness",
+            "C1032_WitnessPersistedReplayTamper",
+            "C1032_WitnessUnsupportedRemovalAfterInspection",
+            "C1017_MirrorCompletesIndependently",
+            "C1017_LocalProgressSurvivesOffline",
+            "C1017_LostAckReusesOperation",
+            "C1032_RecoveryQueuesBusyAndReady",
+            "C1032_RecoveryCrashHandoffs",
+            "C1032_RecoveryInertServerComposition"
+          ],
+          "platform": "windows",
+          "reason": "Real phone-home recipient fixture requires Linux; these 27 methods remain required in the Linux lane (CARD-1017/CARD-1032). Separate Windows handle qualification remains owed.",
+          "owner": "CARD-1561"
+        },
+        {
+          "suite": "antiphon",
+          "class": "RunnerGrokAdapterReadyTestsPty",
+          "methods": [
+            "C1011_real_fresh_worktree_ready_and_one_turn"
+          ],
+          "reason": "Explicit live-provider WQ-3 manual obligation; requires a separately commissioned headed real-provider run (CARD-1011), never unattended qualification.",
+          "owner": "CARD-1566"
         }
       ]
     }
@@ -795,6 +840,12 @@
       "id": "test-stage-value-report",
       "path": "scripts/test-stage-value-report.ps1",
       "disposition": "unattended",
+      "wildcard": false
+    },
+    {
+      "id": "test-rc-roster-repairs",
+      "path": "scripts/test-rc-roster-repairs.ps1",
+      "disposition": "argument-consumer",
       "wildcard": false
     }
   ],
