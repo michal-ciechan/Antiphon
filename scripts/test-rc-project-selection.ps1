@@ -25,7 +25,7 @@ $projects=[ordered]@{
     'tests/Runner/Runner.csproj'=@('claude-runner','codex-runner','shared-pty-runner')
     'tests/Other/Other.csproj'=@('other')
 }
-Put 'tests/rc-project-categories.json' (ConvertTo-Json -Depth 10 @{schemaVersion=1;projects=$projects})
+Put 'tests/rc-project-categories.json' (ConvertTo-Json -Depth 10 @{schemaVersion=1;projects=$projects;batches=@("tests/Server/Server.csproj","tests/Runner/Runner.csproj","tests/Other/Other.csproj")})
 Put 'src/Messaging/Messaging.csproj' '<Project Sdk="Microsoft.NET.Sdk" />'
 Put 'src/Server/Server.csproj' '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Messaging/Messaging.csproj" /></ItemGroup></Project>'
 Put 'src/Runner/Runner.csproj' '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Messaging/Messaging.csproj" /></ItemGroup></Project>'
@@ -58,7 +58,7 @@ switch ($Case) {
         Check ($s.fallbackReasons -contains 'shared-input:Directory.Build.props') 'shared-full'
         Put 'src/Runner/Runner.csproj' '<Project><ItemGroup><ProjectReference Include="$(Unknown)/Runner.csproj" /></ItemGroup></Project>'; $a=Commit; $s=Get-RcProjectSelection $root $b $a
         Check (($s.mode -ceq 'Full') -and (@($s.fallbackReasons | Where-Object {$_ -like '*unresolved-input*'}).Count -gt 0)) 'dynamic-full'
-        $projects.Remove('tests/Other/Other.csproj'); Put 'tests/rc-project-categories.json' (ConvertTo-Json -Depth 10 @{schemaVersion=1;projects=$projects}); $a=Commit
+        $projects.Remove('tests/Other/Other.csproj'); Put 'tests/rc-project-categories.json' (ConvertTo-Json -Depth 10 @{schemaVersion=1;projects=$projects;batches=@("tests/Server/Server.csproj","tests/Runner/Runner.csproj","tests/Other/Other.csproj")}); $a=Commit
         $s=Get-RcProjectSelection $root $b $a
         Check (($s.mode -ceq 'Full') -and ($s.fallbackReasons -contains 'unknown-project:tests/Other/Other.csproj')) 'category-full'
     }
