@@ -613,6 +613,14 @@ public class BootStallDetectionTests
         var warningDetail = $"{BootStallPolicy.DetectedToken} c1151-v15-episode; promptAt={world.PromptAt:o};";
         await using (var seed = world.Read())
         {
+            // An unattempted Pending brief belongs to CARD-1150 recovery. This witness needs
+            // an actual failed delivery, below the attempts cap, to reach the watchdog's write.
+            if (!working)
+            {
+                var brief = await seed.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == world.SessionId);
+                brief.DeliveryAttempts = 1;
+                brief.LastDeliveryStartedAt = world.Now0.AddMinutes(-11);
+            }
             seed.AgentTaskEvents.Add(new AgentTaskEvent
             {
                 Id = Guid.NewGuid(),
@@ -627,6 +635,7 @@ public class BootStallDetectionTests
         var sessionBefore = await world.SessionAsync();
         await using (var scope = world.CreateScope())
         {
+            scope.ServiceProvider.GetRequiredService<AgentSessionService>().ShouldNotBeNull();
             var dispatcher = world.Prepare(scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>());
             if (refuse.Armed)
             {

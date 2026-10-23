@@ -31,6 +31,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [NotInParallel("AgentQueue")]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public class DelegateCheckProbeTests
 {
     // ---- session and task facts ---------------------------------------------------------------
@@ -851,7 +852,7 @@ public class DelegateCheckProbeTests
 
         repo.MakeIndexStatDirty("tracked.txt");
         var beforeControl = repo.IndexWrittenAt();
-        await git.GetChangesAsync(repo.Path, CancellationToken.None);
+        repo.Run("status", "--porcelain", "-z", "--untracked-files=all").ShouldBeEmpty();
         repo.IndexWrittenAt().ShouldNotBe(
             beforeControl,
             "control: a bare `git status` really does rewrite the index, so the check below means something");
@@ -1165,6 +1166,8 @@ public class DelegateCheckProbeTests
             Run("config", "user.email", "probe@antiphon.test");
             Run("config", "user.name", "probe");
             Run("config", "commit.gpgsign", "false");
+            Run("config", "core.ignorestat", "false");
+            Run("config", "core.fsmonitor", "false");
         }
 
         public string Path => _workspace.Path;
@@ -1186,9 +1189,13 @@ public class DelegateCheckProbeTests
         /// <c>git status</c> would refresh (and rewrite) it. Deterministic — no sleeping on the
         /// filesystem's timestamp granularity.
         /// </summary>
-        public void MakeIndexStatDirty(string relativePath) =>
-            File.SetLastWriteTimeUtc(
-                System.IO.Path.Combine(Path, relativePath), DateTime.UtcNow.AddMinutes(-Random.Shared.Next(5, 500)));
+        public void MakeIndexStatDirty(string relativePath)
+        {
+            var file = System.IO.Path.Combine(Path, relativePath);
+            File.SetLastWriteTimeUtc(file, File.GetLastWriteTimeUtc(file).AddMinutes(-5));
+            // Separate the observable index timestamp from any status write, even on a coarse FS.
+            File.SetLastWriteTimeUtc(System.IO.Path.Combine(Path, ".git", "index"), DateTime.UtcNow.AddDays(-1));
+        }
 
         public DateTime IndexWrittenAt() =>
             File.GetLastWriteTimeUtc(System.IO.Path.Combine(Path, ".git", "index"));
@@ -1206,6 +1213,8 @@ public class DelegateCheckProbeTests
             };
             foreach (var a in args)
                 psi.ArgumentList.Add(a);
+            // This fixture's bare-status control must write even when its parent disables locks.
+            psi.Environment["GIT_OPTIONAL_LOCKS"] = "1";
             using var process = Process.Start(psi)!;
             var stdout = process.StandardOutput.ReadToEnd();
             var stderr = process.StandardError.ReadToEnd();

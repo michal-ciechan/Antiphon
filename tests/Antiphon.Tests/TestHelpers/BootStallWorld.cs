@@ -235,6 +235,14 @@ internal sealed class BootStallWorld : IAsyncDisposable
         // The queue constructor requires the runtime. An empty runner transcript persists
         // nothing, so the seeded rows stay the boot clock.
         services.AddSingleton<AgentSessionRuntime>();
+        // Running-brief recovery resolves this service even when it never launches a process.
+        services.AddScoped<AgentSessionService>();
+        services.AddScoped<WorkspaceHookService>();
+        services.AddSingleton<IAgentProtocolAdapterFactory>(new BridgeQueueHarness.ThrowingAdapterFactory());
+        services.AddSingleton<IWorkspaceHookRunner>(
+            new Antiphon.Server.Infrastructure.WorkspaceHooks.WorkspaceHookRunner(
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<Antiphon.Server.Infrastructure.WorkspaceHooks.WorkspaceHookRunner>.Instance));
+        services.AddOptions<AgentSessionSettings>();
         services.AddSingleton<DeadSessionFirstSeenState>();
         services.AddSingleton<DelegationWorkspaceResolver>();
         services.AddDelegationWorktreeGraph(new GitSettings
