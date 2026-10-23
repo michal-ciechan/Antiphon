@@ -126,7 +126,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             : session.HasExited ? InputAuthorization.Exited : InputAuthorization.Allowed;
 
     private async Task<InputAuthorization> WriteInputUnderGateAsync(
-        RunnerSession session, string input, CancellationToken ct)
+        RunnerSession session, string input, CancellationToken ct, Action? beforeBackendWrite = null)
     {
         var authorization = AuthorizeInputUnderGate(session);
         if (authorization != InputAuthorization.Allowed) return authorization;
@@ -140,7 +140,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             }
             // Capture precedes every backend/composer byte. WriteAsync still owns the
             // original input log, composer custody and completed-write revision.
-            await session.WriteAsync(input, ct);
+            await session.WriteAsync(input, ct, beforeBackendWrite);
             session.CompleteDeliveryWrite(input);
         }
         catch
@@ -989,6 +989,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             : features.Append(RunnerCapabilityFeatures.RequiredPlatformV1).ToArray();
         advertised = advertised.Contains(CodexCliVersionProbe.Capability)
             ? advertised : advertised.Append(CodexCliVersionProbe.Capability).ToArray();
+        advertised = advertised.Contains(ProviderDialogObservation.Capability)
+            ? advertised : advertised.Append(ProviderDialogObservation.Capability).ToArray();
         advertised = advertised.Where(f => f != RunnerCapabilityFeatures.CompletedCardWorkspaceV1).ToArray();
         if (SupportsCompletedCardWorkspace)
             advertised = [.. advertised, RunnerCapabilityFeatures.CompletedCardWorkspaceV1];
@@ -1052,7 +1054,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// <see cref="HerdrSettings.PaneReadTimeoutMs"/>; a pty-host snapshot stays the same in-memory read.
     /// </summary>
     public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
-        GetSession(sessionId).GetSnapshotAsync(_labelClock, _herdrPaneReadTimeout, ct);
+        GetSession(sessionId).GetSnapshotAsync(_labelClock, _herdrPaneReadTimeout, ct, _terminalSeatEpoch);
 
     public RunnerTranscriptDto GetTranscript(Guid sessionId) => GetSession(sessionId).GetTranscript();
 
@@ -1607,7 +1609,30 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     sessionId, outcome, session.AcceptedStartedAt, session.LastSequence);
             }
 
-            var authorization = await WriteInputUnderGateAsync(session, request.Input, ct);
+            void Fence()
+            {
+                // Called under the session screen monitor at the last boundary before I/O.
+                // The launch gate alone does not freeze output, readiness or transcript reads.
+                string? refusal = !_sessions.TryGetValue(sessionId, out var current)
+                    || !ReferenceEquals(session, current) ? ConditionalInputOutcomes.StaleObservation
+                    : !SessionGeneration.Equal(session.AcceptedStartedAt, request.ExpectedAcceptedStartedAt)
+                        ? ConditionalInputOutcomes.GenerationMismatch
+                    : session.HasExited ? ConditionalInputOutcomes.Exited
+                    : session.TerminalReleaseInProgress ? ReleaseInProgressInputOutcome
+                    : session.LastSequence != request.ExpectedLastSequence ? ConditionalInputOutcomes.StaleObservation
+                    : request.RequireClaudeDialogClear ? session.CheckDialogInput(request, _terminalSeatEpoch) : null;
+                if (refusal is not null) throw new DialogInputRefusedException(refusal);
+            }
+            InputAuthorization authorization;
+            try
+            {
+                session.WithScreenLock(Fence);
+                authorization = await WriteInputUnderGateAsync(session, request.Input, ct, Fence);
+            }
+            catch (DialogInputRefusedException refusal)
+            {
+                return new(sessionId, refusal.Outcome, session.AcceptedStartedAt, session.LastSequence);
+            }
             return new RunnerConditionalInputResult(
                 sessionId, authorization switch
                 {
@@ -1617,6 +1642,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 }, session.AcceptedStartedAt, session.LastSequence);
         }
         finally { gate.Release(); }
+    }
+
+    private sealed class DialogInputRefusedException(string outcome) : InvalidOperationException(outcome)
+    {
+        public string Outcome { get; } = outcome;
     }
 
     /// <summary>Explicit expiry by an artifact owner; never called by kill, retirement, or worktree cleanup.</summary>
@@ -2473,6 +2503,48 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         private DateTime? _acceptedStartedAt;
         private int _terminalInputWriters;
         private bool _terminalInputUncertain;
+        private long _inputRevision;
+        private long _dialogSequence = -1;
+        private ClaudeDialogObservation? _dialogObservation;
+        private readonly ClaudeSubmittedInputHistory _submittedInput = new();
+
+        internal void WithScreenLock(Action action) { lock (_gate) action(); }
+
+        private ProviderDialogObservation ObserveDialog(Guid runtimeEpoch, TimeProvider? clock = null)
+        {
+            // A sequence belongs to this object only. Cache parsing, never write authority.
+            if (_dialogSequence != _lastSequence || _dialogObservation is null)
+            {
+                _dialogObservation = ClaudeDialogObservation.Observe(_screen?.GetScreenText());
+                _dialogSequence = _lastSequence;
+            }
+            var known = !_adopted && !_terminalInputUncertain && _backend == SessionBackends.PtyHost;
+            var state = known ? _dialogObservation.State switch
+            {
+                ClaudeDialogState.Clear => ProviderDialogState.Clear,
+                ClaudeDialogState.Blocked => ProviderDialogState.Blocked,
+                _ => ProviderDialogState.Unknown
+            } : ProviderDialogState.Unknown;
+            if (clock is not null)
+                _submittedInput.ObserveEmpty(_screen?.GetScreenText() ?? "", _inputRevision,
+                    clock.GetUtcNow(), known && _terminalInputWriters == 0);
+            var proof = _submittedInput.Read(_inputRevision, _acceptedStartedAt, _tailer?.BoundTranscriptPath,
+                _tailer?.Snapshot(), known && _terminalInputWriters == 0 && !_terminalComposerPending);
+            return new(_sessionId, runtimeEpoch, _acceptedStartedAt, _lastSequence, _inputRevision,
+                state, _dialogObservation.Kind.ToString(), _dialogObservation.CanCancel, known, proof);
+        }
+
+        internal string? CheckDialogInput(RunnerConditionalInputRequest request, Guid runtimeEpoch)
+        {
+            if (request.ExpectedRuntimeEpoch != runtimeEpoch || request.ExpectedInputRevision != _inputRevision)
+                return ConditionalInputOutcomes.StaleObservation;
+            return ObserveDialog(runtimeEpoch).State switch
+            {
+                ProviderDialogState.Clear => null,
+                ProviderDialogState.Blocked => ConditionalInputOutcomes.ModalBlocked,
+                _ => ConditionalInputOutcomes.ObservationUnknown
+            };
+        }
         private bool _terminalComposerPending;
         private readonly TerminalSeatDeliveryEvidence _deliveryEvidence = new();
         private long _deliveryEvidenceVersion;
@@ -2518,6 +2590,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             lock (_gate)
             {
                 ClearDeliveryEvidence();
+                _submittedInput.Clear();
+                _dialogObservation = null;
                 _acceptedStartedAt = value is { } v ? SessionGeneration.Normalize(v) : null;
             }
         }
@@ -2616,7 +2690,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         public void OnTranscriptClaimRevoked(string path, Guid newOwner)
         {
-            lock (_gate) ClearDeliveryEvidence(preserveComposer: true);
+            lock (_gate) { ClearDeliveryEvidence(preserveComposer: true); _submittedInput.Clear(); }
             _tailer?.NotifyClaimRevoked(path, newOwner);
         }
 
@@ -3328,7 +3402,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         /// <summary>Persists the transcript binding so the next runner re-tails it without guessing.</summary>
         internal void RecordTranscriptBinding(string transcriptPath, string how)
         {
-            lock (_gate) ClearDeliveryEvidence(preserveComposer: true);
+            lock (_gate) { ClearDeliveryEvidence(preserveComposer: true); _submittedInput.Clear(); }
             var current = _sidecar ?? new TranscriptSidecar { SessionId = _sessionId, ChildStartUtc = _startedAt };
             var persistedHow = how == TranscriptBindMethods.Sidecar
                 && current.TranscriptPath is { } existing
@@ -3341,7 +3415,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         internal void RecordTranscriptUnbinding()
         {
-            lock (_gate) ClearDeliveryEvidence(preserveComposer: true);
+            lock (_gate) { ClearDeliveryEvidence(preserveComposer: true); _submittedInput.Clear(); }
             var current = _sidecar ?? new TranscriptSidecar { SessionId = _sessionId, ChildStartUtc = _startedAt };
             SaveSidecar(current with { TranscriptPath = null, How = null });
         }
@@ -3741,7 +3815,11 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 lock (_gate)
                 {
-                    if (!ReferenceEquals(_tailer, value)) ClearDeliveryEvidence(preserveComposer: true);
+                    if (!ReferenceEquals(_tailer, value))
+                    {
+                        ClearDeliveryEvidence(preserveComposer: true);
+                        _submittedInput.Clear();
+                    }
                     _tailer = value;
                 }
             }
@@ -3855,7 +3933,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         /// feeds); a cancelled caller token rethrows unchanged. The pty-host branch never awaits.
         /// </summary>
         public async Task<RunnerSnapshotDto> GetSnapshotAsync(
-            TimeProvider clock, TimeSpan paneReadTimeout, CancellationToken ct)
+            TimeProvider clock, TimeSpan paneReadTimeout, CancellationToken ct, Guid runtimeEpoch = default)
         {
             if (_pendingReason is not null)
                 throw new HerdrBackendUnavailableException(
@@ -3882,7 +3960,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                                 screen.Text,
                                 _lastSequence,
                                 _startedAt,
-                                _acceptedStartedAt);
+                                _acceptedStartedAt,
+                                new ProviderDialogObservation(_sessionId, runtimeEpoch, _acceptedStartedAt,
+                                    _lastSequence, _inputRevision, ProviderDialogState.Unknown));
                         }
                     }
                 }
@@ -3913,7 +3993,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     _screen?.GetScreenText() ?? "",
                     _lastSequence,
                     _startedAt,
-                    _acceptedStartedAt);
+                    _acceptedStartedAt,
+                    ObserveDialog(runtimeEpoch, clock));
             }
         }
 
@@ -3921,35 +4002,32 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             (_tailer?.Snapshot() ?? new RunnerTranscriptDto(_sessionId, Array.Empty<RunnerTranscriptEvent>(), 0))
                 with { AcceptedStartedAt = _acceptedStartedAt };
 
-        public async Task WriteAsync(string input, CancellationToken ct)
+        public async Task WriteAsync(string input, CancellationToken ct, Action? beforeBackendWrite = null)
         {
             lock (_gate) _terminalInputWriters++;
             try
             {
-                await WriteCoreAsync(input, ct);
+                await WriteCoreAsync(input, ct, beforeBackendWrite);
                 lock (_gate) _terminalComposerPending = input != "\r";
             }
+            catch (DialogInputRefusedException) { throw; }
             catch
             {
-                lock (_gate) _terminalInputUncertain = true;
+                lock (_gate)
+                {
+                    _terminalInputUncertain = true;
+                    _submittedInput.Clear();
+                }
                 throw;
             }
             finally { lock (_gate) _terminalInputWriters--; }
         }
 
-        private async Task WriteCoreAsync(string input, CancellationToken ct)
+        private async Task WriteCoreAsync(string input, CancellationToken ct, Action? beforeBackendWrite)
         {
             if (VerificationBinding is { } binding
                 && _custodyLedger!.Store.ReadRecord<CustodyStamp>(binding, "runner-seal.json") is not null)
                 throw new VerificationCustodyException("verification_custody_sealed");
-            // Recorded BEFORE the write: Claude cannot persist a prompt we have not sent yet, so
-            // the input log is always ahead of the transcript record that rule C4 matches it to.
-            _inputLog.Append(input);
-            if (!_inputLog.IsEmpty && _sidecar?.FirstInputAtUtc is null)
-            {
-                var current = _sidecar ?? new TranscriptSidecar { SessionId = _sessionId, ChildStartUtc = _startedAt };
-                SaveSidecar(current with { FirstInputAtUtc = DateTime.UtcNow });
-            }
             if (_pendingReason is not null)
                 throw new HerdrBackendUnavailableException(
                     "Herdr is unreachable; session is pending adoption.");
@@ -3958,14 +4036,36 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 // Wait for LaunchAsync to finish (same _clientReady gate the pty path uses).
                 if (!await _clientReady.Task.WaitAsync(ct))
                     throw new InvalidOperationException("Herdr session ended before it was ready for input.");
-                await herdr.WriteAsync(input, ct);
+                await WriteBackendAsync(() => herdr.WriteAsync(input, ct));
                 BackendInput.Enqueue(input);
                 return;
             }
 
             var client = await AwaitClientAsync(ct);
-            await client.InputAsync(input, ct);
+            await WriteBackendAsync(() => client.InputAsync(input, ct));
             BackendInput.Enqueue(input);
+
+            Task WriteBackendAsync(Func<Task> write)
+            {
+                lock (_gate)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    beforeBackendWrite?.Invoke();
+                    // Advance before invoking the backend, including a synchronous exception.
+                    // A modal refusal reaches neither the input log nor the backend.
+                    _inputRevision++;
+                    _submittedInput.BeforeWrite(input, _inputRevision, _acceptedStartedAt,
+                        _tailer?.BoundTranscriptPath, _tailer?.Snapshot().LastSequence ?? -1,
+                        !_adopted && !_terminalInputUncertain && _backend == SessionBackends.PtyHost);
+                    _inputLog.Append(input);
+                    if (_sidecar?.FirstInputAtUtc is null)
+                    {
+                        var current = _sidecar ?? new TranscriptSidecar { SessionId = _sessionId, ChildStartUtc = _startedAt };
+                        SaveSidecar(current with { FirstInputAtUtc = DateTime.UtcNow });
+                    }
+                    return write();
+                }
+            }
         }
 
         public async Task ClearLiveBufferAsync(CancellationToken ct)

@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Application.Dtos;
 
@@ -47,7 +48,8 @@ public sealed record SessionRunnerSnapshotDto(
     string RenderedScreen,
     long LastSequence,
     DateTime StartedAt,
-    DateTime? AcceptedStartedAt = null);
+    DateTime? AcceptedStartedAt = null,
+    ProviderDialogObservation? Dialog = null);
 
 public sealed record SessionRunnerOutputEvent(
     Guid SessionId,

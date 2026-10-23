@@ -597,7 +597,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             snapshot.RenderedScreen,
             snapshot.LastSequence,
             snapshot.StartedAt,
-            snapshot.AcceptedStartedAt);
+            snapshot.AcceptedStartedAt,
+            snapshot.Dialog);
     }
 
     public async Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
@@ -755,6 +756,9 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(
         Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct)
     {
+        if (request.RequireClaudeDialogClear
+            && (await GetCapabilitiesAsync(ct))?.Features?.Contains(ProviderDialogObservation.Capability) != true)
+            return new(sessionId, ConditionalInputOutcomes.Unsupported);
         HttpResponseMessage response;
         try
         {
