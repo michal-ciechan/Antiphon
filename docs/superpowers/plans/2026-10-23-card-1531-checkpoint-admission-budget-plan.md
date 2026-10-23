@@ -257,7 +257,7 @@ TestDesign may amend this manifest before Code; Code may not broaden it ad hoc.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1531-red/` | admission-red | `/*/*/CheckpointAdmissionBudgetTests/C1531_*` | V-1..V-9 | all 9 executed, intended behavioral reds, 0 skipped | 9 | 9 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1531-red/` | admission-red | `/*/*/CheckpointAdmissionBudgetTests/C1531_*` | V-1..V-9 | first two implemented witnesses execute red; remaining witnesses added with implementation | 2 | 9 |
 | CP-2 | S1 | CP-1 | contract-red | `/*/*/CheckpointAdmissionContractTests/C1531_*` | V-10..V-12 | all 3 executed, intended contract reds and legacy control, 0 skipped | 3 | 1 |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1531-green/` | admission-green | `/*/*/CheckpointAdmissionBudgetTests/C1531_*` | V-1..V-9 | all 9 passed, 0 failed/skipped | 9 | 10 |
 | CP-4 | S3 | CP-3 | contract-green | `/*/*/CheckpointAdmissionContractTests/C1531_*` | V-10..V-12 | all 3 passed, 0 failed/skipped | 3 | 1 |
