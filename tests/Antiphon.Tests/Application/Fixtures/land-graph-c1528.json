@@ -1,0 +1,516 @@
+[
+  {
+    "id": "present",
+    "group": "static",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.IO.File]::Exists('$(MSBuildThisFileDirectory)../docs/flag.md'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "absent",
+    "group": "static",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.IO.File]::Exists('$(MSBuildThisFileDirectory)../docs/missing.md'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "readme-absent",
+    "group": "static",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.IO.File]::Exists('$(MSBuildThisFileDirectory)../README.md'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "backslash",
+    "group": "static",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.IO.File]::Exists('$(MSBuildThisFileDirectory)../docs\\flag.md'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "case",
+    "group": "static",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.IO.File]::Exists('$(MSBuildThisFileDirectory)../DOCS/FLAG.MD'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "projected",
+    "group": "projected",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Probe Include=\"sentinel.txt\"><Rel>$(MSBuildThisFileDirectory)../docs/flag.md</Rel></Probe></ItemGroup><PropertyGroup><PackageTags>$([System.IO.File]::Exists(@(Probe->'%(Rel)')))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "metadata",
+    "group": "metadata",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "Body",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Probe Include=\"sentinel.txt\"><Body>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../docs/flag.md'))</Body></Probe></ItemGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "default-metadata",
+    "group": "metadata",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "Body",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemDefinitionGroup><Probe><Body>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../docs/flag.md'))</Body></Probe></ItemDefinitionGroup><ItemGroup><Probe Include=\"sentinel.txt\" /></ItemGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "equal-result",
+    "group": "equal-result",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup Condition=\"$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../docs/flag.md').Contains('never-in-either'))\"><PackageTags>unused</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "xml-escape",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.IO.&#70;ile]::Exists('$(MSBuildThisFileDirectory)../docs/flag.md'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "percent-escape",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.IO.%46ile]::Exists('$(MSBuildThisFileDirectory)../docs/flag.md'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "escaped-head",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>%24%28%5BSystem.IO.File]::Exists('$(MSBuildThisFileDirectory)../docs/flag.md'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "whitespace",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$( [System.IO.File] :: Exists ('../docs/flag.md') )</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "nested",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.String]::Copy($([System.IO.File]::Exists('$(MSBuildThisFileDirectory)../docs/flag.md'))))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "directory",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.IO.Directory]::Exists('../docs'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "file-info",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.IO.FileInfo]::new('../docs/flag.md'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "directory-info",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.IO.DirectoryInfo]::new('../docs'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "unknown-type",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "unsupported-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.Environment]::GetEnvironmentVariable('C1528_MISSING'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "unknown-member",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "unsupported-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.String]::GetHashCode('x'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "dynamic-type",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "unsupported-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([$(Receiver)]::Exists('x'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "dynamic-member",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "unsupported-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.String]::$(Member)('x'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "chain",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "unsupported-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.String]::Copy('x').GetType())</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "instance",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "unsupported-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$(PackageTags.GetType())</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "malformed",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "unsupported-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.String]::Copy('x')</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "path-discovery",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "unsupported-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.IO.Path]::GetTempPath())</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "msbuild-discovery",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "unsupported-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([MSBuild]::GetDirectoryNameOfFileAbove('$(MSBuildProjectDirectory)', 'flag.md'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "false-absent",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup Condition=\"'a' == 'b'\"><PackageTags>$([System.IO.File]::Exists('$(MSBuildThisFileDirectory)../docs/arbitrary.md'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    },
+    "omit": [
+      "docs/flag.md"
+    ]
+  },
+  {
+    "id": "projected-absent",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Probe Include=\"sentinel.txt\"><Rel>$(MSBuildThisFileDirectory)../docs/arbitrary.md</Rel></Probe></ItemGroup><PropertyGroup><PackageTags>$([System.IO.File]::Exists(@(Probe->'%(Rel)')))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    },
+    "omit": [
+      "docs/flag.md"
+    ]
+  },
+  {
+    "id": "imported",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "eng/shared.props",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><Import Project=\"../eng/shared.props\" /></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag",
+      "eng/shared.props": "<Project><PropertyGroup><PackageTags>$([System.IO.File]::Exists('$(MSBuildThisFileDirectory)../docs/flag.md'))</PackageTags></PropertyGroup></Project>"
+    }
+  },
+  {
+    "id": "safe-read-denied",
+    "group": "syntax",
+    "expected": 1,
+    "reason": "filesystem-function",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)sentinel.txt'))</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "pure-functions",
+    "group": "controls",
+    "expected": 0,
+    "reason": "approved",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><P0>$([System.IO.Path]::Combine('a','b'))</P0></PropertyGroup><PropertyGroup><P1>$([System.IO.Path]::GetDirectoryName('a/b.txt'))</P1></PropertyGroup><PropertyGroup><P2>$([System.IO.Path]::GetFileName('a/b.txt'))</P2></PropertyGroup><PropertyGroup><P3>$([System.IO.Path]::GetExtension('a/b.txt'))</P3></PropertyGroup><PropertyGroup><P4>$([System.IO.Path]::ChangeExtension('a/b.txt','cs'))</P4></PropertyGroup><PropertyGroup><P5>$([System.String]::Copy('safe'))</P5></PropertyGroup><PropertyGroup><P6>$([System.String]::IsNullOrEmpty(''))</P6></PropertyGroup><PropertyGroup><P7>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)','a'))</P7></PropertyGroup><PropertyGroup><P8>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)','a'))</P8></PropertyGroup><PropertyGroup><P9>$([MSBuild]::EnsureTrailingSlash('safe'))</P9></PropertyGroup><PropertyGroup><P10>$([MSBuild]::Subtract(2,1))</P10></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "pure-metadata",
+    "group": "controls",
+    "expected": 0,
+    "reason": "approved",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Probe Include=\"sentinel.txt\" /></ItemGroup><PropertyGroup><PackageTags>@(Probe->'%(Filename)%(Extension)%(RelativeDir)%(Identity)')</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "empty-items",
+    "group": "controls",
+    "expected": 0,
+    "reason": "approved",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>@(Missing->'%(Filename)')</PackageTags><Literal>System.IO.File Exists ReadAllText</Literal></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    },
+    "omit": [
+      "docs/flag.md"
+    ]
+  },
+  {
+    "id": "ordinary-safe-exists",
+    "group": "controls",
+    "expected": 0,
+    "reason": "approved",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup Condition=\"Exists('$(MSBuildThisFileDirectory)sentinel.txt')\"><PackageTags>safe</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "docs-item",
+    "group": "controls",
+    "expected": 1,
+    "reason": "Probe",
+    "owner": "docs/flag.md",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Probe Include=\"../docs/flag.md\" /></ItemGroup><PropertyGroup><PackageTags>@(Probe->'%(Filename)')</PackageTags></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  },
+  {
+    "id": "docs-item-removed",
+    "group": "controls",
+    "expected": 1,
+    "reason": "Probe",
+    "owner": "docs/flag.md",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Probe Include=\"../docs/flag.md\" /></ItemGroup><PropertyGroup><PackageTags>@(Probe->'%(Filename)')</PackageTags></PropertyGroup><ItemGroup><Probe Remove=\"../docs/flag.md\" /></ItemGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    }
+  }
+]
