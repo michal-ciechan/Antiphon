@@ -416,7 +416,7 @@ public sealed class VerificationRoundDeliveryTests
         {
             var rig = new RefusalRig { Busy = busy, Land = new LandingProtocolHarness() };
             await rig.Land.InitializeAsync();
-            rig.Caller = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = rig.Land.Schema.ConnectionString });
+            rig.Caller = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ClaudeDialogObservation = true, ConnectionString = rig.Land.Schema.ConnectionString });
             rig.Land.Messages = rig.Caller.Queue;
             var connection = rig.Land.Schema.ConnectionString;
             await BridgeQueueHarness.InsertEntryAsync(rig.Caller.SessionId, TranscriptKinds.UserPrompt, "land the owner", connectionString: connection);
