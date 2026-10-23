@@ -48,7 +48,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     private readonly bool _cache;
     private SessionRunnerEventPump? _pump;
     private CompletionNoteWorkHostedService? _worker;
-    private OwnedLoop? _workerLoop, _pumpLoop;
+    private OwnedLoop? _workerLoop, _pumpLoop, _gapActionsLoop;
     private EpochAdapter? _adapter;
     private readonly WorkerScopeGate _workerScopes = new();
     private readonly ContinuationQueue _continuations = new();
@@ -107,6 +107,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         services.AddSingleton(Options.Create(new SessionStateSettings { Enabled = _cache }));
         services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
         services.AddSingleton<SessionStateStore>();
+        services.AddSingleton<SessionRuntimeActionCoordinator>();
         var settings = Options.Create(new Antiphon.Server.Application.Settings.SessionRunnerSettings
         {
             Enabled = true, BaseUrl = "http://runner.invalid", EventStreamIdleTimeoutSeconds = 600,
@@ -229,6 +230,11 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         var recovery = flushes.Recovery;
         var flags = BindingFlags.Instance | BindingFlags.NonPublic;
         var recoveryGate = recovery.GetType().GetField("_gate", flags)!.GetValue(recovery)!;
+        var actions = World.Services.GetRequiredService<SessionRuntimeActionCoordinator>();
+        var owners = (ConcurrentDictionary<Guid, byte>)typeof(SessionRuntimeActionCoordinator)
+            .GetField("_owners", flags)!.GetValue(actions)!;
+        var hints = (Channel<Guid>)typeof(SessionRuntimeActionCoordinator)
+            .GetField("_hints", flags)!.GetValue(actions)!;
         while (true)
         {
             Token.ThrowIfCancellationRequested();
@@ -241,7 +247,9 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
                     noHints = !(bool)recovery.GetType().GetField("_sweep", flags)!.GetValue(recovery)!
                         && ((HashSet<Guid>)recovery.GetType().GetField("_tasks", flags)!.GetValue(recovery)!).Count == 0
                         && ((Dictionary<Guid, DateTime>)recovery.GetType().GetField("_sessions", flags)!.GetValue(recovery)!).Count == 0;
-                return pending.Count == 0 && noHints && recoveryWaiting && (_pump is null || _handler.Stream?.Quiescent == true);
+                var actionsQuiet = _gapActionsLoop is null || (owners.IsEmpty && hints.Reader.Count == 0);
+                return pending.Count == 0 && noHints && actionsQuiet && recoveryWaiting
+                    && (_pump is null || _handler.Stream?.Quiescent == true);
             }
             if (ConcurrentScopeBarriers)
             { if (Quiet()) return; await Task.Yield(); }
@@ -258,6 +266,12 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
 
     public async Task StartGapAsync()
     {
+        // Sync now admits durable actions instead of running its boundary inline.
+        // Own that production processing path for the captured-gap experiment;
+        // the explicit-delivery fault-cut cases keep their staged setup unchanged.
+        _gapActionsLoop = new OwnedLoop(new SessionRuntimeActionHostedService(
+            World.Services.GetRequiredService<SessionRuntimeActionCoordinator>()), Token);
+        await _gapActionsLoop.StartAsync(_continuations);
         _handler.ArmGap();
         _pump = ActivatorUtilities.CreateInstance<SessionRunnerEventPump>(World.Services);
         _pumpLoop = new OwnedLoop(_pump, Token);
@@ -338,10 +352,17 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
 
     private async Task StopPumpAsync()
     {
-        if (_pump is null) return;
-        _handler.ReleaseGap.TrySetResult();
-        await _pumpLoop!.DisposeAsync(); _pumpLoop = null;
-        _pump = null;
+        if (_pump is not null)
+        {
+            _handler.ReleaseGap.TrySetResult();
+            await _pumpLoop!.DisposeAsync(); _pumpLoop = null;
+            _pump = null;
+        }
+        if (_gapActionsLoop is not null)
+        {
+            await _gapActionsLoop.DisposeAsync();
+            _gapActionsLoop = null;
+        }
     }
 
     private async Task StopWorkerAsync()
