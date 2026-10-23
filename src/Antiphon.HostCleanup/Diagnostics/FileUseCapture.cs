@@ -92,8 +92,6 @@ public sealed class FileUseCapture(IFileUseProvider? provider = null, IFileUseEv
                 // Redaction/serialization share the remaining deadline and the one worker seat.
                 var safe = Sanitize(envelope, observation, request) with
                 {
-                    Backend = observation.Backend ?? (OperatingSystem.IsLinux() ? "proc" : "unavailable"),
-                    NativeErrors = observation.NativeErrors.Take(8).ToArray(),
                     DurationMilliseconds = time.GetElapsedTime(clockStart).TotalMilliseconds,
                     ObservationEndUtc = time.GetUtcNow()
                 };
@@ -174,6 +172,8 @@ public sealed class FileUseCapture(IFileUseProvider? provider = null, IFileUseEv
                 Ancestors = owner.Ancestors.Take(8).Select(a => a with { Name = safe.Text(a.Name, 256), NativeStart = safe.Text(a.NativeStart, 128), CommandLine = safe.Command(a.CommandLine, []) }).ToArray() });
         }
         return FileUseEvidenceWriter.Bound(envelope with { Status = raw.Status, Coverage = raw.Coverage, Owners = owners,
+            Backend = safe.Optional(raw.Backend, 64) ?? (OperatingSystem.IsLinux() ? "proc" : "unavailable"),
+            NativeErrors = raw.NativeErrors.Take(8).ToArray(),
             Reasons = reasons.Distinct().ToArray(), Omitted = omitted, PathKind = safe.Optional(raw.PathKind, 32), ResourceIdentity = safe.Optional(raw.ResourceIdentity, 64) });
     }
 }
