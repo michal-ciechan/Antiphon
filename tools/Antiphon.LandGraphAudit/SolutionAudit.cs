@@ -18,6 +18,45 @@ internal static class SolutionAudit
 
     public static int Run(string repo, string solution, string sdkDirectory, TextWriter output)
     {
+        var tracked = BuildInputPolicy.TrackedFiles(repo);
+        var artifacts = Path.Combine(Path.GetTempPath(), "antiphon-landgraph-artifacts-" + Guid.NewGuid().ToString("N"));
+        var baseline = new EvaluationSnapshot(repo, repo);
+        var result = RunPass(repo, solution, sdkDirectory, output, tracked, artifacts, baseline);
+        if (result != Program.Approved) return result;
+
+        using var canary = CanaryRepository.Create(repo);
+        var changed = new EvaluationSnapshot(canary.Root, repo);
+        try
+        {
+            using var diagnostics = new StringWriter();
+            result = RunPass(canary.Root, solution, sdkDirectory, diagnostics, tracked, artifacts, changed);
+            if (result != Program.Approved)
+            {
+                output.WriteLine($"refused: differential canary evaluation refused: {Program.OneLine(diagnostics.ToString())}");
+                return Program.Refused;
+            }
+        }
+        catch (Exception ex)
+        {
+            // A previously successful evaluation that fails after changing only documentation
+            // is itself a dependency witness (not an approval and not a baseline load failure).
+            output.WriteLine($"refused: differential canary evaluation failed: {Program.OneLine(Program.Describe(ex))}");
+            return Program.Refused;
+        }
+
+        var difference = baseline.Difference(changed);
+        if (difference is not null)
+        {
+            output.WriteLine($"refused: differential {difference}");
+            return Program.Refused;
+        }
+        output.WriteLine("approved");
+        return Program.Approved;
+    }
+
+    private static int RunPass(string repo, string solution, string sdkDirectory, TextWriter output,
+        string[] tracked, string scratch, EvaluationSnapshot snapshot)
+    {
         var solutionPath = Path.GetFullPath(Path.Combine(repo, solution));
         var parsed = SolutionFile.Parse(solutionPath);
         var configuration = parsed.SolutionConfigurations.FirstOrDefault(c =>
@@ -26,16 +65,16 @@ internal static class SolutionAudit
 
         // ArtifactsPath points at a directory that is never created: evaluation then finds no
         // restore output (D-12) and nothing under the repository's obj/ is read or written.
-        var scratch = Path.Combine(Path.GetTempPath(), "antiphon-landgraph-" + Guid.NewGuid().ToString("N"));
         var errors = new ErrorLogger();
         using var collection = new ProjectCollection(
             new Dictionary<string, string>(), [errors], ToolsetDefinitionLocations.Default);
-        var context = EvaluationContext.Create(EvaluationContext.SharingPolicy.Shared);
+        var fileSystem = new RecordingFileSystem(repo);
+        var context = EvaluationContext.Create(EvaluationContext.SharingPolicy.Shared, fileSystem);
         var refusals = new SortedSet<string>(StringComparer.Ordinal);
         var evaluated = 0;
         var realRepo = RealPath(repo);
         var realDirectories = new Dictionary<string, string>(StringComparer.Ordinal);
-        var inputs = new BuildInputPolicy(repo, sdkDirectory);
+        var inputs = new BuildInputPolicy(repo, sdkDirectory, tracked);
         var evaluatedProjects = new HashSet<string>(BuildInputPolicy.PathComparer);
         var evaluations = new HashSet<string>(StringComparer.Ordinal);
 
@@ -75,18 +114,25 @@ internal static class SolutionAudit
                 .Select(p => p.Key.ToUpperInvariant() + "=" + p.Value));
             if (!evaluations.Add(key)) return 0;
             evaluatedProjects.Add(projectPath);
-            var project = Project.FromFile(projectPath, new ProjectOptions
+            Project project;
+            fileSystem.Owner = Display(repo, projectPath);
+            try
             {
-                GlobalProperties = globals,
-                ProjectCollection = collection,
-                EvaluationContext = context,
-                LoadSettings = ProjectLoadSettings.RecordDuplicateButNotCircularImports
-                               | ProjectLoadSettings.RecordEvaluatedItemElements,
-            });
+                project = Project.FromFile(projectPath, new ProjectOptions
+                {
+                    GlobalProperties = globals,
+                    ProjectCollection = collection,
+                    EvaluationContext = context,
+                    LoadSettings = ProjectLoadSettings.RecordDuplicateButNotCircularImports
+                                   | ProjectLoadSettings.RecordEvaluatedItemElements,
+                });
+            }
+            finally { fileSystem.Owner = null; }
             try
             {
                 errors.ThrowIfAny(projectPath);
                 inputs.Check(project, refusals);
+                snapshot.Add(project, globals);
                 foreach (var item in project.AllEvaluatedItems)
                 {
                     var fullPath = SkippablePath(repo, realRepo, item.GetMetadataValue("FullPath"),
@@ -134,6 +180,8 @@ internal static class SolutionAudit
         if (evaluated == 0)
             return Program.Fail($"{solution} names no MSBuild project");
 
+        foreach (var refusal in fileSystem.Refusals) refusals.Add(refusal);
+
         foreach (var path in inputs.TrackedProjects.Where(path => !evaluatedProjects.Contains(path)).Order(StringComparer.Ordinal))
             output.WriteLine($"not-built: {Display(repo, path)}");
 
@@ -144,7 +192,6 @@ internal static class SolutionAudit
             return Program.Refused;
         }
 
-        output.WriteLine("approved");
         return Program.Approved;
     }
 
