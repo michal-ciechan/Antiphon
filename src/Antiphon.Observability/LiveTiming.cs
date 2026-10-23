@@ -69,7 +69,7 @@ public sealed class LiveTiming(ILogger<LiveTiming> logger) : IDisposable
     {
         try
         {
-            return _source.StartActivity(operation, ActivityKind.Internal, default(ActivityContext),
+            return _source.StartActivity(operation, ActivityKind.Internal, Activity.Current?.Context ?? default,
                 tags: new ActivityTagsCollection { ["phase"] = phase, ["operation"] = operation, ["run.id"] = _runId });
         }
         catch { return null; } // A listener cannot replace the application result.

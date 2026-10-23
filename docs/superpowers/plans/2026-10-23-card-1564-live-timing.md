@@ -45,8 +45,8 @@ PC-4 remove sink containment/history bound. Mutation owns red/restore/green.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | S1 | `tests/Antiphon.Observability.Tests -> bin-c1564-core/` | live-timing-core | `/*/*/LiveTimingTests/*` | V-1,V-2,V-3,V-4 | all listed, 0 failed | 4 | 3 |
-| CP-2 | S2 | `tests/Antiphon.Observability.Tests -> bin-c1564-wiring/` | live-timing-http | `/*/*/StartupEndpointTests/*` | V-5,V-6 | all listed, 0 failed | 2 | 3 |
+| CP-1 | S1-S2 | `tests/Antiphon.Observability.Tests -> bin-c1564-contract/` | live-timing-core | `/*/*/LiveTimingTests/*` | V-1,V-2,V-3,V-4 | all listed, 0 failed | 4 | 3 |
+| CP-2 | S1-S2 | CP-1 | live-timing-http | `/*/*/StartupEndpointTests/*` | V-5,V-6 | all listed, 0 failed | 2 | 3 |
 
 V-5: actual server VersionEndpoints extension serves the injected live recorder over TestServer.
 V-6: real delegating handler creates failed span, preserving exception; synthetic secret in
