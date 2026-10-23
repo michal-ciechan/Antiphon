@@ -19,6 +19,10 @@ public sealed class RcProjectSelectionTests
     public Task C1545_HistoricalEdges() => Run("C1545_HistoricalEdges", 4,
         "linked-consumer", "old-edge", "deleted-owner", "cycle-full");
 
+    [Test]
+    public Task C1545_ConsumerSafety() => Run("C1545_ConsumerSafety", 4,
+        "content-consumer", "glob-consumer", "imported-reference", "batch-census");
+
     private static Task Run(string name, int rows, params string[] labels) =>
         ScriptHarness.RunHarnessCaseAsync("test-rc-project-selection.ps1", "C1545", name, rows,
             labels.Select(label => "C1545 " + label).ToArray());
