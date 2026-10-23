@@ -53,7 +53,9 @@ passed to the production client. Add optional positive `timeouts.hardWallMinutes
 and `--hard-wall-timeout`; CLI overrides YAML. If absent, hard-wall W-limit is
 checked `E-limit + A-limit`, not number-of-rows times A-limit. An explicit positive
 wall limit may be shorter than E-limit and intentionally win. Never disable a
-limit with zero, negative, empty, overflow or an infinite duration. Keep legacy
+limit with zero, negative, empty, overflow or an infinite duration. Explicit
+invalid total/wall CLI values refuse rather than disabling a clock; checked
+arithmetic must also reject a derived sum outside the timer's representable range. Keep legacy
 normalization for existing YAML numeric fields; reject invalid **new** values.
 `timeouts.totalMinutes` remains legacy/unused by scheduled execution in this card;
 do not add an unrelated configuration precedence change.
@@ -123,7 +125,9 @@ cannot admit these exact path scopes, sequence entire tasks CARD-1532 then CARD-
 Even with parallel source work, final CARD-1531 verification follows CARD-1532:
 the large shared test assembly otherwise risks refusing its own retained red output.
 Do not copy an unreviewed patch or merge/rebase a pushed task branch to get that fix;
-dispatch the qualifying task from the reviewed, landed stamp-fix base.
+dispatch the qualifying task from the reviewed, landed stamp-fix base. Therefore
+the recommended executable schedule is **CARD-1532 Code/Review/land, then
+CARD-1531 Code**; the separate slice sets retain disjoint production ownership.
 
 **D-8 — Placement and release.** Read `GET /api/runner-defaults` and
 `GET /api/session-runners` again at dispatch. Planning observed defaults revision 2
@@ -143,7 +147,7 @@ before implementation. Do not change source while a checkpoint is in flight.
 |---|---|---|
 | S1 (45-60 min) | Add `tests/Antiphon.Tests/Checkpoints/CheckpointAdmissionBudgetTests.cs` and `CheckpointAdmissionContractTests.cs`; local fixture helpers in those files. Thread only passive clock/observation seams through `RunScheduler`, `RowRunner` and `CheckpointApp.Runtime` if needed to run the existing algorithm with virtual time. | CP-1/CP-2: real missing-behavior assertions fail before the fix. New DTO members may be passive/null for compilation; no expected-value-returning implementation. |
 | S2 (45-60 min) | Add `Execution/RunBudgetClock.cs`; update `Execution/RunScheduler.cs`, `Execution/RowRunner.cs`, `Slots/BuildSlotClient.cs`, `Baseline/BaselineComparer.cs`. Implement phase accounting, bounded acquisition, remaining-budget handoff, exact terminal cause and joined cleanup. | Code review against V-1..V-9; commit before continuing. No intermediate broad build. |
-| S3 (45-60 min) | Update `Program.cs`, `RunRequest.cs`, `CheckpointApp.cs`, `Manifest/CheckpointManifest.cs`, `Manifest/ManifestLoader.cs`, `Manifest/ManifestValidator.cs`, `State/RunState.cs`, `Report/ReportModel.cs`, `Report/CheckpointLine.cs`, `Report/ReportWriter.cs`, `Report/ReportMerger.cs`; update only affected existing regression expectations. Finish authoritative testing-guide paragraphs after D-7's doc dependency. | CP-3..CP-10, one shared green test-project build. Add files to scope before editing if implementation finds an additional producer/consumer. |
+| S3 (45-60 min) | Update `Program.cs`, `RunRequest.cs`, `CheckpointApp.cs`, `Manifest/CheckpointManifest.cs`, `Manifest/ManifestLoader.cs`, `Manifest/ManifestValidator.cs`, `State/RunState.cs`, `Report/ReportModel.cs`, `Report/CheckpointLine.cs`, `Report/ReportWriter.cs`, `Report/ReportMerger.cs`, `Report/ReportValidator.cs`; update only affected existing regression expectations. Finish authoritative testing-guide paragraphs after D-7's doc dependency. | CP-3..CP-10, one shared green test-project build. Add files to scope before editing if implementation finds an additional producer/consumer. |
 | S4 (30 min) | Validate exact green receipts, evidence diff, counts and test identity roster. Store full outcome, original red/green CHECKPOINT lines, bootstrap costs and cleanup dispositions in the task report. | No product/source changes merely to rewrite evidence. Fetch master, run conflict-only `git merge-tree --write-tree origin/master HEAD`, push exact task tip, then ordinary Review. |
 
 ## Rollout, activation and rc
@@ -183,7 +187,7 @@ joins its work in `finally`. A build/fixture error is not a red witness.
 |---|---|---|
 | V-1 | `CheckpointAdmissionBudgetTests.C1531_wait_preserves_execution_budget` | E=10 min, A=20, W=30; build admission waits 9, then build/row perform 9 charged minutes and pass. E remains available after wait. Old total timer cancels at wall 10. |
 | V-2 | `CheckpointAdmissionBudgetTests.C1531_ready_row_waits_then_executes` | Build completes after 4 charged minutes; its row waits 9, then uses 5 of remaining 6. Verified build binding survives, exactly one build and one row driver. Old total cancels before row execution. |
-| V-3 | `CheckpointAdmissionBudgetTests.C1531_overlapping_waits_receive_union_credit` | After first build, next build and ready row wait for overlapping [2,7] and [4,9] intervals; no other work. Q=7, not 10. Assert boundaries while preflight/settlement work prevents credit. Old implementation lacks Q; a summed-wait mutation overcredits. |
+| V-3 | `CheckpointAdmissionBudgetTests.C1531_overlapping_waits_receive_union_credit` | After first build, next build and ready row wait for overlapping [2,7] and [2,9] intervals; no other work. Q=7, not 12. Assert boundaries while preflight/settlement work prevents credit. Old implementation lacks Q; a summed-wait mutation overcredits. |
 | V-4 | `CheckpointAdmissionBudgetTests.C1531_running_sibling_keeps_charging` | One admitted command/build runs while sibling waits. At unchanged E-limit cancel running work; Q=0 for that interval, queued sibling never launches. Control for D-1; also verify exact per-row and per-build limits with E/W larger. |
 | V-5 | `CheckpointAdmissionBudgetTests.C1531_stuck_admission_is_bounded` | Block acquisition beyond A with a cancellable fake HTTP attempt, not just a busy-response loop. Exit 4/reason, zero drivers/tests, nonzero partial wait, zero execution, holder disposed. At boundary grant race releases exactly once. Old path exceeds configured A or becomes generic total timeout. |
 | V-6 | `CheckpointAdmissionBudgetTests.C1531_hard_wall_bounds_successive_waits` | Each acquisition is below A but cumulative waits cross W before E. Exit 5 with wall reason, cancel/join all work and prohibit another launch. Old algorithm cannot supply this separate policy/cause. |
@@ -198,7 +202,7 @@ joins its work in `finally`. A build/fixture error is not a red witness.
 
 | Real boundary/type | Absent | Empty/invalid | Value |
 |---|---|---|---|
-| CLI argument strings, then nullable `int` request values | Missing total keeps selected-estimate derivation; missing wall derives E+A. | Present wall with no token, `""`, whitespace, `0`, negative, non-integer and overflow refuses before launch; no silent infinity. | `--total-timeout 10m --hard-wall-timeout 25m` resolves 10/25 using existing duration grammar; serialized request preserves both. |
+| CLI argument strings, then nullable `int` request values | Missing total keeps selected-estimate derivation; missing wall derives E+A. | Present total/wall with no token, `""`, whitespace, `0`, negative, nonnumeric and overflow refuses before launch; no silent infinity. Valid fractional durations retain the existing round-up-to-minutes rule. | `--total-timeout 10m --hard-wall-timeout 25m` resolves 10/25 using existing duration grammar; serialized request preserves both. |
 | YAML mapping and nullable new `int? HardWallMinutes` | Missing `timeouts`, null mapping, empty mapping and omitted hardWallMinutes derive W. | Explicit hardWallMinutes null/empty scalar/empty string, zero, negative, malformed or overflow must not disable a limit; reject explicit invalid scalar, distinguish it from omission at the loader boundary. | Numeric 25 survives loader/serialization; CLI overrides it. Retain current normalization of legacy numeric fields. |
 | Existing `int SlotWaitMinutes` and actual client | Missing build/missing key/empty build mapping use 45. | Existing zero/negative normalization stays 45; malformed scalar refuses. | 2 is passed to client and expires an unresolved acquire at two virtual minutes. |
 | Nullable new JSON duration (`double?`), versus legacy test count (`int?`) | Omitted new fields mean unknown, not zero. | JSON null means unknown; string `"0"` and negative/non-finite reported duration cannot qualify as valid new timing. | Numeric 0 is legitimate for never-executed work; numeric wait >0 survives cancellation. Test count remains an integer independent of seconds. |
