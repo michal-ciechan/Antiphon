@@ -25,7 +25,7 @@ public sealed class TestPhaseSupervisorTests
         packRoot.GetProperty("sampleAlone").GetBoolean().ShouldBeTrue();
         packRoot.GetProperty("maxClasses").GetInt32().ShouldBeLessThanOrEqualTo(30);
         packRoot.GetProperty("hasOperandCapGroup").GetBoolean().ShouldBeTrue();
-        packRoot.GetProperty("hugeSeconds").GetDouble().ShouldBeGreaterThan(2400d);
+        packRoot.GetProperty("hugeSeconds").GetDouble().ShouldBe(1300d);
 
         using var manifestDoc = JsonDocument.Parse(File.ReadAllText(planned));
         var manifest = manifestDoc.RootElement;
@@ -83,6 +83,7 @@ public sealed class TestPhaseSupervisorTests
         hugeBasis.ShouldBe("measured");
         seen.ShouldContain("leaf-keep");
         seen.ShouldContain("huge-1");
+        seen.ShouldContain("huge-2");
 
         var launch = await RunPwsh(LaunchScript, cancellationToken, C1514Support.RepoRoot(), root, C1514Support.StagedProbe());
         launch.ExitCode.ShouldBe(0, launch.Text);
@@ -226,6 +227,7 @@ public sealed class TestPhaseSupervisorTests
             Add-C1514Node ('tiny-' + $name) $name 'Run'
         }
         Add-C1514Node 'huge-1' 'Huge' 'Work'
+        Add-C1514Node 'huge-2' 'Huge' 'Other'
         Add-C1514Node 'param-a' 'Param' 'Run'
         Add-C1514Node 'param-b' 'Param' 'Run'
         Add-C1514Node 'leaf-keep' 'Leaf' 'Keep'
@@ -245,7 +247,9 @@ public sealed class TestPhaseSupervisorTests
         $had = $table.ContainsKey($hugeKey)
         $prev = $null
         if ($had) { $prev = $table[$hugeKey] }
-        $table[$hugeKey] = 3000
+        # Two nodes at 1300s sum past the 2400s lone-class budget, so the class
+        # splits, while each method group stays within the launch ceiling.
+        $table[$hugeKey] = 1300
         try {
             $exclusions = @([pscustomobject]@{ Class = 'Antiphon.Tests.C1514.Leaf'; Methods = @('Skip') })
             $chunks = @([pscustomobject]@{ id = 'all'; classes = @() })
