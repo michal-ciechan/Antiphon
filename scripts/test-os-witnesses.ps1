@@ -50,7 +50,7 @@ function Run-Case([string]$Name, $Evidence, [int]$Exit, [string]$Diagnostic, [st
     $checker = Join-Path $repo 'scripts/check-os-witnesses.ps1'
     if ($Strict) {
         # Invoke the same checker in a child scope inheriting StrictMode, with literal argv.
-        Put 'strict-checker.ps1' 'Set-StrictMode -Version Latest; & $args[0] @($args | Select-Object -Skip 1); exit $LASTEXITCODE'
+        Put 'strict-checker.ps1' 'param($Checker, $Repository, $BaseRef, $HeadRef, $EvidencePath, $Plan); Set-StrictMode -Version Latest; & $Checker -Repository $Repository -BaseRef $BaseRef -HeadRef $HeadRef -EvidencePath $EvidencePath -Plan $Plan; exit $LASTEXITCODE'
         foreach ($arg in @('-NoProfile','-File',(Join-Path $root 'strict-checker.ps1'),$checker)) { $psi.ArgumentList.Add($arg) }
     } else {
         foreach ($arg in @('-NoProfile','-File',$checker)) { $psi.ArgumentList.Add($arg) }
