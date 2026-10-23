@@ -668,7 +668,7 @@ public sealed class ExpectationSnapshotReader
                     message.Status,
                     message.DeliveryAttempts,
                     message.LastDeliveryBaselineSequence,
-                    message.LastDeliveryStartedAt))
+                    message.LastDeliveryStartedAt, message.LastDeliveryGeneration))
                 .ToDictionaryAsync(message => message.Id, ct);
 
         var results = new List<ExpectationNoteDebt>(rows.Count);
@@ -838,6 +838,12 @@ public sealed class ExpectationSnapshotReader
             || keyed.DeliveryAttempts <= 0)
             return false;
 
+        if (row.Kind == LandNotificationKind.ProviderInputWait)
+        {
+            var generation = await _db.AgentSessions.Where(s => s.Id == session).Select(s => (DateTime?)s.StartedAt).SingleOrDefaultAsync(ct);
+            if (keyed.LastDeliveryGeneration is not DateTime delivered || generation is not DateTime current
+                || !SessionGeneration.Equal(delivered, current)) return false;
+        }
         var expected = row.Body;
         TaskCompletionNotification.Delivery? rendering = null;
         if (row.Kind == LandNotificationKind.TaskCompletion && row.HasCompletionSnapshot)
@@ -941,5 +947,5 @@ public sealed class ExpectationSnapshotReader
         QueuedMessageStatus Status,
         int DeliveryAttempts,
         long? LastDeliveryBaselineSequence,
-        DateTime? LastDeliveryStartedAt);
+        DateTime? LastDeliveryStartedAt, DateTime? LastDeliveryGeneration);
 }

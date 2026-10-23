@@ -3881,10 +3881,13 @@ public sealed partial class AgentTaskDispatcher
         }
 
         // Gate 2 — pull the runner's own view, then re-read the clocks against it.
+        var evaluatedAttempt = task.Attempt;
+        var evaluatedDispatch = task.DispatchedAt;
         await CatchUpTranscriptAsync(sessionId, ct);
         var wait = _providerWait is null ? null : await _providerWait.ReadAsync(task.Id, true, ct);
         await _db.Entry(task).ReloadAsync(ct);
-        if (task.AgentSessionId != sessionId || task.Status is not (AgentTaskStatus.Dispatched or AgentTaskStatus.Working)) return false;
+        if (task.AgentSessionId != sessionId || task.Attempt != evaluatedAttempt || task.DispatchedAt != evaluatedDispatch
+            || task.Status is not (AgentTaskStatus.Dispatched or AgentTaskStatus.Working)) return false;
         var verdict = await TaskDeadlinePolicy.EvaluateAsync(_db, task, UtcNow(), _settings, ct, wait);
         if (verdict is not { Breached: true })
         {

@@ -1518,13 +1518,14 @@ public sealed partial class AttentionService
             var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == note.TaskId, ct);
             var busy = note.ParentSessionId is Guid destination && await SessionMessageQueueService.IsWorkingAsync(_db, destination, ct);
             var state = row is null ? "missing queue row" : row.DeliveryAttempts == 0 ? (busy ? "queued; caller busy" : "queued; caller idle") : "attempted; receipt unconfirmed";
+            var providerInput = note.Kind == LandNotificationKind.ProviderInputWait;
             var dispatch = note.Kind == LandNotificationKind.DispatchBase;
             var completion = note.Kind == LandNotificationKind.TaskCompletion;
             items.Add(new AttentionItemDto(
-                dispatch ? AttentionKind.DispatchWarningUnconfirmed : AttentionKind.LandOutcomeUnconfirmed,
+                providerInput ? AttentionKind.CallerNoteUndelivered : dispatch ? AttentionKind.DispatchWarningUnconfirmed : AttentionKind.LandOutcomeUnconfirmed,
                 age >= _delegation.LandErrorSeconds || note.LastErrorCode is not null || parked ? AlertSeverity.Error : AlertSeverity.Warning,
                 task.Id, note.ParentSessionId, task.AgentId, note.QueueMessageId, task.Title,
-                dispatch
+                providerInput ? $"Provider input decision notification: {note.State}; {state}" : dispatch
                     ? $"Dispatch warning notification: {note.State}; {state}"
                     : completion ? $"Task completion notification: {note.State}; {state}"
                     : $"Land {note.Kind} notification: {note.State}; {state}",
@@ -1533,7 +1534,7 @@ public sealed partial class AttentionService
                     : $"notification={note.Id:N}; request={note.RequestId:N}; destination={note.ParentSessionId:N}; "
                         + $"error={note.LastErrorCode}; parked={parked}; {note.Body}",
                 note.CreatedAt, null, [AttentionAction.OpenDrawer], task.CardId,
-                ConditionKey: dispatch ? $"dispatch:{note.Id:N}:receipt" : completion ? $"completion:{note.Id:N}:receipt" : $"land:{note.Id:N}:receipt",
+                ConditionKey: providerInput ? $"provider-wait:{note.Id:N}:receipt" : dispatch ? $"dispatch:{note.Id:N}:receipt" : completion ? $"completion:{note.Id:N}:receipt" : $"land:{note.Id:N}:receipt",
                 LandRequestId: dispatch ? null : note.RequestId, LandNotificationId: note.Id));
         }
 

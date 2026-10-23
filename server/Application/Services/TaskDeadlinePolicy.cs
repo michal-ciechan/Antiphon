@@ -132,6 +132,10 @@ internal static class TaskDeadlinePolicy
     {
         if (task.AgentSessionId is not Guid sessionId || task.DispatchedAt is not DateTime dispatched)
             return null;
+        if (providerWait is not null && (!providerWait.Fresh(now)
+            || providerWait.Binding.TaskId != task.Id || providerWait.Binding.Attempt != task.Attempt
+            || providerWait.Binding.SessionId != sessionId || providerWait.Binding.DispatchedAt != dispatched))
+            providerWait = null;
         if (await db.AgentSessions.AnyAsync(s => s.Id == sessionId
             && (s.GrokRulesState == GrokRulesState.Pending || s.GrokRulesState == GrokRulesState.Failed), ct)) return null;
 
