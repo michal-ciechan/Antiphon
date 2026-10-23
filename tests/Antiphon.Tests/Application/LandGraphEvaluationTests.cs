@@ -594,7 +594,7 @@ public sealed partial class LandGraphEvaluationTests
             return sb.ToString();
         }
 
-        private static async Task GitAsync(string cwd, params string[] args)
+        internal static async Task GitAsync(string cwd, params string[] args)
         {
             var psi = new ProcessStartInfo("git")
             {

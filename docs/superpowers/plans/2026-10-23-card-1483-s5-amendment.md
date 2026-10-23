@@ -1,0 +1,52 @@
+# CARD-1483 S5 script integration
+
+Code/landing owner bb5773d2-1779-40a3-8afa-db6701554690. Base is clean master
+4d4718a5bc3305565c26f8c42069e5513951753c. S1-S4 are already landed.
+This amends the original plan's S5 checkpoint to include all thirty inherited
+evaluation cases, the new script integration cases and the full pre-check/landing
+class. Unit and whole suites are explicitly deferred by the brief (CARD-1466).
+No ordinary R-n rows exist. V-1..V-16 and S1 V-1a/V-1b/V-3a are required.
+
+The pre-check is retained as a separate script, with its original regression
+assertions applied directly to it. Those synthetic fixtures intentionally omit
+solution/SDK prerequisites; they are not evaluation acceptance fixtures. The
+production wrapper has no pre-check-only switch. Its integration witnesses run
+the real staged evaluator and must refuse without writing either record.
+V-14 includes both metadata witnesses, CARD-1498's imported project-directory
+value, CARD-1504 target bodies/Conditions and both d43d1e4a R2 directory spellings.
+The latter already refuse at the pre-check on this master, so are regressions,
+not new red witnesses. V-15 includes positive, missing/malformed record, digest,
+SDK and pins mismatch checks plus the real committed tree. A real evaluator
+exit 2 must preserve both existing records. No timeout or assertion is relaxed.
+
+The gate uses a built DLL (the plan permits this), never an implicit build.
+Default location: tools/Antiphon.LandGraphAudit/bin-land-audit/Release/net10.0/.
+Callers may supply a separately built DLL. Build it through build-slot.ps1;
+the checkpoint already stages it. No restore is performed during evaluation.
+Reviewed defaults remain: pre-check retained, no restore, Linux evaluation with
+OS/Target pins, master only. CARD-1528 is outside S5 and stays unresolved.
+Land still hashes definitions and compares the embedded two-line manifest;
+evaluation is author-time only. A refusal exits 1 without publishing records,
+leaving an unmatched graph to take the existing verification-build path.
+
+Unlisted runs: one slot-gated checkpoint-tool bootstrap, then CP-Red on committed
+tests before implementation; one manual real-tree -Update using that staged DLL
+to generate records, never hand-editing them. Final CP-5 runs once after the report
+commit. The red run retains outputs for that author-time invocation. No repeats
+are required after green. Estimated red cost 12 minutes; final cost 25 minutes.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-Red | red | `tests/Antiphon.Tests -> bin-c1483-s5-red/` | c1483-s5-red | `/*/*/LandGraphEvaluationTests/C1483_S5_*` | V-14 V-15 | new gate witnesses fail before implementation | 12 | 12 |
+| CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1483-s5/` | c1483-s5 | `/*/*/(LandGraphEvaluationTests*)\|(LandNonCodeSkipTests*)/*` | V-1..V-16 V-1a V-1b V-3a | all cases, 0 failed/skipped; exact roster stated before run | 42 | 25 |
+
+### SourceLanding Mutation pending
+
+Every original and inherited control remains pending, including pins comparison
+(V-8/V-9), differential (V-12), exit-2-as-approval (V-3/V-14), S1 controls and
+PC-S2-1/2/3. Additional candidates: bypass evaluator invocation; accept missing
+or mismatched digest/SDK/pins record; publish manifest before evaluator success;
+bind an evaluation of dirty definitions to the HEAD digest. Mutation owns all
+deliberate mutants, red/restore/green cycles and missing-control discovery.
