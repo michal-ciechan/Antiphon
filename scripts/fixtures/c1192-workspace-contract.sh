@@ -1564,7 +1564,7 @@ partial_cut() {
     local code=0 out diag cleanup=0 work=0 mask=0 writer=0 reader=0 residue=-
     out=$(c849_fixture 2>>"$C1192_ROOT/scenario.err") || code=$?
     diag=$(diagnosis_of "$out")
-    if grep -F -q "container c849-${RUN}-restore-p1" "$C1192_ROOT/order"; then cleanup=1; fi
+    if grep -F -x -q "release-attempt container c849-${RUN}-restore-p1" "$C1192_ROOT/order"; then cleanup=1; fi
     volume_exists "$WORK" && work=1
     volume_exists "$MASK" && mask=1
     container_exists "$WRITER" && writer=1
@@ -1583,6 +1583,13 @@ partial_cut() {
 }
 
 mode_partial() {
+    # Observe the real release call. An unacquired consumer must not be removed,
+    # so a Docker rm event cannot witness finalization after identity-safe cleanup.
+    eval "$(declare -f c849_fixture_consumer_release | sed '1s/c849_fixture_consumer_release/c1192_partial_consumer_release/')"
+    c849_fixture_consumer_release() {
+        order_log "release-attempt container $1"
+        c1192_partial_consumer_release "$@"
+    }
     c849_fixture_compose() { :; }
     c849_fixture_prepare() { :; }
     c849_fixture_seed() { :; }
