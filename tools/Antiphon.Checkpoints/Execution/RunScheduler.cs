@@ -15,6 +15,7 @@ public sealed class SchedulerRequest
     public bool SerialAll { get; init; }
     public TimeSpan? RowTimeoutOverride { get; init; }
     public TimeSpan? TotalTimeout { get; init; }
+    public TimeSpan? HardWallTimeout { get; init; }
     public Action? Publish { get; init; }
     public Func<CancellationToken, Task>? BeforeLaunch { get; init; }
     public Func<string>? CancellationReason { get; init; }
@@ -48,15 +49,15 @@ public sealed class RunScheduler
     {
         _driver = driver;
         _platform = platform;
-        _rows = new RowRunner(driver, platform);
+        _rows = new RowRunner(driver, platform, buildTimeProvider);
         _buildTimeProvider = buildTimeProvider;
     }
 
     public async Task<SchedulerResult> RunAsync(SchedulerRequest request, CancellationToken cancellationToken)
     {
-        using var total = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        if (request.TotalTimeout is TimeSpan limit && limit > TimeSpan.Zero)
-            total.CancelAfter(limit);
+        using var deadline = request.TotalTimeout is TimeSpan limit && limit > TimeSpan.Zero
+            ? new CancellationTokenSource(limit, _buildTimeProvider) : new CancellationTokenSource();
+        using var total = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
 
         var session = request.Session ?? await request.Slots.ProbeAsync(total.Token).ConfigureAwait(false);
         var buildStates = request.Manifest.Builds.ToDictionary(

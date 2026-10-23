@@ -65,9 +65,13 @@ public sealed class RowRunner
 {
     private readonly IDriver _driver;
     private readonly IPlatform _platform;
+    private readonly TimeProvider _timeProvider;
 
-    public RowRunner(IDriver driver, IPlatform platform)
+    public RowRunner(IDriver driver, IPlatform platform) : this(driver, platform, TimeProvider.System) { }
+
+    internal RowRunner(IDriver driver, IPlatform platform, TimeProvider timeProvider)
     {
+        _timeProvider = timeProvider;
         _driver = driver;
         _platform = platform;
     }
@@ -152,6 +156,7 @@ public sealed class RowRunner
                 _driver,
                 new DriverRequest(shell, shellArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
                 request.Deadline,
+                _timeProvider,
                 cancellationToken).ConfigureAwait(false);
             var sourceOk = request.SourceBoundary?.Invoke() != false;
             if (ran.TimedOut)
@@ -209,6 +214,7 @@ public sealed class RowRunner
                 _driver,
                 new DriverRequest(fileName, buildArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "build.log"), Environment: request.Environment),
                 request.Deadline,
+                _timeProvider,
                 cancellationToken).ConfigureAwait(false);
             buildWatch.Stop();
             var buildSeconds = buildWatch.Elapsed.TotalSeconds;
@@ -264,6 +270,7 @@ public sealed class RowRunner
             _driver,
             new DriverRequest(fileName, runArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: runEnvironment ?? request.Environment),
             request.Deadline,
+                _timeProvider,
             cancellationToken).ConfigureAwait(false);
         var hostExit = DateTimeOffset.UtcNow;
         var hostElapsed = System.Diagnostics.Stopwatch.GetElapsedTime(hostStartTick);
@@ -324,6 +331,7 @@ public sealed class RowRunner
                     _driver,
                     new DriverRequest(fileName, rerunArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
                     request.Deadline,
+                _timeProvider,
                     cancellationToken).ConfigureAwait(false);
                 if (request.SourceBoundary?.Invoke() == false) sourceStable = false;
                 if (binding is not null && !second.TimedOut) OwnedOutputLedger.Adopt(binding.OutputPath, second.Exited);

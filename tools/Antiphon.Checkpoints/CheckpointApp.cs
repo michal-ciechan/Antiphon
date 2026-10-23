@@ -22,6 +22,7 @@ public static class CheckpointApp
         public TimeSpan? OwnerUncertaintyBudget { get; init; }
         public IDriver? Driver { get; init; }
         public IBuildSlotClient? Slots { get; init; }
+        public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
         public HttpMessageHandler? SlotHandler { get; init; }
         public Func<DateTimeOffset>? SlotClock { get; init; }
         public Func<TimeSpan, CancellationToken, Task>? SlotDelay { get; init; }
@@ -191,7 +192,7 @@ public static class CheckpointApp
         state.TotalTimeoutAt = state.StartedAt.AddMinutes(totalMinutes);
         Note($"execute rows={selected.Count} width={width} total={totalMinutes}m");
         var driver = runtime.Driver ?? new ProcessDriver();
-        var scheduler = new RunScheduler(driver, platform);
+        var scheduler = new RunScheduler(driver, platform, runtime.TimeProvider);
         SchedulerResult result;
         StatePublicationException? publicationFailure = null;
         using var watchCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

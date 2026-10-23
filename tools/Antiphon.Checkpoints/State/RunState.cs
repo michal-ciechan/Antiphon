@@ -2,6 +2,13 @@ namespace Antiphon.Checkpoints;
 
 public sealed class RunState
 {
+    public double? BudgetWallSeconds { get; set; }
+    public double? AdmissionOnlySeconds { get; set; }
+    public double? ExecutionSeconds { get; set; }
+    public double? ExecutionLimitSeconds { get; set; }
+    public double? HardWallLimitSeconds { get; set; }
+    public double? RemainingExecutionSeconds { get; set; }
+    public DateTimeOffset? HardWallTimeoutAt { get; set; }
     public string RunId { get; set; } = "";
     public string ToolOwner { get; set; } = "";
     public string Phase { get; set; } = "running";
@@ -76,6 +83,9 @@ public sealed class BuildProgress
     public double Seconds { get; set; }
     public string Slot { get; set; } = "";
     public string? SlotReason { get; set; }
+    public double? ExecutedSeconds { get; set; }
+    public double? WallSeconds { get; set; }
+    public string? TerminalReason { get; set; }
     public int WaitedSeconds { get; set; }
     public int AdmissionExitCode { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
@@ -94,6 +104,9 @@ public sealed class RowProgress
     public int ExitCode { get; set; }
     public string Slot { get; set; } = "";
     public string? SlotReason { get; set; }
+    public double? ExecutedSeconds { get; set; }
+    public double? WallSeconds { get; set; }
+    public string? TerminalReason { get; set; }
     public int WaitedSeconds { get; set; }
     public RepeatEvidence? Repeat { get; set; }
     public PhaseTimings? Timings { get; set; }
