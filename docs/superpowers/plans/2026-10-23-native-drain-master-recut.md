@@ -20,7 +20,7 @@ No Unit lane or assembly sweep: explicit operator brief limits this re-cut to th
 nine native regressions. No delivery, landing, lease or persistence code changes.
 Prior task 089ef857 measured master build 799.510 seconds and fixed class 78.841
 seconds; these are single samples, not p95. Allow 25 minutes for the isolated
-build/row, 35 minutes execution total, 50 minutes hard wall, and 10 minutes slot
+build/row, 35 minutes execution total, 50 minutes hard wall, and 45 minutes slot
 admission per acquisition. Bounds are provisional for this re-cut, with no product
 timeout changes. Harness retains its 120-second per-case watchdog and fixture
 barriers/cleanup limits. Record build, slot, per-case and aggregate times in the
