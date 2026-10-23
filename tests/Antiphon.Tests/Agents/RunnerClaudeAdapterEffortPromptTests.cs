@@ -1,5 +1,6 @@
 using Antiphon.Agents.Pty;
 using Antiphon.Agents.Pty.Tests;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
@@ -21,7 +22,7 @@ public class RunnerClaudeAdapterEffortPromptTests
         ClaudeInputProbePollIntervalMs = 25, ClaudeInputProbeRetypeIntervalMs = 1000, ClaudeInputProbeClearTimeoutMs = 500
     };
     internal static AgentLaunchSpec Spec() => new("claude", AgentKind.ClaudeCode, "claude.exe",
-        ["--model", "fable", "--effort", "xhigh"], new Dictionary<string,string>(), @"C:\test-owned", 120, 30, SessionId: Guid.NewGuid());
+        ["--model", "fable", "--effort", "xhigh"], new Dictionary<string,string>(), @"C:\test-owned", 120, 30, SessionId: Guid.NewGuid(), AcceptedStartedAt: DateTime.UnixEpoch);
 
     [Test, Arguments(0), Arguments(1), Arguments(2)]
     public async Task Each_captured_dialog_clears_before_the_composer_probe(int capture)
@@ -46,7 +47,7 @@ public class RunnerClaudeAdapterEffortPromptTests
     [Test]
     public async Task Probe_failure_logs_token_elapsed_writes_and_screen()
     {
-        const string screen = "Claude ready\n> \n? for shortcuts\nC449_DIAGNOSTIC_SCREEN";
+        var screen = "C449_DIAGNOSTIC_SCREEN\n" + ScriptedClaudeInputGuard.Composer();
         var fake = new EffortTestScreen { Dialog = false, Override = screen };
         var client = new Client(fake);
         var logger = new StartupLogger();
@@ -199,17 +200,30 @@ public class RunnerClaudeAdapterEffortPromptTests
     internal sealed class Client(EffortTestScreen screen) : ISessionRunnerClient
     {
         private readonly DateTime _startedAt = DateTime.UtcNow;
+        private readonly ScriptedClaudeInputGuard _guard = new();
         private long _sequence;
         private bool _exited;
         public int KillCalls { get; private set; }
         public bool KillTokenWasCanceled { get; private set; }
-        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) => GetAsync(sessionId, ct);
+        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
+        { _guard.Bind(spec.AcceptedStartedAt); return GetAsync(sessionId, ct); }
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
         public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) => Task.FromResult(new SessionRunnerSessionDto(sessionId, 4321,
-            _startedAt, _exited ? "Exited" : "Running", _exited ? 0 : null, AgentExitReason.Unknown, _sequence));
+            _startedAt, _exited ? "Exited" : "Running", _exited ? 0 : null, AgentExitReason.Unknown, _sequence, AcceptedStartedAt: _guard.AcceptedStartedAt));
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) => Task.FromResult(new SessionRunnerBufferDto(sessionId, screen.Raw, _sequence));
-        public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
-            new(sessionId, screen.Raw, await screen.SnapshotAsync(ct), _sequence, _startedAt);
+        public async Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
+        {
+            var rendered = await screen.SnapshotAsync(ct);
+            if (!screen.Dialog && screen.Override is null)
+                rendered = ScriptedClaudeInputGuard.Composer(screen.Composer);
+            return new(sessionId, screen.Raw, rendered, _sequence, _startedAt,
+                _guard.AcceptedStartedAt, _guard.Observe(sessionId, _sequence, rendered));
+        }
+        public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId,
+            RunnerConditionalInputRequest request, CancellationToken ct) =>
+            _guard.WriteAsync(sessionId, request, _sequence,
+                screen.Dialog || screen.Override is not null ? screen.Screen : ScriptedClaudeInputGuard.Composer(screen.Composer),
+                (input, token) => SendInputAsync(sessionId, input, token), ct);
         public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) { _sequence++; await screen.WriteAsync(input, ct); }
         public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerTranscriptDto(sessionId, [], 0));

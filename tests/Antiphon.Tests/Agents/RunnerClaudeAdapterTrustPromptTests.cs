@@ -1,4 +1,5 @@
 using Antiphon.Agents.Pty;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
@@ -60,11 +61,7 @@ public class RunnerClaudeAdapterTrustPromptTests
          Esc to cancel
         """;
 
-    private const string ReadyScreen = """
-        ╭────────────────────────────────────────╮
-        │ >                                      │
-        ╰────────────────────────────────────────╯
-        """;
+    private static string ReadyScreen => ScriptedClaudeInputGuard.Composer();
 
     private const string PermissionScreen = """
          Bash command
@@ -79,7 +76,7 @@ public class RunnerClaudeAdapterTrustPromptTests
     public async Task A_launch_into_an_untrusted_directory_answers_the_dialog_before_reporting_ready()
     {
         var client = ScreenScriptedRunnerClient.HighlightedList(thenShowing: ReadyScreen);
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         var spec = NewSpec();
         await adapter.StartAsync(spec, CancellationToken.None);
 
@@ -98,7 +95,7 @@ public class RunnerClaudeAdapterTrustPromptTests
     public async Task A_trust_dialog_that_will_not_clear_fails_the_launch_with_a_named_block()
     {
         var client = ScreenScriptedRunnerClient.HighlightedList(thenShowing: ReadyScreen, movesOn: null);
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         var spec = NewSpec();
         await adapter.StartAsync(spec, CancellationToken.None);
 
@@ -119,7 +116,7 @@ public class RunnerClaudeAdapterTrustPromptTests
     {
         var client = new ScreenScriptedRunnerClient(
             UnrecognisedTrustScreen, clearedBy: "1", thenShowing: ReadyScreen);
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         var spec = NewSpec();
         await adapter.StartAsync(spec, CancellationToken.None);
 
@@ -138,7 +135,7 @@ public class RunnerClaudeAdapterTrustPromptTests
     public async Task A_healthy_launch_types_nothing_but_the_input_probe()
     {
         var client = new ScreenScriptedRunnerClient(ReadyScreen, clearedBy: "1", thenShowing: ReadyScreen);
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         var spec = NewSpec();
         await adapter.StartAsync(spec, CancellationToken.None);
 
@@ -158,7 +155,7 @@ public class RunnerClaudeAdapterTrustPromptTests
     public async Task A_permission_modal_at_launch_is_not_auto_confirmed_and_is_not_probed_either()
     {
         var client = new ScreenScriptedRunnerClient(PermissionScreen, clearedBy: "1", thenShowing: ReadyScreen);
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
         var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
@@ -179,7 +176,7 @@ public class RunnerClaudeAdapterTrustPromptTests
         {
             EchoTypedInput = false,
         };
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
         var ready = await adapter.WaitForReadyAsync(CancellationToken.None);
@@ -199,7 +196,7 @@ public class RunnerClaudeAdapterTrustPromptTests
         {
             HonourKillLine = false,
         };
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
         (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeFalse();
@@ -215,7 +212,7 @@ public class RunnerClaudeAdapterTrustPromptTests
         {
             EchoTypedInput = false,
         };
-        var adapter = NewAdapter(client, probeTimeoutMs: 0);
+        await using var adapter = NewAdapter(client, probeTimeoutMs: 0);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
         (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue();
@@ -247,7 +244,7 @@ public class RunnerClaudeAdapterTrustPromptTests
         Cwd: @"C:\logs\antiphon\check-interpreter",
         Cols: 120,
         Rows: 30,
-        SessionId: Guid.NewGuid());
+        SessionId: Guid.NewGuid(), AcceptedStartedAt: DateTime.UnixEpoch);
 
     /// <summary>
     /// A runner client that renders a fixed screen and makes no output of its own — exactly like a
@@ -265,6 +262,8 @@ public class RunnerClaudeAdapterTrustPromptTests
     private sealed class ScreenScriptedRunnerClient : ISessionRunnerClient
     {
         private string _screen;
+        private readonly ScriptedClaudeInputGuard _guard = new();
+        private readonly DateTime _startedAt = DateTime.UtcNow;
         private readonly string? _clearedBy;
         private readonly string _thenShowing;
         private string _composer = string.Empty;
@@ -306,24 +305,30 @@ public class RunnerClaudeAdapterTrustPromptTests
 
         public bool HonourKillLine { get; init; } = true;
 
-        public string Screen => _screen + _composer;
+        public string Screen => _screen == ReadyScreen ? ScriptedClaudeInputGuard.Composer(_composer) : _screen + _composer;
 
-        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) =>
-            Task.FromResult(new SessionRunnerSessionDto(
-                sessionId, 4321, DateTime.UtcNow, "Running", null, AgentExitReason.Unknown, 0));
+        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
+        { _guard.Bind(spec.AcceptedStartedAt); return GetAsync(sessionId, ct); }
 
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
 
         public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerSessionDto(
-                sessionId, 4321, DateTime.UtcNow, "Running", null, AgentExitReason.Unknown, _sequence));
+                sessionId, 4321, _startedAt, "Running", null, AgentExitReason.Unknown, _sequence,
+                AcceptedStartedAt: _guard.AcceptedStartedAt));
 
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerBufferDto(sessionId, "", _sequence));
 
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
-            Task.FromResult(new SessionRunnerSnapshotDto(sessionId, Screen, Screen, _sequence, DateTime.UtcNow));
+            Task.FromResult(new SessionRunnerSnapshotDto(sessionId, Screen, Screen, _sequence, _startedAt,
+                _guard.AcceptedStartedAt, _guard.Observe(sessionId, _sequence, Screen)));
+
+        public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId,
+            RunnerConditionalInputRequest request, CancellationToken ct) =>
+            _guard.WriteAsync(sessionId, request, _sequence, Screen,
+                (input, token) => SendInputAsync(sessionId, input, token), ct);
 
         public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
         {

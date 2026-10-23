@@ -1,4 +1,5 @@
 using Antiphon.Agents.Pty;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
@@ -23,7 +24,7 @@ public class RunnerClaudeAdapterVerifiedPromptTests
     public async Task Prompt_is_delivered_as_encoded_body_then_separate_enter_when_composer_echoes()
     {
         var client = new ComposerSimulatingRunnerClient(echoToScreen: true);
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
         await adapter.SendPromptAsync("Work on card CARD-0001\r\nDescription:\r\ndo it", CancellationToken.None);
@@ -37,7 +38,7 @@ public class RunnerClaudeAdapterVerifiedPromptTests
     public async Task Dead_composer_fails_the_prompt_send_with_enter_withheld()
     {
         var client = new ComposerSimulatingRunnerClient(echoToScreen: false);
-        var adapter = NewAdapter(client);
+        await using var adapter = NewAdapter(client);
         await adapter.StartAsync(NewSpec(), CancellationToken.None);
 
         await Should.ThrowAsync<PromptDeliveryException>(() =>
@@ -69,7 +70,7 @@ public class RunnerClaudeAdapterVerifiedPromptTests
         Cwd: Path.GetTempPath(),
         Cols: 120,
         Rows: 30,
-        SessionId: Guid.NewGuid());
+        SessionId: Guid.NewGuid(), AcceptedStartedAt: DateTime.UnixEpoch);
 
     /// <summary>
     /// Runner client with a minimal composer model: typed input (except the CR) shows up on the
@@ -78,26 +79,37 @@ public class RunnerClaudeAdapterVerifiedPromptTests
     private sealed class ComposerSimulatingRunnerClient(bool echoToScreen) : ISessionRunnerClient
     {
         private string _screen = "";
+        private readonly ScriptedClaudeInputGuard _guard = new();
+        private readonly DateTime _startedAt = DateTime.UtcNow;
         private long _sequence;
 
         public List<string> Inputs { get; } = [];
 
-        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) =>
-            Task.FromResult(new SessionRunnerSessionDto(
-                sessionId, 1234, DateTime.UtcNow, "Running", null, AgentExitReason.Unknown, 0));
+        public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct)
+        { _guard.Bind(spec.AcceptedStartedAt); return GetAsync(sessionId, ct); }
 
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
 
         public Task<SessionRunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerSessionDto(
-                sessionId, 1234, DateTime.UtcNow, "Running", null, AgentExitReason.Unknown, _sequence));
+                sessionId, 1234, _startedAt, "Running", null, AgentExitReason.Unknown, _sequence,
+                AcceptedStartedAt: _guard.AcceptedStartedAt));
 
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerBufferDto(sessionId, "", _sequence));
 
-        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
-            Task.FromResult(new SessionRunnerSnapshotDto(sessionId, _screen, _screen, _sequence, DateTime.UtcNow));
+        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
+        {
+            var rendered = ScriptedClaudeInputGuard.Composer(_screen);
+            return Task.FromResult(new SessionRunnerSnapshotDto(sessionId, rendered, rendered, _sequence, _startedAt,
+                _guard.AcceptedStartedAt, _guard.Observe(sessionId, _sequence, rendered)));
+        }
+
+        public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId,
+            RunnerConditionalInputRequest request, CancellationToken ct) =>
+            _guard.WriteAsync(sessionId, request, _sequence, ScriptedClaudeInputGuard.Composer(_screen),
+                (input, token) => SendInputAsync(sessionId, input, token), ct);
 
         public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerTranscriptDto(sessionId, [], 0));
