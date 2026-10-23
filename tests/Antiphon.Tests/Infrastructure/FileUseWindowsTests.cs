@@ -12,6 +12,7 @@ public sealed class FileUseWindowsTests
     {
         var io = new Source();
         var result = Observe(io);
+        result.Owners.ShouldContain(o => o.Pid == 41, "Restart Manager must retain the observed holder");
         result.Owners.Single().Pid.ShouldBe(41);
         result.Owners.Single().MatchKind.ShouldBe("RestartManager");
         result.Owners.Single().NativeStart.ShouldBe(Source.StartTime.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -71,7 +72,7 @@ public sealed class FileUseWindowsTests
         result = Observe(io); result.Status.ShouldNotBe(FileUseStatus.NoOwnersObserved); result.Coverage.ShouldNotBe(FileUseCoverage.Complete);
     }
 
-    private static FileUseRequest Request() => new("tree", new UnauthorizedAccessException("access denied"), Path.GetTempPath());
+    private static FileUseRequest Request() => new("held.dll", new UnauthorizedAccessException("access denied"), Path.GetTempPath());
     private static FileUseObservation Observe(Source source) => new WindowsFileUseProvider(source).Observe(Request(), CancellationToken.None);
     private sealed class NoWriter : IFileUseEvidenceWriter
     { public string? Write(FileUseSnapshot snapshot, string root, CancellationToken cancellationToken) => null; }
