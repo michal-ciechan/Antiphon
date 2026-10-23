@@ -52,3 +52,10 @@ EngineFileUtilities/FileMatcher frame, all from the loaded MSBuild assembly, and
 exclude any Condition function frame. No unverified caller receives the exception.
 Additional slot-gated tool-only diagnostic builds/fixtures are recorded in the Code
 report; they do not replace the closed final CP-4.
+
+Recursive matcher workers run in the Locator-loaded Microsoft.Build.Framework
+assembly and lack the calling IncludeOperation frame. Admit their exact SDK FileMatcher
+frames independently, while early EngineFileUtilities still requires IncludeOperation.
+Assembly identity is the loaded Project/BuildEventArgs assemblies, never a type-name
+match in arbitrary assemblies. Explicit Condition frames and FileOrDirectoryExists
+remain denied. D-4/D-7 still validate every glob/import that the matcher evaluates.

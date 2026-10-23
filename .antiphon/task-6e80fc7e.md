@@ -98,3 +98,11 @@ exception requires the actual MSBuild assembly, that IncludeOperation frame and 
 matcher/EngineFileUtilities frame, and no Condition function frame. Missing provenance
 still refuses. The full CP-4 is rerun after this report and source are committed.
 Generated diagnostic logs are retained under .antiphon/c1483-s4-diagnostics/.
+
+The next diagnostic smoke caught a second, distinct call path: recursive FileMatcher
+workers live in the SDK Microsoft.Build.Framework assembly and lose IncludeOperation
+on their worker stack. Early checks require IncludeOperation plus EngineFileUtilities;
+recursive callbacks require the exact SDK FileMatcher type/assembly identity. Explicit
+Condition frames forbid the exception, and FileOrDirectoryExists never uses it. The
+safe JSON plus unsafe explicit probe fixture is the negative for this compatibility
+allowance. No assertion, timeout or pin was changed to obtain approval.
