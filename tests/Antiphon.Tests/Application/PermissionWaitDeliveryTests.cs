@@ -71,7 +71,22 @@ public partial class PermissionWaitTests
         none.State.ShouldBe(LandNotificationState.NotRequired);
         await f.ReconcileAsync(none.Id, ct);
         (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == none.Id, ct)).ShouldBe(0);
-        await db.AgentTasks.Where(t => t.Id == f.TaskId).ExecuteUpdateAsync(u => u.SetProperty(t => t.ReplyTo, AgentTaskReplyTo.Session), ct);
+        var attempt = 2;
+        foreach (var destination in new Guid?[] { null, Guid.Empty, Guid.NewGuid(), f.ParentSessionId })
+        {
+            var beforeIds = await db.AgentTaskLandNotifications.Where(n => n.TaskId == f.TaskId).Select(n => n.Id).ToListAsync(ct);
+            if (destination == f.ParentSessionId)
+                await db.AgentSessions.Where(s => s.Id == f.ParentSessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped), ct);
+            await db.AgentTasks.Where(t => t.Id == f.TaskId).ExecuteUpdateAsync(u => u.SetProperty(t => t.Attempt, ++attempt)
+                .SetProperty(t => t.ReplyTo, AgentTaskReplyTo.Session).SetProperty(t => t.ParentSessionId, destination), ct);
+            await f.ScanAsync(ct);
+            var unavailable = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.TaskId == f.TaskId && !beforeIds.Contains(n.Id), ct);
+            await f.ReconcileAsync(unavailable.Id, ct);
+            (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == unavailable.Id, ct)).State.ShouldBe(LandNotificationState.DestinationUnavailable);
+            (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == unavailable.Id, ct)).ShouldBe(0);
+        }
+        await db.AgentSessions.Where(s => s.Id == f.ParentSessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running), ct);
+        await db.AgentTasks.Where(t => t.Id == f.TaskId).ExecuteUpdateAsync(u => u.SetProperty(t => t.ReplyTo, AgentTaskReplyTo.Session).SetProperty(t => t.ParentSessionId, f.ParentSessionId), ct);
         f.Clock.AdvanceTo(new DateTimeOffset(f.DispatchedAt).AddMinutes(90));
         (await f.DeadlineAsync(ct)).ShouldBe(1);
         await f.Harness.Queue.FlushSessionAsync(f.ParentSessionId, ct);
@@ -134,5 +149,17 @@ public partial class PermissionWaitTests
         await f.ReconcileAsync(note.Id, ct);
         (await f.NoteAsync(ct)).State.ShouldNotBe(LandNotificationState.Confirmed, "wrong queue destination cannot confirm");
         (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == note.Id, ct)).ShouldBe(1);
+        await using var wake = await PermissionWaitFixture.CreateAsync(ct);
+        await wake.ScanAsync(ct);
+        var wakeNote = await wake.NoteAsync(ct);
+        wake.Boundary.FailAt = "queue-committed-before-wakeup";
+        await wake.ReconcileAsync(wakeNote.Id, ct);
+        (await wake.NoteAsync(ct)).QueueMessageId.ShouldNotBeNull("link survived lost wakeup");
+        wake.Boundary.FailAt = null;
+        await wake.CallerIdleAsync(ct);
+        await wake.Harness.Queue.FlushStrandedQueuesAsync(ct);
+        await wake.ReconcileAsync(wakeNote.Id, ct);
+        (await wake.NoteAsync(ct)).State.ShouldBe(LandNotificationState.Confirmed);
+        wake.Caller.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(wakeNote.Body);
     }
 }
