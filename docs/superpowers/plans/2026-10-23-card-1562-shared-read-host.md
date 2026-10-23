@@ -29,7 +29,7 @@ the checkpoint tool. No whole Unit/assembly run: the explicit minimal-testing br
 overrides the default Final scope. Full affected class is 11 original methods plus the
 sharing guard (12 cases); no downstream production dependency changes.
 
-Timing roots: .antiphon/c1562/baseline/timing and .antiphon/c1562/candidate/timing.
+The recorder requires an absolute root; row environment binds this checkout explicitly. Timing roots: .antiphon/c1562/baseline/timing and .antiphon/c1562/candidate/timing.
 TUnit/TRX is authoritative. Preserve failed receipts, exact source SHA and clean provenance.
 
 ## Verification design
@@ -52,8 +52,8 @@ Mutation owns deliberate mutants/red-restore-green, even if controls need refine
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1562-baseline/` | baseline | `/*/*/AgentTaskScopedListEndpointTests/*` | V-1 red witness; V-2 baseline | 11 passed, 1 sharing assertion failed | 12 | 5 | true | ANTIPHON_TEST_PHASE_ROOT=.antiphon/c1562/baseline/timing;ANTIPHON_TEST_PHASE_RUN_ID=c1562-baseline;ANTIPHON_TEST_PHASE_GROUP_ID=scoped-list;ANTIPHON_TEST_PHASE_ATTEMPT=1;ANTIPHON_TEST_PHASE_SUITE=Antiphon.Tests |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1562-candidate/` | candidate | `/*/*/AgentTaskScopedListEndpointTests/*` | V-1, V-2, R-1, R-2 | all listed, 0 failed/skipped | 13 | 5 | true | ANTIPHON_TEST_PHASE_ROOT=.antiphon/c1562/candidate/timing;ANTIPHON_TEST_PHASE_RUN_ID=c1562-candidate;ANTIPHON_TEST_PHASE_GROUP_ID=scoped-list;ANTIPHON_TEST_PHASE_ATTEMPT=1;ANTIPHON_TEST_PHASE_SUITE=Antiphon.Tests |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1562-baseline/` | baseline | `/*/*/AgentTaskScopedListEndpointTests/*` | V-1 red witness; V-2 baseline | 11 passed, 1 sharing assertion failed | 12 | 5 | true | ANTIPHON_TEST_PHASE_ROOT=/work/worktrees/task-3dc95294/.antiphon/c1562/baseline/timing;ANTIPHON_TEST_PHASE_RUN_ID=c1562-baseline;ANTIPHON_TEST_PHASE_GROUP_ID=scoped-list;ANTIPHON_TEST_PHASE_ATTEMPT=1;ANTIPHON_TEST_PHASE_SUITE=Antiphon.Tests |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1562-candidate/` | candidate | `/*/*/AgentTaskScopedListEndpointTests/*` | V-1, V-2, R-1, R-2 | all listed, 0 failed/skipped | 13 | 5 | true | ANTIPHON_TEST_PHASE_ROOT=/work/worktrees/task-3dc95294/.antiphon/c1562/candidate/timing;ANTIPHON_TEST_PHASE_RUN_ID=c1562-candidate;ANTIPHON_TEST_PHASE_GROUP_ID=scoped-list;ANTIPHON_TEST_PHASE_ATTEMPT=1;ANTIPHON_TEST_PHASE_SUITE=Antiphon.Tests |
 
 Baseline red is intentional and remains historical. Candidate supersedes it after the fix;
 do not rerun baseline green on the fixed source or claim the baseline as acceptance.
