@@ -209,6 +209,9 @@ internal sealed class PermissionWaitFixture : IAsyncDisposable
             ToolName = "Read", Timestamp = DispatchedAt, CreatedAt = DispatchedAt,
         });
         await db.SaveChangesAsync(ct);
+        Caller.DialogGuardEnabled = true;
+        Caller.AcceptedStartedAt = Generation;
+        Caller.ClaudeComposerChrome = true;
         Caller.OnSubmitted = async body =>
         {
             await InsertParentAsync(TranscriptKinds.UserPrompt, body, CancellationToken.None);

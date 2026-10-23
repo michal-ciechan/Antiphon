@@ -121,7 +121,7 @@ public partial class PermissionWaitTests
         using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var ct = budget.Token;
         await using var f = await PermissionWaitFixture.CreateAsync(ct);
-        await using var child = await WorktreeLockChild.StartAsync("file", f.SourceMarker);
+        await using var child = await PermissionWaitChild.StartAsync(ct);
         child.Exited.ShouldBeFalse("real owned child reached its readiness barrier");
         await using var db = f.Db();
         var task = await f.TaskAsync(ct);
@@ -131,6 +131,7 @@ public partial class PermissionWaitTests
         absent!.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.LocalExecution);
         absent.Breached.ShouldBeTrue();
         child.Exited.ShouldBeFalse("classification does not stop a real child");
+        f.Clock.AdvanceTo(new DateTimeOffset(now));
         var wait = await f.Reader.ReadAsync(f.TaskId, true, ct);
         var blocked = await TaskDeadlinePolicy.EvaluateAsync(db, task, now, settings, ct, wait);
         blocked!.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.ProviderInputWait);
@@ -145,6 +146,10 @@ public partial class PermissionWaitTests
         settings.RolePolicy["Code"] = new() { TimeoutMinutes = 0 };
         settings.LocalExecutionDeadlineMinutes = settings.ModelWaitDeadlineMinutes = 0;
         (await TaskDeadlinePolicy.EvaluateAsync(db, task, now, settings, ct, wait)).ShouldBeNull("all clocks disarmed");
+        f.Clock.Advance(TimeSpan.FromSeconds(91));
+        settings.LocalExecutionDeadlineMinutes = 90;
+        await db.TranscriptEntries.Where(t => t.AgentSessionId == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(t => t.Kind, TranscriptKinds.ToolCall), ct);
+        (await TaskDeadlinePolicy.EvaluateAsync(db, task, f.Clock.GetUtcNow().UtcDateTime, settings, ct, wait))!.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.LocalExecution, "stale supplied facts cannot claim a current modal");
         await child.ReleaseAsync();
         child.Exited.ShouldBeTrue();
     }
