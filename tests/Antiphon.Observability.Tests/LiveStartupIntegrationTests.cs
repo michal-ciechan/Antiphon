@@ -1,4 +1,5 @@
 extern alias server;
+using Antiphon.Messaging;
 using Antiphon.Messaging.Client;
 using System.Diagnostics;
 using System.Net;
@@ -39,6 +40,7 @@ public sealed class LiveStartupIntegrationTests
         using var response = await http.GetAsync("/api/diagnostics/startup", cancellationToken);
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        Console.WriteLine("C1564 startup-observation " + body.RootElement.GetRawText());
         var rows = body.RootElement.GetProperty("phases").EnumerateArray().ToArray();
         var operations = rows.Select(x => x.GetProperty("operation").GetString()).ToArray();
         foreach (var operation in new[] { "config-load", "host-build", "migrate", "seed", "setup", "host-start", "listeners-ready" })
