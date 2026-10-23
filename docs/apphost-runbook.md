@@ -261,3 +261,42 @@ rolled back.
    inspect locks, launch logs and `docker ps` before another teardown.
 5. Re-registering tasks while the runner was up killed its supervisor, leaving
    an unsupervised daemon: refresh AppHost tasks with `-AppHostOnly`.
+
+## Dead-launch recovery and outage evidence (CARD-1527)
+
+The watchdog now observes API health before launch locks, cooldown, Docker and flap
+admission. A fresh restart stamp remains protected by default. Earlier recovery
+requires the same stamp on two distinct fires (at most five minutes apart), a
+positively dead holder, a complete empty process/listener census and connection
+refusal from health. A live launch lock, running logon task, live detached encoded
+wrapper, unreadable census, healthy response, timeout, future stamp or replacement
+cancels this proof. Unattributed DCP/dashboard processes conservatively veto early
+reclamation. The runner on 17204 is outside the census and teardown.
+
+Restart admission rechecks health, activity and the exact stamp while it holds an
+exclusive write handle on that existing restart file; it writes its own stamp
+through that handle instead of deleting and recreating the file. A competing
+holder or replacement refuses. Ordinary 15-minute admission remains the fallback.
+At health timeout, a launcher known to have exited nonzero releases this restart's
+lock and prints both captured paths, `logs/apphost-launcher-<id>.out` and `.err`.
+A successful detached exit, running launcher or unreadable exit still retains it.
+
+Outage state is written atomically in `logs/apphost-watchdog.state`. Overlapping
+fires serialize on `logs/apphost-watchdog.fire.lock`. At 180 seconds of observed
+API downtime, one pending down event is recorded; health recovery records one
+recovery event. Pending events are retried in order with the same event ID.
+Successful sends are also retained in `logs/apphost-outage-events.jsonl` for later
+attention import. No automatic attention importer is added by this script change.
+Maintenance suppresses observation/recovery/notifications; ProbeOnly never sends.
+
+**Transport configuration remains an operator decision.** There was no existing
+AppHost watchdog alert sender. The proposed adapter reads
+`ANTIPHON_APPHOST_ALERT_WEBHOOK` in the scheduled task's environment and posts JSON
+over HTTPS with a five-second timeout and the event ID as `Idempotency-Key`.
+The approved receiver must independently survive AppHost loss and deduplicate
+that key, including a send accepted before a local receipt write fails. Missing
+configuration or failed delivery retains the event and logs a pending warning;
+it is not a delivered alert. Do not put a secret URL in source or console output.
+Native Windows CIM/Task Scheduler/5.1 capture qualification and the missing
+watchdog-state-observer registration audit remain owed to the Windows operational
+owner. This change does not register a task or restart any host.

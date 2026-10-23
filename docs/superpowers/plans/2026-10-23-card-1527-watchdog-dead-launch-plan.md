@@ -17,7 +17,8 @@ clears only this restart's lock. Successful detachment and unknown exit retain i
 S4: persist outage time before recovery guards, emit one event at >=180 seconds and
 one recovery event, with durable pending delivery and stable deduplication identity.
 Transport selection is pending caller clarification: this watchdog has no existing
-sender; the nightly watchdog uses independently configured Telegram credentials.
+sender. A proposed HTTPS webhook adapter requires an approved independent receiver
+that deduplicates Idempotency-Key; no endpoint or live credential is configured.
 Do not send live notifications in tests. Preserve maintenance suppression.
 
 ## Verification design
@@ -36,8 +37,8 @@ R-2: existing lock-age and probe-class harnesses (CARD-0310/0152 compatibility).
 R-3: native Windows census (CIM/encoded wrapper/denied access/PID identity), held-file
 races and captured launcher output under PowerShell 5.1 are OWED to Windows lane.
 No desktop operation, supervisor PID 133964 or C:\Antiphon\releases access here.
-R-4: native notification channel and observer-registration audit are OWED to the
-operational Windows owner; no installation or live alert here.
+R-4: approved notification channel selection/configuration and native delivery plus
+observer-registration audit are OWED to the operational owner; no installation or live alert here.
 
 PC-1 (two-fire/identity/absence variants), PC-2 (nonzero exit/own-lock variants),
 PC-3 (threshold/dedup/recovery/maintenance variants) remain pending for method-scoped
