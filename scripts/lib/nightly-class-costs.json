@@ -35,9 +35,10 @@
       "basis": "pace"
     },
     "Antiphon.Tests.Application.AgentTaskLandCheckpointMatrixTests": {
-      "nodes": 43,
+      "nodes": 41,
       "seconds": 1560,
-      "basis": "measured"
+      "basis": "pace",
+      "source": "CARD-1514 split-bound: original CheckpointMatrix 43 nodes / 1560 seconds measured (CARD-1404 R/P); allocate the entire bound to each split class until Windows per-method evidence exists; not two measured totals"
     },
     "Antiphon.Tests.Application.AgentTaskLandPersistenceFailureTests": {
       "nodes": 52,
@@ -48,6 +49,12 @@
       "nodes": 63,
       "seconds": 3780,
       "basis": "pace"
+    },
+    "Antiphon.Tests.Application.AgentTaskLandCheckpointWorkerTests": {
+      "nodes": 2,
+      "seconds": 1560,
+      "basis": "pace",
+      "source": "CARD-1514 split-bound: original CheckpointMatrix 43 nodes / 1560 seconds measured (CARD-1404 R/P); allocate the entire bound to each split class until Windows per-method evidence exists; not two measured totals"
     }
   }
 }

@@ -1742,37 +1742,56 @@ function Test-C1397_RcAntiphonLaunchGroups {
 
 function Test-C1404_Group10MeasuredBudget {
     # Independent R/P evidence prices; Publication is a partial-sample pace bound.
-    # Exercise the real cost loader, rc policy and packer against the recorded roster.
+    # Exercise the real cost loader, rc policy and packer against its exact S3 projection.
     $ErrorActionPreference = 'Stop'
     $ok = $false
     $detail = ''
     try {
         $expected = @{
-            'AgentTaskLandCheckpointMatrixTests' = @{ Nodes = 43; Seconds = 1560; Basis = 'measured'; Launches = 1 }
+            'AgentTaskLandCheckpointMatrixTests' = @{ Nodes = 41; Seconds = 1560; Basis = 'pace'; Launches = 1 }
+            'AgentTaskLandCheckpointWorkerTests' = @{ Nodes = 2; Seconds = 1560; Basis = 'pace'; Launches = 1 }
             'AgentTaskLandPersistenceFailureTests' = @{ Nodes = 52; Seconds = 1980; Basis = 'measured'; Launches = 1 }
             'AgentTaskLandPublicationTests' = @{ Nodes = 63; Seconds = 3780; Basis = 'pace'; Launches = 5 }
         }
-        $nodes = New-Object System.Collections.Generic.List[object]
-        $listing = Join-Path $here 'fixtures/nightly/c1404-group10-listing.txt'
-        foreach ($line in [IO.File]::ReadAllLines($listing)) {
-            if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith('#')) { continue }
-            $fields = $line.Split('|')
-            if ($fields.Count -ne 3 -or $fields[1] -cnotin @('S', '-')) { throw 'invalid fixture row' }
-            $className = $fields[0]
-            $dot = $className.LastIndexOf('.')
-            $type = $className.Substring($dot + 1)
-            foreach ($entry in $fields[2].Split(',')) {
-                if ($entry -cnotmatch '^([A-Za-z_][A-Za-z0-9_]*)=([1-9][0-9]*)$') { throw 'invalid fixture method' }
-                $method = $Matches[1]
-                $cases = [int]$Matches[2]
-                for ($k = 0; $k -lt $cases; $k++) {
-                    [void]$nodes.Add([pscustomobject]@{
-                        ClassName = $className; Namespace = $className.Substring(0, $dot); Type = $type
-                        Method = $method; Uid = ($className + '.' + $method + '.' + $k)
-                        Categories = @($(if ($fields[1] -ceq 'S') { 'Slow' }))
-                    })
+        function Read-C1404Nodes([string]$listing) {
+            $nodes = New-Object System.Collections.Generic.List[object]
+            foreach ($line in [IO.File]::ReadAllLines($listing)) {
+                if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith('#')) { continue }
+                $fields = $line.Split('|')
+                if ($fields.Count -ne 3 -or $fields[1] -cnotin @('S', '-')) { throw 'invalid fixture row' }
+                $className = $fields[0]
+                $dot = $className.LastIndexOf('.')
+                $type = $className.Substring($dot + 1)
+                foreach ($entry in $fields[2].Split(',')) {
+                    if ($entry -cnotmatch '^([A-Za-z_][A-Za-z0-9_]*)=([1-9][0-9]*)$') { throw 'invalid fixture method' }
+                    $method = $Matches[1]
+                    $cases = [int]$Matches[2]
+                    for ($k = 0; $k -lt $cases; $k++) {
+                        [void]$nodes.Add([pscustomobject]@{
+                            ClassName = $className; Namespace = $className.Substring(0, $dot); Type = $type
+                            Method = $method; Uid = ($className + '.' + $method + '.' + $k)
+                            Categories = @($(if ($fields[1] -ceq 'S') { 'Slow' }))
+                        })
+                    }
                 }
             }
+            return $nodes.ToArray()
+        }
+        $historical = @(Read-C1404Nodes (Join-Path $here 'fixtures/nightly/c1404-group10-listing.txt'))
+        $nodes = @(Read-C1404Nodes (Join-Path $here 'fixtures/nightly/c1514-checkpoint-split-listing.txt'))
+        # Preserve the raw evidence oracle and prove the projection is a bijection.
+        $oldMatrix = @($historical | Where-Object Type -CEQ 'AgentTaskLandCheckpointMatrixTests')
+        if ($historical.Count -ne 158 -or $oldMatrix.Count -ne 43) { throw 'historical fixture census' }
+        $historicalIds = @($historical | ForEach-Object Uid | Sort-Object)
+        $mappedIds = @(foreach ($node in $nodes) {
+            if ($node.Type -ceq 'AgentTaskLandCheckpointWorkerTests') {
+                if ($node.Method -cne 'C665_WorkerDeathKeepsRecordedTreeAcrossActualRegistrationDrop') { throw 'unexpected moved method' }
+                $node.Uid.Replace('.AgentTaskLandCheckpointWorkerTests.', '.AgentTaskLandCheckpointMatrixTests.')
+            } else { $node.Uid }
+        })
+        if ($mappedIds.Count -ne 158 -or (@($mappedIds | Sort-Object -Unique)).Count -ne 158 -or
+            @(Compare-Object -ReferenceObject $historicalIds -DifferenceObject @($mappedIds | Sort-Object) -CaseSensitive).Count -ne 0) {
+            throw 'historical-to-split mapping is not bijective'
         }
         $reasons = New-Object System.Collections.Generic.List[string]
         $prices = New-Object System.Collections.Generic.List[string]
@@ -1786,6 +1805,12 @@ function Test-C1404_Group10MeasuredBudget {
             if ($null -eq $row -or [int]$row.Value.nodes -ne $oracle.Nodes -or
                 [double]$row.Value.seconds -ne $oracle.Seconds -or [string]$row.Value.basis -cne $oracle.Basis) {
                 [void]$reasons.Add('cost-row:' + $type)
+            }
+            if ($type -cin @('AgentTaskLandCheckpointMatrixTests', 'AgentTaskLandCheckpointWorkerTests')) {
+                $provenance = if ($null -ne $row) { $row.Value.PSObject.Properties['source'] } else { $null }
+                if ($null -eq $provenance -or [string]$provenance.Value -cnotlike '*original CheckpointMatrix 43 nodes / 1560 seconds measured*') {
+                    [void]$reasons.Add('split-bound-provenance:' + $type)
+                }
             }
             $actual = Get-NightlyLaunchClassCost -Nodes $classNodes -TypeName $type -Bare $bare
             [void]$prices.Add($type + '=' + [Math]::Round($actual.Seconds, 1))
@@ -1801,10 +1826,10 @@ function Test-C1404_Group10MeasuredBudget {
         foreach ($node in $nodes) {
             if (Test-NightlyDiscoveryExcluded -Node $node -ProfileExclusions $exclusions -ProfileAware) { [void]$reasons.Add('excluded:' + $node.Uid) }
         }
-        $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes @($nodes.ToArray()) -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $exclusions -ProfileAware $true -Native $true)
+        $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes @($nodes) -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $exclusions -ProfileAware $true -Native $true)
         $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'antiphon' -Fallback 0
         if ($watchdog -ne 3600000) { [void]$reasons.Add('watchdog') }
-        if ($chunks.Count -ne 7) { [void]$reasons.Add('launch-count') }
+        if ($chunks.Count -ne 8) { [void]$reasons.Add('launch-count') }
 
         # Evaluate the actual emitted filter against the entire fixture. Do not use
         # chunk.nodes or chunk.classes as the selection oracle.
@@ -1870,7 +1895,7 @@ function Test-C1404_Group10MeasuredBudget {
     } catch {
         $detail = 'setup-error: ' + [string]$_.Exception.Message + ' at ' + [string]$_.InvocationInfo.PositionMessage
     }
-    Assert-C487 -Cond $ok -Name 'C1404 group 10 uses evidence costs, seven isolated launches and the unchanged watchdog' -Detail $detail
+    Assert-C487 -Cond $ok -Name 'C1404 group 10 uses evidence costs, eight isolated launches and the unchanged watchdog' -Detail $detail
 }
 
 function Test-C1410_MeasuredCostGroups {
