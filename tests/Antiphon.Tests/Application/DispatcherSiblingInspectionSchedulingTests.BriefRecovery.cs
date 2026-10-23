@@ -215,10 +215,17 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                 (await check.TranscriptEntries.CountAsync(p => p.AgentSessionId == session.Id && p.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
                 var note = await check.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceTaskId == taskId && m.ExecutionTaskId == null);
                 note.AgentSessionId.ShouldBe(h.SessionId);
+                (await check.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == h.SessionId))
+                    .Status.ShouldBe(SessionStatus.Running, "recovery must leave the caller available for its note");
+                (await h.Runtime.ListLiveSessionsAsync(default)).ShouldContain(h.SessionId);
+                note.Status.ShouldBe(QueuedMessageStatus.Pending);
+                note.DeliveryAttempts.ShouldBe(0);
+                note.HoldUntil.ShouldBeNull();
                 // The caller session stayed Running through the scan (the runner inventory lists it),
                 // so the idle flush types the retained note directly; the note carries no hold and
                 // the queue does not gate delivery on the sweep clock.
                 await h.Queue.FlushIfIdleAsync(h.SessionId, default);
+                h.Adapter.SubmittedBodies.ShouldNotBeEmpty("the live caller must actually receive the recovery note");
                 var prompts = await check.TranscriptEntries.AsNoTracking().Where(p => p.AgentSessionId == h.SessionId && p.Kind == TranscriptKinds.UserPrompt).ToListAsync();
                 PromptSubmissionMatch.IsCompleteIn(note.Body, prompts.ShouldHaveSingleItem().Text!).ShouldBeTrue();
                 sink.Calls.ShouldBe(1); runner.Starts.ShouldBe(0); runner.Kills.ShouldBe(0); h.Adapter.Started.ShouldBeFalse();
