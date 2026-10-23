@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
-var modes = new[] { "child", "breakaway-child", "descendant", "breakaway", "root-held", "plain", "environment" };
+var modes = new[] { "child", "breakaway-child", "descendant", "breakaway", "root-held", "plain", "environment", "retained-writer" };
 var controlArguments = args.Length >= 2 && modes.Contains(args[1]);
 var directory = controlArguments ? args[0] : Environment.GetEnvironmentVariable("C1039_FIXTURE_DIRECTORY")!;
 var mode = controlArguments ? args[1] : Environment.GetEnvironmentVariable("C1039_FIXTURE_MODE")!;
@@ -16,6 +16,19 @@ if (mode == "child" || mode == "breakaway-child")
 }
 File.WriteAllText(Path.Combine(directory, "started"), "started");
 File.WriteAllText(Path.Combine(directory, "argv.json"), JsonSerializer.Serialize(controlArguments ? args.Skip(2) : args));
+if (mode == "retained-writer")
+{
+    var owner = Native.OpenProcess(0x40, false, int.Parse(args[2]));
+    if (owner == IntPtr.Zero) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    try
+    {
+        if (!Native.DuplicateHandle(Native.GetCurrentProcess(), Native.GetStdHandle(-11), owner,
+                out var writer, 0, false, 2))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        File.WriteAllText(Path.Combine(directory, "writer.handle"), writer.ToInt64().ToString());
+    }
+    finally { Native.CloseHandle(owner); }
+}
 if (mode == "environment")
 {
     var selected = args.Skip(2).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -71,6 +84,13 @@ Console.WriteLine("ROOT-STDOUT-END"); Console.Error.WriteLine("ROOT-STDERR-END")
 internal static class Native
 {
     [DllImport("kernel32.dll", SetLastError=true)]
+    internal static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll")] internal static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll")] internal static extern IntPtr GetStdHandle(int name);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    internal static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess,
+        out IntPtr target, uint access, bool inherit, uint options);
+    [DllImport("kernel32.dll", SetLastError=true)]
     internal static extern IntPtr GetEnvironmentStringsW();
     [DllImport("kernel32.dll")]
     internal static extern bool FreeEnvironmentStringsW(IntPtr block);
@@ -91,6 +111,19 @@ internal static class Native
 // configured constant. An enclosing checkpoint job may independently deny escape.
 public static class NativeJobObserver
 {
+    public static bool Contains(IntPtr process, IntPtr job)
+    {
+        if (!IsProcessInJob(process, job, out var contained))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        return contained;
+    }
+    public static void CloseWriter(long handle)
+    {
+        if (!CloseHandle((IntPtr)handle))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    }
+    [DllImport("kernel32.dll", SetLastError=true)] private static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool contained);
+    [DllImport("kernel32.dll", SetLastError=true)] private static extern bool CloseHandle(IntPtr handle);
     public static uint ReadLimitFlags(IntPtr job)
     {
         // The API requires the exact JOBOBJECT_EXTENDED_LIMIT_INFORMATION size.
