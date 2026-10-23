@@ -27,7 +27,9 @@ public static class ReportValidator
         if (report.Rows.Any(row => Invalid(row.ExecutedSeconds) || Invalid(row.WallSeconds))
             || report.Builds.Any(build => Invalid(build.ExecutedSeconds) || Invalid(build.WallSeconds))
             || report.Budget is { } budget && (Invalid(budget.BudgetWallSeconds) || Invalid(budget.ExecutionSeconds)
-                || Invalid(budget.AdmissionOnlySeconds) || Invalid(budget.RemainingExecutionSeconds)))
+                || Invalid(budget.AdmissionOnlySeconds) || Invalid(budget.RemainingExecutionSeconds)
+                || Invalid(budget.ExecutionLimitSeconds) || Invalid(budget.HardWallLimitSeconds)
+                || Invalid(budget.AdmissionLimitSeconds) || Invalid(budget.FinalizationSeconds)))
             return "invalid_timing";
         if (report.CleanupRefusals.Count > 0)
             return "cleanup_refused";
