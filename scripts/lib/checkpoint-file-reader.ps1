@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Security.Cryptography;
 using Microsoft.Win32.SafeHandles;
 
 namespace Antiphon.Checkpoints.Coverage;
@@ -18,6 +19,7 @@ public static class ConfinedFileReader
 {
     public const int DocumentLimit = 4 * 1024 * 1024;
     public const int SourceLimit = 1024 * 1024;
+    public const long ContentLimit = 1L << 30;
     // CARD-1318 stalled-receipt contract: a read that delivers nothing for this long is refused. CARD-1363 (the CARD-1358
     // design): the window bounds the open, the inspection and each chunk, and every delivered chunk re-arms it, so the
     // total is bounded by the chunk count and not by a throughput assumption.
@@ -54,6 +56,32 @@ public static class ConfinedFileReader
     public static byte[] ReadBytes(string root, string path, int limit, Action? afterVerification, CancellationToken cancellationToken,
         TimeProvider? time, Func<SafeFileHandle, Stream>? openStream)
     {
+        using var content = new MemoryStream();
+        Consume(root, path, limit, afterVerification, cancellationToken, time, openStream, span => content.Write(span));
+        return content.ToArray();
+    }
+
+    public static (long Length, string Sha256) Digest(string root, string path, long limit, CancellationToken cancellationToken = default) =>
+        Digest(root, path, limit, null, cancellationToken, null, null);
+
+    public static (long Length, string Sha256) Digest(string root, string path, long limit, Action? afterVerification,
+        CancellationToken cancellationToken, TimeProvider? time, Func<SafeFileHandle, Stream>? openStream)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        long total = 0;
+        Consume(root, path, limit, afterVerification, cancellationToken, time, openStream, span =>
+        {
+            hash.AppendData(span);
+            total += span.Length;
+        });
+        return (total, Convert.ToHexString(hash.GetHashAndReset()));
+    }
+
+    private delegate void ContentSink(ReadOnlySpan<byte> bytes);
+
+    private static void Consume(string root, string path, long limit, Action? afterVerification, CancellationToken cancellationToken,
+        TimeProvider? time, Func<SafeFileHandle, Stream>? openStream, ContentSink sink)
+    {
         using var stall = new CancellationTokenSource(StallDeadline, time ?? TimeProvider.System);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, stall.Token);
         deadline.Token.ThrowIfCancellationRequested();
@@ -65,27 +93,28 @@ public static class ConfinedFileReader
         if (metadata.Size > (ulong)limit) throw new InvalidDataException("selected file exceeds size limit");
         afterVerification?.Invoke();
         using var stream = openStream is null ? new FileStream(handle, FileAccess.Read) : openStream(handle);
-        using var content = new MemoryStream();
+        long total = 0;
         var buffer = new byte[ReadChunk];
         try
         {
             int count;
             // One byte past the limit is requested so a file that grows during the read is still refused.
-            while ((count = stream.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, limit - (int)content.Length + 1)), deadline.Token).AsTask().WaitAsync(deadline.Token).GetAwaiter().GetResult()) != 0)
+            while ((count = stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, limit - total + 1)), deadline.Token).AsTask().WaitAsync(deadline.Token).GetAwaiter().GetResult()) != 0)
             {
-                if (content.Length + count > limit) throw new InvalidDataException("selected file exceeds size limit");
-                content.Write(buffer, 0, count);
+                if (total + count > limit) throw new InvalidDataException("selected file exceeds size limit");
+                sink(buffer.AsSpan(0, count));
+                total += count;
                 stall.CancelAfter(StallDeadline); // progress re-arms the window
             }
         }
         catch (OperationCanceledException) when (stall.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
-            // A stall on the end-of-file read after every inspected byte arrived does not fail a complete read.
-            if (content.Length == (long)metadata.Size)
-                return content.ToArray();
-            throw new IOException($"read-stalled: {content.Length} of {metadata.Size} bytes; no progress within {StallDeadline.TotalSeconds:0}s");
+            // Only the retained handle can prove that an EOF stall still represents a complete read.
+            if (total == (long)metadata.Size &&
+                (OperatingSystem.IsLinux() ? InspectLinux(handle) : InspectWindows(handle)).Size == metadata.Size)
+                return;
+            throw new IOException($"read-stalled: {total} of {metadata.Size} bytes; no progress within {StallDeadline.TotalSeconds:0}s");
         }
-        return content.ToArray();
     }
 
     private static SafeFileHandle OpenLinux(string path)
@@ -163,6 +192,12 @@ function Read-CheckpointBytes {
     param([string]$Path)
     $full = [IO.Path]::GetFullPath($Path)
     return ,([Antiphon.Checkpoints.Coverage.ConfinedFileReader]::ReadBytes([IO.Path]::GetDirectoryName($full), $full, 67108864, $null, [Threading.CancellationToken]::None))
+}
+function Get-CheckpointFileDigest {
+    param([string]$Path)
+    $full = [IO.Path]::GetFullPath($Path)
+    $digest = [Antiphon.Checkpoints.Coverage.ConfinedFileReader]::Digest([IO.Path]::GetDirectoryName($full), $full, [Antiphon.Checkpoints.Coverage.ConfinedFileReader]::ContentLimit, [Threading.CancellationToken]::None)
+    return [pscustomobject]@{ Length = [long]$digest.Item1; Sha256 = [string]$digest.Item2 }
 }
 function Read-CheckpointText {
     param([string]$Path)

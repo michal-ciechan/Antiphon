@@ -261,16 +261,25 @@ Closed proposal; TestDesign finalizes it before Code. Each row has one literal
 filter/command and minutes separate from executed-result count. S1 rows are
 intentionally red; S3 rows must all pass on their named lanes.
 
+Code 12dd82bc finalization (TestDesign waived by brief): method-OR operands in
+CP-1 and CP-8 now carry the pinned TUnit wildcard suffix. The initial exact-name
+CP-1 expression executed zero tests; its same-build corrected retry executed all
+four intended red witnesses. This changes selection syntax, not the roster.
+The unbound positive-control roster is
+`docs/superpowers/mutations/2026-10-23-card-1532-streaming-stamps.md`; every variant
+remains pending. CP-9 is separately commissioned Windows work because this Code
+dispatch prohibits desktop access. Its missing outcome remains an incomplete gate.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1532-red/` | large-stamp-red | `/*/*/CheckpointLargeStampTests/(C1532_regular_stamp_crosses_receipt_limit)\|(C1532_large_ignored_paths_remain_covered)\|(C1532_tail_edit_with_restored_mtime_is_tampered)\|(C1532_second_build_and_retry_admit_large_prior_output)` | V-1..V-4 | all 4 executed, intended oversized-stamp assertion reds, 0 skipped | 4 | 9 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1532-red/` | large-stamp-red | `/*/*/CheckpointLargeStampTests/(C1532_regular_stamp_crosses_receipt_limit*)\|(C1532_large_ignored_paths_remain_covered*)\|(C1532_tail_edit_with_restored_mtime_is_tampered*)\|(C1532_second_build_and_retry_admit_large_prior_output*)` | V-1..V-4 | all 4 executed, intended oversized-stamp assertion reds, 0 skipped | 4 | 9 | true |
 | CP-2 | S1 | CP-1 | script-stamp-red | `/*/*/CheckpointLargeStampScriptTests/C1532_script_stamp_matches_full_digest` | V-7 | 1 executed, intended oversized-stamp assertion red, 0 skipped | 1 | 2 | true |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1532-green/` | large-stamp-green | `/*/*/CheckpointLargeStampTests/C1532_*` | V-1..V-6 | all 6 passed, 0 failed/skipped | 6 | 9 | true |
 | CP-4 | S3 | CP-3 | script-parity-green | `/*/*/CheckpointLargeStampScriptTests/C1532_*` | V-7..V-9 | all 3 passed, 0 failed/skipped | 3 | 3 | true |
 | CP-5 | S3 | CP-3 | eof-regression | `/*/*/CheckpointEofStallTests/*` | R-1 | all 10 passed, 0 failed/skipped | 10 | 1 | false |
 | CP-6 | S3 | CP-3 | receipt-cap-regression | `/*/*/HostCleanupCheckpointReceiptTests/Receipt_size_and_deadline_are_bounded` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 | false |
 | CP-7 | S3 | CP-3 | linux-shape-regression | `/*/*/CheckpointStampSafetyTests/tracked_stamp_shapes_are_bounded_and_leave_results_in_place` | R-3 | all 10 passed on Linux, 0 failed/skipped | 10 | 1 | true |
-| CP-8 | S3 | CP-3 | custody-regression | `/*/*/HostCleanupCheckpointCustodyTests/(Existing_directory_cannot_gain_creation_authority)\|(Disk_ledger_cannot_authorize_generic_delete)` | R-4 | all 2 passed, 0 failed/skipped | 2 | 1 | false |
+| CP-8 | S3 | CP-3 | custody-regression | `/*/*/HostCleanupCheckpointCustodyTests/(Existing_directory_cannot_gain_creation_authority*)\|(Disk_ledger_cannot_authorize_generic_delete*)` | R-4 | all 2 passed, 0 failed/skipped | 2 | 1 | false |
 | CP-9 | S3 | n/a | windows-ps51-parse | `powershell.exe -NoProfile -NonInteractive -File scripts/test-checkpoint-stamp-ps51-parse.ps1` | V-10 | exit 0, PS 5.1 Desktop, 4 ASCII + 4 parse checks and malformed-copy negative control pass | n/a | 1 | true |
 
 --- next stage ---

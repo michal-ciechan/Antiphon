@@ -891,8 +891,15 @@ function Get-CheckpointContentStamp {
         if ($null -ne $directory.LinkTarget) { return (Get-CheckpointStampLink ([string]$directory.LinkTarget)) }
         if ($directory.Exists) { return 'directory|0|' }
         if (-not $file.Exists) { return 'absent|0|' }
-        $bytes = Read-CheckpointBytes $Full
-        return 'file|' + $bytes.Length + '|' + (Get-CheckpointSha256 $bytes)
+        $digest = Get-CheckpointFileDigest $Full
+        if ($null -eq $digest -or $null -eq $digest.PSObject.Properties['Length'] -or $null -eq $digest.PSObject.Properties['Sha256']) {
+            throw [IO.InvalidDataException]::new('content digest missing')
+        }
+        if ($digest.Length -isnot [long] -or $digest.Length -lt 0 -or $digest.Length -gt 1073741824L -or
+            $digest.Sha256 -isnot [string] -or $digest.Sha256 -cnotmatch '^[0-9A-Fa-f]{64}$') {
+            throw [IO.InvalidDataException]::new('content digest invalid')
+        }
+        return 'file|' + $digest.Length + '|' + $digest.Sha256.ToLowerInvariant()
     } catch {
         # CARD-1363 (the CARD-1358 D-4 design): a refused read stamps 'unreadable|<reason>', the innermost
         # message on one line, at most 200 characters, so settlement can say why an entry is unprovable.
