@@ -242,7 +242,6 @@ Every row: portable .NET/MSBuild evaluator lane, effective runner defaults, froz
 | CP-5 | S1-S3 | CP-1 | c1528 | `/*/*/LandGraphEvaluationTests/(C1528_StaticExistsRefuses*)\|(C1528_ProjectedExistsRefuses*)\|(C1528_MetadataReadRefuses*)\|(C1528_EqualResultReadRefuses*)\|(C1528_FunctionSyntaxAndAbsence*)\|(C1528_PureMetadataAndFunctionsApprove*)` | R-3 | exactly 11 passed, 0 failed/skipped | 11 | 2 |
 | CP-6 | S1-S3 | CP-1 | publication | `/*/*/LandGraphEvaluationTests/(C1483_S5_UpdateRefusesWhenEvaluationRefuses*)\|(C1483_S5_CheckRequiresEvaluationRecord*)\|(C1528_UpdateRefusalPreservesRecords*)` | R-4 | exactly 12 passed, 0 failed/skipped | 12 | 2 |
 | CP-7 | S1-S3 | CP-1 | manifest | `/*/*/LandNonCodeSkipTests/(C1385_RegistryMatchesNarrowGraph*)` | R-5 | exactly 1 passed, 0 failed/skipped | 1 | 1 |
-
 | CP-8 | S1-S3 | CP-1 | adjacent-fixtures | `/*/*/LandGraphEvaluationTests/(C1483_S4_ExistsProbeOfDocsRefuses*)\|(C1483_S4_FileReadingPropertyFunctionRefuses*)` | R-6 | exactly 9 passed, 0 failed/skipped | 9 | 2 |
 
 Closed floor: 63 results, about 28 minutes including the one build. Declared separately, all
