@@ -46,6 +46,48 @@ V-2, V-3, V-5 through V-13 and R-1 through R-4 are deferred to S2-S4 final
 verification, not passed. V-4's vanished/unknown final-read subcases and a first
 sweep already beyond 90 minutes also remain for S2's expanded V-4 witness.
 
+## Execution history before final qualification
+
+Tool bootstrap: the separately gated build of `tools/Antiphon.Checkpoints` into
+`bin-c1518-tool/` succeeded in 13.67 seconds, four existing compiler warnings,
+zero errors; `slot=granted waited=0s`, lease held 14 seconds. It is setup cost,
+not a test run. All CP runs have a 20-minute total hard deadline (narrower than
+the manifest's 90-minute total); neither production nor row deadlines changed.
+
+Run `20261023-052628-a4d4` at
+`bf83da60c7c435abbc208849ecf241d142cb8287` failed compilation with CS0103:
+the fixture lacked the existing `MessageSendMode` namespace import. No tests
+executed. Fixed by `0833bcc7da66e04c09b1c9f3b32a19d85e470ff1`; no assertion
+changed. The failed build's unsealed output was manually removed only after
+executor death and containment/link checks. Run wall time was 3m02s. Build
+slot was granted with zero wait; the row never acquired one.
+
+```text
+CHECKPOINT CP-1 commit=bf83da60c7c435abbc208849ecf241d142cb8287 build=failed filter=/*/*/PermissionWaitTests/(C1518_CapturedDialogNeedsDecisionBeforeStall)|(C1518_NinetyMinuteBoundaryKeepsCustody) executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a slot=skipped waited=0s dirty=0 source=bf83da60c7c435abbc208849ecf241d142cb8287 sourceState=clean buildSource=unknown
+```
+
+Run `20261023-053024-cd76` at
+`0833bcc7da66e04c09b1c9f3b32a19d85e470ff1` built successfully but ran zero tests
+(native exit 8, checkpoint exit 3). Fresh TRX has empty Results and TestDefinitions;
+this is not either red witness. The existing plan omitted the suffix wildcards
+required by the pinned TUnit 1.44 source-generated method-OR hint extractor,
+documented in `docs/testing-and-build.md`, Combined class filters (CARD-0403).
+CP-1 alone now uses the documented suffixed OR form; the final TRX must contain
+exactly both named methods and no others. S2-S4 must similarly bind their own
+filters before execution. This changes selection syntax, not any assertion or
+execution floor. Build and row slots were granted with zero wait. Build wall
+212.708065s; reported run wall 3m59s, plus tool cleanup before wait returned.
+Output was deleted by the completed executor. The report's `builds: 2` counts
+both manifest declarations; only `bin-c1518-red` executed, green was unused.
+
+```text
+CHECKPOINT CP-1 commit=0833bcc7da66e04c09b1c9f3b32a19d85e470ff1 build=ok filter=/*/*/PermissionWaitTests/(C1518_CapturedDialogNeedsDecisionBeforeStall)|(C1518_NinetyMinuteBoundaryKeepsCustody) executed=0 passed=0 failed=0 skipped=0 trx=/work/worktrees/task-e3f5a407/.antiphon/checkpoints/20261023-053024-cd76/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=0833bcc7da66e04c09b1c9f3b32a19d85e470ff1 sourceState=clean buildSource=verified
+```
+
+The final run and receipt validation remain pending at this report commit;
+their actual outcomes belong to the frozen-source settlement evidence and
+the final message. Neither historical failure is relabeled green.
+
 ## Mutation handoff
 
 All controls remain pending for method-scoped SourceLanding Mutation; this
