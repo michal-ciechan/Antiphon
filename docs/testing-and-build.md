@@ -1553,6 +1553,7 @@ files, a one-byte edit at 69 MiB with restored mtime, independent full hashes,
 separate bounds and custody. The scripts remain ASCII and require PS7 at runtime;
 the parser-only harness requires actual Windows PowerShell 5.1 Desktop unless its
 explicit PS7 test switch is supplied. PS7 parsing is not Windows parser evidence.
+
 ## Opt-in per-test phase timing (CARD-1514)
 
 S1 and S2 record where a test spends time when a run opts in. The sole runtime enable is `ANTIPHON_TEST_PHASE_ROOT`. When that variable is unset or blank the recorder does nothing: no file, no stopwatch, no redaction, and no default path. Metadata variables are `ANTIPHON_TEST_PHASE_RUN_ID`, `ANTIPHON_TEST_PHASE_GROUP_ID`, `ANTIPHON_TEST_PHASE_ATTEMPT`, and `ANTIPHON_TEST_PHASE_SUITE`. Missing or invalid metadata disables only that recorder (`phase-metadata-missing`, `phase-root-invalid`). A failed append disables the sink with `phase-sink-failed` and leaves the test outcome unchanged. The rc profile sets the root to `<LogRoot>/timing` on the native test child only. Discovery, build, and ordinary child wrappers do not receive the variables. Ordinary CI and dev runs stay off unless the root is set.
@@ -1560,4 +1561,3 @@ S1 and S2 record where a test spends time when a run opts in. The sole runtime e
 TRX stays authoritative. Sidecars are private and are not release-gate inputs. A run writes `timing/groups-planned.json` before launch and `timing/groups-executed.json` after native chunks, then `timing/summary.json`, `timing/tests.csv`, and `timing/summary.md` once the verdict flags are final. JSONL shards are `timing/cases-<pid>-<nonce>.jsonl`. The JSONL `testId` is the TUnit native id (`TestDetails.TestId`), also printed as `C1514_NATIVE <phase> <id>` and copied into TRX StdOut. The TRX `testId` attribute is a different GUID. Join a JSONL row to the TRX row whose StdOut contains that native id. Do not join on the TRX GUID, class, method, display name, or time order.
 
 The plan lives on master at [docs/superpowers/plans/2026-10-23-card-1514-test-timing-instrumentation-plan.md](superpowers/plans/2026-10-23-card-1514-test-timing-instrumentation-plan.md). Windows CP-8 (real Windows, Windows PowerShell 5.1, and the paired overhead preflight) is owed and is not claimed from Linux. S3 (remaining process, filesystem, and shared-fixture choke points, V-14/V-15) is deferred.
-
