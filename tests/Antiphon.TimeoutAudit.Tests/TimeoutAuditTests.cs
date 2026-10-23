@@ -10,7 +10,7 @@ namespace Antiphon.TimeoutAudit.Tests;
 public sealed class TimeoutAuditTests
 {
     [Test]
-    public void Inventory_covers_attributes_helpers_policy_and_checkpoint_rows()
+    public void Inventory_covers_attributes_helpers_policy_and_checkpoint_rows(CancellationToken cancellationToken)
     {
         using var f = new Fixture();
         var report = f.Run();
@@ -30,6 +30,10 @@ public sealed class TimeoutAuditTests
         f.Measure(Enumerable.Range(1, 20).Select(x => (double)x).ToArray());
         f.Measure([999], "loaded", "Passed", 21);
         f.Measure([999], "normal", "Failed", 22);
+        f.Measure([888], "normal", "Passed", 23, retry: true);
+        Directory.CreateDirectory(Path.Combine(f.Root, "receipts", "copy"));
+        foreach (var name in new[] { "report.json", "run.trx" })
+            File.Copy(Path.Combine(f.Root, "receipts", "r1", name), Path.Combine(f.Root, "receipts", "copy", name));
         var r = f.Run();
         var budget = r.Budgets.Single(x => x.Subject == "Tests.Probe.Forty" && x.Context.Contains("normal"));
         budget.Samples.ShouldBe(20);
@@ -43,7 +47,7 @@ public sealed class TimeoutAuditTests
     }
 
     [Test]
-    public void Check_rejects_excess_without_exact_justification_measurement_and_card()
+    public void Check_rejects_excess_without_exact_justification_measurement_and_card(CancellationToken cancellationToken)
     {
         using var f = new Fixture();
         f.Measure(Enumerable.Repeat(40d, 20).ToArray());
@@ -59,7 +63,7 @@ public sealed class TimeoutAuditTests
     }
 
     [Test]
-    public void Row_wall_excludes_slot_wait_and_requires_exact_filter_membership()
+    public void Row_wall_excludes_slot_wait_and_requires_exact_filter_membership(CancellationToken cancellationToken)
     {
         using var f = new Fixture();
         f.Measure(Enumerable.Repeat(40d, 20).ToArray());
@@ -83,7 +87,7 @@ public sealed class TimeoutAuditTests
     }
 
     [Test]
-    public void Bad_or_unattributed_receipts_are_visible_and_cannot_supply_measured_samples()
+    public void Bad_or_unattributed_receipts_are_visible_and_cannot_supply_measured_samples(CancellationToken cancellationToken)
     {
         using var f = new Fixture();
         File.WriteAllText(Path.Combine(f.Root, "receipts", "broken.trx"), "<broken");
@@ -105,7 +109,7 @@ public sealed class TimeoutAuditTests
                 namespace Tests;
                 [Timeout(5 * 60_000)]
                 class Probe {
-                  [Test] public void Forty() { WaitForCondition(TimeSpan.FromSeconds(9)); WaitForCondition(Unknown); }
+                  [Test] public void Forty(CancellationToken cancellationToken) { WaitForCondition(TimeSpan.FromSeconds(9)); WaitForCondition(Unknown); }
                   // comment-only Timeout(999999)
                 }
                 """);
@@ -120,7 +124,7 @@ public sealed class TimeoutAuditTests
                 """);
             Directory.CreateDirectory(Path.Combine(Root, "receipts"));
         }
-        public void Measure(double[] values, string load = "normal", string outcome = "Passed", int offset = 0)
+        public void Measure(double[] values, string load = "normal", string outcome = "Passed", int offset = 0, bool retry = false)
         {
             for (var i = 0; i < values.Length; i++)
             {
@@ -129,8 +133,8 @@ public sealed class TimeoutAuditTests
                     <TestRun><TestDefinitions><UnitTest id="t"><TestMethod className="Tests.Probe" name="Forty" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="t" testName="Forty" duration="{TimeSpan.FromSeconds(values[i]):c}" outcome="{outcome}" /></Results></TestRun>
                     """);
                 Write(dir + "/report.json", JsonSerializer.Serialize(new {
-                    commit = new string('a', 40), runId = "run-" + (offset + i + 1), host = new { os = "linux", hostId = "host-a", loadAvg = load },
-                    rows = new[] { new { id = "CP-1", filter = "/*/*/Probe/Forty", seconds = 645, state = outcome == "Passed" ? "green" : "red", trx = "run.trx", slot = "granted", waitedSeconds = 600, timings = new { testHostWallSeconds = 45d, rowSlotWaitSeconds = 600d } } }
+                    commit = new string('a', 40), runId = "run-" + (offset + i + 1), maxConcurrentRows = 1, host = new { os = "linux", hostId = "host-a", loadAvg = load },
+                    rows = new[] { new { id = "CP-1", attempt = retry ? 2 : 1, filter = "/*/*/Probe/Forty", seconds = 645, state = outcome == "Passed" ? "green" : "red", trx = "run.trx", slot = "granted", waitedSeconds = 600, timings = new { testHostWallSeconds = 45d, rowSlotWaitSeconds = 600d } } }
                 }));
             }
         }
