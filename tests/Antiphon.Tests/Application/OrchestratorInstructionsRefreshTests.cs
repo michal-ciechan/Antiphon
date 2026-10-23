@@ -287,6 +287,7 @@ public class OrchestratorInstructionsRefreshTests
     private static async Task<BridgeQueueHarness> CreateReadFailureHarnessAsync(ChainReadFault fault)
     {
         var h = await CreateHarnessAsync(fault);
+        await h.Adapter.EnableClaudeDialogObservationAsync(h.ConnectionString, h.SessionId);
         // A long absolute path reproduces the Windows wrapper pressure on every host.
         h.Delegation.OrchestratorInstructions.Path = Path.Combine(h.TempRoot, new string('w', 100), "i.md");
         await AttachBundleAsync(h);
