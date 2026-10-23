@@ -35,6 +35,8 @@ public sealed class TestTimingLifecycleTests
         shard.Length.ShouldBe(1, "missing complete timing rows");
         var completes = Completes(shard[0]);
         completes.Count.ShouldBe(7, "missing complete timing rows");
+        using (var header = JsonDocument.Parse(File.ReadLines(shard[0]).First()))
+            header.RootElement.GetProperty("assembly").GetString().ShouldBe("Antiphon.TestTiming.Probe", "stable-assembly-name");
         var bytes = File.ReadAllText(shard[0]);
         bytes.ShouldNotContain("CANARY-secret-sk-probe-should-not-leak");
         bytes.ShouldContain("\"recordKind\":\"health\"", Case.Sensitive);

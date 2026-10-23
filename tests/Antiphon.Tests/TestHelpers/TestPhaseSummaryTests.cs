@@ -95,6 +95,7 @@ public sealed class TestPhaseSummaryTests
     [Timeout(180_000)]
     public async Task C1514T_PS51AndRerun(CancellationToken cancellationToken)
     {
+        await C1514NativeProbe.VerifyAsync(cancellationToken);
         foreach (var relative in new[] { "scripts/lib/test-phase-evidence.ps1", "scripts/summarize-test-phases.ps1" })
         {
             var path = Path.Combine(C1514Support.RepoRoot(), relative);

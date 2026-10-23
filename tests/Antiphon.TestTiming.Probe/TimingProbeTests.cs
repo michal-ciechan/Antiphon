@@ -72,3 +72,17 @@ public sealed class TimingProbeTests
         TestContext.Current.Output.WriteLine(line);
     }
 }
+
+// These cases deliberately have no probe-specific identity output. The shared
+// receiver must make ordinary tests joinable too.
+public sealed class TimingPlainProbeTests
+{
+    [Test]
+    public void Plain() { }
+}
+
+public sealed class TimingAsyncProbeTests
+{
+    [Test]
+    public async Task Async() => await Task.Yield();
+}
