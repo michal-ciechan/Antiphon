@@ -26,14 +26,16 @@ internal sealed class RecordingFileSystem(string repo) : MSBuildFileSystemBase
         // matches. Its JSON-only allowance must not become a refusal merely because the
         // matcher visits docs/. Never apply that allowance to an Exists/other Condition.
         // Unknown call provenance fails closed; no repository path or expression is trusted.
-        if (globTraversal && IsMsBuildGlobTraversal()) return;
-        _refusals.TryAdd($"refused: {owner} file-probe {operation} {full}", 0);
+        var origin = "";
+        if (globTraversal && IsMsBuildGlobTraversal(out origin)) return;
+        _refusals.TryAdd($"refused: {owner} file-probe {operation} {full}{origin}", 0);
     }
 
-    private static bool IsMsBuildGlobTraversal()
+    private static bool IsMsBuildGlobTraversal(out string origin)
     {
         var types = new StackTrace().GetFrames().Select(f => f.GetMethod()?.DeclaringType)
             .Where(t => t?.Assembly == typeof(Project).Assembly).ToArray();
+        origin = " (probe-origin: " + string.Join(", ", types.Select(t => t!.FullName).Distinct().Take(8)) + ")";
         return !types.Any(t => t!.FullName == "Microsoft.Build.Evaluation.FunctionCallExpressionNode")
                && types.Any(t => t!.FullName == "Microsoft.Build.Shared.FileMatcher"
                                  || t.DeclaringType?.FullName == "Microsoft.Build.Shared.FileMatcher");
