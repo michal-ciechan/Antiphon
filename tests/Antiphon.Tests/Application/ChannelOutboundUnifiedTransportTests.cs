@@ -462,7 +462,25 @@ public sealed class ChannelOutboundUnifiedTransportTests
                 Trigger = ChannelOutboundTrigger.EveryAgentReply, TimeoutSeconds = 300,
             };
             worker.RegisterOnStart = w.H.Runtime;
+            Guid? deliveryTraceId = null;
             long? workerPreSubmitBoundary = null;
+            async Task TraceAsync(string step, string? submitted = null)
+            {
+                await using var traceDb = w.Db();
+                var tasks = await traceDb.AgentTasks.AsNoTracking()
+                    .Where(t => t.OutboundDeliveryId == deliveryTraceId)
+                    .Select(t => new { t.Id, t.Status, t.Attempt, t.AgentSessionId }).ToListAsync();
+                var taskIds = tasks.Select(t => t.Id).ToArray();
+                var queue = await traceDb.SessionQueuedMessages.AsNoTracking()
+                    .Where(m => taskIds.Contains(m.ExecutionTaskId ?? Guid.Empty))
+                    .Select(m => new { m.Id, m.Body, m.Status, m.LastDeliveryBaselineSequence, m.LastDeliveryGeneration, m.DeliveryVerdict }).ToListAsync();
+                var sessions = tasks.Select(t => t.AgentSessionId).ToArray();
+                var prompts = await traceDb.TranscriptEntries.AsNoTracking()
+                    .Where(t => sessions.Contains(t.AgentSessionId) && t.Kind == TranscriptKinds.UserPrompt)
+                    .Select(t => new { t.AgentSessionId, t.Sequence, t.Text }).ToListAsync();
+                Console.WriteLine("C1565_IDENTITY " + JsonSerializer.Serialize(new
+                    { busy, cut, step, submitted, workerPreSubmitBoundary, tasks, queue, prompts }));
+            }
             worker.OnSubmitted = async submitted =>
             {
                 var session = worker.StartedSessionId!.Value;
@@ -472,6 +490,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
                 workerPreSubmitBoundary ??= await beforeSubmit.TranscriptEntries
                     .Where(t => t.AgentSessionId == session)
                     .MaxAsync(t => (long?)t.Sequence) ?? 0;
+                await TraceAsync("before-submit", submitted);
                 await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.UserPrompt, submitted,
                     timestamp: w.H.Now, connectionString: w.Schema.ConnectionString, createdAtUtc: w.H.Now);
                 await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.TurnEnd, stopReason: "end_turn",
@@ -481,6 +500,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
             await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, scenario.Token);
             await w.H.TickOutboundAsync();
             var delivery = (await w.DeliveryAsync("main"))!;
+            deliveryTraceId = delivery.Id;
             delivery.State.ShouldBe(ChannelOutboundDeliveryState.Pending);
             await using (var child = await w.StartProbeAsync("conversion-task-committed", deliveryId: delivery.Id))
             {
@@ -493,6 +513,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
                 var task = await db.AgentTasks.SingleAsync(t => t.OutboundDeliveryId == delivery.Id);
                 taskId = task.Id; task.Status.ShouldBe(AgentTaskStatus.Queued);
             }
+            await TraceAsync("task-committed");
             if (cut is "conversion-dispatched" or "enqueue-refused")
             {
                 await using var child = await w.StartProbeAsync(cut == "conversion-dispatched" ? cut : null,
@@ -510,6 +531,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
                 await using var scope = w.H.Provider.CreateAsyncScope();
                 await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(scenario.Token);
             }
+            await TraceAsync("dispatch-or-resume-enqueued");
             if (busy)
             {
                 await UnifiedOutboundTransport.WaitForAsync(() => worker.StartedSessionId is not null);
@@ -535,7 +557,9 @@ public sealed class ChannelOutboundUnifiedTransportTests
                 await BridgeQueueHarness.InsertEntryAsync(workerSession, TranscriptKinds.TurnEnd, stopReason: "end_turn",
                     connectionString: w.Schema.ConnectionString, createdAtUtc: w.H.Now);
             }
+            await TraceAsync("launch-idle");
             await w.H.Queue.FlushSessionAsync(workerSession, scenario.Token);
+            await TraceAsync("flushed");
             await using (var db = w.Db())
             {
                 var brief = (await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == workerSession
