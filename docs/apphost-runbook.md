@@ -166,13 +166,21 @@ show a rebuild after the client change before checking the browser. Use
 
 | Lock | Lifetime |
 |---|---|
-| `logs/apphost.restart.lock` | Held through restart. Exit 0 and detected build failure remove it; health timeout, exit 4, and exit 5 (unverified server build) retain its stamp. |
+| `logs/apphost.restart.lock` | Held through restart. Exit 0 and detected build failure remove it. Health timeout (exit 1) also removes this restart's stamp when backend health was not confirmed and the launcher exited nonzero; other health timeouts, exit 4, and exit 5 (unverified server build) retain it. |
 | `logs/apphost.launch.lock` | Written by `dev-aspire.ps1` during launch and removed on script exit, including a successful dashboard start. |
 
-A present lock with a stamp younger than 15 minutes is active **even if its
-holder PID is gone**: the child may still be launching (CARD-0310). An unreadable
-lock is also treated as active. A stamp at least 15 minutes old is ignored.
-Do not delete a fresh lock merely because its holder exited.
+A present lock with a stamp younger than 15 minutes is active by default **even
+if its holder PID is gone**: the child may still be launching (CARD-0310). The
+only early restart-lock exception is the [two-fire dead-launch proof](#dead-launch-recovery-and-outage-evidence-card-1527).
+Unknown age remains active; a known age of at least 15 minutes is ignored by the
+ordinary age check. This window starts at the stamp, not at the holder's exit.
+
+The script's `If the holder is genuinely gone, delete ...` and `delete it to
+force a retry` hints describe a manual override, not a sufficient safety check.
+Holder death alone does not establish that its launch children are gone. Inspect
+both locks, launcher output, owned processes/listeners and health; prefer the
+guarded dead-launch admission below or ordinary lock expiry. Do not delete a
+fresh lock merely because its holder exited. CARD-1533 tracks rewording the hints.
 
 ```powershell
 Get-Content logs\apphost.restart.lock, logs\apphost.launch.lock -ErrorAction SilentlyContinue
@@ -239,8 +247,13 @@ rolled back.
   version-pinned MSIX paths disappear on PowerShell updates. Keep daemon and
   auto-start scripts ASCII-only for Windows PowerShell 5.1 fallback.
 - **Antiphon AppHost Watchdog** runs every two minutes, delayed 15 minutes after
-  logon. It probes API `/health` and the client root over HTTP, skips fresh
-  launch/restart locks, and does not count exit 3 as a restart.
+  logon. Each fire starts `scripts/watchdog-apphost.ps1` from the checkout that
+  registered the task and reads its current scripts. Script-only changes take
+  effect on the next fire; an AppHost restart does not reload the watchdog, and
+  task re-registration is unnecessary for those changes. It probes API `/health`
+  and the client root before recovery guards, normally skips recovery behind
+  fresh launch/restart locks (subject to the dead-launch exception below), and
+  does not count exit 3 as a restart.
 - To suppress recovery for deliberate downtime, run
   `pwsh -File scripts/set-apphost-maintenance.ps1` before stopping the stack.
   This records intent and disables the watchdog; it does not stop AppHost itself.
@@ -265,29 +278,42 @@ rolled back.
 ## Dead-launch recovery and outage evidence (CARD-1527)
 
 The watchdog now observes API health before launch locks, cooldown, Docker and flap
-admission. A fresh restart stamp remains protected by default. Earlier recovery
-requires the same stamp on two distinct fires (at most five minutes apart), a
-positively dead holder, a complete empty process/listener census and connection
-refusal from health. A live launch lock, running logon task, live detached encoded
-wrapper, unreadable census, healthy response, timeout, future stamp or replacement
-cancels this proof. Unattributed DCP/dashboard processes conservatively veto early
-reclamation. The runner on 17204 is outside the census and teardown.
+admission. A fresh restart stamp remains protected by default for its full
+15-minute age window. Earlier recovery requires the same readable, non-future
+restart-lock identity (PID and raw UTC stamp) on two distinct fires at most five
+minutes apart, holder state `Dead`, launcher activity `Absent` from a completed
+process/listener/task census, connection-refused health, and no active launch
+lock. Multiple probes within one fire cannot advance the count. A failed
+condition resets the proof and recovery skips while the lock remains fresh.
+A replacement stamp starts a new identity and observation window; a gap over
+five minutes also restarts the count.
+
+A running logon task, live detached encoded wrapper, unreadable census, healthy
+response or health timeout cannot establish this proof. Unattributed DCP/dashboard
+processes conservatively veto early reclamation. `Slow` health (client up, health
+timeout) is not restart-worthy (CARD-0310). The runner on 17204 is outside the
+census and teardown. Watchdog recovery still requires three down rounds and the
+normal Docker, cooldown and flap checks.
 
 Restart admission rechecks health, activity and the exact stamp while it holds an
 exclusive write handle on that existing restart file; it writes its own stamp
 through that handle instead of deleting and recreating the file. A competing
 holder or replacement refuses. Ordinary 15-minute admission remains the fallback.
-At health timeout, a launcher known to have exited nonzero releases this restart's
-lock and prints both captured paths, `logs/apphost-launcher-<id>.out` and `.err`.
-A successful detached exit, running launcher or unreadable exit still retains it.
+At health timeout, only when backend health has not been confirmed and the
+launcher is known to have exited nonzero does the script remove this restart's
+own stamp, print both captured paths (`logs/apphost-launcher-<id>.out` and `.err`)
+and exit 1. A successful detached exit, running launcher or unreadable exit still
+retains it. Restart exit codes remain 0, 1, 3, 4 and 5 as listed above.
 
 Outage state is written atomically in `logs/apphost-watchdog.state`. Overlapping
-fires serialize on `logs/apphost-watchdog.fire.lock`. At 180 seconds of observed
-API downtime, one pending down event is recorded; health recovery records one
-recovery event. Pending events are retried in order with the same event ID.
+fires serialize on `logs/apphost-watchdog.fire.lock`. At the first observation of
+at least 180 seconds of API downtime, one pending down event is recorded; health
+recovery after an alerted outage records one recovery event. Pending events are
+retried in order with the same event ID.
 Successful sends are also retained in `logs/apphost-outage-events.jsonl` for later
 attention import. No automatic attention importer is added by this script change.
-Maintenance suppresses observation/recovery/notifications; ProbeOnly never sends.
+Maintenance clears outage/proof state and suppresses recovery/notifications;
+ProbeOnly never sends.
 
 The operator-selected transport consists of three independent sinks behind
 Send-AppHostOutageEvent. Windows writes an Application Event Log entry using source
