@@ -48,7 +48,7 @@ PC-4 remove sink containment/history bound. Mutation owns red/restore/green.
 | CP-1 | S1-S2 | `tests/Antiphon.Observability.Tests -> bin-c1564-contract/` | live-timing-core | `/*/*/LiveTimingTests/*` | V-1,V-2,V-3,V-4 | all listed, 0 failed | 4 | 3 |
 | CP-2 | S1-S2 | CP-1 | live-timing-http | `/*/*/StartupEndpointTests/*` | V-5,V-6 | all listed, 0 failed | 2 | 3 |
 | CP-3 | S1-S2 | CP-1 | external-boundaries | `/*/*/ExternalBoundaryTests/*` | V-7,V-8 | all listed, 0 failed | 2 | 1 |
-| CP-4 | S1-S2 | `tests/Antiphon.Tests -> bin-c1564-live/` | real-server-startup | `/*/*/LiveStartupIntegrationTests/*` | V-9 | all listed, 0 failed | 1 | 5 |
+| CP-4 | S1-S2 | CP-1 | real-server-startup | `/*/*/LiveStartupIntegrationTests/*` | V-9 | all listed, 0 failed | 1 | 5 |
 | CP-5 | S1-S2 | n/a | script-timing | `pwsh -NoProfile -File scripts/test-live-startup-timing.ps1` | V-10 | 6 assertions, 2 measured phases, 0 failed | n/a | 1 |
 
 V-5: actual server VersionEndpoints extension serves the injected live recorder over TestServer.
@@ -69,3 +69,11 @@ V-10 executes the PowerShell timing wrapper with success and a throwing action,
 checking values, exceptions, duration, labels and payload omission.
 R-1: native Windows CARD-1526 probe at exact final SHA, required for AppHost path.
 PC-9/PC-10 pending Mutation: omit real startup seed scope; omit script finally log.
+
+Build adaptation: the initial CP-4 Antiphon.Tests build hit the unchanged four-minute
+deadline (fa025caf). V-9 moved to the small project with one fresh owned PostgreSQL
+container and real Program. It reuses the linked established ProductionRunnerGuard
+and refusing runtime seams. No assertions or timeout were loosened. No production
+runner, shared database or provider process is admitted. Initial setup claims about
+the shared factory above are historical; this dedicated startup witness owns its
+fresh container and records readiness/startup wall time explicitly.
