@@ -79,7 +79,7 @@ function Assert-HeadSource([string]$Head) {
 
 function Publish-Record([string]$Source, [string]$Destination) {
     if ([System.IO.File]::Exists($Destination)) {
-        [System.IO.File]::Replace($Source, $Destination, $null)
+        [System.IO.File]::Replace($Source, $Destination, [NullString]::Value)
     } else {
         [System.IO.File]::Move($Source, $Destination)
     }
