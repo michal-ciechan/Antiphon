@@ -69,6 +69,11 @@ public partial class PermissionWaitTests
         none.State.ShouldBe(LandNotificationState.NotRequired);
         await f.ReconcileAsync(none.Id, ct);
         (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == none.Id, ct)).ShouldBe(0);
+        await db.AgentTasks.Where(t => t.Id == f.TaskId).ExecuteUpdateAsync(u => u.SetProperty(t => t.ReplyTo, AgentTaskReplyTo.Session), ct);
+        f.Clock.AdvanceTo(new DateTimeOffset(f.DispatchedAt).AddMinutes(90));
+        (await f.DeadlineAsync(ct)).ShouldBe(1);
+        await f.Harness.Queue.FlushSessionAsync(f.ParentSessionId, ct);
+        f.Caller.SubmittedBodies.ShouldContain(body => body.Contains("Failed"), "a delivered diagnostic cannot suppress later failure delivery");
     }
 
     [Test]

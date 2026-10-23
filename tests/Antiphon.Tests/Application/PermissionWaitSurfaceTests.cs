@@ -3,6 +3,7 @@ using Antiphon.Tests.TestHelpers;
 using Antiphon.Server.Infrastructure.Security;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -23,6 +24,16 @@ public partial class PermissionWaitTests
         var ct = budget.Token;
         await using var f = await PermissionWaitFixture.CreateAsync(ct);
         var observed = (await f.Harness.Runtime.ObserveDialogAsync(f.SessionId, ct))!;
+        await f.ScanAsync(ct);
+        await using var db = f.Db();
+        (await db.AgentIncidents.CountAsync(i => i.SessionId == f.SessionId, ct)).ShouldBe(0, "below the generic stall threshold");
+        var original = await db.TranscriptEntries.AsNoTracking().SingleAsync(t => t.AgentSessionId == f.SessionId, ct);
+        for (var i = 2; i <= 7; i++) db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(),
+            AgentSessionId = f.SessionId, Sequence = i, Uuid = "loop-" + i, Kind = original.Kind,
+            ToolName = original.ToolName, ToolInput = original.ToolInput, Timestamp = original.Timestamp, CreatedAt = original.CreatedAt });
+        await db.SaveChangesAsync(ct);
+        f.Harness.Delegation.StallDetection.Enabled = true;
+        f.Clock.AdvanceTo(new DateTimeOffset(f.DispatchedAt).AddMinutes(30));
         foreach (var (kind, label) in new[] { ("ToolPermission", "permission dialog"), ("Question", "question dialog"), ("Choice", "provider dialog") })
         {
             f.Reader.ObserveOverride = (_, _) => Task.FromResult<ProviderDialogObservation?>(observed with { Kind = kind });
@@ -38,6 +49,11 @@ public partial class PermissionWaitTests
             row.Evidence.ShouldContain("90-minute");
             row.Actions.ShouldBe(new[] { AttentionAction.OpenDrawer, AttentionAction.OpenAgent, AttentionAction.OpenCard });
             row.Evidence.ShouldNotContain(PermissionWaitFixture.CapturedRefusal);
+            await db.AgentIncidents.Where(i => i.SessionId == f.SessionId).ExecuteDeleteAsync(ct);
+            var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+            dispatcher.WorkspaceProbeOverride = new NoWorkspaceProgress();
+            (await dispatcher.DetectStalledProgressAsync(ct)).ShouldBe(1);
+            (await db.AgentIncidents.AsNoTracking().SingleAsync(i => i.SessionId == f.SessionId && i.Kind == AgentIncidentKind.TaskProgressStalled, ct)).Message.ShouldContain("current Claude " + label);
         }
         f.Clock.Advance(TimeSpan.FromSeconds(91));
         await using var finalScope = f.Harness.Provider.CreateAsyncScope();
@@ -151,7 +167,16 @@ public partial class PermissionWaitTests
         var attention = await scope.ServiceProvider.GetRequiredService<AttentionService>().GetAsync(ct, includeProgressProbe: false);
         attention.Items.ShouldContain(i => i.TaskId == f.TaskId && i.Kind.ToString() == "ProviderInputWait");
         await f.AssertCustodyAsync(AgentTaskStatus.Working, ct);
+        await using var db = f.Db();
+        await db.AgentTasks.Where(t => t.Id == f.TaskId).ExecuteUpdateAsync(u => u.SetProperty(t => t.Workspace, WorkspaceMode.Shared), ct);
+        var check = await scope.ServiceProvider.GetRequiredService<DelegateCheckProbe>().GatherAsync(await f.TaskAsync(ct), ct);
+        DelegateCheckProbe.RenderDigest(check).ShouldContain("current Claude permission dialog");
         (await f.DeadlineAsync(ct)).ShouldBe(0);
         await f.AssertCustodyAsync(AgentTaskStatus.Working, ct);
+    }
+    private sealed class NoWorkspaceProgress : IWorkspaceProgressProbe
+    {
+        public Task<WorkspaceProgressArm> ProbeProgressAsync(string? directory, DateTime since, bool sharedCheckout, CancellationToken ct) =>
+            Task.FromResult(new WorkspaceProgressArm(false, null, null, sharedCheckout));
     }
 }
