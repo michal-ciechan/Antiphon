@@ -220,8 +220,12 @@ public sealed class ExpectationNudgeDeliveryService
         }
         else
         {
+            // Refused is the sender's definitive zero-byte result. A late guard may have
+            // claimed custody before refusing; retain its audit, but consume no input attempt.
             changed = await rows.ExecuteUpdateAsync(u => u
                 .SetProperty(n => n.AttemptState, to)
+                .SetProperty(n => n.AttemptStartedAt, n => to == ExpectationAttemptState.Refused ? null : n.AttemptStartedAt)
+                .SetProperty(n => n.AnswerDueAt, n => to == ExpectationAttemptState.Refused ? null : n.AnswerDueAt)
                 .SetProperty(n => n.OperatorOutboxState, n => n.OperatorOutboxState == ExpectationOperatorOutboxState.None
                     ? ExpectationOperatorOutboxState.Due
                     : n.OperatorOutboxState)

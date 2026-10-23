@@ -55,7 +55,8 @@ public sealed class AgentChannelService
             source = await LoadSourceSessionAsync(sourceId, ct);
 
         var input = FormatInput(source, message);
-        await _runtime.SendInputAsync(target.Id, input, ct);
+        await _runtime.SendInputAsync(target.Id, Antiphon.Agents.Pty.PtyInputEncoding.EncodeBody(input.TrimEnd()), ct);
+        await _runtime.SendInputAsync(target.Id, "\r", ct);
         await PublishMessageAsync(source, target, message.Trim(), routedByMention: false, ct);
     }
 

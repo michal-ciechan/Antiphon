@@ -1388,3 +1388,15 @@ card/session state; disabling the feature freezes existing exports.
 with `items` and `nextBefore`. Start appends mutually exclusive `resumeSessionId`,
 `retryContinuity` and existing `fresh`; POST acceptance means queued. See
 [the operator flow](ops-http.md) for strict ownership, refusals and safe queued input.
+
+### CARD-0680 additive runner input metadata
+
+`GET /sessions/{id}/snapshot` includes optional `dialog` on runners advertising
+`claudeDialogGuardV1`. `POST /sessions/{id}/conditional-input` adds
+`requireClaudeDialogClear`, `expectedInputRevision`, `expectedRuntimeEpoch` and a
+finite internal `dialogIntent`. HTTP and phone-home carry identical fields.
+Ordinary automation uses the default intent; named startup/negative/RC intents
+accept only their exact current layout and permitted key. The existing explicit
+interactive input route is separate. Missing capability/metadata refuses guarded
+writes. Runtime and server activation must both precede use; a land alone does
+not activate the guard. Native Windows and Unix watchdog qualification is separate.

@@ -43,6 +43,13 @@ public interface IAgentProtocolAdapter : IAsyncDisposable
 
     Task SendInputAsync(string input, CancellationToken ct);
 
+    Task<ProviderDialogObservation?> ObserveDialogAsync(Guid sessionId, CancellationToken ct) =>
+        Task.FromResult<ProviderDialogObservation?>(null);
+
+    // A finite RC maintenance action, separate from intentional interactive input.
+    Task DismissRemoteControlAsync(CancellationToken ct) =>
+        Task.FromException(new NotSupportedException("Guarded RC input is unsupported by this adapter."));
+
     /// <summary>
     /// CARD-0514: generation-and-sequence-conditional maintenance write. Default Unsupported —
     /// never a raw <see cref="SendInputAsync"/> fallback.

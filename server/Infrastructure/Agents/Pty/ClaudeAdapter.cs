@@ -76,14 +76,11 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
     public Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct)
         => _runner.KillAsync(timeout);
 
-    public async Task SendPromptAsync(string prompt, CancellationToken ct)
+    public Task SendPromptAsync(string prompt, CancellationToken ct)
     {
         EnsureStarted();
-        // Mandatory per E01 findings: CrunchedDetector matches on prior-turn signals
-        // if the buffer isn't reset between sends.
-        _runner.ClearLiveBuffer();
-        _firstPromptOutput = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await _runner.SendLineAsync(prompt, ct);
+        return Task.FromException(new Antiphon.Server.Application.Services.ProviderDialogInputRefusedException(
+            Antiphon.SessionRunner.Contracts.ConditionalInputOutcomes.Unsupported));
     }
 
     public async Task<bool> WaitForFirstPromptOutputAsync(TimeSpan timeout, CancellationToken ct)
@@ -103,6 +100,20 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
     {
         EnsureStarted();
         await _runner.WriteAsync(input, ct);
+    }
+
+    private Task WriteStartupAsync(string input, CancellationToken ct)
+    {
+        var screen = _runner.SnapshotScreen();
+        var observation = ClaudeDialogObservation.Observe(screen);
+        var allowed = observation.State == ClaudeDialogState.Clear;
+        if (observation.Kind == ClaudeBlockingPromptKind.TrustFolder)
+            allowed = ClaudeDialogActions.AllowsTrustKey(screen, input);
+        else if (observation.Kind == ClaudeBlockingPromptKind.EffortChoice && ClaudeEffortPrompt.Parse(screen) is { } menu)
+            allowed = ClaudeDialogActions.AllowsEffortKey(screen, input, menu.Select(_effortIntent));
+        return allowed ? _runner.WriteAsync(input, ct)
+            : Task.FromException(new Antiphon.Server.Application.Services.ProviderDialogInputRefusedException(
+                Antiphon.SessionRunner.Contracts.ConditionalInputOutcomes.ModalBlocked));
     }
 
     public Task ResizeAsync(int cols, int rows, CancellationToken ct)
@@ -126,7 +137,7 @@ public sealed class ClaudeAdapter : IAgentProtocolAdapter
         var probeClock = System.Diagnostics.Stopwatch.StartNew();
         var result = await ClaudeStartupReadiness.RunAsync(
             probeToken,
-            _ => Task.FromResult(_runner.SnapshotScreen()), (input, token) => _runner.WriteAsync(input, token), _effortIntent,
+            _ => Task.FromResult(_runner.SnapshotScreen()), WriteStartupAsync, _effortIntent,
             new ClaudeReadinessOptions(
                 ComposerProbeOptions.FromMilliseconds(_settings.ClaudeInputProbeTimeoutMs,
                     _settings.ClaudeInputProbePollIntervalMs, _settings.ClaudeInputProbeRetypeIntervalMs,

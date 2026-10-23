@@ -55,6 +55,7 @@ public sealed class AgentSessionRuntime
     private readonly SessionGenerationCompatState _generationCompat;
     private readonly ISessionRunnerDirectory? _directory;
     private readonly SessionStateStore? _states;
+    private readonly ProviderDialogObservationService _dialogs;
 
     public AgentSessionRuntime(
         ISessionRunnerClient runnerClient,
@@ -67,9 +68,11 @@ public sealed class AgentSessionRuntime
         SessionGenerationCompatState? generationCompat = null,
         // CARD-0679 D-10: absent, only the local runner's sessions and test adapters are live.
         ISessionRunnerDirectory? directory = null,
-        SessionStateStore? states = null)
+        SessionStateStore? states = null,
+        ProviderDialogObservationService? dialogs = null)
     {
         _states = states;
+        _dialogs = dialogs ?? new ProviderDialogObservationService(runnerClient);
         _directory = directory;
         _runnerClient = runnerClient;
         _eventBus = eventBus;
@@ -2065,7 +2068,9 @@ public sealed class AgentSessionRuntime
                     runnerSnapshot.RawOutput,
                     runnerSnapshot.RenderedScreen,
                     buffer.Buffer,
-                    runnerSnapshot.LastSequence);
+                    runnerSnapshot.LastSequence,
+                    runnerSnapshot.AcceptedStartedAt,
+                    runnerSnapshot.Dialog);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -2134,6 +2139,33 @@ public sealed class AgentSessionRuntime
     public async Task SendInputAsync(
         Guid sessionId, string input, CancellationToken ct, bool trackManualTurn = true)
     {
+        if (string.IsNullOrEmpty(input)) return;
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct)
+            ?? throw new NotFoundException(nameof(AgentSession), sessionId);
+        if (session.AgentKind != AgentKind.ClaudeCode)
+        {
+            await SendInteractiveInputAsync(sessionId, input, ct, trackManualTurn);
+            return;
+        }
+        var observation = await ObserveDialogAsync(sessionId, ct);
+        var request = ProviderDialogObservationService.Request(observation, sessionId,
+            SessionGeneration.Normalize(session.StartedAt), input);
+        ProviderDialogObservationService.RequireWritten(await WriteConditionalAsync(sessionId, request, ct));
+        var submitted = RecordTerminalInput(sessionId, input);
+        if (submitted && trackManualTurn) TryStartManualTurnTracking(sessionId, observation!.OutputSequence);
+    }
+
+    internal Task<ProviderDialogObservation?> ObserveDialogAsync(Guid sessionId, CancellationToken ct) =>
+        _testAdapters.TryGetValue(sessionId, out var adapter)
+            ? ProviderDialogObservationService.ReadBoundedAsync(token => adapter.ObserveDialogAsync(sessionId, token), ct)
+            : _dialogs.ReadAsync(sessionId, ct);
+
+    /// <summary>The explicit authenticated terminal-input route; never inferred from turn tracking.</summary>
+    public async Task SendInteractiveInputAsync(
+        Guid sessionId, string input, CancellationToken ct, bool trackManualTurn = true)
+    {
         if (string.IsNullOrEmpty(input))
             return;
 
@@ -2164,12 +2196,45 @@ public sealed class AgentSessionRuntime
     /// </summary>
     public Task SendModalKeyAsync(Guid sessionId, string key, CancellationToken ct)
     {
-        if (_testAdapters.TryGetValue(sessionId, out var adapter))
-            return adapter.SendInputAsync(key, ct);
-        return _runnerClient.SendInputAsync(sessionId, key, ct);
+        if (key != "2" || HasPendingTerminalInput(sessionId))
+            throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.ModalBlocked);
+        return SendDialogActionAsync(sessionId, key, ClaudeDialogInputIntent.UnsafeDeleteNo, ct);
+    }
+
+    internal Task DismissRemoteControlAsync(Guid sessionId, CancellationToken ct) =>
+        SendDialogActionAsync(sessionId, "\u001b", ClaudeDialogInputIntent.RemoteControlDismiss, ct);
+
+    private async Task SendDialogActionAsync(Guid sessionId, string key, ClaudeDialogInputIntent intent, CancellationToken ct)
+    {
+        var observation = await ObserveDialogAsync(sessionId, ct);
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var generation = await db.AgentSessions.Where(s => s.Id == sessionId).Select(s => s.StartedAt).SingleAsync(ct);
+        var request = ProviderDialogObservationService.Request(observation, sessionId, generation, key, intent);
+        ProviderDialogObservationService.RequireWritten(await WriteConditionalAsync(sessionId, request, ct));
     }
 
     public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+        Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        if (await db.AgentSessions.Where(s => s.Id == sessionId).Select(s => s.AgentKind).SingleAsync(ct) == AgentKind.ClaudeCode)
+        {
+            var observation = await ObserveDialogAsync(sessionId, ct);
+            if (observation?.OutputSequence != request.ExpectedLastSequence)
+                return new(sessionId, ConditionalInputOutcomes.StaleObservation);
+            try
+            {
+                request = ProviderDialogObservationService.Request(observation, sessionId,
+                    request.ExpectedAcceptedStartedAt, request.Input, request.DialogIntent);
+            }
+            catch (ProviderDialogInputRefusedException ex) { return new(sessionId, ex.Reason); }
+        }
+        return await WriteConditionalAsync(sessionId, request, ct);
+    }
+
+    private async Task<RunnerConditionalInputResult> WriteConditionalAsync(
         Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct)
     {
         if (_testAdapters.TryGetValue(sessionId, out var adapter))
@@ -2705,7 +2770,9 @@ public sealed record AgentSessionLiveSnapshot(
     string RawOutput,
     string RenderedScreen,
     string Buffer,
-    long LastSequence);
+    long LastSequence,
+    DateTime? AcceptedStartedAt = null,
+    ProviderDialogObservation? Dialog = null);
 
 /// <param name="AgentStatus">
 /// CARD-0161: herdr <c>pane.get.agent_status</c> verbatim for herdr sessions; null for pty

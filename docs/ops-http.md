@@ -855,3 +855,21 @@ are memory flow control, not prompt-delivery evidence. Durable UserPrompt UUIDs
 remain the delivery authority; transient output beyond both budgets is not made
 durable by this protocol. Activation requires the reviewed server restart and
 runner rollout on the rc line, with loaded SHAs and `window-v1` verified directly.
+
+### Claude dialog observation and guarded input (CARD-0680)
+
+Runner snapshots optionally carry `dialog`: runtime epoch, accepted generation,
+output sequence, input revision, Clear/Blocked/Unknown, kind/cancel metadata and
+optional submitted-input evidence. Missing metadata means unsupported/Unknown.
+The server reads this on demand with a cancellable two-second deadline; it keeps
+no cached Clear authority. Snapshot reads do not mutate queue state or send keys.
+
+Automated conditional input requires `claudeDialogGuardV1` and sends the exact
+snapshot generation/sequence/revision/epoch with `requireClaudeDialogClear=true`.
+Refusals include `modal-blocked`, `observation-unknown`, `stale-observation`,
+`generation-mismatch` and `unsupported`; none authorizes raw fallback. An unknown
+transport acknowledgement is uncertain, not a zero-byte refusal. The interactive
+session input endpoint remains intentional input and advances the same revision.
+`SessionQueueDto.modalBlockedReason` distinguishes an observed Claude dialog from
+unavailable evidence. Resolve dialogs interactively or through separately
+qualified owner actions; do not force Enter, clear holds by age, or release a seat.

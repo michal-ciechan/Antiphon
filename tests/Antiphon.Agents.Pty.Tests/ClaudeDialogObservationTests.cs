@@ -24,6 +24,7 @@ public class ClaudeDialogObservationTests
             ("multi question", "Which options?\n❯ [ ] First\n  [ ] Second\nSpace to select · Enter to submit", ClaudeDialogState.Blocked),
             ("free text question", "Your answer?\n❯ Type something\nEnter to submit · Esc to cancel", ClaudeDialogState.Blocked),
             ("unknown choice", "Select mode\n❯ Fast\n  Slow\nEnter to confirm", ClaudeDialogState.Blocked),
+            ("effort choice", "Use Fable 5.1 at high effort by default?\n> Keep xhigh\nSwitch Fable 5.1 to high effort", ClaudeDialogState.Blocked),
             ("idle", Idle, ClaudeDialogState.Clear),
             ("working", "Reading files…\n✻ Working… (esc to interrupt)", ClaudeDialogState.Clear),
             ("stale working prose", "Earlier: esc to interrupt\nSome new unrecognized screen", ClaudeDialogState.Unknown),

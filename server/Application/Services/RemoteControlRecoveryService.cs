@@ -652,7 +652,8 @@ public sealed class RemoteControlRecoveryService
         {
             return await _runtime.SendConditionalInputAsync(
                 sessionId,
-                new RunnerConditionalInputRequest(generation, sequence, input),
+                new RunnerConditionalInputRequest(generation, sequence, input,
+                    DialogIntent: input == "\u001b" ? ClaudeDialogInputIntent.RemoteControlDismiss : ClaudeDialogInputIntent.None),
                 ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

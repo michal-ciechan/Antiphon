@@ -1,4 +1,5 @@
 using System.Text;
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -380,10 +381,27 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public IReadOnlyList<string> SubmittedBodies => _submittedBodies;
 
     public DateTime? AcceptedStartedAt { get; set; }
+    public bool DialogGuardEnabled { get; set; }
+    private readonly Guid _dialogEpoch = Guid.NewGuid();
+    private long _dialogInputRevision;
+    public Task<ProviderDialogObservation?> ObserveDialogAsync(Guid sessionId, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (!DialogGuardEnabled) return Task.FromResult<ProviderDialogObservation?>(null);
+        var observed = ClaudeDialogObservation.Observe(SnapshotRenderedScreen());
+        return Task.FromResult<ProviderDialogObservation?>(new(sessionId, _dialogEpoch, AcceptedStartedAt,
+            SnapshotSequence, _dialogInputRevision, observed.State switch
+            {
+                ClaudeDialogState.Clear => ProviderDialogState.Clear,
+                ClaudeDialogState.Blocked => ProviderDialogState.Blocked,
+                _ => ProviderDialogState.Unknown
+            }, observed.Kind.ToString(), observed.CanCancel, true));
+    }
     public long SnapshotSequence { get; set; }
     public List<string> ConditionalInputs { get; } = [];
     public bool ConditionalUnsupported { get; set; }
     public string? ConditionalOutcomeOverride { get; set; }
+    public Action? BeforeConditionalInput { get; set; }
     public int SwallowEsc { get; set; }
     public int ManualTurnTracked { get; set; }
 
@@ -411,6 +429,25 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
                 Guid.Empty, ConditionalInputOutcomes.StaleObservation, AcceptedStartedAt, SnapshotSequence);
         }
 
+        if (request.RequireClaudeDialogClear)
+        {
+            BeforeConditionalInput?.Invoke();
+            if (!DialogGuardEnabled) return new(Guid.Empty, ConditionalInputOutcomes.Unsupported);
+            if (request.ExpectedInputRevision != _dialogInputRevision || request.ExpectedRuntimeEpoch != _dialogEpoch)
+                return new(Guid.Empty, ConditionalInputOutcomes.StaleObservation);
+            var screen = SnapshotRenderedScreen();
+            var state = ClaudeDialogObservation.Observe(screen).State;
+            var allowed = request.DialogIntent switch
+            {
+                ClaudeDialogInputIntent.None => state == ClaudeDialogState.Clear,
+                ClaudeDialogInputIntent.UnsafeDeleteNo => request.Input == "2" && ClaudeDialogActions.IsUnsafeDeleteApproval(screen),
+                ClaudeDialogInputIntent.RemoteControlDismiss => request.Input == "\u001b" && ClaudeRemoteControlMenu.AllowsDismiss(screen),
+                _ => false
+            };
+            if (!allowed) return new(Guid.Empty, state == ClaudeDialogState.Unknown
+                ? ConditionalInputOutcomes.ObservationUnknown : ConditionalInputOutcomes.ModalBlocked);
+        }
+
         ConditionalInputs.Add(request.Input);
         await SendInputAsync(request.Input, ct);
         SnapshotSequence++;
@@ -420,6 +457,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
 
     public async Task SendInputAsync(string input, CancellationToken ct)
     {
+        _dialogInputRevision++;
         if (ThrowOnSend is { } throwOnSend)
             throw throwOnSend;
         if (BeforeInput is { } beforeInput)
@@ -588,6 +626,19 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         {
             _emptyComposerSnapshotsRemaining--;
             composer = string.Empty;
+        }
+
+        // Explicit controlled frames are whole frames. Render a newly typed body inside a
+        // readable empty box; a modal hides the composer instead of acquiring a fake idle box.
+        if (DialogGuardEnabled && (frame is not null || RenderedScreenOverride is not null))
+        {
+            if (composer.Length > 0 && ClaudeScreen.TryReadComposer(screen, out var old)
+                && ClaudeScreen.ComposerContentIsEmpty(old))
+            {
+                var prompt = screen.LastIndexOf('❯');
+                if (prompt >= 0) return screen.Insert(prompt + 1, " " + composer.ReplaceLineEndings("\n  "));
+            }
+            return screen;
         }
 
         if (ClaudeComposerChrome)

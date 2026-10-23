@@ -1,4 +1,4 @@
-# CARD-0680 partial Code: classifier and send-guard witnesses
+# CARD-0680 Code execution record
 
 Original Code/landing owner: `52a5dc76-feb4-4349-acaa-e3ca459b918c`.
 Branch: `feat/card-task-52a5dc76`.
@@ -7,7 +7,7 @@ Base: `5a0cfd71324e2ff52c93e81b35004fc58e769f62` (clean assigned master start).
 Plan: [shared Claude dialog observation](../superpowers/plans/2026-10-23-card-0680-claude-dialog-send-guard-plan.md).
 Design/PC inventory: [Code verification design](../superpowers/plans/2026-10-23-card-0680-verification-design.md).
 
-## Outcome and limitation
+## Initial attempt: outcome and limitation (historical)
 
 Partial, not landable. The bounded pure classifier and compiling runner refusal
 witnesses are pushed. Runner enforcement, input-history capture, HTTP/phone-home
@@ -115,3 +115,38 @@ positive submitted-input proof and ordinary rows; retain native obligations.
 The first ordinary Review is still required after implementation/ordinary V/R.
 Next is code, not review or land. Restart now: none. Eventual activation requires
 both server and runner guard/capability on the reviewed RC plus native witnesses.
+
+## Resumed Code after the AppHost outage
+
+Caller restored task ownership and authorized 75 further minutes. The 502 outage was external AppHost downtime, not a failing guard. The runner guard and positive submitted-input history now have a green CP-2/CP-3 run at 9e12263b526d73a34b94063317a330cf938af52c. Server CP-4/CP-5 subsequently failed on the intended missing refusal at 13b2a50c233f7cb66fba629095b67e99e57f00e7. The intervening build-only failure at 9e12263b was a Shouldly expression-tree compilation error; it is not a red witness. Its owned 1389 files / 314226471 bytes were inspected (no links/tracked paths) and removed individually after executor death.
+
+S2 implements guarded automated runtime, queue/expectation, channel, watchdog, health, RC and boot/retry writes. Explicit interactive input is separate. Native watchdog canary code is authored and remains unexecuted/OWED. This report is committed before the verification of that slice. The exact final SHA, ordinary results, receipt validation, full history audit and merge-tree/RC application checks are recorded after execution in .antiphon/task-52a5dc76.md; this text does not predict green. CP-1..CP-7 are the closed portable selection. V-5/R-5 and parent V-6/R-6 remain OWED. Unit/whole suites remain explicitly deferred. PC-1..PC-9 and every variant remain pending SourceLanding Mutation. No timeout or assertion was relaxed.
+
+The resumed checkpoint bootstrap used the host gate: slot=granted waited=0s held=8s, 4 warnings and 0 errors. The only unlisted build was this necessary tool bootstrap. No full-assembly run, native key, restart or deployment occurred.
+
+
+### Run 20261023-010501-8524
+
+CHECKPOINT CP-2 commit=71ac36b0f29fdfe41e36f963e5e7aee7cb70a1e3 build=ok filter=/*/*/ClaudeDialogInputGuardTests/C680_EveryWriteRechecksTheCurrentDialog executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-52a5dc76/.antiphon/checkpoints/20261023-010501-8524/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=71ac36b0f29fdfe41e36f963e5e7aee7cb70a1e3 sourceState=clean buildSource=verified
+PHASES CP-2 slotWait=0s build=93.8407234s startup=5.2305659s testsWall=0.8120841s teardown=1.0437295s hostWall=7.0863754s
+CHECKPOINT CP-3 commit=71ac36b0f29fdfe41e36f963e5e7aee7cb70a1e3 build=reused filter=/*/*/ClaudeDialogInputGuardTests/C680_InputProofInvalidatesOnWriteFailureAndAdoption executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-52a5dc76/.antiphon/checkpoints/20261023-010501-8524/rows/CP-3/run.trx slot=granted waited=30s dirty=0 source=71ac36b0f29fdfe41e36f963e5e7aee7cb70a1e3 sourceState=clean buildSource=verified
+PHASES CP-3 slotWait=30s build=0s startup=4.1065015s testsWall=0.2098848s teardown=0.4156458s hostWall=4.732032s
+
+### Run 20261023-011353-d86a
+
+CHECKPOINT CP-2 commit=9e12263b526d73a34b94063317a330cf938af52c build=ok filter=/*/*/ClaudeDialogInputGuardTests/C680_EveryWriteRechecksTheCurrentDialog executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-52a5dc76/.antiphon/checkpoints/20261023-011353-d86a/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=9e12263b526d73a34b94063317a330cf938af52c sourceState=clean buildSource=verified
+PHASES CP-2 slotWait=0s build=36.9189209s startup=1.7999767s testsWall=0.3629302s teardown=0.62114s hostWall=2.7840493s
+CHECKPOINT CP-3 commit=9e12263b526d73a34b94063317a330cf938af52c build=reused filter=/*/*/ClaudeDialogInputGuardTests/C680_InputProofInvalidatesOnWriteFailureAndAdoption executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-52a5dc76/.antiphon/checkpoints/20261023-011353-d86a/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=9e12263b526d73a34b94063317a330cf938af52c sourceState=clean buildSource=verified
+PHASES CP-3 slotWait=0s build=0s startup=2.8511377s testsWall=0.2240859s teardown=0.4995137s hostWall=3.574737s
+
+### Run 20261023-011536-08b4
+
+CHECKPOINT CP-4 commit=9e12263b526d73a34b94063317a330cf938af52c build=failed filter=/*/*/ClaudeDialogDeliveryTests/C680_QueueAndExpectationKeepDialogInputPending executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a slot=skipped waited=0s dirty=0 source=9e12263b526d73a34b94063317a330cf938af52c sourceState=clean buildSource=unknown
+CHECKPOINT CP-5 commit=9e12263b526d73a34b94063317a330cf938af52c build=failed filter=/*/*/ClaudeDialogDeliveryTests/C680_AllAutomatedWritersUseTheGuard executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a slot=skipped waited=0s dirty=0 source=9e12263b526d73a34b94063317a330cf938af52c sourceState=clean buildSource=unknown
+
+### Run 20261023-011936-7362
+
+CHECKPOINT CP-4 commit=13b2a50c233f7cb66fba629095b67e99e57f00e7 build=ok filter=/*/*/ClaudeDialogDeliveryTests/C680_QueueAndExpectationKeepDialogInputPending executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-52a5dc76/.antiphon/checkpoints/20261023-011936-7362/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=13b2a50c233f7cb66fba629095b67e99e57f00e7 sourceState=clean buildSource=verified
+PHASES CP-4 slotWait=0s build=199.6723883s startup=49.3994987s testsWall=6.7065459s teardown=1.2516884s hostWall=57.3577475s
+CHECKPOINT CP-5 commit=13b2a50c233f7cb66fba629095b67e99e57f00e7 build=reused filter=/*/*/ClaudeDialogDeliveryTests/C680_AllAutomatedWritersUseTheGuard executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-52a5dc76/.antiphon/checkpoints/20261023-011936-7362/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=13b2a50c233f7cb66fba629095b67e99e57f00e7 sourceState=clean buildSource=verified
+PHASES CP-5 slotWait=0s build=0s startup=17.2146833s testsWall=3.3354182s teardown=1.2353613s hostWall=21.7854627s

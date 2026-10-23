@@ -41,6 +41,9 @@ internal interface ITranscriptTailer : IAsyncDisposable
     /// <summary>The transcript currently being tailed, or null while unbound.</summary>
     string? BoundTranscriptPath { get; }
 
+    /// <summary>Opaque current native file/conversation identity; unsupported tailers return null.</summary>
+    string? NativeBindingIdentity => null;
+
     /// <summary>
     /// How the current bind was made (<see cref="TranscriptBindMethods"/>), or null while unbound.
     /// CARD-0180 S4 / CARD-0181: Exact vs Heuristic is derived at claim time; this is the
