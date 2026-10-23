@@ -188,7 +188,7 @@
     "reason": "filesystem-function",
     "owner": "App/App.csproj",
     "files": {
-      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><PackageTags>$([System.String]::Copy(&quot;$([System.IO.File]::Exists('$(MSBuildThisFileDirectory)../docs/flag.md'))&quot;))</PackageTags></PropertyGroup></Project>",
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Probe Include=\"sentinel.txt\"><Body>$([System.String]::Copy($([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../docs/flag.md'))))</Body></Probe></ItemGroup></Project>",
       "Directory.Build.props": "<Project />",
       "Directory.Build.targets": "<Project />",
       "App/sentinel.txt": "safe",

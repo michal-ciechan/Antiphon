@@ -126,6 +126,54 @@ public sealed partial class LandGraphEvaluationTests
         }
     }
 
+    [Test]
+    [Timeout(300_000)]
+    public async Task C1528_UpdateRefusalPreservesRecords()
+    {
+        foreach (var variant in new[] { "present", "projected", "metadata" })
+        foreach (var priorRecords in new[] { false, true })
+        {
+            var fixture = FilesystemFixtures().Single(f => f.Id == variant);
+            var files = fixture.Inputs();
+            // Use the wrapper's established property/item/metadata names. This isolates the
+            // evaluator decision from the older pre-check's separate name allowlists.
+            var unsafeProject = files["App/App.csproj"].Replace("Probe", "None")
+                .Replace("Rel", "PackagePath").Replace("Body", "PackagePath");
+            files["App/App.csproj"] = SdkProject("");
+            await using var repo = await ScriptRepoAsync(files);
+            byte[]? manifest = null;
+            byte[]? evaluation = null;
+            if (priorRecords)
+            {
+                var initial = await RunScriptAsync(repo.Root, "-Update");
+                initial.ExitCode.ShouldBe(0, initial.Text);
+                manifest = await File.ReadAllBytesAsync(repo.Full(ManifestFile));
+                evaluation = await File.ReadAllBytesAsync(repo.Full(EvaluationFile));
+            }
+            await File.WriteAllTextAsync(repo.Full("App/App.csproj"), unsafeProject);
+            await AuditRepo.GitAsync(repo.Root, "add", "App/App.csproj");
+            await AuditRepo.GitAsync(repo.Root, "-c", "user.name=c1528", "-c", "user.email=c1528@antiphon.test",
+                "commit", "-qm", "unsafe evaluation expression");
+            var pre = await RunScriptAsync(repo.Root, "-Update", "audit-land-verification-precheck.ps1",
+                "-ManifestPath", repo.Full("precheck-manifest.txt"));
+            pre.ExitCode.ShouldBe(0, variant + ": the pre-check must admit this witness: " + pre.Text);
+            var run = await RunScriptAsync(repo.Root, "-Update");
+            run.ExitCode.ShouldBe(1, variant + ": " + run.Text);
+            run.Text.ShouldContain("filesystem-function", Case.Sensitive, run.Text);
+            run.Text.ShouldContain("land graph evaluation refused (exit 1)", Case.Sensitive, run.Text);
+            if (priorRecords)
+            {
+                (await File.ReadAllBytesAsync(repo.Full(ManifestFile))).ShouldBe(manifest!);
+                (await File.ReadAllBytesAsync(repo.Full(EvaluationFile))).ShouldBe(evaluation!);
+            }
+            else
+            {
+                File.Exists(repo.Full(ManifestFile)).ShouldBeFalse(run.Text);
+                File.Exists(repo.Full(EvaluationFile)).ShouldBeFalse(run.Text);
+            }
+        }
+    }
+
     private static async Task<AuditRepo> ScriptRepoAsync(Dictionary<string, string> files)
     {
         files[PinsFile] = "";
@@ -140,11 +188,15 @@ public sealed partial class LandGraphEvaluationTests
         return repo;
     }
 
-    private static async Task<ToolRun> RunScriptAsync(string root, string mode)
+    private static async Task<ToolRun> RunScriptAsync(string root, string mode,
+        string script = "audit-land-verification-graph.ps1", params string[] extra)
     {
         var start = new ProcessStartInfo("pwsh") { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var key in start.Environment.Keys.Where(k => k.StartsWith("MSBuild", StringComparison.OrdinalIgnoreCase)).ToArray()) start.Environment.Remove(key);
-        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(root, "scripts/audit-land-verification-graph.ps1"), mode }) start.ArgumentList.Add(arg);
+        // Exercise absent/empty/value wrapper inputs under strict PowerShell semantics too.
+        var arguments = new[] { Path.Combine(root, "scripts", script), mode }.Concat(extra);
+        var command = "Set-StrictMode -Version Latest; & " + string.Join(" ", arguments.Select(a => "'" + a.Replace("'", "''") + "'"));
+        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command", command }) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
