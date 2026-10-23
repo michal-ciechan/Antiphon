@@ -1,0 +1,164 @@
+[
+  {
+    "id": "gate",
+    "group": "environment",
+    "expected": 1,
+    "reason": "environment-property",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup Condition=\"'$(C1540_GATE)'=='1'\"><EmbeddedResource Include=\"../docs/a.md\" /></ItemGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/Program.cs": "// safe",
+      "docs/a.md": "docs"
+    },
+    "omit": [],
+    "environment": {
+      "C1540_GATE": "1"
+    }
+  },
+  {
+    "id": "include",
+    "group": "environment",
+    "expected": 1,
+    "reason": "environment-property",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Probe Include=\"$(C1540_DOCS)\" /></ItemGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/Program.cs": "// safe",
+      "docs/a.md": "docs"
+    },
+    "omit": [],
+    "environment": {
+      "C1540_DOCS": "../docs/a.md"
+    }
+  },
+  {
+    "id": "path",
+    "group": "environment",
+    "expected": 1,
+    "reason": "environment-property",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><PropertyGroup><ToolPathCopy>$(PATH)</ToolPathCopy></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/Program.cs": "// safe",
+      "docs/a.md": "docs"
+    },
+    "omit": [],
+    "environment": {
+      "PATH": "c1540"
+    }
+  },
+  {
+    "id": "modified",
+    "group": "timestamp",
+    "expected": 1,
+    "reason": "timestamp-metadata",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Stamp Include=\"Program.cs\"><Value>%(ModifiedTime)</Value></Stamp></ItemGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/Program.cs": "// safe",
+      "docs/a.md": "docs"
+    },
+    "omit": []
+  },
+  {
+    "id": "created",
+    "group": "timestamp",
+    "expected": 1,
+    "reason": "timestamp-metadata",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Stamp Include=\"Program.cs\"><Value>%(CreatedTime)</Value></Stamp></ItemGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/Program.cs": "// safe",
+      "docs/a.md": "docs"
+    },
+    "omit": []
+  },
+  {
+    "id": "accessed",
+    "group": "timestamp",
+    "expected": 1,
+    "reason": "timestamp-metadata",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Stamp Include=\"Program.cs\"><Value>%(AccessedTime)</Value></Stamp></ItemGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/Program.cs": "// safe",
+      "docs/a.md": "docs"
+    },
+    "omit": []
+  },
+  {
+    "id": "stamp-gate",
+    "group": "timestamp",
+    "expected": 1,
+    "reason": "timestamp-metadata",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Stamp Include=\"Program.cs\" /></ItemGroup><ItemGroup Condition=\"'@(Stamp->'%(ModifiedTime)')'=='2001-01-01 00:00:00.0000000'\"><Probe Include=\"../docs/a.md\" /></ItemGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/Program.cs": "// safe",
+      "docs/a.md": "docs"
+    },
+    "omit": []
+  },
+  {
+    "id": "item-function",
+    "group": "timestamp",
+    "expected": 1,
+    "reason": "timestamp-metadata",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Stamp Include=\"Program.cs\" /></ItemGroup><PropertyGroup><Value>@(Stamp->Metadata('ModifiedTime'))</Value></PropertyGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/Program.cs": "// safe",
+      "docs/a.md": "docs"
+    },
+    "omit": []
+  },
+  {
+    "id": "directory",
+    "group": "timestamp",
+    "expected": 1,
+    "reason": "timestamp-metadata",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Stamp Include=\"../docs\"><Value>%(ModifiedTime)</Value></Stamp></ItemGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/Program.cs": "// safe",
+      "docs/a.md": "docs"
+    },
+    "omit": []
+  },
+  {
+    "id": "unpinned",
+    "group": "knobs",
+    "expected": 1,
+    "reason": "(missing pin)",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup Condition=\"'$(UsePublishedPackages)'=='true'\"><Probe Include=\"../docs/a.md\" /></ItemGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/Program.cs": "// safe",
+      "docs/a.md": "docs"
+    },
+    "omit": [],
+    "environment": {
+      "UsePublishedPackages": "true"
+    }
+  }
+]
