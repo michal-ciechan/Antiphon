@@ -305,6 +305,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             await db.SaveChangesAsync();
         }
 
+        await adapter.EnableClaudeDialogObservationAsync(connection, sessionId);
         adapter.RegisterOnStart = harness.Runtime;
         adapter.OnSubmitted = async body =>
             await BridgeQueueHarness.InsertEntryAsync(sessionId, TranscriptKinds.UserPrompt, body,

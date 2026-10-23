@@ -35,12 +35,14 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         var sweepClock = new FakeTimeProvider(DateTimeOffset.UtcNow.AddMinutes(-5));
         var parent = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
+            ClaudeDialogObservation = true,
             AlwaysOn = true,
             PreserveDatabaseOnDispose = true,
             ConnectionString = schema.ConnectionString,
         });
         var decoy = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
+            ClaudeDialogObservation = true,
             AlwaysOn = true,
             PreserveDatabaseOnDispose = true,
             ConnectionString = schema.ConnectionString,
@@ -250,12 +252,14 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         var ancientAt = Pg(sweepClock.GetUtcNow().UtcDateTime.AddMinutes(-2000));
         var parent = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
+            ClaudeDialogObservation = true,
             AlwaysOn = true,
             PreserveDatabaseOnDispose = true,
             ConnectionString = schema.ConnectionString,
         });
         var decoy = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
+            ClaudeDialogObservation = true,
             AlwaysOn = true,
             PreserveDatabaseOnDispose = true,
             ConnectionString = schema.ConnectionString,

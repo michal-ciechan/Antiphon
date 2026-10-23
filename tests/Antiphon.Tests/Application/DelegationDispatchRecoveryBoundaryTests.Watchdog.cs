@@ -516,6 +516,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         var stopper = new RecordingSessionStopper();
         var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
+            ClaudeDialogObservation = true,
             ConnectionString = connection,
             PreserveDatabaseOnDispose = true,
             ConfigureDbContext = interceptor is null ? null : options => options.AddInterceptors(interceptor),
@@ -531,6 +532,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 services.AddScoped<AgentTaskDispatcher>();
             },
         });
+        await adapter.EnableClaudeDialogObservationAsync(connection, seeded.SessionId);
         adapter.RegisterOnStart = harness.Runtime;
         harness.Runtime.SetTestAcceptedStartedAt(seeded.SessionId, seeded.StartedAt);
         return new DispatchWorld(harness, stopper, runner, adapter);

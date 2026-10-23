@@ -120,6 +120,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             sessionId = session;
             resume = Task.Run(async () =>
             {
+                await adapter.EnableClaudeDialogObservationAsync(schema.ConnectionString, session);
                 BackfillCheckPause.Armed.Value = true;
                 await using var scope = harness.Provider.CreateAsyncScope();
                 await scope.ServiceProvider.GetRequiredService<AgentSessionService>()

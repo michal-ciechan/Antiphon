@@ -87,6 +87,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
 
             await using var queue = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
             {
+                ClaudeDialogObservation = true,
                 ConnectionString = schema.ConnectionString,
                 PreserveDatabaseOnDispose = true,
                 AttachSessionId = seeded.SessionId,
