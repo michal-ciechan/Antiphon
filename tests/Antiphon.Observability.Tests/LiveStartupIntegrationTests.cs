@@ -31,6 +31,7 @@ public sealed class LiveStartupIntegrationTests
             .WithDatabase("antiphon_c1564").WithUsername("test").WithPassword("test").Build();
         await container.StartAsync(cancellationToken);
         Console.WriteLine($"C1564 fixture-setup container-ready elapsedMs={clock.Elapsed.TotalMilliseconds}");
+        clock.Restart();
         var root = Path.Combine(Path.GetTempPath(), "c1564-host-" + Guid.NewGuid().ToString("N"));
         await using var factory = new StartupFactory(container.GetConnectionString(), root);
         using var http = factory.CreateClient();
