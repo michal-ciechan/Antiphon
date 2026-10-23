@@ -38,6 +38,7 @@ public sealed class TimeoutDefaults
 {
     public int RowMinutes { get; set; } = 15;
     public int TotalMinutes { get; set; } = 90;
+    public int? HardWallMinutes { get; set; }
 }
 
 public sealed class RerunDefaults

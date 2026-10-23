@@ -15,6 +15,9 @@ public sealed class SchedulerRequest
     public bool SerialAll { get; init; }
     public TimeSpan? RowTimeoutOverride { get; init; }
     public TimeSpan? TotalTimeout { get; init; }
+    public TimeSpan? HardWallTimeout { get; init; }
+    public RunBudgetClock? Budget { get; init; }
+    internal RunBudgetClock? ActiveBudget { get; set; }
     public Action? Publish { get; init; }
     public Func<CancellationToken, Task>? BeforeLaunch { get; init; }
     public Func<string>? CancellationReason { get; init; }
@@ -48,17 +51,32 @@ public sealed class RunScheduler
     {
         _driver = driver;
         _platform = platform;
-        _rows = new RowRunner(driver, platform);
+        _rows = new RowRunner(driver, platform, buildTimeProvider);
         _buildTimeProvider = buildTimeProvider;
     }
 
     public async Task<SchedulerResult> RunAsync(SchedulerRequest request, CancellationToken cancellationToken)
     {
-        using var deadline = request.TotalTimeout is TimeSpan limit && limit > TimeSpan.Zero
-            ? new CancellationTokenSource(limit, _buildTimeProvider) : new CancellationTokenSource();
-        using var total = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        using var ownedBudget = request.Budget is null ? new RunBudgetClock(request.TotalTimeout,
+            request.HardWallTimeout ?? (request.TotalTimeout is TimeSpan execution
+                ? execution + TimeSpan.FromMinutes(request.Manifest.Build.SlotWaitMinutes) : null), _buildTimeProvider) : null;
+        var budget = request.Budget ?? ownedBudget!;
+        request.ActiveBudget = budget;
+        request.State.HardWallTimeoutAt = budget.HardWallLimit is TimeSpan wallLimit ? budget.StartedAt + wallLimit : null;
+        using var schedulerWork = budget.Work();
+        using var total = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, budget.Token);
 
-        var session = request.Session ?? await request.Slots.ProbeAsync(total.Token).ConfigureAwait(false);
+        SlotSession session;
+        try { session = request.Session ?? await request.Slots.ProbeAsync(total.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (budget.Token.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            request.State.Reason = budget.Reason;
+            request.State.ExitCode = ExitCodes.Timeout;
+            var closed = request.Rows.Select(row => Placeholder(row, budget.Reason ?? "timeout", ExitCodes.Timeout)).ToList();
+            request.State.Rows = closed.Select(row => new RowProgress { Id = row.Id, State = row.State, ExitCode = row.ExitCode }).ToList();
+            Publish(request);
+            return new SchedulerResult { ExitCode = ExitCodes.Timeout, Rows = closed, State = request.State };
+        }
         var buildStates = request.Manifest.Builds.ToDictionary(
             build => build.Id,
             build => new BuildProgress { Id = build.Id, State = "pending" },
@@ -127,10 +145,13 @@ public sealed class RunScheduler
                     pending.Remove(row);
                     var build = buildStates[row.Build!];
                     var admission = build.AdmissionExitCode != 0;
-                    var state = admission ? build.SlotReason is "source_changed" or "source_unknown" ? build.SlotReason
-                        : build.Slot == "timeout" ? "slot-timeout" : "slot-refused" : "build-failed";
+                    var state = build.TerminalReason ?? (admission ? build.SlotReason is "source_changed" or "source_unknown" ? build.SlotReason
+                        : build.Slot == "timeout" ? "slot-timeout" : "slot-refused" : "build-failed");
                     var code = admission ? build.AdmissionExitCode : ExitCodes.Invalid;
                     var receipt = Placeholder(row, state, code);
+                    receipt.TerminalReason = build.TerminalReason;
+                    receipt.ExecutedSeconds = 0;
+                    receipt.WallSeconds = 0;
                     if (admission)
                     {
                         receipt.Slot = build.Slot;
@@ -166,7 +187,7 @@ public sealed class RunScheduler
                     if (nextBuild is not null)
                     {
                         var buildSpec = request.Manifest.Builds.First(build => build.Id == nextBuild.Build);
-                        buildTask = BuildOneAsync(request, buildSpec, buildStates[buildSpec.Id], session, total.Token);
+                        buildTask = BuildOneAsync(request, buildSpec, buildStates[buildSpec.Id], session, budget, total.Token);
                         Publish(request);
                     }
                 }
@@ -195,7 +216,7 @@ public sealed class RunScheduler
                     var buildState = next.IsCommand
                         ? "n/a"
                         : reportedBuilds.Add(next.Build ?? "") ? "ok" : "reused";
-                    running.Add((next, RunRowAsync(request, next, session, rowProgress, buildState, total.Token), rowProgress));
+                    running.Add((next, RunRowAsync(request, next, session, rowProgress, buildState, budget, total.Token), rowProgress));
                 }
             }
 
@@ -209,7 +230,10 @@ public sealed class RunScheduler
             var tasks = running.Select(item => (Task)item.Task).ToList();
             if (buildTask is not null)
                 tasks.Add(buildTask);
-            var completed = await Task.WhenAny(tasks).ConfigureAwait(false);
+            Task completed;
+            schedulerWork.SetWorking(false);
+            try { completed = await Task.WhenAny(tasks).ConfigureAwait(false); }
+            finally { schedulerWork.SetWorking(true); }
             if (completed == buildTask)
             {
                 await buildTask!.ConfigureAwait(false);
@@ -224,11 +248,11 @@ public sealed class RunScheduler
             {
                 result = await task.ConfigureAwait(false);
                 if (cancellationToken.IsCancellationRequested && request.OwnerBound)
-                    result = Placeholder(spec, request.CancellationReason?.Invoke() ?? "owner-ended", ExitCodes.OwnerEnded);
+                    CloseResult(result, request.CancellationReason?.Invoke() ?? "owner-ended", ExitCodes.OwnerEnded);
             }
             catch (OperationCanceledException)
             {
-                result = ClosedRow(request, spec, cancellationToken);
+                result = ClosedRow(request, spec, cancellationToken, progress, budget);
             }
 
             progress.State = result.State;
@@ -240,6 +264,7 @@ public sealed class RunScheduler
             progress.Seconds = result.Seconds > 0 ? result.Seconds : Elapsed(progress.StartedAt);
             progress.Repeat = result.Repeat;
             progress.Timings = result.Timings;
+            progress.TerminalReason = result.TerminalReason;
             finished.Add(result);
             Publish(request);
         }
@@ -251,11 +276,11 @@ public sealed class RunScheduler
             {
                 result = await task.ConfigureAwait(false);
                 if (cancellationToken.IsCancellationRequested && request.OwnerBound)
-                    result = Placeholder(spec, request.CancellationReason?.Invoke() ?? "owner-ended", ExitCodes.OwnerEnded);
+                    CloseResult(result, request.CancellationReason?.Invoke() ?? "owner-ended", ExitCodes.OwnerEnded);
             }
             catch (OperationCanceledException)
             {
-                result = ClosedRow(request, spec, cancellationToken);
+                result = ClosedRow(request, spec, cancellationToken, progress, budget);
             }
             progress.State = result.State;
             progress.ExitCode = result.ExitCode;
@@ -264,6 +289,7 @@ public sealed class RunScheduler
             progress.WaitedSeconds = result.WaitedSeconds;
             progress.Repeat = result.Repeat;
             progress.Timings = result.Timings;
+            progress.TerminalReason = result.TerminalReason;
             finished.Add(result);
             Publish(request);
         }
@@ -279,9 +305,14 @@ public sealed class RunScheduler
 
         var codes = finished.Select(row => row.ExitCode).ToArray();
         var exit = cancellationToken.IsCancellationRequested
-            ? request.OwnerBound ? ExitCodes.OwnerEnded : ExitCodes.Timeout
+            ? request.OwnerBound ? ExitCodes.OwnerEnded : ExitCodes.Canceled
             : codes.Contains(ExitCodes.OwnerEnded) ? ExitCodes.OwnerEnded
+            : budget.Reason is not null && !codes.Contains(ExitCodes.Invalid) && !codes.Contains(ExitCodes.RestoreFailed) ? ExitCodes.Timeout
             : ExitCodes.FromRowStates(codes);
+        request.State.Budget = budget.Snapshot(TimeSpan.FromMinutes(request.Manifest.Build.SlotWaitMinutes));
+        request.State.Reason = cancellationToken.IsCancellationRequested
+            ? request.OwnerBound ? request.CancellationReason?.Invoke() ?? "owner-ended" : "caller-requested"
+            : budget.Reason ?? finished.FirstOrDefault(row => row.TerminalReason is not null)?.TerminalReason;
         request.State.ExitCode = exit;
         Publish(request);
         return new SchedulerResult { ExitCode = exit, Rows = finished, State = request.State };
@@ -360,8 +391,12 @@ public sealed class RunScheduler
         BuildSpec build,
         BuildProgress progress,
         SlotSession session,
+        RunBudgetClock budget,
         CancellationToken cancellationToken)
     {
+        using var activity = budget.Work();
+        var wallStarted = _buildTimeProvider.GetTimestamp();
+        long? admittedAt = null;
         var before = OutputCleanup.MatchingIsolatedDirectories(request.WorkingDirectory, build.Id);
         try
         {
@@ -413,18 +448,23 @@ public sealed class RunScheduler
         var started = DateTimeOffset.UtcNow;
         try
         {
-            await using var lease = await request.Slots.AcquireAsync(session, "build:" + build.Id, cancellationToken).ConfigureAwait(false);
+            progress.Slot = "acquiring";
+            await using var lease = await budget.AcquireAsync(request.Slots, session, "build:" + build.Id, activity,
+                TimeSpan.FromMinutes(request.Manifest.Build.SlotWaitMinutes), value => progress.WaitedSeconds = Math.Max(progress.WaitedSeconds, value), cancellationToken).ConfigureAwait(false);
             progress.Slot = lease.State;
             progress.SlotReason = lease.SlotReason;
-            progress.WaitedSeconds = lease.WaitedSeconds;
+            progress.WaitedSeconds = Math.Max(progress.WaitedSeconds, lease.WaitedSeconds);
             if (lease.ExitCode != 0)
             {
                 progress.AdmissionExitCode = lease.ExitCode;
+                progress.TerminalReason = lease.ExitCode == ExitCodes.SlotTimeout ? "slot-admission-deadline-exceeded" : null;
                 progress.State = "failed";
                 Publish(request);
                 return;
             }
 
+            admittedAt = _buildTimeProvider.GetTimestamp();
+            cancellationToken.ThrowIfCancellationRequested();
             var binding = CheckpointBuildBinding.Expected(request.WorkingDirectory, build.Project, build.OutputPath,
                 properties, request.State.Source.Start);
             if (request.SourceGuard?.Observe() == false)
@@ -481,6 +521,8 @@ public sealed class RunScheduler
         catch (OperationCanceledException)
         {
             progress.State = "failed";
+            progress.TerminalReason = budget.Reason;
+            progress.AdmissionExitCode = ExitCodes.Timeout;
         }
 
         var outside = launched && ledger is not null ? BuildConfinement.VerifyLedger(ledger) : null;
@@ -507,6 +549,11 @@ public sealed class RunScheduler
                 progress.SlotReason = refusal;
             }
             else if (!sourceOk) { progress.AdmissionExitCode = ExitCodes.Invalid; progress.SlotReason = request.SourceGuard?.Reason; }
+            else if (result.TimedOut)
+            {
+                progress.AdmissionExitCode = ExitCodes.Timeout;
+                progress.TerminalReason = "build-deadline-exceeded";
+            }
             progress.Source = request.SourceGuard?.Copy(progress.State == "ok" ? "verified" : "unknown") ?? new SourceEvidence();
         }
         else if (outside?.Kind is not null)
@@ -520,6 +567,8 @@ public sealed class RunScheduler
         }
         finally
         {
+            progress.WallSeconds = _buildTimeProvider.GetElapsedTime(wallStarted).TotalSeconds;
+            progress.ExecutedSeconds = admittedAt is long at ? _buildTimeProvider.GetElapsedTime(at).TotalSeconds : 0;
             OutputCleanup.RecordCreatedOutputs(request.State, request.WorkingDirectory, build.Id, before);
         }
     }
@@ -530,10 +579,20 @@ public sealed class RunScheduler
         SlotSession session,
         RowProgress progress,
         string buildState,
+        RunBudgetClock budget,
         CancellationToken cancellationToken)
     {
+        using var activity = budget.Work();
+        var wallStarted = _buildTimeProvider.GetTimestamp();
+        long? admittedAt = null;
+        try
+        {
         var started = DateTimeOffset.UtcNow;
-        await using var lease = await request.Slots.AcquireAsync(session, spec.Id + "@" + (spec.Build ?? "command"), cancellationToken).ConfigureAwait(false);
+        progress.Slot = "acquiring";
+        await using var lease = await budget.AcquireAsync(request.Slots, session, spec.Id + "@" + (spec.Build ?? "command"), activity,
+            TimeSpan.FromMinutes(request.Manifest.Build.SlotWaitMinutes), value => progress.WaitedSeconds = Math.Max(progress.WaitedSeconds, value), cancellationToken).ConfigureAwait(false);
+        progress.Slot = lease.State;
+        progress.SlotReason = lease.SlotReason;
         if (lease.ExitCode != 0)
         {
             return new RowRunResult
@@ -545,6 +604,9 @@ public sealed class RunScheduler
                 Slot = lease.State,
                 SlotReason = lease.SlotReason,
                 WaitedSeconds = lease.WaitedSeconds,
+                TerminalReason = lease.ExitCode == ExitCodes.SlotTimeout ? "slot-admission-deadline-exceeded" : null,
+                ExecutedSeconds = 0,
+                WallSeconds = _buildTimeProvider.GetElapsedTime(wallStarted).TotalSeconds,
                 Line = CheckpointLine.Format(new CheckpointLineModel
                 {
                     Name = spec.Id,
@@ -559,6 +621,8 @@ public sealed class RunScheduler
             };
         }
 
+        admittedAt = _buildTimeProvider.GetTimestamp();
+        cancellationToken.ThrowIfCancellationRequested();
         var build = spec.IsCommand ? null : request.Manifest.Builds.First(item => item.Id == spec.Build);
         var rowSource = request.SourceGuard?.Copy(spec.IsCommand ? "notApplicable" : "unknown") ?? new SourceEvidence();
         bool Boundary()
@@ -609,20 +673,45 @@ public sealed class RunScheduler
         result.Id = spec.Id;
         result.Slot = lease.State;
         result.SlotReason = lease.SlotReason;
-        result.WaitedSeconds = lease.WaitedSeconds;
+        result.WaitedSeconds = Math.Max(progress.WaitedSeconds, lease.WaitedSeconds);
         result.Seconds = (DateTimeOffset.UtcNow - started).TotalSeconds;
         result.Source = rowSource;
+        result.ExecutedSeconds = _buildTimeProvider.GetElapsedTime(admittedAt.Value).TotalSeconds;
+        result.WallSeconds = _buildTimeProvider.GetElapsedTime(wallStarted).TotalSeconds;
+        result.TerminalReason = result.TimedOut ? "row-deadline-exceeded" : null;
         return result;
+        }
+        finally
+        {
+            progress.WallSeconds = _buildTimeProvider.GetElapsedTime(wallStarted).TotalSeconds;
+            progress.ExecutedSeconds = admittedAt is long at ? _buildTimeProvider.GetElapsedTime(at).TotalSeconds : 0;
+        }
     }
 
-    private static RowRunResult ClosedRow(SchedulerRequest request, CheckpointSpec spec, CancellationToken cancellationToken)
+    private static void CloseResult(RowRunResult result, string reason, int exit)
+    {
+        result.State = reason;
+        result.TerminalReason = reason;
+        result.ExitCode = exit;
+    }
+
+    private static RowRunResult ClosedRow(SchedulerRequest request, CheckpointSpec spec, CancellationToken cancellationToken,
+        RowProgress progress, RunBudgetClock budget)
     {
         var block = request.AdmissionBlock?.Invoke();
         if (block is not null && !(cancellationToken.IsCancellationRequested && request.OwnerBound))
             return Placeholder(spec, block, ExitCodes.OwnerEnded);
         var ownerEnded = cancellationToken.IsCancellationRequested && request.OwnerBound;
-        return Placeholder(spec, ownerEnded ? request.CancellationReason?.Invoke() ?? "owner-ended" : "timeout",
-            ownerEnded ? ExitCodes.OwnerEnded : ExitCodes.Timeout);
+        var reason = ownerEnded ? request.CancellationReason?.Invoke() ?? "owner-ended"
+            : cancellationToken.IsCancellationRequested ? "caller-requested" : budget.Reason ?? "timeout";
+        var result = Placeholder(spec, reason, ownerEnded ? ExitCodes.OwnerEnded
+            : cancellationToken.IsCancellationRequested ? ExitCodes.Canceled : ExitCodes.Timeout);
+        result.TerminalReason = reason;
+        result.WaitedSeconds = progress.WaitedSeconds;
+        result.Slot = progress.Slot;
+        result.ExecutedSeconds = progress.ExecutedSeconds;
+        result.WallSeconds = progress.WallSeconds;
+        return result;
     }
 
     private static bool IsExclusive(CheckpointSpec row, SchedulerRequest request)
@@ -688,5 +777,9 @@ public sealed class RunScheduler
     private static double Elapsed(DateTimeOffset? started) =>
         started is DateTimeOffset at ? Math.Max(0, (DateTimeOffset.UtcNow - at).TotalSeconds) : 0;
 
-    private static void Publish(SchedulerRequest request) => request.Publish?.Invoke();
+    private static void Publish(SchedulerRequest request)
+    {
+        request.State.Budget = request.ActiveBudget?.Snapshot(TimeSpan.FromMinutes(request.Manifest.Build.SlotWaitMinutes));
+        request.Publish?.Invoke();
+    }
 }

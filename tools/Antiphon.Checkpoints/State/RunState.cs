@@ -8,6 +8,8 @@ public sealed class RunState
     public int ExecutorPid { get; set; }
     public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? TotalTimeoutAt { get; set; }
+    public DateTimeOffset? HardWallTimeoutAt { get; set; }
+    public RunBudgetEvidence? Budget { get; set; }
     public DateTimeOffset? EndedAt { get; set; }
     public int? ExitCode { get; set; }
     public string? Reason { get; set; }
@@ -34,7 +36,8 @@ public sealed class RunState
                 var ago = row.LastOutputAt is DateTimeOffset last
                     ? FormatDuration((now - last).TotalSeconds)
                     : "n/a";
-                parts.Add($"{row.Id} running {FormatDuration(seconds)} last-output {ago} ago");
+                parts.Add(row.Slot == "acquiring" ? $"{row.Id} acquiring {FormatDuration(seconds)}"
+                    : $"{row.Id} running {FormatDuration(seconds)} last-output {ago} ago");
             }
             else if (row.State is "green" or "red")
                 parts.Add($"{row.Id} {row.State} {FormatDuration(row.Seconds)}");
@@ -47,7 +50,7 @@ public sealed class RunState
             var seconds = build.StartedAt is DateTimeOffset started
                 ? (now - started).TotalSeconds
                 : build.Seconds;
-            parts.Add($"{build.Id} building {FormatDuration(seconds)}");
+            parts.Add($"{build.Id} {(build.Slot == "acquiring" ? "acquiring" : "building")} {FormatDuration(seconds)}");
         }
         foreach (var build in Builds.Where(b => b.State == "pending"))
             parts.Add($"{build.Id} queued");
@@ -77,6 +80,9 @@ public sealed class BuildProgress
     public string Slot { get; set; } = "";
     public string? SlotReason { get; set; }
     public int WaitedSeconds { get; set; }
+    public double? ExecutedSeconds { get; set; }
+    public double? WallSeconds { get; set; }
+    public string? TerminalReason { get; set; }
     public int AdmissionExitCode { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
     // CARD-1356: the deadline the build ran under, derived from the rows that need it.
@@ -95,6 +101,9 @@ public sealed class RowProgress
     public string Slot { get; set; } = "";
     public string? SlotReason { get; set; }
     public int WaitedSeconds { get; set; }
+    public double? ExecutedSeconds { get; set; }
+    public double? WallSeconds { get; set; }
+    public string? TerminalReason { get; set; }
     public RepeatEvidence? Repeat { get; set; }
     public PhaseTimings? Timings { get; set; }
 }

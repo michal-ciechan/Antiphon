@@ -4,6 +4,8 @@ public sealed class ReportModel
 {
     public string? MarkdownSha256 { get; set; }
     public int SchemaVersion { get; set; } = 2;
+    public RunBudgetEvidence? Budget { get; set; }
+    public List<ReportModel> Attempts { get; set; } = [];
     public SourceEvidence Source { get; set; } = new();
     public string RunId { get; set; } = "";
     public string? ManifestPath { get; set; }
@@ -49,6 +51,9 @@ public sealed class ReportBuild
     public string Slot { get; set; } = "";
     public string? SlotReason { get; set; }
     public int WaitedSeconds { get; set; }
+    public double? ExecutedSeconds { get; set; }
+    public double? WallSeconds { get; set; }
+    public string? TerminalReason { get; set; }
     // CARD-1356: the deadline the build ran under, in minutes.
     public int DeadlineMinutes { get; set; }
 }
@@ -66,6 +71,9 @@ public sealed class ReportRow
     public string? Slot { get; set; }
     public string? SlotReason { get; set; }
     public int WaitedSeconds { get; set; }
+    public double? ExecutedSeconds { get; set; }
+    public double? WallSeconds { get; set; }
+    public string? TerminalReason { get; set; }
     public int? Executed { get; set; }
     public int? Passed { get; set; }
     public int? Failed { get; set; }

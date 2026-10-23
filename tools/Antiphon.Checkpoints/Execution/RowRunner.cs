@@ -43,7 +43,7 @@ public sealed class RowRunResult
 {
     public SourceEvidence Source { get; set; } = new();
     public string Id { get; set; } = "";
-    public int ExitCode { get; init; }
+    public int ExitCode { get; set; }
     public string BuildState { get; init; } = "";
     public string Line { get; set; } = "";
     public string Output { get; init; } = "";
@@ -52,11 +52,14 @@ public sealed class RowRunResult
     public string? TrxPath { get; init; }
     public TrxParseResult? Trx { get; init; }
     public bool TimedOut { get; init; }
-    public string State { get; init; } = "";
+    public string State { get; set; } = "";
     public string Slot { get; set; } = "";
     public string? SlotReason { get; set; }
     public int WaitedSeconds { get; set; }
     public double Seconds { get; set; }
+    public double? ExecutedSeconds { get; set; }
+    public double? WallSeconds { get; set; }
+    public string? TerminalReason { get; set; }
     public RepeatEvidence? Repeat { get; set; }
     public PhaseTimings? Timings { get; set; }
 }
@@ -65,11 +68,13 @@ public sealed class RowRunner
 {
     private readonly IDriver _driver;
     private readonly IPlatform _platform;
+    private readonly TimeProvider _time;
 
-    public RowRunner(IDriver driver, IPlatform platform)
+    public RowRunner(IDriver driver, IPlatform platform, TimeProvider? timeProvider = null)
     {
         _driver = driver;
         _platform = platform;
+        _time = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<RowRunResult> RunAsync(RowRequest request, TextWriter output, CancellationToken cancellationToken)
@@ -152,6 +157,7 @@ public sealed class RowRunner
                 _driver,
                 new DriverRequest(shell, shellArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
                 request.Deadline,
+                _time,
                 cancellationToken).ConfigureAwait(false);
             var sourceOk = request.SourceBoundary?.Invoke() != false;
             if (ran.TimedOut)
@@ -209,6 +215,7 @@ public sealed class RowRunner
                 _driver,
                 new DriverRequest(fileName, buildArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "build.log"), Environment: request.Environment),
                 request.Deadline,
+                _time,
                 cancellationToken).ConfigureAwait(false);
             buildWatch.Stop();
             var buildSeconds = buildWatch.Elapsed.TotalSeconds;
@@ -264,6 +271,7 @@ public sealed class RowRunner
             _driver,
             new DriverRequest(fileName, runArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: runEnvironment ?? request.Environment),
             request.Deadline,
+                _time,
             cancellationToken).ConfigureAwait(false);
         var hostExit = DateTimeOffset.UtcNow;
         var hostElapsed = System.Diagnostics.Stopwatch.GetElapsedTime(hostStartTick);
@@ -324,6 +332,7 @@ public sealed class RowRunner
                     _driver,
                     new DriverRequest(fileName, rerunArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
                     request.Deadline,
+                _time,
                     cancellationToken).ConfigureAwait(false);
                 if (request.SourceBoundary?.Invoke() == false) sourceStable = false;
                 if (binding is not null && !second.TimedOut) OwnedOutputLedger.Adopt(binding.OutputPath, second.Exited);

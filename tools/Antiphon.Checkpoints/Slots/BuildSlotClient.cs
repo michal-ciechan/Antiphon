@@ -43,20 +43,24 @@ public sealed class BuildSlotClient : IBuildSlotClient
     private readonly string? _processStartUtc;
     private readonly ILeaseHolderSource? _holders;
     private readonly string? _sensitiveToken;
+    private readonly TimeProvider _timeProvider;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _held = new(StringComparer.Ordinal);
 
     public BuildSlotClient(HttpMessageHandler handler, string endpoint, TimeSpan? grace = null,
         TimeSpan? wait = null, Func<DateTimeOffset>? clock = null,
         Func<TimeSpan, CancellationToken, Task>? delay = null, Action<string>? log = null,
         int? pid = null, string? processStartUtc = null, ILeaseHolderSource? holders = null,
-        string? sensitiveToken = null, Func<TimeSpan, CancellationToken, Task>? renewalDelay = null)
+        string? sensitiveToken = null, Func<TimeSpan, CancellationToken, Task>? renewalDelay = null,
+        TimeProvider? timeProvider = null)
     {
         _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
         _endpoint = endpoint.TrimEnd('/');
         _grace = grace ?? TimeSpan.FromSeconds(60);
         _wait = wait ?? TimeSpan.FromMinutes(45);
-        _clock = clock ?? (() => DateTimeOffset.UtcNow);
-        _delay = delay ?? ((span, token) => Task.Delay(span, token));
+        RunBudgetClock.Validate(_wait, "slotWaitMinutes");
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _clock = clock ?? _timeProvider.GetUtcNow;
+        _delay = delay ?? ((span, token) => Task.Delay(span, _timeProvider, token));
         _renewalDelay = renewalDelay ?? ((span, token) => Task.Delay(span, token));
         _log = log;
         _pid = pid ?? Environment.ProcessId;
@@ -127,6 +131,31 @@ public sealed class BuildSlotClient : IBuildSlotClient
     }
 
     public async Task<SlotLease> AcquireAsync(SlotSession session, string label, CancellationToken cancellationToken)
+    {
+        var started = _clock();
+        SlotDiagnostic? last = null;
+        using var deadline = new CancellationTokenSource(_wait, _timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        try
+        {
+            var lease = await AcquireCoreAsync(session, label, value => last = value, linked.Token).ConfigureAwait(false);
+            if (linked.IsCancellationRequested)
+            {
+                await lease.DisposeAsync().ConfigureAwait(false);
+                linked.Token.ThrowIfCancellationRequested();
+            }
+            return lease;
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            _log?.Invoke($"BUILD SLOT timeout label={SlotDiagnostic.Excerpt(label, _sensitiveToken)} after {Seconds(started)}s reason=slot-admission-deadline-exceeded");
+            return new SlotLease { State = "timeout", ExitCode = ExitCodes.SlotTimeout, WaitedSeconds = Seconds(started),
+                SlotReason = last?.Reason ?? "slot-admission-deadline-exceeded", Diagnostic = last };
+        }
+    }
+
+    private async Task<SlotLease> AcquireCoreAsync(SlotSession session, string label,
+        Action<SlotDiagnostic> observed, CancellationToken cancellationToken)
     {
         if (session.ExitCode != 0 || session.Mode == "refused")
             return RefusedLease(session.Diagnostic ?? new SlotDiagnostic("probe", null,
@@ -254,6 +283,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
                     }
                     var reason = SlotDiagnostic.ReasonOf(body, "http_" + (int)response.StatusCode);
                     last = Observe("acquire", (int)response.StatusCode, reason, body, elapsed, label);
+                    observed(last);
                     if (response.StatusCode == HttpStatusCode.Conflict && reason is ("build_slot_busy" or "build_slot_memory_floor"))
                     {
                         // A busy reply is a live broker answer. Transport grace starts afresh
@@ -272,7 +302,9 @@ public sealed class BuildSlotClient : IBuildSlotClient
                             lastPrinted = _clock();
                         }
                         var retryMs = ReadInt(body, "retryAfterMs", 5000);
-                        await _delay(TimeSpan.FromMilliseconds(Math.Clamp(retryMs, 1, 60_000)), cancellationToken).ConfigureAwait(false);
+                        var delay = TimeSpan.FromMilliseconds(Math.Clamp(retryMs, 1, 60_000));
+                        var remaining = _wait - SecondsSince(started);
+                        await _delay(delay < remaining ? delay : remaining, cancellationToken).ConfigureAwait(false);
                         continue;
                     }
                     if ((int)response.StatusCode < 500)
@@ -287,6 +319,7 @@ public sealed class BuildSlotClient : IBuildSlotClient
                 catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
                 {
                     last = SlotDiagnostic.Failure("acquire", "runner_unreachable", ex, Seconds(started), _sensitiveToken);
+                    observed(last);
                     Note(last, label);
                     unansweredStarted ??= _clock();
                 }

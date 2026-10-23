@@ -26,6 +26,9 @@ public static class ReportWriter
         {
             if (!string.IsNullOrWhiteSpace(row.Line))
                 text.AppendLine(row.Line);
+            if (row.ExecutedSeconds is double execution && row.WallSeconds is double wall)
+                text.AppendLine(FormattableString.Invariant($"CHECKPOINT-TIMING {row.Id} waited={row.WaitedSeconds}s executed={execution:F3}s wall={wall:F3}s")
+                    + (row.TerminalReason is null ? "" : " reason=" + row.TerminalReason));
             if (row.Repeat is { } repeat)
             {
                 foreach (var ordinal in repeat.Repetitions)
@@ -46,6 +49,9 @@ public static class ReportWriter
                 text.AppendLine($"SLOW CLASS {slow.ClassName} {(int)slow.Seconds}s tests={slow.Tests} ({row.Id})");
         }
 
+        if (model.Budget is { } budget)
+            text.AppendLine(FormattableString.Invariant($"BUDGET wall={budget.BudgetWallSeconds:F3}s execution={budget.ExecutionSeconds:F3}s admissionOnly={budget.AdmissionOnlySeconds:F3}s")
+                + (budget.TerminalReason is null ? "" : " reason=" + budget.TerminalReason));
         text.AppendLine(model.Unlisted.Count == 0
             ? "unlisted: none (the tool ran no other build or test command)"
             : "unlisted: " + string.Join("; ", model.Unlisted));

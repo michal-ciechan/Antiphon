@@ -677,7 +677,8 @@ public static class Program
             Baseline = options.Get("baseline"),
             KnownFlaky = (options.Get("known-flaky") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList(),
             RowTimeoutMinutes = Minutes(options.Get("row-timeout")),
-            TotalTimeoutMinutes = Minutes(options.Get("total-timeout")),
+            TotalTimeoutMinutes = BoundedMinutes(options, "total-timeout"),
+            HardWallTimeoutMinutes = BoundedMinutes(options, "hard-wall-timeout"),
             Parallel = int.TryParse(options.Get("parallel"), out var width) ? width : null,
             Serial = options.Has("serial"),
             Slots = options.Get("slots") ?? "auto",
@@ -712,6 +713,22 @@ public static class Program
 
     private static string Required(ArgSet options, string name) =>
         options.Get(name) ?? throw new ManifestValidationException(name, "missing --" + name);
+
+    private static int? BoundedMinutes(ArgSet options, string name)
+    {
+        if (!options.Has(name)) return null;
+        try
+        {
+            var duration = ParseDuration(options.Get(name));
+            if (duration is null) throw new FormatException();
+            RunBudgetClock.Validate(duration, name);
+            var minutes = checked((int)Math.Ceiling(duration.Value.TotalMinutes));
+            RunBudgetClock.Validate(TimeSpan.FromMinutes(minutes), name);
+            return minutes;
+        }
+        catch (Exception ex) when (ex is OverflowException or ArgumentException or FormatException)
+        { throw new ManifestValidationException(name, name + " must name a positive finite duration"); }
+    }
 
     private static int? Minutes(string? text)
     {

@@ -250,23 +250,45 @@ confirm any claimed inherited red at base with that exact method.
 
 ### Checkpoints
 
-Closed proposed list; **portable .NET fake-clock lane** for every row. One literal
-filter per row. S1 has nine methods in CP-1 and three in CP-2; record actual
-assertion reds and passing controls rather than predict an exact failing count.
-TestDesign may amend this manifest before Code; Code may not broaden it ad hoc.
+Code amendment (task 9241a2cb): the direct Code brief replaces the proposed
+TestDesign/whole-lane profile with minimal exact verification. The historical S1
+CP-1 at 692c0a372344dec0cbee3010fdec61cf7e41e65f executed two intended assertion
+reds using bin-c1531-red/. That receipt remains unchanged. The following final
+closed list reruns CP-1 at the repaired SHA, adds the remaining seven deterministic
+controls and three contract cases, and preserves every original R-1..R-4 method.
+The proposed duplicate green CP-3 and unimplemented red CP-2 are superseded by
+this shared-build list; no missing execution is credited. RowTimeout.cs is also
+in scope for checked execution-budget derivation. RunBudgetEvidence is a nullable
+nested `budget` object; per-row/build timing stays nullable for old receipts.
+The union witness uses two coincident seven-minute waits (14 summed waiter
+minutes, seven queue-only minutes), and baseline uses the actual comparer with
+a synthetic red-row input, avoiding a real baseline checkout.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1531-red/` | admission-red | `/*/*/CheckpointAdmissionBudgetTests/C1531_*` | V-1..V-9 | first two implemented witnesses execute red; remaining witnesses added with implementation | 2 | 9 |
-| CP-2 | S1 | CP-1 | contract-red | `/*/*/CheckpointAdmissionContractTests/C1531_*` | V-10..V-12 | all 3 executed, intended contract reds and legacy control, 0 skipped | 3 | 1 |
-| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1531-green/` | admission-green | `/*/*/CheckpointAdmissionBudgetTests/C1531_*` | V-1..V-9 | all 9 passed, 0 failed/skipped | 9 | 10 |
-| CP-4 | S3 | CP-3 | contract-green | `/*/*/CheckpointAdmissionContractTests/C1531_*` | V-10..V-12 | all 3 passed, 0 failed/skipped | 3 | 1 |
-| CP-5 | S3 | CP-3 | scheduler-regression | `/*/*/RunSchedulerTests/(builds_never_overlap_even_with_free_slots_and_width_two)\|(rows_of_a_finished_build_run_while_the_next_build_is_in_flight)\|(an_exclusive_row_keeps_the_build_lane_idle_until_it_finishes)\|(build_deadline_is_the_largest_dependent_row_timeout_and_the_row_override_replaces_it)\|(build_timer_uses_selected_row_deadlines_and_override)` | R-1 | all 5 passed, 0 failed/skipped | 5 | 1 |
-| CP-6 | S3 | CP-3 | slot-regression | `/*/*/CheckpointSlotExecutorTests/executor_busy_then_rejection_retains_exact_wait_in_state_report_and_merge` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
-| CP-7 | S3 | CP-3 | owner-regression | `/*/*/CheckpointTaskOwnershipTests/settlement_cancels_two_drivers_and_skips_later_rows` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
-| CP-8 | S3 | CP-3 | caller-regression | `/*/*/C1307CliCancellationTests/Executor_cancel_persists_130` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
-| CP-9 | S3 | CP-3 | evidence-regression | `/*/*/(CheckpointLineTests)\|(ReportMergerTests)/(tunit_line_matches_the_pinned_regex_with_slot_suffix)\|(latest_per_cp_wins_and_earlier_attempts_count_as_reruns)` | R-3 | all 2 passed, 0 failed/skipped | 2 | 1 |
-| CP-10 | S3 | CP-3 | remaining-budget-regression | `/*/*/(CheckpointTaskOwnershipTests)\|(BaselineComparerTests)/(windows_estimate_selects_row_and_total_deadlines)\|(baseline_stops_when_the_timeout_is_already_spent)` | R-4 | all 2 passed, 0 failed/skipped | 2 | 2 |
+| CP-1 | S3 | `tests/Antiphon.Tests -> bin-c1531-green/` | admission-green | `/*/*/CheckpointAdmissionBudgetTests/C1531_*` | V-1..V-9 | all 9 passed, 0 failed/skipped | 9 | 5 |
+| CP-2 | S3 | CP-1 | contract-green | `/*/*/CheckpointAdmissionContractTests/C1531_*` | V-10..V-12 | all 3 passed, 0 failed/skipped | 3 | 1 |
+| CP-3 | S3 | CP-1 | scheduler-regression | `/*/*/RunSchedulerTests/(builds_never_overlap_even_with_free_slots_and_width_two)\|(rows_of_a_finished_build_run_while_the_next_build_is_in_flight)\|(an_exclusive_row_keeps_the_build_lane_idle_until_it_finishes)\|(build_deadline_is_the_largest_dependent_row_timeout_and_the_row_override_replaces_it)\|(build_timer_uses_selected_row_deadlines_and_override)` | R-1 | all 5 passed, 0 failed/skipped | 5 | 1 |
+| CP-4 | S3 | CP-1 | slot-regression | `/*/*/CheckpointSlotExecutorTests/executor_busy_then_rejection_retains_exact_wait_in_state_report_and_merge` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
+| CP-5 | S3 | CP-1 | owner-regression | `/*/*/CheckpointTaskOwnershipTests/settlement_cancels_two_drivers_and_skips_later_rows` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
+| CP-6 | S3 | CP-1 | caller-regression | `/*/*/C1307CliCancellationTests/Executor_cancel_persists_130` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
+| CP-7 | S3 | CP-1 | evidence-regression | `/*/*/(CheckpointLineTests)\|(ReportMergerTests)/(tunit_line_matches_the_pinned_regex_with_slot_suffix)\|(latest_per_cp_wins_and_earlier_attempts_count_as_reruns)` | R-3 | all 2 passed, 0 failed/skipped | 2 | 1 |
+| CP-8 | S3 | CP-1 | remaining-budget-regression | `/*/*/(CheckpointTaskOwnershipTests)\|(BaselineComparerTests)/(windows_estimate_selects_row_and_total_deadlines)\|(baseline_stops_when_the_timeout_is_already_spent)` | R-4 | all 2 passed, 0 failed/skipped | 2 | 1 |
+
+## Performance budget
+
+The initial committed red build took 258.35 seconds including custody; the
+compiler reported 227.99 seconds. Two fake-clock cases took 0.35 seconds in the
+test bodies, with 3.26 seconds host startup and 0.65 seconds teardown; actual
+row admission was 30 seconds. This is one contended sample, not measured p95.
+The final shared build is provisionally budgeted at ten minutes (about twice
+this build), execution total fifteen minutes and explicit hard wall twenty-five
+minutes, with collection bounded to this card's red/green and failure-driven
+repair runs. No automatic retries. Unavailable container/database/browser phases
+are inapplicable; filesystem/custody work is in build/host remainder. No fixture
+starts a real compiler, database or browser; R-2's existing named integration
+witness retains its original process limiter. The tool bootstrap is separately
+slot-gated tooling (one red bootstrap, one repaired bootstrap per source group).
 
 --- next stage ---
 next: test-design
