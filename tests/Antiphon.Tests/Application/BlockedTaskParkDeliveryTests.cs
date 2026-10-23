@@ -497,7 +497,7 @@ public sealed class BlockedTaskParkDeliveryTests
         // StartAsync already queued the blocked settlement's caller note. A flush batches every
         // pending note on that session and names the spill after the oldest row, so this receipt
         // has to be delivered on its own once that earlier note is no longer pending.
-        await f.AttachRecipientAsync(world.ParentId, busy: false);
+        await AttachReviewRecipientAsync(f, world.ParentId, busy: false);
         await f.FlushAsync(world.ParentId);
         await f.EndTurnAsync(world.ParentId);
         // Delivered alone, the unpadded note stays under PtySingleChunkBytes (1_024) and is typed
@@ -593,15 +593,22 @@ public sealed class BlockedTaskParkDeliveryTests
 
     private static async Task ConfirmContinuationAsync(RunnerSeatReleaseFixture f, bool busy)
     {
-        f.Launches.OnLaunch = id => f.AttachRecipientAsync(id, busy).GetAwaiter().GetResult();
+        f.Launches.OnLaunch = id => AttachReviewRecipientAsync(f, id, busy).GetAwaiter().GetResult();
         await f.DispatchAsync();
         var queued = (await f.AnswerQueueAsync()).ShouldNotBeNull("G-194");
         await f.RestartAsync();
-        await f.AttachRecipientAsync(queued.AgentSessionId);
+        await AttachReviewRecipientAsync(f, queued.AgentSessionId);
         if (busy) await f.EndTurnAsync(queued.AgentSessionId);
         await f.FlushAsync(queued.AgentSessionId);
         await f.DispatchAsync();
         (await f.TaskAsync()).ReleasedSeatAnswer.ShouldBeNull("G-194");
+    }
+
+    private static async Task AttachReviewRecipientAsync(RunnerSeatReleaseFixture f, Guid sessionId, bool busy = false)
+    {
+        await f.AttachRecipientAsync(sessionId, busy);
+        await f.Recipient!.EnableClaudeDialogObservationAsync(f.Schema.ConnectionString, sessionId);
+        f.Harness.Runtime.SetTestAcceptedStartedAt(sessionId, f.Recipient.AcceptedStartedAt!.Value);
     }
 
     private static Task ContinueAsync(RunnerSeatReleaseFixture f) =>
@@ -651,7 +658,7 @@ public sealed class BlockedTaskParkDeliveryTests
                 && t.Kind == TranscriptKinds.UserPrompt && t.Text != null && t.Text.Contains(evidenceId.ToString("N")))).ShouldBe(0, "G-194");
         }
 
-        await f.AttachRecipientAsync(parentId, busy: false);
+        await AttachReviewRecipientAsync(f, parentId, busy: false);
         if (busyCaller) await f.EndTurnAsync(parentId);
         using var scope = f.Harness.Provider.CreateScope();
         await scope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>().ReconcileAsync(final.Id, CancellationToken.None);
