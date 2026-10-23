@@ -68,6 +68,8 @@ Final `validate-checkpoint-receipt.ps1` must pass for both green rows at final t
 | CP-2 | S1 | CP-1 | wire-red | `/*/*/DelegateBranchDeliveryTests/C1558_*` | V-3,R-1 red/control | 4 executed; windows wire fails HTTP 409; native/linux and mismatch control pass | 4 | 1 |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1556-final/` | instructions-final | `/*/*/OrchestratorInstructionsRefreshTests/A_failed_chain_read*` | V-1,V-2 | all 8 passed, 0 failed/skipped | 8 | 4 |
 | CP-4 | S2 | CP-3 | delivery-final | `/*/*/DelegateBranchDeliveryTests/*` | V-3,R-1,R-2 | all 7 passed, 0 failed/skipped | 7 | 4 |
+| CP-5 | S1c | `tests/Antiphon.Tests -> bin-c1557-base/` | notice-base | `/*/*/OrchestratorInstructionsRefreshTests/A_failed_chain_read_notice*` | V-2 precondition attribution | 4 executed at original base; record actual outcome, no inherited claim without execution | 4 | 7 |
+| CP-6 | S1c | `tests/Antiphon.Tests -> bin-c1557-eligible-red/` | notice-eligible-red | `/*/*/OrchestratorInstructionsRefreshTests/A_failed_chain_read*` | V-1,V-2 reachable red | 8 executed; 161-byte all-tier red and clipped notice transition red, 0 skipped | 8 | 7 |
 
 ## Red-run precondition correction
 
@@ -88,10 +90,3 @@ repair deliberately has no dependency on S1c; verify its picks and compile on rc
 CP-5 runs from a detached exact-base worktree, reading this committed plan by its
 absolute path. CP-6 runs in the assigned worktree. Both use independent owned
 outputs and isolated test databases, and every build/test driver is slot-gated.
-
-### Checkpoints (additional precondition attribution)
-
-| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
-|---|---|---|---|---|---|---|---:|---:|
-| CP-5 | S1c | `tests/Antiphon.Tests -> bin-c1557-base/` | notice-base | `/*/*/OrchestratorInstructionsRefreshTests/A_failed_chain_read_notice*` | V-2 precondition attribution | 4 executed at original base; record actual outcome, no inherited claim without execution | 4 | 7 |
-| CP-6 | S1c | `tests/Antiphon.Tests -> bin-c1557-eligible-red/` | notice-eligible-red | `/*/*/OrchestratorInstructionsRefreshTests/A_failed_chain_read*` | V-1,V-2 reachable red | 8 executed; 161-byte all-tier red and clipped notice transition red, 0 skipped | 8 | 7 |
