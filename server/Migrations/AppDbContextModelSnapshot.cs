@@ -3786,6 +3786,10 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime?>("DueAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<decimal?>("EstimateDays")
+                        .HasPrecision(6, 2)
+                        .HasColumnType("numeric(6,2)");
+
                     b.Property<string>("Identifier")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -4171,6 +4175,10 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("EditedBy")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
+
+                    b.Property<decimal?>("EstimateDays")
+                        .HasPrecision(6, 2)
+                        .HasColumnType("numeric(6,2)");
 
                     b.Property<Guid?>("FromColumnId")
                         .HasColumnType("uuid");
