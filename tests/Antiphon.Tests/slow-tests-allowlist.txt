@@ -3,6 +3,12 @@
 ## Tripwire still accepts caller-supplied simple names. No substring or argument matching.
 ## Each single-# reason must immediately precede its class; blank lines separate complete pairs.
 
+# CARD-1537: real Git graph seeding and isolated PostgreSQL landing; native Windows cases take 35-83s.
+Antiphon.Tests.Application.LandNonCodeSkipTests
+
+# CARD-1308: isolated migrated PostgreSQL, retained runtime debt and verified modal/input recovery.
+Antiphon.Tests.Application.SessionRuntimeActionTemporaryBlockTests
+
 # CARD-0510: real PostgreSQL reservations, repeated admitted launches and healthy-clock boundaries.
 Antiphon.Tests.Application.StandingRestartEscalationTests
 # CARD-1322: isolated migrated PostgreSQL, real session start and fresh-context stall scans; measured 6.7-10.6s.

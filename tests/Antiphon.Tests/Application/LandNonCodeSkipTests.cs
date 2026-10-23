@@ -16,6 +16,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class LandNonCodeSkipTests
 {
@@ -2753,7 +2754,7 @@ public sealed class LandNonCodeSkipTests
         if (!build) verify.Detail.ShouldBe("non-code");
     }
 
-    // Copy real audited build entrypoints into the scratch repo; do not inject a policy verdict.
+    // Seed the real committed graph, independently of checkout line endings or missing worktree files.
     private static async Task SeedGraphAsync(LandingSafetyHarness h)
     {
         await CopyGraphAsync(h.Fixture, DelegateScriptRunner.RepoRoot);
@@ -2764,21 +2765,44 @@ public sealed class LandNonCodeSkipTests
 
     private static async Task CopyGraphAsync(LandingGitFixture fixture, string root)
     {
-        var paths = (await fixture.RequiredAsync(root, "ls-files", "-z")).Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var rows = (await fixture.RequiredAsync(root, "ls-tree", "-r", "-z", "HEAD"))
+            .Split('\0', StringSplitOptions.RemoveEmptyEntries);
         var graph = new LandVerificationBuildGraph();
         var graphPaths = new List<string>();
-        foreach (var path in paths)
+        var graphRows = new List<string>();
+        var executablePaths = new List<string>();
+        var regularPaths = new List<string>();
+        foreach (var row in rows)
         {
+            var tab = row.IndexOf('\t');
+            tab.ShouldBeGreaterThanOrEqualTo(0);
+            var path = row[(tab + 1)..];
             if (!graph.Includes(path)) continue;
+            var metadata = row[..tab].Split(' ');
+            metadata.Length.ShouldBe(3);
+            metadata[1].ShouldBe("blob", path);
+            (metadata[0] is "100644" or "100755").ShouldBeTrue(path);
             graphPaths.Add(path);
+            graphRows.Add(row);
+            (metadata[0] == "100755" ? executablePaths : regularPaths).Add(path);
             var destination = Path.Combine(fixture.Repository, path);
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            File.Copy(Path.Combine(root, path), destination);
-            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(destination, File.GetUnixFileMode(Path.Combine(root, path)));
+            await File.WriteAllBytesAsync(destination, await GitBytesAsync(root, "cat-file", "blob", metadata[2]));
         }
         // The real tracked inventory includes historical scripts beneath ignored .antiphon/.
-        // Stage only these exact copied inputs, including ones the scratch fixture's ignore rules hide.
-        await fixture.RequiredAsync(fixture.Repository, ["add", "-f", "--", .. graphPaths]);
+        // Do not let destination line-ending settings reinterpret committed bytes.
+        graphPaths.ShouldNotBeEmpty();
+        await fixture.RequiredAsync(fixture.Repository, ["-c", "core.autocrlf=false", "add", "-f", "--", .. graphPaths]);
+        // Index modes work on Windows and with core.filemode=false, without trusting checkout permissions.
+        if (regularPaths.Count > 0)
+            await fixture.RequiredAsync(fixture.Repository, ["update-index", "--chmod=-x", "--", .. regularPaths]);
+        if (executablePaths.Count > 0)
+            await fixture.RequiredAsync(fixture.Repository, ["update-index", "--chmod=+x", "--", .. executablePaths]);
+        var tree = (await fixture.RequiredAsync(fixture.Repository, "write-tree")).Trim();
+        var seededRows = (await fixture.RequiredAsync(fixture.Repository, "ls-tree", "-r", "-z", tree))
+            .Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Where(row => graph.Includes(row[(row.IndexOf('\t') + 1)..]));
+        seededRows.ShouldBe(graphRows, "the fixture graph must match committed blob IDs and modes before testing a skip");
     }
 
     private static async Task<string> ReadHeadTreeAsync(string root)
