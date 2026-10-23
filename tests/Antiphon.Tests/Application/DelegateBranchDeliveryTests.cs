@@ -157,6 +157,8 @@ public sealed class DelegateBranchDeliveryTests
             await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             await using var wire = await Wire.CreateAsync(world, false, ct);
             world.Task.RunnerId = wire.Host.AllowedRunnerId; world.Task.Attempt = 1;
+            // Preparation owns the first path assignment; a seeded path refuses replacement.
+            world.Task.RemoteWorktreePath = null;
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
             { db.AgentTasks.Add(world.Task); await db.SaveChangesAsync(ct); }
             if (cut == "before-send") await wire.CloseCurrentAsync();
@@ -175,7 +177,8 @@ public sealed class DelegateBranchDeliveryTests
             mirror.SourceFullRef.ShouldBe(world.FullRef, "recovered-ref");
             AssertOwnerStamp(mirror);
             (await world.RunAsync(mirror.WorktreePath, "rev-parse", "HEAD")).ShouldBe(world.Baseline);
-            world.Task.RemoteWorktreePath = mirror.WorktreePath;
+            (await ReadTaskAsync(schema, world.TaskId, ct)).RemoteWorktreePath
+                .ShouldBe(mirror.WorktreePath, "prepared recipient path survives reload");
             await File.WriteAllTextAsync(Path.Combine(mirror.WorktreePath, "work.txt"), "recovered publication", ct);
             await world.RunAsync(mirror.WorktreePath, "add", "work.txt"); await world.RunAsync(mirror.WorktreePath, "commit", "-m", "recovery work");
             var tip = await world.RunAsync(mirror.WorktreePath, "rev-parse", "HEAD");
