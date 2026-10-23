@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Antiphon.Checkpoints;
+using Antiphon.Tests.Infrastructure;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -91,7 +92,10 @@ public sealed class CheckpointLargeStampTests : CheckpointTestBase
         var expected = Expected(retained);
         driver.Ledgers.Last().Files["App/bin-a/large.dll"].ShouldBe(expected);
         // A fresh run/output id must traverse retained outputs; an existing id cannot acquire custody.
-        var retry = await Run(root, driver, ["retry"], cancellationToken);
+        var retryRoot = Repo();
+        var old = Path.Combine(retryRoot, "App/bin-red/large.dll");
+        WriteLarge(old, Large);
+        var retry = await Run(retryRoot, driver, ["retry"], cancellationToken);
         retry.Exit.ShouldBe(0);
         driver.Builds.ShouldBe(3);
         driver.Rows.ShouldBe(3);
@@ -99,10 +103,160 @@ public sealed class CheckpointLargeStampTests : CheckpointTestBase
         existing.Exit.ShouldNotBe(0);
         driver.Builds.ShouldBe(3);
         Expected(retained).ShouldBe(expected);
-        SafeWrite.WasCreated(retained).ShouldBeFalse();
+        Expected(old).ShouldBe(expected);
+        SafeWrite.WasCreated(old).ShouldBeFalse();
         FlipTail(retained);
         AssertTampered(BuildConfinement.VerifyLedger(driver.Ledgers[1]), "App/bin-a/large.dll");
         File.Exists(retained).ShouldBeTrue();
+    }
+
+    [Test]
+    public void C1532_content_and_receipt_limits_are_distinct()
+    {
+        var path = Path.Combine(TempDir(), "shape.bin");
+        BuildConfinement.Stamp(path).ShouldBe("absent|0|");
+        File.WriteAllBytes(path, []);
+        BuildConfinement.Stamp(path).ShouldBe("file|0|e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        BuildConfinement.Stamp(Path.GetDirectoryName(path)!).ShouldBe("directory|0|");
+        File.WriteAllText(path, "value");
+        BuildConfinement.Stamp(path).ShouldBe(Expected(path));
+
+        var f = new HostCleanupCheckpointFixture();
+        var node = f.Io.Put(path, []);
+        const long bound = 1L << 30;
+        node.Stat = node.Stat with { Size = bound };
+        var stream = new ZeroStream(bound);
+        f.Io.StreamFactory = () => stream;
+        using var reference = new ZeroStream(bound);
+        var expected = Convert.ToHexString(SHA256.HashData(reference)).ToLowerInvariant();
+        BuildConfinement.Stamp(path, p => ReceiptFile.Digest(f.Context, p)).ShouldBe("file|1073741824|" + expected);
+        stream.Delivered.ShouldBe(bound);
+        stream.LargestRequest.ShouldBeLessThanOrEqualTo(256 * 1024);
+        f.Io.Count("open-read", path).ShouldBe(1);
+        f.Io.Count("close-read", path).ShouldBe(1);
+
+        f.Io.Events.Clear();
+        node.Stat = node.Stat with { Size = bound + 1 };
+        BuildConfinement.Stamp(path, p => ReceiptFile.Digest(f.Context, p)).ShouldBe("unreadable|selected file exceeds size limit");
+        f.Io.Count("stream").ShouldBe(0);
+        node.Stat = node.Stat with { Size = bound };
+        var growth = new ZeroStream(bound + 1);
+        f.Io.StreamFactory = () => growth;
+        BuildConfinement.Stamp(path, p => ReceiptFile.Digest(f.Context, p)).ShouldBe("unreadable|selected file exceeds size limit");
+        growth.Delivered.ShouldBe(bound + 1);
+        growth.LargestRequest.ShouldBeLessThanOrEqualTo(256 * 1024);
+
+        node.Stat = node.Stat with { Size = 64 * MiB };
+        f.Io.StreamFactory = () => new ZeroStream(64 * MiB);
+        var receipt = ReceiptFile.ReadBytes(f.Context, path);
+        receipt.LongLength.ShouldBe(64 * MiB);
+        receipt.All(b => b == 0).ShouldBeTrue();
+        node.Stat = node.Stat with { Size = 64 * MiB + 1 };
+        f.Io.Events.Clear();
+        Should.Throw<IOException>(() => ReceiptFile.ReadBytes(f.Context, path)).Message.ShouldContain("selected file exceeds size limit");
+        f.Io.Count("stream").ShouldBe(0);
+        f.Io.Events.ShouldNotContain(e => e.Operation is "write" or "unlink" or "rmdir");
+    }
+
+    [Test]
+    public void C1532_digest_preserves_verified_read_refusals()
+    {
+        foreach (var kind in new[] { "hardlink", "nonregular", "outside" })
+        {
+            var f = new HostCleanupCheckpointFixture();
+            f.Io.HandleMetadata = m => kind switch
+            {
+                "hardlink" => m with { Links = 2 },
+                "nonregular" => m with { Regular = false },
+                _ => m with { Path = Path.Combine(f.Parent, "outside") },
+            };
+            var reason = kind switch { "hardlink" => "multiple links", "nonregular" => "not regular", _ => "outside root" };
+            Should.Throw<IOException>(() => ReceiptFile.Digest(f.Context, f.Payload)).Message.ShouldContain(reason);
+            f.Io.Count("stream").ShouldBe(0);
+            f.Io.Count("open-read").ShouldBe(1);
+            f.Io.Count("close-read").ShouldBe(1);
+        }
+        foreach (var mode in new[] { "progress", "stall", "cancel-before", "cancel-during", "eof", "grow", "shrink", "inspect" })
+        {
+            var f = new HostCleanupCheckpointFixture();
+            var bytes = Enumerable.Range(0, 4 * 65536).Select(i => (byte)(i * 31)).ToArray();
+            var node = f.Io.Put(f.Payload, bytes);
+            using var caller = new CancellationTokenSource();
+            if (mode == "cancel-before") caller.Cancel();
+            var reads = 0;
+            f.Io.StreamFactory = () => new PacedBytes(bytes, () =>
+            {
+                reads++;
+                if (mode == "cancel-during" && reads == 2) caller.Cancel();
+                if (reads == 5 && mode is "eof" or "grow" or "shrink" or "inspect")
+                {
+                    if (mode == "grow") node.Stat = node.Stat with { Size = bytes.Length + 1 };
+                    if (mode == "shrink") node.Stat = node.Stat with { Size = bytes.Length - 1 };
+                    if (mode == "inspect") f.Io.InspectFails = true;
+                    f.Clock.Advance(TimeSpan.FromSeconds(3));
+                }
+                else f.Clock.Advance(TimeSpan.FromSeconds(mode == "stall" && reads == 2 ? 3 : 1));
+            });
+            if (mode is "progress" or "eof")
+            {
+                var digest = ReceiptFile.Digest(f.Context, f.Payload, caller.Token);
+                digest.Length.ShouldBe(bytes.Length);
+                digest.Sha256.ShouldBe(Convert.ToHexString(SHA256.HashData(bytes)));
+                reads.ShouldBe(5);
+            }
+            else
+            {
+                var error = Should.Throw<IOException>(() => ReceiptFile.Digest(f.Context, f.Payload, caller.Token));
+                if (mode.StartsWith("cancel", StringComparison.Ordinal)) error.InnerException.ShouldBeAssignableTo<OperationCanceledException>();
+                else error.Message.ShouldContain(mode == "inspect" ? "inspect failed" : "read-stalled");
+            }
+            f.Io.Count("open-read").ShouldBe(mode == "cancel-before" ? 0 : 1);
+            f.Io.Count("close-read").ShouldBe(mode == "cancel-before" ? 0 : 1);
+            f.Io.Count("inspect").ShouldBe(mode == "cancel-before" ? 0 : mode is "eof" or "grow" or "shrink" or "inspect" ? 2 : 1);
+            f.Io.Events.ShouldNotContain(e => e.Operation is "write" or "unlink" or "rmdir");
+            node.Bytes.ShouldBe(bytes);
+        }
+    }
+
+    private sealed class PacedBytes(byte[] bytes, Action beforeRead) : MemoryStream(bytes, false)
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            beforeRead();
+            return base.ReadAsync(buffer[..Math.Min(buffer.Length, 65536)], cancellationToken);
+        }
+    }
+
+    private sealed class ZeroStream(long length) : Stream
+    {
+        public long Delivered { get; private set; }
+        public int LargestRequest { get; private set; }
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            LargestRequest = Math.Max(LargestRequest, count);
+            var take = (int)Math.Min(count, length - Delivered);
+            buffer.AsSpan(offset, take).Clear();
+            Delivered += take;
+            return take;
+        }
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            LargestRequest = Math.Max(LargestRequest, buffer.Length);
+            var take = (int)Math.Min(buffer.Length, length - Delivered);
+            buffer.Span[..take].Clear();
+            Delivered += take;
+            return ValueTask.FromResult(take);
+        }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => length;
+        public override long Position { get => Delivered; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private string Repo()

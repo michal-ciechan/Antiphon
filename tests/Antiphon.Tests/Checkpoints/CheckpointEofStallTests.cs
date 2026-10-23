@@ -57,7 +57,7 @@ public sealed class CheckpointEofStallTests
                 throw error;
             });
             stamp.ShouldBe(expected);
-            calls.ShouldBe(1, "the real regular-file shape must enter Stamp's byte-reader try/catch");
+            calls.ShouldBe(1, "the real regular-file shape must enter Stamp's digest try/catch");
         }
     }
 
@@ -177,7 +177,7 @@ public sealed class CheckpointEofStallTests
             }
         }
 
-        public string Stamp() => BuildConfinement.Stamp(Path, path => ReceiptFile.ReadBytes(Files.Context, path));
+        public string Stamp() => BuildConfinement.Stamp(Path, path => ReceiptFile.Digest(Files.Context, path));
 
         public void Arm(Action duringStall)
         {

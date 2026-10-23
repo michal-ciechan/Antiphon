@@ -424,9 +424,9 @@ public static class BuildConfinement
         return text.Length > 200 ? text[..200] : text;
     }
 
-    internal static string Stamp(string full) => Stamp(full, path => ReceiptFile.ReadBytes(path));
+    internal static string Stamp(string full) => Stamp(full, path => ReceiptFile.Digest(Antiphon.HostCleanup.Checkpoints.CheckpointCleanupDefaults.Context, path));
 
-    internal static string Stamp(string full, Func<string, byte[]> readBytes)
+    internal static string Stamp(string full, Func<string, (long Length, string Sha256)> digest)
     {
         try
         {
@@ -440,8 +440,8 @@ public static class BuildConfinement
                 return "directory|0|";
             if (!file.Exists)
                 return "absent|0|";
-            var bytes = readBytes(full);
-            return "file|" + bytes.Length + "|" + Hash(bytes);
+            var content = digest(full);
+            return "file|" + content.Length + "|" + content.Sha256.ToLowerInvariant();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
