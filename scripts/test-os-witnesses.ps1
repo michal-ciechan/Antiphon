@@ -61,6 +61,7 @@ try {
     Git @('init','-q') | Out-Null
     Git @('config','user.email','fixture@example.invalid') | Out-Null
     Git @('config','user.name','Fixture') | Out-Null
+    Put '.gitignore' 'evidence.json'
     Put 'plan.md' "### Checkpoints`n`n| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |`n|---|---|---|---|---|---|---|---|---|`n| CP-1 | all | n/a | fixture | pwsh test.ps1 | V-1 | pass | n/a | 1 |`n"
     Put 'source.cs' "// base`n"
     Put 'test.ps1' '# a fixture declaration, not an execution receipt'
@@ -86,6 +87,13 @@ try {
             @{revision='head';line=1;disposition='witness';witnessId='W-1'})
     });witnesses=@($witness);restartImpact=@{required=$false;paths=@();additionalPaths=@();reason='no startup path'}}
     Run-Case 'forced-real-type' $valid 0 'complete syntax/inventory'
+    Put 'source.cs' '// unstaged source must not hide the pinned candidate'
+    Run-Case 'pinned-source' $valid 0 'CANDIDATE head source.cs:1'
+    Put 'source.cs' 'if (OperatingSystem.IsWindows()) ReadOptional();'
+    $e=Copy-Record $valid; $e.inspectedPaths='not-an-array'
+    Run-Case 'malformed-record' $e 2 'invalid array'
+    $e=Copy-Record $valid; $e.witnesses[0].testPath='../outside.ps1'
+    Run-Case 'unsafe-path' $e 1 'invalid path'
     $e=Copy-Record $valid; $e.witnesses[0].witnessKind='seam'
     Run-Case 'seam-only' $e 1 'real-type required'
     $e=Copy-Record $valid; $e.witnesses[0].executionMode='native'; $e.witnesses[0].nativeObligation=@{status='pending';targetOS='Windows';sourceSha=$script:head;command='native test';reason='native API'}

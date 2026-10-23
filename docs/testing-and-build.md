@@ -545,6 +545,93 @@ Legacy unsealed copies retain their current-process ledger behavior.
 
 `import --plan <plan.md>` writes the same manifest as YAML under `.antiphon/` when a row needs `knownFlaky`, `serial`, or a timeout pin. A legacy eight-column table (minutes stored under `Min`) is refused until the time column is renamed `EstimatedMinutes` (CARD-0617). `import` treats 45 minutes as an advisory threshold: imported row timeouts are `max(15, 3 * selected EstimatedMinutes)`, using the platform-selected estimate. Estimate 15 gives 45 minutes without a warning; estimate 16 gives 48 minutes with a warning suggesting a split. Row timeouts are not capped at 45 minutes; positive explicit timeouts are used unchanged, and without an estimate the manifest fallback is `max(15, manifestDefault)`. The independent total-run deadline still applies and can stop a row earlier. `import` also warns when a row names more than four land classes. It also warns, without changing the exit code or the manifest, when a row defines a second build equivalent to an earlier one: a different `bin-<x>/` id with the same project (separators, a leading `./`, a trailing `/` and a `<Dir>/<Dir>.csproj` file name normalised, case-insensitive), the same expanded `After` and the same `Repeat`; the warning names the Build cell to write: the earlier `CP-n` id, or the earlier `<project> -> bin-<x>/` cell when that row id is not `CP-<digits>` (CARD-1493). Builds in different `After` groups are never equivalent. A land row stays at about 120 `[Test]` methods. `row` runs one row with the same lines as `scripts/run-checkpoint.ps1`. The repo tool manifest does not list this package until a feed exists; prove the package with `dotnet pack` and `dotnet tool install --tool-path`.
 
+## OS branch witnesses
+
+For each changed OS-selected production behavior, Code and Review must identify
+its real runtime object from the **production factory/property**, the selected
+branch and the discriminating input. Inspect the test that drives that object
+through production and asserts both setup and observable result. A seam or mock
+may supplement this witness but cannot replace it. Audit changed helpers and
+their OS-gated callers even when the OS check itself did not change. This is a
+changed-behavior obligation, not a repository-wide coverage campaign.
+
+For optional configuration, absent, empty and value are different states. Remove
+the key and assert absence before the call; an empty assignment is not removal.
+CARD-1525 corrected the CARD-1506 incident premise: the old script already used
+real `ProcessStartInfo.EnvironmentVariables`, but every case assigned the opt-out
+key. The missing absent-input witness was decisive. CARD-1525 owns the runtime
+repair and its reviewed file/method/SHA; do not credit an investigation diagnostic
+or bind a speculative method as passing evidence while that repair is pending.
+
+Force an existing OS parameter while retaining the real type when possible.
+Native-only APIs require a separately scoped native witness with its exact OS,
+source, command and budget; do not add a production bypass for testing. A native
+witness not executed stays pending, never a passed skip. Read runtime placement
+from `GET /api/runner-defaults` and `GET /api/session-runners`; leave portable work
+unpinned and use `-Platform Windows` only for the native Windows piece.
+
+Code records the following declaration in ignored JSON, then runs:
+
+```powershell
+pwsh -NoProfile -File scripts/check-os-witnesses.ps1 -BaseRef <full-base-sha> -HeadRef <full-head-sha> -EvidencePath <ignored-json> -Plan <repo-relative-plan.md>
+```
+
+Optional `-Repository` selects the checkout. Both refs must be full commit SHAs.
+The checker reads Git objects at those revisions, including the plan at head;
+unstaged source cannot satisfy it. It prints both resolved SHAs and preserves
+candidate diagnostics even when a reviewer dispositions them. Exit 0 means
+complete syntax/inventory, 1 missing/contradictory obligations, 2 invalid or
+unreadable input. It never executes commands from evidence, authenticates a
+receipt or proves runtime identity/reachability. Review inspects the diff and
+callers, the real test and fresh checkpoint receipts; this lint cannot discover
+all indirect OS dependencies. Existing land admission and receipt validation are
+unchanged. Missing required execution remains verification incomplete under
+[D-2](orchestration-loop.md#d-2-advisory-policy-card-1281); standing rule 4 still
+owns `found`. A declaration saying `real-type` alone proves no execution.
+
+Version 1 fields (names and enum values are case-sensitive by convention):
+
+| Record | Required content |
+|---|---|
+| Root | `version: 1`, `baseSha`, `headSha`, arrays `inspectedPaths`, `witnesses`, object `restartImpact` |
+| Each inspected path | `path`, `disposition` (`os-gated`, `portable`, `test-only`, `removed`), nonblank `reason`, arrays `helpers` and `candidates` |
+| Each candidate | `revision` (`base`/`head`), one-based `line`, `disposition: witness` with `witnessId`, or `disposition: non-behavior` with a reason |
+| Each witness | Unique `id`, `sourcePath`, literal `branchAnchor` present at head, `targetOS`, `witnessKind: real-type`, `productionType`, `factory`, `testPath`, exact `testCase` method/script case, `setup`, `outcome`, `executionMode` (`portable-forced`/`native`), `checkpointId`, `input`, `nativeObligation` |
+| Optional configuration input | `kind: optional-config`, `key`, `cases` containing `absent`, `empty`, and `value` states (multiple distinct values allowed); each has `state`, boolean `keyPresent`, nonblank `setupAssertion`. Absent has false and no `value` property; empty has true and `value: ""`; value has true and a nonempty string |
+| Other input | `kind: other`, `description`, `setupAssertion`; Review checks that an optional read was not misclassified |
+| Native obligation | `status: pending` plus `reason`, or `status: recorded` plus `executionMode: native` and `receiptReference`; both require `targetOS`, exact head `sourceSha`, `command`. Portable-only witnesses may use `status: not-required` plus `reason` |
+| Restart impact | Boolean `required`, exact startup-path census `paths`, array `additionalPaths` for reviewed startup dependencies, `reason`; if required, a Windows `nativeObligation` at head |
+
+Supported target OS names are Windows, Linux, macOS, FreeBSD, Android, iOS,
+Browser and Other. Source/test paths must be regular files in pinned Git trees.
+Removed paths are checked against base; renames retain old and new identities.
+Every changed non-document path must be inventoried; only `.md`, `.rst`, `.txt`
+are automatically documentation. Unknown extensions are explicitly reported for
+classification. `helpers` names additional inspected paths for indirect callers.
+Duplicate identities, stale candidates, contradictory dispositions and unknown
+checkpoint IDs fail. Candidates are scanned in complete changed files at both
+revisions and in named helpers. An unchanged OS guard in a changed file therefore
+still needs an explicit disposition, without demanding a new test for unchanged
+behavior. Deleted guards use a reasoned non-behavior disposition.
+
+The bounded lexical scan recognizes C# (`.cs`, `.csx`), PowerShell (`.ps1`, `.psm1`,
+`.psd1`), shell (`.sh`, `.bash`, `.zsh`) and JS/TS (`.js`, `.jsx`, `.mjs`, `.cjs`,
+`.ts`, `.tsx`). Spellings: `OperatingSystem.Is*`,
+`RuntimeInformation.IsOSPlatform`, `Environment.OSVersion.Platform`, `$IsWindows`,
+`$IsLinux`, `$IsMacOS`, `$env:OS`, OS preprocessor guards with WINDOWS/WIN32/_WIN32,
+LINUX/__linux__, OSX/MACOS/__APPLE__, `uname`, `$OSTYPE`, `process.platform` and
+`os.platform()`. Comments/strings can be candidates; aliases and other spellings
+can be missed. Keep candidate diagnostics and record reasoned non-behavior
+exemptions instead of hiding matches.
+
+Check startup impact for either side of a rename/delete touching `dev-aspire.ps1`,
+`scripts/restart-apphost.ps1`, `scripts/build-slot.ps1`, `scripts/lib/**`,
+`scripts/apphost-common.ps1`, `Antiphon.AppHost/**` or a reviewed dependency.
+Document/test-only changes can say not applicable with their actual census and
+reason. Other matched paths require a native obligation; pending is valid lint
+syntax, not permission for an rc pick. Follow the [native probe and restart
+rehearsal](release-gates.md#startup-path-rc-picks) before publication/activation.
+
 ### Static plan-to-test coverage (CARD-0891/0901)
 
 `coverage --plan <path> [--tests <literal.cs> ...] [--format text|json]

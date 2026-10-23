@@ -1,8 +1,8 @@
-Implement landed plan, verification design and tests.
+Implement plan and verification design.
 
-SCOPE: Unit plus the named affected integration classes. Unit misses delivery, landing, leases, persistence. Before full-assembly runs name invariant, unbounded classes and cost.
+SCOPE: Unit plus the named affected integration classes. Unit omits delivery, landing, leases, persistence. Before full-assembly runs name invariant, unbounded classes, cost.
 
-CHECKPOINTS: Run the closed list in ### Checkpoints via checkpoint tool per committed group (docs/testing-and-build.md). Wait; inspect fresh TRX for each intended class/method and nonzero counts. Rerun red rows. Explain unlisted builds/tests; report slot= and waited=. New tests must fail on their guarded defect; self-comparison or a constant is a stub, not done.
+CHECKPOINTS: Run the ### Checkpoints closed list via checkpoint tool per committed group. Wait; inspect fresh TRX for each intended class/method and nonzero counts. Rerun red rows. Explain unlisted builds/tests; report slot= and waited=. Tests must fail on guarded defects; self-compare or constant is a stub, not done.
 
 repeat-proof: at most 3 normal + 2 loaded repetitions per unchanged proof selection; none required after green. Exceed only for a flake already demonstrated by Review; cite that Review, filter, reason and revised budget.
 
@@ -16,6 +16,7 @@ Report every PC-n/variant pending for Mutation. Mutation owns deliberate mutants
 
 next: review when implementation and ordinary V/R are complete, even with zero PCs. unbound candidate docs/superpowers/mutations/. Restart: server/runner/none.
 
-next: code when implementation/ordinary verification remains; decide for a blocking human choice. Do not settle next: land or deploy. After Review caller lands original Code task and commissions SourceLanding Mutation.
+next: code for remaining implementation/ordinary verification; decide for a blocking human choice. Never next: land/deploy. After Review caller lands original Code task and commissions SourceLanding Mutation.
 
 Platform: read GET /api/runner-defaults and /api/session-runners. Do not embed a fleet location. Omit -Runner unless pinning one host. Omit -Platform unless OS needed; -Platform Any unpins.
+Apply docs/testing-and-build.md#os-branch-witnesses (real type/input; rc startup).
