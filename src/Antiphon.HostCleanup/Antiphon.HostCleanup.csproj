@@ -7,4 +7,10 @@
   <ItemGroup>
     <Compile Include="../../scripts/lib/CheckpointProcessRunner.cs" Link="Checkpoints/CheckpointProcessRunner.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../../scripts/lib/DiagnosticTextRedactor.cs" Link="Diagnostics/DiagnosticTextRedactor.cs" />
+    <Compile Include="../../scripts/lib/DiagnosticCredentialRedactor.cs" Link="Diagnostics/DiagnosticCredentialRedactor.cs" />
+    <Compile Include="../../scripts/lib/DiagnosticUrlRedactor.cs" Link="Diagnostics/DiagnosticUrlRedactor.cs" />
+  </ItemGroup>
+  <PropertyGroup><DefineConstants>$(DefineConstants);HOSTCLEANUP_DIAGNOSTICS</DefineConstants></PropertyGroup>
 </Project>

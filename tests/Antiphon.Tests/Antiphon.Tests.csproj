@@ -66,6 +66,7 @@
     <ProjectReference Include="..\..\scripts\fixtures\nightly\owned-child\OwnedChild.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\src\Antiphon.Resilience\Antiphon.Resilience.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.HostCleanup\Antiphon.HostCleanup.csproj" />
+    <ProjectReference Include="../Antiphon.FileUseTestChild/Antiphon.FileUseTestChild.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.DockerStack.Fixture\Antiphon.DockerStack.Fixture.csproj" />
     <ProjectReference Include="..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.ScriptHarnessHost\Antiphon.ScriptHarnessHost.csproj" ReferenceOutputAssembly="false" />
@@ -100,6 +101,7 @@
        producer framework other than this project's. -->
   <ItemGroup>
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\scripts\fixtures\nightly\owned-child\OwnedChild.csproj" Folder="nightly-owned-child" Glob="*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)../Antiphon.FileUseTestChild/Antiphon.FileUseTestChild.csproj" Folder="file-use-child" Glob="*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj" Folder="custody-child" Glob="*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.ScriptHarnessHost\Antiphon.ScriptHarnessHost.csproj" Folder="script-harness-host" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.ChannelOutbound.Probe\Antiphon.ChannelOutbound.Probe.csproj" Folder="channel-outbound-probe" Glob="**\*" />
