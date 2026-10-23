@@ -29,6 +29,42 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         var requestFile=Directory.GetFiles(Path.Combine(root,".antiphon","checkpoints"),"request.json",SearchOption.AllDirectories).Single();
         var request=JsonSerializer.Deserialize<RunRequest>(File.ReadAllText(requestFile),CheckpointApp.Json)!;
         request.TotalTimeoutMinutes.ShouldBe(10); request.HardWallTimeoutMinutes.ShouldBe(25);
+        foreach(var wallOverride in new int?[] {null,12})
+        {
+        var bound = new CheckpointAdmissionBudgetTests.Harness(TempDir(), commands:true);
+        bound.Manifest.Checkpoints.RemoveAt(1);
+        bound.Manifest.Checkpoints.Single().After=["S1"];
+        bound.Manifest.Build.SlotWaitMinutes=2;
+        bound.Manifest.Timeouts.HardWallMinutes=8;
+        var boundRun=CheckpointApp.CreateRun(bound.Manifest,new RunRequest { TotalTimeoutMinutes=10,HardWallTimeoutMinutes=wallOverride,KeepOutputs=true },bound.Root,
+            new CheckpointApp.Runtime { SourceCapture=_=>CheckpointFixtures.CleanSource() });
+        var entered=CheckpointAdmissionBudgetTests.Signal();
+        var holders=new CheckpointAdmissionBudgetTests.Holders();
+        var handler=new CheckpointAdmissionBudgetTests.AdmissionHttp(bound.Clock,entered,false);
+        var execute=CheckpointApp.ExecuteAsync(boundRun,bound.Watchdog.Token,new CheckpointApp.Runtime
+        {
+            Driver=bound.Driver,SlotHandler=handler,SlotHolders=holders,TimeProvider=bound.Clock,SlotClock=bound.Clock.GetUtcNow,
+            SourceCapture=_=>CheckpointFixtures.CleanSource(),EnvironmentLookup=_=>null,Platform=new FakePlatform(),
+        });
+        try
+        {
+            await entered.Task.WaitAsync(bound.Watchdog.Token);
+            bound.Clock.Advance(TimeSpan.FromMinutes(2));
+            (await execute).ShouldBe(4);
+            var state=new RunStateStore().TryRead(Path.Combine(boundRun,"state.json"))!;
+            state.Rows.Single().WaitedSeconds.ShouldBe(120);
+            state.HardWallLimitSeconds.ShouldBe(wallOverride is null ? 480 : 720);
+            state.ExecutionLimitSeconds.ShouldBe(600);
+            holders.Disposed.ShouldBe(1);bound.Driver.Calls.ShouldBeEmpty();
+        }
+        finally { bound.Watchdog.Cancel();await execute; }
+        foreach(var yaml in new[]{"schemaVersion: 1\ntimeouts: null","schemaVersion: 1\ntimeouts: {}","schemaVersion: 1\nbuild: null","schemaVersion: 1\nbuild: {}"})
+            ManifestLoader.LoadYaml(yaml,root,false).Build.SlotWaitMinutes.ShouldBe(45);
+        foreach(var json in new[]{"{\"executionSeconds\":-1}","{\"rows\":[{\"executedSeconds\":-1}]}"})
+            ReportValidator.Validate(JsonSerializer.Deserialize<ReportModel>(json,ReportWriter.Json)!,new string('a',40)).ShouldBe("invalid_timing");
+        Should.Throw<JsonException>(()=>JsonSerializer.Deserialize<ReportModel>("{\"executionSeconds\":\"0\"}",ReportWriter.Json));
+
+        }
         var absent=ManifestLoader.LoadYaml("schemaVersion: 1",root,false);
         absent.Build.SlotWaitMinutes.ShouldBe(45);
     }

@@ -15,6 +15,7 @@ internal sealed class RunBudgetClock : IDisposable
     private int _activities, _waiting;
     private bool _schedulerIdle;
     private string? _reason;
+    private bool _disposed;
     public CancellationToken Token => _ended.Token;
     public TimeProvider Time => _time;
     public DateTimeOffset HardWallTimeoutAt { get; }
@@ -46,6 +47,7 @@ internal sealed class RunBudgetClock : IDisposable
     {
         lock(_gate)
         {
+            if (_disposed) return;
             Update();
             if(_reason is not null) return;
             if(_wall>=_wallLimit) _reason="hard-wall-deadline-exceeded";
@@ -79,7 +81,15 @@ internal sealed class RunBudgetClock : IDisposable
             if(_reason is not null && (state.Reason is null || state.Reason is "hard-wall-deadline-exceeded" or "execution-budget-exceeded")) state.Reason=_reason;
         }
     }
-    public void Dispose() { _wallTimer.Dispose(); _executionTimer.Dispose(); _ended.Dispose(); }
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _wallTimer.Dispose(); _executionTimer.Dispose(); _ended.Dispose();
+        }
+    }
     internal sealed class Activity(RunBudgetClock owner):IDisposable
     {
         private bool _waiting, _disposed;

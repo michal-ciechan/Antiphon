@@ -72,6 +72,25 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
         }
         finally { releaseBuild.TrySetResult(); releaseRow.TrySetResult(); h.Watchdog.Cancel(); await run; }
         h.Slots.Released.ShouldBe(4);
+        var clock = new ControlledTimeProvider();
+        using var budget = new RunBudgetClock(clock,TimeSpan.FromMinutes(10),TimeSpan.FromMinutes(20));
+        using var first = budget.EnterActivity();
+        using var second = budget.EnterActivity();
+        first.Admission(true);second.Admission(true);
+        clock.Advance(TimeSpan.FromMinutes(2)); // scheduler has not offered all eligible work
+        budget.SchedulerIdle(true);
+        clock.Advance(TimeSpan.FromMinutes(5));
+        first.Admission(false);
+        clock.Advance(TimeSpan.FromMinutes(2)); // source/preflight/settlement work while a sibling waits
+        first.Dispose();
+        clock.Advance(TimeSpan.FromMinutes(2));
+        budget.SchedulerIdle(false);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        var phases=new RunState();budget.Capture(phases);
+        phases.BudgetWallSeconds.ShouldBe(720);
+        phases.AdmissionOnlySeconds.ShouldBe(420);
+        phases.ExecutionSeconds.ShouldBe(300);
+
     }
 
     [Test]
@@ -259,6 +278,34 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
         var state=new RunStateStore().TryRead(Path.Combine(wallRun,"state.json"))!;
         state.Reason.ShouldBe("hard-wall-deadline-exceeded");
         wall.Driver.InFlight.ShouldBe(0);
+        var cleanupClock=new ControlledTimeProvider();
+        using var cleanupBudget=new RunBudgetClock(cleanupClock,TimeSpan.FromMinutes(10),TimeSpan.FromMinutes(30));
+        cleanupClock.Advance(TimeSpan.FromMinutes(6));
+        var cleanupDriver=new FakeDriver();
+        string? checkout=null;
+        cleanupDriver.When(r=>r.Arguments.Contains("rev-parse"),(_,_)=>Task.FromResult(new DriverResult(0,new string('b',40),"")));
+        cleanupDriver.When(r=>r.Arguments.Contains("add"),(r,_)=>
+        {
+            checkout=r.Arguments[3]; Directory.Exists(checkout).ShouldBeFalse();Directory.CreateDirectory(Path.Combine(checkout,"tests","Antiphon.Tests"));
+            return Task.FromResult(new DriverResult(0,"",""));
+        });
+        cleanupDriver.When(CheckpointFixtures.IsBuild,(_,ct)=>
+        {
+            cleanupClock.Advance(TimeSpan.FromMinutes(5));ct.ThrowIfCancellationRequested();
+            return Task.FromResult(new DriverResult(0,"",""));
+        });
+        var comparer=new BaselineComparer(cleanupDriver,new FixedSlotClient("off"),cleanupBudget.RemainingExecution,null,cleanupBudget,TimeSpan.FromMinutes(2));
+        try
+        {
+            await comparer.CompareAsync(TempDir(),TempDir(),"origin/master",
+                [new ReportRow { Id="CP-1",Build="bin-a",Filter="/*/*/ExampleSurfaceTests/*",Failures=[new ReportFailure {Name="ExampleSurfaceTests.bad"}] }],
+                [new BuildSpec {Id="bin-a",Project="tests/Antiphon.Tests",OutputPath="bin-a/"}],CancellationToken.None);
+            checkout.ShouldNotBeNull();Directory.Exists(checkout).ShouldBeTrue();
+            comparer.ToolRuns.ShouldContain(line=>line.Contains("retained canceled workspace",StringComparison.Ordinal));
+            cleanupDriver.Count(r=>r.Arguments.Contains("remove")).ShouldBe(0,"cleanup must not get a fresh one-minute deadline");
+            cleanupDriver.InFlight.ShouldBe(0);
+        }
+        finally { if(checkout is not null && Directory.Exists(checkout)) Directory.Delete(checkout,true); }
     }
 
     private Harness Fixture(bool twoBuilds = false, bool commands = false) => new(TempDir(), twoBuilds, commands);
@@ -306,7 +353,7 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
             },linked.Token);
         }
     }
-    private sealed class Holders : ILeaseHolderSource
+    internal sealed class Holders : ILeaseHolderSource
     {
         public int Disposed;
         public ILeaseHolder Open() => new Holder(this);
@@ -317,7 +364,7 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
             public ValueTask DisposeAsync() { Interlocked.Increment(ref owner.Disposed); return ValueTask.CompletedTask; }
         }
     }
-    private sealed class AdmissionHttp(ControlledTimeProvider clock, TaskCompletionSource entered, bool grantAtBoundary) : HttpMessageHandler
+    internal sealed class AdmissionHttp(ControlledTimeProvider clock, TaskCompletionSource entered, bool grantAtBoundary) : HttpMessageHandler
     {
         public int Deletes;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -327,6 +374,9 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
                 Interlocked.Increment(ref Deletes);
                 return new HttpResponseMessage(System.Net.HttpStatusCode.NoContent);
             }
+            if (request.Method == HttpMethod.Get)
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                { Content = new StringContent("{\"enabled\":true,\"maxCpuCount\":4}") };
             entered.TrySetResult();
             if (!grantAtBoundary) await Task.Delay(Timeout.Infinite, ct);
             else clock.Advance(TimeSpan.FromMinutes(2));

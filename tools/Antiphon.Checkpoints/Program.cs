@@ -543,7 +543,7 @@ public static class Program
             BuildSlotClient.DefaultEndpoint(platform.IsWindows),
             clock: runtime.SlotClock,
             delay: runtime.SlotDelay,
-            holders: new ProcessLeaseHolderSource(runtime.SlotStartTimeReader),
+            holders: runtime.SlotHolders ?? new ProcessLeaseHolderSource(runtime.SlotStartTimeReader),
             sensitiveToken: runtime.EnvironmentLookup("ANTIPHON_TASK_TOKEN"));
         var session = options.Get("slots") == "off"
             ? new SlotSession("off", 4)

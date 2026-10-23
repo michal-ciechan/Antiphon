@@ -770,6 +770,7 @@ public sealed class RunScheduler
             ExitCode = exitCode,
             State = state,
             BuildState = state == "build-failed" ? "failed" : "n/a",
+            ExecutedSeconds = 0, WallSeconds = 0, TerminalReason = state,
         };
 
     private static double Elapsed(DateTimeOffset? started) =>

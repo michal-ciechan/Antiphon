@@ -22,6 +22,7 @@ public static class CheckpointApp
         public TimeSpan? OwnerUncertaintyBudget { get; init; }
         public IDriver? Driver { get; init; }
         public IBuildSlotClient? Slots { get; init; }
+        internal ILeaseHolderSource? SlotHolders { get; init; }
         public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
         internal Action? SchedulerSuspended { get; init; }
         public HttpMessageHandler? SlotHandler { get; init; }
@@ -183,7 +184,7 @@ public static class CheckpointApp
             : new BuildSlotClient(runtime.SlotHandler ?? new HttpClientHandler(), BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows()),
                 wait: TimeSpan.FromMinutes(manifest.Build.SlotWaitMinutes), timeProvider: runtime.TimeProvider,
                 clock: runtime.SlotClock, delay: runtime.SlotDelay, log: Note,
-                holders: new ProcessLeaseHolderSource(runtime.SlotStartTimeReader),
+                holders: runtime.SlotHolders ?? new ProcessLeaseHolderSource(runtime.SlotStartTimeReader),
                 sensitiveToken: runtime.EnvironmentLookup("ANTIPHON_TASK_TOKEN")));
         var platform = runtime.Platform ?? new RuntimePlatform();
         var width = request.Parallel is > 0 ? request.Parallel.Value : manifest.EffectiveMaxRows(platform.IsWindows);
@@ -796,10 +797,10 @@ public static class CheckpointApp
                 Source = row.Source,
                 Build = row.State == "build-failed" ? "failed" : "n/a",
                 Filter = row.Filter ?? row.Command ?? "",
-                Executed = row.State == "slot-refused" ? "0" : "n/a",
-                Passed = row.State == "slot-refused" ? "0" : "n/a",
-                Failed = row.State == "slot-refused" ? "0" : "n/a",
-                Skipped = row.State == "slot-refused" ? "0" : "n/a",
+                Executed = row.Executed?.ToString() ?? "n/a",
+                Passed = row.Passed?.ToString() ?? "n/a",
+                Failed = row.Failed?.ToString() ?? "n/a",
+                Skipped = row.Skipped?.ToString() ?? "n/a",
                 Trx = "n/a",
                 Slot = row.Slot ?? "skipped",
                 SlotReason = row.SlotReason,

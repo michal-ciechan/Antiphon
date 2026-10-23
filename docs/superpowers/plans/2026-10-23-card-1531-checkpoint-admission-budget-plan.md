@@ -265,8 +265,8 @@ TestDesign may amend this manifest before Code; Code may not broaden it ad hoc.
 | CP-6 | S3 | CP-3 | slot-regression | `/*/*/CheckpointSlotExecutorTests/executor_busy_then_rejection_retains_exact_wait_in_state_report_and_merge` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
 | CP-7 | S3 | CP-3 | owner-regression | `/*/*/CheckpointTaskOwnershipTests/settlement_cancels_two_drivers_and_skips_later_rows` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
 | CP-8 | S3 | CP-3 | caller-regression | `/*/*/C1307CliCancellationTests/Executor_cancel_persists_130` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
-| CP-9 | S3 | CP-3 | evidence-regression | `/*/*/(CheckpointLineTests)\|(ReportMergerTests)/(tunit_line_matches_the_pinned_regex_with_slot_suffix*)\|(latest_per_cp_wins_and_earlier_attempts_count_as_reruns*)` | R-3 | all 2 passed, 0 failed/skipped | 2 | 1 |
-| CP-10 | S3 | CP-3 | remaining-budget-regression | `/*/*/(CheckpointTaskOwnershipTests)\|(BaselineComparerTests)/(windows_estimate_selects_row_and_total_deadlines*)\|(baseline_stops_when_the_timeout_is_already_spent*)` | R-4 | all 2 passed, 0 failed/skipped | 2 | 2 |
+| CP-9 | S3 | CP-3 | evidence-regression | `/*/*/(CheckpointLineTests*)\|(ReportMergerTests*)/(tunit_line_matches_the_pinned_regex_with_slot_suffix*)\|(latest_per_cp_wins_and_earlier_attempts_count_as_reruns*)` | R-3 | all 2 passed, 0 failed/skipped | 2 | 1 |
+| CP-10 | S3 | CP-3 | remaining-budget-regression | `/*/*/(CheckpointTaskOwnershipTests*)\|(BaselineComparerTests*)/(windows_estimate_selects_row_and_total_deadlines*)\|(baseline_stops_when_the_timeout_is_already_spent*)` | R-4 | all 2 passed, 0 failed/skipped | 2 | 2 |
 
 --- next stage ---
 next: test-design
