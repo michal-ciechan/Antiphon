@@ -189,16 +189,21 @@ public sealed class VerificationRoundDeliveryTests
             var adapter = new FakeAgentProtocolAdapter();
             await using var _ = adapter;
             var connection = world.Schema.ConnectionString;
-            await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.UserPrompt, "prior turn", connectionString: connection);
-            await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn,
+            await adapter.EnableClaudeDialogObservationAsync(connection, session);
+            Task InsertAsync(Guid id, string kind, string? text = null, string? stopReason = null,
+                DateTime? timestamp = null, string? connectionString = null) =>
+                StoreAwareTranscript.WriteAsync(world.Services, id, () => BridgeQueueHarness.InsertEntryAsync(
+                    id, kind, text, stopReason, timestamp, connectionString: connectionString));
+            await InsertAsync(session, TranscriptKinds.UserPrompt, "prior turn", connectionString: connection);
+            await InsertAsync(session, TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn,
                 connectionString: connection);
             if (busy)
-                await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.AssistantText, "delegate is mid-turn", connectionString: connection);
+                await InsertAsync(session, TranscriptKinds.AssistantText, "delegate is mid-turn", connectionString: connection);
             adapter.OnSubmitted = async submitted =>
             {
-                await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow,
+                await InsertAsync(session, TranscriptKinds.UserPrompt, submitted, timestamp: DateTime.UtcNow,
                     connectionString: connection);
-                await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn,
+                await InsertAsync(session, TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn,
                     connectionString: connection);
             };
             world.Services.GetRequiredService<AgentSessionRuntime>().Register(session, adapter);
@@ -216,7 +221,7 @@ public sealed class VerificationRoundDeliveryTests
             if (busy)
             {
                 adapter.SubmittedBodies.ShouldBeEmpty(row + ": a busy delegate gets zero writes before TurnEnd");
-                await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn,
+                await InsertAsync(session, TranscriptKinds.TurnEnd, stopReason: TranscriptKinds.StopReasons.EndTurn,
                     connectionString: connection);
                 await queue.OnTurnEndAsync(session, CancellationToken.None);
                 // A warm unrelated reuse types the refocus /compact first; its own TurnEnd releases the brief.
@@ -541,6 +546,7 @@ public sealed class VerificationRoundDeliveryTests
             Id = Guid.NewGuid(), Name = name, Slug = name, WorkingDirectory = world.RepositoryPath,
             Details = "CARD-0544 warm delegate.", Status = AgentStatus.Idle, PoolIdleSince = now.AddMinutes(-1),
             Kind = task.AgentKind, ModelLevel = task.ModelLevel, IsPoolDelegate = true, PoolProjectId = task.ProjectId,
+            PoolClaudeEffort = ClaudeLaunchArgs.Effort(task.ModelLevel, task.Role, world.Delegation.ClaudeEffortByRole),
             PersistentSessionId = session.Id.ToString("D"), CreatedAt = now.AddHours(-2), UpdatedAt = now,
         };
         db.Agents.Add(agent);

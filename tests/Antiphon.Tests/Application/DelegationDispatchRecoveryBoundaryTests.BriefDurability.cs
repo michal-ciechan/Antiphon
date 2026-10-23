@@ -26,6 +26,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             var loader = new FailingStateLoader();
             await using (var faulted = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
             {
+                ClaudeDialogObservation = true,
                 ConnectionString = schema.ConnectionString,
                 PreserveDatabaseOnDispose = true,
                 AttachSessionId = seeded.SessionId,

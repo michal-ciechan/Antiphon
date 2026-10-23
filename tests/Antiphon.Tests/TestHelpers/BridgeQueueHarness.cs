@@ -96,6 +96,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         public Guid? AttachSessionId { get; init; }
 
         public Guid? AttachAgentId { get; init; }
+
+        /// <summary>Opt into current Claude observation and guarded writes for this fixture only.</summary>
+        public bool ClaudeDialogObservation { get; init; }
     }
 
     public static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
@@ -272,6 +275,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             var attachedRuntime = provider.GetRequiredService<AgentSessionRuntime>();
             var attachedAdapter = new FakeAgentProtocolAdapter();
             var attachedStore = options.ConnectionString;
+            if (options.ClaudeDialogObservation)
+                await attachedAdapter.EnableClaudeDialogObservationAsync(
+                    attachedStore ?? TestDbFixture.ConnectionString, attachedSession);
             attachedAdapter.OnSubmitted = async submitted =>
             {
                 await InsertEntryAsync(attachedSession, TranscriptKinds.UserPrompt, submitted,
@@ -336,6 +342,8 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
         var adapter = new FakeAgentProtocolAdapter();
         var store = options.ConnectionString;
+        if (options.ClaudeDialogObservation)
+            await adapter.EnableClaudeDialogObservationAsync(store ?? TestDbFixture.ConnectionString, sessionId);
         // CARD-0055: a delivery is Delivered only once its prompt exists as a UserPrompt transcript
         // row, so the fake has to model the whole round trip, not just the composer. A real Claude
         // that takes a prompt records it and then WORKS; the trailing TurnEnd keeps the fake's

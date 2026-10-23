@@ -834,6 +834,8 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 Id = warmAgent, Name = $"task-{warmAgent:N}"[..13], Slug = $"task-{warmAgent:N}"[..13],
                 WorkingDirectory = directory, Details = "Warm pool delegate.", Status = AgentStatus.Idle,
                 Kind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Medium, IsPoolDelegate = true,
+                PoolClaudeEffort = ClaudeLaunchArgs.Effort(AgentModelLevel.Medium, AgentTaskRole.Custom,
+                    harness.Delegation.ClaudeEffortByRole),
                 PoolIdleSince = now.AddMinutes(-30), PersistentSessionId = warmSession.ToString("D"), LaunchEnvJson = "{}",
                 CreatedAt = now, UpdatedAt = now,
             });
