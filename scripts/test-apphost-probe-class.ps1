@@ -75,7 +75,7 @@ Assert-True ((Format-AppHostRestartExitName 4) -eq '4=DCP dependency timeout') '
 Assert-True ((Format-AppHostRestartExitName 5) -eq '5=server build unverified') 'C5 exit 5 is named server build unverified'
 
 # --- C6: captured child stdout includes Write-Host and the named exit ---
-$stubDir = Join-Path $env:TEMP ('apphost-probe-class-' + [guid]::NewGuid().ToString('N'))
+$stubDir = Join-Path ([IO.Path]::GetTempPath()) ('apphost-probe-class-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stubDir -Force | Out-Null
 $stub = Join-Path $stubDir 'stub-restart.ps1'
 @(
@@ -98,7 +98,7 @@ try {
 }
 
 # --- C6b: captured stub exit 5 is named ---
-$stubDir5 = Join-Path $env:TEMP ('apphost-probe-class5-' + [guid]::NewGuid().ToString('N'))
+$stubDir5 = Join-Path ([IO.Path]::GetTempPath()) ('apphost-probe-class5-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stubDir5 -Force | Out-Null
 $stub5 = Join-Path $stubDir5 'stub-restart.ps1'
 @(

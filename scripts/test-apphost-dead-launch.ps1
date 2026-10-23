@@ -35,7 +35,7 @@ function Get-AppHostWatchdogNow {
     return [datetime]::UtcNow
 }
 function Invoke-WebRequest {
-    param($Uri,$UseBasicParsing,$TimeoutSec)
+    param($Uri,[switch]$UseBasicParsing,$TimeoutSec)
     if (Test-Path (Join-Path (Split-Path $PSScriptRoot -Parent) 'up')) { return [pscustomobject]@{StatusCode=200;Content='ok'} }
     throw 'Connection refused'
 }
@@ -99,7 +99,84 @@ exit $LASTEXITCODE
         $null=Fire
         Assert-C1527 (@(Get-Content $sent).Count -eq 2) 'V-3 one recovery notice'
     } else {
-        throw 'guard matrix is added with implementation'
+        . (Join-Path $PSScriptRoot 'apphost-common.ps1')
+        $now=[datetime]::UtcNow
+        $lock=[pscustomobject]@{Exists=$true;Readable=$true;ProcessId=999999;StampRaw=$now.ToString('o');AgeMinutes=0;HolderState='Dead'}
+        function Decide($previous, $fire='one', $activity='Absent', $dead=$true, $launch=$false) {
+            Resolve-AppHostDeadLaunch -Lock $lock -Activity $activity -HealthDead $dead -LaunchBlocked $launch -Previous $previous -FireId $fire -NowUtc $now
+        }
+        $one=Decide $null
+        Assert-C1527 (-not $one.Reclaim -and $one.Proof.Count -eq 1) 'R-1 one observation cannot reclaim'
+        $repeat=Decide $one.Proof
+        Assert-C1527 (-not $repeat.Reclaim) 'R-1 same fire cannot count twice'
+        $two=Decide $one.Proof 'two'
+        Assert-C1527 $two.Reclaim 'R-1 two distinct fires reclaim'
+        foreach ($activity in @('Present','Unknown','')) {
+            $veto=Decide $two.Proof 'three' $activity
+            Assert-C1527 (-not $veto.Reclaim -and $veto.Proof.Count -eq 0) "R-1 activity $activity resets evidence"
+        }
+        foreach ($holder in @('Alive','Unknown')) {
+            $lock.HolderState=$holder
+            Assert-C1527 (-not (Decide $two.Proof 'three').Reclaim) "R-1 holder $holder veto"
+        }
+        $lock.HolderState='Dead'
+        Assert-C1527 (-not (Decide $two.Proof 'three' 'Absent' $false).Reclaim) 'R-1 healthy or timeout resets proof'
+        Assert-C1527 (-not (Decide $two.Proof 'three' 'Absent' $true $true).Reclaim) 'R-1 launch lock veto'
+        $lock.StampRaw=$now.AddSeconds(1).ToString('o')
+        Assert-C1527 (-not (Decide $two.Proof 'three').Reclaim) 'R-1 replacement restarts at one observation'
+        $lock.StampRaw=$now.ToString('o');$lock.AgeMinutes=-1
+        Assert-C1527 (-not (Decide $two.Proof 'three').Reclaim) 'R-1 future stamp veto'
+        $lock.AgeMinutes=0;$lock.Readable=$false
+        Assert-C1527 (-not (Decide $two.Proof 'three').Reclaim) 'R-1 unreadable lock veto'
+        $lock.Readable=$true
+        $old=$two.Proof.PSObject.Copy();$old.ObservedUtc=$now.AddMinutes(-6).ToString('o')
+        Assert-C1527 (-not (Decide $old 'three').Reclaim) 'R-1 stale evidence resets'
+        foreach ($entry in @(@($false,0),@($true,0),@($true,23))) {
+            $process=[pscustomobject]@{HasExited=$entry[0];ExitCode=$entry[1]}
+            $process | Add-Member ScriptMethod Refresh {}
+            $failure=Get-AppHostLauncherFailure $process
+            Assert-C1527 (($null -ne $failure) -eq ($entry[0] -and $entry[1] -ne 0)) "R-1 launcher running or successful exit retains lock ($entry)"
+        }
+        Assert-C1527 ($null -eq (Get-AppHostLauncherFailure $null)) 'R-1 missing launcher evidence retains lock'
+        ('999999 ' + $now.AddMinutes(-15).ToString('o')) | Set-Content $restartLock
+        Assert-C1527 ($null -eq (Test-AppHostLockActive -Path $restartLock -NowUtc $now)) 'R-1 exact fifteen minute fallback'
+        ('999999 ' + $now.ToString('o')) | Set-Content $restartLock
+        @{deadLaunch=$two.Proof} | ConvertTo-Json -Depth 5 | Set-Content $statePath
+        function Get-AppHostDeadLaunchObservation { param($SourceRoot,$Lock); [pscustomobject]@{Activity='Absent';HealthDead=$true;LaunchBlocked=$false} }
+        $admitted=New-AppHostRestartLock -Path $restartLock -SourceRoot $fixture
+        try {
+            Assert-C1527 $admitted.Acquired 'R-1 shared admission acquires proven-dead generation'
+            $competitor=New-AppHostRestartLock -Path $restartLock -SourceRoot $fixture
+            Assert-C1527 (-not $competitor.Acquired) 'R-1 concurrent holder cannot steal admitted lock'
+        } finally { Remove-AppHostLock $admitted }
+        ('999999 ' + $now.AddSeconds(1).ToString('o')) | Set-Content $restartLock
+        $refused=New-AppHostRestartLock -Path $restartLock -SourceRoot $fixture
+        Assert-C1527 (-not $refused.Acquired) 'R-1 replacement before admission refused'
+        Assert-C1527 ((Get-Content $restartLock -Raw).Trim() -eq ('999999 ' + $now.AddSeconds(1).ToString('o'))) 'R-1 replacement bytes preserved'
+        $outage=[pscustomobject]@{}
+        $outage=Update-AppHostOutage $outage $false $false $now
+        $outage=Update-AppHostOutage $outage $false $false ($now.AddSeconds(179))
+        Assert-C1527 ($outage.pendingAlerts.Count -eq 0) 'R-1 no alert before 180 seconds'
+        $outage=Update-AppHostOutage $outage $false $false ($now.AddSeconds(180))
+        Assert-C1527 ($outage.pendingAlerts.Count -eq 1) 'R-1 alert at exact 180 seconds'
+        $id=$outage.pendingAlerts[0].Id
+        $outage=$outage | ConvertTo-Json -Depth 6 | ConvertFrom-Json
+        $outage=Update-AppHostOutage $outage $false $false ($now.AddSeconds(240))
+        Assert-C1527 ($outage.pendingAlerts.Count -eq 1 -and $outage.pendingAlerts[0].Id -eq $id) 'R-1 pending retry identity survives persistence'
+        $outage=Update-AppHostOutage $outage $true $false ($now.AddSeconds(250))
+        Assert-C1527 ($outage.pendingAlerts.Count -eq 2 -and $outage.pendingAlerts[1].Kind -eq 'recovery') 'R-1 recovery queued behind undelivered outage'
+        $outage=Update-AppHostOutage $outage $true $false ($now.AddSeconds(260))
+        Assert-C1527 ($outage.pendingAlerts.Count -eq 2) 'R-1 recovery deduplicates'
+        $outage=Update-AppHostOutage $outage $false $true ($now.AddSeconds(300))
+        Assert-C1527 ($outage.pendingAlerts.Count -eq 0 -and $null -eq $outage.downSinceUtc) 'R-1 maintenance suppresses outage'
+        foreach ($name in @('apphost-common.ps1','watchdog-apphost.ps1','restart-apphost.ps1')) {
+            $path=Join-Path $PSScriptRoot $name
+            $bytes=[IO.File]::ReadAllBytes($path)
+            Assert-C1527 (@($bytes | Where-Object { $_ -gt 127 }).Count -eq 0) "R-1 ASCII $name"
+            $tokens=$null;$errors=$null
+            $null=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)
+            Assert-C1527 ($errors.Count -eq 0) "R-1 syntax $name"
+        }
     }
     Write-Host "C1527 $Case assertions=$script:passed failed=0"
 } finally {

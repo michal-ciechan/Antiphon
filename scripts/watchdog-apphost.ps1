@@ -83,39 +83,44 @@ function Write-Log([string]$level, [string]$msg) {
 }
 
 function Read-WatchdogState {
-    $state = [pscustomobject]@{
-        lastOkUtc    = $null
-        restartsUtc  = @()
-    }
-    if (-not (Test-Path $stateFile)) { return $state }
-    try {
-        $raw = Get-Content -LiteralPath $stateFile -Raw -ErrorAction Stop
-        if ([string]::IsNullOrWhiteSpace($raw)) { return $state }
-        $parsed = $raw | ConvertFrom-Json
-        if ($parsed.lastOkUtc) {
-            if ($parsed.lastOkUtc -is [datetime]) {
-                $state.lastOkUtc = $parsed.lastOkUtc.ToUniversalTime().ToString('o')
-            } else {
-                $state.lastOkUtc = [string]$parsed.lastOkUtc
-            }
+    if (Test-Path -LiteralPath $stateFile) {
+        try { $state = Get-Content -LiteralPath $stateFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
+        catch { throw 'Watchdog state unreadable; preserving outage and restart history for repair.' }
+    } else { $state = [pscustomobject]@{} }
+    foreach ($name in @('lastOkUtc','restartsUtc','deadLaunch','downSinceUtc','outageId','outageAlerted','pendingAlerts')) {
+        if (-not $state.PSObject.Properties[$name]) {
+            $default=$null
+            if ($name -in @('restartsUtc','pendingAlerts')) { $default=@() }
+            $state | Add-Member NoteProperty $name $default
         }
-        if ($null -ne $parsed.restartsUtc) {
-            $state.restartsUtc = @($parsed.restartsUtc | ForEach-Object {
-                if ($_ -is [datetime]) { $_.ToUniversalTime().ToString('o') } else { [string]$_ }
-            })
-        }
-    } catch {
-        Write-Log 'WARN' "state file unreadable - treating as empty ($($_.Exception.Message))"
     }
     return $state
 }
 
 function Write-WatchdogState($state) {
-    $payload = [pscustomobject]@{
-        lastOkUtc   = $state.lastOkUtc
-        restartsUtc = @($state.restartsUtc)
+    $temp = $stateFile + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    try {
+        [IO.File]::WriteAllText($temp, ($state | ConvertTo-Json -Depth 8), [Text.Encoding]::UTF8)
+        if (Test-Path -LiteralPath $stateFile) { [IO.File]::Replace($temp,$stateFile,$null) }
+        else { [IO.File]::Move($temp,$stateFile) }
+    } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
+}
+
+function Observe-WatchdogOutage($round) {
+    $script:state = Update-AppHostOutage -State $script:state -HealthOk $round.HealthOk -Maintenance $script:maintenance -NowUtc (Get-AppHostWatchdogNow)
+    # Intent precedes transport. Sent events stay in a local append-only journal
+    # for post-recovery attention import; pending events retain the same Id.
+    Write-WatchdogState $script:state
+    if ($ProbeOnly -or $script:maintenance) { return }
+    foreach ($event in @($script:state.pendingAlerts)) {
+        if (-not (Send-AppHostOutageEvent -Event $event)) {
+            Write-Log 'WARN' "outage notification pending ($($event.Id)); independent transport unavailable"
+            break
+        }
+        $event | ConvertTo-Json -Compress | Add-Content -LiteralPath (Join-Path $logDir 'apphost-outage-events.jsonl') -Encoding UTF8 -ErrorAction Stop
+        $script:state.pendingAlerts = @($script:state.pendingAlerts | Where-Object { $_.Id -ne $event.Id })
+        Write-WatchdogState $script:state
     }
-    $payload | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $stateFile -Encoding UTF8
 }
 
 function Test-HttpOk([string]$url, [int[]]$okCodes) {
@@ -144,6 +149,8 @@ function Test-Round {
         -HealthOk $health.Ok -HealthError $health.Error -HealthCode $health.Code `
         -ClientOk $client.Ok -ClientError $client.Error -ClientCode $client.Code
     return [pscustomobject]@{
+        HealthOk      = $health.Ok
+        HealthDead    = (-not $health.Ok -and (Test-AppHostProbeErrorIsConnectionRefused $health.Error))
         Ok            = ($class.Kind -eq 'Up')
         RestartWorthy = $class.RestartWorthy
         Kind          = $class.Kind
@@ -151,28 +158,45 @@ function Test-Round {
     }
 }
 
-function Test-LaunchInFlight {
-    # CARD-0075: BOTH locks, not just the launch one. restart-apphost.ps1 tears the
-    # stack down before dev-aspire.ps1 (and its launch lock) exists, so a fire that
-    # begins inside that window sees no lock, three failed rounds, and calls a
-    # second restart over the top of the first.
-    $ah = Get-ScheduledTask -TaskName $appHostTaskName -ErrorAction SilentlyContinue
-    if ($ah -and $ah.State -eq 'Running') {
-        return "AppHost logon task '$appHostTaskName' is Running"
-    }
-    foreach ($pair in @(
-        @{ Path = $restartLockFile; Label = 'restart lock' },
-        @{ Path = $lockFile;        Label = 'launch lock'  })) {
-        $lock = Get-AppHostLock -Path $pair.Path
-        $held = Test-AppHostLockActive -Path $pair.Path -MaxAgeMinutes $LockMaxAgeMinutes -Label $pair.Label
-        if ($held) { return $held }
-        if ($lock.Exists) {
-            Write-Log 'INFO' ("stale {0} - ignoring (stamp {1}, {2}; holder PID {3} alive={4}; {5})" -f `
-                $pair.Label, (Format-AppHostLockStamp $lock), (Format-AppHostLockAge $lock), `
-                $lock.ProcessId, $lock.HolderAlive, $pair.Path)
-        }
-    }
+function Test-LaunchInFlight([switch]$Revalidate) {
+    $restart = Get-AppHostLock -Path $restartLockFile
+    $launchHeld = Test-AppHostLockActive -Path $lockFile -MaxAgeMinutes $LockMaxAgeMinutes -Label 'launch lock'
+    $activity = Get-AppHostLaunchActivity -SourceRoot $root -Lock $restart
+    $observedRound = $script:firstRound
+    if ($Revalidate) { $observedRound = Test-Round }
+    $decision = Resolve-AppHostDeadLaunch -Lock $restart -Activity $activity -HealthDead $observedRound.HealthDead `
+        -LaunchBlocked ([bool]$launchHeld) -Previous $script:state.deadLaunch -FireId $script:fireId `
+        -NowUtc (Get-AppHostWatchdogNow) -Revalidate:$Revalidate
+    $script:state.deadLaunch = $decision.Proof
+    Write-WatchdogState $script:state
+    if ($launchHeld) { return $launchHeld }
+    $restartHeld = Test-AppHostLockActive -Path $restartLockFile -MaxAgeMinutes $LockMaxAgeMinutes -Label 'restart lock'
+    if ($restartHeld -and -not $decision.Reclaim) { return $restartHeld }
+    if ($decision.Reclaim) { Write-Log 'WARN' 'dead launch proven on two fires; restart admission must revalidate' }
+    # Existing task protection also applies when no restart stamp exists.
+    try {
+        $task = @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskName -eq $appHostTaskName })
+        if (@($task | Where-Object { $_.State -eq 'Running' }).Count) { return 'AppHost logon task is Running' }
+    } catch { return 'AppHost logon task inventory unknown' }
     return $null
+}
+
+# Serialize overlapping scheduler fires for this root. Keep the mutex pathname.
+$fireLease = $null
+try { $fireLease = [IO.File]::Open((Join-Path $logDir 'apphost-watchdog.fire.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None) }
+catch { Write-Log 'INFO' 'skip: another watchdog fire owns observation'; exit 0 }
+try {
+$ErrorActionPreference = 'Stop'
+$script:fireId = [guid]::NewGuid().ToString('N')
+$script:state = Read-WatchdogState
+$script:maintenance = Test-Path -LiteralPath (Join-Path $logDir 'apphost.down-on-purpose')
+$script:firstRound = Test-Round
+Observe-WatchdogOutage $script:firstRound
+if ($script:maintenance) {
+    $script:state.deadLaunch = $null
+    Write-WatchdogState $script:state
+    Write-Log 'INFO' 'skip: intentional AppHost maintenance'
+    exit 0
 }
 
 Write-Log 'INFO' "fire beginning (PID $PID$(if ($ProbeOnly) { '; ProbeOnly' }))"
@@ -193,7 +217,7 @@ $roundsNeeded = 3
 $downRounds = 0
 $lastSummary = ''
 for ($i = 1; $i -le $roundsNeeded; $i++) {
-    $round = Test-Round
+    if ($i -eq 1) { $round = $script:firstRound } else { $round = Test-Round; Observe-WatchdogOutage $round }
     $lastSummary = $round.Summary
     if ($round.Ok) {
         if ($i -gt 1) {
@@ -274,7 +298,7 @@ if (-not (Test-Path $restartScript)) {
 # CARD-0075: the check at the top of this fire is up to ~60s old by now (three
 # probe rounds at IntervalSeconds, plus docker info). Re-check immediately before
 # doing anything destructive - one call closes the whole TOCTOU window.
-$inFlight = Test-LaunchInFlight
+$inFlight = Test-LaunchInFlight -Revalidate
 if ($inFlight) {
     Write-Log 'INFO' "skip: launch in flight at restart time - $inFlight"
     exit 0
@@ -310,3 +334,5 @@ Write-WatchdogState $state
 Write-Log 'INFO' ("restart-apphost.ps1 exited {0}; stamped restart in {1}" -f $captured.ExitName, $stateFile)
 
 exit 0
+
+} finally { if ($fireLease) { $fireLease.Dispose() } }

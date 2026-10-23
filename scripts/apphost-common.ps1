@@ -237,6 +237,7 @@ function Get-AppHostLock {
         StampUtc    = $null
         AgeMinutes  = $null
         HolderAlive = $false
+        HolderState = 'Unknown'
     }
     if (-not (Test-Path -LiteralPath $Path)) { return $info }
     $info.Exists = $true
@@ -261,7 +262,17 @@ function Get-AppHostLock {
     # An unparseable pid is treated as alive: freshness alone then decides, which
     # is strictly the conservative reading (do not kill what might be launching).
     if ($info.ProcessId) {
-        $info.HolderAlive = Test-ProcessAlive $info.ProcessId
+        try {
+            $holder = Get-Process -Id $info.ProcessId -ErrorAction Stop
+            $info.HolderAlive = $true
+            $info.HolderState = 'Alive'
+        } catch {
+            $info.HolderAlive = $true
+            if ($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId*') {
+                $info.HolderAlive = $false
+                $info.HolderState = 'Dead'
+            }
+        }
     } else {
         $info.HolderAlive = $true
     }
@@ -500,8 +511,10 @@ function Get-AppHostStrayProcesses {
 }
 
 function Start-AppHostDevLaunch {
-    param([Parameter(Mandatory = $true)][string[]]$ArgumentList)
-    return Start-Process pwsh -ArgumentList $ArgumentList -WindowStyle Normal -PassThru
+    param([Parameter(Mandatory = $true)][string[]]$ArgumentList, [string]$OutputPath, [string]$ErrorPath)
+    $capture = @{}
+    if ($OutputPath -and $ErrorPath) { $capture = @{RedirectStandardOutput=$OutputPath;RedirectStandardError=$ErrorPath} }
+    return Start-Process pwsh -ArgumentList $ArgumentList -WindowStyle Normal -PassThru @capture
 }
 
 function Stop-AppHostLaunchChild {
@@ -578,8 +591,8 @@ function Invoke-AppHostRestartCaptured {
         [int]$TailLines = 40
     )
     $tag = [guid]::NewGuid().ToString('N')
-    $outFile = Join-Path $env:TEMP ("apphost-restart-capture-$tag.out")
-    $errFile = Join-Path $env:TEMP ("apphost-restart-capture-$tag.err")
+    $outFile = Join-Path ([IO.Path]::GetTempPath()) ("apphost-restart-capture-$tag.out")
+    $errFile = Join-Path ([IO.Path]::GetTempPath()) ("apphost-restart-capture-$tag.err")
     try {
         try {
             $p = Start-Process -FilePath $PowerShellExe `
@@ -958,4 +971,187 @@ function Wait-AppHostProcessExit {
         if (([datetime]::UtcNow - $started).TotalSeconds -ge $TimeoutSec) { return $null }
         Wait-AppHostPollInterval -Seconds 1
     }
+}
+
+# CARD-1527: observation and admission are separate. These helpers never infer
+# absence from a failed query. All decision inputs are values, so Linux tests can
+# exercise the policy without probing the Windows machine.
+function Get-AppHostField {
+    param($Value, [string]$Name, $Default = $null)
+    if ($null -eq $Value) { return $Default }
+    if ($Value -is [System.Collections.IDictionary]) {
+        if ($Value.Contains($Name)) { return $Value[$Name] }
+    } elseif ($Value.PSObject.Properties[$Name]) { return $Value.$Name }
+    return $Default
+}
+
+function Get-AppHostWatchdogNow { return [datetime]::UtcNow }
+
+function Get-AppHostLockIdentity {
+    param($Lock)
+    if (-not (Get-AppHostField $Lock 'Readable' $false)) { return $null }
+    $stamp = Get-AppHostField $Lock 'StampRaw'
+    if (-not (ConvertTo-UtcStamp $stamp)) { return $null }
+    return ('{0} {1}' -f (Get-AppHostField $Lock 'ProcessId'), $stamp)
+}
+
+function Resolve-AppHostDeadLaunch {
+    param($Lock, [string]$Activity, [bool]$HealthDead, [bool]$LaunchBlocked,
+        $Previous, [string]$FireId, [datetime]$NowUtc, [switch]$Revalidate)
+    $identity = Get-AppHostLockIdentity $Lock
+    $age = Get-AppHostField $Lock 'AgeMinutes'
+    $eligible = $identity -and $null -ne $age -and $age -ge 0 -and
+        ((Get-AppHostField $Lock 'HolderState' 'Unknown') -eq 'Dead') -and
+        $Activity -eq 'Absent' -and $HealthDead -and -not $LaunchBlocked
+    $count = 0
+    $previousTime = ConvertTo-UtcStamp (Get-AppHostField $Previous 'ObservedUtc')
+    $same = $eligible -and (Get-AppHostField $Previous 'Identity') -ceq $identity -and
+        $previousTime -and $previousTime -le $NowUtc -and ($NowUtc - $previousTime).TotalMinutes -le 5
+    if ($same) { $count = [int](Get-AppHostField $Previous 'Count' 0) }
+    if ($eligible -and -not $Revalidate -and (Get-AppHostField $Previous 'FireId') -ne $FireId) {
+        $count = [math]::Min(2, $count + 1)
+    }
+    if (-not $eligible) { $identity = $null; $count = 0 }
+    return [pscustomobject]@{
+        Reclaim = ($eligible -and $count -ge 2)
+        Proof = [pscustomobject]@{ Identity=$identity; Count=$count; FireId=$FireId; ObservedUtc=$NowUtc.ToString('o') }
+    }
+}
+
+function Get-AppHostLaunchActivity {
+    param([string]$SourceRoot, $Lock)
+    # A full successful census is required. Missing CIM/TCP/Task Scheduler access
+    # is Unknown. Decode the actual detached wrapper used by dev-aspire.ps1.
+    try {
+        $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+        $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop)
+        $tasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskName -eq 'Antiphon AppHost' })
+        if (@($tasks | Where-Object { $_.State -eq 'Running' }).Count) { return 'Present' }
+        if (@($listeners | Where-Object { $_.LocalPort -in @(17200,17202,17203,17205,17206,17207) }).Count) { return 'Present' }
+        $rootText = [IO.Path]::GetFullPath($SourceRoot).TrimEnd('\','/').Replace('/','\') + '\'
+        $wrapperPid = 0
+        $pidPath = Join-Path $SourceRoot 'logs/apphost.pid'
+        if (Test-Path -LiteralPath $pidPath) {
+            $pidText = Get-Content -LiteralPath $pidPath -Raw -ErrorAction Stop
+            if (-not [int]::TryParse($pidText.Trim(), [ref]$wrapperPid)) { return 'Unknown' }
+        }
+        $stamp = Get-AppHostField $Lock 'StampUtc'
+        foreach ($process in $processes) {
+            if ($process.ProcessId -eq $PID) { continue }
+            $name = [string]$process.Name
+            if ($name -notmatch '^(pwsh|powershell|dotnet|dcp|dcpctrl|Antiphon\.AppHost|Antiphon\.Server|Aspire\.Dashboard)(\.exe)?$') { continue }
+            $command = [string]$process.CommandLine
+            if ([string]::IsNullOrWhiteSpace($command)) { return 'Unknown' }
+            if ($command -match '(?i)-(?:EncodedCommand|enc)\s+([A-Za-z0-9+/=]+)') {
+                try { $command += ' ' + [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Matches[1])) }
+                catch { return 'Unknown' }
+            }
+            if ($command.Replace('/','\').IndexOf($rootText, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return 'Present' }
+            # A matching pid without creation evidence cannot establish reuse.
+            # Known older wrapper or unowned DCP is a conservative veto; no kill.
+            if ($wrapperPid -and $process.ProcessId -eq $wrapperPid) {
+                if (-not $stamp -or -not $process.CreationDate) { return 'Unknown' }
+                if ($process.CreationDate.ToUniversalTime() -le $stamp) { return 'Present' }
+            }
+            if ($name -match '^(dcp|dcpctrl|Aspire\.Dashboard)(\.exe)?$') { return 'Unknown' }
+        }
+        return 'Absent'
+    } catch { return 'Unknown' }
+}
+
+function Get-AppHostDeadLaunchObservation {
+    param([string]$SourceRoot, $Lock)
+    $health = Invoke-AppHostHealthProbe
+    $launch = Test-AppHostLockActive -Path (Join-Path $SourceRoot 'logs/apphost.launch.lock')
+    return [pscustomobject]@{
+        Activity = Get-AppHostLaunchActivity -SourceRoot $SourceRoot -Lock $Lock
+        # Only connection refusal establishes dead health. A timeout alone does not.
+        HealthDead = ([string]$health.StatusCode -ne '200' -and (Test-AppHostProbeErrorIsConnectionRefused ([string]$health.Error)))
+        LaunchBlocked = [bool]$launch
+    }
+}
+
+function New-AppHostRestartLock {
+    param([string]$Path, [string]$SourceRoot, [int]$MaxAgeMinutes = $AppHostLockMaxAgeMinutes)
+    $ordinary = New-AppHostLock -Path $Path -MaxAgeMinutes $MaxAgeMinutes -Label 'restart lock'
+    if ($ordinary.Acquired) { return $ordinary }
+    $stream = $null
+    try {
+        $state = Get-Content -LiteralPath (Join-Path $SourceRoot 'logs/apphost-watchdog.state') -Raw -ErrorAction Stop | ConvertFrom-Json
+        $proof = Get-AppHostField $state 'deadLaunch'
+        if ([int](Get-AppHostField $proof 'Count' 0) -lt 2) { return $ordinary }
+        # Take exclusive WRITE ownership of the existing generation, without an
+        # unlink/recreate gap. A held restart stream denies this open on Windows.
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+        $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::ASCII, $false, 1024, $true)
+        try { $raw = $reader.ReadToEnd().Trim() } finally { $reader.Dispose() }
+        $current = Get-AppHostLock -Path $Path
+        if ($raw -cne (Get-AppHostLockIdentity $current)) { return $ordinary }
+        $observation = Get-AppHostDeadLaunchObservation -SourceRoot $SourceRoot -Lock $current
+        $decision = Resolve-AppHostDeadLaunch -Lock $current -Activity $observation.Activity -HealthDead $observation.HealthDead `
+            -LaunchBlocked $observation.LaunchBlocked -Previous $proof -FireId (Get-AppHostField $proof 'FireId') `
+            -NowUtc ([datetime]::UtcNow) -Revalidate
+        if (-not $decision.Reclaim) { return $ordinary }
+        $text = '{0} {1}' -f $PID, [datetime]::UtcNow.ToString('o')
+        $bytes = [Text.Encoding]::ASCII.GetBytes($text)
+        $stream.Position=0; $stream.SetLength(0); $stream.Write($bytes,0,$bytes.Length); $stream.Flush()
+        $result = [pscustomobject]@{Acquired=$true;Path=$Path;Reason=$null;Stream=$stream;Identity=$text}
+        $stream=$null
+        return $result
+    } catch { return $ordinary }
+    finally { if ($stream) { $stream.Dispose() } }
+}
+
+function Get-AppHostLauncherFailure {
+    param($Process)
+    if (-not $Process) { return $null }
+    try {
+        $Process.Refresh()
+        if ($Process.HasExited -and $null -ne $Process.ExitCode -and $Process.ExitCode -ne 0) { return [int]$Process.ExitCode }
+    } catch { }
+    return $null
+}
+
+function Update-AppHostOutage {
+    param($State, [bool]$HealthOk, [bool]$Maintenance, [datetime]$NowUtc)
+    $down = ConvertTo-UtcStamp (Get-AppHostField $State 'downSinceUtc')
+    $episode = Get-AppHostField $State 'outageId'
+    $alerted = [bool](Get-AppHostField $State 'outageAlerted' $false)
+    $pending = @(Get-AppHostField $State 'pendingAlerts' @())
+    if ($Maintenance) {
+        # Deliberate downtime terminates observation without sending a false recovery.
+        $down=$null; $episode=$null; $alerted=$false; $pending=@()
+    } elseif ($HealthOk) {
+        if ($alerted -and $episode) {
+            $pending += [pscustomobject]@{Id=($episode+':recovery');Kind='recovery';DownSinceUtc=$down.ToString('o');ObservedUtc=$NowUtc.ToString('o')}
+        }
+        $down=$null; $episode=$null; $alerted=$false
+    } else {
+        if (-not $down -or $down -gt $NowUtc) { $down=$NowUtc }
+        if (-not $episode) { $episode='apphost:' + [guid]::NewGuid().ToString('N') }
+        if (-not $alerted -and ($NowUtc-$down).TotalSeconds -ge 180) {
+            $pending += [pscustomobject]@{Id=($episode+':down');Kind='down';DownSinceUtc=$down.ToString('o');ObservedUtc=$NowUtc.ToString('o')}
+            $alerted=$true
+        }
+    }
+    $State | Add-Member NoteProperty downSinceUtc $(if ($down) { $down.ToString('o') } else { $null }) -Force
+    $State | Add-Member NoteProperty outageId $episode -Force
+    $State | Add-Member NoteProperty outageAlerted $alerted -Force
+    $State | Add-Member NoteProperty pendingAlerts @($pending) -Force
+    return $State
+}
+
+function Send-AppHostOutageEvent {
+    param($Event)
+    # Transport configuration must be independent of the AppHost. The endpoint
+    # must deduplicate Id / Idempotency-Key across ambiguous HTTP completions.
+    $endpoint = [Environment]::GetEnvironmentVariable('ANTIPHON_APPHOST_ALERT_WEBHOOK')
+    if ([string]::IsNullOrWhiteSpace($endpoint)) { return $false }
+    $uri = $null
+    if (-not [Uri]::TryCreate($endpoint, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -ne 'https') { return $false }
+    try {
+        $null = Invoke-WebRequest -Uri $uri -Method Post -UseBasicParsing -TimeoutSec 5 `
+            -ContentType 'application/json' -Headers @{'Idempotency-Key'=$Event.Id} -Body ($Event | ConvertTo-Json -Compress)
+        return $true
+    } catch { return $false } # Do not log endpoints, credentials or response bodies.
 }
