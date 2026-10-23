@@ -48,8 +48,9 @@ multiline parsing against Persistence 52 passes and Remote 29 passes/censoring.
 | CP-21 | S1 | CP-20 | partial | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_after_partial_failure` | V-1 five partial cases | 5 passed, 0 failed/skipped | 5 | 3 | true | n/a |
 | CP-22 | S1 | CP-20 | drift | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_rejects_receipt_drift` | V-1 eight drifts | 8 passed, 0 failed/skipped | 8 | 3 | true | n/a |
 | CP-23 | S1 | CP-20 | replacement | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_accepts_only_recorded_replacement` | V-1 two replacement cases | 2 passed, 0 failed/skipped | 2 | 3 | true | n/a |
-| CP-11 | S1R | `tests/Antiphon.Tests -> bin-c1514-s1-red/` | stale-roster-red | `/*/*/(C1008PlatformContractTests*)\|(WindowsUnitPlatformAdmissionTests*)/(C1050_Remote_entries_guard_before_work*)\|(C1210_Roster_closure_matches_source_gates*)` | introduced stale identity witness | 2 assertion failures identifying renamed/missing gates | 2 | 3 | true | n/a |
-| CP-24 | S1 | CP-20 | platform-roster-closure | `/*/*/(C1008PlatformContractTests*)\|(WindowsUnitPlatformAdmissionTests*)/(C1050_Remote_entries_guard_before_work*)\|(C1050_Audit_rejects_empty_or_incomplete_outcomes*)\|(C1210_Roster_closure_matches_source_gates*)` | V-1 adjacent selector/skip multiset and source guards | 3 passed, 0 failed/skipped | 3 | 3 | true | n/a |
+| CP-11 | S1R | `tests/Antiphon.Tests -> bin-c1514-s1-red/` | stale-roster-red | `/*/*/(C1008PlatformContractTests*)\|(WindowsUnitPlatformAdmissionTests*)/(C1050_Remote_entries_guard_before_work*)\|(C1210_Roster_closure_matches_source_gates*)` | introduced stale identity witness | 2 assertion failures; inspect attribution separately | 2 | 3 | true | n/a |
+| CP-24 | S1 | CP-20 | platform-roster-closure | `/*/*/(C1008PlatformContractTests*)\|(WindowsUnitPlatformAdmissionTests*)/(C1050_Remote_entries_guard_before_work*)\|(C1050_Audit_rejects_empty_or_incomplete_outcomes*)` | V-1 adjacent selector/skip multiset and source guards | 2 passed, 0 failed/skipped | 2 | 3 | true | n/a |
+| CP-12 | S0R | `tests/Antiphon.Tests -> bin-c1514-s1-base/` | source-closure-base-attribution | `/*/*/WindowsUnitPlatformAdmissionTests/C1210_Roster_closure_matches_source_gates` | exact base attribution for C1374 helper gate | 1 assertion failure if inherited; never passed | 1 | 3 | true | n/a |
 
 Run CP-0,CP-10 at the committed manifest SHA, then CP-20..d at the final
 committed candidate SHA, via checkpoint `run --row-timeout 9m --total-timeout 60m`.
@@ -83,3 +84,10 @@ by changed selector consumers; they replace no original semantic checkpoint.
 The final candidate run includes CP-20..24, with one build. Native Windows child
 audits are outside this Linux-only commission; no OS-selected production branch
 changes, and no Windows pass is claimed.
+
+CP-11 at 17a17e280: C1050 failed on the removed identity as expected.
+C1210 failed first on C1374CensusProbes.Check, outside this extraction. CP-12
+runs that exact method at task base 77eb7806 in a detached checkout, with the
+committed manifest supplied externally. CP-24 keeps only the two direct C1050
+consumers; the broader inherited closure failure, if confirmed, is a documented
+non-receipt finding rather than a passing gate. Preserve its source and assertion.
