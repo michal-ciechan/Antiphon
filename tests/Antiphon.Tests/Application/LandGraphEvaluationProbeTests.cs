@@ -22,7 +22,7 @@ public sealed partial class LandGraphEvaluationTests
             ["App/App.csproj"] = SdkProject($"""
                 <ItemGroup><None Include="../docs/**/*.json" /></ItemGroup>
                 <PropertyGroup Condition="Exists('$(MSBuildThisFileDirectory)../{path}')"><X>y</X></PropertyGroup>
-                <ItemGroup Condition="'$(X)' == 'y'"><ProbeInput Include="safe.txt" /></ItemGroup>
+                <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)../{path}')"><ProbeInput Include="safe.txt" /></ItemGroup>
                 """),
         }, links: path.StartsWith("alias", StringComparison.Ordinal) ? new() { ["alias"] = "docs" } : null);
         var run = await repo.RunToolAsync();
@@ -47,7 +47,7 @@ public sealed partial class LandGraphEvaluationTests
         var read = $"$([System.IO.File]::ReadAllText(&quot;$(MSBuildThisFileDirectory)../{spelling}&quot;))";
         var body = condition
             ? $"<PropertyGroup Condition=\"HasTrailingSlash('{read}')\"><ProbeValue>changed</ProbeValue></PropertyGroup>"
-            : $"<PropertyGroup><ProbeValue>{read}</ProbeValue></PropertyGroup><ItemGroup><ProbeInput Include=\"$(ProbeValue)\" /></ItemGroup>";
+            : $"<PropertyGroup><ProbeValue>{read}</ProbeValue></PropertyGroup><ItemGroup><ProbeInput Include=\"safe.txt\" /></ItemGroup>";
         await using var repo = await AuditRepo.CreateAsync(new()
         {
             ["README.md"] = "safe/",
