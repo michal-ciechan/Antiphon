@@ -16,6 +16,7 @@ $script:handles = @()
 $script:roots = @()
 $script:passed = 0
 $script:parentEnvironment = @{}
+$script:retainedWriters = @()
 function Assert-Native([bool]$Condition, [string]$Label) {
     if (-not $Condition) { throw ('FAIL C1039 ' + $Label) }
     $script:passed++
@@ -231,6 +232,69 @@ try {
             Assert-Native (-not (Test-Path (Join-Path $r.Root 'breakaway-child.pid'))) 'no independently live breakaway descendant'
             $null = Complete-Native $r
         }
+        'C1039_PowerShellDescendantCustody' {
+            $root = Join-Path $ResultsDirectory 'powershell descendant'
+            $null = New-Item -ItemType Directory -Path $root
+            $script:roots += $root
+            $childScript = Join-Path $root 'launch.ps1'
+            @'
+param([string]$Root, [string]$Fixture)
+$start = [Diagnostics.ProcessStartInfo]::new($Fixture)
+$start.UseShellExecute = $false
+$start.ArgumentList.Add($Root)
+$start.ArgumentList.Add('child')
+$child = [Diagnostics.Process]::Start($start)
+while (!(Test-Path (Join-Path $Root 'child.pid'))) { Start-Sleep -Milliseconds 10 }
+'@ | Set-Content -LiteralPath $childScript
+            $powerShell = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
+            $aliases = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Microsoft\WindowsApps'
+            $packaged = @(Get-ChildItem -LiteralPath $aliases -Directory -Filter 'Microsoft.PowerShell_*' -ErrorAction SilentlyContinue |
+                ForEach-Object { Join-Path $_.FullName 'pwsh.exe' } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1)
+            if ($packaged.Count) { $powerShell = $packaged[0] }
+            $owner = Start-NightlyNativeOwner -FilePath $powerShell -ArgumentList @('-NoProfile','-File',$childScript,'-Root',$root,'-Fixture',$FixtureExecutable) `
+                -WorkingDirectory $root -TimeoutMilliseconds 30000 -LogPath (Join-Path $root 'native.log')
+            $script:owners += $owner
+            $r = [pscustomobject]@{ Root=$root; Owner=$owner; Log=(Join-Path $root 'native.log') }
+            $child = Open-NativeHandle $r 'child'
+            Assert-Native ([NativeJobObserver]::Contains($child.Handle, $owner.JobHandle)) 'PowerShell descendant belongs to private native job'
+            Assert-Held $r 'PowerShell descendant held'
+            Release-Native $r 'child'
+            $result = Complete-Native $r
+            Assert-Native ($child.WaitForExit(1000)) 'PowerShell descendant independently exited'
+            Assert-Native (@($result.DescendantIdentities | Where-Object { $_.StartsWith([string]$child.Id+':') }).Count -eq 1) 'PowerShell descendant generation recorded'
+            if ($packaged.Count) {
+                # Bypass the resolver: the native boundary itself must refuse packaged roots before resume.
+                $guardRoot = Join-Path $ResultsDirectory 'packaged admission'
+                $null = New-Item -ItemType Directory -Path $guardRoot
+                $script:roots += $guardRoot
+                $raw = [Antiphon.Nightly.NativeProcessOwner]::Start($packaged[0],
+                    [string[]]@('-NoProfile','-File',$childScript,'-Root',$guardRoot,'-Fixture',$FixtureExecutable),
+                    $guardRoot, 30000, (Join-Path $guardRoot 'native.log'), $null, $null)
+                $script:owners += $raw
+                Wait-Native { $raw.Completion.IsCompleted } 'packaged admission refusal'
+                $refused = $raw.Completion.GetAwaiter().GetResult()
+                Assert-Native ($refused.ExitCode -ne 0 -and $refused.Error.Contains('packaged')) 'raw packaged root refused'
+                Assert-Native ($refused.ChildrenExited -and -not (Test-Path (Join-Path $guardRoot 'child.pid'))) 'packaged root never resumes or starts a child'
+            }
+        }
+        'C1039_RetainedWriterDrainDeadline' {
+            $root = Join-Path $ResultsDirectory 'retained writer'
+            $null = New-Item -ItemType Directory -Path $root
+            $script:roots += $root
+            $owner = Start-NightlyNativeOwner -FilePath $FixtureExecutable -ArgumentList @($root,'retained-writer',[string]$PID) `
+                -WorkingDirectory $root -TimeoutMilliseconds 30000 -LogPath (Join-Path $root 'native.log')
+            $script:owners += $owner
+            Wait-Native { Test-Path (Join-Path $root 'writer.handle') } 'real duplicated stdout writer'
+            $script:retainedWriters += [long](Get-Content (Join-Path $root 'writer.handle') -Raw)
+            Wait-Native { $owner.Observation.ChildrenExited } 'retained writer root and job exited'
+            Assert-Native ($owner.Completion.Wait(20000)) 'retained pipe writer cannot outlive independent drain deadline'
+            $result = $owner.Completion.GetAwaiter().GetResult()
+            $result | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $root 'result.json')
+            Assert-Native ($result.ExitCode -ne 0 -and $result.TimedOut -and $result.OutputDrainTimedOut) 'drain deadline reports failure and timeout'
+            Assert-Native ($result.ChildrenExited -and -not $result.OutputDrained -and -not $result.CleanupComplete) 'retained writer never earns clean output or cleanup'
+            Assert-Native ($result.Error.Contains('output drain') -and $result.DrainMilliseconds -ge 15000 -and $result.DrainMilliseconds -lt 20000) 'drain has its own measured deadline'
+            Assert-Native ((Test-Path (Join-Path $root 'native.log.stdout.tmp')) -and -not (Test-Path (Join-Path $root 'native.log'))) 'failed drain retains partial evidence without a final log'
+        }
         'C1039_DrainBeforeReturn' {
             foreach ($phase in @('stdout','stderr','log-write')) {
                 $r = New-NativeRun ($phase+' held') 'plain' @($phase)
@@ -260,6 +324,7 @@ try {
     $exitCode = 1
     Write-Host ($_ | Out-String)
 } finally {
+    foreach ($writer in $script:retainedWriters) { [NativeJobObserver]::CloseWriter($writer) }
     foreach ($name in $script:parentEnvironment.Keys) {
         [Environment]::SetEnvironmentVariable($name, $script:parentEnvironment[$name], 'Process')
     }
