@@ -175,9 +175,12 @@ public partial class PermissionWaitTests
         var attention = await scope.ServiceProvider.GetRequiredService<AttentionService>().GetAsync(ct, includeProgressProbe: false);
         attention.Items.ShouldContain(i => i.TaskId == f.TaskId && i.Kind.ToString() == "ProviderInputWait");
         await f.AssertCustodyAsync(AgentTaskStatus.Working, ct);
-        await using var db = f.Db();
-        await db.AgentTasks.Where(t => t.Id == f.TaskId).ExecuteUpdateAsync(u => u.SetProperty(t => t.Workspace, WorkspaceMode.Shared), ct);
-        var check = await scope.ServiceProvider.GetRequiredService<DelegateCheckProbe>().GatherAsync(await f.TaskAsync(ct), ct);
+        // Check's existing git probe is independently read-only. Exercise the diagnostic with
+        // unavailable directory metadata, preserving the stored worktree and the zero-call guard.
+        var checkedTask = await f.TaskAsync(ct);
+        checkedTask.WorkingDirectory = null;
+        checkedTask.WorktreePath = null;
+        var check = await scope.ServiceProvider.GetRequiredService<DelegateCheckProbe>().GatherAsync(checkedTask, ct);
         DelegateCheckProbe.RenderDigest(check).ShouldContain("current Claude permission dialog");
         (await f.DeadlineAsync(ct)).ShouldBe(0);
         await f.AssertCustodyAsync(AgentTaskStatus.Working, ct);
