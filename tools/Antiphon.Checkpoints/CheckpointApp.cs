@@ -804,9 +804,6 @@ public static class CheckpointApp
                 Slot = row.Slot ?? "skipped",
                 SlotReason = row.SlotReason,
                 WaitedSeconds = row.WaitedSeconds,
-            ExecutedSeconds = row.ExecutedSeconds,
-            WallSeconds = row.WallSeconds,
-            TerminalReason = row.TerminalReason,
                 Command = row.Command is not null,
                 Timeout = row.State == "timeout" ? "total" : null,
             });

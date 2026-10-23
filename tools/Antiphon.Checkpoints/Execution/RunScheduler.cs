@@ -594,7 +594,6 @@ public sealed class RunScheduler
                 TerminalReason = lease.SlotReason,
                 Line = CheckpointLine.Format(new CheckpointLineModel
                 {
-                    DriverSeconds = seconds => progress.ExecutedSeconds = (progress.ExecutedSeconds ?? 0) + seconds,
             Name = spec.Id,
                     Commit = request.Commit,
                     Build = "failed",
