@@ -38,6 +38,7 @@ cannot batch into this compact. No schema migration or runner changes.
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1529-red/` | red-witnesses | `/*/*/(RefocusBriefIdentityTests*)\|(AgentTaskReuseEnqueueTests*)\|(VerificationRoundDeliveryTests*)/(C1529_*)\|(both_reuse_messages_enqueue_when_nothing_throws*)\|(C544_BriefHandoffRecovery*)` | V-1, V-2, V-3, R-1, R-2 | red at brief admission on unchanged production; inspect each failure | 19 | 5 |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1529-final/` | identity-recovery | `/*/*/(RefocusBriefIdentityTests*)\|(AgentTaskReuseEnqueueTests*)\|(DelegationBriefRecoveryTests*)\|(DelegationDispatchRecoveryBoundaryTests*)/*` | V-1, V-2, R-1, R-2, R-3 | all listed classes, 0 failed/skipped | 28 | 7 |
 | CP-3 | S2 | CP-2 | delivery-acceptance | `/*/*/VerificationRoundDeliveryTests/*` | V-3, R-4 | all listed methods, 0 failed/skipped | 1 | 5 |
+| CP-4 | S3 | `tests/Antiphon.Tests -> bin-c1529-accept/` | final-refocus-acceptance | `/*/*/(RefocusBriefIdentityTests*)\|(VerificationRoundDeliveryTests*)/(C1529_*)\|(C544_BriefHandoffRecovery*)` | V-1, V-2, V-3, R-1, R-2 | all 24 focused cases and acceptance anchor, 0 failed/skipped | 25 | 5 |
 
 ### Cost
 
@@ -93,3 +94,12 @@ generation, supported dialog guard and a real readable Claude composer, using th
 existing fake adapter contract. No product guard or assertion is weakened.
 Rerun CP-2/CP-3 with baseline comparison against the task base to attribute the
 remaining existing-class failures before making any inherited-red claim.
+
+S3 corrects the C544 fixture stamp to the task's actual launch effort (Frontier
+is xhigh). At 1a81be39eadaca3f78b811533f786e72350abd0d the new class passes
+24/24 and AgentTaskReuseEnqueueTests passes 7/7; C544 reaches warm reuse and
+detects the inaccurate high stamp. CP-4 qualifies the final pushed source and
+the changed acceptance fixture. Full-class historical CP-2/CP-3 remain red and
+must not be relabeled green. The tool's automatic baseline run produced no TRX;
+its NEW labels are not attribution evidence. A separate bounded checkpoint at
+the original base runs the exact failed existing methods to establish attribution.
