@@ -815,3 +815,43 @@ retains 409 `routing_exhausted` with no task inserted. Single-candidate holds, p
 conflicts and independent placement failures, including no eligible required-OS
 host, retain their existing refusals. `runner_platform_unavailable` still means
 placement failed; exhaustion alone no longer causes it when a suitable host exists.
+
+### Phone-home event pressure (CARD-1523 / CARD-1524)
+
+A supporting runner advertises `phoneHomeEventWindowV1`. Registration returns an
+optional `eventWindow` (version 1, count limit, payload UTF-8 byte limit), bound to
+the connection ticket. Status `eventMode` is `window-v1` or `legacy` for a live
+remote connection. Both peers must support the capability: an old runner against
+a new server and a new runner against an old server both keep legacy hard-limit
+closure/reconnect behavior. Deploying only one side does not activate flow control.
+
+The runner waits for cumulative observation credits before acquiring the socket
+writer. Heartbeats and RPC replies do not use event credit. The server receive
+loop never waits for observer capacity. Four fixed consumers preserve FIFO within
+each session; `PhoneHomeRunner:EventConsumerConcurrency` accepts 1–16, default 4.
+One is the serial diagnostic fallback, with event credits still enabled.
+
+`pendingEvents` and `pendingEventBytes` include queued and actively observed items;
+bytes now mean UTF-8 payload JSON bytes, excluding the frame envelope. End records
+label monotonically increasing `ReceivedEvents` and `ReceivedPayloadBytes` as
+received totals. Text and structured accounting values come from one snapshot.
+`OverflowAt` records the immutable refusal state and incoming size separately
+from the later pending-at-end observation. High-water warnings still use pending
+values and occur once each at 50% and 90% per connection.
+
+High-water/end diagnostics include fixed event-kind buckets, oldest pending age,
+a bounded 16-session producer sample plus an other bucket, and active observer
+phases. A still-running phase over one second can warn once per connection per
+ten seconds. Runner heartbeats also carry current credit-wait and bounded
+subscriber pressure; subscriber bytes include different overhead from window bytes.
+These are diagnostic thresholds, not operation cancellation timeouts. Payload text
+and transcript contents are excluded.
+
+Finite stalls are protected while the additional events fit the runner subscriber
+budget and each event fits the negotiated byte window. Sustained overload still
+closes the bounded runner subscription, fails in-flight RPCs with existing typed
+semantics, and reconnects through transcript catch-up before eligibility. Credits
+are memory flow control, not prompt-delivery evidence. Durable UserPrompt UUIDs
+remain the delivery authority; transient output beyond both budgets is not made
+durable by this protocol. Activation requires the reviewed server restart and
+runner rollout on the rc line, with loaded SHAs and `window-v1` verified directly.

@@ -722,7 +722,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             CodexCliVersion: cli?.CodexCliVersion,
             CodexCliVersionCheckedAtUtc: cli?.CodexCliVersionCheckedAtUtc,
             CodexCliVersionError: CodexCliObservation.DisplayError(cli, _clock.GetUtcNow()),
-            CodexCliVersionStale: CodexCliObservation.DisplayStale(cli, _clock.GetUtcNow()));
+            CodexCliVersionStale: CodexCliObservation.DisplayStale(cli, _clock.GetUtcNow()),
+            EventMode: live is null ? null : live.EventWindow is null ? "legacy" : "window-v1");
     }
 
     /// <summary>Null when this process has no database. Otherwise every non-terminal bound session and every queued unlaunched task.</summary>

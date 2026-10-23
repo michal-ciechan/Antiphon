@@ -1,3 +1,5 @@
+using Antiphon.Tests.Application;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using System.Text.Json;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -37,13 +39,17 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
     public FakeTimeProvider Clock { get; } = new(DateTimeOffset.UtcNow);
     public CapturingLoggerProvider Logs { get; } = new();
     private ILoggerFactory? _loggers;
-    public Guid SessionId => Bridge.SessionId;
+    private Guid? _sourceSession;
+    public Guid SessionId => _sourceSession ?? Bridge.SessionId;
+    public HeldActivity Activity { get; } = new();
+    public TaskCompletionSource RecoveryHold { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task Connection => _connection!;
     public DateTime Generation { get; private set; }
     public PhoneHomeReceiveControl Completion { get; } = new(PhoneHomeReceiveMode.ObserveOnly);
     public PhoneHomeRecoveryPump Pump { get; private set; } = null!;
     public AppDbContext Db() => Bridge.CreateObserverContext();
 
-    public static async Task<PhoneHomeHostedRunner> CreateAsync(int count = 4, int bytes = 32768, int runnerCount = 8)
+    public static async Task<PhoneHomeHostedRunner> CreateAsync(int count = 4, int bytes = 32768, int runnerCount = 8, bool holdCatchup = false, bool observeCompletion = true, bool legacyServer = false)
     {
         var h = new PhoneHomeHostedRunner();
         try
@@ -53,19 +59,33 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
             h.Bridge = await BridgeQueueHarness.CreateAsync(new()
             {
                 ConnectionString = h._schema.ConnectionString,
-                ConfigureServices = services => services.AddSingleton<IEventBus>(h.Bus),
+                AlwaysOn = false,
+                ConfigureDbContext = options => options.AddInterceptors(h.Activity),
+                ConfigureServices = services =>
+                {
+                    services.AddSingleton<IEventBus>(h.Bus);
+                    services.AddSingleton(Options.Create(new ScheduleSettings()));
+                    services.AddSingleton(Options.Create(new DigestSettings { TimeZone = "Europe/London" }));
+                    services.AddSingleton<ScheduleFireQueue>();
+                    services.AddSingleton<IScheduledCardActions>(new PhoneHomeStrandedQueueTests.UnusedScheduledCardActions());
+                    services.AddScoped<ScheduleService>();
+                    services.AddScoped<AgentChannelService>();
+                    services.AddSingleton<MentionScanner>();
+                    services.AddSingleton<MentionRouteDiagnostics>();
+                    services.AddSingleton<AgentMentionRouter>();
+                },
             });
             h.Bus.HeldSession = h.SessionId;
             h._loggers = LoggerFactory.Create(b => b.AddProvider(h.Logs));
             h.Host = await PhoneHomeTestHost.StartAsync(h.Clock, h._schema.ConnectionString,
                 limits: new PhoneHomeLimits(MaxPendingEvents: count, MaxPendingEventBytes: bytes),
-                receiveControl: h.Completion,
+                receiveControl: observeCompletion ? h.Completion : null,
                 configureRunnerSettings: s => s.InventoryRefreshSeconds = 0,
                 configureServices: services => services.AddHostedService<PhoneHomeRecoveryPump>(sp =>
                     h.Pump = new PhoneHomeRecoveryPump(sp.GetRequiredService<PhoneHomeRunnerDirectory>(),
                         sp.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>(),
                         h.Bridge.Provider.GetRequiredService<IServiceScopeFactory>(),
-                        h._loggers.CreateLogger<PhoneHomeRecoveryPump>())));
+                        h._loggers.CreateLogger<PhoneHomeRecoveryPump>()) { CatchUpHold = holdCatchup ? h.RecoveryHold : null }));
             await using (var db = h.Db())
             {
                 var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
@@ -95,11 +115,11 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
             h.Commands.Sessions.Add(new RunnerSessionDto(h.SessionId, 1, h.Generation, "Running", null, "", 0,
                 AcceptedStartedAt: h.Generation));
             h.Service = new PhoneHomeConnectionService(Options.Create(settings), new PhoneHomeAdoptionGate(),
-                new PhoneHomeCommandDispatcher(h.Commands, settings), h.Runtime, new HttpFactory(),
+                new PhoneHomeCommandDispatcher(h.Commands, settings), h.Runtime, new HttpFactory(legacyServer),
                 TimeProvider.System, h._loggers.CreateLogger<PhoneHomeConnectionService>());
             h._connection = h.Service.RunConnectionAsync(h._stop.Token);
             h.Live = await h.Host.WaitLiveAsync(TimeSpan.FromSeconds(10));
-            await UntilAsync(() => h.Live.DispatchEligible, "hosted catch-up establishes eligibility");
+            if (!holdCatchup) await UntilAsync(() => h.Live.DispatchEligible, "hosted catch-up establishes eligibility");
             return h;
         }
         catch { await h.DisposeAsync(); throw; }
@@ -111,12 +131,39 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
     {
         var entry = new RunnerTranscriptEvent(session, sequence, kind, uuid, null, DateTimeOffset.UtcNow,
             "user", text, null, null, null, null, null);
-        Commands.Transcripts[session] = new RunnerTranscriptDto(session, [entry], sequence);
+        Commands.Transcripts.AddOrUpdate(session, new RunnerTranscriptDto(session, [entry], sequence),
+            (_, old) => new RunnerTranscriptDto(session, [.. old.Entries, entry], sequence));
         Runtime.EventHubForTest.Publish(SessionRunnerEventNames.SessionTranscript, entry);
     }
     public void Exit(Guid session, long sequence, DateTime generation) =>
         Runtime.EventHubForTest.Publish(SessionRunnerEventNames.SessionExited,
             new RunnerSessionExitedEvent(session, 0, "Normal", sequence, generation));
+
+    public async Task PrepareMentionAsync()
+    {
+        var (card, _) = await PhoneHomeStrandedQueueTests.ClaimCardAsync(Bridge, Bridge.ConnectionString);
+        _sourceSession = await PhoneHomeStrandedQueueTests.InsertMentionSourceAsync(Bridge.ConnectionString, card);
+        await using var db = Db();
+        var source = await db.AgentSessions.SingleAsync(s => s.Id == SessionId);
+        source.RunnerId = Host.AllowedRunnerId;
+        source.RunnerStoreId = Host.StoreId;
+        source.RunnerCwd = "/work";
+        Generation = source.StartedAt;
+        await db.SaveChangesAsync();
+        Bus.HeldSession = SessionId;
+        Commands.Sessions.Clear();
+        Commands.Sessions.Add(new RunnerSessionDto(SessionId, 1, Generation, "Running", null, "", 0, AcceptedStartedAt: Generation));
+        await Bridge.MarkWorkingAsync();
+    }
+
+    public async Task ReconnectAsync()
+    {
+        try { await _connection!; } catch (PhoneHomeTransportException) { }
+        _connection = Service.RunConnectionAsync(_stop.Token);
+        await UntilAsync(() => Host.Directory.SnapshotLive() is { } next && !ReferenceEquals(next, Live), "replacement connection accepted");
+        Live = Host.Directory.SnapshotLive()!;
+        await UntilAsync(() => Live.DispatchEligible, "replacement becomes eligible after catch-up");
+    }
 
     public async Task<Guid> AddSessionAsync()
     {
@@ -148,6 +195,8 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         Bus.Release.TrySetResult();
+        Activity.Release.TrySetResult();
+        RecoveryHold.TrySetResult();
         Commands?.ReleaseList.Set();
         _stop.Cancel();
         if (_connection is not null)
@@ -155,6 +204,7 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
             catch (OperationCanceledException) { }
             catch (PhoneHomeTransportException) { }
         if (Host is not null) await Host.DisposeAsync();
+        if (Pump is not null) await Pump.EndPumpForTest();
         if (Bridge is not null) await Bridge.DisposeAsync();
         if (_schema is not null) await _schema.DisposeAsync();
         Service?.Dispose();
@@ -164,11 +214,50 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
         if (Directory.Exists(_root)) Directory.Delete(_root, true);
     }
 
-    private sealed class HttpFactory : IHttpClientFactory { public HttpClient CreateClient(string name) => new(); }
+    public sealed class HeldActivity : SaveChangesInterceptor
+    {
+        public volatile bool Hold;
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
+            InterceptionResult<int> result, CancellationToken ct = default)
+        {
+            if (Hold && data.Context!.ChangeTracker.Entries<AgentSession>().Any(e => e.State == EntityState.Modified
+                && e.Property(s => s.LastSeenAt).IsModified))
+            {
+                Entered.TrySetResult();
+                await Release.Task.WaitAsync(ct);
+            }
+            return result;
+        }
+    }
+
+    private sealed class HttpFactory(bool legacy) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => legacy ? new(new LegacyRegistrationHandler()) : new();
+    }
+    // Old-server wire contract: ignore the new capability and omit the response member.
+    // The real runner registration and event sender remain unchanged.
+    private sealed class LegacyRegistrationHandler : DelegatingHandler
+    {
+        public LegacyRegistrationHandler() : base(new HttpClientHandler()) { }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var body = System.Text.Json.Nodes.JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!;
+            body["capabilities"] = null;
+            request.Content = new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+            var response = await base.SendAsync(request, ct);
+            var answer = System.Text.Json.Nodes.JsonNode.Parse(await response.Content.ReadAsStringAsync(ct))!.AsObject();
+            answer.Remove("eventWindow");
+            response.Content = new StringContent(answer.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+            return response;
+        }
+    }
 
     public sealed class HeldPublication : IEventBus
     {
         public Guid HeldSession { get; set; }
+        public bool IgnoreCancellation { get; set; }
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public MockEventBus Recipient { get; } = new();
@@ -177,7 +266,7 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
             if (eventName == "AgentTextDelta" && group == AgentSessionGroups.Session(HeldSession))
             {
                 Entered.TrySetResult();
-                await Release.Task.WaitAsync(ct);
+                if (IgnoreCancellation) await Release.Task; else await Release.Task.WaitAsync(ct);
             }
             await Recipient.PublishToGroupAsync(group, eventName, payload, ct);
         }

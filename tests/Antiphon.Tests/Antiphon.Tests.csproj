@@ -49,6 +49,8 @@
              Link="TestHelpers\FakeHerdrTransport.cs" />
     <Compile Include="..\Shared\HerdrTestProcess.cs" Link="TestHelpers\HerdrTestProcess.cs" />
     <Compile Include="..\Shared\ReadOnlyDirectory.cs" Link="TestHelpers\ReadOnlyDirectory.cs" />
+    <Compile Include="..\Antiphon.SessionRunner.Tests\TestHelpers\PhoneHomeTestWebSocket.cs"
+             Link="TestHelpers\PhoneHomeTestWebSocket.cs" />
     <Compile Include="..\Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs" Link="TestHelpers\CompletedCardRunnerFixture.cs" />
     <Compile Include="..\Antiphon.SessionRunner.Tests\LocalHttpRunner.cs"
              Link="TestHelpers\LocalHttpRunner.cs" />

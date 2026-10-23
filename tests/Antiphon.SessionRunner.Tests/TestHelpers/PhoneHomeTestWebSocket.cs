@@ -39,6 +39,8 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
     public void Enqueue(PhoneHomeFrame frame) =>
         _incoming.Writer.TryWrite(JsonSerializer.SerializeToUtf8Bytes(frame, PhoneHomeFraming.Json));
 
+    public void EnqueueJson(string json) => _incoming.Writer.TryWrite(System.Text.Encoding.UTF8.GetBytes(json));
+
     /// <summary>The peer closes: the pending/next receive returns a Close message.</summary>
     public void CompleteIncoming() => _incoming.Writer.TryComplete();
 

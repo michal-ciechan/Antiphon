@@ -1436,3 +1436,33 @@ only after fresh positive observations, independently of the answer.
 ## Dispatch concurrency admission (CARD-0505)
 
 Durable global and per-project limits live in the revisioned dispatch-concurrency store, not in host budgets and not in a process restart. Startup imports `Delegation:MaxOpenTasks` and `Delegation:RolePolicy` once as the seed. `LegacyOpen` (the import) counts Queued with Dispatched and Working. `SeparateQueues` is an explicit opt-in: `maxParallel` bounds Dispatched and Working, including a retained capacity wait, and `maxQueued` bounds fresh Queued admission. Check, Distill, and Diagnose stay outside those counts. `GET /api/agent-tasks/pipeline` projects the stored policy and does not import, clear a pin, or write a task. A missing store leaves the older advisory `recommendedInFlight` in place until import. Lowering a limit holds new work; it does not cancel work that was already accepted. `-IgnoreConcurrencyLimit` bypasses only a LegacyOpen open cap when the refusal says `population=open` and `canOverride=true`.
+
+## Bounded phone-home observation (CARD-1523 / CARD-1524)
+
+Phone-home event credits are negotiated on registration and owned by that ticket's
+epoch. Only completed observation, including the established per-event failure
+path, returns cumulative count/UTF-8-payload-byte credit. A frame's reservation
+travels across ingress, per-session queues and active workers; an idempotent lease
+releases it once. Closed-group unread cleanup releases memory without inventing
+observation credit. Catch-up still completes before live observation begins.
+
+Four fixed workers (configurable 1–16) observe at most one event for a session at
+a time and return a nonempty session to the tail of the ready queue. Output,
+transcript, exit and transcript-incident events retain session FIFO, original
+contents, ownership/generation checks and per-event failure isolation. Empty queue
+metadata is removed. A replacement observer group cannot start until its prior
+group joins; an uncooperative observer is reported and remains owned while the
+supervision loop continues. Host stop joins every tracked group.
+
+The runner waits for event credit before the socket write gate, keeping RPC replies
+and heartbeats responsive. A connection-owned server writer coalesces cumulative
+releases in one pending slot; a release during a send causes another update. Epoch
+mismatches cannot release current credit. Both mixed-version directions use the
+legacy bounded overflow/reconnect path. A negotiated event larger than the byte
+window fails explicitly instead of waiting forever.
+
+These bounds protect finite stalls only while the runner's additional subscriber
+budget suffices. Sustained overload retains explicit overflow and durable
+transcript catch-up; it does not promise recovery of every transient event. This
+changes neither session parking nor delivery semantics: a transcript-confirmed
+UserPrompt remains the prompt receipt, and no credit acknowledgement is delivery.
