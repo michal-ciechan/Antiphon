@@ -80,8 +80,20 @@ public sealed class ProviderWaitWarningWriter(IServiceScopeFactory scopes, TaskP
             var cardLabel = task.CardId is Guid cardId
                 ? await db.Cards.Where(c => c.Id == cardId).Select(c => c.Identifier).FirstOrDefaultAsync(ct) : null;
             cardLabel ??= "task " + shortId;
-            var pending = await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending, ct);
-            var receipt = pending == 0 ? "none queued" : "not confirmed";
+            var messages = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == sessionId
+                && m.CreatedAt >= facts.Binding.DispatchedAt && m.Status != QueuedMessageStatus.Canceled).ToListAsync(ct);
+            var pending = messages.Count(m => m.Status == QueuedMessageStatus.Pending);
+            var confirmed = messages.Count > 0;
+            foreach (var message in messages)
+            {
+                var prompts = LandNoteReceipt.Prompts(db.TranscriptEntries.AsNoTracking(), sessionId, false,
+                    LandNotificationKind.ProviderInputWait, message.LastDeliveryBaselineSequence, message.LastDeliveryStartedAt, 30);
+                if (message.Status != QueuedMessageStatus.Sent || message.DeliveryAttempts <= 0
+                    || message.LastDeliveryGeneration is not DateTime delivered || !SessionGeneration.Equal(delivered, session.StartedAt)
+                    || prompts is null || await LandNoteReceipt.FirstReceiptAsync(prompts, message.Body, ct) is null)
+                    confirmed = false;
+            }
+            var receipt = messages.Count == 0 ? "none queued" : confirmed ? "confirmed" : "not confirmed";
             var last = await TaskDeadlinePolicy.LoadLastEntryAsync(db, sessionId, ct);
             var local = last?.Kind == TranscriptKinds.ToolCall;
             var phase = local ? settings.Value.LocalExecutionDeadlineMinutes : settings.Value.ModelWaitDeadlineMinutes;

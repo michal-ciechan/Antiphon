@@ -50,6 +50,12 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             scanCache?.Invalidate(note.Id);
             return;
         }
+        if (note.Kind == LandNotificationKind.ProviderInputWait && note.ReplyTo != AgentTaskReplyTo.Session)
+        {
+            note.State = note.ReplyTo == AgentTaskReplyTo.None ? LandNotificationState.NotRequired : LandNotificationState.DestinationUnavailable;
+            await db.SaveChangesAsync(ct);
+            return;
+        }
         if (note.IsLegacy && note.QueueMessageId is null) return; // Historical evidence never creates a new submission.
         var now = clock.GetUtcNow().UtcDateTime;
         if (note.QueueMessageId is null && note.NextAttemptAt > now) return;
@@ -332,6 +338,12 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 if (evidence is { } hit)
                 {
                     if (boundary is not null) await boundary.ReachedAsync("receipt-before-save", note.TaskId, note.Id, ct);
+                    if (note.Kind == LandNotificationKind.ProviderInputWait)
+                    {
+                        var current = await db.AgentSessions.AsNoTracking().Where(s => s.Id == session).Select(s => (DateTime?)s.StartedAt).SingleOrDefaultAsync(ct);
+                        if (row.LastDeliveryGeneration is not DateTime attempted || current is not DateTime generation
+                            || !SessionGeneration.Equal(attempted, generation)) return;
+                    }
                     note.ConfirmedAt = now;
                     note.ConfirmingPromptSequence = hit.Sequence;
                     note.State = LandNotificationState.Confirmed;
