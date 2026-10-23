@@ -154,12 +154,15 @@ public sealed partial class LandGraphEvaluationTests
             if (variant != "missing") files[PinsFile] = pin;
             await using var repo = await AuditRepo.CreateAsync(files);
             var run = await repo.RunToolAsync();
-            run.ExitCode.ShouldBe(variant == "exact" ? 0 : 1, $"{variant}: {run.Text}");
-            if (variant == "exact") run.Lines.ShouldContain("approved", run.Text);
+            // An OS pin approves the element's bytes, not an unsupported evaluation function.
+            var approves = variant == "exact" && condition == "'$(OS)' == 'Windows_NT'";
+            run.ExitCode.ShouldBe(approves ? 0 : 1, $"{variant}: {run.Text}");
+            if (approves) run.Lines.ShouldContain("approved", run.Text);
             else
             {
                 run.Text.ShouldContain("App/App.csproj /Project[1]/PropertyGroup[", Case.Sensitive, run.Text);
                 run.Lines.ShouldNotContain("approved", run.Text);
+                if (variant == "exact") run.Text.ShouldContain("@Condition unsupported-function", Case.Sensitive, run.Text);
             }
             repo.AssertUntouched();
         }
