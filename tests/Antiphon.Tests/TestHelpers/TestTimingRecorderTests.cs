@@ -232,7 +232,7 @@ public sealed class TestTimingRecorderTests
         session.EndCase("case-a", "Passed", C1514Support.Ms(TestTiming.SpanCap + 1));
         var row = C1514Support.Complete(session.ShardPath!, "case-a");
         row.GetProperty("droppedPhaseCount").GetInt32().ShouldBe(1, "span-budget-recorded");
-        var bytes = File.ReadAllText(session.ShardPath!);
+        var bytes = C1514Support.ReadLiveText(session.ShardPath!);
         bytes.ShouldNotContain("sk-probe-should-not-leak", Case.Sensitive, "secret-canaries-absent");
         bytes.ShouldNotContain("Password=", Case.Sensitive, "secret-canaries-absent");
         bytes.ShouldNotContain("CANARY-tostring", Case.Sensitive, "secret-canaries-absent");
@@ -314,8 +314,8 @@ public sealed class TestTimingRecorderTests
         var right = Path.Combine(root, "cases-77-writerb.jsonl");
         File.Exists(left).ShouldBeTrue("writers-have-distinct-shards");
         File.Exists(right).ShouldBeTrue("writers-have-distinct-shards");
-        var leftText = File.ReadAllText(left);
-        var rightText = File.ReadAllText(right);
+        var leftText = C1514Support.ReadLiveText(left);
+        var rightText = C1514Support.ReadLiveText(right);
         leftText.ShouldContain("writera", Case.Sensitive, "writers-have-distinct-shards");
         leftText.ShouldNotContain("writerb", Case.Sensitive, "writers-have-distinct-shards");
         rightText.ShouldContain("writerb", Case.Sensitive, "writers-have-distinct-shards");
