@@ -155,6 +155,49 @@ internal sealed class PermissionWaitFixture : IAsyncDisposable
             connectionString: Harness.ConnectionString, createdAtUtc: Clock.GetUtcNow().UtcDateTime);
     internal Task CallerIdleAsync(CancellationToken ct) => StoreAwareTranscript.WriteAsync(Harness.Provider, ParentSessionId,
         async () => { await InsertParentAsync(TranscriptKinds.TurnEnd, null, ct); });
+
+    internal Task FlushCallerAsync(CancellationToken ct) =>
+        JoinDeliveryAsync(() => Harness.Queue.FlushSessionAsync(ParentSessionId, ct), ct);
+
+    internal Task FlushStrandedQueuesAsync(CancellationToken ct) =>
+        JoinDeliveryAsync(() => Harness.Queue.FlushStrandedQueuesAsync(ct), ct);
+
+    // Use the registered-timer barrier from TurnEndGapDeliveryHarness. The queue's
+    // settle and separate-Enter delays share this manual clock with the deadline tests.
+    private async Task JoinDeliveryAsync(Func<Task> deliver, CancellationToken ct)
+    {
+        var after = Clock.Events.LastOrDefault()?.Sequence ?? 0;
+        var operation = deliver();
+        try
+        {
+            while (!operation.IsCompleted)
+            {
+                using var pending = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                var timer = Clock.WaitForTimerAsync(e => e.Action == "create"
+                    && (e.DueTime == TimeSpan.FromMilliseconds(20)
+                        || e.DueTime == TimeSpan.FromMilliseconds(50))
+                    && Clock.TimerStates[e.TimerId] != "dispose", after, pending.Token);
+                try
+                {
+                    if (await Task.WhenAny(operation, timer) == operation)
+                        break;
+                    var registered = await timer;
+                    after = registered.Sequence;
+                    Clock.AdvanceTo(registered.Deadline);
+                }
+                finally
+                {
+                    await pending.CancelAsync();
+                    try { await timer; } catch (OperationCanceledException) { }
+                }
+            }
+        }
+        finally
+        {
+            await operation;
+        }
+    }
+
     internal sealed class FaultBoundary : LandDeliveryBoundary
     {
         internal string? FailAt { get; set; }
