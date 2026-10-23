@@ -35,5 +35,5 @@ Mutation owns deliberate defects and discovery of missing controls. No mutation 
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---|---:|---|
-| CP-1 | S1 | tests/Antiphon.TimeoutAudit.Tests bin-c1563-red/ | initial-red | `/*/*/TimeoutAuditTests/*` | V-1,V-2,V-3,V-4,R-1,R-2 red | TimeoutAuditTests | 6 | 1 | true |
-| CP-2 | S2 | tests/Antiphon.TimeoutAudit.Tests bin-c1563-green/ | audit-green | `/*/*/TimeoutAuditTests/*` | V-1,V-2,V-3,V-4,R-1,R-2 | TimeoutAuditTests | 6 | 1 | true |
+| CP-1 | S1 | tests/Antiphon.TimeoutAudit.Tests -> bin-c1563-red/ | initial-red | `/*/*/TimeoutAuditTests/*` | V-1,V-2,V-3,V-4,R-1,R-2 red | TimeoutAuditTests | 6 | 1 | true |
+| CP-2 | S2 | tests/Antiphon.TimeoutAudit.Tests -> bin-c1563-green/ | audit-green | `/*/*/TimeoutAuditTests/*` | V-1,V-2,V-3,V-4,R-1,R-2 | TimeoutAuditTests | 6 | 1 | true |
