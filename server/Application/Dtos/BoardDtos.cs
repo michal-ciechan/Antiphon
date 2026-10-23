@@ -252,7 +252,8 @@ public sealed record CreateCardRequest(
     string? Alias = null,
     string? PrivateNotes = null,
     [property: JsonConverter(typeof(CardFileVisibilityConverter))] CardFileVisibility? CardFileVisibility = null,
-    RequiredPlatform? RequiredPlatform = null);
+    RequiredPlatform? RequiredPlatform = null,
+    decimal? EstimateDays = null);
 
 /// <param name="Reason">
 /// Why this card is moving. Optional, and deliberately NOT named for the close case: "no longer
@@ -348,7 +349,9 @@ public sealed record UpdateCardContentRequest(
     [property: JsonConverter(typeof(CardVerificationPolicyConverter))] CardVerificationPolicy? CodeVerificationPolicy = null,
     [property: JsonConverter(typeof(CardVerificationPolicyConverter))] CardVerificationPolicy? ReviewVerificationPolicy = null,
     /// <summary>CARD-0710. Omitted preserves the stored default. Explicit Any resets it.</summary>
-    RequiredPlatform? RequiredPlatform = null);
+    RequiredPlatform? RequiredPlatform = null,
+    decimal? EstimateDays = null,
+    bool ClearEstimate = false);
 
 /// <summary>
 /// Relative placement of one card inside its board column (CARD-0098). Absolute positions never
