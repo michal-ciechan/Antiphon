@@ -232,15 +232,8 @@ public sealed class TestTimingSession : IDisposable
     public string? ShardPath { get; }
     public long FrequencyHz => _clock.Frequency;
 
-    // CARD-1514 red witness: labeled no-op. Never land alone.
-    private static readonly bool RedWitnessNoOp = true;
-
     public static TestTimingSession TryOpen(TestTimingConfig config)
     {
-        // CARD-1514 red witness: labeled no-op. Never land alone.
-        if (RedWitnessNoOp)
-            return new TestTimingSession(false, null, null, TimingClock.CreateManual());
-
         if (string.IsNullOrWhiteSpace(config.Root))
             return new TestTimingSession(false, null, null, TimingClock.CreateManual());
 
