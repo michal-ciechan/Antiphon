@@ -117,6 +117,33 @@ public class DelegationBriefRecoveryTests
         }
     }
 
+    [Test]
+    [Arguments("absent")]
+    [Arguments("unknown")]
+    public async Task C1541_Resume_keeps_brief_pending_without_clear_dialog_observation(string observation)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var fixture = await BriefFixture.CreateAsync(schema.ConnectionString, dispatched: true);
+        if (observation == "absent")
+            fixture.Adapter.DialogGuardEnabled = false;
+        else
+        {
+            fixture.Adapter.DialogGuardEnabled = true;
+            fixture.Adapter.RenderedScreenOverride = "unrecognized terminal frame";
+        }
+
+        await fixture.ResumeAsync();
+
+        fixture.Adapter.Inputs.ShouldBeEmpty(observation + ": no body, Enter or recovery key");
+        fixture.Adapter.SubmittedBodies.ShouldBeEmpty(observation);
+        await using var db = fixture.Db();
+        var brief = (await db.SessionQueuedMessages.Where(m => m.ExecutionTaskId == fixture.Task.Id)
+            .ToListAsync()).ShouldHaveSingleItem();
+        brief.Status.ShouldBe(QueuedMessageStatus.Pending, observation);
+        brief.DeliveryAttempts.ShouldBe(0, observation + ": the guard refuses before attempt custody");
+        (await db.AgentTasks.SingleAsync(t => t.Id == fixture.Task.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched);
+    }
+
     private sealed class BriefFixture : IAsyncDisposable
     {
         public required BridgeQueueHarness Harness { get; init; }
