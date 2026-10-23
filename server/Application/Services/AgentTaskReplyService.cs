@@ -474,7 +474,7 @@ public sealed class AgentTaskReplyService
                 // CARD-1472 D-1: the reopened turn settles this task again, so the wire restates the
                 // complete-report contract. The caller's text stays first; the contract follows it.
                 var blockedBody = ($"{DelegationReportFormatter.TaskMarker(taskId)}\n\n{message.Trim()}\n\n"
-                    + DelegationReportFormatter.BlockedReplyContract(taskId)).ReplaceLineEndings("\n");
+                    + DelegationReportFormatter.BlockedReplyContract(taskId, task.Stage)).ReplaceLineEndings("\n");
                 var replyEvent = NewEvent(
                     taskId,
                     AgentTaskEventType.Replied,
