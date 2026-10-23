@@ -39,6 +39,17 @@ public sealed class FileUseCapture(IFileUseProvider? provider = null, IFileUseEv
         }
         if (result.Status != FileUseStatus.NotTriggered)
         {
+            // Timeout/Busy are first-failure observations too. A later retry must reuse
+            // their identity rather than start a later census after the evidence changed.
+            try
+            {
+                lock (request.Operation.Captures)
+                {
+                    if (request.Operation.Captures.Count < 8)
+                        request.Operation.Captures.TryAdd(request.Path + "\0" + result.NativeCode, result);
+                }
+            }
+            catch { /* The caller's original outcome remains authoritative. */ }
             try { request.Error.Data["fileUseCaptureId"] = result.CaptureId; request.Error.Data["fileUseCaptureSummary"] = result.Summary; }
             catch { /* Read-only or hostile exception Data never changes the failure path. */ }
         }
