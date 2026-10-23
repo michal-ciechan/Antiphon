@@ -35,6 +35,17 @@ All PCs remain pending for SourceLanding Mutation; Code owns only original-defec
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---|---:|---|---|
 | CP-1 | S2 | tests/Antiphon.Tests -> bin-rcroster/ | rc-roster | `/*/Antiphon.Tests.Scripts/(RcRosterRepairTests*)\|(ReleaseGatePlatformTests*)\|(C1514LandingSplitBudgetTests*)/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 8 | 6 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-2 | S3 | tests/Antiphon.Tests -> bin-rcroster2/ | rc-roster-repair | `/*/Antiphon.Tests.Scripts/(RcRosterRepairTests*)\|(ReleaseGatePlatformTests*)\|(C1514LandingSplitBudgetTests*)/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 8 | 6 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
 
 Run with an explicit 15m total timeout and expected-source-sha set to committed HEAD.
 No repetitions. An extra compile in the RC scratch is required by the brief (R-3).
+
+S3 is the required rerun of the red CP-1 row, with fresh output and source SHA.
+CP-1 at d89a2c1c87a13c0d7dcfe73c0bf9ff743ca9c424 executed eight: six passed,
+two failed. Correct the introduced rounded-vs-raw estimate pin (raw 47108.09756097559
+seconds, rounded-launch sum 47107.9). CARD-1569 tracks the inherited platform fixture:
+its seam did not interpret TUnit OR operands and its candidate id was stale. A fresh
+base script rerun reproduced both at 877b9ce108e6e2bb4ba81840a99c4dd788302ca4,
+four assertions passed / three failed. Repair fixture inputs, retaining every outcome
+assertion, then run CP-2 once. This required red-row repair is the reason for the
+second narrow checkpoint; it is not a proof repetition.
