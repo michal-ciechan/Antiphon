@@ -149,6 +149,7 @@ function Test-C1313_ModeCredit {
         $execution = Invoke-Workload $fx $request
         $trace = Get-Content $fx.Trace -Raw
         $suiteNames = @('antiphon','session-runner','pty-host','agents-pty','messaging','client','scripts','e2e','markdown-pdf')
+        if (Test-Path (Join-Path $repoRoot 'tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj')) { $suiteNames += 'observability' }
         $scriptNames = @('test-apphost-graceful-stop','test-apphost-lock-age','test-apphost-main-worktree-guard','test-apphost-probe-class',
             'test-cleanup-claude-sessions','test-cleanup-codex-test-residue','test-client-mode','test-deploy-am-service','test-deploy-nightly-watchdog',
             'test-hooks','test-nightly-report','test-reap-zombie-agents','test-stage-value-report')

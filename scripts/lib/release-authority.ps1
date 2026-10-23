@@ -215,6 +215,11 @@ function ConvertFrom-ReleaseAuthorityPolicyBytes {
     if ([int]$version -ge 3) {
         $required += 'markdown-pdf'
         Test-NightlyProjectDispositions -PolicyObject $obj
+        # Historical policies predate the standalone CARD-1564 assembly.
+        # Once declared, it must carry its own RC qualification obligation.
+        if (@($obj.projectDispositions | Where-Object project -ceq 'tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj').Count -gt 0) {
+            $required += 'observability'
+        }
     }
     $missing = @($required | Where-Object { $suites -notcontains $_ })
     $unknown = @($suites | Where-Object { $required -notcontains $_ })

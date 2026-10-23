@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "1cda804d3e6126d79ccfcf5601971c02360bd1f56503ab00f30f0e7abca64190",
+  "policyHash": "3e92cc0dd327013297fb6e02283f48c684abdfb55295e95c3f48ea3a5dd6e355",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -8,7 +8,8 @@
     "agents-pty",
     "messaging",
     "client",
-    "scripts"
+    "scripts",
+    "observability"
   ],
   "profiles": {
     "nightly": {
@@ -19,9 +20,10 @@
         "agents-pty",
         "messaging",
         "client",
-        "scripts"
+        "scripts",
+        "observability"
       ],
-      "description": "The seven unattended suites. E2E stays out; OptIn/Explicit still excludes.",
+      "description": "The unattended suites, including the standalone CARD-1564 observability assembly. E2E stays out; OptIn/Explicit still excludes.",
       "exclusions": []
     },
     "rc": {
@@ -34,7 +36,8 @@
         "client",
         "scripts",
         "e2e",
-        "markdown-pdf"
+        "markdown-pdf",
+        "observability"
       ],
       "description": "Full automated Windows profile including portable MarkdownPdf; explicit other-platform and manual obligations remain excluded with owners.",
       "exclusions": [
@@ -641,7 +644,8 @@
     "tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj",
     "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
     "tests/Antiphon.Tests/Antiphon.Tests.csproj",
-    "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+    "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
+    "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj"
   ],
   "suites": {
     "antiphon": {
@@ -715,6 +719,13 @@
       "mode": "unattended",
       "assembly": "Antiphon.MarkdownPdf.Tests",
       "project": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+    },
+    "observability": {
+      "project": "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj",
+      "name": "Antiphon.Observability.Tests",
+      "processGroup": "native-dotnet",
+      "assembly": "Antiphon.Observability.Tests",
+      "mode": "unattended"
     }
   },
   "safeEnvironment": {
@@ -838,7 +849,8 @@
     "client": 1200000,
     "scripts": 1200000,
     "e2e": 7200000,
-    "markdown-pdf": 1200000
+    "markdown-pdf": 1200000,
+    "observability": 1200000
   },
   "reducedDispatchPolicy": "inactive",
   "projectDispositions": [
@@ -939,6 +951,12 @@
       ],
       "role": "child",
       "project": "tests/Antiphon.TestTiming.Probe/Antiphon.TestTiming.Probe.csproj"
+    },
+    {
+      "role": "primary",
+      "consumers": [],
+      "project": "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj",
+      "reason": "Standalone CARD-1564 test assembly owns live startup and external-call observability qualification; required by nightly and rc profiles."
     }
   ],
   "selectionCatalog": {
