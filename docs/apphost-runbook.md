@@ -261,3 +261,31 @@ rolled back.
    inspect locks, launch logs and `docker ps` before another teardown.
 5. Re-registering tasks while the runner was up killed its supervisor, leaving
    an unsupervised daemon: refresh AppHost tasks with `-AppHostOnly`.
+
+## Failed startup-path pick
+
+For the [rc native probe/restart rehearsal](release-gates.md#startup-path-rc-picks),
+retain failed receipts and logs, mark the pick unactivated, and commission Debug.
+If the failure is attributable to the pick, recover by new history in a separately
+assigned recovery task based on the current rc tip with explicit publication
+authority, never by editing the running product checkout:
+
+```powershell
+git revert --no-edit <exact-bad-pick-sha>
+```
+
+For a multi-commit bundle enumerate exact commits newest first. For a merge,
+review the parent and select the mainline explicitly. Never blindly revert a
+range containing intervening work. Review and publish the revert through the
+normal fast-forward to the named rc ref; if it moved, stop for ordinary
+integration. Never reset shared source, force-push, move rc backward or mutate a
+release tag. For an infrastructure-only failure retain its evidence and use the
+existing Debug/recovery path; do not revert unrelated code because of a timeout.
+
+Advance the canonical checkout, repeat the absent-opt-out native probe and
+restore rehearsal, then use the canonical restart from an independent owning
+shell. Honor both locks, exit refusals and the Job Object caveat above. Confirm
+health and `/api/version` at the new revert SHA and retain both failed and
+recovered receipts. The source compensation command alone does not restore
+service. Persistent opt-out is not ordinary recovery; CARD-1525 separately owns
+cleanup of its temporary USER setting after the repaired source and restarts.

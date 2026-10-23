@@ -271,11 +271,53 @@ ordinary checkpoint. No production mutation is authorized during Code. Final
 ordinary verification runs after all three slices are committed, so it requires
 one isolated .NET build in total. Lint harnesses exercise local fixtures only.
 
+## Verification design
+
+Code brief task f93ec86b explicitly skips a separate TestDesign dispatch and
+freezes this bounded design. Final ordinary scope is CP-1/CP-2 only; no Unit lane,
+whole suite or live Windows operation. All new checker tests invoke the actual
+checker against privately committed Git fixtures and assert both exit code and
+specific diagnostic. `-Case <name>` selects a single script case for later
+Mutation binding. `-PolicyOnly` is the separately budgeted pre-fix red witness.
+No command in a witness record is executed by the checker.
+
+| ID | Named cases / invariant | Ordinary row |
+|---|---|---|
+| V-1 | `forced-real-type`, `seam-only`: complete real-type plus absent/empty/value declaration passes; seam alone fails | CP-1 |
+| V-2 | `native-pending`, `fixture-native`: explicit native pending remains pending; forced receipt cannot occupy native slot | CP-1 |
+| V-3 | `missing-witness`: changed OS behavior needs a witness | CP-1 |
+| V-4 | `empty-is-not-absent`, `absent-case-required`: presence/absence setup and all input states | CP-1 |
+| V-5 | `candidate-mismatch`, `candidate-contradiction`, `candidate-reason`: complete-file candidates persist and need consistent dispositions | CP-1 |
+| V-6 | `helper-missing`, `helper-complete`: caller's named helper inventory at both revisions | CP-1 |
+| V-7 | `restart-rename-missing`, `restart-rename-pending`, `restart-delete`: old path triggers native obligation | CP-1 |
+| V-8 | `sha-mismatch`, `unresolved-ref`, `missing-path`, `missing-checkpoint`, `duplicate-inventory`, `malformed-record`, `unsafe-path`, `pinned-source`: identity, structure and pinned-object validation | CP-1 |
+| V-9 | `unknown-classification`: unknown non-document paths need classification | CP-1 |
+| V-10 | `documentation-only`: correct not-applicable census passes | CP-1 |
+| R-1 | `policy-surface`: mandatory owner/bundle pointers, corrected incident, native absent-key recipe, restore and forward recovery (26 assertions) | CP-1 |
+| R-2 | Five TaskPlatformGuidanceTests, eight CheckpointManifestDocumentationTests, one CheckpointRepeatDocumentationTests; existing caps, platform, checkpoint and repeat obligations preserved | CP-2 |
+| R-3 | Manual diff: standing rule 4/D-2 unchanged; no runtime policy repair, desktop/release operations or persistent opt-out change; clean merge-tree and sequential rc cherry-pick simulation | Manual |
+
+CP-1 has 25 named checker cases (50 exit/diagnostic assertions), plus 26 policy
+assertions: 76 total, all required, no skipped group. Each checker process has a
+15-second kill/join deadline. The ordinary command row is capped at two minutes;
+CP-2 at eight minutes, with one isolated build. Normal green is run once; only
+failed rows are repaired/rerun. Pre-fix policy red was committed before the fix.
+
+Unbound Mutation candidate: `docs/superpowers/mutations/2026-10-23-card-1526-os-witnesses.md`.
+PC-1 real-type guard (`seam-only`), PC-2 absence guard (`empty-is-not-absent`),
+PC-3 candidate coverage (`candidate-mismatch`), PC-4 native mode guard
+(`fixture-native`), PC-5 startup old-path census (`restart-rename-missing`) remain
+pending for SourceLanding Mutation, including deliberate red/restore/green and
+missing-control discovery. Code does not run those mutants. Native Windows
+probe/restore is future affected-pick work, not deferred ordinary work for this
+portable policy card. CARD-1525's reviewed runtime witness remains externally
+owned and unbound while its repair is InProgress.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-S3 | n/a | portable-os-witness-lint | `pwsh -NoProfile -File scripts/test-os-witnesses.ps1` | Lint contract, policy pointers, native recipe/rollback document checks | All 10 named lint groups plus policy-surface checks pass; exit 0; no skipped group. TestDesign freezes the assertion count. | n/a | 2 |
+| CP-1 | S1-S3 | n/a | portable-os-witness-lint | `pwsh -NoProfile -File scripts/test-os-witnesses.ps1` | Lint contract, policy pointers, native recipe/rollback document checks | All 25 checker cases (50 assertions) plus 26 policy assertions pass (76 total); exit 0; no skipped group. | n/a | 2 |
 | CP-2 | S1-S3 | `tests/Antiphon.Tests -> bin-c1526/` | portable-bundle-contracts | `/*/*/(TaskPlatformGuidanceTests*)\|(CheckpointManifestDocumentationTests*)\|(CheckpointRepeatDocumentationTests*)/*` | Existing bundle caps, preserved instructions, placement, checkpoint and repeat-policy obligations | All 14 existing methods pass, 0 failed/skipped; no sibling `RunnerDefaultGuidanceTests` selected | 14 | 8 |
 
 Both rows name the portable lane and stay unpinned. Execute them in one
