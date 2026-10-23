@@ -64,12 +64,12 @@ public sealed class RunnerProbePowerShellFixtureTests
             if (variant is "alias-only" or "no-pwsh" or "empty-path")
             {
                 var error = Should.Throw<FileNotFoundException>(() =>
-                    RunnerProcessProbeTests.PowerShellExecutable(searchPath, root));
+                    RunnerProcessProbeTests.PowerShellExecutable(searchPath));
                 error.Message.ShouldContain("regular installed pwsh.exe on PATH");
             }
             else
             {
-                var selected = RunnerProcessProbeTests.PowerShellExecutable(searchPath, root);
+                var selected = RunnerProcessProbeTests.PowerShellExecutable(searchPath);
                 selected.ShouldBe(installed);
                 selected.ShouldNotBe(alias);
                 ScriptHarnessProcessFixture.IsWindowsAppExecutionAlias(selected).ShouldBeFalse();
