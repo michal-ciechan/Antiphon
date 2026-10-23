@@ -22,6 +22,7 @@ AGENTS.md is the universal index and mandatory safety core for this repository. 
 | Bootstrap, AppHost, Docker, ports, logging, scheduled tasks, and recovery | [docs/bootstrap.md](docs/bootstrap.md) |
 | Staged remote Docker rollout and server2 runner handoff | [docs/docker-stack.md](docs/docker-stack.md#staged-server2-rolling-rollout-card-0934) |
 | Tests, builds, E2E diagnostics, and test-time process safety | [docs/testing-and-build.md](docs/testing-and-build.md) |
+| Test performance, timeouts, setup sharing, observability | [docs/test-performance-standards.md](docs/test-performance-standards.md) |
 | Nightly backstop, watchdog and qualification | [docs/nightly-watchdog.md](docs/nightly-watchdog.md), [docs/testing-and-build.md](docs/testing-and-build.md) (Nightly) |
 | Long-lived `rc/YYYY-MM-DD` line, `vYYYY.MM.DD.N-rc.K` pre-release tags, final CalVer tags, RC coverage, Interim activation | [docs/release-gates.md](docs/release-gates.md) |
 | Real browser, vault relay, per-site notes, and Outlook work | [docs/external-site-operations.md](docs/external-site-operations.md) |
@@ -58,6 +59,7 @@ concurrency token by default.
 
 ### Tests and builds
 
+- Apply [test performance standards](docs/test-performance-standards.md): Debug any selection/batch/run over 30 minutes; share expensive setup once per run, record phases, and budget timeouts near 2x measured p95. Plans and Reviews carry its performance checks.
 - Run TUnit with dotnet run --project tests/<ProjectName>, not dotnet test; run Antiphon.Tests and Antiphon.Agents.Pty.Tests sequentially. Use pwsh -File scripts/test-client.ps1 for Vitest, and rebuild client/dist before E2E. Process-spawning tests, including SessionRunner pty-host and direct-process tests, carry an assembly-local ParallelLimiter<ProcessSpawnLimit> (one limiter per test project, not shared across assemblies).
 - A Code stage runs the plan's `### Checkpoints` table as a closed list: one isolated build and one exact filter per row, reported per CP-n with counts; unlisted builds/test runs need a stated reason, and a new test that cannot go red is a stub. Owner: [docs/testing-and-build.md](docs/testing-and-build.md) (Checkpoint manifest, CARD-0585).
 - CARD-0723 checkpoint runs go through the checkpoint tool (`dotnet run --project tools/Antiphon.Checkpoints -- run --plan <plan.md>`), one run per committed slice group, then `wait` until the exit is not 75. Owner: [docs/testing-and-build.md](docs/testing-and-build.md) (Checkpoint runner tool).
