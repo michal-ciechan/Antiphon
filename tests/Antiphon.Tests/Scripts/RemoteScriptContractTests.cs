@@ -2761,7 +2761,7 @@ public sealed class RemoteScriptContractTests
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C1008_Recycle_resume_requires_matching_receipt()
+    public async Task C1008_Recycle_resume_after_seed_failure()
     {
         C1008HostFixture.RequireNativeLinux();
         using (var seeded = new C1008HostFixture())
@@ -2775,76 +2775,107 @@ public sealed class RemoteScriptContractTests
             resumed.Exit.ShouldBe(0, "recycle-resume-generation: empty recorded creation boundary resumes; " + resumed.Output);
             seeded.Removed.Length.ShouldBe(3, "recycle-resume-generation: no repeated deletion after seed failure");
         }
-        using var f = new C1008HostFixture(); f.Docker["fault"] = "rm-second-failed";
-        var run = await f.Run();
-        f.Removed.ShouldBe(new[] { "antiphon-runner_work" }, "recycle-resume-generation: committed partial first removal; " + run.Output);
-        var journal = Path.Combine(f.Root, "server/recycle/c100800000000000000000000000000000001.json");
-        File.Exists(journal).ShouldBeTrue("recycle-resume-generation: external journal survives work removal");
-        var saved = JsonNode.Parse(File.ReadAllText(f.StatePath))!.AsObject();
-        f.Docker.Clear(); foreach (var (key, value) in saved) f.Docker[key] = value?.DeepClone();
-        f.Docker["fault"] = "";
-        var resume = await f.Run(extra: "C1008_RESUME=1");
-        f.Removed.Length.ShouldBe(3, "recycle-resume-generation: removes only the remaining originals; " + resume.Output);
-        resume.Exit.ShouldBe(0);
-        foreach (var fault in new[] { "stop-failed", "owned-rm-failed", "rm-first-failed", "rm-third-failed" })
+    }
+
+    [Test]
+    [Arguments("rm-second-failed")]
+    [Arguments("stop-failed")]
+    [Arguments("owned-rm-failed")]
+    [Arguments("rm-first-failed")]
+    [Arguments("rm-third-failed")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_resume_after_partial_failure(string fault)
+    {
+        C1008HostFixture.RequireNativeLinux();
+        if (fault == "rm-second-failed")
         {
-            using var partial = new C1008HostFixture(); partial.Docker["fault"] = fault;
-            var interrupted = await partial.Run(); interrupted.Exit.ShouldBe(2);
-            partial.ReloadDocker(); partial.Docker["fault"] = "";
-            if (fault is "rm-first-failed" or "rm-third-failed")
-            {
-                partial.Statuses["server2"]!["runnerSessions"] = null;
-                partial.Statuses["server2"]!["available"] = false;
-                partial.Statuses["server2"]!["dispatchEligible"] = false;
-            }
-            var recovered = await partial.Run(extra: "C1008_RESUME=1");
-            recovered.Exit.ShouldBe(0, "recycle-resume-generation: matching saved boundary " + fault + "; " + recovered.Output);
-            partial.Removed.Length.ShouldBe(3);
+            using var f = new C1008HostFixture(); f.Docker["fault"] = "rm-second-failed";
+            var run = await f.Run();
+            f.Removed.ShouldBe(new[] { "antiphon-runner_work" }, "recycle-resume-generation: committed partial first removal; " + run.Output);
+            var journal = Path.Combine(f.Root, "server/recycle/c100800000000000000000000000000000001.json");
+            File.Exists(journal).ShouldBeTrue("recycle-resume-generation: external journal survives work removal");
+            var saved = JsonNode.Parse(File.ReadAllText(f.StatePath))!.AsObject();
+            f.Docker.Clear(); foreach (var (key, value) in saved) f.Docker[key] = value?.DeepClone();
+            f.Docker["fault"] = "";
+            var resume = await f.Run(extra: "C1008_RESUME=1");
+            f.Removed.Length.ShouldBe(3, "recycle-resume-generation: removes only the remaining originals; " + resume.Output);
+            resume.Exit.ShouldBe(0);
+            return;
         }
-        foreach (var drift in new[] { "sourceSha", "project", "context", "dryRun", "composeDigest", "store", "generation", "stop-receipt" })
+        using var partial = new C1008HostFixture(); partial.Docker["fault"] = fault;
+        var interrupted = await partial.Run(); interrupted.Exit.ShouldBe(2);
+        partial.ReloadDocker(); partial.Docker["fault"] = "";
+        if (fault is "rm-first-failed" or "rm-third-failed")
         {
-            using var partial = new C1008HostFixture(); partial.Docker["fault"] = "rm-second-failed";
-            (await partial.Run()).Exit.ShouldBe(2);
-            partial.ReloadDocker(); partial.Docker["fault"] = "";
-            var path = Path.Combine(partial.Root, "server/recycle/c100800000000000000000000000000000001.json");
-            var record = JsonNode.Parse(File.ReadAllText(path))!;
-            if (drift == "generation")
-                partial.Docker["volumes"]!["antiphon-runner_runner-tmp"]!["CreatedAt"] = "2026-10-03T10:00:00Z";
-            else if (drift == "store") partial.Statuses["server2"]!["runnerStoreId"] = "22222222-2222-2222-2222-222222222222";
-            else if (drift == "stop-receipt")
-            {
-                record["stopReceipts"] = new JsonArray();
-                partial.Statuses["server2"]!["runnerSessions"] = null;
-                partial.Statuses["server2"]!["available"] = false;
-                partial.Statuses["server2"]!["dispatchEligible"] = false;
-            }
-            else if (drift == "dryRun") record[drift] = true;
-            else record[drift] = "different";
-            File.WriteAllText(path, record.ToJsonString());
-            var refused = await partial.Run(extra: "C1008_RESUME=1");
-            refused.Exit.ShouldBe(2, "recycle-resume-generation: bound receipt drift " + drift);
-            partial.Removed.ShouldBe(new[] { "antiphon-runner_work" }, "recycle-resume-generation: no new deletion on " + drift);
+            partial.Statuses["server2"]!["runnerSessions"] = null;
+            partial.Statuses["server2"]!["available"] = false;
+            partial.Statuses["server2"]!["dispatchEligible"] = false;
         }
-        foreach (var foreign in new[] { false, true })
+        var recovered = await partial.Run(extra: "C1008_RESUME=1");
+        recovered.Exit.ShouldBe(0, "recycle-resume-generation: matching saved boundary " + fault + "; " + recovered.Output);
+        partial.Removed.Length.ShouldBe(3);
+    }
+
+    [Test]
+    [Arguments("sourceSha")]
+    [Arguments("project")]
+    [Arguments("context")]
+    [Arguments("dryRun")]
+    [Arguments("composeDigest")]
+    [Arguments("store")]
+    [Arguments("generation")]
+    [Arguments("stop-receipt")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_resume_rejects_receipt_drift(string drift)
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var partial = new C1008HostFixture(); partial.Docker["fault"] = "rm-second-failed";
+        (await partial.Run()).Exit.ShouldBe(2);
+        partial.ReloadDocker(); partial.Docker["fault"] = "";
+        var path = Path.Combine(partial.Root, "server/recycle/c100800000000000000000000000000000001.json");
+        var record = JsonNode.Parse(File.ReadAllText(path))!;
+        if (drift == "generation")
+            partial.Docker["volumes"]!["antiphon-runner_runner-tmp"]!["CreatedAt"] = "2026-10-03T10:00:00Z";
+        else if (drift == "store") partial.Statuses["server2"]!["runnerStoreId"] = "22222222-2222-2222-2222-222222222222";
+        else if (drift == "stop-receipt")
         {
-            using var partial = new C1008HostFixture();
-            var replacement = new JsonObject();
-            foreach (var name in new[] { "antiphon-runner_work", "antiphon-runner_runner-tmp", "antiphon-runner_dind-data" })
-            {
-                replacement[name] = partial.Docker["volumes"]![name]!.DeepClone();
-                replacement[name]!["CreatedAt"] = "2026-10-03T10:00:00Z";
-            }
-            File.WriteAllText(Path.Combine(partial.Root, "recreated.json"), new JsonObject
-                { ["volumes"] = replacement, ["runner"] = partial.Container('5', "antiphon-runner", "session-runner", true,
-                    "work", "runner-tmp", "dind-data", "runner-state") }.ToJsonString());
-            var interrupted = await partial.Run(extra: "build_server2_images() { node -e 'const fs=require(\"fs\"),p=process.argv[1],s=JSON.parse(fs.readFileSync(p)),r=JSON.parse(fs.readFileSync(process.argv[2]));Object.assign(s.volumes,r.volumes);s.containers.push(r.runner);fs.writeFileSync(p,JSON.stringify(s))' \"$C1008_FIXTURE_ROOT/docker.json\" \"$C1008_FIXTURE_ROOT/recreated.json\"; c1008_record_recreated; write_result false InterruptedVerification 2; }");
-            interrupted.Exit.ShouldBe(2);
-            partial.ReloadDocker();
-            if (foreign) partial.Docker["containers"]!.AsArray().Single(x => x!["Id"]!.GetValue<string>() == new string('5', 64))!["Id"] = new string('7', 64);
-            var recovered = await partial.Run(extra: "C1008_RESUME=1");
-            recovered.Exit.ShouldBe(foreign ? 2 : 0, "recycle-resume-generation: only recorded replacement may continue verification; " + recovered.Output);
-            partial.Removed.Length.ShouldBe(3, "recycle-resume-generation: recorded partial up performs zero second removals");
+            record["stopReceipts"] = new JsonArray();
+            partial.Statuses["server2"]!["runnerSessions"] = null;
+            partial.Statuses["server2"]!["available"] = false;
+            partial.Statuses["server2"]!["dispatchEligible"] = false;
         }
+        else if (drift == "dryRun") record[drift] = true;
+        else record[drift] = "different";
+        File.WriteAllText(path, record.ToJsonString());
+        var refused = await partial.Run(extra: "C1008_RESUME=1");
+        refused.Exit.ShouldBe(2, "recycle-resume-generation: bound receipt drift " + drift);
+        partial.Removed.ShouldBe(new[] { "antiphon-runner_work" }, "recycle-resume-generation: no new deletion on " + drift);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_resume_accepts_only_recorded_replacement(bool foreign)
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var partial = new C1008HostFixture();
+        var replacement = new JsonObject();
+        foreach (var name in new[] { "antiphon-runner_work", "antiphon-runner_runner-tmp", "antiphon-runner_dind-data" })
+        {
+            replacement[name] = partial.Docker["volumes"]![name]!.DeepClone();
+            replacement[name]!["CreatedAt"] = "2026-10-03T10:00:00Z";
+        }
+        File.WriteAllText(Path.Combine(partial.Root, "recreated.json"), new JsonObject
+            { ["volumes"] = replacement, ["runner"] = partial.Container('5', "antiphon-runner", "session-runner", true,
+                "work", "runner-tmp", "dind-data", "runner-state") }.ToJsonString());
+        var interrupted = await partial.Run(extra: "build_server2_images() { node -e 'const fs=require(\"fs\"),p=process.argv[1],s=JSON.parse(fs.readFileSync(p)),r=JSON.parse(fs.readFileSync(process.argv[2]));Object.assign(s.volumes,r.volumes);s.containers.push(r.runner);fs.writeFileSync(p,JSON.stringify(s))' \"$C1008_FIXTURE_ROOT/docker.json\" \"$C1008_FIXTURE_ROOT/recreated.json\"; c1008_record_recreated; write_result false InterruptedVerification 2; }");
+        interrupted.Exit.ShouldBe(2);
+        partial.ReloadDocker();
+        if (foreign) partial.Docker["containers"]!.AsArray().Single(x => x!["Id"]!.GetValue<string>() == new string('5', 64))!["Id"] = new string('7', 64);
+        var recovered = await partial.Run(extra: "C1008_RESUME=1");
+        recovered.Exit.ShouldBe(foreign ? 2 : 0, "recycle-resume-generation: only recorded replacement may continue verification; " + recovered.Output);
+        partial.Removed.Length.ShouldBe(3, "recycle-resume-generation: recorded partial up performs zero second removals");
     }
 
     [Test]
