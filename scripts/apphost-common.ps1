@@ -1146,17 +1146,91 @@ function Update-AppHostOutage {
     return $State
 }
 
-function Send-AppHostOutageEvent {
+function Write-AppHostWindowsEvent {
     param($Event)
-    # Transport configuration must be independent of the AppHost. The endpoint
-    # must deduplicate Id / Idempotency-Key across ambiguous HTTP completions.
-    $endpoint = [Environment]::GetEnvironmentVariable('ANTIPHON_APPHOST_ALERT_WEBHOOK')
-    if ([string]::IsNullOrWhiteSpace($endpoint)) { return $false }
-    $uri = $null
-    if (-not [Uri]::TryCreate($endpoint, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -ne 'https') { return $false }
+    # Event Log is native Windows work. Source creation can require elevation;
+    # denial is a best-effort sink failure, never a watchdog/recovery failure.
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { return $false }
     try {
-        $null = Invoke-WebRequest -Uri $uri -Method Post -UseBasicParsing -TimeoutSec 5 `
-            -ContentType 'application/json' -Headers @{'Idempotency-Key'=$Event.Id} -Body ($Event | ConvertTo-Json -Compress)
+        $source = 'Antiphon-Watchdog'
+        if (-not [Diagnostics.EventLog]::SourceExists($source)) {
+            [Diagnostics.EventLog]::CreateEventSource($source, 'Application')
+        }
+        if ([Diagnostics.EventLog]::LogNameFromSourceName($source, '.') -ne 'Application') { return $false }
+        $entryType = [Diagnostics.EventLogEntryType]::Warning
+        if ($Event.Kind -eq 'recovery') { $entryType = [Diagnostics.EventLogEntryType]::Information }
+        $message = 'AppHost {0}; outage began {1}; observed {2}; event {3}' -f $Event.Kind, $Event.DownSinceUtc, $Event.ObservedUtc, $Event.Id
+        [Diagnostics.EventLog]::WriteEntry($source, $message, $entryType, 1527)
         return $true
-    } catch { return $false } # Do not log endpoints, credentials or response bodies.
+    } catch { return $false }
+}
+
+function Update-AppHostAlertMarker {
+    param([string]$SourceRoot, $State, [datetime]$NowUtc)
+    $temp = $null
+    try {
+        $path = Join-Path $SourceRoot 'logs/apphost-down.alert'
+        $down = ConvertTo-UtcStamp (Get-AppHostField $State 'downSinceUtc')
+        if (-not $down -or -not (Get-AppHostField $State 'outageAlerted' $false)) {
+            # Use current observation, not the queued event: an old down webhook
+            # retry must not recreate a marker after health recovers.
+            [IO.File]::Delete($path)
+            return $true
+        }
+        $lastAttempt = $null
+        foreach ($stamp in @(Get-AppHostField $State 'restartsUtc' @())) {
+            $parsed = ConvertTo-UtcStamp $stamp
+            if ($parsed -and (-not $lastAttempt -or $parsed -gt $lastAttempt)) { $lastAttempt = $parsed }
+        }
+        $payload = [pscustomobject]@{
+            downSinceUtc = $down.ToString('o')
+            minutesDown = [math]::Round([math]::Max(0, ($NowUtc - $down).TotalMinutes), 2)
+            lastRestartAttemptUtc = $(if ($lastAttempt) { $lastAttempt.ToString('o') } else { $null })
+        }
+        $temp = $path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+        [IO.File]::WriteAllText($temp, ($payload | ConvertTo-Json), [Text.Encoding]::ASCII)
+        if ([IO.File]::Exists($path)) { [IO.File]::Replace($temp, $path, [NullString]::Value) }
+        else { [IO.File]::Move($temp, $path) }
+        return $true
+    } catch { return $false }
+    finally { if ($temp -and [IO.File]::Exists($temp)) { try { [IO.File]::Delete($temp) } catch { } } }
+}
+
+function Send-AppHostOutageEvent {
+    param($Event, [string]$SourceRoot, $State, [datetime]$NowUtc = [datetime]::UtcNow,
+        [switch]$DeferWebhook, [scriptblock]$PersistEventState)
+    # These three sinks are independent. The current marker is refreshed even
+    # when no event is pending, a webhook is failing, or recovery is withheld.
+    $markerOk = Update-AppHostAlertMarker -SourceRoot $SourceRoot -State $State -NowUtc $NowUtc
+    if (-not $Event) { return $markerOk }
+    $Event | Add-Member NoteProperty MarkerUpdated $markerOk -Force
+    if (-not (Get-AppHostField $Event 'EventLogAttempted' $false)) {
+        $Event | Add-Member NoteProperty EventLogAttempted $true -Force
+        # Persist before this best-effort local notification to avoid repeated
+        # entries after process loss. A crash here can omit the entry; the marker
+        # and durable webhook intent remain independent evidence.
+        if ($PersistEventState) { & $PersistEventState }
+        $written = $false
+        try { $written = [bool](Write-AppHostWindowsEvent -Event $Event) } catch { }
+        $Event | Add-Member NoteProperty EventLogWritten $written -Force
+    }
+    if (Get-AppHostField $Event 'WebhookComplete' $false) { return $true }
+    $endpoint = [Environment]::GetEnvironmentVariable('ANTIPHON_WATCHDOG_ALERT_WEBHOOK')
+    if ([string]::IsNullOrWhiteSpace($endpoint)) {
+        $Event | Add-Member NoteProperty WebhookConfigured $false -Force
+        $Event | Add-Member NoteProperty WebhookComplete $true -Force
+        return $true
+    }
+    $Event | Add-Member NoteProperty WebhookConfigured $true -Force
+    if ($DeferWebhook) { return $false }
+    $uri = $null
+    if (-not [Uri]::TryCreate($endpoint, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -notin @('http','https')) { return $false }
+    try {
+        # Send only notification data, not mutable local delivery bookkeeping.
+        $body = [pscustomobject]@{Id=$Event.Id;Kind=$Event.Kind;DownSinceUtc=$Event.DownSinceUtc;ObservedUtc=$Event.ObservedUtc}
+        $null = Invoke-WebRequest -Uri $uri -Method Post -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop -Verbose:$false -Debug:$false `
+            -ContentType 'application/json' -Headers @{'Idempotency-Key'=$Event.Id} -Body ($body | ConvertTo-Json -Compress)
+        $Event | Add-Member NoteProperty WebhookComplete $true -Force
+        return $true
+    } catch { return $false } # Never log the configured URL or response body.
 }

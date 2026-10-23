@@ -7,10 +7,13 @@
     scripts/restart-apphost.ps1 so the session-runner on 17204 is preserved.
 
     One fire does, in order:
-      1. Bail if a launch or restart is in flight (logs/apphost.launch.lock or
+      1. Observe API health and outage duration before recovery guards. Emit
+         independent Event Log, marker and optional webhook signals at 3 min.
+         Then bail if a launch or restart is in flight (logs/apphost.launch.lock or
          logs/apphost.restart.lock with a stamp younger than 15 min, even if
          the holder PID has exited, or the "Antiphon AppHost" logon task
-         currently Running).
+         currently Running). A proven-dead restart generation may be reclaimed
+         after two distinct fires, with shared admission revalidation.
       2. GET /health on 17202 (expect 200) and GET / on 17203 (expect 2xx/3xx).
          On a restart-worthy failure (connection-refused / stack down), re-probe
          twice more at IntervalSeconds (15) spacing. Restart only if all three
@@ -111,11 +114,19 @@ function Observe-WatchdogOutage($round) {
     # Intent precedes transport. Sent events stay in a local append-only journal
     # for post-recovery attention import; pending events retain the same Id.
     Write-WatchdogState $script:state
-    if ($ProbeOnly -or $script:maintenance) { return }
+    if ($ProbeOnly) { return }
+    if (-not (Send-AppHostOutageEvent -SourceRoot $root -State $script:state -NowUtc (Get-AppHostWatchdogNow))) {
+        Write-Log 'WARN' 'outage marker could not be updated; other alert sinks remain independent'
+    }
+    if ($script:maintenance) { return }
+    $webhookBlocked = $false
     foreach ($event in @($script:state.pendingAlerts)) {
-        if (-not (Send-AppHostOutageEvent -Event $event)) {
-            Write-Log 'WARN' "outage notification pending ($($event.Id)); independent transport unavailable"
-            break
+        $complete = Send-AppHostOutageEvent -Event $event -SourceRoot $root -State $script:state -NowUtc (Get-AppHostWatchdogNow) -DeferWebhook:$webhookBlocked -PersistEventState { Write-WatchdogState $script:state }
+        Write-WatchdogState $script:state
+        if (-not $complete) {
+            Write-Log 'WARN' "optional outage webhook pending ($($event.Id)); local sinks were attempted independently"
+            $webhookBlocked = $true
+            continue
         }
         $event | ConvertTo-Json -Compress | Add-Content -LiteralPath (Join-Path $logDir 'apphost-outage-events.jsonl') -Encoding UTF8 -ErrorAction Stop
         $script:state.pendingAlerts = @($script:state.pendingAlerts | Where-Object { $_.Id -ne $event.Id })
@@ -330,6 +341,7 @@ foreach ($stampText in @($state.restartsUtc)) {
 }
 $restartTimes += [datetime]::UtcNow.ToString('o')
 $state.restartsUtc = @($restartTimes)
+$null = Send-AppHostOutageEvent -SourceRoot $root -State $state -NowUtc (Get-AppHostWatchdogNow)
 Write-WatchdogState $state
 Write-Log 'INFO' ("restart-apphost.ps1 exited {0}; stamped restart in {1}" -f $captured.ExitName, $stateFile)
 

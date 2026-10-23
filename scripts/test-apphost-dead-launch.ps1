@@ -35,8 +35,14 @@ function Get-AppHostWatchdogNow {
     return [datetime]::UtcNow
 }
 function Invoke-WebRequest {
-    param($Uri,[switch]$UseBasicParsing,$TimeoutSec)
-    if (Test-Path (Join-Path (Split-Path $PSScriptRoot -Parent) 'up')) { return [pscustomobject]@{StatusCode=200;Content='ok'} }
+    param($Uri,[switch]$UseBasicParsing,$TimeoutSec,$Method,$Headers,$Body,$ContentType)
+    $root=Split-Path $PSScriptRoot -Parent
+    if ($Method -eq 'Post') {
+        if (Test-Path (Join-Path $root 'send-fails')) { throw 'fixture delivery failed' }
+        $Body | Add-Content (Join-Path $root 'sent.jsonl')
+        return [pscustomobject]@{StatusCode=200}
+    }
+    if (Test-Path (Join-Path $root 'up')) { return [pscustomobject]@{StatusCode=200;Content='ok'} }
     throw 'Connection refused'
 }
 function Invoke-AppHostHealthProbe { param($TimeoutSec); [pscustomobject]@{StatusCode=$null;Error='Connection refused'} }
@@ -47,13 +53,13 @@ function Start-AppHostDevLaunch {
     $p | Add-Member ScriptMethod Refresh {}
     return $p
 }
-function Send-AppHostOutageEvent {
+function Write-AppHostWindowsEvent {
     param($Event)
     $root=Split-Path $PSScriptRoot -Parent
-    if (Test-Path (Join-Path $root 'send-fails')) { return $false }
-    $Event | ConvertTo-Json -Compress | Add-Content (Join-Path $root 'sent.jsonl')
+    $Event | ConvertTo-Json -Compress | Add-Content (Join-Path $root 'eventlog.jsonl')
     return $true
 }
+$env:ANTIPHON_WATCHDOG_ALERT_WEBHOOK='https://fixture.invalid/alert'
 '@ | Add-Content (Join-Path $scripts 'apphost-common.ps1')
     @'
 & (Join-Path $PSScriptRoot 'restart-apphost.ps1') -TimeoutSec 0 -SkipGracefulStop
@@ -96,11 +102,14 @@ exit $LASTEXITCODE
         Assert-C1527 ($alertFire.Exit -eq 0) 'V-3 skipped-recovery fire completed'
         $sent=Join-Path $fixture 'sent.jsonl'
         Assert-C1527 (Test-Path $sent) 'V-3 outage alerts despite live restart lock'
+        $marker=Join-Path $logs 'apphost-down.alert'
+        Assert-C1527 (Test-Path $marker) 'V-3 marker exists while restart is withheld'
         $null=Fire
         Assert-C1527 (@(Get-Content $sent).Count -eq 1) 'V-3 outage alert deduplicated across fires'
         '' | Set-Content (Join-Path $fixture 'up')
         $null=Fire
         Assert-C1527 (@(Get-Content $sent).Count -eq 2) 'V-3 one recovery notice'
+        Assert-C1527 (-not (Test-Path $marker)) 'V-3 recovery removes marker'
         Remove-Item (Join-Path $fixture 'up')
         '' | Set-Content (Join-Path $fixture 'send-fails')
         $clock=[datetime]::UtcNow
@@ -111,14 +120,21 @@ exit $LASTEXITCODE
         $pending=Get-Content $statePath -Raw | ConvertFrom-Json
         Assert-C1527 ($pending.pendingAlerts.Count -eq 1) 'V-3 failed delivery persists intent'
         $pendingId=$pending.pendingAlerts[0].Id
+        '' | Set-Content (Join-Path $fixture 'up')
+        $null=Fire
+        $pending=Get-Content $statePath -Raw | ConvertFrom-Json
+        Assert-C1527 ($pending.pendingAlerts.Count -eq 2 -and -not (Test-Path $marker)) 'V-3 recovery clears marker despite queued webhook'
+        $localEvents=@(Get-Content (Join-Path $fixture 'eventlog.jsonl'))
+        Assert-C1527 ($localEvents.Count -eq 4) 'V-3 independent local recovery is not held by failed webhook'
         Remove-Item (Join-Path $fixture 'send-fails')
         $null=Fire
-        $delivered=Get-Content $sent | Select-Object -Last 1 | ConvertFrom-Json
-        Assert-C1527 ($delivered.Id -eq $pendingId -and @(Get-Content $sent).Count -eq 3) 'V-3 retry delivers same event once'
+        $delivered=@(Get-Content $sent | ForEach-Object { $_ | ConvertFrom-Json })
+        Assert-C1527 ($delivered[2].Id -eq $pendingId -and $delivered.Count -eq 4 -and $delivered[3].Kind -eq 'recovery') 'V-3 retry delivers same event once then recovery'
+        Assert-C1527 (@(Get-Content (Join-Path $fixture 'eventlog.jsonl')).Count -eq 4) 'V-3 persisted retries do not repeat Event Log entries'
         '' | Set-Content (Join-Path $logs 'apphost.down-on-purpose')
         $clock.AddSeconds(600).ToString('o') | Set-Content (Join-Path $fixture 'now.txt')
         $null=Fire
-        Assert-C1527 (@(Get-Content $sent).Count -eq 3) 'V-3 maintenance sends no alert or recovery'
+        Assert-C1527 (@(Get-Content $sent).Count -eq 4) 'V-3 maintenance sends no alert or recovery'
     } else {
         . (Join-Path $PSScriptRoot 'apphost-common.ps1')
         $now=[datetime]::UtcNow
