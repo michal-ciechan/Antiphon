@@ -115,3 +115,56 @@ S1 defines zero PCs. Mutation owns missing-control discovery after ordinary Revi
 and landing. [Unbound inventory](../superpowers/mutations/2026-10-23-card-1514-s1-candidate.md).
 S3 PC-3a/b/c/d remain separate, not discharged here. Restart: none. Next: Review
 when candidate V-1 and manual checks are complete; S2 then returns to Code.
+
+## Dependent selector repair and inherited failure attribution
+
+The first candidate run 20261023-092445-474e at 10eba74ed was explicitly
+stopped during its build, before any test host launched. The dependency audit
+found the old identity in C1008PlatformContractTests and WindowsUnitSkipRoster.
+This omission was introduced by S1 and is repaired in this slice. The partial
+output (275 entries) was inventoried and removed; no green or completed build
+time is claimed for that stopped run. Two manifest-only refusals also launched
+no tests (alphanumeric build references, then guard rows outside the table).
+
+CP-11 captured the existing C1050 guard red on the missing old method, at clean
+17a17e280b69fc9b6ee2ef3a68645432d53e2e98. This is an assertion-level witness
+for the introduced selector defect. The second selected guard failed first on
+C1374CensusProbes.Check. CP-12 then reproduced that exact closure method and
+message at task base 77eb7806d35b3b522d46e3942742e4864c688de3, with a separate
+clean, verified build. This is confirmed inherited red, recorded under CARD-1544
+(6cdf08bc-655c-42fa-af14-98533d8ddde2), not an S1 regression or a passing gate.
+The helper and closure assertion remain unchanged. Per the standing minimal-testing
+policy it is an explicit diagnostic/non-receipt row, not a silent omitted pass.
+
+```text
+CHECKPOINT CP-11 commit=17a17e280b69fc9b6ee2ef3a68645432d53e2e98 build=ok filter=/*/*/(C1008PlatformContractTests*)|(WindowsUnitPlatformAdmissionTests*)/(C1050_Remote_entries_guard_before_work*)|(C1210_Roster_closure_matches_source_gates*) executed=2 passed=0 failed=2 skipped=0 trx=/work/worktrees/task-f35fcce8/.antiphon/checkpoints/20261023-092919-68a5/rows/CP-11/run.trx slot=granted waited=0s dirty=0 source=17a17e280b69fc9b6ee2ef3a68645432d53e2e98 sourceState=clean buildSource=verified
+PHASES CP-11 slotWait=0s build=248.567164s startup=5.2360114s testsWall=16.2523855s teardown=0.4909646s hostWall=21.9793628s
+CHECKPOINT CP-12 commit=77eb7806d35b3b522d46e3942742e4864c688de3 build=ok filter=/*/*/WindowsUnitPlatformAdmissionTests/C1210_Roster_closure_matches_source_gates executed=1 passed=0 failed=1 skipped=0 trx=/work/test-evidence/card-1514-f35fcce8/base-attribution/.antiphon/checkpoints/20261023-093637-f657/rows/CP-12/run.trx slot=granted waited=0s dirty=0 source=77eb7806d35b3b522d46e3942742e4864c688de3 sourceState=clean buildSource=verified
+PHASES CP-12 slotWait=0s build=322.6763476s startup=4.1322038s testsWall=12.7069575s teardown=0.442499s hostWall=17.2818727s
+```
+
+Red build cost: 248.567164 s; host 21.9793628 s (two actual assertion failures).
+Base attribution build: 322.6763476 s; host 17.2818727 s (one inherited failure).
+Both builds and rows had granted slots, waited=0s. Red receipts remain RED and
+are not submitted as valid green acceptance. All identities/counts/messages were
+read from fresh TRX/report artifacts. Baseline attribution used only the exact
+failing method, never the assembly. These extra costs are retained separately
+from the before/after resume comparison.
+
+The repair replaces the old native identity/filter operand with four exact
+methods. RemoteHosts explicitly expands the independent literal expected Windows
+multiset by 1/5/8/2, and Existing skip-roster entries record those result counts.
+No native reason, OS branch, outcome predicate, deadline or audit assertion is
+loosened. The native audit still demands an exact identity/outcome/reason multiset,
+now 27 native results plus one portable result (previously 12 plus one). CP-24
+runs the direct C1050 source guard and its unchanged negative audit controls,
+while CP-20..23 still execute every resume case. Required S1 acceptance is these
+18 results, with the inherited closure failure explicitly outside the green
+receipt. Native Windows child audits remain unexecuted/outside this Linux-only
+commission; no changed OS-selected production behavior exists.
+
+The final candidate must run once at the final pushed repair/report SHA; append
+its actual outcomes, source validation, timings, refreshed RC trial, merge-tree
+and evidence-diff to the ignored full task report. Do not relabel earlier tips
+as tested final source. S1 still defines zero PCs; Mutation owns missing controls
+for the selector/multiplicity mapping as well as the extraction.

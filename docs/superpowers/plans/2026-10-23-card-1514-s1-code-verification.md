@@ -17,7 +17,8 @@ retain private fixtures and JSON reloads. Every method requires native Linux and
 the strict ProcessSpawnLimit. The source ledger in external evidence checks exact
 blocks after whitespace-only normalization, including assertion expressions.
 No new product assertion is required for this mechanical extraction. The plan
-specifies no R-1 or PC-1; a baseline cancellation is not a correctness red witness.
+specifies no original R-1 or PC-1; the supplemental selector witness is recorded
+as R-1 below. A baseline cancellation is not a correctness red witness.
 No timing threshold or self-comparison test is introduced. Zero-PC S1 inventory
 still goes to ordinary Review then SourceLanding Mutation for missing controls.
 
@@ -91,3 +92,10 @@ runs that exact method at task base 77eb7806 in a detached checkout, with the
 committed manifest supplied externally. CP-24 keeps only the two direct C1050
 consumers; the broader inherited closure failure, if confirmed, is a documented
 non-receipt finding rather than a passing gate. Preserve its source and assertion.
+
+R-1 (supplemental S1 selector regression): CP-11 C1050 guard assertion red,
+then CP-24 green after exact identity/multiset repair. C1210 red at both
+17a17e280 and base 77eb7806 is inherited CARD-1544, a diagnostic non-receipt
+row, never a green gate. Candidate ordinary scope remains all sixteen resume
+cases and the two direct C1050 guards. Source closure for the four new entries
+is manually audited; the unrelated C1374 helper/closure assertion is unchanged.

@@ -28,7 +28,10 @@ public sealed class C1008PlatformContractTests
         "RemoteScriptContractTests.C1008_Recycle_refuses_unpublished_and_dirty_work",
         "RemoteScriptContractTests.C1008_Recycle_refuses_uninspectable_git",
         "RemoteScriptContractTests.C1008_Recycle_preserves_tmp_copyup",
-        "RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt",
+        "RemoteScriptContractTests.C1008_Recycle_resume_after_seed_failure",
+        .. Enumerable.Repeat("RemoteScriptContractTests.C1008_Recycle_resume_after_partial_failure", 5),
+        .. Enumerable.Repeat("RemoteScriptContractTests.C1008_Recycle_resume_rejects_receipt_drift", 8),
+        .. Enumerable.Repeat("RemoteScriptContractTests.C1008_Recycle_resume_accepts_only_recorded_replacement", 2),
         "RemoteScriptContractTests.C1008_Recycle_receipt_records_disk_and_partial_failure",
         "RemoteScriptContractTests.C1008_Retire_temp_rechecks_absence_and_retirement",
         "RemoteScriptContractTests.C1008_Retire_temp_reclaims_below_cache_disk_gate",
@@ -51,7 +54,7 @@ public sealed class C1008PlatformContractTests
         "RollingVolumeRecycleScriptTests.C1008_Wrapper_refusal_receipts_do_not_leak_secrets",
         "RollingVolumeRecycleScriptTests.C1008_Wrapper_retired_absent_null_is_accepted",
     ];
-    private const string RemoteFilter = "/*/*/RemoteScriptContractTests/(C1008_Recycle_exact_default_volumes*)|(C1008_Recycle_refuses_references_and_unknown_census*)|(C1008_Recycle_audits_work_as_1654*)|(C1008_Recycle_refuses_unpublished_and_dirty_work*)|(C1008_Recycle_refuses_uninspectable_git*)|(C1008_Recycle_preserves_tmp_copyup*)|(C1008_Recycle_resume_requires_matching_receipt*)|(C1008_Recycle_receipt_records_disk_and_partial_failure*)|(C1008_Retire_temp_rechecks_absence_and_retirement*)|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)|(C1008_Recycle_dry_run_never_mutates*)|(C849_Deploy_prepares_and_verifies_before_acceptance*)|(C849_Deploy_ordering_contract_is_pinned*)";
+    private const string RemoteFilter = "/*/*/RemoteScriptContractTests/(C1008_Recycle_exact_default_volumes*)|(C1008_Recycle_refuses_references_and_unknown_census*)|(C1008_Recycle_audits_work_as_1654*)|(C1008_Recycle_refuses_unpublished_and_dirty_work*)|(C1008_Recycle_refuses_uninspectable_git*)|(C1008_Recycle_preserves_tmp_copyup*)|(C1008_Recycle_resume_after_seed_failure*)|(C1008_Recycle_resume_after_partial_failure*)|(C1008_Recycle_resume_rejects_receipt_drift*)|(C1008_Recycle_resume_accepts_only_recorded_replacement*)|(C1008_Recycle_receipt_records_disk_and_partial_failure*)|(C1008_Retire_temp_rechecks_absence_and_retirement*)|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)|(C1008_Recycle_dry_run_never_mutates*)|(C849_Deploy_prepares_and_verifies_before_acceptance*)|(C849_Deploy_ordering_contract_is_pinned*)";
     private const string RollingFilter = "/*/*/RollingVolumeRecycleScriptTests/(C1008_Option_manifest_is_strict*)|(C1008_Documentation_and_transport_pins_match*)|(C1008_Refusal_receipts_do_not_leak_secrets*)|(C1008_Retired_absent_null_is_accepted*)|(C1008_Wrapper_option_manifest_is_strict*)|(C1008_Transport_scripts_are_ascii*)|(C1008_Wrapper_refusal_receipts_do_not_leak_secrets*)|(C1008_Wrapper_retired_absent_null_is_accepted*)";
     private static readonly XNamespace Trx = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
 
