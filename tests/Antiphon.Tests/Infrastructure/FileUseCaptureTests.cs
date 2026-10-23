@@ -37,6 +37,8 @@ public sealed class FileUseCaptureTests
         owner.CommandLine.ShouldContain("Antiphon.FileUseTestChild");
         owner.MatchKind.ShouldBe(mode == "mapped-file" ? "MappedFile" : "OpenFile");
         snapshot.Summary.ShouldContain("pid=" + fixture.Child.Id);
+        failure.Data["fileUseCaptureSummary"].ShouldBe(snapshot.Summary);
+        Console.WriteLine(snapshot.Summary);
         snapshot.EvidencePath.ShouldNotBeNull();
         var json = await File.ReadAllTextAsync(snapshot.EvidencePath);
         json.ShouldContain(snapshot.CaptureId);
@@ -77,7 +79,7 @@ public sealed class FileUseCaptureTests
         {
             case "denied": result.Status.ShouldBe(FileUseStatus.Unavailable); result.Reasons.ShouldContain(FileUseReason.AccessDenied); break;
             case "missing": result.Status.ShouldBe(FileUseStatus.PathGone); result.Owners.ShouldBeEmpty(); break;
-            case "exited": result.Status.ShouldBe(FileUseStatus.Partial); result.Reasons.ShouldContain(FileUseReason.ExitedDuringCapture); result.Owners.ShouldBeEmpty(); break;
+            case "exited": result.Status.ShouldBe(FileUseStatus.Partial); result.Reasons.ShouldContain(FileUseReason.ExitedDuringCapture); result.Owners.Single().State.ShouldBe(FileUseOwnerState.ExitedDuringCapture); result.Owners.Single().CommandLine.ShouldBeNull(); break;
             default: result.Status.ShouldBe(FileUseStatus.NoOwnersObserved); result.Coverage.ShouldBe(FileUseCoverage.Complete); result.Owners.ShouldBeEmpty(); break;
         }
     }
@@ -128,6 +130,13 @@ public sealed class FileUseCaptureTests
         var modules = Enumerable.Range(1, 24).Select(n => "/modules/" + n + new string('a', 210) + ".dll").ToArray();
         var command = await Capture([Owner(42) with { CommandLine = "dotnet\0" + string.Join('\0', modules), ProvenModules = modules }]);
         command.Owners.Single().CommandLine!.Length.ShouldBeLessThanOrEqualTo(4096); command.Owners.Single().CommandLine!.Length.ShouldBeGreaterThan(3500);
+        using var holder = new Holder("exclusive-file"); await holder.Ready();
+        var resources = await new FileUseCapture(new LinuxFileUseProvider(new ControlledSource(holder.Child.Id))).TryCaptureAsync(new(scratch.Path, new UnauthorizedAccessException(), scratch.Evidence) { AdditionalPaths = Enumerable.Repeat(scratch.Path, 127).Append(holder.Path).ToArray() });
+        resources.Owners.ShouldBeEmpty(); resources.Reasons.ShouldContain(FileUseReason.ResourceLimit);
+        await holder.Release();
+        // Exercise the real bounded reader with an actual owned oversized input.
+        var oversized = System.IO.Path.Combine(scratch.Root, "oversized"); File.WriteAllBytes(oversized, new byte[1024 * 1024 + 1]);
+        Should.Throw<FileUseInputLimitException>(() => new LinuxFileUseSource().Read(oversized, 1024 * 1024));
         var operation = new FileUseOperation(); var provider = new Provider((_, _) => Empty()); var service = new FileUseCapture(provider);
         var first = await service.TryCaptureAsync(new(scratch.Path, new UnauthorizedAccessException(), scratch.Evidence) { Operation = operation });
         (await service.TryCaptureAsync(new(scratch.Path, new UnauthorizedAccessException(), scratch.Evidence) { Operation = operation })).CaptureId.ShouldBe(first.CaptureId);
@@ -141,11 +150,11 @@ public sealed class FileUseCaptureTests
         using var scratch = new Scratch();
         var secret = "synthetic-sensitive-marker";
         var values = new[] { "{{key:fixture}}", "sk-abcdefghijk", "xoxb-fixture-123", "ghp_1234567890123456789012345", "github_pat_1234567890123456789012345", "Bearer fixture-bearer", "12345678:12345678901234567890123456789012345", "Password=fixture-password", "clientApiKey=fixture-api", "--token fixture-switch", "postgres://user:fixture-url@db/path?fixture-query#fixture-fragment", "-EncodedCommand fixture-payload", "opaque-positional-value", secret };
-        var raw = "dotnet\0" + string.Join('\0', values);
+        var raw = "opaque-argv-zero\0" + string.Join('\0', values);
         var owner = Owner(42) with { Name = "fixture " + secret, CommandLine = raw, Ancestors = [new(1, "1", secret, raw)] };
         var snapshot = await new FileUseCapture(new Provider((_, _) => new(FileUseStatus.Observed, FileUseCoverage.Complete, [owner], []))).TryCaptureAsync(new(scratch.Path, new UnauthorizedAccessException(string.Join(' ', values)), scratch.Evidence) { SecretValues = [secret] });
         var json = await File.ReadAllTextAsync(snapshot.EvidencePath!);
-        foreach (var marker in new[] { secret, "fixture-bearer", "fixture-password", "fixture-api", "fixture-switch", "fixture-url", "fixture-query", "fixture-fragment", "fixture-payload", "opaque-positional-value", "abcdefghijk", "xoxb-fixture-123", "ghp_1234567890123456789012345" })
+        foreach (var marker in new[] { secret, "fixture-bearer", "fixture-password", "fixture-api", "fixture-switch", "fixture-url", "fixture-query", "fixture-fragment", "fixture-payload", "opaque-positional-value", "opaque-argv-zero", "abcdefghijk", "xoxb-fixture-123", "ghp_1234567890123456789012345" })
         { snapshot.Summary.ShouldNotContain(marker); json.ShouldNotContain(marker); }
         snapshot.Owners[0].CommandLine.ShouldStartWith("dotnet");
         var truncated = owner with { CommandLine = new string('x', 65537) };
@@ -191,7 +200,7 @@ public sealed class FileUseCaptureTests
         var foreign = await new FileUseCapture(new LinuxFileUseProvider(new ControlledSource(fixture.Child.Id))).TryCaptureAsync(request with { Operation = new(), ForeignGenerations = [new(child.Pid, child.NativeStart)] });
         foreign.Owners.Single().AntiphonOwned.ShouldBe(false);
         var reused = await new FileUseCapture(new LinuxFileUseProvider(new ControlledSource(fixture.Child.Id) { ChangeIdentity = true })).TryCaptureAsync(request with { Operation = new() });
-        reused.Reasons.ShouldContain(FileUseReason.IdentityChanged); reused.Owners.ShouldBeEmpty();
+        reused.Reasons.ShouldContain(FileUseReason.IdentityChanged); reused.Owners.Single().State.ShouldBe(FileUseOwnerState.IdentityChanged); reused.Owners.Single().CommandLine.ShouldBeNull(); reused.Owners.Single().NativeStart.ShouldBe(child.NativeStart);
     }
 
     [Test]
@@ -203,7 +212,7 @@ public sealed class FileUseCaptureTests
     }
 
     private static FileUseObservation Empty() => new(FileUseStatus.NoOwnersObserved, FileUseCoverage.Complete, [], []);
-    private static FileUseOwner Owner(int pid) => new(pid, "dotnet", "generation", null, "dotnet\0opaque", 1, [], null, "unknown", "OpenFile", "/held");
+    private static FileUseOwner Owner(int pid) => new(pid, "dotnet", "generation", null, "dotnet\0opaque", 1, [], null, "unknown", "OpenFile", "/held") { ProvenExecutable = "/usr/bin/dotnet" };
     private sealed class Provider(Func<FileUseRequest, CancellationToken, FileUseObservation> action) : IFileUseProvider
     { public int Calls; public FileUseObservation Observe(FileUseRequest request, CancellationToken token) { Interlocked.Increment(ref Calls); return action(request, token); } }
     private sealed class BrokenWriter : IFileUseEvidenceWriter
