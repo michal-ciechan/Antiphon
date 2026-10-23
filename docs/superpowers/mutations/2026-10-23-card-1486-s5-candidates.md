@@ -11,6 +11,10 @@ discovery after ordinary Review and landing of the original Code task.
   Guard: BlockedReplyReportRetentionTests.Blocked_reply_wire_to_a_stage_task_restates_the_finding_marker.
 - Move finding instructions before the caller text or after the closing report tokens;
   omit or substitute a task-specific found/clean token. Same guard.
+- Swap the found and clean token lines inside FindingContract. Review `1bada46b`
+  demonstrated that the original guard stayed green. Code repair `ddd3fc81` adds
+  literal queued-body markers and a found-before-clean assertion independent of
+  FindingContract and FindingToken. Binding and red/restore/green remain pending.
 - Append finding instructions when Stage is null.
   Guard: BlockedReplyReportRetentionTests.Blocked_reply_wire_requires_a_complete_report_and_closing_token.
 - Discovery: bind a different non-null stage to check against hard-coded Review wording.
