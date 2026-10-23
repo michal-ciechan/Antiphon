@@ -64,7 +64,40 @@ try {
     Put '.gitignore' 'evidence.json'
     Put 'plan.md' "### Checkpoints`n`n| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |`n|---|---|---|---|---|---|---|---|---|`n| CP-1 | all | n/a | fixture | pwsh test.ps1 | V-1 | pass | n/a | 1 |`n"
     Put 'source.cs' "// base`n"
-    Put 'test.ps1' '# a fixture declaration, not an execution receipt'
+    # These files are lint inputs, not execution receipts. Pin real code shapes in Git.
+    $realTest = @'
+using System.Diagnostics;
+class WitnessTests {
+    [Test] public void AbsentOptOut() {
+        var environment = new ProcessStartInfo().EnvironmentVariables;
+        environment.Remove("OPT_OUT");
+        Assert.False(environment.ContainsKey("OPT_OUT"));
+        ReadOptional(environment, windows: true);
+    }
+    [Test] public void EmptyOptOut() {
+        var environment = new ProcessStartInfo().EnvironmentVariables;
+        environment["OPT_OUT"] = "";
+        Assert.Equal("", environment["OPT_OUT"]);
+        ReadOptional(environment, windows: true);
+    }
+    [Test] public void ValueOptOut() {
+        var environment = new ProcessStartInfo().EnvironmentVariables;
+        environment["OPT_OUT"] = "1";
+        Assert.Equal("1", environment["OPT_OUT"]);
+        ReadOptional(environment, windows: true);
+    }
+}
+'@
+    Put 'test.cs' $realTest
+    Put 'seam.cs' ($realTest.Replace('new ProcessStartInfo().EnvironmentVariables','new StringDictionary()'))
+    Put 'assigned.cs' ($realTest.Replace('environment.Remove("OPT_OUT");','environment["OPT_OUT"] = "";').Replace('Assert.False(environment.ContainsKey("OPT_OUT"));','Assert.Equal("", environment["OPT_OUT"]);'))
+    Put 'comment-only.cs' '// fixture with no test or runtime object'
+    Put 'comment-strings.cs' ("/*`n$realTest`n*/")
+    Put 'line-comments.cs' (($realTest -split "`n" | ForEach-Object { '// ' + $_ }) -join "`n")
+    Put 'hash-comments.ps1' (($realTest -split "`n" | ForEach-Object { '# ' + $_ }) -join "`n")
+    Put 'factory-missing.cs' ($realTest.Replace('new ProcessStartInfo().EnvironmentVariables','new ProcessStartInfo().Environment'))
+    Put 'method-call.cs' ($realTest.Replace('[Test] public void AbsentOptOut() {','[Test] public void AnotherCase() { AbsentOptOut();'))
+    Put 'method-prefix.cs' ($realTest.Replace('AbsentOptOut()', 'AbsentOptOutExtra()'))
     Put 'helper.cs' 'if (OperatingSystem.IsWindows()) ReadOptional();'
     Put 'scripts/lib/start.cs' 'Start();'
     Fixture-Git @('add','.') | Out-Null; Fixture-Git @('commit','-qm','base') | Out-Null
@@ -74,13 +107,13 @@ try {
     $script:head = Fixture-Git @('rev-parse','HEAD')
     $witness = @{
         id='W-1'; sourcePath='source.cs'; branchAnchor='OperatingSystem.IsWindows()'; targetOS='Windows'
-        witnessKind='real-type'; productionType='System.Diagnostics.ProcessStartInfo.EnvironmentVariables'; factory='new ProcessStartInfo().EnvironmentVariables'
-        testPath='test.ps1'; testCase='AbsentOptOut'; setup='Remove the key from the real property'; outcome='policy applies without exception'
+        witnessKind='real-type'; productionType='ProcessStartInfo'; factory='new ProcessStartInfo().EnvironmentVariables'
+        testPath='test.cs'; testCase='AbsentOptOut'; setup='Remove the key from the real property'; outcome='policy applies without exception'
         executionMode='portable-forced'; checkpointId='CP-1'; nativeObligation=@{status='not-required';reason='existing OS parameter is forceable'}
         input=@{kind='optional-config';key='OPT_OUT';cases=@(
-            @{state='absent';keyPresent=$false;setupAssertion='Contains(key) is false'},
-            @{state='empty';keyPresent=$true;value='';setupAssertion='Contains and empty'},
-            @{state='value';keyPresent=$true;value='1';setupAssertion='Contains and equals 1'})}
+            @{state='absent';keyPresent=$false;setupAssertion='Assert.False(environment.ContainsKey("OPT_OUT"))'},
+            @{state='empty';keyPresent=$true;value='';setupAssertion='Assert.Equal("", environment["OPT_OUT"])'},
+            @{state='value';keyPresent=$true;value='1';setupAssertion='Assert.Equal("1", environment["OPT_OUT"])'})}
     }
     $valid = @{version=1;baseSha=$script:base;headSha=$script:head;inspectedPaths=@(@{
         path='source.cs';disposition='os-gated';reason='changed optional read';helpers=@();candidates=@(
@@ -90,6 +123,30 @@ try {
     Put 'source.cs' '// unstaged source must not hide the pinned candidate'
     Run-Case 'pinned-source' $valid 0 'CANDIDATE head source.cs:1'
     Put 'source.cs' 'if (OperatingSystem.IsWindows()) ReadOptional();'
+    Run-Case 'real-absent-test' $valid 0 'complete syntax/inventory'
+    foreach ($row in @(
+        @('test-seam-only','seam.cs','productionType missing from test code'),
+        @('test-always-assigned','assigned.cs','absent setupAssertion missing from test code'),
+        @('test-comment-only','comment-only.cs','testCase declaration missing'),
+        @('test-comment-strings','comment-strings.cs','testCase declaration missing'),
+        @('test-line-comment-strings','line-comments.cs','testCase declaration missing'),
+        @('test-hash-comment-strings','hash-comments.ps1','testCase declaration missing'),
+        @('test-factory-missing','factory-missing.cs','factory missing from test code'),
+        @('test-name-call-only','method-call.cs','testCase declaration missing'),
+        @('test-name-prefix','method-prefix.cs','testCase declaration missing')
+    )) {
+        $e=Copy-Record $valid; $e.witnesses[0].testPath=$row[1]
+        Run-Case $row[0] $e 1 $row[2]
+    }
+    $e=Copy-Record $valid; $e.witnesses[0].testCase='MissingOptOut'
+    Run-Case 'test-case-missing' $e 1 'testCase declaration missing'
+    Put 'test.cs' '// uncommitted deletion of witness must not replace the pinned test'
+    Run-Case 'pinned-test-ignores-worktree' $valid 0 'complete syntax/inventory'
+    Put 'test.cs' $realTest
+    Put 'seam.cs' $realTest
+    $e=Copy-Record $valid; $e.witnesses[0].testPath='seam.cs'
+    Run-Case 'pinned-test-rejects-worktree-repair' $e 1 'productionType missing from test code'
+    Put 'seam.cs' ($realTest.Replace('new ProcessStartInfo().EnvironmentVariables','new StringDictionary()'))
     $e=Copy-Record $valid; $e.inspectedPaths='not-an-array'
     Run-Case 'malformed-record' $e 2 'invalid array'
     $e=Copy-Record $valid; $e.witnesses[0].testPath='../outside.ps1'
