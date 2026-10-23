@@ -150,3 +150,12 @@ CHECKPOINT CP-4 commit=13b2a50c233f7cb66fba629095b67e99e57f00e7 build=ok filter=
 PHASES CP-4 slotWait=0s build=199.6723883s startup=49.3994987s testsWall=6.7065459s teardown=1.2516884s hostWall=57.3577475s
 CHECKPOINT CP-5 commit=13b2a50c233f7cb66fba629095b67e99e57f00e7 build=reused filter=/*/*/ClaudeDialogDeliveryTests/C680_AllAutomatedWritersUseTheGuard executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-52a5dc76/.antiphon/checkpoints/20261023-011936-7362/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=13b2a50c233f7cb66fba629095b67e99e57f00e7 sourceState=clean buildSource=verified
 PHASES CP-5 slotWait=0s build=0s startup=17.2146833s testsWall=3.3354182s teardown=1.2353613s hostWall=21.7854627s
+
+### S2 compile repair
+
+Run 20261023-014233-6033 at 28829e18a4a156ce4182a79951c18cfc100c4408 failed to build: WatchdogService projected Id/AgentKind but omitted StartedAt needed by the new generation check. No tests executed. Build slot=granted waited=15s. The projection is corrected without changing guards or assertions. After executor death, failed-build roots were inspected for links/tracked paths and removed file-by-file. The next committed source reruns CP-4..CP-7.
+
+CHECKPOINT CP-4 commit=28829e18a4a156ce4182a79951c18cfc100c4408 build=failed filter=/*/*/ClaudeDialogDeliveryTests/C680_QueueAndExpectationKeepDialogInputPending executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a slot=skipped waited=0s dirty=0 source=28829e18a4a156ce4182a79951c18cfc100c4408 sourceState=clean buildSource=unknown
+CHECKPOINT CP-5 commit=28829e18a4a156ce4182a79951c18cfc100c4408 build=failed filter=/*/*/ClaudeDialogDeliveryTests/C680_AllAutomatedWritersUseTheGuard executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a slot=skipped waited=0s dirty=0 source=28829e18a4a156ce4182a79951c18cfc100c4408 sourceState=clean buildSource=unknown
+CHECKPOINT CP-6 commit=28829e18a4a156ce4182a79951c18cfc100c4408 build=failed filter=/*/*/ExpectationDirectDeliveryTests/C650_Unreadable_Claude_composer_keeps_holding_until_it_is_proved_empty executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a slot=skipped waited=0s dirty=0 source=28829e18a4a156ce4182a79951c18cfc100c4408 sourceState=clean buildSource=unknown
+CHECKPOINT CP-7 commit=28829e18a4a156ce4182a79951c18cfc100c4408 build=failed filter=/*/*/WatchdogServiceTests/C566_Unsafe_delete_refusal_sends_verified_no_once_per_episode executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a slot=skipped waited=0s dirty=0 source=28829e18a4a156ce4182a79951c18cfc100c4408 sourceState=clean buildSource=unknown
