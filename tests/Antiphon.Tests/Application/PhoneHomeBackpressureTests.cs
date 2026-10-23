@@ -57,7 +57,7 @@ public class PhoneHomeBackpressureTests
             {
                 await using var db = h.Db();
                 return await db.TranscriptEntries.CountAsync(t => t.Uuid == nonce) == 1
-                    && await db.AgentSessions.AnyAsync(s => s.Id == h.SessionId && s.Status == SessionStatus.Exited);
+                    && await db.AgentSessions.AnyAsync(s => s.Id == h.SessionId && s.Status == SessionStatus.Stopped);
             }, "durable prompt and matching generation exit are observed after the hold");
             await PhoneHomeHostedRunner.UntilAsync(() => h.Live.PendingEvents == 0 && !WaitingForCredit(h), "all reservations drain");
             h.Live.PendingEventBytes.ShouldBe(0);
@@ -89,7 +89,7 @@ public class PhoneHomeBackpressureTests
         {
             await using var db = h.Db();
             return await db.TranscriptEntries.AnyAsync(e => e.Uuid == "b-progress")
-                && await db.AgentSessions.AnyAsync(s => s.Id == other && s.Status == SessionStatus.Exited);
+                && await db.AgentSessions.AnyAsync(s => s.Id == other && s.Status == SessionStatus.Stopped);
         }, "session B must commit and exit while A's publication remains held");
         await using (var db = h.Db())
         {
@@ -100,7 +100,7 @@ public class PhoneHomeBackpressureTests
         await PhoneHomeHostedRunner.UntilAsync(() => h.Live.PendingEvents == 0, "per-session FIFO eventually drains");
         await using var final = h.Db();
         (await final.TranscriptEntries.CountAsync(e => e.Uuid == "a-behind-output")).ShouldBe(1);
-        (await final.AgentSessions.SingleAsync(s => s.Id == h.SessionId)).Status.ShouldBe(SessionStatus.Exited);
+        (await final.AgentSessions.SingleAsync(s => s.Id == h.SessionId)).Status.ShouldBe(SessionStatus.Stopped);
     }
 
     [Test]
