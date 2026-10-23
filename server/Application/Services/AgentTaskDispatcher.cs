@@ -8588,17 +8588,17 @@ public sealed partial class AgentTaskDispatcher
             : null;
         var compactSupported = compact is { State: AgentTuiCapabilityState.Supported, Command: not null };
 
-        if (unrelated && compactSupported)
+        if (unrelated && compactSupported && task.DispatchedAt is DateTime dispatched
+            && sessionRow is not null && sessionKind is AgentKind refocusKind)
         {
             // One line: a slash command is parsed from the submitted composer text, and the
             // focus argument tells the summariser what the surviving context must serve.
             // Type only the catalog's declared Command — never a guessed body.
-            var focus = task.Goal.ReplaceLineEndings(" ").Trim();
-            if (focus.Length > 300) focus = focus[..300];
             await TryEnqueueReuseAsync(
                 task, session,
-                $"{compact!.Command} This session is being handed NEW, unrelated work. Keep only context useful for: {focus}",
-                "refocus compact", ct);
+                DispatchRefocusIdentity.Body(compact!.Command!, task.Goal),
+                "refocus compact", DispatchRefocusIdentity.Key(new DispatchBriefEnsureRequest(
+                    task.Id, task.Attempt, session, dispatched, sessionRow.StartedAt), refocusKind), ct);
         }
 
         var refocus = unrelated && !compactSupported;
@@ -8613,7 +8613,7 @@ public sealed partial class AgentTaskDispatcher
                 stageRemoteSpill: string.IsNullOrWhiteSpace(sessionRow?.RunnerCwd)
                     ? null
                     : spill => _queue.StageRemoteSpill(session, sessionRow!.RunnerCwd!, spill));
-            await TryEnqueueReuseAsync(task, session, brief, "brief", ct);
+            await TryEnqueueReuseAsync(task, session, brief, "brief", null, ct);
             return;
         }
 
@@ -8662,7 +8662,7 @@ public sealed partial class AgentTaskDispatcher
     internal Func<Guid, string, CancellationToken, Task>? ReuseEnqueueOverride { get; set; }
 
     private async Task TryEnqueueReuseAsync(
-        AgentTask task, Guid session, string body, string what, CancellationToken ct)
+        AgentTask task, Guid session, string body, string what, string? conversationKey, CancellationToken ct)
     {
         try
         {
@@ -8671,6 +8671,7 @@ public sealed partial class AgentTaskDispatcher
             else
                 await _queue.EnqueueAsync(
                     session, body, MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation,
+                    conversationKey: conversationKey,
                     executionDeadlineAt: task.ExecutionDeadlineAt, executionTaskId: task.Id);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

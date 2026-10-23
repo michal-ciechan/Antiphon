@@ -35,8 +35,8 @@ cannot batch into this compact. No schema migration or runner changes.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1529-red/` | red-witnesses | `/*/*/RefocusBriefIdentityTests/*\|/*/*/AgentTaskReuseEnqueueTests/both_reuse_messages_enqueue_when_nothing_throws*\|/*/*/VerificationRoundDeliveryTests/C544_BriefHandoffRecovery*` | V-1, V-2, V-3, R-1, R-2 | red at brief admission on unchanged production; inspect each failure | 19 | 5 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1529-final/` | identity-recovery | `/*/*/RefocusBriefIdentityTests/*\|/*/*/AgentTaskReuseEnqueueTests/*\|/*/*/DelegationBriefRecoveryTests/*\|/*/*/DelegationDispatchRecoveryBoundaryTests/*` | V-1, V-2, R-1, R-2, R-3 | all listed classes, 0 failed/skipped | 27 | 7 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1529-red/` | red-witnesses | `/*/*/(RefocusBriefIdentityTests*)\|(AgentTaskReuseEnqueueTests*)\|(VerificationRoundDeliveryTests*)/(C1529_*)\|(both_reuse_messages_enqueue_when_nothing_throws*)\|(C544_BriefHandoffRecovery*)` | V-1, V-2, V-3, R-1, R-2 | red at brief admission on unchanged production; inspect each failure | 19 | 5 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1529-final/` | identity-recovery | `/*/*/(RefocusBriefIdentityTests*)\|(AgentTaskReuseEnqueueTests*)\|(DelegationBriefRecoveryTests*)\|(DelegationDispatchRecoveryBoundaryTests*)/*` | V-1, V-2, R-1, R-2, R-3 | all listed classes, 0 failed/skipped | 28 | 7 |
 | CP-3 | S2 | CP-2 | delivery-acceptance | `/*/*/VerificationRoundDeliveryTests/*` | V-3, R-4 | all listed methods, 0 failed/skipped | 1 | 5 |
 
 ### Cost
@@ -63,3 +63,22 @@ Activation requires a reviewed server restart on the RC line: future refocus
 production and queue/recovery classification change. Runner restart: none.
 Already blocked legacy tasks require inspected recovery; restart alone does not
 requeue them. Desktop and live Windows qualification are outside this task.
+
+S1 evidence: 41d6821fc916328a268587b2c75380a6aaf5d51a, run
+20261023-070713-cb71: 17 executed, 10 passed, 7 expected red. All three
+producer variants report dispatch_brief_evidence_uncertain; all three recovery
+variants retain only the compact. Initial full-path OR selected only the new
+class, so the corrected missing two-method selection ran once, with the same
+verified build, as CP-1-anchor-20261023-071500-3e6e (2 red). The existing reuse
+witness sees one row rather than two. C544's Linux fresh cell fails earlier on
+stale SessionStateStore publication (zero brief UserPrompts); the new real-type
+producer fixture is the Linux equivalent isolating CARD-1529. C544 fixture writes
+now use the already-landed CARD-1464 StoreAwareTranscript helper, retaining all
+assertions and all twelve cells. No production state-store behavior changes.
+The corrected table is the rerunnable selection; historic receipts retain the
+original filter and do not claim the two missing executions. R-2 additionally
+covers a foreign ExecutionTaskId correlated through SourceTaskId (11 cases).
+R-1 runs with and without a received compact: its UserPrompt never receipts the
+pending brief. R-2 also runs the real evidence types with missing/empty/value
+goal, provider and retained payload inputs in
+`C1529_Optional_identity_inputs_fail_closed_without_throwing` (5 cases).
