@@ -1,21 +1,26 @@
 # Evaluation-only oracle over the same fixture data used by LandGraphEvaluationTests.
 # Build the supplied evaluator separately through the host slot gate. This driver never builds.
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$ToolPath, [string]$Group = 'witnesses')
+param([Parameter(Mandatory)][string]$ToolPath, [string]$Group = 'witnesses',
+    [string]$Fixtures = 'tests/Antiphon.Tests/Application/Fixtures/land-graph-c1528.json')
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $tool = (Resolve-Path -LiteralPath $ToolPath).Path
-$fixtures = @(Get-Content -Raw (Join-Path $root 'tests/Antiphon.Tests/Application/Fixtures/land-graph-c1528.json') | ConvertFrom-Json -AsHashtable)
+$fixtures = @(Get-Content -Raw (Join-Path $root $Fixtures) | ConvertFrom-Json -AsHashtable)
 $selected = @($fixtures | Where-Object { if ($Group -eq 'witnesses') { $_.group -in @('static','projected','metadata','equal-result') } else { $_.group -eq $Group -or $_.id -in $Group.Split(',') } })
 if ($selected.Count -eq 0) { throw 'No fixtures selected' }
-function Run-Child([string]$Cwd, [string]$Command, [string[]]$Arguments) {
+function Run-Child([string]$Cwd, [string]$Command, [string[]]$Arguments, [hashtable]$Environment = @{}) {
     $start = [Diagnostics.ProcessStartInfo]::new($Command)
     $start.WorkingDirectory = $Cwd
     $start.UseShellExecute = $false
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
     foreach ($key in @($start.Environment.Keys)) { if ($key.StartsWith('MSBuild', [StringComparison]::OrdinalIgnoreCase)) { [void]$start.Environment.Remove($key) } }
+    foreach ($pair in $Environment.GetEnumerator()) {
+        if ($null -eq $pair.Value) { [void]$start.Environment.Remove($pair.Key) }
+        else { $start.Environment[$pair.Key] = $pair.Value }
+    }
     foreach ($argument in $Arguments) { $start.ArgumentList.Add($argument) }
     $process = [Diagnostics.Process]::Start($start)
     try {
@@ -55,7 +60,10 @@ EndGlobal
             $git = Run-Child $temp 'git' $arguments
             if ($git.Code -ne 0) { throw $git.Text }
         }
-        $run = Run-Child $temp 'dotnet' @($tool,'--repo',$temp,'--solution','Antiphon.sln')
+        $environment = @{}
+        if ($fixture.ContainsKey('environment')) { foreach ($key in $fixture.environment.Keys) { $environment[$key] = $null } }
+        if ($fixture.id -eq 'stamp-gate') { [IO.File]::SetLastWriteTimeUtc((Join-Path $temp 'App/Program.cs'), [DateTime]::new(2001,1,1,0,0,0,[DateTimeKind]::Utc)) }
+        $run = Run-Child $temp 'dotnet' @($tool,'--repo',$temp,'--solution','Antiphon.sln') $environment
         $ok = $run.Code -eq $fixture.expected -and $run.Text.Contains($fixture.reason)
         if ($fixture.expected -eq 1) { $ok = $ok -and $run.Text.Contains($fixture.owner) -and -not ($run.Text -match '(?m)^approved\r?$') }
         if (-not $ok) { $failed++ }

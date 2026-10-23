@@ -478,6 +478,13 @@ public sealed partial class LandGraphEvaluationTests
             => await RunToolAtAsync(Root, extra);
 
         internal static async Task<ToolRun> RunToolAtAsync(string root, params string[] extra)
+            => await RunToolWithEnvironmentAtAsync(root, null, extra);
+
+        public Task<ToolRun> RunToolWithEnvironmentAsync(Dictionary<string, string?> environment)
+            => RunToolWithEnvironmentAtAsync(Root, environment);
+
+        private static async Task<ToolRun> RunToolWithEnvironmentAtAsync(string root,
+            Dictionary<string, string?>? environment, params string[] extra)
         {
             var dll = ToolDll();
             File.Exists(dll).ShouldBeTrue($"the land graph audit tool must be staged at {dll}");
@@ -491,6 +498,11 @@ public sealed partial class LandGraphEvaluationTests
             // The test host may run under `dotnet run`; its MSBuild variables must not steer the tool.
             foreach (var key in psi.Environment.Keys.Where(k => k.StartsWith("MSBuild", StringComparison.OrdinalIgnoreCase)).ToArray())
                 psi.Environment.Remove(key);
+            foreach (var (key, value) in environment ?? [])
+            {
+                if (value is null) psi.Environment.Remove(key);
+                else psi.Environment[key] = value;
+            }
             psi.ArgumentList.Add(dll);
             foreach (var arg in extra)
                 psi.ArgumentList.Add(arg);
