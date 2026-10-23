@@ -138,7 +138,7 @@ public class ClaudeDialogWatchdogCanaryTests
             if (await predicate()) return;
             await Task.Delay(500, ct);
         }
-        throw new TimeoutException("The required native dialog/composer/transcript conjunct was not observed.");
+        throw new System.TimeoutException("The required native dialog/composer/transcript conjunct was not observed.");
     }
 
     private static string Resolve(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "")
