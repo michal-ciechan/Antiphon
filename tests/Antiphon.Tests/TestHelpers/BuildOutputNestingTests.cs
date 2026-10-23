@@ -13,7 +13,7 @@ public sealed class BuildOutputNestingTests
     internal static readonly string[] HelperFolders =
     [
         "nightly-owned-child", "custody-child", "script-harness-host", "channel-outbound-probe",
-        "checkpoint-lifecycle-host", "checkpoint-filter-host", "checkpoint-repeat-host",
+        "checkpoint-lifecycle-host", "checkpoint-filter-host", "checkpoint-repeat-host", "timing-probe",
         "fakeclaude", "fakegrok", "fake-native-claude", "fake-native-grok", "ptyhost-native",
     ];
 
@@ -36,6 +36,7 @@ public sealed class BuildOutputNestingTests
     [Arguments("checkpoint-lifecycle-host", "Antiphon.Checkpoints.LifecycleHost")]
     [Arguments("checkpoint-filter-host", "Antiphon.Checkpoints.FilterHost")]
     [Arguments("checkpoint-repeat-host", "Antiphon.Checkpoints.RepeatHost")]
+    [Arguments("timing-probe", "Antiphon.TestTiming.Probe")]
     [Arguments("fakeclaude", "fakeclaude")]
     [Arguments("fakegrok", "fakegrok")]
     public void Own_output_stages_helper_program(string folder, string assembly)

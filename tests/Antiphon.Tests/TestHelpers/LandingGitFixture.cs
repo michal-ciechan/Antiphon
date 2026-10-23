@@ -173,6 +173,12 @@ internal sealed class LandingGitFixture : IAsyncDisposable
 
         protected override Process? StartProcess(ProcessStartInfo start)
         {
+            TestTiming.RemovePhaseVariables(start);
+            int? argc = start.ArgumentList.Count > 0
+                ? start.ArgumentList.Count
+                : string.IsNullOrEmpty(start.Arguments) ? 0 : null;
+            var exe = string.IsNullOrEmpty(start.FileName) ? "omitted" : Path.GetFileName(start.FileName);
+            using var spawn = TestTiming.BeginProcess(exe, argc, "process");
             var child = base.StartProcess(start);
             if (child is not null) _children.TryAdd(child.Id, 0);
             return child;
@@ -215,6 +221,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
 
         public override async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         {
+            using var wait = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "wait");
             Trace.Add(arguments.ToArray());
             Commands.Add((repository, arguments.ToArray()));
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
