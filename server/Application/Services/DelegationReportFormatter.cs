@@ -973,7 +973,10 @@ public static class DelegationReportFormatter
         }
 
         sb.Append(TaskMarker(task.Id));
-        var pointer = joins ? FlattenForJoiningComposer(sb.ToString()) : sb.ToString();
+        // Persist the same LF bytes the PTY submits, including on Windows. Otherwise the
+        // queue retains CRLF while the complete native UserPrompt contains LF (CARD-1565).
+        var canonicalPointer = sb.ToString().ReplaceLineEndings("\n");
+        var pointer = joins ? FlattenForJoiningComposer(canonicalPointer) : canonicalPointer;
         // The queue replaces a staged runner path with its message-owned inbox path before
         // delivery. Measure the bytes that will actually be typed, not the shorter staged path.
         string Bound(string text) => boundSpillPath is null || string.IsNullOrWhiteSpace(spillPath)
