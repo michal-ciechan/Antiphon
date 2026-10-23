@@ -96,7 +96,7 @@ public sealed partial class LandGraphEvaluationTests
     private static readonly string[] ReviewedKnobs =
     [
         "UsePublishedPackages", "AntiphonMessagingVersion", "EnablePublicApiAnalyzers", "AntiphonCleanFileMaxBytes",
-        "PkgMicrosoft_Windows_Console_ConPTY", "DefaultItemExcludes", "SourceRevisionId", "WarningsAsErrors",
+        "PkgMicrosoft_Windows_Console_ConPTY", "DefaultItemExcludes", "SourceRevisionId", "WarningsAsErrors", "OS",
     ];
 
     [Test]
@@ -115,8 +115,9 @@ public sealed partial class LandGraphEvaluationTests
     public async Task C1540_AdmittedNamesApprove(string name)
     {
         var element = $"<Value>$({name})</Value>";
-        var files = EnvironmentFiles($"<PropertyGroup>{element}</PropertyGroup>");
         var knob = ReviewedKnobs.Contains(name);
+        var files = EnvironmentFiles($"<PropertyGroup>{element}</PropertyGroup>"
+            + (knob ? "" : $"<ItemGroup><Probe Include=\"$({name})\" /></ItemGroup>"));
         if (knob) files[PinsFile] = Pin("App/App.csproj", "/Project[1]/PropertyGroup[3]/Value[1]", element);
         await using var repo = await AuditRepo.CreateAsync(files);
         var run = await repo.RunToolWithEnvironmentAsync(new() { [name] = "../docs/a.md" });
@@ -136,7 +137,7 @@ public sealed partial class LandGraphEvaluationTests
     [Timeout(60_000)]
     public async Task C1540_AdmittedVerdictIgnoresEnvironment()
     {
-        var names = ReviewedKnobs.Concat(["MSBuildThisFileDirectory", "MSBuildProjectDirectory", "OS"]).ToArray();
+        var names = ReviewedKnobs.Concat(["MSBuildThisFileDirectory", "MSBuildProjectDirectory"]).ToArray();
         var elements = names.Select((name, i) => $"<Value{i}>$({name})</Value{i}>").ToArray();
         var files = EnvironmentFiles("<PropertyGroup>" + string.Concat(elements) + "</PropertyGroup>");
         files[PinsFile] = string.Concat(ReviewedKnobs.Select((_, i) => Pin("App/App.csproj",
@@ -157,6 +158,7 @@ public sealed partial class LandGraphEvaluationTests
         var cases = new (string Body, string Reason)[]
         {
             ("<PropertyGroup><Value>$( PATH )</Value></PropertyGroup>", "environment-property"),
+            ("<PropertyGroup><Value>$(OS)</Value></PropertyGroup>", "(missing pin)"),
             ("<PropertyGroup><Value>$(path)</Value></PropertyGroup>", "environment-property"),
             ("<PropertyGroup><Value>%24(PATH)</Value></PropertyGroup>", "environment-property"),
             ("<PropertyGroup><Value>$(UsePublishedPackages )</Value></PropertyGroup>", "(missing pin)"),
@@ -167,6 +169,9 @@ public sealed partial class LandGraphEvaluationTests
             ("<PropertyGroup><Value>%(ModifiedTime</Value></PropertyGroup>", "timestamp-metadata"),
             ("<PropertyGroup><Value>@(Stamp->Metadata('$(MSBuildThisFileDirectory)'))</Value></PropertyGroup>", "timestamp-metadata"),
             ("<PropertyGroup><Value>@(Stamp->WithMetadataValue('CreatedTime','x'))</Value></PropertyGroup>", "timestamp-metadata"),
+            ("<PropertyGroup><Value>@(Stamp->WithoutMetadataValue('AccessedTime','x'))</Value></PropertyGroup>", "timestamp-metadata"),
+            ("<PropertyGroup><Value>@(Stamp->HasMetadata('AccessedTime','x'))</Value></PropertyGroup>", "timestamp-metadata"),
+            ("<PropertyGroup><Value>@(Stamp->AnyHaveMetadataValue('AccessedTime','x'))</Value></PropertyGroup>", "timestamp-metadata"),
             ("<ItemDefinitionGroup><Probe><Value>%(AccessedTime)</Value></Probe></ItemDefinitionGroup>", "timestamp-metadata"),
             ("<PropertyGroup Condition=\"'a'=='b'\"><Value>%(modifiedtime)</Value></PropertyGroup>", "timestamp-metadata"),
             ("<PropertyGroup><Value><![CDATA[%(AccessedTime)]]></Value></PropertyGroup>", "timestamp-metadata"),
