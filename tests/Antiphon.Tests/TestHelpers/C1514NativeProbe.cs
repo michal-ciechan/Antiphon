@@ -9,6 +9,7 @@ internal static class C1514NativeProbe
     internal static async Task VerifyAsync(CancellationToken cancellationToken)
     {
         var root = C1514Support.FreshRoot();
+        Console.WriteLine("C1514_ACTUAL_RUN " + root);
         var script = Path.Combine(root, "native.ps1");
         await File.WriteAllTextAsync(script, Script, cancellationToken);
         var start = new ProcessStartInfo("pwsh");
@@ -16,7 +17,6 @@ internal static class C1514NativeProbe
             start.ArgumentList.Add(arg);
         var ran = await C1514Support.RunProcess(start, cancellationToken);
         ran.ExitCode.ShouldBe(0, ran.Text);
-        Console.WriteLine("C1514_ACTUAL_RUN " + root);
         foreach (var name in new[] { "groups-planned.json", "groups-executed.json", "summary.json", "tests.csv", "summary.md" })
             File.Exists(Path.Combine(root, "timing", name)).ShouldBeTrue("actual-run-five-artifacts: " + name);
         using var summary = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "timing", "summary.json")));

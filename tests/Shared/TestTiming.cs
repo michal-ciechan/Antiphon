@@ -385,6 +385,16 @@ public sealed class TestTimingSession : IDisposable
         var details = context.Metadata.TestDetails;
         var args = Describe(details);
         BeginCase(details.TestId, details.ClassType.FullName ?? details.ClassType.Name, details.MethodName, args, _clock.Now());
+        // TUnit 1.44's expanded ID differs from the MTP TRX GUID. Emit the
+        // explicit identity into that case's captured output; never guess by name.
+        try
+        {
+            context.Output.WriteLine("ANTIPHON_TEST_PHASE_ID " + details.TestId);
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+            // Missing identity remains an incomplete join, never a test failure.
+        }
     }
 
     public void OnTestEnd(TestContext context)
@@ -432,8 +442,8 @@ public sealed class TestTimingSession : IDisposable
         }
 
         WriteLine("{\"recordKind\":\"health\",\"failure\":" + JsonString(FailureCode) + ",\"droppedPhaseCount\":" + _dropped.ToString(CultureInfo.InvariantCulture) + "}");
-        lock (_sinkGate)
-            _writer?.Flush();
+        // WriteLine already flushes the health record under the sink lock and
+        // contains I/O failures. An additional unguarded flush can escape.
     }
 
     public void Dispose()
@@ -451,9 +461,19 @@ public sealed class TestTimingSession : IDisposable
         FlushHealth();
         lock (_sinkGate)
         {
-            _writer?.Dispose();
-            _writer = null;
-            _enabled = false;
+            try
+            {
+                _writer?.Dispose();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ObjectDisposedException)
+            {
+                FailureCode = "phase-sink-failed";
+            }
+            finally
+            {
+                _writer = null;
+                _enabled = false;
+            }
         }
     }
 
@@ -515,16 +535,13 @@ public sealed class TestTimingSession : IDisposable
         {
             if (!_enabled || _writer is null)
                 return;
-            if (_fault)
-            {
-                _fault = false;
-                FailureCode = "phase-sink-failed";
-                _enabled = false;
-                return;
-            }
-
             try
             {
+                if (_fault)
+                {
+                    _fault = false;
+                    throw new IOException("phase-sink-failed");
+                }
                 _writer.WriteLine(json);
                 _writer.Flush();
             }
@@ -545,7 +562,8 @@ public sealed class TestTimingSession : IDisposable
         + ",\"groupId\":" + JsonString(config.GroupId)
         + ",\"attempt\":" + JsonString(config.Attempt)
         + ",\"suite\":" + JsonString(config.Suite)
-        + ",\"assembly\":" + JsonString(assembly) + "}";
+        + ",\"assembly\":" + JsonString(assembly)
+        + ",\"moduleVersionId\":" + JsonString(AssemblyModuleId()) + "}";
 
     private string StartJson(CaseBuffer buffer)
     {
@@ -624,12 +642,18 @@ public sealed class TestTimingSession : IDisposable
     {
         try
         {
-            return System.Reflection.Assembly.GetEntryAssembly()?.ManifestModule.ModuleVersionId.ToString("N");
+            return System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name;
         }
         catch (InvalidOperationException)
         {
             return null;
         }
+    }
+
+    private static string? AssemblyModuleId()
+    {
+        try { return System.Reflection.Assembly.GetEntryAssembly()?.ManifestModule.ModuleVersionId.ToString("N"); }
+        catch (InvalidOperationException) { return null; }
     }
 
     private static string BoundOperation(string? operation) => operation switch

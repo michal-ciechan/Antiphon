@@ -37,7 +37,7 @@ internal static class C1514Support
 
     public static JsonElement Complete(string shard, string testId)
     {
-        foreach (var line in File.ReadLines(shard))
+        foreach (var line in ReadLiveLines(shard))
         {
             if (line.Length == 0)
                 continue;
@@ -49,6 +49,23 @@ internal static class C1514Support
         }
 
         throw new InvalidOperationException("missing complete timing rows for " + testId);
+    }
+
+    // Windows sharing is reciprocal: a live reader must share the existing
+    // writer's write access, even though the writer already shares read access.
+    public static string ReadLiveText(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
+    private static IEnumerable<string> ReadLiveLines(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        while (reader.ReadLine() is { } line)
+            yield return line;
     }
 
     public static long Envelope(JsonElement complete)

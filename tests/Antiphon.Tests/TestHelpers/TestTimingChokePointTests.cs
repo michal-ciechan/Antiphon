@@ -115,6 +115,11 @@ public sealed class TestTimingChokePointTests
     public async Task C1514T_Overhead(CancellationToken cancellationToken)
     {
         var evidence = C1514Support.FreshRoot();
+        Console.WriteLine("C1514_OVERHEAD " + evidence);
+        // An instrumented rc parent must not accidentally enable the OFF arm.
+        using var disabled = TestTimingSession.TryOpen(new TestTimingConfig());
+        using var offLease = TestTiming.Install(disabled);
+        TestTiming.Resolve()!.Enabled.ShouldBeFalse("off-recorder-disabled");
         // Sequential 10s walls on this host differ by more than 2% because the
         // idle P-state is ~2.3x slower and a hot core still wanders. Pin one CPU,
         // leave that idle state before the clocks, and interleave OFF/ON repetitions
@@ -144,9 +149,19 @@ public sealed class TestTimingChokePointTests
                     onMs = pair.On.Wall.TotalMilliseconds,
                     dropped = pair.On.Dropped,
                     shardBytes = pair.On.ShardBytes,
+                    repetitions = pair.On.Repetitions,
+                    offCpuMs = pair.Off.Cpu.TotalMilliseconds,
+                    onCpuMs = pair.On.Cpu.TotalMilliseconds,
+                    offAllocatedBytes = pair.Off.AllocatedBytes,
+                    onAllocatedBytes = pair.On.AllocatedBytes,
+                    records = pair.On.Records,
                 });
+                // Keep observed numbers even if a later acceptance assertion fails.
+                await File.WriteAllTextAsync(Path.Combine(evidence, "overhead-raw.json"),
+                    System.Text.Json.JsonSerializer.Serialize(new { status = "collecting", samples }), cancellationToken);
                 pair.Off.Wall.TotalMilliseconds.ShouldBeGreaterThanOrEqualTo(10000d);
                 pair.On.Wall.TotalMilliseconds.ShouldBeGreaterThanOrEqualTo(10000d);
+                pair.Off.Repetitions.ShouldBe(pair.On.Repetitions, "paired-work-matches");
                 pair.On.Dropped.ShouldBe(0);
                 ratios.Add((pair.On.Wall.TotalMilliseconds - pair.Off.Wall.TotalMilliseconds) / pair.Off.Wall.TotalMilliseconds);
             }
@@ -279,44 +294,76 @@ public sealed class TestTimingChokePointTests
         session.BeginCase(testId, "TestTimingChokePointTests", "C1514T_Overhead", [], session.NowTicks());
         var off = TimeSpan.Zero;
         var on = TimeSpan.Zero;
+        var offCpu = TimeSpan.Zero;
+        var onCpu = TimeSpan.Zero;
+        long offAllocated = 0;
+        long onAllocated = 0;
+        var completedRepetitions = 0;
+        using var process = Process.GetCurrentProcess();
+        async Task MeasureIoAsync(bool enabled)
+        {
+            var cpu = process.TotalProcessorTime;
+            var allocated = GC.GetTotalAllocatedBytes(precise: false);
+            var wall = await TimeIoAsync(lifecycle, session, enabled, cancellationToken);
+            var elapsedCpu = process.TotalProcessorTime - cpu;
+            var elapsedAllocated = GC.GetTotalAllocatedBytes(precise: false) - allocated;
+            if (enabled) { on += wall; onCpu += elapsedCpu; onAllocated += elapsedAllocated; }
+            else { off += wall; offCpu += elapsedCpu; offAllocated += elapsedAllocated; }
+        }
         try
         {
-            for (var step = 0; step < reps * 2; step++)
+            // A one-rep calibration can run cold while the measured loop runs hot.
+            // Finish whole equal-work pairs until BOTH arms meet the existing
+            // minimum. The finite cap also keeps eight spans/rep below SpanCap.
+            for (var repetition = 0; repetition < 400; repetition++)
             {
-                var onStep = offFirst ? step % 2 == 1 : step % 2 == 0;
-                if (onStep)
+                cancellationToken.ThrowIfCancellationRequested();
+                for (var step = 0; step < 2; step++)
                 {
-                    using (TestTiming.Install(session))
-                    {
-                        var watch = Stopwatch.StartNew();
-                        InProcessRep();
-                        watch.Stop();
-                        on += watch.Elapsed;
-                    }
-                }
-                else
-                {
+                    var onStep = offFirst ? step == 1 : step == 0;
+                    var cpu = process.TotalProcessorTime;
+                    var allocated = GC.GetTotalAllocatedBytes(precise: false);
                     var watch = Stopwatch.StartNew();
-                    InProcessRep();
+                    if (onStep)
+                    {
+                        using (TestTiming.Install(session))
+                            InProcessRep();
+                    }
+                    else
+                        InProcessRep();
                     watch.Stop();
-                    off += watch.Elapsed;
+                    var elapsedCpu = process.TotalProcessorTime - cpu;
+                    var elapsedAllocated = GC.GetTotalAllocatedBytes(precise: false) - allocated;
+                    if (onStep) { on += watch.Elapsed; onCpu += elapsedCpu; onAllocated += elapsedAllocated; }
+                    else { off += watch.Elapsed; offCpu += elapsedCpu; offAllocated += elapsedAllocated; }
                 }
+
+                completedRepetitions++;
+                if (completedRepetitions >= reps && off.TotalMilliseconds >= 10000d && on.TotalMilliseconds >= 10000d)
+                    break;
             }
 
             if (offFirst)
             {
-                off += await TimeIoAsync(lifecycle, session, enabled: false, cancellationToken);
-                on += await TimeIoAsync(lifecycle, session, enabled: true, cancellationToken);
+                await MeasureIoAsync(enabled: false);
+                await MeasureIoAsync(enabled: true);
             }
             else
             {
-                on += await TimeIoAsync(lifecycle, session, enabled: true, cancellationToken);
-                off += await TimeIoAsync(lifecycle, session, enabled: false, cancellationToken);
+                await MeasureIoAsync(enabled: true);
+                await MeasureIoAsync(enabled: false);
             }
         }
         finally
         {
+            var flush = Stopwatch.StartNew();
+            var cpu = process.TotalProcessorTime;
+            var allocated = GC.GetTotalAllocatedBytes(precise: false);
             session.Dispose();
+            flush.Stop();
+            on += flush.Elapsed;
+            onCpu += process.TotalProcessorTime - cpu;
+            onAllocated += GC.GetTotalAllocatedBytes(precise: false) - allocated;
             TestTiming.BindTestId(null);
         }
 
@@ -340,7 +387,10 @@ public sealed class TestTimingChokePointTests
         text.ShouldContain("db-create", Case.Sensitive);
         text.ShouldContain("filesystem", Case.Sensitive);
         text.ShouldContain("process-spawn", Case.Sensitive);
-        return new PairResult(new SampleResult(off, 0, 0), new SampleResult(on, dropped, bytes));
+        var records = File.ReadLines(path).Count();
+        return new PairResult(
+            new SampleResult(off, 0, 0, completedRepetitions, offCpu, offAllocated, 0),
+            new SampleResult(on, dropped, bytes, completedRepetitions, onCpu, onAllocated, records));
     }
 
     private static async Task<TimeSpan> TimeIoAsync(
@@ -467,7 +517,8 @@ public sealed class TestTimingChokePointTests
         return session;
     }
 
-    private readonly record struct SampleResult(TimeSpan Wall, int Dropped, long ShardBytes);
+    private readonly record struct SampleResult(TimeSpan Wall, int Dropped, long ShardBytes,
+        int Repetitions, TimeSpan Cpu, long AllocatedBytes, int Records);
 
     private readonly record struct PairResult(SampleResult Off, SampleResult On);
 

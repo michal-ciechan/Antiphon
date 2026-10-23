@@ -222,11 +222,15 @@ function Get-TestPhaseNativeIds {
     $marker = 'C1514_NATIVE '
     foreach ($line in ($Text -split "`n")) {
         $trim = $line.Trim().TrimEnd("`r")
-        if (-not $trim.StartsWith($marker, [StringComparison]::Ordinal)) { continue }
-        $rest = $trim.Substring($marker.Length)
-        $space = $rest.IndexOf(' ')
-        if ($space -lt 1) { continue }
-        $id = $rest.Substring($space + 1).Trim()
+        if ($trim.StartsWith('ANTIPHON_TEST_PHASE_ID ', [StringComparison]::Ordinal)) {
+            $id = $trim.Substring('ANTIPHON_TEST_PHASE_ID '.Length).Trim()
+        } elseif ($trim.StartsWith($marker, [StringComparison]::Ordinal)) {
+            # Preserve the original probe's explicit identity witness.
+            $rest = $trim.Substring($marker.Length)
+            $space = $rest.IndexOf(' ')
+            if ($space -lt 1) { continue }
+            $id = $rest.Substring($space + 1).Trim()
+        } else { continue }
         if (-not [string]::IsNullOrWhiteSpace($id) -and -not $ids.Contains($id)) {
             $ids.Add($id)
         }
@@ -239,7 +243,9 @@ function Read-TestPhaseJsonlFile {
     $records = New-Object System.Collections.Generic.List[object]
     $torn = 0
     $malformed = 0
-    $raw = [System.IO.File]::ReadAllText($Path)
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
+    $reader = [System.IO.StreamReader]::new($stream)
+    try { $raw = $reader.ReadToEnd() } finally { $reader.Dispose(); $stream.Dispose() }
     $parts = $raw.Split([string[]]@("`n"), [System.StringSplitOptions]::None)
     for ($i = 0; $i -lt $parts.Length; $i++) {
         $line = $parts[$i].TrimEnd("`r")
@@ -584,16 +590,33 @@ function ConvertTo-TestPhaseSummaryRows {
                 }
             } else {
                 $seenComplete[$id] = $true
-                $completes[$id] = [pscustomobject]@{ Record = $rec; Conflict = $false }
+                $completes[$id] = [pscustomobject]@{ Record = $rec; Header = $header; Conflict = $false }
             }
         }
     }
     if ($torn -gt 0 -and -not $quality.Contains('torn-tail')) { $quality.Add('torn-tail') }
     if ($malformed -gt 0 -and -not $quality.Contains('malformed-line')) { $quality.Add('malformed-line') }
 
+    $trxGroups = @{}
+    $executedPath = Join-Path $timing 'groups-executed.json'
+    if (Test-Path -LiteralPath $executedPath) {
+        $executed = [System.IO.File]::ReadAllText($executedPath) | ConvertFrom-Json
+        foreach ($chunk in @($executed.chunks)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$chunk.trx)) {
+                $trxGroups[[System.IO.Path]::GetFullPath((Join-Path $RunDirectory ([string]$chunk.trx)))] = [string]$chunk.chunk
+            }
+        }
+    }
     $trxRows = @()
     $trxFiles = @(Get-ChildItem -LiteralPath $RunDirectory -Filter '*.trx' -File -ErrorAction SilentlyContinue)
-    foreach ($trx in $trxFiles) { $trxRows += @(Read-TestPhaseTrxRows -Path $trx.FullName) }
+    foreach ($trx in $trxFiles) {
+        foreach ($row in @(Read-TestPhaseTrxRows -Path $trx.FullName)) {
+            $group = ''
+            if ($trxGroups.ContainsKey($trx.FullName)) { $group = [string]$trxGroups[$trx.FullName] }
+            $row | Add-Member -NotePropertyName GroupId -NotePropertyValue $group
+            $trxRows += $row
+        }
+    }
     $nativeMap = @{}
     foreach ($row in $trxRows) {
         $keys = @([string]$row.TestId)
@@ -622,6 +645,7 @@ function ConvertTo-TestPhaseSummaryRows {
         $joined = $matchRows.Count -eq 1 -and -not $bag.Conflict
         $trxOutcome = ''
         $phaseOutcome = ''
+        $duration = $null
         if ($bag.Conflict) {
             $phaseOutcome = 'conflict'
             if (-not $quality.Contains('conflicting-duplicate')) { $quality.Add('conflicting-duplicate') }
@@ -633,6 +657,7 @@ function ConvertTo-TestPhaseSummaryRows {
             if (-not $quality.Contains('ambiguous-id')) { $quality.Add('ambiguous-id') }
         } elseif ($matchRows.Count -eq 1) {
             $trxOutcome = [string]$matchRows[0].Outcome
+            $duration = [string]$matchRows[0].Duration
             $joinedTrx[[string]$matchRows[0].TestId + '|' + [string]$matchRows[0].Path] = $true
         }
         $outcome = 'incomplete'
@@ -654,6 +679,8 @@ function ConvertTo-TestPhaseSummaryRows {
             testId = [string]$id
             className = [string]$src.className
             method = [string]$src.method
+            duration = $duration
+            groupId = [string]$bag.Header.groupId
             outcome = $outcome
             trxOutcome = $trxOutcome
             phaseOutcome = $phaseOutcome
@@ -677,6 +704,8 @@ function ConvertTo-TestPhaseSummaryRows {
             testId = [string]$id
             className = ''
             method = ''
+            duration = $null
+            groupId = $null
             outcome = 'incomplete'
             trxOutcome = ''
             phaseOutcome = ''
@@ -699,6 +728,8 @@ function ConvertTo-TestPhaseSummaryRows {
             testId = [string]$row.TestId
             className = ''
             method = [string]$row.Name
+            duration = [string]$row.Duration
+            groupId = [string]$row.GroupId
             outcome = [string]$row.Outcome
             trxOutcome = [string]$row.Outcome
             phaseOutcome = ''
@@ -753,7 +784,7 @@ function Write-TestPhaseSummaryFiles {
     }
     Write-TestPhaseTextAtomic -Path (Join-Path $timing 'summary.json') -Text (ConvertTo-TestPhaseJsonText -Value $summary)
 
-    $headers = @('testId','outcome','trxOutcome','phaseOutcome','joined','incomplete','db','host','process','fs','network','fixture','overlapMs','remainderMs','droppedPhaseCount')
+    $headers = @('testId','duration','groupId','outcome','trxOutcome','phaseOutcome','joined','incomplete','db','host','process','fs','network','fixture','overlapMs','remainderMs','droppedPhaseCount')
     $lines = New-Object System.Collections.Generic.List[string]
     $headCells = @()
     foreach ($h in $headers) { $headCells += (ConvertTo-TestPhaseCsvCell -Value $h) }
@@ -761,6 +792,8 @@ function Write-TestPhaseSummaryFiles {
     foreach ($test in $orderedTests) {
         $cells = @(
             (ConvertTo-TestPhaseCsvCell -Value $test.testId),
+            (ConvertTo-TestPhaseCsvCell -Value $test.duration),
+            (ConvertTo-TestPhaseCsvCell -Value $test.groupId),
             (ConvertTo-TestPhaseCsvCell -Value $test.outcome),
             (ConvertTo-TestPhaseCsvCell -Value $test.trxOutcome),
             (ConvertTo-TestPhaseCsvCell -Value $test.phaseOutcome),
