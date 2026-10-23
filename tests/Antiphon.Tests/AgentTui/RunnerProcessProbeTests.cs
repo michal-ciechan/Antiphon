@@ -13,6 +13,7 @@ using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.Tests.Scripts;
 
 namespace Antiphon.Tests.AgentTui;
 
@@ -1420,17 +1421,16 @@ public sealed class RunnerProcessProbeTests
             SecretValues: []);
 
     private static string PowerShellExecutable()
-        => PowerShellExecutable(Environment.GetEnvironmentVariable("PATH"),
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+        => OperatingSystem.IsWindows()
+            ? PowerShellExecutable(Environment.GetEnvironmentVariable("PATH"))
+            : "pwsh";
 
-    internal static string PowerShellExecutable(string? searchPath, string localApplicationData)
+    internal static string PowerShellExecutable(string? searchPath)
     {
-        var alias = Path.Combine(
-            localApplicationData,
-            "Microsoft",
-            "WindowsApps",
-            "pwsh.exe");
-        return File.Exists(alias) ? alias : "pwsh";
+        var executable = ScriptHarnessProcessFixture.ResolveInstalledPowerShell(searchPath);
+        ScriptHarnessProcessFixture.IsWindowsAppExecutionAlias(executable)
+            .ShouldBeFalse("The PATH probe must launch installed PowerShell without an App Execution Alias.");
+        return executable;
     }
 
     private static string CreateScratch()

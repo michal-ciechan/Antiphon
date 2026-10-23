@@ -22,9 +22,12 @@ internal static class ScriptHarnessProcessFixture
                     new LinuxScriptHarnessProcess(request);
             });
 
-    internal static string ResolveInstalledPowerShell()
+    internal static string ResolveInstalledPowerShell() =>
+        ResolveInstalledPowerShell(Environment.GetEnvironmentVariable("PATH"));
+
+    internal static string ResolveInstalledPowerShell(string? searchPath)
     {
-        var path = Environment.GetEnvironmentVariable("PATH") ?? "";
+        var path = searchPath ?? "";
         foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
             var candidate = Path.GetFullPath(Path.Combine(directory, "pwsh.exe"));
@@ -37,7 +40,7 @@ internal static class ScriptHarnessProcessFixture
     }
 
     internal static bool IsWindowsAppExecutionAlias(string path) =>
-        path.Contains("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase);
+        path.Replace('/', '\\').Contains("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase);
 
     internal static async Task<ObservedTree> WaitReadyAsync(Func<ScriptProcessRequest?> request, Task invocation)
     {
