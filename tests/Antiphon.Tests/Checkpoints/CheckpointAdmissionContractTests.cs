@@ -31,7 +31,7 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
             new CheckpointApp.Runtime { SourceCapture=_=>CheckpointFixtures.CleanSource() });
         var exit=await CheckpointApp.ExecuteAsync(run,h.Watchdog.Token,new CheckpointApp.Runtime
         {
-            Driver=h.Driver,Slots=h.Slots,TimeProvider=h.Clock,Platform=new FakePlatform(),EnvironmentLookup=_=>null,
+            Driver=h.Driver,Slots=h.Slots,TimeProvider=h.Clock,SchedulerSuspended=h.Slots.Pump,Platform=new FakePlatform(),EnvironmentLookup=_=>null,
             SourceCapture=_=>CheckpointFixtures.CleanSource(),
         });
         exit.ShouldBe(0);

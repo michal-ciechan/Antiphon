@@ -202,7 +202,7 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
         h.Driver.When(r => r.FileName == "git", (r, ct) => { h.Clock.Advance(TimeSpan.FromMinutes(6)); ct.ThrowIfCancellationRequested(); return Task.FromResult(new DriverResult(0,"sha", "")); });
         await CheckpointApp.ExecuteAsync(run, h.Watchdog.Token, new CheckpointApp.Runtime
         {
-            Driver = h.Driver, Slots = h.Slots, TimeProvider = h.Clock, Platform = new FakePlatform(),
+            Driver = h.Driver, Slots = h.Slots, TimeProvider = h.Clock, SchedulerSuspended = h.Slots.Pump, Platform = new FakePlatform(),
             EnvironmentLookup = _ => null, SourceCapture = _ => CheckpointFixtures.CleanSource(),
         });
         h.Driver.Count(CheckpointFixtures.IsRun).ShouldBe(1);
@@ -250,7 +250,7 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
                 Manifest=Manifest, Rows=Manifest.Checkpoints, WorkingDirectory=Root, RunDirectory=Root,
                 State=new RunState { RunId="c1531", StartedAt=Clock.GetUtcNow() }, Slots=Slots,
                 Commit=new string('a',40), ExpectedSourceSha=new string('a',40), Width=2,
-                TotalTimeout=TimeSpan.FromMinutes(total), HardWallTimeout=TimeSpan.FromMinutes(wall),
+                Suspended=Slots.Pump, TotalTimeout=TimeSpan.FromMinutes(total), HardWallTimeout=TimeSpan.FromMinutes(wall),
                 RowTimeoutOverride=local is int m ? TimeSpan.FromMinutes(m) : null, OwnerBound=owner,
             },linked.Token);
         }
@@ -259,9 +259,13 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
     {
         public Func<string,CancellationToken,Task>? OnAcquire { get; set; }
         public int Released;
+        private readonly System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource> _pending = new();
+        public void Pump() { while(_pending.TryDequeue(out var signal)) signal.TrySetResult(); }
         public Task<SlotSession> ProbeAsync(CancellationToken ct) => Task.FromResult(new SlotSession("enabled",4));
         public async Task<SlotLease> AcquireAsync(SlotSession session,string label,CancellationToken ct)
         {
+            var signal = Signal(); _pending.Enqueue(signal);
+            await signal.Task.WaitAsync(ct);
             if(OnAcquire is not null) await OnAcquire(label,ct);
             return new SlotLease { State="granted",MaxCpuCount=4,ReleaseAsync=_=> { Interlocked.Increment(ref Released); return Task.CompletedTask; } };
         }

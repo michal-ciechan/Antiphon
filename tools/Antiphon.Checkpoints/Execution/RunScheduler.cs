@@ -17,6 +17,7 @@ public sealed class SchedulerRequest
     public TimeSpan? TotalTimeout { get; init; }
     public TimeSpan? HardWallTimeout { get; init; }
     public Action? Publish { get; init; }
+    internal Action? Suspended { get; init; }
     public Func<CancellationToken, Task>? BeforeLaunch { get; init; }
     public Func<string>? CancellationReason { get; init; }
     public Func<string?>? AdmissionBlock { get; init; }
@@ -210,6 +211,7 @@ public sealed class RunScheduler
             var tasks = running.Select(item => (Task)item.Task).ToList();
             if (buildTask is not null)
                 tasks.Add(buildTask);
+            request.Suspended?.Invoke();
             var completed = await Task.WhenAny(tasks).ConfigureAwait(false);
             if (completed == buildTask)
             {

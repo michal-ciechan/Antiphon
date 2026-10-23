@@ -23,6 +23,7 @@ public static class CheckpointApp
         public IDriver? Driver { get; init; }
         public IBuildSlotClient? Slots { get; init; }
         public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+        internal Action? SchedulerSuspended { get; init; }
         public HttpMessageHandler? SlotHandler { get; init; }
         public Func<DateTimeOffset>? SlotClock { get; init; }
         public Func<TimeSpan, CancellationToken, Task>? SlotDelay { get; init; }
@@ -228,6 +229,7 @@ public static class CheckpointApp
                 RowTimeoutOverride = request.RowTimeoutMinutes is int row ? TimeSpan.FromMinutes(row) : null,
                 TotalTimeout = TimeSpan.FromMinutes(totalMinutes),
                 Publish = Publish,
+                Suspended = runtime.SchedulerSuspended,
                 BeforeLaunch = BeforeLaunch,
                 CancellationReason = () => owner.Reason ?? "owner-ended",
                 AdmissionBlock = () => owner.Reason == "owner-unverified" ? owner.Reason : null,
