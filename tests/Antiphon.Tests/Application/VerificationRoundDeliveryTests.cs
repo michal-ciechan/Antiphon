@@ -550,7 +550,7 @@ public sealed class VerificationRoundDeliveryTests
             Id = Guid.NewGuid(), Name = name, Slug = name, WorkingDirectory = world.RepositoryPath,
             Details = "CARD-0544 warm delegate.", Status = AgentStatus.Idle, PoolIdleSince = now.AddMinutes(-1),
             Kind = task.AgentKind, ModelLevel = task.ModelLevel, IsPoolDelegate = true, PoolProjectId = task.ProjectId,
-            PoolClaudeEffort = "high", // CARD-1491: a reusable master fixture needs its launch stamp.
+            PoolClaudeEffort = ClaudeLaunchArgs.Effort(task.ModelLevel, task.Role, world.Delegation.ClaudeEffortByRole),
             PersistentSessionId = session.Id.ToString("D"), CreatedAt = now.AddHours(-2), UpdatedAt = now,
         };
         db.Agents.Add(agent);
