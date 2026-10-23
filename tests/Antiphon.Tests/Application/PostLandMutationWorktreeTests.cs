@@ -149,7 +149,7 @@ public sealed class PostLandMutationWorktreeTests
         task.WorktreePath.ShouldContain(DelegationReportFormatter.Short(world.TaskId));
         task.MergeTargetRef.ShouldBeNull();
         var (dispatcher, provider) = LaunchHarness();
-        using (provider)
+        await using (provider)
         {
             var spec = LaunchSpec(dispatcher, task, kind);
             spec.Cwd.ShouldBe(task.WorktreePath);
@@ -543,8 +543,14 @@ public sealed class PostLandMutationWorktreeTests
                 Ephemeral = true, CreatedAt = DateTime.UtcNow,
             });
             await db.SaveChangesAsync();
-            using var tick = bridge.Provider.CreateScope();
-            await tick.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+            var inspections = bridge.Provider.GetRequiredService<CardSiblingInspectionQueue>();
+            await new CardSiblingInspectionHostedService(inspections).StartAsync(default);
+            await using var tick = bridge.Provider.CreateAsyncScope();
+            var dispatcher = tick.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+            await dispatcher.TickAsync(default);
+            inspections.Attempted(codeId).ShouldBeTrue("the queued Code task must enter sibling inspection");
+            await inspections.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            await dispatcher.TickAsync(default);
             await bridge.Provider.GetRequiredService<AgentSessionLaunchQueue>().WaitForIdleAsync(TimeSpan.FromSeconds(15), default);
             await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
             var dispatched = await verify.AgentTasks.SingleAsync(t => t.Id == codeId);
