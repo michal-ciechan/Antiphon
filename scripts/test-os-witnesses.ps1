@@ -72,6 +72,7 @@ function Run-Case([string]$Name, $Evidence, [int]$Exit, [string]$Diagnostic, [st
 }
 function Test-StrictWholeSuite {
     # Run this entire case table in a new strict scope; every checker child is strict too.
+    $expectedChecks = $script:checks
     $psi = [Diagnostics.ProcessStartInfo]::new((Join-Path $PSHOME 'pwsh'))
     $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
     foreach ($arg in @('-NoProfile','-File',(Join-Path $repo 'scripts/test-os-witnesses.ps1'),'-StrictSuite')) { $psi.ArgumentList.Add($arg) }
@@ -83,8 +84,9 @@ function Test-StrictWholeSuite {
         Assert-That ($p.ExitCode -eq 0) "strict-whole-suite exit expected=0 actual=$($p.ExitCode): $output"
         $results = @($output -split '\r?\n' | Where-Object { $_ -match '^RESULT ' })
         Assert-That (($results -join "`n") -ceq ($script:caseResults -join "`n")) 'strict-whole-suite same named cases and actual exit codes'
-        Assert-That ($output -match "(?m)^ASSERTIONS $script:checks\r?$") 'strict-whole-suite same assertion count'
-        Write-Host "STRICT-SUITE cases=$($results.Count)"
+        Assert-That ($output -match "(?m)^ASSERTIONS $expectedChecks\r?$") 'strict-whole-suite same assertion count'
+        foreach ($result in $results) { Write-Host "STRICT $result" }
+        Write-Host "STRICT-SUITE cases=$($results.Count) assertions=$expectedChecks"
         Write-Host 'PASS strict-whole-suite'
     } finally { $p.Dispose() }
 }

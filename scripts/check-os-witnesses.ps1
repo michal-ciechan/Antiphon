@@ -259,15 +259,16 @@ try {
         $declared=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach ($candidate in $entry.candidates) {
             if ($candidate -isnot [Collections.IDictionary]) { throw 'invalid candidate record' }
+            $candidateWitnessId = if ($candidate.ContainsKey('witnessId')) { $candidate['witnessId'] } else { $null }
             $key="$($candidate.revision):$($candidate.line)"
             if (-not $declared.Add($key)) { Fail "duplicate candidate: $path $key" }
             if (-not $actual.Contains($key)) { Fail "candidate mismatch: $path $key" }
             if ($candidate.disposition -eq 'non-behavior') {
                 Need $candidate @('reason') "candidate $path $key"
-                if ($candidate.witnessId) { Fail "contradictory candidate: $path $key" }
+                if ($candidateWitnessId) { Fail "contradictory candidate: $path $key" }
             } elseif ($candidate.disposition -eq 'witness') {
-                if (-not $candidate.witnessId -or -not $witnesses.ContainsKey([string]$candidate.witnessId)) { Fail "missing witness for candidate: $path $key" }
-                elseif ($witnesses[$candidate.witnessId].sourcePath -cne $path) { Fail "candidate witness path mismatch: $path $key" }
+                if (-not $candidateWitnessId -or -not $witnesses.ContainsKey([string]$candidateWitnessId)) { Fail "missing witness for candidate: $path $key" }
+                elseif ($witnesses[$candidateWitnessId].sourcePath -cne $path) { Fail "candidate witness path mismatch: $path $key" }
             } else { Fail "candidate disposition invalid: $path $key" }
         }
         foreach ($key in $actual) { if (-not $declared.Contains($key)) { Fail "candidate unclassified: $path $key" } }
