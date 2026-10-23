@@ -106,3 +106,22 @@ recursive callbacks require the exact SDK FileMatcher type/assembly identity. Ex
 Condition frames forbid the exception, and FileOrDirectoryExists never uses it. The
 safe JSON plus unsafe explicit probe fixture is the negative for this compatibility
 allowance. No assertion, timeout or pin was changed to obtain approval.
+
+## Final-start infrastructure refusal (retained)
+
+The 50f6feec40e18b9c4547892b72fd876c4685466b focused compatibility smoke passed:
+JSON-only glob approved (0); the same fixture with an explicit docs/new Exists probe
+refused (1). Slot a01b2a17-18fe-4d4f-9bff-0dddd4fdfdb1, waited 0s, held 3s.
+The six post-failure tool-only diagnostic builds and six small diagnostic invocations
+were all slot-gated; they identified ancestor discovery, early include traversal and
+SDK Framework worker callbacks. They supplement, never replace, final CP-4.
+
+The subsequent final CP-4 start did not create a run directory or launch a driver:
+`CHECKPOINT owner owner-unverified`, exit 7. A direct task API read returned HTTP 502.
+This is missing execution, not a passed or failed test row. Preserve its log at
+.antiphon/c1483-s4-diagnostics/c1483-s4-final.log. Retry only with normal owner validation;
+no owner/slot bypass, widened deadline or changed test selection is authorized.
+The source range evidence checker passed (9 commits, four report entries, zero violations),
+and merge-tree against the fetched master was conflict-free at this point. The final
+caller report must name the eventual tested tip and qualified receipt, or leave CP-4
+incomplete and route back to Code if infrastructure prevents it.
