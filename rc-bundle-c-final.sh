@@ -4,7 +4,7 @@ BASE=0714a9a89e4bff65aae7e0b4b94098694aeb931c
 test "$(git rev-parse HEAD)" = "$BASE" || { echo 'STOP: wrong base'; exit 1; }
 test -z "$(git status --porcelain)" || { echo 'STOP: dirty worktree'; exit 1; }
 # Freeze the selection, but prove every source is still reachable from fetched master.
-SELECTION_MASTER=50e71d63ef185ba11081e7f868d2e974072e6733
+SELECTION_MASTER=98e96f029a8117034445d6c236db0cd0c045a0e6
 git fetch origin master
 git merge-base --is-ancestor "$SELECTION_MASTER" origin/master
 assert_source() {
@@ -166,8 +166,13 @@ pick 19a0b6aa27c9cd925ddb045d5de1e6be364f42e2
 skip_docs 522cbb93de9073c3e889c21933f173494eb6a3de
 pick 745cc90e6d5c838bee86ff9c6a133225641465a6
 
+# CARD-1512: landed during the initial verification; keep its test-only repair.
+skip_docs 5a4d06345b7425417d268dc12a9ac98fca53789c
+pick e598d4a920773ccbc0273cdce902ca3dab7c2b01
+skip_docs 98e96f029a8117034445d6c236db0cd0c045a0e6
+
 # EXCLUDED: CARD-1495 and CARD-0167, by caller decision.
-# PENDING at SELECTION_MASTER: CARD-1483 S3; CARD-1512;
+# PENDING at SELECTION_MASTER: CARD-1483 S3;
 # CARD-1486 S4 plus its test repair. Do not infer permission to append branch tips.
 
 # Final inventory includes CARD-1483 S1/S2 and every selected addition.

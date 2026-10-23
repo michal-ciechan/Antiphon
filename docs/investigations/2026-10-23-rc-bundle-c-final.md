@@ -1,16 +1,10 @@
-# Final rc bundle C recipe (verification in progress)
+# CARD-1512 late arrival: revised final verification pending
 
-Selection master: `50e71d63ef185ba11081e7f868d2e974072e6733`. Base: `0714a9a89e4bff65aae7e0b4b94098694aeb931c`.
-
-All 21 new reviewed/master pairs match stable patch IDs. Conditional CARD-1483 S3,
-CARD-1512 and CARD-1486 S4/repair are absent from this master snapshot. CARD-1495
-and CARD-0167 stay excluded. CARD-1232 contributes only its exact slow-test allowance
-as a path-only prerequisite to CARD-1519; no implementation is ported.
-
-The complete script below is staged before the dry run. Builds and the six requested
-checkpoint selections are pending; no green verification is claimed yet.
-
-`rc-bundle-c-final.sh`:
+CARD-1512 landed during the first completed verification. The executable script below
+now includes its three landed entries (one test pick, two document skips). The earlier
+results remain historical evidence at f99d73dfc5b76d16e805ddf6814c4902145c0745.
+The revised final tree will receive one build per project and the closed six requested
+rows plus CARD-1512 CP-1. No Unit lane.
 
 ```bash
 #!/usr/bin/env bash
@@ -19,7 +13,7 @@ BASE=0714a9a89e4bff65aae7e0b4b94098694aeb931c
 test "$(git rev-parse HEAD)" = "$BASE" || { echo 'STOP: wrong base'; exit 1; }
 test -z "$(git status --porcelain)" || { echo 'STOP: dirty worktree'; exit 1; }
 # Freeze the selection, but prove every source is still reachable from fetched master.
-SELECTION_MASTER=50e71d63ef185ba11081e7f868d2e974072e6733
+SELECTION_MASTER=98e96f029a8117034445d6c236db0cd0c045a0e6
 git fetch origin master
 git merge-base --is-ancestor "$SELECTION_MASTER" origin/master
 assert_source() {
@@ -181,8 +175,13 @@ pick 19a0b6aa27c9cd925ddb045d5de1e6be364f42e2
 skip_docs 522cbb93de9073c3e889c21933f173494eb6a3de
 pick 745cc90e6d5c838bee86ff9c6a133225641465a6
 
+# CARD-1512: landed during the initial verification; keep its test-only repair.
+skip_docs 5a4d06345b7425417d268dc12a9ac98fca53789c
+pick e598d4a920773ccbc0273cdce902ca3dab7c2b01
+skip_docs 98e96f029a8117034445d6c236db0cd0c045a0e6
+
 # EXCLUDED: CARD-1495 and CARD-0167, by caller decision.
-# PENDING at SELECTION_MASTER: CARD-1483 S3; CARD-1512;
+# PENDING at SELECTION_MASTER: CARD-1483 S3;
 # CARD-1486 S4 plus its test repair. Do not infer permission to append branch tips.
 
 # Final inventory includes CARD-1483 S1/S2 and every selected addition.
@@ -193,7 +192,3 @@ git commit -q -m 'build(rc): regenerate final bundle C land graph'
 cat server/Application/Services/LandVerificationBuildGraph.manifest.txt
 echo "bundle tip $(git rev-parse HEAD) tree $(git rev-parse HEAD^{tree})"
 ```
-
-The first assembly stopped at the S2 docs-only tip after its plan/report were
-removed. Corrected that entry to `skip_docs`; no build/test had run.
-CARD-1500 report-only entries and unconsumed mutation inventories are omitted too.
