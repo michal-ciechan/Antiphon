@@ -15,4 +15,4 @@ Platform: GET /api/runner-defaults, GET /api/session-runners; embed no fleet loc
 next: land for clean Final; review (Final) for clean Interim; code when there are defects (name them in `handoff:`); decide for a blocking human choice.
 check-evidence-diff.ps1 complete candidate base..HEAD
 For changed input waits: what releases the waiting session, after how long? Parking disabled means no automatic release deadline (CARD-1083).
-Apply docs/testing-and-build.md#os-branch-witnesses (real type/input; rc startup).
+Apply docs/testing-and-build.md#os-branch-witnesses and #performance-standards.

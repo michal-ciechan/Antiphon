@@ -29,6 +29,48 @@ Run the [plan's exact native lane rows](superpowers/plans/2026-10-04-card-1049-w
 through the checkpoint tool; the production readiness deadlines/retries are unchanged.
 
 
+## Performance standards
+
+[Test performance standards](test-performance-standards.md) owns the standing engineering rules.
+Any selection, row, batch or run expected or observed over 30 minutes triggers a Debug task with
+its timing evidence; retrying alone is insufficient. Per-test/per-row timeouts are about 2x
+measured p95 (40 seconds gets at most approximately two minutes). Longer allowances need a
+recorded measurement, justification and card. Preserve historical costs and failures.
+
+### Plan format: Performance budget
+
+Every Plan includes `## Performance budget`, even when TestDesign follows separately. State:
+
+- Exact test selection and app/category batches, project graph/downstream coverage, expected
+  per-test/row/batch/run duration and measurement source (SHA, host/platform, load, sample and p95).
+- Phase budgets for container start/readiness, data preparation, host startup, migrations,
+  snapshot/restore/clone, test body and teardown; build and admission/slot wait reported separately.
+- Once-per-run/assembly/session setup ownership, per-test isolation and any fresh-start witness.
+- Recording artifact location, per-test/group membership and external-call spans/bounds.
+- Every timeout set, its approximately 2x measured-p95 derivation, and card/justification for an
+  exception or provisional sample. Reference the Debug task for any duration over 30 minutes.
+
+For no-test plans state that fact and why. TestDesign refines the budget and checkpoint costs
+from measurements; this section does not add checkpoint columns or alter receipt schemas.
+
+### Review performance checklist
+
+For each new or changed test/fixture and its Plan budget, Review checks:
+
+- Expensive AppHost/web-host/container/migration/seed setup is shared once per run/assembly/session;
+  per-test isolation uses snapshots/templates/clones/transactions, with explicit startup-test exceptions.
+- Test and row timeouts track about 2x measured p95; longer limits and provisional samples carry
+  evidence, justification and a card. Cost rows use measurements rather than guesses.
+- Per-test duration, exact group/category membership, phase breakdown and individually bounded
+  external-call timing are recorded; unknown/remainder and slot wait stay explicit.
+- App categories and downstream dependency selection preserve coverage; any over-30-minute
+  selection/batch/run has a Debug task and timing evidence. Pending instrumentation stays pending.
+
+Current checkpoint importer defaults described below (including the 15-minute floor and 3x
+estimate multiplier) are not the R5 policy: explicit measured budgets or documented exceptions
+are required until tooling is updated. This documentation does not change those defaults, live
+qualification, release gate credit or production timeouts.
+
 <!-- CARD-0254 preserved source begins -->
 
 ## CARD-0254 preserved operational detail

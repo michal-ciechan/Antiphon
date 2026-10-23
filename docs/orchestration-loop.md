@@ -623,6 +623,30 @@ The operator's standing rules for every orchestrator seat, in full. The `orchest
 8. **Minimal testing.** One red witness plus one narrow green per task, with the rc roster as the gate; no whole-Unit or whole-lane runs from Code or Review.
 9. **rc ports.** Bug and test fixes for code already on the rc line go to master and to the rc line (a reviewed cherry-pick that makes a new rc tip); feature work is master-only. Check that the rc carries the prerequisite chain before porting (CARD-0856 found the rc lacked 27 CARD-1427/1428/1432 commits). Startup-path picks also require the exact-candidate native probe before publication and the post-push restore rehearsal in [Startup-path rc picks](release-gates.md#startup-path-rc-picks); use the [forward recovery](apphost-runbook.md#failed-startup-path-pick) if activation fails.
 
+10. **Test performance (operator, 2026-10-23).** Apply [test performance standards](test-performance-standards.md). Dispatch a Debug task, with exact selection, source/host/run identity and timing evidence, for any row, batch, selection or run expected or observed over 30 minutes; a retry alone is insufficient. Routine speedups and preflights need no further permission. After establishing ownership and retaining evidence, an orchestrator may stop an abandoned/uncreditable qualification through its supported stop path and join cleanup without asking; this grants no authority to kill another session or bypass custody. Before the next full rc run, require instrumentation ready to record per-test time, exact batch membership and phase attribution (CARD-1514). Destructive/one-way/secret/publish/promote/tag actions retain their existing authorization requirements.
+
+#### Operator standing instructions (2026-10-23)
+
+The operator's wording is preserved here; [the numbered standards](test-performance-standards.md)
+turn it into design and review obligations:
+
+> For testing, if it is more than 30 minutes start debugging. Are there slow sections of the app we can move out to their own projects and selectively run when only those change. Make sure we set up AppHost and the database ONCE PER RUN rather than per test or per class. Speed up setup by snapshotting databases and things so we do not need to do everything on every single test launch or test class/run. We need thorough observability in tests (and the live app) to understand how much time is spent on setting up, including spinning up and waiting for docker or similar processes, setting up / prepping data, spinning up the web host, migrations, various other setup, actually running the tests, and teardown. Are timeouts aggressive enough? If a test takes 40 s we should not have a timeout longer than 2 minutes (approx double). We need to start recording in a test where time is going, especially around external calls (db, io, http, cli, other external). Make sure this is committed and used as part of our design/review etc.
+>
+> This is a monorepo: make sure we have categories/apps per batch so that if something in the messaging layer changes that batch runs, server, Claude runner, Codex runner, shared pty runner, git operations handler (should be its own csproj), so we can scope future rc runs to only the projects that actually need testing (including downstream of those projects).
+>
+> before the next full rc run record time per test, which tests are in each batch, and where time is going.
+>
+> we want to speed up releases, tasks and testing so do what is needed (do not ask for permission for routine actions).
+
+Generated instructions section 8 reads `Delegation:OrchestratorInstructions:StandingInstructions`
+(`OrchestratorInstructionsSettings`, startup `IOptions`): at most 10 lines of 300 characters.
+There is no add-standing-instruction API/script; refresh only re-renders the loaded settings.
+The orchestrator owns machine configuration (see [bootstrap overlays](bootstrap.md#3-secrets)),
+preserves existing lines, appends a short owner pointer within those limits, and activates it
+under the restart runbook before checking `GET /api/orchestrator-instructions` section 8.
+A Docs task reports the exact proposed configuration command/text; it never writes live settings
+or edits the generated file. The full wording stays here, outside section 8's size cap.
+
 ### Post-land miss retrospective (CARD-0811)
 
 Rule 6's post-land sibling. A defect that a Clean Review approved and that was found only in the
