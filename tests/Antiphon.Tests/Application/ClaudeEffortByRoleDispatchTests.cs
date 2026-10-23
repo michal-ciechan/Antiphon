@@ -416,6 +416,7 @@ public sealed class ClaudeEffortByRoleDispatchTests
             ModelLevel = level,
             Kind = AgentKind.ClaudeCode,
             IsPoolDelegate = pool,
+            PoolClaudeEffort = pool ? ClaudeLaunchArgs.Effort(level) : null,
             AlwaysOn = !pool,
             // Well outside PoolReservedForCallerMinutes, so the reservation window never decides.
             PoolIdleSince = pool && idle ? now.AddMinutes(-5) : null,

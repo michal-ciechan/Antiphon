@@ -278,6 +278,7 @@ public class AgentTaskCheckScheduleTests
             ModelLevel = AgentModelLevel.Medium,
             IsPoolDelegate = true,
             PoolIdleSince = now.AddMinutes(-10),
+            PoolClaudeEffort = "medium",
             PersistentSessionId = sessionId.ToString("D"),
             CreatedAt = now,
             UpdatedAt = now,

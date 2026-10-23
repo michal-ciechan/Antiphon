@@ -29,8 +29,26 @@ public static class ClaudeLaunchArgs
     /// <summary>Claude's session-effort flag. Space-separated: <c>--effort</c> then the value.</summary>
     public const string EffortFlag = "--effort";
 
-    // S1 red foundation: implemented after the launch/reuse witnesses execute.
-    public static string? ReadLaunchEffort(IReadOnlyList<string> args) => null;
+    /// <summary>Explicit launch intent before --; absent, invalid or conflicting flags are unknown.</summary>
+    public static string? ReadLaunchEffort(IReadOnlyList<string> args)
+    {
+        string? effort = null;
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (args[i] == "--") break;
+            string? candidate;
+            if (args[i] == EffortFlag)
+                candidate = i + 1 < args.Count ? Canonical(args[++i]) : null;
+            else if (args[i].StartsWith(EffortFlag + "=", StringComparison.Ordinal))
+                candidate = Canonical(args[i][(EffortFlag.Length + 1)..]);
+            else continue;
+
+            if (candidate is null || (effort is not null && !string.Equals(effort, candidate, StringComparison.Ordinal)))
+                return null;
+            effort = candidate;
+        }
+        return effort;
+    }
 
     /// <summary>
     /// Effort, set EXPLICITLY on every launch (CARD-0289). The same four-value table Codex and

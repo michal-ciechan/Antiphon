@@ -189,7 +189,7 @@ public class ModelAvailabilityDispatcherTests
     }
 
     internal static async Task<(Guid AgentId, Guid SessionId)> SeedWarmAgentAsync(
-        string connectionString, string directory, DateTime? at = null)
+        string connectionString, string directory, DateTime? at = null, AgentModelLevel level = AgentModelLevel.Medium)
     {
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
@@ -217,7 +217,8 @@ public class ModelAvailabilityDispatcherTests
             Details = "Warm pool delegate.",
             Status = AgentStatus.Idle,
             Kind = AgentKind.ClaudeCode,
-            ModelLevel = AgentModelLevel.Medium,
+            ModelLevel = level,
+            PoolClaudeEffort = ClaudeLaunchArgs.Effort(level),
             IsPoolDelegate = true,
             PoolIdleSince = now.AddMinutes(-3),
             PersistentSessionId = sessionId.ToString("D"),

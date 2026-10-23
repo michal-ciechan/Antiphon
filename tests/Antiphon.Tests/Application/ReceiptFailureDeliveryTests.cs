@@ -66,14 +66,13 @@ public class ReceiptFailureDeliveryTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
         var (agentId, sessionId) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
-            schema.ConnectionString, workspace.Path);
+            schema.ConnectionString, workspace.Path, level: AgentModelLevel.High);
         var (_, callerId) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
             schema.ConnectionString, workspace.Path);
         var task = await ModelAvailabilityDispatcherTests.SeedQueuedTaskAsync(
             schema.ConnectionString, workspace.Path, agentId, AgentModelLevel.High, "lost receipt-failure brief");
         await using (var db = CreateContext(schema))
         {
-            (await db.Agents.SingleAsync(a => a.Id == agentId)).ModelLevel = AgentModelLevel.High;
             var stored = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
             stored.Attempt = 3;
             stored.ParentSessionId = callerId;
@@ -362,13 +361,11 @@ public class ReceiptFailureDeliveryTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
         var (agentId, sessionId) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
-            schema.ConnectionString, workspace.Path);
+            schema.ConnectionString, workspace.Path, level: AgentModelLevel.High);
         var task = await ModelAvailabilityDispatcherTests.SeedQueuedTaskAsync(
             schema.ConnectionString, workspace.Path, agentId, AgentModelLevel.High, "receipt failure delivery");
         await using (var db = CreateContext(schema))
         {
-            var agent = await db.Agents.SingleAsync(a => a.Id == agentId);
-            agent.ModelLevel = AgentModelLevel.High;
             var stored = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
             stored.Attempt = 3;
             stored.Goal = "Keep this entire brief.\nFirst line belongs to this attempt.\nFinal line must also arrive.";

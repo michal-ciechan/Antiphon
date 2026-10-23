@@ -809,6 +809,7 @@ public class GrokDelegateDispatchTests
             ModelLevel = AgentModelLevel.Medium,
             Kind = kind,
             IsPoolDelegate = true,
+            PoolClaudeEffort = kind == AgentKind.ClaudeCode ? "medium" : null,
             // Well outside PoolReservedForCallerMinutes, so the reservation window is never what
             // decides these tests.
             PoolIdleSince = now.AddMinutes(-idleMinutes),

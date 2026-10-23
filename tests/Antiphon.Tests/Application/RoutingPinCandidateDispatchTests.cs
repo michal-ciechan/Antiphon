@@ -723,6 +723,7 @@ public sealed class RoutingPinCandidateDispatchTests
             ModelLevel = AgentModelLevel.High,
             IsPoolDelegate = true,
             PoolIdleSince = now.AddMinutes(-3),
+            PoolClaudeEffort = "high",
             PersistentSessionId = sessionId.ToString("D"),
             CreatedAt = now,
             UpdatedAt = now,

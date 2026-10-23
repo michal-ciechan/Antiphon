@@ -429,12 +429,8 @@ public class WallRerouteDispatchTests
 
     private static async Task<(Guid AgentId, Guid SessionId)> SeedWarmOpusAsync(IsolatedTestSchema schema, string directory)
     {
-        var warm = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(schema.ConnectionString, directory);
-        await using var db = CreateContext(schema);
-        var agent = await db.Agents.SingleAsync(a => a.Id == warm.AgentId);
-        agent.ModelLevel = AgentModelLevel.High;
-        await db.SaveChangesAsync();
-        return warm;
+        return await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, directory, level: AgentModelLevel.High);
     }
 
     private static async Task<AgentTask> SeedQueuedOpusAsync(IsolatedTestSchema schema, string directory)

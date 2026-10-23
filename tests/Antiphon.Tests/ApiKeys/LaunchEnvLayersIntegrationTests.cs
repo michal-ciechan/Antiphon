@@ -198,6 +198,7 @@ public sealed class LaunchEnvLayersIntegrationTests
             Kind = AgentKind.ClaudeCode,
             ModelLevel = AgentModelLevel.Medium,
             PoolIdleSince = now.AddMinutes(-10),
+            PoolClaudeEffort = "medium",
             PersistentSessionId = session.Id.ToString("D"),
             CreatedAt = now,
             UpdatedAt = now,
@@ -775,6 +776,7 @@ public sealed class LaunchEnvLayersIntegrationTests
             Kind = AgentKind.ClaudeCode,
             ModelLevel = AgentModelLevel.Medium,
             PoolIdleSince = now.AddMinutes(-10),
+            PoolClaudeEffort = "medium",
             PersistentSessionId = session.Id.ToString("D"),
             LaunchEnvJson = AgentLaunchEnv.Serialize(new Dictionary<string, string>
             {
@@ -1325,6 +1327,7 @@ public sealed class LaunchEnvLayersIntegrationTests
             Kind = AgentKind.ClaudeCode,
             ModelLevel = AgentModelLevel.Medium,
             PoolIdleSince = now.AddMinutes(-10),
+            PoolClaudeEffort = "medium",
             PoolProjectId = projectId,
             PoolProviderProjectionJson = stamp,
             PersistentSessionId = session.Id.ToString("D"),
