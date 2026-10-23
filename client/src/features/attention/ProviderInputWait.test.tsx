@@ -2,7 +2,7 @@ import { HttpResponse, http } from 'msw'
 import { describe, expect, it } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import type { AttentionItemDto } from '../../api/attention'
-import { renderWithProviders, screen, within } from '../../test/utils'
+import { renderWithProviders, screen, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { AttentionPanel } from './AttentionPanel'
 import { visualOf, targetOf } from './attentionVisuals'
@@ -35,7 +35,7 @@ describe('C1518 provider input decision', () => {
     expect(within(unknownRow).queryByText('Provider input')).not.toBeInTheDocument()
     await userEvent.click(screen.getByText('Recent failures'))
     const failedRow = await screen.findByTestId('attention-row-RecentFailure')
-    expect(within(failedRow).getByText(failed.evidence!)).toBeVisible()
+    await waitFor(() => expect(within(failedRow).getByText(failed.evidence!)).toBeVisible())
     expect(within(failedRow).queryByRole('button', { name: /approve|cancel|send now|kill|restart|continue/i })).not.toBeInTheDocument()
   })
 })
