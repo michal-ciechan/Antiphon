@@ -601,6 +601,9 @@ public sealed class AgentTaskLandReceiptWatermarkTests
         await using var h = await LandReceiptScanHarness.CreateAsync();
         if (arm == "running-destination-real-delivery")
         {
+            // Master's Claude input guard needs a current, generation-bound clear observation.
+            // This is a positive delivery witness; the default fake deliberately has none.
+            await h.Bridge.Adapter.EnableClaudeDialogObservationAsync(h.ConnectionString, h.SessionId);
             AgentTaskLandNotification note = null!;
             // A body that fits one write, so the queue types it whole rather than spilling it.
             note = await h.SeedLinkedNoteAsync("C1121 real delivery outcome", beforeEnqueue: async seeded =>

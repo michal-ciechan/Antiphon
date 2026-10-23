@@ -118,3 +118,44 @@ compile (R-4). All other builds/tests are checkpoint-owned. No full-assembly run
 Before completion run receipt validation against the final pushed/tested SHA,
 check-evidence-diff over full task base..HEAD, and merge-tree against freshly
 fetched origin/master; retain all original outcomes and costs.
+
+## First final attempt and master-only repair
+
+Run 20261023-121620-cf2f at 7c46aed3925ac6d5d6aee1ddc16c887615b47731
+completed CP-2 with 36 executed, 35 passed, 1 failed, 0 skipped. Both FK arms,
+store-absent and exact master budget passed. The remaining inherited real-delivery
+case was still held: master CARD-0680 correctly refuses Claude input without a
+current, generation-bound dialog observation. Its default fake supplies none.
+Use the existing ClaudeDialogFixture.EnableClaudeDialogObservationAsync on this
+positive-delivery witness before enqueue; preserve every delivery assertion.
+This is a master-only fixture API, absent from RC, so exclude this follow-up
+commit from the three RC picks above. No product guard changes.
+
+CHECKPOINT CP-2 commit=7c46aed3925ac6d5d6aee1ddc16c887615b47731 build=ok filter=/*/*/AgentTaskLandReceiptWatermarkTests/* executed=36 passed=35 failed=1 skipped=0 trx=/work/worktrees/task-3fa840bf/.antiphon/checkpoints/20261023-121620-cf2f/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=7c46aed3925ac6d5d6aee1ddc16c887615b47731 sourceState=clean buildSource=verified
+
+CP-2 host wall 109.57s, startup 51.56s, tests wall 54.93s, teardown 3.08s.
+Shared build driver 292.84s (0 errors); build slot granted, waited 45s.
+CP-3 waited for a slot for 180s and did not launch tests. CP-4/CP-5 did not launch.
+Explicitly stopped the executor before source edits to fix CP-2 and requalify all
+four classes at the final tip. Stop exited 0; the concurrent wait reported exit 6
+(executor died without phase=done / report handle verification refused), so there
+is no complete successful receipt for this stopped run. Its completed CP-2 line
+and fresh TRX remain historical red evidence; canceled rows are NOT passes.
+The stop's initial shadow cleanup raced the observer (IOException); the waiting
+observer then reported TOOL CLEANUP Removed / identity-dead. No test remained
+running when source changed. Fresh isolated output is used for the next run.
+
+Inspected the complete live-committed-row SQL from the fresh TRX, all three passes:
+two notification SELECTs, one session Status/StartedAt SELECT, one queue-row
+SELECT, one combined session/identity/MAX prelude, one active-task Id/Attempt
+SELECT, one TurnEnd ApiCallId dedup SELECT, one first-pass receipt SELECT,
+and one concurrency-token UPDATE. Totals are exactly 9/8/8; only the receipt
+SELECT disappears. The two authority SELECTs are retained for the durable
+admission path, not removed as a test repair. RC's three prelude probes replace
+the one combined prelude: exactly 11/10/10. Full SQL is retained in the live-row
+TRX StdOut; no range, sampled roster or tautological count replaced the assertion.
+
+R-4 completed: all three RC picks applied without conflicts, Antiphon.Tests built
+with 0 errors in 275.76s; BUILD SLOT granted, waited=0s, released after 276s.
+Post-build worktree-to-index diff is empty and index tree remains
+fb531f381f149c7279aed82058f15e6698ac293d. No RC execution/Windows pass is claimed.

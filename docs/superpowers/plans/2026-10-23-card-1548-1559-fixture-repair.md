@@ -33,7 +33,7 @@ separately commissioned desktop lane; this task must not use that lane.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | baseline | `tests/Antiphon.Tests -> bin-3fa-red/` | inherited-red | `/*/*/AgentTaskLandReceiptWatermarkTests/C1121_AnyCommittedChangeReopensFullScan*\|/*/*/AgentTaskLandReceiptWatermarkTests/C1121_UnchangedTranscriptSkipsOnlyReceiptSelect*\|/*/*/AgentTaskLandReceiptWatermarkTests/C1121_UnknownEvidenceUsesExistingScan*\|/*/*/SessionStateWarmupTests/Retention_*\|/*/*/ChannelInboundRecoveryTests/C768_BrokerReplayAfterPayloadPurgeKeepsNativeIdentity*` | V-1,V-2,V-3 | diagnostic: inherited red required | 29 | 5 | true |
-| CP-2 | repair | `tests/Antiphon.Tests -> bin-3fa-final/` | watermark | `/*/*/AgentTaskLandReceiptWatermarkTests/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 36 | 5 | true |
+| CP-2 | repair | `tests/Antiphon.Tests -> bin-3fa-final2/` | watermark | `/*/*/AgentTaskLandReceiptWatermarkTests/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 36 | 5 | true |
 | CP-3 | repair | CP-2 | warmup | `/*/*/SessionStateWarmupTests/*` | V-1,R-2 | all listed, 0 failed | 16 | 2 | true |
 | CP-4 | repair | CP-2 | inbound-recovery | `/*/*/ChannelInboundRecoveryTests/*` | V-1,R-2 | all listed, 0 failed | 27 | 5 | true |
 | CP-5 | repair | CP-2 | card-correction | `/*/*/CardCorrectionIntegrationTests/*` | V-4,R-3 | all listed, 0 failed | 43 | 3 | true |
@@ -41,7 +41,7 @@ separately commissioned desktop lane; this task must not use that lane.
 ### Cost
 
 One red-witness build/run, then one final shared build with four class rows.
-Hard run deadlines: red 15m, final 30m; row cap 15m. Estimates include build
+Hard run deadlines: red 15m, final 20m; row cap 15m. Estimates include build
 startup, not a claim of measured class cost. Record actual per-class durations.
 The only additional builds are checkpoint-tool bootstrap and required RC compile;
 both use the host build-slot gate. No repetitions after green.
@@ -60,3 +60,10 @@ warmup/inbound. Use retained diagnosis for those base witnesses (cost exception
 in the brief). No baseline pass is claimed for those classes. Final rows select
 one class each and inspect every fresh TRX identity. Evidence and exact RC picks:
 `docs/investigations/2026-10-23-card-1548-1559-fixture-repair.md`.
+
+First final attempt: CP-2 35/36 passed; master-only supported-Claude observation
+was absent from its positive real-delivery fixture. CP-3 was waiting for a slot;
+CP-4/CP-5 had not launched when the run was explicitly stopped before repair.
+Repeat CP-2 and run CP-3..CP-5 together against the final pushed SHA, using fresh
+bin-3fa-final2/ and a 20m total hard cap (row cap remains 15m). Preserve prior
+red/incomplete outcomes; this is failure-driven qualification, not green repetition.
