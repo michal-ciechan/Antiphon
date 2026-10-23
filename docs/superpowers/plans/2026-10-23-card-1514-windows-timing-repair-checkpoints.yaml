@@ -1,0 +1,26 @@
+schemaVersion: 1
+plan: docs/superpowers/plans/2026-10-23-card-1514-windows-timing-repair-plan.md
+resultsRoot: .antiphon/checkpoints
+build:
+  properties:
+    RunAnalyzersDuringBuild: 'false'
+  slots: auto
+  slotWaitMinutes: 3
+timeouts:
+  rowMinutes: 12
+  totalMinutes: 25
+builds:
+- id: bin-c1514t-win-bounded
+  project: tests/Antiphon.Tests
+  outputPath: bin-c1514t-win-bounded/
+checkpoints:
+- id: CP-8
+  after: [Windows-repair]
+  build: bin-c1514t-win-bounded
+  group: windows-minimum-preflight
+  filter: /*/*/(TestTimingRecorderTests*|TestTimingLifecycleTests*|TestTimingChokePointTests*|TestPhaseSupervisorTests*|TestPhaseSummaryTests*|TestPhaseCustodyTests*)/C1514T_*
+  expect: [TestTimingRecorderTests, TestTimingLifecycleTests, TestTimingChokePointTests, TestPhaseSupervisorTests, TestPhaseSummaryTests, TestPhaseCustodyTests]
+  minExecuted: 28
+  estimatedMinutes: 12
+  timeoutMinutes: 12
+  serial: true
