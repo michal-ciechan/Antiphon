@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.WebSockets;
 using System.Reflection;
 using System.Text.Json;
@@ -28,6 +29,37 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegateBranchDeliveryTests
 {
+    [Test]
+    [Arguments(null)]
+    [Arguments("windows")]
+    [Arguments("linux")]
+    [Timeout(180_000)]
+    public async Task C1558_WireRegistersReportedPlatform(string? reportedPlatform, CancellationToken ct)
+    {
+        await using var world = await RunnerSettlementSyncTests.SyncWorld.CreateAsync();
+        await using var wire = await Wire.CreateAsync(world, false, ct, reportedPlatform);
+        var expected = reportedPlatform ?? (OperatingSystem.IsWindows() ? "windows" : "linux");
+        wire.Surface.Capabilities().Platform.ShouldBe(expected);
+        (await wire.Host.Directory.DescribeAsync(wire.Host.AllowedRunnerId, ct))!.Platform.ShouldBe(expected);
+        await wire.ReconnectAsync(ct);
+        (await wire.Host.Directory.DescribeAsync(wire.Host.AllowedRunnerId, ct))!.Platform.ShouldBe(expected);
+        await wire.Client.ListAsync(ct);
+    }
+
+    [Test]
+    public async Task C1558_InconsistentPlatformIsRefused(CancellationToken ct)
+    {
+        await using var runtime = new SessionRunnerRuntime(
+            Options.Create(new SessionRunnerSettings()), NullLogger<SessionRunnerRuntime>.Instance);
+        var capabilities = new PhoneHomeRuntimeAdapter(runtime, RunnerBuildIdentity.Resolve()).Capabilities()
+            with { Platform = "windows" };
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        var error = await Should.ThrowAsync<HttpRequestException>(() =>
+            host.RegisterAsync(platform: "linux", capabilities: capabilities));
+        error.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        host.Directory.SnapshotLive(host.AllowedRunnerId).ShouldBeNull();
+    }
+
     [Test]
     [Timeout(180_000)]
     public async Task C1213_OldRunnerReceivesLegacy(CancellationToken ct)
@@ -313,6 +345,7 @@ public sealed class DelegateBranchDeliveryTests
         private readonly Guid _store;
         private readonly Guid _boot = Guid.NewGuid();
         private readonly bool _old;
+        private readonly string? _reportedPlatform;
         private readonly ReadySignal _ready = new();
         private SessionRunnerRuntime _runtime = null!;
         public PhoneHomeTestHost Host { get; private set; } = null!;
@@ -326,14 +359,14 @@ public sealed class DelegateBranchDeliveryTests
         public PhoneHomeOperation? QueuedOperation { get; set; }
         public TaskCompletionSource Queued { get; set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int GitStarts;
-        private Wire(string root, string repository, string allowed, string origin, Guid store, bool old)
-        { _root = root; _repository = repository; _allowed = allowed; _origin = origin; _store = store; _old = old; }
-        public static async Task<Wire> CreateAsync(RunnerSettlementSyncTests.SyncWorld world, bool old, CancellationToken ct)
+        private Wire(string root, string repository, string allowed, string origin, Guid store, bool old, string? reportedPlatform = null)
+        { _reportedPlatform = reportedPlatform; _root = root; _repository = repository; _allowed = allowed; _origin = origin; _store = store; _old = old; }
+        public static async Task<Wire> CreateAsync(RunnerSettlementSyncTests.SyncWorld world, bool old, CancellationToken ct, string? reportedPlatform = null)
         {
             var repo = Path.Combine(world.Root, "recipient-repo");
             await world.RunAsync(world.Root, "clone", world.Origin, repo);
             await world.RunAsync(repo, "config", "user.name", "c1213 wire"); await world.RunAsync(repo, "config", "user.email", "c1213@localhost");
-            var w = new Wire(Path.Combine(world.Root, "wire-state"), repo, Path.Combine(world.Root, "recipient"), world.Origin, Guid.NewGuid(), old);
+            var w = new Wire(Path.Combine(world.Root, "wire-state"), repo, Path.Combine(world.Root, "recipient"), world.Origin, Guid.NewGuid(), old, reportedPlatform);
             try { await w.StartAsync(ct); return w; } catch { await w.DisposeAsync(); throw; }
         }
         public static async Task<Wire> CreateForParkAsync(TaskParkPublicationTests.PublicationWorld park, CancellationToken ct)
@@ -421,7 +454,7 @@ public sealed class DelegateBranchDeliveryTests
             public RunnerCapabilitiesDto Capabilities()
             {
                 var caps = adapter.Capabilities();
-                return caps with { Features = [.. caps.Features!.Where(f => !owner._old || f != "workspaceCardBranchV1"), RunnerCapabilityFeatures.WorkspaceParkV1, RunnerCapabilityFeatures.WorkspaceRepositoryIdentityV1], RunnerStoreId = owner._store };
+                return caps with { Platform = owner._reportedPlatform ?? caps.Platform, Features = [.. caps.Features!.Where(f => !owner._old || f != "workspaceCardBranchV1"), RunnerCapabilityFeatures.WorkspaceParkV1, RunnerCapabilityFeatures.WorkspaceRepositoryIdentityV1], RunnerStoreId = owner._store };
             }
             public Guid RunnerStoreId => owner._store;
             public string Health() => "healthy"; public IReadOnlyList<RunnerSessionDto> List() => [];

@@ -214,7 +214,8 @@ public class OrchestratorInstructionsRefreshTests
 
         var state = await ReadStateAsync(h);
         var file = await File.ReadAllTextAsync(state.WrittenPath);
-        var line = file.Split('\n').Single(value => value.StartsWith("- Plan:", StringComparison.Ordinal));
+        // Exercise Windows rendering on every host. The byte bound covers content, not CRLF.
+        var line = MatrixLine(file.ReplaceLineEndings("\r\n"));
         fault.Failures.ShouldBe(fault.Tiers.Length * ChainReadFault.ReadsPerCell);
         foreach (var affected in fault.Tiers)
             line.ShouldContain($"{affected}{(affected == TaskComplexity.Medium ? " (default)" : "")} unknown (chain read failed)");
@@ -280,12 +281,14 @@ public class OrchestratorInstructionsRefreshTests
         (await File.ReadAllTextAsync(recovered.WrittenPath)).ShouldNotContain("unknown (chain read failed)");
     }
 
+    private static string MatrixLine(string file) =>
+        file.Split('\n').Single(value => value.StartsWith("- Plan:", StringComparison.Ordinal));
+
     private static async Task<BridgeQueueHarness> CreateReadFailureHarnessAsync(ChainReadFault fault)
     {
         var h = await CreateHarnessAsync(fault);
-        // Use a short real filename and candidate so the three tier transitions fit the
-        // existing 700-character notice wrapper. Longer notices retain its usual clipping.
-        h.Delegation.OrchestratorInstructions.Path = Path.Combine(h.TempRoot, "i.md");
+        // A long absolute path reproduces the Windows wrapper pressure on every host.
+        h.Delegation.OrchestratorInstructions.Path = Path.Combine(h.TempRoot, new string('w', 100), "i.md");
         await AttachBundleAsync(h);
         h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.Off;
         await using var scope = h.Provider.CreateAsyncScope();
