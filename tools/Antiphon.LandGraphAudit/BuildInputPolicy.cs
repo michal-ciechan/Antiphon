@@ -17,7 +17,7 @@ internal sealed class BuildInputPolicy
     private readonly HashSet<string> _tracked;
     private readonly HashSet<string> _realTrackedNames;
 
-    public BuildInputPolicy(string repo, string sdkDirectory)
+    public BuildInputPolicy(string repo, string sdkDirectory, string[]? trackedFiles = null)
     {
         _repo = repo;
         _realRepo = SolutionAudit.RealPath(repo);
@@ -26,7 +26,7 @@ internal sealed class BuildInputPolicy
         _packages = SolutionAudit.RealPath(string.IsNullOrWhiteSpace(packages)
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages")
             : Path.GetFullPath(packages, repo));
-        var paths = TrackedFiles(repo);
+        var paths = trackedFiles ?? TrackedFiles(repo);
         _tracked = paths.Select(p => Path.GetFullPath(Path.Combine(repo, p))).ToHashSet(PathComparer);
         // Keep the tracked names, not their resolved link targets: a tracked alias must not make
         // an untracked target trusted. Account for the repository root itself being a link.
@@ -169,7 +169,7 @@ internal sealed class BuildInputPolicy
 
     private string Display(string path) => Path.GetRelativePath(_repo, path).Replace(Path.DirectorySeparatorChar, '/');
 
-    private static string[] TrackedFiles(string repo)
+    internal static string[] TrackedFiles(string repo, bool includeUntracked = false)
     {
         var start = new ProcessStartInfo("git")
         {
@@ -177,6 +177,11 @@ internal sealed class BuildInputPolicy
             RedirectStandardOutput = true, RedirectStandardError = true,
         };
         foreach (var arg in new[] { "ls-files", "--cached", "-z" }) start.ArgumentList.Add(arg);
+        if (includeUntracked)
+        {
+            start.ArgumentList.Add("--others");
+            start.ArgumentList.Add("--exclude-standard");
+        }
         using var process = Process.Start(start)!;
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
