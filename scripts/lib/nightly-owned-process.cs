@@ -20,11 +20,12 @@ namespace Antiphon.Nightly
         public string[] Barriers { get; set; } = Array.Empty<string>();
         public bool FailAssignment { get; set; }
         public bool ZeroCountAtRootWait { get; set; }
-        internal void Pause(string phase)
+        internal void Pause(string phase, CancellationToken cancellation = default(CancellationToken))
         {
             if (!Barriers.Contains(phase)) return;
             File.WriteAllText(Path.Combine(BarrierDirectory, phase + ".entered"), "entered");
-            while (!File.Exists(Path.Combine(BarrierDirectory, phase + ".release"))) Thread.Sleep(10);
+            while (!File.Exists(Path.Combine(BarrierDirectory, phase + ".release")))
+            { cancellation.ThrowIfCancellationRequested(); Thread.Sleep(10); }
         }
         internal bool HoldRootWait()
         {
@@ -38,6 +39,7 @@ namespace Antiphon.Nightly
     {
         public int ExitCode { get; set; } = 1;
         public bool TimedOut { get; set; }
+        public bool OutputDrainTimedOut { get; set; }
         public int Pid { get; set; }
         public DateTime RootStartedAtUtc { get; set; }
         public string[] DescendantIdentities { get; set; } = Array.Empty<string>();
@@ -56,6 +58,8 @@ namespace Antiphon.Nightly
 
     public sealed class NativeProcessOwner
     {
+        private const int OutputDrainTimeoutMilliseconds = 15000;
+        private readonly CancellationTokenSource _drainCancellation = new CancellationTokenSource();
         private readonly NativeProcessHooks _hooks;
         private readonly Dictionary<int, Process> _descendants = new Dictionary<int, Process>();
         public NativeProcessResult Observation { get; } = new NativeProcessResult();
@@ -98,6 +102,7 @@ namespace Antiphon.Nightly
             IntPtr inputRead = IntPtr.Zero, inputWrite = IntPtr.Zero, attributes = IntPtr.Zero, handleList = IntPtr.Zero, envBlock = IntPtr.Zero;
             ReaderWork stdout = null, stderr = null;
             Task logWrite = null;
+            Stopwatch drain = null;
             var clock = Stopwatch.StartNew();
             bool resumed = false;
             string stdoutPath = logPath + ".stdout.tmp", stderrPath = logPath + ".stderr.tmp";
@@ -147,6 +152,12 @@ namespace Antiphon.Nightly
                 root = info.Process; thread = info.Thread; Observation.Pid = (int)info.Pid;
                 using (var identity = Process.GetProcessById(Observation.Pid)) Observation.RootStartedAtUtc = identity.StartTime.ToUniversalTime();
                 Close(ref outWrite); Close(ref errWrite); Close(ref inputRead); Close(ref inputWrite);
+                // Desktop packaged apps can create unpackaged children outside this job,
+                // even when this process itself was successfully assigned to it.
+                uint packageLength = 0;
+                int packageStatus = GetPackageFullName(root, ref packageLength, null);
+                if (packageStatus != 15700) // APPMODEL_ERROR_NO_PACKAGE
+                    throw new InvalidOperationException("Native job custody refuses packaged process images; use an unpackaged executable. Package query=" + packageStatus);
                 _hooks.Pause("assignment");
                 Check(!_hooks.FailAssignment && AssignProcessToJobObject(job, root), "AssignProcessToJobObject");
                 // Readers start before resume, and own only their respective read handles.
@@ -186,13 +197,13 @@ namespace Antiphon.Nightly
                 uint exit;
                 Check(GetExitCodeProcess(root, out exit), "GetExitCodeProcess");
                 Observation.ExitCode = Observation.TimedOut ? 1 : unchecked((int)exit);
-                var drain = Stopwatch.StartNew();
+                drain = Stopwatch.StartNew();
                 logWrite = Task.Run(() =>
                 {
                     // Physical EOF and flushed temporary files permit the final write;
                     // reader completion is independently observed by the owner below.
                     Task.WhenAll(stdout.ContentReady.Task, stderr.ContentReady.Task).GetAwaiter().GetResult();
-                    _hooks.Pause("log-write");
+                    _hooks.Pause("log-write", _drainCancellation.Token);
                     using (var output = new FileStream(logPath, FileMode.Create, FileAccess.Write, FileShare.Read))
                     {
                         foreach (string path in new[] { stdoutPath, stderrPath })
@@ -202,10 +213,16 @@ namespace Antiphon.Nightly
                 });
                 while (true)
                 {
-                    if (stdout.Completion.IsFaulted || stderr.Completion.IsFaulted || logWrite.IsFaulted)
-                        Task.WhenAll(stdout.Completion, stderr.Completion, logWrite).GetAwaiter().GetResult();
+                    foreach (var work in new[] { stdout.Completion, stderr.Completion, logWrite })
+                        if (work.IsFaulted) work.GetAwaiter().GetResult();
                     Observation.OutputDrained = stdout.Completion.IsCompletedSuccessfully && stderr.Completion.IsCompletedSuccessfully && logWrite.IsCompletedSuccessfully;
                     if (Observation.OutputDrained) break;
+                    if (drain.ElapsedMilliseconds >= OutputDrainTimeoutMilliseconds)
+                    {
+                        Observation.TimedOut = true;
+                        Observation.OutputDrainTimedOut = true;
+                        throw new TimeoutException("Native output drain not observed within " + OutputDrainTimeoutMilliseconds + "ms.");
+                    }
                     Thread.Sleep(10);
                 }
                 Observation.DrainMilliseconds = drain.Elapsed.TotalMilliseconds;
@@ -214,6 +231,7 @@ namespace Antiphon.Nightly
             catch (Exception ex)
             {
                 Observation.Error = ex.Message; Observation.ExitCode = 1;
+                _drainCancellation.Cancel();
                 // Failed admission must kill the suspended root, which is not yet in our job.
                 // A running root is contained: kill only our job, never a process-name sweep.
                 if (root != IntPtr.Zero)
@@ -244,6 +262,8 @@ namespace Antiphon.Nightly
                 if (stdout != null && stderr != null)
                     try { Task.WhenAll(stdout.Completion, stderr.Completion).GetAwaiter().GetResult(); } catch { }
                 if (logWrite != null) try { logWrite.GetAwaiter().GetResult(); } catch { }
+                if (drain != null) Observation.DrainMilliseconds = drain.Elapsed.TotalMilliseconds;
+                _drainCancellation.Dispose();
                 Observation.DescendantIdentities = _descendants.Values.Select(p => p.Id + ":" + p.StartTime.ToUniversalTime().ToString("O")).ToArray();
                 foreach (var p in _descendants.Values) p.Dispose();
                 Close(ref job); Close(ref root); Close(ref thread);
@@ -268,11 +288,33 @@ namespace Antiphon.Nightly
             {
                 try
                 {
-                    using (var pipe = new FileStream(new SafeFileHandle(handle, true), FileAccess.Read, 4096, false))
+                    using (var pipe = new SafeFileHandle(handle, true))
                     using (var output = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read))
-                    { pipe.CopyTo(output); output.Flush(true); }
+                    {
+                        // Anonymous pipes do not support cancellable overlapped reads.
+                        // Poll availability and read only available bytes, so an external
+                        // duplicated writer cannot strand a synchronous ReadFile forever.
+                        var buffer = new byte[81920];
+                        while (true)
+                        {
+                            _drainCancellation.Token.ThrowIfCancellationRequested();
+                            uint available;
+                            if (!PeekNamedPipe(pipe, IntPtr.Zero, 0, IntPtr.Zero, out available, IntPtr.Zero))
+                            {
+                                int error = Marshal.GetLastWin32Error();
+                                if (error == 109 || error == 233) break; // broken/disconnected pipe: physical EOF
+                                throw new Win32Exception(error, "PeekNamedPipe");
+                            }
+                            if (available == 0) { Thread.Sleep(10); continue; }
+                            uint read;
+                            Check(ReadFile(pipe, buffer, Math.Min((uint)buffer.Length, available), out read, IntPtr.Zero), "ReadFile");
+                            if (read == 0) break;
+                            output.Write(buffer, 0, (int)read);
+                        }
+                        output.Flush(true);
+                    }
                     reader.ContentReady.SetResult(true);
-                    _hooks.Pause(phase);
+                    _hooks.Pause(phase, _drainCancellation.Token);
                 }
                 catch (Exception ex) { reader.ContentReady.TrySetException(ex); throw; }
             });
@@ -329,6 +371,9 @@ namespace Antiphon.Nightly
         [StructLayout(LayoutKind.Sequential)] private struct ExtendedLimits { public BasicLimits Basic; public IoCounters Io; public UIntPtr ProcessMemory, JobMemory, PeakProcessMemory, PeakJobMemory; }
         [StructLayout(LayoutKind.Sequential)] private struct Accounting { public long User, Kernel, PeriodUser, PeriodKernel; public uint PageFaults, Total, Active, Terminated; }
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool CreatePipe(out IntPtr read, out IntPtr write, ref SecurityAttributes attributes, uint size);
+        [DllImport("kernel32.dll", SetLastError=true)] private static extern bool PeekNamedPipe(SafeFileHandle pipe, IntPtr buffer, uint size, IntPtr read, out uint available, IntPtr left);
+        [DllImport("kernel32.dll", SetLastError=true)] private static extern bool ReadFile(SafeFileHandle pipe, byte[] buffer, uint size, out uint read, IntPtr overlapped);
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] private static extern int GetPackageFullName(IntPtr process, ref uint length, StringBuilder name);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool SetHandleInformation(IntPtr handle, uint mask, uint flags);
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] private static extern IntPtr CreateJobObjectW(IntPtr attributes, string name);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool SetInformationJobObject(IntPtr job, int kind, ref ExtendedLimits limits, uint size);
