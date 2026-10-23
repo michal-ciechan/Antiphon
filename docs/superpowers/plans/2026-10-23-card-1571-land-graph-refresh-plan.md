@@ -53,6 +53,6 @@ publication/record binding) remain pending SourceLanding Mutation; no new PCs.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1571-red/` | stale-witness | `/*/*/LandNonCodeSkipTests/C1380_TargetContainedCodeIsExcludedFromTheActualRebasedDiff` | V-1 red witness | 1 executed; expected guarded-defect failure | 1 | 5 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1571-green/` | refreshed-witnesses | `/*/*/(LandNonCodeSkipTests\|LandGraphEvaluationTests)/(C1380_TargetContainedCodeIsExcludedFromTheActualRebasedDiff\|C1385_RegistryMatchesNarrowGraph\|C1483_S3_PinnedTargetMatchesOnlyItsHash)` | V-1, V-2, V-3 | all 3 methods, 0 failed/skipped | 3 | 5 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1571-green/` | refreshed-witnesses | `/*/*/(LandNonCodeSkipTests*)\|(LandGraphEvaluationTests*)/(C1380_TargetContainedCodeIsExcludedFromTheActualRebasedDiff*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1483_S3_PinnedTargetMatchesOnlyItsHash*)` | V-1, V-2, V-3 | all 3 methods, 0 failed/skipped | 3 | 5 |
 | CP-3 | S2 | CP-2 | unit | `/*/*/*/*[Category=Unit]` | R-1 | >= 1 executed, 0 failed | 1 | 8 |
-| CP-4 | S2 | CP-2 | affected-classes | `/*/*/(LandNonCodeSkipTests\|LandGraphEvaluationTests)/*` | R-2 | both full classes, 0 failed/skipped | 2 | 10 |
+| CP-4 | S2 | CP-2 | affected-classes | `/*/*/(LandNonCodeSkipTests*)\|(LandGraphEvaluationTests*)/*` | R-2 | both full classes, 0 failed/skipped | 2 | 10 |
