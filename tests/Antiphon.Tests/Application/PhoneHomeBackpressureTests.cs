@@ -12,13 +12,14 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-public class PhoneHomeBackpressureTests
+public partial class PhoneHomeBackpressureTests
 {
     [Test]
     public async Task Finite_stall_preserves_connection_order_and_delivery()
     {
         await using var h = await PhoneHomeHostedRunner.CreateAsync();
-        var chunks = new[] { "first-", "@fa", "ke hello", "\n" };
+        await h.PrepareMentionAsync();
+        var chunks = new[] { "first\n", "@fa", "ke hello", "\n" };
         h.Output(h.SessionId, 1, chunks[0]);
         await h.Bus.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         for (var i = 1; i < chunks.Length; i++) h.Output(h.SessionId, i + 1, chunks[i]);
@@ -65,6 +66,12 @@ public class PhoneHomeBackpressureTests
                 .Select(e => JsonSerializer.SerializeToElement(e.Payload)).ToArray();
             deltas.Select(e => e.GetProperty("sequence").GetInt64()).ShouldBe(new long[] { 1, 2, 3, 4, 7 });
             deltas.Select(e => e.GetProperty("text").GetString()).ShouldBe(chunks.Concat(new[] { "last" }));
+            await PhoneHomeHostedRunner.UntilAsync(async () =>
+            {
+                await using var db = h.Db();
+                return await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == h.Bridge.SessionId
+                    && m.Origin == QueuedMessageOrigin.Mention && m.Body.Contains("hello")) == 1;
+            }, "the split mention reaches the real recipient queue exactly once");
         }
         finally
         {
@@ -72,6 +79,7 @@ public class PhoneHomeBackpressureTests
             h.Bus.Release.TrySetResult();
             try { await rpc; } catch (PhoneHomeTransportException) { }
         }
+        await ByteWindowDuringCatchupAsync();
     }
 
     [Test]
@@ -101,6 +109,9 @@ public class PhoneHomeBackpressureTests
         await using var final = h.Db();
         (await final.TranscriptEntries.CountAsync(e => e.Uuid == "a-behind-output")).ShouldBe(1);
         (await final.AgentSessions.SingleAsync(s => s.Id == h.SessionId)).Status.ShouldBe(SessionStatus.Stopped);
+        await OwnershipAndFailureAsync(h);
+        await WorkerBoundAsync();
+        await ReplacementWaitsForObserverAsync();
     }
 
     [Test]
@@ -134,6 +145,7 @@ public class PhoneHomeBackpressureTests
         end.Message.ShouldContain("received total 12 events");
         end.Message.ShouldContain("pending 0 events / 0 bytes");
         end.Message.ShouldNotContain("live buffer");
+        await AccountingBoundsAsync();
     }
 
     [Test]
@@ -157,6 +169,19 @@ public class PhoneHomeBackpressureTests
         await h.Pump.RunCycleAsync(CancellationToken.None);
         h.Logs.Entries.Count(e => Equals(e["Phase"], "output.publish")).ShouldBe(2);
         string.Join("\n", h.Logs.Entries.Concat(h.Host.Logs.Entries).Select(e => e.Message)).ShouldNotContain(secretText);
+        h.Bus.Release.TrySetResult();
+        await PhoneHomeHostedRunner.UntilAsync(() => h.Live.PendingEvents == 0, "publication scenario drains");
+        var other = await h.AddSessionAsync();
+        h.Activity.Hold = true;
+        h.Output(other, 1, secretText);
+        await h.Activity.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        h.Clock.Advance(TimeSpan.FromSeconds(10));
+        await PhoneHomeHostedRunner.UntilAsync(() => h.Logs.Entries.Any(e => Equals(e["Phase"], "output.activity")),
+            "the independently held activity save is named while still running");
+        h.Logs.Entries.Single(e => Equals(e["Phase"], "output.activity"))["SessionId"].ShouldBe(other);
+        h.Activity.Release.TrySetResult();
+        await PhoneHomeHostedRunner.UntilAsync(() => h.Live.PendingEvents == 0, "activity scenario drains");
+        string.Join("\n", h.Logs.Entries.Select(e => e.Message)).ShouldNotContain(secretText);
     }
 
     [Test]
@@ -165,12 +190,15 @@ public class PhoneHomeBackpressureTests
         await using var h = await PhoneHomeHostedRunner.CreateAsync();
         h.Commands.Capabilities().Features.ShouldContain("phoneHomeEventWindowV1",
             "the shipping adapter, not the fake command surface, must advertise support");
-        var window = JsonSerializer.SerializeToElement(h.Live).GetProperty("EventWindow");
+        var window = JsonSerializer.SerializeToElement(h.Live.EventWindow);
         window.GetProperty("Version").GetInt32().ShouldBe(1);
         window.GetProperty("MaxPendingEvents").GetInt32().ShouldBe(4);
         await using var legacy = await PhoneHomeTestHost.StartAsync();
         var oldTicket = JsonSerializer.SerializeToElement(await legacy.RegisterAsync(), PhoneHomeFraming.Json);
         if (oldTicket.TryGetProperty("eventWindow", out var oldWindow)) oldWindow.ValueKind.ShouldBe(JsonValueKind.Null);
+        await ProtocolGuardsAsync();
+        await LegacyAndTicketBindingAsync(h.Commands.Capabilities());
+        await NewRunnerLegacyServerAsync();
     }
 
     private static bool WaitingForCredit(PhoneHomeHostedRunner h) =>

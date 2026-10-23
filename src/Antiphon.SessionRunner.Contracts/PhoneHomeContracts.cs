@@ -670,4 +670,5 @@ public sealed record PhoneHomeRunnerStatusDto(
     string? CodexCliVersion = null,
     DateTimeOffset? CodexCliVersionCheckedAtUtc = null,
     string? CodexCliVersionError = null,
-    bool? CodexCliVersionStale = null);
+    bool? CodexCliVersionStale = null,
+    string? EventMode = null);

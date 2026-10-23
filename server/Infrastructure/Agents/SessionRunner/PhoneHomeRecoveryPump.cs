@@ -281,16 +281,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     private void StartPump(PhoneHomeLiveConnection live, Cycle cycle, CancellationToken ct)
     {
         if (cycle.Pump is { IsCompleted: false })
-        {
-            try
-            {
-                cycle.PumpStop?.Cancel();
-            }
-            catch (ObjectDisposedException)
-            {
-                // The previous pump already disposed its stop source.
-            }
-        }
+            throw new InvalidOperationException("The previous phone-home observer group has not joined.");
 
         var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cycle.PumpStop = stop;
