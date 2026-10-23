@@ -374,18 +374,14 @@ public sealed class LandNonCodeSkipTests
               </ItemGroup>
             </Project>
             """);
-        try
+        await root.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(root, "en-US", "-Update");
             ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
             ran.Stderr.ShouldContain("cannot approve it");
             ran.Stderr.ShouldContain("docs/**/*.md");
             File.Exists(AuditManifest(root)).ShouldBeFalse();
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
+        });
     }
 
     [Test]
@@ -401,18 +397,14 @@ public sealed class LandNonCodeSkipTests
                   </ItemGroup>
                 </Project>
                 """);
-            try
+            await root.RunAsync(async () =>
             {
                 var ran = await RunAuditAsync(root, "en-US", "-Update");
                 ran.Code.ShouldBe(1, include + " " + ran.Stdout + ran.Stderr);
                 ran.Stderr.ShouldContain("cannot approve it");
                 ran.Stderr.IndexOf(include, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
                 File.Exists(AuditManifest(root)).ShouldBeFalse();
-            }
-            finally
-            {
-                Directory.Delete(root, recursive: true);
-            }
+            });
         }
     }
 
@@ -434,7 +426,7 @@ public sealed class LandNonCodeSkipTests
                 </Project>
                 """,
         });
-        try
+        await explicitImport.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(explicitImport, "en-US", "-Update");
             ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
@@ -442,11 +434,7 @@ public sealed class LandNonCodeSkipTests
             ran.Stderr.IndexOf("eng/x/shared.props", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
             ran.Stderr.IndexOf("../docs/**/*.md", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
             File.Exists(AuditManifest(explicitImport)).ShouldBeFalse();
-        }
-        finally
-        {
-            Directory.Delete(explicitImport, recursive: true);
-        }
+        });
 
         var directoryBuild = await InitAuditTreeAsync(new Dictionary<string, string>
         {
@@ -462,7 +450,7 @@ public sealed class LandNonCodeSkipTests
                 </Project>
                 """,
         });
-        try
+        await directoryBuild.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(directoryBuild, "en-US", "-Update");
             ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
@@ -470,11 +458,7 @@ public sealed class LandNonCodeSkipTests
             ran.Stderr.IndexOf("Directory.Build.props", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
             ran.Stderr.IndexOf("$(MSBuildProjectDirectory)/../docs/**/*.md", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
             File.Exists(AuditManifest(directoryBuild)).ShouldBeFalse();
-        }
-        finally
-        {
-            Directory.Delete(directoryBuild, recursive: true);
-        }
+        });
     }
 
     [Test]
@@ -487,18 +471,14 @@ public sealed class LandNonCodeSkipTests
               </ItemGroup>
             </Project>
             """);
-        try
+        await root.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(root, "en-US", "-Update");
             ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
             ran.Stderr.ShouldContain("cannot approve it");
             ran.Stderr.IndexOf("../%64ocs/**/*.md", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
             File.Exists(AuditManifest(root)).ShouldBeFalse();
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
+        });
     }
 
     [Test]
@@ -511,7 +491,7 @@ public sealed class LandNonCodeSkipTests
               </ItemGroup>
             </Project>
             """);
-        try
+        await root.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(root, "en-US", "-Update");
             ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
@@ -519,11 +499,7 @@ public sealed class LandNonCodeSkipTests
             ran.Stderr.IndexOf("AdditionalFiles", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
             ran.Stderr.IndexOf("../docs/**/*.md", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
             File.Exists(AuditManifest(root)).ShouldBeFalse();
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
+        });
     }
 
     [Test]
@@ -678,7 +654,7 @@ public sealed class LandNonCodeSkipTests
                 ["server/App.csproj"] =
                     "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <Import Project=\"" + reference + "\" />\n</Project>\n",
             });
-            try
+            await root.RunAsync(async () =>
             {
                 var ran = await RunAuditAsync(root, "en-US", "-Update");
                 ran.Code.ShouldBe(1, reference + ": " + ran.Stdout + ran.Stderr);
@@ -686,11 +662,7 @@ public sealed class LandNonCodeSkipTests
                 ran.Stderr.IndexOf("server/App.csproj Import Project=" + reference, StringComparison.Ordinal)
                     .ShouldBeGreaterThanOrEqualTo(0, reference + ": " + ran.Stderr);
                 File.Exists(AuditManifest(root)).ShouldBeFalse(reference);
-            }
-            finally
-            {
-                Directory.Delete(root, recursive: true);
-            }
+            });
         }
     }
 
@@ -922,17 +894,13 @@ public sealed class LandNonCodeSkipTests
             ["server/Directory.Packages.props"] = safe,
             ["server/sub/App.csproj"] = project,
         });
-        try
+        await nearest.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(nearest, "en-US", "-Update");
             ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
             ran.Stdout.ShouldContain("count=3");
             File.Exists(AuditManifest(nearest)).ShouldBeTrue();
-        }
-        finally
-        {
-            Directory.Delete(nearest, recursive: true);
-        }
+        });
     }
 
     // CARD-1409 repair (Review 23aedc52 D4): a tracked <project>.user file is imported by its project, so the
@@ -982,17 +950,13 @@ public sealed class LandNonCodeSkipTests
                 </Project>
                 """,
         });
-        try
+        await harmless.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(harmless, "en-US", "-Update");
             ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
             ran.Stdout.ShouldContain("count=2");
             File.Exists(AuditManifest(harmless)).ShouldBeTrue();
-        }
-        finally
-        {
-            Directory.Delete(harmless, recursive: true);
-        }
+        });
     }
 
     // CARD-1409 repair (Review 8989ece8 F1): Microsoft.Common.props/.targets import
@@ -1105,17 +1069,13 @@ public sealed class LandNonCodeSkipTests
                 """,
             ["server/App.csproj"] = project,
         });
-        try
+        await reads.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(reads, "en-US", "-Update");
             ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
             ran.Stdout.ShouldContain("count=2");
             File.Exists(AuditManifest(reads)).ShouldBeTrue();
-        }
-        finally
-        {
-            Directory.Delete(reads, recursive: true);
-        }
+        });
     }
 
     // CARD-1409 repair (Review 31c77116 R1): a tracked .rsp file is parsed, not only hashed. Every
@@ -1157,17 +1117,13 @@ public sealed class LandNonCodeSkipTests
             ["Directory.Build.rsp"] = "﻿# CARD-0589 D-2\r\n\r\n-nodeReuse:false\r\n-maxcpucount\r\n/m:4\r\n-verbosity:minimal\r\n-v:q\r\n-nologo\r\n",
             ["server/App.csproj"] = project,
         });
-        try
+        await allowed.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(allowed, "en-US", "-Update");
             ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
             ran.Stdout.ShouldContain("count=2");
             File.Exists(AuditManifest(allowed)).ShouldBeTrue();
-        }
-        finally
-        {
-            Directory.Delete(allowed, recursive: true);
-        }
+        });
     }
 
     // CARD-1409 repair (Review 31c77116 R2): a property name outside the audit's allow-list refuses wherever it
@@ -1297,17 +1253,13 @@ public sealed class LandNonCodeSkipTests
                 </Project>
                 """,
         });
-        try
+        await allowed.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(allowed, "en-US", "-Update");
             ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
             ran.Stdout.ShouldContain("count=1");
             File.Exists(AuditManifest(allowed)).ShouldBeTrue();
-        }
-        finally
-        {
-            Directory.Delete(allowed, recursive: true);
-        }
+        });
     }
 
     // CARD-1409 repair (Review 31c77116 R3): every item type is classified. Analyzer-config and file items follow the
@@ -1444,17 +1396,13 @@ public sealed class LandNonCodeSkipTests
                 </Project>
                 """,
         });
-        try
+        await allowed.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(allowed, "en-US", "-Update");
             ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
             ran.Stdout.ShouldContain("count=2");
             File.Exists(AuditManifest(allowed)).ShouldBeTrue();
-        }
-        finally
-        {
-            Directory.Delete(allowed, recursive: true);
-        }
+        });
     }
 
     // CARD-1409 repair (Review 31c77116, default-deny): a construct the audit cannot classify refuses: a Project
@@ -1572,17 +1520,13 @@ public sealed class LandNonCodeSkipTests
                 </Project>
                 """,
         });
-        try
+        await allowed.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(allowed, "en-US", "-Update");
             ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
             ran.Stdout.ShouldContain("count=2");
             File.Exists(AuditManifest(allowed)).ShouldBeTrue();
-        }
-        finally
-        {
-            Directory.Delete(allowed, recursive: true);
-        }
+        });
     }
 
     // CARD-1409 repair 4 (Review 937bb1c9 F1): a docs glob is classified by what it resolves to, not by
@@ -1638,16 +1582,12 @@ public sealed class LandNonCodeSkipTests
                 </Project>
                 """,
         });
-        try
+        await allowed.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(allowed, "en-US", "-Update");
             ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
             ran.Stdout.ShouldContain("count=1");
-        }
-        finally
-        {
-            Directory.Delete(allowed, recursive: true);
-        }
+        });
     }
 
     // CARD-1409 repair 4 (Review 937bb1c9 F1, real repository): widening the card-0449 captures include of
@@ -1884,16 +1824,12 @@ public sealed class LandNonCodeSkipTests
                 </Project>
                 """,
         });
-        try
+        await allowed.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(allowed, "en-US", "-Update");
             ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
             ran.Stdout.ShouldContain("count=2");
-        }
-        finally
-        {
-            Directory.Delete(allowed, recursive: true);
-        }
+        });
     }
 
     // CARD-1409 repair 4 (Review 937bb1c9 F3): item metadata names are allow-listed per item type; a
@@ -1969,16 +1905,12 @@ public sealed class LandNonCodeSkipTests
                 </Project>
                 """,
         });
-        try
+        await allowed.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(allowed, "en-US", "-Update");
             ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
             ran.Stdout.ShouldContain("count=2");
-        }
-        finally
-        {
-            Directory.Delete(allowed, recursive: true);
-        }
+        });
     }
 
     // CARD-1409 repair 4 (Review 937bb1c9, disclosed D-18 items closed cheaply): a property whose value is a
@@ -2058,16 +1990,12 @@ public sealed class LandNonCodeSkipTests
                 </Project>
                 """,
         });
-        try
+        await allowed.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(allowed, "en-US", "-Update");
             ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
             ran.Stdout.ShouldContain("count=4");
-        }
-        finally
-        {
-            Directory.Delete(allowed, recursive: true);
-        }
+        });
     }
 
     // CARD-1409 repair 5 (Review f0fb9035 F1, D-28): the Windows land host strips trailing dots and spaces per
@@ -2641,7 +2569,7 @@ public sealed class LandNonCodeSkipTests
     public async Task C1390_MissingNulFailsUnderNonInvariantCulture()
     {
         var root = await InitAuditRepositoryAsync("<Project Sdk=\"Microsoft.NET.Sdk\"></Project>\n");
-        try
+        await root.RunAsync(async () =>
         {
             var updated = await RunAuditAsync(root, "en-US", "-Update");
             updated.Code.ShouldBe(0, updated.Stdout + updated.Stderr);
@@ -2678,11 +2606,7 @@ public sealed class LandNonCodeSkipTests
             var ran = await RunAuditAsync(root, "en-US", new Dictionary<string, string?> { ["PATH"] = path }, "-Check");
             ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
             ran.Stderr.ShouldContain("missing its trailing NUL");
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
+        });
     }
 
     [Test]
@@ -2836,7 +2760,7 @@ public sealed class LandNonCodeSkipTests
         IReadOnlyList<(string Mode, string Path, string Content)>? entries, params string[] needles)
     {
         var root = await InitAuditTreeAsync(files, entries);
-        try
+        await root.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(root, "en-US", "-Update");
             ran.Code.ShouldBe(1, ran.Stdout + ran.Stderr);
@@ -2844,32 +2768,24 @@ public sealed class LandNonCodeSkipTests
             foreach (var needle in needles)
                 ran.Stderr.IndexOf(needle, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, ran.Stderr);
             File.Exists(AuditManifest(root)).ShouldBeFalse();
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
+        });
     }
 
     private static async Task AssertUpdateApprovesAsync(IReadOnlyDictionary<string, string> files, int count,
         IReadOnlyList<(string Mode, string Path, string Content)>? entries = null)
     {
         var root = await InitAuditTreeAsync(files, entries);
-        try
+        await root.RunAsync(async () =>
         {
             var ran = await RunAuditAsync(root, "en-US", "-Update");
             ran.Code.ShouldBe(0, ran.Stdout + ran.Stderr);
             ran.Stdout.ShouldContain("count=" + count.ToString(CultureInfo.InvariantCulture));
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
+        });
     }
 
-    private static async Task<string> InitAuditRepositoryAsync(string project)
+    private static async Task<AuditGitFixture> InitAuditRepositoryAsync(string project)
     {
-        var root = Directory.CreateTempSubdirectory("c1390-audit-").FullName;
+        var root = new AuditGitFixture();
         Directory.CreateDirectory(Path.Combine(root, "server", "Application", "Services"));
         Directory.CreateDirectory(Path.Combine(root, "scripts"));
         await File.WriteAllTextAsync(Path.Combine(root, "server", "App.csproj"), project);
@@ -2884,10 +2800,10 @@ public sealed class LandNonCodeSkipTests
         return root;
     }
 
-    private static async Task<string> InitAuditTreeAsync(IReadOnlyDictionary<string, string> files,
+    private static async Task<AuditGitFixture> InitAuditTreeAsync(IReadOnlyDictionary<string, string> files,
         IReadOnlyList<(string Mode, string Path, string Content)>? entries = null)
     {
-        var root = Directory.CreateTempSubdirectory("c1400-audit-").FullName;
+        var root = new AuditGitFixture();
         Directory.CreateDirectory(Path.Combine(root, "scripts"));
         File.Copy(
             Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "audit-land-verification-graph.ps1"),
