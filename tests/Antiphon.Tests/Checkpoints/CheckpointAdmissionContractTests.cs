@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Antiphon.Checkpoints;
 using Shouldly;
 using TUnit.Core;
@@ -8,6 +9,75 @@ namespace Antiphon.Tests.Checkpoints;
 [Category("Unit")]
 public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
 {
+    [Test]
+    public async Task C1531_production_parser_reads_legacy_and_current_receipts()
+    {
+        var observation = CheckpointFixtures.CleanSource();
+        var source = new SourceEvidence { Start = observation, End = observation, State = "clean", BuildSource = "verified" };
+        var run = TempDir();
+        var model = new ReportModel
+        {
+            RunId = "fixture", Commit = observation.Commit!, Source = source,
+            Builds = [new ReportBuild { Id = "bin-fixture", Source = source, State = "built" }],
+            Rows = [new ReportRow { Id = "CP-1", State = "green", Source = source, Executed = 1, Passed = 1, Failed = 0, Skipped = 0,
+                Line = $"CHECKPOINT CP-1 commit={observation.Commit} source={observation.Commit} dirty=0 sourceState=clean buildSource=verified executed=1 passed=1 failed=0 skipped=0" }],
+        };
+        ReportWriter.WriteFiles(run, model);
+        var report = JsonNode.Parse(File.ReadAllText(Path.Combine(run, "report.json")))!.AsObject();
+        var state = JsonSerializer.SerializeToNode(new RunState
+        {
+            RunId = "fixture", ToolOwner = SafeWrite.Marker, Source = source,
+            Builds = [new BuildProgress { Id = "bin-fixture" }], Rows = [new RowProgress { Id = "CP-1" }],
+        }, RunStateStore.Json)!.AsObject();
+        var failures = new List<string>();
+        foreach (var legacy in new[] { false, true })
+        {
+            var input = report.DeepClone().AsObject();
+            var stateInput = state.DeepClone().AsObject();
+            if (legacy)
+            {
+                RemoveNewFields(input);
+                RemoveNewFields(stateInput);
+            }
+            // Unknown fields have always been ignored; they confer no qualification authority.
+            input["futureDiagnostic"] = "ignored";
+            try
+            {
+                var parsed = ReceiptJson.Parse<ReportModel>(input.ToJsonString(), ReportWriter.Json);
+                parsed.ExecutionSeconds.ShouldBeNull();
+                parsed.Rows.Single().ExecutedSeconds.ShouldBeNull();
+                parsed.Rows.Single().Executed.ShouldBe(1);
+                parsed.Attempts.ShouldBeEmpty();
+                ReportValidator.Validate(parsed, observation.Commit!).ShouldBeNull();
+                ReceiptJson.Parse<RunState>(stateInput.ToJsonString(), RunStateStore.Json).Rows.Single().Phase.ShouldBeNull();
+                var path = Path.Combine(run, "acceptance.json");
+                File.WriteAllText(path, input.ToJsonString());
+                var output = new StringWriter();
+                (await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", path, "--expected-source-sha", observation.Commit!],
+                    new CheckpointApp.Runtime { RepoRoot = run, Output = output })).ShouldBe(0, output.ToString());
+            }
+            catch (Exception ex) { failures.Add($"legacy={legacy}: {ex.Message}"); }
+        }
+        failures.ShouldBeEmpty(string.Join('\n', failures));
+    }
+
+    private static void RemoveNewFields(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var key in new[] { "attempts", "brokerReason", "terminalReason", "executedSeconds", "wallSeconds", "budgetWallSeconds",
+                "admissionOnlySeconds", "executionSeconds", "executionLimitSeconds", "hardWallLimitSeconds", "remainingExecutionSeconds", "hardWallTimeoutAt", "teardownSeconds" })
+                obj.Remove(key);
+            // The run's phase is old and required; only build/row phase is new.
+            foreach (var key in new[] { "builds", "rows" })
+                if (obj[key] is JsonArray children)
+                    foreach (var child in children.OfType<JsonObject>()) child.Remove("phase");
+            foreach (var child in obj.Select(pair => pair.Value).OfType<JsonNode>()) RemoveNewFields(child);
+        }
+        else if (node is JsonArray array)
+            foreach (var child in array.OfType<JsonNode>()) RemoveNewFields(child);
+    }
+
     [Test]
     public async Task C1531_inputs_resolve_without_disabling_bounds()
     {
