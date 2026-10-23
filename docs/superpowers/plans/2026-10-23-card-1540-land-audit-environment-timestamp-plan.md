@@ -118,6 +118,34 @@ same way. Never widen the set to make a fixture pass, and list every rewritten f
 effective runner defaults: no PostgreSQL, browser or provider. One shared `Antiphon.Tests` build.
 No session that waits for input is added or changed, and no release timer is involved.
 
+## Code execution corrections (task 6c903205)
+
+The assigned base is c51023b99b3fcccd222ddbf8137de8c203e04760. Its current manifest is
+60C8870DF97C1FA3231BA95C442C2CFD7B3E870A379D8A1501F7D4A6C1C6491A / 59,
+which supersedes the historical digest/count above. No definition is changed by this task;
+-Update must preserve these base manifest bytes.
+
+A gated native MSBuild probe with OS=../docs/a.md returned that value: OS is environment
+overridable. Correct D-2/D-3 to TWO reserved names and NINE pinned environment knobs,
+including OS. V-6 now requires both pinned approval and unpinned refusal for OS; the two
+reserved-directory controls feed an evaluated item, proving environment overrides cannot
+redirect those items into docs. V-7 covers all eleven names as before.
+
+PATH is also an executable-search prerequisite: removing it caused the base tool to fail
+launching git (exit 2), before evaluation. V-3 therefore uses an inherited usable PATH;
+V-1/V-2 still exercise actual absent/empty/set child variables. The first PATH probe's
+exit 2 is infrastructure failure, excluded from red evidence; its corrected isolated probe
+approved at base. All ten required base witnesses approved (exit 0): gate/include/path,
+modified/created/accessed/stamp-gate/item-function/directory and unpinned.
+
+CP-4 has six results, since the OS method has three arguments. The corrected closed floor
+is 45. Historical counts and costs above remain provenance, not claimed execution.
+D-6 rewrites Receiver, Member and AbsentProperty in c1528 fixtures to the reserved
+MSBuildThisFileDirectory; their original unsupported-function/approval oracles remain.
+Probe tests replace helper-property item reads with safe literal items or the same Exists
+condition. The imported-directory publication fixture now forwards a ProbeInput item,
+retaining its MSBuildProjectDirectory docs dependency without a new property refusal.
+
 ## Slices
 
 | Slice / budget | Files and outcome | Boundary |
@@ -177,12 +205,12 @@ Every row: portable .NET/MSBuild evaluator lane, effective runner defaults, froz
 | CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1540/` | env-time | `/*/*/LandGraphEvaluationTests/(C1540_EnvironmentPropertyRefuses*)\|(C1540_TimestampMetadataRefuses*)` | V-1..V-4 | exactly 9 passed, 0 failed/skipped | 9 | 12 |
 | CP-2 | S1-S3 | CP-1 | knobs | `/*/*/LandGraphEvaluationTests/(C1540_KnobGateNeedsPin*)\|(C1540_AdmittedNamesApprove*)\|(C1540_AdmittedVerdictIgnoresEnvironment*)` | V-5..V-7 | exactly 14 passed, 0 failed/skipped | 14 | 4 |
 | CP-3 | S1-S3 | CP-1 | syntax | `/*/*/LandGraphEvaluationTests/(C1540_ExpressionSyntaxFailsClosed*)` | V-8 | exactly 1 passed, 0 failed/skipped | 1 | 2 |
-| CP-4 | S1-S3 | CP-1 | approval-pins | `/*/*/LandGraphEvaluationTests/(C1483_S4_RealRepositoryApproves*)\|(C1483_S1_HarmlessFixtureApproves*)\|(C1483_S3_OsConditionedElementNeedsPin*)\|(C1483_S3_PinnedTargetMatchesOnlyItsHash*)` | R-1 R-2 | exactly 4 passed, 0 failed/skipped | 4 | 3 |
+| CP-4 | S1-S3 | CP-1 | approval-pins | `/*/*/LandGraphEvaluationTests/(C1483_S4_RealRepositoryApproves*)\|(C1483_S1_HarmlessFixtureApproves*)\|(C1483_S3_OsConditionedElementNeedsPin*)\|(C1483_S3_PinnedTargetMatchesOnlyItsHash*)` | R-1 R-2 | exactly 6 passed, 0 failed/skipped | 6 | 3 |
 | CP-5 | S1-S3 | CP-1 | c1528 | `/*/*/LandGraphEvaluationTests/(C1528_StaticExistsRefuses*)\|(C1528_ProjectedExistsRefuses*)\|(C1528_MetadataReadRefuses*)\|(C1528_EqualResultReadRefuses*)\|(C1528_FunctionSyntaxAndAbsence*)\|(C1528_PureMetadataAndFunctionsApprove*)` | R-3 | exactly 11 passed, 0 failed/skipped | 11 | 2 |
 | CP-6 | S1-S3 | CP-1 | publication | `/*/*/LandGraphEvaluationTests/(C1483_S5_UpdateRefusesWhenEvaluationRefuses*)\|(C1483_S5_CheckRequiresEvaluationRecord*)\|(C1528_UpdateRefusalPreservesRecords*)` | R-4 | exactly 3 passed, 0 failed/skipped | 3 | 2 |
 | CP-7 | S1-S3 | CP-1 | manifest | `/*/*/LandNonCodeSkipTests/(C1385_RegistryMatchesNarrowGraph*)` | R-5 | exactly 1 passed, 0 failed/skipped | 1 | 1 |
 
-Closed floor: 43 results, about 26 minutes including the one build. Declared separately, all
+Closed floor: 45 results, about 26 minutes including the one build. Declared separately, all
 gated: one tool-only base build for S1 red if no verified base DLL exists, and one final tool-only
 build for `-Update`. Run `dotnet run --project tools/Antiphon.Checkpoints -- run --plan <this plan>
 --after S1-S3 --expected-source-sha <sha>` and wait until the exit is not 75. Run

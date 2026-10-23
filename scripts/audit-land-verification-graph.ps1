@@ -2,6 +2,7 @@
 # -Update requires the emulation pre-check AND real MSBuild evaluation, with no restore.
 # -Check verifies the pre-check, manifest and digest/SDK/pins evaluation record; it does not evaluate.
 # CARD-1528: -Update also refuses unobserved filesystem/unsupported evaluation functions.
+# CARD-1540: timestamp metadata and unreviewed environment properties refuse; knob reads need exact pins.
 # Land itself only compares the definition digest; it never runs this evaluator.
 # Build the DLL through scripts/build-slot.ps1, with -c Release and
 # --property:OutputPath=bin-land-audit/Release/net10.0/, or supply a built -ToolPath.
