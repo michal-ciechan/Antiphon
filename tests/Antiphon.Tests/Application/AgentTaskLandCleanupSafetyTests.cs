@@ -164,6 +164,40 @@ public sealed class AgentTaskLandCleanupSafetyTests
         await h.Fixture.AssertRemoteSourceAsync();
     }
 
+    [Test]
+    public async Task C1536_SourceFileRemainsPreserved()
+    {
+        await using var h = new LandingSafetyHarness();
+        await PreparePublishedAsync(h);
+        var receipt = (await h.OperationAsync()).ShouldNotBeNull();
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "worktree", "remove", h.Fixture.Source);
+        await File.WriteAllTextAsync(h.Fixture.Source, "foreign file\n");
+        File.GetAttributes(h.Fixture.Source).HasFlag(FileAttributes.Directory).ShouldBeFalse();
+        Directory.Exists(h.Fixture.Source).ShouldBeFalse();
+        await h.RepostAsync();
+        var requestId = await CurrentRequestAsync(h);
+        var calls = h.Verifier.Calls;
+        h.Fixture.Git.Trace.Clear();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+        await using var db = h.CreateContext();
+        var request = await db.AgentTaskLandRequests.SingleAsync(r => r.Id == requestId);
+        request.State.ShouldBe(LandRequestState.Completed);
+        request.IsPending.ShouldBeFalse();
+        request.HoldReasonCode.ShouldBeNull();
+        var retry = (await h.OperationAsync()).ShouldNotBeNull();
+        retry.Id.ShouldBe(receipt.Id);
+        retry.Mode.ShouldBe(LandOperationMode.CleanupRetry);
+        retry.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+        retry.RemoteConfirmedAt.ShouldBe(receipt.RemoteConfirmedAt);
+        retry.DirectoryRemoved.ShouldBeFalse();
+        retry.BranchRemoved.ShouldBeFalse();
+        (await File.ReadAllTextAsync(h.Fixture.Source)).ShouldBe("foreign file\n");
+        h.Verifier.Calls.ShouldBe(calls);
+        h.Fixture.Git.Trace.ShouldNotContain(a => a.Contains("remove") || a.Contains("rebase") || a[0] == "push");
+        (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", h.Fixture.SourceRef)).Trim().ShouldBe(receipt.OriginalSourceSha);
+        await h.Fixture.AssertRemoteSourceAsync();
+    }
+
     private static async Task PreparePublishedAsync(LandingSafetyHarness h)
     {
         await h.InitializeAsync();
