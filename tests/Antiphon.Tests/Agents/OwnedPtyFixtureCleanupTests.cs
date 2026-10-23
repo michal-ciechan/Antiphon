@@ -57,6 +57,28 @@ public class OwnedPtyFixtureCleanupTests
             {
                 (await Should.ThrowAsync<IOException>(() => cleanup.DeleteAsync())).ShouldBeSameAs(unrelated);
                 elapsed.ShouldBe(TimeSpan.Zero); attempts.ShouldBe(1); diagnostics.ShouldBe(0);
+                // A plausible native code alone cannot authorize retries or attribute a foreign file.
+                foreach (var variant in new[] { "readonly", "changed", "unattributed", "unix" })
+                {
+                    var calls = 0;
+                    var observedAttributes = File.GetAttributes(image);
+                    var policy = new OwnedPtyFixtureCleanup(root, [new(image, observedAttributes)], variant,
+                        deleteTree: _ => { calls++; throw denied; },
+                        deleteFile: _ => { if (variant != "unattributed") throw denied; },
+                        attributes: _ => variant == "readonly" ? observedAttributes | FileAttributes.ReadOnly
+                            : variant == "changed" ? observedAttributes ^ FileAttributes.Hidden : observedAttributes,
+                        diagnose: _ => throw new InvalidOperationException("ineligible denial reached diagnosis"),
+                        elapsed: () => elapsed, delay: (_, _) => throw new InvalidOperationException("ineligible denial retried"),
+                        windows: variant != "unix");
+                    (await Should.ThrowAsync<IOException>(() => policy.DeleteAsync())).ShouldBeSameAs(denied);
+                    calls.ShouldBe(1, variant); Directory.Exists(root).ShouldBeTrue();
+                }
+                Should.Throw<ArgumentException>(() => new OwnedPtyFixtureCleanup(root,
+                    [new(Path.Combine(Path.GetDirectoryName(root)!, "OpenConsole.exe"), FileAttributes.Normal)], "foreign"));
+                using var canceled = new CancellationTokenSource();
+                canceled.Cancel();
+                var noDelete = new OwnedPtyFixtureCleanup(root, [], "canceled", deleteTree: _ => throw new InvalidOperationException("canceled deletion ran"));
+                await Should.ThrowAsync<OperationCanceledException>(() => noDelete.DeleteAsync(canceled.Token));
             }
             else
             {
