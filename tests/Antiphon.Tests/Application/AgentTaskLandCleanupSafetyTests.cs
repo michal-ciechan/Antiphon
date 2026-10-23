@@ -66,6 +66,7 @@ public sealed class AgentTaskLandCleanupSafetyTests
     [Arguments("registered-broken")]
     [Arguments("empty-gitfile")]
     [Arguments("query-error")]
+    [Arguments("query-timeout")]
     [Arguments("source-alias")]
     public async Task C1536_UncertainSourceRetainsAdmissionHold(string uncertainty)
     {
@@ -116,15 +117,16 @@ public sealed class AgentTaskLandCleanupSafetyTests
             if (uncertainty == "no-operation") (await input.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId)).ActiveLandingId.ShouldBeNull();
         }
         var queryFailed = false;
-        if (uncertainty == "query-error") h.Fixture.Git.BeforeCommand = (_, args) =>
+        if (uncertainty is "query-error" or "query-timeout") h.Fixture.Git.BeforeCommand = (_, args) =>
         {
             if (args[0] != "worktree" || !args.Contains("list")) return Task.FromResult<LandingGitResult?>(null);
             queryFailed = true;
+            if (uncertainty == "query-timeout") throw new TimeoutException("fixture enumeration timeout");
             return Task.FromResult<LandingGitResult?>(new(128, "", "fixture enumeration unavailable"));
         };
         h.Fixture.Git.Trace.Clear();
         (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Held);
-        if (uncertainty == "query-error") queryFailed.ShouldBeTrue();
+        if (uncertainty is "query-error" or "query-timeout") queryFailed.ShouldBeTrue();
         await using var after = h.CreateContext();
         var request = await after.AgentTaskLandRequests.SingleAsync(r => r.Id == requestId);
         request.State.ShouldBe(LandRequestState.Held);
