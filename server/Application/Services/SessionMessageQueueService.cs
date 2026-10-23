@@ -2054,12 +2054,12 @@ public sealed partial class SessionMessageQueueService
     // delivery rather than delaying one.
     private async Task<bool> HeldBackTypingBlocksTheComposerAsync(
         Guid sessionId,
+        AgentKind kind,
         IReadOnlyList<SessionQueuedMessage> pending,
         IReadOnlyList<SessionQueuedMessage> deliverable,
         DateTime sessionGeneration,
         CancellationToken ct)
     {
-        var kind = await TryGetSessionKindAsync(sessionId, ct);
         var deliverableIds = deliverable.Select(m => m.Id).ToHashSet();
         var heldBack = pending
             .Where(m => !deliverableIds.Contains(m.Id))
@@ -2098,7 +2098,7 @@ public sealed partial class SessionMessageQueueService
     // submitted UserPrompt after the typing floor proves that composer was emptied, regardless
     // of its text; this is release evidence, not a delivery verdict for the canceled message.
     private async Task<bool> CanceledTypingBlocksTheComposerAsync(
-        AppDbContext db, Guid sessionId, DateTime generation, CancellationToken ct)
+        AppDbContext db, Guid sessionId, AgentKind kind, DateTime generation, CancellationToken ct)
     {
         var canceled = await db.SessionQueuedMessages.AsNoTracking()
             .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Canceled
@@ -2109,8 +2109,6 @@ public sealed partial class SessionMessageQueueService
                 || (m.LastDeliveryGeneration == null
                     && (m.LastDeliveryStartedAt == null || m.LastDeliveryStartedAt >= generation)))
             .ToListAsync(ct);
-        var kind = await db.AgentSessions.AsNoTracking()
-            .Where(s => s.Id == sessionId).Select(s => s.AgentKind).FirstAsync(ct);
         var bufferedPointer = false;
         var unrecorded = new List<(Guid Id, string Body)>();
         foreach (var message in canceled.Where(m => !DeliveryGenerationChanged(m, generation)))
@@ -2350,11 +2348,14 @@ public sealed partial class SessionMessageQueueService
         if (pending.Count == 0)
             return rulesClosed ? TemporaryBlock() : FlushResult.Nothing;
 
-        var sessionGeneration = SessionGeneration.Normalize(
-            await db.AgentSessions.AsNoTracking()
-                .Where(s => s.Id == sessionId)
-                .Select(s => s.StartedAt)
-                .FirstAsync(ct));
+        // CARD-1543: share provider metadata only within this generation-bound attempt.
+        // Runtime writes still revalidate the generation and live dialog/input revisions.
+        var attemptSession = await db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => new { s.StartedAt, s.AgentKind })
+            .FirstAsync(ct);
+        var sessionGeneration = SessionGeneration.Normalize(attemptSession.StartedAt);
+        var sessionKind = attemptSession.AgentKind;
         if (await CancelDeadBriefsAsync(db, pending, sessionGeneration, ct))
             pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
         if (pending.Count == 0) return FlushResult.Nothing;
@@ -2372,7 +2373,7 @@ public sealed partial class SessionMessageQueueService
         // fails verification for two very different reasons — the body never reached Claude, or it
         // did and the matcher was blind (ingestion stall, a fork, a text transform) — and only the
         // transcript can tell them apart. Automatic retry is safe BECAUSE the retry looks first.
-        var late = await LateConfirmAttemptedMessagesAsync(db, sessionId, pending, ct);
+        var late = await LateConfirmAttemptedMessagesAsync(db, sessionId, pending, sessionKind, ct);
         lateConfirmed?.Record(late);
         if (late.Handled > 0)
             pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
@@ -2414,10 +2415,10 @@ public sealed partial class SessionMessageQueueService
         // becomes Sent and stops being a held-back row at all. A cleared composer or a relaunch
         // also releases it. Cancellation alone never proves the composer empty (CARD-0266).
         if (await HeldBackTypingBlocksTheComposerAsync(
-                sessionId, pending, deliverable, sessionGeneration, ct))
+                sessionId, sessionKind, pending, deliverable, sessionGeneration, ct))
             return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
 
-        if (await CanceledTypingBlocksTheComposerAsync(db, sessionId, sessionGeneration, ct))
+        if (await CanceledTypingBlocksTheComposerAsync(db, sessionId, sessionKind, sessionGeneration, ct))
             return late.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
 
         // CARD-0650 D-7: the same hold for an unconfirmed watchdog prompt of this generation.
@@ -2478,7 +2479,7 @@ public sealed partial class SessionMessageQueueService
             await db.SaveChangesAsync(ct);
             // The last-look supersession above can create an orphan in THIS flush, after the
             // initial composer checks. Recheck before typing the next surviving completion note.
-            if (await CanceledTypingBlocksTheComposerAsync(db, sessionId, sessionGeneration, ct))
+            if (await CanceledTypingBlocksTheComposerAsync(db, sessionId, sessionKind, sessionGeneration, ct))
                 // As in the all-superseded case below, publish the changed queue without
                 // reporting a new delivery or charging an attempt to the surviving note.
                 return FlushResult.LateConfirmed;
@@ -2647,7 +2648,7 @@ public sealed partial class SessionMessageQueueService
         // CARD-0340 S3 / CARD-0342: a previously typed body still standing in the composer gets
         // Enter only in the process that took the typing, with the whole head visible (CARD-0501).
         // A new generation proves the old composer gone even when history shows the same body.
-        if (await RecoverPointerAsync(db, sessionId, run, ceilings, ct) is { } pointerRecovery)
+        if (await RecoverPointerAsync(db, sessionId, run, ceilings, sessionKind, ct) is { } pointerRecovery)
             return pointerRecovery;
 
         if (run.Any(m => m.DeliveryAttempts > 0)
@@ -2970,10 +2971,15 @@ public sealed partial class SessionMessageQueueService
     /// reverted for NoSubmitOutput was re-typed on the very turn-end its own delivery produced.</item>
     /// </list>
     /// </summary>
-    private async Task<LateConfirmCounts> LateConfirmAttemptedMessagesAsync(
+    private Task<LateConfirmCounts> LateConfirmAttemptedMessagesAsync(
         AppDbContext db, Guid sessionId, IReadOnlyList<SessionQueuedMessage> pending, CancellationToken ct)
+        => LateConfirmAttemptedMessagesAsync(db, sessionId, pending, null, ct);
+
+    private async Task<LateConfirmCounts> LateConfirmAttemptedMessagesAsync(
+        AppDbContext db, Guid sessionId, IReadOnlyList<SessionQueuedMessage> pending,
+        AgentKind? knownKind, CancellationToken ct)
     {
-        var kind = await TryGetSessionKindAsync(sessionId, ct);
+        var kind = knownKind ?? await TryGetSessionKindAsync(sessionId, ct);
         var currentGeneration = kind == AgentKind.Codex ? await CaptureSessionGenerationAsync(sessionId, ct) : null;
         if (!_verification.TranscriptConfirmEnabled && !pending.Any(m => IsCodexPointer(kind, m)))
             return LateConfirmCounts.Empty;
