@@ -49,6 +49,9 @@ multiline parsing against Persistence 52 passes and Remote 29 passes/censoring.
 | CP-22 | S1 | CP-20 | drift | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_rejects_receipt_drift` | V-1 eight drifts | 8 passed, 0 failed/skipped | 8 | 3 | true | n/a |
 | CP-23 | S1 | CP-20 | replacement | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_accepts_only_recorded_replacement` | V-1 two replacement cases | 2 passed, 0 failed/skipped | 2 | 3 | true | n/a |
 
+| CP-11 | S1R | `tests/Antiphon.Tests -> bin-c1514-s1-red/` | stale-roster-red | `/*/*/(C1008PlatformContractTests*)\|(WindowsUnitPlatformAdmissionTests*)/(C1050_Remote_entries_guard_before_work*)\|(C1210_Roster_closure_matches_source_gates*)` | introduced stale identity witness | 2 assertion failures identifying renamed/missing gates | 2 | 3 | true | n/a |
+| CP-24 | S1 | CP-20 | platform-roster-closure | `/*/*/(C1008PlatformContractTests*)\|(WindowsUnitPlatformAdmissionTests*)/(C1050_Remote_entries_guard_before_work*)\|(C1050_Audit_rejects_empty_or_incomplete_outcomes*)\|(C1210_Roster_closure_matches_source_gates*)` | V-1 adjacent selector/skip multiset and source guards | 3 passed, 0 failed/skipped | 3 | 3 | true | n/a |
+
 Run CP-0,CP-10 at the committed manifest SHA, then CP-20..d at the final
 committed candidate SHA, via checkpoint `run --row-timeout 9m --total-timeout 60m`.
 Wait through exit 75. One normal baseline/candidate pair; no repeat after green.
@@ -67,3 +70,17 @@ before the caller lands this original Code task; S2 follows as separate Code.
 
 Manifest subrows CP-20..23 implement landed logical CP-2. Numeric IDs are
 required for build reuse; initial alphanumeric import was refused before build/tests.
+
+## Dependent platform roster repair
+
+The first candidate run 20261023-092445-474e was explicitly stopped during
+build, before any test host launch: dependency audit found the old identity in
+C1008PlatformContractTests and WindowsUnitSkipRoster. This is an introduced
+selection defect, owned here. CP-11 captures the existing exact guards red at
+the committed extraction, then CP-24 runs those guards and the unchanged audit
+negative controls after updating literal identities/multiplicities (1/5/8/2).
+No assertion is loosened. Both additions are bounded exact selections, justified
+by changed selector consumers; they replace no original semantic checkpoint.
+The final candidate run includes CP-20..24, with one build. Native Windows child
+audits are outside this Linux-only commission; no OS-selected production branch
+changes, and no Windows pass is claimed.
