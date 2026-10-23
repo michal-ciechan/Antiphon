@@ -1,5 +1,7 @@
 # CARD-0680 Code execution record
 
+Latest server execution `20261023-020243-8a0c`, source `8a459b64736e1942b361cf2e9b2e8fa4d5e6824b`: CP-4 and CP-6 each passed one method with zero skips; CP-5 failed because its factory reused/disposed the primary HTTP client; CP-7 exposed an introduced watchdog regression where Unknown suppressed clearing an absent rule's active episode. The repair gives the fixture independent clients and moves the dialog admission check after no-match bookkeeping, still before response/cooldown success. Assertions and durations remain unchanged. CP-5/CP-7 are rerun; CP-4/CP-6 remain valid for unchanged queue/hold code. Build 318.644s, all slots granted with zero wait; recorded run wall 8m09s, cleanup completed. The aggregate red receipt is retained, not relabeled green. Exact CHECKPOINT lines and final validation outcomes are in the full ignored task report.
+
 Current status before final checkpoints: implementation is complete; portable server verification is still pending. Historical sections below preserve the initial outage and pre-fix outcomes. The ignored `.antiphon/task-52a5dc76.md` records final results after this report-bearing commit.
 
 CP-2/CP-3 passed at `8fc327d6b8dcd9a328c0b7625ff0fcf061a3a997`, one exact method each, no failures/skips; fresh TRX inspected and receipt validation returned `CHECKPOINT SOURCE VALID` rows=2. Build 54.221s, all slots granted with zero wait. This includes awaited-evidence/replacement/startup and full input-proof controls.
