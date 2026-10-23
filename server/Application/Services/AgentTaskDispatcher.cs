@@ -141,6 +141,8 @@ public sealed partial class AgentTaskDispatcher
         "dispatch_brief_recovery_held: dispatch brief recovery did not complete before the delivery deadline. "
         + "Original input is retained. The session was not stopped.";
 
+    private readonly TaskProviderWaitReader? _providerWait;
+
     public AgentTaskDispatcher(
         AppDbContext db,
         AgentRegistry agentRegistry,
@@ -220,8 +222,10 @@ public sealed partial class AgentTaskDispatcher
         SettlementSyncRecoveryService? settlementSync = null,
         DispatchConcurrencySettingsService? dispatchConcurrency = null,
         CardSiblingInspectionService? siblingInspection = null,
-        CardSiblingInspectionQueue? siblingInspections = null)
+        CardSiblingInspectionQueue? siblingInspections = null,
+        TaskProviderWaitReader? providerWait = null)
     {
+        _providerWait = providerWait;
         _dispatchConcurrency = dispatchConcurrency;
         _siblingInspection = siblingInspection;
         _siblingInspections = siblingInspections;
@@ -3877,7 +3881,10 @@ public sealed partial class AgentTaskDispatcher
 
         // Gate 2 — pull the runner's own view, then re-read the clocks against it.
         await CatchUpTranscriptAsync(sessionId, ct);
-        var verdict = await TaskDeadlinePolicy.EvaluateAsync(_db, task, UtcNow(), _settings, ct);
+        var wait = _providerWait is null ? null : await _providerWait.ReadAsync(task.Id, true, ct);
+        await _db.Entry(task).ReloadAsync(ct);
+        if (task.AgentSessionId != sessionId || task.Status is not (AgentTaskStatus.Dispatched or AgentTaskStatus.Working)) return false;
+        var verdict = await TaskDeadlinePolicy.EvaluateAsync(_db, task, UtcNow(), _settings, ct, wait);
         if (verdict is not { Breached: true })
         {
             _logger.LogInformation(
@@ -3929,6 +3936,10 @@ public sealed partial class AgentTaskDispatcher
             + "The task is Failed, not escalated and not retried: a bigger model cannot finish a "
             + "task that never ends, and re-running it is your call. The session was NOT killed "
             + $"— read session {sessionId} for what it was actually doing before you decide.";
+        if (wait is { IsWait: true })
+            reason = verdict.Summary + $" The task is Failed. The session was not killed; its runner seat may still be occupied. New Refine calls on this task are refused. Preserve the worktree and pending queue, then inspect session {sessionId} and its runner seat before choosing recovery.";
+        else if (_providerWait is not null && task.AgentKind == AgentKind.ClaudeCode && wait is null)
+            reason += " Current provider dialog observation unavailable; the ordinary deadline still applies.";
         if (bindRefusal.Outcome == BindRefusalOutcome.UnreportedActivity)
         {
             reason = reason.TrimEnd()
