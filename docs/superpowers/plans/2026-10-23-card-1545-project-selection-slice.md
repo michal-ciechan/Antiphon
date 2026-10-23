@@ -51,6 +51,8 @@ remain pending for method-scoped SourceLanding Mutation, including discovery.
 | CP-3 | S2 | CP-2 | release-modes | `/*/*/ChangeAwareReleaseTests/C1313_ModeCredit` | R-1 | 1 method, 0 failed/skipped | 1 | 4 |
 | CP-4 | S3 | n/a | consumer-red | `pwsh -NoProfile -File scripts/test-rc-project-selection.ps1 -Case C1545_ConsumerSafety -ResultsDirectory .antiphon/c1545-consumer-red` | V-5 | 4 assertion rows, expected missing-consumer/batch failures before S4 | n/a | 1 |
 | CP-5 | S4 | `tests/Antiphon.Tests -> bin-c1545-final/` | final-planner | `/*/*/RcProjectSelectionTests/*` | V-1,V-2,V-3,V-5 | all 4 methods, 0 failed/skipped | 4 | 6 |
+| CP-6 | S5 | n/a | path-red | `pwsh -NoProfile -File scripts/test-rc-project-selection.ps1 -Case C1545_ConsumerSafety -ResultsDirectory .antiphon/c1545-path-red` | V-6 | 4 assertion rows, glob-consumer must fail on literal bracket name before S6 | n/a | 1 |
+| CP-7 | S6 | n/a | path-green | `pwsh -NoProfile -File scripts/test-rc-project-selection.ps1 -Case C1545_ConsumerSafety -ResultsDirectory .antiphon/c1545-path-green` | V-5,V-6 | 4 passed assertion rows, 0 failed | n/a | 1 |
 
 Measured first red checkpoint: build 266.90 s, host 21.16 s, three intended
 assertion failures, no skips. This single sample is not p95. The build plus
@@ -81,3 +83,12 @@ and batch census failed as intended. S4 adds those consumer edges and a TUnit
 census with reasoned harness-only dispositions. Imported item paths resolve
 relative to the consuming project, while explicit MSBuildThisFileDirectory and
 Import paths resolve from their declaring file. No qualification policy changed.
+
+S5 strengthens C1545_ConsumerSafety's glob-consumer guard with a literal bracketed
+filename. V-6 requires that consumer as well as the wildcard consumer. S6 replaces
+the PowerShell wildcard interpretation with escaped, bounded regex matching of
+MSBuild's star/question-mark patterns; brackets remain literal. Only this existing
+PowerShell method body/matcher changes after CP-5, so CP-6/CP-7 run that exact body
+directly without recompiling its unchanged TUnit wrapper. PC-7 is the bracket-path
+variant of C1545_ConsumerSafety, pending SourceLanding Mutation. CP-5 passed all
+four methods at 257acdc2d453857e2c01b87f5598391508795ba1, clean/verified build.
