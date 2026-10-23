@@ -59,7 +59,7 @@ V-8 2 fail; V-9 2 fail. Total 27, 19 expected assertion failures, 8 passed contr
 CP-2's first OR filter selected zero: invalid, not a red witness. Corrected the documented
 TUnit wildcard-hint syntax and reran only CP-2 through the checkpoint tool row verb with
 --no-build at the same source SHA. Exactly V-10 and V-11 failed their persisted-stamp assertions.
-No production defect, timeout or assertion was weakened. The plan records the syntax correction
+No production defect, timeout or assertion was weakened. The Code checkpoint supplement records the syntax correction
 for all OR rows. Final producer fixtures use owned isolated databases; guarded assertions remain.
 
 ```text
@@ -103,3 +103,20 @@ No repeated green proof is planned. Owned alternate outputs are removed after us
 All PC-1..PC-12 variants remain pending for SourceLanding Mutation:
 docs/superpowers/mutations/2026-10-23-card-1491-pool-effort.md. Ordinary Review is next when
 required ordinary rows are complete; missing exact execution remains Code, not approval to land.
+
+## Prequalification publication correction
+
+The S2 implementation/report commit 766668c50027a6cbe6e0e447b7f5860de153a3ce was pushed.
+Its first green run 20261023-030208-e6d9 was stopped immediately after merge-tree found an
+add/add conflict in the independently landed plan. No test row executed. The build had acquired
+a slot (waited=0s) and was interrupted; wait returned exit 6 (executor died before phase=done),
+so this is invalid evidence, never green. Stop cleanup first reported IOException; the owning
+wait then confirmed executor death and removed the shadow copy.
+
+The original plan is restored byte-for-byte to origin/master. Executable corrections now live
+in docs/superpowers/plans/2026-10-23-card-1491-code-checkpoints.md, preserving the nine rows.
+This correction is test-selection content required for mergeability, not an advisory-only
+Review correction. A fresh single build and CP-3..CP-9 qualify the new committed source.
+The earlier merge-tree against rc 5a126f6fc5ae4e16d803b628716b8f0485a37174 also showed the
+expected provider-context conflicts (dispatcher, control, Agent and related fixtures). A direct
+rc cherry-pick is not clean; a separate adapted rc port and rc-model schema proof are required.
