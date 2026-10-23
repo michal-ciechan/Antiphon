@@ -2242,7 +2242,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     }
 
     public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
-        _runtime.SendInputAsync(sessionId, input, ct);
+        _runtime.SendInteractiveInputAsync(sessionId, input, ct);
 
     public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct)
     {
@@ -3194,7 +3194,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
         for (var attempt = 1; attempt <= 2; attempt++)
         {
-            await adapter.SendInputAsync("\u001b", ct);
+            await adapter.DismissRemoteControlAsync(ct);
             await Task.Delay(RemoteControlMenuSettleDelay, ct);
             try
             {

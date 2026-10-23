@@ -8,6 +8,7 @@ namespace Antiphon.SessionRunner;
 /// <summary>Volatile factual custody, separate from terminal-seat release authority.</summary>
 internal sealed class ClaudeSubmittedInputHistory
 {
+    public bool HasSubmittedCapture => _capture?.SubmitRevision is not null;
     private string? _emptyScreen;
     private DateTimeOffset _emptyAt;
     private long _emptyRevision;

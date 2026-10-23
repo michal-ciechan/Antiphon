@@ -33,7 +33,7 @@ internal sealed class ExpectationDeliveryFixture : IAsyncDisposable
     public RecordingCatchUp CatchUp { get; } = new();
 
     /// <param name="observable">One completed turn first, so the send has a transcript floor.</param>
-    public static async Task<ExpectationDeliveryFixture> CreateAsync(bool observable = true)
+    public static async Task<ExpectationDeliveryFixture> CreateAsync(bool observable = true, ISessionRunnerClient? runner = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var world = await ExpectationTestWorld.CreateAsync(schema.ConnectionString);
@@ -50,9 +50,15 @@ internal sealed class ExpectationDeliveryFixture : IAsyncDisposable
             AttachSessionId = world.OwnedSessionId,
             AttachAgentId = world.AgentId,
             ConfigureServices = services =>
-                services.AddSingleton<IExpectationPromptSender, SessionQueueExpectationPromptSender>(),
+            {
+                services.AddSingleton<IExpectationPromptSender, SessionQueueExpectationPromptSender>();
+                if (runner is not null) services.AddSingleton(runner);
+            },
         });
         var fixture = new ExpectationDeliveryFixture(schema, world, harness);
+        harness.Adapter.DialogGuardEnabled = true;
+        harness.Adapter.AcceptedStartedAt = await fixture.GenerationAsync();
+        harness.Adapter.ClaudeComposerChrome = true;
         if (observable)
             await harness.InsertTurnAsync("an earlier prompt", "an earlier answer");
         return fixture;

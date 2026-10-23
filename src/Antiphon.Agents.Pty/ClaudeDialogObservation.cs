@@ -29,7 +29,9 @@ public sealed record ClaudeDialogObservation(
         // or a final numbered answer are blocking. A partial redraw stays Unknown.
         var footer = string.Concat(last.Where(char.IsLetterOrDigit)).ToLowerInvariant();
         var bottomChoice = last.Trim('│', ' ', '❯', '>').StartsWith("2.", StringComparison.Ordinal)
-            || last.All(c => char.IsWhiteSpace(c) || "╰╯─".Contains(c));
+            || last.All(c => char.IsWhiteSpace(c) || "╰╯─".Contains(c))
+            || prompt.Kind == ClaudeBlockingPromptKind.EffortChoice
+                && last.Trim('│', ' ', '❯', '>').StartsWith("Switch ", StringComparison.OrdinalIgnoreCase);
         if (!bottomChoice && !footer.Contains("enterto") && !footer.Contains("escto")
             && !footer.Contains("spacetoselect")) return new(ClaudeDialogState.Unknown);
         return new(ClaudeDialogState.Blocked, prompt.Kind,

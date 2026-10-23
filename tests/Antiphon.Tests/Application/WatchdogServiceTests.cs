@@ -140,7 +140,8 @@ public class WatchdogServiceTests
         await shared.Db.SaveChangesAsync();
         var secondAdapter = new FakeAgentProtocolAdapter
         {
-            RenderedScreenOverride = C566Menu, EchoTypedInputToScreen = false
+            RenderedScreenOverride = C566Menu, EchoTypedInputToScreen = false,
+            DialogGuardEnabled = true, AcceptedStartedAt = second.StartedAt
         };
         shared.Runtime.Register(second.Id, secondAdapter);
         (await shared.Service.ScanAsync(CancellationToken.None)).ShouldBe(1);
@@ -686,6 +687,8 @@ public class WatchdogServiceTests
             var adapter = new FakeAgentProtocolAdapter
             {
                 RenderedScreenOverride = rendered,
+                DialogGuardEnabled = true,
+                AcceptedStartedAt = session.StartedAt,
                 EchoTypedInputToScreen = false // the measured modal consumes '2', not the composer
             };
             runtime.Register(session.Id, adapter);

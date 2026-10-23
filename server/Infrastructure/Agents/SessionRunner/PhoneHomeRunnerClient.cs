@@ -480,6 +480,7 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
                 requireClaudeDialogClear = request.RequireClaudeDialogClear,
                 expectedInputRevision = request.ExpectedInputRevision,
                 expectedRuntimeEpoch = request.ExpectedRuntimeEpoch,
+                dialogIntent = request.DialogIntent,
             },
             ct);
         if (frame.Kind == PhoneHomeFrameKind.Error)

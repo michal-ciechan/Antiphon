@@ -82,8 +82,8 @@ public sealed partial class SessionMessageQueueService
                     if (string.Equals(meta.Pending, HerdrPendingReasons.Unreachable, StringComparison.Ordinal))
                         return ExpectationSendResult.Refuse("backend_unreachable");
                 }
-                if (await IsModalBlockedLockedAsync(db, sessionId, ct))
-                    return ExpectationSendResult.Refuse("modal_blocked");
+                if (await ModalBlockReasonAsync(db, sessionId, ct) is { } dialogReason)
+                    return ExpectationSendResult.Refuse(dialogReason);
 
                 // A Sent row still awaiting reconciliation may own the composer, whatever its age.
                 var windowFloor = UtcNow() - InterruptedAttemptWindow;

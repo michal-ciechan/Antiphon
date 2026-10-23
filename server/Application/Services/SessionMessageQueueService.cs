@@ -621,7 +621,7 @@ public sealed partial class SessionMessageQueueService
                     return (await GetQueueAsync(sessionId, ct)) with
                     {
                         ModalBlocked = true,
-                        ModalBlockedReason = "Remote Control menu blocks input",
+                        ModalBlockedReason = "Automated input is held by current dialog evidence",
                     };
                 }
 
@@ -1475,7 +1475,7 @@ public sealed partial class SessionMessageQueueService
                 return await GetQueueAsync(sessionId, ct) with
                 {
                     ModalBlocked = true,
-                    ModalBlockedReason = "Remote Control menu blocks input",
+                    ModalBlockedReason = await ModalBlockReasonAsync(db, sessionId, ct),
                 };
 
             // Same late-confirm as the automatic paths: a previously attempted message whose body
@@ -3766,7 +3766,7 @@ public sealed partial class SessionMessageQueueService
         var trimmed = Antiphon.Agents.Pty.PtyInputEncoding.NormalizeBody(body);
 
         if (await IsModalBlockedAsync(sessionId, ct))
-            return DeliveryOutcome.Of(DeliveryVerdict.ModalBlocked, "remote-control-modal");
+            return DeliveryOutcome.Of(DeliveryVerdict.ModalBlocked, "provider-input-held");
 
         // CARD-0137 S3 / L0: refuse Forbidden bodies before a byte is typed. Codex `/usage` is the
         // founding case — typing it opens a picker whose highlighted option redeems the account's
@@ -3951,6 +3951,10 @@ public sealed partial class SessionMessageQueueService
         {
             await _runtime.SendInputAsync(sessionId, payload, ct);
         }
+        catch (ProviderDialogInputRefusedException ex)
+        {
+            return DeliveryOutcome.Of(DeliveryVerdict.ModalBlocked, ex.Reason);
+        }
         catch (RunnerSpillWriteException)
         {
             // The runner issued this code inside its spill writer, before SendInputAsync.
@@ -4042,6 +4046,12 @@ public sealed partial class SessionMessageQueueService
             }
 
             return DeliveryOutcome.Delivered;
+        }
+        catch (ProviderDialogInputRefusedException)
+        {
+            // The body has custody even when Enter/retry wrote zero bytes. Never refund,
+            // Esc or retype it; the existing receipt/composer reconciliation owns the hold.
+            return DeliveryOutcome.Of(DeliveryVerdict.NoComposerEvidence);
         }
         catch (Exception ex) when (IsPreBodyPhoneHomeUnavailable(ex))
         {
@@ -5525,16 +5535,8 @@ public sealed partial class SessionMessageQueueService
                 false))
             .ToListAsync(ct);
         var working = await ReadWorkingAsync(db, sessionId, ct);
-        var session = await db.AgentSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sessionId, ct);
-        var modalBlocked = false;
-        if (session is not null)
-        {
-            var generation = SessionGeneration.Normalize(session.StartedAt);
-            modalBlocked = await db.RemoteControlModalEpisodes.AsNoTracking().AnyAsync(
-                e => e.SessionId == sessionId
-                    && e.AcceptedStartedAt == generation
-                    && e.ResolvedAt == null, ct);
-        }
+        var reason = await ModalBlockReasonAsync(db, sessionId, ct);
+        var modalBlocked = reason is not null;
 
         var dtos = modalBlocked
             ? messages.Select(m => m with { ModalBlocked = true }).ToList()
@@ -5544,7 +5546,7 @@ public sealed partial class SessionMessageQueueService
             dtos,
             working,
             ModalBlocked: modalBlocked,
-            ModalBlockedReason: modalBlocked ? "Remote Control menu blocks input" : null);
+            ModalBlockedReason: reason);
     }
 
     internal async Task<bool> IsModalBlockedAsync(Guid sessionId, CancellationToken ct)
@@ -5554,17 +5556,27 @@ public sealed partial class SessionMessageQueueService
         return await IsModalBlockedLockedAsync(db, sessionId, ct);
     }
 
-    internal static async Task<bool> IsModalBlockedLockedAsync(
-        AppDbContext db, Guid sessionId, CancellationToken ct)
+    internal async Task<bool> IsModalBlockedLockedAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>
+        await ModalBlockReasonAsync(db, sessionId, ct) is not null;
+
+    private async Task<string?> ModalBlockReasonAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
     {
         var session = await db.AgentSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == sessionId, ct);
         if (session is null)
-            return false;
+            return null;
         var generation = SessionGeneration.Normalize(session.StartedAt);
-        return await db.RemoteControlModalEpisodes.AsNoTracking().AnyAsync(
+        if (await db.RemoteControlModalEpisodes.AsNoTracking().AnyAsync(
             e => e.SessionId == sessionId
                 && e.AcceptedStartedAt == generation
-                && e.ResolvedAt == null, ct);
+                && e.ResolvedAt == null, ct)) return "Remote Control menu blocks input";
+        if (session.AgentKind != AgentKind.ClaudeCode) return null;
+        var observation = await _runtime.ObserveDialogAsync(sessionId, ct);
+        return ProviderDialogObservationService.Refusal(observation, sessionId, generation) switch
+        {
+            null => null,
+            ConditionalInputOutcomes.ModalBlocked => "Claude dialog blocks input",
+            _ => "Claude dialog observation unavailable"
+        };
     }
 
     private async Task<AgentSession> RequireSessionAsync(Guid sessionId, CancellationToken ct)
@@ -5662,7 +5674,10 @@ public sealed partial class SessionMessageQueueService
             }
         }
 
-        await _runtime.SendInputAsync(sessionId, overlay.DismissKey, ct, trackManualTurn: false);
+        if (kind == AgentKind.ClaudeCode && overlay.DismissKey == "\u001b")
+            await _runtime.DismissRemoteControlAsync(sessionId, ct);
+        else
+            await _runtime.SendInputAsync(sessionId, overlay.DismissKey, ct, trackManualTurn: false);
         var settle = TimeSpan.FromMilliseconds(Math.Max(0, _verification.OverlaySettleMs));
         if (settle > TimeSpan.Zero)
             await Task.Delay(settle, _timeProvider, ct);

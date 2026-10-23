@@ -42,7 +42,7 @@ public static class ProviderContractCatalog
             HasScreenFallback: true),
         DeliveryVerification: new DeliveryVerificationContract(
             AgentTuiCapabilityState.Supported,
-            "Composer echo plus CARD-0055 transcript-confirmed delivery (VerifiedPromptSubmitter at the adapter; IsVerifiedDeliverySessionAsync at the queue)."),
+            "CARD-0680 automated body/Enter/retry writes require claudeDialogGuardV1 with current generation, output and input revision. Unknown observation or a dialog holds input; explicit interactive input is separate. Composer echo plus CARD-0055 complete UserPrompt confirmation remains the delivery receipt. Native watchdog activation is independently qualified per backend."),
         SessionResume: new SessionResumeContract(
             AgentTuiCapabilityState.Supported,
             "Sessions resume by conversation identity (--resume / --session-id); AgentSessionService allows resume."),

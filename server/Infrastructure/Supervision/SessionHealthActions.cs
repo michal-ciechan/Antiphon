@@ -52,7 +52,7 @@ public sealed class SessionHealthActions : ISessionHealthActions
     }
 
     public Task SendRawInputAsync(Guid sessionId, string input, CancellationToken ct) =>
-        _runner.SendInputAsync(sessionId, input, ct);
+        _runtime.SendInputAsync(sessionId, input, ct);
 
     /// <summary>
     /// CARD-0292 S5: the exact plumbing <c>SessionMessageQueueService.TryDismissOverlayAsync</c>
@@ -87,7 +87,7 @@ public sealed class SessionHealthActions : ISessionHealthActions
                 return false;
         }
 
-        await _runtime.SendInputAsync(sessionId, "\u001b", ct, trackManualTurn: false);
+        await _runtime.DismissRemoteControlAsync(sessionId, ct);
         return true;
     }
 }

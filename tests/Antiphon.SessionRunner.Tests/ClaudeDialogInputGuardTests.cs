@@ -21,6 +21,43 @@ public class ClaudeDialogInputGuardTests
         f.Session.RenderDialogScreenForTest(Clear);
         (await f.SendAsync("body")).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
         f.Child.Inputs.ShouldBe(["body"]);
+        await using var late = new Fixture();
+        var raceTailer = new Tailer(late.Id) { BeforeObservation = () => late.Session.RenderDialogScreenForTest(Modal) };
+        late.Session.BindChildForTest(late.Child, raceTailer, late.Generation);
+        (await late.SendAsync("late evidence read race")).Outcome.ShouldBe(ConditionalInputOutcomes.StaleObservation);
+        late.Child.Inputs.ShouldBeEmpty();
+        await using var replacement = new Fixture();
+        var replacementChild = new Child();
+        var replacementSession = new SessionRunnerRuntime.RunnerSession(replacement.Id,
+            replacement.Settings, new SessionRunnerEventHub(), NullLogger.Instance);
+        replacementSession.BindDialogChildForTest(replacementChild, replacement.Generation, Clear);
+        replacement.Runtime.ConditionalInputBeforeWrite = (_, _) =>
+        {
+            replacement.Runtime.ReplaceTrackedSessionForTest(replacement.Session, replacementSession);
+            return Task.CompletedTask;
+        };
+        (await replacement.SendAsync("replaced-object")).Outcome.ShouldBe(ConditionalInputOutcomes.StaleObservation);
+        replacement.Child.Inputs.ShouldBeEmpty();
+        replacementChild.Inputs.ShouldBeEmpty();
+        await replacement.Session.DisposeAsync();
+        await using var startup = new Fixture();
+        startup.Session.RenderDialogScreenForTest("Quick safety check: Is this a project you created or one you trust?\n❯ 1. Yes, I trust this folder\n2. No, exit\nEnter to confirm · Esc to cancel");
+        var trust = await startup.RequestAsync("1");
+        (await startup.Runtime.SendConditionalInputAsync(startup.Id, trust, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.ModalBlocked);
+        (await startup.Runtime.SendConditionalInputAsync(startup.Id, trust with { DialogIntent = ClaudeDialogInputIntent.StartupTrust }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        var arbitrary = await startup.RequestAsync("arbitrary task text");
+        (await startup.Runtime.SendConditionalInputAsync(startup.Id, arbitrary with { DialogIntent = ClaudeDialogInputIntent.StartupTrust }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.ModalBlocked);
+        startup.Child.Inputs.ShouldBe(["1"]);
+        startup.Session.RenderDialogScreenForTest("Use Fable 5.1 at high effort by default?\n> Keep xhigh\nSwitch Fable 5.1 to high effort");
+        var effort = await startup.RequestAsync("\r");
+        (await startup.Runtime.SendConditionalInputAsync(startup.Id, effort with { DialogIntent = ClaudeDialogInputIntent.StartupEffortSwitch }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.ModalBlocked);
+        (await startup.Runtime.SendConditionalInputAsync(startup.Id, effort with { DialogIntent = ClaudeDialogInputIntent.StartupEffortKeep }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        startup.Child.Inputs.ShouldBe(["1", "\r"]);
         f.Session.RenderDialogScreenForTest(Clear);
         var epochRequest = await f.RequestAsync("wrong-epoch");
         (await f.Runtime.SendConditionalInputAsync(f.Id, epochRequest with
@@ -112,10 +149,12 @@ public class ClaudeDialogInputGuardTests
         public SessionRunnerRuntime Runtime { get; }
         public SessionRunnerRuntime.RunnerSession Session { get; }
         public Child Child { get; } = new();
+        public SessionRunnerSettings Settings { get; }
         public Clock Clock { get; } = new();
         public Fixture(bool adopted = false)
         {
             var settings = new SessionRunnerSettings { SessionLogPath = _root, CpuWatchdogEnabled = false };
+            Settings = settings;
             Runtime = new(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance, timeProvider: Clock);
             Session = new(Id, settings, new SessionRunnerEventHub(), NullLogger.Instance);
             Session.BindDialogChildForTest(Child, Generation, Clear, adopted);
@@ -143,8 +182,15 @@ public class ClaudeDialogInputGuardTests
 
     private sealed class Tailer(Guid id) : ITranscriptTailer
     {
+        public Action? BeforeObservation { get; init; }
+        public Task<TerminalTranscriptObservation> ObserveTerminalSeatAsync(CancellationToken ct)
+        {
+            BeforeObservation?.Invoke();
+            return Task.FromResult(new TerminalTranscriptObservation(TerminalTranscriptReadStatus.Unbound, TerminalTranscriptVerdict.Unknown));
+        }
         private RunnerTranscriptDto _snapshot = new(id, [], 0);
         public string? BoundTranscriptPath => "/owned/conversation.jsonl";
+        public string? NativeBindingIdentity => "native-file-conversation";
         public string? BindHow => "exact";
         public string? UnboundReason => null;
         public void Prompt(string text) => _snapshot = new(id,

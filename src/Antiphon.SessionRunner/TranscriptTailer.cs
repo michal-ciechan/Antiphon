@@ -197,6 +197,9 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     internal Func<CancellationToken, Task>? CompactionObserveAfterRead { get; set; }
 
     internal string? BindingIdentity => CaptureBinding()?.Identity;
+    string? ITranscriptTailer.NativeBindingIdentity => !_claimRevoked
+        && (_claims is null || BoundTranscriptPath is { } path && _claims.OwnerOf(path)?.Owner == _sessionId)
+            ? BindingIdentity : null;
 
     public async Task<CompactionTailObservation> ObserveCompactionSilenceAsync(CancellationToken ct)
     {

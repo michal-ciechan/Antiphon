@@ -1,6 +1,7 @@
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 
@@ -15,6 +16,7 @@ internal sealed class RunnerTerminalSession
     private Guid _sessionId;
     private bool _started;
     private DateTime? _acceptedGeneration;
+    private ClaudeEffortIntent _effortIntent = new();
 
     public RunnerTerminalSession(ISessionRunnerClient client)
     {
@@ -43,6 +45,7 @@ internal sealed class RunnerTerminalSession
 
         _sessionId = sessionId;
         _acceptedGeneration = spec.AcceptedStartedAt;
+        _effortIntent = ClaudeEffortIntent.Read(spec.Args);
         var session = await _client.StartAsync(sessionId, spec, ct);
         StartedAt = session.StartedAt;
         Pid = session.Pid;
@@ -100,6 +103,43 @@ internal sealed class RunnerTerminalSession
     {
         EnsureStarted();
         await _client.SendInputAsync(_sessionId, input, ct);
+    }
+
+    internal async Task WriteGuardedAsync(string input, CancellationToken ct,
+        ClaudeDialogInputIntent intent = ClaudeDialogInputIntent.None)
+    {
+        EnsureStarted();
+        var observation = await new ProviderDialogObservationService(_client).ReadAsync(_sessionId, ct);
+        if (_acceptedGeneration is not { } generation)
+            throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.ObservationUnknown);
+        var request = ProviderDialogObservationService.Request(observation, _sessionId, generation, input, intent);
+        ProviderDialogObservationService.RequireWritten(await _client.SendConditionalInputAsync(_sessionId, request, ct));
+    }
+
+    internal async Task WriteStartupAsync(string input, CancellationToken ct)
+    {
+        var snapshot = await GetSnapshotAsync(ct);
+        var screen = snapshot.RenderedScreen;
+        var kind = ClaudeBlockingPromptDetector.Detect(screen)?.Kind;
+        var intent = kind == ClaudeBlockingPromptKind.TrustFolder ? ClaudeDialogInputIntent.StartupTrust
+            : kind == ClaudeBlockingPromptKind.EffortChoice && ClaudeEffortPrompt.Parse(screen) is { } menu
+                ? menu.Select(_effortIntent) switch
+                {
+                    ClaudeEffortOption.Keep => ClaudeDialogInputIntent.StartupEffortKeep,
+                    ClaudeEffortOption.Switch => ClaudeDialogInputIntent.StartupEffortSwitch,
+                    _ => ClaudeDialogInputIntent.None
+                } : ClaudeDialogInputIntent.None;
+        if (_acceptedGeneration is not { } generation)
+            throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.ObservationUnknown);
+        var request = ProviderDialogObservationService.Request(snapshot.Dialog, _sessionId, generation, input, intent);
+        ProviderDialogObservationService.RequireWritten(await _client.SendConditionalInputAsync(_sessionId, request, ct));
+    }
+
+    internal async Task SendGuardedLineAsync(string line, CancellationToken ct)
+    {
+        await WriteGuardedAsync(PtyInputEncoding.EncodeBody(line), ct);
+        await Task.Delay(20, ct);
+        await WriteGuardedAsync("\r", ct);
     }
 
     public Task<RunnerConditionalInputResult> WriteConditionalAsync(
