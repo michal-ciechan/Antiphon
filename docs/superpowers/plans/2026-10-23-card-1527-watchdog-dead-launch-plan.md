@@ -20,11 +20,14 @@ Refinement decision (operator, input 92375fc6-31ae-42ec-affd-01d28ef7a745):
 three independent sinks behind one function: Windows Application Event Log source
 Antiphon-Watchdog (created lazily; Warning down / Information recovery; creation
 failure never fails the watchdog), logs/apphost-down.alert (outage start, minutes
-down, last restart attempt; removed on recovery), and OPTIONAL webhook only from
+down, last restart attempt; removed on recovery), and OPTIONAL HTTPS webhook only from
 ANTIPHON_WATCHDOG_ALERT_WEBHOOK, once per outage plus recovery. Never log its URL.
 S5 commits failing sink witnesses. S6 implements these sinks, updates entry-script
 coverage and freezes the report before final qualification. No other transport.
 Do not send live notifications in tests. Preserve maintenance suppression.
+S7: caller reply ddc4591e-e87a-494c-85a1-392d10ff9ea7 requires HTTPS only.
+Commit the HTTP-refusal witness before tightening the sender; disable redirects
+to prevent an HTTPS endpoint from redirecting notification data to HTTP.
 
 ## Verification design
 
@@ -50,11 +53,12 @@ source failure is isolated from marker/webhook. Native adapter details remain R-
 V-5: -Case Marker: actual file contents, refresh, last attempt, recovery removal,
 old pending down event cannot recreate marker, write failure leaves other sinks working.
 V-6: -Case Webhook: exact optional variable, absence is harmless, bounded request,
-durable deduplication, failed-delivery retry does not repeat the local event.
+durable deduplication, failed-delivery retry does not repeat the local event,
+HTTP refusal without suppressing local sinks, and no redirect downgrade.
 
 PC-1 (two-fire/identity/absence variants), PC-2 (nonzero exit/own-lock variants),
 PC-3 (threshold/dedup/recovery/maintenance variants) and PC-4 (independent
-sinks/optional-variable/marker-recovery variants) remain pending for method-scoped
+sinks/optional-variable/marker-recovery/HTTPS-only/no-redirect variants) remain pending for method-scoped
 SourceLanding Mutation; Code creates no deliberate mutants. Candidate binding belongs
 under docs/superpowers/mutations/ after Review.
 
@@ -66,6 +70,11 @@ rerun red rows green after S2-S4. CP-4..6 run once on the final report-bearing t
 All rows have a hard 120-second timeout; tool bootstrap is an explained unlisted build.
 Refinement: CP-7..9 run red at S5, then all nine rows qualify the report-bearing
 S6 tip because common helper and entry-script notification behavior changed.
+S7: run CP-9 red, then CP-3/CP-4/CP-7/CP-8/CP-9 once on the final pushed
+report-bearing tip: caller/guards and all sender sinks are affected. CP-1/CP-2
+and CP-5/CP-6 retain their full green baseline at 415116fd9145c43a91c1cba415e01319540e5da7;
+this scheme-only repair does not change restart admission, launcher exit, lock age
+or health classification. Preserve those actual source SHAs in the report.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
