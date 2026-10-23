@@ -946,7 +946,10 @@ public sealed class BlockedTaskParkDeliveryTests
 
                 (await f.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Blocked);
                 await f.HandleParkAsync();
-                (await f.ParkAsync()).State.ShouldBe(AgentTaskParkState.Parked);
+                var park = await f.ParkAsync();
+                Console.WriteLine("C1565_PARK " + System.Text.Json.JsonSerializer.Serialize(new
+                    { step = "after-handle", busyCaller, completionSingleWriteBytes, park }));
+                park.State.ShouldBe(AgentTaskParkState.Parked, park.ReasonCode);
                 f.Clock.Advance(TimeSpan.FromMinutes(1));
                 using var scope = f.Harness.Provider.CreateScope();
                 (await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().RecoverBlockedTaskSyncAsync(CancellationToken.None)).ShouldBeGreaterThan(0);
