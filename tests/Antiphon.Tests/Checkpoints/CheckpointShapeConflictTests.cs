@@ -263,7 +263,11 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             {
                 if (receipt.GetProperty("verdict").GetString() != "INVALID" || receipt.GetProperty("reason").GetString() != "source_ineligible") return new RunResult(66, "receipt verdict mismatch");
                 var model = JsonSerializer.Deserialize<Antiphon.Checkpoints.ReportModel>(File.ReadAllText(path), Antiphon.Checkpoints.ReportWriter.Json)!;
-                if (Antiphon.Checkpoints.ReportValidator.Validate(model, head, [name]) != "report_source_ineligible") return new RunResult(66, "negative qualification mismatch");
+                // A failed run is rejected before source eligibility (CARD-1370).
+                // Keep both contracts: the tampered source cannot qualify, and the
+                // complete failed report must retain its higher-priority refusal.
+                if (Antiphon.Checkpoints.ReportValidator.IsSourceEligible(model.Source, head)) return new RunResult(66, "tampered source qualified");
+                if (Antiphon.Checkpoints.ReportValidator.Validate(model, head, [name]) != "report_failed") return new RunResult(66, "negative qualification mismatch");
             }
             if (!receipt.GetProperty("runId").GetString()!.StartsWith(name + "-", StringComparison.Ordinal)
                 || receipt.GetProperty("rows")[0].GetProperty("id").GetString() != name)
