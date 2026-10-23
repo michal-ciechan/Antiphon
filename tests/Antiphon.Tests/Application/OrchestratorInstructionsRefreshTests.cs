@@ -149,6 +149,32 @@ public class OrchestratorInstructionsRefreshTests
         h.Adapter.SubmittedBodies.Count.ShouldBe(2);
     }
 
+    private static void AssertBoundedChainNotice(string notice, string delta, string path)
+    {
+        notice.Length.ShouldBeLessThanOrEqualTo(700);
+        notice.ShouldContain("unknown (chain read failed)");
+        notice.ShouldContain("ClaudeCode/Low (haiku)");
+        notice.ShouldNotContain("→ unset");
+        notice.ShouldContain(path);
+        notice.ShouldContain("GET /api/orchestrator-instructions");
+        const string separator = ". Re-read ANTIPHON_ORCHESTRATOR_INSTRUCTIONS (";
+        var start = notice.IndexOf("): ", StringComparison.Ordinal);
+        var end = notice.IndexOf(separator, StringComparison.Ordinal);
+        start.ShouldBeGreaterThan(0);
+        end.ShouldBeGreaterThan(start + 3);
+        var visible = notice[(start + 3)..end];
+        delta.StartsWith(visible, StringComparison.Ordinal).ShouldBeTrue("the notice retains a prefix of the complete delta");
+        // Derive available delta space from this real wrapper, including its absolute path.
+        var room = 700 - (notice.Length - visible.Length);
+        if (delta.Length <= room)
+            visible.ShouldBe(delta);
+        else
+        {
+            visible.Length.ShouldBeLessThan(delta.Length);
+            (room - visible.Length).ShouldBeLessThan(40, "the existing wrapper clips in 40-character steps");
+        }
+    }
+
     private static async Task<OrchestratorInstructionsSnapshot> SnapshotAsync(BridgeQueueHarness h)
     {
         await using var scope = h.Provider.CreateAsyncScope();
@@ -224,7 +250,7 @@ public class OrchestratorInstructionsRefreshTests
             line.ShouldContain($"{affected}{(affected == TaskComplexity.Medium ? " (default)" : "")} unknown (chain read failed)");
         Encoding.UTF8.GetByteCount(line).ShouldBeLessThanOrEqualTo(160);
         line.ShouldNotContain("\uFFFD");
-        state.Body.ShouldContain(line.TrimEnd('\r'));
+        state.Body.ShouldContain(line);
 
         await using var scope = h.Provider.CreateAsyncScope();
         var snapshot = await scope.ServiceProvider.GetRequiredService<OrchestratorInstructionsSnapshotBuilder>()
@@ -252,13 +278,17 @@ public class OrchestratorInstructionsRefreshTests
 
         fault.Failures.ShouldBe(fault.Tiers.Length * ChainReadFault.ReadsPerCell);
         h.Adapter.SubmittedBodies.Count.ShouldBe(1);
-        h.Adapter.SubmittedBodies[0].Length.ShouldBeLessThanOrEqualTo(700);
-        foreach (var affected in fault.Tiers)
-            h.Adapter.SubmittedBodies[0].ShouldContain(
-                $"matrix: Plan {affected} ClaudeCode/Low (haiku) → unknown (chain read failed)");
-        h.Adapter.SubmittedBodies[0].ShouldNotContain("→ unset");
         var failedSnapshot = await SnapshotAsync(h);
         var delta = OrchestratorInstructionsDelta.Format(beforeSnapshot, failedSnapshot);
+        var failed = await ReadStateAsync(h);
+        var failedFile = await File.ReadAllTextAsync(failed.WrittenPath);
+        AssertBoundedChainNotice(h.Adapter.SubmittedBodies[0], delta, failed.WrittenPath);
+        foreach (var affected in fault.Tiers)
+        {
+            delta.ShouldContain($"matrix: Plan {affected} ClaudeCode/Low (haiku) → unknown (chain read failed)");
+            MatrixLine(failedFile).ShouldContain(
+                $"{affected}{(affected == TaskComplexity.Medium ? " (default)" : "")} unknown (chain read failed)");
+        }
         delta.ShouldNotContain("→ rolePolicy");
         if (tier is null or TaskComplexity.Medium)
         {
@@ -267,7 +297,6 @@ public class OrchestratorInstructionsRefreshTests
             (await File.ReadAllTextAsync((await ReadStateAsync(h)).WrittenPath))
                 .ShouldContain("  Plan: effective unknown (chain read failed) via unknown (chain read failed)");
         }
-        var failed = await ReadStateAsync(h);
         await Instructions(h).ReconcileNowAsync("same chain read failure");
         h.Adapter.SubmittedBodies.Count.ShouldBe(1);
         (await ReadStateAsync(h)).Revision.ShouldBe(failed.Revision);
@@ -275,17 +304,23 @@ public class OrchestratorInstructionsRefreshTests
         fault.Enabled = false;
         await Instructions(h).ReconcileNowAsync("chain read recovered");
         h.Adapter.SubmittedBodies.Count.ShouldBe(2);
-        h.Adapter.SubmittedBodies[1].Length.ShouldBeLessThanOrEqualTo(700);
-        foreach (var affected in fault.Tiers)
-            h.Adapter.SubmittedBodies[1].ShouldContain(
-                $"matrix: Plan {affected} unknown (chain read failed) → ClaudeCode/Low (haiku)");
         var recovered = await ReadStateAsync(h);
+        var recoveredFile = await File.ReadAllTextAsync(recovered.WrittenPath);
+        var recovery = OrchestratorInstructionsDelta.Format(failedSnapshot, await SnapshotAsync(h));
+        AssertBoundedChainNotice(h.Adapter.SubmittedBodies[1], recovery, recovered.WrittenPath);
+        foreach (var affected in fault.Tiers)
+        {
+            recovery.ShouldContain($"matrix: Plan {affected} unknown (chain read failed) → ClaudeCode/Low (haiku)");
+            MatrixLine(recoveredFile).ShouldContain(
+                $"{affected}{(affected == TaskComplexity.Medium ? " (default)" : "")} ClaudeCode/Low (haiku)");
+        }
         recovered.Revision.ShouldBe(failed.Revision + 1);
-        (await File.ReadAllTextAsync(recovered.WrittenPath)).ShouldNotContain("unknown (chain read failed)");
+        recoveredFile.ShouldNotContain("unknown (chain read failed)");
     }
 
     private static string MatrixLine(string file) =>
-        file.Split('\n').Single(value => value.StartsWith("- Plan:", StringComparison.Ordinal));
+        file.Split('\n').Select(value => value.TrimEnd('\r'))
+            .Single(value => value.StartsWith("- Plan:", StringComparison.Ordinal));
 
     private static async Task<BridgeQueueHarness> CreateReadFailureHarnessAsync(ChainReadFault fault)
     {
