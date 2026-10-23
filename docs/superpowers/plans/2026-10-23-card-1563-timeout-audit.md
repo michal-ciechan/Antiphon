@@ -33,13 +33,13 @@ Mutation owns deliberate defects and discovery of missing controls. No mutation 
 
 ### Checkpoints
 
-| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
-|---|---|---|---|---|---|---|---|---:|---|
-| CP-1 | S1 | tests/Antiphon.TimeoutAudit.Tests -> bin-c1563-red/ | initial-red | `/*/*/TimeoutAuditTests/*` | V-1,V-2,V-3,V-4,R-1,R-2 red | TimeoutAuditTests | 6 | 1 | true |
-| CP-2 | S2 | tests/Antiphon.TimeoutAudit.Tests -> bin-c1563-green/ | audit-green | `/*/*/TimeoutAuditTests/*` | V-1,V-2,V-3,V-4,R-1,R-2 | TimeoutAuditTests | 6 | 1 | true |
-| CP-3 | S3 | n/a | census-red | `pwsh -NoProfile -File scripts/test-test-selection.ps1 -Case C1313_ProjectAndCatalogUniverse` | R-3 red | exit 1; C1313 project-universe fails on unclassified audit test project | n/a | 1 | true |
-| CP-4 | S4 | tests/Antiphon.Tests -> bin-c1563-main/ | linked-audit | `/*/*/TimeoutAuditTests/*` | V-1,V-2,V-3,V-4,R-1,R-2,R-3 | TimeoutAuditTests | 6 | 1 | true |
-| CP-5 | S4 | CP-4 | census-regression | `/*/*/TestSelectionCatalogTests/*` | R-3 and existing catalog/live/mixed smoke | TestSelectionCatalogTests | 3 | 1 | true |
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
+|---|---|---|---|---|---|---|---|---:|---|---|
+| CP-1 | S1 | tests/Antiphon.TimeoutAudit.Tests -> bin-c1563-red/ | initial-red | `/*/*/TimeoutAuditTests/*` | V-1,V-2,V-3,V-4,R-1,R-2 red | TimeoutAuditTests | 6 | 1 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-2 | S2 | tests/Antiphon.TimeoutAudit.Tests -> bin-c1563-green/ | audit-green | `/*/*/TimeoutAuditTests/*` | V-1,V-2,V-3,V-4,R-1,R-2 | TimeoutAuditTests | 6 | 1 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-3 | S3 | n/a | census-red | `pwsh -NoProfile -File scripts/test-test-selection.ps1 -Case C1313_ProjectAndCatalogUniverse` | R-3 red | exit 1; C1313 project-universe fails on unclassified audit test project | n/a | 1 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-4 | S4 | tests/Antiphon.Tests -> bin-c1563-main/ | linked-audit | `/*/*/TimeoutAuditTests/*` | V-1,V-2,V-3,V-4,R-1,R-2,R-3 | TimeoutAuditTests | 6 | 1 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-5 | S4 | CP-4 | census-regression | `/*/*/TestSelectionCatalogTests/*` | R-3 and existing catalog/live/mixed smoke | TestSelectionCatalogTests | 3 | 1 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
 
 ## S3-S4 qualification census integration
 
