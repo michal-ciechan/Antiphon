@@ -54,9 +54,9 @@ public sealed class CheckpointOrFilterTests : CheckpointTestBase
             Wait = _ => { work.Add("wait"); return Task.FromResult(0); },
         };
         string[] args = verb == "import"
-            ? [verb, "--plan", plan, "--repo-root", root, "--out", "import.yaml"]
+            ? [verb, "--plan", plan, "--repo-root", root, "--out", Path.Combine(root, "import.yaml")]
             : [verb, "--plan", plan, "--repo-root", root];
-        (await Antiphon.Checkpoints.Program.RunAsync(args, runtime)).ShouldBe(2);
+        (await Antiphon.Checkpoints.Program.MainAsync(args, runtimeFactory: _ => runtime)).ShouldBe(2);
         work.ShouldBeEmpty();
         driver.Calls.ShouldBeEmpty();
         File.Exists(Path.Combine(root, "import.yaml")).ShouldBeFalse();
@@ -130,13 +130,13 @@ public sealed class CheckpointOrFilterTests : CheckpointTestBase
     }
 
     [Test]
-    [Arguments("/*/*/Sample/alpha")]
-    [Arguments("/*/*/Sample/*")]
-    [Arguments("/*/*/Sample/(Alpha*)|(Beta*)")]
-    [Arguments("/*/*/(Alpha*)|(Beta*)/*")]
-    [Arguments("/*/*/(Alpha*)|(Beta*)/(One*)|(Two*)[Category=Unit]")]
-    [Arguments("/*/*/*/*[(Category=Unit)|(Category=Slow)]")]
-    public void C0931_accepted_filters_are_byte_preserved(string filter)
+    [Arguments("/*/*/Sample/alpha", "Sample")]
+    [Arguments("/*/*/Sample/*", "Sample")]
+    [Arguments("/*/*/Sample/(Alpha*)|(Beta*)", "Alpha,Beta")]
+    [Arguments("/*/*/(Alpha*)|(Beta*)/*", "Alpha,Beta")]
+    [Arguments("/*/*/(Alpha*)|(Beta*)/(One*)|(Two*)[(Category=Unit)]", "Alpha,Beta,One,Two")]
+    [Arguments("/*/*/*/*[(Category=Unit)|(Category=Slow)]", "")]
+    public void C0931_accepted_filters_are_byte_preserved(string filter, string roster)
     {
         var result = PlanTableImporter.ImportMarkdown(Table(filter));
         result.ExitCode.ShouldBe(0, result.Error);
@@ -144,7 +144,7 @@ public sealed class CheckpointOrFilterTests : CheckpointTestBase
         manifest.Checkpoints.Single().Filter.ShouldBe(filter);
         manifest.Checkpoints.Single().Build.ShouldBe("bin-example");
         manifest.Builds.Single().OutputPath.ShouldBe("bin-example/");
-        manifest.Checkpoints.Single().Expect.ShouldBe(PlanTableImporter.RosterTokens(filter));
+        manifest.Checkpoints.Single().Expect.ShouldBe(roster.Split(',', StringSplitOptions.RemoveEmptyEntries));
         ManifestValidator.Validate(manifest, TempDir());
     }
 
@@ -152,8 +152,8 @@ public sealed class CheckpointOrFilterTests : CheckpointTestBase
     [Arguments("pass", 0, "green")]
     [Arguments("fail", 1, "red")]
     [Arguments("partial", 3, "roster-miss")]
-    [Arguments("absent", 2, "red")]
-    [Arguments("malformed", 2, "red")]
+    [Arguments("absent", 2, "no-trx")]
+    [Arguments("malformed", 2, "malformed")]
     [Arguments("skip", 0, "green")]
     public async Task C0931_nonselection_outcomes_keep_their_codes(string kind, int exit, string state)
     {
@@ -192,6 +192,18 @@ public sealed class CheckpointOrFilterTests : CheckpointTestBase
         result.Line.ShouldContain("executed=0");
         result.Trx!.Executed.ShouldBe(0);
         result.Reruns.ShouldBe(0);
+    }
+
+    [Test]
+    [Arguments("/*/*/Sample/(Alpha*)|(Beta)", "method", 2)]
+    [Arguments("/*/*/(Alpha)|(Beta)/*", "class", 1)]
+    public void C0931_manifest_validator_rejects_unsafe_or(string filter, string segment, int operand)
+    {
+        var manifest = PlanTableImporter.ImportMarkdown(Table("/*/*/Sample/alpha")).Manifest!;
+        manifest.Checkpoints.Single().Filter = filter;
+        var exception = Should.Throw<ManifestValidationException>(() => ManifestValidator.Validate(manifest, TempDir()));
+        exception.ExitCode.ShouldBe(2);
+        exception.Message.ShouldContain($"checkpoint-filter-or-wildcard: CP-1: {segment} operand {operand}");
     }
 
     private void Refused(string filter, string segment, int operand, bool wrapped)
