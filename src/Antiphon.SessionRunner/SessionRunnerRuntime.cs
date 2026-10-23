@@ -3779,6 +3779,28 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         internal void OutputForTest(long sequence) => HandleOutput(sequence, "fixture output");
 
+        // Controlled child I/O plus rendered bytes; no eligibility verdict is injected.
+        internal void BindDialogChildForTest(ISessionChild child, DateTime generation, string screen, bool adopted = false)
+        {
+            _herdrChild = child;
+            BindAcceptedGeneration(generation);
+            _startedAt = generation;
+            _status = "Running";
+            _adopted = adopted;
+            _clientReady.TrySetResult(true);
+            RenderDialogScreenForTest(screen);
+        }
+
+        internal void RenderDialogScreenForTest(string screen)
+        {
+            lock (_gate)
+            {
+                _screen = new TerminalScreen(120, 40);
+                _screen.Feed(screen.ReplaceLineEndings("\r\n"));
+                _lastSequence++;
+            }
+        }
+
         // Supplies concrete backend state, never a qualification verdict.
         internal void SetTerminalBackendStateForTest(string status = "Running", string? pendingReason = null,
             string backend = SessionBackends.PtyHost)

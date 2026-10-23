@@ -17,6 +17,7 @@ public enum ClaudeBlockingPromptKind
     Choice = 3,
 
     EffortChoice = 4,
+    Question = 5,
 }
 
 /// <summary>
@@ -154,7 +155,9 @@ public static partial class ClaudeBlockingPromptDetector
         // it keeps ordinary prose containing the word "trust" from reading as a dialog. The 2.1.258
         // unnumbered confirm still paints "Enter to confirm · Esc to cancel".
         var hasChoices = compact.Contains("1yes") || compact.Contains("2no")
-            || compact.Contains("entertoconfirm") || compact.Contains("esctocancel");
+            || compact.Contains("entertoconfirm") || compact.Contains("esctocancel")
+            || compact.Contains("entertoselect") || compact.Contains("spacetoselect")
+            || compact.Contains("entertosubmit");
         if (!hasChoices)
             return null;
 

@@ -15,12 +15,17 @@ public static class ConditionalInputOutcomes
     public const string Exited = "exited";
     public const string Unsupported = "unsupported";
     public const string Unknown = "unknown";
+    public const string ModalBlocked = "modal-blocked";
+    public const string ObservationUnknown = "observation-unknown";
 }
 
 public sealed record RunnerConditionalInputRequest(
     DateTime ExpectedAcceptedStartedAt,
     long ExpectedLastSequence,
-    string Input);
+    string Input,
+    bool RequireClaudeDialogClear = false,
+    long? ExpectedInputRevision = null,
+    Guid? ExpectedRuntimeEpoch = null);
 
 public sealed record RunnerConditionalInputResult(
     Guid SessionId,
