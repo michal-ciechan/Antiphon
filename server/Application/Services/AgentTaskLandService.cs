@@ -557,7 +557,7 @@ public sealed class AgentTaskLandService
                 $"Landing waits for repository/source writer {holder.Id:N} ({holder.Status}).", ct);
             return LandRunResult.Held;
         }
-        var indexLock = await ProbeAdmissionIndexLockAsync(task, ct);
+        var indexLock = await ProbeAdmissionIndexLockAsync(task, request, ct);
         if (indexLock is not null)
         {
             await HoldAsync(task, request, indexLock.Value.Code, null, indexLock.Value.Detail, ct);
@@ -866,18 +866,24 @@ public sealed class AgentTaskLandService
     /// <summary>
     /// CARD-0543 V-11s / CARD-0688 D-10: probe the source worktree when its directory still exists (cleanup
     /// still mutates it), the land worktree when it exists, and the main checkout only when
-    /// <c>&lt;common&gt;/HEAD</c> names the merge target. No registration listing: the main checkout is a file
-    /// read. A missing source-worktree directory is not a lock: cleanup never clears
+    /// <c>&lt;common&gt;/HEAD</c> names the merge target. Ordinary admission does not list registrations:
+    /// only a published plain replacement with a source path error needs a live listing. It may reach
+    /// guarded cleanup's refusal, never acquire deletion authority here. A missing source directory is not a lock: cleanup never clears
     /// <see cref="AgentTask.WorktreePath"/>, and probing it would turn <c>index_lock_path_error</c> into a
     /// permanent <c>git_index_lock_held</c> hold. A common-directory lookup failure falls back to RepoPath.
     /// </summary>
-    private async Task<(string Code, string Detail)?> ProbeAdmissionIndexLockAsync(AgentTask task, CancellationToken ct)
+    private async Task<(string Code, string Detail)?> ProbeAdmissionIndexLockAsync(AgentTask task,
+        AgentTaskLandRequest request, CancellationToken ct)
     {
         if (_landingGit is null || task.RepoPath is null)
             return null;
         if (task.WorktreePath is not null
             && await ProbeCheckoutIndexLockAsync(task.WorktreePath, ct) is { } source)
-            return source;
+        {
+            if (source.Reason != GitIndexLock.PathErrorReason
+                || !await IsPublishedPlainReplacementAsync(task, request, ct))
+                return (source.Code, source.Detail);
+        }
 
         string? land = null, targetCheckout = null;
         try
@@ -899,20 +905,71 @@ public sealed class AgentTaskLandService
         foreach (var checkout in new[] { land, targetCheckout })
         {
             if (checkout is null || GitIndexLock.PathsEqual(checkout, task.WorktreePath)) continue;
-            if (await ProbeCheckoutIndexLockAsync(checkout, ct) is { } hit) return hit;
+            if (await ProbeCheckoutIndexLockAsync(checkout, ct) is { } hit) return (hit.Code, hit.Detail);
         }
         return null;
     }
 
-    private async Task<(string Code, string Detail)?> ProbeCheckoutIndexLockAsync(string checkout, CancellationToken ct)
+    private async Task<bool> IsPublishedPlainReplacementAsync(AgentTask task, AgentTaskLandRequest request,
+        CancellationToken ct)
+    {
+        if (task.ActiveLandingId is not Guid operationId || task.RepoPath is null
+            || task.WorktreePath is null || task.WorktreeBranch is null)
+            return false;
+        var operation = await _db.AgentTaskLandings.AsNoTracking().SingleOrDefaultAsync(o => o.Id == operationId, ct);
+        if (operation is null || !operation.Active || operation.TaskId != task.Id
+            || !new AgentTaskLandingState().HasPublication(operation)
+            || request.CleanupOnly && request.RequiredLandingOperationId != operation.Id)
+            return false;
+        try
+        {
+            if (!GitIndexLock.PathsEqual(operation.RepositoryPath, task.RepoPath)
+                || !GitIndexLock.PathsEqual(operation.WorktreePath, task.WorktreePath)
+                || operation.SourceFullRef != FullRef(task.WorktreeBranch)
+                || operation.TargetFullRef != FullRef(task.MergeTargetRef ?? "master")
+                || !GitIndexLock.PathsEqual(operation.CommonDirectory,
+                    await _landingGit!.CommonDirectoryAsync(task.RepoPath, ct)))
+                return false;
+            var attributes = File.GetAttributes(task.WorktreePath);
+            if ((attributes & FileAttributes.Directory) == 0 || (attributes & FileAttributes.ReparsePoint) != 0
+                || !GitIndexLock.PathsEqual(await _landingGit!.CanonicalDirectoryAsync(task.WorktreePath, ct), operation.WorktreePath))
+                return false;
+            // Only a missing entry is evidence of absence. Exists() also returns false on I/O failures.
+            try
+            {
+                File.GetAttributes(Path.Combine(task.WorktreePath, ".git"));
+                return false;
+            }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
+            var registrations = await _landingGit.LiveRegistrationsAsync(task.RepoPath, ct);
+            foreach (var registration in registrations)
+            {
+                if (GitIndexLock.PathsEqual(registration.Path, task.WorktreePath)
+                    || GitIndexLock.PathsEqual(await _landingGit.CanonicalDirectoryAsync(registration.Path, ct), operation.WorktreePath))
+                    return false;
+            }
+            // An absent parent during the .git observation or a changed directory is not proof.
+            attributes = File.GetAttributes(task.WorktreePath);
+            return (attributes & FileAttributes.Directory) != 0 && (attributes & FileAttributes.ReparsePoint) == 0
+                && GitIndexLock.PathsEqual(await _landingGit.CanonicalDirectoryAsync(task.WorktreePath, ct), operation.WorktreePath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private async Task<(string Code, string Detail, string? Reason)?> ProbeCheckoutIndexLockAsync(string checkout, CancellationToken ct)
     {
         if (!Directory.Exists(checkout))
             return null;
         var observation = await _landingGit!.InspectIndexLockAsync(checkout, ct);
         if (!Directory.Exists(checkout))
             return null;
-        return GitIndexLock.Refusal(observation, GitIndexLock.StaleAfter(_gitSettings?.IndexLockStaleAfterSeconds),
+        var refusal = GitIndexLock.Refusal(observation, GitIndexLock.StaleAfter(_gitSettings?.IndexLockStaleAfterSeconds),
             _clock.GetUtcNow().UtcDateTime);
+        return refusal is { } hit ? (hit.Code, hit.Detail, observation.Reason) : null;
     }
 
     private static string FullRef(string branch) =>
