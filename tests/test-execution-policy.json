@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "add59a1e4dccec4c9d1b923ffe315382c31b2090b0022cdbbe0c7c3b7fa3b0b9",
+  "policyHash": "7b4050b3f7fee897c201c5e9fbb01f56c19f6db50a00e2a10c2e331b6b1072f9",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -946,6 +946,14 @@
       ],
       "role": "child",
       "project": "tests/Antiphon.Checkpoints.RepeatHost/Antiphon.Checkpoints.RepeatHost.csproj"
+    },
+    {
+      "reason": "Existing CARD-1514 timing probe is an explicit child host launched by the primary timing lifecycle tests and staged by Antiphon.Tests.",
+      "consumers": [
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ],
+      "role": "child",
+      "project": "tests/Antiphon.TestTiming.Probe/Antiphon.TestTiming.Probe.csproj"
     }
   ],
   "selectionCatalog": {
