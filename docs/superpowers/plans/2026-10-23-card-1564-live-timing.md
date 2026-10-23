@@ -48,6 +48,8 @@ PC-4 remove sink containment/history bound. Mutation owns red/restore/green.
 | CP-1 | S1-S2 | `tests/Antiphon.Observability.Tests -> bin-c1564-contract/` | live-timing-core | `/*/*/LiveTimingTests/*` | V-1,V-2,V-3,V-4 | all listed, 0 failed | 4 | 3 |
 | CP-2 | S1-S2 | CP-1 | live-timing-http | `/*/*/StartupEndpointTests/*` | V-5,V-6 | all listed, 0 failed | 2 | 3 |
 | CP-3 | S1-S2 | CP-1 | external-boundaries | `/*/*/ExternalBoundaryTests/*` | V-7,V-8 | all listed, 0 failed | 2 | 1 |
+| CP-4 | S1-S2 | `tests/Antiphon.Tests -> bin-c1564-live/` | real-server-startup | `/*/*/LiveStartupIntegrationTests/*` | V-9 | all listed, 0 failed | 1 | 5 |
+| CP-5 | S1-S2 | n/a | script-timing | `pwsh -NoProfile -File scripts/test-live-startup-timing.ps1` | V-10 | 6 assertions, 2 measured phases, 0 failed | n/a | 1 |
 
 V-5: actual server VersionEndpoints extension serves the injected live recorder over TestServer.
 V-6: real delegating handler creates failed span, preserving exception; synthetic secret in
@@ -59,3 +61,11 @@ checking unchanged return values and safe success/failure/cancellation logs.
 V-8 exercises real directory services and a failing git child in an owned empty
 directory, under the assembly process limiter. No repository checkout is used.
 PC-7 pending Mutation: skip async DB failures; PC-8: omit git or filesystem scope.
+
+V-9 boots the real Program once via the shared AntiphonWebAppFactory, its isolated
+DB and refusing runner. A fresh host is necessary to observe actual startup; shared
+assembly DB bootstrap remains once per run. Existing fixture guards stay intact.
+V-10 executes the PowerShell timing wrapper with success and a throwing action,
+checking values, exceptions, duration, labels and payload omission.
+R-1: native Windows CARD-1526 probe at exact final SHA, required for AppHost path.
+PC-9/PC-10 pending Mutation: omit real startup seed scope; omit script finally log.
