@@ -190,6 +190,14 @@ exit $LASTEXITCODE
         $refused=New-AppHostRestartLock -Path $restartLock -SourceRoot $fixture
         Assert-C1527 (-not $refused.Acquired) 'R-1 replacement before admission refused'
         Assert-C1527 ((Get-Content $restartLock -Raw).Trim() -eq ('999999 ' + $now.AddSeconds(1).ToString('o'))) 'R-1 replacement bytes preserved'
+        $precise=[datetimeoffset]::Parse('2026-10-23T00:00:00.9000000Z').UtcDateTime
+        Assert-C1527 ((ConvertTo-UtcStamp $precise) -eq $precise) 'R-1 typed UTC timestamp keeps fractional seconds'
+        $offset=[datetimeoffset]::new($precise).ToOffset([timespan]::FromHours(1))
+        Assert-C1527 ((ConvertTo-UtcStamp $offset) -eq $precise) 'R-1 typed offset timestamp keeps exact UTC instant'
+        $persisted=Update-AppHostOutage ([pscustomobject]@{}) $false $false $precise
+        $persisted=$persisted | ConvertTo-Json -Depth 6 | ConvertFrom-Json
+        $persisted=Update-AppHostOutage $persisted $false $false ($precise.AddSeconds(179.5))
+        Assert-C1527 ($persisted.pendingAlerts.Count -eq 0) 'R-1 persisted fractional outage cannot alert early'
         $outage=[pscustomobject]@{}
         $outage=Update-AppHostOutage $outage $false $false $now
         $outage=Update-AppHostOutage $outage $false $false ($now.AddSeconds(179))
