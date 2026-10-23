@@ -80,7 +80,9 @@ exit $LASTEXITCODE
         ('999999 ' + [datetime]::UtcNow.ToString('o')) | Set-Content $restartLock
         $first=Fire
         Assert-C1527 (-not (Test-Path (Join-Path $fixture 'admitted'))) 'V-1 first fire preserves fresh lock'
+        Assert-C1527 ($first.Exit -eq 0) 'V-1 first fire completed'
         $second=Fire
+        Assert-C1527 ($second.Exit -eq 0) 'V-1 second fire completed'
         Assert-C1527 (Test-Path (Join-Path $fixture 'admitted')) 'V-1 second fire reaches shared restart admission'
     } elseif ($Case -eq 'Launcher') {
         $run=Run-Fixture 'restart-apphost.ps1' @('-TimeoutSec','0','-SkipGracefulStop')
@@ -90,7 +92,8 @@ exit $LASTEXITCODE
     } elseif ($Case -eq 'Alert') {
         ($PID.ToString() + ' ' + [datetime]::UtcNow.ToString('o')) | Set-Content $restartLock
         @{lastOkUtc=$null;restartsUtc=@();downSinceUtc=[datetime]::UtcNow.AddMinutes(-4).ToString('o')} | ConvertTo-Json | Set-Content $statePath
-        $null=Fire
+        $alertFire=Fire
+        Assert-C1527 ($alertFire.Exit -eq 0) 'V-3 skipped-recovery fire completed'
         $sent=Join-Path $fixture 'sent.jsonl'
         Assert-C1527 (Test-Path $sent) 'V-3 outage alerts despite live restart lock'
         $null=Fire
@@ -98,6 +101,24 @@ exit $LASTEXITCODE
         '' | Set-Content (Join-Path $fixture 'up')
         $null=Fire
         Assert-C1527 (@(Get-Content $sent).Count -eq 2) 'V-3 one recovery notice'
+        Remove-Item (Join-Path $fixture 'up')
+        '' | Set-Content (Join-Path $fixture 'send-fails')
+        $clock=[datetime]::UtcNow
+        $clock.ToString('o') | Set-Content (Join-Path $fixture 'now.txt')
+        $null=Fire
+        $clock.AddSeconds(180).ToString('o') | Set-Content (Join-Path $fixture 'now.txt')
+        $null=Fire
+        $pending=Get-Content $statePath -Raw | ConvertFrom-Json
+        Assert-C1527 ($pending.pendingAlerts.Count -eq 1) 'V-3 failed delivery persists intent'
+        $pendingId=$pending.pendingAlerts[0].Id
+        Remove-Item (Join-Path $fixture 'send-fails')
+        $null=Fire
+        $delivered=Get-Content $sent | Select-Object -Last 1 | ConvertFrom-Json
+        Assert-C1527 ($delivered.Id -eq $pendingId -and @(Get-Content $sent).Count -eq 3) 'V-3 retry delivers same event once'
+        '' | Set-Content (Join-Path $logs 'apphost.down-on-purpose')
+        $clock.AddSeconds(600).ToString('o') | Set-Content (Join-Path $fixture 'now.txt')
+        $null=Fire
+        Assert-C1527 (@(Get-Content $sent).Count -eq 3) 'V-3 maintenance sends no alert or recovery'
     } else {
         . (Join-Path $PSScriptRoot 'apphost-common.ps1')
         $now=[datetime]::UtcNow
@@ -169,6 +190,41 @@ exit $LASTEXITCODE
         Assert-C1527 ($outage.pendingAlerts.Count -eq 2) 'R-1 recovery deduplicates'
         $outage=Update-AppHostOutage $outage $false $true ($now.AddSeconds(300))
         Assert-C1527 ($outage.pendingAlerts.Count -eq 0 -and $null -eq $outage.downSinceUtc) 'R-1 maintenance suppresses outage'
+        $script:inventory=@();$script:listeners=@();$script:censusDenied=$false
+        function Get-CimInstance { param($ClassName); if ($script:censusDenied) { throw 'denied' }; return $script:inventory }
+        function Get-NetTCPConnection { param($State); return $script:listeners }
+        function Get-ScheduledTask { return @() }
+        $nativeLock=[pscustomobject]@{StampUtc=$now}
+        Assert-C1527 ((Get-AppHostLaunchActivity $fixture $nativeLock) -eq 'Absent') 'R-1 complete empty census is absence'
+        $script:censusDenied=$true
+        Assert-C1527 ((Get-AppHostLaunchActivity $fixture $nativeLock) -eq 'Unknown') 'R-1 denied census is unknown'
+        $script:censusDenied=$false
+        $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("Set-Location '$fixture/Antiphon.AppHost'; dotnet run"))
+        $script:inventory=@([pscustomobject]@{ProcessId=999997;Name='pwsh.exe';CommandLine="pwsh -EncodedCommand $encoded";CreationDate=$now})
+        Assert-C1527 ((Get-AppHostLaunchActivity $fixture $nativeLock) -eq 'Present') 'R-1 encoded detached wrapper veto'
+        $script:inventory[0].CommandLine="pwsh -File $fixture/dev-aspire.ps1"
+        Assert-C1527 ((Get-AppHostLaunchActivity $fixture $nativeLock) -eq 'Present') 'R-1 restore or build-slot launcher veto'
+        $script:inventory[0].CommandLine='dotnet build /unrelated/checkout/project.csproj'
+        Assert-C1527 ((Get-AppHostLaunchActivity $fixture $nativeLock) -eq 'Absent') 'R-1 unrelated build does not block'
+        999997 | Set-Content (Join-Path $logs 'apphost.pid')
+        $script:inventory[0].CreationDate=$now.AddMinutes(1)
+        Assert-C1527 ((Get-AppHostLaunchActivity $fixture $nativeLock) -eq 'Absent') 'R-1 reused pid after lock ignored when unrelated'
+        $script:inventory[0].CreationDate=$null
+        Assert-C1527 ((Get-AppHostLaunchActivity $fixture $nativeLock) -eq 'Unknown') 'R-1 wrapper identity unknown veto'
+        $script:inventory[0].CommandLine=$null
+        Assert-C1527 ((Get-AppHostLaunchActivity $fixture $nativeLock) -eq 'Unknown') 'R-1 unreadable command line veto'
+        Remove-Item (Join-Path $logs 'apphost.pid')
+        $script:inventory=@();$script:listeners=@([pscustomobject]@{LocalPort=17202})
+        Assert-C1527 ((Get-AppHostLaunchActivity $fixture $nativeLock) -eq 'Present') 'R-1 listener veto without health success'
+        $script:listeners=@([pscustomobject]@{LocalPort=17204})
+        Assert-C1527 ((Get-AppHostLaunchActivity $fixture $nativeLock) -eq 'Absent') 'R-1 runner port excluded'
+        $script:listeners=@()
+        $ownPath=Join-Path $logs 'owned.lock'
+        $owned=New-AppHostLock -Path $ownPath
+        $owned.Stream.Dispose();$owned.Stream=$null
+        '999999 replacement' | Set-Content $ownPath
+        Remove-AppHostLock $owned
+        Assert-C1527 ((Get-Content $ownPath -Raw).Trim() -eq '999999 replacement') 'R-1 cleanup preserves replacement lock'
         foreach ($name in @('apphost-common.ps1','watchdog-apphost.ps1','restart-apphost.ps1')) {
             $path=Join-Path $PSScriptRoot $name
             $bytes=[IO.File]::ReadAllBytes($path)

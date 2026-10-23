@@ -633,3 +633,19 @@ Start either without re-login: `Start-ScheduledTask -TaskName "Antiphon Session 
   running; `Remove-Item` the path from the hold/refusal detail once the census is clear.
   Simulate only in a scratch repo (`git rev-parse --path-format=absolute --git-path index.lock`,
   then `File.WriteAllBytes` + `File.SetLastWriteTimeUtc`); never touch `C:\src\Antiphon\.git`.
+
+### Dead launch watchdog refinement (CARD-1527)
+
+Fresh-lock protection has one conservative exception: the same restart stamp,
+a positively dead holder, no owned launch/process/listener, and refused health on
+two separate fires allow revalidated shared restart admission. Unknown evidence
+and slow detached launches retain the existing 15-minute fallback. Confirmed
+nonzero launcher exit at health timeout now clears only the restart's own stamp
+and names captured stdout/stderr, including failures before apphost.log exists.
+
+The watchdog records outage duration even when recovery is suppressed and queues
+one down event at three minutes plus one recovery event. Delivery requires the
+independently configured, idempotent transport described in the
+[dead-launch runbook](apphost-runbook.md#dead-launch-recovery-and-outage-evidence-card-1527).
+Missing transport is pending delivery, not a successful alert. Native Windows
+qualification and observer registration remain separate operational work.

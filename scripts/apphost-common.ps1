@@ -375,7 +375,7 @@ function New-AppHostLock {
                 Reason   = ("{0} could not be written ({1}; {2})" -f $Label, $_.Exception.Message, $Path)
             }
         }
-        return [pscustomobject]@{ Acquired = $true; Path = $Path; Reason = $null; Stream = $stream }
+        return [pscustomobject]@{ Acquired = $true; Path = $Path; Reason = $null; Stream = $stream; Identity = $text }
     }
 }
 
@@ -393,7 +393,12 @@ function Remove-AppHostLock {
     if ($Lock.Stream) { try { $Lock.Stream.Dispose() } catch { } }
     $Lock.Stream = $null
     if (-not $KeepFile) {
-        try { Remove-Item -LiteralPath $Lock.Path -Force -ErrorAction SilentlyContinue } catch { }
+        try {
+            $identity = Get-AppHostField $Lock 'Identity'
+            if ($identity -and (Get-Content -LiteralPath $Lock.Path -Raw -ErrorAction Stop).Trim() -ceq $identity) {
+                Remove-Item -LiteralPath $Lock.Path -Force -ErrorAction Stop
+            }
+        } catch { }
     }
 }
 

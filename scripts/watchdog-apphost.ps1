@@ -101,7 +101,7 @@ function Write-WatchdogState($state) {
     $temp = $stateFile + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
     try {
         [IO.File]::WriteAllText($temp, ($state | ConvertTo-Json -Depth 8), [Text.Encoding]::UTF8)
-        if (Test-Path -LiteralPath $stateFile) { [IO.File]::Replace($temp,$stateFile,$null) }
+        if (Test-Path -LiteralPath $stateFile) { [IO.File]::Replace($temp,$stateFile,[NullString]::Value) }
         else { [IO.File]::Move($temp,$stateFile) }
     } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
 }
@@ -166,7 +166,7 @@ function Test-LaunchInFlight([switch]$Revalidate) {
     if ($Revalidate) { $observedRound = Test-Round }
     $decision = Resolve-AppHostDeadLaunch -Lock $restart -Activity $activity -HealthDead $observedRound.HealthDead `
         -LaunchBlocked ([bool]$launchHeld) -Previous $script:state.deadLaunch -FireId $script:fireId `
-        -NowUtc (Get-AppHostWatchdogNow) -Revalidate:$Revalidate
+        -NowUtc (Get-AppHostWatchdogNow) -Revalidate:($Revalidate -or $ProbeOnly)
     $script:state.deadLaunch = $decision.Proof
     Write-WatchdogState $script:state
     if ($launchHeld) { return $launchHeld }
