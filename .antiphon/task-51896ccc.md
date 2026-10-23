@@ -3,12 +3,12 @@
 Continuation task: 51896ccc-eabb-492b-8526-97fa1a76f3b4. Original Code task / landing owner: a5f9c44c-29ec-431d-9e90-a912d9273f52.
 Branch: feat/card-task-51896ccc. Worktree: /work/worktrees/task-51896ccc.
 Continuation base: 8c7765eb7674f9b28cbff20c60d3b0a724f354a1. Full task/evidence base: 877b9ce108e6e2bb4ba81840a99c4dd788302ca4.
-Code repair commit: 7556d3331674d1944ed5e12f3846076067b0c4b1.
+Code repair commits: 7556d3331674d1944ed5e12f3846076067b0c4b1 and 1d4e73d67af280e2f20182d328ba2424b3b44576.
 Previous report: /work/worktrees/task-a5f9c44c/.antiphon/task-a5f9c44c.md; previous final evidence: /work/worktrees/task-a5f9c44c/.antiphon/a5f9-evidence/final-report.log.
 
 This manifest is frozen before final qualification. Actual tested/pushed SHA, final unedited CHECKPOINT lines, receipt qualification, all V/R outcomes, timings and RC compile result are stored in the ignored `.antiphon/c1554-evidence/final-report.log`. This committed pre-run report makes no final-green claim.
 
-Only BootStallDetectionTests changed. The completed RepairSourceDispatchTests, DelegateCheckProbeTests, OrchestratorInstructionsRefreshTests and shared BootStallWorld are untouched by this continuation. No production code, timeout, retry or assertion body changed. Existing red tests were already committed before the fix.
+Only BootStallDetectionTests changed. The completed RepairSourceDispatchTests, DelegateCheckProbeTests, OrchestratorInstructionsRefreshTests and shared BootStallWorld are untouched by this continuation. No production code, timeout, retry or behavioral assertion was weakened. SQL counts remain exact, with the recorded source-version justification below. Existing red tests were already committed before the fix.
 
 ## Attribution and justification
 
@@ -17,6 +17,8 @@ Fresh pristine-base run 20261023-130110-b0bd tested clean committed 877b9ce108e6
 One-line justification: CARD-1518 legitimately reloads AgentTasks after transcript catch-up to revalidate status/session/attempt/dispatch identity before deciding; this inherited roster #14 query raises five exact budgets 28→29 and the identity-refusal budget 22→23.
 
 Introduced by 3b44e076dbb1ad8f1b2e039749ae033538d369d6, strengthened by abce6eff68. AgentTaskDispatcher.TryFailOverdueAsync captures evaluatedAttempt/evaluatedDispatch, pulls, reloads, then checks all binding fields before its second deadline evaluation. Removing the read would weaken stale-decision protection. It is not an extra runner pull or inventory read. The eight exact totals, transcript-pull checks, inventory-zero checks, warning-stage checks, failed-write interleaving and no-destructive-action assertions remain strict.
+
+RC compatibility: fresh rc c16cf5ef0 still lacks both TaskProviderWaitReader and the associated task reload. The six pull paths use exact 28/22 there and exact 29/23 on the source that declares this production feature. The test checks only type availability, never its observed SQL count or reload implementation. Removing the reload while retaining the feature type still fails all six exact budgets. The two no-pull paths remain exact 9/13 on both sources. This is necessary for forwarding the same fixture commits to the older rc line; no dummy options or manufactured SQL is used.
 
 | Variant | Base expected | Base actual | Attribution / fixed expected |
 |---|---:|---:|---|
@@ -49,11 +51,11 @@ Earlier V-1/V-3/V-4 remain historical PASS in the previous report (41/41, 50/50,
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | all | tests/Antiphon.Tests -> bin-c1554-final/ | boot-continuation | `/*/Antiphon.Tests.Application/(BootStallDetectionTests*)\|(BootStallWorkingTickCharacterizationTests*)\|(DelegationDispatchRecoveryBoundaryTests*)/*` | V-2, R-1, R-2 | all three full classes, 0 failed/skipped | 443 | 8 | `TUNIT_MAX_PARALLEL_TESTS=4` |
+| CP-1 | all | tests/Antiphon.Tests -> bin-c1554-final2/ | boot-continuation | `/*/Antiphon.Tests.Application/(BootStallDetectionTests*)\|(BootStallWorkingTickCharacterizationTests*)\|(DelegationDispatchRecoveryBoundaryTests*)/*` | V-2, R-1, R-2 | all three full classes, 0 failed/skipped | 443 | 8 | `TUNIT_MAX_PARALLEL_TESTS=4` |
 
 Run prebuilt checkpoint tool `run --plan .antiphon/task-51896ccc.md --expected-source-sha <committed HEAD> --row-timeout 12m --total-timeout 16m --keep-outputs --max-wait 50s`, then `wait --run <id> --max-wait 50s` until terminal. Supported keep-outputs avoids automatically retained red outputs poisoning receipt qualification (previous task's cleanup_refused). After terminal wait, inspect recorded outputPaths and task ownership, copy build-source provenance, remove only exact task-owned isolated outputs, then validate the unedited report.json using scripts/validate-checkpoint-receipt.ps1 at the actual tested SHA. Do not edit receipts.
 
-Additional drivers are explained: the pristine-base exact-method checkpoint above was explicitly commissioned for attribution; the gated checkpoint-tool bootstrap (8s held, granted/waited=0s) supplies the driver; one gated RC compilation is explicitly commissioned, with a 12m hard timeout including slot acquisition. No unlisted test selection.
+Additional drivers are explained: the pristine-base exact-method checkpoint above was explicitly commissioned for attribution; the gated checkpoint-tool bootstrap (8s held, granted/waited=0s) supplies the driver; gated RC compilation is explicitly commissioned, with a 12m hard timeout including slot acquisition. No unlisted test selection. An incorrect expected SHA refused before any build/test driver. First final run 20261023-130939-452f at 07997e6dc4c49850fa31818903548faee5880aff was explicitly stopped during its build to add the discovered RC feature compatibility; stop returned 0 and executor/driver absence was checked before source edits. Build slot granted/waited=0s; zero tests executed, no qualification credit. New isolated output final2 prevents reuse of partial output. The initial RC compile tests the first four patches; a bounded incremental RC compile after patch 5 is required for the actual final source.
 
 ## RC and handoff obligations
 
@@ -62,8 +64,9 @@ Fresh RC base c16cf5ef0f0429ad9c1c6bdd41ba5a89d8e973e9. Scratch /tmp/c1554-51896
 2. 762aebee213330b75b7c9623cea71bab78aaf3a5
 3. fd7622fd6cb2a639de035034fa162ec7802c95cf
 4. 7556d3331674d1944ed5e12f3846076067b0c4b1
+5. 1d4e73d67af280e2f20182d328ba2424b3b44576
 
-All four applied without conflict; compile is still required and its actual outcome belongs in final evidence. Report/manifest/mutation-candidate commits are not RC code picks.
+The first four applied without conflict; patch 5 and final compilation are still required and actual outcomes belong in final evidence. Report/manifest/mutation-candidate commits are not RC code picks.
 GET /api/runner-defaults and GET /api/session-runners were read: Linux is eligible; no host/platform is pinned. Restart: none. No desktop use, activation or deployment.
 
 Every prior PC-1..PC-6/variant remains PENDING under docs/superpowers/mutations/2026-10-23-rc-fixture-repairs-a5f9c44c.md. Continuation PC-7/PC-8 are PENDING under docs/superpowers/mutations/2026-10-23-card-1554-boot-continuation.md. Mutation owns method-scoped deliberate mutants, intended red/restore/green and missing-control discovery. Code ran no deliberate mutant. The brief asks for no Review; the governing Code stage contract still requires next: review when ordinary verification completes. Original landing owner remains a5f9c44c.
