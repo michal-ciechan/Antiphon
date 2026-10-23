@@ -22,9 +22,12 @@ function Paint {
 }
 function Publish-Trace([string]$phase) {
     $script:sequence++
-    @{ applied = $script:applied; highlight = $script:highlight; keys = $script:keys.ToArray(); composer = $script:composer; pid = $PID;
+    $json = @{ applied = $script:applied; highlight = $script:highlight; keys = $script:keys.ToArray(); composer = $script:composer; pid = $PID;
        sequence = $script:sequence; phase = $phase; clearReceived = $script:clearReceived; clearPainted = $script:clearPainted } |
-        ConvertTo-Json -Compress | Set-Content -LiteralPath $env:C449_TRACE
+        ConvertTo-Json -Compress
+    $temporary = $env:C449_TRACE + '.tmp'
+    [IO.File]::WriteAllText($temporary, $json)
+    [IO.File]::Move($temporary, $env:C449_TRACE, $true)
     if ($script:PublishSink) { & $script:PublishSink $phase }
 }
 function Invoke-FixtureKey([ConsoleKeyInfo]$key) {
@@ -45,9 +48,9 @@ function Invoke-FixtureKey([ConsoleKeyInfo]$key) {
     }
     elseif ($key.KeyChar -ne [char]0) { $script:composer += $key.KeyChar }
     $phase = if ($name -eq 'Ctrl+U') { 'clear' } elseif ($name -eq 'Enter') { 'enter' } else { 'key' }
-    Publish-Trace $phase
     Paint
     if ($name -eq 'Ctrl+U') { $script:clearPainted = [DateTime]::UtcNow.ToString('O') }
+    if ($phase -ne 'key') { Publish-Trace $phase }
 }
 if (!$DefinitionsOnly) {
     Paint
