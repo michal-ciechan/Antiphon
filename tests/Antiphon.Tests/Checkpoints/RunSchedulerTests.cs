@@ -482,7 +482,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             try
             {
                 var token = await entered.Task.WaitAsync(watchdog.Token);
-                var timer = await clock.WaitForTimerAsync(e => e.Action == "create", ct: watchdog.Token);
+                var timer = await clock.WaitForTimerAsync(e => e.Action == "create" && e.DueTime == TimeSpan.FromMinutes(expectedMinutes), ct: watchdog.Token);
                 clock.Advance(TimeSpan.FromMinutes(aliveAt));
                 token.IsCancellationRequested.ShouldBeFalse("the held build is still within its selected row deadline");
                 timer.DueTime.ShouldBe(TimeSpan.FromMinutes(expectedMinutes));
@@ -502,7 +502,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             driver.KillCount.ShouldBe(0);
             result.State.Builds.Single().DeadlineMinutes.ShouldBe(expectedMinutes);
             result.State.Builds.Single().State.ShouldBe(expires ? "failed" : "ok");
-            result.ExitCode.ShouldBe(expires ? ExitCodes.Invalid : ExitCodes.Green);
+            result.ExitCode.ShouldBe(expires ? ExitCodes.Timeout : ExitCodes.Green);
             driver.Count(CheckpointFixtures.IsRun).ShouldBe(expires ? 0 : selected.Count);
             result.Rows.Count.ShouldBe(selected.Count);
             if (!expires)

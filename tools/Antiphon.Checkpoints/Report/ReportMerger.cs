@@ -54,6 +54,8 @@ public static class ReportMerger
             Unlisted = latest.Unlisted,
             Evidence = latest.Evidence,
             Builds = latest.Builds,
+            Budget = latest.Budget,
+            Attempts = ordered,
             Rows = byId.Values.Select(item => item.Row).ToList(),
         };
         merged.SequentialEquivalentSeconds = merged.Rows.Sum(row => row.Seconds);
@@ -82,6 +84,9 @@ public static class ReportMerger
             Reruns = row.Reruns + (row.Repeat is null ? earlierAttempts : 0),
             Trx = row.Trx,
             Seconds = row.Seconds,
+            ExecutedSeconds = row.ExecutedSeconds,
+            WallSeconds = row.WallSeconds,
+            TerminalReason = row.TerminalReason,
             Line = row.Line,
             Failures = row.Failures,
             RerunLines = row.RerunLines.ToList(),

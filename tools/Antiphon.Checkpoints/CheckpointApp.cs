@@ -27,6 +27,7 @@ public static class CheckpointApp
         public Func<TimeSpan, CancellationToken, Task>? SlotDelay { get; init; }
         public Func<Process, DateTime>? SlotStartTimeReader { get; init; }
         public IPlatform? Platform { get; init; }
+        public TimeProvider? TimeProvider { get; init; }
         public Func<LaunchRequest, int>? Launch { get; init; }
         public Func<LaunchRequest, LaunchOutcome>? LaunchWithOutcome { get; init; }
         public string? ToolDirectory { get; init; }
@@ -107,7 +108,11 @@ public static class CheckpointApp
                 ExitCode = exit,
                 Reason = reason,
                 Verdict = "RED",
-                Rows = state.Rows.Select(row => new ReportRow { Id = row.Id, State = row.State, ExitCode = row.ExitCode }).ToList(),
+                Budget = state.Budget,
+                Rows = state.Rows.Select(row => new ReportRow { Id = row.Id, State = row.State, ExitCode = row.ExitCode,
+                    Slot = row.Slot, SlotReason = row.SlotReason, WaitedSeconds = row.WaitedSeconds,
+                    ExecutedSeconds = row.ExecutedSeconds, WallSeconds = row.WallSeconds,
+                    TerminalReason = row.TerminalReason, Line = row.Line }).ToList(),
                 Source = state.Source,
                 Evidence = Path.Combine(runDirectory, "report.md"),
             };
@@ -179,9 +184,9 @@ public static class CheckpointApp
         IBuildSlotClient slots = runtime.Slots ?? (request.Slots == "off"
             ? new FixedSlotClient("off")
             : new BuildSlotClient(runtime.SlotHandler ?? new HttpClientHandler(), BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows()),
-                clock: runtime.SlotClock, delay: runtime.SlotDelay, log: Note,
+                wait: TimeSpan.FromMinutes(manifest.Build.SlotWaitMinutes), clock: runtime.SlotClock, delay: runtime.SlotDelay, log: Note,
                 holders: new ProcessLeaseHolderSource(runtime.SlotStartTimeReader),
-                sensitiveToken: runtime.EnvironmentLookup("ANTIPHON_TASK_TOKEN")));
+                sensitiveToken: runtime.EnvironmentLookup("ANTIPHON_TASK_TOKEN"), timeProvider: runtime.TimeProvider));
         var platform = runtime.Platform ?? new RuntimePlatform();
         var width = request.Parallel is > 0 ? request.Parallel.Value : manifest.EffectiveMaxRows(platform.IsWindows);
         if (request.Serial)
@@ -191,7 +196,13 @@ public static class CheckpointApp
         state.TotalTimeoutAt = state.StartedAt.AddMinutes(totalMinutes);
         Note($"execute rows={selected.Count} width={width} total={totalMinutes}m");
         var driver = runtime.Driver ?? new ProcessDriver();
-        var scheduler = new RunScheduler(driver, platform);
+        var executionLimit = TimeSpan.FromMinutes(totalMinutes);
+        var wallLimit = request.HardWallTimeoutMinutes ?? manifest.Timeouts.HardWallMinutes;
+        var admissionLimit = TimeSpan.FromMinutes(manifest.Build.SlotWaitMinutes);
+        using var budget = new RunBudgetClock(executionLimit,
+            wallLimit is int wall ? TimeSpan.FromMinutes(wall) : executionLimit + admissionLimit, runtime.TimeProvider);
+        state.HardWallTimeoutAt = budget.StartedAt + budget.HardWallLimit;
+        var scheduler = new RunScheduler(driver, platform, runtime.TimeProvider ?? TimeProvider.System);
         SchedulerResult result;
         StatePublicationException? publicationFailure = null;
         using var watchCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -226,6 +237,7 @@ public static class CheckpointApp
                 SerialAll = request.Serial,
                 RowTimeoutOverride = request.RowTimeoutMinutes is int row ? TimeSpan.FromMinutes(row) : null,
                 TotalTimeout = TimeSpan.FromMinutes(totalMinutes),
+                Budget = budget,
                 Publish = Publish,
                 BeforeLaunch = BeforeLaunch,
                 CancellationReason = () => owner.Reason ?? "owner-ended",
@@ -306,6 +318,7 @@ public static class CheckpointApp
             model.Verdict = "RED";
             model.CleanedOutputs = false;
             model.OutputPaths = state.CreatedOutputPaths.ToList();
+            state.Budget = model.Budget = budget.Snapshot(admissionLimit);
             model.Evidence = Path.Combine(runDirectory, "report.md");
             var output = runtime.Output ?? Console.Error;
             foreach (var line in model.Rows.SelectMany(row => new[] { row.Line }.Concat(row.RerunLines))
@@ -338,12 +351,10 @@ public static class CheckpointApp
         { return await RetainPublicationFailure(ex).ConfigureAwait(false); }
         if (!owner.Ended.IsCancellationRequested && !string.IsNullOrWhiteSpace(request.Baseline))
         {
-            var remaining = state.TotalTimeoutAt is DateTimeOffset deadline
-                ? deadline - context.Time.GetUtcNow()
-                : TimeSpan.FromMinutes(15);
+            var remaining = budget.RemainingExecution;
             if (remaining < TimeSpan.Zero)
                 remaining = TimeSpan.Zero;
-            var comparer = new BaselineComparer(driver, slots, remaining, BeforeLaunch);
+            var comparer = new BaselineComparer(driver, slots, remaining, BeforeLaunch, budget, admissionLimit);
             try
             {
                 await comparer.CompareAsync(
@@ -372,6 +383,7 @@ public static class CheckpointApp
             model.Reason = owner.Reason;
         }
 
+        state.Budget = model.Budget = budget.Snapshot(admissionLimit);
         model.Evidence = Path.Combine(runDirectory, "report.md");
         var gitAppend = write.Append(Path.Combine(runDirectory, "git.txt"),
             $"\nsource={SourceEvidence.Token(source.Start)} sourceState={source.State} buildSource={source.BuildSource}\n",
@@ -808,6 +820,7 @@ public static class CheckpointApp
             SequentialEquivalentSeconds = rows.Sum(row => row.Seconds),
             ExitCode = result.ExitCode,
             Reason = state.Reason,
+            Budget = state.Budget,
             Verdict = result.ExitCode == 0 ? "GREEN" : "RED",
             Builds = state.Builds.Select(build => new ReportBuild
             {
@@ -819,6 +832,9 @@ public static class CheckpointApp
                 SlotReason = build.SlotReason,
                 WaitedSeconds = build.WaitedSeconds,
                 DeadlineMinutes = build.DeadlineMinutes,
+                ExecutedSeconds = build.ExecutedSeconds,
+                WallSeconds = build.WallSeconds,
+                TerminalReason = build.TerminalReason,
                 Source = build.Source,
             }).ToList(),
             Rows = rows,
@@ -856,6 +872,9 @@ public static class CheckpointApp
             Timings = row.Timings,
             Trx = row.TrxPath,
             Seconds = row.Seconds,
+            ExecutedSeconds = row.ExecutedSeconds,
+            WallSeconds = row.WallSeconds,
+            TerminalReason = row.TerminalReason,
             Line = row.Line,
             RerunLines = row.RerunLines,
             SlowClasses = row.Trx?.SlowClasses ?? [],

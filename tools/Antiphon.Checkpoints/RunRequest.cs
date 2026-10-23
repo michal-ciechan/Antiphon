@@ -8,6 +8,7 @@ public sealed class RunRequest
     public List<string> KnownFlaky { get; set; } = [];
     public int? RowTimeoutMinutes { get; set; }
     public int? TotalTimeoutMinutes { get; set; }
+    public int? HardWallTimeoutMinutes { get; set; }
     public int? Parallel { get; set; }
     public bool Serial { get; set; }
     public string Slots { get; set; } = "auto";

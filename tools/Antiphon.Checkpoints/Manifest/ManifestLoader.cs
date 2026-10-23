@@ -21,6 +21,15 @@ public static class ManifestLoader
         CheckpointManifest manifest;
         try
         {
+            var stream = new YamlDotNet.RepresentationModel.YamlStream();
+            stream.Load(new StringReader(yaml));
+            if (stream.Documents.FirstOrDefault()?.RootNode is YamlDotNet.RepresentationModel.YamlMappingNode root
+                && root.Children.TryGetValue(new YamlDotNet.RepresentationModel.YamlScalarNode("timeouts"), out var timeouts)
+                && timeouts is YamlDotNet.RepresentationModel.YamlMappingNode mapping
+                && mapping.Children.TryGetValue(new YamlDotNet.RepresentationModel.YamlScalarNode("hardWallMinutes"), out var scalar)
+                && (scalar is not YamlDotNet.RepresentationModel.YamlScalarNode value
+                    || !int.TryParse(value.Value, out var minutes) || minutes <= 0))
+                throw new ManifestValidationException("hardWallMinutes", "hardWallMinutes must be a positive integer when present");
             manifest = Deserializer.Deserialize<CheckpointManifest>(yaml) ?? throw new ManifestValidationException("yaml", "empty manifest");
         }
         catch (ManifestValidationException)

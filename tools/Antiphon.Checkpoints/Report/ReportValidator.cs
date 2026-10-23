@@ -23,6 +23,12 @@ public static class ReportValidator
 
     public static string? Validate(ReportModel report, string expectedSha, IReadOnlyList<string>? selectedIds = null, int expectedRepeat = 1)
     {
+        static bool Invalid(double? seconds) => seconds is double value && (!double.IsFinite(value) || value < 0);
+        if (report.Rows.Any(row => Invalid(row.ExecutedSeconds) || Invalid(row.WallSeconds))
+            || report.Builds.Any(build => Invalid(build.ExecutedSeconds) || Invalid(build.WallSeconds))
+            || report.Budget is { } budget && (Invalid(budget.BudgetWallSeconds) || Invalid(budget.ExecutionSeconds)
+                || Invalid(budget.AdmissionOnlySeconds) || Invalid(budget.RemainingExecutionSeconds)))
+            return "invalid_timing";
         if (report.CleanupRefusals.Count > 0)
             return "cleanup_refused";
         if (report.ExitCode != ExitCodes.Green || report.Verdict != "GREEN")
