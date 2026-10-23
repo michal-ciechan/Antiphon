@@ -6001,6 +6001,7 @@ public sealed partial class AgentTaskDispatcher
                 ? "{}"
                 : claimed.InheritedLaunchEnvJson;
             agent.PoolProviderProjectionJson = ProviderEndpointLayers.UnknownPoolProjection;
+            agent.PoolClaudeEffort = null;
         }
 
         var cwd = claimed.WorktreePath ?? claimed.WorkingDirectory;
@@ -6551,7 +6552,10 @@ public sealed partial class AgentTaskDispatcher
         // stamp described the wedged process; BuildLaunchSpecAsync restamps from the new launch's
         // own read, and a relaunch that never builds a spec leaves the row matching nothing.
         if (agent.IsPoolDelegate)
+        {
             agent.PoolProviderProjectionJson = ProviderEndpointLayers.UnknownPoolProjection;
+            agent.PoolClaudeEffort = null;
+        }
 
         var limit = Math.Max(1, _settings.BootWedgeRelaunchLimit);
         _db.AgentTaskEvents.Add(new AgentTaskEvent
@@ -7026,6 +7030,8 @@ public sealed partial class AgentTaskDispatcher
             // placeholder only; the resolved value is never stored.
             if (agent.IsPoolDelegate)
             {
+                agent.PoolClaudeEffort = spec.Kind == AgentKind.ClaudeCode
+                    ? ClaudeLaunchArgs.ReadLaunchEffort(spec.Args) : null;
                 agent.PoolProviderProjectionJson = ProviderEndpointLayers.PoolFingerprint(
                     session.AgentKind,
                     endpoints,
@@ -8137,16 +8143,13 @@ public sealed partial class AgentTaskDispatcher
 
             // Only a FREE pinned delegate reaches this: a busy one is waited for above, never
             // replaced by a second session mid-task (CARD-1481 repair).
-            if (DeclinesReuseForClaudeEffort(claimed))
+            if (!ClaudeEffortMatchesPool(pinned, claimed))
                 return ReuseOutcome.SpawnFresh;
 
             agent = pinned;
         }
         else if (_settings.PoolEnabled)
         {
-            if (DeclinesReuseForClaudeEffort(claimed))
-                return ReuseOutcome.SpawnFresh;
-
             var reservationCutoff = now.AddMinutes(-Math.Max(0, _settings.PoolReservedForCallerMinutes));
             var warm = await _db.Agents
                 .Where(a => a.IsPoolDelegate
@@ -8173,6 +8176,7 @@ public sealed partial class AgentTaskDispatcher
                 .Where(a => claimed.Workspace != WorkspaceMode.Shared
                     || !IsWorktreeWorkingDirectory(a.WorkingDirectory))
                 .Where(a => InheritedEnvMatchesPool(a, claimed, projectEndpoints))
+                .Where(a => ClaudeEffortMatchesPool(a, claimed))
                 .Where(a => a.PoolReservedForRootTaskId == claimed.RootTaskId
                     || a.PoolIdleSince <= reservationCutoff)
                 .ToList();
@@ -8262,53 +8266,16 @@ public sealed partial class AgentTaskDispatcher
     }
 
     /// <summary>
-    /// Place a task pinned to a STANDING agent — a user's own agent, or a supervised specialist like
-    /// the check interpreter (CARD-0047 slice 4A). The general capability behind "run this on my
-    /// standing agent".
-    ///
-    /// <para>Until this existed, every pinned non-pool agent fell through to <c>SpawnFresh</c>, which
-    /// creates a SECOND session and overwrites <see cref="Agent.PersistentSessionId"/>. For an
-    /// AlwaysOn agent that is not merely wasteful — it points the row at a session the supervisor
-    /// never started while the one it did start keeps running, so the two fight over the row for as
-    /// long as both live.</para>
-    ///
-    /// <para>So: a live session takes the work, and NOTHING on the agent row is written.
-    /// <c>PersistentSessionId</c> belongs to whoever launched the session, and
-    /// <c>Status</c>/<c>PoolIdleSince</c>/<c>PoolReservedForRootTaskId</c> belong to the pool — a
-    /// standing agent is in neither's gift.</para>
-    ///
-    /// <para>No live session and <see cref="Agent.AlwaysOn"/> means the supervisor is already on it
-    /// (its sweep ensures every AlwaysOn agent that is not user-suspended has a session), so the task
-    /// waits rather than racing it. A standing agent that nothing supervises keeps today's
-    /// <c>SpawnFresh</c> behaviour — there is no one else to bring it up. From CARD-0140 the fresh
-    /// session's program is the agent's own TUI profile (via <see cref="ResolveDelegateProgramAsync"/>),
-    /// not the task-kind registry default that used to launch <c>claude.exe</c> under a Codex
-    /// agent's name.</para>
+    /// A pool process keeps its launch effort. Unknown stamps fail closed; standing seats and
+    /// busy pins are handled before this comparison. Other providers retain their own gates.
     /// </summary>
-    /// <summary>
-    /// Warm-pool reuse may only keep a process whose inherit-list projection matches this
-    /// task's snapshot (CARD-0260). Same names and Ordinal values; two empties match.
-    /// </summary>
-    /// <summary>
-    /// A reused POOL process cannot change its --effort either: CARD-0289 made effort a launch
-    /// ARGUMENT, and the pool matches on tier, not role. A Delegation:ClaudeEffortByRole entry that
-    /// differs from the tier's effort therefore needs a fresh process; a same-tier warm candidate
-    /// may have been launched for a role without one (task 8333e231). Pool placement only — a
-    /// standing seat runs at its own launch effort and keeps its own rules (PlaceOnStandingAgentAsync),
-    /// and a busy pinned delegate is waited for before this is asked (CARD-1481 repair).
-    /// </summary>
-    private bool DeclinesReuseForClaudeEffort(AgentTask claimed)
-    {
-        if (claimed.AgentKind != AgentKind.ClaudeCode
-            || !ClaudeLaunchArgs.RoleOverrideDiffersFromTier(claimed.ModelLevel, claimed.Role, _settings.ClaudeEffortByRole))
-            return false;
+    private bool ClaudeEffortMatchesPool(Agent agent, AgentTask task) =>
+        task.AgentKind != AgentKind.ClaudeCode
+        || (agent.PoolClaudeEffort is not null && string.Equals(agent.PoolClaudeEffort,
+            ClaudeLaunchArgs.Effort(task.ModelLevel, task.Role, _settings.ClaudeEffortByRole),
+            StringComparison.Ordinal));
 
-        _logger.LogInformation(
-            "Task {ShortId} has a Claude effort override for role {Role} that differs from its tier — declining warm reuse so a fresh process can apply it",
-            DelegationReportFormatter.Short(claimed.Id), claimed.Role);
-        return true;
-    }
-
+    /// <summary>Match the candidate's inherited environment and provider projection.</summary>
     private bool InheritedEnvMatchesPool(
         Agent agent, AgentTask task, IReadOnlyDictionary<AgentKind, ProviderEndpoint>? projectEndpoints) =>
         InheritedEnvMatchesPool(agent, task, projectEndpoints, _settings.LlmEnvInheritance.Names);
@@ -8390,6 +8357,30 @@ public sealed partial class AgentTaskDispatcher
         });
     }
 
+    /// <summary>
+    /// Place a task pinned to a STANDING agent — a user's own agent, or a supervised specialist like
+    /// the check interpreter (CARD-0047 slice 4A). The general capability behind "run this on my
+    /// standing agent".
+    ///
+    /// <para>Until this existed, every pinned non-pool agent fell through to <c>SpawnFresh</c>, which
+    /// creates a SECOND session and overwrites <see cref="Agent.PersistentSessionId"/>. For an
+    /// AlwaysOn agent that is not merely wasteful — it points the row at a session the supervisor
+    /// never started while the one it did start keeps running, so the two fight over the row for as
+    /// long as both live.</para>
+    ///
+    /// <para>So: a live session takes the work, and NOTHING on the agent row is written.
+    /// <c>PersistentSessionId</c> belongs to whoever launched the session, and
+    /// <c>Status</c>/<c>PoolIdleSince</c>/<c>PoolReservedForRootTaskId</c> belong to the pool — a
+    /// standing agent is in neither's gift.</para>
+    ///
+    /// <para>No live session and <see cref="Agent.AlwaysOn"/> means the supervisor is already on it
+    /// (its sweep ensures every AlwaysOn agent that is not user-suspended has a session), so the task
+    /// waits rather than racing it. A standing agent that nothing supervises keeps today's
+    /// <c>SpawnFresh</c> behaviour — there is no one else to bring it up. From CARD-0140 the fresh
+    /// session's program is the agent's own TUI profile (via <see cref="ResolveDelegateProgramAsync"/>),
+    /// not the task-kind registry default that used to launch <c>claude.exe</c> under a Codex
+    /// agent's name.</para>
+    /// </summary>
     private async Task<ReuseOutcome> PlaceOnStandingAgentAsync(
         AgentTask claimed, Agent standing, DateTime now, CancellationToken ct)
     {

@@ -542,17 +542,18 @@ public class AgentSessionBackendTests
     [NotInParallel("AgentControl")]
     public async Task C1491_control_start_replaces_stale_effort_stamp()
     {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
         try
         {
-            var workspace = Path.Combine(tempRoot, "c0167-pool-start");
+            var workspace = Path.Combine(tempRoot, "c1491-pool-start");
             Directory.CreateDirectory(workspace);
             var adapter = new FakeAgentProtocolAdapter();
             await using var harness = AgentControlServiceIntegrationTests.BuildHarness(
-                tempRoot, [adapter], defaultKind: "ClaudeCode");
+                tempRoot, [adapter], defaultKind: "ClaudeCode", connectionString: schema.ConnectionString);
             var agent = await harness.AgentService.CreateAsync(
-                new CreateAgentRequest(Unique("C0167 Pool Start"), workspace), CancellationToken.None);
-            await using (var db = CreateContext())
+                new CreateAgentRequest(Unique("C1491 Pool Start"), workspace), CancellationToken.None);
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
             {
                 var row = await db.Agents.SingleAsync(a => a.Id == agent.Id);
                 row.IsPoolDelegate = true;
@@ -567,12 +568,11 @@ public class AgentSessionBackendTests
             var argv = adapter.StartedArgs.ToList();
             argv.ShouldContain("--effort");
             argv[argv.IndexOf("--effort") + 1].ShouldBe("high");
-            await using var verify = CreateContext();
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
             (await verify.Agents.AsNoTracking().SingleAsync(a => a.Id == agent.Id)).PoolClaudeEffort.ShouldBe("high");
         }
         finally
         {
-            await AgentControlServiceIntegrationTests.CleanupProjectsByTempRootAsync(tempRoot);
             AgentControlServiceIntegrationTests.DeleteDirectoryBestEffort(tempRoot);
         }
     }

@@ -467,6 +467,7 @@ public sealed class TaskPlatformDispatchTests
                 Id = agentId, Name = "warm-c710", Slug = "warm-c710", WorkingDirectory = workspace.Path,
                 Details = "warm", Status = AgentStatus.Idle, Kind = AgentKind.ClaudeCode,
                 ModelLevel = AgentModelLevel.Medium, IsPoolDelegate = true, PoolIdleSince = now.AddMinutes(-5),
+                PoolClaudeEffort = "medium",
                 PersistentSessionId = sessionId.ToString("D"), LaunchEnvJson = "{}",
                 CreatedAt = now, UpdatedAt = now,
             });
@@ -519,6 +520,7 @@ public sealed class TaskPlatformDispatchTests
                 Id = agentId, Name = "warm-hold", Slug = "warm-hold", WorkingDirectory = workspace.Path,
                 Details = "warm", Status = AgentStatus.Idle, Kind = AgentKind.ClaudeCode,
                 ModelLevel = AgentModelLevel.Medium, IsPoolDelegate = true, PoolIdleSince = now.AddMinutes(-5),
+                PoolClaudeEffort = "medium",
                 PersistentSessionId = sessionId.ToString("D"), LaunchEnvJson = "{}",
                 CreatedAt = now, UpdatedAt = now,
             });

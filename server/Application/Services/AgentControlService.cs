@@ -568,6 +568,8 @@ public sealed class AgentControlService : ICompactionContinuationResume
             // and the {{key:NAME}} placeholder only, never a value.
             if (agent.IsPoolDelegate)
             {
+                agent.PoolClaudeEffort = spec.Kind == AgentKind.ClaudeCode
+                    ? ClaudeLaunchArgs.ReadLaunchEffort(spec.Args) : null;
                 agent.PoolProviderProjectionJson = ProviderEndpointLayers.PoolFingerprint(
                     spec.Kind,
                     resolved.ProjectProviderEndpoints,
@@ -1172,7 +1174,10 @@ public sealed class AgentControlService : ICompactionContinuationResume
             // outside Antiphon, so which provider endpoint it routes through is unknown. A pool row
             // keeps no stamp from an earlier process: it is marked unknown and matches no task.
             if (agent.IsPoolDelegate)
+            {
                 agent.PoolProviderProjectionJson = ProviderEndpointLayers.UnknownPoolProjection;
+                agent.PoolClaudeEffort = null;
+            }
 
             await _db.SaveChangesAsync(ct);
 

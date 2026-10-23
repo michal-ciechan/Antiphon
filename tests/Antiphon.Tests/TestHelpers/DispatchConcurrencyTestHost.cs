@@ -630,6 +630,7 @@ public sealed class ConcurrencyDispatchWorld : IAsyncDisposable
             Kind = AgentKind.ClaudeCode,
             IsPoolDelegate = pool,
             PoolIdleSince = pool ? now.AddMinutes(-10) : null,
+            PoolClaudeEffort = pool ? "medium" : null,
             PoolProjectId = projectId,
             PersistentSessionId = sessionId.ToString("D"),
             AlwaysOn = false,

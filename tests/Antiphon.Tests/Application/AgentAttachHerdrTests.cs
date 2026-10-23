@@ -227,11 +227,12 @@ public class AgentAttachHerdrTests
     [Test]
     public async Task C1491_adoption_clears_stale_claude_effort()
     {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var tempRoot = NewTemp();
         await using var fake = StartFake();
         try
         {
-            await using var harness = BuildHarness(tempRoot, fake);
+            await using var harness = BuildHarness(tempRoot, fake, connectionString: schema.ConnectionString);
             var nativeId = Guid.NewGuid();
             var cwd = Path.Combine(tempRoot, "cwd");
             Directory.CreateDirectory(cwd);
@@ -248,13 +249,13 @@ public class AgentAttachHerdrTests
 
             await harness.Control.AttachHerdrAsync(agent.Id, new AttachHerdrPaneRequest(pane.PaneId), CancellationToken.None);
 
-            await using var verify = CreateContext();
+            await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
             var stored = await verify.Agents.AsNoTracking().SingleAsync(a => a.Id == agent.Id);
             stored.PoolClaudeEffort.ShouldBeNull();
         }
         finally
         {
-            await CleanupAsync(tempRoot);
+            Directory.Delete(tempRoot, recursive: true);
         }
     }
 
@@ -609,11 +610,11 @@ public class AgentAttachHerdrTests
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
-    private static Harness BuildHarness(string tempRoot, FakeHerdrServer fake, bool advertiseAttach = true)
+    private static Harness BuildHarness(string tempRoot, FakeHerdrServer fake, bool advertiseAttach = true, string? connectionString = null)
     {
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(options =>
-            options.UseNpgsql(TestDbFixture.ConnectionString, npgsql =>
+            options.UseNpgsql(connectionString ?? TestDbFixture.ConnectionString, npgsql =>
             {
                 npgsql.MigrationsAssembly("Antiphon.Server");
                 npgsql.SetPostgresVersion(16, 0);

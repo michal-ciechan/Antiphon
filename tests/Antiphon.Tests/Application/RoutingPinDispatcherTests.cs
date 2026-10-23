@@ -222,6 +222,7 @@ public class RoutingPinDispatcherTests
             ModelLevel = AgentModelLevel.Frontier,
             IsPoolDelegate = true,
             PoolIdleSince = now.AddMinutes(-3),
+            PoolClaudeEffort = "xhigh",
             PersistentSessionId = sessionId.ToString("D"),
             CreatedAt = now,
             UpdatedAt = now,

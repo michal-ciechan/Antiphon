@@ -288,11 +288,16 @@ per-machine overlay (`appsettings.Development.json` or `dotnet user-secrets --id
 keys `Delegation:ClaudeEffortByRole:<Role>`) and restart; the operator's 2026-10-22 map names
 every role except **Review**, which is intentionally absent so Review keeps the tier's effort, and
 **Check**, which runs on the standing Check seat (below). Keys are role names only; a number or a
-comma list fails validation. A task whose override differs from its tier's effort declines
-warm-pool reuse (a running process cannot change its `--effort`): an unpinned task skips the pool
-and a task pinned to a FREE pool delegate relaunches it, while a task pinned to a BUSY pool
-delegate still waits for it. A task without an override may still reuse a same-tier warm session
-launched at an overridden effort. Standing agents ignore the setting: a task pinned to one,
+comma list fails validation. Warm Claude pool reuse requires the candidate's persisted
+`PoolClaudeEffort` launch stamp to equal the incoming task's resolved effort. Role identity is
+not a reuse key: matching overridden launches can be reused, including free pins; a Review
+requiring `high` rejects a process launched at `xhigh`. A busy pinned delegate still waits.
+Unknown legacy stamps decline reuse even with an empty map. Those rows retire through ordinary
+pool cleanup; rollout can temporarily increase cold starts and retained idle seats, without a
+forced flush or a fixed one-start-per-row bound. Every replacement invalidates the stamp, then
+records the resolved launch argv before enqueue. Adopting an external pane leaves it unknown.
+The stamp records launch intent; manual runtime effort changes are not detected. Empty-map argv
+is unchanged. Standing agents ignore the setting: a task pinned to one,
 including every Check task on the AlwaysOn Check seat, runs at the seat's own launch effort under
 the seat's rules (CARD-1481 repair). Codex and Grok keep their own switches. Escalation events say when the target rung
 launches at an overridden effort.
