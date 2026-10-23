@@ -269,7 +269,8 @@ public sealed record RunnerSnapshotDto(
     string RenderedScreen,
     long LastSequence,
     DateTime StartedAt,
-    DateTime? AcceptedStartedAt = null);
+    DateTime? AcceptedStartedAt = null,
+    ProviderDialogObservation? Dialog = null);
 
 public sealed record RunnerOutputEvent(
     Guid SessionId,
