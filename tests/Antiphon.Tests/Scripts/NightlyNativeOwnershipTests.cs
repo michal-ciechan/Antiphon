@@ -18,6 +18,11 @@ public sealed class NightlyNativeOwnershipTests
     public Task C1039_DrainBeforeReturn() => RunAsync(nameof(C1039_DrainBeforeReturn));
 
     [Test]
+    public Task C1039_PowerShellDescendantCustody() => RunAsync(nameof(C1039_PowerShellDescendantCustody));
+    [Test]
+    public Task C1039_RetainedWriterDrainDeadline() => RunAsync(nameof(C1039_RetainedWriterDrainDeadline));
+
+    [Test]
     public Task C1045_NullEnvironmentInherits() => RunAsync(nameof(C1045_NullEnvironmentInherits), "C1045 null inherits parent sentinel");
     [Test]
     public Task C1045_SuppliedEnvironmentReplaces() => RunAsync(nameof(C1045_SuppliedEnvironmentReplaces), "C1045 supplied map excludes parent sentinel");
