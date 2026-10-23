@@ -13,6 +13,11 @@ CP-5 independently guards the new provider backend field at the durable JSON sin
 the pre-fix field bypasses sanitization. After that guard fails, CP-2/3/4 plus
 CP-6/7 qualify the repaired source in one build. CP-6/7 retain S1's R-6 and legacy
 R-1 compatibility obligations without changing their production facades.
+Two CP-5 builds exhausted the unchanged five-minute execution limit before
+TUnit ran. They remain incomplete, not assertion reds. A slot-gated in-memory
+provider probe against the source-frozen compiled HostCleanup component reproduced
+the sentinel in actual persisted JSON (manual red). The final CP-3 retains the
+automated JSON guard. This manual exception adds no checkpoint provenance credit.
 S2 adds no databases, hosts, or processes. W-1/W-2 need a separately commissioned
 Windows lane; no fake result earns native credit. Windows evidence writer and
 production hooks remain unimplemented debt; these rows prove provider behavior.
