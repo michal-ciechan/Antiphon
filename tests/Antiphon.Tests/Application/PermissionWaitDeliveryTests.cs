@@ -49,10 +49,10 @@ public partial class PermissionWaitTests
         await f.ScanAsync(ct);
         var note = await f.NoteAsync(ct);
         await f.ReconcileAsync(note.Id, ct);
-        await f.Harness.Queue.FlushAsync(f.ParentSessionId, ct);
+        await f.Harness.Queue.FlushSessionAsync(f.ParentSessionId, ct);
         f.Caller.SubmittedBodies.ShouldBeEmpty("busy recipient keeps WhenIdle custody");
         await f.CallerIdleAsync(ct);
-        await f.Harness.Queue.FlushAsync(f.ParentSessionId, ct);
+        await f.Harness.Queue.FlushSessionAsync(f.ParentSessionId, ct);
         await f.ReconcileAsync(note.Id, ct);
         f.Caller.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(note.Body);
         (await f.NoteAsync(ct)).State.ShouldBe(LandNotificationState.Confirmed);

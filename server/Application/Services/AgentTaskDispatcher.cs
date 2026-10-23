@@ -438,6 +438,7 @@ public sealed partial class AgentTaskDispatcher
         // landed, whose session is alive and which is simply never going to finish answered every
         // one of them for as long as it ran. RolePolicyEntry.TimeoutMinutes was declared for this
         // and read nowhere, so until now there was no deadline on a working task at all.
+        sweepFailures += await RunSweepAsync("provider input wait", (d, ct2) => d.DetectProviderWaitsAsync(ct2), ct);
         sweepFailures += await RunSweepAsync("overdue-task deadline", (d, ct2) => d.FailOverdueTasksAsync(ct2), ct);
 
         // And with work that is still writing rows but none of them is new (CARD-0153). After the
@@ -4140,7 +4141,8 @@ public sealed partial class AgentTaskDispatcher
             SessionId = sessionId,
             Kind = AgentIncidentKind.TaskProgressStalled,
             Severity = severity,
-            Message = verdict.Summary,
+            Message = (_providerWait is null ? null : await _providerWait.CachedAsync(task.Id, ct)) is { IsWait: true } wait
+                ? wait.Diagnosis + " " + verdict.Summary : verdict.Summary,
             FailureReason = verdict.FailureReason,
             CreatedAt = UtcNow(),
         });

@@ -139,7 +139,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     ? $"check:{note.TaskId:N}"
                     : IsCompletionNoteKind(note.Kind)
                     ? $"task:{await db.AgentTasks.Where(t => t.Id == note.TaskId).Select(t => t.RootTaskId).SingleAsync(ct):N}"
-                    : $"land:{note.Id:N}";
+                    : note.Kind == LandNotificationKind.ProviderInputWait ? $"provider-wait:{note.Id:N}" : $"land:{note.Id:N}";
                 await messages.EnqueueAsync(session, note.Body, MessageSendMode.WhenIdle, ct,
                     legacyCheck ? QueuedMessageOrigin.Check : QueuedMessageOrigin.Delegation, conversationKey, note.TaskId, note.ContentDigest,
                     completion?.NoteHeader ?? note.Body.Split('\n')[0], onCreated: message => note.QueueMessageId = message,
@@ -241,6 +241,14 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             {
                 // A parked delegate's caller may restart while delivery is uncertain. A
                 // prompt from that replacement generation cannot discharge the old attempt.
+                if (note.Kind == LandNotificationKind.ProviderInputWait
+                    && (row.LastDeliveryGeneration is not DateTime providerGeneration || !SessionGeneration.Equal(providerGeneration, destination.StartedAt)))
+                {
+                    note.LastErrorCode = "provider_wait_delivery_generation_unknown_or_changed";
+                    note.LastErrorAt = now;
+                    await db.SaveChangesAsync(ct);
+                    return;
+                }
                 if (note.Kind == LandNotificationKind.TaskCompletion && row.LastDeliveryGeneration is DateTime deliveredGeneration
                     && await db.AgentSessions.Where(s => s.Id == session).Select(s => s.StartedAt).SingleAsync(ct) != deliveredGeneration)
                 {
