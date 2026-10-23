@@ -36,9 +36,14 @@ internal sealed class RecordingFileSystem(string repo) : MSBuildFileSystemBase
         var types = new StackTrace().GetFrames().Select(f => f.GetMethod()?.DeclaringType)
             .Where(t => t?.Assembly == typeof(Project).Assembly).ToArray();
         origin = " (probe-origin: " + string.Join(", ", types.Select(t => t!.FullName).Distinct().Take(8)) + ")";
-        return !types.Any(t => t!.FullName == "Microsoft.Build.Evaluation.FunctionCallExpressionNode")
-               && types.Any(t => t!.FullName == "Microsoft.Build.Shared.FileMatcher"
-                                 || t.DeclaringType?.FullName == "Microsoft.Build.Shared.FileMatcher");
+        var includeOperation = types.Any(t => t!.FullName is { } name
+            && name.StartsWith("Microsoft.Build.Evaluation.LazyItemEvaluator`", StringComparison.Ordinal)
+            && name.EndsWith("+IncludeOperation", StringComparison.Ordinal));
+        var matcher = types.Any(t => t!.FullName is "Microsoft.Build.Shared.FileMatcher"
+                or "Microsoft.Build.Internal.EngineFileUtilities"
+            || t!.DeclaringType?.FullName == "Microsoft.Build.Shared.FileMatcher");
+        return includeOperation && matcher
+               && !types.Any(t => t!.FullName == "Microsoft.Build.Evaluation.FunctionCallExpressionNode");
     }
 
     private static bool Sensitive(string root, string path, bool directory)

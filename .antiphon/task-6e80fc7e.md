@@ -87,3 +87,14 @@ D-4, with explicit Condition frames excluded; V-11 combines a JSON glob with eac
 unsafe explicit Exists call as a negative for that allowance. The canary copy now
 shares the source parent's ancestors. No snapshot category is ignored. Full CP-4
 reruns on the repaired committed report/source tip. No repeat-proof run is requested.
+
+Focused diagnosis after the first CP-4 repair used additional slot-gated tool-only
+builds and tiny fixture invocations to avoid spending another full test-project build
+on a known compatibility failure. At cb02772ebe909b322c9dbc48ef96771e4ecd50b8,
+the real repository approved; the JSON fixture still refused because early glob
+checks enter EngineFileUtilities before FileMatcher. At the next diagnostic commit,
+refusal named EngineFileUtilities plus LazyItemEvaluator.IncludeOperation. The final
+exception requires the actual MSBuild assembly, that IncludeOperation frame and its
+matcher/EngineFileUtilities frame, and no Condition function frame. Missing provenance
+still refuses. The full CP-4 is rerun after this report and source are committed.
+Generated diagnostic logs are retained under .antiphon/c1483-s4-diagnostics/.
