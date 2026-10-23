@@ -30,6 +30,9 @@ public sealed class FileUseCaptureTests
         owner.ShouldNotBeNull("the capture must name the still-running real child holder");
         owner.Name.ShouldNotBeNullOrWhiteSpace();
         owner.NativeStart.ShouldNotBeNullOrWhiteSpace();
+        var stat = await File.ReadAllTextAsync($"/proc/{fixture.Child.Id}/stat");
+        owner.NativeStart.ShouldBe(stat[(stat.LastIndexOf(')') + 2)..].Split(' ')[19]);
+        owner.StartUtc.ShouldBe(fixture.Child.StartTime.ToUniversalTime());
         owner.ParentPid.ShouldBe(Environment.ProcessId);
         owner.CommandLine.ShouldContain("Antiphon.FileUseTestChild");
         owner.MatchKind.ShouldBe(mode == "mapped-file" ? "MappedFile" : "OpenFile");
@@ -39,6 +42,7 @@ public sealed class FileUseCaptureTests
         json.ShouldContain(snapshot.CaptureId);
         json.ShouldContain(fixture.Child.Id.ToString());
         fixture.Child.HasExited.ShouldBeFalse();
+        if (mode == "mapped-file") { File.Delete(fixture.Path); File.Exists(fixture.Path).ShouldBeFalse(); }
         await fixture.Release();
     }
 
@@ -102,14 +106,35 @@ public sealed class FileUseCaptureTests
         bounded.Owners.ShouldAllBe(o => o.Name.Length <= 256 && o.Ancestors.Count <= 8 && (o.CommandLine == null || o.CommandLine.Length <= 4096));
         System.Text.Encoding.UTF8.GetByteCount(bounded.Summary).ShouldBeLessThanOrEqualTo(8192);
         new FileInfo(bounded.EvidencePath!).Length.ShouldBeLessThanOrEqualTo(32768);
+        await AssertIndependentCaps(scratch);
         foreach (var limit in new[] { "process", "fd", "maps", "total", "resource" })
         {
             var src = new LimitSource(limit);
             var result = await new FileUseCapture(new LinuxFileUseProvider(src)).TryCaptureAsync(new(scratch.Path, new UnauthorizedAccessException(), scratch.Evidence) { AdditionalPaths = limit == "resource" ? Enumerable.Repeat(scratch.Path, 130).ToArray() : [] });
             result.Coverage.ShouldNotBe(FileUseCoverage.Complete, limit); result.Omitted.ShouldBeGreaterThan(0, limit);
+            if (limit == "total") { src.MapsReads.ShouldBeLessThanOrEqualTo(8); result.Reasons.ShouldContain(FileUseReason.InputLimit); result.Reasons.ShouldNotContain(FileUseReason.ProcessLimit); }
         }
     }
 
+    // Exact effective bounds: keep these small enough that the JSON cap cannot hide a missing owner/ancestor cap.
+    private static async Task AssertIndependentCaps(Scratch scratch)
+    {
+        async Task<FileUseSnapshot> Capture(IReadOnlyList<FileUseOwner> owners) => await new FileUseCapture(new Provider((_, _) => new(FileUseStatus.Observed, FileUseCoverage.Complete, owners, []))).TryCaptureAsync(new(scratch.Path, new UnauthorizedAccessException(), scratch.Evidence));
+        var owners = await Capture(Enumerable.Range(1, 33).Select(Owner).ToArray()); owners.Owners.Count.ShouldBe(32); owners.Reasons.ShouldContain(FileUseReason.OwnerLimit);
+        var ancestry = await Capture([Owner(42) with { Ancestors = Enumerable.Range(1, 9).Select(n => new FileUseAncestor(n, "1", "parent", null)).ToArray() }]);
+        ancestry.Owners.Single().Ancestors.Count.ShouldBe(8); ancestry.Reasons.ShouldContain(FileUseReason.AncestorLimit);
+        var names = await Capture([Owner(42) with { Name = new string('n', 257), Resource = "/" + new string('r', 1024) }]);
+        names.Owners.Single().Name.Length.ShouldBeLessThanOrEqualTo(256); names.Owners.Single().Resource.Length.ShouldBeLessThanOrEqualTo(1024); names.Reasons.ShouldContain(FileUseReason.TextLimit);
+        var modules = Enumerable.Range(1, 24).Select(n => "/modules/" + n + new string('a', 210) + ".dll").ToArray();
+        var command = await Capture([Owner(42) with { CommandLine = "dotnet\0" + string.Join('\0', modules), ProvenModules = modules }]);
+        command.Owners.Single().CommandLine!.Length.ShouldBeLessThanOrEqualTo(4096); command.Owners.Single().CommandLine!.Length.ShouldBeGreaterThan(3500);
+        var operation = new FileUseOperation(); var provider = new Provider((_, _) => Empty()); var service = new FileUseCapture(provider);
+        var first = await service.TryCaptureAsync(new(scratch.Path, new UnauthorizedAccessException(), scratch.Evidence) { Operation = operation });
+        (await service.TryCaptureAsync(new(scratch.Path, new UnauthorizedAccessException(), scratch.Evidence) { Operation = operation })).CaptureId.ShouldBe(first.CaptureId);
+        for (var n = 1; n < 8; n++) await service.TryCaptureAsync(new(scratch.Path + n, new UnauthorizedAccessException(), scratch.Evidence) { Operation = operation });
+        var suppressed = await service.TryCaptureAsync(new(scratch.Path + "ninth", new UnauthorizedAccessException(), scratch.Evidence) { Operation = operation });
+        suppressed.Reasons.ShouldContain(FileUseReason.Suppressed); provider.Calls.ShouldBe(8);
+    }
     [Test]
     public async Task C1539_redaction_before_sinks()
     {
@@ -201,9 +226,14 @@ public sealed class FileUseCaptureTests
     }
     private sealed class LimitSource(string limit) : LinuxFileUseSource
     {
+        public int MapsReads;
         public override IEnumerable<int> Processes() => limit is "process" or "total" ? Enumerable.Repeat(Environment.ProcessId, 4100) : [Environment.ProcessId];
         public override IEnumerable<string> Fds(int pid) => limit == "fd" ? Enumerable.Repeat("/proc/self/fd/999999", 4100) : [];
-        public override string Read(string path, int maximumBytes) => path.EndsWith("/maps", StringComparison.Ordinal) && limit is "maps" or "total" ? throw new FileUseInputLimitException() : base.Read(path, maximumBytes);
+        public override string Read(string path, int maximumBytes)
+        {
+            if (path.EndsWith("/maps", StringComparison.Ordinal) && limit is "maps" or "total") { MapsReads++; throw new FileUseInputLimitException(); }
+            return base.Read(path, maximumBytes);
+        }
     }
     private sealed class Scratch : IDisposable
     {
