@@ -43,7 +43,7 @@ public sealed partial class LandGraphEvaluationTests
     public async Task C1483_S4_FileReadingPropertyFunctionRefuses(string path, bool condition)
     {
         var spelling = path == "README.md" && condition ? "%52EADME.md" : path;
-        var read = $"$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../{spelling}'))";
+        var read = $"$([System.IO.File]::ReadAllText(&quot;$(MSBuildThisFileDirectory)../{spelling}&quot;))";
         var body = condition
             ? $"<PropertyGroup Condition=\"HasTrailingSlash('{read}')\"><ProbeValue>changed</ProbeValue></PropertyGroup>"
             : $"<PropertyGroup><ProbeValue>{read}</ProbeValue></PropertyGroup><ItemGroup><ProbeInput Include=\"$(ProbeValue)\" /></ItemGroup>";
