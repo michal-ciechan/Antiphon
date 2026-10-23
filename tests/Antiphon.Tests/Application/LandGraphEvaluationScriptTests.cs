@@ -139,7 +139,10 @@ public sealed partial class LandGraphEvaluationTests
             // evaluator decision from the older pre-check's separate name allowlists.
             var unsafeProject = files["App/App.csproj"].Replace("Probe", "None")
                 .Replace("Rel", "PackagePath").Replace("Body", "PackagePath")
-                .Replace("<EnableDefaultItems>false</EnableDefaultItems>", "");
+                .Replace("<EnableDefaultItems>false</EnableDefaultItems>", "")
+                .Replace("sentinel.txt", "sentinel.json");
+            files.Remove("App/sentinel.txt");
+            files["App/sentinel.json"] = "{}";
             files["App/App.csproj"] = SdkProject("");
             await using var repo = await ScriptRepoAsync(files);
             byte[]? manifest = null;
