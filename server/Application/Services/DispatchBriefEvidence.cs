@@ -34,7 +34,8 @@ internal sealed record DispatchBriefTaskSnapshot(
     Guid? AgentSessionId,
     DateTime? DispatchedAt,
     DateTime? SessionStartedAt,
-    string? Goal);
+    string? Goal,
+    AgentKind? SessionKind = null);
 
 internal sealed record DispatchBriefRowEvidence(
     Guid Id,
@@ -153,7 +154,8 @@ internal static class DispatchBriefEvidence
         var current = new List<DispatchBriefRowEvidence>();
         foreach (var row in rows)
         {
-            if (row.AgentSessionId == request.SessionId && InWindow(row.CreatedAt, request.DispatchedAt))
+            if (row.AgentSessionId == request.SessionId && InWindow(row.CreatedAt, request.DispatchedAt)
+                && !DispatchRefocusIdentity.Matches(row, request, task.SessionKind, task.Goal))
                 current.Add(row);
         }
 
@@ -182,6 +184,10 @@ internal static class DispatchBriefEvidence
             Unattempted: IsUnattempted(brief),
             Attempted: IsAttempted(brief));
     }
+
+    internal static bool IsCurrentBrief(DispatchBriefRowEvidence row, DispatchBriefEnsureRequest request) =>
+        row.AgentSessionId == request.SessionId && InWindow(row.CreatedAt, request.DispatchedAt)
+        && IsRecognized(row, request.TaskId, DelegationReportFormatter.TaskMarker(request.TaskId));
 
     private static bool IsRecognized(DispatchBriefRowEvidence row, Guid taskId, string marker)
     {

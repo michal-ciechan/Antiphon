@@ -1,4 +1,3 @@
-using System.Globalization;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
@@ -101,6 +100,7 @@ public sealed class RefocusBriefIdentityTests
     [Arguments("wrong-body")]
     [Arguments("marker-in-goal")]
     [Arguments("retained-payload")]
+    [Arguments("foreign-owner")]
     public async Task C1529_Only_positive_current_refocus_identity_excludes_evidence(string shape)
     {
         await using var f = await Fixture.CreateAsync();
@@ -123,6 +123,10 @@ public sealed class RefocusBriefIdentityTests
                 case "wrong-body": row.Body = "uncertain input"; break;
                 case "marker-in-goal": row.Body += f.Marker; break;
                 case "retained-payload": row.RemoteSpillBody = f.Marker + " possible brief"; break;
+                case "foreign-owner":
+                    row.ExecutionTaskId = await db.AgentTasks.Where(t => t.Id != f.Task.Id).Select(t => t.Id).FirstAsync();
+                    row.SourceTaskId = f.Task.Id; // Still correlated evidence; ownership is foreign.
+                    break;
             }
             db.SessionQueuedMessages.Add(row);
             await db.SaveChangesAsync();
@@ -139,15 +143,28 @@ public sealed class RefocusBriefIdentityTests
     }
 
     [Test]
-    public async Task C1529_Real_brief_blocks_a_second_brief_without_a_receipt()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C1529_Real_brief_blocks_a_second_brief_without_a_receipt(bool compactReceived)
     {
         await using var f = await Fixture.CreateAsync();
         await f.Harness.MarkWorkingAsync();
         await using (var db = f.Harness.CreateObserverContext())
         {
-            db.SessionQueuedMessages.Add(f.Compact());
+            var compact = f.Compact();
+            if (compactReceived)
+            {
+                compact.Status = QueuedMessageStatus.Sent;
+                compact.DeliveryAttempts = 1;
+                compact.SentAt = DateTime.UtcNow;
+            }
+            db.SessionQueuedMessages.Add(compact);
             await db.SaveChangesAsync();
         }
+        if (compactReceived)
+            await StoreAwareTranscript.WriteAsync(f.Harness.Provider, f.Harness.SessionId, () =>
+                BridgeQueueHarness.InsertEntryAsync(f.Harness.SessionId, TranscriptKinds.UserPrompt, f.CompactBody,
+                    timestamp: DateTime.UtcNow, connectionString: f.Harness.ConnectionString));
         var first = await f.Harness.Queue.EnsureDispatchBriefAsync(f.Request, CancellationToken.None);
         first.Inserted.ShouldBeTrue();
         var second = await f.Harness.Queue.EnsureDispatchBriefAsync(f.Request, CancellationToken.None);
@@ -156,6 +173,30 @@ public sealed class RefocusBriefIdentityTests
         second.MessageId.ShouldBe(first.MessageId);
         (await f.RowsAsync()).Count.ShouldBe(2);
         f.Harness.Adapter.SubmittedBodies.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments("goal-null")]
+    [Arguments("goal-empty")]
+    [Arguments("kind-null")]
+    [Arguments("payload-empty")]
+    [Arguments("value")]
+    public async Task C1529_Optional_identity_inputs_fail_closed_without_throwing(string shape)
+    {
+        await using var f = await Fixture.CreateAsync();
+        var row = f.Compact();
+        if (shape == "payload-empty")
+        {
+            row.RemoteSpillBody = "";
+            row.RemoteSpillRelativePath = "";
+        }
+        var snapshot = new DispatchBriefTaskSnapshot(AgentTaskStatus.Dispatched, f.Task.Attempt,
+            f.Harness.SessionId, f.Task.DispatchedAt, f.Started,
+            shape == "goal-null" ? null : shape == "goal-empty" ? "" : f.Task.Goal,
+            shape == "kind-null" ? null : AgentKind.ClaudeCode);
+        var result = DispatchBriefEvidence.Classify(f.Request, snapshot,
+            [SessionMessageQueueService.ToBriefEvidence(row)], []);
+        result.Kind.ShouldBe(shape is "value" or "payload-empty" ? DispatchBriefKind.Absent : DispatchBriefKind.Uncertain);
     }
 
     private sealed class Fixture : IAsyncDisposable
@@ -237,16 +278,29 @@ public sealed class RefocusBriefIdentityTests
             await db.SaveChangesAsync();
             h.Runtime.SetTestAcceptedStartedAt(h.SessionId, session.StartedAt);
             var f = new Fixture { Harness = h, Task = task, Started = session.StartedAt, Cut = fault };
-            h.Adapter.OnSubmitted = async body =>
+            h.Adapter.OnSubmitted = body => StoreAwareTranscript.WriteAsync(h.Provider, h.SessionId, async () =>
             {
+                var now = DateTime.UtcNow;
                 await BridgeQueueHarness.InsertEntryAsync(h.SessionId, TranscriptKinds.UserPrompt, body,
-                    timestamp: DateTime.UtcNow, connectionString: h.ConnectionString);
+                    timestamp: now, connectionString: h.ConnectionString);
                 // Manual compaction ends without a TurnEnd; the boundary must release the following brief.
                 await BridgeQueueHarness.InsertEntryAsync(h.SessionId,
                     body.StartsWith("/compact", StringComparison.Ordinal) ? TranscriptKinds.CompactBoundary : TranscriptKinds.TurnEnd,
-                    body.StartsWith("/compact", StringComparison.Ordinal) ? "Compacted (manual)" : null,
-                    stopReason: "end_turn", connectionString: h.ConnectionString);
-            };
+                    body.StartsWith("/compact", StringComparison.Ordinal) ? "Context compacted (manual)" : null,
+                    stopReason: "end_turn", connectionString: h.ConnectionString,
+                    timestamp: body.StartsWith("/compact", StringComparison.Ordinal) ? now.AddMilliseconds(2) : null);
+                if (body.StartsWith("/compact", StringComparison.Ordinal))
+                {
+                    await BridgeQueueHarness.InsertEntryAsync(h.SessionId, TranscriptKinds.UserPrompt,
+                        "This session is being continued from a previous conversation that ran out of context. The conversation is summarized below:",
+                        timestamp: now.AddMilliseconds(1), connectionString: h.ConnectionString);
+                    await BridgeQueueHarness.InsertEntryAsync(h.SessionId, TranscriptKinds.UserPrompt,
+                        "<command-name>/compact</command-name>", timestamp: now, connectionString: h.ConnectionString);
+                    await BridgeQueueHarness.InsertEntryAsync(h.SessionId, TranscriptKinds.UserPrompt,
+                        "<local-command-stdout>Compacted</local-command-stdout>", timestamp: now.AddMilliseconds(2),
+                        connectionString: h.ConnectionString);
+                }
+            });
             return f;
         }
         public ValueTask DisposeAsync() => Harness.DisposeAsync();

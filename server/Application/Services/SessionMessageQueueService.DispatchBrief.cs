@@ -107,7 +107,8 @@ public sealed partial class SessionMessageQueueService
                     task.AgentSessionId,
                     task.DispatchedAt,
                     session?.StartedAt,
-                    task.Goal),
+                    task.Goal,
+                    session?.AgentKind),
                 related.Select(ToBriefEvidence).ToArray(),
                 prompts,
                 ReadAbsoluteSpill);
@@ -132,7 +133,7 @@ public sealed partial class SessionMessageQueueService
                     await db.SaveChangesAsync(ct);
                 var messageId = decision.Kind is DispatchBriefKind.Reuse or DispatchBriefKind.Received
                     or DispatchBriefKind.AttemptOwned
-                    ? related.FirstOrDefault(m => m.AgentSessionId == request.SessionId)?.Id
+                    ? related.FirstOrDefault(m => DispatchBriefEvidence.IsCurrentBrief(ToBriefEvidence(m), request))?.Id
                     : null;
                 result = new DispatchBriefEnsureResult(decision.Kind, messageId, false);
             }
@@ -288,7 +289,7 @@ public sealed partial class SessionMessageQueueService
         }
     }
 
-    private static DispatchBriefRowEvidence ToBriefEvidence(SessionQueuedMessage row) =>
+    internal static DispatchBriefRowEvidence ToBriefEvidence(SessionQueuedMessage row) =>
         new(
             row.Id,
             row.AgentSessionId,
