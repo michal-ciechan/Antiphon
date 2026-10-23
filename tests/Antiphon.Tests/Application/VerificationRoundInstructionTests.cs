@@ -24,7 +24,7 @@ public sealed class VerificationRoundInstructionTests
                  {
                      "Unit plus the named affected integration classes",
                      "Final (default, first round): whole Unit lane, every full affected class, every ordinary V/R, required manual work.",
-                     "Run each V-n and R-n the round requires; report every ID and actual outcome.",
+                     "Run required V-n/R-n; report every ID and actual outcome.",
                  })
             code.ShouldContain(required, customMessage: $"Code contract row: {required}");
         code.ShouldNotContain("selected-only", customMessage: "the default round must not be a selected-only sweep");
@@ -37,8 +37,8 @@ public sealed class VerificationRoundInstructionTests
         foreach (var required in new[]
                  {
                      "Final Review reruns the complete ordinary scope, including Interim deferrals.",
-                     "next: land when there are no defects and this was a Final Review;",
-                     "review (Final) when a clean Interim;",
+                     "next: land for clean Final;",
+                     "review (Final) for clean Interim;",
                      "ordinaryScopeCompleted: <Full|Interim|None>",
                  })
             review.ShouldContain(required, customMessage: $"Review contract row: {required}");

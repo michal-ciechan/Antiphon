@@ -22,7 +22,7 @@ public sealed class PostLandMutationContractTests
         var review = Compose(AgentTaskRole.Review);
         review.ShouldContain("PCs may remain pending");
         review.ShouldContain("Reject a missing producer-to-recipient test");
-        review.ShouldContain("next: land when there are no defects");
+        review.ShouldContain("next: land for clean Final");
         review.ShouldContain("original Code landing owner");
         var mutation = Compose(AgentTaskRole.Mutation);
         foreach (var contract in new[] { "SourceLanding Worktree", "HEAD=L", "clean tracked source/index",
