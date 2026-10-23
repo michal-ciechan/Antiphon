@@ -82,3 +82,14 @@ R-1 runs with and without a received compact: its UserPrompt never receipts the
 pending brief. R-2 also runs the real evidence types with missing/empty/value
 goal, provider and retained payload inputs in
 `C1529_Optional_identity_inputs_fail_closed_without_throwing` (5 cases).
+
+First S2 qualification (`68943e6eb35d7f078e2979ab371573a5253d05f1`,
+20261023-072139-c90e) is RED: CP-2 415/356/59 and CP-3 20/3/17
+(executed/passed/failed, zero skipped). The six focused delivery cases now pass
+admission/recovery insertion but lack receipts: fake Claude adapters advertise
+no dialog observation by default, so CARD-0680 correctly refuses automated input.
+The focused fixture and C544 anchor now explicitly provide the accepted session
+generation, supported dialog guard and a real readable Claude composer, using the
+existing fake adapter contract. No product guard or assertion is weakened.
+Rerun CP-2/CP-3 with baseline comparison against the task base to attribute the
+remaining existing-class failures before making any inherited-red claim.
