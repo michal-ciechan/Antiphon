@@ -100,6 +100,24 @@ public sealed class TimeoutAuditTests
         f.Run().Warnings.ShouldContain(x => x.Contains("orphan.trx"));
     }
 
+    [Test]
+    public void Windows_row_override_is_inventoried_and_only_compared_to_Windows_history(CancellationToken cancellationToken)
+    {
+        using var f = new Fixture();
+        f.WindowsPlan();
+        f.Measure(Enumerable.Repeat(40d, 20).ToArray(), os: "windows");
+        var r = f.Run();
+        r.Inventory.ShouldContain(x => x.Kind == "row-windows" && x.Seconds == 3600);
+        var windows = r.Inventory.Single(x => x.Kind == "row-windows");
+        var budget = r.Budgets.Single(x => x.DeclarationId == windows.Id);
+        budget.Samples.ShouldBe(20);
+        budget.P95.ShouldBe(45);
+        budget.RecommendedSeconds.ShouldBe(90);
+        budget.Status.ShouldBe("candidate");
+        var fallback = r.Inventory.Single(x => x.Kind == "row" && x.Path.EndsWith("windows.md", StringComparison.Ordinal));
+        r.Budgets.Single(x => x.DeclarationId == fallback.Id).Samples.ShouldBe(0);
+    }
+
     private sealed class Fixture : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "c1563-" + Guid.NewGuid().ToString("N"));
@@ -124,7 +142,7 @@ public sealed class TimeoutAuditTests
                 """);
             Directory.CreateDirectory(Path.Combine(Root, "receipts"));
         }
-        public void Measure(double[] values, string load = "normal", string outcome = "Passed", int offset = 0, bool retry = false)
+        public void Measure(double[] values, string load = "normal", string outcome = "Passed", int offset = 0, bool retry = false, string os = "linux")
         {
             for (var i = 0; i < values.Length; i++)
             {
@@ -133,11 +151,17 @@ public sealed class TimeoutAuditTests
                     <TestRun><TestDefinitions><UnitTest id="t"><TestMethod className="Tests.Probe" name="Forty" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="t" testName="Forty" duration="{TimeSpan.FromSeconds(values[i]):c}" outcome="{outcome}" /></Results></TestRun>
                     """);
                 Write(dir + "/report.json", JsonSerializer.Serialize(new {
-                    commit = new string('a', 40), runId = "run-" + (offset + i + 1), maxConcurrentRows = 1, host = new { os = "linux", hostId = "host-a", loadAvg = load },
+                    commit = new string('a', 40), runId = "run-" + (offset + i + 1), maxConcurrentRows = 1, host = new { os, hostId = "host-a", loadAvg = load },
                     rows = new[] { new { id = "CP-1", attempt = retry ? 2 : 1, filter = "/*/*/Probe/Forty", seconds = 645, state = outcome == "Passed" ? "green" : "red", trx = "run.trx", slot = "granted", waitedSeconds = 600, timings = new { testHostWallSeconds = 45d, rowSlotWaitSeconds = 600d } } }
                 }));
             }
         }
+        public void WindowsPlan() => Write("docs/superpowers/plans/windows.md", """
+            ### Checkpoints
+            | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows |
+            |---|---|---|---|---|---|---|---|---|---|
+            | CP-1 | S1 | tests/Probe -> bin-probe/ | probe | `/*/*/Probe/Forty` | V-1 | Forty | 1 | 1 | 20 |
+            """);
         public void Exceptions(object exception) => Write("exceptions.json", JsonSerializer.Serialize(new[] { exception }));
         public AuditReport Run() => Audit.Run(new(Root, [Path.Combine(Root, "receipts")], File.Exists(Path.Combine(Root, "exceptions.json")) ? Path.Combine(Root, "exceptions.json") : null));
         private void Write(string relative, string text)
