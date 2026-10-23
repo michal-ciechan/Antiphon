@@ -700,6 +700,7 @@ try
     builder.Services.AddSingleton<AgentSessionRuntime>();
     builder.Services.AddSingleton<ProviderDialogObservationService>();
     builder.Services.AddSingleton<TaskProviderWaitReader>();
+    builder.Services.AddSingleton<ProviderWaitWarningWriter>();
     builder.Services.AddSingleton<SessionRuntimeActionCoordinator>();
     builder.Services.AddSingleton<StaleWorkingTranscriptRecovery>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.StaleWorkingTranscriptHostedService>();
