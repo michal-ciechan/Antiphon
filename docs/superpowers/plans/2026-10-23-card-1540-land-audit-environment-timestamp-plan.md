@@ -138,13 +138,19 @@ exit 2 is infrastructure failure, excluded from red evidence; its corrected isol
 approved at base. All ten required base witnesses approved (exit 0): gate/include/path,
 modified/created/accessed/stamp-gate/item-function/directory and unpinned.
 
-CP-4 has six results, since the OS method has three arguments. The corrected closed floor
-is 45. Historical counts and costs above remain provenance, not claimed execution.
+CP-4 has six results, since the OS method has three arguments. With the ten-argument publication method the seven-row floor is 54; the adjacent
+D-6 smoke row adds nine results, for a final floor of 63. Historical counts and costs above remain provenance, not claimed execution.
 D-6 rewrites Receiver, Member and AbsentProperty in c1528 fixtures to the reserved
 MSBuildThisFileDirectory; their original unsupported-function/approval oracles remain.
 Probe tests replace helper-property item reads with safe literal items or the same Exists
-condition. The imported-directory publication fixture now forwards a ProbeInput item,
+condition. The imported-directory publication fixture now declares a None item,
 retaining its MSBuildProjectDirectory docs dependency without a new property refusal.
+
+The first frozen checkpoint run (17887afa6cd0bbe3ed97c4193f904f5d18de760c) passed
+53 of 54 results. The introduced imported-directory fixture used an item type outside the
+pre-check roster. Replace it with a None item, preserving the docs/flag.md assertion. Rerun
+only CP-6 after repair and execute the newly named CP-8 adjacent smoke once. The original
+red TRX remains evidence; no timeout or refusal assertion is loosened.
 
 The two function arguments of R-2 were already red at the assigned base: with an exact
 pin, IsOSPlatform and RuntimeInformation.OSDescription both refuse unsupported-function.
@@ -153,7 +159,7 @@ retain that named refusal; an exact pin is not an evaluation-expression exemptio
 
 ## Performance budget
 
-The closed selection remains CP-1..CP-7, estimated 26 minutes including one shared
+The closed selection remains CP-1..CP-8, estimated 28 minutes including one shared
 Antiphon.Tests build; there is no full assembly or Unit lane (the task brief selects narrow
 ordinary verification). Scope/category: git operations, Integration; Antiphon.Tests references
 and stages Antiphon.LandGraphAudit, while production landing/runtime binaries are unchanged.
@@ -213,6 +219,7 @@ named class, not merely nonzero.
 | R-3 | `C1528_*` (6 methods, 11 results): filesystem refusals keep their class after D-6 rewrites. |
 | R-4 | `C1483_S5_UpdateRefusesWhenEvaluationRefuses`, `C1483_S5_CheckRequiresEvaluationRecord`, `C1528_UpdateRefusalPreservesRecords`: publication on refusal is independent of the refusal class. |
 | R-5 | `LandNonCodeSkipTests.C1385_RegistryMatchesNarrowGraph`: the embedded manifest is unchanged (D-4). |
+| R-6 | `C1483_S4_ExistsProbeOfDocsRefuses` (5 arguments), `C1483_S4_FileReadingPropertyFunctionRefuses` (4 arguments): exact adjacent smoke for D-6 fixture rewrites. |
 
 Positive controls for SourceLanding Mutation (pending, method-scoped, each restored separately):
 PC-1 admit every plain name (V-1..V-3); PC-2 skip `%(…)` timestamp detection (V-4 `modified`);
@@ -233,10 +240,12 @@ Every row: portable .NET/MSBuild evaluator lane, effective runner defaults, froz
 | CP-3 | S1-S3 | CP-1 | syntax | `/*/*/LandGraphEvaluationTests/(C1540_ExpressionSyntaxFailsClosed*)` | V-8 | exactly 1 passed, 0 failed/skipped | 1 | 2 |
 | CP-4 | S1-S3 | CP-1 | approval-pins | `/*/*/LandGraphEvaluationTests/(C1483_S4_RealRepositoryApproves*)\|(C1483_S1_HarmlessFixtureApproves*)\|(C1483_S3_OsConditionedElementNeedsPin*)\|(C1483_S3_PinnedTargetMatchesOnlyItsHash*)` | R-1 R-2 | exactly 6 passed, 0 failed/skipped | 6 | 3 |
 | CP-5 | S1-S3 | CP-1 | c1528 | `/*/*/LandGraphEvaluationTests/(C1528_StaticExistsRefuses*)\|(C1528_ProjectedExistsRefuses*)\|(C1528_MetadataReadRefuses*)\|(C1528_EqualResultReadRefuses*)\|(C1528_FunctionSyntaxAndAbsence*)\|(C1528_PureMetadataAndFunctionsApprove*)` | R-3 | exactly 11 passed, 0 failed/skipped | 11 | 2 |
-| CP-6 | S1-S3 | CP-1 | publication | `/*/*/LandGraphEvaluationTests/(C1483_S5_UpdateRefusesWhenEvaluationRefuses*)\|(C1483_S5_CheckRequiresEvaluationRecord*)\|(C1528_UpdateRefusalPreservesRecords*)` | R-4 | exactly 3 passed, 0 failed/skipped | 3 | 2 |
+| CP-6 | S1-S3 | CP-1 | publication | `/*/*/LandGraphEvaluationTests/(C1483_S5_UpdateRefusesWhenEvaluationRefuses*)\|(C1483_S5_CheckRequiresEvaluationRecord*)\|(C1528_UpdateRefusalPreservesRecords*)` | R-4 | exactly 12 passed, 0 failed/skipped | 12 | 2 |
 | CP-7 | S1-S3 | CP-1 | manifest | `/*/*/LandNonCodeSkipTests/(C1385_RegistryMatchesNarrowGraph*)` | R-5 | exactly 1 passed, 0 failed/skipped | 1 | 1 |
 
-Closed floor: 45 results, about 26 minutes including the one build. Declared separately, all
+| CP-8 | S1-S3 | CP-1 | adjacent-fixtures | `/*/*/LandGraphEvaluationTests/(C1483_S4_ExistsProbeOfDocsRefuses*)\|(C1483_S4_FileReadingPropertyFunctionRefuses*)` | R-6 | exactly 9 passed, 0 failed/skipped | 9 | 2 |
+
+Closed floor: 63 results, about 28 minutes including the one build. Declared separately, all
 gated: one tool-only base build for S1 red if no verified base DLL exists, and one final tool-only
 build for `-Update`. Run `dotnet run --project tools/Antiphon.Checkpoints -- run --plan <this plan>
 --after S1-S3 --expected-source-sha <sha>` and wait until the exit is not 75. Run
