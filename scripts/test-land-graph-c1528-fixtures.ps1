@@ -7,8 +7,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $tool = (Resolve-Path -LiteralPath $ToolPath).Path
-$fixtures = @(Get-Content -Raw (Join-Path $root $Fixtures) | ConvertFrom-Json -AsHashtable)
-$selected = @($fixtures | Where-Object { if ($Group -eq 'witnesses') { $_.group -in @('static','projected','metadata','equal-result') } else { $_.group -eq $Group -or $_.id -in $Group.Split(',') } })
+$fixtureData = @(Get-Content -Raw (Join-Path $root $Fixtures) | ConvertFrom-Json -AsHashtable)
+$selected = @($fixtureData | Where-Object { if ($Group -eq 'witnesses') { $_.group -in @('static','projected','metadata','equal-result') } else { $_.group -eq $Group -or $_.id -in $Group.Split(',') } })
 if ($selected.Count -eq 0) { throw 'No fixtures selected' }
 function Run-Child([string]$Cwd, [string]$Command, [string[]]$Arguments, [hashtable]$Environment = @{}) {
     $start = [Diagnostics.ProcessStartInfo]::new($Command)
