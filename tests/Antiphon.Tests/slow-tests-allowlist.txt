@@ -339,3 +339,6 @@ Antiphon.Tests.Application.DispatcherSiblingInspectionSchedulingTests
 Antiphon.Tests.Application.DispatchBaseInspectionDiagnosticsTests
 # CARD-1233 S8: four actual fixture callers exercise cancellation and inherited-pipe custody.
 Antiphon.Tests.Checkpoints.CheckpointFixtureRoutingTests
+
+# CARD-1232: isolated PostgreSQL delivery recovery, persistence cuts and scratch-Git claim rollback; cold witness measured 18.7s.
+Antiphon.Tests.Application.PreDispatchFailureDeliveryTests
