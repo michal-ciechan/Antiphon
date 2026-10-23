@@ -98,6 +98,7 @@ internal sealed class PermissionWaitFixture : IAsyncDisposable
                     services.AddSingleton<IDelegateSessionStopper>(stopper);
                     services.AddSingleton<IAgentProtocolAdapterFactory>(launches);
                     services.AddSingleton<ProviderDialogObservationService>();
+                    services.AddSingleton<TaskProviderWaitReader>();
                     services.AddSingleton<DelegationWorkspaceResolver>();
                     services.AddScoped<AgentTaskService>();
                     services.AddSingleton<AgentTaskReplyService>();
@@ -116,6 +117,8 @@ internal sealed class PermissionWaitFixture : IAsyncDisposable
             throw;
         }
     }
+
+    internal TaskProviderWaitReader Reader => Harness.Provider.GetRequiredService<TaskProviderWaitReader>();
 
     internal AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
 
