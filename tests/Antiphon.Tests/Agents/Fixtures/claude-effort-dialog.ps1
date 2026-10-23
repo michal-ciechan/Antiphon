@@ -1,5 +1,5 @@
 # Test-owned console peer. Unicode provider captures are loaded, never retyped here.
-param([switch]$DefinitionsOnly)
+$DefinitionsOnly = $args -contains '-DefinitionsOnly'
 $capture = Get-Content -LiteralPath $env:C449_CAPTURE -Raw | ConvertFrom-Json
 $script:template = $capture.screen
 $script:highlight = if ($env:C449_REQUESTED -eq 'high') { 1 } else { 2 }
