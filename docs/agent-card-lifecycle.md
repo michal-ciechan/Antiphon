@@ -231,3 +231,13 @@ Missing/unsupported/unknown custody, live owners, dirty source or unknown output
 Repeat cleanup through this endpoint after resolving evidence; never force-remove or delete the
 external verification/runner ledgers. A restored Failed/Canceled run can clean without changing
 its verdict. See [testing-and-build.md](testing-and-build.md#verification-restoration-contract-card-0478).
+
+## Provider input decision (CARD-1518)
+
+A current Claude permission/question dialog raises a diagnostic attention row and
+one durable caller note. It does not change the task/card status or add a column.
+The caller arranges an authorized decision; any human question belongs on the
+existing NeedsDecision move/reopen revision. The original task deadline remains
+in force. A Failed task stays terminal and rejects Refine even if its session is
+still alive. Preserve its worktree and pending queue before explicit seat recovery
+or commissioning a separate replacement attempt.
