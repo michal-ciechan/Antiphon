@@ -37,7 +37,8 @@ internal sealed class RecordingFileSystem(string repo) : MSBuildFileSystemBase
         var types = frames.Select(f => f.GetMethod()?.DeclaringType)
             .Where(t => t?.Assembly == typeof(Project).Assembly).ToArray();
         origin = " (probe-origin: " + string.Join(", ", frames.Select(f =>
-            f.GetMethod()?.DeclaringType?.FullName ?? f.GetMethod()?.Name).Distinct().Take(12)) + ")";
+            f.GetMethod()?.DeclaringType is { } t ? t.FullName + "@" + Path.GetFileName(t.Assembly.Location)
+                : f.GetMethod()?.Name).Distinct().Take(12)) + ")";
         var includeOperation = types.Any(t => t!.FullName is { } name
             && name.StartsWith("Microsoft.Build.Evaluation.LazyItemEvaluator`", StringComparison.Ordinal)
             && name.EndsWith("+IncludeOperation", StringComparison.Ordinal));
