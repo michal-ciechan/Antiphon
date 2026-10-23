@@ -16,8 +16,12 @@ internal static class BudgetPolicy
         var exceptions = ReadExceptions(options.Exceptions);
         foreach (var declaration in report.Inventory)
         {
-            var subject = declaration.Kind == "test" ? declaration.Test : declaration.Kind == "row" ? declaration.Filter : null;
-            IGrouping<string, Observation>[] groups = subject == null ? [] : report.Observations.Where(x => x.Subject == subject).GroupBy(x => x.Context).ToArray();
+            var subject = declaration.Kind == "test" ? declaration.Test : declaration.Kind is "row" or "row-windows" ? declaration.Filter : null;
+            var matching = report.Observations.Where(x => x.Subject == subject);
+            if (declaration.Kind == "row-windows") matching = matching.Where(IsWindows);
+            else if (declaration.Kind == "row" && report.Inventory.Any(x => x.Kind == "row-windows" && x.Path == declaration.Path && x.Line == declaration.Line))
+                matching = matching.Where(x => !IsWindows(x));
+            IGrouping<string, Observation>[] groups = subject == null ? [] : matching.GroupBy(x => x.Context).ToArray();
             if (groups.Length == 0)
             {
                 report.Budgets.Add(new(declaration.Id, subject ?? declaration.Expression, "unknown", 0, null, null, null, null, "provisional", []));
@@ -46,6 +50,7 @@ internal static class BudgetPolicy
         return report;
     }
     private static double? Rank(double[] values, double percentile) => values.Length == 0 ? null : values[(int)Math.Ceiling(values.Length * percentile) - 1];
+    private static bool IsWindows(Observation sample) => sample.Context.Split('|', 2)[0].Contains("windows", StringComparison.OrdinalIgnoreCase);
     private static HashSet<string> ReadExceptions(string? path)
     {
         var result = new HashSet<string>(StringComparer.Ordinal);

@@ -26,6 +26,8 @@ A class default remains separately visible when partial/inherited tests cannot b
 Checkpoint rows expose the current importer's `max(15, 3*EstimatedMinutes)` watchdog;
 this implementation fact is not endorsed as R5 policy. The CLI does not edit plans,
 timeout declarations, checkpoint tooling, costs, policy hashes or release evidence.
+An EstimatedMinutesWindows override is inventoried separately as `row-windows` and
+compared only to Windows history; when present, it replaces the default for that OS.
 
 TRX final durations provide per-case samples; checkpoint `testHostWallSeconds` provides
 per-row execution wall. Exact filter membership, expanded case display identity, source
@@ -74,7 +76,7 @@ Windows log paths and live Windows timing inputs are not reachable from a Linux 
 Copy/export the retained receipts through the ordinary evidence path before making a
 Windows budget claim; do not relabel Linux timings as Windows evidence.
 
-The six audit tests are shared source: their small standalone project is a declared child
+The audit tests are shared source: their small standalone project is a declared child
 checkpoint host, and Antiphon.Tests compiles the same file and references the audit tool.
 The shipped execution-policy census retains seven primary suites and now declares seven
 child hosts. This registration changes the policy hash, without changing any watchdog,

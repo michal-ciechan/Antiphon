@@ -169,6 +169,12 @@ internal static class SourceInventory
             var estimate = Number(cells[estimateIndex]);
             // Current importer semantics, not R5 policy. Expose the actual implicit watchdog for audit.
             Add(report, path, i + 1, "row", cells[0] + " EstimatedMinutes=" + cells[estimateIndex], estimate == null ? null : Math.Max(15, 3 * estimate.Value) * 60, filter: cells[filterIndex]);
+            var windowsIndex = Array.IndexOf(header, "EstimatedMinutesWindows");
+            if (windowsIndex >= 0 && !string.IsNullOrWhiteSpace(cells[windowsIndex]))
+            {
+                var windows = Number(cells[windowsIndex]);
+                Add(report, path, i + 1, "row-windows", cells[0] + " EstimatedMinutesWindows=" + cells[windowsIndex], windows == null ? null : Math.Max(15, 3 * windows.Value) * 60, filter: cells[filterIndex]);
+            }
         }
     }
     private static void Add(AuditReport report, string path, int line, string kind, string expression, double? seconds, string? test = null, string? filter = null)
