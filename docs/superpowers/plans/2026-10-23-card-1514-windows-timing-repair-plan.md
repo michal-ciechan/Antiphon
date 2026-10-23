@@ -37,7 +37,7 @@ write access. Keep the buffered per-process writer and its per-line sink lock.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-8 | Windows-repair | `tests/Antiphon.Tests -> bin-c1514t-win-final/` | windows-minimum-preflight | `/*/*/(TestTimingRecorderTests*\|TestTimingLifecycleTests*\|TestTimingChokePointTests*\|TestPhaseSupervisorTests*\|TestPhaseSummaryTests*\|TestPhaseCustodyTests*)/C1514T_*` | V-1..V-13, R-1..R-5 | all 28 executed, 0 failed/skipped; real Windows + PS5.1 | 28 | 12 | true |
+| CP-8 | Windows-repair | `tests/Antiphon.Tests -> bin-c1514t-win-bounded/` | windows-minimum-preflight | `/*/*/(TestTimingRecorderTests*\|TestTimingLifecycleTests*\|TestTimingChokePointTests*\|TestPhaseSupervisorTests*\|TestPhaseSummaryTests*\|TestPhaseCustodyTests*)/C1514T_*` | V-1..V-13, R-1..R-5 | all 28 executed, 0 failed/skipped; real Windows + PS5.1 | 28 | 12 | true |
 
 Separate authorized manual work: compile the exact repair picks on a detached
 scratch checkout of origin/rc/2026-10-20; do not publish rc or tags. Run the evidence
@@ -68,3 +68,18 @@ PC-2 live-reader compatibility/disposal containment; PC-10 stable assembly name,
 ordinary-test identity marker, CSV duration/group; V-13 minimum-sample continuation
 and inherited-parent OFF isolation. Mutation owns deliberate red/restore/green and
 missing-control discovery; this repair performs no deliberate mutants.
+## Bounded compiler configuration
+
+The final-source tool build also reached source compilation but exhausted the same
+12-minute deadline during repeated nested helper staging, with zero tests. No
+assertion or timeout is relaxed. The authored companion manifest
+`2026-10-23-card-1514-windows-timing-repair-checkpoints.yaml` binds the SAME CP-8
+selection and adds `RunAnalyzersDuringBuild=false` to avoid repeating analyzer work
+through the staged helper graph. C# compilation and TUnit source generation remain
+enabled; exact nonzero rosters are mandatory. Original normal-build diagnostics and
+all three failed receipts remain retained. This is an explicit build configuration
+exception for the bounded repair, not an assertion of default-build success.
+
+Run the companion manifest through the checkpoint tool at committed HEAD, with
+12-minute row/build and 25-minute total limits. Keep parent phase recording enabled.
+The rc scratch compile uses the ordinary default analyzer configuration separately.
