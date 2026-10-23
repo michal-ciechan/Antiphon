@@ -225,6 +225,40 @@ public class AgentAttachHerdrTests
     }
 
     [Test]
+    public async Task C1491_adoption_clears_stale_claude_effort()
+    {
+        var tempRoot = NewTemp();
+        await using var fake = StartFake();
+        try
+        {
+            await using var harness = BuildHarness(tempRoot, fake);
+            var nativeId = Guid.NewGuid();
+            var cwd = Path.Combine(tempRoot, "cwd");
+            Directory.CreateDirectory(cwd);
+            using var grok = PinGrokHome(tempRoot, nativeId, cwd);
+            var pane = SeedGrokPane(fake, nativeId, cwd);
+            var agent = await CreateGrokHerdrAgentAsync(harness, cwd);
+            // Through the harness scope's own context: it already tracks this row (see
+            // CreateGrokHerdrAgentAsync), and the service's FOR UPDATE read resolves to that instance.
+            var scoped = harness.Scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = await scoped.Agents.SingleAsync(a => a.Id == agent.Id);
+            row.IsPoolDelegate = true;
+            row.PoolClaudeEffort = "xhigh";
+            await scoped.SaveChangesAsync();
+
+            await harness.Control.AttachHerdrAsync(agent.Id, new AttachHerdrPaneRequest(pane.PaneId), CancellationToken.None);
+
+            await using var verify = CreateContext();
+            var stored = await verify.Agents.AsNoTracking().SingleAsync(a => a.Id == agent.Id);
+            stored.PoolClaudeEffort.ShouldBeNull();
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task Refuses_non_herdr_agent_and_unmapped_kinds()
     {
         var tempRoot = NewTemp();

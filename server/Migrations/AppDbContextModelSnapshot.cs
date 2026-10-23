@@ -120,6 +120,9 @@ namespace Antiphon.Server.Migrations
                     b.Property<int?>("PolicyRefreshMode")
                         .HasColumnType("integer");
 
+                    b.Property<string>("PoolClaudeEffort")
+                        .HasColumnType("text");
+
                     b.Property<DateTime?>("PoolIdleSince")
                         .HasColumnType("timestamp with time zone");
 
