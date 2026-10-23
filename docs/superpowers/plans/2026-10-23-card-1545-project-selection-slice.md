@@ -49,7 +49,6 @@ remain pending for method-scoped SourceLanding Mutation, including discovery.
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1545-red/` | red-witness | `/*/*/RcProjectSelectionTests/*` | V-1,V-2,V-3 | all 3 methods, expected assertion failures before S2 | 3 | 6 |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1545-green/` | project-planner | `/*/*/RcProjectSelectionTests/*` | V-1,V-2,V-3 | all 3 methods, 0 failed/skipped | 3 | 6 |
 | CP-3 | S2 | CP-2 | release-modes | `/*/*/ChangeAwareReleaseTests/C1313_ModeCredit` | R-1 | 1 method, 0 failed/skipped | 1 | 4 |
-
 | CP-4 | S3 | n/a | consumer-red | `pwsh -NoProfile -File scripts/test-rc-project-selection.ps1 -Case C1545_ConsumerSafety -ResultsDirectory .antiphon/c1545-consumer-red` | V-5 | 4 assertion rows, expected missing-consumer/batch failures before S4 | n/a | 1 |
 | CP-5 | S4 | `tests/Antiphon.Tests -> bin-c1545-final/` | final-planner | `/*/*/RcProjectSelectionTests/*` | V-1,V-2,V-3,V-5 | all 4 methods, 0 failed/skipped | 4 | 6 |
 
