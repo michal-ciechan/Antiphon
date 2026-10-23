@@ -75,6 +75,9 @@ public sealed partial class LandGraphEvaluationTests
         var original = await File.ReadAllLinesAsync(repo.Full(EvaluationFile));
         original.Length.ShouldBe(3);
         original[0].ShouldBe((await File.ReadAllLinesAsync(repo.Full(ManifestFile)))[0]);
+        var replacement = await RunScriptAsync(repo.Root, "-Update");
+        replacement.ExitCode.ShouldBe(0, replacement.Text);
+        (await File.ReadAllLinesAsync(repo.Full(EvaluationFile))).ShouldBe(original);
         foreach (var variant in new[] { "valid", "missing", "digest", "sdk", "pins", "extra-line" })
         {
             var lines = original.ToArray();
