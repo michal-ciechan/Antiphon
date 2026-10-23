@@ -537,6 +537,46 @@ public class AgentSessionBackendTests
         }
     }
 
+    [Test]
+    [Category("Integration")]
+    [NotInParallel("AgentControl")]
+    public async Task C1491_control_start_replaces_stale_effort_stamp()
+    {
+        var tempRoot = AgentControlServiceIntegrationTests.NewTempRoot();
+        try
+        {
+            var workspace = Path.Combine(tempRoot, "c0167-pool-start");
+            Directory.CreateDirectory(workspace);
+            var adapter = new FakeAgentProtocolAdapter();
+            await using var harness = AgentControlServiceIntegrationTests.BuildHarness(
+                tempRoot, [adapter], defaultKind: "ClaudeCode");
+            var agent = await harness.AgentService.CreateAsync(
+                new CreateAgentRequest(Unique("C0167 Pool Start"), workspace), CancellationToken.None);
+            await using (var db = CreateContext())
+            {
+                var row = await db.Agents.SingleAsync(a => a.Id == agent.Id);
+                row.IsPoolDelegate = true;
+                row.ModelLevel = AgentModelLevel.High;
+                row.PoolClaudeEffort = "xhigh";
+                await db.SaveChangesAsync();
+            }
+
+            var first = await harness.Control.StartAsync(agent.Id, new StartAgentRequest(), CancellationToken.None);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            first.PersistentSessionId.ShouldNotBeNull();
+            var argv = adapter.StartedArgs.ToList();
+            argv.ShouldContain("--effort");
+            argv[argv.IndexOf("--effort") + 1].ShouldBe("high");
+            await using var verify = CreateContext();
+            (await verify.Agents.AsNoTracking().SingleAsync(a => a.Id == agent.Id)).PoolClaudeEffort.ShouldBe("high");
+        }
+        finally
+        {
+            await AgentControlServiceIntegrationTests.CleanupProjectsByTempRootAsync(tempRoot);
+            AgentControlServiceIntegrationTests.DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     private static async Task SetPoolStampAsync(Guid agentId, string stamp, bool makePool)
     {
         await using var db = CreateContext();
