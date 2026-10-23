@@ -79,3 +79,35 @@ The preceding verification-manifest commit and this documentation update are opt
 rc documentation picks; neither is needed to compile the fixture repair.
 Final checkpoint results remain pending at this committed narrative tip; the final
 caller report supplies the fresh receipt, tested SHA and per-method counts.
+
+## First checkpoint and additional fixture omission
+
+The first checkpoint at `09c8e9f141f141176e944d6ca1689fe230b3fda9`
+completed RED: 32 executed, 4 passed, 28 failed, 0 skipped. Build 5m08s,
+tests 7m37s, total wall 13m56s; both build and row slots granted, waited=0s.
+The original Unknown persistence outcome disappeared, but input stayed held:
+EpochAdapter inherited null dialog observation and Unsupported conditional input,
+and its FakeAgentProtocolAdapter never enabled the supported Claude composer.
+C544DeliveryRig already has the required EnableClaudeDialogObservationAsync setup.
+The repair now applies that same real generation-bound setup on each attachment
+and forwards observation/conditional writes through the epoch wrapper. The input
+guard remains active. The gap action worker remains scoped to its owned experiment.
+All test assertions and timeouts remain unchanged.
+
+Unedited first checkpoint receipt:
+
+```text
+CHECKPOINT CP-1 commit=09c8e9f141f141176e944d6ca1689fe230b3fda9 build=ok filter=/*/*/(TurnEndGapRestartDeliveryTests*)|(TestClassificationPolicyTests*)/(C1205_*)|(C487_G059*) executed=32 passed=4 failed=28 skipped=0 trx=/work/worktrees/task-d923b640/.antiphon/checkpoints/20261023-105551-fdda/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=09c8e9f141f141176e944d6ca1689fe230b3fda9 sourceState=clean buildSource=verified
+```
+
+PC-1492-3 (pending SourceLanding Mutation): omit forwarding dialog observation
+through EpochAdapter; exact watchdog method must fail its recipient-submission
+assertion despite successful transcript recovery. The first checkpoint is the
+ordinary red witness for this fixture omission, not a Mutation execution.
+
+A second CP-1 run is required after this substantive fixture repair, retaining all
+32 selected cases because the shared attachment path changed. This is a changed
+proof selection's repair run, not a repetition to seek a passing flake. Final
+receipt validation remains outstanding. The rc source pick list must now include
+both fixture repair commits; the earlier one-commit pick applied only to the first
+candidate and is historical. Recheck the combined diff and compile on rc.
