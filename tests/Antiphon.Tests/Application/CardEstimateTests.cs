@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
@@ -20,6 +21,11 @@ namespace Antiphon.Tests.Application;
 [ClassDataSource<CardFileSyncEndpointWebAppFactory>(Shared = SharedType.PerClass)]
 public class CardEstimateTests(CardFileSyncEndpointWebAppFactory factory)
 {
+    private static JsonSerializerOptions JsonOptions() => new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() }
+    };
+
     private async Task<Guid> BoardAsync()
     {
         using var scope = factory.Services.CreateScope();
@@ -39,7 +45,7 @@ public class CardEstimateTests(CardFileSyncEndpointWebAppFactory factory)
     private static async Task<JsonElement> CreateAsync(HttpClient client, Guid board, decimal? estimate)
     {
         using var response = await client.PostAsJsonAsync($"/api/boards/{board}/cards",
-            new CreateCardRequest(null, "Estimate test", EstimateDays: estimate));
+            new CreateCardRequest(null, "Estimate test", EstimateDays: estimate), JsonOptions());
         response.StatusCode.ShouldBe(HttpStatusCode.Created);
         return await response.Content.ReadFromJsonAsync<JsonElement>();
     }
@@ -53,7 +59,7 @@ public class CardEstimateTests(CardFileSyncEndpointWebAppFactory factory)
     {
         using var response = await client.PatchAsJsonAsync($"/api/cards/{card.GetProperty("id").GetGuid()}/content",
             new UpdateCardContentRequest(card.GetProperty("concurrencyToken").GetGuid(), "Revise estimate",
-                Title: title, EstimateDays: estimate, ClearEstimate: clear));
+                Title: title, EstimateDays: estimate, ClearEstimate: clear), JsonOptions());
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         return await response.Content.ReadFromJsonAsync<JsonElement>();
     }
@@ -126,7 +132,7 @@ public class CardEstimateTests(CardFileSyncEndpointWebAppFactory factory)
         var estimate = decimal.Parse(value, CultureInfo.InvariantCulture);
         using var response = await client.PatchAsJsonAsync($"/api/cards/{id}/content",
             new UpdateCardContentRequest(token, "Invalid estimate", Title: "Must not persist",
-                EstimateDays: estimate, ClearEstimate: clear));
+                EstimateDays: estimate, ClearEstimate: clear), JsonOptions());
         response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
         var error = await response.Content.ReadFromJsonAsync<JsonElement>();
         error.GetProperty("errors").TryGetProperty(clear ? "clearEstimate" : "estimateDays", out _).ShouldBeTrue();
@@ -139,7 +145,7 @@ public class CardEstimateTests(CardFileSyncEndpointWebAppFactory factory)
         if (!clear)
         {
             using var rejected = await client.PostAsJsonAsync($"/api/boards/{board}/cards",
-                new CreateCardRequest(null, "Invalid create", EstimateDays: estimate));
+                new CreateCardRequest(null, "Invalid create", EstimateDays: estimate), JsonOptions());
             rejected.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
             using var scope = factory.Services.CreateScope();
             (await scope.ServiceProvider.GetRequiredService<AppDbContext>().Cards
