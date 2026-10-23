@@ -348,3 +348,12 @@ Antiphon.Tests.Application.PreDispatchFailureDeliveryTests
 
 # CARD-1519: isolated PostgreSQL, hosted admission and owned shutdown barriers; the first control run measured 17-22s.
 Antiphon.Tests.Application.DispatcherAdmissionSchedulingTests
+
+# CARD-1472: real Git, isolated PostgreSQL and reply settlement under repository lease contention.
+Antiphon.Tests.Application.BlockedReplyReportRetentionTests
+# CARD-1475: real PostgreSQL queue delivery, verification windows and transcript receipts.
+Antiphon.Tests.Application.DeliveryUnverifiedDiagnosticTests
+# CARD-1430: real Git, isolated PostgreSQL and dispatch/SourceLanding repository lease boundaries.
+Antiphon.Tests.Application.DispatcherLeaseSpanTests
+# CARD-1420: owned PostgreSQL containers, full migration, schema dumps and snapshot restore parity.
+Antiphon.Tests.TestHelpers.TestSchemaSnapshotTests
