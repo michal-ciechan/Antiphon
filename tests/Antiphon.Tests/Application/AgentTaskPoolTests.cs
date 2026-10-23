@@ -948,7 +948,7 @@ public class AgentTaskPoolTests
     {
         using var workspace = new TempWorkspace();
         var (dispatcher, _, provider) = CreateHarness();
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
         var (busy, session) = await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, 3);
         var (idle, _) = await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, 4);
         await SeedMidTurnTranscriptAsync(session);
