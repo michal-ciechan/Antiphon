@@ -21,25 +21,8 @@ internal static class TargetPins
         var tracked = TrackedFiles(repo);
         var pins = ReadPins(repo, tracked, refusals);
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var file in tracked.Where(Definition).Order(StringComparer.Ordinal))
+        foreach (var (relative, document) in DefinitionDocuments(repo, tracked))
         {
-            var text = File.ReadAllText(file);
-            var extension = Path.GetExtension(file);
-            var projectXml = extension.EndsWith("proj", StringComparison.OrdinalIgnoreCase)
-                             || extension.Equals(".props", StringComparison.OrdinalIgnoreCase)
-                             || extension.Equals(".targets", StringComparison.OrdinalIgnoreCase)
-                             || file.EndsWith("proj.user", StringComparison.OrdinalIgnoreCase);
-            // Some digested definitions are JSON, solution text or response files. Also inspect
-            // XML-shaped definitions with unusual names (e.g. Directory.Build.custom), which D-7
-            // permits as imports. A broken project XML file fails closed in XmlReader.
-            if (!projectXml && !text.AsSpan().TrimStart().StartsWith("<", StringComparison.Ordinal)) continue;
-            var document = new XmlDocument { PreserveWhitespace = true, XmlResolver = null };
-            using var reader = XmlReader.Create(new StringReader(text), new XmlReaderSettings
-            {
-                DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
-            });
-            document.Load(reader);
-            var relative = Path.GetRelativePath(repo, file).Replace(Path.DirectorySeparatorChar, '/');
             foreach (var element in Elements(document.DocumentElement!))
             {
                 var target = element.LocalName == "Target";
@@ -63,6 +46,34 @@ internal static class TargetPins
         }
         foreach (var key in pins.Keys.Where(key => !seen.Contains(key)))
             refusals.Add($"refused: {key.Replace('\t', ' ')} (stale pin)");
+    }
+
+    // Shared with the post-Locator evaluation-expression gate; the census and XML loader
+    // must not drift from the exact definition/pin boundary.
+    internal static IEnumerable<(string Relative, XmlDocument Document)> DefinitionDocuments(
+        string repo, IReadOnlySet<string>? tracked = null)
+    {
+        foreach (var file in (tracked ?? TrackedFiles(repo)).Where(Definition).Order(StringComparer.Ordinal))
+        {
+            var text = File.ReadAllText(file);
+            var extension = Path.GetExtension(file);
+            var projectXml = extension.EndsWith("proj", StringComparison.OrdinalIgnoreCase)
+                             || extension.Equals(".props", StringComparison.OrdinalIgnoreCase)
+                             || extension.Equals(".targets", StringComparison.OrdinalIgnoreCase)
+                             || file.EndsWith("proj.user", StringComparison.OrdinalIgnoreCase);
+            // Some digested definitions are JSON, solution text or response files. Also inspect
+            // XML-shaped definitions with unusual names (e.g. Directory.Build.custom), which D-7
+            // permits as imports. A broken project XML file fails closed in XmlReader.
+            if (!projectXml && !text.AsSpan().TrimStart().StartsWith("<", StringComparison.Ordinal)) continue;
+            var document = new XmlDocument { PreserveWhitespace = true, XmlResolver = null };
+            using var reader = XmlReader.Create(new StringReader(text), new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
+            });
+            document.Load(reader);
+            var relative = Path.GetRelativePath(repo, file).Replace(Path.DirectorySeparatorChar, '/');
+            yield return (relative, document);
+        }
     }
 
     private static Dictionary<string, string> ReadPins(string repo, IReadOnlySet<string> tracked, ISet<string> refusals)
@@ -159,7 +170,7 @@ internal static class TargetPins
             foreach (var descendant in Elements(child)) yield return descendant;
     }
 
-    private static string ElementPath(XmlElement element)
+    internal static string ElementPath(XmlElement element)
     {
         var index = 1;
         for (var sibling = element.PreviousSibling; sibling is not null; sibling = sibling.PreviousSibling)
