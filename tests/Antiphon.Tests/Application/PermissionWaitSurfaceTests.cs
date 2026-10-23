@@ -59,6 +59,14 @@ public partial class PermissionWaitTests
         await using var finalScope = f.Harness.Provider.CreateAsyncScope();
         var stale = await finalScope.ServiceProvider.GetRequiredService<AttentionService>().GetAsync(ct, includeProgressProbe: false);
         stale.Items.ShouldNotContain(i => i.Kind.ToString() == "ProviderInputWait");
+        f.Clock.AdvanceTo(new DateTimeOffset(f.DispatchedAt).AddMinutes(90));
+        f.Reader.ObserveOverride = (_, _) => { f.Clock.Advance(TimeSpan.FromSeconds(1)); return Task.FromResult<ProviderDialogObservation?>(observed); };
+        var refreshed = await finalScope.ServiceProvider.GetRequiredService<DelegateCheckProbe>().GatherAsync(await f.TaskAsync(ct), ct);
+        refreshed.Deadline!.Kind.ShouldBe("ProviderInputWait", "Check evaluates after the completed read, not with a pre-read clock");
+        f.Reader.ObserveOverride = (_, _) => Task.FromResult<ProviderDialogObservation?>(null);
+        await f.Reader.ReadAsync(f.TaskId, true, ct);
+        var unknown = await finalScope.ServiceProvider.GetRequiredService<DelegateCheckProbe>().GatherAsync(await f.TaskAsync(ct), ct);
+        unknown.Deadline!.Summary.ShouldContain("observation unavailable");
     }
 
     [Test]
