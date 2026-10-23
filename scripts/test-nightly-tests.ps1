@@ -2051,7 +2051,7 @@ function Test-C1410_MeasuredCostGroups {
         # the old 9-10 hour envelope. Four synthetic suffix-probe launches are
         # additional to the 100 real-fixture launches (not Windows qualification).
         if ($launches -ne 104) { [void]$reasons.Add('launch-count') }
-        if ([Math]::Abs($suiteSeconds - 47107.9) -gt 0.11) { [void]$reasons.Add('suite-hours') }
+        if ([Math]::Abs($suiteSeconds - 47108.09756097559) -gt 0.11) { [void]$reasons.Add('suite-hours') }
         if ($maxSeconds -ge $watchdogSeconds) { [void]$reasons.Add('watchdog-budget') }
         if ($overTarget.Count -ne 0) { [void]$reasons.Add('target') }
         if ($missing -ne 0 -or $double -ne 0 -or $extra -ne 0) { [void]$reasons.Add('census') }

@@ -262,7 +262,19 @@ $NightlySeams = @{
             $filterIndex = [array]::IndexOf($argv, '--treenode-filter')
             if ($filterIndex -ge 0) {
                 $parts = $argv[$filterIndex + 1].Split('/')
-                $nodes = @($nodes | Where-Object { $_.namespace -like $parts[2] -and $_.type -like $parts[3] -and $_.method -like $parts[4] })
+                # CARD-1569: emulate each TUnit OR operand, retaining its
+                # trailing wildcard. PowerShell -like has no OR grammar.
+                function Test-C1323FilterPart($Value, $Pattern) {
+                    foreach ($operand in $Pattern.Split('|')) {
+                        if ($Value -like $operand.Trim('(', ')')) { return $true }
+                    }
+                    return $false
+                }
+                $nodes = @($nodes | Where-Object {
+                    (Test-C1323FilterPart $_.namespace $parts[2]) -and
+                    (Test-C1323FilterPart $_.type $parts[3]) -and
+                    (Test-C1323FilterPart $_.method $parts[4])
+                })
             }
             foreach ($node in $nodes) { Add-Content '__ROOT__/__PLATFORM__-launched.txt' $node.uid }
             $trx = Join-Path $argv[[array]::IndexOf($argv, '--results-directory') + 1] $argv[[array]::IndexOf($argv, '--report-trx-filename') + 1]
@@ -308,16 +320,17 @@ function Test-C1323_PlatformExecution {
     Assert-C1323 ($windows.ExitCode -eq 0 -and $summary.testsPassed -and $summary.coverageComplete -and $summary.coverageScope -ceq 'Full' -and $summary.platform -ceq 'windows' -and $summary.reasons.Count -eq 0) 'windows-summary-remains-full' ($summary | ConvertTo-Json -Depth 8 -Compress)
 
     $releaseRoot = "$($fx.Root)/releases"
-    $green = "$releaseRoot/candidates/fixture/complete-green.json"
+    $candidateId = (Test-ReleaseGateCandidateRef -Ref 'rc/2026-10-20' -Sha $fx.Sha).CandidateId
+    $green = "$releaseRoot/candidates/$candidateId/complete-green.json"
     $masterGreen = "$($fx.Root)/master/last-complete-green.json"
-    Write-C1323File $fx.Root 'releases/candidates/fixture/complete-green.json' 'candidate sentinel'
+    Write-C1323File $fx.Root "releases/candidates/$candidateId/complete-green.json" 'candidate sentinel'
     Write-C1323File $fx.Root 'master/last-complete-green.json' 'master sentinel'
     foreach ($platform in @('linux', 'windows')) {
         $runId = "offline-$platform"
         $stateRoot = "$($fx.Root)/state-$platform"
-        $request = @{ RepositoryRoot = $fx.Clone; CandidateSha = $fx.Sha; CandidateRef = 'rc/2026-10-20'; Repository = 'fixture/c1323'; Profile = 'rc'; ReleaseRoot = $releaseRoot; CandidateId = 'fixture'; RunId = $runId; SelectionMode = 'Full'; Attempt = 1 }
+        $request = @{ RepositoryRoot = $fx.Clone; CandidateSha = $fx.Sha; CandidateRef = 'rc/2026-10-20'; Repository = 'fixture/c1323'; Profile = 'rc'; ReleaseRoot = $releaseRoot; CandidateId = $candidateId; RunId = $runId; SelectionMode = 'Full'; Attempt = 1 }
         $bound = New-ReleaseSelectionAttemptCore $request
-        $run = Invoke-AntiphonNightlyRunCore -NoSync -CheckoutRoot $fx.Clone -StateRoot $stateRoot -LogRoot "$($fx.Root)/run-$platform" -RemoteUrl 'https://github.com/fixture/c1323' -Ref 'rc/2026-10-20' -Profile rc -Trigger rc -ExpectedSha $fx.Sha -CandidateId fixture -Repository 'fixture/c1323' -ReleaseRoot $releaseRoot -CoordinationRoot "$($fx.Root)/coordination" -RunId $runId -SeamsPath "$($fx.Root)/$platform.ps1" -SelectionAttemptPath $bound.SelectionAttemptPath -SelectionAttemptDigest $bound.SelectionAttemptDigest -SelectionPath $bound.SelectionPath -SelectionDigest $bound.SelectionDigest
+        $run = Invoke-AntiphonNightlyRunCore -NoSync -CheckoutRoot $fx.Clone -StateRoot $stateRoot -LogRoot "$($fx.Root)/run-$platform" -RemoteUrl 'https://github.com/fixture/c1323' -Ref 'rc/2026-10-20' -Profile rc -Trigger rc -ExpectedSha $fx.Sha -CandidateId $candidateId -Repository 'fixture/c1323' -ReleaseRoot $releaseRoot -CoordinationRoot "$($fx.Root)/coordination" -RunId $runId -SeamsPath "$($fx.Root)/$platform.ps1" -SelectionAttemptPath $bound.SelectionAttemptPath -SelectionAttemptDigest $bound.SelectionAttemptDigest -SelectionPath $bound.SelectionPath -SelectionDigest $bound.SelectionDigest
         $state = Get-Content "$stateRoot/last-run.json" -Raw | ConvertFrom-Json
         if ($platform -eq 'linux') {
             $record = ConvertTo-NightlyResultRecord $run

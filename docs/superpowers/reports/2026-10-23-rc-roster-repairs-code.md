@@ -53,3 +53,26 @@ PC-1/PC-2/PC-3/PC-4 and all variants remain pending method-scoped SourceLanding 
 
 Remaining input-dependent work is substantive, not an advisory correction: complete
 the Windows timing census and exact roster estimate before claiming CARD-1567 done.
+
+## S3 repair, before final rerun
+
+CP-1 at d89a2c1c87a13c0d7dcfe73c0bf9ff743ca9c424: eight executed, six passed,
+two failed, zero skipped. Build and source provenance were verified and clean;
+slot waits were 60s build / 15s row. It retained output after red. All three new
+CARD-1561/1566/1567 witnesses passed. C1410 exposed an introduced arithmetic pin bug:
+47107.9 is the rounded-launch sum, while its independent node sum is
+47108.09756097559. Correct the pin with the same tolerance and launch/census assertions.
+
+C1323_PlatformExecution also failed. A fresh base-only script run reproduced its
+four passed / three failed assertions, with slot granted / waited=0s / held=23s.
+CARD-1569 was filed for this inherited fixture drift: PowerShell -like cannot parse
+TUnit OR operands, and literal CandidateId fixture is now correctly refused. Its
+repair updates only the seam matcher and derived candidate inputs, retaining all
+twelve execution/custody/credit assertions. Card creation succeeded; the card CLI
+then exited 1 attempting a Windows card-file sync from Linux (board not opted in).
+
+CP-2 reruns the red row at a fresh committed source, with a fresh isolated build.
+Raw and rounded fixture sums are distinct, neither is a Windows current-roster claim.
+RC scratch compilation already passed at 6a7977069184ed9a217f89a5af08624c4a8366d5:
+1140 warnings / zero errors / 156.76s; slot granted, waited=15s, held=157s.
+The S3 script repair must also be picked after the original two source commits for RC.
