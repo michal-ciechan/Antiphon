@@ -159,3 +159,40 @@ R-4 completed: all three RC picks applied without conflicts, Antiphon.Tests buil
 with 0 errors in 275.76s; BUILD SLOT granted, waited=0s, released after 276s.
 Post-build worktree-to-index diff is empty and index tree remains
 fb531f381f149c7279aed82058f15e6698ac293d. No RC execution/Windows pass is claimed.
+
+## Final class run and bounded red-row repair
+
+Run 20261023-122958-8d7f at e3e6298152c1ec8dc9da0f9ab23f3b281728c681
+completed all four classes: 115 passed, 21 failed, 0 skipped of 136.
+CP-2 watermark 36/36; CP-3 warmup 16/16; CP-5 card correction 43/43.
+CP-4 inbound recovery 20/41, 21 failures. Both broker replay variants failed before
+retention at their complete-delivery wait; C767/C593 cases also lacked prompts,
+submissions or delivery acknowledgements. Do not label these current-master
+failures as the historical RC prune-count failure. Their base execution attribution
+is unresolved; the retained RC diagnosis does not prove these additional reds.
+
+CHECKPOINT CP-2 commit=e3e6298152c1ec8dc9da0f9ab23f3b281728c681 build=ok filter=/*/*/AgentTaskLandReceiptWatermarkTests/* executed=36 passed=36 failed=0 skipped=0 trx=/work/worktrees/task-3fa840bf/.antiphon/checkpoints/20261023-122958-8d7f/rows/CP-2/run.trx slot=granted waited=15s dirty=0 source=e3e6298152c1ec8dc9da0f9ab23f3b281728c681 sourceState=clean buildSource=verified
+PHASES CP-2 slotWait=90s build=353.5206624s startup=69.3536844s testsWall=41.2783461s teardown=3.2738009s hostWall=113.9058278s
+CHECKPOINT CP-3 commit=e3e6298152c1ec8dc9da0f9ab23f3b281728c681 build=reused filter=/*/*/SessionStateWarmupTests/* executed=16 passed=16 failed=0 skipped=0 trx=/work/worktrees/task-3fa840bf/.antiphon/checkpoints/20261023-122958-8d7f/rows/CP-3/run.trx slot=granted waited=15s dirty=0 source=e3e6298152c1ec8dc9da0f9ab23f3b281728c681 sourceState=clean buildSource=verified
+PHASES CP-3 slotWait=15s build=0s startup=26.6220121s testsWall=15.9725159s teardown=2.1519707s hostWall=44.746499s
+CHECKPOINT CP-4 commit=e3e6298152c1ec8dc9da0f9ab23f3b281728c681 build=reused filter=/*/*/ChannelInboundRecoveryTests/* executed=41 passed=20 failed=21 skipped=0 trx=/work/worktrees/task-3fa840bf/.antiphon/checkpoints/20261023-122958-8d7f/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=e3e6298152c1ec8dc9da0f9ab23f3b281728c681 sourceState=clean buildSource=verified
+PHASES CP-4 slotWait=0s build=0s startup=34.6990775s testsWall=162.1412115s teardown=2.5597722s hostWall=199.4000611s
+CHECKPOINT CP-5 commit=e3e6298152c1ec8dc9da0f9ab23f3b281728c681 build=reused filter=/*/*/CardCorrectionIntegrationTests/* executed=43 passed=43 failed=0 skipped=0 trx=/work/worktrees/task-3fa840bf/.antiphon/checkpoints/20261023-122958-8d7f/rows/CP-5/run.trx slot=granted waited=15s dirty=0 source=e3e6298152c1ec8dc9da0f9ab23f3b281728c681 sourceState=clean buildSource=verified
+PHASES CP-5 slotWait=15s build=0s startup=33.2850279s testsWall=18.657337s teardown=6.9840089s hostWall=58.9263736s
+
+All four fresh TRX files were inspected for their exact single class and nonzero
+counts, including the named repaired watermark and warmup variants. Slot granted
+for every build/row: build waited 75s; row waits 15s/15s/0s/15s. Build driver 287.97s.
+The complete 21-failure identities and stacks remain in CP-4's failures.md/TRX.
+
+The positive channel-recipient fixtures also predate master's Claude observation
+guard. Scope the existing supported-Claude opt-in to this class, using the real
+BridgeQueueHarness option, and await the existing generation-bound observation
+helper for additional receipt adapters. The default fake remains absent elsewhere.
+No negative Claude-observation case exists in this class, and all existing channel
+hold, paging, receipt, payload and timeout assertions are retained. This is a
+master-only test composition repair; DO NOT add it to the three RC picks above.
+Only CP-4 changes, so rerun that full red class once with fresh build/source
+provenance; the other three green class receipts at e3e6298 remain historical
+ordinary verification and are not relabeled to the new SHA. Final tip must be the
+source tested by that red-row rerun. Receipt validation is scoped to its actual row.
