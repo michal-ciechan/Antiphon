@@ -37,9 +37,34 @@ write access. Keep the buffered per-process writer and its per-line sink lock.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-8 | Windows-repair | `tests/Antiphon.Tests -> bin-c1514t-win-repair/` | windows-minimum-preflight | `/*/*/(TestTimingRecorderTests*\|TestTimingLifecycleTests*\|TestTimingChokePointTests*\|TestPhaseSupervisorTests*\|TestPhaseSummaryTests*\|TestPhaseCustodyTests*)/C1514T_*` | V-1..V-13, R-1..R-5 | all 28 executed, 0 failed/skipped; real Windows + PS5.1 | 28 | 12 | true |
+| CP-8 | Windows-repair | `tests/Antiphon.Tests -> bin-c1514t-win-final/` | windows-minimum-preflight | `/*/*/(TestTimingRecorderTests*\|TestTimingLifecycleTests*\|TestTimingChokePointTests*\|TestPhaseSupervisorTests*\|TestPhaseSummaryTests*\|TestPhaseCustodyTests*)/C1514T_*` | V-1..V-13, R-1..R-5 | all 28 executed, 0 failed/skipped; real Windows + PS5.1 | 28 | 12 | true |
 
 Separate authorized manual work: compile the exact repair picks on a detached
 scratch checkout of origin/rc/2026-10-20; do not publish rc or tags. Run the evidence
 history guard over task-start base..HEAD and inventory native OS witnesses.
+## Repair and native witness inventory
 
+Two old-source checkpoint builds exhausted the 12-minute build deadline during
+helper staging (no test results); retain both receipts. The bounded real native
+probe then failed `actual CSV duration/group/join missing`, with nine actual TRX
+results and stale-input-not-joined. The original Windows preflight at rc
+12a0b107f4c896979dda94b4afb628842f601883 remains the recorder/overhead red witness:
+eight incompatible-reader failures, OFF wall 8847.5505ms <10000ms. Relevant recorder,
+summary and overhead source was identical before this repair. These are historical
+reds, not checkpoint-tool gate credit. Final CP-8 still requires fresh execution.
+
+Shared recorder and readers are test-only, portable .NET APIs; their Windows
+sharing behavior is witnessed by C1514T_IntervalAlgebra and the live-writer summary
+in C1514T_PS51AndRerun. That method's real three-class probe also runs the production
+native owner and verifies identical PS7/Windows PowerShell 5.1 summaries and nine
+joined CSV rows. The unchanged Linux-only affinity helper is outside this Windows
+repair; no Linux native claim is made. All changed qualification scripts are test
+supervisor tooling; they are not imported by AppHost or the session runner.
+Restart: none. Parent phase environment is enabled for final CP-8; the overhead
+method explicitly disables OFF so it cannot inherit the parent's recorder.
+
+PC-1..PC-16 remain pending. Additional variants for method-scoped Mutation:
+PC-2 live-reader compatibility/disposal containment; PC-10 stable assembly name,
+ordinary-test identity marker, CSV duration/group; V-13 minimum-sample continuation
+and inherited-parent OFF isolation. Mutation owns deliberate red/restore/green and
+missing-control discovery; this repair performs no deliberate mutants.
