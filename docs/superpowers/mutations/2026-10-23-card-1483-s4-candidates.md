@@ -17,3 +17,9 @@ and absolute links, recording enumeration/read variants and over-broad path norm
 All inherited S1 controls, PC-S2-1a/1b/1c/2a/2b/3a/3b/3c, and PC-S3-1..7 with their
 listed variants remain pending; original exit-2-as-approval controls include S5.
 No Code run here discharges any PC.
+
+PC-S4-5 pending: broaden the FileMatcher traversal exception to explicit Conditions
+or to a directory path whitelist. Exact guard: C1483_S4_ExistsProbeOfDocsRefuses,
+which combines the allowed JSON glob with each unsafe explicit probe. Discovery must
+also test absent call provenance, Condition-triggered glob expansion and SDK matcher
+changes. PC-S4-6 pending: put the canary under an unrelated parent (V-13 real tree).

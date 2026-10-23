@@ -28,3 +28,20 @@ Generate/check the real manifest with the audit script, never by hand.
 One isolated build and full affected class per committed group, approximately 18 minutes.
 No full-assembly run, repeat-proof or additional class is needed. Every deliberate
 positive control remains pending for method-scoped SourceLanding Mutation.
+
+### D-4 / D-6 compatibility established by the first implementation run
+
+MSBuild's glob matcher calls DirectoryExists even for the required safe JSON glob.
+Retain the S2 allowance by delegating only directory/existence/enumeration traversal
+with a verified Microsoft.Build FileMatcher frame to the unchanged D-4 glob policy.
+Condition function frames forbid this exception; unknown provenance refuses. No
+path-based whitelist is added. V-11 now combines the safe JSON glob with each unsafe
+Exists probe, so the glob cannot authorize an explicit probe on the same directory.
+The existing V-5 matrix still refuses Markdown, wildcard extensions and ignored excludes.
+
+The canary is a sibling of the source repository: MSBuild enumerates ancestor
+.globalconfig candidates, and a /tmp copy of a /work checkout changes those candidates
+without any documentation dependency. No item/property category is excluded from the
+comparison. The sibling preserves the same ancestors; lack of write access fails closed.
+Established item/import/glob refusals take diagnostic precedence over probe refusals;
+probe checks remain decisive whenever those prior checks would approve.

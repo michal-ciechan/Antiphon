@@ -20,6 +20,7 @@ public sealed partial class LandGraphEvaluationTests
             ["README.md"] = "root",
             ["docs/flag.md"] = "flag",
             ["App/App.csproj"] = SdkProject($"""
+                <ItemGroup><None Include="../docs/**/*.json" /></ItemGroup>
                 <PropertyGroup Condition="Exists('$(MSBuildThisFileDirectory)../{path}')"><X>y</X></PropertyGroup>
                 <ItemGroup Condition="'$(X)' == 'y'"><ProbeInput Include="safe.txt" /></ItemGroup>
                 """),

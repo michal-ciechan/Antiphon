@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using Microsoft.Build.Evaluation;
 using Microsoft.Build.FileSystem;
 
 namespace Antiphon.LandGraphAudit;
@@ -12,15 +14,29 @@ internal sealed class RecordingFileSystem(string repo) : MSBuildFileSystemBase
     public string? Owner { get; set; }
     public IEnumerable<string> Refusals => _refusals.Keys;
 
-    private void Record(string path, string operation, bool directory = false)
+    private void Record(string path, string operation, bool directory = false, bool globTraversal = false)
     {
         var owner = Owner;
         if (owner is null || string.IsNullOrEmpty(path)) return;
         if (Path.DirectorySeparatorChar == '/') path = path.Replace('\\', '/');
         var full = Path.GetFullPath(path);
         var real = _realPaths.GetOrAdd(path, SolutionAudit.RealPath);
-        if (Sensitive(repo, full, directory) || Sensitive(_realRepo, real, directory))
-            _refusals.TryAdd($"refused: {owner} file-probe {operation} {full}", 0);
+        if (!Sensitive(repo, full, directory) && !Sensitive(_realRepo, real, directory)) return;
+        // D-4 already examines every actual MSBuild glob, ignoring excludes and today's
+        // matches. Its JSON-only allowance must not become a refusal merely because the
+        // matcher visits docs/. Never apply that allowance to an Exists/other Condition.
+        // Unknown call provenance fails closed; no repository path or expression is trusted.
+        if (globTraversal && IsMsBuildGlobTraversal()) return;
+        _refusals.TryAdd($"refused: {owner} file-probe {operation} {full}", 0);
+    }
+
+    private static bool IsMsBuildGlobTraversal()
+    {
+        var types = new StackTrace().GetFrames().Select(f => f.GetMethod()?.DeclaringType)
+            .Where(t => t?.Assembly == typeof(Project).Assembly).ToArray();
+        return !types.Any(t => t!.FullName == "Microsoft.Build.Evaluation.FunctionCallExpressionNode")
+               && types.Any(t => t!.FullName == "Microsoft.Build.Shared.FileMatcher"
+                                 || t.DeclaringType?.FullName == "Microsoft.Build.Shared.FileMatcher");
     }
 
     private static bool Sensitive(string root, string path, bool directory)
@@ -34,7 +50,7 @@ internal sealed class RecordingFileSystem(string repo) : MSBuildFileSystemBase
     }
 
     public override bool FileExists(string path) { Record(path, nameof(FileExists)); return base.FileExists(path); }
-    public override bool DirectoryExists(string path) { Record(path, nameof(DirectoryExists), true); return base.DirectoryExists(path); }
+    public override bool DirectoryExists(string path) { Record(path, nameof(DirectoryExists), true, true); return base.DirectoryExists(path); }
     public override bool FileOrDirectoryExists(string path) { Record(path, nameof(FileOrDirectoryExists), true); return base.FileOrDirectoryExists(path); }
     public override TextReader ReadFile(string path) { Record(path, nameof(ReadFile)); return base.ReadFile(path); }
     public override string ReadFileAllText(string path) { Record(path, nameof(ReadFileAllText)); return base.ReadFileAllText(path); }
@@ -44,9 +60,9 @@ internal sealed class RecordingFileSystem(string repo) : MSBuildFileSystemBase
     public override FileAttributes GetAttributes(string path) { Record(path, nameof(GetAttributes), true); return base.GetAttributes(path); }
     public override DateTime GetLastWriteTimeUtc(string path) { Record(path, nameof(GetLastWriteTimeUtc), true); return base.GetLastWriteTimeUtc(path); }
     public override IEnumerable<string> EnumerateFiles(string path, string searchPattern = "*", SearchOption searchOption = SearchOption.TopDirectoryOnly)
-    { Record(path, nameof(EnumerateFiles), true); return base.EnumerateFiles(path, searchPattern, searchOption); }
+    { Record(path, nameof(EnumerateFiles), true, true); return base.EnumerateFiles(path, searchPattern, searchOption); }
     public override IEnumerable<string> EnumerateDirectories(string path, string searchPattern = "*", SearchOption searchOption = SearchOption.TopDirectoryOnly)
-    { Record(path, nameof(EnumerateDirectories), true); return base.EnumerateDirectories(path, searchPattern, searchOption); }
+    { Record(path, nameof(EnumerateDirectories), true, true); return base.EnumerateDirectories(path, searchPattern, searchOption); }
     public override IEnumerable<string> EnumerateFileSystemEntries(string path, string searchPattern = "*", SearchOption searchOption = SearchOption.TopDirectoryOnly)
-    { Record(path, nameof(EnumerateFileSystemEntries), true); return base.EnumerateFileSystemEntries(path, searchPattern, searchOption); }
+    { Record(path, nameof(EnumerateFileSystemEntries), true, true); return base.EnumerateFileSystemEntries(path, searchPattern, searchOption); }
 }
