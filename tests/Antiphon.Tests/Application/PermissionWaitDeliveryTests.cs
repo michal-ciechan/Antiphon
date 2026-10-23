@@ -20,7 +20,9 @@ public partial class PermissionWaitTests
         await using var db = f.Db();
         (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId, ct)).ShouldBe(1);
         // A new writer instance has no process-local dedupe memory.
-        await f.NewWriter().RecordAsync(f.TaskId, facts, ct);
+        var restarted = f.NewReader();
+        (await restarted.CachedAsync(f.TaskId, ct)).ShouldBeNull("restart cannot turn history into current evidence");
+        await f.NewWriter(restarted).RecordAsync(f.TaskId, await restarted.ReadAsync(f.TaskId, true, ct), ct);
         (await db.AgentTaskLandNotifications.CountAsync(n => n.TaskId == f.TaskId, ct)).ShouldBe(1);
         f.Reader.ObserveOverride = (_, _) => Task.FromResult<ProviderDialogObservation?>(facts.Observation with { OutputSequence = 88 });
         await f.Writer.RecordAsync(f.TaskId, await f.Reader.ReadAsync(f.TaskId, true, ct), ct);
@@ -116,6 +118,21 @@ public partial class PermissionWaitTests
         await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(u => u.SetProperty(m => m.LastDeliveryGeneration, f.Generation), ct);
         await f.ReconcileAsync(note.Id, ct);
         (await f.NoteAsync(ct)).State.ShouldNotBe(LandNotificationState.Confirmed, "QueuedUserPrompt is not receipt");
+        await db.TranscriptEntries.Where(t => t.AgentSessionId == f.ParentSessionId && t.Kind == TranscriptKinds.QueuedUserPrompt)
+            .ExecuteUpdateAsync(u => u.SetProperty(t => t.Kind, TranscriptKinds.UserPrompt).SetProperty(t => t.Text, note.Body.Split('\n')[0]), ct);
+        await f.ReconcileAsync(note.Id, ct);
+        (await f.NoteAsync(ct)).State.ShouldNotBe(LandNotificationState.Confirmed, "head-only is not receipt");
+        await db.TranscriptEntries.Where(t => t.AgentSessionId == f.ParentSessionId && t.Kind == TranscriptKinds.UserPrompt)
+            .ExecuteUpdateAsync(u => u.SetProperty(t => t.Text, note.Body), ct);
+        await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(u => u
+            .SetProperty(m => m.LastDeliveryBaselineSequence, (long?)null).SetProperty(m => m.LastDeliveryStartedAt, (DateTime?)null)
+            .SetProperty(m => m.Status, QueuedMessageStatus.Sent), ct);
+        await f.ReconcileAsync(note.Id, ct);
+        (await f.NoteAsync(ct)).State.ShouldNotBe(LandNotificationState.Confirmed, "Sent-only with no floor is not receipt");
+        await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(u => u
+            .SetProperty(m => m.LastDeliveryBaselineSequence, 0L).SetProperty(m => m.AgentSessionId, f.SessionId), ct);
+        await f.ReconcileAsync(note.Id, ct);
+        (await f.NoteAsync(ct)).State.ShouldNotBe(LandNotificationState.Confirmed, "wrong queue destination cannot confirm");
         (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == note.Id, ct)).ShouldBe(1);
     }
 }

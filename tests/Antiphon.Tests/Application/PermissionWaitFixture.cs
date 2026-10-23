@@ -133,7 +133,8 @@ internal sealed class PermissionWaitFixture : IAsyncDisposable
     internal FaultBoundary Boundary { get; private set; } = null!;
     internal FakeAgentProtocolAdapter Caller { get; } = new();
     internal ProviderWaitWarningWriter Writer => Harness.Provider.GetRequiredService<ProviderWaitWarningWriter>();
-    internal ProviderWaitWarningWriter NewWriter() => new(Harness.Provider.GetRequiredService<IServiceScopeFactory>(), Reader, Harness.EventBus, Clock, Options.Create(Harness.Delegation), Boundary);
+    internal TaskProviderWaitReader NewReader() => new(Harness.Provider.GetRequiredService<IServiceScopeFactory>(), Harness.Runtime, Clock);
+    internal ProviderWaitWarningWriter NewWriter(TaskProviderWaitReader? reader = null) => new(Harness.Provider.GetRequiredService<IServiceScopeFactory>(), reader ?? Reader, Harness.EventBus, Clock, Options.Create(Harness.Delegation), Boundary);
     internal async Task<int> ScanAsync(CancellationToken ct)
     {
         await using var scope = Harness.Provider.CreateAsyncScope();

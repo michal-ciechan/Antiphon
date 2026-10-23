@@ -175,6 +175,14 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 await db.SaveChangesAsync(ct);
                 return; // Never replace a previously authoritative attempted/parked row.
             }
+            if (note.Kind == LandNotificationKind.ProviderInputWait
+                && (row.AgentSessionId != session || row.ContentDigest != note.ContentDigest))
+            {
+                note.LastErrorCode = "provider_wait_queue_identity_mismatch";
+                note.LastErrorAt = now;
+                await db.SaveChangesAsync(ct);
+                return;
+            }
             if (row.Status == QueuedMessageStatus.Canceled)
             {
                 note.State = LandNotificationState.Canceled;
