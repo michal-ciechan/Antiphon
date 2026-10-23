@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Build.Evaluation;
 using Microsoft.Build.FileSystem;
+using Microsoft.Build.Framework;
 
 namespace Antiphon.LandGraphAudit;
 
@@ -35,17 +36,20 @@ internal sealed class RecordingFileSystem(string repo) : MSBuildFileSystemBase
     {
         var frames = new StackTrace().GetFrames();
         var types = frames.Select(f => f.GetMethod()?.DeclaringType)
-            .Where(t => t?.Assembly == typeof(Project).Assembly).ToArray();
-        origin = " (probe-origin: " + string.Join(", ", frames.Select(f =>
-            f.GetMethod()?.DeclaringType is { } t ? t.FullName + "@" + Path.GetFileName(t.Assembly.Location)
-                : f.GetMethod()?.Name).Distinct().Take(12)) + ")";
+            .Where(t => t?.Assembly == typeof(Project).Assembly
+                        || t?.Assembly == typeof(BuildEventArgs).Assembly).ToArray();
+        origin = " (probe-origin: " + string.Join(", ", types.Select(t => t!.FullName).Distinct().Take(8)) + ")";
         var includeOperation = types.Any(t => t!.FullName is { } name
             && name.StartsWith("Microsoft.Build.Evaluation.LazyItemEvaluator`", StringComparison.Ordinal)
             && name.EndsWith("+IncludeOperation", StringComparison.Ordinal));
-        var matcher = types.Any(t => t!.FullName is "Microsoft.Build.Shared.FileMatcher"
-                or "Microsoft.Build.Internal.EngineFileUtilities"
+        var matcher = types.Any(t => t!.FullName == "Microsoft.Build.Shared.FileMatcher"
             || t!.DeclaringType?.FullName == "Microsoft.Build.Shared.FileMatcher");
-        return includeOperation && matcher
+        var earlyTraversal = includeOperation
+                             && types.Any(t => t!.FullName == "Microsoft.Build.Internal.EngineFileUtilities");
+        // Recursive FileMatcher workers do not retain the IncludeOperation stack. Their
+        // callback belongs to the Locator-loaded SDK Framework assembly (not a name match
+        // against arbitrary assemblies), and D-4/D-7 still validate their glob/import inputs.
+        return (earlyTraversal || matcher)
                && !types.Any(t => t!.FullName == "Microsoft.Build.Evaluation.FunctionCallExpressionNode");
     }
 
