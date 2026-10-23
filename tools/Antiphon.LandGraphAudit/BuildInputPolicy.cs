@@ -71,145 +71,7 @@ internal sealed class BuildInputPolicy
             // differ from the state at the removal and cannot establish independence.
             foreach (var item in root.Items.Where(item => item.Remove.Length > 0 && !InsideTarget(item)))
             {
-                if (item.Remove.IndexOfAny(['            {
-                if (import.Project.IndexOfAny(['*', '?']) >= 0)
-                    refusals.Add($"refused: {Display(root.FullPath)} import {import.Project} (wildcard)");
-            }
-        }
-
-        foreach (var result in project.GetAllGlobs())
-        {
-            // MsBuildGlob can be a composite or a glob with gaps. Only its positive branches
-            // contribute: D-4 deliberately ignores every Exclude and Remove.
-            foreach (var glob in Includes(result.MsBuildGlob))
-            {
-                if (!glob.IsLegal)
-                    throw new InvalidOperationException($"{project.FullPath}: invalid glob {result.ItemElement.Include}");
-                var fixedDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(glob.FixedDirectoryPart));
-                if (!ReachesDocs(_repo, fixedDirectory, glob)
-                    && !ReachesDocs(_realRepo, SolutionAudit.RealPath(fixedDirectory), glob)) continue;
-                refusals.Add($"refused: {Display(result.ItemElement.ContainingProject.FullPath)} glob {result.ItemElement.Include} ({glob.FixedDirectoryPart}{glob.WildcardDirectoryPart}{glob.FilenamePart})");
-            }
-        }
-    }
-
-    private static bool InsideTarget(ProjectElement element)
-    {
-        for (var parent = element.Parent; parent is not null; parent = parent.Parent)
-            if (parent is ProjectTargetElement) return true;
-        return false;
-    }
-
-    private bool SdkWorkloadManifest(ResolvedImport import)
-    {
-        // Workload manifests ship next to sdk/, not beneath sdk/<version>/. Admit only
-        // the SDK's known workload-locator import and its manifest file in that installation.
-        var owner = Path.Combine(_sdk, "Sdks", "Microsoft.NET.Sdk", "targets", "Microsoft.NET.Sdk.ImportWorkloads.targets");
-        var manifests = SolutionAudit.RealPath(Path.Combine(_sdk, "..", "..", "sdk-manifests"));
-        var target = SolutionAudit.RealPath(import.ImportedProject.FullPath);
-        return PathComparer.Equals(SolutionAudit.RealPath(import.ImportingElement.ContainingProject.FullPath), owner)
-               && import.ImportingElement.Sdk == "Microsoft.NET.SDK.WorkloadManifestTargetsLocator"
-               && import.ImportingElement.Project == "WorkloadManifest.targets"
-               && Path.GetFileName(target) == "WorkloadManifest.targets"
-               && Within(manifests, target);
-    }
-
-    private bool TrustedDefinition(string path, bool allowDocs = false)
-    {
-        path = Path.GetFullPath(path);
-        var real = SolutionAudit.RealPath(path);
-        // Even a tracked .props under docs is disallowed as an import (D-7).
-        if (!allowDocs && (Within(Path.Combine(_repo, "docs"), path) || Within(Path.Combine(_realRepo, "docs"), real)))
-            return false;
-        if (Within(_sdk, real) || Within(_packages, real)) return true;
-        return _tracked.Contains(path) && Definition(path)
-               && _realTrackedNames.Contains(real) && Definition(real);
-    }
-
-    private static bool ReachesDocs(string repo, string fixedDirectory, MSBuildGlob glob)
-    {
-        if (!CouldNameMarkdown(glob.FilenamePart)) return false;
-        var docs = Path.Combine(repo, "docs");
-        return Within(docs, fixedDirectory)
-               || (Within(fixedDirectory, docs) && glob.WildcardDirectoryPart.Length > 0)
-               || Within(fixedDirectory, repo); // root README, conservatively using the same filename rule
-    }
-
-    private static bool CouldNameMarkdown(string fileName)
-    {
-        var extension = Path.GetExtension(fileName);
-        return extension.Length == 0 || extension.Equals(".md", StringComparison.OrdinalIgnoreCase)
-                                     || extension.IndexOfAny(['*', '?']) >= 0;
-    }
-
-    private static IEnumerable<MSBuildGlob> Includes(IMSBuildGlob glob)
-    {
-        switch (glob)
-        {
-            case MSBuildGlob parsed:
-                yield return parsed;
-                break;
-            case CompositeGlob composite:
-                foreach (var child in composite.Globs)
-                    foreach (var part in Includes(child)) yield return part;
-                break;
-            case MSBuildGlobWithGaps gaps:
-                foreach (var part in Includes(gaps.MainGlob)) yield return part;
-                break;
-            default:
-                throw new InvalidOperationException($"unsupported MSBuild glob {glob.GetType().FullName}");
-        }
-    }
-
-    private static bool Within(string root, string path) =>
-        path.Equals(root, StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith(Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar,
-            StringComparison.OrdinalIgnoreCase);
-
-    // Same definition inventory as LandVerificationBuildGraph.Includes; do not trust an arbitrary
-    // tracked XML/text file merely because MSBuild successfully parsed it as a project.
-    private static bool Definition(string path)
-    {
-        var name = Path.GetFileName(path);
-        var extension = Path.GetExtension(path).ToLowerInvariant();
-        return extension.EndsWith("proj", StringComparison.Ordinal)
-               || extension is ".props" or ".targets" or ".sln" or ".slnx" or ".slnf" or ".rsp"
-               || name.StartsWith("Directory.Build.", StringComparison.OrdinalIgnoreCase)
-               || name.EndsWith("proj.user", StringComparison.OrdinalIgnoreCase)
-               || name.ToLowerInvariant() is "global.json" or "nuget.config" or "packages.lock.json"
-                   or "packages.config" or "directory.packages.props";
-    }
-
-    private string Display(string path) => Path.GetRelativePath(_repo, path).Replace(Path.DirectorySeparatorChar, '/');
-
-    internal static string[] TrackedFiles(string repo, bool includeUntracked = false)
-    {
-        var start = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = repo, UseShellExecute = false,
-            RedirectStandardOutput = true, RedirectStandardError = true,
-        };
-        foreach (var arg in new[] { "ls-files", "--cached", "-z" }) start.ArgumentList.Add(arg);
-        if (includeUntracked)
-        {
-            start.ArgumentList.Add("--others");
-            start.ArgumentList.Add("--exclude-standard");
-        }
-        using var process = Process.Start(start)!;
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(10_000))
-        {
-            process.Kill(entireProcessTree: true);
-            process.WaitForExit();
-            throw new InvalidOperationException("git tracked-file inventory timed out");
-        }
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException($"git tracked-file inventory failed: {stderr.GetAwaiter().GetResult()}");
-        return stdout.GetAwaiter().GetResult().Split('\0', StringSplitOptions.RemoveEmptyEntries);
-    }
-}
-, '@', '%']) >= 0)
+                if (item.Remove.IndexOfAny(['$', '@', '%']) >= 0)
                 {
                     refusals.Add($"refused: {Display(root.FullPath)} {item.ItemType} unsupported-item-remove");
                     continue;
@@ -244,6 +106,13 @@ internal sealed class BuildInputPolicy
                 refusals.Add($"refused: {Display(result.ItemElement.ContainingProject.FullPath)} glob {result.ItemElement.Include} ({glob.FixedDirectoryPart}{glob.WildcardDirectoryPart}{glob.FilenamePart})");
             }
         }
+    }
+
+    private static bool InsideTarget(ProjectElement element)
+    {
+        for (var parent = element.Parent; parent is not null; parent = parent.Parent)
+            if (parent is ProjectTargetElement) return true;
+        return false;
     }
 
     private bool SdkWorkloadManifest(ResolvedImport import)
