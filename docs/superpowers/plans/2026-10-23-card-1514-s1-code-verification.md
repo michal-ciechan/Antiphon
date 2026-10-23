@@ -24,7 +24,7 @@ still goes to ordinary Review then SourceLanding Mutation for missing controls.
 Baseline CP-0 executes the exact old method once with a nine-minute row cap, below
 the historical 585-second adapter cap and unchanged 600-second test timeout. A
 censored result remains incomplete, never green. CP-10 captures the exact C1374
-host method once as S2's 32-vector baseline. Candidate CP-20..d partitions the
+host method once as S2's 32-vector baseline. Candidate CP-20..24 partitions the
 landed CP-2 selection into its four required methods; one build is reused within
 each run, no binaries across changed source. The candidate keeps the same fixture
 construction/capture mode and strict limiter. No speed-up claim is expected:
@@ -48,7 +48,6 @@ multiline parsing against Persistence 52 passes and Remote 29 passes/censoring.
 | CP-21 | S1 | CP-20 | partial | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_after_partial_failure` | V-1 five partial cases | 5 passed, 0 failed/skipped | 5 | 3 | true | n/a |
 | CP-22 | S1 | CP-20 | drift | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_rejects_receipt_drift` | V-1 eight drifts | 8 passed, 0 failed/skipped | 8 | 3 | true | n/a |
 | CP-23 | S1 | CP-20 | replacement | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_accepts_only_recorded_replacement` | V-1 two replacement cases | 2 passed, 0 failed/skipped | 2 | 3 | true | n/a |
-
 | CP-11 | S1R | `tests/Antiphon.Tests -> bin-c1514-s1-red/` | stale-roster-red | `/*/*/(C1008PlatformContractTests*)\|(WindowsUnitPlatformAdmissionTests*)/(C1050_Remote_entries_guard_before_work*)\|(C1210_Roster_closure_matches_source_gates*)` | introduced stale identity witness | 2 assertion failures identifying renamed/missing gates | 2 | 3 | true | n/a |
 | CP-24 | S1 | CP-20 | platform-roster-closure | `/*/*/(C1008PlatformContractTests*)\|(WindowsUnitPlatformAdmissionTests*)/(C1050_Remote_entries_guard_before_work*)\|(C1050_Audit_rejects_empty_or_incomplete_outcomes*)\|(C1210_Roster_closure_matches_source_gates*)` | V-1 adjacent selector/skip multiset and source guards | 3 passed, 0 failed/skipped | 3 | 3 | true | n/a |
 
