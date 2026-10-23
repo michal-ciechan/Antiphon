@@ -76,6 +76,6 @@ Windows budget claim; do not relabel Linux timings as Windows evidence.
 
 The six audit tests are shared source: their small standalone project is a declared child
 checkpoint host, and Antiphon.Tests compiles the same file and references the audit tool.
-The shipped execution-policy census retains seven primary suites and now declares six
+The shipped execution-policy census retains seven primary suites and now declares seven
 child hosts. This registration changes the policy hash, without changing any watchdog,
 suite, exclusion or release gate behavior.

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "38241acdc0996916008ec6ef4d5ac6150bb2aa4d21d6d040968819577193345f",
+  "policyHash": "1cda804d3e6126d79ccfcf5601971c02360bd1f56503ab00f30f0e7abca64190",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -931,6 +931,14 @@
       ],
       "role": "child",
       "project": "tests/Antiphon.TimeoutAudit.Tests/Antiphon.TimeoutAudit.Tests.csproj"
+    },
+    {
+      "reason": "Existing CARD-1514 timing probe is an explicit child host launched by the primary timing lifecycle tests and staged by Antiphon.Tests.",
+      "consumers": [
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ],
+      "role": "child",
+      "project": "tests/Antiphon.TestTiming.Probe/Antiphon.TestTiming.Probe.csproj"
     }
   ],
   "selectionCatalog": {
