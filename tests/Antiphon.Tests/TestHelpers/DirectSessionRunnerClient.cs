@@ -33,6 +33,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
     /// </summary>
     public Action? BeforeStart { get; set; }
     public int KillCalls { get; private set; }
+    internal Antiphon.Agents.Pty.PtyBackend ActualBackend => _runtime.BackendDecision.Backend;
+    internal IReadOnlyList<(Guid SessionId, string Input)> BackendWrites => _runtime.SnapshotBackendWrites();
     private readonly System.Collections.Concurrent.ConcurrentQueue<RunnerLaunchRequest> _startRequests = new();
     public IReadOnlyList<RunnerLaunchRequest> StartRequests => _startRequests.ToArray();
 
@@ -244,6 +246,7 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             features!.Add(RunnerCapabilityFeatures.SessionGenerationV1);
         if (AdvertiseConditionalInput)
             features!.Add(RunnerCapabilityFeatures.ConditionalMaintenanceInputV1);
+        features!.Add(ProviderDialogObservation.Capability);
         return Task.FromResult<RunnerCapabilitiesDto?>(new(
             "ModernConPty",
             "modern",
@@ -357,7 +360,8 @@ internal sealed class DirectSessionRunnerClient : ISessionRunnerClient, IAsyncDi
             snapshot.RenderedScreen,
             snapshot.LastSequence,
             snapshot.StartedAt,
-            snapshot.AcceptedStartedAt);
+            snapshot.AcceptedStartedAt,
+            snapshot.Dialog);
     }
 
     public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)

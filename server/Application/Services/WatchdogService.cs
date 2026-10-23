@@ -130,6 +130,10 @@ public sealed class WatchdogService
             var screen = string.IsNullOrWhiteSpace(snapshot.RenderedScreen)
                 ? snapshot.Buffer
                 : snapshot.RenderedScreen;
+            if (session.AgentKind == AgentKind.ClaudeCode
+                && ProviderDialogObservationService.Refusal(await _runtime.ObserveDialogAsync(sessionId, ct),
+                    sessionId, session.StartedAt) is not null)
+                continue;
             var match = _matcher.Match(screen, _settings.Rules);
             if (match is null)
             {

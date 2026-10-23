@@ -46,3 +46,24 @@ Ordinary portable green remains the plan's 15-minute estimate, native watchdog
 16 minutes separately owed, parent Q1 12 minutes separately owned. No arbitrary
 mutants or native deliberate red runs belong to this Code task.
 
+
+## Resumed implementation coverage
+
+CP-2 adds identity replacement, output changes during the awaited delivery-evidence
+read, missing revision/wrong epoch, trust key versus arbitrary text, and effort
+highlight checks at the production runner write boundary. CP-3 adds two-empty-frame
+arming, complete versus head-only native prompt, later input and single-frame veto.
+CP-4 adds body-before-dialog custody, withheld Enter, and a swallowed first Enter
+followed by a modal that must veto retry. CP-5 calls real runtime, channel, health,
+watchdog and runner Claude boot adapters (verification on/off), interactive input,
+RC dismissal plus concurrent-modal refusal, and real HTTP/phone-home clients for
+snapshot/request forwarding and missing-capability no-fallback. CP-6/CP-7 retain
+all original assertions; their fakes explicitly model generation/guard support.
+CP-8/CP-9 are authored against isolated native runner sessions and the actual
+expectation nudge service; neither is executed by this Code commissioning.
+
+PC-3 additionally requires the awaited-evidence and replacement variants. PC-4
+covers absent metadata and both transport forwarders. PC-5 additionally covers
+two-frame arming, complete prompt and binding changes. PC-9 includes each startup
+intent and RC's additional modal veto. All variants remain pending Mutation;
+there is no Code mutation qualification. The 38-minute estimate remains a floor.

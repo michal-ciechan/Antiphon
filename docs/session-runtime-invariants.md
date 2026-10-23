@@ -1466,3 +1466,32 @@ budget suffices. Sustained overload retains explicit overflow and durable
 transcript catch-up; it does not promise recovery of every transient event. This
 changes neither session parking nor delivery semantics: a transcript-confirmed
 UserPrompt remains the prompt receipt, and no credit acknowledgement is delivery.
+
+## Claude automated-input dialog guard (CARD-0680)
+
+Automated Claude bodies, Enter, retries and maintenance keys use a fresh runner
+snapshot and `claudeDialogGuardV1`. The conditional backend boundary compares the
+accepted generation, session object, runtime epoch, output sequence and input
+revision under the launch gate and screen monitor, after asynchronous reads.
+Visible dialogs refuse; absent, unsupported, adopted or uncertain input history
+holds as Unknown. Each backend write attempt advances input revision before I/O,
+including explicit interactive input and a failed write. No raw-input fallback is
+permitted for an unsupported guarded peer.
+
+Queue and expectation admission retain pending work without an attempt when the
+veto precedes typing. A body already written retains its existing composer hold
+when Enter/retry is refused. Time, an empty-looking unreadable screen, and a redraw
+cannot clear that hold. The complete correlated UserPrompt remains the receipt.
+Explicit authenticated terminal input uses the named interactive entry point.
+Startup trust/effort, exact unsafe-delete `2` without Enter, and RC dismissal have
+finite typed intents and fresh matching-layout checks; none accepts task text.
+
+Optional submitted-input evidence requires two settled readable empty composers
+500 ms apart, one whole body, a separate Enter, one complete native UserPrompt
+past the captured floor, the same native binding/generation, and no later input.
+Binding changes, adoption, incomplete input or failure invalidate it. This is
+factual evidence only: it grants neither interruption nor terminal-seat release.
+Herdr lacks complete input custody and reports Unknown for this guard. Native
+permission/question nudge witnesses remain qualification gates per backend;
+CARD-1517/1518 alone owns subsequent intervention policy. No release deadline,
+automatic key, deployment, or parking setting is introduced here.

@@ -86,7 +86,7 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
 
         if (!_verification.Enabled)
         {
-            await _terminal.SendLineAsync(prompt, ct);
+            await _terminal.SendGuardedLineAsync(prompt, ct);
             return;
         }
 
@@ -101,7 +101,7 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
                 prompt,
                 _terminal.SnapshotScreenAsync,
                 _terminal.GetLastSequenceAsync,
-                _terminal.WriteAsync,
+                (input, token) => _terminal.WriteGuardedAsync(input, token),
                 new VerifiedSubmitOptions(
                     TimeSpan.FromSeconds(_verification.EvidenceTimeoutSeconds),
                     TimeSpan.FromMilliseconds(_verification.PollIntervalMs),
@@ -138,6 +138,12 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
         await _terminal.WriteAsync(input, ct);
     }
 
+    public async Task<ProviderDialogObservation?> ObserveDialogAsync(Guid sessionId, CancellationToken ct) =>
+        sessionId == _terminal.SessionId ? (await _terminal.GetSnapshotAsync(ct)).Dialog : null;
+
+    public Task DismissRemoteControlAsync(CancellationToken ct) =>
+        _terminal.WriteGuardedAsync("\u001b", ct, ClaudeDialogInputIntent.RemoteControlDismiss);
+
     public Task<RunnerConditionalInputResult> SendConditionalInputAsync(
         RunnerConditionalInputRequest request, CancellationToken ct)
     {
@@ -166,7 +172,7 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
         if (early?.Kind == ClaudeBlockingPromptKind.TrustFolder)
         {
             var trust = await ClaudeBlockingPromptDetector.ClearStartupTrustPromptAsync(
-                _terminal.SnapshotScreenAsync, _terminal.WriteAsync,
+                _terminal.SnapshotScreenAsync, _terminal.WriteStartupAsync,
                 TimeSpan.FromMilliseconds(_settings.ClaudeTrustPromptSettleMs), ct);
             if (trust.Outcome is ClaudeStartupBlockOutcome.TrustNotCleared or ClaudeStartupBlockOutcome.TrustUnanswerable)
             {
@@ -186,7 +192,7 @@ public sealed class RunnerClaudeAdapter : IAgentProtocolAdapter, IAttachableProt
         var probeClock = System.Diagnostics.Stopwatch.StartNew();
         var result = await ClaudeStartupReadiness.RunAsync(
             probeToken,
-            _terminal.SnapshotScreenAsync, _terminal.WriteAsync, _effortIntent,
+            _terminal.SnapshotScreenAsync, _terminal.WriteStartupAsync, _effortIntent,
             new ClaudeReadinessOptions(
                 ComposerProbeOptions.FromMilliseconds(_settings.ClaudeInputProbeTimeoutMs,
                     _settings.ClaudeInputProbePollIntervalMs, _settings.ClaudeInputProbeRetypeIntervalMs,

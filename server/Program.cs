@@ -698,6 +698,7 @@ try
     // Startup barrier before any state-dependent hosted consumer.
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SessionStateWarmupService>();
     builder.Services.AddSingleton<AgentSessionRuntime>();
+    builder.Services.AddSingleton<ProviderDialogObservationService>();
     builder.Services.AddSingleton<SessionRuntimeActionCoordinator>();
     builder.Services.AddSingleton<StaleWorkingTranscriptRecovery>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.StaleWorkingTranscriptHostedService>();

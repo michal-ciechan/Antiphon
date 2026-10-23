@@ -2528,8 +2528,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (clock is not null)
                 _submittedInput.ObserveEmpty(_screen?.GetScreenText() ?? "", _inputRevision,
                     clock.GetUtcNow(), known && _terminalInputWriters == 0);
-            var proof = _submittedInput.Read(_inputRevision, _acceptedStartedAt, _tailer?.BoundTranscriptPath,
-                _tailer?.Snapshot(), known && _terminalInputWriters == 0 && !_terminalComposerPending);
+            var proof = _submittedInput.Read(_inputRevision, _acceptedStartedAt, _tailer?.NativeBindingIdentity,
+                _submittedInput.HasSubmittedCapture ? _tailer?.Snapshot() : null,
+                known && _terminalInputWriters == 0 && !_terminalComposerPending);
             return new(_sessionId, runtimeEpoch, _acceptedStartedAt, _lastSequence, _inputRevision,
                 state, _dialogObservation.Kind.ToString(), _dialogObservation.CanCancel, known, proof);
         }
@@ -2538,7 +2539,23 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             if (request.ExpectedRuntimeEpoch != runtimeEpoch || request.ExpectedInputRevision != _inputRevision)
                 return ConditionalInputOutcomes.StaleObservation;
-            return ObserveDialog(runtimeEpoch).State switch
+            var observation = ObserveDialog(runtimeEpoch);
+            if (request.DialogIntent != ClaudeDialogInputIntent.None)
+            {
+                if (!observation.InputHistoryKnown) return ConditionalInputOutcomes.ObservationUnknown;
+                var screen = _screen?.GetScreenText() ?? "";
+                var allowed = request.DialogIntent switch
+                {
+                    ClaudeDialogInputIntent.UnsafeDeleteNo => request.Input == "2" && ClaudeDialogActions.IsUnsafeDeleteApproval(screen),
+                    ClaudeDialogInputIntent.StartupTrust => ClaudeDialogActions.AllowsTrustKey(screen, request.Input),
+                    ClaudeDialogInputIntent.StartupEffortKeep => ClaudeDialogActions.AllowsEffortKey(screen, request.Input, ClaudeEffortOption.Keep),
+                    ClaudeDialogInputIntent.StartupEffortSwitch => ClaudeDialogActions.AllowsEffortKey(screen, request.Input, ClaudeEffortOption.Switch),
+                    ClaudeDialogInputIntent.RemoteControlDismiss => request.Input == "\u001b" && ClaudeRemoteControlMenu.AllowsDismiss(screen),
+                    _ => false
+                };
+                return allowed ? null : ConditionalInputOutcomes.ModalBlocked;
+            }
+            return observation.State switch
             {
                 ProviderDialogState.Clear => null,
                 ProviderDialogState.Blocked => ConditionalInputOutcomes.ModalBlocked,
@@ -4055,7 +4072,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     // A modal refusal reaches neither the input log nor the backend.
                     _inputRevision++;
                     _submittedInput.BeforeWrite(input, _inputRevision, _acceptedStartedAt,
-                        _tailer?.BoundTranscriptPath, _tailer?.Snapshot().LastSequence ?? -1,
+                        _tailer?.NativeBindingIdentity, _tailer?.Snapshot().LastSequence ?? -1,
                         !_adopted && !_terminalInputUncertain && _backend == SessionBackends.PtyHost);
                     _inputLog.Append(input);
                     if (_sidecar?.FirstInputAtUtc is null)

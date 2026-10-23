@@ -11,29 +11,8 @@ public sealed class WatchdogMatcher
     /// This is deliberately a rendered Claude modal recognizer, not a search of terminal history.
     /// The footer and ordered choice rows must still be the bottom visible prompt.
     /// </summary>
-    public bool IsActiveUnsafeRmApproval(string renderedScreen)
-    {
-        if (string.IsNullOrWhiteSpace(renderedScreen))
-            return false;
-
-        var lines = MentionScanner.StripAnsi(renderedScreen).Replace("\r", string.Empty)
-            .Split('\n').Select(line => line.TrimEnd()).Where(line => !string.IsNullOrWhiteSpace(line)).ToArray();
-        if (lines.Length < 7
-            || !Regex.IsMatch(lines[^1], @"^\s*Esc to cancel\s*·\s*Tab to amend\s*$", RegexOptions.CultureInvariant)
-            || !Regex.IsMatch(lines[^2], @"^\s*2\. No\s*$", RegexOptions.CultureInvariant)
-            || !Regex.IsMatch(lines[^3], @"^\s*❯\s*1\. Yes\s*$", RegexOptions.CultureInvariant)
-            || !Regex.IsMatch(lines[^4], @"^\s*Do you want to proceed\?\s*$", RegexOptions.CultureInvariant))
-            return false;
-
-        var question = lines.Length - 4;
-        var bash = Array.FindLastIndex(lines, question - 1, question, line => line.Trim() == "Bash command");
-        if (bash < 0 || question - bash > 12)
-            return false;
-
-        var warning = string.Join(" ", lines[(bash + 1)..question].Select(line => line.Trim().TrimStart('│').Trim()));
-        return warning.Contains("Dangerous rm operation on possibly-empty variable path:", StringComparison.Ordinal)
-            && warning.Contains("rm -rf", StringComparison.Ordinal);
-    }
+    public bool IsActiveUnsafeRmApproval(string renderedScreen) =>
+        Antiphon.Agents.Pty.ClaudeDialogActions.IsUnsafeDeleteApproval(MentionScanner.StripAnsi(renderedScreen));
 
     public bool IsUnsafeRmApprovalCandidate(string renderedScreen)
     {
