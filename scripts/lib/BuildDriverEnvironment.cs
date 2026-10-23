@@ -23,7 +23,9 @@ namespace Antiphon.Build
         public Dictionary<string, string> GetOverrides(StringDictionary environment, bool windows)
         {
             var values = new Dictionary<string, string>();
-            if (!windows || environment["ANTIPHON_BUILD_MEMORY_POLICY_OPTOUT"] == "1")
+            // ProcessStartInfo's StringDictionary adapter throws for absent keys.
+            if (!windows || (environment.ContainsKey("ANTIPHON_BUILD_MEMORY_POLICY_OPTOUT") &&
+                environment["ANTIPHON_BUILD_MEMORY_POLICY_OPTOUT"] == "1"))
                 return values;
 
             values["UseSharedCompilation"] = "false";
