@@ -359,3 +359,6 @@ Antiphon.Tests.Application.DeliveryUnverifiedDiagnosticTests
 Antiphon.Tests.Application.DispatcherLeaseSpanTests
 # CARD-1420: owned PostgreSQL containers, full migration, schema dumps and snapshot restore parity.
 Antiphon.Tests.TestHelpers.TestSchemaSnapshotTests
+
+# CARD-1539: real exclusive-fd/maps holder children, bounded diagnostics and evidence persistence.
+Antiphon.Tests.Infrastructure.FileUseCaptureTests
