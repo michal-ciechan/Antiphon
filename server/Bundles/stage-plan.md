@@ -6,6 +6,8 @@ The plan carries: decisions with reasons and rejected alternatives; a ground-tru
 
 Every Plan MUST include `## Performance budget`: apply docs/testing-and-build.md#performance-standards (durations, phases, shared setup, measured p95 and about 2x timeouts).
 
+Checkpoint filters: class/method OR uses `(NameA*)|(NameB*)`, with parentheses and a trailing `*` on EVERY operand; escape table pipes as `\|`. Single exact methods remain valid. Import refuses unsafe OR shapes. Check the intended roster for suffix collisions. See docs/testing-and-build.md#combined-class-filters-card-0403.
+
 A `## Verification design` section is required when the brief says the test-design stage is folded into this dispatch. Otherwise settle next: test-design.
 
 next: test-design when verification is a separate stage; code only when the verification section is already in the plan so Build can execute it; decide when the plan is written under stated defaults (enumerate them as D-n in a ## Decisions section); investigate when the card's premise is wrong (say what to measure).

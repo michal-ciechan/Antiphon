@@ -387,6 +387,9 @@ public sealed class RowRunner
         if (repeatCheck is { Ok: false } && exit != ExitCodes.FailedTests)
             exit = repeatCheck.ExitCode;
         if (!sourceStable) exit = ExitCodes.Invalid;
+        var zeroTests = exit == ExitCodes.RosterOrMin && parsed.Executed == 0
+            && parsed.Failed == 0 && parsed.FailureNames.Count == 0
+            && (request.MinExecuted > 0 || misses.Count > 0);
 
         var lineModel = CheckpointLine.Format(new CheckpointLineModel
         {
@@ -406,6 +409,7 @@ public sealed class RowRunner
             Repeat = repeatCheck?.Evidence,
             Source = request.Source,
         });
+        if (zeroTests) lineModel += " reason=zero-tests-executed";
         combined.WriteLine(lineModel);
         if (repeatCheck?.Error is string repeatError)
             combined.WriteLine("REPEAT INVALID " + repeatError);
@@ -435,7 +439,7 @@ public sealed class RowRunner
         {
             ExitCodes.Green => "green",
             ExitCodes.FailedTests => "red",
-            ExitCodes.RosterOrMin => "roster-miss",
+            ExitCodes.RosterOrMin => zeroTests ? "zero-tests-executed" : "roster-miss",
             _ => "red",
         };
         var completed = Finish(exit, buildState, lineModel, buffer, reruns, rerunLines, Path.GetFullPath(trxPath), parsed, false, state);

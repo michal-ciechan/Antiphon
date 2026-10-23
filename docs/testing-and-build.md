@@ -450,6 +450,17 @@ Use the checkpoint tool for repeated class runs. Before any ad hoc destructive s
 
 A Plan/TestDesign artifact ends its `## Verification design` with a `### Checkpoints` table: one row per isolated build plus one exact test-filter group, bound to the plan slice it closes, and a Code dispatch runs that table as a **closed list** rather than an ad hoc build/test loop. It removes the extra rebuilds (CARD-0490 ran 19 builds for 8 test runs), the hunting for files the plan already named, and the second Code round that CARD-0459 paid for; it does not shrink the named Slow/native V/R work, which is the coverage itself (investigation `docs/superpowers/investigations/2026-09-20-card-0585-batched-edit-test-workflow.md`).
 
+CARD-0931: plan import and manifest validation refuse a class/method OR operand
+without its own trailing `*` as `checkpoint-filter-or-wildcard`; full-path OR,
+unparenthesized alternatives and unsupported nested path expressions receive
+`checkpoint-filter-or-shape`. This happens before checkpoint builds or slots;
+the tool itself may need a separately accounted bootstrap build. Accepted filters
+are preserved, including property-expression OR. If a valid TRX executes zero
+tests despite a positive Min or missing nonblank roster token, the row retains
+exit 3 and reports `zero-tests-executed` in its state and CHECKPOINT reason.
+There is no automatic retry or rebuild; independent rows can reuse the build.
+Explicit skip-only rows with Min=0 and all named skips retain their result.
+
 Schema:
 
 | Column | Meaning |
@@ -1079,6 +1090,13 @@ Check that the suffix patterns selected only the intended classes; do not infer 
 exit zero. A failed filter can produce a fresh TRX with zero tests (native exit 8).
 When a land test injects a Git fault, scope it to the target-branch observation, because CARD-0488's resolver observes the source branch first (CARD-0567 groups 1 and 4).
 The method-segment OR form `/*/*/Class/(MethodA*)|(MethodB*)` works on the pinned TUnit 1.44, while a bare `|` between two full paths does not: it silently ran the whole `AgentTaskLandRefusedRetryTests` class in one case and zero tests in another.
+
+Import and manifest validation enforce the canonical suffix on **every** class
+or method operand (CARD-0931). All-bare OR has demonstrated zero discovery;
+mixed starred/bare OR is refused by canonical-form policy even though one
+wildcard can suppress this pin's literal discovery hint. Single exact methods
+need no suffix. OR inside square-bracket property expressions is preserved.
+Use separate exact-method rows sharing one build if suffix matches are too broad.
 
 `--list-tests --treenode-filter ...` is not scoped-execution evidence on this runner: CARD-0403
 observed all 5389 discovery entries even with a single-class filter. Require actual executed

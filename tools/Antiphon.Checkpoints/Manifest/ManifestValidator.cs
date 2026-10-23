@@ -75,6 +75,8 @@ public static class ManifestValidator
 
             if (hasFilter)
             {
+                if (PlanTableImporter.OrFilterError(row.Id, row.Filter!) is string filterError)
+                    throw new ManifestValidationException("filter", filterError);
                 if (string.IsNullOrWhiteSpace(row.Build) || manifest.Builds.All(b => b.Id != row.Build))
                     throw new ManifestValidationException("build", $"{row.Id} references unknown build '{row.Build}'");
                 var afterKey = string.Join(",", row.After);
