@@ -7,6 +7,9 @@ public static class ConfinedFileReader
 {
     public const int DocumentLimit = CheckpointFileReader.DocumentLimit;
     public const int SourceLimit = CheckpointFileReader.SourceLimit;
+    public const long ContentLimit = CheckpointFileReader.ContentLimit;
+    public static (long Length, string Sha256) Digest(string root, string path, long limit, CancellationToken cancellationToken = default) =>
+        CheckpointFileReader.Digest(CheckpointCleanupDefaults.Context, root, path, limit, cancellationToken);
     public static string? Refusal(bool isRegularFile, ulong linkCount, string resolvedPath, string root) =>
         CheckpointFileReader.Refusal(isRegularFile, linkCount, resolvedPath, root);
     public static string? Refusal(CheckpointCleanupContext context, bool isRegularFile, ulong linkCount, string resolvedPath, string root) =>
