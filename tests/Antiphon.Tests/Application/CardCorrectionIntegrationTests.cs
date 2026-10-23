@@ -2136,6 +2136,15 @@ public class CardCorrectionIntegrationTests
         await db.RunAttempts.Where(a => attemptIds.Contains(a.Id)).ExecuteDeleteAsync();
         await db.RetrySchedules.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync();
         await db.ExternalIssueRefs.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync();
+        // Done moves leave cleanup obligations with Restrict FKs to their card and revision.
+        // Delete only this fixture's cleanup tree, leaf-first, before deleting those parents.
+        await db.CardWorktreeCleanupEndpoints
+            .Where(e => cardIds.Contains(e.Target.Cleanup.CardId))
+            .ExecuteDeleteAsync();
+        await db.CardWorktreeCleanupTargets
+            .Where(t => cardIds.Contains(t.Cleanup.CardId))
+            .ExecuteDeleteAsync();
+        await db.CardWorktreeCleanups.Where(c => cardIds.Contains(c.CardId)).ExecuteDeleteAsync();
         await db.AgentSessions.Where(s => sessionIds.Contains(s.Id)).ExecuteDeleteAsync();
         await db.Worktrees.Where(w => cardIds.Contains(w.CardId)).ExecuteDeleteAsync();
         await db.CardRevisions.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync();
