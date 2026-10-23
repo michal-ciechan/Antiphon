@@ -146,6 +146,32 @@ Probe tests replace helper-property item reads with safe literal items or the sa
 condition. The imported-directory publication fixture now forwards a ProbeInput item,
 retaining its MSBuildProjectDirectory docs dependency without a new property refusal.
 
+The two function arguments of R-2 were already red at the assigned base: with an exact
+pin, IsOSPlatform and RuntimeInformation.OSDescription both refuse unsupported-function.
+Base-tool oracle evidence confirms that inherited mismatch. Correct the test expectations to
+retain that named refusal; an exact pin is not an evaluation-expression exemption.
+
+## Performance budget
+
+The closed selection remains CP-1..CP-7, estimated 26 minutes including one shared
+Antiphon.Tests build; there is no full assembly or Unit lane (the task brief selects narrow
+ordinary verification). Scope/category: git operations, Integration; Antiphon.Tests references
+and stages Antiphon.LandGraphAudit, while production landing/runtime binaries are unchanged.
+No database, container, web host, browser, migration or seed setup is used. Each fresh tiny Git
+repository is the subject of the evaluator test, not repeated application infrastructure.
+
+The initial ten-fixture base oracle took 34s execution plus 16s admission; the isolated corrected
+PATH witness took 7s plus 0s admission. The two inherited OS-function probes took 2s plus 0s.
+Samples are provisional, not measured p95 (CARD-1540); collect final TRX per-test times once.
+New individual tests use 60s deadlines and the syntax matrix 120s; inherited child/tool bounds
+are unchanged. Checkpoint defaults remain historical tool policy, not measured p95; use a
+finite 35-minute run deadline. No selection is expected over 30 minutes.
+
+Retain .antiphon/c1540 and checkpoint run directories with slot waits, exact groups, source
+SHA and TRX durations. LAND_GRAPH_EVALUATION records each external evaluator process wall
+span/exit. Internal evaluator filesystem/evaluation and Git preparation breakdowns are unknown;
+unattributed time is remainder, not zero. No latency/p95 claim is made from these small samples.
+
 ## Slices
 
 | Slice / budget | Files and outcome | Boundary |

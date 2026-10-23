@@ -161,6 +161,8 @@ public sealed partial class LandGraphEvaluationTests
             else
             {
                 run.Text.ShouldContain("App/App.csproj /Project[1]/PropertyGroup[", Case.Sensitive, run.Text);
+                run.Text.ShouldContain(variant == "exact" ? "unsupported-function" :
+                    variant == "changed" ? "(changed pin)" : "(missing pin)", Case.Sensitive, run.Text);
                 run.Lines.ShouldNotContain("approved", run.Text);
                 if (variant == "exact") run.Text.ShouldContain("@Condition unsupported-function", Case.Sensitive, run.Text);
             }
