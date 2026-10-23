@@ -1,5 +1,11 @@
 #requires -Version 7.0
 # CARD-1506: real wrapper/child, fixture slot broker, no build or live process control.
+param(
+    [ValidateSet('All', 'ProcessAbsent', 'ProcessOptOutOne', 'ProcessOptOutZero',
+        'ProcessOptOutEmpty', 'ProcessConflicting', 'StringDictionaryAbsent',
+        'StringDictionaryMixedCase')]
+    [string]$Case = 'All'
+)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('c1506-' + [guid]::NewGuid().ToString('N'))
@@ -30,6 +36,74 @@ $before = @{}
 foreach ($name in $names) { $before[$name] = [Environment]::GetEnvironmentVariable($name) }
 $failed = 0; $passed = 0
 try {
+    # CARD-1525: ProcessStartInfo exposes a StringDictionary adapter over a real
+    # Dictionary. Unlike a standalone StringDictionary, a missing indexer throws.
+    # Keep absence distinct from the old fixtures' explicitly empty opt-out.
+    . (Join-Path $root 'scripts/lib/build-driver-environment.ps1')
+    Add-Type -Path (Join-Path $root 'scripts/lib/BuildDriverEnvironment.cs')
+    $policy = New-Object Antiphon.Build.BuildDriverEnvironment
+    $regressionPassed = 0
+    foreach ($regression in @(
+        @{ Name = 'ProcessAbsent'; OptOut = $null; Seed = $false },
+        @{ Name = 'ProcessOptOutOne'; OptOut = '1'; Seed = $true },
+        @{ Name = 'ProcessOptOutZero'; OptOut = '0'; Seed = $true },
+        @{ Name = 'ProcessOptOutEmpty'; OptOut = ''; Seed = $true },
+        @{ Name = 'ProcessConflicting'; OptOut = $null; Seed = $true },
+        @{ Name = 'StringDictionaryAbsent'; OptOut = $null; Seed = $false },
+        @{ Name = 'StringDictionaryMixedCase'; OptOut = '1'; Seed = $true }
+    )) {
+        if ($Case -ne 'All' -and $Case -ne $regression.Name) { continue }
+        $standalone = $regression.Name.StartsWith('StringDictionary')
+        $paths = if ($standalone) { @('direct') } else { @('direct', 'adapter') }
+        foreach ($path in $paths) {
+            $info = [Diagnostics.ProcessStartInfo]::new()
+            $info.Environment.Clear()
+            $environment = if ($standalone) { [Collections.Specialized.StringDictionary]::new() }
+                else { $info.EnvironmentVariables }
+            $environment['C1525_UNRELATED'] = 'preserved'
+            $optOutName = if ($standalone) { 'antiphon_build_memory_policy_optout' }
+                else { 'ANTIPHON_BUILD_MEMORY_POLICY_OPTOUT' }
+            if ($null -ne $regression.OptOut) { $environment[$optOutName] = $regression.OptOut }
+            if ($regression.Seed) {
+                foreach ($name in $names) { $environment[$name] = 'conflicting-caller-value' }
+            }
+            $snapshot = @{}
+            foreach ($name in $environment.Keys) { $snapshot[$name] = $environment[$name] }
+            if ($path -eq 'adapter') {
+                Set-AntiphonBuildDriverEnvironment -StartInfo $info -Windows $true
+            } else {
+                $policy.Apply($environment, $true)
+            }
+            if ($regression.OptOut -ceq '1') {
+                if ($environment.Count -ne $snapshot.Count) { throw "$($regression.Name)/$path changed environment count" }
+                foreach ($name in $snapshot.Keys) {
+                    if (-not $environment.ContainsKey($name) -or $environment[$name] -cne $snapshot[$name]) {
+                        throw "$($regression.Name)/$path changed opted-out environment"
+                    }
+                }
+            } else {
+                for ($i = 0; $i -lt $names.Count; $i++) {
+                    if (-not $environment.ContainsKey($names[$i]) -or $environment[$names[$i]] -cne $expected[$i]) {
+                        throw "$($regression.Name)/$path wrong $($names[$i])"
+                    }
+                }
+                $expectedCount = 7 + [int]($null -ne $regression.OptOut)
+                if ($environment.Count -ne $expectedCount) { throw "$($regression.Name)/$path changed unrelated keys" }
+            }
+            if ($environment['C1525_UNRELATED'] -cne 'preserved') { throw "$($regression.Name)/$path changed unrelated value" }
+            if ($null -eq $regression.OptOut) {
+                if ($environment.ContainsKey($optOutName)) { throw "$($regression.Name)/$path created opt-out" }
+            } elseif (-not $environment.ContainsKey($optOutName) -or $environment[$optOutName] -cne $regression.OptOut) {
+                throw "$($regression.Name)/$path changed opt-out"
+            }
+        }
+        $regressionPassed++
+        Write-Host "PASS $($regression.Name) paths=$($paths.Count)"
+    }
+    $regressionExpected = if ($Case -eq 'All') { 7 } else { 1 }
+    if ($regressionPassed -ne $regressionExpected) { throw 'regression selection executed the wrong case count' }
+    Write-Host "C1525 cases=$regressionPassed passed=$regressionPassed failed=0"
+    if ($Case -ne 'All') { return }
     foreach ($case in @(
         @{ Name = 'windows-default'; Windows = $true; Seed = $false; OptOut = '' },
         @{ Name = 'windows-conflicting'; Windows = $true; Seed = $true; OptOut = '' },
