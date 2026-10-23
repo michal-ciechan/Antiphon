@@ -38,6 +38,43 @@ function Blob([string]$Sha, [string]$Path) {
     $script:blobs[$key]=$value
     return $value
 }
+function Test-Lexemes([string]$Text) {
+    # Keep quoted key/assertion arguments, but remove comments before any matching.
+    # The second view also masks strings, so a quoted example is not executable code.
+    $pattern = '(?<literal>@?"(?:""|\\.|`.|[^"\\])*"|''(?:''''|\\.|[^''\\])*'')|(?<comment>//[^\r\n]*|/\*[\s\S]*?\*/|<#[\s\S]*?#>|#[^\r\n]*)'
+    $code = [regex]::Replace($Text, $pattern, {
+        param($match)
+        if ($match.Groups['comment'].Success) { return [regex]::Replace($match.Value, '[^\r\n]', ' ') }
+        return $match.Value
+    })
+    $tokens = [regex]::Replace($code, $pattern, { param($match) [regex]::Replace($match.Value, '[^\r\n]', ' ') })
+    return @{ Code=$code; Tokens=$tokens }
+}
+function Code-Fragment($Lexemes, [string]$Fragment) {
+    if ([string]::IsNullOrWhiteSpace($Fragment)) { return $false }
+    $pattern = '(?<![\w])' + [regex]::Escape($Fragment.Trim()).Replace('\ ', '\s+') + '(?![\w])'
+    foreach ($match in [regex]::Matches($Lexemes.Code, $pattern)) {
+        # A fragment may contain string arguments, but must start outside a string.
+        if (-not [char]::IsWhiteSpace($Lexemes.Tokens[$match.Index])) { return $true }
+    }
+    return $false
+}
+function Test-Declaration($Lexemes, [string]$Name) {
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    $exact = [regex]::Escape($Name)
+    # Bounded C# test-method and PowerShell function / named-case declarations.
+    $method = '(?m)^\s*(?:\[[^\]\r\n]+\]\s*)+\s*(?:(?:public|private|protected|internal|static|async|virtual|override)\s+)*(?:[\w.<>,?\[\]]+\s+)'+$exact+'\s*\([^;{}]*\)\s*(?:\{|=>)'
+    $function = '(?m)^\s*function\s+'+$exact+'\s*(?:\([^;{}]*\)\s*)?\{'
+    foreach ($match in [regex]::Matches($Lexemes.Tokens, $method)) {
+        if ($match.Value -match '\[(?:[\w]+\.)*(?:Test|Fact|Theory|TestMethod|DataTestMethod)(?:Attribute)?\s*(?:\(|\])') { return $true }
+    }
+    if ([regex]::IsMatch($Lexemes.Tokens, $function)) { return $true }
+    $case = '(?m)^\s*(?<keyword>It|Run-Case|Test-Case)\s+(?:-Name\s+)?(?<quote>[''"])'+$exact+'\k<quote>(?=\s|$)'
+    foreach ($match in [regex]::Matches($Lexemes.Code, $case)) {
+        if (-not [char]::IsWhiteSpace($Lexemes.Tokens[$match.Groups['keyword'].Index])) { return $true }
+    }
+    return $false
+}
 function Native($Record, [string]$Context, [string]$Os, [bool]$Required) {
     if ($Record -isnot [Collections.IDictionary]) { Fail "$Context missing native obligation"; return }
     if ($Record.status -eq 'not-required') {
@@ -115,7 +152,12 @@ try {
         if ($w.witnessKind -ne 'real-type') { Fail "$($w.id) real-type required" }
         if ($w.targetOS -notin @('Windows','Linux','macOS','FreeBSD','Android','iOS','Browser','Other')) { Fail "$($w.id) invalid targetOS" }
         if (-not $inventory.ContainsKey([string]$w.sourcePath) -or $inventory[$w.sourcePath].disposition -ne 'os-gated') { Fail "$($w.id) witness requires os-gated inventory" }
-        $source=Blob $script:head $w.sourcePath; $null=Blob $script:head $w.testPath
+        $source=Blob $script:head $w.sourcePath
+        $test=Test-Lexemes (Blob $script:head $w.testPath)
+        if (-not (Test-Declaration $test $w.testCase)) { Fail "$($w.id) testCase declaration missing: $($w.testCase)" }
+        foreach ($field in @('productionType','factory')) {
+            if (-not (Code-Fragment $test $w[$field])) { Fail "$($w.id) $field missing from test code" }
+        }
         if ($source -and $w.branchAnchor -and -not $source.Contains($w.branchAnchor)) { Fail "$($w.id) branch anchor missing" }
         if ($w.checkpointId -notin $checkpointIds) { Fail "$($w.id) checkpoint missing" }
         if ($w.executionMode -notin @('portable-forced','native')) { Fail "$($w.id) invalid execution mode" }
@@ -130,6 +172,7 @@ try {
             foreach ($case in $w.input.cases) {
                 if ($case -isnot [Collections.IDictionary]) { throw 'invalid input case' }
                 Need $case @('state','setupAssertion') "$($w.id) input"
+                if (-not (Code-Fragment $test $case.setupAssertion)) { Fail "$($w.id) $($case.state) setupAssertion missing from test code" }
                 if (-not $seen.Add("$($case.state):$($case.value)")) { Fail "$($w.id) duplicate input case" }
                 if ($case.keyPresent -isnot [bool]) { Fail "$($w.id) keyPresent must be boolean" }
                 switch ($case.state) {
