@@ -320,6 +320,75 @@ Acceptance on this standard is the operator's CARD-1350 decision: it earns no `r
 and authorises no `publish-release.ps1`; publication still needs the full automated Windows
 profile.
 
+## Startup-path rc picks
+
+Apply the [OS witness contract](testing-and-build.md#os-branch-witnesses) to
+changes affecting the AppHost/dev-aspire/restart/build-slot path, its libraries
+or reviewed startup dependencies. Document/test-only changes may record not
+applicable with their actual changed-path census. These steps supplement the
+reviewed rc integration procedure; they do not grant merge/publication authority.
+
+1. Before rc publication, record the current rc ref/tip, last healthy running SHA,
+   reviewed source SHA and prerequisite chain. Prepare the reviewed **exact integration candidate**.
+   On native Windows at that candidate, verify a clean checkout, expected SHA,
+   native OS, PowerShell version and resolved real `dotnet`. Record the probe's
+   sanitized output, UTC time, source SHA, OS/runtime, absent opt-out state, slot
+   grant/release and child exit. Keep its receipt in Review evidence or an
+   exact-candidate attachment before pick authorization; an older master receipt
+   does not qualify a changed candidate and does not relabel the original Review.
+2. In that checkout, run this fresh native PowerShell process. It removes only
+   the process opt-out and refuses inherited test shims; USER/MACHINE stay intact.
+
+   ```powershell
+   pwsh -NoProfile -Command {
+       $ErrorActionPreference = 'Stop'
+       if (-not $IsWindows) { throw 'native Windows required' }
+       foreach ($name in @('C589_SLOT_SHIM', 'C589_COMMAND_SHIM', 'ANTIPHON_APPHOST_TEST_SEAMS')) {
+           if ([Environment]::GetEnvironmentVariable($name, 'Process')) { throw "test seam present: $name" }
+       }
+       [Environment]::SetEnvironmentVariable('ANTIPHON_BUILD_MEMORY_POLICY_OPTOUT', [NullString]::Value, 'Process')
+       if ([Environment]::GetEnvironmentVariables('Process').Contains('ANTIPHON_BUILD_MEMORY_POLICY_OPTOUT')) { throw 'opt-out must be absent' }
+       $dotnet = Get-Command dotnet -CommandType Application -ErrorAction Stop
+       & ./scripts/build-slot.ps1 -Label rc-native-probe -- $dotnet.Source --version
+       exit $LASTEXITCODE
+   }
+   ```
+
+   Absence is a key-presence assertion, not empty-string equality. Do not dump
+   the environment. The wrapper owns the slot: do not nest it inside a slot-owning
+   checkpoint. Unavailable, timeout or unleased probes are unqualified; never
+   retry outside the gate. This cheap native probe crosses the build-driver
+   boundary; it does not prove restore, build or healthy startup.
+3. After pushing rc, read back the remote tip and advance the clean canonical
+   checkout through the existing rc procedure. Verify it equals the published
+   SHA. Repeat the native probe there, then run the **restart rehearsal**: use
+   the same fresh-process block above, replacing label `rc-native-probe` with
+   `rc-restart-rehearsal` and arguments `--version` with `restore Antiphon.AppHost`.
+   The underlying restore-only substep is:
+
+   ```powershell
+   pwsh -NoProfile -File scripts/build-slot.ps1 -Label rc-restart-rehearsal -- dotnet restore Antiphon.AppHost
+   ```
+
+   The fresh wrapper and its absent opt-out assertion remain required. This does
+   not stop AppHost, run npm, create another launcher or waive the canonical
+   checkout guard. `restart-apphost.ps1 -StopOnly -WhatIf` only previews stop;
+   it cannot satisfy rehearsal. Bare `-WhatIf` is refused. Do not run
+   `dev-aspire.ps1` just to rehearse its restore substep.
+4. Activate only after rehearsal passes, from an independent owning shell under
+   the [restart runbook](apphost-runbook.md#first-start-and-apphost-restart), both
+   locks and the Job Object caveat. Require restart exit 0, health and
+   `/api/version` equal to the intended rc SHA. Record publication, rehearsal
+   and activation separately; a healthy old process is not activation.
+5. If startup fails, preserve the error/logs, mark the pick unactivated and
+   commission Debug. Use the [forward revert recipe](apphost-runbook.md#failed-startup-path-pick)
+   only when source attribution supports it. An infrastructure timeout alone
+   does not justify reverting unrelated source.
+
+CARD-1525's temporary USER opt-out is incident cleanup owned by its repair task.
+That owner removes it only after repaired rc source and required restarts are
+verified. A probe with opt-out `1` cannot count as native policy coverage.
+
 ## Cutting, testing and publishing a candidate
 
 | Script | Job |
