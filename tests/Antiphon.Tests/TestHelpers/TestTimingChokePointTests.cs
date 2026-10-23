@@ -21,9 +21,9 @@ public sealed class TestTimingChokePointTests
         using (TestTiming.Install(session))
         {
             session.BeginCase(testId, "TestTimingChokePointTests", "C1514T_DbHostGit", [], session.NowTicks());
-            // The assembly hook already started the shared store. Disable this lifecycle's
-            // schema cache so start and migrate run after this session is installed.
-            var lifecycle = new TestDbFixtureLifecycle(new TestDbOperations(), TestSchemaCache.Disabled);
+            // The assembly hook already started the shared store. Own a cold lifecycle so
+            // start and migrate run after this session is installed.
+            var lifecycle = new TestDbFixtureLifecycle();
             try
             {
                 await using (var schema = await lifecycle.CreateIsolatedSchemaAsync())
