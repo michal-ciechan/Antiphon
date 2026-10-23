@@ -68,15 +68,17 @@ public partial class PermissionWaitTests
         await using var peer = await host.ConnectPeerAsync();
         host.Directory.MarkRecovered(await host.WaitLiveAsync());
         var releaseCalls = 0;
+        var releasing = f.SessionId;
         peer.Reply = frame =>
         {
             if (frame.Operation != PhoneHomeOperation.ReleaseSlot) return null;
             releaseCalls++;
             return new PhoneHomeFrame(PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
-                JsonSerializer.SerializeToElement(new RunnerSessionDto(f.SessionId, 4, f.Generation, "Exited", 0, "KilledByRequest", 0), PhoneHomeFraming.Json));
+                JsonSerializer.SerializeToElement(new RunnerSessionDto(releasing, 4, f.Generation, "Exited", 0, "KilledByRequest", 0), PhoneHomeFraming.Json));
         };
         foreach (var id in new[] { f.SessionId, Guid.NewGuid() })
         {
+            releasing = id;
             peer.Sessions.Add(new RunnerSessionDto(id, 4, f.Generation, "Running", null, "", 0));
             using var refused = await host.PostOperatorAsync($"/api/session-runners/{host.AllowedRunnerId}/slots/{id:D}/release",
                 new RunnerSlotReleaseRequest("permission fixture"), null);

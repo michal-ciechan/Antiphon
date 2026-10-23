@@ -94,5 +94,19 @@ public partial class PermissionWaitTests
         failed.FailureReason.ShouldContain("New Refine calls on this task are refused.");
         failed.FailureReason.ShouldContain($"Preserve the worktree and pending queue, then inspect session {f.SessionId} and its runner seat before choosing recovery.");
         callerNotes.ShouldContain(n => n.Body.Contains("current Claude permission dialog"));
+        // Fresh final observation supersedes an earlier affirmative cache, without pausing time.
+        foreach (var state in new Antiphon.SessionRunner.Contracts.ProviderDialogState?[] { null, Antiphon.SessionRunner.Contracts.ProviderDialogState.Clear, Antiphon.SessionRunner.Contracts.ProviderDialogState.Unknown })
+        {
+            await using var changed = await PermissionWaitFixture.CreateAsync(ct);
+            var prior = (await changed.Reader.ReadAsync(changed.TaskId, true, ct))!;
+            changed.Reader.ObserveOverride = (_, _) => Task.FromResult(state is null ? null : prior.Observation with { State = state.Value });
+            changed.Clock.AdvanceTo(new DateTimeOffset(changed.DispatchedAt).AddMinutes(90).AddSeconds(1));
+            (await changed.DeadlineAsync(ct)).ShouldBe(1, "unknown/clear never extends a genuine execution deadline");
+            var reason = (await changed.TaskAsync(ct)).FailureReason!;
+            reason.ShouldContain("waiting on a local tool");
+            reason.ShouldNotContain("current Claude permission dialog");
+            if (state != Antiphon.SessionRunner.Contracts.ProviderDialogState.Clear) reason.ShouldContain("observation unavailable");
+            await changed.AssertCustodyAsync(AgentTaskStatus.Failed, ct);
+        }
     }
 }
