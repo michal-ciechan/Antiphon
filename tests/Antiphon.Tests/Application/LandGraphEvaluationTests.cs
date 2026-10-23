@@ -511,6 +511,7 @@ public sealed partial class LandGraphEvaluationTests
             psi.ArgumentList.Add("--solution");
             psi.ArgumentList.Add("Antiphon.sln");
 
+            var clock = Stopwatch.StartNew();
             using var process = Process.Start(psi)!;
             var stdout = process.StandardOutput.ReadToEndAsync();
             var stderr = process.StandardError.ReadToEndAsync();
@@ -525,7 +526,9 @@ public sealed partial class LandGraphEvaluationTests
                 throw;
             }
 
-            return new ToolRun(process.ExitCode, await stdout + await stderr);
+            var text = await stdout + await stderr;
+            Console.WriteLine($"LAND_GRAPH_EVALUATION repo={root} elapsedMs={clock.ElapsedMilliseconds} exit={process.ExitCode}");
+            return new ToolRun(process.ExitCode, text);
         }
 
         /// <summary>The tool writes nothing into the repo: same files, and no obj directory anywhere.</summary>
