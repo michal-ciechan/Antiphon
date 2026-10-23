@@ -25,12 +25,12 @@ internal static class EvaluationExpressionPolicy
     // Knob reads also require an exact XML pin, including inactive branches.
     private static readonly HashSet<string> ReservedProperties = new(StringComparer.OrdinalIgnoreCase)
     {
-        "MSBuildThisFileDirectory", "MSBuildProjectDirectory", "OS",
+        "MSBuildThisFileDirectory", "MSBuildProjectDirectory",
     };
     private static readonly HashSet<string> ReviewedEnvironmentProperties = new(StringComparer.OrdinalIgnoreCase)
     {
         "UsePublishedPackages", "AntiphonMessagingVersion", "EnablePublicApiAnalyzers", "AntiphonCleanFileMaxBytes",
-        "PkgMicrosoft_Windows_Console_ConPTY", "DefaultItemExcludes", "SourceRevisionId", "WarningsAsErrors",
+        "PkgMicrosoft_Windows_Console_ConPTY", "DefaultItemExcludes", "SourceRevisionId", "WarningsAsErrors", "OS",
     };
     private static readonly HashSet<string> Timestamps = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -98,7 +98,7 @@ internal static class EvaluationExpressionPolicy
         }
         foreach (Match function in MetadataFunction.Matches(text))
         {
-            var argument = LiteralMetadataArgument.Match(text[function.Index + function.Length..]);
+            var argument = LiteralMetadataArgument.Match(text[(function.Index + function.Length)..]);
             if (!argument.Success || Timestamps.Contains(argument.Groups["name"].Value))
                 refusals.Add($"refused: {owner} timestamp-metadata");
         }
