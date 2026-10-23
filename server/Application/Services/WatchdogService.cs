@@ -56,7 +56,7 @@ public sealed class WatchdogService
         var activeSessions = await _db.AgentSessions
             .AsNoTracking()
             .Where(s => liveSessionIds.Contains(s.Id) && ActiveStatuses.Contains(s.Status))
-            .Select(s => new { s.Id, s.AgentKind })
+            .Select(s => new { s.Id, s.AgentKind, s.StartedAt })
             .ToListAsync(ct);
 
         var responded = 0;
