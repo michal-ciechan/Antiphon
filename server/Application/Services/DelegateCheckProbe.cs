@@ -55,14 +55,16 @@ public sealed class DelegateCheckProbe
     // the class comment still holds. Optional so every harness that predates the card keeps
     // constructing this; absent, the shipped defaults are used, never a missing DEADLINE line.
     private readonly DelegationSettings _delegation;
+    private readonly TaskProviderWaitReader? _providerWait;
 
     public DelegateCheckProbe(
         AppDbContext db,
         GitWorkspaceService git,
         TimeProvider timeProvider,
         IOptions<SupervisionSettings> supervision,
-        IOptions<DelegationSettings>? delegation = null)
+        IOptions<DelegationSettings>? delegation = null, TaskProviderWaitReader? providerWait = null)
     {
+        _providerWait = providerWait;
         _db = db;
         _git = git;
         _timeProvider = timeProvider;
@@ -247,7 +249,8 @@ public sealed class DelegateCheckProbe
         IReadOnlyList<CheckIncident> Incidents,
         DateTime? PreviousCheckAt = null,
         CheckDeadlineFacts? Deadline = null,
-        CheckCardFacts? Card = null);
+        CheckCardFacts? Card = null,
+        string? ProviderInputWait = null);
 
     // ---- gathering -----------------------------------------------------------------------------
 
@@ -290,11 +293,12 @@ public sealed class DelegateCheckProbe
             ? await GatherIncidentsAsync(incidentSession, ct)
             : [];
         var git = await GatherGitAsync(task, ct);
-        var deadline = await GatherDeadlineAsync(task, now, ct);
+        var providerWait = _providerWait is null ? null : await _providerWait.ReadAsync(task.Id, false, ct);
+        var deadline = await GatherDeadlineAsync(task, now, ct, providerWait);
         var card = await GatherCardAsync(task, ct);
 
         return new CheckFacts(
-            now, taskFacts, session, tail, git, pending, incidents, previousCheckAt, deadline, card);
+            now, taskFacts, session, tail, git, pending, incidents, previousCheckAt, deadline, card, providerWait is { IsWait: true } ? providerWait.Diagnosis : null);
     }
 
     /// <summary>
@@ -363,9 +367,9 @@ public sealed class DelegateCheckProbe
     /// row and the failure the sweep will write are three renderings of one verdict.
     /// </summary>
     private async Task<CheckDeadlineFacts?> GatherDeadlineAsync(
-        AgentTask task, DateTime now, CancellationToken ct)
+        AgentTask task, DateTime now, CancellationToken ct, TaskProviderWaitFacts? providerWait = null)
     {
-        var verdict = await TaskDeadlinePolicy.EvaluateAsync(_db, task, now, _delegation, ct);
+        var verdict = await TaskDeadlinePolicy.EvaluateAsync(_db, task, now, _delegation, ct, providerWait);
         return verdict is null
             ? null
             : new CheckDeadlineFacts(
@@ -574,6 +578,8 @@ public sealed class DelegateCheckProbe
             sb.AppendLine("SESSION: none — this task has no live session row.");
         }
 
+        if (facts.ProviderInputWait is { } wait)
+            sb.Append("PROVIDER INPUT: ").AppendLine(wait);
         sb.Append("DEADLINE: ");
         if (facts.Deadline is { } deadline)
         {

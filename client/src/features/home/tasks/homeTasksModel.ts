@@ -166,6 +166,7 @@ export const LIVENESS_KINDS: ReadonlySet<AttentionKind> = new Set([
   'ReportUnsettled',
   'UnmarkedWaiting',
   'PastExpectedIdle',
+  'ProviderInputWait',
   'ProgressStalled',
   'Overdue',
   'ChecksSpent',

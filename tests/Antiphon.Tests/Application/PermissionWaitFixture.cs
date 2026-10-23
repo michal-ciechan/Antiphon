@@ -111,6 +111,8 @@ internal sealed class PermissionWaitFixture : IAsyncDisposable
                     services.AddSingleton<AgentTaskReplyService>();
                     services.AddScoped<AgentFilesService>();
                     services.AddScoped<AgentTaskDispatcher>();
+                    services.AddScoped<DelegateCheckProbe>();
+                    services.AddScoped<AttentionService>();
                 },
             });
             var fixture = new PermissionWaitFixture(schema, harness, clock, stopper, git, launches);

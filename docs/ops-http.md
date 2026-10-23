@@ -873,3 +873,17 @@ session input endpoint remains intentional input and advances the same revision.
 `SessionQueueDto.modalBlockedReason` distinguishes an observed Claude dialog from
 unavailable evidence. Resolve dialogs interactively or through separately
 qualified owner actions; do not force Enter, clear holds by age, or release a seat.
+
+### Provider input waits (CARD-1518)
+
+`ProviderInputWait` attention is a current, generation-bound diagnosis with drawer,
+agent and card navigation. Its caller note is a decision request, not an approval
+or cancellation action. Inspect the named session before acting on a delayed note.
+A Failed task refuses new Refine and may retain its runner seat indefinitely while
+automatic parking/release is disabled. Preserve source and queue evidence first.
+Use `scripts/runner-slots.ps1 list -RunnerId <observed-runner-id>` to inspect that
+binding. An unavailable list is unknown; absence alone does not prove release.
+If an authorized operator explicitly chooses release, the existing single-seat
+`release -RunnerId <observed-runner-id> -SessionId <id> -Reason <reason>` kills the
+process tree and works even without a server session row. Recheck ownership and
+retain the audit/result. A replacement task requires separate commissioning.
