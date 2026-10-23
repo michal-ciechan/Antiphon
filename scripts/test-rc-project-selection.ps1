@@ -67,13 +67,33 @@ switch ($Case) {
         Check (Same $s.batches.project @('tests/Server/Server.csproj','tests/Runner/Runner.csproj')) 'linked-consumer'
         Put 'src/Server/Server.csproj' '<Project Sdk="Microsoft.NET.Sdk" />'; $a=Commit
         $s=Get-RcProjectSelection $root $b $a
-        Check ($s.affectedProjects -contains 'tests/Server/Server.csproj') 'old-edge'
+        $oldServer=@(@($s.graphs | Where-Object sha -CEQ $b)[0].projects | Where-Object path -CEQ 'src/Server/Server.csproj')[0]
+        $newServer=@(@($s.graphs | Where-Object sha -CEQ $a)[0].projects | Where-Object path -CEQ 'src/Server/Server.csproj')[0]
+        Check (($s.affectedProjects -contains 'tests/Server/Server.csproj') -and ($oldServer.references -contains 'src/Messaging/Messaging.csproj') -and $newServer.references.Count -eq 0) 'old-edge'
         [IO.File]::Delete((Join-Path $root 'src/Messaging/Message.cs')); $a=Commit; $s=Get-RcProjectSelection $root $b $a
         Check ($s.affectedProjects -contains 'src/Runner/Runner.csproj') 'deleted-owner'
         Put 'src/Runner/Runner.csproj' '<Project><ItemGroup><ProjectReference Include="../Server/Server.csproj" /></ItemGroup></Project>'
         Put 'src/Server/Server.csproj' '<Project><ItemGroup><ProjectReference Include="../Runner/Runner.csproj" /></ItemGroup></Project>'
         $a=Commit; $s=Get-RcProjectSelection $root $b $a
         Check (($s.mode -ceq 'Full') -and (@($s.fallbackReasons | Where-Object {$_ -like '*cycle*'}).Count -gt 0)) 'cycle-full'
+    }
+    'C1545_ConsumerSafety' {
+        Put 'tests/Runner/Runner.csproj' '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../../src/Runner/Runner.csproj" /><Content Include="../Server/Data.txt" /></ItemGroup></Project>'
+        Put 'tests/Server/Data.txt' 'baseline'; $cb=Commit
+        Put 'tests/Server/Data.txt' 'changed'; $ca=Commit; $s=Get-RcProjectSelection $root $cb $ca
+        Check (($s.mode -ceq 'Scoped') -and (Same $s.batches.project @('tests/Server/Server.csproj','tests/Runner/Runner.csproj'))) 'content-consumer'
+        Put 'tests/Runner/Runner.csproj' '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../../src/Runner/Runner.csproj" /><Content Include="../Server/Fixtures/*.json" /></ItemGroup></Project>'
+        Put 'tests/Server/Fixtures/example.json' '{}'; $cb=Commit
+        Put 'tests/Server/Fixtures/example.json' '{"changed":true}'; $ca=Commit; $s=Get-RcProjectSelection $root $cb $ca
+        Check (($s.mode -ceq 'Scoped') -and (Same $s.batches.project @('tests/Server/Server.csproj','tests/Runner/Runner.csproj'))) 'glob-consumer'
+        Put 'src/Server/Server.csproj' '<Project Sdk="Microsoft.NET.Sdk"><Import Project="Dependencies.props" /></Project>'
+        Put 'src/Server/Dependencies.props' '<Project><ItemGroup><ProjectReference Include="../Messaging/Messaging.csproj" /></ItemGroup></Project>'
+        $cb=Commit; Put 'src/Messaging/Message.cs' 'imported consumer change'; $ca=Commit; $s=Get-RcProjectSelection $root $cb $ca
+        Check (($s.mode -ceq 'Scoped') -and ($s.batches.project -contains 'tests/Server/Server.csproj')) 'imported-reference'
+        Put 'tests/Runner/Runner.csproj' '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../../src/Runner/Runner.csproj" /><PackageReference Include="TUnit" Version="1.0" /></ItemGroup></Project>'
+        Put 'tests/rc-project-categories.json' (ConvertTo-Json -Depth 10 @{schemaVersion=1;projects=$projects;batches=@('tests/Server/Server.csproj','tests/Other/Other.csproj')})
+        $cb=Commit; Put 'src/Messaging/Message.cs' 'missing batch change'; $ca=Commit; $s=Get-RcProjectSelection $root $cb $ca
+        Check (($s.mode -ceq 'Full') -and ($s.fallbackReasons -contains 'unbatched-test-project:tests/Runner/Runner.csproj')) 'batch-census'
     }
     default { throw "unknown case: $Case" }
 }

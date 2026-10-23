@@ -48,9 +48,30 @@ remain pending for method-scoped SourceLanding Mutation, including discovery.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1545-red/` | red-witness | `/*/*/RcProjectSelectionTests/*` | V-1,V-2,V-3 | all 3 methods, expected assertion failures before S2 | 3 | 6 |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1545-green/` | project-planner | `/*/*/RcProjectSelectionTests/*` | V-1,V-2,V-3 | all 3 methods, 0 failed/skipped | 3 | 6 |
-| CP-3 | S2 | CP-2 | release-modes | `/*/*/ChangeAwareReleaseTests/C1313_ModeCredit` | R-1 | 1 method, 0 failed/skipped | 1 | 1 |
+| CP-3 | S2 | CP-2 | release-modes | `/*/*/ChangeAwareReleaseTests/C1313_ModeCredit` | R-1 | 1 method, 0 failed/skipped | 1 | 4 |
+
+| CP-4 | S3 | n/a | consumer-red | `pwsh -NoProfile -File scripts/test-rc-project-selection.ps1 -Case C1545_ConsumerSafety -ResultsDirectory .antiphon/c1545-consumer-red` | V-5 | 4 assertion rows, expected missing-consumer/batch failures before S4 | n/a | 1 |
+| CP-5 | S4 | `tests/Antiphon.Tests -> bin-c1545-final/` | final-planner | `/*/*/RcProjectSelectionTests/*` | V-1,V-2,V-3,V-5 | all 4 methods, 0 failed/skipped | 4 | 6 |
 
 Measured first red checkpoint: build 266.90 s, host 21.16 s, three intended
 assertion failures, no skips. This single sample is not p95. The build plus
 source-boundary checks exceeded the initial 3-minute estimate; revised to 6 minutes
 per building row without changing any test timeout.
+
+S3 adds a direct script red witness for V-5 (literal and wildcard sibling content,
+imported references, and missing TUnit batch census), then S4 repairs it. The same
+case runs under TUnit in CP-5. This avoids an extra build merely to execute the
+PowerShell defect witness. PC-5 literal/glob content omission and PC-6 missing
+TUnit batch acceptance remain pending for Mutation, including imported-reference
+and historical-graph variants of PC-3. Old-edge assertions now inspect both literal
+graphs, not only the changed project's already-selected consumer.
+
+CP-3 R-1 is red at 0f2f2ce7e803105d6a016d64fe194c0bfdf4c8f7:
+missing dispositions for Antiphon.TestTiming.Probe and c1375-probe. A one-time
+unlisted exact base harness probe at c51023b99b3fcccd222ddbf8137de8c203e04760
+reproduced the same four mode failures (3 passed / 4 failed assertion rows). It ran
+under a granted slot (wait 0), using the unchanged FilterHost from the verified
+CP-2 build; no base build was necessary for the PowerShell policy failure. R-1
+remains failed/inherited; no Unit lane, assembly, policy repair, or timeout change
+is substituted. The caller must commission the policy owner's repair and rerun
+that exact row before Review/land. The final row closes only the planner behaviors.
