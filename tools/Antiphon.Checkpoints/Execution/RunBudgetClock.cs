@@ -171,8 +171,9 @@ public sealed class RunBudgetClock : IDisposable
 
     public void Dispose()
     {
-        _executionTimer?.Dispose();
-        _wallTimer?.Dispose();
+        // Join timer callbacks before disposing the cancellation source they use.
+        if (_executionTimer is not null) _executionTimer.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        if (_wallTimer is not null) _wallTimer.DisposeAsync().AsTask().GetAwaiter().GetResult();
         _expired.Dispose();
     }
 }
@@ -187,4 +188,5 @@ public sealed class RunBudgetEvidence
     public double? AdmissionLimitSeconds { get; set; }
     public double RemainingExecutionSeconds { get; set; }
     public string? TerminalReason { get; set; }
+    public double? FinalizationSeconds { get; set; }
 }

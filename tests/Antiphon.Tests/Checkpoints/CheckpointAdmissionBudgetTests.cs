@@ -117,6 +117,28 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
             h.Slots.Exited.ShouldBeTrue();
         }
         finally { await h.Join(task); }
+
+        // A broker may return a grant concurrently with cancellation. Release and
+        // join that grant before publishing the admission timeout.
+        var clock = new ControlledTimeProvider();
+        using var budget = new RunBudgetClock(TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(30), clock);
+        using var activity = budget.Work();
+        var late = new LateGrantSlots();
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var acquire = budget.AcquireAsync(late, new SlotSession("enabled", 1), "late", activity,
+            TimeSpan.FromMinutes(2), _ => { }, stop.Token);
+        try
+        {
+            await late.Entered.Task.WaitAsync(stop.Token);
+            clock.Advance(TimeSpan.FromMinutes(2));
+            await late.Releasing.Task.WaitAsync(stop.Token);
+            acquire.IsCompleted.ShouldBeFalse("timeout publication must join grant release");
+            late.Release.TrySetResult();
+            await using var lease = await acquire;
+            lease.ExitCode.ShouldBe(4);
+            late.Releases.ShouldBe(1);
+        }
+        finally { stop.Cancel(); late.Release.TrySetResult(); await acquire; }
     }
 
     [Test]
@@ -290,6 +312,27 @@ public sealed class CheckpointAdmissionBudgetTests : CheckpointTestBase
             Entered.TrySetResult();
             try { await grant.Task.WaitAsync(ct); return new SlotLease { State = "granted" }; }
             finally { Exited = true; }
+        }
+    }
+
+    private sealed class LateGrantSlots : IBuildSlotClient
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Releasing { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Releases { get; private set; }
+        public Task<SlotSession> ProbeAsync(CancellationToken ct) => Task.FromResult(new SlotSession("enabled", 1));
+        public async Task<SlotLease> AcquireAsync(SlotSession session, string label, CancellationToken ct)
+        {
+            Entered.TrySetResult();
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); }
+            catch (OperationCanceledException) { }
+            return new SlotLease { State = "granted", ReleaseAsync = async _ =>
+            {
+                Releases++;
+                Releasing.TrySetResult();
+                await Release.Task;
+            } };
         }
     }
 }
