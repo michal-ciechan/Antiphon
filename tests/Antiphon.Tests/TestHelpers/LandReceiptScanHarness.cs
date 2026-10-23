@@ -13,6 +13,7 @@ using Antiphon.Tests.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Tests.TestHelpers;
@@ -36,7 +37,6 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
 
     public sealed record Options
     {
-        public bool Store { get; init; } = true;
         public bool StoreEnabled { get; init; } = true;
         public bool Cache { get; init; } = true;
         public TimeProvider? CacheClock { get; init; }
@@ -80,15 +80,15 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
     }
 
     /// <summary>A process restart: a new provider (runtime, store, cache) over the same database and session.</summary>
-    public async Task RestartAsync()
+    public async Task RestartAsync(bool store = true)
     {
-        _bridges.Add(await BridgeQueueHarness.CreateAsync(BridgeOptions(_bridges[0].SessionId, _bridges[0].AgentId)
+        _bridges.Add(await BridgeQueueHarness.CreateAsync(BridgeOptions(_bridges[0].SessionId, _bridges[0].AgentId, store)
             with { PreserveDatabaseOnDispose = true }));
         await Db.DisposeAsync();
         Bind();
     }
 
-    private BridgeQueueHarness.HarnessOptions BridgeOptions(Guid? attachSession, Guid? attachAgent) => new()
+    private BridgeQueueHarness.HarnessOptions BridgeOptions(Guid? attachSession, Guid? attachAgent, bool store = true) => new()
     {
         AlwaysOn = false,
         ConnectionString = _schema.ConnectionString,
@@ -98,7 +98,13 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
         ConfigureServices = services =>
         {
             services.AddSingleton<ISessionRunnerClient>(Runner);
-            if (!_options.Store) return;
+            if (!store)
+            {
+                // BridgeQueueHarness already registered it. This provider models an absent
+                // optional store only after setup ingested the transcript through a real store.
+                services.RemoveAll<SessionStateStore>();
+                return;
+            }
             services.AddSingleton(Microsoft.Extensions.Options.Options.Create(
                 new SessionStateSettings { Enabled = _options.StoreEnabled }));
             services.AddSingleton<ISessionStateLoader, SessionStateLoader>();

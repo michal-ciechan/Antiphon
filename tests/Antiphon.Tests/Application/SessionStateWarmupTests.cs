@@ -112,6 +112,10 @@ public class SessionStateWarmupTests
         // These setup-only raw edits precede the production mutation under test. Reseed metadata.
         using (var lease = await f.Store.BeginWriteAsync(f.SessionId, default)) await lease.ReconcileAsync(false, default);
         var before = await f.Store.ReadAsync(f.SessionId, default);
+        // CARD-1259 retention deliberately holds transcripts with outstanding action custody.
+        // Complete this fixture's effects before exercising the no-debt retention path.
+        await f.Services.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(f.SessionId, default);
+        (await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == f.SessionId)).ShouldBeFalse();
         var audit = Options.Create(new AuditSettings());
         var retention = new DataRetentionService(db, Options.Create(new RetentionSettings()), audit,
             TimeProvider.System, NullLogger<DataRetentionService>.Instance, new AuditService(db, audit), f.Store);
@@ -302,6 +306,9 @@ public class SessionStateWarmupTests
             s.SetProperty(x => x.Status, SessionStatus.Stopped).SetProperty(x => x.LastSeenAt, old));
         await db.TranscriptEntries.Where(t => t.AgentSessionId == f.SessionId)
             .ExecuteUpdateAsync(t => t.SetProperty(x => x.CreatedAt, old));
+        // Leave the cached Working snapshot intact; discharge only its deferred effects.
+        await f.Services.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(f.SessionId, default);
+        (await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == f.SessionId)).ShouldBeFalse();
         var audit = Options.Create(new AuditSettings());
         var retention = new DataRetentionService(db, Options.Create(new RetentionSettings()), audit,
             TimeProvider.System, NullLogger<DataRetentionService>.Instance, new AuditService(db, audit), f.Store);

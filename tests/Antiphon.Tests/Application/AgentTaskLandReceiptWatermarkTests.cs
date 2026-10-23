@@ -5,6 +5,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
 using Mode = Antiphon.Tests.TestHelpers.LandReceiptScanHarness.ScriptedTranscriptRunner.Mode;
@@ -31,7 +32,7 @@ public sealed class AgentTaskLandReceiptWatermarkTests
         await h.Service.ReconcileAsync(noteId, CancellationToken.None);
         var scans = h.Receipts.Scans;
         return new(h.Commands.Total, scans.Count, scans.Sum(s => s.Rows), scans.Select(s => s.Floor).ToList(),
-            scans.Select(s => s.Session).ToList(), h.Runner.TotalPulls, scans.Select(s => s.Sql).ToList(), h.Commands.Roster(),
+            scans.Select(s => s.Session).ToList(), h.Runner.TotalPulls, scans.Select(s => s.Sql).ToList(), string.Join("\n---\n", h.Commands.Commands),
             h.SessionProjections);
     }
 
@@ -121,6 +122,9 @@ public sealed class AgentTaskLandReceiptWatermarkTests
                 break;
             case "two-kind-outcome-live-committed-row":
                 // The runner still holds the session and answers one row the store already committed.
+                // CARD-1549: durable admission adds the active AgentTasks Id/Attempt SELECT
+                // and TurnEnd ApiCallId dedup SELECT. CARD-1403 folds session, identity and
+                // MAX(sequence) reads into one prelude, offsetting those two commands on master.
                 h.Runner.Transcript = Mode.Entries;
                 h.Runner.NextEntries = _ => [events[5]];
                 expected = [9, 8, 8];
@@ -128,6 +132,9 @@ public sealed class AgentTaskLandReceiptWatermarkTests
         }
 
         var passes = await PassesAsync(h, note.Id, 3);
+
+        if (shape == "two-kind-outcome-live-committed-row")
+            Console.WriteLine(string.Join("\n----\n", passes.Select(p => p.Roster)));
 
         passes.Select(p => p.Commands).ShouldBe(expected, string.Join("\n----\n", passes.Select(p => p.Roster)));
         passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
@@ -198,6 +205,12 @@ public sealed class AgentTaskLandReceiptWatermarkTests
                 await using (var mutation = await store.BeginMutationAsync([h.SessionId], ct))
                 {
                     await using var db = h.Fixture();
+                    // This synthetic reset discards only the action owning the removed row.
+                    // No hosted action worker runs in this harness; keep all other custody.
+                    var removed = db.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId && t.Sequence == Floor + 1);
+                    (await db.SessionRuntimeActions.Where(a => a.AgentSessionId == h.SessionId
+                            && removed.Any(t => t.Id == a.TranscriptEntryId))
+                        .ExecuteDeleteAsync(ct)).ShouldBe(1);
                     (await db.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId && t.Sequence == Floor + 1)
                         .ExecuteDeleteAsync(ct)).ShouldBe(1);
                     await mutation.PublishCommittedAsync(ct);
@@ -343,7 +356,6 @@ public sealed class AgentTaskLandReceiptWatermarkTests
         var clock = evidence == "cache-clock-fault" ? new FaultAfterPublishClock() : null;
         await using var h = await LandReceiptScanHarness.CreateAsync(new()
         {
-            Store = evidence != "store-absent",
             StoreEnabled = evidence != "store-disabled",
             CacheClock = clock,
         });
@@ -358,6 +370,13 @@ public sealed class AgentTaskLandReceiptWatermarkTests
                 "destination-starting" => SessionStatus.Starting,
                 _ => SessionStatus.Stopped,
             });
+        if (evidence == "store-absent")
+        {
+            // Production ingestion needs its real store. Remove it only from the restarted
+            // observer, after setup committed the transcript, before any measured pass.
+            await h.RestartAsync(store: false);
+            h.Store.ShouldBeNull("the optional dependency must actually be absent");
+        }
         int[]? commands = null;
         switch (evidence)
         {
@@ -587,6 +606,8 @@ public sealed class AgentTaskLandReceiptWatermarkTests
                 await h.SeedTranscriptAsync(h.SessionId));
             await h.AssertCoherentAsync(h.SessionId);
             // The real queue types the keyed row; the submission lands through the runtime ingest.
+            // CARD-1259: finish routing the seeded actions before asking the queue to type.
+            await h.Bridge.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(h.SessionId, ct);
             await h.Bridge.Queue.FlushIfIdleAsync(h.SessionId, ct);
             h.Bridge.Adapter.SubmittedBodies.ShouldNotBeEmpty();
             var row = await h.RowAsync(note.QueueMessageId!.Value);

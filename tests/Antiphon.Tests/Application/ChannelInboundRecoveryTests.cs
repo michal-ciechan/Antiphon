@@ -385,6 +385,10 @@ public sealed class ChannelInboundRecoveryTests
                 var row = await db.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native);
                 inboundId = row.Id;
                 ownerId = row.QueueMessageId!.Value;
+                // Queue pruning correctly retains action-owned evidence (CARD-1259).
+                // Finish only this recipient's deferred work before aging its settled receipt.
+                await original.Provider.GetRequiredService<SessionRuntimeActionCoordinator>().DrainPageAsync(sessionId, Ct);
+                (await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == sessionId, Ct)).ShouldBeFalse();
                 var receiptAt = DateTime.UtcNow.AddDays(-2);
                 await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId
                         && t.Kind == TranscriptKinds.UserPrompt && t.Text != null
