@@ -3,8 +3,9 @@
 Task `8423cb1a` stopped the abandoned Windows qualification at
 2026-10-23 11:41:12 UTC (12:41:12 BST), following
 [Inspecting and stopping a qualification](../release-gates.md#inspecting-and-stopping-a-qualification).
-The stop succeeded. Lock recovery remains pending the required exclusive hold on
-new native starts; both locks have been retained.
+The stop and stale-lock recovery succeeded. The caller confirmed an exclusive
+hold on new native starts and task `8423cb1a` as sole recovery owner. Both locks
+were preserved in the evidence directory; their original paths are absent.
 
 ## Identity and custody
 
@@ -51,27 +52,44 @@ before/after SHA-256 is
 `AD87A0911EA40FD67C9EB1A23F436606140A878B1197D561D37BF88450D2504C`.
 Its recorded phase remains `tests`, with null exit; it is not a terminal receipt.
 
-## Health and remaining lock recovery
+## Health and completed lock recovery
 
-Post-stop free physical memory was **8,792.11 MiB**, versus 5,961.73 MiB before.
+Post-stop free physical memory was **8,792.11 MiB**, versus 5,961.73 MiB before;
+the final post-recovery measurement was **8,804.80 MiB**.
 AppHost PID `238576`, desktop session runner PID `295168`, and both Docker backend
 processes (`18036`, `18332`) retained their original generations. At approximately
 11:41:52 UTC, server `/health`, server `/api/version`, and runner `:17204/health`
 returned HTTP 200. Server version was the exact candidate SHA with `land-v2`.
 Docker answered `docker info` successfully, version `29.5.3`.
 
-The native lock and run lock still refer to the stopped owner PID `219196` and
-this run. They remain at their original paths:
+Recovery completed at **2026-10-23T11:48:24.3141573Z** (12:48:24 BST).
+Each lock was independently reread and compared with its exact preserved bytes.
+Both identified this run and owner PID `219196`, started
+`2026-10-23T02:00:40.4040758Z`; the owner and all previously observed tree PIDs
+were absent. Recovery paths and ancestors were checked for reparse points, and
+each destination was nonexisting and on the same volume. The locks were moved
+separately using `Move-Item -LiteralPath` without `-Force`:
 
-- `C:\Antiphon\verification\native-run.lock`
-- `C:\Antiphon\releases\candidates\rc-2026-10-20-5a126f6fc5ae\state-c11e7803\run.lock`
+| Original path | Retained file within the evidence directory |
+| --- | --- |
+| `C:\Antiphon\verification\native-run.lock` | `native-run.lock.moved-20261023T114818721Z` |
+| `C:\Antiphon\releases\candidates\rc-2026-10-20-5a126f6fc5ae\state-c11e7803\run.lock` | `run.lock.moved-20261023T114818721Z` |
 
-The authoritative procedure additionally requires recovery to be serialized with
-all operators and new native starts held through existing launch owners. That
-coordination has been requested but is not yet confirmed. Step 4 explicitly says
-to abort cleanup without it, so neither lock was moved. Once that hold exists,
-reobserve owner/children, compare exact preserved lock bytes and identity, then
-move each separately to a unique same-volume evidence destination using
-`Move-Item -LiteralPath` without `-Force`. Verify moved bytes and absent original
-paths. Changed, foreign, live, reused or unknown identities require retention.
-No later qualification is authorized by this report.
+The moved files' SHA-256 values match their before-state copies:
+
+- Native: `8CCA594581FB8D5201ABF8AA7EC21513A41F0FA7CCAF93F6FAEA6799B6BC5586`.
+- Run: `642573C7E3CBF87725542833923E95F36E590D289E7260959938D609D41D814D`.
+
+Checks before and after each move, followed by a final census, found no prior tree
+PID, run/checkout process, or new native start. Both original lock paths were
+absent after each relevant move and at final health verification. The supervisor's
+state remained byte-identical and the original logs remained in place.
+
+`lock-recovery-receipts.json`, `lock-recovery-complete.json` and
+`recovery-health.json` record the completion. The earlier blocked receipt is
+retained as historical evidence; the appended stop note records its resolution
+after the caller confirmed the operational hold. Final health checks again found
+all four protected process generations unchanged, HTTP 200 from server health,
+server version and runner health, the exact candidate server SHA, and healthy
+Docker `29.5.3`. No qualification, preflight or test run was started. No recovery
+blocker remains; this abandoned run still earns no gate credit.
