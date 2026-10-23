@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -324,7 +325,10 @@ public partial class DispatcherSiblingInspectionSchedulingTests
             }
             f.Git.Block = false; f.Git.Release.TrySetResult();
         }
-        await f.Queue.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(15));
+        if (scenario is "active limit" or "total capacity" or "fairness")
+            await WaitForSaturatedQueueAsync(f, scenario);
+        else
+            await f.Queue.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(15));
         if (scenario == "shutdown")
         {
             await using var read = f.Read();
@@ -375,7 +379,7 @@ public partial class DispatcherSiblingInspectionSchedulingTests
             f.Queue.Attempted(ids.Last()).ShouldBeTrue("the unattempted task must precede held requeues");
             f.Queue.InFlight.ShouldBe(32);
             f.Git.Block = false; f.Git.Release.TrySetResult();
-            await f.Queue.WhenIdleAsync();
+            await WaitForSaturatedQueueAsync(f, "fairness requeue");
             f.Queue.Outstanding.ShouldBe(32);
         }
         else if (ids.Count == 1)
@@ -392,6 +396,43 @@ public partial class DispatcherSiblingInspectionSchedulingTests
             await using var check = f.Read();
             (await check.AgentTasks.Where(t => ids.Contains(t.Id)).ToListAsync())
                 .ShouldAllBe(t => t.Status == AgentTaskStatus.Queued && t.AgentSessionId == null && t.WorktreePath == null);
+        }
+    }
+
+    private static async Task WaitForSaturatedQueueAsync(SiblingInspectionFixture f, string scenario)
+    {
+        // CARD-1552: the scheduling assertions above run behind barriers. Draining 32 real-Git
+        // inspections is a throughput measurement: retain the old 15 s limit for no progress,
+        // with a 48 s absolute cap (about twice the recorded Windows maximum of 23.4 s,
+        // including teardown). Progress can renew the quiet window, never the absolute cap.
+        var elapsed = Stopwatch.StartNew();
+        var lastProgress = TimeSpan.Zero;
+        var remaining = f.Queue.InFlight;
+        var commands = f.Git.Calls.Count;
+        var drain = f.Queue.WhenIdleAsync();
+        Console.WriteLine($"Inspection drain {scenario}: inFlight={remaining}, active={f.Queue.Active}, gitCalls={commands}");
+        try
+        {
+            while (!drain.IsCompleted)
+            {
+                await Task.WhenAny(drain, Task.Delay(50));
+                var currentRemaining = f.Queue.InFlight;
+                var currentCommands = f.Git.Calls.Count;
+                if (currentRemaining < remaining || currentCommands > commands)
+                    lastProgress = elapsed.Elapsed;
+                remaining = currentRemaining;
+                commands = currentCommands;
+                var state = $"{scenario}: inFlight={remaining}, active={f.Queue.Active}, gitCalls={commands}, elapsed={elapsed.Elapsed}";
+                elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(48), state);
+                (elapsed.Elapsed - lastProgress).ShouldBeLessThan(TimeSpan.FromSeconds(15), state);
+            }
+            await drain;
+            f.Queue.InFlight.ShouldBe(0);
+            f.Queue.Active.ShouldBe(0);
+        }
+        finally
+        {
+            Console.WriteLine($"Inspection drain {scenario}: elapsed={elapsed.Elapsed.TotalSeconds:F3}s, inFlight={f.Queue.InFlight}, active={f.Queue.Active}, gitCalls={f.Git.Calls.Count}");
         }
     }
 
