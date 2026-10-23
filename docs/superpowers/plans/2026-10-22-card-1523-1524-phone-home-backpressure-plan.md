@@ -294,36 +294,13 @@ target, amend pushed commits or edit source while a checkpoint is running.
 | S4 — fair bounded observation | `server/Infrastructure/Agents/SessionRunner/PhoneHomeRecoveryPump.cs`, new adjacent `PhoneHomeEventScheduler.cs`, `server/Application/Settings/PhoneHomeRunnerSettings.cs` (including its `PhoneHomeRunnerSettingsRules`). Four fixed workers, per-session FIFO, aggregate accounting, join on stop/replacement. Existing `PhoneHomeRunnerSettingsValidator` delegates to those rules; no new validator or registration is needed. | Cross-session progress, same-session order, ownership/generation, failure and cancellation assertions. |
 | S5 — contract documentation | `docs/ops-http.md` phone-home section and `docs/session-runtime-invariants.md` phone-home ingestion paragraph. Explain negotiated versus legacy mode, finite capacity, byte units, received totals, snapshot timing and sustained recovery. | Static review against D-1–D-7; no prose-mirroring test. Run the complete narrow green group at the committed S2–S5 tip. |
 
-## Verification design
+## Verification outline for the separate TestDesign stage
 
-The Code brief for task `ccf88b5d` explicitly skips a separate TestDesign dispatch
-and selects the fifteen narrow Linux rows below under the operator's minimal-testing
-rule. This Final round's ordinary scope is this closed manifest: the whole Unit
-lane and whole affected classes are deferred, not passed. There is no Windows/native
-row. The five baseline methods compiled and failed at their intended assertions at
-`9db2c7f71aa3c0b7366b0ce4f85f32ee55ff8d68`; the earlier fixture build failure is
-retained separately and is not a red witness. Code adds the guard variants below
-inside the same six methods, keeping the checkpoint roster/counts unchanged.
-
-The fixture owns real Kestrel, the real runner service/event hub, hosted recovery
-pump and runtime persistence in isolated schemas. Only command inventory, a
-post-catch-up List hold, publication and activity-save dependencies are controlled.
-The protocol cases also reuse the existing channel-backed WebSocket writer fixture
-inside the actual runner service. The old-server registration shim removes the
-capability and response field on the wire; it leaves the new runner sender intact.
-
-Ordinary assertions cover finite count and byte stalls, catch-up under byte pressure,
-original output/mention/prompt/exit recipients, cross-session progress and FIFO,
-worker ceiling and failure isolation, foreign ownership/stale epoch/generation,
-joined replacement after an uncooperative observer, UTF-8 accounting and idempotence,
-50%/90% warnings, immutable refusal state, bounded producer diagnostics, ongoing
-publish/activity attribution, both mixed versions, ticket-bound limits, duplicate/
-stale/impossible/nonmonotonic credits, malformed negotiation, oversize refusal,
-release during update send, cancellation, and sustained-overload UUID recovery.
-
-Positive controls remain **pending for SourceLanding Mutation**. Code does not
-introduce deliberate mutants. The unbound candidate and per-variant method targets
-are in `docs/superpowers/mutations/2026-10-23-card-1523-1524-candidate.md`.
+TestDesign owns the final guard-to-test/positive-control mapping, deterministic
+fixture latches, importer validation and any necessary correction to this closed
+manifest. It must add the executable `## Verification design` before handing to
+Code. No tests or builds have been run by this Plan dispatch. Do not treat the
+following expected reds as measured results.
 
 ### Hosted red witness and recipients
 
@@ -394,7 +371,7 @@ R-1 must run on the repaired path; preserve old tests of legacy hard overflow.
 
 ### Checkpoints
 
-This is the Code brief's closed ordinary execution list, finalized without a separate TestDesign dispatch.
+This is the closed proposed ordinary execution list for TestDesign to finalize.
 All rows use the Linux managed loopback lane; DB rows use isolated schemas. Each
 filter names exactly one method (CP-13's trailing wildcard selects its two
 argument cases). One red build and one green build are reused explicitly. Run
