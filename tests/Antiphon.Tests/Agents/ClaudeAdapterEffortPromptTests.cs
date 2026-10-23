@@ -72,6 +72,11 @@ public class ClaudeAdapterEffortPromptTests
         evidence.ShouldContain("xhigh");
         evidence.ShouldContain("ShouldAssertException");
         evidence.ShouldContain("cleanup: complete");
+        evidence.Split("raw:\n")[1].Split("\nrendered:")[0].ShouldContain(observation.Token!);
+        evidence.Split("rendered:\n")[1].Split("\ntrace:")[0].ShouldContain(observation.Token!);
+        using var trace = JsonDocument.Parse(evidence.Split("trace:\n")[1].Split("\nlogger:")[0]);
+        trace.RootElement.GetProperty("applied").GetString().ShouldBe("xhigh");
+        trace.RootElement.GetProperty("composer").GetString().ShouldContain(observation.Token!);
     }
 
     private sealed class FailureObservation
@@ -91,54 +96,119 @@ public class ClaudeAdapterEffortPromptTests
         var trace = Path.Combine(scratch, "trace.json");
         await File.WriteAllTextAsync(capture, JsonSerializer.Serialize(new { screen = EffortTestScreen.Capture(0) }));
         Environment.SetEnvironmentVariable("ANTIPHON_PTY_BACKEND", "modern");
-        await using var adapter = new ClaudeAdapter(Options.Create(RunnerClaudeAdapterEffortPromptTests.Settings()));
-        try
+        var settings = RunnerClaudeAdapterEffortPromptTests.Settings();
+        // D-6: this real PowerShell fixture owns its clearance allowance. Runner fakes retain 500 ms.
+        settings.ClaudeInputProbeClearTimeoutMs = 3000;
+        var logger = new RunnerClaudeAdapterEffortPromptTests.StartupLogger();
+        var adapter = new ClaudeAdapter(Options.Create(settings), logger);
+        var spec = RunnerClaudeAdapterEffortPromptTests.Spec() with
         {
-            var spec = RunnerClaudeAdapterEffortPromptTests.Spec() with
-            {
-                Exe = "pwsh.exe", Cwd = scratch,
-                Args = ["-NoProfile", "-File", Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "claude-effort-dialog.ps1"), "--effort", requested],
-                Env = new Dictionary<string,string> { ["C449_CAPTURE"] = capture, ["C449_TRACE"] = trace, ["C449_STUCK"] = stuck ? "1" : "0", ["C449_REQUESTED"] = requested,
-                    ["C1516_CLEAR_DELAY_MS"] = Environment.GetEnvironmentVariable("C1516_CLEAR_DELAY_MS") ?? "0", ["C1516_NEVER_CLEAR"] = neverClear ? "1" : "0" }
-            };
-            if (observation is not null) observation.Token = ComposerInputProbe.TokenFor(spec.SessionId!.Value);
-            await adapter.StartAsync(spec, CancellationToken.None);
-            using var cts = new CancellationTokenSource();
-            var task = adapter.WaitForReadyAsync(cts.Token);
+            Exe = "pwsh.exe", Cwd = scratch,
+            Args = ["-NoProfile", "-File", Path.Combine(AppContext.BaseDirectory, "Agents", "Fixtures", "claude-effort-dialog.ps1"), "--effort", requested],
+            Env = new Dictionary<string,string> { ["C449_CAPTURE"] = capture, ["C449_TRACE"] = trace, ["C449_STUCK"] = stuck ? "1" : "0", ["C449_REQUESTED"] = requested,
+                ["C1516_CLEAR_DELAY_MS"] = Environment.GetEnvironmentVariable("C1516_CLEAR_DELAY_MS") ?? "0", ["C1516_NEVER_CLEAR"] = neverClear ? "1" : "0" }
+        };
+        var token = ComposerInputProbe.TokenFor(spec.SessionId!.Value);
+        if (observation is not null) observation.Token = token;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Exception? primary = null, cleanup = null;
+        string? artifact = null;
+        string snapshot = "terminal observation unavailable: startup did not complete";
+        await TestOwnedPtyHost.ScopeAsync(async () =>
+        {
             try
             {
-                (await Task.WhenAny(task, Task.Delay(16000))).ShouldBe(task, "local adapter completed before independent watchdog");
-                (await task).ShouldBe(!stuck, adapter.SnapshotRenderedScreen());
-                using var json = JsonDocument.Parse(await File.ReadAllTextAsync(trace));
-                if (stuck)
+                await adapter.StartAsync(spec, CancellationToken.None);
+                clock.Restart();
+                using var cts = new CancellationTokenSource();
+                var task = adapter.WaitForReadyAsync(cts.Token);
+                try
                 {
-                    adapter.LaunchBlock!.Kind.ShouldBe(AgentLaunchBlockKind.EffortDialogNotCleared);
-                    json.RootElement.GetProperty("applied").ValueKind.ShouldBe(JsonValueKind.Null);
+                    (await Task.WhenAny(task, Task.Delay(16000))).ShouldBe(task, "local adapter completed before independent watchdog");
+                    if (neverClear)
+                    {
+                        (await task).ShouldBeFalse("controlled failure stays false");
+                        adapter.LaunchBlock.ShouldBeNull();
+                        adapter.SnapshotRenderedScreen().ShouldContain(token);
+                        logger.Messages.ShouldContain(message => message.Contains("NeverCleared"));
+                        using var failedTrace = JsonDocument.Parse(await EffortFixtureCompletion.ReadTraceAsync(trace));
+                        failedTrace.RootElement.GetProperty("applied").GetString().ShouldBe(requested);
+                        failedTrace.RootElement.GetProperty("composer").GetString().ShouldContain(token);
+                    }
+                    (await task).ShouldBe(!stuck, adapter.SnapshotRenderedScreen());
+                    var text = stuck ? await EffortFixtureCompletion.ReadTraceAsync(trace)
+                        : await EffortFixtureCompletion.WaitAsync(adapter.SnapshotRenderedScreen,
+                            () => EffortFixtureCompletion.ReadTraceAsync(trace), () => clock.Elapsed,
+                            (span, ct) => Task.Delay(span, ct), cts.Token);
+                    using var json = JsonDocument.Parse(text);
+                    if (stuck)
+                    {
+                        adapter.LaunchBlock!.Kind.ShouldBe(AgentLaunchBlockKind.EffortDialogNotCleared);
+                        json.RootElement.GetProperty("applied").ValueKind.ShouldBe(JsonValueKind.Null);
+                    }
+                    else
+                    {
+                        json.RootElement.GetProperty("applied").GetString().ShouldBe(requested);
+                        json.RootElement.GetProperty("composer").GetString().ShouldBe("");
+                        var keys = json.RootElement.GetProperty("keys").EnumerateArray().Select(k => k.GetString()).ToArray();
+                        keys[0].ShouldBe("j"); keys[1].ShouldBe("Enter"); keys.Last().ShouldBe("Ctrl+U");
+                        adapter.LaunchBlock.ShouldBeNull();
+                        EffortFixtureCompletion.EmptyComposer(adapter.SnapshotRenderedScreen()).ShouldBeTrue("rendered composer empty");
+                        if (int.TryParse(spec.Env["C1516_CLEAR_DELAY_MS"], out var delay) && delay > 0)
+                        {
+                            var received = json.RootElement.GetProperty("clearReceived").GetDateTime();
+                            var painted = json.RootElement.GetProperty("clearPainted").GetDateTime();
+                            (painted - received).ShouldBeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(delay), "delayed clear reached");
+                            Console.WriteLine($"C1516 delayed-clear received={received:O} painted={painted:O} requested-ms={delay}");
+                        }
+                    }
                 }
-                else
-                {
-                    json.RootElement.GetProperty("applied").GetString().ShouldBe(requested);
-                    json.RootElement.GetProperty("composer").GetString().ShouldBe("");
-                    var keys = json.RootElement.GetProperty("keys").EnumerateArray().Select(k => k.GetString()).ToArray();
-                    keys[0].ShouldBe("j"); keys[1].ShouldBe("Enter"); keys.Last().ShouldBe("Ctrl+U");
-                    adapter.LaunchBlock.ShouldBeNull();
-                }
+                finally { await cts.CancelAsync(); try { await task; } catch (OperationCanceledException) { } }
             }
-            finally { await cts.CancelAsync(); try { await task; } catch (OperationCanceledException) { } }
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("ANTIPHON_PTY_BACKEND", prior);
-            if (adapter.Pid is not null)
+            catch (Exception ex) { primary = ex; throw; }
+            finally
             {
-                (await adapter.KillAsync(TimeSpan.FromSeconds(5), CancellationToken.None)).ShouldBeTrue();
-                await adapter.Exited.WaitAsync(TimeSpan.FromSeconds(5));
+                // Retain terminal state while the peer is still alive, even for a later teardown failure.
+                try
+                {
+                    snapshot = await EffortFixtureEvidence.CaptureAsync(requested, spec.SessionId.Value, token, clock.Elapsed,
+                        adapter.SnapshotRawOutput, adapter.SnapshotRenderedScreen, trace,
+                        JsonSerializer.Serialize(new { logger.Messages, Errors = logger.Errors.Select(x => new { x.Message, x.Fields }) }));
+                }
+                catch (Exception ex) { snapshot += "\nevidence capture failed: " + ex; }
+                try { artifact = await EffortFixtureEvidence.PublishAsync(snapshot, primary); }
+                catch (Exception ex) { Console.WriteLine("C1516 evidence publication failed: " + ex); }
             }
-            await adapter.DisposeAsync();
-            DeleteScratch(scratch);
-        }
+        }, async () =>
+        {
+            try
+            {
+                await TestOwnedPtyHost.ScopeAsync(async () =>
+                {
+                    if (adapter.Pid is not null)
+                    {
+                        (await adapter.KillAsync(TimeSpan.FromSeconds(5), CancellationToken.None)).ShouldBeTrue();
+                        await adapter.Exited.WaitAsync(TimeSpan.FromSeconds(5));
+                    }
+                }, () => TestOwnedPtyHost.ScopeAsync(() => adapter.DisposeAsync().AsTask(),
+                    () => { DeleteScratch(scratch); return Task.CompletedTask; }));
+            }
+            catch (Exception ex) { cleanup = ex; throw; }
+            finally
+            {
+                Environment.SetEnvironmentVariable("ANTIPHON_PTY_BACKEND", prior);
+                if (artifact is not null)
+                {
+                    try
+                    {
+                        await EffortFixtureEvidence.CompleteAsync(artifact, primary, cleanup);
+                        if (observation is not null) observation.Artifact = artifact;
+                    }
+                    catch (Exception ex) { Console.WriteLine("C1516 evidence publication failed: " + ex); }
+                }
+            }
+        });
     }
-
     internal static void DeleteScratch(string path)
     {
         var full = Path.GetFullPath(path);
