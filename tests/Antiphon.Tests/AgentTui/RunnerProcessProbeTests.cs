@@ -1420,9 +1420,13 @@ public sealed class RunnerProcessProbeTests
             SecretValues: []);
 
     private static string PowerShellExecutable()
+        => PowerShellExecutable(Environment.GetEnvironmentVariable("PATH"),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+
+    internal static string PowerShellExecutable(string? searchPath, string localApplicationData)
     {
         var alias = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            localApplicationData,
             "Microsoft",
             "WindowsApps",
             "pwsh.exe");
