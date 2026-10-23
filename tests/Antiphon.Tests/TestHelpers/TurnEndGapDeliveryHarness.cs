@@ -266,17 +266,23 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
 
     public async Task StartGapAsync()
     {
+        await StartActionsAsync();
+        _handler.ArmGap();
+        _pump = ActivatorUtilities.CreateInstance<SessionRunnerEventPump>(World.Services);
+        _pumpLoop = new OwnedLoop(_pump, Token);
+        await _pumpLoop.StartAsync(_continuations);
+        await GapCaptured.WaitAsync(Token);
+    }
+
+    private async Task StartActionsAsync()
+    {
+        if (_gapActionsLoop is not null) return;
         // Sync now admits durable actions instead of running its boundary inline.
         // Own that production processing path for the captured-gap experiment;
         // the explicit-delivery fault-cut cases keep their staged setup unchanged.
         _gapActionsLoop = new OwnedLoop(new SessionRuntimeActionHostedService(
             World.Services.GetRequiredService<SessionRuntimeActionCoordinator>()), Token);
         await _gapActionsLoop.StartAsync(_continuations);
-        _handler.ArmGap();
-        _pump = ActivatorUtilities.CreateInstance<SessionRunnerEventPump>(World.Services);
-        _pumpLoop = new OwnedLoop(_pump, Token);
-        await _pumpLoop.StartAsync(_continuations);
-        await GapCaptured.WaitAsync(Token);
     }
 
     public void ReleaseGapWithEnd()
@@ -422,7 +428,13 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     public async Task<int> EndCountAsync()
     { await using var db = World.CreateContext(); return await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == Id && t.Kind == TranscriptKinds.TurnEnd, Token); }
     public async Task ProbeAsync()
-    { await Recovery.TickAsync(Token); await Recovery.JoinCurrentProbesAsync().WaitAsync(Token); }
+    {
+        // A healthy live stream admits each subsequent turn boundary as action
+        // debt. Own that loop before probing so all five notes can progress.
+        if (_pump is not null) await StartActionsAsync();
+        await Recovery.TickAsync(Token);
+        await Recovery.JoinCurrentProbesAsync().WaitAsync(Token);
+    }
     public async Task StartStreamAsync()
     {
         _handler.Drained = Signal();
