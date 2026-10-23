@@ -31,7 +31,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [NotInParallel("AgentQueue")]
-[ParallelLimiter<GitProcessSpawnLimit>]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class DelegateCheckProbeTests
 {
     // ---- session and task facts ---------------------------------------------------------------

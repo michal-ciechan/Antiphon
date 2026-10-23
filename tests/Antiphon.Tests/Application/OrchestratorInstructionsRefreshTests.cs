@@ -824,6 +824,7 @@ public class OrchestratorInstructionsRefreshTests
         var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
         {
             AlwaysOn = true,
+            ClaudeDialogObservation = true,
             ConnectionString = schema.ConnectionString,
             Delegation = settings,
             ConfigureDbContext = options =>
