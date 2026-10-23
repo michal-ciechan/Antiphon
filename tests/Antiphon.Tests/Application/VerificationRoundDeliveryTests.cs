@@ -189,15 +189,7 @@ public sealed class VerificationRoundDeliveryTests
             var adapter = new FakeAgentProtocolAdapter();
             await using var _ = adapter;
             var connection = world.Schema.ConnectionString;
-<<<<<<< HEAD
-            await using (var generation = world.CreateContext())
-                adapter.AcceptedStartedAt = await generation.AgentSessions.Where(s => s.Id == session)
-                    .Select(s => s.StartedAt).SingleAsync();
-            adapter.DialogGuardEnabled = true;
-            adapter.ClaudeComposerChrome = true;
-=======
             await adapter.EnableClaudeDialogObservationAsync(connection, session);
->>>>>>> 30c7c0a3e (test: supply guarded Claude observations and actual warm effort in recovery fixtures)
             Task InsertAsync(Guid id, string kind, string? text = null, string? stopReason = null,
                 DateTime? timestamp = null, string? connectionString = null) =>
                 StoreAwareTranscript.WriteAsync(world.Services, id, () => BridgeQueueHarness.InsertEntryAsync(
