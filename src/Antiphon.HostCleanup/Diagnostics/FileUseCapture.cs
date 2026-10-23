@@ -10,7 +10,8 @@ namespace Antiphon.HostCleanup.Diagnostics;
 // Caller-owned service. A timed-out native worker retains the only seat until it returns.
 public sealed class FileUseCapture(IFileUseProvider? provider = null, IFileUseEvidenceWriter? writer = null, TimeProvider? timeProvider = null)
 {
-    private readonly IFileUseProvider provider = provider ?? new LinuxFileUseProvider();
+    private readonly IFileUseProvider provider = provider ??
+        (OperatingSystem.IsWindows() ? new WindowsFileUseProvider() : new LinuxFileUseProvider());
     private readonly IFileUseEvidenceWriter writer = writer ?? new FileUseEvidenceWriter();
     private readonly TimeProvider time = timeProvider ?? TimeProvider.System;
     private int busy;
@@ -91,7 +92,8 @@ public sealed class FileUseCapture(IFileUseProvider? provider = null, IFileUseEv
                 // Redaction/serialization share the remaining deadline and the one worker seat.
                 var safe = Sanitize(envelope, observation, request) with
                 {
-                    Backend = OperatingSystem.IsLinux() ? "proc" : "unavailable",
+                    Backend = observation.Backend ?? (OperatingSystem.IsLinux() ? "proc" : "unavailable"),
+                    NativeErrors = observation.NativeErrors.Take(8).ToArray(),
                     DurationMilliseconds = time.GetElapsedTime(clockStart).TotalMilliseconds,
                     ObservationEndUtc = time.GetUtcNow()
                 };

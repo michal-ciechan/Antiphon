@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../scripts/lib/CheckpointProcessRunner.cs" Link="Checkpoints/CheckpointProcessRunner.cs" />
+    <PackageReference Include="System.Management" Version="9.0.21" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../../scripts/lib/DiagnosticTextRedactor.cs" Link="Diagnostics/DiagnosticTextRedactor.cs" />
