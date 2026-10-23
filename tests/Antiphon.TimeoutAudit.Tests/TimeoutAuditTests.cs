@@ -116,7 +116,7 @@ public sealed class TimeoutAuditTests
                 ### Checkpoints
                 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
                 |---|---|---|---|---|---|---|---|---|
-                | CP-1 | S1 | tests/Probe bin-probe/ | probe | `/*/*/Probe/Forty` | V-1 | Forty | 1 | 1 |
+                | CP-1 | S1 | tests/Probe -> bin-probe/ | probe | `/*/*/Probe/Forty` | V-1 | Forty | 1 | 1 |
                 """);
             Directory.CreateDirectory(Path.Combine(Root, "receipts"));
         }
