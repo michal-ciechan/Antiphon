@@ -6,6 +6,10 @@ using System.Text.Json.Serialization.Metadata;
 
 namespace Antiphon.Checkpoints;
 
+/// <summary>A new receipt property that older serialized receipts may omit.</summary>
+[AttributeUsage(AttributeTargets.Property)]
+public sealed class CheckpointOptionalAttribute : Attribute { }
+
 /// <summary>Validate serialized facts and deserialized shapes before any verb uses them.</summary>
 public static class CheckpointReceiptJson
 {
@@ -23,7 +27,8 @@ public static class CheckpointReceiptJson
         {
             if (info.Kind != JsonTypeInfoKind.Object) return;
             foreach (var property in info.Properties)
-                if (property.Set is not null && !property.PropertyType.IsValueType)
+                if (property.Set is not null && !property.PropertyType.IsValueType
+                    && property.AttributeProvider?.IsDefined(typeof(CheckpointOptionalAttribute), inherit: true) != true)
                     property.IsRequired = true;
         });
         var strict = new JsonSerializerOptions(options)

@@ -29,6 +29,7 @@ public sealed class ReportModel
     public string Verdict { get; set; } = "GREEN";
     public List<ReportBuild> Builds { get; set; } = [];
     public List<ReportRow> Rows { get; set; } = [];
+    [CheckpointOptional]
     public List<ReportModel> Attempts { get; set; } = [];
     public List<string> Unlisted { get; set; } = [];
     public string? Evidence { get; set; }
@@ -59,7 +60,9 @@ public sealed class ReportBuild
     public string? SlotReason { get; set; }
     public double? ExecutedSeconds { get; set; }
     public double? WallSeconds { get; set; }
+    [CheckpointOptional]
     public string? BrokerReason { get; set; }
+    [CheckpointOptional]
     public string? TerminalReason { get; set; }
     public int WaitedSeconds { get; set; }
     // CARD-1356: the deadline the build ran under, in minutes.
@@ -80,7 +83,9 @@ public sealed class ReportRow
     public string? SlotReason { get; set; }
     public double? ExecutedSeconds { get; set; }
     public double? WallSeconds { get; set; }
+    [CheckpointOptional]
     public string? BrokerReason { get; set; }
+    [CheckpointOptional]
     public string? TerminalReason { get; set; }
     public int WaitedSeconds { get; set; }
     public int? Executed { get; set; }

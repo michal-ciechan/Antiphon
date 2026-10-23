@@ -85,8 +85,11 @@ public sealed class BuildProgress
     public string? SlotReason { get; set; }
     public double? ExecutedSeconds { get; set; }
     public double? WallSeconds { get; set; }
+    [CheckpointOptional]
     public string? BrokerReason { get; set; }
+    [CheckpointOptional]
     public string? TerminalReason { get; set; }
+    [CheckpointOptional]
     public string? Phase { get; set; }
     public int WaitedSeconds { get; set; }
     public int AdmissionExitCode { get; set; }
@@ -108,8 +111,11 @@ public sealed class RowProgress
     public string? SlotReason { get; set; }
     public double? ExecutedSeconds { get; set; }
     public double? WallSeconds { get; set; }
+    [CheckpointOptional]
     public string? BrokerReason { get; set; }
+    [CheckpointOptional]
     public string? TerminalReason { get; set; }
+    [CheckpointOptional]
     public string? Phase { get; set; }
     public int WaitedSeconds { get; set; }
     public RepeatEvidence? Repeat { get; set; }

@@ -250,23 +250,34 @@ confirm any claimed inherited red at base with that exact method.
 
 ### Checkpoints
 
-Closed proposed list; **portable .NET fake-clock lane** for every row. One literal
-filter per row. S1 has nine methods in CP-1 and three in CP-2; record actual
+Closed list; CP-1..CP-10 use the **portable .NET fake-clock lane**. One literal
+filter per row. S1 has nine methods in CP-1 and four in CP-2; record actual
 assertion reds and passing controls rather than predict an exact failing count.
-TestDesign may amend this manifest before Code; Code may not broaden it ad hoc.
+Continuation 8c3c378f adds a production-parser V-12 regression to CP-2/CP-4.
+Its commissioned Final profile requires the whole Unit lane (CP-11) and full
+affected integration class (CP-12), supplementing the original focused rows.
+These are explicit profile obligations, not a full-assembly exception. Unit
+misses real broker/lease/executor persistence; CP-12 covers those boundaries.
+The shared receipt parser also serves ownership/copy consumers; Unit covers their
+required-field controls. No unbounded integration class is claimed. Estimate
+CP-11 at 15 minutes (45-minute derived row deadline), CP-12 at 2 minutes, plus
+one shared build and admission. CP-1/CP-2 retain their historical S1 red role;
+the final continuation executes CP-3..CP-12 with one shared build.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1531-red/` | admission-red | `/*/*/CheckpointAdmissionBudgetTests/C1531_*` | V-1..V-9 | all 9 executed, intended behavioral reds, 0 skipped | 9 | 9 |
-| CP-2 | S1 | CP-1 | contract-red | `/*/*/CheckpointAdmissionContractTests/C1531_*` | V-10..V-12 | all 3 executed, intended contract reds and legacy control, 0 skipped | 3 | 1 |
+| CP-2 | S1 | CP-1 | contract-red | `/*/*/CheckpointAdmissionContractTests/C1531_*` | V-10..V-12 | all 4 executed, intended contract reds and legacy control, 0 skipped | 4 | 1 |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1531-green/` | admission-green | `/*/*/CheckpointAdmissionBudgetTests/C1531_*` | V-1..V-9 | all 9 passed, 0 failed/skipped | 9 | 10 |
-| CP-4 | S3 | CP-3 | contract-green | `/*/*/CheckpointAdmissionContractTests/C1531_*` | V-10..V-12 | all 3 passed, 0 failed/skipped | 3 | 1 |
+| CP-4 | S3 | CP-3 | contract-green | `/*/*/CheckpointAdmissionContractTests/C1531_*` | V-10..V-12 | all 4 passed, 0 failed/skipped | 4 | 1 |
 | CP-5 | S3 | CP-3 | scheduler-regression | `/*/*/RunSchedulerTests/(builds_never_overlap_even_with_free_slots_and_width_two*)\|(rows_of_a_finished_build_run_while_the_next_build_is_in_flight*)\|(an_exclusive_row_keeps_the_build_lane_idle_until_it_finishes*)\|(build_deadline_is_the_largest_dependent_row_timeout_and_the_row_override_replaces_it*)\|(build_timer_uses_selected_row_deadlines_and_override*)` | R-1 | all 5 passed, 0 failed/skipped | 5 | 1 |
 | CP-6 | S3 | CP-3 | slot-regression | `/*/*/CheckpointSlotExecutorTests/executor_busy_then_rejection_retains_exact_wait_in_state_report_and_merge` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
 | CP-7 | S3 | CP-3 | owner-regression | `/*/*/CheckpointTaskOwnershipTests/settlement_cancels_two_drivers_and_skips_later_rows` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
 | CP-8 | S3 | CP-3 | caller-regression | `/*/*/C1307CliCancellationTests/Executor_cancel_persists_130` | R-2 | 1 passed, 0 failed/skipped | 1 | 1 |
 | CP-9 | S3 | CP-3 | evidence-regression | `/*/*/(CheckpointLineTests*)\|(ReportMergerTests*)/(tunit_line_matches_the_pinned_regex_with_slot_suffix*)\|(latest_per_cp_wins_and_earlier_attempts_count_as_reruns*)` | R-3 | all 2 passed, 0 failed/skipped | 2 | 1 |
 | CP-10 | S3 | CP-3 | remaining-budget-regression | `/*/*/(CheckpointTaskOwnershipTests*)\|(BaselineComparerTests*)/(windows_estimate_selects_row_and_total_deadlines*)\|(baseline_stops_when_the_timeout_is_already_spent*)` | R-4 | all 2 passed, 0 failed/skipped | 2 | 2 |
+| CP-11 | S3 | CP-3 | final-unit | `/*/*/*/*[Category=Unit]` | Final Unit and shared parser consumers | all executed, 0 failed; report platform skips | 1 | 15 |
+| CP-12 | S3 | CP-3 | final-lease-integration | `/*/*/CheckpointSlotExecutorTests/*` | Final full affected integration class, R-2 | all 10 passed, 0 failed/skipped | 10 | 2 |
 
 --- next stage ---
 next: test-design

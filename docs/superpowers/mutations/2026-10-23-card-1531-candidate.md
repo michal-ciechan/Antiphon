@@ -25,6 +25,7 @@ interpret a build/fixture error or zero selection as an assertion red.
 | PC-9a/b/c | Ignore configured client admission limit; ignore explicit wall/CLI override; accept invalid CLI/YAML bound (separate inputs) | CheckpointAdmissionContractTests.C1531_inputs_resolve_without_disabling_bounds |
 | PC-10a/b | Zero timing; substitute duration for executed test count | CheckpointAdmissionContractTests.C1531_receipts_keep_wait_execution_and_counts |
 | PC-11a/b | Default legacy unknown timing to zero; erase failed/refused attempt (separate variants) | CheckpointAdmissionContractTests.C1531_legacy_receipts_remain_unknown_not_zero |
+| PC-12a/b | Require a newly optional report/state reference again; make an old required field optional (separate fields/variants) | CheckpointAdmissionContractTests.C1531_production_parser_reads_legacy_and_current_receipts |
 
 Mutation owns deliberate red/restore/green cycles and missing-control discovery.
 A missing assertion is a finding for a separately commissioned Code repair; it is

@@ -172,6 +172,8 @@ public sealed class BaselineComparerTests : CheckpointTestBase
         driver.Count(CheckpointFixtures.IsBuild).ShouldBe(0);
         driver.Count(CheckpointFixtures.IsRun).ShouldBe(0);
         comparer.ToolRuns.ShouldContain(item => item.Contains("git fetch", StringComparison.Ordinal));
+        comparer.ToolRuns.ShouldContain(item => item.Contains("skipped: baseline budget exhausted", StringComparison.Ordinal));
+        driver.Calls.ShouldBeEmpty();
     }
 
     [Test]

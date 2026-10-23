@@ -45,10 +45,18 @@ public sealed class BaselineComparer
         if (redRows.Count == 0 || string.IsNullOrWhiteSpace(baselineRef))
             return results;
 
-        if (_timeout <= TimeSpan.Zero) return results;
+        if (_timeout <= TimeSpan.Zero)
+        {
+            RecordExhaustedFetch(baselineRef);
+            return results;
+        }
         using var ownedBudget = _budget is null ? new RunBudgetClock(TimeProvider.System, _timeout, _timeout + _slotWait) : null;
         _activeBudget = _budget ?? ownedBudget;
-        if (_activeBudget!.Token.IsCancellationRequested) return results;
+        if (_activeBudget!.Token.IsCancellationRequested)
+        {
+            RecordExhaustedFetch(baselineRef);
+            return results;
+        }
         using var work = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _activeBudget.Token);
         cancellationToken = work.Token;
         var deadline = _activeBudget.HardWallTimeoutAt;
@@ -186,6 +194,9 @@ public sealed class BaselineComparer
 
         return results;
     }
+
+    private void RecordExhaustedFetch(string baselineRef) =>
+        ToolRuns.Add("tool-run: baseline git fetch " + baselineRef + " skipped: baseline budget exhausted");
 
     public static string CheckoutPath(string sourceWorktree, string runId, string buildId)
     {

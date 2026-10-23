@@ -30,33 +30,92 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
             Builds = [new BuildProgress { Id = "bin-fixture" }], Rows = [new RowProgress { Id = "CP-1" }],
         }, RunStateStore.Json)!.AsObject();
         var failures = new List<string>();
-        foreach (var legacy in new[] { false, true })
+        foreach (var shape in new[] { "null", "absent", "value", "empty" })
         {
             var input = report.DeepClone().AsObject();
             var stateInput = state.DeepClone().AsObject();
-            if (legacy)
+            if (shape == "absent")
             {
                 RemoveNewFields(input);
                 RemoveNewFields(stateInput);
+            }
+            if (shape is "value" or "empty")
+            {
+                input["executionSeconds"] = 12.5;
+                foreach (var collection in new[] { "builds", "rows" })
+                {
+                    input[collection]![0]!["executedSeconds"] = 0.5;
+                    input[collection]![0]!["brokerReason"] = shape == "empty" ? "" : "enabled";
+                    input[collection]![0]!["terminalReason"] = shape == "empty" ? "" : "completed";
+                    stateInput[collection]![0]!["phase"] = "executing";
+                }
             }
             // Unknown fields have always been ignored; they confer no qualification authority.
             input["futureDiagnostic"] = "ignored";
             try
             {
                 var parsed = ReceiptJson.Parse<ReportModel>(input.ToJsonString(), ReportWriter.Json);
-                parsed.ExecutionSeconds.ShouldBeNull();
-                parsed.Rows.Single().ExecutedSeconds.ShouldBeNull();
+                parsed.ExecutionSeconds.ShouldBe(shape is "value" or "empty" ? 12.5 : null);
+                parsed.Rows.Single().ExecutedSeconds.ShouldBe(shape is "value" or "empty" ? 0.5 : null);
                 parsed.Rows.Single().Executed.ShouldBe(1);
                 parsed.Attempts.ShouldBeEmpty();
                 ReportValidator.Validate(parsed, observation.Commit!).ShouldBeNull();
-                ReceiptJson.Parse<RunState>(stateInput.ToJsonString(), RunStateStore.Json).Rows.Single().Phase.ShouldBeNull();
+                ReceiptJson.Parse<RunState>(stateInput.ToJsonString(), RunStateStore.Json).Rows.Single().Phase
+                    .ShouldBe(shape is "value" or "empty" ? "executing" : null);
                 var path = Path.Combine(run, "acceptance.json");
                 File.WriteAllText(path, input.ToJsonString());
                 var output = new StringWriter();
                 (await Antiphon.Checkpoints.Program.RunAsync(["validate", "--evidence", path, "--expected-source-sha", observation.Commit!],
                     new CheckpointApp.Runtime { RepoRoot = run, Output = output })).ShouldBe(0, output.ToString());
             }
-            catch (Exception ex) { failures.Add($"legacy={legacy}: {ex.Message}"); }
+            catch (Exception ex) { failures.Add($"shape={shape}: {ex.Message}"); }
+        }
+        foreach (var required in new[] { "source", "rows", "builds", "cleanupRefusals", "markdownSha256" })
+        {
+            var invalid = report.DeepClone().AsObject();
+            invalid.Remove(required);
+            Should.Throw<JsonException>(() => ReceiptJson.Parse<ReportModel>(invalid.ToJsonString(), ReportWriter.Json));
+        }
+        foreach (var invalidValue in new JsonNode?[] { null, JsonValue.Create(""), JsonValue.Create(42) })
+        {
+            var invalid = report.DeepClone().AsObject();
+            invalid["attempts"] = invalidValue?.DeepClone();
+            Should.Throw<JsonException>(() => ReceiptJson.Parse<ReportModel>(invalid.ToJsonString(), ReportWriter.Json));
+        }
+        foreach (var field in new[] { "brokerReason", "terminalReason" })
+        {
+            var invalid = report.DeepClone().AsObject();
+            invalid["rows"]![0]![field] = 42;
+            Should.Throw<JsonException>(() => ReceiptJson.Parse<ReportModel>(invalid.ToJsonString(), ReportWriter.Json));
+        }
+        var invalidState = state.DeepClone().AsObject();
+        invalidState.Remove("phase");
+        Should.Throw<JsonException>(() => ReceiptJson.Parse<RunState>(invalidState.ToJsonString(), RunStateStore.Json));
+        foreach (var schema in new[] { 2, 3 })
+        {
+            var input = report.DeepClone().AsObject();
+            RemoveNewFields(input);
+            input["schemaVersion"] = schema;
+            input["exitCode"] = 5;
+            input["verdict"] = "RED";
+            input["rows"]![0]!["exitCode"] = 5;
+            input["rows"]![0]!["state"] = "timeout";
+            var parsed = ReceiptJson.Parse<ReportModel>(input.ToJsonString(), ReportWriter.Json);
+            parsed.SchemaVersion.ShouldBe(schema);
+            parsed.Rows.Single().ExecutedSeconds.ShouldBeNull();
+            parsed.Rows.Single().ExitCode.ShouldBe(5);
+            ReportValidator.Validate(parsed, observation.Commit!).ShouldBe("report_failed");
+        }
+        foreach (var historical in new[] { "failed", "cleanup" })
+        {
+            var input = report.DeepClone().AsObject();
+            var attempt = report.DeepClone().AsObject();
+            RemoveNewFields(attempt);
+            if (historical == "failed") { attempt["exitCode"] = 5; attempt["verdict"] = "RED"; }
+            else attempt["cleanupRefusals"] = new JsonArray("still-present");
+            input["attempts"] = new JsonArray(attempt);
+            var parsed = ReceiptJson.Parse<ReportModel>(input.ToJsonString(), ReportWriter.Json);
+            ReportValidator.Validate(parsed, observation.Commit!).ShouldBe(historical == "failed" ? "historical_attempt_failed" : "cleanup_refused");
         }
         failures.ShouldBeEmpty(string.Join('\n', failures));
     }
@@ -65,13 +124,13 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
     {
         if (node is JsonObject obj)
         {
-            foreach (var key in new[] { "attempts", "brokerReason", "terminalReason", "executedSeconds", "wallSeconds", "budgetWallSeconds",
+            foreach (var key in new[] { "attempts", "brokerReason", "terminalReason", "executedSeconds", "budgetWallSeconds",
                 "admissionOnlySeconds", "executionSeconds", "executionLimitSeconds", "hardWallLimitSeconds", "remainingExecutionSeconds", "hardWallTimeoutAt", "teardownSeconds" })
                 obj.Remove(key);
             // The run's phase is old and required; only build/row phase is new.
             foreach (var key in new[] { "builds", "rows" })
                 if (obj[key] is JsonArray children)
-                    foreach (var child in children.OfType<JsonObject>()) child.Remove("phase");
+                    foreach (var child in children.OfType<JsonObject>()) { child.Remove("phase"); child.Remove("wallSeconds"); }
             foreach (var child in obj.Select(pair => pair.Value).OfType<JsonNode>()) RemoveNewFields(child);
         }
         else if (node is JsonArray array)
