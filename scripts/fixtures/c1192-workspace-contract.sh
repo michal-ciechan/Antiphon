@@ -1707,6 +1707,9 @@ plant_cache() {
     dir="$C1192_ROOT/volumes/$name"
     printf '1\n' > "$dir/label-schema"
     printf '%s\n' "$role" > "$dir/label-cache-role"
+    # These scenarios own the planted cache. Valid labels alone do not grant
+    # the production mount guard acquisition authority.
+    printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
 }
 
 sleeps_named() {
@@ -2199,7 +2202,6 @@ mode_npm_sentinel() {
     : > "$C1192_ROOT/scenario.err"
     require_init
     plant_cache "$cache" npm-content
-    printf '%s\n' "$cache" >> "$CASE_DIR/.fixture-volumes"
     data="$C1192_ROOT/volumes/$WORK/data"
     modules="$data/npm-offline/b/node_modules"
     sentinel="$modules/c849-cache-probe/sentinel"
