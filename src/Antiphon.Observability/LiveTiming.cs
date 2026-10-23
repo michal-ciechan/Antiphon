@@ -121,13 +121,22 @@ public sealed class LiveTiming(ILogger<LiveTiming> logger) : IDisposable
     /// <summary>Ends the startup envelope at ApplicationStarted, including hosted-service startup.</summary>
     public Phase ObserveHostStartup(IHostApplicationLifetime lifetime)
     {
+        // Completion runs in the host's callback context, so this envelope must not
+        // remain the ambient parent of the application's later work.
+        var parent = Activity.Current;
         var phase = BeginStartup(StartupOperation.HostStart);
+        Activity.Current = parent;
         lifetime.ApplicationStarted.Register(() =>
         {
-            phase.Complete();
-            phase.Dispose();
-            using var ready = BeginStartup(StartupOperation.ListenersReady);
-            ready.Complete();
+            var callbackParent = Activity.Current;
+            try
+            {
+                phase.Complete();
+                phase.Dispose();
+                using var ready = BeginStartup(StartupOperation.ListenersReady);
+                ready.Complete();
+            }
+            finally { Activity.Current = callbackParent; }
         });
         return phase;
     }

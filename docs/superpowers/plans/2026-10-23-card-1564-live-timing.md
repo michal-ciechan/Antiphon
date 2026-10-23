@@ -82,3 +82,10 @@ V-10 final selection is a method-scoped TUnit wrapper around the proven-red scri
 contract, enabling method-scoped SourceLanding controls. Five seconds covers native
 exit and both drains, with separate two-second owned cleanup; the pure PowerShell
 actions spawn no descendants. The assembly strict process limiter serializes it.
+
+Observed startup-witness sample at 6f994b9 / Debian shared host: one case 66.992s,
+container ready 10.093s, build 107.771s, build-slot admission 15s. This is n=1,
+not p95. The case includes about a minute of unrelated Kafka producer cleanup.
+Final fixture structurally refuses the messaging producer and disables the bridge;
+assertions and four-minute row/build deadline remain unchanged. Final sample is
+to be retained in Code evidence. Native R-1 remains required, not a Linux skip/pass.
