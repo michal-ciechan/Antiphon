@@ -2312,6 +2312,16 @@ short, or non-hex manifest, a digest or count mismatch, an unreadable tree, and 
 definition-file change force a build. Unknown repositories build. No MSBuild
 evaluation is run to decide a skip.
 
+Author-time `-Update` requires the pre-check and real MSBuild evaluation. CARD-1528
+also checks every tracked definition's evaluation expressions, including inactive
+branches, imported definitions and custom/default item metadata. Filesystem property
+functions and unknown, dynamic or chained call identities refuse; only the explicit
+lexical members in `EvaluationExpressionPolicy` are admitted. Exactly pinned Target
+bodies keep their separate reviewed trust boundary; OS pins do not exempt evaluation
+expressions. The recorder and canary remain additional checks. `-Check` validates the
+pre-check and digest/SDK/pins record, without invoking the evaluator. This policy
+adds zero land-time runtime work: land still compares the embedded manifest only.
+
 A skip records `Stage=Verify`, `Outcome=Skipped`, `Detail=non-code`, with
 `VerificationPassed=false`. The landing's `VerificationCommand` records
 `Skipped(non-code)`, target/candidate SHAs and the audited graph fingerprint;
