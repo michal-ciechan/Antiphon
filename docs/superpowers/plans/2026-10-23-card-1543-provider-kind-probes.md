@@ -32,8 +32,8 @@ optimization, not an rc qualification fix; no scratch rc pick is commissioned.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | witness | `tests/Antiphon.Tests -> bin-c1543-red/` | exact-budget-red | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets` | V-1 red witness | 3 expected budget assertion failures; other arguments green | 15 | 2 | true |
-| CP-2 | implementation | `tests/Antiphon.Tests -> bin-c1543-green/` | guarded-recovery | `/*/*/(DelegationDispatchRecoveryBoundaryTests)\|(SessionMessageQueueCodexPointerTests)\|(ClaudeDialogDeliveryTests)/(C1149_C1150_Statement_budgets)\|(C1521_Recovery_never_stacks_a_pointer)\|(C1521_Recovery_reconciles_before_input)\|(C680_QueueAndExpectationKeepDialogInputPending)\|(C680_AllAutomatedWritersUseTheGuard)` | V-1,V-2,R-1 | 31 results, no failure/skip | 31 | 3 | true |
+| CP-1 | witness | `tests/Antiphon.Tests -> bin-c1543-red2/` | exact-budget-red | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets` | V-1 red witness | 3 expected budget assertion failures; other arguments green | 14 | 2 | true |
+| CP-2 | implementation | `tests/Antiphon.Tests -> bin-c1543-green/` | guarded-recovery | `/*/*/(DelegationDispatchRecoveryBoundaryTests)\|(SessionMessageQueueCodexPointerTests)\|(ClaudeDialogDeliveryTests)/(C1149_C1150_Statement_budgets)\|(C1521_Recovery_never_stacks_a_pointer)\|(C1521_Recovery_reconciles_before_input)\|(C680_QueueAndExpectationKeepDialogInputPending)\|(C680_AllAutomatedWritersUseTheGuard)` | V-1,V-2,R-1 | 30 results, no failure/skip | 30 | 3 | true |
 
 ## Performance budget
 
@@ -51,3 +51,9 @@ changes. Retain TRX durations, slot waits, build/row wall times and SQL rosters 
 ignored evidence. Unavailable fixture/external phase attribution remains unknown
 under CARD-1514. Category: server/messaging; downstream Application/API through
 existing test references. No runner/git changes or unbounded class selection.
+
+The first launcher used bare timeout values, parsed as seconds, and ended before
+tests (run 20261023-200114-149a). No red witness is claimed from that run. Correct
+the CLI units to the already documented 10m/20m budgets. Correct the counted
+argument roster to 14 budget cases and 30 combined cases. Use a fresh red output
+root; preserve the failed build evidence.
