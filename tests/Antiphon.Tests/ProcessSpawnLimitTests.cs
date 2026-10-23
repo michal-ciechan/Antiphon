@@ -20,6 +20,22 @@ public class ProcessSpawnLimitTests
         new ProcessSpawnLimit().Limit.ShouldBe(1);
     }
 
+    [Test]
+    public void C1514_Checkpoint_workers_are_separate_from_the_git_lane()
+    {
+        var matrix = typeof(AgentTaskLandCheckpointMatrixTests);
+        Attribute.GetCustomAttribute(matrix, typeof(ParallelLimiterAttribute<GitProcessSpawnLimit>))
+            .ShouldNotBeNull("the 41 Git-only cases must use the existing Git lane");
+        Attribute.GetCustomAttribute(matrix, typeof(ParallelLimiterAttribute<ProcessSpawnLimit>)).ShouldBeNull();
+        var worker = matrix.Assembly.GetType("Antiphon.Tests.Application.AgentTaskLandCheckpointWorkerTests")
+            .ShouldNotBeNull("both real worker-death cases need their own strict class");
+        Attribute.GetCustomAttribute(worker, typeof(ParallelLimiterAttribute<ProcessSpawnLimit>)).ShouldNotBeNull();
+        Attribute.GetCustomAttribute(worker, typeof(ParallelLimiterAttribute<GitProcessSpawnLimit>)).ShouldBeNull();
+        const string method = "C665_WorkerDeathKeepsRecordedTreeAcrossActualRegistrationDrop";
+        matrix.GetMethod(method).ShouldBeNull();
+        worker.GetMethod(method).ShouldNotBeNull();
+    }
+
     // A floor, not a census: the strict lane (pty, pwsh, cmd, dotnet worker, fake agents, web host, session runtime).
     private static readonly Type[] StrictClasses =
     [
