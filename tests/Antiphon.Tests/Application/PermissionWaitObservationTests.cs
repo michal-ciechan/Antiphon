@@ -66,11 +66,15 @@ public partial class PermissionWaitTests
         await db.AgentTasks.Where(t => t.Id == f.TaskId).ExecuteUpdateAsync(u => u.SetProperty(t => t.DispatchedAt, f.DispatchedAt), ct);
         foreach (var runner in new[] { "", "desktop", "fixture-runner" })
         {
-            await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, runner).SetProperty(s => s.RunnerStoreId, (Guid?)null), ct);
+            // The database requires all three remote fields together. Empty store identity is
+            // admissible storage but unusable observation evidence; the local absence is below.
+            await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, runner)
+                .SetProperty(s => s.RunnerStoreId, Guid.Empty).SetProperty(s => s.RunnerCwd, f.WorktreePath), ct);
             var value = await reader.ReadAsync(f.TaskId, true, ct);
             (value?.IsWait == true).ShouldBe(runner != "fixture-runner", "remote store absence is unknown");
         }
-        await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, (string?)null), ct);
+        await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, (string?)null)
+            .SetProperty(s => s.RunnerStoreId, (Guid?)null).SetProperty(s => s.RunnerCwd, (string?)null), ct);
         await db.TranscriptEntries.Where(t => t.AgentSessionId == f.SessionId).ExecuteDeleteAsync(ct);
         await db.SessionQueuedMessages.Where(m => m.AgentSessionId == f.SessionId).ExecuteDeleteAsync(ct);
         await f.Writer.RecordAsync(f.TaskId, await reader.ReadAsync(f.TaskId, true, ct), ct);
@@ -112,11 +116,14 @@ public partial class PermissionWaitTests
         await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.StartedAt, f.Generation), ct);
         reader.ObserveOverride = async (_, token) =>
         {
-            await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, "fixture-runner").SetProperty(s => s.RunnerStoreId, Guid.NewGuid()), token);
+            await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, "fixture-runner")
+                .SetProperty(s => s.RunnerStoreId, Guid.NewGuid()).SetProperty(s => s.RunnerCwd, f.WorktreePath), token);
             return valid;
         };
         (await reader.ReadAsync(f.TaskId, true, ct)).ShouldBeNull("runner binding changed across await");
-        await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, (string?)null).SetProperty(s => s.RunnerStoreId, (Guid?)null), ct);
+        (await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == f.SessionId, ct)).RunnerId.ShouldBe("fixture-runner", "the race actually committed");
+        await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.RunnerId, (string?)null)
+            .SetProperty(s => s.RunnerStoreId, (Guid?)null).SetProperty(s => s.RunnerCwd, (string?)null), ct);
         facts.Fresh(facts.CompletedAt.AddTicks(-1)).ShouldBeFalse("negative-age evidence is not current");
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -166,6 +173,17 @@ public partial class PermissionWaitTests
         var model = await TaskDeadlinePolicy.EvaluateAsync(db, task, now, settings, ct, wait);
         model!.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.ModelWait);
         model.Limit.ShouldBe(TimeSpan.FromMinutes(20));
+        f.Reader.ObserveOverride = (_, _) => Task.FromResult<ProviderDialogObservation?>(wait!.Observation with { Kind = "Question" });
+        var question = await f.Reader.ReadAsync(f.TaskId, true, ct);
+        var questionVerdict = await TaskDeadlinePolicy.EvaluateAsync(db, task, now, settings, ct, question);
+        questionVerdict!.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.ModelWait);
+        questionVerdict.Summary.ShouldContain("question dialog");
+        await db.TranscriptEntries.Where(t => t.AgentSessionId == f.SessionId).ExecuteUpdateAsync(u => u.SetProperty(t => t.Kind, TranscriptKinds.TurnEnd), ct);
+        (await TaskDeadlinePolicy.EvaluateAsync(db, task, now, settings, ct, question)).ShouldBeNull("a modal does not make an idle turn Working");
+        var continuation = TranscriptKinds.CompactionContinuationPromptPrefix + " that ran out of context.";
+        await db.TranscriptEntries.Where(t => t.AgentSessionId == f.SessionId).ExecuteUpdateAsync(u => u
+            .SetProperty(t => t.Kind, TranscriptKinds.UserPrompt).SetProperty(t => t.Text, continuation), ct);
+        (await TaskDeadlinePolicy.EvaluateAsync(db, task, now, settings, ct, question)).ShouldBeNull("a modal does not arm a compaction continuation clock");
         settings.RolePolicy["Code"] = new() { TimeoutMinutes = 0 };
         settings.LocalExecutionDeadlineMinutes = settings.ModelWaitDeadlineMinutes = 0;
         (await TaskDeadlinePolicy.EvaluateAsync(db, task, now, settings, ct, wait)).ShouldBeNull("all clocks disarmed");
