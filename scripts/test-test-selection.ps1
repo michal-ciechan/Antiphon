@@ -14,11 +14,20 @@ $script:C1313GitFixtures = [Collections.Generic.List[string]]::new()
 function Test-C1313_ProjectAndCatalogUniverse {
     $policy = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
     $census = Test-NightlyPolicyProjectUniverse -RepoRoot $repoRoot -PolicyObject $policy.Object
-    Assert-C487 -Cond ($census.Ok -and $census.Disk.Count -eq 14) -Name 'C1313 project-universe' -Detail ($census | ConvertTo-Json -Compress)
+    Assert-C487 -Cond $census.Ok -Name 'C1313 project-universe' -Detail ($census | ConvertTo-Json -Compress)
     $roles = $policy.Object.projectDispositions
-    $probe = @($roles | Where-Object project -ceq 'scripts/fixtures/nightly/c1375-probe/Probe.csproj')
+    $probePaths = @('scripts/fixtures/nightly/c1375-probe/Probe.csproj', 'tests/Antiphon.TestTiming.Probe/Antiphon.TestTiming.Probe.csproj')
+    $probes = @($roles | Where-Object { $probePaths -ccontains $_.project })
+    $ownedProbes = @($probes | Where-Object {
+        $_.role -ceq 'child' -and $_.reason -and @($_.consumers).Count -eq 1 -and
+        $_.consumers[0] -ceq 'tests/Antiphon.Tests/Antiphon.Tests.csproj'
+    })
+    $observability = 'tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj'
+    $hasObservability = Test-Path (Join-Path $repoRoot $observability)
+    $ownedAssembly = @($roles | Where-Object { $_.project -ceq $observability -and $_.role -ceq 'primary' -and $_.reason -and @($_.consumers).Count -eq 0 })
+    $assemblyOwned = -not $hasObservability -or ($ownedAssembly.Count -eq 1 -and $policy.Object.profiles.rc.requiredSuites -ccontains 'observability' -and $policy.Object.profiles.nightly.requiredSuites -ccontains 'observability')
     $authority=ConvertFrom-ReleaseAuthorityPolicyBytes ([IO.File]::ReadAllBytes("$repoRoot/tests/test-execution-policy.json"))
-    Assert-C487 -Cond (@($roles | Where-Object role -eq primary).Count -eq 7 -and @($roles | Where-Object role -eq child).Count -eq 7 -and $probe.Count -eq 1 -and $probe[0].role -ceq 'child' -and @($probe[0].consumers).Count -eq 1 -and $probe[0].consumers[0] -ceq 'tests/Antiphon.Tests/Antiphon.Tests.csproj' -and $authority.RequiredSuites.Count -eq 9 -and $authority.RequiredSuites -ccontains 'markdown-pdf' -and $policy.Object.profiles.nightly.requiredSuites.Count -eq 7) -Name 'C1313 seven-primary-seven-child'
+    Assert-C487 -Cond (@($roles | Where-Object role -eq primary).Count -eq (7 + [int]$hasObservability) -and $assemblyOwned -and $ownedProbes.Count -eq 2 -and $authority.RequiredSuites.Count -eq (9 + [int]$hasObservability) -and $authority.RequiredSuites -ccontains 'markdown-pdf' -and $policy.Object.profiles.nightly.requiredSuites.Count -eq (7 + [int]$hasObservability)) -Name 'C1313 primary-and-probe-ownership'
     $catalog = Read-TestSelectionCatalog "$repoRoot/tests/test-selection-policy.json" $policy.Object.selectionCatalog.hash
     Assert-C487 -Cond (@($catalog.sets | Where-Object id -eq core).members.Count -eq 7) -Name 'C1313 seven-method-core'
     $root=Join-Path $ResultsDirectory 'universe';[void](New-Item -ItemType Directory $root)
