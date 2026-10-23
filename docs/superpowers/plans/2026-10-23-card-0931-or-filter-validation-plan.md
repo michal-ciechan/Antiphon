@@ -328,8 +328,8 @@ has one literal filter, one time estimate in minutes and a separate execution fl
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c0931-red/` | or-filter-red | `/*/Antiphon.Tests.Checkpoints/CheckpointOrFilterTests/C0931_*` | V-1..V-7, R-1..R-3 | 29 executed: 16 intended assertion failures, 13 controls pass, 0 skipped | 29 | 9 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c0931-green/` | or-filter-green | `/*/Antiphon.Tests.Checkpoints/CheckpointOrFilterTests/C0931_*` | V-1..V-7, R-1..R-3 | all 29 passed, 0 failed/skipped | 29 | 9 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c0931-red/` | or-filter-red | `/*/Antiphon.Tests.Checkpoints/CheckpointOrFilterTests/C0931_*` | V-1..V-7, R-1..R-3 | 31 executed: 18 intended assertion failures, 13 controls pass, 0 skipped | 31 | 9 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c0931-green/` | or-filter-green | `/*/Antiphon.Tests.Checkpoints/CheckpointOrFilterTests/C0931_*` | V-1..V-7, R-1..R-3 | all 31 passed, 0 failed/skipped | 31 | 9 |
 | CP-3 | S2 | CP-2 | importer-row-regression | `/*/Antiphon.Tests.Checkpoints/(CheckpointImportTests*)\|(RowRunnerTests*)\|(RerunPolicyTests*)/*` | R-4 | all 45 base methods passed, 0 failed/skipped; reconcile source census before Code | 45 | 1 |
 | CP-4 | S2 | CP-2 | plan-bundle-contract | `/*/Antiphon.Tests.Application/InstructionBundleTests/each_stage_bundle_is_ascii_and_under_the_size_cap` | R-5 | all 6 argument cases passed, 0 failed/skipped | 6 | 1 |
 
