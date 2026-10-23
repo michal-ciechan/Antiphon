@@ -20,6 +20,40 @@ namespace Antiphon.Tests.Application;
 public sealed class LandNonCodeSkipTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C1537_SeedPreservesCommittedGraphWithCrLfCheckout(bool missingWorkingFile)
+    {
+        await using var source = new LandingGitFixture();
+        await using var destination = new LandingGitFixture();
+        await source.InitializeAsync();
+        await destination.InitializeAsync();
+        await source.RequiredAsync(source.Repository, "config", "core.autocrlf", "false");
+        await File.WriteAllTextAsync(Path.Combine(source.Repository, "Directory.Build.props"), "<Project>\n</Project>\n");
+        await File.WriteAllBytesAsync(Path.Combine(source.Repository, "executable.targets"), [0, 255, 10, 13, 0]);
+        await source.RequiredAsync(source.Repository, "add", "--", "Directory.Build.props", "executable.targets");
+        await source.RequiredAsync(source.Repository, "update-index", "--chmod=+x", "executable.targets");
+        await source.RequiredAsync(source.Repository, "commit", "-m", "committed graph bytes and modes");
+        await source.RequiredAsync(source.Repository, "config", "core.autocrlf", "true");
+        await source.RequiredAsync(source.Repository, "config", "core.eol", "crlf");
+        var props = Path.Combine(source.Repository, "Directory.Build.props");
+        File.Delete(props);
+        await source.RequiredAsync(source.Repository, "checkout", "--", "Directory.Build.props");
+        (await File.ReadAllTextAsync(props)).ShouldBe("<Project>\r\n</Project>\r\n",
+            "the real Git checkout must reproduce Windows CRLF bytes on every OS");
+        if (missingWorkingFile) File.Delete(props);
+
+        await destination.RequiredAsync(destination.Repository, "config", "core.autocrlf", "false");
+        await destination.RequiredAsync(destination.Repository, "config", "core.filemode", "false");
+        await CopyGraphAsync(destination, source.Repository);
+        await destination.RequiredAsync(destination.Repository, "commit", "-m", "seeded graph");
+        var paths = new[] { "Directory.Build.props", "executable.targets" };
+        var expected = await source.RequiredAsync(source.Repository, ["ls-tree", "-r", "-z", "HEAD", "--", .. paths]);
+        var actual = await destination.RequiredAsync(destination.Repository, ["ls-tree", "-r", "-z", "HEAD", "--", .. paths]);
+        actual.ShouldBe(expected, "seeding must preserve committed blob IDs and executable modes, independent of checkout bytes");
+    }
+
+    [Test]
     public async Task C1380_DocsOnlyRebasedLandRecordsNonCodeSkip()
     {
         await using var h = new LandingSafetyHarness();
@@ -2722,25 +2756,29 @@ public sealed class LandNonCodeSkipTests
     // Copy real audited build entrypoints into the scratch repo; do not inject a policy verdict.
     private static async Task SeedGraphAsync(LandingSafetyHarness h)
     {
-        var root = DelegateScriptRunner.RepoRoot;
-        var paths = (await h.Fixture.RequiredAsync(root, "ls-files", "-z")).Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        await CopyGraphAsync(h.Fixture, DelegateScriptRunner.RepoRoot);
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "-m", "audited build graph");
+        await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", "master");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "rebase", "master");
+    }
+
+    private static async Task CopyGraphAsync(LandingGitFixture fixture, string root)
+    {
+        var paths = (await fixture.RequiredAsync(root, "ls-files", "-z")).Split('\0', StringSplitOptions.RemoveEmptyEntries);
         var graph = new LandVerificationBuildGraph();
         var graphPaths = new List<string>();
         foreach (var path in paths)
         {
             if (!graph.Includes(path)) continue;
             graphPaths.Add(path);
-            var destination = Path.Combine(h.Fixture.Repository, path);
+            var destination = Path.Combine(fixture.Repository, path);
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.Copy(Path.Combine(root, path), destination);
             if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(destination, File.GetUnixFileMode(Path.Combine(root, path)));
         }
         // The real tracked inventory includes historical scripts beneath ignored .antiphon/.
         // Stage only these exact copied inputs, including ones the scratch fixture's ignore rules hide.
-        await h.Fixture.RequiredAsync(h.Fixture.Repository, ["add", "-f", "--", .. graphPaths]);
-        await h.Fixture.RequiredAsync(h.Fixture.Repository, "commit", "-m", "audited build graph");
-        await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", "master");
-        await h.Fixture.RequiredAsync(h.Fixture.Source, "rebase", "master");
+        await fixture.RequiredAsync(fixture.Repository, ["add", "-f", "--", .. graphPaths]);
     }
 
     private static async Task<string> ReadHeadTreeAsync(string root)
