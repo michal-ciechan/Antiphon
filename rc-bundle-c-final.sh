@@ -22,7 +22,7 @@ pick() {
   assert_source "$s"
   local -a drop=()
   while IFS= read -r p; do
-    case "$p" in docs/superpowers/plans/*|docs/superpowers/mutations/*|docs/superpowers/reports/*|.antiphon/task-*.md) drop+=("$p");; esac
+    case "$p" in docs/superpowers/plans/*|docs/superpowers/mutations/*|docs/superpowers/reports/*|docs/investigations/2026-10-22-card-1512-fixture-repair.md|.antiphon/task-*.md) drop+=("$p");; esac
   done < <(git diff-tree --no-commit-id --name-only -r "$s")
   base=$(git rev-parse HEAD)
   if git cherry-pick -x "$s"; then
@@ -44,7 +44,7 @@ skip_docs() {
   local s=$1 p
   assert_source "$s"
   while IFS= read -r p; do
-    case "$p" in docs/superpowers/plans/*|docs/superpowers/mutations/*|docs/superpowers/reports/*|.antiphon/task-*.md) ;;
+    case "$p" in docs/superpowers/plans/*|docs/superpowers/mutations/*|docs/superpowers/reports/*|docs/investigations/2026-10-22-card-1512-fixture-repair.md|.antiphon/task-*.md) ;;
       *) echo "STOP $s is not plan/report-only: $p"; exit 1;;
     esac
   done < <(git diff-tree --no-commit-id --name-only -r "$s")

@@ -31,7 +31,7 @@ pick() {
   assert_source "$s"
   local -a drop=()
   while IFS= read -r p; do
-    case "$p" in docs/superpowers/plans/*|docs/superpowers/mutations/*|docs/superpowers/reports/*|.antiphon/task-*.md) drop+=("$p");; esac
+    case "$p" in docs/superpowers/plans/*|docs/superpowers/mutations/*|docs/superpowers/reports/*|docs/investigations/2026-10-22-card-1512-fixture-repair.md|.antiphon/task-*.md) drop+=("$p");; esac
   done < <(git diff-tree --no-commit-id --name-only -r "$s")
   base=$(git rev-parse HEAD)
   if git cherry-pick -x "$s"; then
@@ -53,7 +53,7 @@ skip_docs() {
   local s=$1 p
   assert_source "$s"
   while IFS= read -r p; do
-    case "$p" in docs/superpowers/plans/*|docs/superpowers/mutations/*|docs/superpowers/reports/*|.antiphon/task-*.md) ;;
+    case "$p" in docs/superpowers/plans/*|docs/superpowers/mutations/*|docs/superpowers/reports/*|docs/investigations/2026-10-22-card-1512-fixture-repair.md|.antiphon/task-*.md) ;;
       *) echo "STOP $s is not plan/report-only: $p"; exit 1;;
     esac
   done < <(git diff-tree --no-commit-id --name-only -r "$s")
@@ -192,3 +192,7 @@ git commit -q -m 'build(rc): regenerate final bundle C land graph'
 cat server/Application/Services/LandVerificationBuildGraph.manifest.txt
 echo "bundle tip $(git rev-parse HEAD) tree $(git rev-parse HEAD^{tree})"
 ```
+
+The first CARD-1512 assembly stopped safely at its report-only tip because its
+report uses an investigation path. That exact report is now explicitly omitted;
+no general investigation-document exemption was added.
