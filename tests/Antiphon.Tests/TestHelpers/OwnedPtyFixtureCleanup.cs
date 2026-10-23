@@ -64,6 +64,8 @@ internal sealed class OwnedPtyFixtureCleanup
         }
         string holders;
         try { holders = await _diagnose([refused.Path]); }
+        catch (WindowsFileLockOwners.DiagnosticCleanupException ex)
+        { throw new AggregateException($"Owned deletion of {refused.Path} and diagnostic cleanup both failed", first, ex); }
         catch (Exception ex) when (ex is not WindowsFileLockOwners.DiagnosticCleanupException)
         { holders = "holder unknown: " + ex; }
         Diagnostic = $"path={refused.Path} attributes={refused.Attributes}; {_witnesses}; {holders}";
