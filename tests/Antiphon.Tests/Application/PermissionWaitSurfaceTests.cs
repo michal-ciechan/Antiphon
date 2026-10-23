@@ -1,3 +1,6 @@
+using System.Text.Json;
+using Antiphon.Tests.TestHelpers;
+using Antiphon.Server.Infrastructure.Security;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
@@ -59,7 +62,31 @@ public partial class PermissionWaitTests
         var attention = await scope.ServiceProvider.GetRequiredService<AttentionService>().GetAsync(ct, includeProgressProbe: false);
         attention.Items.ShouldNotContain(i => i.TaskId == f.TaskId && i.Kind.ToString() == "ProviderInputWait");
         await using var db = f.Db();
-        await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteDeleteAsync(ct);
+        // The absent server-row route is a runner-only seat. Deleting this fixture's real
+        // session would itself cascade its queue, which is not recovery behavior.
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: f.Harness.ConnectionString);
+        await using var peer = await host.ConnectPeerAsync();
+        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        var releaseCalls = 0;
+        peer.Reply = frame =>
+        {
+            if (frame.Operation != PhoneHomeOperation.ReleaseSlot) return null;
+            releaseCalls++;
+            return new PhoneHomeFrame(PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+                JsonSerializer.SerializeToElement(new RunnerSessionDto(f.SessionId, 4, f.Generation, "Exited", 0, "KilledByRequest", 0), PhoneHomeFraming.Json));
+        };
+        foreach (var id in new[] { f.SessionId, Guid.NewGuid() })
+        {
+            peer.Sessions.Add(new RunnerSessionDto(id, 4, f.Generation, "Running", null, "", 0));
+            using var refused = await host.PostOperatorAsync($"/api/session-runners/{host.AllowedRunnerId}/slots/{id:D}/release",
+                new RunnerSlotReleaseRequest("permission fixture"), null);
+            ((int)refused.StatusCode).ShouldBe(403);
+            using var released = await host.PostOperatorAsync($"/api/session-runners/{host.AllowedRunnerId}/slots/{id:D}/release",
+                new RunnerSlotReleaseRequest("permission fixture"), OperatorTokenFile.ReadOrCreate(host.OperatorTokenPath));
+            released.EnsureSuccessStatusCode();
+        }
+        releaseCalls.ShouldBe(2);
+        (await db.AgentIncidents.CountAsync(i => i.Kind == AgentIncidentKind.RunnerSlotForceReleased, ct)).ShouldBe(2);
         await Should.ThrowAsync<ConflictException>(() => replies.RefineAsync(f.TaskId, "still refused", ct));
         (await f.TaskAsync(ct)).Status.ShouldBe(AgentTaskStatus.Failed);
         (await db.SessionQueuedMessages.CountAsync(m => m.Id == f.RefinementId, ct)).ShouldBe(1);

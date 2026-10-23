@@ -99,6 +99,11 @@ public partial class PermissionWaitTests
         await f.InsertParentAsync(TranscriptKinds.UserPrompt, note.Body, ct);
         await f.ReconcileAsync(note.Id, ct);
         (await f.NoteAsync(ct)).State.ShouldNotBe(LandNotificationState.Confirmed, "missing generation");
+        var world = await ExpectationTestWorld.CreateAsync(f.Harness.ConnectionString);
+        await db.AgentSessions.Where(s => s.Id == f.ParentSessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.StandingAgentId, world.AgentId), ct);
+        var snapshot = await new ExpectationSnapshotReader(db).ReadAsync(world.Directive, world.Digest,
+            f.Clock.GetUtcNow().UtcDateTime, ExpectationProbeInput.None, ct);
+        snapshot.Notes.ShouldContain(n => n.NotificationId == note.Id, "read-only debt must also reject a generationless receipt");
         await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(u => u.SetProperty(m => m.LastDeliveryGeneration, f.Generation.AddSeconds(-1)), ct);
         await f.ReconcileAsync(note.Id, ct);
         (await f.NoteAsync(ct)).State.ShouldNotBe(LandNotificationState.Confirmed, "wrong generation");
