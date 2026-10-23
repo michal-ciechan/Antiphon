@@ -81,4 +81,9 @@
     <ProjectReference Include="..\src\Antiphon.Resilience\Antiphon.Resilience.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="../scripts/lib/DiagnosticTextRedactor.cs" Link="Diagnostics/DiagnosticTextRedactor.cs" />
+    <Compile Include="../scripts/lib/DiagnosticCredentialRedactor.cs" Link="Diagnostics/DiagnosticCredentialRedactor.cs" />
+    <Compile Include="../scripts/lib/DiagnosticUrlRedactor.cs" Link="Diagnostics/DiagnosticUrlRedactor.cs" />
+  </ItemGroup>
 </Project>

@@ -47,13 +47,7 @@ public sealed record SlotDiagnostic(
             value = value.Replace(token, "[redacted]", StringComparison.Ordinal);
         if (!string.IsNullOrEmpty(sensitiveToken))
             value = value.Replace(sensitiveToken, "[redacted]", StringComparison.Ordinal);
-        value = Regex.Replace(value, @"https?://[^\s""'<>]+", match =>
-        {
-            if (!Uri.TryCreate(match.Value, UriKind.Absolute, out var uri))
-                return "[url]";
-            var safe = new UriBuilder(uri) { UserName = "", Password = "", Query = "", Fragment = "" };
-            return safe.Uri.GetLeftPart(UriPartial.Path);
-        }, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        value = Antiphon.DiagnosticText.DiagnosticUrlRedactor.Redact(value);
         var text = JsonSerializer.Serialize(value);
         if (text.Length <= 2048)
             return text;
