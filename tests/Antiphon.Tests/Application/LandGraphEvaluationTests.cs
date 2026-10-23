@@ -475,12 +475,15 @@ public sealed partial class LandGraphEvaluationTests
         }
 
         public async Task<ToolRun> RunToolAsync(params string[] extra)
+            => await RunToolAtAsync(Root, extra);
+
+        internal static async Task<ToolRun> RunToolAtAsync(string root, params string[] extra)
         {
             var dll = ToolDll();
             File.Exists(dll).ShouldBeTrue($"the land graph audit tool must be staged at {dll}");
             var psi = new ProcessStartInfo("dotnet")
             {
-                WorkingDirectory = Root,
+                WorkingDirectory = root,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -492,7 +495,7 @@ public sealed partial class LandGraphEvaluationTests
             foreach (var arg in extra)
                 psi.ArgumentList.Add(arg);
             psi.ArgumentList.Add("--repo");
-            psi.ArgumentList.Add(Root);
+            psi.ArgumentList.Add(root);
             psi.ArgumentList.Add("--solution");
             psi.ArgumentList.Add("Antiphon.sln");
 
