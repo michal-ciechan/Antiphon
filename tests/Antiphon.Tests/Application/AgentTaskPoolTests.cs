@@ -872,7 +872,7 @@ public class AgentTaskPoolTests
     {
         using var workspace = new TempWorkspace();
         var (dispatcher, stopper, provider) = CreateHarness();
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
         var (agent, session) = await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, 120);
         await SeedMidTurnTranscriptAsync(session);
         var before = DateTime.UtcNow.AddMinutes(-1);
@@ -888,7 +888,7 @@ public class AgentTaskPoolTests
     {
         using var workspace = new TempWorkspace();
         var (dispatcher, stopper, provider) = CreateHarness();
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
         var (agent, session) = await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, 120);
         await SeedMidTurnTranscriptAsync(session);
         await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
@@ -905,7 +905,7 @@ public class AgentTaskPoolTests
             await db.SaveChangesAsync();
         }
         var (next, nextStopper, nextProvider) = CreateHarness();
-        using var nextOwnedProvider = nextProvider;
+        await using var nextOwnedProvider = nextProvider;
         await next.RetireIdleWarmAgentsAsync(CancellationToken.None);
         nextStopper.Killed.ShouldContain(session);
         await using var verify = CreateContext();
@@ -917,7 +917,7 @@ public class AgentTaskPoolTests
     {
         using var workspace = new TempWorkspace();
         var (dispatcher, stopper, provider) = CreateHarness();
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
         var (_, session) = await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, 120);
         await SeedMidTurnTranscriptAsync(session, DateTime.UtcNow.AddMinutes(-10));
         await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None);
@@ -929,7 +929,7 @@ public class AgentTaskPoolTests
     {
         using var workspace = new TempWorkspace();
         var (dispatcher, stopper, provider) = CreateHarness();
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
         var agents = new List<(Guid AgentId, Guid SessionId)>();
         for (var i = 0; i < 5; i++)
             agents.Add(await SeedWarmAgentAsync(workspace.Path, AgentModelLevel.Medium, i));
@@ -1038,7 +1038,7 @@ public class AgentTaskPoolTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
         var (dispatcher, stopper, provider) = CreateHarness(connectionString: schema.ConnectionString);
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
         var (agentId, sessionId, task) = await SeedUnreleasedDelegateAsync(
             schema.ConnectionString, workspace.Path, AgentTaskStatus.Failed, TimeSpan.FromMinutes(3));
 
@@ -1059,7 +1059,7 @@ public class AgentTaskPoolTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
         var (dispatcher, stopper, provider) = CreateHarness(connectionString: schema.ConnectionString);
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
         var (agentId, sessionId, _) = await SeedUnreleasedDelegateAsync(
             schema.ConnectionString, workspace.Path, AgentTaskStatus.Succeeded, TimeSpan.FromMinutes(3),
             WorkspaceMode.Worktree);
@@ -1079,7 +1079,7 @@ public class AgentTaskPoolTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
         var (dispatcher, stopper, provider) = CreateHarness(connectionString: schema.ConnectionString);
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
         var (agentId, sessionId, _) = await SeedUnreleasedDelegateAsync(
             schema.ConnectionString, workspace.Path, AgentTaskStatus.Failed, TimeSpan.FromSeconds(30));
 
@@ -1095,7 +1095,7 @@ public class AgentTaskPoolTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
         var (dispatcher, stopper, provider) = CreateHarness(connectionString: schema.ConnectionString);
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
         var (agentId, sessionId, _) = await SeedUnreleasedDelegateAsync(
             schema.ConnectionString, workspace.Path, AgentTaskStatus.Failed, TimeSpan.FromMinutes(3));
         await SeedTaskOnDelegateAsync(schema.ConnectionString, agentId, sessionId, workspace.Path,
@@ -1113,7 +1113,7 @@ public class AgentTaskPoolTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         using var workspace = new TempWorkspace();
         var (dispatcher, stopper, provider) = CreateHarness(connectionString: schema.ConnectionString);
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
         var (agentId, sessionId, _) = await SeedUnreleasedDelegateAsync(
             schema.ConnectionString, workspace.Path, AgentTaskStatus.Failed, TimeSpan.FromMinutes(3),
             WorkspaceMode.Worktree, sourced: true);
@@ -1131,7 +1131,7 @@ public class AgentTaskPoolTests
         using var workspace = new TempWorkspace();
         var logs = new List<RecordingLogEntry>();
         var (dispatcher, stopper, provider) = CreateHarness(connectionString: schema.ConnectionString, logs: logs);
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
         var (agentId, sessionId, _) = await SeedUnreleasedDelegateAsync(
             schema.ConnectionString, workspace.Path, AgentTaskStatus.Failed, TimeSpan.FromMinutes(3));
         await using (var db = CreateContext(schema.ConnectionString))
@@ -1160,7 +1160,7 @@ public class AgentTaskPoolTests
         using var workspace = new TempWorkspace();
         var cs = schema.ConnectionString;
         var (dispatcher, stopper, provider) = CreateHarness(connectionString: cs);
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
         stopper.StopsSessionsIn = null;
         var (agentId, sessionId) = await SeedWarmAgentAsync(
             workspace.Path, AgentModelLevel.Medium, idleMinutes: 10, connectionString: cs);
@@ -1187,7 +1187,7 @@ public class AgentTaskPoolTests
             // A fresh scope per pass, as each dispatcher tick gets: a reused context would keep
             // tracking the agent with the previous pass's PoolIdleSince and never see it age.
             var (next, nextStopper, nextProvider) = CreateHarness(connectionString: cs);
-            using var nextOwnedProvider = nextProvider;
+            await using var nextOwnedProvider = nextProvider;
             nextStopper.StopsSessionsIn = null;
             await next.RetireIdleWarmAgentsAsync(CancellationToken.None);
             kills += nextStopper.Killed.Count(id => id == sessionId);
@@ -1227,7 +1227,7 @@ public class AgentTaskPoolTests
         await SeedTaskOnDelegateAsync(schema.ConnectionString, h.AgentId, h.SessionId, h.TempRoot,
             AgentTaskStatus.Failed, DateTime.UtcNow.AddMinutes(-3));
         var (dispatcher, stopper, provider) = CreateHarness(connectionString: schema.ConnectionString);
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
 
         var acted = janitor ? await dispatcher.RetireIdleWarmAgentsAsync(CancellationToken.None)
             : await dispatcher.ReleaseUnownedPoolDelegatesAsync(CancellationToken.None);
@@ -1261,7 +1261,7 @@ public class AgentTaskPoolTests
                     u.SetProperty(s => s.Status, SessionStatus.Failed));
         }
         var (dispatcher, _, provider) = CreateHarness(connectionString: schema.ConnectionString);
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
         runtime.Register(sessionId, new Antiphon.Tests.Agents.FakeAgentProtocolAdapter());
 
@@ -1290,7 +1290,7 @@ public class AgentTaskPoolTests
                 services.AddSingleton<ISessionRunnerDirectory>(host.Directory);
                 services.AddSingleton<ISessionRunnerClient>(new BridgeQueueHarness.EmptyRunnerClient());
             });
-        using var ownedProvider = provider;
+        await using var ownedProvider = provider;
         var runtime = provider.GetRequiredService<AgentSessionRuntime>();
         runtime.ListLiveSessions().ShouldNotContain(sessionId);
         runtime.IsLiveOrUnknown(sessionId, host.AllowedRunnerId).ShouldBeTrue();
