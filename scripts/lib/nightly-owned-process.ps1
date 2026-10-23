@@ -36,8 +36,17 @@ function Start-NightlyNativeOwner {
           [Antiphon.Nightly.NativeProcessHooks]$Hooks = $null)
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Nightly native custody requires Windows.' }
     $command = Get-Command $FilePath -CommandType Application -ErrorAction Stop | Select-Object -First 1
-    $start = New-NightlyChildStartInfo -FilePath $command.Source -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -Environment $Environment
+    $executable = $command.Source
+    # Packaged PowerShell can launch unpackaged children outside our private job.
+    # Its WindowsApps alias and its physical package image both need this resolution.
+    if ([IO.Path]::GetFileName($executable) -ieq 'pwsh.exe' -and $executable -match '(?i)[\\/]WindowsApps[\\/]') {
+        $executable = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'PowerShell\7\pwsh.exe'
+        if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+            throw 'Native process custody requires unpackaged PowerShell 7 in Program Files\PowerShell\7.'
+        }
+    }
+    $start = New-NightlyChildStartInfo -FilePath $executable -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -Environment $Environment
     [string[]]$entries = [string[]]@($start.Environment.Keys | ForEach-Object { '{0}={1}' -f $_, $start.Environment[$_] })
-    return [Antiphon.Nightly.NativeProcessOwner]::Start($command.Source, $ArgumentList,
+    return [Antiphon.Nightly.NativeProcessOwner]::Start($executable, $ArgumentList,
         $WorkingDirectory, $TimeoutMilliseconds, $LogPath, [string[]]$entries, $Hooks)
 }
