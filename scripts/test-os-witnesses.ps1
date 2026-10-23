@@ -1,8 +1,10 @@
 # CARD-1526 portable checker tests. No native execution is claimed.
-param([switch]$PolicyOnly, [string]$Case = '')
+param([switch]$PolicyOnly, [string]$Case = '', [switch]$StrictSuite)
 $ErrorActionPreference = 'Stop'
+if ($StrictSuite) { Set-StrictMode -Version Latest }
 $repo = Split-Path $PSScriptRoot -Parent
 $script:checks = 0
+$script:caseResults = [Collections.Generic.List[string]]::new()
 function Assert-That([bool]$Condition, [string]$Name) {
     if (-not $Condition) { throw "ASSERT $Name" }
     $script:checks++
@@ -42,13 +44,13 @@ function Put([string]$Path, [string]$Text) {
 }
 function Copy-Record($Value) { return ($Value | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable) }
 function Run-Case([string]$Name, $Evidence, [int]$Exit, [string]$Diagnostic, [string]$Head = $script:head, [switch]$Strict) {
-    if ($Case -and $Case -ne $Name) { return }
+    if ($Case -and $Case -ne 'strict-whole-suite' -and $Case -ne $Name) { return }
     $path = Join-Path $root 'evidence.json'
     $Evidence | ConvertTo-Json -Depth 30 | Set-Content $path
     $psi = [Diagnostics.ProcessStartInfo]::new((Join-Path $PSHOME 'pwsh'))
     $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
     $checker = Join-Path $repo 'scripts/check-os-witnesses.ps1'
-    if ($Strict) {
+    if ($Strict -or $StrictSuite) {
         # Invoke the same checker in a child scope inheriting StrictMode, with literal argv.
         Put 'strict-checker.ps1' 'param($Checker, $Repository, $BaseRef, $HeadRef, $EvidencePath, $Plan); Set-StrictMode -Version Latest; & $Checker -Repository $Repository -BaseRef $BaseRef -HeadRef $HeadRef -EvidencePath $EvidencePath -Plan $Plan; exit $LASTEXITCODE'
         foreach ($arg in @('-NoProfile','-File',(Join-Path $root 'strict-checker.ps1'),$checker)) { $psi.ArgumentList.Add($arg) }
@@ -62,8 +64,29 @@ function Run-Case([string]$Name, $Evidence, [int]$Exit, [string]$Diagnostic, [st
     $output = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
     Assert-That ($p.ExitCode -eq $Exit) "$Name exit expected=$Exit actual=$($p.ExitCode): $output"
     Assert-That ($output.Contains($Diagnostic)) "$Name diagnostic=$Diagnostic actual=$output"
+    $result = "RESULT $Name exit=$($p.ExitCode)"
+    $script:caseResults.Add($result)
+    Write-Host $result
     $p.Dispose()
     Write-Host "PASS $Name"
+}
+function Test-StrictWholeSuite {
+    # Run this entire case table in a new strict scope; every checker child is strict too.
+    $psi = [Diagnostics.ProcessStartInfo]::new((Join-Path $PSHOME 'pwsh'))
+    $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+    foreach ($arg in @('-NoProfile','-File',(Join-Path $repo 'scripts/test-os-witnesses.ps1'),'-StrictSuite')) { $psi.ArgumentList.Add($arg) }
+    $p = [Diagnostics.Process]::Start($psi)
+    try {
+        $stdout = $p.StandardOutput.ReadToEndAsync(); $stderr = $p.StandardError.ReadToEndAsync()
+        if (-not $p.WaitForExit(120000)) { $p.Kill($true); $p.WaitForExit(); throw 'timeout: strict-whole-suite' }
+        $output = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
+        Assert-That ($p.ExitCode -eq 0) "strict-whole-suite exit expected=0 actual=$($p.ExitCode): $output"
+        $results = @($output -split '\r?\n' | Where-Object { $_ -match '^RESULT ' })
+        Assert-That (($results -join "`n") -ceq ($script:caseResults -join "`n")) 'strict-whole-suite same named cases and actual exit codes'
+        Assert-That ($output -match "(?m)^ASSERTIONS $script:checks\r?$") 'strict-whole-suite same assertion count'
+        Write-Host "STRICT-SUITE cases=$($results.Count)"
+        Write-Host 'PASS strict-whole-suite'
+    } finally { $p.Dispose() }
 }
 try {
     Fixture-Git @('init','-q') | Out-Null
@@ -205,6 +228,11 @@ class WitnessTests {
     Run-Case 'candidate-contradiction' $e 1 'witness requires os-gated'
     $e=Copy-Record $valid; $e.inspectedPaths[0].disposition='portable'; $e.inspectedPaths[0].candidates[0]=@{revision='head';line=1;disposition='non-behavior';reason='unchanged guard, changed comment only'}; $e.witnesses=@()
     Run-Case 'candidate-reason' $e 0 'CANDIDATE head source.cs:1'
+    # The candidate deliberately has no witnessId member, not an empty member.
+    if (-not $Case -or $Case -in @('strict-whole-suite','non-behavior-without-witness-id')) {
+        Assert-That (-not $e.inspectedPaths[0].candidates[0].ContainsKey('witnessId')) 'non-behavior-without-witness-id setup'
+    }
+    Run-Case 'non-behavior-without-witness-id' $e 0 'CANDIDATE head source.cs:1'
     $e=Copy-Record $valid; $e.inspectedPaths[0].helpers=@('helper.cs')
     Run-Case 'helper-missing' $e 1 'helper not inspected'
     $e.inspectedPaths+=@{path='helper.cs';disposition='os-gated';reason='called by changed code';helpers=@();candidates=@(@{revision='base';line=1;disposition='witness';witnessId='W-2'},@{revision='head';line=1;disposition='witness';witnessId='W-2'})}
@@ -243,8 +271,9 @@ class WitnessTests {
     $docs=Fixture-Git @('rev-parse','HEAD')
     $e=@{version=1;baseSha=$script:base;headSha=$docs;inspectedPaths=@();witnesses=@();restartImpact=@{required=$false;paths=@();additionalPaths=@();reason='documentation-only readme.md'}}
     Run-Case 'documentation-only' $e 0 'complete syntax/inventory' $docs
-    if (-not $Case) { Policy-Surface }
+    if (-not $Case -or $Case -eq 'strict-whole-suite') { Policy-Surface }
     if ($script:checks -eq 0) { throw "unknown case: $Case" }
+    if (-not $StrictSuite -and (-not $Case -or $Case -eq 'strict-whole-suite')) { Test-StrictWholeSuite }
     Write-Host "ASSERTIONS $script:checks"
 } finally {
     # Only the private, freshly created direct child of the system temp root is removed.
