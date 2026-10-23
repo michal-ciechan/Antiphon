@@ -49,6 +49,8 @@ public partial class DispatcherSiblingInspectionSchedulingTests
         await using var h = await BridgeQueueHarness.CreateAsync(new()
         {
             AlwaysOn = true, ValidateScopes = true, ConnectionString = schema.ConnectionString,
+            // Absent launches deliver the recovery note to the Claude caller through guarded input.
+            ClaudeDialogObservation = absent,
             Delegation = new DelegationSettings { AllowedRoots = ["/", "C:\\"], MaxConcurrentTasks = 32 },
             ConfigureDbContext = options => options.AddInterceptors(fault, fault.Insert),
             ConfigureServices = services =>
@@ -228,6 +230,9 @@ public partial class DispatcherSiblingInspectionSchedulingTests
                 h.Adapter.SubmittedBodies.ShouldNotBeEmpty("the live caller must actually receive the recovery note");
                 var prompts = await check.TranscriptEntries.AsNoTracking().Where(p => p.AgentSessionId == h.SessionId && p.Kind == TranscriptKinds.UserPrompt).ToListAsync();
                 PromptSubmissionMatch.IsCompleteIn(note.Body, prompts.ShouldHaveSingleItem().Text!).ShouldBeTrue();
+                var delivered = await check.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == note.Id);
+                delivered.Status.ShouldBe(QueuedMessageStatus.Sent);
+                delivered.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
                 sink.Calls.ShouldBe(1); runner.Starts.ShouldBe(0); runner.Kills.ShouldBe(0); h.Adapter.Started.ShouldBeFalse();
             }
         }
