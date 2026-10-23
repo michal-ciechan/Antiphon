@@ -6,6 +6,7 @@ foreach ($name in @('nightly-common', 'nightly-policy', 'nightly-coverage', 'nig
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 $repo = Split-Path $PSScriptRoot -Parent
+$ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
 $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
 function New-Node($Type, $Method, $Uid) {
     [pscustomobject]@{ ClassName = "Antiphon.Tests.Application.$Type"; Namespace = 'Antiphon.Tests.Application'; Type = $Type; Method = $Method; Uid = $Uid; Categories = @('Integration'); Excluded = $false }
@@ -87,5 +88,4 @@ switch ($Case) {
     'Costs' { Test-Costs }
     default { throw 'Case must be Mirror, Explicit or Costs' }
 }
-Write-Host ('TOTAL passed={0} failed={1}' -f $script:C487Passed,$script:C487Failed)
-if ($script:C487Failed -gt 0) { exit 1 }
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 0

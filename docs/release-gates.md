@@ -263,6 +263,18 @@ coverage or substitutes for the Windows obligations above.
 
 ### OptIn is not exclusion in a profile lane
 
+CARD-1561 assigns the 27 named `CardWorktreeMirrorCleanupTests` methods to the
+Linux phone-home lane through a Windows-only method exclusion. Linux keeps them
+required; separate Windows handle qualification remains an owed native obligation.
+Future methods in that class remain required unless explicitly classified.
+
+CARD-1566 assigns `RunnerGrokAdapterReadyTestsPty.C1011_real_fresh_worktree_ready_and_one_turn`
+to its separately commissioned headed WQ-3 live-provider workflow. Its sibling
+methods remain required. TUnit diagnostic export exposes metadata categories but
+does not expose this method's `[Explicit]` execution attribute; the RC disposition
+therefore names the method and its manual owner rather than inferring spend
+authorization from an absent category. Neither exclusion is a pass receipt.
+
 In the `rc` profile, `OptIn` alone does **not** exclude a discovery node. Only a declared
 `profiles.rc.exclusions` row - class, or class plus named methods - excludes, and every row
 must carry a `reason` and an `owner` or the policy refuses to load. Raw discovery categories

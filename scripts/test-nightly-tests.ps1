@@ -2046,8 +2046,12 @@ function Test-C1410_MeasuredCostGroups {
         $launches = @($plan).Count
         $reasons = New-Object System.Collections.Generic.List[string]
         if ($realCount -ne 19012) { [void]$reasons.Add('listing') }
-        if ($launches -lt 60 -or $launches -gt 100) { [void]$reasons.Add('launch-count') }
-        if ($suiteSeconds -lt 32400 -or $suiteSeconds -gt 36000) { [void]$reasons.Add('suite-hours') }
+        # CARD-1567 reprices the unchanged 19012-node fixture from retained
+        # Windows diagnostic totals. Pin its new estimate rather than widening
+        # the old 9-10 hour envelope. Four synthetic suffix-probe launches are
+        # additional to the 100 real-fixture launches (not Windows qualification).
+        if ($launches -ne 104) { [void]$reasons.Add('launch-count') }
+        if ([Math]::Abs($suiteSeconds - 47107.9) -gt 0.11) { [void]$reasons.Add('suite-hours') }
         if ($maxSeconds -ge $watchdogSeconds) { [void]$reasons.Add('watchdog-budget') }
         if ($overTarget.Count -ne 0) { [void]$reasons.Add('target') }
         if ($missing -ne 0 -or $double -ne 0 -or $extra -ne 0) { [void]$reasons.Add('census') }
