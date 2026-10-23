@@ -1,5 +1,13 @@
 # CARD-0680 Code execution record
 
+Current status before final checkpoints: implementation is complete; portable server verification is still pending. Historical sections below preserve the initial outage and pre-fix outcomes. The ignored `.antiphon/task-52a5dc76.md` records final results after this report-bearing commit.
+
+CP-2/CP-3 passed at `8fc327d6b8dcd9a328c0b7625ff0fcf061a3a997`, one exact method each, no failures/skips; fresh TRX inspected and receipt validation returned `CHECKPOINT SOURCE VALID` rows=2. Build 54.221s, all slots granted with zero wait. This includes awaited-evidence/replacement/startup and full input-proof controls.
+
+Server run `20261023-015407-8e86` at that SHA failed before tests: the native canary used ambiguous System/TUnit `TimeoutException`. One error, 1146 warnings, wall 6m52s, build slot granted with zero wait. A transient owner HTTP 502 was logged, but the executor ended normally with exit 2. Commit `040f6d0c05877e782ccd3158bba19930513fc286` qualifies the type without changing duration/assertions. Failed outputs were inspected: no links or tracked paths, 1388 files / 314307119 bytes, removed individually after executor death. A subsequent invocation had a mistyped expected SHA and was refused before any build/test; its retry uses the actual committed HEAD.
+
+Unbound Mutation candidate: [CARD-0680 candidate](../superpowers/mutations/2026-10-23-card-0680-candidate.md). Every PC-1..PC-9 and variant remains pending. CP-8/CP-9 native and CP-10/CP-11 parent Q1 remain OWED. Whole Unit, suites and broader classes remain explicitly deferred by the brief. This report is committed before the final portable checks and predicts no green.
+
 Original Code/landing owner: `52a5dc76-feb4-4349-acaa-e3ca459b918c`.
 Branch: `feat/card-task-52a5dc76`.
 Worktree: `/work/worktrees/task-52a5dc76`.
