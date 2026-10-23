@@ -18,16 +18,16 @@ directly. Those inserts are not acceptance for this roster.
 
 ## Discharge
 
-Each CP-2..CP-13 row is discharged only by a complete UserPrompt transcript from
+Each CP-2..CP-14 row is discharged only by a complete UserPrompt transcript from
 the real producer to the recipient. Queue insert, Sent, or ack alone does not
 discharge that row. The existing methods reach that transcript through
 `LandDeliveryFixture.AssertDispatchReceiptsAsync`, which calls `ReceiptAsync` and
 requires `TranscriptKinds.UserPrompt` plus `PromptSubmissionMatch.IsCompleteIn`
-for every committed intent. CP-1 does not discharge CP-2..CP-13.
+for every committed intent. CP-1 does not discharge CP-2..CP-14.
 
 ## Platform
 
-CP-2..CP-13 are a Windows witness. `LandDeliveryFixture.InitializeAsync` requires
+CP-2..CP-14 are a Windows witness. `LandDeliveryFixture.InitializeAsync` requires
 Windows, a located ConPTY redistributable, and staged `fakegrok.exe`. A Linux run
 cannot execute those rows. Do not mark them passed from a Linux CP-1 result.
 
@@ -36,9 +36,13 @@ cannot execute those rows. Do not mark them passed from a Linux CP-1 result.
 CARD-0550 CP-24 budgets one `DispatchBaseWarningDeliveryE2ETests` method at 4
 minutes with the E2E build reused. CARD-0550 CP-22 budgets five of those methods
 at 8 minutes. CP-2 uses 8 minutes because that row pays for the isolated E2E
-build and one method. CP-3..CP-13 use 4 minutes, the CP-24 one-method budget.
+build and one method. CP-3..CP-14 use 4 minutes, the CP-24 one-method budget.
 CP-1 uses 2 minutes for the unit pin. These are published budgets, not a new
 measurement on this host.
+
+CP-14 restores the later CARD-1359 slow-materialization witness. Its 4-minute
+estimate provisionally reuses the CP-24 one-method budget; this Linux repair
+does not execute it or establish p95. The Windows witness remains pending.
 
 ## Non-goals
 
@@ -83,17 +87,17 @@ the `## Cost basis` section lacks its four-minute one-method budget citation
 checkpoint section contains this E2E class name, or when that E2E source
 contains a conditional-compilation directive. It does not compile the E2E
 project, a non-public or static method is not a roster row, and a passing pin
-does not pass V-2. CP-2..CP-13 stay unrun on Linux and V-2 stays pending.
+does not pass V-2. CP-2..CP-14 stay unrun on Linux and V-2 stays pending.
 
 V-2. On Windows, a named method stores one complete UserPrompt transcript per
 committed dispatch intent from the real producer to the recipient. Queue insert,
-Sent, or ack alone does not discharge V-2. V-2 stays pending: CP-2..CP-13 are
+Sent, or ack alone does not discharge V-2. V-2 stays pending: CP-2..CP-14 are
 Windows rows, and this roster-pin repair does not run them or mark V-2 passed.
 
 ### Checkpoints
 
 One isolated build for the unit pin and one isolated E2E build for the Windows
-rows. Reuse the E2E build only inside S1. `Min` is TUnit results. CP-2..CP-13
+rows. Reuse the E2E build only inside S1. `Min` is TUnit results. CP-2..CP-14
 run on Windows; CP-1 runs the roster class on Linux.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
@@ -111,12 +115,13 @@ run on Windows; CP-1 runs the roster class on Linux.
 | CP-11 | S1 | `CP-2` | e2e-pre-typing | `/*/*/DispatchBaseWarningDeliveryE2ETests/C540_PreTypingCrashRecoversWarnings*` | V-2 | exact 1 results, 0 failed/skipped | 1 | 4 | true |
 | CP-12 | S1 | `CP-2` | e2e-post-prompt | `/*/*/DispatchBaseWarningDeliveryE2ETests/C540_PostPromptCrashDoesNotRetype*` | V-2 | exact 1 results, 0 failed/skipped | 1 | 4 | true |
 | CP-13 | S1 | `CP-2` | e2e-receipt-crash | `/*/*/DispatchBaseWarningDeliveryE2ETests/C540_ReceiptCrashDoesNotRetype*` | V-2 | exact 1 results, 0 failed/skipped | 1 | 4 | true |
+| CP-14 | S1 | `CP-2` | e2e-slow-materialization | `/*/*/DispatchBaseWarningDeliveryE2ETests/C540_PreEnqueueWaitSurvivesSlowMaterialization*` | V-2 | exact 1 results, 0 failed/skipped | 1 | 4 | true |
 
 ### Cost
 
-Ordinary Code floor is 54 minutes, the sum of `EstimatedMinutes`. A Windows run
-of CP-2..CP-13 is that floor minus CP-1. A Linux roster-pin run is CP-1 only and
-leaves V-2 pending. This repair does not run CP-2..CP-13, so V-2 stays pending.
+Ordinary Code floor is 58 minutes, the sum of `EstimatedMinutes`. A Windows run
+of CP-2..CP-14 is that floor minus CP-1. A Linux roster-pin run is CP-1 only and
+leaves V-2 pending. This repair does not run CP-2..CP-14, so V-2 stays pending.
 
 ## S1
 
