@@ -45,3 +45,10 @@ without any documentation dependency. No item/property category is excluded from
 comparison. The sibling preserves the same ancestors; lack of write access fails closed.
 Established item/import/glob refusals take diagnostic precedence over probe refusals;
 probe checks remain decisive whenever those prior checks would approve.
+
+The observed early glob DirectoryExists caller is EngineFileUtilities before
+FileMatcher. Require a LazyItemEvaluator.IncludeOperation frame plus the SDK's
+EngineFileUtilities/FileMatcher frame, all from the loaded MSBuild assembly, and
+exclude any Condition function frame. No unverified caller receives the exception.
+Additional slot-gated tool-only diagnostic builds/fixtures are recorded in the Code
+report; they do not replace the closed final CP-4.
