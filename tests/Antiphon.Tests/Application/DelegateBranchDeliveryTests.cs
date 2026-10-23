@@ -50,7 +50,7 @@ public sealed class DelegateBranchDeliveryTests
     public async Task C1558_InconsistentPlatformIsRefused(CancellationToken ct)
     {
         await using var runtime = new SessionRunnerRuntime(
-            Options.Create(new SessionRunnerSettings()), NullLogger<SessionRunnerRuntime>.Instance);
+            Options.Create(new Antiphon.SessionRunner.SessionRunnerSettings()), NullLogger<SessionRunnerRuntime>.Instance);
         var capabilities = new PhoneHomeRuntimeAdapter(runtime, RunnerBuildIdentity.Resolve()).Capabilities()
             with { Platform = "windows" };
         await using var host = await PhoneHomeTestHost.StartAsync();
