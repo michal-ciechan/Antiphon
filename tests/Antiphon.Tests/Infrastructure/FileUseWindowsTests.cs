@@ -26,6 +26,8 @@ public sealed class FileUseWindowsTests
         {
             io = new() { StartError = error };
             result = Observe(io); result.Coverage.ShouldNotBe(FileUseCoverage.Complete); result.Status.ShouldNotBe(FileUseStatus.NoOwnersObserved);
+            result.NativeErrors.ShouldContain(error);
+            if (error == 353) result.Reasons.ShouldContain(FileUseReason.SessionLimit);
             io.Trace.ShouldBe(["start"]);
         }
         io = new() { RegisterError = 5 };
@@ -53,6 +55,9 @@ public sealed class FileUseWindowsTests
         result = Observe(io);
         result.Owners.Single().MatchKind.ShouldBe("CommandLineCandidate");
         result.Coverage.ShouldBe(FileUseCoverage.Partial);
+        var candidate = await new FileUseCapture(new WindowsFileUseProvider(io), new NoWriter()).TryCaptureAsync(Request());
+        candidate.Summary.ShouldContain("candidate pid=41"); candidate.Summary.ShouldNotContain("holder pid=");
+        candidate.Backend.ShouldBe("restart-manager+cim");
         io = new() { Denied = true };
         result = Observe(io);
         result.Owners.Single().Pid.ShouldBe(41); result.Owners.Single().CommandLine.ShouldBeNull();
@@ -68,6 +73,16 @@ public sealed class FileUseWindowsTests
         var capture = await new FileUseCapture(new WindowsFileUseProvider(io), new NoWriter()).TryCaptureAsync(request);
         capture.Owners.Single().AntiphonOwned.ShouldBe(true); capture.Summary.ShouldNotContain("fixture-secret"); capture.Summary.ShouldNotContain("opaque-secret");
         capture.Owners.Single().CommandLine.ShouldContain("dotnet");
+        io = new() { Parent = 11 };
+        var ancestor = await new FileUseCapture(new WindowsFileUseProvider(io), new NoWriter()).TryCaptureAsync(
+            Request() with { OwnedGenerations = [new(11, Source.StartTime.ToString(System.Globalization.CultureInfo.InvariantCulture))] });
+        ancestor.Owners.Single().AntiphonOwned.ShouldBe(true); ancestor.Owners.Single().Ancestors.Single().Pid.ShouldBe(11);
+        io = new();
+        var foreign = await new FileUseCapture(new WindowsFileUseProvider(io), new NoWriter()).TryCaptureAsync(
+            Request() with { ForeignGenerations = [new(41, Source.StartTime.ToString(System.Globalization.CultureInfo.InvariantCulture))] });
+        foreign.Owners.Single().AntiphonOwned.ShouldBe(false);
+        io = new();
+        Observe(io).Owners.Single().AntiphonOwned.ShouldBeNull("a dotnet name does not establish ownership");
         io = new() { StartError = 120, InventoryDenied = true };
         result = Observe(io); result.Status.ShouldNotBe(FileUseStatus.NoOwnersObserved); result.Coverage.ShouldNotBe(FileUseCoverage.Complete);
     }
@@ -81,7 +96,7 @@ public sealed class FileUseWindowsTests
         public static long StartTime => new DateTime(2026, 10, 23, 0, 0, 0, DateTimeKind.Utc).ToFileTimeUtc();
         public List<string> Trace { get; } = [];
         public Queue<WindowsFileUseList> Lists = new([new(234, 1, []), new(0, 1, [new(41, StartTime, "dotnet")])]);
-        public int StartError, RegisterError; public bool ThrowList, Denied, Reused, Exit, InventoryDenied;
+        public int StartError, RegisterError; public int? Parent; public bool ThrowList, Denied, Reused, Exit, InventoryDenied;
         public string Kind = "file", Argv = "dotnet\0--no-logo";
         public string[] Registered = [], Descendants = [], ModulePaths = [];
         public int[] Inventory = [];
@@ -93,7 +108,7 @@ public sealed class FileUseWindowsTests
         public override WindowsFileUseList List(uint session, uint capacity) { Trace.Add("list:" + capacity); if (ThrowList) throw new DllNotFoundException(); return Lists.Dequeue(); }
         public override void End(uint session) => Trace.Add("end");
         public override IEnumerable<int> Processes() => InventoryDenied ? throw new UnauthorizedAccessException() : Inventory;
-        public override WindowsFileUseMetadata Metadata(int pid) => Denied ? throw new UnauthorizedAccessException() : Exit ? throw new ArgumentException() : new(pid, StartTime, "dotnet", "dotnet.exe", Argv, null);
+        public override WindowsFileUseMetadata Metadata(int pid) => Denied ? throw new UnauthorizedAccessException() : Exit ? throw new ArgumentException() : new(pid, StartTime, "dotnet", "dotnet.exe", Argv, pid == 41 ? Parent : null);
         public override long Generation(int pid) => Reused ? StartTime + 1 : StartTime;
         public override IEnumerable<string> Modules(int pid) => ModulePaths;
     }

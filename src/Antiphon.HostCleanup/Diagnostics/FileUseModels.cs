@@ -3,7 +3,7 @@ namespace Antiphon.HostCleanup.Diagnostics;
 public enum FileUseStatus { Unavailable, Observed, NoOwnersObserved, PathGone, Partial, TimedOut, Busy, NotTriggered }
 public enum FileUseCoverage { None, Partial, Complete }
 public enum FileUseOwnerState { Observed, ExitedDuringCapture, IdentityChanged, MetadataUnavailable }
-public enum FileUseReason { UnsupportedPlatform, AccessDenied, PathGone, ExitedDuringCapture, IdentityChanged, NamespaceLimited, Budget, ResourceLimit, ProcessLimit, FdLimit, InputLimit, OwnerLimit, AncestorLimit, TextLimit, EvidenceUnavailable, RedactionUnavailable, ProviderFailure, Suppressed }
+public enum FileUseReason { UnsupportedPlatform, AccessDenied, PathGone, ExitedDuringCapture, IdentityChanged, NamespaceLimited, Budget, ResourceLimit, ProcessLimit, FdLimit, InputLimit, OwnerLimit, AncestorLimit, TextLimit, EvidenceUnavailable, RedactionUnavailable, ProviderFailure, Suppressed, SessionLimit, NativeFailure, ModuleLimit }
 public sealed record FileUseGeneration(int Pid, string NativeStart);
 public sealed record FileUseAncestor(int Pid, string NativeStart, string Name, string? CommandLine);
 public sealed record FileUseOwner(int Pid, string Name, string NativeStart, DateTimeOffset? StartUtc,
@@ -22,6 +22,8 @@ public sealed record FileUseObservation(FileUseStatus Status, FileUseCoverage Co
 {
     public string? PathKind { get; init; }
     public string? ResourceIdentity { get; init; }
+    public string? Backend { get; init; }
+    public IReadOnlyList<int> NativeErrors { get; init; } = [];
 }
 public sealed record FileUseRequest(string Path, Exception Error, string EvidenceRoot)
 {
@@ -60,6 +62,7 @@ public sealed record FileUseSnapshot(string CaptureId, FileUseStatus Status, Fil
     public string? RunId { get; init; }
     public string? SessionId { get; init; }
     public string Backend { get; init; } = "none";
+    public IReadOnlyList<int> NativeErrors { get; init; } = [];
     public double DurationMilliseconds { get; init; }
     public long FailureTimestamp { get; init; }
     public string? PathIdentity { get; init; }
@@ -70,7 +73,7 @@ public sealed record FileUseSnapshot(string CaptureId, FileUseStatus Status, Fil
     {
         get
         {
-            var text = $"file-use capture={CaptureId} status={Status}; " + string.Join("; ", Owners.Select(o => $"holder pid={o.Pid} name={o.Name} start={o.NativeStart} state={o.State} parent={o.ParentPid} commandLine={o.CommandLine}"));
+            var text = $"file-use capture={CaptureId} status={Status}; " + string.Join("; ", Owners.Select(o => $"{(o.MatchKind == "CommandLineCandidate" ? "candidate" : "holder")} pid={o.Pid} name={o.Name} start={o.NativeStart} state={o.State} parent={o.ParentPid} commandLine={o.CommandLine}"));
             return text.Length <= 2048 ? text : text[..2033] + "...[truncated]";
         }
     }
