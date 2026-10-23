@@ -276,7 +276,7 @@ Ignored board snapshots/card drafts are local working evidence in
 ## Exact recorded failures and stacks
 
 The following extracts preserve ErrorInfo from the three TRX files and failed-case blocks
-from the group-15 console. TUnit itself omits internal frames. They are historical test
+from the group-15 console, with trailing padding removed. TUnit itself omits internal frames. They are historical test
 output, not executions performed by this task.
 
 ### Group 3: Dispose_awaits_exit_of_its_running_host_and_descendants
@@ -304,12 +304,12 @@ ShouldAssertException: await h.ProbeAsync(); h.RecoveryOutcomes.Last()
     but was
 "Unknown"
     difference
-Difference     |  |    |    |    |    |    |    |    |    |    |    |    |    |    |   
-               | \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  
-Index          | 0    1    2    3    4    5    6    7    8    9    10   11   12   13   
-Expected Value | C    h    e    c    k    e    d    W    o    r    k    i    n    g    
-Actual Value   | U    n    k    n    o    w    n                                       
-Expected Code  | 67   104  101  99   107  101  100  87   111  114  107  105  110  103  
+Difference     |  |    |    |    |    |    |    |    |    |    |    |    |    |    |
+               | \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/
+Index          | 0    1    2    3    4    5    6    7    8    9    10   11   12   13
+Expected Value | C    h    e    c    k    e    d    W    o    r    k    i    n    g
+Actual Value   | U    n    k    n    o    w    n
+Expected Code  | 67   104  101  99   107  101  100  87   111  114  107  105  110  103
 Actual Code    | 85   110  107  110  111  119  110
 at Antiphon.Tests.Application.TurnEndGapRestartDeliveryTests.C1205_Watchdog_delivers_while_event_stream_remains_healthy() in C:\Antiphon\releases\checkout\tests\Antiphon.Tests\Application\TurnEndGapRestartDeliveryTests.cs:line 85
    at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
@@ -337,12 +337,12 @@ ShouldAssertException: h.RecoveryOutcomes.Last()
     but was
 "Unknown"
     difference
-Difference     |  |    |    |    |    |    |    |    |    |    |    |    |    |    |   
-               | \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  
-Index          | 0    1    2    3    4    5    6    7    8    9    10   11   12   13   
-Expected Value | C    h    e    c    k    e    d    W    o    r    k    i    n    g    
-Actual Value   | U    n    k    n    o    w    n                                       
-Expected Code  | 67   104  101  99   107  101  100  87   111  114  107  105  110  103  
+Difference     |  |    |    |    |    |    |    |    |    |    |    |    |    |    |
+               | \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/  \|/
+Index          | 0    1    2    3    4    5    6    7    8    9    10   11   12   13
+Expected Value | C    h    e    c    k    e    d    W    o    r    k    i    n    g
+Actual Value   | U    n    k    n    o    w    n
+Expected Code  | 67   104  101  99   107  101  100  87   111  114  107  105  110  103
 Actual Code    | 85   110  107  110  111  119  110
 at Antiphon.Tests.Application.TurnEndGapRestartDeliveryTests.C1205_Busy_tail_keeps_completion_obligations_pending() in C:\Antiphon\releases\checkout\tests\Antiphon.Tests\Application\TurnEndGapRestartDeliveryTests.cs:line 168
    at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
@@ -634,7 +634,7 @@ failed C1380_DocsOnlyRebasedLandRecordsNonCodeSkip (34s 973ms)
   0
       but was
   1
-  
+
   Additional Info:
       a docs-only rebased candidate must not invoke the verifier or its build slot
     at Antiphon.Tests.Application.LandNonCodeSkipTests.C1380_DocsOnlyRebasedLandRecordsNonCodeSkip() in C:\Antiphon\releases\checkout\tests\Antiphon.Tests\Application\LandNonCodeSkipTests.cs:33
