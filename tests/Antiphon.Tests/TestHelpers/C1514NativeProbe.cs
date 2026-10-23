@@ -38,10 +38,11 @@ internal static class C1514NativeProbe
         . (Join-Path $lib 'nightly-common.ps1')
         . (Join-Path $lib 'nightly-policy.ps1')
         . (Join-Path $lib 'nightly-coverage.ps1')
+        . (Join-Path $lib 'nightly-tests-impl.ps1')
         . (Join-Path $lib 'test-phase-evidence.ps1')
         . (Join-Path $lib 'nightly-owned-process.ps1')
-        $environment = @{}
-        foreach ($name in $script:TestPhaseVariableNames) { $environment[$name] = $null }
+        $environment = Get-NightlySafeChildEnvironment -PolicyObject ([pscustomobject]@{}) -SuiteId 'probe'
+        Remove-TestPhaseVariables -Environment $environment
         $diag = Join-Path $work 'discovery'
         New-Item -ItemType Directory -Path $diag | Out-Null
         $discovery = Invoke-NightlyOwnedProcess -FilePath 'dotnet' -ArgumentList @($probe,'--list-tests','--no-progress','--no-ansi','--diagnostic','--diagnostic-output-directory',$diag) -WorkingDirectory $work -TimeoutMilliseconds 30000 -Environment $environment -LogPath (Join-Path $work 'discovery.log')
