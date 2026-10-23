@@ -100,6 +100,9 @@ public sealed class PhoneHomeRunnerSettings
     /// </summary>
     public int OwnerCacheNegativeSeconds { get; set; } = 5;
 
+    /// <summary>Fixed per-connection observers. One restores serial observation for diagnosis.</summary>
+    public int EventConsumerConcurrency { get; set; } = 4;
+
     /// <summary>
     /// CARD-1219 D-2/D-3: the <c>TranscriptIncidentReplayGuard</c> window; minimum 1 per
     /// <c>PhoneHomeRunnerSettingsValidatorTests.Replay_window_below_one_second_is_refused</c>.
@@ -299,6 +302,8 @@ public static class PhoneHomeRunnerSettingsRules
             failures.Add("PhoneHomeRunner:CatchUpRetrySeconds must be at least 1.");
         if (options.OwnerCacheNegativeSeconds < 0)
             failures.Add("PhoneHomeRunner:OwnerCacheNegativeSeconds must not be negative.");
+        if (options.EventConsumerConcurrency is < 1 or > 16)
+            failures.Add("PhoneHomeRunner:EventConsumerConcurrency must be between 1 and 16.");
         if (options.TranscriptIncidentReplayWindowSeconds < 1)
             failures.Add("PhoneHomeRunner:TranscriptIncidentReplayWindowSeconds must be at least 1.");
         if (options.LaunchTransportRetries < 0)

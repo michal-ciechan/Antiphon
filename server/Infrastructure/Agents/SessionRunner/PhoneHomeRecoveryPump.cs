@@ -56,6 +56,8 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         if (!_settings.Enabled)
             return;
 
+        try
+        {
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -73,6 +75,26 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
 
             await Task.Delay(50, stoppingToken);
         }
+        }
+        finally
+        {
+            foreach (var cycle in _cycles.Values)
+                try { cycle.PumpStop?.Cancel(); } catch (ObjectDisposedException) { }
+            foreach (var cycle in _cycles.Values)
+            {
+                await JoinPumpAsync(cycle.Pump);
+                await JoinPumpAsync(cycle.Refresh);
+                await JoinPumpAsync(cycle.Teardown);
+            }
+        }
+    }
+
+    private async Task JoinPumpAsync(Task? task)
+    {
+        if (task is null) return;
+        try { await task; }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { _logger.LogWarning(ex, "Phone-home owned observation task ended with a fault"); }
     }
 
     /// <summary>How many owned sessions' transcripts failed in the last catch-up that listed.</summary>
@@ -98,6 +120,22 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     {
         var cycle = _cycles.GetOrAdd(runnerId, static _ => new Cycle());
         var live = _directory.SnapshotLive(runnerId);
+        if (cycle.Teardown is { } teardown)
+        {
+            if (!teardown.IsCompleted) return false;
+            await teardown;
+            cycle.Teardown = null;
+            cycle.Recovered = null;
+        }
+        if (cycle.Recovered is { } previous && (!ReferenceEquals(previous, live) || !previous.SocketOpen))
+        {
+            try { cycle.PumpStop?.Cancel(); } catch (ObjectDisposedException) { }
+            cycle.Teardown = JoinPumpAsync(cycle.Pump);
+            cycle.NextCatchUp = null;
+            if (!cycle.Teardown.IsCompleted)
+                _logger.LogWarning("Phone-home observer teardown is still running for {RunnerId} epoch {Epoch}; replacement waits", runnerId, previous.Epoch);
+            return false;
+        }
         if (live is null || !live.SocketOpen)
         {
             cycle.Recovered = null;
@@ -122,6 +160,12 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
                 StartPump(live, cycle, ct);
             }
 
+            if (live.Diagnostics.TakeSlowWarning() is { } slow)
+                _logger.LogWarning(
+                    "Phone-home slow observer runner={RunnerId} epoch={Epoch} worker={Worker} session={SessionId} event={EventName} phase={Phase} elapsedMs={ElapsedMs} oldestMs={OldestPendingMs} diagnostics={Diagnostics}",
+                    runnerId, live.Epoch, slow.Worker, slow.SessionId, slow.EventName, slow.Phase, slow.ElapsedMs,
+                    live.AccountingSnapshot().OldestPendingMs,
+                    System.Text.Json.JsonSerializer.Serialize(live.Diagnostics.Snapshot(), PhoneHomeFraming.Json));
             RefreshInventoryIfDue(live, cycle, ct);
             return false;
         }
@@ -257,7 +301,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     {
         try
         {
-            await PumpEventsAsync(live, stop.Token);
+            await Task.Run(() => PumpEventsAsync(live, stop.Token), CancellationToken.None);
         }
         finally
         {
@@ -356,20 +400,16 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         _ => ex.GetType().Name,
     };
 
-    internal async Task PumpEventsAsync(PhoneHomeLiveConnection live, CancellationToken ct)
+    internal Task PumpEventsAsync(PhoneHomeLiveConnection live, CancellationToken ct) =>
+        new PhoneHomeEventScheduler(live, _settings.EventConsumerConcurrency,
+            (worker, item, parsed, token) => ObserveEventAsync(live, worker, item, parsed, token),
+            (item, error) => RecordEventFailure(live, item, null, error)).RunAsync(ct);
+
+    private async Task ObserveEventAsync(PhoneHomeLiveConnection live, int worker, PhoneHomeQueuedEvent item,
+        SessionRunnerEvent parsed, CancellationToken ct)
     {
-        await foreach (var item in live.Events.ReadAllAsync(ct))
+        try
         {
-            var frame = item.Frame;
-            Guid? sessionId = null;
-            try
-            {
-                if (frame.EventName is null || frame.Payload is null)
-                    continue;
-                var parsed = RunnerContractMapper.ParseEvent(frame.EventName, frame.Payload.Value.GetRawText());
-                if (parsed is null)
-                    continue;
-                sessionId = parsed.SessionId;
                 // CARD-0679 D-10: an exited session leaves the inventory whoever owns it; the List
                 // the inventory came from is not owner-filtered either. Any other event from a
                 // session is the runner confirming it is still there.
@@ -377,20 +417,34 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
                     live.NoteSessionGone(parsed.SessionId, parsed.Exited.AcceptedStartedAt);
                 else
                     live.NoteSessionConfirmed(parsed.SessionId);
+                live.Diagnostics.Phase(worker, parsed.SessionId, parsed.EventName, "owner");
                 if (!await OwnerMatchesAsync(live, parsed.SessionId, ct))
-                    continue;
+                    return;
 
                 await using var scope = _scopes.CreateAsyncScope();
                 var runtime = scope.ServiceProvider.GetRequiredService<AgentSessionRuntime>();
                 if (parsed.Output is not null)
-                    await runtime.ObserveOutputAsync(parsed.Output.SessionId, parsed.Output.Sequence, parsed.Output.Text, ct);
+                    await runtime.ObserveOutputAsync(parsed.Output.SessionId, parsed.Output.Sequence, parsed.Output.Text,
+                        phase => live.Diagnostics.Phase(worker, parsed.SessionId, parsed.EventName, phase switch
+                        {
+                            SessionObservationPhase.OutputMention => "output.mention",
+                            SessionObservationPhase.OutputPublish => "output.publish",
+                            _ => "output.activity"
+                        }), ct);
                 else if (parsed.Exited is not null)
+                {
+                    live.Diagnostics.Phase(worker, parsed.SessionId, parsed.EventName, "exit.observe");
                     await runtime.ObserveExitAsync(parsed.Exited, ct);
+                }
                 else if (parsed.Transcript is not null)
+                {
+                    live.Diagnostics.Phase(worker, parsed.SessionId, parsed.EventName, "transcript.persist");
                     await runtime.ObserveTranscriptAsync(parsed.Transcript, ct);
+                }
                 // CARD-1219 D-4: transcript fault/bound frames (PhoneHomeTranscriptIncidentTests).
                 else if (parsed.TranscriptFault is { } fault)
                 {
+                    live.Diagnostics.Phase(worker, parsed.SessionId, parsed.EventName, "transcript.incident");
                     if (ReplayGuardFor(live).Admit(fault))
                         await scope.ServiceProvider.GetRequiredService<TranscriptBindingIncidentService>()
                             .OnTranscriptFaultAsync(fault, ct);
@@ -399,30 +453,26 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
                 }
                 else if (parsed.TranscriptBound is { } bound)
                 {
+                    live.Diagnostics.Phase(worker, parsed.SessionId, parsed.EventName, "transcript.incident");
                     if (ReplayGuardFor(live).Admit(bound))
                         await scope.ServiceProvider.GetRequiredService<TranscriptBindingIncidentService>()
                             .OnHeuristicBindAsync(bound, ct);
                     else
                         LogReplay(live, parsed.EventName, bound.SessionId);
                 }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
-            {
-                // CARD-0679 D-2: one event that cannot be observed must not end the pump, or every
-                // later event on the connection stays pending until the cap closes the socket. A
-                // persisted transcript entry is still in the runner's transcript, and the next
-                // connection's catch-up re-reads it.
-                var failures = Interlocked.Increment(ref StateFor(live).EventFailures);
-                _logger.LogWarning(
-                    ex, "Phone-home event {EventName} for session {SessionId} on runner {RunnerId} epoch {Epoch} "
-                    + "failed; the pump continues ({EventFailures} failed events on this connection)",
-                    frame.EventName, sessionId, live.RunnerId, live.Epoch, failures);
-            }
-            finally
-            {
-                item.Release();
-            }
         }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            RecordEventFailure(live, item, parsed.SessionId, ex);
+        }
+    }
+
+    private void RecordEventFailure(PhoneHomeLiveConnection live, PhoneHomeQueuedEvent item, Guid? sessionId, Exception ex)
+    {
+        var failures = Interlocked.Increment(ref StateFor(live).EventFailures);
+        _logger.LogWarning(ex,
+            "Phone-home event {EventName} for session {SessionId} on runner {RunnerId} epoch {Epoch} failed; the pump continues ({EventFailures} failed events on this connection)",
+            item.Frame.EventName, sessionId, live.RunnerId, live.Epoch, failures);
     }
 
     /// <summary>
@@ -466,6 +516,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         public DateTimeOffset NextRefresh;
         public Task? Refresh;
         public Task? Pump;
+        public Task? Teardown;
         public CancellationTokenSource? PumpStop;
     }
 
