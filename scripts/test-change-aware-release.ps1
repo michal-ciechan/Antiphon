@@ -49,7 +49,9 @@ function New-Fx {
     foreach ($path in @($catalog.sets.sourceInputs + $catalog.sets.members.source | Sort-Object -Unique)) {
         if ($path -and -not (Test-Path (Join-Path $seed $path))) { Write-Fx $seed $path 'fixture source' }
     }
-    foreach ($path in (Git-Fx $repoRoot @('ls-files','tests/*.csproj','scripts/fixtures/nightly/c487-probe/Probe.csproj')).Split("`n")) {
+    # Preserve every tracked project, including child probes outside tests/.
+    # The production census still decides which projects require a disposition.
+    foreach ($path in (Git-Fx $repoRoot @('ls-files','*.csproj')).Split("`n")) {
         Write-Fx $seed $path ([IO.File]::ReadAllText((Join-Path $repoRoot $path)))
     }
     # Committed differing wrapper bytes force the real self-reexec edge. These tiny
