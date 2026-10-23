@@ -424,7 +424,7 @@ public static class BuildConfinement
         return text.Length > 200 ? text[..200] : text;
     }
 
-    internal static string Stamp(string full) => Stamp(full, path => ReceiptFile.Digest(Antiphon.HostCleanup.Checkpoints.CheckpointCleanupDefaults.Context, path));
+    internal static string Stamp(string full) => Stamp(full, path => ReceiptFile.Digest(CheckpointCleanupDefaults.Context, path));
 
     internal static string Stamp(string full, Func<string, (long Length, string Sha256)> digest)
     {
