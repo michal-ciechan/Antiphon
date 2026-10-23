@@ -1097,9 +1097,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         AgentSession session, AgentTask task, CancellationToken ct)
     {
         var marker = DelegationReportFormatter.TaskMarker(task.Id);
-        var hasBrief = await _db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == session.Id
+        var related = await _db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == session.Id
             && m.Origin == QueuedMessageOrigin.Delegation
-            && (m.ExecutionTaskId == task.Id || (m.SourceTaskId == task.Id && m.Body.Contains(marker))), ct);
+            && (m.ExecutionTaskId == task.Id || (m.SourceTaskId == task.Id && m.Body.Contains(marker)))).ToListAsync(ct);
+        var request = task.DispatchedAt is DateTime dispatch
+            ? new DispatchBriefEnsureRequest(task.Id, task.Attempt, session.Id, dispatch, session.StartedAt)
+            : null;
+        var hasBrief = related.Any(m => request is null || !DispatchRefocusIdentity.Matches(
+            SessionMessageQueueService.ToBriefEvidence(m), request, session.AgentKind, task.Goal));
         var receivedBrief = !hasBrief && await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == session.Id
             && t.Kind == TranscriptKinds.UserPrompt && t.Text != null && t.Text.Contains(marker)
             && (task.DispatchedAt == null || (t.Timestamp ?? t.CreatedAt) > task.DispatchedAt), ct);
@@ -1289,17 +1294,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     && m.Origin == QueuedMessageOrigin.Delegation
                     && (m.ExecutionTaskId == task.Id || m.SourceTaskId == task.Id)
                     && m.CreatedAt >= dispatchedAt)
-                .Select(m => new
-                {
-                    m.Status,
-                    m.DeliveryAttempts,
-                    m.SentAt,
-                    m.CanceledAt,
-                    m.LastDeliveryStartedAt,
-                    m.DeliveryVerdict,
-                    m.ExecutionTaskId,
-                })
                 .ToListAsync(ct);
+            var request = new DispatchBriefEnsureRequest(task.Id, task.Attempt, session.Id, dispatchedAt, session.StartedAt);
+            rows.RemoveAll(m => DispatchRefocusIdentity.Matches(
+                SessionMessageQueueService.ToBriefEvidence(m), request, session.AgentKind, task.Goal));
             if (rows.Count == 0)
                 return RunningBriefObligation.Absent;
             if (rows.Count == 1
