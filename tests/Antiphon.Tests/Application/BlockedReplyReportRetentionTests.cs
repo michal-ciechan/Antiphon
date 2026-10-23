@@ -236,7 +236,7 @@ public sealed class BlockedReplyReportRetentionTests
         await using (var db = world.CreateContext())
         {
             var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
-            task.Stage = OrchestrationStage.Code;
+            task.Stage = OrchestrationStage.Review;
             await db.SaveChangesAsync();
         }
         const string message = "Accepted. Resend the complete report.";
@@ -263,7 +263,7 @@ public sealed class BlockedReplyReportRetentionTests
                     "the finding contract precedes the closing report tokens");
             }
         }
-        body.ShouldContain(DelegationReportFormatter.FindingContract(world.TaskId, OrchestrationStage.Code),
+        body.ShouldContain(DelegationReportFormatter.FindingContract(world.TaskId, OrchestrationStage.Review),
             Case.Sensitive, "Reply uses the dispatch finding instructions verbatim");
         var replied = (await world.EventsAsync()).Single(e => e.Type == AgentTaskEventType.Replied);
         replied.InputBody.ShouldBe(body, "the Replied event stores the complete queued wire");
