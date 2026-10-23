@@ -643,9 +643,11 @@ and slow detached launches retain the existing 15-minute fallback. Confirmed
 nonzero launcher exit at health timeout now clears only the restart's own stamp
 and names captured stdout/stderr, including failures before apphost.log exists.
 
-The watchdog records outage duration even when recovery is suppressed and queues
-one down event at three minutes plus one recovery event. Delivery requires the
-independently configured, idempotent transport described in the
-[dead-launch runbook](apphost-runbook.md#dead-launch-recovery-and-outage-evidence-card-1527).
-Missing transport is pending delivery, not a successful alert. Native Windows
-qualification and observer registration remain separate operational work.
+The watchdog records outage duration even when recovery is suppressed. At three
+minutes it writes a best-effort Windows Application Event Log Warning (source
+Antiphon-Watchdog), maintains logs/apphost-down.alert, and optionally posts to the
+URL in ANTIPHON_WATCHDOG_ALERT_WEBHOOK. Recovery writes Information, removes the
+marker and sends the optional recovery webhook. Each sink is independent; no URL
+means no webhook. See the [dead-launch runbook](apphost-runbook.md#dead-launch-recovery-and-outage-evidence-card-1527)
+for retry/deduplication and marker details. Native Windows qualification and
+observer registration remain separate operational work.

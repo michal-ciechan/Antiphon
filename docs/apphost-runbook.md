@@ -289,14 +289,29 @@ Successful sends are also retained in `logs/apphost-outage-events.jsonl` for lat
 attention import. No automatic attention importer is added by this script change.
 Maintenance suppresses observation/recovery/notifications; ProbeOnly never sends.
 
-**Transport configuration remains an operator decision.** There was no existing
-AppHost watchdog alert sender. The proposed adapter reads
-`ANTIPHON_APPHOST_ALERT_WEBHOOK` in the scheduled task's environment and posts JSON
-over HTTPS with a five-second timeout and the event ID as `Idempotency-Key`.
-The approved receiver must independently survive AppHost loss and deduplicate
-that key, including a send accepted before a local receipt write fails. Missing
-configuration or failed delivery retains the event and logs a pending warning;
-it is not a delivered alert. Do not put a secret URL in source or console output.
-Native Windows CIM/Task Scheduler/5.1 capture qualification and the missing
-watchdog-state-observer registration audit remain owed to the Windows operational
-owner. This change does not register a task or restart any host.
+The operator-selected transport consists of three independent sinks behind
+Send-AppHostOutageEvent. Windows writes an Application Event Log entry using source
+`Antiphon-Watchdog`: Warning after three minutes down, Information on recovery.
+The source is created lazily. Source access/creation/write failure is best effort
+and cannot fail the watchdog or suppress the other sinks. The attempt is persisted
+before writing, preventing repeated entries after process loss; a crash between
+that intent and the write can omit that local entry.
+
+`logs/apphost-down.alert` contains JSON with `downSinceUtc`, `minutesDown` and
+`lastRestartAttemptUtc` (null when no attempt is recorded). It refreshes on each
+fire after the threshold and after a restart attempt, and is removed on recovery
+or intentional maintenance. It follows current health, so a delayed down webhook
+cannot recreate a recovered marker. Marker write failure leaves other sinks working.
+
+The webhook is optional and reads only `ANTIPHON_WATCHDOG_ALERT_WEBHOOK` from the
+scheduled task's environment. With no configured URL, no HTTP request or pending
+webhook is created. With a URL, it posts one down event and one recovery event,
+with a five-second bound and stable `Idempotency-Key`. Failed delivery stays queued;
+recovery's local signals proceed even while the earlier webhook retries. The
+receiver must deduplicate that key across ambiguous HTTP completions. Prefer HTTPS.
+The URL and response body are never logged. No endpoint is built into source.
+The earlier proposed `ANTIPHON_APPHOST_ALERT_WEBHOOK` name is not consumed.
+
+Native Windows CIM/Task Scheduler/5.1 capture and Event Log source/entry qualification,
+plus the missing watchdog-state-observer registration audit, remain owed to the
+Windows operational owner. This change does not register a task or restart any host.
