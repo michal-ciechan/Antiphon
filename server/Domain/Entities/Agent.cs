@@ -228,6 +228,9 @@ public class Agent
     /// </summary>
     public string? PoolProviderProjectionJson { get; set; }
 
+    /// <summary>Explicit Claude effort in this pool process's launch argv; null means unknown.</summary>
+    public string? PoolClaudeEffort { get; set; }
+
     /// <summary>
     /// For a reservation window after each task, the warm delegate answers only to the run that
     /// just used it — follow-ups keep their context. The window expiring releases it to anyone;

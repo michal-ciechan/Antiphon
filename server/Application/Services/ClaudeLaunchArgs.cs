@@ -29,6 +29,9 @@ public static class ClaudeLaunchArgs
     /// <summary>Claude's session-effort flag. Space-separated: <c>--effort</c> then the value.</summary>
     public const string EffortFlag = "--effort";
 
+    // S1 red foundation: implemented after the launch/reuse witnesses execute.
+    public static string? ReadLaunchEffort(IReadOnlyList<string> args) => null;
+
     /// <summary>
     /// Effort, set EXPLICITLY on every launch (CARD-0289). The same four-value table Codex and
     /// Grok use, so a given tier means the same depth on every provider. The Claude CLI accepts
