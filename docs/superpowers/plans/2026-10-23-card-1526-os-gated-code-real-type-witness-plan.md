@@ -294,12 +294,16 @@ No command in a witness record is executed by the checker.
 | V-9 | `unknown-classification`: unknown non-document paths need classification | CP-1 |
 | V-10 | `documentation-only`: correct not-applicable census passes | CP-1 |
 | V-11 | Repair: `test-seam-only`, `test-always-assigned`, `test-comment-only`, `test-case-missing`, `test-comment-strings`, `test-line-comment-strings`, `test-hash-comment-strings`, `test-factory-missing`, `test-name-call-only`, `test-name-prefix`, `real-absent-test`, `pinned-test-ignores-worktree`, `pinned-test-rejects-worktree-repair`: require pinned test declarations, code tokens and setup assertions | CP-1 |
+| V-12 | Repair 2: `test-unterminated-csharp-block`, `test-unterminated-powershell-block`, `test-nested-powershell-block`, `test-nested-powershell-inner-close-only`, `test-closed-powershell-block`, `test-csharp-block-does-not-nest`, `test-unterminated-block-after-code`: strip closed comments, nest PowerShell blocks only, reject every unterminated block with its kind | CP-1 |
+| V-13 | Repair 2: `test-csharp-string-comment-delimiters`, `test-powershell-string-comment-delimiters`, `test-csharp-escaped-string-delimiters`, `test-powershell-escaped-string-delimiters`, `test-unterminated-string`: quoted delimiters stay literal; ambiguous/unterminated strings fail closed | CP-1 |
+| V-14 | Repair 2: `strict-valid-absent`: absent optional value passes under inherited Set-StrictMode Latest | CP-1 |
 | R-1 | `policy-surface`: mandatory owner/bundle pointers, corrected incident, native absent-key recipe, restore and forward recovery (26 assertions) | CP-1 |
 | R-2 | Five TaskPlatformGuidanceTests, eight CheckpointManifestDocumentationTests, one CheckpointRepeatDocumentationTests; existing caps, platform, checkpoint and repeat obligations preserved | CP-2 |
 | R-3 | Manual diff: standing rule 4/D-2 unchanged; no runtime policy repair, desktop/release operations or persistent opt-out change; clean merge-tree and sequential rc cherry-pick simulation | Manual |
 
 CP-1 preserves the original 25 named checker cases (50 exit/diagnostic assertions)
-and 26 policy assertions, adding 13 repair cases (26 assertions): 102 total,
+and 26 policy assertions, adding 13 first-repair cases (26 assertions) and 13
+second-repair cases (26 assertions): 51 checker cases, 128 total assertions,
 all required, no skipped group. Each checker process has a
 15-second kill/join deadline. The ordinary command row is capped at two minutes;
 CP-2 at eight minutes, with one isolated build. Normal green is run once; only
@@ -319,7 +323,7 @@ owned and unbound while its repair is InProgress.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1-S3 | n/a | portable-os-witness-lint | `pwsh -NoProfile -File scripts/test-os-witnesses.ps1` | Lint contract, pinned test code, policy pointers, native recipe/rollback document checks | All 38 checker cases (76 assertions) plus 26 policy assertions pass (102 total); exit 0; no skipped group. | n/a | 2 |
+| CP-1 | S1-S3 | n/a | portable-os-witness-lint | `pwsh -NoProfile -File scripts/test-os-witnesses.ps1` | V-1 through V-14, R-1: lint, pinned test code, comments/strings, strict mode, policy and native recipe checks | All 51 checker cases (102 assertions) plus 26 policy assertions pass (128 total); exit 0; no skipped group. | n/a | 2 |
 | CP-2 | S1-S3 | `tests/Antiphon.Tests -> bin-c1526/` | portable-bundle-contracts | `/*/*/(TaskPlatformGuidanceTests*)\|(CheckpointManifestDocumentationTests*)\|(CheckpointRepeatDocumentationTests*)/*` | Existing bundle caps, preserved instructions, placement, checkpoint and repeat-policy obligations | All 14 existing methods pass, 0 failed/skipped; no sibling `RunnerDefaultGuidanceTests` selected | 14 | 8 |
 
 Both rows name the portable lane and stay unpinned. Execute them in one
