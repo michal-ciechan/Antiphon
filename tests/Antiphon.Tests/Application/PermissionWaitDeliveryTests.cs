@@ -54,10 +54,10 @@ public partial class PermissionWaitTests
         await f.ScanAsync(ct);
         var note = await f.NoteAsync(ct);
         await f.ReconcileAsync(note.Id, ct);
-        await f.Harness.Queue.FlushSessionAsync(f.ParentSessionId, ct);
+        await f.FlushCallerAsync(ct);
         f.Caller.SubmittedBodies.ShouldBeEmpty("busy recipient keeps WhenIdle custody");
         await f.CallerIdleAsync(ct);
-        await f.Harness.Queue.FlushSessionAsync(f.ParentSessionId, ct);
+        await f.FlushCallerAsync(ct);
         await f.ReconcileAsync(note.Id, ct);
         f.Caller.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(note.Body);
         (await f.NoteAsync(ct)).State.ShouldBe(LandNotificationState.Confirmed);
@@ -93,14 +93,14 @@ public partial class PermissionWaitTests
         await db.AgentTasks.Where(t => t.Id == f.TaskId).ExecuteUpdateAsync(u => u.SetProperty(t => t.ReplyTo, AgentTaskReplyTo.Session).SetProperty(t => t.ParentSessionId, f.ParentSessionId), ct);
         f.Clock.AdvanceTo(new DateTimeOffset(f.DispatchedAt).AddMinutes(90));
         (await f.DeadlineAsync(ct)).ShouldBe(1);
-        await f.Harness.Queue.FlushSessionAsync(f.ParentSessionId, ct);
+        await f.FlushCallerAsync(ct);
         f.Caller.SubmittedBodies.ShouldContain(body => body.Contains("Failed"), "a delivered diagnostic cannot suppress later failure delivery");
         await using var idle = await PermissionWaitFixture.CreateAsync(ct);
         await idle.CallerIdleAsync(ct);
         await idle.ScanAsync(ct);
         var idleNote = await idle.NoteAsync(ct);
         await idle.ReconcileAsync(idleNote.Id, ct);
-        await idle.Harness.Queue.FlushSessionAsync(idle.ParentSessionId, ct);
+        await idle.FlushCallerAsync(ct);
         await idle.ReconcileAsync(idleNote.Id, ct);
         (await idle.NoteAsync(ct)).State.ShouldBe(LandNotificationState.Confirmed);
         idle.Caller.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(idleNote.Body);
@@ -171,7 +171,7 @@ public partial class PermissionWaitTests
         (await wake.NoteAsync(ct)).QueueMessageId.ShouldNotBeNull("link survived lost wakeup");
         wake.Boundary.FailAt = null;
         await wake.CallerIdleAsync(ct);
-        await wake.Harness.Queue.FlushStrandedQueuesAsync(ct);
+        await wake.FlushStrandedQueuesAsync(ct);
         await wake.ReconcileAsync(wakeNote.Id, ct);
         (await wake.NoteAsync(ct)).State.ShouldBe(LandNotificationState.Confirmed);
         wake.Caller.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(wakeNote.Body);
