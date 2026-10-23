@@ -9,6 +9,7 @@ internal static class ReadOnlyDirectory
 {
     public static void Delete(string path)
     {
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.Filesystem, "delete-tree");
         if (Directory.Exists(path))
             ClearReadOnly(path);
         Directory.Delete(path, recursive: true);
