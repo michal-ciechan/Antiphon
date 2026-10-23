@@ -138,7 +138,8 @@ public sealed partial class LandGraphEvaluationTests
             // Use the wrapper's established property/item/metadata names. This isolates the
             // evaluator decision from the older pre-check's separate name allowlists.
             var unsafeProject = files["App/App.csproj"].Replace("Probe", "None")
-                .Replace("Rel", "PackagePath").Replace("Body", "PackagePath");
+                .Replace("Rel", "PackagePath").Replace("Body", "PackagePath")
+                .Replace("<EnableDefaultItems>false</EnableDefaultItems>", "");
             files["App/App.csproj"] = SdkProject("");
             await using var repo = await ScriptRepoAsync(files);
             byte[]? manifest = null;
@@ -194,8 +195,14 @@ public sealed partial class LandGraphEvaluationTests
         var start = new ProcessStartInfo("pwsh") { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var key in start.Environment.Keys.Where(k => k.StartsWith("MSBuild", StringComparison.OrdinalIgnoreCase)).ToArray()) start.Environment.Remove(key);
         // Exercise absent/empty/value wrapper inputs under strict PowerShell semantics too.
-        var arguments = new[] { Path.Combine(root, "scripts", script), mode }.Concat(extra);
-        var command = "Set-StrictMode -Version Latest; & " + string.Join(" ", arguments.Select(a => "'" + a.Replace("'", "''") + "'"));
+        static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
+        if (mode is not ("-Update" or "-Check")) throw new ArgumentOutOfRangeException(nameof(mode));
+        var command = "Set-StrictMode -Version Latest; & " + Quote(Path.Combine(root, "scripts", script)) + " " + mode;
+        if (extra.Length != 0)
+        {
+            if (extra.Length != 2 || extra[0] != "-ManifestPath") throw new ArgumentException("unsupported script arguments");
+            command += " -ManifestPath " + Quote(extra[1]);
+        }
         foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command", command }) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
         var stdout = process.StandardOutput.ReadToEndAsync();

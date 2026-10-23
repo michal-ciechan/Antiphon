@@ -452,7 +452,8 @@
       "Directory.Build.targets": "<Project />",
       "App/sentinel.txt": "safe",
       "docs/flag.md": "secret-flag"
-    }
+    },
+    "omit": []
   },
   {
     "id": "empty-items",
@@ -680,5 +681,50 @@
       "App/sentinel.txt": "safe",
       "docs/flag.md": "secret-flag"
     }
+  },
+  {
+    "id": "safe-item-removed",
+    "group": "controls",
+    "expected": 0,
+    "reason": "approved",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Probe Include=\"sentinel.txt\" /></ItemGroup><PropertyGroup><PackageTags>@(Probe->'%(Filename)%(Extension)%(RelativeDir)%(Identity)')</PackageTags></PropertyGroup><ItemGroup><Probe Remove=\"sentinel.txt\" /></ItemGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    },
+    "omit": []
+  },
+  {
+    "id": "dynamic-item-removed",
+    "group": "controls",
+    "expected": 1,
+    "reason": "unsupported-item-remove",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Probe Include=\"sentinel.txt\" /></ItemGroup><PropertyGroup><PackageTags>@(Probe->'%(Filename)%(Extension)%(RelativeDir)%(Identity)')</PackageTags></PropertyGroup><ItemGroup><Probe Remove=\"@(Probe)\" /></ItemGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    },
+    "omit": []
+  },
+  {
+    "id": "escaped-item-removed",
+    "group": "controls",
+    "expected": 1,
+    "reason": "unsupported-item-remove",
+    "owner": "App/App.csproj",
+    "files": {
+      "App/App.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework><EnableDefaultItems>false</EnableDefaultItems></PropertyGroup><ItemGroup><Probe Include=\"sentinel.txt\" /></ItemGroup><PropertyGroup><PackageTags>@(Probe->'%(Filename)%(Extension)%(RelativeDir)%(Identity)')</PackageTags></PropertyGroup><ItemGroup><Probe Remove=\"%73entinel.txt\" /></ItemGroup></Project>",
+      "Directory.Build.props": "<Project />",
+      "Directory.Build.targets": "<Project />",
+      "App/sentinel.txt": "safe",
+      "docs/flag.md": "secret-flag"
+    },
+    "omit": []
   }
 ]
