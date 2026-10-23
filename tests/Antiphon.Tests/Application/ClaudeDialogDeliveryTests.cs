@@ -71,6 +71,6 @@ public class ClaudeDialogDeliveryTests
             TimeProvider.System, NullLogger<WatchdogService>.Instance);
         (await watchdog.ScanAsync(CancellationToken.None)).ShouldBe(0);
         h.Adapter.Inputs.ShouldBeEmpty();
-        h.EventBus.PublishedEvents.ShouldNotContain(e => e.EventName is "WatchdogAutoResponded" or "AgentChannelMessage");
+        h.EventBus.PublishedEvents.ShouldNotContain(e => e.EventName == "WatchdogAutoResponded" || e.EventName == "AgentChannelMessage");
     }
 }
