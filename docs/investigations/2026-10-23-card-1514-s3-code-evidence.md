@@ -119,5 +119,22 @@ pushed tip must be the tested source. Validate its receipt and inspect fresh TRX
 PC-3a (worker lane), PC-3b (mapping), PC-3c (missing cost), PC-3d (Matrix lane)
 remain pending for method-scoped SourceLanding Mutation after ordinary Review and
 landing by the original Code owner. No PC is discharged by ordinary green.
-Unbound candidate: the verification design above; no bound mutation pack yet.
+Unbound candidate: [S3 mutation inventory](../superpowers/mutations/2026-10-23-card-1514-s3-candidate.md); no bound mutation pack yet.
 Restart: none. Next: Review when V-3/R-3 and manual checks are complete.
+
+## Final handoff artifact completion
+
+CP-1 at `731c484412b29262a18d2d34795889287a01647c` passed all 66 cases with
+a validated clean receipt. The matched 43 landing cases passed on both sides;
+their wall span fell from 111.2094715 to 34.4577415 seconds (69.015%). The
+full test host fell from 189.6000589 to 115.3228554 seconds, but the build rose
+from 211.6127715 to 301.3313237 seconds: no overall checkpoint speedup is claimed.
+
+The required unbound mutation candidate was missing from its stage-owned directory
+at that green tip. This commit adds it and links it; no executable test or product
+source changes. A second CP-1 is required solely to satisfy the brief's final-tip
+source binding after this handoff correction. Preserve the first candidate and
+baseline measurements as the matched pair; do not select the fastest rerun. The
+final caller report records the new SHA and second receipt separately. This is the
+third total execution of the selection (one test-first baseline, two candidates),
+within the three-normal repetition cap. No further repetition is commissioned.
