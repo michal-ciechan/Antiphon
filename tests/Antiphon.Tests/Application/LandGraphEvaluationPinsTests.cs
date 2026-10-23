@@ -154,11 +154,16 @@ public sealed partial class LandGraphEvaluationTests
             if (variant != "missing") files[PinsFile] = pin;
             await using var repo = await AuditRepo.CreateAsync(files);
             var run = await repo.RunToolAsync();
-            run.ExitCode.ShouldBe(variant == "exact" ? 0 : 1, $"{variant}: {run.Text}");
-            if (variant == "exact") run.Lines.ShouldContain("approved", run.Text);
+            // CARD-1528 already refuses OS function identities even after an exact pin.
+            // Only the reserved-name expression may reach evaluation; a pin is no exemption.
+            var approves = variant == "exact" && condition == "'$(OS)' == 'Windows_NT'";
+            run.ExitCode.ShouldBe(approves ? 0 : 1, $"{variant}: {run.Text}");
+            if (approves) run.Lines.ShouldContain("approved", run.Text);
             else
             {
                 run.Text.ShouldContain("App/App.csproj /Project[1]/PropertyGroup[", Case.Sensitive, run.Text);
+                run.Text.ShouldContain(variant == "exact" ? "unsupported-function" :
+                    variant == "changed" ? "(changed pin)" : "(missing pin)", Case.Sensitive, run.Text);
                 run.Lines.ShouldNotContain("approved", run.Text);
             }
             repo.AssertUntouched();
