@@ -154,3 +154,9 @@ owner; the caller lands it after Review and commissions SourceLanding Mutation.
 Restart: none in this task.
 
 ## Unedited checkpoint receipts before report commit
+
+```text
+CHECKPOINT CP-2 commit=eb1fb08c2b4300d7e5ee9c831086d16c064165e9 build=n/a filter=pwsh -NoProfile -File scripts/test-build-driver-environment.ps1 -Case ProcessAbsent executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=1 slot=granted waited=0s dirty=0 source=eb1fb08c2b4300d7e5ee9c831086d16c064165e9 sourceState=clean buildSource=notApplicable
+CHECKPOINT CP-2 commit=a4e553eb0b3d5dd081f71e97cb73f86482506006 build=n/a filter=pwsh -NoProfile -File scripts/test-build-driver-environment.ps1 -Case ProcessAbsent executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=1 slot=granted waited=0s dirty=0 source=a4e553eb0b3d5dd081f71e97cb73f86482506006 sourceState=clean buildSource=notApplicable
+CHECKPOINT CP-1 commit=f8a7c0d265c6161d3097454b03c8ed927ec568fc build=n/a filter=pwsh -NoProfile -File scripts/test-build-driver-environment.ps1 executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=0 slot=granted waited=0s dirty=0 source=f8a7c0d265c6161d3097454b03c8ed927ec568fc sourceState=clean buildSource=notApplicable
+```
