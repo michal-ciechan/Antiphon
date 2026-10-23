@@ -33,7 +33,8 @@ public class ProcessSpawnLimitTests
         Attribute.GetCustomAttribute(worker, typeof(ParallelLimiterAttribute<GitProcessSpawnLimit>)).ShouldBeNull();
         const string method = "C665_WorkerDeathKeepsRecordedTreeAcrossActualRegistrationDrop";
         matrix.GetMethod(method).ShouldBeNull();
-        worker.GetMethod(method).ShouldNotBeNull();
+        worker.GetMethod(method).ShouldNotBeNull()
+            .GetCustomAttributes(typeof(ArgumentsAttribute), inherit: true).Length.ShouldBe(2, "both worker cuts remain");
     }
 
     // A floor, not a census: the strict lane (pty, pwsh, cmd, dotnet worker, fake agents, web host, session runtime).
@@ -44,7 +45,8 @@ public class ProcessSpawnLimitTests
         typeof(CardReviewServiceIntegrationTests),
         typeof(Antiphon.Tests.Infrastructure.WorktreeManagerGitIntegrationTests),
         typeof(AgentTaskLandRecoveryTests),
-        typeof(AgentTaskLandCheckpointMatrixTests),
+        typeof(AgentTaskLandCheckpointWorkerTests),
+        typeof(C1514LandingSplitBudgetTests),
         typeof(Antiphon.Tests.Infrastructure.LandingAdmissionControlTests),
         typeof(Antiphon.Tests.Infrastructure.LandingRemovalControlTests),
         typeof(Antiphon.Tests.Infrastructure.LandingSourceBoundaryControlTests),
@@ -100,6 +102,7 @@ public class ProcessSpawnLimitTests
         typeof(AgentTaskLandAdmissionTests),
         typeof(AgentTaskLandBoundaryTests),
         typeof(AgentTaskLandCleanupSafetyTests),
+        typeof(AgentTaskLandCheckpointMatrixTests),
         typeof(AgentTaskLandConcurrencyTests),
         typeof(AgentTaskLandIdentityMatrixTests),
         typeof(AgentTaskLandPersistenceFailureTests),

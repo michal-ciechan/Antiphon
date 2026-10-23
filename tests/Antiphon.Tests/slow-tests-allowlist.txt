@@ -124,6 +124,7 @@ Antiphon.Tests.Application.AgentTaskLandConcurrencyTests
 Antiphon.Tests.Application.AgentTaskLandVerifierTests
 # CARD-0475: retained real checkpoint recovery matrix.
 Antiphon.Tests.Application.AgentTaskLandCheckpointMatrixTests
+Antiphon.Tests.Application.AgentTaskLandCheckpointWorkerTests
 # CARD-0475: retained real cleanup safety matrix.
 Antiphon.Tests.Application.AgentTaskLandCleanupSafetyTests
 # CARD-0484: ChannelBridge observed cost; rebaseline after the pending fix. No timeout tuning here.

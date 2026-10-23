@@ -1318,7 +1318,12 @@ until its watchdog killed the underpriced launch. The
 [measured-budget plan](superpowers/plans/2026-10-22-card-1404-group-10-measured-budget-plan.md)
 prices its two complete classes from the slower complete sample and labels Publication's
 partial-sample price as provisional `pace`. Existing method splitting gives seven launches
-under the unchanged 60-minute cap. Historical failures and missing-TRX coverage remain incomplete.
+under the unchanged 60-minute cap. CARD-1514 S3 subsequently separates the two real
+CheckpointMatrix worker cases from its 41 Git-only cases: the split projection has eight
+launches, and each split class conservatively retains the full historical 1560-second
+bound as `pace` until Windows per-method measurements exist. The original 43-node
+measurement and raw listing remain historical evidence. Historical failures and
+missing-TRX coverage remain incomplete.
 
 **Gate lanes run beside other work on server2.** The Linux rc roster shares the host with Code,
 Review and other gate tasks, and must tolerate that: run it in its own detached worktree and
