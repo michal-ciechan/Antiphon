@@ -84,97 +84,108 @@ public class DirectSessionRunnerClientDisposalTests
     [Test]
     public async Task Dispose_with_kill_disabled_leaves_the_session_adoptable()
     {
-        await using var fixture = await OwnedPtyFixture.StartAsync();
-        fixture.Client.KillOnDispose = false;
-        await fixture.Adapter.DisposeAsync();
-        await fixture.Client.DisposeAsync();
-        fixture.Witness.AssertAlive();
-        await using var adopter = new DirectSessionRunnerClient(Path.Combine(fixture.Root, "logs"),
-            ptyBackend: OperatingSystem.IsWindows() ? "modern" : null);
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        try
+        await OwnedPtyFixture.ScopeAsync(async fixture =>
         {
-            await adopter.AdoptOrphanedHostsAsync(deadline.Token);
-            var adopted = await adopter.GetAsync(fixture.SessionId, deadline.Token);
-            adopted.HostPid.ShouldBe(fixture.Witness.Entries.Single(x => x.Role == "host").Process.Id);
-            await OwnedPtyFixture.AssertPromptAsync(adopter, fixture.SessionId, deadline.Token);
-            await adopter.SimulateRunnerRestartAsync(deadline.Token);
-            adopter.KillOnDispose.ShouldBeFalse("restart-preserves-optout");
+            fixture.Client.KillOnDispose = false;
+            await fixture.Adapter.DisposeAsync();
+            await fixture.Client.DisposeAsync();
             fixture.Witness.AssertAlive();
-            await OwnedPtyFixture.AssertPromptAsync(adopter, fixture.SessionId, deadline.Token);
-        }
-        finally { adopter.KillOnDispose = true; await adopter.DisposeAsync(); }
-        fixture.Witness.AssertExited();
-        await fixture.DeleteRootAsync();
+            await using var adopter = new DirectSessionRunnerClient(Path.Combine(fixture.Root, "logs"),
+                ptyBackend: OperatingSystem.IsWindows() ? "modern" : null);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            try
+            {
+                await adopter.AdoptOrphanedHostsAsync(deadline.Token);
+                var adopted = await adopter.GetAsync(fixture.SessionId, deadline.Token);
+                adopted.HostPid.ShouldBe(fixture.Witness.Entries.Single(x => x.Role == "host").Process.Id);
+                await OwnedPtyFixture.AssertPromptAsync(adopter, fixture.SessionId, deadline.Token);
+                await adopter.SimulateRunnerRestartAsync(deadline.Token);
+                adopter.KillOnDispose.ShouldBeFalse("restart-preserves-optout");
+                fixture.Witness.AssertAlive();
+                await OwnedPtyFixture.AssertPromptAsync(adopter, fixture.SessionId, deadline.Token);
+            }
+            finally { adopter.KillOnDispose = true; await adopter.DisposeAsync(); }
+            fixture.Witness.AssertExited();
+            await fixture.DeleteRootAsync();
+        });
     }
 
     [Test]
     public async Task Dispose_does_not_touch_another_clients_host()
     {
-        await using var a = await OwnedPtyFixture.StartAsync();
-        await using var b = await OwnedPtyFixture.StartAsync();
-        await a.Client.DisposeAsync();
-        a.Witness.AssertExited();
-        b.Witness.AssertAlive();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        await OwnedPtyFixture.AssertPromptAsync(b.Client, b.SessionId, deadline.Token);
-        await b.Client.DisposeAsync();
-        b.Witness.AssertExited();
-        await a.DeleteRootAsync();
-        await b.DeleteRootAsync();
+        await OwnedPtyFixture.ScopeAsync(async a =>
+        await OwnedPtyFixture.ScopeAsync(async b =>
+        {
+            await a.Client.DisposeAsync();
+            a.Witness.AssertExited();
+            b.Witness.AssertAlive();
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            await OwnedPtyFixture.AssertPromptAsync(b.Client, b.SessionId, deadline.Token);
+            await b.Client.DisposeAsync();
+            b.Witness.AssertExited();
+            await a.DeleteRootAsync();
+            await b.DeleteRootAsync();
+        }));
     }
 
     [Test]
     public async Task Dispose_is_idempotent()
     {
-        await using var fixture = await OwnedPtyFixture.StartAsync();
-        var calls = 0;
-        fixture.Client.OnDisposeCore = () => calls++;
-        var first = fixture.Client.DisposeAsync().AsTask();
-        var second = fixture.Client.DisposeAsync().AsTask();
-        Exception? failure = null;
-        try { await Task.WhenAll(first, second); } catch (Exception ex) { failure = ex; }
-        calls.ShouldBe(1, "dispose-core-once");
-        ReferenceEquals(first, second).ShouldBeTrue("second call shares completion");
-        failure.ShouldBeNull();
-        fixture.Witness.AssertExited();
-        await using var holder = Environment.GetEnvironmentVariable("C1515_HOLD_SHADOW_IMAGE") == "until-denial"
-            ? await WorktreeLockChild.StartAsync("file", fixture.ConsoleImages.Single().Path) : null;
-        if (holder is not null)
-            fixture.Cleanup.DenialObserved = async () =>
-            {
-                fixture.Cleanup.Diagnostic.ShouldContain($"pid={holder.ProcessId}");
-                fixture.Cleanup.Diagnostic.ShouldContain($"start={holder.StartTicks}");
-                holder.Exited.ShouldBeFalse();
-                await holder.ReleaseAsync();
-            };
-        await fixture.DeleteRootAsync();
+        await OwnedPtyFixture.ScopeAsync(async fixture =>
+        {
+            var calls = 0;
+            fixture.Client.OnDisposeCore = () => calls++;
+            var first = fixture.Client.DisposeAsync().AsTask();
+            var second = fixture.Client.DisposeAsync().AsTask();
+            Exception? failure = null;
+            try { await Task.WhenAll(first, second); } catch (Exception ex) { failure = ex; }
+            calls.ShouldBe(1, "dispose-core-once");
+            ReferenceEquals(first, second).ShouldBeTrue("second call shares completion");
+            failure.ShouldBeNull();
+            fixture.Witness.AssertExited();
+            await using var holder = Environment.GetEnvironmentVariable("C1515_HOLD_SHADOW_IMAGE") == "until-denial"
+                ? await WorktreeLockChild.StartAsync("file", fixture.ConsoleImages.Single().Path) : null;
+            if (holder is not null)
+                fixture.Cleanup.DenialObserved = async () =>
+                {
+                    fixture.Cleanup.Diagnostic.ShouldContain($"pid={holder.ProcessId}");
+                    fixture.Cleanup.Diagnostic.ShouldContain($"start={holder.StartTicks}");
+                    holder.Exited.ShouldBeFalse();
+                    await holder.ReleaseAsync();
+                };
+            await fixture.DeleteRootAsync();
+        });
     }
 
     [Test]
     public async Task Body_failure_still_reaps_the_owned_host()
     {
-        await using var fixture = await OwnedPtyFixture.StartAsync();
+        var fixture = await OwnedPtyFixture.StartAsync();
         var sentinel = new InvalidOperationException("C1020 body sentinel");
         Exception? caught = null;
         try
         {
-            await using (fixture.Client) { throw sentinel; }
+            await TestOwnedPtyHost.ScopeAsync(
+                async () => { await using (fixture.Client) { throw sentinel; } },
+                () => TestOwnedPtyHost.ScopeAsync(
+                    () => { fixture.Witness.AssertExited(); return Task.CompletedTask; },
+                    () => fixture.DisposeAsync().AsTask()));
         }
         catch (Exception ex) { caught = ex; }
         ReferenceEquals(caught, sentinel).ShouldBeTrue("identical body sentinel");
-        fixture.Witness.AssertExited();
-        await fixture.DeleteRootAsync();
+        Directory.Exists(fixture.Root).ShouldBeFalse("private-tree-deletable after body failure");
     }
     [Test]
     public async Task Dispose_awaits_exit_of_its_running_host_and_descendants()
     {
-        await using var fixture = await OwnedPtyFixture.StartAsync();
-        var elapsed = Stopwatch.StartNew();
-        await fixture.Client.DisposeAsync();
-        fixture.Witness.AssertExited();
-        elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(10), "cleanup-before-ttl");
-        await fixture.DeleteRootAsync();
+        await OwnedPtyFixture.ScopeAsync(async fixture =>
+        {
+            var elapsed = Stopwatch.StartNew();
+            await fixture.Client.DisposeAsync();
+            fixture.Witness.AssertExited();
+            elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(10), "cleanup-before-ttl");
+            await fixture.DeleteRootAsync();
+        });
     }
 }
 
@@ -327,7 +338,9 @@ internal sealed class OwnedPtyFixture : IAsyncDisposable
     public static async Task<OwnedPtyFixture> StartAsync()
     {
         var fixture = new OwnedPtyFixture();
-        try
+        fixture.Cleanup = new(fixture.Root, [], $"session={fixture.SessionId}; startup incomplete");
+        var started = false;
+        await TestOwnedPtyHost.ScopeAsync(async () =>
         {
             Directory.CreateDirectory(Path.Combine(fixture.Root, "cwd"));
             fixture.Client = new(Path.Combine(fixture.Root, "logs"), ptyBackend: OperatingSystem.IsWindows() ? "modern" : null);
@@ -348,9 +361,15 @@ internal sealed class OwnedPtyFixture : IAsyncDisposable
             fixture.Cleanup = new(fixture.Root, fixture.ConsoleImages,
                 string.Join("; ", fixture.Witness.Entries.Select(x => $"session={fixture.SessionId} pid={x.Process.Id} start={x.Start.Ticks} image={x.Image} role={x.Role}")));
             (await fixture.Adapter.WaitForReadyAsync(deadline.Token)).ShouldBeTrue();
-            return fixture;
-        }
-        catch { await fixture.DisposeAsync(); throw; }
+            started = true;
+        }, () => started ? Task.CompletedTask : fixture.DisposeAsync().AsTask());
+        return fixture;
+    }
+
+    internal static async Task ScopeAsync(Func<OwnedPtyFixture, Task> body)
+    {
+        var fixture = await StartAsync();
+        await TestOwnedPtyHost.ScopeAsync(() => body(fixture), () => fixture.DisposeAsync().AsTask());
     }
 
     internal static RunnerGrokAdapter CreateAdapter(DirectSessionRunnerClient client) => new(client,
@@ -378,17 +397,18 @@ internal sealed class OwnedPtyFixture : IAsyncDisposable
     }
     public Task DeleteRootAsync()
     {
-        Witness.Release();
+        Witness?.Release();
         return Cleanup.DeleteAsync();
     }
 
     public async ValueTask DisposeAsync()
     {
-        try { if (Adapter is not null) await Adapter.DisposeAsync(); }
-        finally
-        {
-            try { if (Client is not null) await Client.DisposeAsync(); }
-            finally { if (Witness is not null) await Witness.DisposeAsync(); }
-        }
+        await TestOwnedPtyHost.ScopeAsync(
+            () => Adapter is null ? Task.CompletedTask : Adapter.DisposeAsync().AsTask(),
+            () => TestOwnedPtyHost.ScopeAsync(
+                () => Client is null ? Task.CompletedTask : Client.DisposeAsync().AsTask(),
+                () => TestOwnedPtyHost.ScopeAsync(
+                    () => Witness is null ? Task.CompletedTask : Witness.DisposeAsync().AsTask(),
+                    DeleteRootAsync)));
     }
 }
