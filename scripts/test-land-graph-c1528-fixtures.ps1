@@ -61,7 +61,7 @@ EndGlobal
             if ($git.Code -ne 0) { throw $git.Text }
         }
         $environment = @{}
-        if ($fixture.ContainsKey('environment')) { foreach ($key in $fixture.environment.Keys) { $environment[$key] = $null } }
+        if ($fixture.ContainsKey('environment')) { foreach ($key in $fixture.environment.Keys) { if ($key -ne 'PATH') { $environment[$key] = $null } } }
         if ($fixture.id -eq 'stamp-gate') { [IO.File]::SetLastWriteTimeUtc((Join-Path $temp 'App/Program.cs'), [DateTime]::new(2001,1,1,0,0,0,[DateTimeKind]::Utc)) }
         $run = Run-Child $temp 'dotnet' @($tool,'--repo',$temp,'--solution','Antiphon.sln') $environment
         $ok = $run.Code -eq $fixture.expected -and $run.Text.Contains($fixture.reason)
