@@ -491,6 +491,11 @@ public class BootStallDetectionTests
     [Arguments("absent-proof-refused", 29, 1)]
     public async Task C1151_Boot_branch_statement_counts(string path, int expected, int expectedPulls)
     {
+        // The rc line predates CARD-1518 and its TaskProviderWaitReader/reload pair. Keep its
+        // exact pre-feature budget too; this checks feature availability, never the measured SQL.
+        var hasBindingReload = typeof(AgentTaskDispatcher).Assembly.GetType(
+            "Antiphon.Server.Application.Services.TaskProviderWaitReader") is not null;
+        var expectedForSource = expectedPulls == 1 && !hasBindingReload ? expected - 1 : expected;
         var counter = new FullCommandCounter();
         var fault = path == "event-save-fault" ? new TelemetryFaults("insert") : null;
         var idle = path is "non-working-listed" or "absent-proof-refused";
@@ -547,7 +552,7 @@ public class BootStallDetectionTests
         Console.WriteLine($"C1151-BUDGET {path} total={total} pulls={pulls} inventory={world.Directory!.Reads}");
         Console.WriteLine(roster);
 
-        total.ShouldBe(expected, $"path {path}{Environment.NewLine}{roster}");
+        total.ShouldBe(expectedForSource, $"path {path}{Environment.NewLine}{roster}");
         pulls.ShouldBe(expectedPulls, $"path {path}: runner transcript pulls");
         world.Directory.Reads.ShouldBe(0, "the boot branch never consults runner inventory");
         world.Runner.Lists.ShouldBe(0);
