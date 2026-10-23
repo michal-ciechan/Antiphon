@@ -115,6 +115,7 @@ internal static class WindowsUnitSkipRoster
     // Legacy call sites are source-closure accounting, outside the S1 child runtime roster.
     internal static readonly Entry[] Existing =
     [
+        new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1374_Host_census_recovers_transient_reads", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1087_Host_census_filters_and_names_cause", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1008_Recycle_exact_default_volumes", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1008_Recycle_refuses_references_and_unknown_census", 1, ExistingReason),

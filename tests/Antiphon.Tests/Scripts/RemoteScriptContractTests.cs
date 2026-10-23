@@ -24,7 +24,10 @@ public sealed class RemoteScriptContractTests
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1374_Host_census_recovers_transient_reads()
-        => await C1374CensusProbes.Check(host: true);
+    {
+        C1008HostFixture.RequireNativeLinux();
+        await C1374CensusProbes.Check(host: true);
+    }
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]

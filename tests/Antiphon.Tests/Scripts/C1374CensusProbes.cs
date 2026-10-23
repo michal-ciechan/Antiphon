@@ -33,7 +33,6 @@ internal static class C1374CensusProbes
 
     internal static async Task Check(bool host)
     {
-        if (host) C1008HostFixture.RequireNativeLinux();
         // Run first: before the fix this fails expected success after the first 502,
         // independently on each side, before any attempt-number assertions.
         var vectors = new List<Vector> { new("primary-502-detail", DetailPath, ["502", "ok"]) };
