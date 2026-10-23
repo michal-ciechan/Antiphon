@@ -275,10 +275,6 @@ function Write-TestPhasePlannedManifest {
         $DiscoveryNodes,
         $ProfileExclusions
     )
-    # CARD-1514 red witness: labeled no-op. Never land alone.
-    $RedWitnessNoOp = $true
-    if ($RedWitnessNoOp) { return $null }
-
     $entry = [pscustomobject]@{
         Document = [pscustomobject]@{ Nodes = @($DiscoveryNodes) }
         InProgress = @()
