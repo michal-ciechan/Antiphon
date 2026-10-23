@@ -12,6 +12,12 @@ public sealed class CheckpointLargeStampScriptTests : CheckpointTestBase
     [Test]
     public Task C1532_script_stamp_matches_full_digest() => Run("stamp");
 
+    [Test]
+    public Task C1532_script_digest_limits_stalls_and_eof() => Run("reader");
+
+    [Test]
+    public Task C1532_scripts_are_ascii_and_parse_in_pwsh() => Run("parser");
+
     private async Task Run(string mode)
     {
         var psi = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
