@@ -4,7 +4,7 @@ BASE=0714a9a89e4bff65aae7e0b4b94098694aeb931c
 test "$(git rev-parse HEAD)" = "$BASE" || { echo 'STOP: wrong base'; exit 1; }
 test -z "$(git status --porcelain)" || { echo 'STOP: dirty worktree'; exit 1; }
 # Freeze the selection, but prove every source is still reachable from fetched master.
-SELECTION_MASTER=98e96f029a8117034445d6c236db0cd0c045a0e6
+SELECTION_MASTER=eb6101b1a0eb8b7542cd631f8064c6ae0671733c
 git fetch origin master
 git merge-base --is-ancestor "$SELECTION_MASTER" origin/master
 assert_source() {
@@ -138,6 +138,11 @@ pick 285aa79bf05fc677d437dc4185be71571321d9ab
 pick aed1449a8a7a6c0321ae81b287fa1066a222ad0e
 skip_docs 8ef0baca812807bf83c7c34578173ac61a36eed6
 
+# CARD-1483 S3: landed target/OS pin gate after S2, including its isolation repair.
+pick bc601a4c24774c6e1dde8becccb77223b9a7c969
+pick 63df8861705faa7ff603cccd8017bf28615af9cb
+pick eb6101b1a0eb8b7542cd631f8064c6ae0671733c
+
 # CARD-1500: Review order, including explicit prerequisite/scope-plan skips.
 skip_docs 5d9cdbe9b92a0a8ab5fa94588a8af94d8afdb0f4
 pick 82083a4043c1cf41b863d1aafadf8e16e6dc5a9a
@@ -172,8 +177,7 @@ pick e598d4a920773ccbc0273cdce902ca3dab7c2b01
 skip_docs 98e96f029a8117034445d6c236db0cd0c045a0e6
 
 # EXCLUDED: CARD-1495 and CARD-0167, by caller decision.
-# PENDING at SELECTION_MASTER: CARD-1483 S3;
-# CARD-1486 S4 plus its test repair. Do not infer permission to append branch tips.
+# PENDING at SELECTION_MASTER: CARD-1486 S4 plus its test repair. Do not infer permission to append branch tips.
 
 # Final inventory includes CARD-1483 S1/S2 and every selected addition.
 pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Update
