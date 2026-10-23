@@ -1,4 +1,4 @@
-Implement plan and verification design.
+Implement landed plan, verification design and tests.
 
 SCOPE: Unit plus the named affected integration classes. Unit omits delivery, landing, leases, persistence. Before full-assembly runs name invariant, unbounded classes, cost.
 
@@ -10,7 +10,7 @@ SOURCE: Pass committed HEAD as expected SHA; keep actual tested SHA and unedited
 
 ROUND: Follow the brief. Final (default, first round): whole Unit lane, every full affected class, every ordinary V/R, required manual work. Interim (explicit only): cumulative changed cases since the full baseline incl. earlier repair cases, unresolved-finding tests, named adjacent smoke; unbounded shared impact needs Final. List deferred-to-final IDs; never mark them passed.
 
-INVARIANTS: Run each V-n and R-n the round requires; report every ID and actual outcome. Commit and push slices; report full commit SHA, branch, worktree, original Code task ID (landing owner), plan/evidence paths.
+INVARIANTS: Run required V-n/R-n; report every ID and actual outcome. Commit and push slices; report full commit SHA, branch, worktree, original Code task ID (landing owner), plan/evidence paths.
 
 Report every PC-n/variant pending for Mutation. Mutation owns deliberate mutants, red/restore/green and missing-control discovery, incl. zero-PC plans. Never widen a timeout or loosen an assertion.
 
