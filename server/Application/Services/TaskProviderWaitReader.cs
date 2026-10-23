@@ -30,7 +30,8 @@ internal sealed record TaskProviderWaitFacts(TaskProviderWaitBinding Binding,
         "ToolPermission" => "permission dialog", "Question" => "question dialog", _ => "provider dialog",
     };
     internal bool Fresh(DateTime now) => now >= CompletedAt && now - CompletedAt <= TimeSpan.FromSeconds(90);
-    internal string Diagnosis => $"Mid-turn with a current Claude {DialogLabel}. Tool execution is not confirmed.";
+    internal const string Unavailable = "Current provider dialog observation unavailable; the ordinary deadline still applies.";
+    internal string Diagnosis => $"A current Claude {DialogLabel} needs an authorized decision. Tool execution is not confirmed.";
 }
 
 /// <summary>Read-only diagnostic facts. No cached observation grants authority to send input.</summary>
@@ -42,6 +43,7 @@ public sealed class TaskProviderWaitReader(IServiceScopeFactory scopes, AgentSes
         internal TaskProviderWaitFacts? Facts;
         internal TaskProviderWaitBinding? Binding;
         internal DateTime? LastReadAt;
+        internal TaskProviderWaitFacts? CaughtUp;
     }
     private readonly ConcurrentDictionary<Guid, Slot> _slots = new();
     internal Func<Guid, CancellationToken, Task<ProviderDialogObservation?>>? ObserveOverride { get; set; }
@@ -60,6 +62,17 @@ public sealed class TaskProviderWaitReader(IServiceScopeFactory scopes, AgentSes
         var runner = TaskProviderWaitBinding.NormalizeRunner(session.RunnerId);
         if (runner.Length != 0 && (session.RunnerStoreId is null || session.RunnerStoreId == Guid.Empty)) return null;
         return new(task.Id, task.Attempt, id, dispatch, session.StartedAt, runner, session.RunnerStoreId);
+    }
+
+    internal bool ClaimCatchUp(TaskProviderWaitFacts facts)
+    {
+        if (!_slots.TryGetValue(facts.Binding.SessionId, out var slot)) return false;
+        lock (slot)
+        {
+            if (slot.CaughtUp == facts) return false;
+            slot.CaughtUp = facts;
+            return true;
+        }
     }
 
     internal async Task<TaskProviderWaitFacts?> CachedAsync(Guid taskId, CancellationToken ct)

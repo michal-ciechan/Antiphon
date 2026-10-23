@@ -294,7 +294,10 @@ public sealed class DelegateCheckProbe
             : [];
         var git = await GatherGitAsync(task, ct);
         var providerWait = _providerWait is null ? null : await _providerWait.ReadAsync(task.Id, false, ct);
+        now = _timeProvider.GetUtcNow().UtcDateTime;
         var deadline = await GatherDeadlineAsync(task, now, ct, providerWait);
+        if (_providerWait is not null && task.AgentKind == AgentKind.ClaudeCode && providerWait is null && deadline is not null)
+            deadline = deadline with { Summary = deadline.Summary + " " + TaskProviderWaitFacts.Unavailable };
         var card = await GatherCardAsync(task, ct);
 
         return new CheckFacts(
