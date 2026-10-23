@@ -11,7 +11,7 @@ namespace Antiphon.Tests.Application;
 /// CARD-1155. The roster pin parses the E2E source with Roslyn and records each
 /// public instance method of DispatchBaseWarningDeliveryE2ETests whose attributes
 /// name Test or TestAttribute. A conditional compilation directive fails the pin
-/// closed. Those names must equal the plan's CP-2..CP-13 filters. Queue insert,
+/// closed. Those names must equal the plan's CP-2..CP-14 filters. Queue insert,
 /// Sent, or ack does not discharge an E2E row.
 /// </summary>
 [Category("Unit")]
