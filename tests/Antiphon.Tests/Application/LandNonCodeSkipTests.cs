@@ -2812,7 +2812,7 @@ public sealed class LandNonCodeSkipTests
         Directory.CreateDirectory(Path.Combine(root, "scripts"));
         await File.WriteAllTextAsync(Path.Combine(root, "server", "App.csproj"), project);
         File.Copy(
-            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "audit-land-verification-graph.ps1"),
+            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "audit-land-verification-precheck.ps1"),
             Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
         await GitAsync(root, "init", "-b", "master");
         await GitAsync(root, "config", "user.email", "c1390@example.invalid");
@@ -2828,7 +2828,7 @@ public sealed class LandNonCodeSkipTests
         var root = Directory.CreateTempSubdirectory("c1400-audit-").FullName;
         Directory.CreateDirectory(Path.Combine(root, "scripts"));
         File.Copy(
-            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "audit-land-verification-graph.ps1"),
+            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "audit-land-verification-precheck.ps1"),
             Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
         foreach (var (relative, content) in files)
         {
