@@ -37,8 +37,9 @@ write access. Keep the buffered per-process writer and its per-line sink lock.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-8 | Windows-repair | `tests/Antiphon.Tests -> bin-c1514t-win/` | windows-minimum-preflight | `/*/*/(TestTimingRecorderTests*\|TestTimingLifecycleTests*\|TestTimingChokePointTests*\|TestPhaseSupervisorTests*\|TestPhaseSummaryTests*\|TestPhaseCustodyTests*)/C1514T_*` | V-1..V-13, R-1..R-5 | all 28 executed, 0 failed/skipped; real Windows + PS5.1 | 28 | 12 | true |
+| CP-8 | Windows-repair | `tests/Antiphon.Tests -> bin-c1514t-win-repair/` | windows-minimum-preflight | `/*/*/(TestTimingRecorderTests*\|TestTimingLifecycleTests*\|TestTimingChokePointTests*\|TestPhaseSupervisorTests*\|TestPhaseSummaryTests*\|TestPhaseCustodyTests*)/C1514T_*` | V-1..V-13, R-1..R-5 | all 28 executed, 0 failed/skipped; real Windows + PS5.1 | 28 | 12 | true |
 
 Separate authorized manual work: compile the exact repair picks on a detached
 scratch checkout of origin/rc/2026-10-20; do not publish rc or tags. Run the evidence
 history guard over task-start base..HEAD and inventory native OS witnesses.
+
