@@ -49,6 +49,7 @@ No desktop, live qualification, deployment or restart work is authorized.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1492-final/` | fixture-delivery | `/*/*/(TurnEndGapRestartDeliveryTests*)\|(TestClassificationPolicyTests*)/(C1205_*)\|(C487_G059*)` | V-1, R-1, R-2 | 32 passed, 0 failed/skipped: 31 delivery cases and one registry guard | 32 | 8 | true |
+| CP-2 | S1 | CP-1 | watchdog-action-loop | `/*/*/TurnEndGapRestartDeliveryTests/C1205_Watchdog_delivers_while_event_stream_remains_healthy*` | V-1 watchdog repair | 1 passed, 0 failed/skipped | 1 | 1 | true |
 
 Run once at committed HEAD with `--expected-source-sha <HEAD> --total-timeout 25m
 --row-timeout 15m`; wait until exit is not 75. One build, one exact row, no repeats
@@ -132,3 +133,23 @@ not relabeled green. No product API or input guard was changed.
 
 The next CP-1 run qualifies the committed master tip with the original 32-case
 selection and unchanged deadlines. Its receipt and V-1/R-1/R-2 outcomes are pending.
+
+## Targeted watchdog repair
+
+At ca3d82b2838c40e10f0c7bead470c31b6a6c10e1 CP-1 executed 32: 31 passed,
+1 failed, 0 skipped; full fresh TRX inspected. Both restart variants, busy-tail,
+all 27 adjacent delivery cases and the registry guard passed. The only red was
+watchdog, five submissions expected versus one. Build/source provenance verified,
+both slots granted and waited=0s. Total wall 5m27s; host 105.57s, build phase205.90s.
+
+The watchdog starts a healthy pump, so later recipient TurnEnds need action workers
+as well as initial stale recovery. ProbeAsync now starts the same owned action loop
+when a pump exists; the no-pump fault-cut setup remains explicit. StartGapAsync
+uses the extracted identical starter. Only the watchdog method calls ProbeAsync
+with a live pump. Run CP-2 only after this repair, retaining the prior 31 green
+cases under the targeted-after-fix rule. No assertion or timeout changed.
+CP-1492-4 remains pending Mutation: omit starting actions from the live-pump probe;
+exact watchdog must fail five submissions versus one. The rc pick list is now
+229ffecbf1598cfe9ec67ccee9b1fc8cca04385a followed by this final watchdog repair
+commit (no dialog API dependency in that repair). Its source delta must apply to rc;
+the initial rc fixture compile remains historical, not a new final-pick compile.
