@@ -77,7 +77,8 @@ public partial class PermissionWaitTests
             var beforeIds = await db.AgentTaskLandNotifications.Where(n => n.TaskId == f.TaskId).Select(n => n.Id).ToListAsync(ct);
             if (destination == f.ParentSessionId)
                 await db.AgentSessions.Where(s => s.Id == f.ParentSessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Stopped), ct);
-            await db.AgentTasks.Where(t => t.Id == f.TaskId).ExecuteUpdateAsync(u => u.SetProperty(t => t.Attempt, ++attempt)
+            attempt++;
+            await db.AgentTasks.Where(t => t.Id == f.TaskId).ExecuteUpdateAsync(u => u.SetProperty(t => t.Attempt, attempt)
                 .SetProperty(t => t.ReplyTo, AgentTaskReplyTo.Session).SetProperty(t => t.ParentSessionId, destination), ct);
             await f.ScanAsync(ct);
             var unavailable = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.TaskId == f.TaskId && !beforeIds.Contains(n.Id), ct);
