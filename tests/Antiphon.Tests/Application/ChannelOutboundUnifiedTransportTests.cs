@@ -439,10 +439,16 @@ public sealed class ChannelOutboundUnifiedTransportTests
             });
             await w.H.Adapter.EnableClaudeDialogObservationAsync(w.Schema.ConnectionString, w.H.SessionId);
             w.H.Runtime.SetTestAcceptedStartedAt(w.H.SessionId, w.H.Adapter.AcceptedStartedAt!.Value);
-            if (busy) workerEvents.OnStarted = () => BridgeQueueHarness.InsertEntryAsync(
-                worker.StartedSessionId!.Value, TranscriptKinds.UserPrompt,
-                "converter is already working after its interrupted launch", connectionString: w.Schema.ConnectionString,
-                createdAtUtc: w.H.Now);
+            workerEvents.OnStarted = async () =>
+            {
+                var session = worker.StartedSessionId!.Value;
+                await worker.EnableClaudeDialogObservationAsync(w.Schema.ConnectionString, session);
+                w.H.Runtime.SetTestAcceptedStartedAt(session, worker.AcceptedStartedAt!.Value);
+                if (busy)
+                    await StoreAwareTranscript.WriteAsync(w.H.Provider, session, () => BridgeQueueHarness.InsertEntryAsync(
+                        session, TranscriptKinds.UserPrompt, "converter is already working after its interrupted launch",
+                        connectionString: w.Schema.ConnectionString, createdAtUtc: w.H.Now));
+            };
             delegation.AllowedRoots = [w.H.TempRoot];
             var workerRoot = Directory.CreateDirectory(Path.Combine(w.H.TempRoot, "converter")).FullName;
             await File.WriteAllTextAsync(Path.Combine(workerRoot, "convert.md"), "Preserve every source; emit the exact converted receipt.");
@@ -493,10 +499,13 @@ public sealed class ChannelOutboundUnifiedTransportTests
                     .Where(t => t.AgentSessionId == session)
                     .MaxAsync(t => (long?)t.Sequence) ?? 0;
                 await TraceAsync("before-submit", submitted);
-                await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.UserPrompt, submitted,
-                    timestamp: w.H.Now, connectionString: w.Schema.ConnectionString, createdAtUtc: w.H.Now);
-                await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.TurnEnd, stopReason: "end_turn",
-                    connectionString: w.Schema.ConnectionString, createdAtUtc: w.H.Now);
+                await StoreAwareTranscript.WriteAsync(w.H.Provider, session, async () =>
+                {
+                    await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.UserPrompt, submitted,
+                        timestamp: w.H.Now, connectionString: w.Schema.ConnectionString, createdAtUtc: w.H.Now);
+                    await BridgeQueueHarness.InsertEntryAsync(session, TranscriptKinds.TurnEnd, stopReason: "end_turn",
+                        connectionString: w.Schema.ConnectionString, createdAtUtc: w.H.Now);
+                });
             };
             await ReceiveSourceAsync(w, "main", false, new HandoffFault("none"), scenario.Token);
             await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, scenario.Token);
@@ -559,8 +568,9 @@ public sealed class ChannelOutboundUnifiedTransportTests
                     && m.ExecutionTaskId == taskId).ToListAsync()).ShouldHaveSingleItem();
                 queued.Status.ShouldBe(QueuedMessageStatus.Pending);
                 queued.DeliveryAttempts.ShouldBe(0);
-                await BridgeQueueHarness.InsertEntryAsync(workerSession, TranscriptKinds.TurnEnd, stopReason: "end_turn",
-                    connectionString: w.Schema.ConnectionString, createdAtUtc: w.H.Now);
+                await StoreAwareTranscript.WriteAsync(w.H.Provider, workerSession, () => BridgeQueueHarness.InsertEntryAsync(
+                    workerSession, TranscriptKinds.TurnEnd, stopReason: "end_turn",
+                    connectionString: w.Schema.ConnectionString, createdAtUtc: w.H.Now));
             }
             await TraceAsync("launch-idle");
             await w.H.Queue.FlushSessionAsync(workerSession, scenario.Token);
