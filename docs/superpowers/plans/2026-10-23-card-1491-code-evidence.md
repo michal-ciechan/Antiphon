@@ -120,3 +120,34 @@ Review correction. A fresh single build and CP-3..CP-9 qualify the new committed
 The earlier merge-tree against rc 5a126f6fc5ae4e16d803b628716b8f0485a37174 also showed the
 expected provider-context conflicts (dispatcher, control, Agent and related fixtures). A direct
 rc cherry-pick is not clean; a separate adapted rc port and rc-model schema proof are required.
+
+## First S2 outcome and fixture correction
+
+At a306dc71b3f02b7a5d06e4a76271a0c4eb329be7, run 20261023-030358-ee59
+executed all 54 intended cases: 52 passed, 2 failed, none skipped. Source was clean and
+build provenance verified. V-4 pinned xhigh was blocked after an unrelated-root compact
+was queued with this execution identity; the brief evidence gate treated that as uncertain.
+The corrected fixture is a same-root Code-to-Review follow-up, keeping the Dispatched,
+same-agent/session and zero-second-launch assertions. R-3 mid-turn passed its assertions
+but synchronously disposed CardSiblingInspectionQueue (IAsyncDisposable). Its provider is
+now awaited. Neither timeout nor assertion changes. No inherited-red classification is claimed.
+
+The run also reported cleanup refusal still-present, so its overall receipt is unqualified.
+Raw historical receipts remain unchanged. The terminal executor has exited. One fresh build
+and the same bounded CP-3..CP-9 group will verify the final committed tip together and produce
+a complete qualifying report; this repeats five green rows only to satisfy the requested
+single-source final receipt after the two red rows. It is the second normal S2 selection,
+within the repeat budget. Unit/full classes remain deferred. No broader test run is added.
+
+```text
+CHECKPOINT CP-3 commit=a306dc71b3f02b7a5d06e4a76271a0c4eb329be7 build=ok filter=/*/*/PoolClaudeEffortTests/C1491_* executed=27 passed=26 failed=1 skipped=0 trx=/work/worktrees/task-d15bbee2/.antiphon/checkpoints/20261023-030358-ee59/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=a306dc71b3f02b7a5d06e4a76271a0c4eb329be7 sourceState=clean buildSource=verified
+CHECKPOINT CP-4 commit=a306dc71b3f02b7a5d06e4a76271a0c4eb329be7 build=reused filter=/*/*/(AgentSessionBackendTests*)|(AgentAttachHerdrTests*)/(C1491_control_start_replaces_stale_effort_stamp*)|(C1491_adoption_clears_stale_claude_effort*) executed=2 passed=2 failed=0 skipped=0 trx=/work/worktrees/task-d15bbee2/.antiphon/checkpoints/20261023-030358-ee59/rows/CP-4/run.trx slot=granted waited=15s dirty=0 source=a306dc71b3f02b7a5d06e4a76271a0c4eb329be7 sourceState=clean buildSource=verified
+CHECKPOINT CP-5 commit=a306dc71b3f02b7a5d06e4a76271a0c4eb329be7 build=reused filter=/*/*/PoolClaudeEffortMigrationTests/C1491_nullable_stamp_roundtrips_and_legacy_rows_stay_unknown executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-d15bbee2/.antiphon/checkpoints/20261023-030358-ee59/rows/CP-5/run.trx slot=granted waited=30s dirty=0 source=a306dc71b3f02b7a5d06e4a76271a0c4eb329be7 sourceState=clean buildSource=verified
+CHECKPOINT CP-6 commit=a306dc71b3f02b7a5d06e4a76271a0c4eb329be7 build=reused filter=/*/*/ClaudeEffortByRoleDispatchTests/(a_code_task_launches_at_the_overridden_effort_while_review_keeps_the_tier*)|(an_empty_map_launches_todays_argv*)|(an_override_changes_only_its_own_roles_effort_element*)|(a_check_task_pinned_to_its_standing_seat_keeps_the_seats_placement_under_an_override*)|(a_task_pinned_to_a_busy_pool_delegate_still_waits_for_it_under_an_override*)|(a_role_override_that_differs_from_the_tier_declines_warm_reuse*)|(a_task_pinned_to_a_free_pool_delegate_launched_at_another_effort_relaunches*) executed=8 passed=8 failed=0 skipped=0 trx=/work/worktrees/task-d15bbee2/.antiphon/checkpoints/20261023-030358-ee59/rows/CP-6/run.trx slot=granted waited=15s dirty=0 source=a306dc71b3f02b7a5d06e4a76271a0c4eb329be7 sourceState=clean buildSource=verified
+CHECKPOINT CP-7 commit=a306dc71b3f02b7a5d06e4a76271a0c4eb329be7 build=reused filter=/*/*/LaunchEnvLayersIntegrationTests/(C1495_*)|(TryReuseWarmAgentAsync_declines_a_non_empty_override_and_not_an_empty_one*)|(TryReuseWarmAgentAsync_declines_when_inherited_env_projections_differ*) executed=10 passed=10 failed=0 skipped=0 trx=/work/worktrees/task-d15bbee2/.antiphon/checkpoints/20261023-030358-ee59/rows/CP-7/run.trx slot=granted waited=15s dirty=0 source=a306dc71b3f02b7a5d06e4a76271a0c4eb329be7 sourceState=clean buildSource=verified
+CHECKPOINT CP-8 commit=a306dc71b3f02b7a5d06e4a76271a0c4eb329be7 build=reused filter=/*/*/AgentTaskPoolTests/(a_queued_task_takes_over_a_warm_agent_in_its_directory*)|(the_reused_sessions_bearer_token_now_resolves_to_the_new_task*)|(a_follow_up_in_the_same_run_keeps_the_context_uncompacted*)|(a_mid_turn_warm_agent_is_not_reused_by_the_unpinned_shop*) executed=4 passed=3 failed=1 skipped=0 trx=/work/worktrees/task-d15bbee2/.antiphon/checkpoints/20261023-030358-ee59/rows/CP-8/run.trx slot=granted waited=60s dirty=0 source=a306dc71b3f02b7a5d06e4a76271a0c4eb329be7 sourceState=clean buildSource=verified
+CHECKPOINT CP-9 commit=a306dc71b3f02b7a5d06e4a76271a0c4eb329be7 build=reused filter=/*/*/(CodexDelegateDispatchTests*)|(GrokDelegateDispatchTests*)/(a_codex_delegate_launches_the_codex_definition_with_a_slug_an_effort_and_developer_instructions*)|(a_grok_delegate_launches_the_grok_definition_with_a_grok_model_when_nothing_composes*) executed=2 passed=2 failed=0 skipped=0 trx=/work/worktrees/task-d15bbee2/.antiphon/checkpoints/20261023-030358-ee59/rows/CP-9/run.trx slot=granted waited=60s dirty=0 source=a306dc71b3f02b7a5d06e4a76271a0c4eb329be7 sourceState=clean buildSource=verified
+```
+
+Historical wallSeconds=887.3084456; build slot=granted waited=150s; buildSeconds=440.4104551.
+Remaining build/output cleanup and final receipt validation are recorded in the ignored final report.

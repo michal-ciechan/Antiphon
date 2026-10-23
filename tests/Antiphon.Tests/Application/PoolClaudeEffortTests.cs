@@ -113,7 +113,8 @@ public sealed class PoolClaudeEffortTests
         await using var h = await Harness.CreateAsync();
         if (effort == "xhigh") h.Settings.ClaudeEffortByRole["Review"] = "xhigh";
         var seed = await h.SeedAsync(effort, settled: true); // Previous role was Code.
-        var task = await h.TaskAsync(AgentTaskRole.Review, pinned ? seed.AgentId : null);
+        // A same-run role handoff admits ordinary brief delivery without unrelated-task compaction.
+        var task = await h.TaskAsync(AgentTaskRole.Review, pinned ? seed.AgentId : null, rootTaskId: seed.TaskId);
         if (pinned && effort == "xhigh")
         {
             await h.TickAsync();
@@ -295,12 +296,13 @@ public sealed class PoolClaudeEffortTests
             agent.PoolIdleSince.ShouldNotBeNull();
             agent.PersistentSessionId.ShouldBe(seed.SessionId.ToString("D"));
         }
-        public async Task<AgentTask> TaskAsync(AgentTaskRole role, Guid? pin = null, AgentKind kind = AgentKind.ClaudeCode)
+        public async Task<AgentTask> TaskAsync(AgentTaskRole role, Guid? pin = null, AgentKind kind = AgentKind.ClaudeCode,
+            Guid? rootTaskId = null)
         {
             var id = Guid.NewGuid();
             var task = new AgentTask
             {
-                Id = id, RootTaskId = id, Title = "c1491 effort", Goal = "c1491 effort",
+                Id = id, RootTaskId = rootTaskId ?? id, Title = "c1491 effort", Goal = "c1491 effort",
                 Kind = AgentTaskKind.Worker, Role = role, AgentKind = kind, ModelLevel = AgentModelLevel.High,
                 Workspace = WorkspaceMode.Shared, WorkingDirectory = _directory, Ephemeral = true,
                 Status = AgentTaskStatus.Queued, ReplyTo = AgentTaskReplyTo.None,
