@@ -53,8 +53,17 @@ a fresh main build is provisionally bounded to 8 minutes (about twice that obser
 rounded) separately from admission. No test attribute timeout is widened. The two new
 main-assembly execution rows expect under 60 seconds each including host startup, with
 CARD-1563 provisional collection obligations. No repeats beyond the changed integration.
-R-3: the shipped test-project universe remains closed, with seven primary/six child projects,
+R-3: the shipped test-project universe remains closed, with seven primary/seven child projects,
 and main qualification includes the six audit tests. CP-3 is its pre-fix script red witness;
 CP-4 and CP-5 cover the linked audit source and the full affected TestSelectionCatalogTests.
 PC-7 pending SourceLanding Mutation for the source-link/census obligation.
 
+
+The first CP-3 attempt failed before assertions because TEMP was unset; it is not red credit.
+The corrected CP-3 observed 4 script assertions passed / 1 failed, naming the new audit
+host and existing TestTiming.Probe. The exact five-row census at base
+4497af9b48136a8003def54331f49ac66fd2dec9 reproduced 4 passed / 1 failed naming only
+TestTiming.Probe (unlisted base check required by git-common, under a build slot).
+Register both explicit child consumers; seven primary/seven child is the corrected census.
+No fixture source changes. The first S4 run was stopped while queued before any build or
+execution, to avoid paying for the known inherited census red. It carries no test credit.
