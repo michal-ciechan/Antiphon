@@ -37,3 +37,24 @@ Mutation owns deliberate defects and discovery of missing controls. No mutation 
 |---|---|---|---|---|---|---|---|---:|---|
 | CP-1 | S1 | tests/Antiphon.TimeoutAudit.Tests -> bin-c1563-red/ | initial-red | `/*/*/TimeoutAuditTests/*` | V-1,V-2,V-3,V-4,R-1,R-2 red | TimeoutAuditTests | 6 | 1 | true |
 | CP-2 | S2 | tests/Antiphon.TimeoutAudit.Tests -> bin-c1563-green/ | audit-green | `/*/*/TimeoutAuditTests/*` | V-1,V-2,V-3,V-4,R-1,R-2 | TimeoutAuditTests | 6 | 1 | true |
+| CP-3 | S3 | n/a | census-red | `pwsh -NoProfile -File scripts/test-test-selection.ps1 -Case C1313_ProjectAndCatalogUniverse` | R-3 red | exit 1; C1313 project-universe fails on unclassified audit test project | n/a | 1 | true |
+| CP-4 | S4 | tests/Antiphon.Tests -> bin-c1563-main/ | linked-audit | `/*/*/TimeoutAuditTests/*` | V-1,V-2,V-3,V-4,R-1,R-2,R-3 | TimeoutAuditTests | 6 | 1 | true |
+| CP-5 | S4 | CP-4 | census-regression | `/*/*/TestSelectionCatalogTests/*` | R-3 and existing catalog/live/mixed smoke | TestSelectionCatalogTests | 3 | 1 | true |
+
+## S3-S4 qualification census integration
+
+The real-repository audit exposed that a new IsTestProject must join the existing project
+census. S3 records the existing census witness red. S4 will register the small standalone
+checkpoint host as a child whose same test source is linked into the primary Antiphon.Tests
+assembly; main qualification thereby runs these tests without adding a suite or watchdog.
+A main-assembly build and its bounded classes are necessary integration checks. Historical
+build evidence at 647183914215a3bbcea84a225859f1fcf2e9501d was 207.08 seconds;
+a fresh main build is provisionally bounded to 8 minutes (about twice that observation,
+rounded) separately from admission. No test attribute timeout is widened. The two new
+main-assembly execution rows expect under 60 seconds each including host startup, with
+CARD-1563 provisional collection obligations. No repeats beyond the changed integration.
+R-3: the shipped test-project universe remains closed, with seven primary/six child projects,
+and main qualification includes the six audit tests. CP-3 is its pre-fix script red witness;
+CP-4 and CP-5 cover the linked audit source and the full affected TestSelectionCatalogTests.
+PC-7 pending SourceLanding Mutation for the source-link/census obligation.
+
