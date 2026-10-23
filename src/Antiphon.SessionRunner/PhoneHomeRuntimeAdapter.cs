@@ -11,6 +11,7 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         GrokRulesTransport.Capability,
         RunnerCapabilityFeatures.SessionGenerationV1,
         RunnerCapabilityFeatures.ConditionalMaintenanceInputV1,
+        ProviderDialogObservation.Capability,
         RunnerCapabilityFeatures.CompactionContinuationStopV1,
         RunnerCapabilityFeatures.TerminalSeatReleaseV1,
         RunnerCapabilityFeatures.TerminalSeatDeliveryEvidenceV1,
