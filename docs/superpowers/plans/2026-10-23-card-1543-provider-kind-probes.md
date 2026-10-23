@@ -34,7 +34,11 @@ optimization, not an rc qualification fix; no scratch rc pick is commissioned.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | witness | `tests/Antiphon.Tests -> bin-c1543-red2/` | exact-budget-red | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets` | V-1 red witness | 3 expected budget assertion failures; other arguments green | 14 | 2 | true |
-| CP-2 | implementation | `tests/Antiphon.Tests -> bin-c1543-green/` | guarded-recovery | `/*/*/(DelegationDispatchRecoveryBoundaryTests)\|(SessionMessageQueueCodexPointerTests)\|(ClaudeDialogDeliveryTests)\|(DelegationBriefRecoveryTests)/(C1149_C1150_Statement_budgets)\|(C1521_Recovery_never_stacks_a_pointer)\|(C1521_Recovery_reconciles_before_input)\|(C680_QueueAndExpectationKeepDialogInputPending)\|(C680_AllAutomatedWritersUseTheGuard)\|(C1541_Resume_keeps_brief_pending_without_clear_dialog_observation)` | V-1,V-2,R-1 | 32 results, no failure/skip | 32 | 3 | true |
+| CP-2 | implementation | `tests/Antiphon.Tests -> bin-c1543-green2/` | exact-budget-green | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets` | V-1 | 14 results, no failure/skip | 14 | 2 | true |
+| CP-3 | implementation | `CP-2` | pointer-holds | `/*/*/SessionMessageQueueCodexPointerTests/C1521_Recovery_never_stacks_a_pointer` | V-2 | 6 variants, no failure/skip | 6 | 1 | true |
+| CP-4 | implementation | `CP-2` | pointer-receipts | `/*/*/SessionMessageQueueCodexPointerTests/C1521_Recovery_reconciles_before_input` | V-2 | 8 variants, no failure/skip | 8 | 1 | true |
+| CP-5 | implementation | `CP-2` | dialog-fencing | `/*/*/ClaudeDialogDeliveryTests/*` | R-1 | 2 methods, no failure/skip | 2 | 1 | true |
+| CP-6 | implementation | `CP-2` | unknown-refusal | `/*/*/DelegationBriefRecoveryTests/C1541_Resume_keeps_brief_pending_without_clear_dialog_observation` | R-1 | absent and Unknown, no failure/skip | 2 | 1 | true |
 
 ## Performance budget
 
@@ -65,3 +69,13 @@ expected assertion failures (actual 71/67/67 versus target 67/63/63), no skips.
 Clean source and verified build. Build 304.796s, host 54.686s; slot waits zero.
 The green row adds both absent/Unknown refusal cases (32 total) for the card
 contract; no test/fixture behavior or timeout changes.
+
+CP-2 run 20261023-201000-3ff9 at 5a687844d9086cae46edb3152d739c98b7260015
+built clean/verified but the composed class/method OR filter selected zero tests.
+This is incomplete execution, never green. Split the same intended 32 cases into
+CP-2..CP-6 using exact class/method filters (CP-5 is the two-method full class),
+with a single shared fresh build. Keep the original 10m/20m caps. The repeated
+build is required by the new committed manifest/source provenance; no test has
+passed in the implementation slice yet and none is being repeated after green.
+Each row is one assembly invocation with shared TestDbFixture within that run.
+The selected five row estimates total six minutes; build remains ten minutes.
