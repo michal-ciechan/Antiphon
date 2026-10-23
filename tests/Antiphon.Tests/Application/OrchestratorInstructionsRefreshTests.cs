@@ -187,7 +187,10 @@ public class OrchestratorInstructionsRefreshTests
                 "pins" => Table("RoutingPins") && parameters.All(p => !p.ParameterName.Contains("role", StringComparison.Ordinal)),
                 "defaults" => Table("RunnerRoutingSettings"),
                 "budget" => Table("HostBudgets"),
-                "runners" => Table("AgentTasks") && sql.Contains("count(*)", StringComparison.Ordinal),
+                // Desktop catalogue occupancy, not SessionStateLoader's unrelated task counts.
+                "runners" => Table("AgentTasks") && sql.Contains("count(*)", StringComparison.Ordinal)
+                    && sql.Contains("\"CapacityWaitRetained\"", StringComparison.Ordinal)
+                    && sql.Contains("\"RunnerId\" IS NULL", StringComparison.Ordinal),
                 _ => false,
             };
             if (fails)

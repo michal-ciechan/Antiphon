@@ -274,6 +274,7 @@ public class RepairSourceDispatchTests
         var advertised = await PublishRemoteOnlyPrimaryAsync(world);
         if (present)
             await FetchAdvertisedObjectAsync(world, advertised.FullRef);
+        await using var blockedFetch = present ? null : ArmBaselineFetchBlocker(world, advertised.FullRef);
 
         var (repair, _) = await world.DispatchAsync();
         repair.Status.ShouldBe(AgentTaskStatus.Dispatched);
@@ -317,7 +318,7 @@ public class RepairSourceDispatchTests
     public async Task C1115_RepairBaselinePinsOnlyPresentObservations(bool present)
     {
         await using var world = await RepairSourceWorld.CreateAsync();
-        var race = present ? null : ArmOwnerAdvanceRace(world);
+        await using var race = present ? null : ArmOwnerAdvanceRace(world);
 
         try
         {
@@ -374,8 +375,10 @@ public class RepairSourceDispatchTests
         await using var world = await RepairSourceWorld.CreateAsync(ordinaryCodeTask: true);
         var advertised = await PublishRemoteOnlyPrimaryAsync(world);
         advertised.LocalSha.ShouldNotBe(advertised.AdvertisedSha);
+        await using var blockedFetch = ArmBaselineFetchBlocker(world, advertised.FullRef);
 
         var (repair, _) = await world.DispatchAsync();
+        await blockedFetch.DisposeAsync();
         repair.Status.ShouldBe(AgentTaskStatus.Dispatched);
         var baseline = await ReloadBaselineAsync(world, repair.Id);
         baseline.Primary.LocalSha.ShouldBe(advertised.LocalSha);
@@ -412,8 +415,11 @@ public class RepairSourceDispatchTests
         var advertised = await PublishRemoteOnlyPrimaryAsync(world);
         if (present)
             await FetchAdvertisedObjectAsync(world, advertised.FullRef);
+        await using var blockedFetch = present ? null : ArmBaselineFetchBlocker(world, advertised.FullRef);
 
         var (repair, _) = await world.DispatchAsync();
+        if (blockedFetch is not null)
+            await blockedFetch.DisposeAsync();
         repair.Status.ShouldBe(AgentTaskStatus.Dispatched);
         var baseline = await ReloadBaselineAsync(world, repair.Id);
         baseline.Primary.LocalSha.ShouldBe(advertised.LocalSha);
@@ -462,7 +468,7 @@ public class RepairSourceDispatchTests
     public async Task C1115_MovedRepairRemoteRequiresPresentBaseline(bool present)
     {
         await using var world = await RepairSourceWorld.CreateAsync();
-        var race = present ? null : ArmOwnerAdvanceRace(world);
+        await using var race = present ? null : ArmOwnerAdvanceRace(world);
         AgentTask repair;
         try
         {
@@ -471,6 +477,8 @@ public class RepairSourceDispatchTests
         finally
         {
             world.Git.BeforeCommand = null;
+            if (race is not null)
+                await race.DisposeAsync();
         }
 
         repair.Status.ShouldBe(AgentTaskStatus.Dispatched);
@@ -703,26 +711,90 @@ public class RepairSourceDispatchTests
 
     private sealed record RemoteAdvertisement(string LocalSha, string AdvertisedSha, string FullRef);
 
-    private sealed class OwnerAdvanceRace
+    private class BaselineFetchBlocker(RepairSourceWorld world) : IAsyncDisposable
+    {
+        private RepositoryLease? _lease;
+
+        public async Task HoldAsync(string repository)
+        {
+            _lease.ShouldBeNull();
+            _lease = (await world.Leases.TryAcquireAsync(repository, CancellationToken.None))
+                .ShouldNotBeNull("CARD-1430 releases the dispatch lease before baseline observation");
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            world.Git.BeforeCommand = null;
+            if (_lease is not { } lease)
+                return;
+            _lease = null;
+            await lease.DisposeAsync();
+        }
+    }
+
+    private static BaselineFetchBlocker ArmBaselineFetchBlocker(RepairSourceWorld world, string fullRef)
+    {
+        var blocker = new BaselineFetchBlocker(world);
+        world.Git.BeforeCommand = async (repository, args) =>
+        {
+            if (IsExactOwnerLsRemote(args, fullRef))
+                await blocker.HoldAsync(repository);
+            return null;
+        };
+        return blocker;
+    }
+
+    private sealed class OwnerAdvanceRace(RepairSourceWorld world) : BaselineFetchBlocker(world)
     {
         public int OwnerReads { get; set; }
         public string? Advanced { get; set; }
     }
 
-    private static OwnerAdvanceRace ArmOwnerAdvanceRace(RepairSourceWorld world)
+    private static OwnerAdvanceRace ArmOwnerAdvanceRace(RepairSourceWorld world, bool blockFetch = true)
     {
-        var race = new OwnerAdvanceRace();
+        var race = new OwnerAdvanceRace(world);
         // The first owner ls-remote is currency and must still see A. The second is baseline
-        // capture: advance origin before that command so the nested lease refuses the fetch.
-        world.Git.BeforeCommand = async (_, args) =>
+        // capture: advance origin, then hold an independent real lease to refuse only its fetch.
+        world.Git.BeforeCommand = async (repository, args) =>
         {
             if (!IsExactOwnerLsRemote(args, world.OwnerRef))
                 return null;
             if (++race.OwnerReads == 2)
+            {
                 race.Advanced = await world.CommitFromSecondCloneAsync(world.OwnerRef, "repair remote advance");
+                if (blockFetch)
+                    await race.HoldAsync(repository);
+            }
             return null;
         };
         return race;
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C1553_ReleasedDispatchLeaseFetchesUncachedBaseline(bool repairSource)
+    {
+        await using var world = await RepairSourceWorld.CreateAsync(ordinaryCodeTask: !repairSource);
+        var advertised = repairSource ? null : await PublishRemoteOnlyPrimaryAsync(world);
+        await using var race = repairSource ? ArmOwnerAdvanceRace(world, blockFetch: false) : null;
+        var (repair, _) = await world.DispatchAsync();
+        world.Git.BeforeCommand = null;
+        repair.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        var baseline = await ReloadBaselineAsync(world, repair.Id);
+        var source = repairSource ? baseline.RepairSource.ShouldNotBeNull() : baseline.Primary;
+        var expected = repairSource ? race!.Advanced.ShouldNotBeNull() : advertised!.AdvertisedSha;
+        source.Remote.State.ShouldBe(ProgressRemoteState.Present);
+        source.Remote.Sha.ShouldBe(expected);
+        source.Remote.Reason.ShouldBeNull();
+        (await CommitExistsAsync(world.Repo.Path, expected)).ShouldBeTrue();
+        (await TryRevParseAsync(world.Repo.Path, BaselinePin(repair.Id,
+            repairSource ? "repair-remote" : "primary-remote"))).ShouldBe(expected);
+        (await TryRevParseAsync(world.Repo.Path, source.FullRef)).ShouldBe(source.LocalSha);
+        (await ScratchGitRepo.GitInAsync(source.RegisteredCheckout!, "rev-parse", "HEAD")).StdOut.Trim()
+            .ShouldBe(source.LocalSha);
+        world.Git.Trace.ShouldContain(args => args.Length > 0 && args[0] == "fetch");
     }
 
     /// <summary>
