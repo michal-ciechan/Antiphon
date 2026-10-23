@@ -181,14 +181,15 @@ public class ClaudeDialogDeliveryTests
             }
             throw new InvalidOperationException("Unexpected raw/fallback operation: " + operation);
         }
-        using var http = new HttpClient(new WireHandler(async message =>
+        using var handler = new WireHandler(async message =>
         {
             JsonElement? payload = message.Content is null ? null
                 : JsonSerializer.Deserialize<JsonElement>(await message.Content.ReadAsStringAsync());
             return new HttpResponseMessage(HttpStatusCode.OK)
             { Content = JsonContent.Create(Reply(message.RequestUri!.Segments[^1], payload), options: PhoneHomeFraming.Json) };
-        })) { BaseAddress = new Uri("http://fixture/") };
-        var httpClient = new SessionRunnerHttpClient(http, new Factory(http),
+        });
+        using var http = new HttpClient(handler, disposeHandler: false);
+        var httpClient = new SessionRunnerHttpClient(http, new Factory(handler),
             Options.Create(new SessionRunnerSettings { BaseUrl = "http://fixture" }));
         (await httpClient.GetSnapshotAsync(id, CancellationToken.None)).Dialog.ShouldBe(observation);
         (await httpClient.SendConditionalInputAsync(id, request, CancellationToken.None)).Outcome.ShouldBe(ConditionalInputOutcomes.ModalBlocked);
@@ -221,7 +222,8 @@ public class ClaudeDialogDeliveryTests
         captured.ShouldBeNull();
         peer.Inputs.ShouldBeEmpty();
         // A new HTTP client has no cached capability from the supported control.
-        var unsupportedHttp = new SessionRunnerHttpClient(http, new Factory(http),
+        using var unsupportedWire = new HttpClient(handler, disposeHandler: false);
+        var unsupportedHttp = new SessionRunnerHttpClient(unsupportedWire, new Factory(handler),
             Options.Create(new SessionRunnerSettings { BaseUrl = "http://fixture" }));
         (await unsupportedHttp.SendConditionalInputAsync(id, request, CancellationToken.None)).Outcome.ShouldBe(ConditionalInputOutcomes.Unsupported);
         captured.ShouldBeNull();
@@ -231,9 +233,9 @@ public class ClaudeDialogDeliveryTests
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) => handle(request);
     }
-    private sealed class Factory(HttpClient client) : IHttpClientFactory
+    private sealed class Factory(HttpMessageHandler handler) : IHttpClientFactory
     {
-        public HttpClient CreateClient(string name) => client;
+        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
     }
 
     private sealed class GuardClient : ISessionRunnerClient
