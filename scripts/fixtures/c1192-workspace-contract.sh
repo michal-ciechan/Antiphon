@@ -2382,7 +2382,7 @@ transfer_once() {
 
 mode_transfer() {
     local data stage imported source_ok=0 sink_ok=0
-    local dot_ok=0 exec_ok=0 space_ok=0 mode
+    local dot_ok=0 exec_ok=0 space_ok=0 tool_mode
     if ! declare -F c849_payload_accept_transfer >/dev/null 2>&1; then
         emit source-copy-failure-refused 0
         emit sink-copy-failure-refused 0
@@ -2407,8 +2407,8 @@ mode_transfer() {
         dot_ok=1
     fi
     if [ -f "$stage/tool" ] && [ -f "$imported/tool" ]; then
-        mode=$(stat -c %a -- "$stage/tool")
-        [ "$mode" = 755 ] && [ "$(stat -c %a -- "$imported/tool")" = 755 ] && exec_ok=1
+        tool_mode=$(stat -c %a -- "$stage/tool")
+        [ "$tool_mode" = 755 ] && [ "$(stat -c %a -- "$imported/tool")" = 755 ] && exec_ok=1
     fi
     if [ -f "$stage/my file.txt" ] && [ -f "$imported/my file.txt" ] \
         && [ "$(cat -- "$stage/my file.txt")" = spaced ] \
