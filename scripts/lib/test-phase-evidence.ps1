@@ -275,6 +275,10 @@ function Write-TestPhasePlannedManifest {
         $DiscoveryNodes,
         $ProfileExclusions
     )
+    # CARD-1514 red witness: labeled no-op. Never land alone.
+    $RedWitnessNoOp = $true
+    if ($RedWitnessNoOp) { return $null }
+
     $entry = [pscustomobject]@{
         Document = [pscustomobject]@{ Nodes = @($DiscoveryNodes) }
         InProgress = @()
@@ -370,7 +374,7 @@ function Write-TestPhasePlannedManifest {
     }
     $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
     $path = Join-Path $dir 'groups-planned.json'
-    Write-NightlyAtomicJson -Path $path -Object $manifest
+    Write-TestPhaseTextAtomic -Path $path -Text (ConvertTo-TestPhaseJsonText -Value $manifest)
     return $path
 }
 
@@ -388,6 +392,66 @@ function Write-TestPhaseFailureMarker {
     }
 }
 
+function ConvertTo-TestPhaseExecutedChunk {
+    param($Item, [string]$Chunk, [string]$RunId, [string]$Attempt, [string]$Suite, [double]$HostWallSeconds, [bool]$TrxMissing, [int]$PassedCount, $Outcomes, [string]$Trx, [string]$TrxDigest, $ExitCode, $CoverageComplete, $TestsPassed)
+    $priorOutcomes = New-Object System.Collections.Generic.List[object]
+    if ($null -ne $Outcomes) {
+        foreach ($row in @($Outcomes)) {
+            if ($null -eq $row) { continue }
+            $priorOutcomes.Add([ordered]@{ testId = [string]$row.testId; outcome = [string]$row.outcome })
+        }
+    }
+    $chunkId = $Chunk
+    $run = $RunId
+    $attempt = $Attempt
+    $suite = $Suite
+    $wall = $HostWallSeconds
+    $missing = $TrxMissing
+    $passed = $PassedCount
+    $trx = $Trx
+    $digest = $TrxDigest
+    $exitCode = $ExitCode
+    $coverage = $CoverageComplete
+    $tests = $TestsPassed
+    if ($null -ne $Item) {
+        if ($Item.PSObject.Properties.Name -contains 'chunk') { $chunkId = [string]$Item.chunk }
+        if ($Item.PSObject.Properties.Name -contains 'runId') { $run = [string]$Item.runId }
+        if ($Item.PSObject.Properties.Name -contains 'attempt') { $attempt = [string]$Item.attempt }
+        if ($Item.PSObject.Properties.Name -contains 'suite') { $suite = [string]$Item.suite }
+        if ($Item.PSObject.Properties.Name -contains 'hostWallSeconds' -and $null -ne $Item.hostWallSeconds) { $wall = [double]$Item.hostWallSeconds }
+        if ($Item.PSObject.Properties.Name -contains 'trxMissing') { $missing = [bool]$Item.trxMissing }
+        if ($Item.PSObject.Properties.Name -contains 'passedCount' -and $null -ne $Item.passedCount) { $passed = [int]$Item.passedCount }
+        if ($Item.PSObject.Properties.Name -contains 'trx') { $trx = [string]$Item.trx }
+        if ($Item.PSObject.Properties.Name -contains 'trxDigest') { $digest = [string]$Item.trxDigest }
+        if ($Item.PSObject.Properties.Name -contains 'exitCode') { $exitCode = $Item.exitCode }
+        if ($Item.PSObject.Properties.Name -contains 'coverageComplete') { $coverage = $Item.coverageComplete }
+        if ($Item.PSObject.Properties.Name -contains 'testsPassed') { $tests = $Item.testsPassed }
+        $priorOutcomes = New-Object System.Collections.Generic.List[object]
+        if ($Item.PSObject.Properties.Name -contains 'outcomes' -and $null -ne $Item.outcomes) {
+            foreach ($row in @($Item.outcomes)) {
+                if ($null -eq $row) { continue }
+                $priorOutcomes.Add([ordered]@{ testId = [string]$row.testId; outcome = [string]$row.outcome })
+            }
+        }
+    }
+    return [ordered]@{
+        chunk = [string]$chunkId
+        runId = [string]$run
+        attempt = [string]$attempt
+        suite = [string]$suite
+        hostWallSeconds = $wall
+        trxMissing = [bool]$missing
+        manufacturedPassed = $false
+        passedCount = $passed
+        outcomes = @($priorOutcomes.ToArray())
+        trx = [string]$trx
+        trxDigest = [string]$digest
+        exitCode = $exitCode
+        coverageComplete = $coverage
+        testsPassed = $tests
+    }
+}
+
 function Write-TestPhaseExecutedManifest {
     param(
         $Verdict,
@@ -402,38 +466,54 @@ function Write-TestPhaseExecutedManifest {
     $rows = @()
     $trxMissing = -not (Test-Path -LiteralPath $TrxPath)
     if (-not $trxMissing) { $rows = @(Read-TestPhaseTrxRows -Path $TrxPath) }
-    $outcomes = @()
+    $outcomes = New-Object System.Collections.Generic.List[object]
     $passed = 0
     foreach ($row in $rows) {
-        $outcomes += [ordered]@{ testId = [string]$row.TestId; outcome = [string]$row.Outcome }
+        $outcomes.Add([ordered]@{ testId = [string]$row.TestId; outcome = [string]$row.Outcome })
         if ([string]$row.Outcome -eq 'Passed') { $passed++ }
     }
     $digest = ''
     if (-not $trxMissing) { $digest = Get-NightlyFileSha256 -Path $TrxPath }
+    $exitCode = $null
+    $coverageComplete = $null
+    $testsPassed = $null
+    if ($null -ne $Verdict) {
+        if ($Verdict.PSObject.Properties.Name -contains 'ExitCode') { $exitCode = $Verdict.ExitCode }
+        if ($Verdict.PSObject.Properties.Name -contains 'coverageComplete') { $coverageComplete = [bool]$Verdict.coverageComplete }
+        if ($Verdict.PSObject.Properties.Name -contains 'testsPassed') { $testsPassed = [bool]$Verdict.testsPassed }
+    }
+    $fresh = ConvertTo-TestPhaseExecutedChunk -Chunk $Chunk -RunId $RunId -Attempt $Attempt -Suite $Suite -HostWallSeconds $HostWallSeconds -TrxMissing $trxMissing -PassedCount $passed -Outcomes @($outcomes.ToArray()) -Trx (ConvertTo-TestPhaseRelativePath -LogRoot $LogRoot -Path $TrxPath) -TrxDigest $digest -ExitCode $exitCode -CoverageComplete $coverageComplete -TestsPassed $testsPassed
+    $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
+    $path = Join-Path $dir 'groups-executed.json'
+    $kept = New-Object System.Collections.Generic.List[object]
+    $topRun = [string]$RunId
+    $topAttempt = [string]$Attempt
+    $topSuite = [string]$Suite
+    if (Test-Path -LiteralPath $path) {
+        $existing = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
+        if ($existing.PSObject.Properties.Name -contains 'runId' -and -not [string]::IsNullOrWhiteSpace([string]$existing.runId)) { $topRun = [string]$existing.runId }
+        if ($existing.PSObject.Properties.Name -contains 'attempt') { $topAttempt = [string]$existing.attempt }
+        if ($existing.PSObject.Properties.Name -contains 'suite' -and -not [string]::IsNullOrWhiteSpace([string]$existing.suite)) { $topSuite = [string]$existing.suite }
+        $prior = @()
+        if ($existing.PSObject.Properties.Name -contains 'chunks' -and $null -ne $existing.chunks) { $prior = @($existing.chunks) }
+        elseif ($existing.PSObject.Properties.Name -contains 'chunk') { $prior = @($existing) }
+        foreach ($item in $prior) {
+            if ($null -eq $item) { continue }
+            $same = ([string]$item.chunk -eq [string]$Chunk) -and ([string]$item.suite -eq [string]$Suite)
+            if ($same) { continue }
+            $kept.Add((ConvertTo-TestPhaseExecutedChunk -Item $item))
+        }
+    }
+    $kept.Add($fresh)
     $manifest = [ordered]@{
         version = 1
-        runId = [string]$RunId
-        attempt = [string]$Attempt
-        suite = [string]$Suite
-        chunk = [string]$Chunk
-        hostWallSeconds = $HostWallSeconds
-        trxMissing = [bool]$trxMissing
+        runId = $topRun
+        attempt = $topAttempt
+        suite = $topSuite
         manufacturedPassed = $false
-        passedCount = $passed
-        outcomes = @($outcomes)
-        trx = (ConvertTo-TestPhaseRelativePath -LogRoot $LogRoot -Path $TrxPath)
-        trxDigest = $digest
-        exitCode = $null
-        coverageComplete = $null
-        testsPassed = $null
+        chunks = @($kept.ToArray())
     }
-    if ($null -ne $Verdict) {
-        if ($Verdict.PSObject.Properties.Name -contains 'ExitCode') { $manifest.exitCode = $Verdict.ExitCode }
-        if ($Verdict.PSObject.Properties.Name -contains 'coverageComplete') { $manifest.coverageComplete = [bool]$Verdict.coverageComplete }
-        if ($Verdict.PSObject.Properties.Name -contains 'testsPassed') { $manifest.testsPassed = [bool]$Verdict.testsPassed }
-    }
-    $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
-    Write-NightlyAtomicJson -Path (Join-Path $dir 'groups-executed.json') -Object $manifest
+    Write-TestPhaseTextAtomic -Path $path -Text (ConvertTo-TestPhaseJsonText -Value $manifest)
 }
 
 function Complete-TestPhaseLaunch {
