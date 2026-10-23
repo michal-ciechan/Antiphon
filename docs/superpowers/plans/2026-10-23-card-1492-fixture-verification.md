@@ -111,3 +111,24 @@ proof selection's repair run, not a repetition to seek a passing flake. Final
 receipt validation remains outstanding. The rc source pick list must now include
 both fixture repair commits; the earlier one-commit pick applied only to the first
 candidate and is historical. Recheck the combined diff and compile on rc.
+
+## Branch-specific rc pick correction
+
+The combined master guard-forwarding change was checked in the rc scratch tree.
+Its compile failed in 1m21s with CS0246: ProviderDialogObservation is absent from
+that rc revision. Source inspection confirms that rc has neither that contract
+nor the supported-dialog fixture extension. This is a later-master fixture
+compatibility repair, not part of cause B on rc. A subsequent import-only commit
+was unnecessary and is removed at this narrative tip; it cannot supply an API
+that does not exist on rc.
+
+Final exact rc pick list remains `229ffecbf1598cfe9ec67ccee9b1fc8cca04385a`
+ONLY. Its clean apply and successful rc test-project compile are recorded above.
+Do not pick d2e472d817a5e5ff0bc75a1b8676558d7ed66e10 or the import-only commit
+to rc: those forward the master dialog API, which rc does not have. The master
+candidate includes that separate fixture repair because its input guard is active.
+The attempted combined compile is retained as failed applicability evidence,
+not relabeled green. No product API or input guard was changed.
+
+The next CP-1 run qualifies the committed master tip with the original 32-case
+selection and unchanged deadlines. Its receipt and V-1/R-1/R-2 outcomes are pending.
