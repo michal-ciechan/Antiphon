@@ -1215,6 +1215,8 @@ public sealed partial class AttentionService
             // reuses this verdict, so the policy is still evaluated at most once per task.
             var providerWait = _providerWait is null ? null : await _providerWait.CachedAsync(task.Id, ct);
             var deadline = await TaskDeadlinePolicy.EvaluateAsync(_db, task, now, _delegation, ct, providerWait);
+            if (_providerWait is not null && task.AgentKind == AgentKind.ClaudeCode && providerWait is null && deadline is not null)
+                deadline = deadline with { Summary = deadline.Summary + " " + TaskProviderWaitFacts.Unavailable };
             if (deadline?.Boot is { } boot)
             {
                 items.Add(BootStallItem(task, boot, now, digest, cost));
