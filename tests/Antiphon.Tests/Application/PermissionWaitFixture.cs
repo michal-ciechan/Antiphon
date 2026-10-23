@@ -297,7 +297,13 @@ internal sealed class PermissionWaitFixture : IAsyncDisposable
     internal async Task<int> DeadlineAsync(CancellationToken ct)
     {
         await using var scope = Harness.Provider.CreateAsyncScope();
-        return await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().FailOverdueTasksAsync(ct);
+        var failed = 0;
+        // An idle caller receives the later failure note inside EnqueueAsync itself.
+        await JoinDeliveryAsync(async () =>
+        {
+            failed = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().FailOverdueTasksAsync(ct);
+        }, ct);
+        return failed;
     }
 
     internal async Task<AgentTask> TaskAsync(CancellationToken ct)
