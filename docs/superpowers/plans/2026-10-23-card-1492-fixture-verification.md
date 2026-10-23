@@ -62,3 +62,20 @@ CheckedWorking versus Unknown. PC-1492-2: omit starting the gap action worker;
 restart-five exact method must fail at five recipient submissions versus zero.
 Both belong to method-scoped SourceLanding Mutation after ordinary Review and landing.
 Existing CARD-1205 PC-84 through PC-100 remain pending; this repair does not discharge them.
+
+## Prequalification rc check
+
+M-1 passed: repair commit `229ffecbf1598cfe9ec67ccee9b1fc8cca04385a`
+applied with `git apply --check` and `git apply` in the detached rc scratch tree
+at `5a126f6fc5ae4e16d803b628716b8f0485a37174`. The resulting harness bytes match
+master's repaired harness. The rc test project compiled successfully (exit 0),
+through `build-slot.ps1 -Label c1492-rc-compile`, bounded by `timeout 600s`, using
+`dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c1492-rc/
+--property:UseAppHost=false --nologo`. Existing compiler/analyzer warnings remain.
+This is compile/applicability evidence, not a claim of rc test execution.
+
+Exact rc source pick list: `229ffecbf1598cfe9ec67ccee9b1fc8cca04385a` only.
+The preceding verification-manifest commit and this documentation update are optional
+rc documentation picks; neither is needed to compile the fixture repair.
+Final checkpoint results remain pending at this committed narrative tip; the final
+caller report supplies the fresh receipt, tested SHA and per-method counts.
