@@ -1,4 +1,5 @@
 extern alias server;
+using Antiphon.Messaging.Client;
 using System.Diagnostics;
 using System.Net;
 using Antiphon.Server.Application.Interfaces;
@@ -53,6 +54,12 @@ public sealed class LiveStartupIntegrationTests
         Console.WriteLine($"C1564 host-startup observed elapsedMs={clock.Elapsed.TotalMilliseconds}");
     }
 
+    private sealed class RefusingProducer : IAntiphonMessagingProducer
+    {
+        public Task SendAsync(ChannelReply reply, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Startup timing fixture refuses outbound messaging");
+    }
+
     private sealed class StartupFactory(string connection, string root) : WebApplicationFactory<server::Program>
     {
         public RefusingSessionRunnerClient Runner { get; } = new();
@@ -67,6 +74,7 @@ public sealed class LiveStartupIntegrationTests
                 ["AgentTui:KeyRingPath"] = Path.Combine(root, "keys"),
                 ["AgentTui:ImportProfilesOnStartup"] = "false",
                 ["GitHub:Enabled"] = "false",
+                ["ChannelBridge:Enabled"] = "false",
                 ["Agents:DefaultDefinition"] = "test-raw",
                 ["Agents:Definitions:test-raw:Kind"] = "Raw",
                 ["Agents:Definitions:test-raw:Exe"] = "unused-test-executable",
@@ -82,6 +90,8 @@ public sealed class LiveStartupIntegrationTests
             }));
             builder.ConfigureServices(services =>
             {
+                services.RemoveAll<IAntiphonMessagingProducer>();
+                services.AddSingleton<IAntiphonMessagingProducer>(new RefusingProducer());
                 services.RemoveAll<ISessionRunnerClient>();
                 services.AddSingleton<ISessionRunnerClient>(Runner);
                 services.RemoveAll<IZombieProcessCensus>();

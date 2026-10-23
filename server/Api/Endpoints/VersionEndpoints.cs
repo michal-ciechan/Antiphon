@@ -1,3 +1,4 @@
+using Antiphon.Observability;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 
@@ -12,6 +13,8 @@ public static class VersionEndpoints
     /// </summary>
     public static void MapVersionEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/diagnostics/startup", (LiveTiming timing) => Results.Ok(timing.ReadStartup()))
+            .WithTags("Diagnostics");
         app.MapGet("/api/version", () => Results.Ok(new AntiphonVersionDto(
             AntiphonVersion.Sha,
             AntiphonVersion.Informational,
