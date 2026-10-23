@@ -23,8 +23,8 @@ still goes to ordinary Review then SourceLanding Mutation for missing controls.
 
 Baseline CP-0 executes the exact old method once with a nine-minute row cap, below
 the historical 585-second adapter cap and unchanged 600-second test timeout. A
-censored result remains incomplete, never green. CP-0b captures the exact C1374
-host method once as S2's 32-vector baseline. Candidate CP-2a..d partitions the
+censored result remains incomplete, never green. CP-10 captures the exact C1374
+host method once as S2's 32-vector baseline. Candidate CP-20..d partitions the
 landed CP-2 selection into its four required methods; one build is reused within
 each run, no binaries across changed source. The candidate keeps the same fixture
 construction/capture mode and strict limiter. No speed-up claim is expected:
@@ -43,13 +43,13 @@ multiline parsing against Persistence 52 passes and Remote 29 passes/censoring.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-0 | S0 | `tests/Antiphon.Tests -> bin-c1514-s1-before/` | old-resume-baseline | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_requires_matching_receipt` | V-1 original 16-scenario baseline | 1 passed, or explicitly censored at bound | 1 | 3 | true | n/a |
-| CP-0b | S0 | CP-0 | host-census-baseline | `/*/*/RemoteScriptContractTests/C1374_Host_census_recovers_transient_reads` | S2 exact 32-vector baseline only | 1 passed, 0 failed/skipped | 1 | 3 | true | n/a |
-| CP-2a | S1 | `tests/Antiphon.Tests -> bin-c1514-s1/` | seed | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_after_seed_failure` | V-1 seed | 1 passed, 0 failed/skipped | 1 | 3 | true | n/a |
-| CP-2b | S1 | CP-2a | partial | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_after_partial_failure` | V-1 five partial cases | 5 passed, 0 failed/skipped | 5 | 3 | true | n/a |
-| CP-2c | S1 | CP-2a | drift | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_rejects_receipt_drift` | V-1 eight drifts | 8 passed, 0 failed/skipped | 8 | 3 | true | n/a |
-| CP-2d | S1 | CP-2a | replacement | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_accepts_only_recorded_replacement` | V-1 two replacement cases | 2 passed, 0 failed/skipped | 2 | 3 | true | n/a |
+| CP-10 | S0 | CP-0 | host-census-baseline | `/*/*/RemoteScriptContractTests/C1374_Host_census_recovers_transient_reads` | S2 exact 32-vector baseline only | 1 passed, 0 failed/skipped | 1 | 3 | true | n/a |
+| CP-20 | S1 | `tests/Antiphon.Tests -> bin-c1514-s1/` | seed | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_after_seed_failure` | V-1 seed | 1 passed, 0 failed/skipped | 1 | 3 | true | n/a |
+| CP-21 | S1 | CP-20 | partial | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_after_partial_failure` | V-1 five partial cases | 5 passed, 0 failed/skipped | 5 | 3 | true | n/a |
+| CP-22 | S1 | CP-20 | drift | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_rejects_receipt_drift` | V-1 eight drifts | 8 passed, 0 failed/skipped | 8 | 3 | true | n/a |
+| CP-23 | S1 | CP-20 | replacement | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_accepts_only_recorded_replacement` | V-1 two replacement cases | 2 passed, 0 failed/skipped | 2 | 3 | true | n/a |
 
-Run CP-0,CP-0b at the committed manifest SHA, then CP-2a..d at the final
+Run CP-0,CP-10 at the committed manifest SHA, then CP-20..d at the final
 committed candidate SHA, via checkpoint `run --row-timeout 9m --total-timeout 60m`.
 Wait through exit 75. One normal baseline/candidate pair; no repeat after green.
 One unlisted build bootstraps the tool through build-slot.ps1 into external owned
@@ -64,3 +64,6 @@ current-master merge-tree, full base..HEAD evidence-diff and task output cleanup
 Every PC-3a/b/c/d remains pending from S3; none is discharged here. V-2..5 and
 CP-3..5 are outside S1, not passed. Restart: none. Ordinary Review is required
 before the caller lands this original Code task; S2 follows as separate Code.
+
+Manifest subrows CP-20..23 implement landed logical CP-2. Numeric IDs are
+required for build reuse; initial alphanumeric import was refused before build/tests.
