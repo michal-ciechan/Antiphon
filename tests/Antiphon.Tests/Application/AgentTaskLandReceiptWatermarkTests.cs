@@ -123,11 +123,12 @@ public sealed class AgentTaskLandReceiptWatermarkTests
             case "two-kind-outcome-live-committed-row":
                 // The runner still holds the session and answers one row the store already committed.
                 // CARD-1549: durable admission adds the active AgentTasks Id/Attempt SELECT
-                // and TurnEnd ApiCallId dedup SELECT. RC 5a126f6fc predates CARD-1403's
-                // consolidated prelude, so both reads add to the original exact budget.
+                // and TurnEnd ApiCallId dedup SELECT. CARD-1403 folds session, identity and
+                // MAX(sequence) reads into one prelude, offsetting those two commands on master.
+                // RC 5a126f6fc instead takes d87adc576's exact [11,10,10] expectation.
                 h.Runner.Transcript = Mode.Entries;
                 h.Runner.NextEntries = _ => [events[5]];
-                expected = [11, 10, 10];
+                expected = [9, 8, 8];
                 break;
         }
 
