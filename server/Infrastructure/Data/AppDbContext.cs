@@ -1350,6 +1350,7 @@ public class AppDbContext : DbContext
             entity.Property(c => c.RequiredPlatform).IsRequired().HasDefaultValue(RequiredPlatform.Any);
             entity.Property(c => c.Urgency).IsRequired().HasDefaultValue(CardUrgency.Normal);
             entity.Property(c => c.DueAt);
+            entity.Property(c => c.EstimateDays).HasPrecision(6, 2);
             entity.Property(c => c.UrgentSince);
             // Nullable, no index: every sort is in memory per column (CARD-0098).
             entity.Property(c => c.Position);
@@ -1425,6 +1426,7 @@ public class AppDbContext : DbContext
             entity.Property(r => r.Importance);
             entity.Property(r => r.Urgency);
             entity.Property(r => r.DueAt);
+            entity.Property(r => r.EstimateDays).HasPrecision(6, 2);
             entity.Property(r => r.Position);
             entity.Property(r => r.Title).HasMaxLength(300);
             entity.Property(r => r.Alias).HasMaxLength(64);

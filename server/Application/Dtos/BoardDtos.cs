@@ -100,6 +100,8 @@ public sealed record CardDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool HasMore = false)
 {
     public CardFileVisibility CardFileVisibility { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public decimal? EstimateDays { get; init; }
     public bool HasPrivateNotes { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public CardFileCardStatusDto? CardFileStatus { get; init; }
@@ -442,6 +444,8 @@ public sealed record CardRevisionDto(
     DateTime? CompletedAt = null,
     string? Alias = null)
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public decimal? EstimateDays { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     public CardFileVisibility? CardFileVisibility { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.Never)]

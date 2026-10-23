@@ -434,7 +434,7 @@ public sealed class BoardService
                 : null,
             card.Alias) { CardFileVisibility = card.CardFileVisibility, HasPrivateNotes = card.PrivateNotes.Length > 0,
                 CodeVerificationPolicy = card.CodeVerificationPolicy, ReviewVerificationPolicy = card.ReviewVerificationPolicy,
-                RequiredPlatform = card.RequiredPlatform };
+                RequiredPlatform = card.RequiredPlatform, EstimateDays = card.EstimateDays };
     }
 
     /// <summary>
@@ -528,6 +528,7 @@ public sealed class BoardService
                 CodeVerificationPolicy = revision.Kind == CardRevisionKind.ContentEdit ? revision.CodeVerificationPolicy : null,
                 ReviewVerificationPolicy = revision.Kind == CardRevisionKind.ContentEdit ? revision.ReviewVerificationPolicy : null,
                 RequiredPlatform = revision.Kind == CardRevisionKind.ContentEdit ? revision.RequiredPlatform : null,
+                EstimateDays = revision.Kind == CardRevisionKind.ContentEdit ? revision.EstimateDays : null,
                 RelatedCardId = revision.RelatedCardId,
                 RelatedCardIdentifier = revision.RelatedCardIdentifier,
                 RelationshipKind = revision.RelationshipKind };

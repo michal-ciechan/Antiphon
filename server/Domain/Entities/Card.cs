@@ -37,6 +37,9 @@ public class Card
     public CardUrgency Urgency { get; set; } = CardUrgency.Normal;
     public DateTime? DueAt { get; set; }
 
+    /// <summary>Estimated effort in days; null until estimated.</summary>
+    public decimal? EstimateDays { get; set; }
+
     /// <summary>
     /// Set when <see cref="Urgency"/> rises above <see cref="CardUrgency.Normal"/>; cleared when
     /// it returns. Surfaced as staleness ("rated Now 12d ago"), never used to decay the rating.
