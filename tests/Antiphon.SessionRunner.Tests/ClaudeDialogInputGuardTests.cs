@@ -21,6 +21,15 @@ public class ClaudeDialogInputGuardTests
         f.Session.RenderDialogScreenForTest(Clear);
         (await f.SendAsync("body")).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
         f.Child.Inputs.ShouldBe(["body"]);
+        f.Session.RenderDialogScreenForTest(Clear);
+        var epochRequest = await f.RequestAsync("wrong-epoch");
+        (await f.Runtime.SendConditionalInputAsync(f.Id, epochRequest with
+        { ExpectedRuntimeEpoch = Guid.NewGuid() }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.StaleObservation);
+        (await f.Runtime.SendConditionalInputAsync(f.Id, epochRequest with
+        { ExpectedInputRevision = null }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.StaleObservation);
+        f.Child.Inputs.ShouldBe(["body"]);
         f.Session.RenderDialogScreenForTest(Modal);
         (await f.SendAsync("\r")).Outcome.ShouldBe(ConditionalInputOutcomes.ModalBlocked);
         f.Child.Inputs.ShouldBe(["body"], "the Enter and retry must leave zero bytes");
@@ -65,6 +74,34 @@ public class ClaudeDialogInputGuardTests
         await using var adopted = new Fixture(adopted: true);
         (await adopted.SendAsync("after-adoption")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
         adopted.Child.Inputs.ShouldBeEmpty();
+
+        await using var proof = new Fixture();
+        var tailer = new Tailer(proof.Id);
+        proof.Session.BindChildForTest(proof.Child, tailer, proof.Generation);
+        await proof.Runtime.GetSnapshotAsync(proof.Id, CancellationToken.None);
+        proof.Clock.Now += TimeSpan.FromMilliseconds(500);
+        await proof.Runtime.GetSnapshotAsync(proof.Id, CancellationToken.None);
+        var body = new string('a', 220) + " required complete tail";
+        (await proof.SendAsync(body)).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        (await proof.SendAsync("\r")).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        tailer.Prompt(body[..200]);
+        (await proof.Runtime.GetSnapshotAsync(proof.Id, CancellationToken.None)).Dialog!.SubmittedInput.ShouldBeNull();
+        tailer.Prompt(body);
+        var matched = (await proof.Runtime.GetSnapshotAsync(proof.Id, CancellationToken.None)).Dialog!;
+        matched.SubmittedInput.ShouldNotBeNull();
+        matched.SubmittedInput.SubmitRevision.ShouldBe(matched.InputRevision);
+        matched.SubmittedInput.TranscriptFloor.ShouldBe(0);
+        await proof.Runtime.SendInputAsync(proof.Id, "later draft", CancellationToken.None);
+        (await proof.Runtime.GetSnapshotAsync(proof.Id, CancellationToken.None)).Dialog!.SubmittedInput.ShouldBeNull();
+
+        // A single empty frame never arms positive custody, even with a complete receipt.
+        await using var single = new Fixture();
+        var singleTailer = new Tailer(single.Id);
+        single.Session.BindChildForTest(single.Child, singleTailer, single.Generation);
+        await single.SendAsync(body);
+        await single.SendAsync("\r");
+        singleTailer.Prompt(body);
+        (await single.Runtime.GetSnapshotAsync(single.Id, CancellationToken.None)).Dialog!.SubmittedInput.ShouldBeNull();
     }
 
     private sealed class Fixture : IAsyncDisposable
@@ -75,10 +112,11 @@ public class ClaudeDialogInputGuardTests
         public SessionRunnerRuntime Runtime { get; }
         public SessionRunnerRuntime.RunnerSession Session { get; }
         public Child Child { get; } = new();
+        public Clock Clock { get; } = new();
         public Fixture(bool adopted = false)
         {
             var settings = new SessionRunnerSettings { SessionLogPath = _root, CpuWatchdogEnabled = false };
-            Runtime = new(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
+            Runtime = new(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance, timeProvider: Clock);
             Session = new(Id, settings, new SessionRunnerEventHub(), NullLogger.Instance);
             Session.BindDialogChildForTest(Child, Generation, Clear, adopted);
             Runtime.Track(Session);
@@ -95,6 +133,28 @@ public class ClaudeDialogInputGuardTests
             await Runtime.DisposeAsync();
             if (Directory.Exists(_root)) Directory.Delete(_root, true);
         }
+    }
+
+    private sealed class Clock : TimeProvider
+    {
+        public DateTimeOffset Now = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
+    private sealed class Tailer(Guid id) : ITranscriptTailer
+    {
+        private RunnerTranscriptDto _snapshot = new(id, [], 0);
+        public string? BoundTranscriptPath => "/owned/conversation.jsonl";
+        public string? BindHow => "exact";
+        public string? UnboundReason => null;
+        public void Prompt(string text) => _snapshot = new(id,
+            [new(id, 1, TranscriptKinds.UserPrompt, "native-prompt", null, DateTimeOffset.UtcNow,
+                "user", text, null, null, null, null, null)], 1);
+        public RunnerTranscriptDto Snapshot() => _snapshot;
+        public void Start() { }
+        public void NotifyChildExited() { }
+        public void NotifyClaimRevoked(string path, Guid newOwner) { }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class Child : ISessionChild

@@ -235,7 +235,8 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.Snapshot, new { sessionId }, ct);
         var dto = Read<RunnerSnapshotDto>(frame) ?? throw Missing("snapshot");
-        return new SessionRunnerSnapshotDto(dto.SessionId, dto.RawOutput, dto.RenderedScreen, dto.LastSequence, dto.StartedAt);
+        return new SessionRunnerSnapshotDto(dto.SessionId, dto.RawOutput, dto.RenderedScreen, dto.LastSequence,
+            dto.StartedAt, dto.AcceptedStartedAt, dto.Dialog);
     }
 
     // CARD-1153 D-3/D-4: the authenticated, runner/store-bound connection is the authentication;
@@ -465,6 +466,9 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(
         Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct)
     {
+        if (request.RequireClaudeDialogClear
+            && (await GetCapabilitiesAsync(ct))?.Features?.Contains(ProviderDialogObservation.Capability) != true)
+            return new(sessionId, ConditionalInputOutcomes.Unsupported);
         var frame = await _connection.RequestAsync(
             PhoneHomeOperation.ConditionalInput,
             new
@@ -473,6 +477,9 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
                 expectedAcceptedStartedAt = request.ExpectedAcceptedStartedAt,
                 expectedLastSequence = request.ExpectedLastSequence,
                 input = request.Input,
+                requireClaudeDialogClear = request.RequireClaudeDialogClear,
+                expectedInputRevision = request.ExpectedInputRevision,
+                expectedRuntimeEpoch = request.ExpectedRuntimeEpoch,
             },
             ct);
         if (frame.Kind == PhoneHomeFrameKind.Error)
