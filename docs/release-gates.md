@@ -683,3 +683,27 @@ acceptance run.
   independent watchdog continues to monitor **master only**; there is no independent RC
   scheduler-outage notification. An RC incident can never update or close a master nightly
   incident, and a reporting failure is a failed job with a local durable record, not green.
+
+## Advisory project batches (CARD-1545 first slice)
+
+`scripts/select-rc-project-batches.ps1 -BaselineSha <full sha> -CandidateSha <full sha>`
+reads committed files and `tests/rc-project-categories.json`. Its JSON manifest
+contains both ProjectReference graphs, direct references, transitive downstream
+projects, linked Compile inputs, categories and proposed whole-test-project batches.
+Use `-OutputPath <new file>` to retain an intent without overwriting an older one.
+The release selection intent records the same data as `projectProposal` when a
+baseline and a non-Full request are present. This adds no test execution.
+
+The first slice keeps mixed projects whole. Server/git operations and shared
+Claude/Codex/pty projects carry all their categories; no handler extraction or
+per-method discovery is implied. Conditional references are conservatively unioned.
+Literal imports are traversed without executing MSBuild. Unknown categories,
+paths, unresolved imports/references, cycles and shared build/scripts/policy inputs
+fall back to Full. Client and script inputs also fall back to Full.
+
+`mode=Scoped` describes a shadow proposal only: `effectiveMode=Full`,
+`coverageScope=Full`, `gateCredit=false`, `executionEvidence=false`. Every release
+still executes the existing full nine-suite profile. This manifest is not a
+qualification receipt, unchanged-project proof, or permission to reuse old groups.
+Admission of scoped gate credit and shadow/full comparison qualification remain
+future CARD-1545 slices; the next full RC run is unchanged.

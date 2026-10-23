@@ -204,11 +204,16 @@ function New-ReleaseSelectionAttemptCore {
         if ($ancestor.Exit -ne 0) { throw 'baseline-not-ancestor' }
     }
     $proposal = $null
+    $projectProposal = $null
     $reasons = @()
     if ($baseline.reason) { $reasons += $baseline.reason }
     if ($b) {
         $proposal = Get-TestSelection $Request.RepositoryRoot $b $Request.CandidateSha $Request.Profile
         $reasons += @($proposal.fallbackReasons)
+        if ($Request.SelectionMode -cne 'Full') {
+            . (Join-Path $PSScriptRoot 'rc-project-selection.ps1')
+            $projectProposal = Get-RcProjectSelection $Request.RepositoryRoot $b $Request.CandidateSha
+        }
     }
     if ($Request.SelectionMode -ceq 'ChangeAware') { $reasons += 'change-aware-unqualified' }
     $qualificationDigest = ''
@@ -220,7 +225,7 @@ function New-ReleaseSelectionAttemptCore {
         $qualificationDigest = Get-NightlyFileSha256 $Request.QualificationPath
     }
     $selection = [ordered]@{ format='antiphon-release-selection-v1'; candidateSha=$Request.CandidateSha; baselineSha=$b
-        requestedMode=$Request.SelectionMode; effectiveMode='Full'; coverageScope='Full'; proposal=$proposal
+        requestedMode=$Request.SelectionMode; effectiveMode='Full'; coverageScope='Full'; proposal=$proposal; projectProposal=$projectProposal
         fallbackReasons=@($reasons | Sort-Object -Unique); executionEvidence=$false }
     return Save-ReleaseSelectionAttempt $Request $selection $contract $baseline.digest $qualificationDigest
 }

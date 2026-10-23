@@ -21,7 +21,7 @@ No AppHost/restart, checkpoint-tool, fixture, or timeout-policy changes.
 Three isolated tiny Git fixtures, one per behavior; no DB/container/web host.
 Each Git read has the existing 30-second bounded process runner. One test host,
 existing ScriptHarness process ownership and 300-second deadline, no new timeout.
-Provisional expected total <5 minutes including build, test bodies <10 seconds each;
+Provisional expected total <12 minutes including two builds, test bodies <25 seconds each;
 no p95 sample yet. Record native TRX durations, checkpoint phases and slot wait;
 fixture IO and Git times not instrumented individually remain unknown/remainder.
 CARD-1545 tracks the provisional sample; no selection >30 minutes is authorized.
@@ -46,6 +46,11 @@ remain pending for method-scoped SourceLanding Mutation, including discovery.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1545-red/` | red-witness | `/*/*/RcProjectSelectionTests/*` | V-1,V-2,V-3 | all 3 methods, expected assertion failures before S2 | 3 | 3 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1545-green/` | project-planner | `/*/*/RcProjectSelectionTests/*` | V-1,V-2,V-3 | all 3 methods, 0 failed/skipped | 3 | 3 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1545-red/` | red-witness | `/*/*/RcProjectSelectionTests/*` | V-1,V-2,V-3 | all 3 methods, expected assertion failures before S2 | 3 | 6 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1545-green/` | project-planner | `/*/*/RcProjectSelectionTests/*` | V-1,V-2,V-3 | all 3 methods, 0 failed/skipped | 3 | 6 |
 | CP-3 | S2 | CP-2 | release-modes | `/*/*/ChangeAwareReleaseTests/C1313_ModeCredit` | R-1 | 1 method, 0 failed/skipped | 1 | 1 |
+
+Measured first red checkpoint: build 266.90 s, host 21.16 s, three intended
+assertion failures, no skips. This single sample is not p95. The build plus
+source-boundary checks exceeded the initial 3-minute estimate; revised to 6 minutes
+per building row without changing any test timeout.
