@@ -58,8 +58,8 @@ try {
         foreach ($path in $paths) {
             $info = [Diagnostics.ProcessStartInfo]::new()
             $info.Environment.Clear()
-            $environment = if ($standalone) { [Collections.Specialized.StringDictionary]::new() }
-                else { $info.EnvironmentVariables }
+            if ($standalone) { $environment = [Collections.Specialized.StringDictionary]::new() }
+            else { $environment = $info.EnvironmentVariables }
             $environment['C1525_UNRELATED'] = 'preserved'
             $optOutName = if ($standalone) { 'antiphon_build_memory_policy_optout' }
                 else { 'ANTIPHON_BUILD_MEMORY_POLICY_OPTOUT' }
@@ -104,7 +104,7 @@ try {
     if ($regressionPassed -ne $regressionExpected) { throw 'regression selection executed the wrong case count' }
     Write-Host "C1525 cases=$regressionPassed passed=$regressionPassed failed=0"
     if ($Case -ne 'All') { return }
-    foreach ($case in @(
+    foreach ($scenario in @(
         @{ Name = 'windows-default'; Windows = $true; Seed = $false; OptOut = '' },
         @{ Name = 'windows-conflicting'; Windows = $true; Seed = $true; OptOut = '' },
         @{ Name = 'windows-optout'; Windows = $true; Seed = $true; OptOut = '1' },
@@ -118,16 +118,16 @@ try {
         $start.RedirectStandardError = $true
         $start.WorkingDirectory = $root
         foreach ($arg in @('-NoProfile', '-File', $caller, '-Root', $root, '-Probe', $probe,
-            ('-Windows:$' + ([string]$case.Windows).ToLowerInvariant()))) { $start.ArgumentList.Add($arg) }
+            ('-Windows:$' + ([string]$scenario.Windows).ToLowerInvariant()))) { $start.ArgumentList.Add($arg) }
         foreach ($name in $names) {
             [void]$start.Environment.Remove($name)
-            if ($case.Seed) { $start.Environment[$name] = 'caller-value' }
+            if ($scenario.Seed) { $start.Environment[$name] = 'caller-value' }
         }
-        $start.Environment['ANTIPHON_BUILD_MEMORY_POLICY_OPTOUT'] = $case.OptOut
+        $start.Environment['ANTIPHON_BUILD_MEMORY_POLICY_OPTOUT'] = $scenario.OptOut
         $start.Environment['C1506_UNRELATED'] = 'preserved'
         $start.Environment['C589_SLOT_SHIM'] = Join-Path $root 'scripts/fixtures/c589-slot-shim.ps1'
         $start.Environment['C589_SLOT_SCRIPT'] = 'granted'
-        $start.Environment['C589_SLOT_LOG'] = Join-Path $scratch ($case.Name + '.log')
+        $start.Environment['C589_SLOT_LOG'] = Join-Path $scratch ($scenario.Name + '.log')
         [void]$start.Environment.Remove('C589_COMMAND_SHIM')
         $process = [Diagnostics.Process]::Start($start)
         $stdout = $process.StandardOutput.ReadToEndAsync()
@@ -142,15 +142,15 @@ try {
             $actual = $line[0].Substring(6) | ConvertFrom-Json -AsHashtable
             $mismatches = @()
             for ($i = 0; $i -lt $names.Count; $i++) {
-                $want = if ($case.Windows -and $case.OptOut -ne '1') { $expected[$i] }
-                    elseif ($case.Seed) { 'caller-value' } else { $null }
+                $want = if ($scenario.Windows -and $scenario.OptOut -ne '1') { $expected[$i] }
+                    elseif ($scenario.Seed) { 'caller-value' } else { $null }
                 if ($actual[$names[$i]] -cne $want) {
                     $mismatches += ($names[$i] + ': expected [' + $want + '], observed [' + $actual[$names[$i]] + ']')
                 }
             }
             if ($actual['C1506_UNRELATED'] -cne 'preserved') { $mismatches += 'unrelated environment changed' }
-            if ($mismatches.Count) { $failed++; Write-Host ('FAIL ' + $case.Name + ': ' + ($mismatches -join '; ')) }
-            else { $passed++; Write-Host ('PASS ' + $case.Name) }
+            if ($mismatches.Count) { $failed++; Write-Host ('FAIL ' + $scenario.Name + ': ' + ($mismatches -join '; ')) }
+            else { $passed++; Write-Host ('PASS ' + $scenario.Name) }
         } finally {
             if (-not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
             $process.Dispose()
