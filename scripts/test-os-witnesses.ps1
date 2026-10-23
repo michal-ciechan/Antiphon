@@ -30,7 +30,7 @@ function Policy-Surface {
 if ($PolicyOnly) { Policy-Surface; Write-Host "ASSERTIONS $script:checks"; exit 0 }
 $root = Join-Path ([IO.Path]::GetTempPath()) ('c1526-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($root) | Out-Null
-function Git([string[]]$Arguments) {
+function Fixture-Git([string[]]$Arguments) {
     $out = & git -C $root @Arguments 2>&1
     if ($LASTEXITCODE -ne 0) { throw "fixture git failed: $out" }
     return ($out -join "`n")
@@ -58,20 +58,20 @@ function Run-Case([string]$Name, $Evidence, [int]$Exit, [string]$Diagnostic, [st
     Write-Host "PASS $Name"
 }
 try {
-    Git @('init','-q') | Out-Null
-    Git @('config','user.email','fixture@example.invalid') | Out-Null
-    Git @('config','user.name','Fixture') | Out-Null
+    Fixture-Git @('init','-q') | Out-Null
+    Fixture-Git @('config','user.email','fixture@example.invalid') | Out-Null
+    Fixture-Git @('config','user.name','Fixture') | Out-Null
     Put '.gitignore' 'evidence.json'
     Put 'plan.md' "### Checkpoints`n`n| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |`n|---|---|---|---|---|---|---|---|---|`n| CP-1 | all | n/a | fixture | pwsh test.ps1 | V-1 | pass | n/a | 1 |`n"
     Put 'source.cs' "// base`n"
     Put 'test.ps1' '# a fixture declaration, not an execution receipt'
     Put 'helper.cs' 'if (OperatingSystem.IsWindows()) ReadOptional();'
     Put 'scripts/lib/start.cs' 'Start();'
-    Git @('add','.') | Out-Null; Git @('commit','-qm','base') | Out-Null
-    $script:base = Git @('rev-parse','HEAD')
+    Fixture-Git @('add','.') | Out-Null; Fixture-Git @('commit','-qm','base') | Out-Null
+    $script:base = Fixture-Git @('rev-parse','HEAD')
     Put 'source.cs' 'if (OperatingSystem.IsWindows()) ReadOptional();'
-    Git @('add','.') | Out-Null; Git @('commit','-qm','head') | Out-Null
-    $script:head = Git @('rev-parse','HEAD')
+    Fixture-Git @('add','.') | Out-Null; Fixture-Git @('commit','-qm','head') | Out-Null
+    $script:head = Fixture-Git @('rev-parse','HEAD')
     $witness = @{
         id='W-1'; sourcePath='source.cs'; branchAnchor='OperatingSystem.IsWindows()'; targetOS='Windows'
         witnessKind='real-type'; productionType='System.Diagnostics.ProcessStartInfo.EnvironmentVariables'; factory='new ProcessStartInfo().EnvironmentVariables'
@@ -127,25 +127,25 @@ try {
     $e=Copy-Record $valid; $e.witnesses[0].nativeObligation=@{status='recorded';targetOS='Windows';sourceSha=$script:head;command='native test';receiptReference='fixture.json';executionMode='portable-forced'}
     Run-Case 'fixture-native' $e 1 'native receipt requires native execution'
     # Rename and delete are separate committed deltas; no worktree source is used by the checker.
-    Git @('mv','scripts/lib/start.cs','moved.cs') | Out-Null
-    Git @('commit','-qam','rename') | Out-Null
-    $rename=Git @('rev-parse','HEAD')
+    Fixture-Git @('mv','scripts/lib/start.cs','moved.cs') | Out-Null
+    Fixture-Git @('commit','-qam','rename') | Out-Null
+    $rename=Fixture-Git @('rev-parse','HEAD')
     $e=Copy-Record $valid; $e.headSha=$rename; $e.inspectedPaths+=@{path='scripts/lib/start.cs';disposition='removed';reason='renamed';helpers=@();candidates=@()},@{path='moved.cs';disposition='portable';reason='renamed startup';helpers=@();candidates=@()}
     Run-Case 'restart-rename-missing' $e 1 'restart path census' $rename
     $e.restartImpact=@{required=$true;paths=@('scripts/lib/start.cs');additionalPaths=@();reason='renamed startup';nativeObligation=@{status='pending';targetOS='Windows';sourceSha=$rename;command='rc-native-probe';reason='future native integration'}}
     Run-Case 'restart-rename-pending' $e 0 'NATIVE pending' $rename
-    Git @('rm','moved.cs') | Out-Null; Git @('commit','-qm','delete') | Out-Null
-    $deleted=Git @('rev-parse','HEAD'); $e.headSha=$deleted; $e.restartImpact.nativeObligation.sourceSha=$deleted
+    Fixture-Git @('rm','moved.cs') | Out-Null; Fixture-Git @('commit','-qm','delete') | Out-Null
+    $deleted=Fixture-Git @('rev-parse','HEAD'); $e.headSha=$deleted; $e.restartImpact.nativeObligation.sourceSha=$deleted
     $e.inspectedPaths=@($e.inspectedPaths | Where-Object path -ne 'moved.cs')
     Run-Case 'restart-delete' $e 0 'complete syntax/inventory' $deleted
     Put 'unknown.widget' 'unrecognized executable/configuration candidate'
-    Git @('add','.') | Out-Null; Git @('commit','-qm','unknown') | Out-Null
-    $unknown=Git @('rev-parse','HEAD'); $e.headSha=$unknown; $e.restartImpact.nativeObligation.sourceSha=$unknown
+    Fixture-Git @('add','.') | Out-Null; Fixture-Git @('commit','-qm','unknown') | Out-Null
+    $unknown=Fixture-Git @('rev-parse','HEAD'); $e.headSha=$unknown; $e.restartImpact.nativeObligation.sourceSha=$unknown
     Run-Case 'unknown-classification' $e 1 'inventory missing: unknown.widget' $unknown
     # Documentation-only uses a second base at the current commit.
     $script:base=$unknown; Put 'readme.md' '# documentation'
-    Git @('add','readme.md') | Out-Null; Git @('commit','-qm','docs') | Out-Null
-    $docs=Git @('rev-parse','HEAD')
+    Fixture-Git @('add','readme.md') | Out-Null; Fixture-Git @('commit','-qm','docs') | Out-Null
+    $docs=Fixture-Git @('rev-parse','HEAD')
     $e=@{version=1;baseSha=$script:base;headSha=$docs;inspectedPaths=@();witnesses=@();restartImpact=@{required=$false;paths=@();additionalPaths=@();reason='documentation-only readme.md'}}
     Run-Case 'documentation-only' $e 0 'complete syntax/inventory' $docs
     if (-not $Case) { Policy-Surface }
