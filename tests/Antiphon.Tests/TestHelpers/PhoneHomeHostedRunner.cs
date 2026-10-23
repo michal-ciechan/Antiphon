@@ -72,7 +72,7 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
                 session.RunnerId = h.Host.AllowedRunnerId;
                 session.RunnerStoreId = h.Host.StoreId;
                 session.RunnerCwd = "/work";
-                h.Generation = session.StartedAt ?? DateTime.UtcNow;
+                h.Generation = session.StartedAt;
                 session.StartedAt = h.Generation;
                 await db.SaveChangesAsync();
             }
@@ -88,7 +88,7 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
             };
             await File.WriteAllTextAsync(settings.SecretPath, h.Host.Secret);
             await File.WriteAllTextAsync(settings.StoreIdPath, h.Host.StoreId.ToString());
-            h.Runtime = new SessionRunnerRuntime(Options.Create(new SessionRunnerSettings
+            h.Runtime = new SessionRunnerRuntime(Options.Create(new Antiphon.SessionRunner.SessionRunnerSettings
                 { SessionLogPath = Path.Combine(h._root, "sessions") }), NullLogger<SessionRunnerRuntime>.Instance);
             h.Commands = new CommandSurface(new PhoneHomeRuntimeAdapter(h.Runtime,
                 new RunnerBuildDto("test", null, DateTime.UtcNow, DateTime.UtcNow)));
@@ -116,7 +116,7 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
     }
     public void Exit(Guid session, long sequence, DateTime generation) =>
         Runtime.EventHubForTest.Publish(SessionRunnerEventNames.SessionExited,
-            new RunnerExitedEvent(session, 0, "Normal", sequence, generation));
+            new RunnerSessionExitedEvent(session, 0, "Normal", sequence, generation));
 
     public async Task<Guid> AddSessionAsync()
     {
