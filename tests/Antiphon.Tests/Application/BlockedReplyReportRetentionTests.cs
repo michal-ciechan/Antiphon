@@ -265,6 +265,14 @@ public sealed class BlockedReplyReportRetentionTests
         }
         body.ShouldContain(DelegationReportFormatter.FindingContract(world.TaskId, OrchestrationStage.Review),
             Case.Sensitive, "Reply uses the dispatch finding instructions verbatim");
+        var shortTaskId = world.TaskId.ToString("N")[..8];
+        var foundMarker = $"[antiphon-finding:{shortTaskId} found]";
+        var cleanMarker = $"[antiphon-finding:{shortTaskId} clean]";
+        body.ShouldContain(foundMarker, Case.Sensitive, "the queued wire preserves the literal found marker");
+        body.ShouldContain(cleanMarker, Case.Sensitive, "the queued wire preserves the literal clean marker");
+        body.IndexOf(foundMarker, StringComparison.Ordinal).ShouldBeLessThan(
+            body.IndexOf(cleanMarker, StringComparison.Ordinal),
+            "the queued finding contract documents found before clean independently of the formatter");
         var replied = (await world.EventsAsync()).Single(e => e.Type == AgentTaskEventType.Replied);
         replied.InputBody.ShouldBe(body, "the Replied event stores the complete queued wire");
     }
