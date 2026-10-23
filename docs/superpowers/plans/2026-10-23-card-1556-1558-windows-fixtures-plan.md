@@ -66,8 +66,7 @@ Final `validate-checkpoint-receipt.ps1` must pass for both green rows at final t
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1556-red/` | instructions-red | `/*/*/OrchestratorInstructionsRefreshTests/A_failed_chain_read*` | V-1,V-2 red witnesses | 8 executed; all-tier file fails at 161 bytes; notice fails at missing clipped transitions; 0 skipped | 8 | 4 |
 | CP-2 | S1 | CP-1 | wire-red | `/*/*/DelegateBranchDeliveryTests/C1558_*` | V-3,R-1 red/control | 4 executed; windows wire fails HTTP 409; native/linux and mismatch control pass | 4 | 1 |
-| CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1556-final/` | instructions-final | `/*/*/OrchestratorInstructionsRefreshTests/A_failed_chain_read*` | V-1,V-2 | all 8 passed, 0 failed/skipped | 8 | 4 |
-| CP-4 | S2 | CP-3 | delivery-final | `/*/*/DelegateBranchDeliveryTests/*` | V-3,R-1,R-2 | all 7 passed, 0 failed/skipped | 7 | 4 |
+| CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1556-final/` | fixtures-final | `/*/*/(OrchestratorInstructionsRefreshTests*)\|(DelegateBranchDeliveryTests*)/(A_failed_chain_read*)\|(C1213_*)\|(C1558_*)` | V-1,V-2,V-3,R-1,R-2 | all 15 passed, 0 failed/skipped; 8 instructions and all 7 delivery cases | 15 | 10 |
 | CP-5 | S1c | `tests/Antiphon.Tests -> bin-c1557-base/` | notice-base | `/*/*/OrchestratorInstructionsRefreshTests/A_failed_chain_read_notice*` | V-2 precondition attribution | 4 executed at original base; record actual outcome, no inherited claim without execution | 4 | 7 |
 | CP-6 | S1c | `tests/Antiphon.Tests -> bin-c1557-eligible-red/` | notice-eligible-red | `/*/*/OrchestratorInstructionsRefreshTests/A_failed_chain_read*` | V-1,V-2 reachable red | 8 executed; 161-byte all-tier red and clipped notice transition red, 0 skipped | 8 | 7 |
 
@@ -90,3 +89,9 @@ repair deliberately has no dependency on S1c; verify its picks and compile on rc
 CP-5 runs from a detached exact-base worktree, reading this committed plan by its
 absolute path. CP-6 runs in the assigned worktree. Both use independent owned
 outputs and isolated test databases, and every build/test driver is slot-gated.
+
+Final manifest amendment: CP-4 is consolidated into CP-3 with exactly the same
+15 expanded cases (both named instructions methods and the entire delivery class).
+This removes one measured 66-85 second host startup and another slot acquisition;
+it does not defer any ordinary case. Use only `--rows CP-3` for the final run.
+The original CP-1/2 and later CP-5/6 manifest versions remain in their receipts.
