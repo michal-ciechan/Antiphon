@@ -88,7 +88,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
             var session = await db.AgentSessions.SingleAsync(s => s.Id == h.Id);
             h._handler.Id = h.Id;
             h._handler.Generation = session.StartedAt;
-            h.Attach();
+            await h.AttachAsync();
             h._handler.Append(TranscriptKinds.UserPrompt, "dispatch five tasks", publish: false);
             await h.Runtime.CatchUpTranscriptAsync(h.Id, h.Token);
             if (!busy) await h.MakeIdleAsync();
@@ -124,8 +124,9 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         services.AddSingleton<LandDeliveryBoundary>(Boundary);
     }
 
-    private void Attach()
+    private async Task AttachAsync()
     {
+        await Caller.EnableClaudeDialogObservationAsync(World.Schema.ConnectionString, Id);
         _adapter = new EpochAdapter(Caller);
         Runtime.Register(Id, _adapter);
         Caller.OnSubmitted = async body =>
@@ -190,7 +191,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         await StopPumpAsync();
         if (_adapter is not null) await _adapter.DisposeAsync();
         await World.RestartAsync(keepInterceptor: true);
-        Attach();
+        await AttachAsync();
         _restarted = true;
         Interlocked.Exchange(ref _postRestartDeliveryWorkerCycles, 0);
     }
@@ -826,6 +827,10 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         public Task SendPromptAsync(string prompt, CancellationToken ct) => _inner.SendPromptAsync(prompt, ct);
         public Task<bool> WaitForFirstPromptOutputAsync(TimeSpan timeout, CancellationToken ct) => _inner.WaitForFirstPromptOutputAsync(timeout, ct);
         public Task SendInputAsync(string input, CancellationToken ct) => _inner.SendInputAsync(input, ct);
+        public Task<ProviderDialogObservation?> ObserveDialogAsync(Guid sessionId, CancellationToken ct) =>
+            _inner.ObserveDialogAsync(sessionId, ct);
+        public Task<RunnerConditionalInputResult> SendConditionalInputAsync(RunnerConditionalInputRequest request, CancellationToken ct) =>
+            _inner.SendConditionalInputAsync(request, ct);
         public Task ResizeAsync(int cols, int rows, CancellationToken ct) => _inner.ResizeAsync(cols, rows, ct);
         public Task<bool> WaitForReadyAsync(CancellationToken ct) => _inner.WaitForReadyAsync(ct);
         public Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct) => _inner.WaitForTurnCompleteAsync(ct);
