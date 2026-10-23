@@ -415,7 +415,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
         await broker.StartAsync(startup.Token);
         {
             using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-            var worker = new FakeAgentProtocolAdapter();
+            var worker = new FakeAgentProtocolAdapter { DialogGuardEnabled = true, ClaudeComposerChrome = true };
             if (busy) worker.ReadyHold = new(TaskCreationOptions.RunContinuationsAsynchronously);
             var workerEvents = new WorkerTurnBus();
             var delegation = new DelegationSettings { MaxConcurrentTasks = 16 };
@@ -437,6 +437,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
                             { Kind = "ClaudeCode", Exe = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh" } },
                     }));
             });
+            await w.H.Adapter.EnableClaudeDialogObservationAsync(w.Schema.ConnectionString, w.H.SessionId);
+            w.H.Runtime.SetTestAcceptedStartedAt(w.H.SessionId, w.H.Adapter.AcceptedStartedAt!.Value);
             if (busy) workerEvents.OnStarted = () => BridgeQueueHarness.InsertEntryAsync(
                 worker.StartedSessionId!.Value, TranscriptKinds.UserPrompt,
                 "converter is already working after its interrupted launch", connectionString: w.Schema.ConnectionString,
@@ -512,6 +514,9 @@ public sealed class ChannelOutboundUnifiedTransportTests
             {
                 var task = await db.AgentTasks.SingleAsync(t => t.OutboundDeliveryId == delivery.Id);
                 taskId = task.Id; task.Status.ShouldBe(AgentTaskStatus.Queued);
+                // Exercise Windows newlines on every host, while retaining the exact receipt oracle.
+                task.Title += "\r\nconverter receipt identity";
+                await db.SaveChangesAsync(scenario.Token);
             }
             await TraceAsync("task-committed");
             if (cut is "conversion-dispatched" or "enqueue-refused")
