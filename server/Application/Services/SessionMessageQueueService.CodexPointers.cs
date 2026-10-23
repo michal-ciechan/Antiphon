@@ -121,10 +121,15 @@ public sealed partial class SessionMessageQueueService
         }
     }
 
-    private async Task<FlushResult?> RecoverPointerAsync(AppDbContext db, Guid sessionId,
+    private Task<FlushResult?> RecoverPointerAsync(AppDbContext db, Guid sessionId,
         IReadOnlyList<SessionQueuedMessage> run, PtyDeliveryCeilings ceilings, CancellationToken ct)
+        => RecoverPointerAsync(db, sessionId, run, ceilings, null, ct);
+
+    private async Task<FlushResult?> RecoverPointerAsync(AppDbContext db, Guid sessionId,
+        IReadOnlyList<SessionQueuedMessage> run, PtyDeliveryCeilings ceilings,
+        AgentKind? knownKind, CancellationToken ct)
     {
-        var kind = await TryGetSessionKindAsync(sessionId, ct);
+        var kind = knownKind ?? await TryGetSessionKindAsync(sessionId, ct);
         var pointers = run.Where(m => IsCodexPointer(kind, m)
             && (m.DeliveryAttempts > 0 || m.LastDeliveryStartedAt is not null)).ToList();
         if (pointers.Count == 0) return null;

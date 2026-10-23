@@ -98,9 +98,9 @@ public sealed partial class SessionMessageQueueService
                 var pending = await db.SessionQueuedMessages.AsNoTracking()
                     .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending)
                     .ToListAsync(ct);
-                if (await HeldBackTypingBlocksTheComposerAsync(sessionId, pending, [], generation, ct))
+                if (await HeldBackTypingBlocksTheComposerAsync(sessionId, session.AgentKind, pending, [], generation, ct))
                     return ExpectationSendResult.Refuse("held_back_body_in_composer");
-                if (await CanceledTypingBlocksTheComposerAsync(db, sessionId, generation, ct))
+                if (await CanceledTypingBlocksTheComposerAsync(db, sessionId, session.AgentKind, generation, ct))
                     return ExpectationSendResult.Refuse("composer_orphan");
                 if (await ExpectationBodyBlocksComposerAsync(db, sessionId, generation, ct))
                     return ExpectationSendResult.Refuse("unconfirmed_expectation_body");
