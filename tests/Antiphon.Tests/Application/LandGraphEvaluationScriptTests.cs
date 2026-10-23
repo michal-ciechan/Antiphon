@@ -49,6 +49,12 @@ public sealed partial class LandGraphEvaluationTests
         if (variant == "imported-directory")
             files["eng/deep/shared.props"] = """<Project><PropertyGroup><PackageTags>$(MSBuildProjectDirectory)/../docs/flag.md</PackageTags></PropertyGroup></Project>""";
         await using var repo = await ScriptRepoAsync(files);
+        if (variant == "imported-directory")
+        {
+            var evaluated = await repo.RunToolAsync();
+            evaluated.ExitCode.ShouldBe(1, evaluated.Text);
+            evaluated.Text.ShouldContain("docs/flag.md");
+        }
         var run = await RunScriptAsync(repo.Root, "-Update");
         run.ExitCode.ShouldBe(1, run.Text);
         if (variant is "relative-dir" or "identity" or "task-properties" or "property-body" or "target-framework")
@@ -89,18 +95,32 @@ public sealed partial class LandGraphEvaluationTests
     [Timeout(300_000)]
     public async Task C1483_S5_EvaluationFailurePreservesRecords()
     {
-        await using var repo = await ScriptRepoAsync(new() { ["App/App.csproj"] = "<Project />" });
-        // Missing entry point gives the real evaluator exit 2, after the pre-check approves.
-        File.Delete(repo.Full("Antiphon.sln"));
-        await AuditRepo.GitAsync(repo.Root, "add", "-A");
-        await AuditRepo.GitAsync(repo.Root, "-c", "user.name=c1483", "-c", "user.email=c1483@antiphon.test", "commit", "-qm", "missing solution");
-        await File.WriteAllTextAsync(repo.Full(ManifestFile), "old manifest\n");
-        await File.WriteAllTextAsync(repo.Full(EvaluationFile), "old evaluation\n");
-        var run = await RunScriptAsync(repo.Root, "-Update");
-        run.ExitCode.ShouldBe(1, run.Text);
-        run.Text.ShouldContain("evaluation-failed:");
-        (await File.ReadAllTextAsync(repo.Full(ManifestFile))).ShouldBe("old manifest\n");
-        (await File.ReadAllTextAsync(repo.Full(EvaluationFile))).ShouldBe("old evaluation\n");
+        foreach (var variant in new[] { "evaluation", "missing-tool", "dirty-project", "dirty-pins" })
+        {
+            await using var repo = await ScriptRepoAsync(new() { ["App/App.csproj"] = "<Project />" });
+            if (variant == "evaluation")
+            {
+                // Missing entry point gives the real evaluator exit 2, after the pre-check approves.
+                File.Delete(repo.Full("Antiphon.sln"));
+                await AuditRepo.GitAsync(repo.Root, "add", "-u");
+                await AuditRepo.GitAsync(repo.Root, "-c", "user.name=c1483", "-c", "user.email=c1483@antiphon.test", "commit", "-qm", "missing solution");
+            }
+            if (variant == "missing-tool") File.Delete(repo.Full("tools/Antiphon.LandGraphAudit/bin-land-audit/Release/net10.0/Antiphon.LandGraphAudit.dll"));
+            if (variant == "dirty-project") await File.AppendAllTextAsync(repo.Full("App/App.csproj"), "<!-- dirty -->");
+            if (variant == "dirty-pins") await File.AppendAllTextAsync(repo.Full(PinsFile), "# dirty\n");
+            await File.WriteAllTextAsync(repo.Full(ManifestFile), "old manifest\n");
+            await File.WriteAllTextAsync(repo.Full(EvaluationFile), "old evaluation\n");
+            var run = await RunScriptAsync(repo.Root, "-Update");
+            run.ExitCode.ShouldBe(1, variant + ": " + run.Text);
+            run.Text.ShouldContain(variant switch
+            {
+                "evaluation" => "evaluation-failed:",
+                "missing-tool" => "built evaluator missing:",
+                _ => "source differs from HEAD",
+            });
+            (await File.ReadAllTextAsync(repo.Full(ManifestFile))).ShouldBe("old manifest\n");
+            (await File.ReadAllTextAsync(repo.Full(EvaluationFile))).ShouldBe("old evaluation\n");
+        }
     }
 
     private static async Task<AuditRepo> ScriptRepoAsync(Dictionary<string, string> files)
