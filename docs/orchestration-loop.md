@@ -2352,7 +2352,11 @@ branches, imported definitions and custom/default item metadata. Filesystem prop
 functions and unknown, dynamic or chained call identities refuse; only the explicit
 lexical members in `EvaluationExpressionPolicy` are admitted. Exactly pinned Target
 bodies keep their separate reviewed trust boundary; OS pins do not exempt evaluation
-expressions. The recorder and canary remain additional checks. `-Check` validates the
+expressions. CARD-1540 also refuses timestamp metadata, dynamic metadata-name arguments
+and plain properties outside the explicit reviewed set. Every evaluation element that reads
+a reviewed environment knob (including OS) needs an exact pin on its own attributes and
+direct text, even in an inactive branch. Only MSBuildThisFileDirectory and
+MSBuildProjectDirectory are admitted without these pins. The recorder and canary remain additional checks. `-Check` validates the
 pre-check and digest/SDK/pins record, without invoking the evaluator. This policy
 adds zero land-time runtime work: land still compares the embedded manifest only.
 
