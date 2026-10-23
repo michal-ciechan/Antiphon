@@ -14,7 +14,7 @@ internal sealed class EvaluationSnapshot(string repo, string sourceRepo)
         foreach (var root in new[] { repo, sourceRepo }.Distinct().OrderByDescending(p => p.Length))
         {
             value = value.Replace(root, "{repo}", StringComparison.Ordinal);
-            value = value.Replace(root.TrimStart(Path.DirectorySeparatorChar), "{repo-no-root}", StringComparison.Ordinal);
+            value = value.Replace(root[Path.GetPathRoot(root)!.Length..], "{repo-no-root}", StringComparison.Ordinal);
         }
         return value;
     }
