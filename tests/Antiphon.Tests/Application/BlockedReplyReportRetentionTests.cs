@@ -204,6 +204,7 @@ public sealed class BlockedReplyReportRetentionTests
     public async Task Blocked_reply_wire_requires_a_complete_report_and_closing_token()
     {
         await using var world = await BlockedBySyncAsync();
+        world.Task.Stage.ShouldBeNull("fixture: the existing reply contract is stage-less");
         const string message = "Accepted. Stopping here.";
 
         await ReplyAsync(world, message);
@@ -219,11 +220,53 @@ public sealed class BlockedReplyReportRetentionTests
         body.ShouldContain(blocked, Case.Sensitive, "the exact task-specific blocked line is restated");
         body.ShouldContain("complete", Case.Insensitive, "the wire asks for the complete report, not a token");
         body.ShouldContain("report", Case.Insensitive);
+        body.ShouldNotContain("[antiphon-finding:", Case.Sensitive);
         body.IndexOf(done, StringComparison.Ordinal).ShouldBeGreaterThan(
             body.IndexOf(message, StringComparison.Ordinal), "the contract follows the caller's text");
 
         var replied = (await world.EventsAsync()).Single(e => e.Type == AgentTaskEventType.Replied);
         replied.InputBody.ShouldBe(body, "the Replied event stores the typed wire");
+    }
+
+    [Test]
+    [Timeout(240_000)]
+    public async Task Blocked_reply_wire_to_a_stage_task_restates_the_finding_marker()
+    {
+        await using var world = await BlockedBySyncAsync();
+        await using (var db = world.CreateContext())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+            task.Stage = OrchestrationStage.Code;
+            await db.SaveChangesAsync();
+        }
+        const string message = "Accepted. Resend the complete report.";
+
+        await ReplyAsync(world, message);
+
+        var wire = await ReplyWireAsync(world);
+        wire.Status.ShouldBe(QueuedMessageStatus.Pending);
+        var body = wire.Body;
+        body.ShouldStartWith(DelegationReportFormatter.TaskMarker(world.TaskId), Case.Sensitive);
+        body.ShouldContain(message, Case.Sensitive);
+        foreach (var verdict in new[] { "found", "clean" })
+        {
+            var finding = DelegationReportFormatter.FindingToken(world.TaskId, verdict);
+            body.ShouldContain(finding, Case.Sensitive, "a staged Reply restates both finding verdicts");
+            var findingIndex = body.IndexOf(finding, StringComparison.Ordinal);
+            findingIndex.ShouldBeGreaterThan(body.IndexOf(message, StringComparison.Ordinal),
+                "the caller's text stays before the finding contract");
+            foreach (var outcome in new[] { "done", "blocked", "failed" })
+            {
+                var report = DelegationReportFormatter.ReportToken(world.TaskId, outcome);
+                body.ShouldContain(report, Case.Sensitive);
+                findingIndex.ShouldBeLessThan(body.IndexOf(report, StringComparison.Ordinal),
+                    "the finding contract precedes the closing report tokens");
+            }
+        }
+        body.ShouldContain(DelegationReportFormatter.FindingContract(world.TaskId, OrchestrationStage.Code),
+            Case.Sensitive, "Reply uses the dispatch finding instructions verbatim");
+        var replied = (await world.EventsAsync()).Single(e => e.Type == AgentTaskEventType.Replied);
+        replied.InputBody.ShouldBe(body, "the Replied event stores the complete queued wire");
     }
 
     [Test]
